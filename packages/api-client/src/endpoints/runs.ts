@@ -1,4 +1,5 @@
 import type {
+  ExecutionCancellationRequest,
   CreateLingTurnRequest,
   CreateLingThreadRequest,
   CreateToolLoadRequest,
@@ -311,12 +312,12 @@ export const runEndpoints = {
       return this._get(`/runs/${encodeURIComponent(runId)}/shell-snapshots/${encodeURIComponent(snapshotId)}`, { cwd });
     },
 
-  async cancelRun(this: LingDaemonEndpointContext, cwd: string, runId: string): Promise<RunCancelResponse> {
-      return this._post(`/runs/${encodeURIComponent(runId)}/cancel`, { cwd });
+  async cancelRun(this: LingDaemonEndpointContext, cwd: string, runId: string, input: ExecutionCancellationRequest = {}): Promise<RunCancelResponse> {
+      return this._post(`/runs/${encodeURIComponent(runId)}/cancel`, { cwd }, input);
     },
 
-  async listRunInterventions(this: LingDaemonEndpointContext, cwd: string, runId: string, limit: number = 100): Promise<RunInterventionListResponse> {
-      return this._get(`/runs/${encodeURIComponent(runId)}/interventions`, { cwd, limit });
+  async listRunInterventions(this: LingDaemonEndpointContext, cwd: string, runId: string, limit: number = 100, idempotencyKey?: string): Promise<RunInterventionListResponse> {
+      return this._get(`/runs/${encodeURIComponent(runId)}/interventions`, { cwd, limit, idempotencyKey });
     },
 
   async createRunIntervention(this: LingDaemonEndpointContext, cwd: string, runId: string, input: CreateRunInterventionRequest): Promise<RunInterventionResponse> {

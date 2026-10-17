@@ -154,8 +154,18 @@ test("channel composer keeps failed drafts and uses shared persistent feedback",
   })];
   state.workspaceSettings.defaultProviderPresetId = "provider_ui2_channel_composer_failure";
   state.channels[0].defaultProviderPresetId = "provider_ui2_channel_composer_failure";
-  state.failNextChannelMessage = true;
   await mockDaemon(page, state);
+  let rejectNext = true;
+  await page.route("**/channels/channel_engineering/turns/stream?**", async route => {
+    if (!rejectNext) { await route.fallback(); return; }
+    rejectNext = false;
+    await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ message: "Controlled input rejection before acceptance" }) });
+  });
+  await page.route("**/conversation-submissions?**", async route => {
+    const url = new URL(route.request().url());
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ status: "unknown",
+      cwd: url.searchParams.get("cwd"), idempotencyKey: url.searchParams.get("idempotencyKey") }) });
+  });
   await page.goto("/");
   await openEngineeringChannel(page);
 

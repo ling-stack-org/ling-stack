@@ -39,6 +39,7 @@ import {
 } from "./orchestrator.js";
 import { buildRunInterventionContinuationRequest } from "./run-intervention-continuation-request.js";
 import { assertNoUnsafeRequiredPause } from "./user-input-cancellation-guard.js";
+import { continuationSourceReady } from "../../runtime/continuation-source-barrier.js";
 
 const runControlService = new RunControlService();
 
@@ -69,9 +70,11 @@ export async function handleRunInterventions(
   }
 
   if (request.method === "GET") {
+    const idempotencyKey = url.searchParams.get("idempotencyKey") ?? undefined;
     writeJson(response, 200, {
       cwd: store.paths.cwd,
-      interventions: store.listRunInterventions({ sourceRunId, limit: readOptionalIntegerQuery(url, "limit", 1) }),
+      ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
+      interventions: store.listRunInterventions({ sourceRunId, idempotencyKey, limit: readOptionalIntegerQuery(url, "limit", 1) }),
     });
     return;
   }
@@ -378,6 +381,17 @@ export async function maybeStartNextRunInterventionContinuation(input: {
   if (!sourceRun || !isTerminalRunStatus(sourceRun.status)) {
     return;
   }
+  const sourceUnit = sourceRun.workUnitId ? input.store.getWorkUnit(sourceRun.workUnitId) : undefined;
+  if (!sourceUnit || !continuationSourceReady(input.store, sourceUnit, input.activeRuns, "run-interventions",
+    () => maybeStartNextRunInterventionContinuation(input))) return;
+  const predecessor = input.store.listRunInterventions({ sourceRunId: input.sourceRunId,
+    hasContinuation: true, newestFirst: true, limit: 1 })[0];
+  if (predecessor?.continuationRunId) {
+    const previousRun = input.store.getRun(predecessor.continuationRunId);
+    const previousUnit = previousRun?.workUnitId ? input.store.getWorkUnit(previousRun.workUnitId) : undefined;
+    if (!previousUnit || !continuationSourceReady(input.store, previousUnit, input.activeRuns, "run-interventions",
+      () => maybeStartNextRunInterventionContinuation(input))) return;
+  }
   while (true) {
     const now = new Date().toISOString();
     const starting = input.store.claimNextRunIntervention({
@@ -389,6 +403,11 @@ export async function maybeStartNextRunInterventionContinuation(input: {
     });
     if (!starting) {
       return;
+    }
+    if ((starting.sourceWorkUnitId && starting.sourceWorkUnitId !== sourceUnit.id)
+      || (starting.sourceAttemptId && starting.sourceAttemptId !== sourceUnit.activeAttemptId)) {
+      failRunIntervention(input, starting.id, "continuation_source_attempt_changed");
+      continue;
     }
     streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_continuation_starting", {
       interventionId: starting.id,

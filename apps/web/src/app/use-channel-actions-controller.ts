@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from "react";
+import { useRef, type Dispatch, type SetStateAction } from "react";
 import {
   createChannel,
   createChannelContextSummary,
@@ -9,6 +9,7 @@ import {
   createTask,
   deleteChannelAttachment,
   streamChannelTurn,
+  getConversationSubmission,
   updateChannel,
   updateChannelBrief,
   updateChannelCollaborationProtocol,
@@ -28,6 +29,9 @@ import { titleFromPrompt } from "../lib/formatting.js";
 import { canUseConversationProvider, providerEffectiveBaseUrl, providerPreflightReady } from "../lib/providers.js";
 import { defaultTools } from "../lib/tools.js";
 import { readSseResponse } from "../sse.js";
+import { recoverSubmissionReceipt, submissionWasRejected, UnconfirmedConversationSubmissionError, RecoveredConversationSubmissionError } from "../shared/conversation/conversation-submission-recovery.js";
+import { submissionLookupJournal } from "../shared/conversation/conversation-submission-journal.js";
+import { validateConversationSubmissionReceipt } from "../shared/conversation/submission-receipt-scope.js";
 import type {
   AiTeammate,
   Channel,
@@ -216,6 +220,10 @@ export function useChannelActionsController(input: {
   readonly refreshRuntimeState: (cwd?: string) => Promise<void>;
   readonly refreshChannelActivity: () => Promise<void>;
 }): ChannelActionsController {
+  const uploadOwnerKey = JSON.stringify([input.form.cwd.trim(), input.selectedChannelId]);
+  const uploadOwnerRef = useRef({ key: uploadOwnerKey, pending: 0 });
+  if (uploadOwnerRef.current.key !== uploadOwnerKey) uploadOwnerRef.current = { key: uploadOwnerKey, pending: 0 };
+
   function reportFeedback(
     surface: ChannelActionFeedbackSurface,
     identity: string,
@@ -496,13 +504,27 @@ export function useChannelActionsController(input: {
         || input.form.providerPresetId
         || input.providers.find(providerPreflightReady)?.id
       : undefined;
+    let messageAccepted = false;
+    const submissionScope = { cwd: input.form.cwd.trim(), surface: "channel" as const, ownerId: channelId, threadId: messageInput.threadId };
+    const pendingKey = submissionLookupJournal.read(submissionScope);
+    if (pendingKey) {
+      const query = { surface: "channel" as const, channelId, threadId: messageInput.threadId, idempotencyKey: pendingKey };
+      const receipt = await recoverSubmissionReceipt(async () => validateConversationSubmissionReceipt(
+        await getConversationSubmission(submissionScope.cwd, query), submissionScope.cwd, query));
+      if (!receipt?.sourceItem) throw new UnconfirmedConversationSubmissionError(pendingKey, true);
+      await input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true });
+      submissionLookupJournal.forget(submissionScope, pendingKey);
+      throw new RecoveredConversationSubmissionError(projectMessageItem(receipt.sourceItem, []).body);
+    }
+    const idempotencyKey = crypto.randomUUID();
     try {
       clearFeedback("composer", channelId);
       let receivedAiReply = false;
-      let messageAccepted = false;
       let autoStartedWorkflow = false;
       let streamErrorMessage = "";
-      const response = await streamChannelTurn(input.form.cwd.trim(), channelId, {
+      submissionLookupJournal.begin(submissionScope, idempotencyKey);
+      const response = await streamChannelTurn(submissionScope.cwd, channelId, {
+        idempotencyKey,
         surface: messageInput.threadId
           ? { kind: "thread", threadId: messageInput.threadId }
           : { kind: "channel_root" },
@@ -525,6 +547,7 @@ export function useChannelActionsController(input: {
           input.setChannelConversationItems((current) => projectChannelItemsReady(current, data));
           if (!messageAccepted) {
             messageAccepted = true;
+            submissionLookupJournal.forget(submissionScope, idempotencyKey);
             messageInput.onMessageAccepted?.(data.message);
           }
           return;
@@ -619,6 +642,7 @@ export function useChannelActionsController(input: {
           if (data.replyDispatch) messageInput.onReplyDispatch?.(data.replyDispatch);
         }
       });
+      if (!messageAccepted) throw new Error("Pending confirmation");
       await input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true });
       await input.refreshChannelExecutionProposals(channelId);
       await input.refreshChannelIntentDecisions(channelId);
@@ -636,8 +660,31 @@ export function useChannelActionsController(input: {
       }
       return {};
     } catch (error) {
+      let rejectionConfirmed = false;
+      if (!messageAccepted) {
+        const query = { surface: "channel" as const, channelId, threadId: messageInput.threadId, idempotencyKey };
+        const receipt = await recoverSubmissionReceipt(async () => validateConversationSubmissionReceipt(
+          await getConversationSubmission(submissionScope.cwd, query), submissionScope.cwd, query));
+        rejectionConfirmed = submissionWasRejected(error, receipt);
+        if (receipt?.sourceItem) {
+          messageAccepted = true;
+          submissionLookupJournal.forget(submissionScope, idempotencyKey);
+          messageInput.onMessageAccepted?.(projectMessageItem(receipt.sourceItem, []));
+        } else if (!rejectionConfirmed) {
+          throw new UnconfirmedConversationSubmissionError(idempotencyKey);
+        }
+      }
+      if (rejectionConfirmed) submissionLookupJournal.forget(submissionScope, idempotencyKey);
+      if (messageAccepted) {
+        // Reconcile the original accepted turn; a broken stream is not a resend request.
+        await Promise.allSettled([
+          input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true }),
+        ]);
+      }
       reportFeedback("composer", channelId, "stream", error);
       throw error;
+    } finally {
+      submissionLookupJournal.finish(submissionScope, idempotencyKey);
     }
   }
 
@@ -650,18 +697,20 @@ export function useChannelActionsController(input: {
       return [];
     }
 
+    const owner = uploadOwnerRef.current;
+    const sourceCwd = input.form.cwd.trim();
+    const channelId = input.selectedChannelId;
+    owner.pending++;
     input.setChannelFilesLoading(true);
     try {
-      clearFeedback("composer", input.selectedChannelId);
-      const responses = await Promise.all(files.map((file) => uploadChannelAttachment(input.form.cwd.trim(), input.selectedChannelId, file)));
+      clearFeedback("composer", channelId);
+      const responses = await Promise.all(files.map((file) => uploadChannelAttachment(sourceCwd, channelId, file)));
       const uploaded = responses.map((response) => response.attachment);
-      input.setChannelAttachments((current) => [...uploaded, ...current]);
+      if (uploadOwnerRef.current === owner) input.setChannelAttachments((current) => [...uploaded, ...current]);
       return uploaded;
-    } catch (error) {
-      reportFeedback("composer", input.selectedChannelId, "mutation", error);
-      throw error;
     } finally {
-      input.setChannelFilesLoading(false);
+      owner.pending--;
+      if (uploadOwnerRef.current === owner && owner.pending === 0) input.setChannelFilesLoading(false);
     }
   }
 

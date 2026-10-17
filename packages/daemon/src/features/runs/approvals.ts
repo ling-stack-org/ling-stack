@@ -177,6 +177,7 @@ export function createRunApprovalHandler(options: {
   readonly sourceFence?: RuntimeAttemptFenceV1;
   /** Captured Host operation authority, never inferred from a later Attempt. */
   readonly hostOperationTracker?: AttemptHostOperationTracker;
+  readonly recordCompactionBoundaryEvidence?: boolean;
   readonly delegatedRequirementFingerprint?: string;
   readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
   readonly approvalPolicy: ApprovalPolicy;
@@ -436,6 +437,7 @@ export function createRunApprovalHandler(options: {
             signal: options.signal,
             requireExistingParentsForAdds: typedExclusiveCreate,
             hostOperation: fileAdmission?.operation,
+            recordCompactionBoundaryEvidence: options.recordCompactionBoundaryEvidence,
           }),
         };
       }
@@ -890,6 +892,7 @@ export function createRunApprovalHandler(options: {
           signal: options.signal,
           requireExistingParentsForAdds: typedExclusiveCreate,
           hostOperation: fileAdmission?.operation,
+          recordCompactionBoundaryEvidence: options.recordCompactionBoundaryEvidence,
         });
       }
       return {

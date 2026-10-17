@@ -102,6 +102,52 @@ test("successful Broker evidence is committed only after the guarded real file w
   assert.equal(f.store.getHarnessToolExecution(boundId).state, "succeeded");
 });
 
+for (const mode of ["off", "shadow", "enforce"]) {
+  test(`${mode} native file completion observes actual Host effects without enabling enforcement`, async t => {
+    const f = await fixture(t, mode);
+    const receiptType = "application/vnd.ling.native-file-mutation-completion+json";
+    const pending = f.execute(undefined, { recordCompactionBoundaryEvidence: true });
+    assert.equal(f.store.listArtifacts(f.run.id).some(artifact => artifact.contentType === receiptType), false);
+    const result = await pending;
+    assert.equal(result.isError, undefined);
+    assert.equal(readFileSync(join(f.cwd, "guarded.txt"), "utf8"), "guarded\n");
+    const receipts = f.store.listArtifacts(f.run.id).filter(artifact => artifact.contentType === receiptType);
+    assert.equal(receipts.length, 1);
+    const payload = receipts[0].sealedPayload;
+    assert.deepEqual(payload.source, { runId: f.run.id, ...f.sourceFence });
+    assert.equal(payload.toolCallId, f.request.toolCallId);
+    assert.equal(payload.toolName, "write");
+    assert.equal(payload.outcome, "applied");
+    assert.equal(payload.rawPatchSha256, f.draft.plan.rawPatchSha256);
+    assert.deepEqual(payload.touchedPaths, f.draft.plan.touchedPaths);
+    assert.equal(payload.provenanceArtifactIds.length, 2);
+    assert.ok(payload.provenanceArtifactIds.every(id => f.store.getArtifact(id)?.runId === f.run.id));
+    assert.equal(f.store.listEvents(f.run.id).some(event => JSON.stringify(event.data).includes(receipts[0].id)), false,
+      "private completion evidence must not be published as transcript content");
+    assert.equal(f.store.listHarnessToolExecutions(f.run.id).length, mode === "off" ? 0 : 1);
+    assert.equal(f.store.getHostAttemptCompletion({ runId: f.run.id, ...f.sourceFence }), undefined,
+      "a file result is not a whole-Attempt stop receipt");
+  });
+}
+
+test("native completion observation failure preserves the actual off-mode write but withholds evidence", async t => {
+  const f = await fixture(t, "off");
+  const receiptType = "application/vnd.ling.native-file-mutation-completion+json";
+  const createArtifact = f.store.createArtifact.bind(f.store);
+  let attempts = 0;
+  t.mock.method(f.store, "createArtifact", input => {
+    if (input.contentType === receiptType) { attempts++; throw new Error("isolated_receipt_storage_failure"); }
+    return createArtifact(input);
+  });
+  t.mock.method(console, "warn", () => {});
+  const result = await f.execute(undefined, { recordCompactionBoundaryEvidence: true });
+  assert.equal(result.isError, undefined);
+  assert.equal(attempts, 1);
+  assert.equal(readFileSync(join(f.cwd, "guarded.txt"), "utf8"), "guarded\n");
+  assert.equal(f.store.listArtifacts(f.run.id).some(artifact => artifact.contentType === receiptType), false);
+  assert.equal(f.store.listHarnessToolExecutions(f.run.id).length, 0);
+});
+
 test("approved file result has sealed durable evidence without publishing the private payload", async t => {
   const f = await fixture(t, "enforce");
   const approval = f.store.createApprovalRequest({ runId: f.run.id, taskId: f.run.taskId,

@@ -858,6 +858,7 @@ export function AppShell(): React.JSX.Element {
     isLoading: runsLoading,
     isRunLoading,
     cancellingRunId,
+    cancellingRunIds,
   } = runsDomain.state;
   const {
     setLookupRunId,
@@ -2615,7 +2616,7 @@ export function AppShell(): React.JSX.Element {
             activeRunId={activeRunId}
             latestStatus={latestStatus}
             isRunning={isRunning}
-            isCancellingRun={Boolean(cancellingRunId)}
+            cancellingRunIds={cancellingRunIds}
             approvalPolicy={approvalPolicy}
             authorizationMode={form.authorizationMode}
             permissionMode={form.permissionMode}
@@ -2799,7 +2800,7 @@ export function AppShell(): React.JSX.Element {
                   conversationErrorMessage={conversationSurfaceError || conversationComposerError}
                   sending={conversationStreamBusy}
                   activeRun={activeConversationRun}
-                  stopping={Boolean(activeConversationRun && cancellingRunId === activeConversationRun.id)}
+                  stopping={Boolean(activeConversationRun && cancellingRunIds.includes(activeConversationRun.id))}
                   onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                   onOpenModelWorkbench={() => openSettingsWorkspaceTool("providers")}
                   fullAccessConfirmed={fullAccessConfirmation.isConfirmed(normalConversationConfirmationScope)}
@@ -2853,6 +2854,8 @@ export function AppShell(): React.JSX.Element {
                         homeMessageFromTranscript(event.assistantMessage),
                       ]),
                       onMessageAccepted: input.onMessageAccepted,
+                      onSubmissionUnknown: input.onSubmissionUnknown,
+                      onSubmissionRecovered: input.onSubmissionRecovered,
                       onReplyLinked: input.onReplyLinked,
                       onRunEvent: (event) => {
                         if (event.assistantMessage) {
@@ -3317,7 +3320,8 @@ export function AppShell(): React.JSX.Element {
                 externalActionBusy={externalActionBusy}
                 isLoading={approvalsLoading}
                 resolvingApprovals={resolvingApprovals}
-                errorMessage={approvalErrors[selectedApprovalId] ?? approvalsDomain.error?.message ?? ""}
+                errorMessage={approvalsDomain.error?.message ?? ""}
+                approvalErrors={approvalErrors}
                 onRefresh={() => void refreshApprovals()}
                 onSelectApproval={setSelectedApprovalId}
                 onRefreshRepair={(runId) => {

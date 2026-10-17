@@ -8,6 +8,7 @@ import {
   DEFAULT_WORKSPACE_ID,
   applyConversationModeToEffectiveRunPolicySnapshot,
   resolveSessionRunPolicy,
+  hostCompactionResourceBoundaryArtifactId,
   getEffectiveTeammateSkill,
   getRunSummaryPath,
   redactSecrets,
@@ -47,7 +48,8 @@ import type {
   PiRunnerUserInputYieldDirective,
 } from "@ling-stack/runner-pi";
 import type { RunCompactionCheckpointBlockerCode } from "@ling-stack/contracts";
-import { PiRunnerAdapter, PiRunnerYielded } from "@ling-stack/runner-pi";
+import { PiRunnerAdapter, PiRunnerYielded, isPiToolFreeCompletion, readPiCompletedToolCalls, readPiCompletedBuiltinReads,
+  type PiToolBoundaryObservation } from "@ling-stack/runner-pi";
 import {
   hostCapabilityToolsV1,
   type HostCapabilityToolDefinitionV1,
@@ -61,6 +63,7 @@ import { HttpError } from "../../errors.js";
 import { appendConversationResponseStyle } from "../../shared/conversation-response-style.js";
 import { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import { AttemptLocalWriterGroup } from "../../runtime/attempt-local-writers.js";
+import { observeHostAttemptCompletion } from "../../runtime/host-attempt-completion.js";
 import { scopeUserInputLocalWriters } from "./user-input-local-writer-scope.js";
 import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
 import { DEFAULT_RUNNER_ID, UnsupportedRunnerError, type RunnerRegistry, type RunnerResolution } from "../../runtime/runners.js";
@@ -177,6 +180,7 @@ import { commitRunCompactionProgress } from "../harness/continuations/run-compac
 import { assessRunOrdinaryProgressRecovery, OrdinaryRunProgressController } from "../harness/continuations/run-ordinary-progress.js";
 import { projectPublicRunEventEnvelope } from "./public-artifacts.js";
 import { AttemptHostOperationTracker } from "../../runtime/attempt-host-operation-tracker.js";
+import { observeHostCompactionResourceBoundary } from "../harness/continuations/host-compaction-resource-boundary.js";
 import { UserInputPauseCoordinator } from "./user-input-pause-coordinator.js";
 import { providerForRunPersistence } from "./provider-persistence.js";
 import {
@@ -414,6 +418,7 @@ async function executeAdmittedRunRequest(
   let compactionRecoveryModelView: readonly unknown[] | undefined;
   let ordinaryProgressRecoveryModelView: readonly unknown[] | undefined;
   let ordinaryProgressRecoveryWitness: RunProgressCheckpointWitness | undefined;
+  let compactionRecoveryCheckpointId: string | undefined;
   const existingContinuation = options.existingRunContinuation;
   let workflowStartOwner: import("@ling-stack/core").WorkflowStepStartOwnerV1 | undefined;
   try {
@@ -726,6 +731,7 @@ async function executeAdmittedRunRequest(
               "The selected Runner cannot reconstruct the committed Pi compaction view.");
           }
           compactionRecoveryModelView = compaction.modelView;
+          compactionRecoveryCheckpointId = compaction.checkpoint.id;
         } else {
           needsOrdinaryRecovery = true;
         }
@@ -944,6 +950,11 @@ async function executeAdmittedRunRequest(
           idempotencyDiscriminator: existingContinuation.idempotencyDiscriminator,
         });
         const activation = store.commitExistingRunContinuation({
+          ...(compactionRecoveryCheckpointId ? { compactionResourceBoundary: {
+            checkpointId: compactionRecoveryCheckpointId,
+            artifactId: hostCompactionResourceBoundaryArtifactId({ runId: run.id, ...toRuntimeAttemptFence(sourceAttempt) },
+              compactionRecoveryCheckpointId),
+          } } : {}),
           preparation: plan.preparation,
           ...(ordinaryProgressRecoveryWitness
             ? { recoveryProgressCheckpointGuard: ordinaryProgressRecoveryWitness } : {}),
@@ -1142,8 +1153,8 @@ async function executeAdmittedRunRequest(
             run,
             linkedMessageId: runRequest.linkedMessageId,
             controlPlaneEvents: options.controlPlaneEvents,
-            getExecutionContext: options.enableUserInputPause === true && turn.sourceItemId
-              && runnerRequest.initialToolSurface?.userInput === true
+            getExecutionContext: durableRunRequest.harnessFeatureSnapshot?.toolBroker === "enforce"
+              || (options.enableUserInputPause === true && turn.sourceItemId && runnerRequest.initialToolSurface?.userInput === true)
               ? () => localWriters && hostOperationTracker ? { localWriters, hostOperationTracker } : undefined
               : undefined,
           }),
@@ -1529,6 +1540,7 @@ async function executeAdmittedRunRequest(
   // keeps its own authority; it must never be reconstructed from a successor.
   let hostOperationTracker: AttemptHostOperationTracker | undefined;
   let localWriters: AttemptLocalWriterGroup | undefined;
+  let durableAttemptCompletion: Promise<void> | undefined;
   let pauseCoordinator: UserInputPauseCoordinator | undefined;
   let yieldedWait: CommitUserInputYieldResult["wait"] | undefined;
   let retainExecutionAuthority = false;
@@ -1638,6 +1650,8 @@ async function executeAdmittedRunRequest(
         throw new HttpError(409, progress.code,
           `A safe Run progress checkpoint is required before the next model request (${progress.code}).`);
       }
+      observeHostCompactionResourceBoundary({ store, source: { runId: run.id, ...runnerCallbackFence },
+        observation: toolBoundaryObservation, hostToolCallIds: [...hostToolCalls], hostBoundaryUnverified });
     } else if (boundary === "before_provider_request" && ordinaryProgressController) {
       const progress = ordinaryProgressController.beforeProviderBoundary({
         modelView: redactCompactionModelView(modelView, resolvedSecretValues),
@@ -1736,6 +1750,10 @@ async function executeAdmittedRunRequest(
   let hardTimeoutPauseDepth = 0;
   let approvalHardTimeoutPaused = false;
   let runtimeStarted = false;
+  let toolBoundaryObservation: PiToolBoundaryObservation | undefined;
+  let hostToolBoundaryEntered = existingContinuation?.origin === "approval_resume";
+  let hostBoundaryUnverified = hostToolBoundaryEntered;
+  const hostToolCalls = new Set<string>();
   const clearHardTimeout = (): void => {
     if (!hardTimeoutTimer) return;
     clearTimeout(hardTimeoutTimer);
@@ -1811,15 +1829,25 @@ async function executeAdmittedRunRequest(
         continuationBinding: { continuationId: continuationExecution.continuation.id, targetFence: runnerCallbackFence },
       } } : {}) });
   }
+  localWriters = new AttemptLocalWriterGroup({ runId: run.id, ...runnerCallbackFence });
   // The turn's persisted source item is the only valid question anchor. If a
   // legacy/internal run has no canonical item, do not expose request_user_input
   // rather than guessing from the latest message or task id.
-  if (options.enableUserInputPause === true && turn.sourceItemId && runnerRequest.initialToolSurface?.userInput === true) {
-    localWriters = new AttemptLocalWriterGroup({ runId: run.id, ...runnerCallbackFence });
+  const userInputSelected = options.enableUserInputPause === true && Boolean(turn.sourceItemId)
+    && runnerRequest.initialToolSurface?.userInput === true;
+  // Observe already journaled execution independently of the internal question tool.
+  // Off/shadow keep their existing fallback behavior and cannot supply this proof.
+  if (durableRunRequest.harnessFeatureSnapshot?.toolBroker === "enforce" || userInputSelected) {
     hostOperationTracker = new AttemptHostOperationTracker({
       store,
       source: { runId: run.id, ...runnerCallbackFence },
     });
+    activeRuns.registerAttemptExecutors(hostOperationTracker.executorGroup);
+  }
+  // The turn's persisted source item is the only valid question anchor. If a
+  // legacy/internal run has no canonical item, do not expose request_user_input
+  // rather than guessing from the latest message or task id.
+  if (userInputSelected && hostOperationTracker && turn.sourceItemId) {
     pauseCoordinator = new UserInputPauseCoordinator({
       store,
       runId: run.id,
@@ -1993,6 +2021,23 @@ async function executeAdmittedRunRequest(
       data: { runId: run.id },
     });
     recordRuntimeHeartbeat("runner", { event: "runner_started" });
+    if (localWriters) {
+      const capturedWriters = localWriters;
+      // Persist only after the original main lifetime and its closed callback
+      // group drain. This observes off/shadow without enabling Broker enforcement.
+      durableAttemptCompletion = observeHostAttemptCompletion(store, capturedWriters.source,
+        runCompletion.then(() => capturedWriters.waitForIdle()),
+        () => {
+          if (!hostToolBoundaryEntered && isPiToolFreeCompletion(toolBoundaryObservation, run.id, attempt.id)) return true;
+          const sdkCalls = readPiCompletedToolCalls(toolBoundaryObservation, run.id, attempt.id);
+          const settledBuiltinReads = readPiCompletedBuiltinReads(toolBoundaryObservation, run.id, attempt.id);
+          if (hostBoundaryUnverified || !sdkCalls || !settledBuiltinReads) return false;
+          const toolCallIds = [...new Set([...sdkCalls, ...hostToolCalls])];
+          if (!hostOperationTracker && toolCallIds.some(id => !settledBuiltinReads.some(read => read.toolCallId === id))) return false;
+          return { schemaVersion: 1, toolCallIds, settledBuiltinReads };
+        }, () => activeRuns.retireDurablyDrainedAttempt(capturedWriters.source));
+      activeRuns.trackAttemptCompletion(capturedWriters.source, durableAttemptCompletion);
+    }
     runtimeStarted = true;
     hardTimeoutActiveSince = performance.now();
     clearHardTimeout();
@@ -2023,6 +2068,7 @@ async function executeAdmittedRunRequest(
     await waitForTaskContinuation("run_start");
     abortController.signal.throwIfAborted();
     const runApprovalHandler = createRunApprovalHandler({
+      recordCompactionBoundaryEvidence: hostCompactionEnabled,
       restrictedCommandRuntime: runtimeSupervisor.getRestrictedCommandRuntime(),
       store,
       run,
@@ -2116,6 +2162,10 @@ async function executeAdmittedRunRequest(
             },
           })
         : {}),
+      onToolBoundaryObservation: receipt => {
+        if (toolBoundaryObservation) { hostToolBoundaryEntered = true; hostBoundaryUnverified = true; }
+        toolBoundaryObservation = receipt;
+      },
       runId: run.id,
       runnerAttemptId: attempt.id,
       hostCompactionEnabled,
@@ -2335,7 +2385,15 @@ async function executeAdmittedRunRequest(
       ? { ...boundRunnerRequest, approvedToolContinuation }
       : boundRunnerRequest;
     const continuationRunnerRequest = localWriters
-      ? scopeUserInputLocalWriters(unscopedContinuationRequest, localWriters)
+      ? scopeUserInputLocalWriters(unscopedContinuationRequest, localWriters, {
+          requireTrackedMedia: hostOperationTracker !== undefined,
+          onToolBoundary: request => {
+            hostToolBoundaryEntered = true;
+            const id = request && typeof request === "object" && "toolCallId" in request ? request.toolCallId : undefined;
+            if (typeof id === "string" && id) hostToolCalls.add(id);
+            else hostBoundaryUnverified = true;
+          },
+        })
       : unscopedContinuationRequest;
     assertWorkflowRunAdmission(store, run, workflowStartOwner, abortController.signal);
     const reconstruction = continuationExecution
@@ -2816,13 +2874,13 @@ async function executeAdmittedRunRequest(
       });
     } else if (!retainExecutionAuthority) {
       localWriters?.close();
-      if (localWriters) activeRuns.trackCompletion(localWriters.waitForIdle());
+      if (localWriters) activeRuns.trackAttemptCompletion(localWriters.source, localWriters.waitForIdle());
       clearInterval(heartbeatTimer);
       clearHardTimeout();
-      // A committed user-input yield already released the captured leases in
-      // Core's atomic wait transaction. Do not use the generic run-finished
-      // reason as a second authority action.
-      if (!yieldedWait) {
+      // Started executions release through their durable completion observer,
+      // after execution and local writers drain. Preparation failures
+      // have not registered a lifetime and still need their original cleanup.
+      if (!yieldedWait && !runtimeStarted) {
         const releaseAt = new Date().toISOString();
         store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), releaseAt, "run-finished");
         store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), releaseAt, "run-finished");
@@ -2838,6 +2896,10 @@ async function executeAdmittedRunRequest(
           } catch {
             // Computer Use projection finalization is best-effort and must not block run cleanup.
           }
+          // Successors may acquire the same channel slot. End this execution's
+          // lifetime and finish durable cleanup before admitting another Run.
+          resolveRunCompletion?.();
+          await durableAttemptCompletion;
           await options.afterRunTerminal?.(terminalRun);
         }
       } finally {

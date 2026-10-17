@@ -48,6 +48,19 @@ import {
 
 const now = "2026-08-11T01:00:00.000Z";
 
+function publishReadyWorkflowConnection(store, connectionId, protocolVariant = "prompt_legacy") {
+  const admission = store.beginMediaWorkflowConnectionCheck(connectionId);
+  assert.ok(admission);
+  const publication = store.commitMediaWorkflowConnectionCheck(admission.ticket, {
+    ok: true,
+    message: "Test workflow connection is ready.",
+    checkedAt: now,
+    protocolVariant,
+    nodeCount: 2,
+  }, now);
+  assert.equal(publication.status, "published");
+}
+
 test("conversation media maps upstream content policy rejection without exposing provider details", () => {
   assert.equal(conversationMediaFailureCode("content_policy_blocked"), "generation_content_policy_blocked");
   assert.equal(
@@ -1281,8 +1294,8 @@ test("workflow restart polls the persisted operation with a new attempt and neve
     assert.ok(connection && definition?.currentVersionId);
     fixture.store.updateMediaWorkflowConnection(connection.id, {
       baseUrl: comfy.url,
-      status: "ready",
     }, now);
+    publishReadyWorkflowConnection(fixture.store, connection.id);
     fixture.store.updateWorkspaceSettings({
       mediaGenerationDefaults: {
         video: { kind: "workflow", workflowDefinitionId: fixture.workflowId },
@@ -1306,6 +1319,7 @@ test("workflow restart polls the persisted operation with a new attempt and neve
       task: { id: run.taskId, title: "Generate", prompt: "Animate" },
       cwd: fixture.cwd,
     });
+    assert.equal(accepted.isError, undefined, JSON.stringify(accepted));
     const mediaJobId = accepted.details.mediaJobId;
     const originalChild = fixture.store.listWorkUnits({ linkedMediaJobId: mediaJobId, limit: 10 })[0];
     const started = startRuntimeWorkUnit({
@@ -1470,8 +1484,8 @@ test("concurrent workflow dispatches share one ComfyUI submission and one work u
     fixture.store.updateMediaWorkflowConnection(connection.id, {
       baseUrl: comfy.url,
       protocolVariant: "prompt_legacy",
-      status: "ready",
     }, now);
+    publishReadyWorkflowConnection(fixture.store, connection.id);
     const version = fixture.store.createMediaWorkflowVersion({
       workflowDefinitionId: definition.id,
       sourceDigest: "digest-concurrent-workflow",
@@ -1517,7 +1531,7 @@ test("concurrent workflow dispatches share one ComfyUI submission and one work u
       task: { id: run.taskId, title: "Generate", prompt: "Animate" },
       cwd: fixture.cwd,
     });
-    assert.equal(accepted.isError, undefined);
+    assert.equal(accepted.isError, undefined, JSON.stringify(accepted));
     const mediaJobId = accepted.details.mediaJobId;
     const runInput = {
       cwd: fixture.cwd,

@@ -158,6 +158,7 @@ import {
   parseGovernanceNotificationRoute,
 } from "../features/governance-notifications/routes.js";
 import { handleConversationAttachmentsCollection, handleConversationDetail, handleConversationStream, startConversationReplacementRun } from "../features/conversations/routes.js";
+import { handleConversationSubmissionReceipt } from "../features/conversations/submission-receipts.js";
 import { startDetachedRunAndResolveReady } from "../features/runs/detached.js";
 import { handleConversationMessageEdit } from "../features/conversations/message-edits.js";
 import { dispatchMediaJobExecution, handleRunMediaJob, syncMediaJobForApprovalDecision, type RunMediaJobHooks } from "../features/media/executor.js";
@@ -233,7 +234,7 @@ import {
   handleApprovalItem,
   handleApprovalPolicy,
   handleApprovalsCollection,
-  handleCancelRun,
+  handleCancelRunRequest,
   handleGetArtifact,
   handleGetArtifactContent,
   handleGetArtifactPreview,
@@ -1121,6 +1122,15 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/conversation-submissions") {
+    if (request.method !== "GET") {
+      writeJson(response, 405, { error: "method_not_allowed", message: "Submission receipts are read-only" });
+      return;
+    }
+    handleConversationSubmissionReceipt(response, url, storeRegistry);
+    return;
+  }
+
   if (url.pathname === "/conversations/stream") {
     await handleConversationStream(request, response, config, storeRegistry, runnerRegistry, async (runRequest, sink) =>
       await executeRunRequest(
@@ -1428,7 +1438,7 @@ export async function routeRequest(
 
   const runRoute = parseRunRoute(url.pathname);
   if (request.method === "POST" && runRoute?.kind === "cancel") {
-    handleCancelRun(response, url, storeRegistry, activeRuns, runRoute.runId, ensureRunCancelled);
+    await handleCancelRunRequest(request, response, config, url, storeRegistry, activeRuns, runRoute.runId, ensureRunCancelled);
     return;
   }
   if (runRoute?.kind === "interventions") {
@@ -2427,6 +2437,7 @@ export async function routeRequest(
           teammate,
           thread,
           sourceMessage,
+          replyMessageId,
           providerPresetId,
           permissionPreset,
           authorizationMode,
@@ -2439,7 +2450,7 @@ export async function routeRequest(
           let sourceWorkUnitId: string | undefined;
           const workspace = await ensureDirectWorkspaceReady({ store, thread, workspaceCwd: store.paths.cwd });
           if (!workspace.ok) {
-            return createBlockedTeammateDirectReply(store, teammate, thread, workspace.message);
+            return createBlockedTeammateDirectReply(store, teammate, thread, workspace.message, replyMessageId);
           }
           await providerStartupRefresh.refreshBeforeRun({
             cwd: store.paths.cwd,
@@ -2452,6 +2463,7 @@ export async function routeRequest(
             teammate,
             thread,
             sourceMessage,
+            replyMessageId,
             providerPresetId,
             permissionPreset,
             authorizationMode,
@@ -2499,6 +2511,7 @@ export async function routeRequest(
           teammate,
           thread,
           sourceMessage,
+          replyMessageId,
           providerPresetId,
           permissionPreset,
           authorizationMode,
@@ -2513,7 +2526,7 @@ export async function routeRequest(
           let sourceWorkUnitId: string | undefined;
           const workspace = await ensureDirectWorkspaceReady({ store, thread, workspaceCwd: store.paths.cwd });
           if (!workspace.ok) {
-            const blocked = createBlockedTeammateDirectReply(store, teammate, thread, workspace.message);
+            const blocked = createBlockedTeammateDirectReply(store, teammate, thread, workspace.message, replyMessageId);
             stream?.onBlocked(blocked);
             return blocked;
           }
@@ -2528,6 +2541,7 @@ export async function routeRequest(
             teammate,
             thread,
             sourceMessage,
+            replyMessageId,
             providerPresetId,
             permissionPreset,
             authorizationMode,
@@ -2781,9 +2795,11 @@ function createBlockedTeammateDirectReply(
   teammate: AiTeammate,
   thread: TeammateDirectThread,
   reason: string,
+  replyMessageId?: string,
 ): TeammateDirectMessage {
   return store.createTeammateDirectMessage(
     {
+      ...(replyMessageId ? { id: replyMessageId } : {}),
       threadId: thread.id,
       teammateId: teammate.id,
       authorType: "ai-teammate",

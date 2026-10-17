@@ -249,11 +249,24 @@ for (const bad of ["unknown journal", "stop unconfirmed"]) {
 
 test("A21 Core new activation and idempotent replay both require the current verified witness", async t => {
   const f = await fixture(t); f.addRound(); assertCommitted(f.store.commitRunProgressCheckpoint(f.input()));
+  assert.ok(f.store.acquireResourceLease({ workspaceId: core.DEFAULT_WORKSPACE_ID, resourceType: "bound_path", resourceKey: f.cwd,
+    ownerType: "run", ownerId: f.run.id, workUnitId: f.unit.id, attemptId: f.attempt.id,
+    runtimeInstanceId: f.attempt.runtimeInstanceId, fencingToken: f.attempt.fencingToken,
+    acquiredAt: now, expiresAt: "2026-10-13T04:00:00.000Z" }));
+  assert.ok(f.store.acquireRuntimeSemaphoreSlot({ workspaceId: core.DEFAULT_WORKSPACE_ID, resourceType: "runner", resourceKey: "pi",
+    limit: 1, ownerType: "work_unit_attempt", ownerId: f.attempt.id, workUnitId: f.unit.id, attemptId: f.attempt.id,
+    runtimeInstanceId: f.attempt.runtimeInstanceId, fencingToken: f.attempt.fencingToken,
+    acquiredAt: now, expiresAt: "2026-10-13T04:00:00.000Z" }));
+  void f.store.trackHostAttemptCompletion({ runId: f.run.id, ...f.fence }, new Promise(() => {}));
   const read = f.read(); assert.equal(read.kind, "verified"); f.loseSource();
   const noGuard = f.activation(); assert.equal(f.store.commitExistingRunContinuation(noGuard).code, "checkpoint.missing");
   assert.equal(f.store.listWorkUnitAttempts(f.unit.id).length, 1);
   const guarded = { ...noGuard, recoveryProgressCheckpointGuard: read.witness };
   const activation = f.store.commitExistingRunContinuation(guarded); assert.equal(activation.ok, true, JSON.stringify(activation));
+  assert.equal(f.store.listResourceLeases({ attemptId: f.attempt.id, status: "active" }).length, 0);
+  assert.equal(f.store.listResourceLeases({ attemptId: f.attempt.id, status: "released" }).length, 1);
+  assert.equal(f.store.listRuntimeSemaphoreSlots({ ownerId: f.attempt.id, status: "active" }).length, 0);
+  assert.equal(f.store.listRuntimeSemaphoreSlots({ ownerId: f.attempt.id, status: "released" }).length, 1);
   assert.equal(f.store.commitExistingRunContinuation(noGuard).code, "checkpoint.missing");
   const replay = f.store.commitExistingRunContinuation(guarded); assert.equal(replay.ok, true, JSON.stringify(replay)); assert.equal(replay.replayed, true);
   assert.equal(f.store.listWorkUnitAttempts(f.unit.id).length, 2);

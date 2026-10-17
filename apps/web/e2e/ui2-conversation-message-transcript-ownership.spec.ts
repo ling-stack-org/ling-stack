@@ -1,8 +1,10 @@
 import { readFile, readdir } from "node:fs/promises";
 import { timelineBatchGroup } from "./support/timeline-batch-group";
+import { timelineResponseFooter } from "./support/timeline-response-footer";
+import { expandTimelineProcesses } from "./support/timeline-process";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { installChannelWorkCellFixture, installNormalWorkCellFixture } from "./support/conversation-work-cell-fixture";
+import { completedTerminalReport, installChannelWorkCellFixture, installNormalWorkCellFixture } from "./support/conversation-work-cell-fixture";
 import { seedImportedQuietOcean } from "./support/media-jobs-fixtures";
 import { expectMessageFrameContained } from "./support/message-frame-assertions";
 import { expectMessageInteractionPolicy } from "./support/message-interaction-policy";
@@ -60,6 +62,7 @@ test("1440x960 Ling Light owns a complete Channel Timeline and action feedback",
   await expect(blockedRow.getByRole("alert")).toHaveCount(0);
   await expect(blockedRow.locator(".message-action-bar")).toHaveCount(0);
 
+  await expandTimelineProcesses(timeline);
   const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"][data-conversation-timeline-depth="0"]');
   await expect(commandBatch).toBeVisible();
   await expect(commandBatch).toHaveAttribute("data-conversation-batch-count", "3");
@@ -104,6 +107,14 @@ test("1280x800 Ling Dark keeps Normal message states independent from Channel ow
   const ready = rows.filter({ hasText: "Normal ownership ready response" });
   const pending = rows.filter({ hasText: "Normal ownership response is still streaming" });
   const failed = rows.filter({ hasText: "Normal ownership provider failed" });
+  for (const state of ["ready", "pending", "failed"]) {
+    const ordered = await rows.evaluateAll((elements, state) => elements
+      .map(element => element.textContent ?? "").filter(text => text.includes(`Normal ownership ${state} prompt`)
+        || text.includes(state === "pending" ? "Normal ownership response is still streaming"
+          : state === "failed" ? "Normal ownership provider failed" : "Normal ownership ready response")), state);
+    expect(ordered).toHaveLength(2);
+    expect(ordered[0]).toContain(`Normal ownership ${state} prompt`);
+  }
   await expect(own).toHaveClass(/message-bubble-own/u);
   await expectOwnMessageBubble(own);
   await expect(own).toHaveAttribute("data-has-avatar", "false");
@@ -121,6 +132,10 @@ test("1280x800 Ling Dark keeps Normal message states independent from Channel ow
   await expectMessageInteractionPolicy(own, "user", "Copy message");
   await expectMessageInteractionPolicy(ready, "assistant", "Copy message");
   await expectMessageInteractionPolicy(failed, "assistant", "Copy message");
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await (await exerciseActionBar(failed, "Copy message")).click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain("Normal ownership provider failed");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).not.toContain("Normal ownership ready response");
   const workCells = feed.locator('[data-conversation-timeline="true"]');
   expect(await workCells.count()).toBeGreaterThanOrEqual(1);
   await expect(workCells.first()).toBeVisible();
@@ -138,6 +153,7 @@ test("1280x800 Ling Dark keeps Normal message states independent from Channel ow
   await expectReducedMotion(page, [rows, feed.locator(".message-action-bar")]);
   await expectNoHorizontalOverflow(page, [conversation, feed, rows, workCells]);
   await positionForCapture(ready);
+  await ready.hover();
   await like.hover();
   await expectRadixTooltip(page, "Like response");
   await captureEvidence(page, "1280x800-ling-dark-normal-message-states.png");
@@ -319,20 +335,21 @@ function addNormalTurn(state: MockState, input: {
   if (!template) throw new Error("Normal WorkCell fixture did not create a run template.");
   const turnId = `turn_ui2_normal_ownership_${input.id}`;
   const runId = `run_ui2_normal_ownership_${input.id}`;
+  const runTimestamp = new Date(Date.parse(input.timestamp) + 1).toISOString();
   state.turns.push({
     id: turnId,
     workspaceId: "workspace_default",
     threadId: input.threadId,
     kind: "manual_followup",
-    status: "succeeded",
+    status: input.status,
     title: input.prompt,
     userInstruction: input.prompt,
     activeRunId: input.status === "running" ? runId : undefined,
     lastRunId: runId,
     createdByActor: "local-user",
     createdAt: input.timestamp,
-    updatedAt: input.timestamp,
-    completedAt: input.status === "succeeded" || input.status === "failed" ? input.timestamp : undefined,
+    updatedAt: runTimestamp,
+    completedAt: input.status === "succeeded" || input.status === "failed" ? runTimestamp : undefined,
   });
   state.turnRunLinks.push({
     turnId,
@@ -350,19 +367,26 @@ function addNormalTurn(state: MockState, input: {
     eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
     threadId: input.threadId,
     turnId,
-    createdAt: input.timestamp,
-    startedAt: input.timestamp,
-    updatedAt: input.timestamp,
-    endedAt: input.status === "succeeded" || input.status === "failed" ? input.timestamp : undefined,
+    createdAt: runTimestamp,
+    startedAt: runTimestamp,
+    updatedAt: runTimestamp,
+    endedAt: input.status === "succeeded" || input.status === "failed" ? runTimestamp : undefined,
   });
   state.eventsByRun[runId] = [{
     id: `event_${runId}`,
     runId,
     seq: 1,
-    ts: input.timestamp,
+    ts: runTimestamp,
     type: "assistant_text_delta",
     data: { text: input.body },
   }];
+  if (input.status === "failed") {
+    // Failure narration remains commentary; its committed Host report owns final copy.
+    const report = completedTerminalReport({ id: `report_${runId}`, threadId: input.threadId,
+      turnId, runId, title: "Provider execution failed" });
+    state.terminalReports.push({ ...report, createdAt: runTimestamp, committedAt: runTimestamp,
+      outcome: { ...report.outcome, status: "failed", summary: "The provider stopped after producing partial output." } });
+  }
 }
 
 function installTeammateOwnershipFixture(state: MockState): {
@@ -525,7 +549,8 @@ async function openTeammate(page: Page, displayName: string): Promise<void> {
 async function exerciseActionBar(row: Locator, actionLabel: string): Promise<Locator> {
   await row.scrollIntoViewIfNeeded();
   await row.hover();
-  const actionBar = row.locator(".message-action-bar");
+  const actionBar = (await timelineResponseFooter(row)).locator(".message-action-bar");
+  await (await timelineResponseFooter(row)).hover();
   await expect(actionBar).toBeVisible();
   await expect.poll(() => actionBar.evaluate((element) => Number.parseFloat(getComputedStyle(element).opacity))).toBeGreaterThan(0.99);
   const action = actionBar.getByRole("button", { name: actionLabel, exact: true });
@@ -579,12 +604,10 @@ async function expectOwnMessageBubble(row: Locator): Promise<void> {
       padding: Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight),
     };
   });
-  // The unified Timeline uses the Codex-style document lane for factual
-  // messages: the row keeps ownership/alignment semantics without a second
-  // chat-card background. The important contract is the right-side placement.
+  // User messages keep a stable muted bubble while Agent narrative is unboxed.
   expect(appearance.justifySelf).toBe("end");
-  expect(appearance.borderRadius).toBeGreaterThanOrEqual(0);
-  expect(appearance.padding).toBeGreaterThanOrEqual(0);
+  expect(appearance.borderRadius).toBeGreaterThan(0);
+  expect(appearance.padding).toBeGreaterThan(0);
 }
 
 async function expectReducedMotion(page: Page, locators: readonly Locator[]): Promise<void> {

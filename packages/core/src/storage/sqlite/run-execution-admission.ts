@@ -30,3 +30,16 @@ export function isCurrentRunExecutionOwner(context: SqliteStoreContext, runId: s
   return Boolean(context.database.prepare(`SELECT 1 WHERE ${runExecutionOwnerSql}`)
     .get(...runExecutionOwnerParameters(runId, fence, allowCleanup)));
 }
+
+/** Fact-only identity for original verified settlements, not permission to launch or clean up effects. */
+export function isCapturedCancelledRunOwner(context: SqliteStoreContext, runId: string, fence: RuntimeAttemptFenceV1): boolean {
+  return Boolean(context.database.prepare(`SELECT 1 FROM run_sessions AS run
+    JOIN work_units AS unit ON unit.id=run.work_unit_id
+    JOIN work_unit_attempts AS attempt ON attempt.id=unit.active_attempt_id
+    WHERE run.id=? AND run.work_unit_id=? AND unit.linked_run_id=run.id
+      AND attempt.id=? AND attempt.work_unit_id=unit.id
+      AND attempt.runtime_instance_id=? AND attempt.fencing_token=?
+      AND run.status='cancelled' AND unit.status='cancelled' AND attempt.status='cancelled'
+      AND run.ended_at IS NOT NULL AND attempt.ended_at IS NOT NULL`)
+    .get(runId, fence.workUnitId, fence.attemptId, fence.runtimeInstanceId, fence.fencingToken));
+}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { editConversationMessage } from "../../api.js";
 import type {
   AiTeammate,
@@ -6,6 +6,7 @@ import type {
   PermissionPreset,
   TeammateDirectMessage,
 } from "../../types.js";
+import { useTeammateAsyncRequestOwner } from "./useTeammateAsyncRequestOwner.js";
 
 export interface TeammatePrivateMessageController {
   readonly editError: string;
@@ -29,6 +30,7 @@ export function useTeammatePrivateMessageController({
   permissionConfirmation,
   permissionPreset,
   teammate,
+  threadId,
 }: {
   readonly cwd: string;
   readonly messages: readonly TeammateDirectMessage[];
@@ -36,7 +38,11 @@ export function useTeammatePrivateMessageController({
   readonly permissionConfirmation?: PermissionConfirmation;
   readonly permissionPreset: PermissionPreset;
   readonly teammate: AiTeammate;
+  readonly threadId?: string;
 }): TeammatePrivateMessageController {
+  const identity = JSON.stringify([cwd.trim(), teammate.id, threadId ?? ""]);
+  const requests = useTeammateAsyncRequestOwner<"edit" | "replacement">(teammate.id, identity);
+  const mounted = useRef(true);
   const [feedbackById, setFeedbackById] = useState<Record<string, "up" | "down">>({});
   const [editingMessageId, setEditingMessageId] = useState<string>();
   const [editSaving, setEditSaving] = useState(false);
@@ -49,15 +55,24 @@ export function useTeammatePrivateMessageController({
   );
 
   useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  useEffect(() => {
     setFeedbackById({});
     setEditingMessageId(undefined);
+    setEditSaving(false);
     setEditError("");
     setReplacementRetryingMessageId(undefined);
     setReplacementRetryError("");
-  }, [teammate.id]);
+  }, [identity]);
 
   async function saveEdit(message: TeammateDirectMessage, body: string): Promise<void> {
-    if (editSaving) return;
+    if (editSaving || (threadId && message.threadId !== threadId)) return;
+    const operation = requests.begin("edit");
+    const isCurrent = () => mounted.current && requests.isActionCurrent(operation);
+    if (!isCurrent()) return;
     setEditSaving(true);
     setEditError("");
     setReplacementRetryError("");
@@ -76,18 +91,22 @@ export function useTeammatePrivateMessageController({
         permissionConfirmation,
         idempotencyKey: `teammate-message-edit:${message.id}:${crypto.randomUUID()}`,
       });
+      if (!isCurrent()) return;
       setEditingMessageId(undefined);
       await onRefreshMessages();
     } catch (error) {
-      setEditError(error instanceof Error ? error.message : String(error));
+      if (isCurrent()) setEditError(error instanceof Error ? error.message : String(error));
     } finally {
-      setEditSaving(false);
+      if (isCurrent()) setEditSaving(false);
     }
   }
 
   async function retryReplacement(message: TeammateDirectMessage): Promise<void> {
     const pending = message.pendingReplacement;
-    if (!pending || replacementRetryingMessageId) return;
+    if (!pending || replacementRetryingMessageId || (threadId && message.threadId !== threadId)) return;
+    const operation = requests.begin("replacement");
+    const isCurrent = () => mounted.current && requests.isActionCurrent(operation);
+    if (!isCurrent()) return;
     setReplacementRetryingMessageId(message.id);
     setReplacementRetryError("");
     try {
@@ -105,14 +124,15 @@ export function useTeammatePrivateMessageController({
         permissionConfirmation,
         idempotencyKey: pending.idempotencyKey,
       });
+      if (!isCurrent()) return;
       if (result.status === "replacement_pending") {
         setReplacementRetryError(result.failureReason ?? pending.failureReason ?? "");
       }
       await onRefreshMessages();
     } catch (error) {
-      setReplacementRetryError(error instanceof Error ? error.message : String(error));
+      if (isCurrent()) setReplacementRetryError(error instanceof Error ? error.message : String(error));
     } finally {
-      setReplacementRetryingMessageId(undefined);
+      if (isCurrent()) setReplacementRetryingMessageId(undefined);
     }
   }
 

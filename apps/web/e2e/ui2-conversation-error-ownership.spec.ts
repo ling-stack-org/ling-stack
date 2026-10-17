@@ -7,6 +7,7 @@ import {
 } from "../src/domains/conversations/conversation-error-owner";
 import { mockDaemon } from "./support/mock-daemon";
 import { triggerFocusRevalidation } from "./support/focus-revalidation";
+import { mockUnknownSubmissionReceipt } from "./support/unknown-submission-receipt";
 import {
   createBaseState,
   createChatProvider,
@@ -171,6 +172,7 @@ test("T13-P.9EF.B a late stream failure remains with Alpha and cannot mutate Bet
   await prepareSurface(page);
   const state = createConversationErrorState();
   await mockDaemon(page, state);
+  await mockUnknownSubmissionReceipt(page);
   await page.goto("/");
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await openConversation(navigation, page, alpha);
@@ -186,7 +188,8 @@ test("T13-P.9EF.B a late stream failure remains with Alpha and cannot mutate Bet
     streamStarted.resolve();
     await releaseStream.promise;
     await route.fulfill({
-      status: 503,
+      // Proven rejection owns a send error; an unknown 5xx must not permit replay.
+      status: 400,
       json: { error: "late_alpha_stream_failed", message: failureMessage },
     });
   }, { times: 1 });

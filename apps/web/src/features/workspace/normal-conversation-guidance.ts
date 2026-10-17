@@ -1,8 +1,11 @@
-import { createRunIntervention } from "../../api.js";
+import { createRunIntervention, listRunInterventions } from "../../api.js";
+import { guidanceLookupJournal } from "../../shared/conversation/conversation-submission-journal.js";
+import { resolveGuidanceSubmission } from "../../shared/conversation/conversation-submission-recovery.js";
 import type {
   ChannelMessageFileRef,
   ConversationAttachment,
   ConversationActiveReplyTarget,
+  CreateRunInterventionRequest,
   RunIntervention,
 } from "../../types.js";
 import type { ConversationHomeMessage } from "./normal-conversation-types.js";
@@ -15,14 +18,16 @@ export interface NormalConversationGuidanceDraft {
 
 export async function queueNormalConversationGuidance(input: {
   readonly cwd: string;
-  readonly sourceReply: ConversationActiveReplyTarget;
+  readonly sourceReply?: ConversationActiveReplyTarget;
+  readonly threadId: string;
   readonly draft: NormalConversationGuidanceDraft;
-  readonly idempotencyKey: string;
-}): Promise<RunIntervention> {
+  readonly onSubmitting: () => void;
+  readonly notReadyMessage: string;
+}): Promise<{ readonly intervention: RunIntervention; readonly queryOnly: boolean }> {
   const body = input.draft.body.trim();
   const attachmentIds = input.draft.attachments.map((attachment) => attachment.id);
   const instruction = body || summarizeGuidanceAttachments(input.draft.attachments, input.draft.fileRefs);
-  const response = await createRunIntervention(input.cwd, input.sourceReply.sourceRunId, {
+  const request = {
     mode: "queue_followup",
     instruction,
     messagePayload: {
@@ -45,9 +50,39 @@ export async function queueNormalConversationGuidance(input: {
         materializationStatus: "not_loaded",
       })),
     },
-    idempotencyKey: input.idempotencyKey,
+  } satisfies Omit<CreateRunInterventionRequest, "idempotencyKey">;
+  return resolveGuidanceSubmission<RunIntervention>({
+    scope: { cwd: input.cwd, surface: "normal", ownerId: input.threadId },
+    journal: guidanceLookupJournal,
+    prepare: () => {
+      if (!input.sourceReply) throw new Error(input.notReadyMessage);
+      return { key: `web-guidance:${crypto.randomUUID()}`, sourceId: input.sourceReply.sourceRunId,
+        threadId: input.threadId, mode: "queue_followup" };
+    },
+    create: async record => {
+      input.onSubmitting();
+      const response = await createRunIntervention(input.cwd, record.sourceId, { ...request, idempotencyKey: record.key });
+      if (response.cwd !== input.cwd || response.intervention.idempotencyKey !== record.key
+        || response.intervention.sourceRunId !== record.sourceId || response.intervention.mode !== record.mode) {
+        throw new Error("Guidance receipt scope mismatch");
+      }
+      return response.intervention;
+    },
+    read: async record => {
+      const response = await listRunInterventions(input.cwd, record.sourceId, 1, record.key);
+      if (response.cwd !== input.cwd || response.idempotencyKey !== record.key || response.interventions.length > 1
+        || response.interventions.some(item => item.sourceRunId !== record.sourceId || item.idempotencyKey !== record.key || item.mode !== record.mode)) {
+        throw new Error("Guidance receipt scope mismatch");
+      }
+      return response.interventions[0] ? { status: "accepted", intervention: response.interventions[0] } : { status: "unknown" };
+    },
   });
-  return response.intervention;
+}
+
+export function hasPendingNormalGuidance(cwd: string, threadId: string | undefined): boolean {
+  if (!threadId) return false;
+  try { return Boolean(guidanceLookupJournal.read({ cwd, surface: "normal", ownerId: threadId })); }
+  catch { return true; }
 }
 
 export function projectNormalConversationGuidanceMessage(input: {

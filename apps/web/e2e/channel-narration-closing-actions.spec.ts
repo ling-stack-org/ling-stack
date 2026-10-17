@@ -3,6 +3,7 @@ import type { ConversationItemV1 } from "@ling-stack/contracts";
 import { createBaseState, createMockTeammate } from "./support/mock-state";
 import { mockDaemon } from "./support/mock-daemon";
 import { openEngineeringChannel } from "./support/test-helpers";
+import { timelineResponseFooter } from "./support/timeline-response-footer";
 
 // Canonical API fixtures, not a model run or packaged-client acceptance.
 for (const sample of [
@@ -40,9 +41,10 @@ for (const sample of [
     const row = page.getByLabel("Channel message feed").locator(".channel-message-row").filter({ hasText: sample.body });
     await expect(row).toHaveCount(1);
     await expect(row).toBeVisible();
-    await expect(row.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(sample.closing ? 1 : 0);
-    await expect(row.getByRole("button", { name: "Like response", exact: true })).toHaveCount(sample.closing ? 1 : 0);
-    await expect(row.getByRole("button", { name: "Dislike response", exact: true })).toHaveCount(sample.closing ? 1 : 0);
+    const actions = sample.closing ? await timelineResponseFooter(row) : row;
+    await expect(actions.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(sample.closing ? 1 : 0);
+    await expect(actions.getByRole("button", { name: "Like response", exact: true })).toHaveCount(sample.closing ? 1 : 0);
+    await expect(actions.getByRole("button", { name: "Dislike response", exact: true })).toHaveCount(sample.closing ? 1 : 0);
     const user = page.getByLabel("Channel message feed").locator(".channel-message-row").filter({ hasText: "Explain the current request." });
     await expect(user.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
   });

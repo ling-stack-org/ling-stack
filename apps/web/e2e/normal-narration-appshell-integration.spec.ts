@@ -3,6 +3,8 @@ import type { ConversationDetailResponse, ConversationTranscriptMessage } from "
 import { installNormalWorkCellFixture } from "./support/conversation-work-cell-fixture";
 import { buildMockConversationDetail, mockDaemon } from "./support/mock-daemon";
 import { createBaseState, cwd } from "./support/mock-state";
+import { expandTimelineProcesses } from "./support/timeline-process";
+import { timelineResponseFooter } from "./support/timeline-response-footer";
 
 function narrationFixture() {
   const state = createBaseState({ approvalStatus: "expired" });
@@ -62,6 +64,7 @@ async function openHistory(page: Page, title: string): Promise<void> {
 async function expectInterleavedNarration(page: Page): Promise<void> {
   const timeline = page.getByLabel("Conversation page").locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]').first();
   await expect(timeline.locator('[data-conversation-timeline-kind="agentMessage"]')).toHaveCount(3);
+  await expandTimelineProcesses(timeline);
   const rows = timeline.locator('[data-conversation-timeline-kind][data-conversation-timeline-depth="0"]');
   await expect.poll(() => rows.evaluateAll((elements) => elements.map((element) => {
     const kind = element.getAttribute("data-conversation-timeline-kind");
@@ -109,15 +112,16 @@ test("segmented normal narration owns message references and full-message action
   await openHistory(page, fixture.title);
   await expectInterleavedNarration(page);
   const rows = page.locator('[data-conversation-timeline-kind="agentMessage"]');
-  await expect(rows.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
-  await expect(rows.getByRole("button", { name: "Like response", exact: true })).toHaveCount(1);
+  const footer = await timelineResponseFooter(rows.last());
+  await expect(footer.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
+  await expect(footer.getByRole("button", { name: "Like response", exact: true })).toHaveCount(1);
   await expect(rows.locator(".conversation-reference-strip")).toHaveCount(1);
-  await expect(rows.last().getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
+  await expect(rows.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(0);
   for (const index of [0, 1]) {
     await expect(rows.nth(index).locator(".conversation-reference-strip, .normal-conversation-message-actions")).toHaveCount(0);
   }
-  await rows.last().hover();
-  await rows.last().getByRole("button", { name: "Copy message", exact: true }).click();
+  await footer.hover();
+  await footer.getByRole("button", { name: "Copy message", exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as unknown as { normalCopiedText: string }).normalCopiedText))
     .toBe(fixture.fullAssistant.content);
 });
@@ -187,9 +191,11 @@ test("normal narration hides assistant closing actions until pending and running
     await page.getByRole("textbox", { name: "Conversation message" }).fill("Continue with narration boundaries.");
     await page.getByRole("button", { name: "Send", exact: true }).click();
     const rows = page.locator('[data-conversation-timeline-kind="agentMessage"]');
+    const responseFooters = page.locator('[data-conversation-response-footer]');
     await expect(rows).toHaveCount(1);
     await expect(rows.first()).toContainText("Before read.");
     await expect.soft(rows.locator(".normal-conversation-message-actions"), "pending assistant must not expose closing actions").toHaveCount(0);
+    await expect(responseFooters).toHaveCount(0);
     await expect(rows.locator(".conversation-reference-strip")).toHaveCount(1);
     const user = page.locator('[data-conversation-timeline-kind="userMessage"]').last();
     await expect(user.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
@@ -197,18 +203,21 @@ test("normal narration hides assistant closing actions until pending and running
     await page.evaluate(() => (globalThis as typeof globalThis & { normalNarrationActionsProbe: { advance: (status: "running" | "succeeded") => void } }).normalNarrationActionsProbe.advance("running"));
     await expectInterleavedNarration(page);
     await expect.soft(rows.locator(".normal-conversation-message-actions"), "running assistant must not expose closing actions").toHaveCount(0);
+    await expect(responseFooters).toHaveCount(0);
     await expect(rows.locator(".conversation-reference-strip")).toHaveCount(1);
     await page.evaluate(() => (globalThis as typeof globalThis & { normalNarrationActionsProbe: { advance: (status: "running" | "succeeded") => void } }).normalNarrationActionsProbe.advance("succeeded"));
-    await expect(rows.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
-    await expect(rows.getByRole("button", { name: "Like response", exact: true })).toHaveCount(1);
-    await expect(rows.getByRole("button", { name: "Dislike response", exact: true })).toHaveCount(1);
-    await expect(rows.last().locator(".normal-conversation-message-actions")).toHaveCount(1);
-    await rows.last().hover();
-    await rows.last().getByRole("button", { name: "Copy message", exact: true }).click();
+    const footer = await timelineResponseFooter(rows.last());
+    await expect(responseFooters).toHaveCount(1);
+    await expect(footer.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
+    await expect(footer.getByRole("button", { name: "Like response", exact: true })).toHaveCount(1);
+    await expect(footer.getByRole("button", { name: "Dislike response", exact: true })).toHaveCount(1);
+    await expect(rows.locator(".normal-conversation-message-actions")).toHaveCount(0);
+    await footer.hover();
+    await footer.getByRole("button", { name: "Copy message", exact: true }).click();
     await expect.poll(() => page.evaluate(() => (globalThis as typeof globalThis & { normalNarrationActionsProbe: { copiedText?: string } }).normalNarrationActionsProbe.copiedText)).toBe(assistant.content);
     releaseRefresh();
     await expectInterleavedNarration(page);
-    await expect(rows.locator(".normal-conversation-message-actions")).toHaveCount(1);
+    await expect(responseFooters).toHaveCount(1);
   } finally {
     releaseRefresh();
   }
@@ -247,6 +256,7 @@ for (const entry of ["ready", "run_event", "done"] as const) {
     });
     try {
       await openHistory(page, fixture.title);
+      await expandTimelineProcesses(page.getByLabel("Conversation page"));
       await expect(page.locator('[data-conversation-action-id="narration-command"]')).toBeVisible();
       await page.getByRole("textbox", { name: "Conversation message" }).fill("Continue with narration boundaries.");
       await page.getByRole("button", { name: "Send", exact: true }).click();

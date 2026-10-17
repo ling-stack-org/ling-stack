@@ -398,6 +398,20 @@ export interface WorkUnitDetailResponse {
   readonly leases: readonly ResourceLease[];
   readonly semaphoreSlots: readonly RuntimeSemaphoreSlot[];
   readonly run?: RunSession;
+  /** Observation only: never a replay capability or a replacement for cancellation authority. */
+  readonly stopEvidence?: {
+    readonly schemaVersion: 1;
+    readonly workUnitId: string;
+    readonly attempts: readonly WorkUnitAttemptStopEvidence[];
+  };
+}
+
+export interface WorkUnitAttemptStopEvidence {
+  readonly attemptId: string;
+  readonly runtimeInstanceId: string;
+  readonly fencingToken: string;
+  readonly localExecution: "draining" | "drained" | "unverified";
+  readonly effects: "settled" | "pending" | "unknown" | "unverified";
 }
 
 export interface WorkUnitEventsResponse {
@@ -411,6 +425,12 @@ export interface WorkUnitMutationResponse {
   readonly cwd: string;
   readonly workUnit: WorkUnit;
   readonly event?: RuntimeEvent;
+}
+
+export interface ExecutionCancellationRequest {
+  /** Omitted by legacy clients; null explicitly requires no active Attempt. */
+  readonly expectedAttemptId?: string | null;
+  readonly expectedRunId?: string | null;
 }
 
 export interface RuntimeSemaphoreListResponse {
@@ -923,6 +943,7 @@ export interface CreateRunInterventionRequest {
 
 export interface RunInterventionListResponse {
   readonly cwd: string;
+  readonly idempotencyKey?: string;
   readonly interventions: readonly RunIntervention[];
 }
 

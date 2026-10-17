@@ -10,6 +10,7 @@ import {
 import { mapResourceLease } from "./runtime-work-mappers.js";
 import { resourceLeaseSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { expireRuntimeResourcesWithCancellationVeto, withCancelledAttemptResourceVeto } from "./cancelled-attempt-resource-veto.js";
 
 export class SqliteResourceLeaseStore {
   private readonly context: SqliteStoreContext;
@@ -149,8 +150,9 @@ export class SqliteResourceLeaseStore {
   }
 
   releaseResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number {
-    const result = this.context.database
-      .prepare(`
+    return withCancelledAttemptResourceVeto(this.context.database, fence, releasedAt, () => {
+      const result = this.context.database
+        .prepare(`
         UPDATE resource_leases
         SET status = 'released', released_at = ?, release_reason = ?
         WHERE work_unit_id = ?
@@ -168,27 +170,21 @@ export class SqliteResourceLeaseStore {
               AND attempts.fencing_token = resource_leases.fencing_token
               AND units.active_attempt_id = attempts.id
           )
-      `)
-      .run(
-        releasedAt,
-        releaseReason,
-        fence.workUnitId,
-        fence.attemptId,
-        fence.runtimeInstanceId,
-        fence.fencingToken,
-      );
-    return Number(result.changes);
+        `)
+        .run(
+          releasedAt,
+          releaseReason,
+          fence.workUnitId,
+          fence.attemptId,
+          fence.runtimeInstanceId,
+          fence.fencingToken,
+        );
+      return Number(result.changes);
+    });
   }
 
   expireResourceLeases(now: string): number {
-    const result = this.context.database
-      .prepare(`
-        UPDATE resource_leases
-        SET status = 'expired', released_at = ?, release_reason = COALESCE(release_reason, 'expired')
-        WHERE status = 'active' AND expires_at <= ?
-      `)
-      .run(now, now);
-    return Number(result.changes);
+    return expireRuntimeResourcesWithCancellationVeto(this.context.database, "resource_leases", now);
   }
 
   listResourceLeases(options: ListResourceLeasesOptions = {}): ResourceLease[] {

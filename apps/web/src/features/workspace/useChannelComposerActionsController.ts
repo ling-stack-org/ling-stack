@@ -5,13 +5,13 @@ import {
   listRunInterventions,
 } from "../../api.js";
 import type { Translate } from "../../i18n.js";
+import { UnconfirmedConversationSubmissionError, RecoveredConversationSubmissionError } from "../../shared/conversation/conversation-submission-recovery.js";
 import { titleFromPrompt } from "../../lib/formatting.js";
 import {
   createLocalComposerAssetId,
   composerWorkspaceFileParts,
   parseComposerSlashIntent,
   parseComposerInputParts,
-  revokePendingAttachmentPreviews,
   serializeComposerInputParts,
   type ComposerInputPart,
   type PendingAttachmentItem,
@@ -40,7 +40,7 @@ import type {
 import type { ChannelComposerSendState } from "./ChannelComposer.js";
 import type { PendingChannelSendPreview } from "./ChannelMessageFeed.js";
 import type { PendingLinkPreviewItem } from "./useChannelComposerDraftController.js";
-import type { DetachedChannelSendSnapshot } from "./useChannelComposerSnapshotController.js";
+import type { ChannelComposerSnapshotController } from "./useChannelComposerSnapshotController.js";
 import {
   filterQueuedChannelGuidanceInterventions,
   type ChannelGuidanceTarget,
@@ -68,6 +68,7 @@ import { findMentionsInText, mergeMentions } from "./channelMentionText.js";
 interface ChannelComposerActionsInput {
   readonly cwd: string;
   readonly selectedChannelId: string;
+  readonly composerOwnerKey: string;
   readonly selectedChannelBranchRootThreadId?: string;
   readonly selectedChannel: Channel | undefined;
   readonly sendLifecycle: ConversationSendLifecycleController;
@@ -94,7 +95,7 @@ interface ChannelComposerActionsInput {
   readonly setMentionActiveIndex: Dispatch<SetStateAction<number>>;
   readonly setPendingChannelSendPreview: Dispatch<SetStateAction<PendingChannelSendPreview | undefined>>;
   readonly autoPreviewUrlsRef: { readonly current: Set<string> };
-  readonly attachmentPreviewUrlsRef: { readonly current: Set<string> };
+  readonly releaseAttachmentPreviews: (items: readonly PendingAttachmentItem<ChannelAttachment>[]) => void;
   readonly teammateOptions: readonly ChannelMention[];
   readonly slashCommands: readonly ComposerSlashCommandOption[];
   readonly channelAttachmentById: ReadonlyMap<string, ChannelAttachment>;
@@ -133,13 +134,8 @@ interface ChannelComposerActionsInput {
     readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
     readonly onReplyDispatch?: (dispatch: ChannelReplyDispatch) => void;
   }) => Promise<{ readonly errorMessage?: string }>;
-  readonly isChannelCurrent: (channelId: string) => boolean;
-  readonly rememberDetachedSendFailure: (
-    channelId: string,
-    snapshot: DetachedChannelSendSnapshot,
-    errorMessage: string,
-  ) => void;
-  readonly rememberDetachedSendSuccess: (channelId: string) => void;
+  readonly isComposerCurrent: (ownerKey: string) => boolean;
+  readonly composerSnapshots: ChannelComposerSnapshotController;
   readonly onCancelActiveReply: (target: ChannelGuidanceTarget) => void;
   readonly onRefreshChannelActivity: () => void;
   readonly onRefreshTasks: () => void;
@@ -163,7 +159,7 @@ export function useChannelComposerActionsController({
   activeConversationSourceRunId,
   visibleChannelMessageIds,
   assetOperationPending,
-  attachmentPreviewUrlsRef,
+  releaseAttachmentPreviews,
   autoPreviewUrlsRef,
   channelAttachmentById,
   channelLinkPreviewById,
@@ -194,11 +190,11 @@ export function useChannelComposerActionsController({
   onRefreshRuntime,
   onRefreshTasks,
   onSendMessage,
-  isChannelCurrent,
+  isComposerCurrent,
+  composerOwnerKey,
   pendingAttachments,
   pendingLinkPreviews,
-  rememberDetachedSendFailure,
-  rememberDetachedSendSuccess,
+  composerSnapshots,
   selectedChannel,
   selectedChannelBranchRootThreadId,
   selectedChannelId,
@@ -415,9 +411,19 @@ export function useChannelComposerActionsController({
     }
     const draftSnapshot = liveDraft;
     const sendChannelId = selectedChannelId;
+    const sendOwnerKey = composerOwnerKey;
     const messageMentionsSnapshot = messageMentions;
     const pendingAttachmentsSnapshot = pendingAttachments;
     const pendingLinkPreviewsSnapshot = pendingLinkPreviews;
+    const sendId = createLocalComposerAssetId("message");
+    composerSnapshots.beginSend(sendOwnerKey, sendId);
+    const isCurrentSend = () => isComposerCurrent(sendOwnerKey) && composerSnapshots.isLatestSend(sendOwnerKey, sendId);
+    const restoreSnapshot = {
+      messageDraft: draftSnapshot,
+      messageMentions: messageMentionsSnapshot,
+      pendingAttachments: pendingAttachmentsSnapshot,
+      pendingLinkPreviews: pendingLinkPreviewsSnapshot,
+    };
     const slashIntent = parseComposerSlashIntent(body, {
       teammateMentions: teammateOptions.map((teammate) => ({ id: teammate.id, label: teammate.label })),
       commands: slashCommands,
@@ -513,7 +519,7 @@ export function useChannelComposerActionsController({
         }
         setMessageDraft("");
         setMessageMentions([]);
-        revokePendingAttachmentPreviews(pendingAttachmentsSnapshot, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
+        releaseAttachmentPreviews(pendingAttachmentsSnapshot);
         setPendingAttachments([]);
         setPendingLinkPreviews([]);
         autoPreviewUrlsRef.current.clear();
@@ -540,7 +546,7 @@ export function useChannelComposerActionsController({
       const linkPreviews = [...pendingPreviewRecords, ...newPreviews];
       sendOperation = sendLifecycle.begin();
       const pendingSendPreview = {
-        id: createLocalComposerAssetId("message"),
+        id: sendId,
         channelId: selectedChannelId,
         threadId: selectedChannelBranchRootThreadId,
         body,
@@ -599,20 +605,20 @@ export function useChannelComposerActionsController({
         requestAiReply: shouldRequestAi,
         ...(replyDisposition ? { replyDisposition } : {}),
         onMessageAccepted: (message) => {
-          if (!sendOperation || !sendLifecycle.accept(sendOperation) || !isChannelCurrent(sendChannelId)) return;
           acceptedSourceMessageId = message.id;
+          if (!pendingAttachmentPreviewsReleased) {
+            pendingAttachmentPreviewsReleased = true;
+            releaseAttachmentPreviews(pendingAttachmentsSnapshot);
+          }
+          if (!sendOperation || !sendLifecycle.accept(sendOperation) || !isCurrentSend()) return;
           setPendingChannelSendPreview((current) => acknowledgePendingChannelSendPreview(
             current,
             pendingSendPreviewId,
             message.id,
           ));
-          if (!pendingAttachmentPreviewsReleased) {
-            pendingAttachmentPreviewsReleased = true;
-            revokePendingAttachmentPreviews(pendingAttachmentsSnapshot, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
-          }
         },
         onReplyPending: (pending) => {
-          if (!sendOperation || !sendLifecycle.accept(sendOperation) || !isChannelCurrent(sendChannelId)) return;
+          if (!sendOperation || !sendLifecycle.accept(sendOperation) || !isCurrentSend()) return;
           setOptimisticGuidance((current) => removeOptimisticChannelGuidance(current, pendingSendPreviewId));
           setPendingChannelSendPreview((current) => projectPendingChannelReply(
             current?.id === pendingSendPreviewId
@@ -623,12 +629,12 @@ export function useChannelComposerActionsController({
           ));
         },
         onReplyLinked: (target) => {
-          if (!sendOperation || !sendLifecycle.link(sendOperation, target) || !isChannelCurrent(sendChannelId)) return;
+          if (!sendOperation || !sendLifecycle.link(sendOperation, target) || !isCurrentSend()) return;
           setSendState("idle");
           setSendError("");
         },
         onReplyDispatch: (dispatch) => {
-          if (!isChannelCurrent(sendChannelId)) return;
+          if (!isCurrentSend()) return;
           if (dispatch.disposition !== "followup_queued" || !dispatch.intervention) {
             setOptimisticGuidance((current) => removeOptimisticChannelGuidance(current, pendingSendPreviewId));
             return;
@@ -649,29 +655,32 @@ export function useChannelComposerActionsController({
           refreshChannelRunGuidanceSurfaces();
         },
       });
-      if (!isChannelCurrent(sendChannelId)) {
+      if (!isCurrentSend()) {
         setOptimisticGuidance((current) => removeOptimisticChannelGuidance(current, pendingSendPreviewId));
-        if (sendResult.errorMessage) {
-          rememberDetachedSendFailure(sendChannelId, {
-            messageDraft: draftSnapshot,
-            messageMentions: messageMentionsSnapshot,
-            pendingAttachments: pendingAttachmentsSnapshot,
-            pendingLinkPreviews: pendingLinkPreviewsSnapshot,
-          }, sendResult.errorMessage);
+        if (sendResult.errorMessage && !acceptedSourceMessageId) {
+          composerSnapshots.settleDetachedSend(sendOwnerKey, sendId, {
+            restore: restoreSnapshot, errorMessage: sendResult.errorMessage,
+          });
         } else {
-          rememberDetachedSendSuccess(sendChannelId);
+          composerSnapshots.settleDetachedSend(sendOwnerKey, sendId);
         }
         return;
       }
       if (sendOperation) sendLifecycle.settle(sendOperation);
       setOptimisticGuidance((current) => removeOptimisticChannelGuidance(current, pendingSendPreviewId));
       if (!pendingAttachmentPreviewsReleased) {
-        revokePendingAttachmentPreviews(pendingAttachmentsSnapshot, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
+        releaseAttachmentPreviews(pendingAttachmentsSnapshot);
       }
       setPendingChannelSendPreview((current) => current?.id === pendingSendPreviewId ? undefined : current);
       if (sendResult.errorMessage) {
-        setSendState("failed");
-        setSendError(sendResult.errorMessage);
+        if (acceptedSourceMessageId) {
+          setSendState("idle");
+          setSendError("");
+          showComposerFeedback("error", sendResult.errorMessage);
+        } else {
+          setSendState("failed");
+          setSendError(sendResult.errorMessage);
+        }
         return;
       }
       setSendState("idle");
@@ -681,17 +690,64 @@ export function useChannelComposerActionsController({
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof RecoveredConversationSubmissionError) {
+        if (sendOperation) sendLifecycle.defer(sendOperation);
+        if (isCurrentSend()) {
+          setPendingChannelSendPreview(undefined);
+          setOptimisticGuidance(current => removeOptimisticChannelGuidance(current, pendingSendPreviewId));
+          setMessageDraft(current => current.trim() ? current : draftSnapshot.trim() === error.originalBody.trim()
+            && !pendingAttachmentsSnapshot.length && !pendingLinkPreviewsSnapshot.length ? "" : draftSnapshot);
+          setMessageMentions(current => current.length ? current : messageMentionsSnapshot);
+          setPendingAttachments(current => current.length ? current : pendingAttachmentsSnapshot);
+          setPendingLinkPreviews(current => current.length ? current : pendingLinkPreviewsSnapshot);
+          setSendState("idle");
+          setSendError("");
+          showComposerFeedback("success", t("Message sent"));
+        } else {
+          const restore = draftSnapshot.trim() === error.originalBody.trim()
+            && !pendingAttachmentsSnapshot.length && !pendingLinkPreviewsSnapshot.length
+            ? undefined : restoreSnapshot;
+          if (composerSnapshots.settleDetachedSend(sendOwnerKey, sendId, { restore })) {
+            showComposerFeedback("success", t("Message sent"));
+          }
+        }
+        return;
+      }
+      if (error instanceof UnconfirmedConversationSubmissionError) {
+        if (sendOperation) sendLifecycle.defer(sendOperation);
+        if (isCurrentSend()) {
+          setSendState("idle");
+          setSendError("");
+          if (error.recoveryOnly) {
+            setPendingChannelSendPreview(undefined);
+            setOptimisticGuidance(current => removeOptimisticChannelGuidance(current, pendingSendPreviewId));
+            setMessageDraft(current => current.trim() ? current : draftSnapshot);
+            setMessageMentions(current => current.length ? current : messageMentionsSnapshot);
+            setPendingAttachments(current => current.length ? current : pendingAttachmentsSnapshot);
+            setPendingLinkPreviews(current => current.length ? current : pendingLinkPreviewsSnapshot);
+          } else {
+            setPendingChannelSendPreview(current => current?.id === pendingSendPreviewId
+              ? { ...current, statusLabel: t("Pending confirmation") } : current);
+          }
+          showComposerFeedback("error", t("Pending confirmation"));
+        } else {
+          const visible = composerSnapshots.settleDetachedSend(sendOwnerKey, sendId, {
+            restore: error.recoveryOnly ? restoreSnapshot : undefined,
+          });
+          if (visible || isComposerCurrent(sendOwnerKey)) showComposerFeedback("error", t("Pending confirmation"));
+        }
+        return;
+      }
       const failure = sendOperation
         ? sendLifecycle.fail(sendOperation)
         : { accepted: false, restoreInput: false };
-      if (!isChannelCurrent(sendChannelId)) {
+      if (!isCurrentSend()) {
         setOptimisticGuidance((current) => removeOptimisticChannelGuidance(current, pendingSendPreviewId));
-        rememberDetachedSendFailure(sendChannelId, {
-          messageDraft: draftSnapshot,
-          messageMentions: messageMentionsSnapshot,
-          pendingAttachments: pendingAttachmentsSnapshot,
-          pendingLinkPreviews: pendingLinkPreviewsSnapshot,
-        }, message);
+        if (acceptedSourceMessageId) {
+          composerSnapshots.settleDetachedSend(sendOwnerKey, sendId);
+        } else {
+          composerSnapshots.settleDetachedSend(sendOwnerKey, sendId, { restore: restoreSnapshot, errorMessage: message });
+        }
         return;
       }
       if (pendingSendPreviewId) {
@@ -704,14 +760,20 @@ export function useChannelComposerActionsController({
         setPendingAttachments((current) => current.length > 0 ? current : pendingAttachmentsSnapshot);
         setPendingLinkPreviews((current) => current.length > 0 ? current : pendingLinkPreviewsSnapshot);
       }
-      setSendState("failed");
-      setSendError(message);
+      if (failure.accepted || acceptedSourceMessageId) {
+        setSendState("idle");
+        setSendError("");
+        showComposerFeedback("error", message);
+      } else {
+        setSendState("failed");
+        setSendError(message);
+      }
     }
   }, [
     activeGoal,
     activeConversationTarget,
     assetOperationPending,
-    attachmentPreviewUrlsRef,
+    releaseAttachmentPreviews,
     autoPreviewUrlsRef,
     composerInputParts,
     composerInputRef,
@@ -728,11 +790,11 @@ export function useChannelComposerActionsController({
     onSetGoalObjective,
     onSetPlanMode,
     onSendMessage,
-    isChannelCurrent,
+    isComposerCurrent,
+    composerOwnerKey,
     pendingAttachments,
     pendingLinkPreviews,
-    rememberDetachedSendFailure,
-    rememberDetachedSendSuccess,
+    composerSnapshots,
     selectedChannel?.autoReplyMode,
     selectedChannelBranchRootThreadId,
     selectedChannelId,

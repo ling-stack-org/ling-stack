@@ -142,12 +142,12 @@
   display: grid;
   width: 224px;
   max-width: min(244px, calc(100vw - 96px));
-  min-height: 54px;
+  min-height: 64px;
   flex: 0 0 224px;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: var(--ling-space-4);
-  padding: 5px 28px 5px 5px;
+  padding: 5px 34px 5px 5px;
   border: 1px solid var(--ling-border-default);
   border-radius: var(--ling-radius-md);
   color: var(--ling-text-default);
@@ -236,6 +236,26 @@
 [data-conversation-composer] .composer-preview-remove:focus-visible {
   color: var(--ling-text-strong);
   background: var(--ling-bg-pressed);
+}
+
+[data-conversation-composer] .composer-preview-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  width: 24px;
+}
+
+[data-conversation-composer] .composer-preview-actions .composer-preview-remove {
+  position: static;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
 }
 
 [data-conversation-composer] .composer-preview-card.uploading {

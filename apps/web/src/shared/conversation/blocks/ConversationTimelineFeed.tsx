@@ -83,7 +83,35 @@ export function ConversationTimelineFeed({
             "data-conversation-feed-window-owner": "timeline",
             title,
             tabIndex: 0,
-            onKeyDown,
+            onKeyDownCapture: event => {
+              if (event.altKey || event.ctrlKey || event.metaKey || (event.key !== "Enter" && event.key !== " ")) return;
+              const target = event.target;
+              if (target instanceof Element && target !== event.currentTarget && target.closest(
+                'button, input, textarea, select, a[href], [contenteditable], [role="button"], [role="textbox"], [role="menu"]',
+              )) {
+                onUserScrollIntent?.();
+              }
+            },
+            onKeyDown: event => {
+              onKeyDown?.(event);
+              if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+              const target = event.target;
+              const interactiveTarget = target instanceof Element && target !== event.currentTarget && target.closest(
+                'button, input, textarea, select, a[href], [contenteditable], [role="button"], [role="textbox"], [role="menu"]',
+              );
+              if (interactiveTarget) return;
+              if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+                onUserScrollIntent?.();
+              }
+            },
+            onPointerDownCapture: event => {
+              const target = event.target;
+              if (target instanceof Element && target.closest(
+                'button, input, textarea, select, a[href], [contenteditable], [role="button"], [role="textbox"], [role="menu"]',
+              )) {
+                onUserScrollIntent?.();
+              }
+            },
             onPointerDown,
             onPointerMove,
             onPointerUp,

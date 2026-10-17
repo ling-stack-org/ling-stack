@@ -20,6 +20,7 @@ import type {
   TeammateChannelMembershipListResponse,
   TeammateDirectMessageListResponse,
   TeammateDirectMessageMutationResponse,
+  TeammateDirectMessageSubmissionReceipt,
   TeammateDirectInterventionListResponse,
   TeammateDirectInterventionResponse,
   TeammateDirectLinkPreviewListResponse,
@@ -196,8 +197,8 @@ export const teammateEndpoints = {
       return this._get(`/teammates/${encodeURIComponent(teammateId)}/direct-runtime`, { cwd });
     },
 
-  async listTeammateDirectInterventions(this: LingDaemonEndpointContext, cwd: string, teammateId: string): Promise<TeammateDirectInterventionListResponse> {
-      return this._get(`/teammates/${encodeURIComponent(teammateId)}/direct-interventions`, { cwd });
+  async listTeammateDirectInterventions(this: LingDaemonEndpointContext, cwd: string, teammateId: string, idempotencyKey?: string): Promise<TeammateDirectInterventionListResponse> {
+      return this._get(`/teammates/${encodeURIComponent(teammateId)}/direct-interventions`, { cwd, idempotencyKey });
     },
 
   async createTeammateDirectIntervention(this: LingDaemonEndpointContext,
@@ -230,6 +231,11 @@ export const teammateEndpoints = {
       input: CancelTeammateDirectReplyRequest = {},
     ): Promise<TeammateDirectReplyCancelResponse> {
       return this._post(`/teammate-direct-replies/${encodeURIComponent(workUnitId)}/cancel`, { cwd }, input);
+    },
+
+  async getTeammateDirectMessageSubmission(this: LingDaemonEndpointContext, cwd: string,
+      teammateId: string, idempotencyKey: string): Promise<TeammateDirectMessageSubmissionReceipt> {
+      return this._get(`/teammates/${encodeURIComponent(teammateId)}/direct-messages`, { cwd, idempotencyKey });
     },
 
   async streamTeammateDirectMessage(this: LingDaemonEndpointContext,

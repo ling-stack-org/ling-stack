@@ -26,6 +26,7 @@ export function useNormalConversationIdentityController(input: {
 }): {
   readonly identity: string;
   readonly ownerKey: string;
+  readonly ready: boolean;
   readonly capture: () => NormalConversationIdentitySnapshot;
   readonly isCurrent: (snapshot: NormalConversationIdentitySnapshot) => boolean;
   readonly createCommitGuard: () => (threadId?: string) => boolean;
@@ -67,6 +68,7 @@ export function useNormalConversationIdentityController(input: {
   return useMemo(() => ({
     identity: snapshot.identity,
     ownerKey: normalConversationIdentityOwnerKey(snapshot),
+    ready: Boolean(snapshot.workspaceCwd && (snapshot.threadId || snapshot.draftGeneration !== undefined)),
     capture,
     isCurrent,
     createCommitGuard,

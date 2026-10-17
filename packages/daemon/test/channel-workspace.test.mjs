@@ -48,6 +48,7 @@ import { ensureEmptyGitRepo, ensureGitRepo, ensureGitRepoForChannelPost } from "
 import { commandOperationCandidate, fileOperationCandidate } from "./support/channel-operation-candidate-fixture.mjs";
 import { messageText, startRealPiChannelFixture, systemText } from "./support/channel-operation-real-pi-fixture.mjs";
 import { prepareFixtureTaskInput } from "./support/prepared-input-fixture.mjs";
+import { ToolFreePiRunner } from "./support/tool-free-pi-runner.mjs";
 
 const require = createRequire(import.meta.url);
 const ASYNC_SETTLE_TIMEOUT_MS = 10_000;
@@ -1243,7 +1244,11 @@ test("root reply guidance cannot capture a branch turn and branch continuation s
     assert.equal(branchSource.replyDispatch.disposition, "reply_requested");
     assert.equal(branchSource.aiReply.threadId, branch.rootThreadId);
     assert.deepEqual(store.listRunInterventions({ sourceRunId: rootRun.id }), []);
-    await waitForCondition(() => runner.runs.length === 1, "branch reply run to start");
+    await waitForCondition(() => {
+      const failed = store.listRuns({ limit: 20 }).find(run => run.threadId === branch.rootThreadId && run.status === "failed");
+      assert.equal(failed?.errorMessage, undefined);
+      return runner.runs.length === 1;
+    }, "branch reply run to start");
     const branchRun = store.listRuns({ limit: 20 }).find((run) =>
       run.channelId === channel.id && run.threadId === branch.rootThreadId && run.id !== rootRun.id
     );
@@ -10073,9 +10078,21 @@ test("workflow graph compiles into durable steps and emits standardized packets"
   }
 });
 
-test("workflow step context compacts dependency output before blocking on provider budget", async () => {
+for (const contextWindowTokens of [1800, 4096]) {
+test(`workflow dependency compaction preserves the SDK budget gate at ${contextWindowTokens} tokens`, async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-context-compaction-"));
-  const runner = new RecordingRunner();
+  const runner = new class extends RecordingRunner {
+    providerRequests = 0;
+
+    registerCustomProviderIfNeeded(runtime, provider) {
+      super.registerCustomProviderIfNeeded(runtime, provider);
+      const streamSimple = runtime.streamSimple.bind(runtime);
+      runtime.streamSimple = (...args) => {
+        this.providerRequests += 1;
+        return streamSimple(...args);
+      };
+    }
+  }();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
     storeFactory: (storeCwd) => {
@@ -10087,7 +10104,7 @@ test("workflow step context compacts dependency output before blocking on provid
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
       capabilities: ["chat", "reasoning", "tool_call"],
-      contextWindow: 1800,
+      contextWindow: contextWindowTokens,
       maxTokens: 512,
     })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -10116,7 +10133,11 @@ test("workflow step context compacts dependency output before blocking on provid
       createdBy: "local-user",
     }, now);
     const hugeDependencySummary = `Important dependency summary. ${"research finding detail ".repeat(80)}`;
-    const upstreamSteps = Array.from({ length: 7 }, (_, index) => {
+    const fullInputBudget = contextWindowTokens - 512 - 512;
+    // Measured with the production packer: 20 capped dependencies exceed the
+    // 4K model's 3072-token packet budget; the compacted summary still fits.
+    const dependencyCount = contextWindowTokens === 1800 ? 7 : 20;
+    const upstreamSteps = Array.from({ length: dependencyCount }, (_, index) => {
       const step = createParallelWorkflowStep(store, workflow.id, `Research Findings ${index + 1}`, {
         branchGroupId: `research-${index + 1}`,
         providerPresetId: provider.id,
@@ -10144,15 +10165,34 @@ test("workflow step context compacts dependency output before blocking on provid
     assert.match(runner.runs[0].task.prompt, /Compaction id: workflow_packet_summary_/);
     assert.doesNotMatch(runner.runs[0].task.prompt, /research finding detail research finding detail research finding detail research finding detail research finding detail research finding detail research finding detail research finding detail research finding detail research finding detail/);
 
-    const startedStep = await waitForWorkflowStepStatus(daemon.url, cwd, workflow.id, downstream.id, "succeeded");
+    let startedStep;
+    try {
+      startedStep = await waitForWorkflowStepStatus(daemon.url, cwd, workflow.id, downstream.id,
+        contextWindowTokens === 1800 ? "blocked" : "succeeded");
+    } catch {
+      const step = store.getChannelWorkflowStep(downstream.id);
+      const run = step?.runId ? store.getRun(step.runId) : undefined;
+      assert.fail(`Compacted workflow did not settle: ${JSON.stringify({ step: step && { status: step.status,
+        error: step.errorMessage, runId: step.runId }, run: run && { status: run.status, error: run.errorMessage },
+        errors: run ? store.listEvents(run.id).filter(event => event.type === "run_error").map(event => event.data) : [] })}`);
+    }
+    const run = store.getRun(startedStep.runId);
+    if (contextWindowTokens === 1800) {
+      assert.equal(run?.status, "failed");
+      assert.match(run.errorMessage, /Pi model context exceeds selected model budget/);
+      assert.equal(runner.providerRequests, 0, "packet compaction cannot bypass the SDK's complete-input capacity check");
+    } else {
+      assert.equal(run?.status, "succeeded");
+      assert.equal(runner.providerRequests, 1, "the actual SDK must admit the compacted input before the no-network reply");
+    }
     assert.ok(startedStep.metadata.contextArtifactId);
     const contextPacket = await getArtifactJson(daemon.url, cwd, startedStep.metadata.contextArtifactId);
     assert.equal(contextPacket.contextPack.kind, "workflow_step");
     assert.equal(contextPacket.contextPack.budget.mode, "model_known");
-    assert.equal(contextPacket.contextPack.budget.contextWindowTokens, 1800);
+    assert.equal(contextPacket.contextPack.budget.contextWindowTokens, contextWindowTokens);
     assert.equal(contextPacket.contextPack.budget.reservedOutputTokens, 512);
     assert.equal(contextPacket.contextPack.budget.reservedRuntimeOverheadTokens, 512);
-    assert.equal(contextPacket.contextPack.budget.inputBudgetTokens, 1024);
+    assert.equal(contextPacket.contextPack.budget.inputBudgetTokens, Math.max(1024, fullInputBudget));
     assert.equal(contextPacket.contextPack.budget.tokenizer, "openai-compatible");
     assert.equal(contextPacket.contextPack.budget.capabilitySource, "user_override");
     assert.equal(contextPacket.contextPack.budget.capabilityConfidence, "known");
@@ -10185,6 +10225,7 @@ test("workflow step context compacts dependency output before blocking on provid
     await rm(cwd, { recursive: true, force: true });
   }
 });
+}
 
 test("workflow planning failure follows policy and blocks for user repair", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-planning-failure-"));
@@ -10966,7 +11007,7 @@ test("workflow orchestrator keeps serial behavior when smart scheduling max runs
       defaultProviderPresetId: provider.id,
       defaultTeammateId: channel.defaultTeammateId,
       allowedTools: ["read"],
-      runtimePolicy: channel.runtimePolicy,
+      runtimePolicy: { ...channel.runtimePolicy, queueOnConflict: false },
     });
     const store = stores.get(cwd);
     assert.ok(store);
@@ -10997,6 +11038,9 @@ test("workflow orchestrator keeps serial behavior when smart scheduling max runs
     await runner.waitUntilStarted(1);
     const steps = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
     assert.deepEqual(steps.workflowSteps.map((step) => step.status).sort(), ["queued", "running"]);
+    runner.resolveAll("serial source completed");
+    await runner.waitUntilStarted(2);
+    await waitForCondition(() => store.getChannelWorkflow(workflow.id)?.status === "succeeded", "serial successor to finish without a manual tick");
   } finally {
     try {
       runner.resolveAll("serial cleanup");
@@ -13012,7 +13056,12 @@ test("task run validates requestedSkillId and records the selected skill", async
 
 test("task run records compiled skill context fallback plan on missing lazy reference failure", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-runtime-fallback-"));
-  const runner = new ScriptedRunner([new Error("missing reference lazy_examples")]);
+  // A missing Host skill reference fails before model execution, not inside
+  // the SDK provider transport, whose public errors are intentionally redacted.
+  const runner = { runs: [], async runTask(options) {
+    this.runs.push(options);
+    throw new Error("missing reference lazy_examples");
+  } };
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
     storeFactory: (storeCwd) => {
@@ -14286,7 +14335,7 @@ test("teammate direct replies use a local workspace when cwd is not a Git reposi
   }
 });
 
-test("teammate direct message stream emits ready delta and done events", async () => {
+test("teammate direct message stream emits accepted ready delta and done events", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-stream-"));
   await ensureGitRepo(cwd);
   const runner = new RecordingRunner();
@@ -14308,7 +14357,7 @@ test("teammate direct message stream emits ready delta and done events", async (
       }),
     });
     assert.equal(response.status, 200);
-    const events = parseSseEvents(await response.text());
+    const events = privateReplyTextEvents(await response.text());
     assert.deepEqual(events.map((event) => event.event), ["ready", "run_linked", "delta", "done"]);
     assert.ok(events[1].data.linkedRunId);
     assert.equal(events[1].data.activeReply.runId, events[1].data.linkedRunId);
@@ -14614,7 +14663,7 @@ test("teammate direct reply injects web search context before runner reply", asy
       body: JSON.stringify({ body: "查一下 Ling Stack 最新消息", providerPresetId: provider.id }),
     });
     assert.equal(response.status, 200);
-    const events = parseSseEvents(await response.text());
+    const events = parseAcceptedPrivateSseEvents(await response.text());
     assert.equal(events[0].event, "ready");
     assert.equal(events.at(-1).event, "done");
     assert.ok(events.some((event) => event.event === "delta" && /正在准备 web_search/.test(event.data.body)));
@@ -14684,7 +14733,7 @@ test("teammate direct web search context blocks unsupported providers without fe
       body: JSON.stringify({ body: "查一下 Ling Stack 最新消息", providerPresetId: provider.id }),
     });
     assert.equal(response.status, 200);
-    const events = parseSseEvents(await response.text());
+    const events = parseAcceptedPrivateSseEvents(await response.text());
     assert.equal(events[0].event, "ready");
     assert.equal(events.at(-1).event, "done");
     assert.ok(events.some((event) => event.event === "delta" && /web_search 被阻止/.test(event.data.body)));
@@ -14764,7 +14813,7 @@ test("teammate direct reply materializes current text and docx attachments", asy
       }),
     });
     assert.equal(response.status, 200);
-    const events = parseSseEvents(await response.text());
+    const events = privateReplyTextEvents(await response.text());
     assert.deepEqual(events.map((event) => event.event), ["ready", "run_linked", "delta", "done"]);
 
     const prompt = runner.runs[0].task.prompt;
@@ -14889,7 +14938,7 @@ test("teammate direct prompt anchors latest attachment message instead of old gu
       }),
     });
     assert.equal(response.status, 200);
-    const events = parseSseEvents(await response.text());
+    const events = privateReplyTextEvents(await response.text());
     assert.deepEqual(events.map((event) => event.event), ["ready", "run_linked", "delta", "done"]);
 
     const prompt = runner.runs.at(-1).task.prompt;
@@ -15266,19 +15315,15 @@ class SummaryAwareRunner {
   }
 }
 
-class RecordingRunner {
+class RecordingRunner extends ToolFreePiRunner {
   constructor() {
+    super();
     this.runs = [];
   }
 
   async runTask(options) {
     this.runs.push(options);
-    options.onEvent?.({ type: "assistant_text_delta", text: "Designer reply" });
-    return {
-      taskId: options.task.id,
-      messages: ["Designer reply"],
-      events: [],
-    };
+    return super.runTask(options, () => "Designer reply");
   }
 }
 
@@ -15518,19 +15563,17 @@ class DirectApprovalRunner {
   }
 }
 
-class PromptEchoRunner {
+class PromptEchoRunner extends ToolFreePiRunner {
   constructor() {
+    super();
     this.runs = [];
   }
 
   async runTask(options) {
-    this.runs.push(options);
-    options.onEvent?.({ type: "assistant_text_delta", text: options.task.prompt });
-    return {
-      taskId: options.task.id,
-      messages: [options.task.prompt],
-      events: [],
-    };
+    return super.runTask(options, () => {
+      this.runs.push(options);
+      return options.task.prompt;
+    });
   }
 }
 
@@ -15538,68 +15581,57 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-class ScriptedRunner {
+class ScriptedRunner extends ToolFreePiRunner {
   constructor(responses) {
+    super();
     this.responses = responses.slice();
     this.runs = [];
   }
 
   async runTask(options) {
-    this.runs.push(options);
-    const queuedResponse = this.responses.shift();
-    const response = typeof queuedResponse === "function" ? queuedResponse(options) : queuedResponse;
-    if (response instanceof Error) {
-      throw response;
-    }
-    const text = response ?? "";
-    options.onEvent?.({ type: "assistant_text_delta", text });
-    return {
-      taskId: options.task.id,
-      messages: [text],
-      events: [],
-    };
+    return super.runTask(options, () => {
+      this.runs.push(options);
+      const queuedResponse = this.responses.shift();
+      const response = typeof queuedResponse === "function" ? queuedResponse(options) : queuedResponse;
+      if (response instanceof Error) throw response;
+      return response ?? "";
+    });
   }
 }
 
-class SelectiveFailingRunner {
+class SelectiveFailingRunner extends ToolFreePiRunner {
   constructor(failingTitles) {
+    super();
     this.failingTitles = new Set(failingTitles);
     this.runs = [];
   }
 
   async runTask(options) {
-    this.runs.push(options);
-    if (this.failingTitles.has(options.task.title)) {
-      throw new Error(`${options.task.title} failed by test runner`);
-    }
-    options.onEvent?.({ type: "assistant_text_delta", text: `${options.task.title} complete` });
-    return {
-      taskId: options.task.id,
-      messages: [`${options.task.title} complete`],
-      events: [],
-    };
+    return super.runTask(options, () => {
+      this.runs.push(options);
+      if (this.failingTitles.has(options.task.title)) throw new Error(`${options.task.title} failed by test runner`);
+      return `${options.task.title} complete`;
+    });
   }
 }
 
-class DelayedRunner {
+class DelayedRunner extends ToolFreePiRunner {
   constructor() {
+    super();
     this.runs = [];
     this.completed = false;
     this.pending = undefined;
   }
 
   async runTask(options) {
-    this.runs.push(options);
-    const text = await new Promise((resolve) => {
-      this.pending = resolve;
+    return super.runTask(options, async () => {
+      this.runs.push(options);
+      const text = await new Promise((resolve) => {
+        this.pending = resolve;
+      });
+      this.completed = true;
+      return text;
     });
-    this.completed = true;
-    options.onEvent?.({ type: "assistant_text_delta", text });
-    return {
-      taskId: options.task.id,
-      messages: [text],
-      events: [],
-    };
   }
 
   resolve(text) {
@@ -15608,28 +15640,25 @@ class DelayedRunner {
   }
 }
 
-class AbortableDelayedRunner {
+class AbortableDelayedRunner extends ToolFreePiRunner {
   constructor() {
+    super();
     this.runs = [];
     this.abortCount = 0;
     this.pending = undefined;
   }
 
   async runTask(options) {
-    this.runs.push(options);
-    const text = await new Promise((resolve, reject) => {
-      this.pending = { resolve, reject };
-      options.signal?.addEventListener("abort", () => {
-        this.abortCount += 1;
-        reject(new Error("aborted by test"));
-      }, { once: true });
+    return super.runTask(options, () => {
+      this.runs.push(options);
+      return new Promise((resolve, reject) => {
+        this.pending = { resolve, reject };
+        options.signal?.addEventListener("abort", () => {
+          this.abortCount += 1;
+          reject(new Error("aborted by test"));
+        }, { once: true });
+      });
     });
-    options.onEvent?.({ type: "assistant_text_delta", text });
-    return {
-      taskId: options.task.id,
-      messages: [text],
-      events: [],
-    };
   }
 
   resolve(text) {
@@ -15643,8 +15672,9 @@ function readCurrentChannelUserMessage(prompt) {
   return matches.at(-1)?.[1];
 }
 
-class ParallelDelayedRunner {
+class ParallelDelayedRunner extends ToolFreePiRunner {
   constructor() {
+    super();
     this.runs = [];
     this.pendingResolvers = [];
     this.startedResolvers = [];
@@ -15654,18 +15684,9 @@ class ParallelDelayedRunner {
   async runTask(options) {
     this.runs.push(options);
     this.startedResolvers.splice(0).forEach((resolveStarted) => resolveStarted());
-    let text = this.autoResolveText;
-    if (text === undefined) {
-      text = await new Promise((resolve) => {
-        this.pendingResolvers.push(resolve);
-      });
-    }
-    options.onEvent?.({ type: "assistant_text_delta", text });
-    return {
-      taskId: options.task.id,
-      messages: [text],
-      events: [],
-    };
+    return super.runTask(options, async () => {
+      return this.autoResolveText ?? new Promise((resolve) => this.pendingResolvers.push(resolve));
+    });
   }
 
   async waitUntilStarted(count) {
@@ -16035,6 +16056,31 @@ async function postTaskRunAndReadReadyRunId(baseUrl, cwd, taskId, body) {
   const dataLine = text.split(/\r?\n/).find((line) => line.startsWith("data:") && line.includes("runId"));
   assert.ok(dataLine, text);
   return JSON.parse(dataLine.slice("data:".length).trim()).runId;
+}
+
+function parseAcceptedPrivateSseEvents(text) {
+  const [accepted, ...events] = parseSseEvents(text);
+  assert.equal(accepted?.event, "accepted");
+  const message = accepted.data.message;
+  assert.ok(message.id);
+  assert.ok(message.threadId);
+  assert.equal(message.authorType, "local-user");
+  assert.equal(message.status, "ready");
+  assert.deepEqual(events[0]?.data.message, message);
+  assert.equal(events[0]?.event, "ready");
+  assert.equal(events.some(event => event.event === "accepted"), false);
+  return events;
+}
+
+function privateReplyTextEvents(text) {
+  const events = parseAcceptedPrivateSseEvents(text);
+  for (const event of events.filter(event => event.event === "delta")) {
+    assert.equal(typeof event.data.delta, "string");
+    assert.equal(typeof event.data.body, "string");
+    assert.equal(event.data.messageId, events[0].data.aiReply.id);
+  }
+  // A real SDK message_end also publishes narration metadata with no new text.
+  return events.filter(event => event.event !== "delta" || event.data.delta !== "");
 }
 
 function parseSseEvents(text) {

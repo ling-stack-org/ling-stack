@@ -1,6 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { projectConversationUserInputs } from "./user-input-transcript.js";
-import { createHash } from "node:crypto";
 import {
   DEFAULT_WORKSPACE_ID,
   LING_AGENT_ID,
@@ -51,6 +50,7 @@ import { projectNormalExecutionContextSnapshots } from "./normal-execution-conte
 import { ConversationNarrationAccumulator } from "./narration-segments.js";
 import { createOwnedRunNarrationAccumulator } from "./narration-owner.js";
 import { prepareNormalConversationInput } from "./normal-conversation-input.js";
+import { normalSubmissionThreadId } from "./submission-receipts.js";
 import { saveNormalConversationPreparedRequest } from "./normal-conversation-prepared-request.js";
 import { renderNormalConversationRunPrompt, type NormalConversationContextSnapshot } from "./normal-conversation-context.js";
 import { projectTerminalReportDto } from "../channels/terminal-report-routes.js";
@@ -684,7 +684,7 @@ function parseConversationStreamRequest(value: unknown): ConversationStreamReque
 
 function resolveConversationThread(store: RunStore, input: ConversationStreamRequest, now: string): LingThread {
   const keyedThreadId = !input.threadId && input.idempotencyKey
-    ? `thread_normal_${createHash("sha256").update(JSON.stringify([store.paths.cwd, input.idempotencyKey])).digest("hex")}`
+    ? normalSubmissionThreadId(store.paths.cwd, input.idempotencyKey)
     : undefined;
   const threadId = input.threadId ?? keyedThreadId;
   if (threadId) {

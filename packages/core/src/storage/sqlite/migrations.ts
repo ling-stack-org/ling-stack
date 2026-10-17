@@ -23,6 +23,10 @@ import { applyHostOfficeLocalDirectoryV2Migration } from "./host-office-local-di
 import { applyHostOfficeLocalDirectoryV2CertificateMigration } from "./host-office-local-directory-v2-certificate-migration.js";
 import { ensureLingTurnCursorIndexes } from "./ling-turn-cursor-indexes.js";
 import { applyProposedPlanRevisionMigration } from "./proposed-plan-revision-migration.js";
+import { applyTeammateDirectSubmissionMigration } from "./teammate-direct-submission-migration.js";
+import { applyHostAttemptCompletionMigration } from "./host-attempt-completion-migration.js";
+import { applyHostAttemptEffectCoverageMigration } from "./host-attempt-effect-coverage-migration.js";
+import { applyTeammateDirectInterventionFenceMigration } from "./teammate-direct-intervention-fence-migration.js";
 
 export interface SqliteRunStoreMigrationContext {
   readonly database: DatabaseSync;
@@ -5993,4 +5997,8 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
     hasColumn: context.hasColumn.bind(context),
     recordMigration: context.recordMigration.bind(context),
   });
+  applyTeammateDirectSubmissionMigration(context);
+  applyHostAttemptCompletionMigration(context);
+  applyHostAttemptEffectCoverageMigration(context);
+  applyTeammateDirectInterventionFenceMigration(context);
 }

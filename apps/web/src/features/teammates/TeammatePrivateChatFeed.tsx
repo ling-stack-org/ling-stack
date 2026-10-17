@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useMemo } from "react";
 import { ArrowDown, Copy, FileText, Image, Loader2, MessageSquare, Pencil, Plus, ThumbsDown, ThumbsUp } from "lucide-react";
 import { attachmentContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
@@ -21,7 +21,6 @@ import {
   ConversationGeneratedMediaBlock,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
-  type ConversationTimelineItemLocator,
   ConversationTimelineFeed,
   InlineMessageEditor,
   MessageActionBar,
@@ -76,6 +75,7 @@ export type TeammatePrivateChatFeedProps = Pick<TeammatePrivateChatSurfaceProps,
   | "onScrollToLatest"
   | "privateAttachmentById"
   | "privateFeedRef"
+  | "privateFeedLocatorRef"
   | "providerRecovered"
   | "runs"
   | "taskCreateBusyKeys"
@@ -113,6 +113,7 @@ export function TeammatePrivateChatFeed({
   onScrollToLatest,
   privateAttachmentById,
   privateFeedRef,
+  privateFeedLocatorRef,
   providerRecovered,
   runs,
   taskCreateBusyKeys,
@@ -126,7 +127,7 @@ export function TeammatePrivateChatFeed({
   visibleMessages: candidateMessages,
 }: TeammatePrivateChatFeedProps): React.JSX.Element {
   const { t } = useI18n();
-  const timelineItemLocatorRef = useRef<ConversationTimelineItemLocator | null>(null);
+  const timelineItemLocatorRef = privateFeedLocatorRef;
   const ownerMessageText = useMemo(() => selectTeammatePrivateOwnedMessages(candidateMessages, {
     teammateId: teammate.id, directThreadId: threadId,
   }), [candidateMessages, teammate.id, threadId]);

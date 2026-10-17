@@ -1,5 +1,6 @@
 import type {
   HarnessDiagnosticQueryV1,
+  ExecutionCancellationRequest,
   RunnerListResponse,
   RunnerReadinessResponse,
   RuntimeExtensionListResponse,
@@ -99,8 +100,8 @@ export const runtimeEndpoints = {
       return this._get(`/work-units/${encodeURIComponent(workUnitId)}/events`, { cwd, afterSeq });
     },
 
-  async cancelWorkUnit(this: LingDaemonEndpointContext, cwd: string, workUnitId: string): Promise<WorkUnitMutationResponse> {
-      return this._post(`/work-units/${encodeURIComponent(workUnitId)}/cancel`, { cwd });
+  async cancelWorkUnit(this: LingDaemonEndpointContext, cwd: string, workUnitId: string, input: ExecutionCancellationRequest = {}): Promise<WorkUnitMutationResponse> {
+      return this._post(`/work-units/${encodeURIComponent(workUnitId)}/cancel`, { cwd }, input);
     },
 
   async retryWorkUnit(this: LingDaemonEndpointContext, cwd: string, workUnitId: string): Promise<WorkUnitMutationResponse> {

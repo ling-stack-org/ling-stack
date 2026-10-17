@@ -1,4 +1,5 @@
 import type {
+  ApprovalDetailResponse,
   ApprovalCommandRuleListResponse,
   ApprovalCommandRuleMutationResponse,
   ApprovalListResponse,
@@ -18,6 +19,10 @@ export async function listApprovals(
 
 export async function getApprovalPolicy(cwd: string): Promise<ApprovalPolicyResponse> {
   return daemonClient.getApprovalPolicy(cwd);
+}
+
+export async function getApproval(cwd: string, approvalId: string): Promise<ApprovalDetailResponse> {
+  return daemonClient.getApproval(cwd, approvalId);
 }
 
 export async function updateApprovalPolicy(cwd: string, form: ApprovalPolicyFormState): Promise<ApprovalPolicyResponse> {

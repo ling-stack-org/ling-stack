@@ -157,6 +157,8 @@ export * from "./runtime-permissions.js";
 export * from "./exec/unified-exec-types.js";
 export * from "./host-command-journal-types.js";
 export * from "./host-operation-journal-types.js";
+export * from "./host-attempt-completion-types.js";
+export * from "./host-compaction-resource-types.js";
 export * from "./host-media-operation-types.js";
 export * from "./exec/shell-snapshot-types.js";
 export * from "./storage/event-log.js";

@@ -1,4 +1,5 @@
 import type {
+  ExecutionCancellationRequest,
   CreateLingThreadRequest,
   CreateRunInterventionRequest,
   LingThreadArchiveRequest,
@@ -289,8 +290,8 @@ export async function unpinLingThread(
   return daemonClient.unpinLingThread(cwd, threadId, input);
 }
 
-export async function listRunInterventions(cwd: string, runId: string, limit = 100): Promise<RunInterventionListResponse> {
-  return daemonClient.listRunInterventions(cwd, runId, limit);
+export async function listRunInterventions(cwd: string, runId: string, limit = 100, idempotencyKey?: string): Promise<RunInterventionListResponse> {
+  return daemonClient.listRunInterventions(cwd, runId, limit, idempotencyKey);
 }
 
 export async function createRunIntervention(
@@ -329,6 +330,6 @@ export async function getRunShellSnapshot(runId: string, snapshotId: string, cwd
   return daemonClient.getRunShellSnapshot(runId, snapshotId, cwd);
 }
 
-export async function cancelRun(cwd: string, runId: string): Promise<RunCancelResponse> {
-  return daemonClient.cancelRun(cwd, runId);
+export async function cancelRun(cwd: string, runId: string, input: ExecutionCancellationRequest = {}): Promise<RunCancelResponse> {
+  return daemonClient.cancelRun(cwd, runId, input);
 }

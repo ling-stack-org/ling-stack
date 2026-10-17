@@ -6,6 +6,8 @@ import {
   promoteRunIntervention,
 } from "../../api.js";
 import type { RunIntervention, RunSession } from "../../types.js";
+import { guidanceLookupJournal, type GuidanceLookupScope } from "../../shared/conversation/conversation-submission-journal.js";
+import { resolveGuidanceSubmission } from "../../shared/conversation/conversation-submission-recovery.js";
 
 export function useRunInterventionController(input: {
   readonly cwd: string;
@@ -19,9 +21,18 @@ export function useRunInterventionController(input: {
   const [errors, setErrors] = useState<Readonly<Record<string, string>>>({});
   const busyRef = useRef(new Set<string>());
   const requestRevisionRef = useRef(0);
-  const identityRef = useRef("");
   const sourceRunId = input.run.parentRunId ?? input.run.id;
-  identityRef.current = `${input.cwd.trim()}::${sourceRunId}`;
+  const identity = `${input.cwd.trim()}::${sourceRunId}`;
+  const ownerRef = useRef({ identity, revision: 0 });
+  if (ownerRef.current.identity !== identity) ownerRef.current = { identity, revision: ownerRef.current.revision + 1 };
+  const scope: GuidanceLookupScope = { cwd: input.cwd.trim(), surface: "run", ownerId: sourceRunId };
+  let pendingConfirmation = false;
+  let pendingMode: RunIntervention["mode"] | undefined;
+  try {
+    const pending = guidanceLookupJournal.read(scope);
+    pendingConfirmation = Boolean(pending);
+    pendingMode = pending?.mode;
+  } catch { pendingConfirmation = true; }
 
   useEffect(() => {
     requestRevisionRef.current += 1;
@@ -32,77 +43,103 @@ export function useRunInterventionController(input: {
     setErrors({});
     setLoadState("loading");
     void loadInterventions(false);
+    return () => { ownerRef.current = { ...ownerRef.current, revision: ownerRef.current.revision + 1 }; };
     // identity reset owns initial request
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [input.cwd, sourceRunId]);
 
   async function loadInterventions(retain = true): Promise<void> {
-    const identity = `${input.cwd.trim()}::${sourceRunId}`;
-    const revision = ++requestRevisionRef.current;
+    const owner = ownerRef.current;
     const key = "refresh";
     if (!begin(key)) return;
+    const revision = ++requestRevisionRef.current;
     setErrors((current) => omitKey(current, key));
     if (!retain) setLoadState("loading");
     try {
       const response = await listRunInterventions(input.cwd.trim(), sourceRunId, 100);
-      if (identityRef.current !== identity || requestRevisionRef.current !== revision) return;
+      if (ownerRef.current !== owner || requestRevisionRef.current !== revision) return;
       setInterventions(response.interventions);
       setLoadState("ready");
     } catch (error) {
-      if (identityRef.current !== identity || requestRevisionRef.current !== revision) return;
+      if (ownerRef.current !== owner || requestRevisionRef.current !== revision) return;
       setErrors((current) => ({ ...current, [key]: error instanceof Error ? error.message : String(error) }));
       setLoadState(interventions.length > 0 && retain ? "stale" : "failed");
     } finally {
-      if (identityRef.current === identity && requestRevisionRef.current === revision) end(key);
+      if (ownerRef.current === owner && requestRevisionRef.current === revision) end(key);
     }
   }
 
   async function create(mode: RunIntervention["mode"]): Promise<void> {
     const trimmed = instruction.trim();
-    const key = `create:${mode}`;
-    if (!trimmed) {
+    const key = `create:${pendingMode ?? mode}`;
+    if (!pendingConfirmation && !trimmed) {
       setErrors((current) => ({ ...current, [key]: "missing_instruction" }));
       return;
     }
-    await runMutation(key, async () => {
-      const response = await createRunIntervention(input.cwd.trim(), sourceRunId, {
-        mode,
-        instruction: trimmed,
-        idempotencyKey: `web:${input.run.id}:${mode}:${Date.now()}`,
+    if ([...busyRef.current].some(candidate => candidate.startsWith("create:"))) return;
+    await runMutation(key, async commit => {
+      const { intervention, queryOnly } = await resolveGuidanceSubmission<RunIntervention>({
+        scope,
+        journal: guidanceLookupJournal,
+        prepare: () => ({ key: `web-guidance:${crypto.randomUUID()}`, sourceId: sourceRunId,
+          threadId: input.run.threadId ?? sourceRunId, mode }),
+        create: async record => {
+          const response = await createRunIntervention(scope.cwd, record.sourceId, {
+            mode: record.mode, instruction: trimmed, idempotencyKey: record.key,
+          });
+          if (response.cwd !== scope.cwd || response.intervention.sourceRunId !== record.sourceId
+            || response.intervention.idempotencyKey !== record.key || response.intervention.mode !== record.mode) {
+            throw new Error("Guidance receipt scope mismatch");
+          }
+          return response.intervention;
+        },
+        read: async record => {
+          const response = await listRunInterventions(scope.cwd, record.sourceId, 1, record.key);
+          if (response.cwd !== scope.cwd || response.idempotencyKey !== record.key || response.interventions.length > 1
+            || response.interventions.some(item => item.sourceRunId !== record.sourceId || item.idempotencyKey !== record.key || item.mode !== record.mode)) {
+            throw new Error("Guidance receipt scope mismatch");
+          }
+          return response.interventions[0] ? { status: "accepted", intervention: response.interventions[0] } : { status: "unknown" };
+        },
       });
-      setInterventions((current) => upsertIntervention(current, response.intervention));
-      setInstruction("");
-      input.onRefreshRun();
+      commit(() => {
+        setInterventions((current) => upsertIntervention(current, intervention));
+        setInstruction(current => current.trim() === (queryOnly ? intervention.instruction.trim() : trimmed) ? "" : current);
+        setErrors(current => omitKey(omitKey(current, "create:queue_followup"), "create:interrupt_redirect"));
+        input.onRefreshRun();
+      });
     });
   }
 
   async function cancel(interventionId: string): Promise<void> {
-    await runMutation(`cancel:${interventionId}`, async () => {
+    await runMutation(`cancel:${interventionId}`, async commit => {
       const response = await cancelRunIntervention(input.cwd.trim(), interventionId);
-      setInterventions((current) => upsertIntervention(current, response.intervention));
+      commit(() => setInterventions((current) => upsertIntervention(current, response.intervention)));
     });
   }
 
   async function promote(interventionId: string): Promise<void> {
-    await runMutation(`promote:${interventionId}`, async () => {
+    await runMutation(`promote:${interventionId}`, async commit => {
       const response = await promoteRunIntervention(input.cwd.trim(), interventionId);
-      setInterventions((current) => upsertIntervention(current, response.intervention));
-      input.onRefreshRun();
+      commit(() => {
+        setInterventions((current) => upsertIntervention(current, response.intervention));
+        input.onRefreshRun();
+      });
     });
   }
 
-  async function runMutation(key: string, operation: () => Promise<void>): Promise<void> {
+  async function runMutation(key: string, operation: (commit: (update: () => void) => void) => Promise<void>): Promise<void> {
     if (!begin(key)) return;
-    const identity = identityRef.current;
+    const owner = ownerRef.current;
     setErrors((current) => omitKey(current, key));
     try {
-      await operation();
+      await operation(update => { if (ownerRef.current === owner) update(); });
     } catch (error) {
-      if (identityRef.current === identity) {
+      if (ownerRef.current === owner) {
         setErrors((current) => ({ ...current, [key]: error instanceof Error ? error.message : String(error) }));
       }
     } finally {
-      end(key);
+      if (ownerRef.current === owner) end(key);
     }
   }
 
@@ -126,6 +163,7 @@ export function useRunInterventionController(input: {
       busyKeys,
       errors,
       sourceRunId,
+      pendingConfirmation,
     },
     actions: { setInstruction, loadInterventions, create, cancel, promote },
   };

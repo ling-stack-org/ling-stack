@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { expectMessageFrameContained } from "./support/message-frame-assertions";
+import { installEarlyMeasurementScroll } from "./support/early-measurement-scroll";
 import { mockDaemon, type MockExecutionAction } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -1639,7 +1640,8 @@ test("AI teammate private chat previews image attachments and keeps them in mess
   await expect(reloadedMessage).toContainText("direct-shot.png");
 });
 
-test("AI teammate private chat opens latest messages and loads older history from the top", async ({ page }) => {
+for (const earlyMeasurement of [false, true]) {
+test(`AI teammate private chat opens latest messages and loads older history from the top${earlyMeasurement ? " (scroll before measurement commit)" : ""}`, async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -1730,6 +1732,10 @@ test("AI teammate private chat opens latest messages and loads older history fro
     return stable;
   }).toBe(true);
   if (!anchorBefore) throw new Error("Private conversation anchor did not stabilize");
+  if (earlyMeasurement) {
+    await installEarlyMeasurementScroll(feed);
+    await page.screenshot({ path: testInfo.outputPath("reading-before-remeasurement.png") });
+  }
   const expandedAboveAnchor = await feed.evaluate((element) => {
     const feedRect = element.getBoundingClientRect();
     const row = Array.from(element.querySelectorAll<HTMLElement>(".conversation-timeline-virtual-row"))
@@ -1740,6 +1746,7 @@ test("AI teammate private chat opens latest messages and loads older history fro
     return true;
   });
   expect(expandedAboveAnchor).toBe(true);
+  if (earlyMeasurement) await expect.poll(() => feed.getAttribute("data-test-early-measurement-scrolls")).not.toBe("0");
   await expect.poll(async () => {
     const anchorAfter = await readFirstVisibleAnchor();
     return Boolean(
@@ -1748,6 +1755,7 @@ test("AI teammate private chat opens latest messages and loads older history fro
       && Math.abs(anchorAfter.offsetTop - (anchorBefore?.offsetTop ?? 0)) <= 4
     );
   }).toBe(true);
+  if (earlyMeasurement) await page.screenshot({ path: testInfo.outputPath("reading-after-remeasurement.png") });
 
   await feed.evaluate((element) => {
     element.scrollTop = element.scrollHeight;
@@ -1755,6 +1763,7 @@ test("AI teammate private chat opens latest messages and loads older history fro
   });
   await expect(privateChat.getByText("private history 106", { exact: true })).toBeVisible();
 });
+}
 
 test("AI teammate private chat demotes recovered provider preflight history", async ({ page }) => {
   await page.addInitScript(() => {

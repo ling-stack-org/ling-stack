@@ -5,6 +5,7 @@ import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
 
 const appShellPath = fileURLToPath(new URL("../src/app/AppShell.tsx", import.meta.url));
+const approvalsPagePath = fileURLToPath(new URL("../src/features/approvals/ApprovalsPage.tsx", import.meta.url));
 const evidenceDirectory = fileURLToPath(new URL(
   "../../../docs/design/ui2.0升级/evidence/shell/app-shell-error-ownership/",
   import.meta.url,
@@ -18,8 +19,9 @@ const releasedDomainPaths = [
 ].map((path) => fileURLToPath(new URL(path, import.meta.url)));
 
 test("T13-P.9C released domains cannot restore the generic AppShell error writer", async () => {
-  const [appShell, ...domains] = await Promise.all([
+  const [appShell, approvalsPage, ...domains] = await Promise.all([
     readFile(appShellPath, "utf8"),
+    readFile(approvalsPagePath, "utf8"),
     ...releasedDomainPaths.map((path) => readFile(path, "utf8")),
   ]);
 
@@ -36,9 +38,12 @@ test("T13-P.9C released domains cannot restore the generic AppShell error writer
 
   expect(appShell).toContain('errorMessage={providersDomain.error?.message ?? ""}');
   expect(appShell).toContain('errorMessage={runsDomain.error?.message ?? ""}');
-  expect(appShell).toContain(
+  expect(appShell).not.toContain(
     'errorMessage={approvalErrors[selectedApprovalId] ?? approvalsDomain.error?.message ?? ""}',
   );
+  expect(appShell).toContain('errorMessage={approvalsDomain.error?.message ?? ""}');
+  expect(appShell).toContain("approvalErrors={approvalErrors}");
+  expect(approvalsPage).toContain('errorMessage={controller.selectedRow ? approvalErrors[controller.selectedRow.id] ?? "" : ""}');
 });
 
 for (const fixture of [

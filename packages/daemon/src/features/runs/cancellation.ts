@@ -12,6 +12,7 @@ import { transitionWorkUnitCancelled } from "../../runtime/work-units.js";
 import { writeTerminalSummary } from "./terminal.js";
 import { syncLingThreadForRunEvent, syncLingThreadForTerminalRun } from "./threads.js";
 import { assertNoUnsafeRequiredPause } from "./user-input-cancellation-guard.js";
+import { withCancellationFence } from "../../runtime/cancellation-fence.js";
 
 export function ensureRunCancelled(input: {
   readonly store: RunStore;
@@ -20,6 +21,8 @@ export function ensureRunCancelled(input: {
   readonly startedAt?: string;
   readonly reason: string;
   readonly active: boolean;
+  readonly expectedAttemptId?: string | null;
+  readonly expectedRunId?: string | null;
   readonly streamEnvelope?: (envelope: RunEventEnvelope) => void;
 }): { readonly event?: RunEventEnvelope; readonly inputWait?: RunCancelResponse["inputWait"] } {
   const current = input.store.getRun(input.runId);
@@ -43,6 +46,28 @@ export function ensureRunCancelled(input: {
   if (isTerminalRunStatus(current.status)) {
     return {};
   }
+
+  const events: RunEventEnvelope[] = [];
+  const result = withCancellationFence<{ readonly event?: RunEventEnvelope }>(input.store, {
+    runId: input.runId, expectedAttemptId: input.expectedAttemptId, expectedRunId: input.expectedRunId,
+  }, ({ run }) => {
+    if (!run || isTerminalRunStatus(run.status)) return {};
+    if (run.status === "yielded") throw new HttpError(409, "stale_cancellation", "Execution entered a safe wait; read its current cancellation state.");
+    return cancelCurrentRun({ ...input, streamEnvelope: event => events.push(event) }, run);
+  });
+  if (result.event) {
+    const cancelled = input.store.getRun(input.runId)!;
+    writeTerminalSummary(getRunSummaryPath(input.store.paths, input.runId), {
+      runId: input.runId, status: "cancelled", taskId: cancelled.taskId, eventCount: result.event.seq,
+      startedAt: cancelled.startedAt, endedAt: cancelled.endedAt!, errorMessage: null,
+    });
+    for (const event of events) input.streamEnvelope?.(event);
+  }
+  return result;
+}
+
+function cancelCurrentRun(input: Parameters<typeof ensureRunCancelled>[0], current: NonNullable<ReturnType<RunStore["getRun"]>>)
+  : { readonly event: RunEventEnvelope } {
 
   // A pending required pause has not yet established physical safety. A
   // generic cancellation would otherwise release its retained attempt leases
@@ -74,16 +99,8 @@ export function ensureRunCancelled(input: {
   });
   input.streamEnvelope?.(event);
   syncLingThreadForRunEvent(input.store, current, "run_cancelled", event);
-  const summaryPath = writeTerminalSummary(getRunSummaryPath(input.store.paths, input.runId), {
-    runId: input.runId,
-    status: "cancelled",
-    taskId: input.taskId,
-    eventCount: event.seq,
-    startedAt: input.startedAt,
-    endedAt,
-    errorMessage: null,
-  });
-  input.store.transitionRunStatus({
+  const summaryPath = getRunSummaryPath(input.store.paths, input.runId);
+  const transitioned = input.store.transitionRunStatus({
     runId: input.runId,
     expectedStatus: current.status,
     event: "cancel",
@@ -94,11 +111,13 @@ export function ensureRunCancelled(input: {
     summaryPath,
     errorMessage: null,
   });
+  if (!transitioned.ok) throw new HttpError(409, "stale_cancellation", "The Run changed before cancellation.");
   syncLingThreadForTerminalRun(input.store, input.runId, endedAt);
-  const task = input.store.getTask(input.taskId);
-  if (task && task.status !== "done" && task.status !== "cancelled") {
+  const task = input.store.getTask(current.taskId);
+  if (task && (!task.currentRunId || task.currentRunId === current.id)
+    && task.status !== "done" && task.status !== "cancelled") {
     input.store.transitionTaskStatus({
-      taskId: input.taskId,
+      taskId: task.id,
       expectedStatus: task.status,
       event: "cancel",
       actor: "local-user",
@@ -109,7 +128,7 @@ export function ensureRunCancelled(input: {
   }
   if (current.workUnitId) {
     const workUnit = input.store.getWorkUnit(current.workUnitId);
-    const attemptId = workUnit?.activeAttemptId ?? input.store.listWorkUnitAttempts(current.workUnitId).at(-1)?.id;
+    const attemptId = workUnit?.activeAttemptId;
     if (attemptId) {
       const attempt = input.store.getWorkUnitAttempt(attemptId);
       if (attempt) {

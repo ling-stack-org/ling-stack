@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { publishNormalRunNarration } from "./sqlite/normal-run-narration-publication.js";
 import { isCurrentRunExecutionOwner } from "./sqlite/run-execution-admission.js";
 import { SqliteTeammateDirectMessageRuntimeStore } from "./sqlite/teammate-direct-message-runtime-store.js";
+import { withCancellationFence } from "./sqlite/cancellation-transaction.js";
 import { assertConversationMediaExecutionAdmission, assertReusableConversationMediaExecutionAdmission } from "./sqlite/conversation-media-execution-admission.js";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -564,6 +565,7 @@ import {
 } from "../governance-notification-types.js";
 import { redactSecrets } from "../redaction.js";
 import { applySqliteRunStoreMigrations, configureSqliteRunStoreDatabase } from "./sqlite/migrations.js";
+import { SqliteTeammateDirectSubmissionStore } from "./sqlite/teammate-direct-submission-store.js";
 import { withSqliteRunStoreMigrationLock } from "./sqlite/migration-coordinator.js";
 import {
   CONTINUITY_V2_MIGRATION_ID,
@@ -642,6 +644,8 @@ import { SqliteControlPlaneStore } from "./sqlite/control-plane-store.js";
 import { SqliteRunEventStore } from "./sqlite/run-event-store.js";
 import { SqliteHostCommandJournalStore } from "./sqlite/host-command-journal-store.js";
 import { SqliteHostOperationJournalStore } from "./sqlite/host-operation-journal-store.js";
+import { SqliteHostAttemptCompletionStore } from "./sqlite/host-attempt-completion-store.js";
+import { sealHostCompactionResourceBoundary } from "./sqlite/host-compaction-resource-boundary.js";
 import { assertHostLaunchPreflight } from "./sqlite/host-launch-preflight.js";
 import { SqliteHostMediaOperationStore } from "./sqlite/host-media-operation-store.js";
 import { SqliteHostOfficeLocalStore } from "./sqlite/host-office-local-store.js";
@@ -768,6 +772,7 @@ export class SqliteRunStore implements RunStore {
   private readonly runEvents: SqliteRunEventStore;
   private readonly hostCommandJournal: SqliteHostCommandJournalStore;
   private readonly hostOperationJournal: SqliteHostOperationJournalStore;
+  private readonly hostAttemptCompletions: SqliteHostAttemptCompletionStore;
   private readonly hostMediaOperations: SqliteHostMediaOperationStore;
   private readonly hostOfficeLocal: SqliteHostOfficeLocalStore;
   private readonly hostOfficeLocalDirectoryV2: SqliteHostOfficeLocalDirectoryV2Store;
@@ -1001,6 +1006,9 @@ export class SqliteRunStore implements RunStore {
       this.runnerContinuations,
       this.runtimeWorkUnits,
       {
+        listArtifacts: id => this.listArtifacts(id),
+        getLatestRunCompactionCheckpoint: id => this.getLatestRunCompactionCheckpoint(id),
+        getLatestWorkspaceProvenanceWatermark: id => this.getLatestWorkspaceProvenanceWatermark(id),
         getRun: (id) => this.getRun(id),
         getArtifact: (id) => this.getArtifact(id),
         getTask: (id) => this.getTask(id),
@@ -1105,6 +1113,7 @@ export class SqliteRunStore implements RunStore {
     );
     this.hostCommandJournal = new SqliteHostCommandJournalStore({ database: this.database }, id => this.getRun(id));
     this.hostOperationJournal = new SqliteHostOperationJournalStore({ database: this.database });
+    this.hostAttemptCompletions = new SqliteHostAttemptCompletionStore({ database: this.database }, this);
     this.hostMediaOperations = new SqliteHostMediaOperationStore({ database: this.database }, this.hostOperationJournal);
     this.hostOfficeLocal = new SqliteHostOfficeLocalStore({ database: this.database }, this.hostOperationJournal);
     this.hostOfficeLocalDirectoryV2 = new SqliteHostOfficeLocalDirectoryV2Store({ database: this.database }, this.hostOperationJournal, originalOfficeHostBridge, this);
@@ -1113,6 +1122,8 @@ export class SqliteRunStore implements RunStore {
       {
         getRun: (runId) => this.getRun(runId),
         getConversationItem: (itemId) => this.getConversationItem(itemId),
+        getLingThread: (threadId) => this.getLingThread(threadId),
+        getConversationAttachment: (attachmentId) => this.getConversationAttachment(attachmentId),
         assertAttachmentInChannel: (channelId, attachmentId) => this.assertAttachmentInChannel(channelId, attachmentId),
         assertLinkPreviewInChannel: (channelId, linkPreviewId) => this.assertLinkPreviewInChannel(channelId, linkPreviewId),
       },
@@ -1798,6 +1809,7 @@ export class SqliteRunStore implements RunStore {
 
   findLingThreadByOwner(input: {
     readonly kind: LingThreadKind;
+    readonly surfaceKind?: LingThread["surfaceKind"];
     readonly taskId?: string;
     readonly workflowStepId?: string;
     readonly externalWorkId?: string;
@@ -2035,6 +2047,22 @@ export class SqliteRunStore implements RunStore {
 
   admitHostOperation(input: Parameters<RunStore["admitHostOperation"]>[0]): ReturnType<RunStore["admitHostOperation"]> {
     return this.hostOperationJournal.admitHostOperation(input);
+  }
+
+  trackHostAttemptCompletion(...args: Parameters<RunStore["trackHostAttemptCompletion"]>): ReturnType<RunStore["trackHostAttemptCompletion"]> {
+    return this.hostAttemptCompletions.trackHostAttemptCompletion(...args);
+  }
+
+  getHostAttemptCompletion(...args: Parameters<RunStore["getHostAttemptCompletion"]>): ReturnType<RunStore["getHostAttemptCompletion"]> {
+    return this.hostAttemptCompletions.getHostAttemptCompletion(...args);
+  }
+
+  releaseHostAttemptResources(...args: Parameters<RunStore["releaseHostAttemptResources"]>): void {
+    this.hostAttemptCompletions.releaseHostAttemptResources(...args);
+  }
+
+  sealHostCompactionResourceBoundary(input: Parameters<RunStore["sealHostCompactionResourceBoundary"]>[0]): string | undefined {
+    return sealHostCompactionResourceBoundary({ database: this.database }, this, input);
   }
 
   bindHostOperationEvidence(...args: Parameters<RunStore["bindHostOperationEvidence"]>): ReturnType<RunStore["bindHostOperationEvidence"]> {
@@ -2489,6 +2517,11 @@ export class SqliteRunStore implements RunStore {
     input: Parameters<RunStore["transitionWorkUnitStatus"]>[0],
   ): TransitionResult<WorkUnitStatus> {
     return this.runtimeWorkUnits.transitionWorkUnitStatus(input);
+  }
+
+  withCancellationFence<T>(input: Parameters<RunStore["withCancellationFence"]>[0],
+    mutate: (target: { readonly run?: RunSession; readonly workUnit?: WorkUnit }) => T): T {
+    return withCancellationFence<T>(this.database, this, input, mutate);
   }
 
   createWorkUnitAttempt(input: CreateWorkUnitAttemptInput): WorkUnitAttempt {
@@ -3743,6 +3776,15 @@ export class SqliteRunStore implements RunStore {
     now: string,
   ): import("../teammate-direct-message-runtime-types.js").CommitTeammateDirectMessageRuntimeResult {
     return new SqliteTeammateDirectMessageRuntimeStore({ database: this.database }, this).commit(input, now);
+  }
+
+  acceptTeammateDirectMessage(input: CreateTeammateDirectMessageInput & { readonly idempotencyKey: string; readonly requestFingerprint: string },
+    now: string): { readonly message: TeammateDirectMessage; readonly created: boolean } {
+    return new SqliteTeammateDirectSubmissionStore({ database: this.database }, this.teammateDirect).accept(input, now);
+  }
+
+  getTeammateDirectMessageByIdempotencyKey(teammateId: string, key: string): TeammateDirectMessage | undefined {
+    return new SqliteTeammateDirectSubmissionStore({ database: this.database }, this.teammateDirect).get(teammateId, key);
   }
 
   updateTeammateDirectMessageRuntime(

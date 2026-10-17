@@ -10,6 +10,7 @@ import { readNumber } from "./helpers.js";
 import { mapRuntimeSemaphoreSlot } from "./runtime-work-mappers.js";
 import { runtimeSemaphoreSlotSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { expireRuntimeResourcesWithCancellationVeto, withCancelledAttemptResourceVeto } from "./cancelled-attempt-resource-veto.js";
 
 export class SqliteRuntimeSemaphoreStore {
   constructor(private readonly context: SqliteStoreContext) {}
@@ -125,8 +126,9 @@ export class SqliteRuntimeSemaphoreStore {
     releasedAt: string,
     releaseReason: string,
   ): number {
-    const result = this.context.database
-      .prepare(`
+    return withCancelledAttemptResourceVeto(this.context.database, fence, releasedAt, () => {
+      const result = this.context.database
+        .prepare(`
         UPDATE runtime_semaphore_slots
         SET status = 'released', released_at = ?, release_reason = ?
         WHERE work_unit_id = ?
@@ -144,27 +146,21 @@ export class SqliteRuntimeSemaphoreStore {
               AND attempts.fencing_token = runtime_semaphore_slots.fencing_token
               AND units.active_attempt_id = attempts.id
           )
-      `)
-      .run(
-        releasedAt,
-        releaseReason,
-        fence.workUnitId,
-        fence.attemptId,
-        fence.runtimeInstanceId,
-        fence.fencingToken,
-      );
-    return Number(result.changes);
+        `)
+        .run(
+          releasedAt,
+          releaseReason,
+          fence.workUnitId,
+          fence.attemptId,
+          fence.runtimeInstanceId,
+          fence.fencingToken,
+        );
+      return Number(result.changes);
+    });
   }
 
   expireRuntimeSemaphoreSlots(now: string): number {
-    const result = this.context.database
-      .prepare(`
-        UPDATE runtime_semaphore_slots
-        SET status = 'expired', released_at = ?, release_reason = COALESCE(release_reason, 'expired')
-        WHERE status = 'active' AND expires_at <= ?
-      `)
-      .run(now, now);
-    return Number(result.changes);
+    return expireRuntimeResourcesWithCancellationVeto(this.context.database, "runtime_semaphore_slots", now);
   }
 
   listRuntimeSemaphoreSlots(options: ListRuntimeSemaphoreSlotsOptions = {}): RuntimeSemaphoreSlot[] {

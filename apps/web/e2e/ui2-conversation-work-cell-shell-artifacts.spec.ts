@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { timelineBatchGroup } from "./support/timeline-batch-group";
+import { expandTimelineProcesses } from "./support/timeline-process";
 import {
   installNormalWorkCellFixture,
   installTeammateWorkCellFixture,
@@ -80,6 +81,7 @@ test("Normal conversation renders the shared WorkCell shell without document ove
   const conversation = page.getByLabel("Conversation page");
   const timeline = conversation.locator('[data-conversation-timeline-depth="0"]').first();
   await expect(timeline).toBeVisible();
+  await expandTimelineProcesses(timeline);
   const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"]');
   await expect(commandBatch).toHaveCount(1);
   await expectDocumentContained(page);
@@ -147,6 +149,7 @@ test("WorkCell command evidence preserves multiline output formatting", async ({
   await openRecentConversation(page, title);
 
   const timeline = page.getByLabel("Conversation page").locator('[data-conversation-timeline-depth="0"]').first();
+  await expandTimelineProcesses(timeline);
   const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"]');
   await commandBatch.locator(".conversation-command-batch-header").click();
   const commandRow = (await timelineBatchGroup(commandBatch)).locator('[data-conversation-timeline-kind="commandExecution"][data-conversation-timeline-id="action:execution_action_typecheck_normal"]');
@@ -177,6 +180,7 @@ test("Teammate conversation renders the shared WorkCell shell in reduced motion"
   const feed = page.getByLabel("Private message feed", { exact: true });
   const timeline = feed.locator('[data-conversation-timeline-depth="0"]').first();
   await expect(timeline).toBeVisible();
+  await expandTimelineProcesses(timeline);
   const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"]');
   await expect(commandBatch).toHaveCount(1);
   await expectReducedMotion(page, [timeline, commandBatch]);

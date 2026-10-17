@@ -18,6 +18,10 @@ for (const kind of ["read", "command"] as const) {
       await page.getByRole("button", { name: /Open recent conversation \d+/u }).filter({ hasText: fixture.title }).click();
       const feed = page.getByLabel("Conversation page").getByLabel("Conversation messages", { exact: true });
       const timeline = feed.locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]');
+      const process = timeline.locator('[data-conversation-process-header]').first();
+      await expect(process).toHaveAttribute("aria-expanded", "false");
+      await process.click();
+      await expect(process).toHaveAttribute("aria-expanded", "true");
       const batchKind = kind === "read" ? "exploration" : "command";
       const batch = timeline.locator(`[data-conversation-batch-kind="${batchKind}"]`);
       const header = batch.locator(`.conversation-${batchKind}-batch-header`);
@@ -53,8 +57,9 @@ for (const kind of ["read", "command"] as const) {
       expect(errors).toEqual([]);
       expect(sample.mountedFacts).toBeGreaterThan(0);
       expect(sample.mountedFacts).toBeLessThanOrEqual(count === 10 ? 10 : 60);
-      expect(sample.potentialRows).toBe(count + 3);
-      expect(sample.visibleRows).toBe(count + 3);
+      // The fixture has user/result rows plus distinct process and batch headers.
+      expect(sample.potentialRows).toBe(count + 4);
+      expect(sample.visibleRows).toBe(count + 4);
       expect(sample.rootVirtualizers).toBe(count === 10 ? 0 : 1);
       expect(sample.nestedVirtualizers).toBe(0);
       expect(sample.nestedTimelines).toBe(0);

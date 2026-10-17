@@ -123,7 +123,8 @@ test("late tool updates cannot change the Attempt of an accepted Host launch rec
   const f = await fixture(t);
   f.emit("tool_start", { args: { path: "index.html" } });
   f.emit("tool_end", { isError: false, result: { details: { hostCapabilityResult: f.receipt } } });
-  f.emit("tool_update", { attemptId: "foreign-late-attempt", partialResult: { content: [{ type: "text", text: "late" }] } });
+  assert.throws(() => f.emit("tool_update", { attemptId: "foreign-late-attempt",
+    partialResult: { content: [{ type: "text", text: "late" }] } }), /Attempt does not match its captured Host fence/u);
   assert.equal(f.actions()[0].attemptId, f.attempt.id);
   assert.equal(f.verify().status, "verified");
 });

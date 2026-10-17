@@ -1384,9 +1384,12 @@ export interface CreateRunInterventionInput {
 
 export interface ListRunInterventionsOptions {
   readonly sourceRunId?: string;
+  readonly idempotencyKey?: string;
   readonly sourceMessageIds?: readonly string[];
   readonly status?: RunInterventionStatus;
   readonly mode?: RunInterventionMode;
+  readonly hasContinuation?: boolean;
+  readonly newestFirst?: boolean;
   readonly limit?: number;
 }
 
@@ -1575,6 +1578,11 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   settleHostCommandExecution(ticket: import("./host-command-journal-types.js").HostCommandExecutionTicket, input: import("./host-command-journal-types.js").HostCommandSettlementInput): Extract<RunEventEnvelope, { readonly type: "host_command_settled" }>;
   listHostCommandWriteBlockers(cwd: string): import("@ling-stack/contracts").HostCommandWriteBlockerV1[];
   admitHostOperation(input: import("./host-operation-journal-types.js").AdmitHostOperationInput): import("./host-operation-journal-types.js").HostOperationTicket;
+  trackHostAttemptCompletion(source: import("./host-operation-journal-types.js").HostOperationSource,
+    lifetime: Promise<unknown>, verifyEffectCoverage?: () => import("./host-attempt-completion-types.js").HostAttemptEffectObservation): Promise<import("./host-attempt-completion-types.js").HostAttemptCompletionRecord>;
+  getHostAttemptCompletion(source: import("./host-operation-journal-types.js").HostOperationSource): import("./host-attempt-completion-types.js").HostAttemptCompletionRecord | undefined;
+  releaseHostAttemptResources(source: import("./host-operation-journal-types.js").HostOperationSource, releasedAt: string): void;
+  sealHostCompactionResourceBoundary(input: import("./host-compaction-resource-types.js").SealHostCompactionResourceBoundaryInput): string | undefined;
   bindHostOperationEvidence(ticket: import("./host-operation-journal-types.js").HostOperationTicket, evidence: import("./host-operation-journal-types.js").HostOperationEvidenceRef): import("./host-operation-journal-types.js").HostOperationRecord;
   launchHostOperation<T>(ticket: import("./host-operation-journal-types.js").HostOperationTicket, launch: () => T): T;
   continueHostOperationEffect<T>(ticket: import("./host-operation-journal-types.js").HostOperationTicket, effect: () => T, mode?: "forward" | "cleanup"): T;
@@ -1675,6 +1683,7 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   hardDeleteLingThread(threadId: string, input: HardDeleteLingThreadInput, now: string): HardDeleteLingThreadResult | undefined;
   findLingThreadByOwner(input: {
     readonly kind: LingThreadKind;
+    readonly surfaceKind?: LingThread["surfaceKind"];
     readonly taskId?: string;
     readonly workflowStepId?: string;
     readonly externalWorkId?: string;
@@ -1835,6 +1844,13 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   cancelRunIntervention(interventionId: string, now: string, reason?: string): RunIntervention | undefined;
   createWorkUnit(input: CreateWorkUnitInput): WorkUnit;
   getWorkUnit(workUnitId: string): WorkUnit | undefined;
+  /** Host-only synchronous cancellation; never grants an execution or replay capability. */
+  withCancellationFence<T>(input: {
+    readonly runId?: string;
+    readonly workUnitId?: string;
+    readonly expectedAttemptId?: string | null;
+    readonly expectedRunId?: string | null;
+  }, mutate: (target: { readonly run?: RunSession; readonly workUnit?: WorkUnit }) => T): T;
   listWorkUnits(options?: ListWorkUnitsOptions): WorkUnit[];
   findWorkUnitByIdempotency(input: {
     readonly kind: WorkUnit["kind"];
@@ -2105,6 +2121,9 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
     input: import("./teammate-direct-message-runtime-types.js").CommitTeammateDirectMessageRuntimeInput,
     now: string,
   ): import("./teammate-direct-message-runtime-types.js").CommitTeammateDirectMessageRuntimeResult;
+  acceptTeammateDirectMessage(input: CreateTeammateDirectMessageInput & { readonly idempotencyKey: string; readonly requestFingerprint: string },
+    now: string): { readonly message: TeammateDirectMessage; readonly created: boolean };
+  getTeammateDirectMessageByIdempotencyKey(teammateId: string, key: string): TeammateDirectMessage | undefined;
   updateTeammateDirectMessageRuntime(
     id: string,
     input: {
@@ -2822,6 +2841,8 @@ export type TeammateStoreFacet = RunStoreFacet<
   | "createTeammateDirectMessage"
   | "getTeammateDirectMessageRuntimeObservation"
   | "commitTeammateDirectMessageRuntime"
+  | "acceptTeammateDirectMessage"
+  | "getTeammateDirectMessageByIdempotencyKey"
   | "updateTeammateDirectMessageRuntime"
   | "createTeammateDirectLinkPreview"
   | "getTeammateDirectLinkPreview"

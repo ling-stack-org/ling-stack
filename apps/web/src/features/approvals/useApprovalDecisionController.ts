@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import type { ApprovalRequest } from "../../types.js";
 import type { ApprovalResolution } from "./types.js";
@@ -18,23 +18,18 @@ export function useApprovalDecisionController(input: {
   const [decisionReason, setDecisionReason] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [reasonError, setReasonError] = useState("");
-  const [attempted, setAttempted] = useState(false);
   const [attemptedDecision, setAttemptedDecision] = useState<ApprovalResolution | undefined>();
   const status = effectiveApprovalStatus(input.approval);
   const highRisk = input.approval.risk === "high" || input.approval.risk === "critical";
   const reasonRequired = input.reasonPolicy !== "none" && highRisk && input.approval.actionType !== "media_cost";
   const isResolving = Boolean(input.resolvingDecision);
   const trimmedReason = decisionReason.trim();
-  const mutationError = useMemo(
-    () => attempted && status === "pending" && !isResolving ? input.errorMessage?.trim() ?? "" : "",
-    [attempted, input.errorMessage, isResolving, status],
-  );
+  const mutationError = status === "pending" && !isResolving ? input.errorMessage?.trim() ?? "" : "";
 
   useEffect(() => {
     setDecisionReason("");
     setDialogOpen(false);
     setReasonError("");
-    setAttempted(false);
     setAttemptedDecision(undefined);
   }, [input.approval.id]);
 
@@ -42,7 +37,6 @@ export function useApprovalDecisionController(input: {
     if (status === "pending") return;
     setDialogOpen(false);
     setReasonError("");
-    setAttempted(false);
     setAttemptedDecision(undefined);
   }, [status]);
 
@@ -68,7 +62,6 @@ export function useApprovalDecisionController(input: {
       return;
     }
     setReasonError("");
-    setAttempted(true);
     setAttemptedDecision(decision);
     input.onResolve(input.approval.id, decision, trimmedReason || undefined, proposedRuleFingerprint);
   }

@@ -887,8 +887,12 @@ async function expectMessageWidthPolicy(ownMessage: Locator, peerMessage: Locato
 }
 
 async function expectInputContained(input: Locator, field: Locator): Promise<void> {
-  const inputBox = await input.boundingBox();
-  const fieldBox = await field.boundingBox();
+  const handle = await input.elementHandle();
+  // Both rectangles must come from one frame while the menu is animating.
+  const { inputBox, fieldBox } = await field.evaluate((element, input) => ({
+    inputBox: input?.getBoundingClientRect().toJSON(),
+    fieldBox: element.getBoundingClientRect().toJSON(),
+  }), handle);
   expect(inputBox).not.toBeNull();
   expect(fieldBox).not.toBeNull();
   expect(inputBox!.x).toBeGreaterThanOrEqual(fieldBox!.x - 1);

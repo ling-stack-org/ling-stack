@@ -3,6 +3,7 @@ import {
   type RunnerFallbackReason,
   type RunExecutionStoreFacet,
   type RunStorePathsFacet,
+  type RunStore,
   type RuntimeSupervisorStoreFacet,
   type TerminalAttemptStatus,
   type TerminalRuntimeEventType,
@@ -14,6 +15,7 @@ import {
 } from "@ling-stack/core";
 import { DEFAULT_RUNNER_ID } from "./runners.js";
 import type { RuntimeSupervisor } from "./supervisor.js";
+import { withCancellationFence } from "./cancellation-fence.js";
 
 export { DEFAULT_RUNNER_ID } from "./runners.js";
 
@@ -315,8 +317,19 @@ function claimRuntimeWorkUnit(input: {
   };
 }
 
-export function cancelStandaloneWorkUnit(store: RuntimeWorkUnitStore, workUnit: WorkUnit, reason: string): WorkUnit {
-  const attemptId = workUnit.activeAttemptId ?? store.listWorkUnitAttempts(workUnit.id).at(-1)?.id;
+export function cancelStandaloneWorkUnit(store: RuntimeWorkUnitStore & Pick<RunStore, "withCancellationFence">,
+  workUnit: WorkUnit, reason: string,
+  expected?: { readonly expectedAttemptId?: string | null; readonly expectedRunId?: string | null }): WorkUnit {
+  return withCancellationFence<WorkUnit>(store, { workUnitId: workUnit.id,
+    expectedAttemptId: expected?.expectedAttemptId === undefined ? workUnit.activeAttemptId ?? null : expected.expectedAttemptId,
+    expectedRunId: expected?.expectedRunId === undefined ? workUnit.linkedRunId ?? null : expected.expectedRunId }, ({ workUnit: current }) => {
+    if (!current) throw new Error("Cancellation WorkUnit no longer exists");
+    return cancelCurrentStandaloneWorkUnit(store, current, reason);
+  });
+}
+
+function cancelCurrentStandaloneWorkUnit(store: RuntimeWorkUnitStore, workUnit: WorkUnit, reason: string): WorkUnit {
+  const attemptId = workUnit.activeAttemptId;
   if (attemptId) {
     transitionWorkUnitCancelled(store, workUnit.id, attemptId, reason);
   } else if (!isTerminalWorkUnitStatus(workUnit.status) && workUnit.status !== "stale") {
@@ -341,7 +354,14 @@ export function cancelStandaloneWorkUnit(store: RuntimeWorkUnitStore, workUnit: 
       });
     }
   }
-  releaseWorkUnitRuntimeResources(store, workUnit, new Date().toISOString(), "cancelled");
+  if (attemptId) {
+    const attempt = store.getWorkUnitAttempt(attemptId);
+    if (attempt) {
+      const now = new Date().toISOString();
+      store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), now, "cancelled");
+      store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), now, "cancelled");
+    }
+  }
   return store.getWorkUnit(workUnit.id) ?? workUnit;
 }
 

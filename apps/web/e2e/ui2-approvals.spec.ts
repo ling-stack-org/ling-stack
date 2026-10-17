@@ -14,7 +14,7 @@ import {
 import { createBaseState, createChatProvider, type MockState } from "./support/mock-state";
 import { openPendingInbox } from "./support/pending-primary-navigation";
 
-const evidenceDirectory = fileURLToPath(new URL(
+const evidenceDirectory = process.env.LING_P2_APPROVAL_EVIDENCE_DIR ?? fileURLToPath(new URL(
   "../../../docs/design/ui2.0升级/evidence/features/approvals/",
   import.meta.url,
 ));
@@ -51,6 +51,8 @@ test("APPROVAL-LIST handles 100 rows, keyboard, search, retained refresh failure
   faults.failNextList = true;
   await refreshInbox(surface);
   await expect(surface.getByText("Synthetic approval refresh failure")).toBeVisible();
+  await expect(surface.getByText("Synthetic approval refresh failure")).toHaveCount(1);
+  await expect(surface.getByRole("region", { name: "Decision", exact: true }).getByRole("alert")).toHaveCount(0);
   await expect(list.getByRole("option")).toHaveCount(100);
   await refreshInbox(surface);
   await expect(surface.getByText("Synthetic approval refresh failure")).toHaveCount(0);
@@ -170,6 +172,7 @@ test("Decision failure retains its draft, selection changes reset state, and exp
   faults.failNextDecisionId = "approval_high_b";
   await dialog.getByRole("button", { name: "Approve" }).click();
   await expect(dialog.getByText("Synthetic approval decision failure")).toBeVisible();
+  await expect(surface.locator(".approvals-ui2-page-feedback")).toHaveCount(0);
   await expect(dialog.getByLabel("Decision reason")).toHaveValue("Keep this reason after failure");
   await expect(dialog.getByRole("button", { name: "Retry" })).toBeVisible();
   await captureEvidence(page, "1280x800-ling-dark-decision-failure.png");
@@ -177,10 +180,11 @@ test("Decision failure retains its draft, selection changes reset state, and exp
   await selectApproval(surface, "High risk request A");
   await expect(selectedDetail(surface).getByText("Synthetic approval decision failure")).toHaveCount(0);
   await selectApproval(surface, "High risk request B");
-  await selectedDetail(surface).getByRole("button", { name: "Approve" }).click();
+  await expect(selectedDetail(surface).getByText("Synthetic approval decision failure")).toBeVisible();
+  await selectedDetail(surface).getByRole("button", { name: "Retry" }).click();
   dialog = page.getByRole("dialog", { name: /Decision: High risk request B/ });
   await dialog.getByLabel("Decision reason").fill("Retry only the failed B request");
-  await dialog.getByRole("button", { name: "Approve" }).click();
+  await dialog.getByRole("button", { name: "Retry" }).click();
   await expect(dialog).toHaveCount(0);
 
   await selectApproval(surface, "High risk request A");

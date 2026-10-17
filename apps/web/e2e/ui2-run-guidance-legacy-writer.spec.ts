@@ -12,7 +12,7 @@ const evidenceDirectory = fileURLToPath(new URL(
   "../../../docs/design/ui2.0升级/evidence/features/run-guidance-legacy-writer/",
   import.meta.url,
 ));
-const expectedInjected503 = /503 \(Service Unavailable\)/u;
+const expectedInjected400 = /400 \(Bad Request\)/u;
 const legacyGuidanceSelector = [
   ".run-guidance-actions",
   ".run-guidance-submit-row",
@@ -65,9 +65,15 @@ test("1280x800 Ling Dark contains shared Textarea focus through failure and retr
   let failNextQueue = true;
   await installRunsThreadsFixture(page, state);
   await page.route(/\/runs\/run_ui2_failed\/interventions(?:\?|$)/u, async (route) => {
+    const key = new URL(route.request().url()).searchParams.get("idempotencyKey");
+    if (route.request().method() === "GET" && key) {
+      await route.fulfill({ json: { cwd: "/tmp/ling-stack-workspace", idempotencyKey: key,
+        interventions: state.runInterventions.filter(item => item.sourceRunId === "run_ui2_failed" && item.idempotencyKey === key) } });
+      return;
+    }
     if (route.request().method() === "POST" && failNextQueue) {
       failNextQueue = false;
-      await route.fulfill({ status: 503, json: { message: "Injected Run Guidance ownership failure" } });
+      await route.fulfill({ status: 400, json: { message: "Injected Run Guidance ownership failure" } });
       return;
     }
     await route.fallback();
@@ -97,7 +103,7 @@ test("1280x800 Ling Dark contains shared Textarea focus through failure and retr
   await panel.getByRole("button", { name: "Queue guidance" }).click();
   await expect(panel.locator(".runs-intervention-row")).toContainText("Queued");
   await expectRunGuidancePanelContract(page);
-  runtime.expectOnly([expectedInjected503]);
+  runtime.expectOnly([expectedInjected400]);
 });
 
 test("1440x960 imported Quiet Ocean keeps long started guidance contained", async ({ page }) => {

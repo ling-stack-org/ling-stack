@@ -115,6 +115,28 @@ export interface ConversationStreamRequest {
   readonly idempotencyKey?: string;
 }
 
+/** A native input lookup, not evidence that its reply completed. Unknown never means rejected. */
+export interface ConversationSubmissionReceipt {
+  readonly cwd: string;
+  readonly idempotencyKey: string;
+  readonly status: "accepted" | "unknown";
+  readonly threadId?: string;
+  readonly turnId?: string;
+  readonly sourceItemId?: string;
+  readonly sourceItem?: ConversationItemV1;
+}
+
+export type ConversationSubmissionQuery = {
+  readonly surface: "normal";
+  readonly idempotencyKey: string;
+  readonly threadId?: string;
+} | {
+  readonly surface: "channel";
+  readonly channelId: string;
+  readonly idempotencyKey: string;
+  readonly threadId?: string;
+};
+
 export interface ConversationStreamReadyEvent {
   readonly thread: LingThread;
   readonly turn: LingTurn;

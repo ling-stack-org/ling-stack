@@ -26,7 +26,7 @@ export function RunDetailHeader({ run, approvals, isRunning, cancellingRunId, on
         <StatusIndicator label={t(primaryState.label)} tone={primaryState.tone} />
       </div>
       <div className="runs-detail-actions">
-        {run && runCanBeStopped(run) ? <Button leadingIcon={<Square size={14} />} loading={stopping} onClick={() => onCancelRun(run)} size="sm" variant="danger">{stopping ? t("Stopping") : t("Stop")}</Button> : null}
+        {run && (runCanBeStopped(run) || stopping) ? <Button aria-label={stopping ? t("Stopping") : t("Stop")} leadingIcon={<Square size={14} />} loading={stopping} onClick={() => onCancelRun(run)} size="sm" variant="danger">{stopping ? t("Stopping") : t("Stop")}</Button> : null}
         <Button disabled={!run || isRunning || !providerPresetId} leadingIcon={<RotateCcw size={15} />} loading={isRunning} onClick={() => run && onRerun(run)} size="sm" variant="primary">{t("Rerun snapshot")}</Button>
       </div>
     </header>

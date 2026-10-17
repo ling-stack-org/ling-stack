@@ -12,7 +12,7 @@ import { useApprovalsPageController } from "./useApprovalsPageController.js";
 
 export function ApprovalsPage({
   cwd, approvals, repairRunId, repairRun, selectedApprovalId, externalActionDetails, externalActionBusy,
-  isLoading, resolvingApprovals, errorMessage, onRefresh, onSelectApproval, onRefreshRepair, onResolve,
+  isLoading, resolvingApprovals, errorMessage, approvalErrors = {}, onRefresh, onSelectApproval, onRefreshRepair, onResolve,
   onExecuteExternalAction, onCancelExternalAction, onOpenRun, onOpenWorkBoard, onClearRepair, channels,
   onRouteExternalWork, routingExternalWorkId, inlineApprovalIds,
 }: {
@@ -26,6 +26,7 @@ export function ApprovalsPage({
   readonly isLoading: boolean;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly errorMessage: string;
+  readonly approvalErrors?: Readonly<Record<string, string>>;
   readonly onRefresh: () => void;
   readonly onSelectApproval: (approvalId: string) => void;
   readonly onRefreshRepair: (runId: string) => void;
@@ -99,7 +100,7 @@ export function ApprovalsPage({
           routingExternalWorkId={routingExternalWorkId}
           externalActionBusy={externalActionBusy}
           resolvingApprovals={resolvingApprovals}
-          errorMessage={errorMessage}
+          errorMessage={controller.selectedRow ? approvalErrors[controller.selectedRow.id] ?? "" : ""}
           onRefresh={runRefresh}
           onOpenRun={onOpenRun}
           onOpenWorkBoard={onOpenWorkBoard}

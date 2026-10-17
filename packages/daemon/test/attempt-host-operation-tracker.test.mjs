@@ -9,6 +9,7 @@ import { AttemptHostOperationTracker } from "../dist/runtime/attempt-host-operat
 import { executeHarnessedFileMutationTool } from "../dist/features/harness/tool-execution/broker.js";
 import { createFileMutationActionDraft } from "../dist/features/harness/tool-execution/executors/file-mutation.js";
 import { createUnifiedExecFixture } from "./support/unified-exec-fixture.mjs";
+import { RunControlService } from "../dist/run-control.js";
 
 const required = Object.freeze({ kind: "user_input_required", requestId: "pause", requestVersion: 1 });
 async function fixture(t) {
@@ -182,6 +183,35 @@ test("exact file Broker plus real filesystem facts safely settle through tracker
   assert.equal(drain.status, "settled");
   assert.equal(drain.operations[0].settlement.kind, "completed_persisted");
   assert.equal(drain.operations[0].settlement.physicalScope, "entire_operation");
+});
+
+test("the original completed file fact can settle after cancellation without permitting more effects", async t => {
+  const f = await fixture(t);
+  const request = f.request();
+  const operation = f.tracker.beginHostCall("file_mutation", request.toolCallId);
+  assert.notEqual((await f.execute(request, f.tracker.fileMutationOperation(operation))).isError, true);
+  new RunControlService().cancelRun({ store: f.store, runId: f.run.id, reason: "user_requested" });
+  const cancelled = f.store.getRun(f.run.id);
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(f.tracker.settleFileFromStore(operation).phase, "safe");
+  assert.deepEqual(f.store.getRun(f.run.id), cancelled);
+  assert.throws(() => f.tracker.continueHostEffect(operation, () => assert.fail("cancelled forward effect")));
+  assert.throws(() => f.tracker.continueHostEffect(operation, () => assert.fail("cancelled cleanup effect"), "cleanup"));
+  assert.throws(() => f.tracker.beginHostCall("file_mutation", "cancelled-new-write"));
+  const reopened = createSqliteRunStore(f.cwd);
+  try { assert.equal(reopened.getHostOperation(operation.operationId).settlementKind, "file_completed"); }
+  finally { reopened.close(); }
+});
+
+test("a cancelled file fact cannot settle under a successor's ownership", async t => {
+  const f = await fixture(t);
+  const request = f.request();
+  const operation = f.tracker.beginHostCall("file_mutation", request.toolCallId);
+  assert.notEqual((await f.execute(request, f.tracker.fileMutationOperation(operation))).isError, true);
+  new RunControlService().cancelRun({ store: f.store, runId: f.run.id, reason: "user_requested" });
+  f.replace();
+  assert.throws(() => f.tracker.settleFileFromStore(operation), error => error.code === "host_operation_stale_owner");
+  assert.equal(f.store.getHostOperation(operation.operationId).phase, "launched");
 });
 
 test("multi-file forward effects reuse one operation while every write rechecks the guard", async t => {

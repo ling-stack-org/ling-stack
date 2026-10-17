@@ -1012,6 +1012,7 @@ export function teammateDirectReplyInterventionSelectSql(whereClause: string): s
       thread_id,
       source_message_id,
       source_work_unit_id,
+      source_attempt_id,
       mode,
       status,
       instruction,

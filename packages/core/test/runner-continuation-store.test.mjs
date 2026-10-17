@@ -145,6 +145,66 @@ test("continuation and target Attempt are committed atomically and replay with o
   );
 });
 
+for (const [kind, ownerType] of [["conversation_run", "conversation_turn"],
+  ["channel_ai_reply", "channel_message"], ["teammate_direct_reply", "teammate_direct_message"]]) {
+  test(`preparation failure settles a snapshot-only ${kind} atomically without creating a Task`, async (t) => {
+    const f = await fixture(t);
+    setSnapshotOnlyOwner(f, kind, ownerType, { id: "snapshot-task" });
+    const prepared = f.store.prepareContinuationAndAttempt(f.input);
+    const input = preparationFailureInput(f, prepared);
+    const stale = f.store.commitExistingRunContinuationPreparationFailure({ ...input,
+      targetFence: { ...input.targetFence, fencingToken: "foreign-fence" } });
+    assert.equal(stale.ok, false);
+    assert.equal(f.store.getRun(f.targetRun.id).status, "queued");
+    assert.equal(f.store.getRunnerContinuation(prepared.continuation.id).state, "prepared");
+    f.database.exec(`CREATE TRIGGER reject_preparation_failure BEFORE UPDATE OF status ON work_unit_attempts
+      WHEN NEW.status='failed' BEGIN SELECT RAISE(ABORT, 'reject preparation failure'); END;`);
+    assert.throws(() => f.store.commitExistingRunContinuationPreparationFailure(input), /reject preparation failure/u);
+    assert.equal(f.store.getRun(f.targetRun.id).status, "queued");
+    assert.equal(f.store.getWorkUnit(f.targetUnit.id).status, "queued");
+    assert.equal(f.store.getRunnerContinuation(prepared.continuation.id).state, "prepared");
+    f.database.exec("DROP TRIGGER reject_preparation_failure");
+    const result = f.store.commitExistingRunContinuationPreparationFailure(input);
+    assert.equal(result.ok, true);
+    assert.equal(result.run.status, "failed");
+    assert.equal(result.workUnit.status, "failed");
+    assert.equal(result.attempt.status, "failed");
+    assert.equal(result.continuation.state, "failed");
+    assert.equal(result.task, undefined);
+    assert.equal(f.store.getTask("snapshot-task"), undefined);
+    assert.equal(f.store.commitExistingRunContinuationPreparationFailure(input).ok, false);
+  });
+}
+
+for (const [kind, ownerType, snapshot] of [["task_run", "task", { id: "snapshot-task" }],
+  ["conversation_run", "conversation_turn", {}], ["conversation_run", "conversation_turn", { id: "another-task" }],
+  ["conversation_run", "task", { id: "snapshot-task" }]]) {
+  test(`preparation failure rejects missing Task or invalid ${kind}/${ownerType} snapshot ${JSON.stringify(snapshot)}`, async (t) => {
+    const f = await fixture(t);
+    setSnapshotOnlyOwner(f, kind, ownerType, snapshot);
+    const prepared = f.store.prepareContinuationAndAttempt(f.input);
+    const result = f.store.commitExistingRunContinuationPreparationFailure(preparationFailureInput(f, prepared));
+    assert.deepEqual(result, { ok: false, code: "continuation.preparation_failure_lineage_stale" });
+    assert.equal(f.store.getRun(f.targetRun.id).status, "queued");
+    assert.equal(f.store.getWorkUnitAttempt(prepared.attempt.id).status, "created");
+    assert.equal(f.store.getRunnerContinuation(prepared.continuation.id).state, "prepared");
+  });
+}
+
+function setSnapshotOnlyOwner(f, kind, ownerType, snapshot) {
+  f.database.prepare("UPDATE run_sessions SET task_id=?,task_snapshot_json=? WHERE id=?")
+    .run("snapshot-task", JSON.stringify(snapshot), f.targetRun.id);
+  f.database.prepare("UPDATE work_units SET kind=?,owner_type=?,task_id=? WHERE id=?")
+    .run(kind, ownerType, "snapshot-task", f.targetUnit.id);
+}
+
+function preparationFailureInput(f, prepared) {
+  return { continuationId: prepared.continuation.id, expectedContinuationRevision: prepared.continuation.revision,
+    expectedContinuationState: "prepared", runId: f.targetRun.id, expectedRunStatus: "queued",
+    workUnitId: f.targetUnit.id, expectedWorkUnitStatus: "queued", targetFence: toRuntimeAttemptFence(prepared.attempt),
+    expectedAttemptStatus: "created", errorCode: "fixture_prepare_failed", errorMessage: "Preparation failed", now: later };
+}
+
 test("prepare survives daemon reopen without creating a duplicate Attempt", async (t) => {
   const f = await fixture(t);
   const first = f.store.prepareContinuationAndAttempt(f.input);

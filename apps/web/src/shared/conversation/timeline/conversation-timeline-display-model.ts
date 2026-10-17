@@ -268,8 +268,6 @@ function displayRowKey(
     depth,
     encodeURIComponent(parentSubAgentId),
     encodeURIComponent(item.id),
-    item.threadSequence,
-    item.partIndex,
   ].join(":");
 }
 

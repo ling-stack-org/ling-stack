@@ -135,13 +135,6 @@ export function useChannelComposerDraftController(channelId: string): ChannelCom
     composerResizeDragRef.current = undefined;
   }, []);
 
-  useEffect(() => () => {
-    for (const previewUrl of attachmentPreviewUrlsRef.current) {
-      URL.revokeObjectURL(previewUrl);
-    }
-    attachmentPreviewUrlsRef.current.clear();
-  }, []);
-
   return {
     messageDraft,
     setMessageDraft,
