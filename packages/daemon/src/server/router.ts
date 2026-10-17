@@ -160,6 +160,7 @@ import {
 import { handleConversationAttachmentsCollection, handleConversationDetail, handleConversationStream, startConversationReplacementRun } from "../features/conversations/routes.js";
 import { startDetachedRunAndResolveReady } from "../features/runs/detached.js";
 import { handleConversationMessageEdit } from "../features/conversations/message-edits.js";
+import { handleUserInputAnswer } from "../features/conversations/user-input-answer-route.js";
 import { dispatchMediaJobExecution, handleRunMediaJob, syncMediaJobForApprovalDecision, type RunMediaJobHooks } from "../features/media/executor.js";
 import { publishConversationMediaProjectionChange } from "../features/media/conversation-events.js";
 import { handleConversationMediaGenerationTargets } from "../features/media/conversation-target-routes.js";
@@ -382,6 +383,7 @@ export async function routeRequest(
     activeDirectReplies,
     channelReplyDispatchCoordinator,
     channelTurnDispatchWorker,
+    userInputDeliveryWorker,
     runtimeSupervisor,
     secretResolver,
     externalSecretStore,
@@ -900,7 +902,8 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/external-work/workflow/configure") {
-    await handleExternalWorkWorkflowConfigure(request, response, config, storeRegistry);
+    await handleExternalWorkWorkflowConfigure(request, response, config, storeRegistry,
+      runtimeSupervisor.getExternalWorkflowRequestRuntime());
     return;
   }
 
@@ -1118,6 +1121,11 @@ export async function routeRequest(
 
   if (url.pathname === "/conversations/attachments") {
     await handleConversationAttachmentsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/user-input-answers") {
+    await handleUserInputAnswer(request, response, config, storeRegistry, (store) => userInputDeliveryWorker.wake(store));
     return;
   }
 
@@ -2725,8 +2733,10 @@ export async function routeRequest(
           }
         },
         syncWorkflow: () => {
+          if (approval.payload.type !== "workflow_step") return;
           const result = syncWorkflowApprovalDecision(store, approval, now);
           if (result.status === "missing_owner") throw new Error("approval_workflow_owner_missing");
+          if (result.status === "stale_owner") throw new Error("approval_workflow_owner_stale");
         },
         syncMedia: () => syncMediaJobForApprovalDecision({
           cwd,

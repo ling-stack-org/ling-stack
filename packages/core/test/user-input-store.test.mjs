@@ -165,6 +165,49 @@ test("answer receipt is atomic, explicit, idempotent and does not claim delivery
   assert.throws(() => f.submit(request, { answers: [{ questionId: "theme", kind: "option", optionId: "light" }] }), code("idempotency_conflict"));
 });
 
+test("public answer authority is Host-recomputed for first acceptance and exact replay", async (t) => {
+  const f = await fixture(t);
+  const request = f.ask();
+  const authority = f.store.readUserInputTranscript({ threadId: f.thread.id, itemIds: [request.itemId] })[0].answerAuthority;
+  assert.match(authority.token, /^[a-f0-9]{64}$/u);
+  const submit = (answerAuthority = authority, overrides = {}) => f.store.submitUserInputAnswer({
+    threadId: answerAuthority.threadId,
+    authority: answerAuthority,
+    submission: f.answer(request, {
+      expectedVersion: answerAuthority.requestVersion,
+      expectedStatusRevision: answerAuthority.statusRevision,
+      ...overrides,
+    }),
+  }, now);
+  for (const [field, value, expected] of [
+    ["runId", "foreign-run", "source_conflict"], ["attemptId", "foreign-attempt", "source_conflict"],
+    ["participantId", "foreign-agent", "source_conflict"], ["requestVersion", 2, "source_conflict"],
+    ["statusRevision", 2, "source_conflict"], ["token", "b".repeat(64), "source_conflict"],
+  ]) {
+    assert.throws(() => submit({ ...authority, [field]: value }), code(expected));
+  }
+  const receipt = submit();
+  const replay = submit();
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.answerId, receipt.answerId);
+  assert.throws(() => submit(authority, { answers: [{ questionId: "theme", kind: "option", optionId: "light" }] }), code("idempotency_conflict"));
+  assert.equal(count(f, "user_input_answers"), 1);
+});
+
+test("captured public authority cannot answer after owner loss, archive or cancellation", async (t) => {
+  for (const invalidation of ["owner", "archive", "cancel"]) {
+    const f = await fixture(t);
+    const request = f.ask();
+    const authority = f.store.readUserInputTranscript({ threadId: f.thread.id, itemIds: [request.itemId] })[0].answerAuthority;
+    if (invalidation === "owner") f.db.prepare("UPDATE work_unit_attempts SET status='lost',ended_at=? WHERE id=?").run(now, f.attempt.id);
+    if (invalidation === "archive") f.store.updateLingThread(f.thread.id, { status: "archived" }, now);
+    if (invalidation === "cancel") f.store.cancelUserInputRequest({ threadId: f.thread.id, requestId: request.requestId, expectedStatusRevision: 1 }, now);
+    assert.throws(() => f.store.submitUserInputAnswer({ threadId: f.thread.id, authority,
+      submission: f.answer(request) }, now), code("stale_request"));
+    assert.equal(count(f, "user_input_answers"), 0);
+  }
+});
+
 test("answer validation rejects stale, expired, unknown or empty submissions before writes", async (t) => {
   const f = await fixture(t);
   const request = f.ask({ expiresAt: later });
@@ -241,6 +284,7 @@ test("database reopen preserves receipt and pending delivery without reaccepting
 test("two independently opened SQLite connections accept only one conflicting answer", async (t) => {
   const f = await fixture(t);
   const request = f.ask();
+  const authority = f.store.readUserInputTranscript({ threadId: f.thread.id, itemIds: [request.itemId] })[0].answerAuthority;
   const gate = new SharedArrayBuffer(4);
   const jobs = ["dark", "light"].map((optionId) => {
     const worker = new Worker(`
@@ -256,7 +300,7 @@ test("two independently opened SQLite connections accept only one conflicting an
       })().catch(error => { throw error; });
     `, { eval: true, workerData: {
       module: new URL("../dist/index.js", import.meta.url).href, cwd: f.cwd, gate, now,
-      input: { threadId: f.thread.id, submission: f.answer(request, { idempotencyKey: "answer-" + optionId, answers: [{ questionId: "theme", kind: "option", optionId }] }) },
+      input: { threadId: f.thread.id, authority, submission: f.answer(request, { idempotencyKey: "answer-" + optionId, answers: [{ questionId: "theme", kind: "option", optionId }] }) },
     } });
     t.after(() => worker.terminate());
     let ready, readyReject;

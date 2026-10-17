@@ -12361,7 +12361,7 @@
     "terminal_report.change.updated": "已更新 {path}",
     "terminal_report.changed_files.one": "已編輯 1 個文件",
     "terminal_report.changed_files.other": "編輯 {count} 文件",
-    "terminal_report.evidence.execution_unconfirmed": "沒有記錄工具完成收據。流程停止且效果未確認；重試前驗證實際效果。",
+    "terminal_report.evidence.execution_unconfirmed": "沒有記錄工具完成收據。工具進程是否停止尚未確認，實際效果亦未確認；重試前核實實際效果。",
     "terminal_report.evidence.reporting_barrier_expired": "報告障礙已過期；一些追蹤操作可能沒有完整的證據。",
     "terminal_report.evidence.runtime_interrupted_no_checkpoint": "運轉時在沒有安全恢復檢查點的情況下重新啟動。該任務中斷且未自動重試。",
     "terminal_report.evidence.truncated": "{name} 證據從 {total} 項被截斷為 {limit} 項。",

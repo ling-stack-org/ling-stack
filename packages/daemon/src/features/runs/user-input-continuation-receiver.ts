@@ -20,6 +20,7 @@ export function withUserInputContinuationReceiver(input: {
   readonly adapter: RunnerAdapter;
   readonly options: PiRunnerRunOptions;
   readonly now?: () => string;
+  readonly onAccepted?: (acceptedAt: string) => void | Promise<void>;
 }): PiRunnerRunOptions {
   const { store, threadId, options } = input;
   const reject = (code: string): never => { throw new HttpError(409, code, "User input continuation cannot enter this receiver."); };
@@ -50,12 +51,14 @@ export function withUserInputContinuationReceiver(input: {
   return { ...options, runId: binding.runId, runnerAttemptId: binding.fence.attemptId, preparedInput,
     onPreparedInputAccepted: (receipt, signal) => {
       signal.throwIfAborted();
+      const acceptedAt = input.now?.() ?? new Date().toISOString();
       const accepted = store.acknowledgeUserInputContinuation({ threadId, deliveryId: binding.deliveryId,
         bindingRef: { id: binding.id, fingerprint: binding.fingerprint }, sourceFence: binding.fence, receipt },
-      input.now?.() ?? new Date().toISOString());
+      acceptedAt);
       // Read-only ACK replay is valid audit/recovery, never permission to send the model twice.
       if (accepted.replayed) return reject("user_input_already_received");
       signal.throwIfAborted();
+      return input.onAccepted?.(acceptedAt);
     } };
 }
 function json(value: unknown): unknown { return JSON.parse(JSON.stringify(value)); }

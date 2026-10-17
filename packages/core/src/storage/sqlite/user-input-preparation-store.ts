@@ -92,18 +92,22 @@ function assertRequest(value: unknown, seed: UserInputContinuationSeed): asserts
 /** Storage validates immutable identity; the selected adapter still validates its exact SDK DTO before dispatch. */
 export function assertUserInputExecutionPlan(value: unknown, seed: UserInputContinuationSeed, request: unknown): asserts value is UserInputContinuationExecutionPlan {
   const keys = ["schemaVersion", "runnerId", "providerName", "providerModel", "providerPresetId", "selectedSkillId",
-    "taskSnapshot", "providerSnapshot", "requestSnapshot", "preparedInput", "preparedInputFingerprint", "runnerExecutionInput"];
+    "taskSnapshot", "providerSnapshot", "requestSnapshot", "runRequestSnapshot", "preparedInput", "preparedInputFingerprint", "runnerExecutionInput"];
   if (!record(value) || value.schemaVersion !== 1 || Object.keys(value).some(key => !keys.includes(key))
     || !["runnerId", "providerName", "providerModel", "preparedInputFingerprint"].every(key => typeof value[key] === "string" && value[key])
     || normalizeStoredRunnerId(value.runnerId as string) !== value.runnerId
     || !["providerPresetId", "selectedSkillId"].every(key => value[key] === undefined || typeof value[key] === "string" && value[key])
-    || !record(value.taskSnapshot) || !record(value.providerSnapshot) || !record(value.requestSnapshot) || !record(value.preparedInput)
+    || !record(value.taskSnapshot) || !record(value.providerSnapshot) || !record(value.requestSnapshot)
+    || !record(value.runRequestSnapshot) || !record(value.preparedInput)
     || !same(value.requestSnapshot, request) || !same(value.taskSnapshot, value.requestSnapshot.task)
+    || !same(value.taskSnapshot, value.runRequestSnapshot.task)
     || value.providerSnapshot.provider !== value.providerName || value.providerSnapshot.model !== value.providerModel
+    || !same(value.runRequestSnapshot.runnerExecutionInput, value.runnerExecutionInput)
     || value.preparedInput.taskId !== seed.source.taskBinding.taskId || value.preparedInput.fingerprint !== value.preparedInputFingerprint) {
     throw new UserInputStoreError("source_conflict");
   }
   assertRequest(value.requestSnapshot, seed);
+  assertRequest(value.runRequestSnapshot, seed);
   // The Core boundary validates shared identities, not Pi prompt/tool semantics.
   // A fingerprint-only plan cannot become the source of a second continuation.
   const execution = value.runnerExecutionInput;

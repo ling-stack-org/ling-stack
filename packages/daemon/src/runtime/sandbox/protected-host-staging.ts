@@ -5,8 +5,8 @@ import type { EffectiveRunPolicySnapshot, ExecutionSandboxBackendIdentity, HostO
   RunSession, RunStore, RuntimeAttemptFenceV1 } from "@ling-stack/core";
 import { captureProtectedHostStagePaths, type ProtectedHostStagePaths } from "./protected-host-stage-paths.js";
 import { readMacosSandboxBackendIdentity, readPreparedMacosSandboxAuthority, isOwnedMacosSandboxChild,
-  MACOS_NATIVE_COMMAND_ACTOR_ENTRY,
-  type PreparedMacosSandboxAuthority, type PreparedMacosSandboxCommand } from "./macos-native-command.js";
+  MACOS_NATIVE_COMMAND_ACTOR_ENTRY, type PreparedMacosSandboxAuthority,
+  type PreparedMacosSandboxCommand } from "./macos-native-command.js";
 import { assertProtectedHostDomainExcludesStage, captureProtectedHostActorDomain,
   type ProtectedHostActorDomain } from "./protected-host-actor-domain.js";
 import { readProtectedHostBootstrapReadRoots } from "./protected-host-bootstrap-domain.js";
@@ -67,7 +67,14 @@ interface ActorState {
   readonly domain: ProtectedHostActorDomain | undefined;
   phase: "prepared" | "launch_entered" | "launched" | "unknown";
 }
+interface ExternalWorkflowRequestActorState {
+  readonly prepared: object;
+  readonly domain: ProtectedHostActorDomain;
+  phase: "prepared" | "launch_entered" | "launched" | "closed" | "unknown";
+}
 const ownedRegistries = new WeakSet<ProtectedHostStageRegistry>();
+const activeExternalWorkflowRequestActors = new Set<ProtectedHostActorPreparation>();
+const activeProtectedHostStages = new Set<ProtectedHostStageRegistration>();
 const officeLeaseReleasesInProgress = new WeakSet<OriginalOfficeDirectoryRuntimeReleasePermitV2>();
 const originalOfficeRegistryReaders = new WeakMap<ProtectedHostStageRegistry, Readonly<{
   assertStage: (stage: ProtectedHostStageRegistration) => void;
@@ -79,7 +86,10 @@ const originalOfficeRegistryReaders = new WeakMap<ProtectedHostStageRegistry, Re
   assertLeaseReleased: (permit: OriginalOfficeDirectoryRuntimeReleasePermitV2) => void;
 }>>();
 const actorPreparedBindings = new WeakMap<ProtectedHostActorPreparation, {
-  readonly registry: ProtectedHostStageRegistry; readonly prepared: PreparedMacosSandboxCommand;
+  readonly registry: ProtectedHostStageRegistry;
+  readonly entry: ProtectedHostActorEntry;
+  readonly prepared: object;
+  readonly readDomain: () => ProtectedHostActorDomain | undefined;
 }>();
 const originalActorRegistryReaders = new WeakMap<ProtectedHostStageRegistry, Readonly<{
   readDomain: (actor: ProtectedHostActorPreparation, prepared: PreparedMacosSandboxCommand) => ProtectedHostActorDomain | undefined;
@@ -96,8 +106,19 @@ function requireScope(condition: unknown, code: string): asserts condition {
 export function assertProtectedHostActorPreparedBinding(actor: ProtectedHostActorPreparation,
   prepared: PreparedMacosSandboxCommand): void {
   const binding = actorPreparedBindings.get(actor);
-  requireScope(binding && ownedRegistries.has(binding.registry) && binding.prepared === prepared,
+  requireScope(binding && binding.entry === MACOS_NATIVE_COMMAND_ACTOR_ENTRY
+    && ownedRegistries.has(binding.registry) && binding.prepared === prepared,
     "protected_host_actor_prepared_binding_invalid");
+  readOriginalProtectedHostActorLaunchDomain(actor);
+}
+
+/** The fixed request launcher consumes only the exact request preparation owned by the original registry. */
+export function assertProtectedHostExternalWorkflowRequestBinding(actor: ProtectedHostActorPreparation,
+  prepared: object): void {
+  const binding = actorPreparedBindings.get(actor);
+  requireScope(binding && binding.entry.entryId === "external_workflow_request"
+    && ownedRegistries.has(binding.registry) && binding.prepared === prepared,
+  "protected_host_actor_prepared_binding_invalid");
   readOriginalProtectedHostActorLaunchDomain(actor);
 }
 
@@ -106,10 +127,8 @@ export function readOriginalProtectedHostActorLaunchDomain(actor: ProtectedHostA
   entry?: ProtectedHostActorEntry): ProtectedHostActorDomain | undefined {
   const binding = actorPreparedBindings.get(actor);
   requireScope(binding && ownedRegistries.has(binding.registry), "protected_host_actor_preparation_invalid");
-  if (entry) requireScope(entry === MACOS_NATIVE_COMMAND_ACTOR_ENTRY, "protected_host_actor_entry_proof_invalid");
-  const original = originalActorRegistryReaders.get(binding.registry);
-  requireScope(original, "protected_host_actor_preparation_invalid");
-  return original.readDomain(actor, binding.prepared);
+  if (entry) requireScope(entry === binding.entry, "protected_host_actor_entry_proof_invalid");
+  return binding.readDomain();
 }
 
 /** Source-owned aggregate history uses constructor-private readers, never replacement public methods. */
@@ -166,6 +185,7 @@ export class ProtectedHostStageRegistry {
   readonly #stageLifetimes = new WeakMap<ProtectedHostStageRegistration, StageState>();
   readonly #sources = new WeakMap<ProtectedHostActorSource, ActorSourceState>();
   readonly #actors = new WeakMap<ProtectedHostActorPreparation, ActorState>();
+  readonly #externalWorkflowRequestActors = new WeakMap<ProtectedHostActorPreparation, ExternalWorkflowRequestActorState>();
   readonly #inventory = new ProtectedHostActorInventory();
   readonly #officeWindows = new WeakMap<ProtectedHostOfficeDirectoryWindowV2, OfficeWindowState>();
   readonly #officeLeaseReleaseHistory = new WeakMap<OriginalOfficeDirectoryRuntimeReleasePermitV2, OfficeLeaseReleaseHistory>();
@@ -225,6 +245,15 @@ export class ProtectedHostStageRegistry {
   assertActorEntryLaunchCurrent(entry: ProtectedHostActorEntry, actor?: ProtectedHostActorPreparation, launchEntered = true): void {
     const facts = this.#inventory.assertOriginal(entry);
     if (facts.kind !== "controlled") return;
+    if (facts.entryId === "external_workflow_request") {
+      requireScope(actor, "protected_host_actor_entry_proof_invalid");
+      const domain = readOriginalProtectedHostActorLaunchDomain(actor, entry);
+      requireScope(domain, "protected_host_actor_domain_unverified");
+      for (const stage of this.#stages.values()) {
+        this.#assertStage(stage); this.#assertStageExclusion(domain, stage);
+      }
+      return;
+    }
     if (actor) {
       requireScope(facts.entryId === "macos_native_command", "protected_host_actor_entry_proof_invalid");
       this.#assertActorLaunchCurrent(actor); return;
@@ -314,9 +343,11 @@ export class ProtectedHostStageRegistry {
 
   /** Only register an existing Host stage: this slice neither creates it nor deletes any pathname. */
   registerStage(input: ProtectedHostSourceInput & { readonly stagePath: string }): ProtectedHostStageRegistration {
+    requireScope(activeExternalWorkflowRequestActors.size === 0, "protected_host_request_actor_active");
     const source = captureSource(input), paths = captureProtectedHostStagePaths(input.stagePath);
     try {
       requireScope(this.#stages.size < 64, "protected_host_stage_budget_exceeded");
+      requireScope(activeExternalWorkflowRequestActors.size === 0, "protected_host_request_actor_active");
       requireScope(!this.#coverageClosed, "protected_host_actor_coverage_unknown");
       this.#assertOriginalHostHistoryCurrent();
       assertSourceCurrent(source); assertPrivateStage(paths);
@@ -328,6 +359,7 @@ export class ProtectedHostStageRegistry {
       const registration = Object.freeze({}) as ProtectedHostStageRegistration;
       this.#stages.set(registration, state);
       this.#stageLifetimes.set(registration, state);
+      activeProtectedHostStages.add(registration);
       return registration;
     } catch (error) {
       try { paths.close(); } catch (closeError) { throw new AggregateError([error, closeError], "protected_host_stage_registration_unknown"); }
@@ -406,8 +438,72 @@ export class ProtectedHostStageRegistry {
     const actor: ActorState = { source: state, prepared, authority, domain, phase: "prepared" };
     const token = Object.freeze({}) as ProtectedHostActorPreparation;
     this.#actors.set(token, actor);
-    actorPreparedBindings.set(token, Object.freeze({ registry: this, prepared }));
+    actorPreparedBindings.set(token, Object.freeze({ registry: this, entry: MACOS_NATIVE_COMMAND_ACTOR_ENTRY, prepared,
+      readDomain: () => originalActorRegistryReaders.get(this)!.readDomain(token, prepared) }));
     return token;
+  }
+
+  /**
+   * Request-scoped actor lease. It is not a Run/Attempt source and grants no tool permission.
+   * The exact source-owned launcher still gates the one physical process; while the request is
+   * live, every registry refuses a new protected stage.
+   */
+  bindExternalWorkflowRequestActor(prepared: object, domain: ProtectedHostActorDomain,
+    entry: ProtectedHostActorEntry): ProtectedHostActorPreparation {
+    requireScope(prepared && typeof prepared === "object" && domain && typeof domain === "object",
+      "protected_host_actor_preparation_invalid");
+    requireScope(this.#inventory.assertOriginal(entry).entryId === "external_workflow_request",
+      "protected_host_actor_entry_proof_invalid");
+    requireScope(activeExternalWorkflowRequestActors.size === 0 && activeProtectedHostStages.size === 0,
+      "protected_host_request_actor_busy");
+    // Request isolation protects the workspace operation itself and is mutually
+    // exclusive with live protected stages. Historical coverage from unrelated
+    // fixed Host actors (for example Keychain status probes) is not a workspace
+    // safety authority and must not permanently disable this request-scoped lane.
+    this.#inventory.assertOriginalSourceManifest(readOriginalProtectedHostActorEntries());
+    requireScope(isDeepStrictEqual(readMacosSandboxBackendIdentity(), domain.backend), "protected_host_backend_changed");
+    const token = Object.freeze({}) as ProtectedHostActorPreparation;
+    const state: ExternalWorkflowRequestActorState = { prepared, domain, phase: "prepared" };
+    this.#externalWorkflowRequestActors.set(token, state);
+    activeExternalWorkflowRequestActors.add(token);
+    actorPreparedBindings.set(token, Object.freeze({ registry: this, entry, prepared,
+      readDomain: () => this.#readExternalWorkflowRequestDomain(token) }));
+    return token;
+  }
+
+  beginExternalWorkflowRequestActorLaunch(token: ProtectedHostActorPreparation): void {
+    const state = this.#externalWorkflowRequestActor(token);
+    requireScope(state.phase === "prepared", "protected_host_actor_launch_closed");
+    this.#readExternalWorkflowRequestDomain(token);
+    state.phase = "launch_entered";
+  }
+
+  recordExternalWorkflowRequestActorLaunched(token: ProtectedHostActorPreparation): void {
+    const state = this.#externalWorkflowRequestActor(token);
+    requireScope(state.phase === "launch_entered", "protected_host_actor_launch_unknown");
+    state.phase = "launched";
+  }
+
+  cancelExternalWorkflowRequestActor(token: ProtectedHostActorPreparation): void {
+    const state = this.#externalWorkflowRequestActor(token);
+    requireScope(state.phase === "prepared", "protected_host_actor_launch_closed");
+    state.phase = "closed";
+    activeExternalWorkflowRequestActors.delete(token);
+  }
+
+  completeExternalWorkflowRequestActor(token: ProtectedHostActorPreparation): void {
+    const state = this.#externalWorkflowRequestActor(token);
+    requireScope(state.phase === "launched", "protected_host_actor_launch_unknown");
+    state.phase = "closed";
+    activeExternalWorkflowRequestActors.delete(token);
+  }
+
+  markExternalWorkflowRequestActorUnknown(token: ProtectedHostActorPreparation): void {
+    const state = this.#externalWorkflowRequestActor(token);
+    state.phase = "unknown";
+    this.#coverageClosed = true;
+    // Keep the global request lease: without a proved terminal child, future Host
+    // stages must remain fail-closed rather than assuming descendants stopped.
   }
 
   /** Before both launcher entry and native spawn; prepared actors also constrain later stage registration. */
@@ -461,6 +557,7 @@ export class ProtectedHostStageRegistry {
     const stage = this.#stageLifetimes.get(token);
     requireScope(stage, "protected_host_stage_registration_invalid");
     this.#assertStage(stage);
+    requireScope(activeProtectedHostStages.has(token), "protected_host_stage_registration_invalid");
     if (this.#domain) this.#assertStageExclusion(this.#domain, stage);
   }
   readStageIdentityFacts(token: ProtectedHostStageRegistration): ReturnType<ProtectedHostStagePaths["identityFacts"]> {
@@ -474,6 +571,7 @@ export class ProtectedHostStageRegistry {
     requireScope(!stage.officeWindow && (stage.officeAdmission === undefined || stage.officeAdmission === "invalid"),
       "protected_host_office_window_close_required");
     if (stage.lifetime === "closed" || (stage.officeAdmission === "invalid" && stage.lifetime === "closed_pending")) return;
+    requireScope(activeProtectedHostStages.has(token), "protected_host_stage_registration_invalid");
     requireScope(stage.lifetime === "active", "protected_host_stage_close_unknown");
     const officeFailure = stage.officeAdmission === "invalid";
     stage.lifetime = "close_entered";
@@ -484,6 +582,7 @@ export class ProtectedHostStageRegistry {
     // original invalid-cleanup claim exists yet, so even known stage closure
     // must retain its protection member rather than implicitly releasing it.
     stage.lifetime = officeFailure ? "closed_pending" : "closed";
+    if (!officeFailure) requireScope(activeProtectedHostStages.delete(token), "protected_host_stage_registration_invalid");
   }
   #source(token: ProtectedHostActorSource): ActorSourceState {
     const source = this.#sources.get(token);
@@ -494,6 +593,22 @@ export class ProtectedHostStageRegistry {
     const actor = this.#actors.get(token);
     requireScope(actor, "protected_host_actor_preparation_invalid");
     return actor;
+  }
+  #externalWorkflowRequestActor(token: ProtectedHostActorPreparation): ExternalWorkflowRequestActorState {
+    const actor = this.#externalWorkflowRequestActors.get(token);
+    requireScope(actor && activeExternalWorkflowRequestActors.has(token), "protected_host_actor_preparation_invalid");
+    return actor;
+  }
+  #readExternalWorkflowRequestDomain(token: ProtectedHostActorPreparation): ProtectedHostActorDomain {
+    const actor = this.#externalWorkflowRequestActor(token);
+    requireScope(actor.phase === "prepared" || actor.phase === "launch_entered" || actor.phase === "launched",
+      "protected_host_actor_launch_closed");
+    this.#assertOriginalHostHistoryCurrent();
+    requireScope(isDeepStrictEqual(readMacosSandboxBackendIdentity(), actor.domain.backend), "protected_host_backend_changed");
+    for (const stage of this.#stages.values()) {
+      this.#assertStage(stage); this.#assertStageExclusion(actor.domain, stage);
+    }
+    return actor.domain;
   }
   #assertStage(stage: StageState): void {
     requireScope(stage.officeAdmission === undefined || stage.officeAdmission === "bound", "protected_host_office_window_admission_closed");
@@ -595,7 +710,8 @@ export class ProtectedHostStageRegistry {
       && target.registration === state.registration && isDeepStrictEqual(target.execution, state.execution)
       && this.#officeWindows.get(history.window) === state && this.#stageLifetimes.get(state.registration) === state.stage
       && state.epoch === this.#hostBindingEpoch && state.stage.officeWindow === state
-      && !this.#stages.has(state.registration), "protected_host_office_lease_release_history_invalid");
+      && !this.#stages.has(state.registration) && !activeProtectedHostStages.has(state.registration),
+    "protected_host_office_lease_release_history_invalid");
     // Historical idempotence is exact identity only. Current source/coverage,
     // native proof and already-closed original FD readers must not run here.
     return history;
@@ -609,6 +725,7 @@ export class ProtectedHostStageRegistry {
     requireScope(this.#officeWindows.get(token) === window && this.#stageLifetimes.get(window.registration) === stage
       && window.epoch === this.#hostBindingEpoch && stage.officeWindow === window
       && this.#stages.get(window.registration) === stage && epoch === this.#domainEpoch
+      && activeProtectedHostStages.has(window.registration)
       && !this.#coverageClosed && stage.lifetime === "closed_pending" && stage.officeAdmission === "bound",
       "protected_host_office_lease_release_invalid");
   }
@@ -639,6 +756,7 @@ export class ProtectedHostStageRegistry {
       // deletion of this member and publication of its original private history.
       this.#stages.delete(window.registration);
       this.#officeLeaseReleaseHistory.set(permit, history);
+      requireScope(activeProtectedHostStages.delete(window.registration), "protected_host_office_lease_release_invalid");
     } finally { officeLeaseReleasesInProgress.delete(permit); }
   }
   #assertOfficeLeaseReleased(permit: OriginalOfficeDirectoryRuntimeReleasePermitV2): void {

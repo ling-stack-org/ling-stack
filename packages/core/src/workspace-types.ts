@@ -2407,6 +2407,7 @@ export interface ChannelWorkflowStepMetadata {
   readonly autoStart?: boolean;
   readonly approvalGate?: SkillApprovalProfile;
   readonly preStepApprovalId?: string;
+  readonly preStepApprovalMarker?: import("./workflow-pre-gate.js").WorkflowPreGateMarkerV1;
   readonly policy?: WorkflowStepPolicy;
   readonly gates?: readonly WorkflowStepGate[];
   readonly fanInPolicy?: WorkflowFanInPolicy;

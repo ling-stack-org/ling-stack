@@ -1738,6 +1738,13 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   markRunFailed(runId: string, endedAt: string, errorMessage: string, summaryPath?: string): void;
   markRunCancelled(runId: string, endedAt: string, summaryPath?: string): void;
   appendEvent<K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K]): Extract<RunEventEnvelope, { readonly type: K }>;
+  /** Approval decisions use a stable Host idempotency identity, not a check-then-append projection. */
+  appendApprovalDecisionEvent(
+    runId: string,
+    approvalId: string,
+    type: Extract<RunEventType, "approval_approved" | "approval_denied" | "approval_expired" | "approval_cancelled">,
+    data: RunEventDataByType[Extract<RunEventType, "approval_approved" | "approval_denied" | "approval_expired" | "approval_cancelled">],
+  ): Extract<RunEventEnvelope, { readonly type: "approval_approved" | "approval_denied" | "approval_expired" | "approval_cancelled" }>;
   /** Runner callbacks must supply the Host identity captured before dispatch. */
   appendExecutionEvent<K extends RunEventType>(runId: string, sourceFence: RuntimeAttemptFenceV1, type: K, data: RunEventDataByType[K]): Extract<RunEventEnvelope, { readonly type: K }>;
   isCurrentRunExecutionOwner(runId: string, sourceFence: RuntimeAttemptFenceV1, allowCleanup?: boolean): boolean;
@@ -2381,6 +2388,8 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
     readonly idempotencyKey: string;
     readonly now: string;
   }): TransitionResult<ChannelWorkflowStep["status"]>;
+  requestChannelWorkflowStepPreApproval(input: import("./workflow-pre-gate.js").WorkflowStepPreApprovalInput): import("./workflow-pre-gate.js").WorkflowStepPreApprovalResult;
+  resolveChannelWorkflowStepPreApproval(input: import("./workflow-pre-gate.js").WorkflowStepPreApprovalResolveInput): import("./workflow-pre-gate.js").WorkflowStepPreApprovalResult;
   beginChannelWorkflowStepStart(input: import("./workflow-step-start-owner.js").BeginChannelWorkflowStepStartInput): import("./workflow-step-start-owner.js").BeginChannelWorkflowStepStartResult;
   commitChannelWorkflowStepRunReady(input: import("./workflow-step-start-owner.js").WorkflowStepStartCommitInput): import("./workflow-step-start-owner.js").WorkflowStepStartCommitResult;
   settleChannelWorkflowStepStartFailure(input: import("./workflow-step-start-owner.js").WorkflowStepStartFailureInput): import("./workflow-step-start-owner.js").WorkflowStepStartCommitResult;

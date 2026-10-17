@@ -59,11 +59,13 @@ export function ensureRunCancelled(input: {
     if (!cancelled) {
       continue;
     }
-    const approvalEvent = input.store.appendEvent(input.runId, "approval_cancelled", {
+    const approvalEvent = input.store.appendApprovalDecisionEvent(input.runId, cancelled.id, "approval_cancelled", {
       approvalId: cancelled.id,
       status: cancelled.status,
       resolvedBy: cancelled.resolvedBy,
       decisionReason: cancelled.decisionReason,
+      decisionKind: cancelled.decisionKind,
+      decisionRuleId: cancelled.decisionRuleId,
     });
     input.streamEnvelope?.(approvalEvent);
     syncLingThreadForRunEvent(input.store, current, "approval_cancelled", approvalEvent);

@@ -23,6 +23,9 @@ import {
   type RunSession,
   type RunProgressCheckpointWitness,
   type CommitUserInputYieldResult,
+  type UserInputContinuationBinding,
+  type UserInputContinuationClaim,
+  type UserInputContinuationSeed,
   type RunStatus,
   type RunStore,
   type RunTool,
@@ -180,6 +183,7 @@ import { projectPublicRunEventEnvelope } from "./public-artifacts.js";
 import { AttemptHostOperationTracker } from "../../runtime/attempt-host-operation-tracker.js";
 import { UserInputPauseCoordinator } from "./user-input-pause-coordinator.js";
 import { providerForRunPersistence } from "./provider-persistence.js";
+import { withUserInputContinuationReceiver } from "./user-input-continuation-receiver.js";
 import {
   createProviderInvocationObserver,
   type ProviderInvocationFailureSink,
@@ -192,6 +196,19 @@ interface ExistingRunContinuationExecutionOptions {
   readonly origin: RunnerContinuationOrigin;
   readonly idempotencyDiscriminator: string;
   readonly preparedExecution?: PreparedRunnerContinuationExecution;
+}
+
+interface UserInputContinuationExecutionOptions {
+  readonly threadId: string;
+  readonly deliveryId: string;
+  readonly claim?: UserInputContinuationClaim;
+  readonly binding?: UserInputContinuationBinding;
+}
+
+export interface UserInputReceiverAccepted {
+  readonly runId: string;
+  readonly deliveryId: string;
+  readonly acceptedAt: string;
 }
 
 export interface ExecuteRunRequestOptions {
@@ -210,6 +227,10 @@ export interface ExecuteRunRequestOptions {
   readonly enableUserInputPause?: boolean;
   /** Trusted daemon-only path. Public Run requests never select an existing Run. */
   readonly existingRunContinuation?: ExistingRunContinuationExecutionOptions;
+  /** Trusted durable outbox consumer. Public callers cannot supply delivery claims or bindings. */
+  readonly userInputContinuation?: UserInputContinuationExecutionOptions;
+  /** Trusted process-local scheduling signal emitted only after the durable Pi receiver ACK. */
+  readonly onUserInputReceiverAccepted?: (input: UserInputReceiverAccepted) => void;
 }
 
 export interface RunExecutionSink {
@@ -369,6 +390,35 @@ export function executeExistingRunContinuation(
   return completion;
 }
 
+/** Execute the one durable successor selected by the Host delivery worker. */
+export function executeUserInputContinuation(
+  input: UserInputContinuationExecutionOptions & { readonly request: RunRequest },
+  sink: RunExecutionSink,
+  runnerRegistry: RunnerRegistry,
+  storeRegistry: RunStoreRegistry,
+  activeRuns: ActiveRunRegistry,
+  runtimeSupervisor: RuntimeSupervisor,
+  secretResolver: SecretResolver,
+  mcpBroker: McpBroker,
+  options: ExecuteRunRequestOptions = {},
+): Promise<string | undefined> {
+  if (Boolean(input.claim) === Boolean(input.binding)) {
+    writeRunPreparationFailure(sink, 409, { error: "user_input_continuation_identity_invalid",
+      message: "Exactly one durable delivery claim or admitted binding is required." });
+    return Promise.resolve(undefined);
+  }
+  const completion = Promise.resolve().then(() => {
+    if (activeRuns.isShuttingDown()) {
+      writeRunPreparationFailure(sink, 503, { error: "runtime_shutting_down", message: "Runtime is shutting down." });
+      return undefined;
+    }
+    return executeAdmittedRunRequest(input.request, sink, runnerRegistry, storeRegistry, activeRuns,
+      runtimeSupervisor, secretResolver, mcpBroker, { ...options, userInputContinuation: input });
+  });
+  activeRuns.trackCompletion(completion);
+  return completion;
+}
+
 async function executeAdmittedRunRequest(
   runRequest: RunRequest,
   sink: RunExecutionSink,
@@ -416,8 +466,14 @@ async function executeAdmittedRunRequest(
   let ordinaryProgressRecoveryModelView: readonly unknown[] | undefined;
   let ordinaryProgressRecoveryWitness: RunProgressCheckpointWitness | undefined;
   const existingContinuation = options.existingRunContinuation;
+  const userInputContinuation = options.userInputContinuation;
+  let userInputSeed: UserInputContinuationSeed | undefined;
+  let userInputBinding: UserInputContinuationBinding | undefined;
   let workflowStartOwner: import("@ling-stack/core").WorkflowStepStartOwnerV1 | undefined;
   try {
+    if (existingContinuation && userInputContinuation) {
+      throw new HttpError(409, "continuation_identity_conflict", "A Run cannot use two continuation owners.");
+    }
     workspaceCwd = runRequest.workspaceCwd ?? runRequest.cwd;
     await ensureWorkspaceStateWritableForRun(workspaceCwd);
     await ensureStartupReadyForRun({
@@ -428,7 +484,34 @@ async function executeAdmittedRunRequest(
       secretResolver,
     });
     store = storeRegistry.getStore(workspaceCwd);
-    if (existingContinuation) {
+    if (userInputContinuation) {
+      userInputSeed = store.getUserInputContinuationSeed(userInputContinuation.threadId, userInputContinuation.deliveryId);
+      if (!userInputSeed || userInputSeed.source.cwd !== runRequest.cwd
+        || userInputSeed.source.threadId !== runRequest.threadId || userInputSeed.source.turnId !== runRequest.turnId
+        || userInputSeed.source.taskBinding.taskId !== runRequest.task.id
+        || userInputSeed.source.participantId !== (runRequest.teammateId ?? "ling_agent")
+        || userInputSeed.source.workflowStepId !== runRequest.workflowStepId
+        || userInputSeed.source.runId !== runRequest.parentRunId
+        || runRequest.continuationReason !== "user_input_answer") {
+        throw new HttpError(409, "user_input_source_request_invalid", "Durable answer source no longer matches the prepared request.");
+      }
+      workUnit = store.getWorkUnit(userInputSeed.source.fence.workUnitId);
+      thread = store.getLingThread(userInputSeed.source.threadId);
+      turn = store.getLingTurn(userInputSeed.source.turnId);
+      userInputBinding = userInputContinuation.binding;
+      if (userInputBinding) {
+        const current = store.getUserInputContinuationBinding(userInputContinuation.threadId, userInputContinuation.deliveryId);
+        if (!current || !isDeepStrictEqual(current, userInputBinding)) {
+          throw new HttpError(409, "user_input_binding_changed", "Durable answer binding changed before execution.");
+        }
+        run = store.getRun(userInputBinding.runId);
+      }
+      if (!workUnit || !thread || !turn || workUnit.id !== userInputSeed.source.fence.workUnitId
+        || thread.id !== userInputSeed.source.threadId || turn.threadId !== thread.id
+        || userInputBinding && (!run || run.workUnitId !== workUnit.id || userInputBinding.fence.workUnitId !== workUnit.id)) {
+        throw new HttpError(409, "continuation_source_incomplete", "Durable answer continuation lineage is incomplete.");
+      }
+    } else if (existingContinuation) {
       run = store.getRun(existingContinuation.runId);
       workUnit = run?.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;
       thread = run?.threadId ? store.getLingThread(run.threadId) : undefined;
@@ -458,15 +541,16 @@ async function executeAdmittedRunRequest(
         attempt = activeAttempt;
       }
     }
-    let preparedExecution = existingContinuation ? undefined : readNormalConversationPreparedExecution(store, runRequest);
-    const existingRunnerExecution = existingContinuation && run ? readStoredRunnerExecution(run) : undefined;
-    if (existingContinuation && !existingRunnerExecution) {
+    let preparedExecution = existingContinuation || userInputContinuation ? undefined : readNormalConversationPreparedExecution(store, runRequest);
+    const existingRunnerExecution = (existingContinuation || userInputBinding) && run ? readStoredRunnerExecution(run) : undefined;
+    if ((existingContinuation || userInputBinding) && !existingRunnerExecution) {
       throw new HttpError(409, "continuation_source_incomplete", "Existing Run has no valid frozen Runner execution input.");
     }
     const frozenExecution = preparedExecution?.payload ?? existingRunnerExecution;
     assertFullAccessPermissionConfirmed(runRequest);
     validateWorkflowStepOwner(store, runRequest);
-    workflowStartOwner = captureWorkflowStartOwner(store, runRequest, existingContinuation?.runId);
+    workflowStartOwner = captureWorkflowStartOwner(store, runRequest,
+      existingContinuation?.runId ?? userInputSeed?.source.runId);
     runtime = runtimeSupervisor.getRuntime(workspaceCwd, store);
     resolvedProvider = resolveProviderForRun(store, runRequest, secretResolver, {
       providerWebSocketFallbackEnabled: runtimeSupervisor.getTransportFeatures().providerWebSocketFallback,
@@ -576,17 +660,17 @@ async function executeAdmittedRunRequest(
       hostCapabilityTools: selectedHostCapabilityTools,
     };
     resolvedSecretValues = [resolvedProvider.apiKey];
-    runId = existingContinuation?.runId ?? createRunId();
+    runId = existingContinuation?.runId ?? userInputSeed?.successorRunId ?? createRunId();
     createdAt = new Date().toISOString();
     const idempotencyKey = runRequest.idempotencyKey ?? `run:${runId}`;
-    if (!existingContinuation) {
+    if (!existingContinuation && !userInputContinuation) {
       thread = ensureLingThreadForRun(store, runRequest, createdAt);
       turn = ensureLingTurnForRun(store, thread, runRequest, createdAt);
     }
     if (!thread || !turn) {
       throw new HttpError(409, "continuation_source_incomplete", "Run thread or turn lineage is incomplete.");
     }
-    durableTaskSnapshot = run?.taskSnapshot as RunRequest["task"] | undefined
+    durableTaskSnapshot = userInputContinuation ? runRequest.task : run?.taskSnapshot as RunRequest["task"] | undefined
       ?? store.getTask(runRequest.task.id)
       ?? runRequest.task;
     const harnessFeatureSnapshot = runRequest.harnessFeatureSnapshot ?? createHarnessFeatureSnapshot({
@@ -602,7 +686,7 @@ async function executeAdmittedRunRequest(
       harnessFeatureSnapshot,
       harnessContinuationOrigin,
     };
-    const workUnitOwner = existingContinuation && workUnit
+    const workUnitOwner = (existingContinuation || userInputContinuation) && workUnit
       ? { kind: workUnit.kind, ownerType: workUnit.ownerType, ownerId: workUnit.ownerId }
       : resolveRunWorkUnitOwner(thread, runRequest, turn.id);
     // Definitions belong to initial model input; executable handlers require the real Run below.
@@ -623,7 +707,7 @@ async function executeAdmittedRunRequest(
       if (activeRuns.isShuttingDown()) throw new HttpError(503, "runtime_shutting_down", "Runtime is shutting down.");
       assertHostCapabilitiesCurrent();
     };
-    if (!existingContinuation) {
+    if (!existingContinuation && !userInputContinuation) {
       preparedExecution = await prepareNormalConversationExecution({ store, request: runRequest,
         runnerId: runnerResolution.effectiveRunnerId, adapter: runnerResolution.runner.adapter, options: runnerRequest,
         usedMemory, skillSourceContext: selectedSkillSourceContext, assertCurrent: assertPreparationCurrent });
@@ -640,7 +724,7 @@ async function executeAdmittedRunRequest(
     const refreshPreparedExecution = (): void => {
       if (!executionInput) return;
       // Recheck after awaiting SDK preparation. A snapshot never authorizes a revoked provider/tool.
-      if (existingContinuation) {
+      if (existingContinuation || userInputBinding) {
         assertPreparedRunnerMemoryCurrent(runStore, runRequest, executionInput);
       } else {
         assertPreparedExecutionMemoryCurrent(runStore, runRequest, executionInput);
@@ -673,7 +757,7 @@ async function executeAdmittedRunRequest(
       assertPreparationCurrent();
     };
     refreshPreparedExecution();
-    const existingWorkUnit = !existingContinuation && runRequest.idempotencyKey
+    const existingWorkUnit = !existingContinuation && !userInputContinuation && runRequest.idempotencyKey
       ? store.findWorkUnitByIdempotency({
           kind: workUnitOwner.kind,
           ownerType: workUnitOwner.ownerType,
@@ -757,7 +841,7 @@ async function executeAdmittedRunRequest(
           ordinaryProgressRecoveryWitness = progress.witness;
         }
       }
-    } else {
+    } else if (!userInputContinuation) {
       workUnit = store.createWorkUnit({
         workspaceId: DEFAULT_WORKSPACE_ID,
         kind: workUnitOwner.kind,
@@ -810,6 +894,12 @@ async function executeAdmittedRunRequest(
         },
       });
       appendWorkUnitCreatedControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, workUnit, createdAt);
+    } else if (userInputBinding) {
+      const frozenPolicy = readStoredEffectivePolicySnapshot(run?.requestSnapshot);
+      if (!frozenPolicy || !isDeepStrictEqual(effectivePolicySnapshot, frozenPolicy)) {
+        throw new HttpError(409, "continuation_policy_changed",
+          "The admitted answer continuation no longer matches current workspace and conversation policy.");
+      }
     }
     if (!store || !resolvedProvider || !effectivePolicySnapshot || !thread || !turn || !runnerResolution || !workUnit) {
       throw new Error("Run persistence dependencies were not initialized.");
@@ -969,6 +1059,69 @@ async function executeAdmittedRunRequest(
         });
         attempt = activation.attempt;
       }
+    } else if (userInputContinuation) {
+      if (!executionInput || !(runnerResolution.runner.adapter instanceof PiRunnerAdapter) || !userInputSeed || !workUnit) {
+        throw new HttpError(409, "user_input_receiver_unverified",
+          "Durable answer continuation requires a verified Pi receiver and frozen execution input.");
+      }
+      if (!userInputBinding) {
+        const claim = userInputContinuation.claim;
+        if (!claim) throw new HttpError(409, "user_input_claim_missing", "Durable answer claim is missing.");
+        prepareManagedRuntime();
+        const admissionAt = new Date().toISOString();
+        const runRequestSnapshot = {
+          ...durableRunRequest,
+          permissionMode: effectivePolicySnapshot.mode,
+          effectivePolicySnapshot,
+          workspaceCwd,
+          executionCwd: runRequest.cwd,
+          channelWorkspaceBinding: channelWorkspaceSnapshot,
+          threadId: persistenceThread.id,
+          turnId: persistenceTurn.id,
+          provider: persistenceProvider,
+          runnerResolution: toRunnerResolutionSnapshot(persistenceRunnerResolution),
+          runtimeSettings,
+          runtimeToolFeatures,
+          selectedSkillId: selectedSkill?.skillId,
+          skillSourceContext: selectedSkillSourceContext,
+          mcpToolAccess,
+          managedPluginRuntime,
+          runnerExecutionInput: executionInput,
+        };
+        const preparedRequest = store.getUserInputContinuationPreparation(claim.threadId, claim.deliveryId, "request");
+        if (!preparedRequest) throw new HttpError(409, "user_input_prepared_request_missing",
+          "Durable answer request preparation is missing.");
+        const prepared = store.saveUserInputContinuationPreparation({ ...claim, stage: "execution",
+          parentRef: { id: preparedRequest.id, fingerprint: preparedRequest.fingerprint },
+          payload: {
+            schemaVersion: 1,
+            runnerId: runnerResolution.effectiveRunnerId,
+            providerName: persistenceProvider.provider,
+            providerModel: persistenceProvider.model,
+            providerPresetId: runRequest.providerPresetId,
+            selectedSkillId: selectedSkill?.skillId,
+            taskSnapshot: runRequest.task,
+            providerSnapshot: { providerPresetId: runRequest.providerPresetId, ...persistenceProvider },
+            requestSnapshot: runRequest,
+            runRequestSnapshot,
+            preparedInput: executionInput.preparedInput,
+            preparedInputFingerprint: executionInput.preparedInput.fingerprint,
+            runnerExecutionInput: executionInput,
+          },
+        }, admissionAt).snapshot;
+        userInputBinding = store.admitUserInputContinuation({ ...claim,
+          executionRef: { id: prepared.id, fingerprint: prepared.fingerprint },
+          runtimeInstanceId: runtime.runtimeInstanceId }, admissionAt);
+        createdAt = admissionAt;
+      }
+      run = store.getRun(userInputBinding.runId);
+      workUnit = store.getWorkUnit(userInputBinding.fence.workUnitId);
+      attempt = store.getWorkUnitAttempt(userInputBinding.fence.attemptId);
+      if (!run || !workUnit || !attempt || run.id !== runId || workUnit.id !== userInputBinding.fence.workUnitId
+        || !isDeepStrictEqual(toRuntimeAttemptFence(attempt), userInputBinding.fence)) {
+        throw new HttpError(409, "continuation_source_incomplete", "Admitted answer continuation is incomplete.");
+      }
+      storeRegistry.rememberRun(run.id, store);
     } else if (continuationEnforced) {
       const sourceRun = runRequest.parentRunId ? store.getRun(runRequest.parentRunId) : undefined;
       const sourceWorkUnit = sourceRun?.workUnitId ? store.getWorkUnit(sourceRun.workUnitId) : undefined;
@@ -1030,11 +1183,11 @@ async function executeAdmittedRunRequest(
       runnerId: runnerResolution.effectiveRunnerId,
       now: createdAt,
     });
-    if (!existingContinuation
+    if (!userInputContinuation && (!existingContinuation
       || existingContinuation.origin === "runner_retry"
       || existingContinuation.origin === "manual_resume"
       || existingContinuation.origin === "queued_followup"
-      || existingContinuation.origin === "interrupt_redirect") {
+      || existingContinuation.origin === "interrupt_redirect")) {
       claimPreparedRunTask({
         store,
         task: preparedConcurrency.task,
@@ -1080,7 +1233,9 @@ async function executeAdmittedRunRequest(
       });
       appendWorkUnitTransitionControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd,
         workUnit.id, "queued", "claimed", runId, createdAt);
-    } else if (currentWorkUnitBeforeClaim.status !== "running") {
+    } else if (currentWorkUnitBeforeClaim.status !== "running"
+      && !(userInputContinuation && currentWorkUnitBeforeClaim.status === "claimed"
+        && currentWorkUnitBeforeClaim.activeAttemptId === attempt.id)) {
       throw new HttpError(409, "continuation_activation_state_invalid",
         `Existing Run WorkUnit is ${currentWorkUnitBeforeClaim.status}; expected queued or running.`);
     }
@@ -1093,7 +1248,7 @@ async function executeAdmittedRunRequest(
       now: createdAt,
     });
     run ??= persistRun(continuationContext);
-    if (existingContinuation) {
+    if (existingContinuation || userInputContinuation) {
       markLingThreadRunActive(store, thread.id, run.id, createdAt);
       storeRegistry.rememberRun(run.id, store);
     }
@@ -1211,8 +1366,20 @@ async function executeAdmittedRunRequest(
       });
       appendRunCreatedControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, run, createdAt);
     }
-    if (run) commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner);
+    if (run && !userInputContinuation) commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner);
   } catch (error) {
+    if (userInputContinuation) {
+      if (preparedConcurrency.leases.length > 0 && store && attempt) {
+        const now = new Date().toISOString();
+        store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), now, "user-input-prepare-deferred");
+        store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), now, "user-input-prepare-deferred");
+      }
+      writeRunPreparationFailure(sink, error instanceof HttpError ? error.statusCode : 503, {
+        error: error instanceof HttpError ? error.code : "user_input_receiver_unavailable",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
     if (existingContinuation?.origin === "approval_resume" && error instanceof HttpError
       && error.code === "runtime_shutting_down" && store && run && attempt && continuationExecution) {
       const suspension = suspendClaimedApprovalResumePreparation({
@@ -1701,6 +1868,7 @@ async function executeAdmittedRunRequest(
     }
   };
   const heartbeatTimer = setInterval(() => {
+    if (!runtimeStarted) return;
     recordRuntimeHeartbeat("supervisor");
     // A blocked pause retains the original owner for durable recovery. Idle
     // and hard-timeout observers must not turn an unknown Host outcome into a
@@ -1738,6 +1906,9 @@ async function executeAdmittedRunRequest(
   let hardTimeoutPauseDepth = 0;
   let approvalHardTimeoutPaused = false;
   let runtimeStarted = false;
+  let userInputReceiverAccepted = userInputBinding === undefined;
+  const pendingUserInputRunnerEvents: PiRunnerEvent[] = [];
+  let flushPendingUserInputRunnerEvents = (): void => undefined;
   const clearHardTimeout = (): void => {
     if (!hardTimeoutTimer) return;
     clearTimeout(hardTimeoutTimer);
@@ -1926,19 +2097,20 @@ async function executeAdmittedRunRequest(
     data: RunEventDataByType[K],
   ): RunEventEnvelope | undefined => appendRunEvent(type, data, true);
 
-  try {
-    runStartedAt = new Date().toISOString();
+  const startObservedRuntime = (startedAt: string, alreadyStartedByCore: boolean): void => {
+    if (runtimeStarted) throw new Error("Runner start was accepted more than once.");
+    runStartedAt = startedAt;
     const runBeforeStart = store.getRun(run.id);
     if (!runBeforeStart) throw new Error("Run disappeared before Runner start.");
-    if (runBeforeStart.status === "queued") {
+    if (!alreadyStartedByCore && runBeforeStart.status === "queued") {
       const runStartTransition = store.transitionRunExecutionStatus({
         runId: run.id,
         sourceFence: runnerCallbackFence,
         expectedStatus: "queued",
         event: "runner_started",
         actor: "runner",
-        now: runStartedAt,
-        startedAt: runStartedAt,
+        now: startedAt,
+        startedAt,
       });
       if (!runStartTransition.ok) {
         throw new Error(`Run transition failed: ${runStartTransition.code}`);
@@ -1948,7 +2120,7 @@ async function executeAdmittedRunRequest(
     }
     const workUnitBeforeStart = store.getWorkUnit(workUnit.id);
     if (!workUnitBeforeStart) throw new Error("Work unit disappeared before Runner start.");
-    if (workUnitBeforeStart.status === "claimed") {
+    if (!alreadyStartedByCore && workUnitBeforeStart.status === "claimed") {
       const workUnitStartTransition = store.transitionWorkUnitStatus({
         workUnitId: workUnit.id,
         attemptId: attempt.id,
@@ -1958,31 +2130,37 @@ async function executeAdmittedRunRequest(
         expectedStatus: "claimed",
         event: "runner_started",
         actor: "runner",
-        now: runStartedAt,
-        startedAt: runStartedAt,
-        lastHeartbeatAt: runStartedAt,
+        now: startedAt,
+        startedAt,
+        lastHeartbeatAt: startedAt,
       });
       if (!workUnitStartTransition.ok) {
         throw new Error(`Work unit start failed: ${workUnitStartTransition.code}`);
       }
       appendWorkUnitTransitionControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd,
-        workUnit.id, "claimed", "running", run.id, runStartedAt);
+        workUnit.id, "claimed", "running", run.id, startedAt);
     } else if (workUnitBeforeStart.status !== "running") {
       throw new Error(`Work unit start requires claimed or running state, received ${workUnitBeforeStart.status}.`);
     }
-    if (continuationExecution) {
-      continuationExecution = startPreparedRunnerContinuation(store, continuationExecution, runStartedAt);
-    } else {
+    if (alreadyStartedByCore) {
+      appendWorkUnitTransitionControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd,
+        workUnit.id, "claimed", "running", run.id, startedAt);
+    }
+    if (!alreadyStartedByCore && continuationExecution) {
+      continuationExecution = startPreparedRunnerContinuation(store, continuationExecution, startedAt);
+    } else if (!alreadyStartedByCore) {
       store.updateWorkUnitAttemptStatus({
         attemptId: attempt.id,
         workUnitId: attempt.workUnitId,
         runtimeInstanceId: attempt.runtimeInstanceId,
         fencingToken: attempt.fencingToken,
         status: "started",
-        now: runStartedAt,
-        startedAt: runStartedAt,
-        lastHeartbeatAt: runStartedAt,
+        now: startedAt,
+        startedAt,
+        lastHeartbeatAt: startedAt,
       });
+    } else if (store.getWorkUnitAttempt(attempt.id)?.status !== "started") {
+      throw new Error("Accepted user input continuation Attempt is not started.");
     }
     store.appendRuntimeEvent({
       workUnitId: workUnit.id,
@@ -1991,7 +2169,7 @@ async function executeAdmittedRunRequest(
       fencingToken: attempt.fencingToken,
       type: "work_unit_started",
       actor: "runner",
-      ts: runStartedAt,
+      ts: startedAt,
       data: { runId: run.id },
     });
     recordRuntimeHeartbeat("runner", { event: "runner_started" });
@@ -2001,13 +2179,13 @@ async function executeAdmittedRunRequest(
     scheduleHardTimeout();
     if (preparedConcurrency.taskExists) {
       const taskBeforeStart = store.getTask(run.taskId);
-      if (taskBeforeStart?.status === "claimed") {
+      if (!alreadyStartedByCore && taskBeforeStart?.status === "claimed") {
         const taskStartTransition = store.transitionTaskStatus({
           taskId: run.taskId,
           expectedStatus: "claimed",
           event: "start_run",
           actor: "runner",
-          now: runStartedAt,
+          now: startedAt,
           currentRunId: run.id,
         });
         if (!taskStartTransition.ok) {
@@ -2017,9 +2195,13 @@ async function executeAdmittedRunRequest(
         throw new Error(`Task start requires claimed or running state, received ${taskBeforeStart?.status ?? "missing"}.`);
       }
     }
+  };
+
+  try {
     if (!approvalPolicy) {
       throw new Error("Run approval policy was not initialized.");
     }
+    if (!userInputBinding) startObservedRuntime(new Date().toISOString(), false);
     // Complete Host start bookkeeping so shutdown has a legal fenced failure
     // transition, then reject before any Runner or approval tool is invoked.
     await waitForTaskContinuation("run_start");
@@ -2206,6 +2388,10 @@ async function executeAdmittedRunRequest(
           })
         : undefined,
       onEvent: (event: PiRunnerEvent) => {
+        if (!userInputReceiverAccepted) {
+          pendingUserInputRunnerEvents.push(event);
+          return;
+        }
         if (event.type === "tool_start") {
           toolStartArgsById.set(event.toolCallId, event.args);
         }
@@ -2316,6 +2502,12 @@ async function executeAdmittedRunRequest(
       },
       signal: abortController.signal,
     };
+    flushPendingUserInputRunnerEvents = (): void => {
+      userInputReceiverAccepted = true;
+      for (const pendingEvent of pendingUserInputRunnerEvents.splice(0)) {
+        boundRunnerRequest.onEvent?.(pendingEvent);
+      }
+    };
     assertWorkflowRunAdmission(store, run, workflowStartOwner, abortController.signal);
     const approvedToolContinuation: PiRunnerApprovedToolContinuation | undefined =
       existingContinuation?.origin === "approval_resume"
@@ -2339,6 +2531,26 @@ async function executeAdmittedRunRequest(
     const continuationRunnerRequest = localWriters
       ? scopeUserInputLocalWriters(unscopedContinuationRequest, localWriters)
       : unscopedContinuationRequest;
+    const executableRunnerRequest = userInputBinding
+      ? withUserInputContinuationReceiver({
+          store,
+          threadId: userInputContinuation!.threadId,
+          binding: userInputBinding,
+          adapter: runnerResolution.runner.adapter,
+          options: continuationRunnerRequest,
+          onAccepted: (acceptedAt) => {
+            startObservedRuntime(acceptedAt, true);
+            flushPendingUserInputRunnerEvents();
+            try {
+              options.onUserInputReceiverAccepted?.({ runId: userInputBinding!.runId,
+                deliveryId: userInputBinding!.deliveryId, acceptedAt });
+            } catch {
+              // Process-local scheduling observers never own the durable ACK or
+              // the model execution that is now allowed to proceed.
+            }
+          },
+        })
+      : continuationRunnerRequest;
     assertWorkflowRunAdmission(store, run, workflowStartOwner, abortController.signal);
     const reconstruction = continuationExecution
       ? await executeRunnerContinuationReconstruction({
@@ -2348,7 +2560,7 @@ async function executeAdmittedRunRequest(
           targetFence: runnerCallbackFence,
           workspaceCwd,
           policySnapshot: effectivePolicySnapshot,
-          liveOptions: continuationRunnerRequest,
+          liveOptions: executableRunnerRequest,
         })
       : undefined;
     if (reconstruction && !reconstruction.ok) {
@@ -2356,7 +2568,7 @@ async function executeAdmittedRunRequest(
     }
     assertWorkflowRunAdmission(store, run, workflowStartOwner, abortController.signal);
     const result = reconstruction?.result
-      ?? await runnerResolution.runner.adapter.runTask(continuationRunnerRequest);
+      ?? await runnerResolution.runner.adapter.runTask(executableRunnerRequest);
 
     const completionStopIntent = activeRuns.getStopIntent(run.id)
       ?? readActiveRunStopIntent(abortController.signal.reason);
@@ -2505,6 +2717,27 @@ async function executeAdmittedRunRequest(
   } catch (error) {
     const stopIntent = activeRuns.getStopIntent(run.id) ?? readActiveRunStopIntent(abortController.signal.reason);
     const observedRun = store.getRun(run.id);
+    const observedWorkUnit = store.getWorkUnit(workUnit.id);
+    const observedAttempt = store.getWorkUnitAttempt(attempt.id);
+    if (userInputBinding
+      && !store.getUserInputContinuationReceipt(userInputContinuation!.threadId, userInputBinding.deliveryId)
+      && observedRun?.status === "queued"
+      && observedWorkUnit?.status === "claimed"
+      && observedWorkUnit.activeAttemptId === attempt.id
+      && observedAttempt?.status === "created") {
+      // The Pi session never crossed the durable receiver boundary. Keep the
+      // admitted binding intact so another daemon can reopen the same frozen
+      // Run/Attempt; no model request, terminal state, or applied answer exists.
+      if (!sinkClosed) {
+        sink.writeEvent("user_input_receiver_unavailable", {
+          runId: run.id,
+          deliveryId: userInputBinding.deliveryId,
+          code: error instanceof HttpError ? error.code : "user_input_receiver_unavailable",
+        });
+        sink.end();
+      }
+      return run.id;
+    }
     if (!store.isCurrentRunExecutionOwner(run.id, runnerCallbackFence, true)) {
       const staleEvent = auditIgnoredRunnerCompletion({
         store,

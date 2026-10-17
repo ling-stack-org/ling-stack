@@ -1,5 +1,6 @@
 import {
   isRiskyRunTool,
+  inspectWorkflowPreApproval,
   type Channel,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
@@ -149,12 +150,8 @@ function queuedStepIds(eligibleSteps: readonly ChannelWorkflowStep[], runnableSt
 }
 
 function needsPreStepApproval(store: RunStore, step: ChannelWorkflowStep): boolean {
-  const approvalGate = step.metadata?.approvalGate;
-  if (!approvalGate || approvalGate.mode === "none") {
-    return false;
-  }
-  const approval = step.metadata?.preStepApprovalId ? store.getApprovalRequest(step.metadata.preStepApprovalId) : undefined;
-  return approval?.status !== "approved";
+  const inspection = inspectWorkflowPreApproval(store, step, new Date().toISOString());
+  return inspection.status !== "not_required" && inspection.status !== "approved";
 }
 
 function resolveStepToolSafety(

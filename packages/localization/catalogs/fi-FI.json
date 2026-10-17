@@ -10421,7 +10421,7 @@
     "On iPhone, open Ling Mobile and scan this one-time code. Final confirmation stays on this PC.": "Avaa iPhonessa Ling Mobile ja skannaa tämä kertakäyttöinen koodi. Lopullinen vahvistus jää tälle tietokoneelle.",
     "One more step": "Vielä yksi askel",
     "One or more project images are no longer available.": "Yksi tai useampi projektikuva ei ole enää saatavilla.",
-    "One per line. Store env: or keychain: refs only, not secret values.": "Yksi per rivi. Store env: tai avaimenperä: vain viitteet, ei salaisia ​​arvoja.",
+    "One per line. Store env: or keychain: refs only, not secret values.": "Yksi per rivi. Store env: tai keychain: vain viitteet, ei salaisia ​​arvoja.",
     "One-off preference": "Kertaluonteinen etusija",
     "Only archived conversations can be deleted.": "Vain arkistoidut keskustelut voidaan poistaa.",
     "Only authorize MCP tools this teammate actually needs.": "Valtuuta vain MCP työkaluja, joita tämä joukkuetoveri todella tarvitsee.",

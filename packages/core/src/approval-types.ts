@@ -211,6 +211,8 @@ export type ApprovalPayload =
   | {
       readonly type: "workflow_step";
       readonly gateStage?: "pre" | "post";
+      /** Host-frozen start-cycle authority; never supplied by a workflow client. */
+      readonly preGateBasis?: import("./workflow-pre-gate.js").WorkflowPreGateBasisV1;
       readonly workflowId: string;
       readonly workflowStepId: string;
       readonly templateStepId?: string;

@@ -12,6 +12,7 @@ import { readConsumedOriginalPackagedCodesignHostProof, readOriginalPackagedCode
 /** Audited native-entry inventory. These names describe source-owned producers, not runner labels. */
 function createActorEntryKinds() { return Object.freeze({
   macos_native_command: "controlled",
+  external_workflow_request: "controlled",
   unified_exec_raw: "controlled",
   // A distinct DB-backed confirmed source, never the absence of a native dispatch.
   unified_exec_full_access: "user_external",

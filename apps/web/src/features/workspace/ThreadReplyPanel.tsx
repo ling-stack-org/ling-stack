@@ -5,6 +5,7 @@ import { buildSurfaceTimelineSnapshot } from "../../domains/conversations/timeli
 import { filterUsedMemoryEventsByResponse, UsedMemorySummary } from "../../shared/components/index.js";
 import { ConversationReplacementRetry, InlineMessageEditor, MessageActionBar, MessageRow, mountConversationTimeline } from "../../shared/conversation/index.js";
 import { Textarea } from "../../shared/ui/index.js";
+import { submitUserInputAnswer } from "../../api.js";
 import type { ChannelMention, ChannelMessage, ConversationItemV1, ConversationReasoningSummaryRecord, MemoryObject, UsedMemoryEvent, UserInputTranscriptItemV1 } from "../../types.js";
 
 export function ThreadReplyPanel({
@@ -87,6 +88,7 @@ export function ThreadReplyPanel({
     }),
     depth: 0,
     cwd,
+    onSubmitUserInputAnswer: (command) => submitUserInputAnswer(cwd, command),
     onOpenSourceRef: () => onOpenFileReference(),
     renderMessageChrome: (item, body) => {
       const message = messageByTimelineId.get(item.id);

@@ -715,6 +715,7 @@ import { SqliteChannelProtocolStore } from "./sqlite/channel-protocol-store.js";
 import { SqliteChannelPlaybookStore } from "./sqlite/channel-playbook-store.js";
 import { SqliteChannelWorkflowStore } from "./sqlite/channel-workflow-store.js";
 import { SqliteChannelWorkflowStartStore } from "./sqlite/channel-workflow-start-store.js";
+import { SqliteChannelWorkflowPreApprovalStore } from "./sqlite/channel-workflow-pre-approval-store.js";
 import { SqliteChannelTeamEvidenceStore } from "./sqlite/channel-team-evidence-store.js";
 import { SqliteChannelTeamLifecycleStore } from "./sqlite/channel-team-lifecycle-store.js";
 import { SqliteChannelTeamPatternStore } from "./sqlite/channel-team-pattern-store.js";
@@ -844,6 +845,7 @@ export class SqliteRunStore implements RunStore {
   private readonly channelPlaybooks: SqliteChannelPlaybookStore;
   private readonly channelWorkflows: SqliteChannelWorkflowStore;
   private readonly channelWorkflowStarts: SqliteChannelWorkflowStartStore;
+  private readonly channelWorkflowPreApprovals: SqliteChannelWorkflowPreApprovalStore;
   private readonly channelTeamEvidence: SqliteChannelTeamEvidenceStore;
   private readonly channelTeamLifecycle: SqliteChannelTeamLifecycleStore;
   private readonly channelTeamPatterns: SqliteChannelTeamPatternStore;
@@ -1128,11 +1130,17 @@ export class SqliteRunStore implements RunStore {
       markRunFailed: (runId, endedAt, errorMessage) => this.markRunFailed(runId, endedAt, errorMessage),
       getRun: (runId) => this.getRun(runId),
       getWorkUnit: (workUnitId) => this.getWorkUnit(workUnitId),
+      getWorkUnitAttempt: (attemptId) => this.getWorkUnitAttempt(attemptId),
+      getUserInputContinuationBinding: (threadId, deliveryId) =>
+        this.getUserInputContinuationBinding(threadId, deliveryId),
+      getUserInputContinuationReceipt: (threadId, deliveryId) =>
+        this.getUserInputContinuationReceipt(threadId, deliveryId),
       getLingThread: (threadId) => this.getLingThread(threadId),
       updateLingThread: (threadId, input, now) => this.updateLingThread(threadId, input, now),
       listRecoverableChannelWorkflows: () => this.channelWorkflows.listRecoverableChannelWorkflows(),
       listChannelWorkflowSteps: (options) => this.listChannelWorkflowSteps(options),
       getApprovalRequest: (id) => this.getApprovalRequest(id),
+      resolveChannelWorkflowStepPreApproval: (input) => this.resolveChannelWorkflowStepPreApproval(input),
       listApprovalRequests: (options) => this.listApprovalRequests(options),
       getApprovalCheckpointForApproval: (approvalId) => this.getApprovalCheckpointForApproval(approvalId),
       transitionChannelWorkflowStepStatus: (input) => this.transitionChannelWorkflowStepStatus(input),
@@ -1338,6 +1346,7 @@ export class SqliteRunStore implements RunStore {
       },
     );
     this.channelWorkflowStarts = new SqliteChannelWorkflowStartStore({ database: this.database }, this);
+    this.channelWorkflowPreApprovals = new SqliteChannelWorkflowPreApprovalStore({ database: this.database }, this);
     this.terminalReportPublication = new SqliteTerminalReportPublicationStore(
       { database: this.database },
       {
@@ -1995,6 +2004,11 @@ export class SqliteRunStore implements RunStore {
     data: RunEventDataByType[K],
   ): Extract<RunEventEnvelope, { readonly type: K }> {
     return this.runEvents.appendEvent(runId, type, data);
+  }
+
+  appendApprovalDecisionEvent(...args: Parameters<RunStore["appendApprovalDecisionEvent"]>)
+    : ReturnType<RunStore["appendApprovalDecisionEvent"]> {
+    return this.runEvents.appendApprovalDecisionEvent(...args);
   }
 
   appendControlPlaneEvent(input: AppendControlPlaneEventInput, now: string): ControlPlaneEvent {
@@ -4542,6 +4556,12 @@ export class SqliteRunStore implements RunStore {
     return this.channelWorkflows.commitChannelWorkflowStepFinalization(input);
   }
 
+  requestChannelWorkflowStepPreApproval(input: Parameters<RunStore["requestChannelWorkflowStepPreApproval"]>[0]) {
+    return this.channelWorkflowPreApprovals.requestChannelWorkflowStepPreApproval(input);
+  }
+  resolveChannelWorkflowStepPreApproval(input: Parameters<RunStore["resolveChannelWorkflowStepPreApproval"]>[0]) {
+    return this.channelWorkflowPreApprovals.resolveChannelWorkflowStepPreApproval(input);
+  }
   beginChannelWorkflowStepStart(input: Parameters<RunStore["beginChannelWorkflowStepStart"]>[0]) {
     return this.channelWorkflowStarts.beginChannelWorkflowStepStart(input);
   }

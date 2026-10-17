@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from "react";
 import { ArrowDown, Copy, FileText, Pencil } from "lucide-react";
-import { attachmentContentUrl } from "../../api.js";
+import { attachmentContentUrl, submitUserInputAnswer } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
@@ -275,6 +275,7 @@ export function NormalConversationFeed({
             snapshot: timelineSnapshot,
             depth: 0,
             cwd: projectPath?.trim() || workspaceCwd.trim(),
+            onSubmitUserInputAnswer: (command) => submitUserInputAnswer(projectPath?.trim() || workspaceCwd.trim(), command),
             virtualScrollRef: feedRef,
             itemLocatorRef: timelineItemLocatorRef,
             onDisclosureIntent: pauseTimelineAutoFollow,

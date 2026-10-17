@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { readFileSync, realpathSync } from "node:fs";
 import "./sandbox/core-original-process-bridge.js";
 import {
   DEFAULT_WORKSPACE_ID,
@@ -16,7 +17,8 @@ import {
 import { assertOriginalOfficeHostBridgeForCompositionCurrent, retireOriginalOfficeHostBridgeForComposition,
   type OriginalOfficeHostBridgeSetup } from "@ling-stack/core/original-office-host-bridge";
 import type { ResolvedDaemonConfig } from "../config.js";
-import { NativeRestrictedCommandRuntime } from "./sandbox/restricted-command-runtime.js";
+import { ExternalWorkflowRequestRuntime } from "./sandbox/external-workflow-request-runtime.js";
+import { NativeRestrictedCommandRuntime, type RestrictedCommandExecutablePin } from "./sandbox/restricted-command-runtime.js";
 import { ProtectedHostStageRegistry } from "./sandbox/protected-host-staging.js";
 import type { ProtectedHostActorEntry } from "./sandbox/protected-host-actor-inventory.js";
 import { readOriginalProtectedHostActorEntries } from "./sandbox/protected-host-original-entry-manifest.js";
@@ -130,9 +132,17 @@ export type RuntimeSupervisorWorkUnitTransitionObserver = (input: {
   readonly now: string;
 }) => void;
 
+function localDevelopmentNodePin(): RestrictedCommandExecutablePin | undefined {
+  if (Reflect.get(process.versions, "electron")) return undefined;
+  const path = realpathSync(process.execPath);
+  return Object.freeze({ path, sha256: createHash("sha256").update(readFileSync(path)).digest("hex") });
+}
+
 export class RuntimeSupervisor {
   private readonly hostBootstrap?: RuntimeSupervisorHostBootstrap;
   private restrictedCommandRuntime: NativeRestrictedCommandRuntime | undefined;
+  private externalWorkflowRequestRuntime: ExternalWorkflowRequestRuntime | undefined;
+  private externalWorkflowRequestRuntimeResolved = false;
   private readonly protectedHostStages = new ProtectedHostStageRegistry();
   private readonly officeNativeRuntimes = new Map<RunStore, OfficeLocalNativeRuntime>();
   private readonly runtimesByCwd = new Map<string, RuntimeInstance>();
@@ -173,6 +183,16 @@ export class RuntimeSupervisor {
     const config = this.config.sandbox.restrictedCommands;
     if (config) this.restrictedCommandRuntime ??= new NativeRestrictedCommandRuntime(config, this.protectedHostStages);
     return this.restrictedCommandRuntime;
+  }
+
+  getExternalWorkflowRequestRuntime(): ExternalWorkflowRequestRuntime | undefined {
+    if (!originalOfficeRuntimeBindings.get(this)?.active) throw new Error("runtime_supervisor_released");
+    if (this.externalWorkflowRequestRuntimeResolved) return this.externalWorkflowRequestRuntime;
+    this.externalWorkflowRequestRuntimeResolved = true;
+    if (process.platform !== "darwin") return undefined;
+    const node = this.config.sandbox.restrictedCommands?.executables.node ?? localDevelopmentNodePin();
+    if (node) this.externalWorkflowRequestRuntime = new ExternalWorkflowRequestRuntime({ node }, this.protectedHostStages);
+    return this.externalWorkflowRequestRuntime;
   }
 
   /** Shared original issuer for the future fixed Office adapter; never construct a second protection registry. */
@@ -303,6 +323,7 @@ export class RuntimeSupervisor {
   releaseAll(): void {
     const original = originalOfficeRuntimeBindings.get(this)!;
     original.active = false;
+    this.externalWorkflowRequestRuntime?.release();
     for (const bridge of original.storeBridges) retireOriginalOfficeHostBridgeForComposition(bridge.setup, bridge.store);
     original.storeBridges.clear();
     const nativeCloseErrors: unknown[] = [];
@@ -348,7 +369,8 @@ export class RuntimeSupervisor {
     ];
     for (const workUnit of candidates) {
       const reason = "runtime-startup-reconcile";
-      const reconciled = preserveRecoverableApprovalWorkUnit(store, workUnit, now) ??
+      const reconciled = preserveRecoverableUserInputReceiver(store, workUnit) ??
+        preserveRecoverableApprovalWorkUnit(store, workUnit, now) ??
         reconcileActiveWorkUnitFromLinkedTerminalRun(store, workUnit, now) ??
         markWorkUnitStale(store, workUnit, now, reason);
       this.notifyWorkUnitTransition(store, cwd, workUnit, reconciled, reason, now);
@@ -402,6 +424,53 @@ export class RuntimeSupervisor {
       now,
     });
   }
+}
+
+/**
+ * A claimed answer-continuation WorkUnit has not started the model yet. Its
+ * immutable binding is the restart authority until the Pi receiver commits a
+ * receipt, so startup must not retire that exact Run/Attempt as lost work.
+ */
+function preserveRecoverableUserInputReceiver(
+  store: RuntimeSupervisorRuntimeStore,
+  workUnit: WorkUnit,
+): WorkUnit | undefined {
+  if (workUnit.status !== "claimed" || !workUnit.linkedRunId || !workUnit.activeAttemptId) return undefined;
+  if (!("getUserInputContinuationBinding" in store) || !("getUserInputContinuationReceipt" in store)) return undefined;
+  const continuationStore = store as RuntimeSupervisorRuntimeStore & Pick<RunStore,
+    "getUserInputContinuationBinding" | "getUserInputContinuationReceipt">;
+  const run = store.getRun(workUnit.linkedRunId);
+  if (!run || run.status !== "queued" || run.continuationReason !== "user_input_answer" || !run.threadId) return undefined;
+  const deliveryId = deliveryIdFromContinuationSnapshot(run.requestSnapshot);
+  if (!deliveryId) return undefined;
+  try {
+    const binding = continuationStore.getUserInputContinuationBinding(run.threadId, deliveryId);
+    if (!binding || continuationStore.getUserInputContinuationReceipt(run.threadId, deliveryId)
+      || binding.runId !== run.id || binding.fence.workUnitId !== workUnit.id
+      || binding.fence.attemptId !== workUnit.activeAttemptId) return undefined;
+    const attempt = store.getWorkUnitAttempt(binding.fence.attemptId);
+    if (!attempt || attempt.status !== "created" || attempt.endedAt
+      || attempt.runtimeInstanceId !== binding.fence.runtimeInstanceId
+      || attempt.fencingToken !== binding.fence.fencingToken) return undefined;
+    return workUnit;
+  } catch {
+    // Corrupt continuation evidence is not recoverable authority. The normal
+    // startup reconciliation below will retire the stale execution owner.
+    return undefined;
+  }
+}
+
+function deliveryIdFromContinuationSnapshot(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const context = (value as Record<string, unknown>).userInputContinuationContext;
+  if (!context || typeof context !== "object" || Array.isArray(context)) return undefined;
+  const seedRef = (context as Record<string, unknown>).seedRef;
+  if (!seedRef || typeof seedRef !== "object" || Array.isArray(seedRef)) return undefined;
+  const id = (seedRef as Record<string, unknown>).id;
+  const prefix = "user_input_continuation_seed:";
+  return typeof id === "string" && id.startsWith(prefix) && id.length > prefix.length
+    ? id.slice(prefix.length)
+    : undefined;
 }
 
 function preserveRecoverableApprovalWorkUnit(

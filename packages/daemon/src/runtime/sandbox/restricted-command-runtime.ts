@@ -33,7 +33,7 @@ const outside = (root: string, path: string): boolean => {
 function requireRuntime(value: unknown, code: string): asserts value {
   if (!value) throw new Error(code);
 }
-function verifyPin(pin: RestrictedCommandBinaryPin): string {
+export function verifyRestrictedCommandBinaryPin(pin: RestrictedCommandBinaryPin): string {
   requireRuntime(pin && isAbsolute(pin.path) && /^[a-f0-9]{64}$/u.test(pin.sha256), "restricted_command_binary_invalid");
   const stat = lstatSync(pin.path);
   requireRuntime(stat.isFile() && !stat.isSymbolicLink() && realpathSync(pin.path) === pin.path
@@ -69,7 +69,7 @@ export class NativeRestrictedCommandRuntime {
   #resolve(command: string): { command: UnifiedExecCommand; readRoots: readonly string[]; runtimeProfile?: MacosCommandRuntimeProfile } {
     requireRuntime(process.platform === "darwin", "restricted_command_platform_unavailable");
     readMacosSandboxBackendIdentity();
-    verifyPin(this.#config.inputHelper);
+    verifyRestrictedCommandBinaryPin(this.#config.inputHelper);
     requireRuntime(/^[\w.+-]{1,128}$/u.test(this.#config.inputHelper.version), "restricted_command_helper_version_invalid");
     // No expansion from the daemon environment. Operators/globs are not argv.
     let argv: ReturnType<typeof parse>;
@@ -79,7 +79,7 @@ export class NativeRestrictedCommandRuntime {
       && typeof argv[0] === "string" && /^[A-Za-z0-9_-]+$/u.test(argv[0]), "restricted_command_argv_unsupported");
     const pin = this.#config.executables[argv[0] as string];
     requireRuntime(pin && Object.hasOwn(this.#config.executables, argv[0] as string), "restricted_command_executable_unavailable");
-    const executable = verifyPin(pin);
+    const executable = verifyRestrictedCommandBinaryPin(pin);
     const resources = pin.runtime === undefined ? undefined : verifyElectronNodeResources(executable, pin.runtime);
     return { command: { kind: "argv", argv: [executable, ...argv.slice(1) as string[]] },
       readRoots: [executable, ...(resources?.readRoots ?? [])],

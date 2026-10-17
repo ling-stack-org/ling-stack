@@ -35,6 +35,8 @@ export interface UserInputContinuationExecutionPlan {
   readonly taskSnapshot: Readonly<Record<string, unknown>>;
   readonly providerSnapshot: Readonly<Record<string, unknown>>;
   readonly requestSnapshot: Readonly<Record<string, unknown>>;
+  /** Complete non-secret Run snapshot after current Host policy/runtime preflight. */
+  readonly runRequestSnapshot: Readonly<Record<string, unknown>>;
   readonly preparedInput: Readonly<Record<string, unknown>>;
   readonly preparedInputFingerprint: string;
   /** Full non-secret input of this successor, required if it asks another question. */

@@ -80,5 +80,5 @@ export function createProtectedHostStageFixture(t, { registry: suppliedRegistry 
     for (const arena of arenas) rmSync(arena, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   });
-  return { root, cwd, store, stagePath, registry, runtime, config, current, createRun, register, source, input, directPrepared };
+  return { root, cwd, store, stagePath, registry, runtime, supervisor, config, current, createRun, register, source, input, directPrepared };
 }

@@ -565,13 +565,10 @@ function validateGraphNodeRunner(store: RunStore, requestedRunnerId: string | un
 }
 
 function graphNodeHasSideEffects(store: RunStore, node: WorkflowGraphNode): boolean {
-  if (node.gates && node.gates.length > 0) {
-    return false;
-  }
   const skillTools = node.skillId
     ? listExecutableSkillDefinitions(store).find((skill) => skill.id === node.skillId)?.requiredTools ?? []
     : [];
-  return skillTools.some(isRiskyRunTool);
+  return [...skillTools, ...(node.requiredTools ?? [])].some(isRiskyRunTool);
 }
 
 function defaultWorkflowGraphStepPolicy(graph: WorkflowGraph): WorkflowStepPolicy {

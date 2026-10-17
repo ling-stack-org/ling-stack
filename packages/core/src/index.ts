@@ -129,6 +129,7 @@ export * from "./normal-terminal-report-basis.js";
 export * from "./normal-terminal-tool-barrier.js";
 export * from "./workflow-completion-read-set.js";
 export * from "./workflow-step-start-owner.js";
+export * from "./workflow-pre-gate.js";
 export * from "./conversation-revision-types.js";
 export * from "./conversation-item-store-types.js";
 export * from "./conversation-item-run-event-projection.js";

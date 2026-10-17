@@ -229,6 +229,7 @@ for (const surface of ["normal", "private", "channel"]) {
     const execution = f.store.saveUserInputContinuationPreparation({ ...f.claim, stage: "execution", parentRef: preparedRequest.ref,
       payload: { schemaVersion: 1, runnerId: "pi", providerName: options.provider.provider, providerModel: options.provider.model,
         taskSnapshot: request.task, providerSnapshot: options.provider, requestSnapshot: request,
+        runRequestSnapshot: { ...request, runnerExecutionInput },
         preparedInput, preparedInputFingerprint: preparedInput.fingerprint, runnerExecutionInput } }, claimedAt).snapshot;
     const binding = f.store.admitUserInputContinuation({ ...f.claim, executionRef: { id: execution.id, fingerprint: execution.fingerprint },
       runtimeInstanceId: "fixture-sdk-runtime" }, claimedAt);

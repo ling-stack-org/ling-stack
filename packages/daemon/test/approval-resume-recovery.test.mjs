@@ -659,12 +659,9 @@ test("resume_pending before tool_start replaces the lost attempt and executes ex
 
 test("startup recovery waits for a missing durable approval event before executing", async () => {
   const fixture = await createResumeFixture("missing-decision-event", "printf x >> recovered-after-event.txt");
-  const appendEvent = fixture.store.appendEvent.bind(fixture.store);
+  const appendApprovalDecisionEvent = fixture.store.appendApprovalDecisionEvent.bind(fixture.store);
   try {
-    fixture.store.appendEvent = (runId, type, data, now) => {
-      if (type === "approval_approved") throw new Error("injected_event_storage_failure");
-      return appendEvent(runId, type, data, now);
-    };
+    fixture.store.appendApprovalDecisionEvent = () => { throw new Error("injected_event_storage_failure"); };
     const activeRuns = new ActiveRunRegistry();
     const coordinator = createCoordinator(activeRuns);
     coordinator.registerStore(fixture.store);
@@ -672,14 +669,14 @@ test("startup recovery waits for a missing durable approval event before executi
     assert.equal(fixture.store.getRun(fixture.run.id)?.status, "waiting_for_approval");
     await assert.rejects(readFile(resolve(fixture.cwd, "recovered-after-event.txt")), /ENOENT/u);
 
-    fixture.store.appendEvent = appendEvent;
+    fixture.store.appendApprovalDecisionEvent = appendApprovalDecisionEvent;
     coordinator.registerStore(fixture.store);
     await waitForCondition(() => fixture.store.getRun(fixture.run.id)?.status === "succeeded", "recovered approval should resume");
     assert.equal(await readFile(resolve(fixture.cwd, "recovered-after-event.txt"), "utf8"), "x");
     assert.equal(fixture.store.listEvents(fixture.run.id, { limit: 1_000 }).filter((event) =>
       event.type === "approval_approved" && event.data?.approvalId === fixture.approval.id).length, 1);
   } finally {
-    fixture.store.appendEvent = appendEvent;
+    fixture.store.appendApprovalDecisionEvent = appendApprovalDecisionEvent;
     await fixture.close();
   }
 });
@@ -1454,7 +1451,7 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
   const approvalInput = {
     runId: run.id,
     taskId: run.taskId,
-    ...((sdkOptions.realSdk || sdkOptions.reviewLineage) && taskChannel ? { channelId: taskChannel.id } : {}),
+    ...(run.channelId ? { channelId: run.channelId } : {}),
     toolCallId: `tool_resume_recovery_${suffix}`,
     actionType: "bash",
     risk: "medium",

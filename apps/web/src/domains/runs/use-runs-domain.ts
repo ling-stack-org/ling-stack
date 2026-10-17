@@ -13,7 +13,7 @@ import { inferRunStatus } from "../../lib/run-evidence.js";
 import { useRunControl } from "../../lib/use-run-control.js";
 import { useLatestKeyedRequestGuard } from "../../lib/use-latest-request.js";
 import { useI18n } from "../../i18n.js";
-import { streamRun } from "../../sse.js";
+import { streamRun, type StreamJsonResponseParser } from "../../sse.js";
 import type {
   RunArtifact,
   RunEventEnvelope,
@@ -42,7 +42,13 @@ export interface RunsActions {
   readonly loadRun: (runId?: string, cwd?: string) => Promise<void>;
   readonly refreshRunList: (cwd?: string) => Promise<void>;
   readonly runWithRequest: (requestBody: unknown, cwd: string, afterRunLoaded?: (runId: string) => Promise<void>) => Promise<void>;
-  readonly streamRunRequest: (url: string, requestBody: unknown, cwd: string, afterRunLoaded?: (runId: string) => Promise<void>) => Promise<void>;
+  readonly streamRunRequest: <TResponse = never>(
+    url: string,
+    requestBody: unknown,
+    cwd: string,
+    afterRunLoaded?: (runId: string) => Promise<void>,
+    parseJsonResponse?: StreamJsonResponseParser<TResponse>,
+  ) => Promise<TResponse | undefined>;
   readonly abortCurrentRun: () => void;
   readonly cancelRunOrWorkUnit: (targetRun?: RunSession) => Promise<void>;
   readonly resetForCwd: () => void;
@@ -157,15 +163,16 @@ export function useRunsDomain(input: {
     await streamRunRequest(`${daemonBaseUrl}/runs`, requestBody, cwd, afterRunLoaded);
   }
 
-  async function streamRunRequest(
+  async function streamRunRequest<TResponse = never>(
     url: string,
     requestBody: unknown,
     cwd: string,
     afterRunLoaded?: (runId: string) => Promise<void>,
-  ): Promise<void> {
+    parseJsonResponse?: StreamJsonResponseParser<TResponse>,
+  ): Promise<TResponse | undefined> {
     const confirmedRequestBody = await input.confirmFullAccessRunIfNeeded(requestBody);
     if (!confirmedRequestBody) {
-      return;
+      return undefined;
     }
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -180,7 +187,7 @@ export function useRunsDomain(input: {
 
     try {
       let streamedRunId = "";
-      await streamRun(
+      const jsonResponse = await streamRun(
         url,
         confirmedRequestBody,
         (message) => {
@@ -196,7 +203,12 @@ export function useRunsDomain(input: {
           setEvents((current) => [...current, message.event]);
         },
         controller.signal,
+        parseJsonResponse,
       );
+
+      if (jsonResponse !== undefined) {
+        return jsonResponse;
+      }
 
       if (streamedRunId) {
         await loadRun(streamedRunId, cwd);
@@ -205,11 +217,17 @@ export function useRunsDomain(input: {
         await input.refreshUsedMemoryAudit(cwd);
         await afterRunLoaded?.(streamedRunId);
       }
+      return undefined;
     } catch (caught) {
-      if ((caught as Error).name !== "AbortError") {
+      const aborted = (caught as Error).name === "AbortError";
+      if (!aborted && !parseJsonResponse) {
         const message = caught instanceof Error ? caught.message : String(caught);
         setError({ scope: "stream", message });
       }
+      if (parseJsonResponse && !aborted) {
+        throw caught;
+      }
+      return undefined;
     } finally {
       setIsRunning(false);
       await input.refreshHealth();

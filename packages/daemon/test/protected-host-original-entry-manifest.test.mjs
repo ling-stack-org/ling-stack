@@ -32,6 +32,7 @@ const slots = Object.freeze([
   ["keychain_security", "features/providers/keychain-secret-store.js", "KEYCHAIN_SECURITY_ACTOR_ENTRY"],
   ["packaged_codesign", "runtime/sandbox/packaged-restricted-command-bootstrap.js", "PACKAGED_CODESIGN_ACTOR_ENTRY"],
   ["docker_probe", "runtime/sandbox/docker.js", "DOCKER_PROBE_ACTOR_ENTRY"],
+  ["external_workflow_request", "runtime/sandbox/external-workflow-request-source.js", "EXTERNAL_WORKFLOW_REQUEST_ACTOR_ENTRY"],
 ].map(slot => Object.freeze(slot)));
 const expectedIds = slots.map(([id]) => id).sort();
 
@@ -40,8 +41,8 @@ async function originalSet() {
   assert.equal(typeof manifest.readOriginalProtectedHostActorEntries, "function");
   const entries = manifest.readOriginalProtectedHostActorEntries();
   assert.ok(Array.isArray(entries));
-  assert.equal(entries.length, 20,
-    "fixed original producer-source manifest must contain all 20 real exports, not the empty fail-closed placeholder");
+  assert.equal(entries.length, 21,
+    "fixed original producer-source manifest must contain all 21 real exports, not the empty fail-closed placeholder");
   return { manifest, entries, inventory: await import(distUrl(inventoryPath)) };
 }
 
@@ -53,11 +54,11 @@ async function newSupervisor(bootstrap) {
   return new RuntimeSupervisor(resolveConfig({ defaultWorkspaceCwd: process.cwd() }), undefined, bootstrap);
 }
 
-test("fixed manifest has exactly 20 original owner exports and exact entry identities", async () => {
+test("fixed manifest has exactly 21 original owner exports and exact entry identities", async () => {
   const { entries, inventory } = await originalSet();
   assert.deepEqual(Object.keys(inventory.PROTECTED_HOST_ACTOR_ENTRIES).sort(), expectedIds);
   assert.deepEqual(entries.map(entry => entry.entryId).sort(), expectedIds);
-  assert.equal(new Set(entries).size, 20);
+  assert.equal(new Set(entries).size, 21);
   const byId = new Map(entries.map(entry => [entry.entryId, entry]));
   for (const [id, path, exportName] of slots) {
     const owner = await import(distUrl(path)), entry = owner[exportName];
@@ -230,7 +231,7 @@ await test("controlled producer history cannot be cleared by later default enrol
   const manifest = await import(manifestUrl);
   const entries = manifest.readOriginalProtectedHostActorEntries();
   const slots = JSON.parse(serializedSlots);
-  assert.equal(entries.length, 20);
+  assert.equal(entries.length, 21);
   assert.equal(Object.isFrozen(entries), true);
   assert.equal(entries.find(entry => entry.entryId === "docker_probe"), docker.DOCKER_PROBE_ACTOR_ENTRY);
   const { RuntimeSupervisor } = await import(supervisorUrl);
@@ -290,9 +291,9 @@ const first = await import(firstUrl);
 const manifest = await import(manifestUrl);
 const caller = new Proxy([], { get() { assert.fail("first reader consulted caller data"); } });
 const entries = manifest.readOriginalProtectedHostActorEntries(caller, () => assert.fail("caller resolver ran"));
-assert.equal(entries.length, 20, "fresh first read must contain the 20 real producer exports");
+assert.equal(entries.length, 21, "fresh first read must contain the 21 real producer exports");
 assert.equal(Object.isFrozen(entries), true);
-assert.equal(new Set(entries).size, 20);
+assert.equal(new Set(entries).size, 21);
 assert.deepEqual(entries.map(entry => entry.entryId).sort(), slots.map(([id]) => id).sort());
 assert.equal(manifest.readOriginalProtectedHostActorEntries(), entries);
 const inventory = await import(inventoryUrl);
@@ -334,6 +335,7 @@ const firstImports = [
   "features/previews/workspace-file-actions.js",
   "features/providers/keychain-secret-store.js",
   "runtime/sandbox/docker.js",
+  "runtime/sandbox/external-workflow-request-source.js",
 ];
 
 for (const firstImport of firstImports) {

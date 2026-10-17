@@ -204,11 +204,13 @@ export class RunControlService {
       if (!cancelled) {
         continue;
       }
-      const event = store.appendEvent(runId, "approval_cancelled", {
+      const event = store.appendApprovalDecisionEvent(runId, cancelled.id, "approval_cancelled", {
         approvalId: cancelled.id,
         status: cancelled.status,
         resolvedBy: cancelled.resolvedBy,
         decisionReason: cancelled.decisionReason,
+        decisionKind: cancelled.decisionKind,
+        decisionRuleId: cancelled.decisionRuleId,
       });
       streamEnvelope?.(event);
       const run = store.getRun(runId);

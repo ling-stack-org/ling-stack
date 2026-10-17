@@ -22,6 +22,7 @@ export interface BeginChannelWorkflowStepStartInput {
   readonly workflowStepId: string;
   readonly expected: WorkflowStepStartExpectedBasis;
   readonly leaseId: string;
+  readonly executionPermit?: import("./workflow-pre-gate.js").WorkflowPreGateExecutionPermitV1;
   readonly task: CreateTaskInput;
   readonly createTaskOnly?: boolean;
   readonly fanInContextReviews?: NonNullable<ChannelWorkflowStep["metadata"]>["fanInContextReviews"];
@@ -141,8 +142,8 @@ export function classifyWorkflowStepStartOwner(store: WorkflowStepStartReadStore
   if (!isWorkflowStepStartOwnerV1(owner)) return { status: "invalid", code: "workflow_start_owner_missing" };
   const workflow = store.getChannelWorkflow(step.workflowId);
   const task = store.getTask(owner.taskId);
-  if (!workflow || !["running", "waiting_for_approval", "blocked"].includes(workflow.status)
-    || !["running", "waiting_for_approval"].includes(step.status)
+  if (!workflow || !["running", "waiting_for_approval", "waiting_for_input", "blocked"].includes(workflow.status)
+    || !["claimed", "running", "waiting_for_approval", "waiting_for_input"].includes(step.status)
     || step.taskId !== owner.taskId || !task || task.channelId !== step.channelId
     || task.assigneeTeammateId !== step.toParticipantId
     || workflowStepStartAuthorityBasis(store, step) !== owner.authorityBasis) return { status: "invalid", code: "workflow_start_owner_stale" };

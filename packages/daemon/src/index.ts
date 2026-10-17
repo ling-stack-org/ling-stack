@@ -57,7 +57,9 @@ import { RunEvaluationSchedulerRegistry } from "./features/harness/evaluations/s
 import {
   createDetachedRunExecutionSink,
   executeExistingRunContinuation,
+  executeUserInputContinuation,
 } from "./features/runs/orchestrator.js";
+import { UserInputDeliveryWorkerRegistry } from "./features/runs/user-input-delivery-worker.js";
 import { resumePendingMediaJobExecutions, syncMediaJobForApprovalDecision } from "./features/media/executor.js";
 import { publishConversationMediaProjectionChange } from "./features/media/conversation-events.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
@@ -272,6 +274,7 @@ export function createDaemonServer(
   let approvalAutoReviewRecoveryCoordinator: ApprovalAutoReviewRecoveryCoordinator | undefined;
   let daemonRunnerRecoveryCoordinator: DaemonRunnerRecoveryCoordinator | undefined;
   let runEvaluationScheduler: RunEvaluationSchedulerRegistry | undefined;
+  let userInputDeliveryWorker: UserInputDeliveryWorkerRegistry | undefined;
   // Chrome/Office plugin synchronization opens the Store during construction.
   // The same original Supervisor must exist before any default Store is opened;
   // an injected factory remains untrusted and is never retrofitted with custody.
@@ -328,6 +331,7 @@ export function createDaemonServer(
       approvalAutoReviewRecoveryCoordinator?.registerStore(store);
       daemonRunnerRecoveryCoordinator?.registerStore(store);
       runEvaluationScheduler?.registerStore(store);
+      userInputDeliveryWorker?.registerStore(store);
       startupOptionalWarmups?.start(cwd, store);
       reconcileAllContinuityWorkflows(store, { cause: "startup" });
       if (resolvedConfig.channels.terminalReports === true) {
@@ -501,6 +505,37 @@ export function createDaemonServer(
     });
     daemonRunnerRecoveryCoordinator?.recoverStore(store);
   };
+  const deliveryWorker = userInputDeliveryWorker = new UserInputDeliveryWorkerRegistry({
+    execute: (input) => {
+      let resolveAccepted!: (runId: string) => void;
+      const accepted = new Promise<string>((resolve) => { resolveAccepted = resolve; });
+      const completion = executeUserInputContinuation(
+        { request: input.request, threadId: input.threadId, deliveryId: input.deliveryId,
+          ...(input.claim ? { claim: input.claim } : { binding: input.binding! }) },
+        createDetachedRunExecutionSink(),
+        runnerRegistry,
+        storeRegistry,
+        activeRuns,
+        runtimeSupervisor,
+        secretResolver,
+        mcpBroker,
+        {
+          controlPlaneEvents,
+          startupState,
+          computerUsePreviews,
+          hostCapabilityBridge,
+          afterRunTerminal: afterChannelRunTerminal,
+          onUserInputReceiverAccepted: ({ runId }) => resolveAccepted(runId),
+        },
+      );
+      // The worker owns admission through durable receiver acceptance only.
+      // The full Run remains owned by ActiveRunRegistry after this slot frees.
+      return Promise.race([accepted, completion]);
+    },
+    onError: (failure) => {
+      console.warn(`user_input_delivery_${failure.phase}_failed:${failure.code}`);
+    },
+  });
   approvalResumeCoordinator = new ApprovalResumeCoordinator({
     runtimeSupervisor,
     activeRuns,
@@ -633,6 +668,7 @@ export function createDaemonServer(
     activeDirectReplies,
     channelReplyDispatchCoordinator,
     channelTurnDispatchWorker,
+    userInputDeliveryWorker: deliveryWorker,
     runtimeSupervisor,
     secretResolver,
     externalSecretStore,
@@ -753,6 +789,7 @@ export function createDaemonServer(
         runEvaluationScheduler.registerStore(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
         daemonRunnerRecoveryCoordinator.registerStore(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
         daemonRunnerRecoveryCoordinator.start();
+        deliveryWorker.registerStore(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
         // Ephemeral control-plane servers are used by tests and embedded fixtures.
         // They must never claim the installation-global Remote Gateway listener.
         if (resolvedConfig.port !== 0) {
@@ -818,8 +855,10 @@ export function createDaemonServer(
                     }
                   },
                   syncWorkflow: () => {
+                    if (approval.payload.type !== "workflow_step") return;
                     const result = syncWorkflowApprovalDecision(store, approval);
                     if (result.status === "missing_owner") throw new Error("approval_workflow_owner_missing");
+                    if (result.status === "stale_owner") throw new Error("approval_workflow_owner_stale");
                   },
                   syncMedia: () => syncMediaJobForApprovalDecision({
                     cwd: store.paths.cwd, store, storeRegistry, secretResolver, approval,
@@ -850,6 +889,7 @@ export function createDaemonServer(
       approvalRecoveryTimer = undefined;
       daemonRunnerRecoveryCoordinator.beginShutdown();
       runEvaluationScheduler.beginShutdown();
+      deliveryWorker.beginShutdown();
       channelTurnDispatchReady = false;
       channelTurnDispatchWorker.beginShutdown();
       activeRuns.suspendAll("daemon_restart");
@@ -887,6 +927,7 @@ export function createDaemonServer(
         await channelTurnDispatchWorker.close();
         await automationSchedulers.waitForIdle();
         await runEvaluationScheduler.waitForIdle();
+        await deliveryWorker.waitForIdle();
         await providerImportShutdown;
         await cuaDriverActivationCoordinator.shutdown();
         await activeRuns.waitForIdle();

@@ -57,6 +57,7 @@ const addedDependencyGroups = Object.freeze({
     "packages/core/src/storage/sqlite/recovery-discovery-validation.ts",
   ],
   packaging: [
+    "apps/desktop/scripts/cua-driver-parent-lease-stream-writer.mjs",
     "apps/desktop/scripts/packaged-office-signing-inputs.mjs",
     "apps/desktop/scripts/cua-driver-package-staging-contract.mjs",
     "apps/desktop/scripts/cua-driver-package-staging-files.mjs",
@@ -92,6 +93,11 @@ test("Office signing admission remains an explicit authored root and packaging s
 test("Office recovery discovery validation remains an explicit packaging source input", () => {
   assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(
     "packages/core/src/storage/sqlite/recovery-discovery-validation.ts"));
+});
+
+test("C001 parent-lease stream writer remains an explicit packaging source input", () => {
+  assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(
+    "apps/desktop/scripts/cua-driver-parent-lease-stream-writer.mjs"));
 });
 
 /** Disposable, explicitly synthetic compiler/signature fixture. It never approves product sources. */

@@ -45,6 +45,7 @@ import type {
   ChannelWorkflowStepListResponse,
   ChannelWorkflowStepMutationResponse,
   ChannelWorkflowStepRetryResponse,
+  ChannelWorkflowStepStartResponseContext,
   ChannelWorkflowStepStartResponse,
   ChannelWorkflowTemplateMutationResponse,
   ChannelWorkspaceCreateWorktreeRequest,
@@ -70,7 +71,7 @@ import type {
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
   CreateChannelWorkflowTemplateCompileRequest,
-  StartChannelWorkflowStepRequest,
+  CreateTaskChannelWorkflowStepStartRequest,
   ListChannelConversationItemsOptions,
   Task,
   TaskEditFormState,
@@ -531,9 +532,10 @@ export async function updateChannelWorkflowStep(
 export async function startChannelWorkflowStep(
   cwd: string,
   workflowStepId: string,
-  input: StartChannelWorkflowStepRequest,
+  input: CreateTaskChannelWorkflowStepStartRequest,
+  expected: Omit<ChannelWorkflowStepStartResponseContext, "mode">,
 ): Promise<ChannelWorkflowStepStartResponse> {
-  return daemonClient.startChannelWorkflowStep(cwd, workflowStepId, input);
+  return daemonClient.startChannelWorkflowStep(cwd, workflowStepId, input, expected);
 }
 
 export async function retryChannelWorkflowStep(cwd: string, workflowStepId: string): Promise<ChannelWorkflowStepRetryResponse> {

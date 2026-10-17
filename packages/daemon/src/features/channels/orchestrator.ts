@@ -1,4 +1,6 @@
 import {
+  isWorkflowPreGateMarkerV1,
+  selectWorkflowStepGate,
   type ApprovalRequest,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
@@ -7,7 +9,6 @@ import {
   type SecretResolver,
   type WorkflowFanInContextReview,
   type WorkflowStepFailurePolicy,
-  type WorkflowStepGate,
   type WorkflowStepPolicy,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
@@ -151,9 +152,9 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
   const currentWorkflow = input.store.getChannelWorkflow(workflow.id) ?? workflow;
   const steps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
   const activeStepCount = countActiveWorkflowSteps(steps);
-  const approvedGatedSteps = steps.filter((step) => isApprovedPreStartStep(input.store, step));
+  const preStartSteps = steps.filter((step) => isPreStartAdmissionStep(step) && isWorkflowStepEligible(step, steps));
   const eligibleSteps = [
-    ...approvedGatedSteps,
+    ...preStartSteps,
     ...steps.filter((step) => step.status === "queued" && isWorkflowStepEligible(step, steps)),
   ].sort(compareWorkflowStepForScheduling);
   const schedulingDecision = resolveSmartSchedulingDecision({
@@ -166,7 +167,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
   });
   const parallelStartBudget = schedulingDecision.parallelLimit;
   const startBudget = schedulingDecision.runnableStepIds.length;
-  if (parallelStartBudget <= 1 && approvedGatedSteps.length === 0 && steps.some((step) => step.status === "claimed" || step.status === "running" || step.status === "waiting_for_approval")) {
+  if (parallelStartBudget <= 1 && preStartSteps.length === 0 && steps.some((step) => step.status === "claimed" || step.status === "running" || step.status === "waiting_for_approval")) {
     return { status: "idle", workflow: currentWorkflow, reason: "Workflow already has an active step.", schedulingDecision };
   }
   if (eligibleSteps.length === 0 || startBudget <= 0) {
@@ -202,21 +203,6 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
       eligibleSteps,
       now: new Date().toISOString(),
     }).workflowStep;
-    const isApprovedGatedStep = isApprovedPreStartStep(input.store, latestCandidate);
-    if (!isApprovedGatedStep) {
-      const gateResult = maybeRequestPreStepApproval(input.store, input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow, latestCandidate);
-      if (gateResult) {
-        if (gateResult.status === "waiting_for_approval") {
-          waitingApprovals.push({ workflowStep: gateResult.workflowStep, approval: gateResult.approval });
-          if (parallelStartBudget <= 1) {
-            break;
-          }
-          continue;
-        }
-        return { ...gateResult, schedulingDecision };
-      }
-    }
-
     const started = prepareWorkflowStepStart(
       input.store,
       latestCandidate.id,
@@ -231,6 +217,12 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
       input.validateRunRequest,
       input.secretResolver,
     );
+    if (started.kind === "waiting_for_approval") {
+      waitingApprovals.push({ workflowStep: input.store.getChannelWorkflowStep(latestCandidate.id) ?? latestCandidate,
+        approval: started.approval });
+      if (parallelStartBudget <= 1) break;
+      continue;
+    }
     if (started.kind === "blocked") {
       blockedResults.push({
         status: "blocked",
@@ -345,6 +337,7 @@ export function syncWorkflowApprovalDecision(
   );
   if (matchesPreGate) {
     const result = reconcilePreStepApprovalDecision(store, workflow, step, approval, now);
+    if (result?.status === "stale_owner") return { status: "stale_owner", workflowStepId: step.id };
     syncWorkflowSourceTurnProgress(store, store.getChannelWorkflow(workflow.id) ?? workflow, now);
     return {
       status: "synced",
@@ -353,6 +346,11 @@ export function syncWorkflowApprovalDecision(
       ...(result ? { result } : {}),
     };
   }
+  // A differently staged or unversioned old workflow gate cannot fall through
+  // into the legacy approval-only state machine and unlock a current start.
+  if (approval.payload.type === "workflow_step" && (step.metadata?.preStepApprovalId
+    || step.metadata?.postStepApprovalId || step.metadata?.activeGateStage || step.metadata?.approvalGate
+    || step.metadata?.gates?.length)) return { status: "stale_owner", workflowStepId: step.id };
   const result = reconcileLegacyWorkflowApprovalDecision(store, workflow, step, approval, now);
   syncWorkflowSourceTurnProgress(store, store.getChannelWorkflow(workflow.id) ?? workflow, now);
   return {
@@ -592,6 +590,10 @@ export async function retryChannelWorkflowStep(input: RetryWorkflowStepInput): P
     input.validateRunRequest,
     input.secretResolver,
   );
+  if (started.kind === "waiting_for_approval") {
+    return { status: "waiting_for_approval", workflow: input.store.getChannelWorkflow(started.workflowId) ?? workflow,
+      workflowStep: input.store.getChannelWorkflowStep(step.id) ?? step, approval: started.approval };
+  }
   if (started.kind === "blocked") {
     return {
       status: "blocked",
@@ -1070,12 +1072,13 @@ function maybeRequestPostStepApproval(
 }
 
 /** A pre-start permission decision is not an execution generation or a missing execution owner. */
-function isApprovedPreStartStep(store: RunStore, step: ChannelWorkflowStep): boolean {
-  if (step.status !== "running" || step.taskId || step.runId || step.metadata?.startOwner || !step.metadata?.preStepApprovalId) return false;
-  const approval = store.getApprovalRequest(step.metadata.preStepApprovalId);
-  return approval?.status === "approved" && approval.channelId === step.channelId && approval.workflowStepId === step.id
-    && approval.payload.type === "workflow_step" && approval.payload.gateStage === "pre"
-    && approval.payload.workflowId === step.workflowId && approval.payload.workflowStepId === step.id;
+function isPreStartAdmissionStep(step: ChannelWorkflowStep): boolean {
+  const marker = step.metadata?.preStepApprovalMarker;
+  const hasUnconsumedAdmission = Boolean(step.metadata?.preStepApprovalId
+    && isWorkflowPreGateMarkerV1(marker) && !marker.consumedByTaskId);
+  return (step.status === "running" || step.status === "waiting_for_approval")
+    && !step.taskId && !step.runId && !step.metadata?.startOwner
+    && (step.metadata?.activeGateStage === "pre" || hasUnconsumedAdmission);
 }
 
 function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): WorkflowOrchestrationResult | { readonly status: "open" } {
@@ -1085,7 +1088,16 @@ function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): Workflo
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${workflowId}`);
   }
   for (const step of steps) {
-    if (isApprovedPreStartStep(store, step)) continue;
+    if (isPreStartAdmissionStep(step)) {
+      const approval = step.metadata?.preStepApprovalId ? store.getApprovalRequest(step.metadata.preStepApprovalId) : undefined;
+      if (approval) {
+        const result = reconcilePreStepApprovalDecision(store, workflow, step, approval);
+        if (result && result.status !== "stale_owner") return result;
+      }
+      // Explicit Advance must reach prepare for stale-marker retirement. A
+      // pre-start gate is not a missing B011 execution owner or a running Task.
+      continue;
+    }
     if (step.status === "running") {
       const now = new Date().toISOString();
       const ownership = classifyWorkflowStepStartOwner(store, step, now);
@@ -1108,19 +1120,6 @@ function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): Workflo
       }
       const approvalResult = reconcilePostStepApprovalDecision(store, workflow, step, approval);
       if (approvalResult?.status === "stale_owner") return { status: "open" };
-      if (approvalResult) {
-        return approvalResult;
-      }
-    }
-    if (step.status === "waiting_for_approval" && step.metadata?.preStepApprovalId) {
-      const approval = store.getApprovalRequest(step.metadata.preStepApprovalId);
-      if (!approval || approval.status === "pending") {
-        if (approval) {
-          return { status: "waiting_for_approval", workflow, workflowStep: step, approval };
-        }
-        continue;
-      }
-      const approvalResult = reconcilePreStepApprovalDecision(store, workflow, step, approval);
       if (approvalResult) {
         return approvalResult;
       }
@@ -1166,163 +1165,30 @@ function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): Workflo
   return { status: "open" };
 }
 
-function maybeRequestPreStepApproval(
-  store: RunStore,
-  workflow: ChannelWorkflow,
-  step: ChannelWorkflowStep,
-): Extract<WorkflowOrchestrationResult, { status: "waiting_for_approval" | "blocked" | "failed" }> | undefined {
-  const approvalGate = step.metadata?.approvalGate;
-  if (!approvalGate || approvalGate.mode === "none") {
-    return undefined;
-  }
-  const existingApproval = step.metadata?.preStepApprovalId ? store.getApprovalRequest(step.metadata.preStepApprovalId) : undefined;
-  if (existingApproval?.status === "approved") {
-    return undefined;
-  }
-  if (existingApproval && existingApproval.status !== "pending") {
-    return reconcilePreStepApprovalDecision(store, workflow, step, existingApproval);
-  }
-  const now = new Date().toISOString();
-  const workflowStart = ensureWorkflowRunningForGate(store, workflow, now);
-  if (!workflowStart.ok) {
-    throw new HttpError(409, workflowStart.code, `Workflow transition failed: ${workflowStart.code}`);
-  }
-  const latestWorkflow = store.getChannelWorkflow(workflow.id) ?? workflow;
-  const stepStart = ensureWorkflowStepRunningForGate(store, step, now);
-  if (!stepStart.ok) {
-    throw new HttpError(409, stepStart.code, `Workflow step transition failed: ${stepStart.code}`);
-  }
-  const latestStep = store.getChannelWorkflowStep(step.id) ?? step;
-  const approval = existingApproval ?? store.createApprovalRequest(
-    {
-      workflowStepId: step.id,
-      channelId: step.channelId,
-      actionType: "workflow_step",
-      risk: approvalGate.risk ?? (approvalGate.mode === "strict" ? "high" : "medium"),
-      title: `Approve workflow step: ${step.title}`,
-      description: `Approve starting workflow step "${step.title}" for workflow "${workflow.title}".`,
-      payload: {
-        type: "workflow_step",
-        gateStage: "pre",
-        workflowId: workflow.id,
-        workflowStepId: step.id,
-        templateStepId: step.metadata?.templateStepId,
-        contextArtifactId: step.metadata?.contextArtifactId,
-        outputArtifactId: step.metadata?.outputArtifactId,
-        title: step.title,
-        approvalMode: approvalGate.mode,
-        requiredForTools: approvalGate.requiredForTools ?? [],
-        requiredForActions: approvalGate.requiredForActions ?? [],
-      },
-      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    },
-    now,
-  );
-  store.updateChannelWorkflowStep(
-    step.id,
-    {
-      metadata: {
-        ...latestStep.metadata,
-        activeGateStage: "pre",
-        preStepApprovalId: approval.id,
-      },
-    },
-    now,
-  );
-  const waitingStep = store.transitionChannelWorkflowStepStatus({
-    workflowStepId: step.id,
-    expectedStatus: "running",
-    event: "approval_requested",
-    actor: "system",
-    reason: `approval:${approval.id}`,
-    now,
-    blocker: `Waiting for approval: ${approval.title}`,
-  });
-  if (!waitingStep.ok) {
-    throw new HttpError(409, waitingStep.code, `Workflow step approval transition failed: ${waitingStep.code}`);
-  }
-  const waitingWorkflow = store.transitionChannelWorkflowStatus({
-    workflowId: workflow.id,
-    expectedStatus: "running",
-    event: "approval_requested",
-    actor: "system",
-    reason: `approval:${approval.id}`,
-    now,
-  });
-  if (!waitingWorkflow.ok) {
-    throw new HttpError(409, waitingWorkflow.code, `Workflow approval transition failed: ${waitingWorkflow.code}`);
-  }
-  return {
-    status: "waiting_for_approval",
-    workflow: store.getChannelWorkflow(workflow.id) ?? latestWorkflow,
-    workflowStep: store.getChannelWorkflowStep(step.id) ?? latestStep,
-    approval,
-  };
-}
-
 function reconcilePreStepApprovalDecision(
   store: RunStore,
   workflow: ChannelWorkflow,
   step: ChannelWorkflowStep,
   approval: ApprovalRequest,
   decisionAt = new Date().toISOString(),
-): Extract<WorkflowOrchestrationResult, { status: "waiting_for_approval" | "blocked" | "failed" }> | undefined {
-  if (approval.status === "pending") {
-    return { status: "waiting_for_approval", workflow, workflowStep: step, approval };
+): Extract<WorkflowOrchestrationResult, { status: "waiting_for_approval" | "blocked" | "failed" }>
+  | { readonly status: "stale_owner" } | undefined {
+  const resolved = store.resolveChannelWorkflowStepPreApproval({ workflowStepId: step.id,
+    approvalId: approval.id, actor: approval.resolvedBy === "local-user" ? "local-user" : "system", now: decisionAt });
+  if (resolved.status === "stale" || resolved.status === "invalid" || resolved.status === "not_required") {
+    return { status: "stale_owner" };
   }
-  const now = decisionAt;
-  if (approval.status === "approved") {
-    const workflowApproval = workflow.status === "waiting_for_approval"
-      ? store.transitionChannelWorkflowStatus({
-          workflowId: workflow.id,
-          expectedStatus: "waiting_for_approval",
-          event: "approval_approved",
-          actor: "local-user",
-          reason: `approval:${approval.id}`,
-          now,
-        })
-      : { ok: true as const, from: workflow.status, to: workflow.status };
-    if (!workflowApproval.ok) {
-      throw new HttpError(409, workflowApproval.code, `Workflow approval transition failed: ${workflowApproval.code}`);
-    }
-    syncWorkflowSourceTurnProgress(store, store.getChannelWorkflow(workflow.id) ?? workflow, now);
-    const stepApproval = step.status === "waiting_for_approval"
-      ? store.transitionChannelWorkflowStepStatus({
-          workflowStepId: step.id,
-          expectedStatus: "waiting_for_approval",
-          event: "approval_approved",
-          actor: "local-user",
-          reason: `approval:${approval.id}`,
-          now,
-          blocker: null,
-        })
-      : { ok: true as const, from: step.status, to: step.status };
-    if (!stepApproval.ok) {
-      throw new HttpError(409, stepApproval.code, `Workflow step approval transition failed: ${stepApproval.code}`);
-    }
-    const latestStep = store.getChannelWorkflowStep(step.id) ?? step;
-    const { activeGateStage, ...metadata } = latestStep.metadata ?? {};
-    if (activeGateStage === "pre") {
-      store.updateChannelWorkflowStep(step.id, { metadata }, now);
-    }
-    return undefined;
-  }
-  const reason = approval.decisionReason ?? `Workflow step approval ${approval.status}.`;
-  applyWorkflowStepFailurePolicy({
-    store,
-    workflow,
-    step,
-    policy: resolveWorkflowStepPolicy(step).onApprovalDenied,
-    actor: approval.status === "expired" ? "system" : "local-user",
-    reason,
-    now,
-    blocker: reason,
-  });
   const latestWorkflow = store.getChannelWorkflow(workflow.id) ?? workflow;
   const latestStep = store.getChannelWorkflowStep(step.id) ?? step;
-  return latestWorkflow.status === "failed"
-    ? { status: "failed", workflow: latestWorkflow, workflowStep: latestStep, blocker: reason }
-    : { status: "blocked", workflow: latestWorkflow, workflowStep: latestStep, blocker: latestStep.blocker ?? reason };
+  if (resolved.status === "approved") return undefined;
+  if (resolved.status === "requested" || resolved.status === "duplicate") {
+    return { status: "waiting_for_approval", workflow: latestWorkflow, workflowStep: latestStep, approval: resolved.approval };
+  }
+  if (resolved.status === "blocked") {
+    return { status: resolved.failed ? "failed" : "blocked", workflow: latestWorkflow,
+      workflowStep: latestStep, blocker: resolved.blocker };
+  }
+  return { status: "stale_owner" };
 }
 
 function reconcilePostStepApprovalDecision(
@@ -1525,120 +1391,8 @@ function transitionWorkflowAfterStepPolicy(
   }
 }
 
-function selectWorkflowStepGate(
-  step: ChannelWorkflowStep,
-  stage: WorkflowStepGate["stage"],
-  status: ChannelWorkflowStep["status"],
-): WorkflowStepGate | undefined {
-  return (step.metadata?.gates ?? []).find((gate) =>
-    gate.stage === stage &&
-    gate.approvalProfile.mode !== "none" &&
-    (!gate.requiredForStatuses || gate.requiredForStatuses.includes(status)));
-}
-
 function resolveWorkflowStepPolicy(step: ChannelWorkflowStep): WorkflowStepPolicy {
   return step.metadata?.policy ?? DEFAULT_WORKFLOW_STEP_POLICY;
-}
-
-function ensureWorkflowRunningForGate(
-  store: RunStore,
-  workflow: ChannelWorkflow,
-  now: string,
-): ReturnType<RunStore["transitionChannelWorkflowStatus"]> {
-  if (workflow.status === "running") {
-    return { ok: true, from: "running", to: "running" };
-  }
-  if (workflow.status === "ready" || workflow.status === "blocked") {
-    return store.transitionChannelWorkflowStatus({
-      workflowId: workflow.id,
-      expectedStatus: workflow.status,
-      event: "start",
-      actor: "system",
-      now,
-    });
-  }
-  if (workflow.status === "draft") {
-    const prepared = store.transitionChannelWorkflowStatus({
-      workflowId: workflow.id,
-      expectedStatus: "draft",
-      event: "prepare",
-      actor: "system",
-      now,
-    });
-    if (!prepared.ok) {
-      return prepared;
-    }
-    return store.transitionChannelWorkflowStatus({
-      workflowId: workflow.id,
-      expectedStatus: "ready",
-      event: "start",
-      actor: "system",
-      now,
-    });
-  }
-  return { ok: false, code: "invalid_transition", currentStatus: workflow.status };
-}
-
-function ensureWorkflowStepRunningForGate(
-  store: RunStore,
-  step: ChannelWorkflowStep,
-  now: string,
-): ReturnType<RunStore["transitionChannelWorkflowStepStatus"]> {
-  if (step.status === "running") {
-    return { ok: true, from: "running", to: "running" };
-  }
-  if (step.status === "queued") {
-    const claimed = store.transitionChannelWorkflowStepStatus({
-      workflowStepId: step.id,
-      expectedStatus: "queued",
-      event: "claim",
-      actor: "system",
-      now,
-    });
-    if (!claimed.ok) {
-      return claimed;
-    }
-    return store.transitionChannelWorkflowStepStatus({
-      workflowStepId: step.id,
-      expectedStatus: "claimed",
-      event: "start",
-      actor: "system",
-      now,
-      blocker: null,
-    });
-  }
-  if (step.status === "blocked") {
-    const resumed = store.transitionChannelWorkflowStepStatus({
-      workflowStepId: step.id,
-      expectedStatus: "blocked",
-      event: "resume",
-      actor: "system",
-      now,
-      blocker: null,
-    });
-    if (!resumed.ok) {
-      return resumed;
-    }
-    return store.transitionChannelWorkflowStepStatus({
-      workflowStepId: step.id,
-      expectedStatus: "claimed",
-      event: "start",
-      actor: "system",
-      now,
-      blocker: null,
-    });
-  }
-  if (step.status === "claimed") {
-    return store.transitionChannelWorkflowStepStatus({
-      workflowStepId: step.id,
-      expectedStatus: "claimed",
-      event: "start",
-      actor: "system",
-      now,
-      blocker: null,
-    });
-  }
-  return { ok: false, code: "invalid_transition", currentStatus: step.status };
 }
 
 function isWorkflowStepEligible(step: ChannelWorkflowStep, steps: readonly ChannelWorkflowStep[]): boolean {

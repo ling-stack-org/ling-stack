@@ -17,6 +17,7 @@ import {
 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify, TextDecoder } from "node:util";
+import { createNativeParentLeaseStreamWriter } from "./cua-driver-parent-lease-stream-writer.mjs";
 
 const execFile = promisify(execFileCallback);
 const NATIVE_SOURCE_PATH = fileURLToPath(
@@ -151,6 +152,21 @@ export async function withAtomicPublishParentLeaseForTest(input, operation) {
     timeoutMs,
   });
 
+  return runAtomicPublishParentLeaseOperation(lease, operation);
+}
+
+/** Controlled stream/child seam; never accepted by the production entry point. */
+export async function withAtomicPublishParentLeaseChildForTest(input, operation) {
+  requireParentLeaseOperation(operation);
+  const parentRoot = await requireCanonicalParent(input?.parentRoot);
+  const lease = await acquireAtomicPublishParentLease({
+    assertPublisherIdentity: async () => {},
+    nativePublisher: Object.freeze({ path: "test-only-controlled-parent-lease-holder" }),
+    operationTimeoutMs: requireParentLeaseOperationTimeout(input?.operationTimeoutMs),
+    parentRoot,
+    spawnProcess: async () => input.child,
+    timeoutMs: requireParentLeaseTimeout(input?.timeoutMs),
+  });
   return runAtomicPublishParentLeaseOperation(lease, operation);
 }
 
@@ -596,6 +612,7 @@ async function acquireAtomicPublishParentLease({
     acceptingCalls: false,
     assertPublisherIdentity,
     child,
+    invalidationDrain: undefined,
     lineReader,
     lost,
     lostError: undefined,
@@ -612,6 +629,15 @@ async function acquireAtomicPublishParentLease({
     stderr,
     termination,
   };
+  capability.writer = createNativeParentLeaseStreamWriter({
+    stream: child.stdin,
+    createFailure: cause => new CuaDriverAtomicPublishError(
+      "staging_parent_lock_protocol_invalid",
+      "failed to write a native parent lease protocol frame",
+      { cause, outcome: "ambiguous" },
+    ),
+    onFailure: error => invalidateNativeParentLeaseCapability(capability, error),
+  });
   void termination.then((state) => {
     if (!capability.releaseRequested && capability.state !== "released") {
       markNativeParentLeaseLost(
@@ -619,6 +645,7 @@ async function acquireAtomicPublishParentLease({
         parentLeaseLostError(state, stderr()),
       );
     }
+    capability.writer.disposeAfterTermination();
   });
 
   let lockedReceipt;
@@ -642,6 +669,11 @@ async function acquireAtomicPublishParentLease({
 
   const assertHeld = () => {
     if (capability.lostError !== undefined) throw capability.lostError;
+  };
+  const assertHeldAfterDrain = async () => {
+    if (capability.lostError === undefined) return;
+    await invalidateNativeParentLeaseCapability(capability, capability.lostError);
+    throw capability.lostError;
   };
   const guard = async (operationFactory) => {
     if (typeof operationFactory !== "function") {
@@ -670,6 +702,7 @@ async function acquireAtomicPublishParentLease({
       if (drainedError !== undefined) {
         attachParentLeaseOperationError(capability.lostError, drainedError);
       }
+      await invalidateNativeParentLeaseCapability(capability, capability.lostError);
       // The lease-loss classification remains authoritative after draining,
       // while any identity-bound cleanup metadata from the drained operation
       // remains attached for explicit recovery.
@@ -697,19 +730,18 @@ async function acquireAtomicPublishParentLease({
     guard,
     public: publicLease,
     release: async () => {
-      assertHeld();
+      await assertHeldAfterDrain();
       capability.acceptingCalls = false;
       nativeParentLeaseCapabilities.delete(publicLease);
       await capability.queue;
-      assertHeld();
+      await assertHeldAfterDrain();
       capability.releaseRequested = true;
       capability.state = "releasing";
       const requestId = capability.nextRequestId;
       capability.nextRequestId += 1;
       let releaseFailure;
       try {
-        await writeNativeParentLeaseFrame(
-          child,
+        await capability.writer.write(
           encodeNativeParentLeaseReleaseFrame(requestId),
           { end: true },
         );
@@ -821,8 +853,7 @@ async function executeNativeParentLeaseOperation(
     );
   }
   try {
-    await writeNativeParentLeaseFrame(
-      capability.child,
+    await capability.writer.write(
       encodeNativeParentLeaseCallFrame(requestId, operation, args),
     );
     const line = await readParentLeaseProtocolLine({
@@ -859,22 +890,28 @@ function markNativeParentLeaseLost(capability, error) {
   return error;
 }
 
-async function invalidateNativeParentLeaseCapability(capability, error) {
-  markNativeParentLeaseLost(capability, error);
-  if (capability.child.exitCode === null && capability.child.signalCode === null) {
-    try {
-      capability.child.kill("SIGKILL");
-    } catch (invalidationError) {
-      attachParentLeaseInvalidationError(error, invalidationError);
-    }
+function invalidateNativeParentLeaseCapability(capability, error) {
+  const failure = markNativeParentLeaseLost(capability, error);
+  if (capability.invalidationDrain === undefined) {
+    // The writer error event, guarded operation and release may all observe the
+    // same loss. They must share termination/drain, not signal a holder twice.
+    capability.invalidationDrain = Promise.resolve().then(async () => {
+      if (capability.child.exitCode === null && capability.child.signalCode === null) {
+        try {
+          capability.child.kill("SIGKILL");
+        } catch (invalidationError) {
+          attachParentLeaseInvalidationError(failure, invalidationError);
+        }
+      }
+      // Never return while the invalidated holder could still own the OS lease
+      // or finish a mutation. Keep the existing intentionally unbounded drain.
+      const state = await capability.termination;
+      if (state.error !== undefined) {
+        attachParentLeaseInvalidationError(failure, state.error);
+      }
+    });
   }
-  // Safety boundary: never return control while an invalidated holder could
-  // still own the OS lease or finish a native mutation. The holder's own
-  // operation watchdog is bounded, but this await intentionally is not.
-  const state = await capability.termination;
-  if (state.error !== undefined) {
-    attachParentLeaseInvalidationError(error, state.error);
-  }
+  return capability.invalidationDrain;
 }
 
 async function spawnNativePublisherProcess(nativePublisher, args, options) {
@@ -1119,29 +1156,6 @@ function containsLoneSurrogate(value) {
     }
   }
   return false;
-}
-
-function writeNativeParentLeaseFrame(child, frame, { end = false } = {}) {
-  return new Promise((resolve, reject) => {
-    const onError = (cause) => {
-      child.stdin.off("error", onError);
-      reject(new CuaDriverAtomicPublishError(
-        "staging_parent_lock_protocol_invalid",
-        "failed to write a native parent lease protocol frame",
-        { cause, outcome: "ambiguous" },
-      ));
-    };
-    child.stdin.once("error", onError);
-    const onComplete = () => {
-      child.stdin.off("error", onError);
-      resolve();
-    };
-    if (end) {
-      child.stdin.end(frame, onComplete);
-    } else {
-      child.stdin.write(frame, onComplete);
-    }
-  });
 }
 
 function parentLeaseProtocolError(message, cause) {

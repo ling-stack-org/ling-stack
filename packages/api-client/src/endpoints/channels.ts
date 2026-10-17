@@ -88,6 +88,8 @@ import type {
   CreateChannelWorkflowTemplateCompileRequest,
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
+  CreateAndRunTaskChannelWorkflowStepStartRequest,
+  CreateTaskChannelWorkflowStepStartRequest,
   CorrectChannelTurnContextRequest,
   CorrectChannelTurnContextResponse,
   ListChannelConversationItemsOptions,
@@ -102,8 +104,9 @@ import type {
   UpdateChannelWorkflowRequest,
   UpdateChannelWorkflowStepRequest,
   UpdateChannelRequest,
-  StartChannelWorkflowStepRequest,
+  ChannelWorkflowStepStartResponseContext,
 } from "@ling-stack/contracts";
+import { parseChannelWorkflowStepStartResponse } from "@ling-stack/contracts";
 import { LingDaemonError } from "../errors.js";
 import { readErrorMessage } from "../transport.js";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
@@ -770,9 +773,44 @@ export const channelEndpoints = {
   async startChannelWorkflowStep(this: LingDaemonEndpointContext,
       cwd: string,
       workflowStepId: string,
-      input: StartChannelWorkflowStepRequest,
+      input: CreateTaskChannelWorkflowStepStartRequest,
+      expected: Omit<ChannelWorkflowStepStartResponseContext, "mode">,
     ): Promise<ChannelWorkflowStepStartResponse> {
-      return this._post(`/workflow-steps/${encodeURIComponent(workflowStepId)}/start`, { cwd }, input);
+      if ((input as { readonly mode?: unknown }).mode !== "create_task") {
+        throw new TypeError("startChannelWorkflowStep only accepts create_task; use streamChannelWorkflowStep for create_and_run_task.");
+      }
+      if (expected.workflowStep.id !== workflowStepId) {
+        throw new TypeError("Workflow step start path does not match the frozen expected workflow step.");
+      }
+      const value = await this._post<unknown>(`/workflow-steps/${encodeURIComponent(workflowStepId)}/start`, { cwd }, input);
+      const parsed = parseChannelWorkflowStepStartResponse(value, {
+        ...expected,
+        mode: input.mode,
+      });
+      if (!parsed) throw new Error("Workflow step start returned an invalid response or foreign lineage.");
+      return parsed;
+    },
+
+  async streamChannelWorkflowStep(this: LingDaemonEndpointContext,
+      cwd: string,
+      workflowStepId: string,
+      input: CreateAndRunTaskChannelWorkflowStepStartRequest,
+    ): Promise<Response> {
+      if ((input as { readonly mode?: unknown }).mode !== "create_and_run_task") {
+        throw new TypeError("streamChannelWorkflowStep only accepts create_and_run_task; use startChannelWorkflowStep for create_task.");
+      }
+      const response = await this._fetch(this._url(`/workflow-steps/${encodeURIComponent(workflowStepId)}/start`, { cwd }), {
+        method: "POST",
+        headers: {
+          Accept: "text/event-stream",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+      });
+      if (!response.ok) {
+        throw new LingDaemonError(await readErrorMessage(response), response.status, response.statusText);
+      }
+      return response;
     },
 
   async retryChannelWorkflowStep(this: LingDaemonEndpointContext, cwd: string, workflowStepId: string): Promise<ChannelWorkflowStepRetryResponse> {

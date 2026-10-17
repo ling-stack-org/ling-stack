@@ -27,12 +27,14 @@ async function fixture(t, surface = "normal", options = {}) {
   f.prepare = (adjust = () => {}) => {
     f.preparedRequest = f.store.saveUserInputContinuationPreparation({ ...f.claimIdentity, stage: "request",
       parentRef: ref(f.seed), payload: f.runRequest }, claimedAt).snapshot;
+    const runnerExecutionInput = { schemaVersion: 1, runnerId: "pi", toolHydrationEnabled: false,
+      input: { cwd: f.cwd, task: f.task, provider: { provider: "fixture", model: "fixture" }, tools: [] },
+      preparedInput: f.preparedInput };
     f.plan = { schemaVersion: 1, runnerId: "pi", providerName: "fixture", providerModel: "fixture",
       taskSnapshot: f.task, providerSnapshot: { provider: "fixture", model: "fixture" }, requestSnapshot: f.runRequest,
+      runRequestSnapshot: { ...f.runRequest, runnerExecutionInput },
       preparedInput: f.preparedInput, preparedInputFingerprint: f.preparedInput.fingerprint,
-      runnerExecutionInput: { schemaVersion: 1, runnerId: "pi", toolHydrationEnabled: false,
-        input: { cwd: f.cwd, task: f.task, provider: { provider: "fixture", model: "fixture" }, tools: [] },
-        preparedInput: f.preparedInput } };
+      runnerExecutionInput };
     adjust(f.plan);
     f.preparedExecution = f.store.saveUserInputContinuationPreparation({ ...f.claimIdentity, stage: "execution",
       parentRef: ref(f.preparedRequest), payload: f.plan }, claimedAt).snapshot;
@@ -40,17 +42,6 @@ async function fixture(t, surface = "normal", options = {}) {
   };
   f.admit = () => f.store.admitUserInputContinuation({ ...f.claimIdentity,
     executionRef: ref(f.preparedExecution), runtimeInstanceId: "receiver-runtime" }, claimedAt);
-  f.activate = binding => {
-    f.store.updateWorkUnitAttemptStatus({ ...binding.fence, status: "started", startedAt: claimedAt, now: claimedAt });
-    assert.equal(f.store.transitionWorkUnitStatus({ ...binding.fence, expectedStatus: "claimed", event: "runner_started",
-      actor: "runner", now: claimedAt }).ok, true);
-    assert.equal(f.store.transitionRunStatus({ runId: binding.runId, expectedStatus: "queued", event: "runner_started",
-      actor: "runner", now: claimedAt }).ok, true);
-    if (f.storedTask) assert.equal(f.store.transitionTaskStatus({ taskId: f.storedTask.id, expectedStatus: "claimed",
-      event: "start_run", actor: "system", currentRunId: binding.runId, now: claimedAt }).ok, true);
-    if (f.step) assert.equal(f.store.transitionChannelWorkflowStepStatus({ workflowStepId: f.step.id, expectedStatus: "claimed",
-      event: "start", actor: "system", runId: binding.runId, now: claimedAt }).ok, true);
-  };
   f.ackInput = binding => ({ threadId: f.thread.id, deliveryId: f.delivery.deliveryId, bindingRef: ref(binding), sourceFence: binding.fence,
     receipt: { schemaVersion: 1, boundary: "pi-session-ready", runId: binding.runId, attemptId: binding.fence.attemptId,
       taskId: f.run.taskId, preparedInputFingerprint: f.preparedInput.fingerprint } });
@@ -80,10 +71,14 @@ for (const surface of ["normal", "private", "channel"]) {
     assert.equal(f.store.listLingTurnRuns(f.turn.turnId).find(link => link.runId === run.id).role, "resume");
     assert.equal(f.db.prepare("SELECT COUNT(*) n FROM ling_turns").get().n, 1);
     assert.equal(f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId).status, "claimed");
-    assert.throws(() => f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later), code("source_conflict"));
-    f.activate(binding);
+    assert.equal(f.store.getRun(binding.runId).status, "queued");
+    assert.equal(f.store.getWorkUnit(binding.fence.workUnitId).status, "claimed");
+    assert.equal(f.store.getWorkUnitAttempt(binding.fence.attemptId).status, "created");
     const receipt = f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later);
     assert.equal(receipt.replayed, false);
+    assert.equal(f.store.getRun(binding.runId).status, "running");
+    assert.equal(f.store.getWorkUnit(binding.fence.workUnitId).status, "running");
+    assert.equal(f.store.getWorkUnitAttempt(binding.fence.attemptId).status, "started");
     assert.equal(f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId).status, "applied");
     assert.equal(f.store.getUserInputWait(f.thread.id, f.seed.request.requestId).status, "resumed");
     assert.equal(f.store.getLingTurn(f.turn.turnId).status, "running");
@@ -127,7 +122,7 @@ for (const change of ["runner", "cwd", "task", "provider", "sdk", "hydration"]) 
 }
 for (const change of ["missing", "replaced"]) {
   test(`admitted Run cannot lose or replace its own SDK source input before ACK: ${change}`, async t => {
-    const f = await fixture(t); f.prepare(); const binding = f.admit(); f.activate(binding);
+    const f = await fixture(t); f.prepare(); const binding = f.admit();
     const run = f.store.getRun(binding.runId), snapshot = structuredClone(run.requestSnapshot);
     if (change === "missing") delete snapshot.runnerExecutionInput;
     else snapshot.runnerExecutionInput.input.task.prompt = "borrowed parent input";
@@ -147,6 +142,26 @@ test("binding survives reopen and cannot allocate another successor after lease 
     assert.throws(() => f.admit(), code("delivery_conflict"));
     assert.equal(other.listWorkUnitAttempts(f.unit.id).length, 2);
   } finally { other.close(); }
+});
+test("startup recovery preserves the exact pre-ACK user-input binding", async t => {
+  const f = await fixture(t); f.prepare(plan => {
+    plan.runRequestSnapshot.userInputContinuationContext = { seedRef: ref(f.seed) };
+  }); const binding = f.admit();
+  assert.equal(f.store.recoverStaleRuns(later), 0);
+  assert.equal(f.store.getRun(binding.runId).status, "queued");
+  assert.equal(f.store.getWorkUnit(binding.fence.workUnitId).status, "claimed");
+  assert.equal(f.store.getWorkUnitAttempt(binding.fence.attemptId).status, "created");
+  assert.equal(f.store.getUserInputContinuationReceipt(f.thread.id, f.delivery.deliveryId), undefined);
+  assert.equal(f.store.listEvents(binding.runId, { limit: 100 }).some(event => event.type === "run_error"), false);
+});
+test("startup recovery still fails a queued successor without valid user-input lineage", async t => {
+  const f = await fixture(t); f.prepare(plan => {
+    plan.runRequestSnapshot.userInputContinuationContext = { seedRef: ref(f.seed) };
+  }); const binding = f.admit();
+  f.db.prepare("UPDATE run_sessions SET continuation_reason=NULL WHERE id=?").run(binding.runId);
+  assert.equal(f.store.recoverStaleRuns(later), 1);
+  assert.equal(f.store.getRun(binding.runId).status, "failed");
+  assert.equal(f.store.listEvents(binding.runId, { limit: 100 }).some(event => event.type === "run_error"), true);
 });
 for (const target of ["run_sessions", "work_unit_attempts", "conversation_context_snapshots", "control_plane_events"]) {
   test(`admission rolls back all pointers if ${target} rejects a write`, async t => {
@@ -170,7 +185,7 @@ test("logical cancellation wins before admission and keeps the accepted answer",
   assert.equal(f.read().find(item => item.kind === "user_input_answer").availability, "available");
 });
 test("stale execution fence and receipt fingerprint cannot ACK", async t => {
-  const f = await fixture(t); f.prepare(); const binding = f.admit(); f.activate(binding);
+  const f = await fixture(t); f.prepare(); const binding = f.admit();
   const input = f.ackInput(binding);
   assert.throws(() => f.store.acknowledgeUserInputContinuation({ ...input,
     sourceFence: { ...input.sourceFence, fencingToken: "wrong" } }, later), code("source_conflict"));
@@ -181,11 +196,14 @@ test("stale execution fence and receipt fingerprint cannot ACK", async t => {
   assert.equal(f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId).status, "claimed");
 });
 test("ACK, wait state and transcript visibility roll back together", async t => {
-  const f = await fixture(t); f.prepare(); const binding = f.admit(); f.activate(binding);
+  const f = await fixture(t); f.prepare(); const binding = f.admit();
   f.db.exec("CREATE TRIGGER receipt_failure BEFORE UPDATE ON user_input_deliveries WHEN NEW.status='applied' BEGIN SELECT RAISE(ABORT,'receipt failure'); END");
   assert.throws(() => f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later), /receipt failure/);
   assert.equal(f.store.getUserInputContinuationReceipt(f.thread.id, f.delivery.deliveryId), undefined);
   assert.equal(f.store.getUserInputWait(f.thread.id, f.seed.request.requestId).status, "resuming");
+  assert.equal(f.store.getRun(binding.runId).status, "queued");
+  assert.equal(f.store.getWorkUnit(binding.fence.workUnitId).status, "claimed");
+  assert.equal(f.store.getWorkUnitAttempt(binding.fence.attemptId).status, "created");
   f.db.exec("DROP TRIGGER receipt_failure");
   assert.equal(f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later).replayed, false);
   const other = createSqliteRunStore(f.cwd);
@@ -210,7 +228,6 @@ for (const options of [{ storedTask: true }, { workflow: true }, { storedTask: t
       assert.equal(f.store.getChannelWorkflowStep(f.step.id).status, "claimed");
       assert.equal(f.store.getChannelWorkflowStep(f.step.id).runId, binding.runId);
     }
-    f.activate(binding);
     assert.equal(f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later).replayed, false);
     if (sibling) assert.deepEqual(f.store.getChannelWorkflowStep(sibling.id), sibling);
   });
@@ -220,7 +237,6 @@ for (const stage of ["request", "binding", "receipt"]) {
     const f = await fixture(t, "channel", { storedTask: true, workflow: true });
     if (stage !== "request") f.prepare();
     const binding = stage === "receipt" ? f.admit() : undefined;
-    if (binding) f.activate(binding);
     const before = [f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId), f.store.getWorkUnit(f.unit.id),
       f.store.getTask(f.storedTask.id), f.store.getChannelWorkflowStep(f.step.id), f.store.getLingThread(f.thread.id),
       f.store.getUserInputWait(f.thread.id, f.request.requestId)];
@@ -241,7 +257,7 @@ for (const stage of ["request", "binding", "receipt"]) {
 for (const stage of ["request", "execution", "binding", "receipt"]) {
   for (const damage of ["payload", "scope", "parent"]) {
     test(`corrupt ${stage} ${damage} cannot hydrate an applied answer`, async t => {
-      const f = await fixture(t); f.prepare(); const binding = f.admit(); f.activate(binding);
+      const f = await fixture(t); f.prepare(); const binding = f.admit();
       f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later);
       const recordId = `user_input_continuation_${stage}:${f.delivery.deliveryId}`;
       if (damage === "payload") f.db.prepare("UPDATE conversation_context_snapshots SET payload_json='{}' WHERE id=?").run(recordId);
@@ -266,7 +282,7 @@ for (const stage of ["request", "execution", "binding", "receipt"]) {
 }
 test("missing upstream preparation or binding cannot be reconstructed from an admitted Run", async t => {
   for (const stage of ["request", "execution", "binding"]) {
-    const f = await fixture(t); f.prepare(); const binding = f.admit(); f.activate(binding);
+    const f = await fixture(t); f.prepare(); const binding = f.admit();
     f.db.prepare("DELETE FROM conversation_context_snapshots WHERE snapshot_use=?").run("user_input_continuation_" + stage);
     assert.throws(() => f.store.getUserInputContinuationBinding(f.thread.id, f.delivery.deliveryId), code("invalid_record"));
     assert.throws(() => f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later), code("invalid_record"));
@@ -287,14 +303,14 @@ test("preparation rejects secrets and SQL-writing getters without changing the c
   f.prepare(); assert.ok(f.admit());
 });
 test("archived conversation cannot ACK, and a failed ACK does not unarchive it", async t => {
-  const f = await fixture(t); f.prepare(); const binding = f.admit(); f.activate(binding);
+  const f = await fixture(t); f.prepare(); const binding = f.admit();
   f.store.updateLingThread(f.thread.id, { status: "archived", archivedAt: later }, later);
   assert.throws(() => f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later), code("source_conflict"));
   assert.equal(f.store.getLingThread(f.thread.id).status, "archived");
   assert.equal(f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId).status, "claimed");
 });
 test("historical receipt remains readable after its execution finishes", async t => {
-  const f = await fixture(t); f.prepare(); const binding = f.admit(); f.activate(binding);
+  const f = await fixture(t); f.prepare(); const binding = f.admit();
   const receipt = f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later).receipt;
   assert.equal(f.store.transitionWorkUnitStatus({ ...binding.fence, expectedStatus: "running", event: "runner_succeeded", actor: "runner", now: later }).ok, true);
   assert.ok(f.store.updateWorkUnitAttemptStatus({ ...binding.fence, status: "succeeded", endedAt: later, now: later }));
@@ -306,9 +322,9 @@ test("historical receipt remains readable after its execution finishes", async t
 for (const owner of ["task", "step", "turn"]) {
   test(`cancellation of the current ${owner} wins before receiver ACK`, async t => {
     const f = await fixture(t, "channel", { storedTask: true, workflow: true }); f.prepare();
-    const binding = f.admit(); f.activate(binding);
-    const result = owner === "task" ? f.store.transitionTaskStatus({ taskId: f.storedTask.id, expectedStatus: "running", event: "cancel", actor: "user", now: later })
-      : owner === "step" ? f.store.transitionChannelWorkflowStepStatus({ workflowStepId: f.step.id, expectedStatus: "running", event: "cancel", actor: "user", now: later })
+    const binding = f.admit();
+    const result = owner === "task" ? f.store.transitionTaskStatus({ taskId: f.storedTask.id, expectedStatus: "claimed", event: "cancel", actor: "user", now: later })
+      : owner === "step" ? f.store.transitionChannelWorkflowStepStatus({ workflowStepId: f.step.id, expectedStatus: "claimed", event: "cancel", actor: "user", now: later })
       : f.store.transitionLingTurnStatus({ turnId: f.turn.turnId, expectedStatus: "running", event: "cancel", actor: "user", now: later });
     assert.equal(result.ok, true);
     assert.throws(() => f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later), code("source_conflict"));
@@ -327,7 +343,6 @@ test("continuation admission and ACK preserve a sibling approval's Thread priori
   const binding = f.admit();
   assert.equal(f.store.getLingThread(f.thread.id).status, "waiting_for_approval");
   assert.equal(f.store.getLingThread(f.thread.id).activeRunId, sibling.id);
-  f.activate(binding);
   f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later);
   assert.deepEqual(f.store.getRun(sibling.id), before);
   assert.equal(f.store.getLingThread(f.thread.id).status, "waiting_for_approval");
@@ -337,7 +352,6 @@ for (const operation of ["admitUserInputContinuation", "acknowledgeUserInputCont
   test(`two SQLite connections serialize ${operation} to one write`, { timeout: 20000 }, async t => {
     const f = await fixture(t); f.prepare();
     const binding = operation === "acknowledgeUserInputContinuation" ? f.admit() : undefined;
-    if (binding) f.activate(binding);
     const input = binding ? f.ackInput(binding) : { ...f.claimIdentity, executionRef: ref(f.preparedExecution), runtimeInstanceId: "parallel-runtime" };
     const gate = new SharedArrayBuffer(4);
     const workers = [0, 1].map(() => new Worker(`

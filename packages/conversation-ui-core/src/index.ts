@@ -281,6 +281,6 @@ export type {
   DockSurfaceKind,
 } from "./dock-types.js";
 export { reconcileCanonicalUserInputs, isUserInputAnchor, userInputTranscriptRevisionSignature } from "./user-input-transcript-snapshot.js";
-export type { CanonicalUserInput, CanonicalUserInputRequest, CanonicalUserInputAnswer, CanonicalUserInputUnavailable, CanonicalUserInputSource, CanonicalUserInputSnapshot } from "./user-input-transcript-snapshot.js";
+export type { CanonicalUserInput, CanonicalUserInputRequest, CanonicalUserInputAnswer, CanonicalUserInputUnavailable, CanonicalUserInputSource, CanonicalUserInputAnswerAuthority, CanonicalUserInputSnapshot } from "./user-input-transcript-snapshot.js";
 export { interleaveUserInputRunTimeline } from "./user-input-event-order.js";
 export { interleaveConversationUserInputRows } from "./conversation-user-input-order.js";

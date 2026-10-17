@@ -25,10 +25,14 @@ import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
 import { ConversationTimelineUserInputRenderer } from "./ConversationTimelineUserInputRenderer.js";
 import type { ConversationTimelineBatchDisclosure } from "./conversation-timeline-display-model.js";
 import type { ConversationTimelineMessagePresentation } from "./timeline-response-presentation.js";
+import type { UserInputAnswerAcceptedResponseV1, UserInputAnswerCommandV1 } from "../../../types.js";
 
 export interface ConversationTimelineRenderContext {
   readonly scopeKind?: ConversationTimelineScopeKind;
   readonly renderUserInputAvatar?: (item: ConversationTimelineUserInputItem) => ReactNode;
+  readonly onSubmitUserInputAnswer?: (
+    command: UserInputAnswerCommandV1,
+  ) => Promise<UserInputAnswerAcceptedResponseV1>;
   readonly cwd?: string;
   readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
   readonly onInvokeProtocolAction?: (
@@ -99,7 +103,8 @@ function renderReasoningItem(item: ConversationTimelineItem, context: Conversati
 function renderUserInputItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
   return item.kind === "userInputRequest" || item.kind === "userInputAnswer"
     ? <ConversationTimelineUserInputRenderer key={item.id} item={item} cwd={context.cwd} depth={context.depth}
-        scopeKind={context.scopeKind} renderAvatar={context.renderUserInputAvatar} /> : null;
+        scopeKind={context.scopeKind} renderAvatar={context.renderUserInputAvatar}
+        onSubmitAnswer={context.onSubmitUserInputAnswer} /> : null;
 }
 
 function renderPlanItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {

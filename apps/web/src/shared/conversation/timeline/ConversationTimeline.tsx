@@ -10,6 +10,7 @@ import {
   type ConversationTimelineScopeKind,
   type TimelineSnapshot,
 } from "@ling-stack/conversation-ui-core";
+import type { UserInputAnswerAcceptedResponseV1, UserInputAnswerCommandV1 } from "../../../types.js";
 import { ChevronDown, CircleAlert, Loader2, UserRound } from "lucide-react";
 import { renderConversationTimelineItem } from "./renderer-registry.js";
 import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
@@ -44,6 +45,9 @@ export interface ConversationTimelineProps {
   readonly onDisclosureIntent?: (intent: ConversationTimelineDisclosureIntent) => void;
   readonly renderSubAgentAvatar?: (item: ConversationTimelineSubAgentItem) => ReactNode;
   readonly renderUserInputAvatar?: (item: ConversationTimelineUserInputItem) => ReactNode;
+  readonly onSubmitUserInputAnswer?: (
+    command: UserInputAnswerCommandV1,
+  ) => Promise<UserInputAnswerAcceptedResponseV1>;
   readonly renderMessageChrome?: (item: Extract<ConversationTimelineItem, { kind: "userMessage" | "agentMessage" }>, body: ReactNode, presentation: ConversationTimelineMessagePresentation) => ReactNode;
   readonly renderResponseActions?: ConversationTimelineResponseActionsRenderer;
   readonly emptyLabel?: ReactNode;
@@ -88,6 +92,7 @@ export function ConversationTimeline({
   onDisclosureIntent,
   renderSubAgentAvatar,
   renderUserInputAvatar,
+  onSubmitUserInputAnswer,
   renderMessageChrome,
   renderResponseActions,
   emptyLabel,
@@ -224,6 +229,7 @@ export function ConversationTimeline({
           {displayModel.segments.map((segment) => renderTimelineSegment(segment, {
             scopeKind: snapshot.scope.kind,
             renderUserInputAvatar,
+            onSubmitUserInputAnswer,
             cwd,
             onOpenSourceRef,
             onOpenReview,
@@ -253,6 +259,7 @@ export function ConversationTimeline({
       {displayModel.segments.map((segment) => renderTimelineSegment(segment, {
         scopeKind: snapshot.scope.kind,
         renderUserInputAvatar,
+        onSubmitUserInputAnswer,
         cwd,
         onOpenSourceRef,
         onOpenReview,
@@ -344,7 +351,7 @@ function countAtomicItems(items: readonly ConversationTimelineItem[]): number {
   }, 0);
 }
 
-type TimelineRenderContext = Pick<ConversationTimelineProps, "cwd" | "onOpenSourceRef" | "onOpenReview" | "onInvokeProtocolAction" | "onDisclosureIntent" | "renderMessageChrome" | "renderSubAgentAvatar" | "renderUserInputAvatar"> & {
+type TimelineRenderContext = Pick<ConversationTimelineProps, "cwd" | "onOpenSourceRef" | "onOpenReview" | "onInvokeProtocolAction" | "onDisclosureIntent" | "renderMessageChrome" | "renderSubAgentAvatar" | "renderUserInputAvatar" | "onSubmitUserInputAnswer"> & {
   readonly scopeKind?: ConversationTimelineScopeKind;
   readonly depth: 0 | 1;
 };
@@ -458,6 +465,7 @@ function renderTimelineDisplayRow(
       }} /> : renderTimelineItem(row, {
         scopeKind: context.scopeKind,
         renderUserInputAvatar: context.renderUserInputAvatar,
+        onSubmitUserInputAnswer: context.onSubmitUserInputAnswer,
         cwd: context.cwd,
         onOpenSourceRef: context.onOpenSourceRef,
         onInvokeProtocolAction: context.onInvokeProtocolAction,
@@ -487,6 +495,7 @@ function renderTimelineItem(
   return renderConversationTimelineItem(row.item, {
     scopeKind: context.scopeKind,
     renderUserInputAvatar: context.renderUserInputAvatar,
+    onSubmitUserInputAnswer: context.onSubmitUserInputAnswer,
     cwd: context.cwd,
     onOpenSourceRef: context.onOpenSourceRef,
     onInvokeProtocolAction: context.onInvokeProtocolAction,

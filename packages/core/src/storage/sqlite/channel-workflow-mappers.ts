@@ -245,6 +245,9 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     autoStart: typeof record.autoStart === "boolean" ? record.autoStart : undefined,
     approvalGate: parseOptionalApprovalProfileValue(record.approvalGate),
     preStepApprovalId: readOptionalStringValue(record.preStepApprovalId),
+    // Preserve malformed persisted markers so admission fails closed as stale;
+    // dropping one here would turn a corrupt approval basis into "no gate".
+    preStepApprovalMarker: record.preStepApprovalMarker as ChannelWorkflowStepMetadata["preStepApprovalMarker"],
     policy: parseOptionalWorkflowStepPolicyValue(record.policy),
     gates: parseOptionalWorkflowStepGateListValue(record.gates),
     fanInPolicy: parseOptionalWorkflowFanInPolicyValue(record.fanInPolicy),

@@ -24,11 +24,10 @@ import type { PiRunnerPermissionRequest, PiRunnerRunOptions } from "@ling-stack/
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import {
   appendApprovalCreatedControlPlaneEvent,
-  appendApprovalExpiredControlPlaneEvent,
-  appendApprovalResolvedControlPlaneEvent,
   streamOrAppendApprovalDecisionEvent,
   waitForApprovalDecision,
 } from "./approvals.js";
+import { reconcileApprovalPostCommitEffects } from "./approval-postcommit-effects.js";
 import {
   applyRiskReviewToApprovalInput,
 } from "./risk-review-approval-adapter.js";
@@ -121,27 +120,19 @@ export function createRunPermissionRequestHandler(options: {
 
     const resolvedApproval = await waitForApprovalDecision(options.store, approval.id, options.signal);
     const resolvedAt = new Date().toISOString();
-    if (resolvedApproval.status === "expired") {
-      appendApprovalExpiredControlPlaneEvent(
-        options.store,
-        options.controlPlaneEvents,
-        options.workspaceCwd ?? options.run.cwd,
-        resolvedApproval,
-        "pending",
-        resolvedAt,
-      );
-    } else {
-      appendApprovalResolvedControlPlaneEvent(
-        options.store,
-        options.controlPlaneEvents,
-        options.workspaceCwd ?? options.run.cwd,
-        resolvedApproval,
-        "pending",
-        resolvedApproval.status === "approved" ? "approved" : "denied",
-        resolvedAt,
-      );
-    }
     transitionPermissionRequestRunBackToRunning(options.store, options.run.id, resolvedApproval, resolvedAt);
+    try {
+      reconcileApprovalPostCommitEffects({
+        store: options.store,
+        approval: resolvedApproval,
+        cwd: options.workspaceCwd ?? options.run.cwd,
+        now: resolvedAt,
+        controlPlaneEvents: options.controlPlaneEvents,
+      });
+    } catch {
+      // The durable decision remains authoritative; startup recovery retries
+      // any projection that could not be verified in this callback.
+    }
     streamOrAppendApprovalDecisionEvent({
       store: options.store,
       approval: resolvedApproval,
@@ -291,15 +282,18 @@ function createAutoDeniedPermissionApproval(options: {
   if (!resolved) {
     throw new Error(`Permission approval request not found after policy denial: ${denied.id}`);
   }
-  appendApprovalResolvedControlPlaneEvent(
-    options.store,
-    options.controlPlaneEvents,
-    options.workspaceCwd ?? options.run.cwd,
-    resolved,
-    "pending",
-    "denied",
-    resolved.resolvedAt ?? new Date().toISOString(),
-  );
+  const resolvedAt = resolved.resolvedAt ?? new Date().toISOString();
+  try {
+    reconcileApprovalPostCommitEffects({
+      store: options.store,
+      approval: resolved,
+      cwd: options.workspaceCwd ?? options.run.cwd,
+      now: resolvedAt,
+      controlPlaneEvents: options.controlPlaneEvents,
+    });
+  } catch {
+    // The policy denial committed with its recovery ledger.
+  }
   const requestEvent = options.appendAndMaybeStream("approval_requested", approvalRequestEventPayload(resolved));
   streamOrAppendApprovalDecisionEvent({
     store: options.store,

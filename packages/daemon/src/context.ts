@@ -54,6 +54,7 @@ import type { HostCapabilityBridgeController } from "./features/runs/host-capabi
 import type { HostMcpOperation } from "./features/mcp/host-operation.js";
 import type { HostOfficeLocalMcpOperation } from "./features/mcp/office-local-mcp-operation.js";
 import type { HumanEvaluationService } from "./features/harness/evaluations/human-evaluation-service.js";
+import type { UserInputDeliveryWorkerRegistry } from "./features/runs/user-input-delivery-worker.js";
 
 export interface RunnerAdapter {
   /** Optional capability; absence must reject prepared execution, never fabricate evidence. */
@@ -209,6 +210,7 @@ export interface DaemonContext {
   readonly activeDirectReplies: ActiveDirectReplyRegistry;
   readonly channelReplyDispatchCoordinator: ChannelReplyDispatchCoordinator;
   readonly channelTurnDispatchWorker: ChannelTurnDispatchWorkerRegistry;
+  readonly userInputDeliveryWorker: UserInputDeliveryWorkerRegistry;
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
   readonly externalSecretStore: ExternalSecretStore;

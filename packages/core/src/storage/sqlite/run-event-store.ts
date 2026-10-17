@@ -23,6 +23,9 @@ export interface SqliteRunEventStorePorts {
   readonly rebuildLingThreadMetadata: (threadId: string | undefined, now: string) => void;
 }
 
+type ApprovalDecisionEventType = Extract<RunEventType,
+  "approval_approved" | "approval_denied" | "approval_expired" | "approval_cancelled">;
+
 export class SqliteRunEventStore {
   constructor(
     private readonly context: SqliteStoreContext,
@@ -35,6 +38,66 @@ export class SqliteRunEventStore {
     data: RunEventDataByType[K],
   ): Extract<RunEventEnvelope, { readonly type: K }> {
     return this.append(runId, type, data, { kind: "host" });
+  }
+
+  /**
+   * Publish one canonical decision fact per Approval.
+   *
+   * Recovery claims can expire while an old publisher is paused. A separate
+   * listEvents/appendEvent pair therefore cannot provide exactly-once. The
+   * stable event id makes the database insert the serialization point across
+   * claim generations and SQLite connections.
+   */
+  appendApprovalDecisionEvent(
+    runId: string,
+    approvalId: string,
+    type: ApprovalDecisionEventType,
+    data: RunEventDataByType[ApprovalDecisionEventType],
+  ): Extract<RunEventEnvelope, { readonly type: ApprovalDecisionEventType }> {
+    if (!approvalId || data.approvalId !== approvalId) {
+      throw new Error("Approval decision event identity is invalid");
+    }
+    const run = this.ports.getRun(runId);
+    if (!run) throw new Error(`Run session not found: ${runId}`);
+    const redactedData = normalizeLegacyEventPayload(type, redactSecrets(data));
+    if (!isRunEventData(type, redactedData)) {
+      throw new Error(`Invalid run event payload for ${type}`);
+    }
+
+    const existing = this.findApprovalDecisionEvent(runId, approvalId);
+    if (existing) return this.assertMatchingApprovalDecisionEvent(existing, type, approvalId);
+
+    const eventId = `evt_approval_decision_${approvalId}`;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const envelope = {
+        id: eventId,
+        runId,
+        seq: this.nextEventSeq(runId),
+        ts: new Date().toISOString(),
+        type,
+        data: redactedData,
+      } as Extract<RunEventEnvelope, { readonly type: ApprovalDecisionEventType }>;
+      const inserted = this.context.database.prepare(`INSERT OR IGNORE INTO run_events
+        (id, run_id, seq, ts, type, data_json)
+        SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (
+          SELECT 1 FROM run_sessions WHERE id=? AND status <> 'yielded'
+        )`).run(envelope.id, envelope.runId, envelope.seq, envelope.ts, envelope.type,
+          stringifyJson(envelope.data), runId);
+      if (Number(inserted.changes) === 1) {
+        appendEventLogLine(run.eventLogPath, envelope);
+        return envelope;
+      }
+      const duplicate = this.findApprovalDecisionEvent(runId, approvalId);
+      if (duplicate) return this.assertMatchingApprovalDecisionEvent(duplicate, type, approvalId);
+      if (this.ports.getRun(runId)?.status === "yielded") {
+        const error = new Error(`Run execution is closed (yielded or stale owner): ${runId}`);
+        Object.assign(error, { code: "stale_run_execution" });
+        throw error;
+      }
+      // An unrelated writer may have claimed the same next sequence. Re-read
+      // the tail and retry; the stable event id still prevents duplicates.
+    }
+    throw new Error(`Approval decision event could not be serialized: ${approvalId}`);
   }
 
   appendExecutionEvent<K extends RunEventType>(runId: string, sourceFence: RuntimeAttemptFenceV1, type: K, data: RunEventDataByType[K])
@@ -154,6 +217,30 @@ export class SqliteRunEventStore {
       .prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM run_events WHERE run_id = ?")
       .get(runId);
     return readNumber(row as Record<string, SQLOutputValue>, "next_seq");
+  }
+
+  private findApprovalDecisionEvent(runId: string, approvalId: string): RunEventEnvelope | undefined {
+    const row = this.context.database.prepare(`
+      SELECT id, run_id, seq, ts, type, data_json
+      FROM run_events
+      WHERE run_id = ?
+        AND type IN ('approval_approved', 'approval_denied', 'approval_expired', 'approval_cancelled')
+        AND json_extract(data_json, '$.approvalId') = ?
+      ORDER BY seq ASC
+      LIMIT 1
+    `).get(runId, approvalId);
+    return row ? mapRunEvent(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  private assertMatchingApprovalDecisionEvent(
+    event: RunEventEnvelope,
+    type: ApprovalDecisionEventType,
+    approvalId: string,
+  ): Extract<RunEventEnvelope, { readonly type: ApprovalDecisionEventType }> {
+    if (event.type !== type || event.data.approvalId !== approvalId) {
+      throw new Error(`Approval decision event conflicts with committed fact: ${approvalId}`);
+    }
+    return event as Extract<RunEventEnvelope, { readonly type: ApprovalDecisionEventType }>;
   }
 }
 
