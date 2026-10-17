@@ -420,6 +420,7 @@ export interface SkillSourceSnapshot {
   readonly upstreamName?: string;
   readonly upstreamVersion?: string;
   readonly upstreamSkillPath?: string;
+  readonly bundleUpdateMode?: "follow" | "pinned";
   readonly sourceChecksum: string;
   readonly rawSkillMarkdown: string;
   readonly rawSkillMarkdownArtifactId?: string;
@@ -463,6 +464,7 @@ export interface SkillSourceSyncPreviewRecord {
   readonly definitionPreview?: SkillDefinition;
   readonly snapshotPreview?: CreateSkillSourceSnapshotInput;
   readonly existingSnapshotId?: string;
+  readonly existingSnapshotChecksum?: string;
   readonly diff: readonly SkillSourceSyncDiffItem[];
   readonly semanticProfile?: SkillSourceSemanticProfile;
   readonly semanticDiff: readonly SkillSourceSemanticDiffItem[];
@@ -502,6 +504,30 @@ export interface SkillSourceArtifact {
   readonly includedInRuntime: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+export interface PublishSkillSourceBatchInput {
+  readonly records: readonly {
+    readonly snapshot: CreateSkillSourceSnapshotInput;
+    readonly expectedSnapshotId?: string;
+    readonly expectedSourceChecksum?: string;
+    readonly requireNoSourceHistory?: boolean;
+    readonly requireBundledFollow?: boolean;
+    readonly artifacts?: readonly CreateSkillSourceArtifactInput[];
+  }[];
+  readonly newSkills?: CreateSkillImportDraftInput;
+}
+
+export interface PublishedSkillSourceBatch {
+  readonly snapshots: readonly SkillSourceSnapshot[];
+  readonly artifacts: readonly SkillSourceArtifact[];
+}
+
+export class SkillSourcePublicationError extends Error {
+  constructor(readonly code: "skill_source_publication_conflict" | "skill_source_publication_invalid", message: string) {
+    super(message);
+    this.name = "SkillSourcePublicationError";
+  }
 }
 
 export interface CreateSkillSourceArtifactInput {
@@ -583,6 +609,12 @@ export interface SkillSourceRuntimeFallbackPlan {
 }
 
 export interface SkillSourceRuntimeContext {
+  readonly resourceBinding?: {
+    readonly manifestChecksum: string;
+    readonly upstreamRevision: string;
+    readonly adaptationRevision: string;
+    readonly sourceChecksum: string;
+  };
   readonly loaded: boolean;
   readonly runtimeViewKind: SkillRuntimeViewKind;
   readonly skillId: string;
@@ -759,6 +791,7 @@ export interface CreateSkillSourceSnapshotInput {
   readonly upstreamName?: string;
   readonly upstreamVersion?: string;
   readonly upstreamSkillPath?: string;
+  readonly bundleUpdateMode?: "follow" | "pinned";
   readonly sourceChecksum: string;
   readonly rawSkillMarkdown: string;
   readonly rawSkillMarkdownArtifactId?: string;

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "repository": "testsavantai/prompt-injection-defender-small-v0-onnx",
+  "revision": "5bfc06f0b54950e6653f253eb7df1e3c9811b5cb",
+  "releaseEligible": false,
+  "redistributionReview": "unresolved",
+  "files": [
+    { "path": "config.json", "remotePath": "config.json", "sizeBytes": 975, "checksum": "sha256:832494be4c3615798fdbf2186ed57f7e38cedf17351d01c1462207692a4c951f" },
+    { "path": "tokenizer.json", "remotePath": "tokenizer.json", "sizeBytes": 711396, "checksum": "sha256:d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66" },
+    { "path": "tokenizer_config.json", "remotePath": "tokenizer_config.json", "sizeBytes": 1270, "checksum": "sha256:ae57eda34a3d4e3bbab5edd30c5b7e4ee3c493fa48c2e1af1443b6bd619afc19" },
+    { "path": "special_tokens_map.json", "remotePath": "special_tokens_map.json", "sizeBytes": 125, "checksum": "sha256:b6d346be366a7d1d48332dbc9fdf3bf8960b5d879522b7799ddba59e76237ee3" },
+    { "path": "vocab.txt", "remotePath": "vocab.txt", "sizeBytes": 231508, "checksum": "sha256:07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3" },
+    { "path": "onnx/model.onnx", "remotePath": "model.onnx", "sizeBytes": 115167311, "checksum": "sha256:7cf77ec204721d8178bfc8826b763774f2138d95e3380f4a460629aae21455c7" },
+    { "path": "README.md", "remotePath": "README.md", "sizeBytes": 4642, "checksum": "sha256:b10f0f23bcf986f414275024416d5b234ec6709da8f8b579a96919f512a302ec" }
+  ]
+}

@@ -1,0 +1,2324 @@
+{
+  "schemaVersion": 1,
+  "reviewStatus": "reviewed-static-dependency-mappings",
+  "releaseEligible": false,
+  "upstreamRevision": "47d639abffa882b8cbb641d7d1dedf08ecada9ec",
+  "sourceManifestChecksum": "sha256:2921f0cfd111004b078f33b50b91efb053e5d81a661f9fc9473c9ff0e2dcbf8d",
+  "callGraphChecksum": "sha256:5dc13f5ff671e44102cb3dab305952bfebb40a3e126113dcdd879aa6d06503df",
+  "sourceSiteGraphChecksum": "sha256:2020036c8d5ade3b67ab6945e56f33d691afe939f797a5a4f75717a2767bfa64",
+  "dynamicSiteGraphChecksum": "sha256:a64c741a942b286d307eddab1bc864a450fab1d91d96687292ad13445af653b6",
+  "entries": [
+    {
+      "consumerPath": "bin/dev-setup",
+      "consumerChecksum": "sha256:96d376461a2f630854f947dab1f24e12047393a5250e11ae45424e94f31fafcb",
+      "start": 2209,
+      "end": 2250,
+      "argumentsChecksum": "sha256:ea76c0f03ceb0f3854a3106fe98f7250592bbe78d309f7fb57c4d7ca6d086b6c",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-host-renders.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-analytics",
+      "consumerChecksum": "sha256:dc82174c231fd7b754cc9208e29a7eea83f9587fbaebfba0ff60dec940b4719a",
+      "start": 412,
+      "end": 452,
+      "argumentsChecksum": "sha256:8e773c2f408ed34e45d60f750ff62f42e0ed0b1b0df4a811e2a4385d6016239c",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-artifacts-init",
+      "consumerChecksum": "sha256:ffb91c901d59b1809bc5fabadcd2f14dde1052c9f482555c06af890ddb0d5f6a",
+      "start": 2296,
+      "end": 2336,
+      "argumentsChecksum": "sha256:fff625df4be20b8f8b836672937bd49b8c5af53fe24166aba6da17c4728afbd5",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-artifacts-init",
+      "consumerChecksum": "sha256:ffb91c901d59b1809bc5fabadcd2f14dde1052c9f482555c06af890ddb0d5f6a",
+      "start": 2850,
+      "end": 2886,
+      "argumentsChecksum": "sha256:cd2f6010174bd47f45f275c71bcc9ab94b434d98a4d3460c18217df2b6675e56",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-egress-lib.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-artifacts-init",
+      "consumerChecksum": "sha256:ffb91c901d59b1809bc5fabadcd2f14dde1052c9f482555c06af890ddb0d5f6a",
+      "start": 10442,
+      "end": 10478,
+      "argumentsChecksum": "sha256:b9745fb0a45817f2f84e642e58deea2a5908123a56f9048b1cd58f76a29236e2",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-brain-lock.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-brain-enqueue",
+      "consumerChecksum": "sha256:7d54938a9f98f6ff3439be2c8301fba8d8e49c797805179c911dddfaf7927aa9",
+      "start": 1637,
+      "end": 1677,
+      "argumentsChecksum": "sha256:ef787425dd1c7f82370ee536c35710f55c1007fa53cf874d76e0bea6ed453c59",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-brain-restore",
+      "consumerChecksum": "sha256:bf4488d07bec692d680a831eec8f0e2667e7760bfe39c3b5c8e25b02f1637f6a",
+      "start": 1673,
+      "end": 1713,
+      "argumentsChecksum": "sha256:370485988ffa34dd2be8c71b536004c6850b0135a0e66f2ac1879e90f6dc38e8",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-brain-restore",
+      "consumerChecksum": "sha256:bf4488d07bec692d680a831eec8f0e2667e7760bfe39c3b5c8e25b02f1637f6a",
+      "start": 2174,
+      "end": 2210,
+      "argumentsChecksum": "sha256:41e05420b67774235705b49509deb3448ef2d0716c6f6eb96cb46c5074078ef1",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-egress-lib.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-brain-restore",
+      "consumerChecksum": "sha256:bf4488d07bec692d680a831eec8f0e2667e7760bfe39c3b5c8e25b02f1637f6a",
+      "start": 3518,
+      "end": 3554,
+      "argumentsChecksum": "sha256:3dcb5a0e12472412c19f40b67fd61880bc58f5d3004261e36a1775d87ae5d6cb",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-brain-lock.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-brain-sync",
+      "consumerChecksum": "sha256:8582725c23f5585b00cacc2a9091bf3ef2625afd0383ec234f5166ddbbdccc88",
+      "start": 5537,
+      "end": 5577,
+      "argumentsChecksum": "sha256:06a967f3ba4ebf6bef0b4ba09975702c14b82670636dcc1d6d094b93122995ec",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-brain-sync",
+      "consumerChecksum": "sha256:8582725c23f5585b00cacc2a9091bf3ef2625afd0383ec234f5166ddbbdccc88",
+      "start": 6838,
+      "end": 6874,
+      "argumentsChecksum": "sha256:24df1c5a4386d45e2848ca3af738cca79183c05ec9725414c69ae8515f1bc7e6",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-egress-lib.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-brain-sync",
+      "consumerChecksum": "sha256:8582725c23f5585b00cacc2a9091bf3ef2625afd0383ec234f5166ddbbdccc88",
+      "start": 6947,
+      "end": 6983,
+      "argumentsChecksum": "sha256:a05f221409b29f8c7c6074262279c4d501b2f93917eb4e8945f2b9ab9cb3497a",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-brain-lock.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-brain-uninstall",
+      "consumerChecksum": "sha256:c30dfa84fb16253db606cf03a5e5ceeeedd5cdb70ac5ec55164f3c5a345e696a",
+      "start": 1877,
+      "end": 1917,
+      "argumentsChecksum": "sha256:8ab94c082bf553ae92e4bbe8e252eb92f2b7bf08e04b6e5a787e7fb28c7fefbc",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-capy-install",
+      "consumerChecksum": "sha256:97fad0a32f3efe32409f3c0468cca43f6b6395b253c39baf4cc5d369767e5382",
+      "start": 3175,
+      "end": 3216,
+      "argumentsChecksum": "sha256:07ee7e34aef1eef4b7d044f66a555c2e27be68c0948c338e8dab2daa16fea79f",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-doctor-components.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-capy-install",
+      "consumerChecksum": "sha256:97fad0a32f3efe32409f3c0468cca43f6b6395b253c39baf4cc5d369767e5382",
+      "start": 5322,
+      "end": 5357,
+      "argumentsChecksum": "sha256:abb10032b2d4b5113cf1c4be8b170b59e7b9e7f7b4538b2b8de5c59d0250087d",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-bun-version.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-capy-install",
+      "consumerChecksum": "sha256:97fad0a32f3efe32409f3c0468cca43f6b6395b253c39baf4cc5d369767e5382",
+      "start": 5454,
+      "end": 5493,
+      "argumentsChecksum": "sha256:b9c2da1d493db75bacc8a03a470b354ba346cf55dfafc26ecacf7f3f9c0ac620",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-install-verdict.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-capy-install",
+      "consumerChecksum": "sha256:97fad0a32f3efe32409f3c0468cca43f6b6395b253c39baf4cc5d369767e5382",
+      "start": 16311,
+      "end": 16352,
+      "argumentsChecksum": "sha256:2c5d1da2eee06b9131443f0d23e1d4da08513a265e4c394cdd9ae106ad4e8269",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-doctor-components.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-capy-session",
+      "consumerChecksum": "sha256:e09cfa989a15ea96c3f1d1097d106b96b6edcd52e72a848074bb80735cfc88fe",
+      "start": 2965,
+      "end": 3004,
+      "argumentsChecksum": "sha256:c846d62b5781ddc39a58fdcfe6db08c3fb213f4e3244cf8024ed58d0c1d874a9",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-install-verdict.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-codex-probe",
+      "consumerChecksum": "sha256:bed67f4b872d5a9345ddbbea46b584f2e6f645ed4bd863ecfa6f838ce260bc26",
+      "start": 15232,
+      "end": 15275,
+      "argumentsChecksum": "sha256:93286d40ff4a94c1837058a28bceea4ecf0d7e51de78be7ad4b695f445c1b66e",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-codex-probe",
+      "consumerChecksum": "sha256:bed67f4b872d5a9345ddbbea46b584f2e6f645ed4bd863ecfa6f838ce260bc26",
+      "start": 17356,
+      "end": 17399,
+      "argumentsChecksum": "sha256:33ab139e26ce9c7f26652e8a34aea0006a2ca735bd19614f25132b8e46975a38",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-codex-probe",
+      "consumerChecksum": "sha256:bed67f4b872d5a9345ddbbea46b584f2e6f645ed4bd863ecfa6f838ce260bc26",
+      "start": 22224,
+      "end": 22267,
+      "argumentsChecksum": "sha256:deab1e8db2245427da21f0c213e466da20b9d778ba9821b311fd233dc36fc904",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-codex-probe",
+      "consumerChecksum": "sha256:bed67f4b872d5a9345ddbbea46b584f2e6f645ed4bd863ecfa6f838ce260bc26",
+      "start": 45646,
+      "end": 45689,
+      "argumentsChecksum": "sha256:aa5c1a9b4ff4da9d6f4f369794d74d33eeb3f1223a01f30f232d3ccb66238d15",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-codex-session-import",
+      "consumerChecksum": "sha256:9fa417ffbcb07df18264cbd9b27c86febf5333b7170d3c9881f442e86f34213e",
+      "start": 1168,
+      "end": 1208,
+      "argumentsChecksum": "sha256:1ed61b9888a6fd2624feda32371b0e5396f7ccd50c852f00f3748b3a44d96cc1",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-community-dashboard",
+      "consumerChecksum": "sha256:68fbba2cfacdf342f15ceed27593ccccfce076d4ce9f67212242ba6db81087e2",
+      "start": 619,
+      "end": 659,
+      "argumentsChecksum": "sha256:5bc99a7aebb529cc1a82315c41a9175a0146bd92b646b8ebc550e0480e5c4ee3",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-egress-lib.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-community-dashboard",
+      "consumerChecksum": "sha256:68fbba2cfacdf342f15ceed27593ccccfce076d4ce9f67212242ba6db81087e2",
+      "start": 799,
+      "end": 833,
+      "argumentsChecksum": "sha256:fbfa17f051dc847d877f7e1136a22256569b0d425d2dcc28221805969f36704a",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "supabase/config.sh"
+      ],
+      "prerequisites": [],
+      "reason": "The exact pinned source includes public service defaults, not a discovered local credential file. Preserve its bytes; network and telemetry consent remain separate gates."
+    },
+    {
+      "consumerPath": "bin/gstack-config",
+      "consumerChecksum": "sha256:59eb7da3a8f0cab4d883b4172abef8b5e01f31c03dcf1e7f938e6f06dabba3be",
+      "start": 1801,
+      "end": 1841,
+      "argumentsChecksum": "sha256:3caed24242525a8221b30288a85b582408183e8fa8f232fe3b58ebced2140438",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-config",
+      "consumerChecksum": "sha256:59eb7da3a8f0cab4d883b4172abef8b5e01f31c03dcf1e7f938e6f06dabba3be",
+      "start": 57151,
+      "end": 57197,
+      "argumentsChecksum": "sha256:641eeb2f31cb370194b4ad0dbdf62d18066b70144d6f210d0b3b66a6b9e2a7e1",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-install-registry.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-config",
+      "consumerChecksum": "sha256:59eb7da3a8f0cab4d883b4172abef8b5e01f31c03dcf1e7f938e6f06dabba3be",
+      "start": 61233,
+      "end": 61272,
+      "argumentsChecksum": "sha256:52116cc4f7a2000c0eac5c86803af966ba3ab3882b2d7cc0a9b7a2e14999de03",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-render-claude.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-context-recovery",
+      "consumerChecksum": "sha256:354ea5066a0652508911b58184d844b41a617fc36a23058a33a1650e85aa6c52",
+      "start": 871,
+      "end": 901,
+      "argumentsChecksum": "sha256:3c66675189de4d5584334885e832ef65d9e544e99ead433da141c48a9df6aa0c",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-developer-profile",
+      "consumerChecksum": "sha256:fc005645f305d9be958a9301288d5678d0b134739d47c7732e158c2ecf27834d",
+      "start": 1912,
+      "end": 1952,
+      "argumentsChecksum": "sha256:d9cb94cd526218fcc7ce8cee7a07b2836fc3cd5819b6eeadfba19a6924c27560",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-distill-apply",
+      "consumerChecksum": "sha256:b7289750140e3fd098191974ad2dd90b1c852935e18d5145dc3a07cc8a40a784",
+      "start": 1315,
+      "end": 1355,
+      "argumentsChecksum": "sha256:8dd21715fcc0f35b68062958a90382bcb3a5c5c0acd4f463ac6d466899722952",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-distill-free-text",
+      "consumerChecksum": "sha256:a92e6dcf36f53d5dc1dd1ae5a5dd8a039018fb850b8cf57d9c1f9a95dbf86380",
+      "start": 1878,
+      "end": 1918,
+      "argumentsChecksum": "sha256:9702faf75f19f3f2c52c1ccfbd22a6bab04d96efda1da2fd7f9dead9dd35004b",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-doctor",
+      "consumerChecksum": "sha256:852872643eea3514507943058043afa16e1a33cbd74a7eee9e47b45deea7bc21",
+      "start": 5988,
+      "end": 6023,
+      "argumentsChecksum": "sha256:e8ea5dce08e18e9cfaa1ef96c1dd8b2655272c614d3a8ec3d56d22e33f1198f9",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-install-registry.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-doctor",
+      "consumerChecksum": "sha256:852872643eea3514507943058043afa16e1a33cbd74a7eee9e47b45deea7bc21",
+      "start": 7436,
+      "end": 7466,
+      "argumentsChecksum": "sha256:266552ecc901faef5707f071300a2e3912ff2afa48a16d20f1e09baa07563013",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-bun-version.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-doctor",
+      "consumerChecksum": "sha256:852872643eea3514507943058043afa16e1a33cbd74a7eee9e47b45deea7bc21",
+      "start": 23122,
+      "end": 23151,
+      "argumentsChecksum": "sha256:2ea5a0f3c864eb0c7b6188999b6fcb7cefc048342b12d0bc68dd1256e01d6c6d",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-doctor",
+      "consumerChecksum": "sha256:852872643eea3514507943058043afa16e1a33cbd74a7eee9e47b45deea7bc21",
+      "start": 23433,
+      "end": 23464,
+      "argumentsChecksum": "sha256:4e9eed756fb5e55ade35b56bfe54c8438c58450071f8a68bfbfd6bcfc716ef05",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-codex-status.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-doctor",
+      "consumerChecksum": "sha256:852872643eea3514507943058043afa16e1a33cbd74a7eee9e47b45deea7bc21",
+      "start": 23594,
+      "end": 23625,
+      "argumentsChecksum": "sha256:07999d2850082bf4a4a1e45e88fc22759aff8161486db5bce1b534f27562d920",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-launch-probe.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-doctor",
+      "consumerChecksum": "sha256:852872643eea3514507943058043afa16e1a33cbd74a7eee9e47b45deea7bc21",
+      "start": 23855,
+      "end": 23886,
+      "argumentsChecksum": "sha256:dd97a8ec854eb4164bda3d506d5b84dcbeecbbce312f145e0455f255dd3db223",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-doctor-check.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-doctor-check.sh",
+      "consumerChecksum": "sha256:af5da53f1d0cb21fa1b09e8d8b4983ed5e984ba3f47c2a002269bd9c705ff292",
+      "start": 1309,
+      "end": 1345,
+      "argumentsChecksum": "sha256:c5494951abb0b10fa5e5bff528122c13d4a09c65547ed29122c0be74cb44c2c1",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-doctor-components.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-doctor-check.sh",
+      "consumerChecksum": "sha256:af5da53f1d0cb21fa1b09e8d8b4983ed5e984ba3f47c2a002269bd9c705ff292",
+      "start": 1467,
+      "end": 1502,
+      "argumentsChecksum": "sha256:cb044e681285144f7c1923ca35236bcde9c2337a3367939ffcea891fe42f1e21",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-install-registry.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-doctor-check.sh",
+      "consumerChecksum": "sha256:af5da53f1d0cb21fa1b09e8d8b4983ed5e984ba3f47c2a002269bd9c705ff292",
+      "start": 1635,
+      "end": 1665,
+      "argumentsChecksum": "sha256:7edec7d5775139f8cbbe89846ba7a5fcc20cb0ea883e987bc4c853aeb61e2ab5",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-bun-version.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-egress-lib.sh",
+      "consumerChecksum": "sha256:9fac216f6393ddeb6663e8645638cc6307c1071dd425da1ebd462dca4522b2e8",
+      "start": 4346,
+      "end": 4394,
+      "argumentsChecksum": "sha256:df97fbdb9e6af90287cb2d5eeaf6ddff22853fa715d6f96e29949cfc4838e40c",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-gbrain-mcp-verify",
+      "consumerChecksum": "sha256:2b2a62e95084b24ed12a51abeeacacd17d8fabc7fe88d13d9c6ac8d486fef868",
+      "start": 1796,
+      "end": 1851,
+      "argumentsChecksum": "sha256:18c1b643c16fc4bb75d3c233b4eb1d2d1cd2d5c7f225c4402bad580e1c4c2e95",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-egress-lib.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-gbrain-repo-policy",
+      "consumerChecksum": "sha256:0acc35c72f8bde5c2421c00972af598da78ef314b31db9a0596e8979b4b42845",
+      "start": 2458,
+      "end": 2498,
+      "argumentsChecksum": "sha256:49200a29a18b3e0ee10fe1ac751e2fa95feb53820f2ef9622ce68743f7376242",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-gbrain-source-wireup",
+      "consumerChecksum": "sha256:e8d87e236d8ee9e6b2d96b2eaba78765d10f5271faec53551f5335521a12ea00",
+      "start": 2080,
+      "end": 2120,
+      "argumentsChecksum": "sha256:66f05e8488b4e788ea5be9fb414760a7b9c05e50ad3246b03ce4355a982907bc",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-gbrain-source-wireup",
+      "consumerChecksum": "sha256:e8d87e236d8ee9e6b2d96b2eaba78765d10f5271faec53551f5335521a12ea00",
+      "start": 3019,
+      "end": 3055,
+      "argumentsChecksum": "sha256:790bf240fe3d04043f617f62ea67db3c847ff57211c6e5aa3f25e1ba608234ca",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-brain-lock.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-install-registry.sh",
+      "consumerChecksum": "sha256:a3f9c6b4477258a8e8889c4359b5f31300ff79e2963b00ed3be5079e48dafe70",
+      "start": 1452,
+      "end": 1510,
+      "argumentsChecksum": "sha256:8030d493c6749347b83abddef2da73fae274da0b2e3b75e7acff084155f91a2b",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-path-spelling.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-learnings-log",
+      "consumerChecksum": "sha256:34064f71c0bf8ceef8e383eb0962f521d7743c1ca3b02cbd7b003daa93967ce1",
+      "start": 917,
+      "end": 957,
+      "argumentsChecksum": "sha256:19494c0cc53390c497a1eed6df8ed6c30f04bfdbfdba7eae88e7c4fbb2b1507e",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-learnings-search",
+      "consumerChecksum": "sha256:bcd62c4b0f7df8fc82ac7d8a44a01afc3c52fe3dac9a057ca7fd59be31c0a504",
+      "start": 655,
+      "end": 695,
+      "argumentsChecksum": "sha256:3b09a35c2da498eeefdc9efdaa5e7c6597d59c893712bba6bc655de88205a376",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-lease",
+      "consumerChecksum": "sha256:b222df8f46da3927727a6e5bfb9327e7e1f1c633d8539654852e0fab9ad84041",
+      "start": 1675,
+      "end": 1709,
+      "argumentsChecksum": "sha256:02ee5a8544038ee0fcc323d2886fbf99a09e1fc69546846fc0a97a4f4064942d",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-install-verdict.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-lease",
+      "consumerChecksum": "sha256:b222df8f46da3927727a6e5bfb9327e7e1f1c633d8539654852e0fab9ad84041",
+      "start": 1820,
+      "end": 1850,
+      "argumentsChecksum": "sha256:64d87c27fa3121cf3ecdac2b91d1c8734c12ad5c944cda05e2a8df3e67094b51",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-harness-pid.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-memorable",
+      "consumerChecksum": "sha256:06180c85ef7c6c253107e0fa89ccaa46c74780fbb4fc618fdeeeb9f53fd4d089",
+      "start": 2076,
+      "end": 2116,
+      "argumentsChecksum": "sha256:e26a4148951b05c52730ca2ef90bdd53b72634649ef402fcfa8f1eefdb16e942",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-paths",
+      "consumerChecksum": "sha256:cbe627bb0239453fffba4425b2ed6834cd7df05e47fa8cf6a01a2bae331c74c6",
+      "start": 3214,
+      "end": 3231,
+      "argumentsChecksum": "sha256:9d2bab148d0458bfa6997460d880e373e394b7fd32e85e01d36cd9060a520495",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-question-log",
+      "consumerChecksum": "sha256:cf839539c4950911495502b911d8ca26ecd23d9b580bd3fb0f79ee22f8caa4a8",
+      "start": 2034,
+      "end": 2074,
+      "argumentsChecksum": "sha256:284da5f1431abe409fbfdd1529d0ecb8420c3c0f93402503d8da32adec0b73dc",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-question-preference",
+      "consumerChecksum": "sha256:4b7c21acea7028e78f2b937b2f4ba34bd55329ed654d71677b03f3ffd4984d4c",
+      "start": 2110,
+      "end": 2150,
+      "argumentsChecksum": "sha256:f43f8069e92789c1bcd69717f1bd6fbc9194c7f1b974d4ffbae1aa8fbe94367d",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-relink",
+      "consumerChecksum": "sha256:2e4bda8e3576ed1bf00fa4ebd58e53570c5ac896a0c56445fb74f8b06eb4c578",
+      "start": 467,
+      "end": 503,
+      "argumentsChecksum": "sha256:071941be0e8c82327a6a7ea33efd7d31c3f87fd2793fc039d5b2f4e938c11467",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-relink",
+      "consumerChecksum": "sha256:2e4bda8e3576ed1bf00fa4ebd58e53570c5ac896a0c56445fb74f8b06eb4c578",
+      "start": 1451,
+      "end": 1493,
+      "argumentsChecksum": "sha256:331acc106dfe17a57276e40390fbeab46260d92403347f073a1accc4731d2f62",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-install-registry.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-relink",
+      "consumerChecksum": "sha256:2e4bda8e3576ed1bf00fa4ebd58e53570c5ac896a0c56445fb74f8b06eb4c578",
+      "start": 3044,
+      "end": 3086,
+      "argumentsChecksum": "sha256:66024aba633ff899d983fa415d06051f7ab1df86a0cd4b38968e386b3462c100",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-install-registry.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-repo-mode",
+      "consumerChecksum": "sha256:3e79b3b9335c5403a8d23c464488776093d9facbd91120578b1e3f44299ac834",
+      "start": 1804,
+      "end": 1840,
+      "argumentsChecksum": "sha256:933ea1f4068965e7c47c96a678e135d821794b6d4d3f5ce1e63287c31d6068ff",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-retro-metrics",
+      "consumerChecksum": "sha256:e43121424f8d3b1777d6ce9f12d63fcd8c92d3eaeca14986331fdb319c459084",
+      "start": 2045,
+      "end": 2085,
+      "argumentsChecksum": "sha256:43b4d1e0087ac9a3fa6d97021a599be17e4a5e7198e29539b0080c8e2361c2cd",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-review-log",
+      "consumerChecksum": "sha256:6e002da6f1981942440e1d8a797203e4799a5dc499677e5988c116b4e9287be2",
+      "start": 1189,
+      "end": 1229,
+      "argumentsChecksum": "sha256:a23f4b217d7929a9c89ba271cdddbb7a4244cabfdec7f86f2705fbbd06135a6c",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-review-read",
+      "consumerChecksum": "sha256:b58837b450f550a1f3ff8e2b2a8eb2b16ba2b2c5ecdff3be5c2a13b4502909e1",
+      "start": 814,
+      "end": 854,
+      "argumentsChecksum": "sha256:958dda91db0c77ad238353c5ed35c4f6a3bb9f4254dad658c36af38572c4fc0c",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-security-dashboard",
+      "consumerChecksum": "sha256:10eff671c01b05a9165f69a4fffe8ca002656ea2e247ae4d9443e2098817993c",
+      "start": 854,
+      "end": 894,
+      "argumentsChecksum": "sha256:c90da7c2ae51d98d86f96d5498a4787b77b00e7e42cb3b75b84110099f5d7120",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-egress-lib.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-security-dashboard",
+      "consumerChecksum": "sha256:10eff671c01b05a9165f69a4fffe8ca002656ea2e247ae4d9443e2098817993c",
+      "start": 1009,
+      "end": 1043,
+      "argumentsChecksum": "sha256:dd3190ca9b0a6d971f05dbf56529304472fcca9de2702f9574108400b17ebbd1",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "supabase/config.sh"
+      ],
+      "prerequisites": [],
+      "reason": "The exact pinned source includes public service defaults, not a discovered local credential file. Preserve its bytes; network and telemetry consent remain separate gates."
+    },
+    {
+      "consumerPath": "bin/gstack-session-update",
+      "consumerChecksum": "sha256:4951401b30d2be3ad609bbc0642f737148d2d1a079d7afebca2c4be78a3825c7",
+      "start": 1829,
+      "end": 1884,
+      "argumentsChecksum": "sha256:fb23f2ee6b128515fe1acdfd193552455ea92dcef51ee85d2b7ba70f84713d26",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-session-update",
+      "consumerChecksum": "sha256:4951401b30d2be3ad609bbc0642f737148d2d1a079d7afebca2c4be78a3825c7",
+      "start": 2152,
+      "end": 2207,
+      "argumentsChecksum": "sha256:97e874dc0233a88c150657284580995dd3132eb378f49a360503e5e029828817",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-egress-lib.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-session-update",
+      "consumerChecksum": "sha256:4951401b30d2be3ad609bbc0642f737148d2d1a079d7afebca2c4be78a3825c7",
+      "start": 2361,
+      "end": 2417,
+      "argumentsChecksum": "sha256:e5c0915039f89435dd38d29b6efc73f50b5634c66bf45e0b7c8d28c6204e205e",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-bun-version.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-session-update",
+      "consumerChecksum": "sha256:4951401b30d2be3ad609bbc0642f737148d2d1a079d7afebca2c4be78a3825c7",
+      "start": 2755,
+      "end": 2813,
+      "argumentsChecksum": "sha256:6f5dc5096acfac41a24df7826d7a5cb579f35b1f0500eeef871f5f36b2a133dc",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-path-spelling.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-skill-end",
+      "consumerChecksum": "sha256:96c7d99a3463944458b1abc331c901f10cef218b5bfaf3cdc2b6b89b5ecf0518",
+      "start": 1388,
+      "end": 1428,
+      "argumentsChecksum": "sha256:8034e8ad2629b8629b4b7a17bab74aed23ce099b8f479491955123fede7d9745",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-skill-start",
+      "consumerChecksum": "sha256:5e77750c63aa485cde8dcf68e8a1881b6b9182a1111f0866bb710499701f87de",
+      "start": 2849,
+      "end": 2890,
+      "argumentsChecksum": "sha256:421ef80e47291344932b21e1e7e92feda5b696e679f53fd873603fb3a568ec0b",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-harness-pid.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-skill-start",
+      "consumerChecksum": "sha256:5e77750c63aa485cde8dcf68e8a1881b6b9182a1111f0866bb710499701f87de",
+      "start": 3103,
+      "end": 3143,
+      "argumentsChecksum": "sha256:2fe57dc5163f4fecb55c84ff835b53e3795bd59c78668d73d44b65278b5a33f7",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-skill-start",
+      "consumerChecksum": "sha256:5e77750c63aa485cde8dcf68e8a1881b6b9182a1111f0866bb710499701f87de",
+      "start": 7756,
+      "end": 7791,
+      "argumentsChecksum": "sha256:3898d5707a2baadac960b1c762a61d61680c41721b5bc7875823098d02b2a38f",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-install-verdict.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-skill-start",
+      "consumerChecksum": "sha256:5e77750c63aa485cde8dcf68e8a1881b6b9182a1111f0866bb710499701f87de",
+      "start": 7807,
+      "end": 7838,
+      "argumentsChecksum": "sha256:e363e42557b048f4cc72968fc65d1713ff8ed1aea6960b58038fdb104a0296a4",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-bun-version.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-skill-start",
+      "consumerChecksum": "sha256:5e77750c63aa485cde8dcf68e8a1881b6b9182a1111f0866bb710499701f87de",
+      "start": 7854,
+      "end": 7891,
+      "argumentsChecksum": "sha256:f3bd9ff80a820ad4ed5290a7fa9f6310ecd6b9a1fe9435e216936535f5ff657b",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-doctor-components.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-skill-start",
+      "consumerChecksum": "sha256:5e77750c63aa485cde8dcf68e8a1881b6b9182a1111f0866bb710499701f87de",
+      "start": 21444,
+      "end": 21474,
+      "argumentsChecksum": "sha256:8f3e707190ad0483809a9d7263788d88126fd6f7ebe1a6f72d7bf43332fd2b09",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-egress-lib.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-skill-start",
+      "consumerChecksum": "sha256:5e77750c63aa485cde8dcf68e8a1881b6b9182a1111f0866bb710499701f87de",
+      "start": 21858,
+      "end": 21888,
+      "argumentsChecksum": "sha256:70a7b77a6036590d89eabb68e1dcf18588e41172ae7d8434606bc8904340f9d8",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-brain-lock.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-slug",
+      "consumerChecksum": "sha256:b66afbf7ea03b42f4b819d7011de0aefb547c55a8ca6ffbd3a3e9add92dc9371",
+      "start": 6463,
+      "end": 6503,
+      "argumentsChecksum": "sha256:0f362da3a8b5013b656d2c618a2271bb96d2672fffc51135cd274d730a525b85",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-slug",
+      "consumerChecksum": "sha256:b66afbf7ea03b42f4b819d7011de0aefb547c55a8ca6ffbd3a3e9add92dc9371",
+      "start": 6765,
+      "end": 6810,
+      "argumentsChecksum": "sha256:0b7c9747c686e164fcb87cc9d2f0dd76ea90253fa668401b6bc7450726b6a822",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-remote-identity.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-specialist-stats",
+      "consumerChecksum": "sha256:1e20d7df735ce2b47773347d1461d31e591c79e1b40413f7e1fa13649e208b31",
+      "start": 481,
+      "end": 521,
+      "argumentsChecksum": "sha256:aa11c990764c5e97f03e16d5e4b9c1e1527a7d819ed3901c5a966c4d00ad81f2",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-telemetry-log",
+      "consumerChecksum": "sha256:754419b52c012b7528cb9b2ef6892f4701132026b690b6dcd0bc507ce3fac793",
+      "start": 1371,
+      "end": 1411,
+      "argumentsChecksum": "sha256:c0609c74befb0af1a16fa16e75059df7adf3f7cda7eeca397e39cd5878a18494",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-telemetry-sync",
+      "consumerChecksum": "sha256:9c5a2bb935bde5c9bcb32ab173ed04115b4a0fc8f3f9571e35e9da7175c11ca6",
+      "start": 630,
+      "end": 670,
+      "argumentsChecksum": "sha256:e72ec0ca71fa543dceb56b7d964d19bd9693ad3352feff0a98da962d33982bd7",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-telemetry-sync",
+      "consumerChecksum": "sha256:9c5a2bb935bde5c9bcb32ab173ed04115b4a0fc8f3f9571e35e9da7175c11ca6",
+      "start": 1002,
+      "end": 1042,
+      "argumentsChecksum": "sha256:a35cbde6a42e684f4257d4f84db6d50d4eb85050688e93de3b37b1b4aeca8c91",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-egress-lib.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-telemetry-sync",
+      "consumerChecksum": "sha256:9c5a2bb935bde5c9bcb32ab173ed04115b4a0fc8f3f9571e35e9da7175c11ca6",
+      "start": 1396,
+      "end": 1430,
+      "argumentsChecksum": "sha256:a1197f50ad98ce57252ccb2da8989407d036f61e8c85a76840e22522009e1ea3",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "supabase/config.sh"
+      ],
+      "prerequisites": [],
+      "reason": "The exact pinned source includes public service defaults, not a discovered local credential file. Preserve its bytes; network and telemetry consent remain separate gates."
+    },
+    {
+      "consumerPath": "bin/gstack-timeline-log",
+      "consumerChecksum": "sha256:4bf0fa4e0262ed81a635fcd96ed7cf26d19a7e758c341742db2141b797005a1e",
+      "start": 766,
+      "end": 806,
+      "argumentsChecksum": "sha256:9f698ef31bbf8fc6e8caaccc677cb0d393648c749797aa44e3a77e4933cab15a",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-timeline-read",
+      "consumerChecksum": "sha256:498c84a00d25b0099e76298d4a06bd7271a9a7ca670402a58f2b458c51343b9e",
+      "start": 617,
+      "end": 657,
+      "argumentsChecksum": "sha256:5c9a54e75ebb46b1610f97d558e583dc002772e715dc7e93e2712c54d88fe968",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-uninstall",
+      "consumerChecksum": "sha256:dc1518c2e69ea4ef1165f017a356091640370eebf209edee2f451c2cbe05c115",
+      "start": 3177,
+      "end": 3217,
+      "argumentsChecksum": "sha256:cb67e56265344372822baf1ad94bbce730c7f8fb96b088d4e50601ad1412dc90",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-uninstall",
+      "consumerChecksum": "sha256:dc1518c2e69ea4ef1165f017a356091640370eebf209edee2f451c2cbe05c115",
+      "start": 25176,
+      "end": 25222,
+      "argumentsChecksum": "sha256:26ef672b46fe84b154c2734fc06522a065e2245ddda1387813d4dc245b90219a",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-install-registry.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-update-check",
+      "consumerChecksum": "sha256:6040a142521d7b246dc9e27a390c65718f391ff77040bfdbdd5b92a1732497fc",
+      "start": 1667,
+      "end": 1707,
+      "argumentsChecksum": "sha256:e66fdc79e58aaa3a30f9acd6b741805eb06d1b29a43f17d6ffae24153c8d249f",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-update-check",
+      "consumerChecksum": "sha256:6040a142521d7b246dc9e27a390c65718f391ff77040bfdbdd5b92a1732497fc",
+      "start": 2112,
+      "end": 2152,
+      "argumentsChecksum": "sha256:121d6cdaf2564fed30e954c0dd1826268452938ad6a5f8bd301a3fe16970ae3b",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-egress-lib.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-update-check",
+      "consumerChecksum": "sha256:6040a142521d7b246dc9e27a390c65718f391ff77040bfdbdd5b92a1732497fc",
+      "start": 8945,
+      "end": 8979,
+      "argumentsChecksum": "sha256:e12ff52ac8a68726686bca185c32d3265c259eb6fbaf24e3ee868b0d766b47a2",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "supabase/config.sh"
+      ],
+      "prerequisites": [],
+      "reason": "The exact pinned source includes public service defaults, not a discovered local credential file. Preserve its bytes; network and telemetry consent remain separate gates."
+    },
+    {
+      "consumerPath": "bin/gstack-upgrade",
+      "consumerChecksum": "sha256:74f2a8646ce6afebb4ffc31db2441b1d2e1993eeb8a355e1d1b43ac49231bd88",
+      "start": 2799,
+      "end": 2833,
+      "argumentsChecksum": "sha256:3b2ebfcdd43ca9a31977fb4173f8ee130f97059608e09b3b16b3452e302204f0",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-egress-lib.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-upgrade",
+      "consumerChecksum": "sha256:74f2a8646ce6afebb4ffc31db2441b1d2e1993eeb8a355e1d1b43ac49231bd88",
+      "start": 7296,
+      "end": 7331,
+      "argumentsChecksum": "sha256:9daebe48b8ddb8c3f4e49736ce803b0c2e3420c4fc76d97b06acc561cfaa1fea",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-bun-version.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-verify-gate",
+      "consumerChecksum": "sha256:343fab371937d0a521fad5516757fc408f2e6fc4e3c59f0d486043c27caa8f8d",
+      "start": 1325,
+      "end": 1338,
+      "argumentsChecksum": "sha256:6c856e29a526e82ab0ae28444bddf135f7d2d616c2454d7dc939cf8fe6e04a8d",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "bin/gstack-wtree",
+      "consumerChecksum": "sha256:09f120ba72fdfae2dfa814bbf19f8c7aeaa2cfc78c7742d48d956044ea15d715",
+      "start": 3489,
+      "end": 3547,
+      "argumentsChecksum": "sha256:5120b0d68e4baab8f9b0d44b0b8391ebc900a9406cfd9145d11944663fd7e876",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-path-spelling.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "browse/bin/remote-slug",
+      "consumerChecksum": "sha256:472a8d3788994e027a63de7d9c57b9eafe457d5a1b856e66d4d46558b3c5c22a",
+      "start": 351,
+      "end": 406,
+      "argumentsChecksum": "sha256:e3b3afe0a287964890894741a6e603a38273961cb7a977f6de85a7bb3b38ed12",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-remote-identity.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "careful/bin/check-careful.sh",
+      "consumerChecksum": "sha256:356a1684011b24cebe70e9cc1211aa6d198702011bb3eecba6e852f3190ac0be",
+      "start": 1165,
+      "end": 1182,
+      "argumentsChecksum": "sha256:11bf01f06be6cb16786d2ad9e9c137512c48ebfce8f7e108b2b9bc1534b1b37a",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "careful/bin/hook-extract.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "careful/bin/hook-extract.sh",
+      "consumerChecksum": "sha256:790876f8bfd14e72d604e592b6246b3b5fb9d74081d4199fd2debc0057c0f3e3",
+      "start": 9117,
+      "end": 9132,
+      "argumentsChecksum": "sha256:547160db9da028afbe7ee156fabc1f935ab85068edd62a76ba6bb502ee915d07",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "freeze/bin/check-freeze.sh",
+      "consumerChecksum": "sha256:a9cd28d6d1a1ebd3d956e96671f8c32981cb353851040854f79cdb4c90eeb252",
+      "start": 2409,
+      "end": 2426,
+      "argumentsChecksum": "sha256:8219549935c83b7f17c29b92b1c0463e4bd18e349bae6ccba9171959fd21ddb5",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "careful/bin/hook-extract.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "freeze/bin/freeze-state.sh",
+      "consumerChecksum": "sha256:b34db2f963a36fd72ec2c3549fff8a9c1a418f85a4e99dbe939901f01f0bdc28",
+      "start": 93,
+      "end": 137,
+      "argumentsChecksum": "sha256:1c8771493f83ca6f2c9cd8c4fc024dc39642b9e5c803f553abe1de54d216edbe",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "careful/bin/hook-extract.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "gstack-upgrade/migrations/v0.16.2.0.sh",
+      "consumerChecksum": "sha256:601fd231c58f78466e4af825bd8b851bdb9471d1f176c086e123fc10e35665b7",
+      "start": 669,
+      "end": 728,
+      "argumentsChecksum": "sha256:d869211ec79a4679fa173e73108f039d1c286394c3b01d340cd85da7dc8d4ee4",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "gstack-upgrade/migrations/v1.0.0.0.sh",
+      "consumerChecksum": "sha256:ee428dd3da1251186088579391203b69023111d2bab3745aeb461c9b9525bea5",
+      "start": 805,
+      "end": 864,
+      "argumentsChecksum": "sha256:4a2c5ae238d8bcf5fde80fb85aa6a06ff280fd66d28262ac26eb342144a15343",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "gstack-upgrade/migrations/v1.17.0.0.sh",
+      "consumerChecksum": "sha256:5e01715f196b3967a642e1150781d8f29ac52f0cb27ba4070c8dc2b99eb05aed",
+      "start": 1698,
+      "end": 1757,
+      "argumentsChecksum": "sha256:5fa7549d24463a3e54c52a2a59ae8943b9bc0abe8bfa08f64542d2bd3c4f98cd",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "gstack-upgrade/migrations/v1.27.0.0.sh",
+      "consumerChecksum": "sha256:917b95f7885400f5934bbc2d57eed58fcf2ec858fdb06a9307dead78a6164fbb",
+      "start": 2477,
+      "end": 2536,
+      "argumentsChecksum": "sha256:47822bc03e6af4678544c750a498b1fade6a36991e3c4fdf2cc58e2086df8c75",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "gstack-upgrade/migrations/v1.37.0.0.sh",
+      "consumerChecksum": "sha256:23b0f2104b1a4e96ec9f03c785259f2032e9cbf4b98d7738e1bc163e6f303041",
+      "start": 1934,
+      "end": 1993,
+      "argumentsChecksum": "sha256:156f48cc5cc9d73d18afc9de0601a396ac2807b2bee493644ec3c32ebe5f3a18",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "gstack-upgrade/migrations/v1.38.1.0.sh",
+      "consumerChecksum": "sha256:f0b04ef65108f1c47978392af4c7359110ff7d950d0d51b744fe1cb3167c6e2a",
+      "start": 787,
+      "end": 846,
+      "argumentsChecksum": "sha256:33b372ce2fb3aa027bd83bc07e6b45d83a9793f6bd65b99ac4259cac0389f789",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "gstack-upgrade/migrations/v1.40.0.0.sh",
+      "consumerChecksum": "sha256:aeae1b86ba0eadfba1bbd9d459ecb2d62a05f559e746938553d78b8b898700b6",
+      "start": 1249,
+      "end": 1308,
+      "argumentsChecksum": "sha256:2ffc50e4b01a2ec4bd7b305935431004e3b0a18ae16a4be17ae28e737c9b543e",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "gstack-upgrade/migrations/v1.58.0.0.sh",
+      "consumerChecksum": "sha256:9d6a1ff47b736c5d66b06b7b307feb72be2871b14933146c6c5be780a44a0452",
+      "start": 1035,
+      "end": 1094,
+      "argumentsChecksum": "sha256:437c10d325b62f26bb0babba8a2bf7375b2027c6c6d41e5e56116e44db786adb",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "gstack-upgrade/migrations/v1.65.0.0.sh",
+      "consumerChecksum": "sha256:d50ea8e9eb8ed15133792a2a3580b6830d2d2c87be250932ab8c901ea1627d95",
+      "start": 2105,
+      "end": 2164,
+      "argumentsChecksum": "sha256:ca5e222391e123118e10ff79c9c032d44008f46e03142c49e1206eb082a2c1e4",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "gstack-upgrade/migrations/v1.78.0.0.sh",
+      "consumerChecksum": "sha256:eac4a918e6c850a7c6aa28e76c5dc5c88e01737ff037b27533959d9aeb0a5a7a",
+      "start": 945,
+      "end": 1004,
+      "argumentsChecksum": "sha256:56bbcfc88d8b07bd941de857930132f605feb3118454e44bbaa7446cf6bc26ce",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "gstack-upgrade/migrations/v1.91.19.0.sh",
+      "consumerChecksum": "sha256:5a3f872b962986390b799107ab73c24108855ac923a8b87a84bb95796577fd26",
+      "start": 432,
+      "end": 491,
+      "argumentsChecksum": "sha256:b08584540661bbe8f1e4c8193fba7513abbf321bbd736ea6e03a45e5eaaafe27",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "gstack-upgrade/migrations/v1.91.65.0.sh",
+      "consumerChecksum": "sha256:e82e5ec114a71bbf18f10893994477ff6500aed88640de4b45534021d0aede7f",
+      "start": 939,
+      "end": 976,
+      "argumentsChecksum": "sha256:e56955c84c1fe4504e4ea771bd021738eeacacdbed8c54c657703cf9b6e1f2e3",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "gstack-upgrade/migrations/v1.91.65.0.sh",
+      "consumerChecksum": "sha256:e82e5ec114a71bbf18f10893994477ff6500aed88640de4b45534021d0aede7f",
+      "start": 1235,
+      "end": 1278,
+      "argumentsChecksum": "sha256:6f0f6ff541bd15034c6463cfe6fdd312986bca28971047c17fc38bb09c9dc072",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-install-registry.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "gstack-upgrade/migrations/v1.91.65.0.sh",
+      "consumerChecksum": "sha256:e82e5ec114a71bbf18f10893994477ff6500aed88640de4b45534021d0aede7f",
+      "start": 1301,
+      "end": 1340,
+      "argumentsChecksum": "sha256:04d8a8a399baf3444836b01a153ca1f9502be72df26e8705a7377b1219399021",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-host-renders.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "scripts/build.sh",
+      "consumerChecksum": "sha256:6a56dc29fc19cd95ae357657250abc7ec2e5636f76f012ffeca71679efac440f",
+      "start": 1622,
+      "end": 1658,
+      "argumentsChecksum": "sha256:65a20f44c6a904a988084adb7e8cc5ad4766992918f5bcb8a2dd38796e4d52da",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-host-renders.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "scripts/ubicloud/ubi-runner.sh",
+      "consumerChecksum": "sha256:6e663c4601f248336a887de86af7381f244376808d4092d56a1055e977b17f46",
+      "start": 5077,
+      "end": 5089,
+      "argumentsChecksum": "sha256:4c971d954c0163a7ccf1c5faa653053bb8e3249b865554a677fa53c6936aff68",
+      "kind": "source",
+      "classification": "generated-state",
+      "requiredRuntimeControl": "structured-owned-state",
+      "targets": [],
+      "prerequisites": [
+        "owned-cloud-state",
+        "explicit-cloud-operation-approval"
+      ],
+      "reason": "load() reads a VM record produced under the runner state root; never package live state or evaluate it during preparation. Ling needs structured owned-state parsing and cloud consent."
+    },
+    {
+      "consumerPath": "setup",
+      "consumerChecksum": "sha256:9b3262aa2a3302e635f62f0dd1d6bc361da95b28d455f896c0bd8b479ee95ecb",
+      "start": 7246,
+      "end": 7287,
+      "argumentsChecksum": "sha256:90f48d07a37655a80184677060adb9e67974701949b80cf75fa4ea1733b251f3",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "setup",
+      "consumerChecksum": "sha256:9b3262aa2a3302e635f62f0dd1d6bc361da95b28d455f896c0bd8b479ee95ecb",
+      "start": 7291,
+      "end": 7338,
+      "argumentsChecksum": "sha256:5c097a92ab286e8a3c14a8990e3daa949b0bc4c64db9a6c786f2821940f6b0e9",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-install-registry.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "setup",
+      "consumerChecksum": "sha256:9b3262aa2a3302e635f62f0dd1d6bc361da95b28d455f896c0bd8b479ee95ecb",
+      "start": 7352,
+      "end": 7396,
+      "argumentsChecksum": "sha256:22acc6fc49093f8676c2693e4240327737a7501487bcb2ad732462aae80c483e",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-render-claude.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "setup",
+      "consumerChecksum": "sha256:9b3262aa2a3302e635f62f0dd1d6bc361da95b28d455f896c0bd8b479ee95ecb",
+      "start": 7400,
+      "end": 7443,
+      "argumentsChecksum": "sha256:11a97b858a075ebe649b2371c4ae3a9a32bdb7785d7b76a4c47fa27bfa253c1f",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-codex-status.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "setup",
+      "consumerChecksum": "sha256:9b3262aa2a3302e635f62f0dd1d6bc361da95b28d455f896c0bd8b479ee95ecb",
+      "start": 15390,
+      "end": 15435,
+      "argumentsChecksum": "sha256:21d776d7c80ff8848e796d54b3251604fba6c9318de167753beabd97cab90aa8",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-bun-version.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "setup",
+      "consumerChecksum": "sha256:9b3262aa2a3302e635f62f0dd1d6bc361da95b28d455f896c0bd8b479ee95ecb",
+      "start": 17251,
+      "end": 17298,
+      "argumentsChecksum": "sha256:678126671fa12a611079c12729aae159b432577df0dce70f8312d409c77cb80f",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "setup",
+      "consumerChecksum": "sha256:9b3262aa2a3302e635f62f0dd1d6bc361da95b28d455f896c0bd8b479ee95ecb",
+      "start": 17567,
+      "end": 17617,
+      "argumentsChecksum": "sha256:f4fd4302437de2e5e19ed1ebe18ec6158bf5d611296bf85c703897910d6d7ab7",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-path-spelling.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "setup",
+      "consumerChecksum": "sha256:9b3262aa2a3302e635f62f0dd1d6bc361da95b28d455f896c0bd8b479ee95ecb",
+      "start": 17742,
+      "end": 17795,
+      "argumentsChecksum": "sha256:67c3a118db1b38222fc9b461fe75c481888555c0fbd65d1b7a0f021c148aa801",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-install-registry.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "setup",
+      "consumerChecksum": "sha256:9b3262aa2a3302e635f62f0dd1d6bc361da95b28d455f896c0bd8b479ee95ecb",
+      "start": 17947,
+      "end": 17997,
+      "argumentsChecksum": "sha256:fb488b57dde9a3307e2c7ec8f20417388a00cdceac3c3969f01584b17f527276",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-render-claude.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "setup",
+      "consumerChecksum": "sha256:9b3262aa2a3302e635f62f0dd1d6bc361da95b28d455f896c0bd8b479ee95ecb",
+      "start": 18122,
+      "end": 18171,
+      "argumentsChecksum": "sha256:bde4ac406e1cd47661c6901cb4644dd5d4aaea5a3b04cfa49ce18f51bcbde7f8",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-host-renders.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "setup",
+      "consumerChecksum": "sha256:9b3262aa2a3302e635f62f0dd1d6bc361da95b28d455f896c0bd8b479ee95ecb",
+      "start": 235241,
+      "end": 235293,
+      "argumentsChecksum": "sha256:0fa3e4f272e3c285d3ade7abfa415297005a944064e4fc802ce68ec29a17df02",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-state-root.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "setup",
+      "consumerChecksum": "sha256:9b3262aa2a3302e635f62f0dd1d6bc361da95b28d455f896c0bd8b479ee95ecb",
+      "start": 240528,
+      "end": 240577,
+      "argumentsChecksum": "sha256:b85a7b23a01a2c3e4220a67cb006b578e31f2071c552f5c665f46838aff54daf",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "bin/gstack-launch-probe.sh"
+      ],
+      "prerequisites": [],
+      "reason": "Reviewed source/self-directory or inherited package-bin expression names this immutable counterpart. Ling must bind the frozen bundle root instead of trusting arbitrary root overrides; this mapping does not execute the helper."
+    },
+    {
+      "consumerPath": "supabase/verify-rls.sh",
+      "consumerChecksum": "sha256:3644d825a936688f2022b09a578517496cc5fb78cfdcb06fac8567f71f53169d",
+      "start": 420,
+      "end": 445,
+      "argumentsChecksum": "sha256:84a4fcae977e5417d4dc900d427a0524a884b2f1bb68aa2e662ffabdc10e7b9e",
+      "kind": "source",
+      "classification": "bundled-resource",
+      "requiredRuntimeControl": "frozen-bundle-root",
+      "targets": [
+        "supabase/config.sh"
+      ],
+      "prerequisites": [],
+      "reason": "The exact pinned source includes public service defaults, not a discovered local credential file. Preserve its bytes; network and telemetry consent remain separate gates."
+    },
+    {
+      "consumerPath": "bin/gstack-codex-probe",
+      "consumerChecksum": "sha256:bed67f4b872d5a9345ddbbea46b584f2e6f645ed4bd863ecfa6f838ce260bc26",
+      "start": 5569,
+      "end": 5607,
+      "argumentsChecksum": "sha256:e4adaac15dbdbae86ef3cfdd3bbf0465abaafb4c60f31d2b448a2c11cd4064dc",
+      "kind": "dynamic-evaluation",
+      "classification": "shell-introspection",
+      "requiredRuntimeControl": "owned-shell-introspection",
+      "targets": [],
+      "prerequisites": [
+        "owned-shell-runtime"
+      ],
+      "reason": "The zsh-only branch locates the sourced helper using a fixed introspection expression. No variable resolution occurs here; actual Bash/zsh behavior and owned roots require runtime acceptance."
+    },
+    {
+      "consumerPath": "bin/gstack-codex-probe",
+      "consumerChecksum": "sha256:bed67f4b872d5a9345ddbbea46b584f2e6f645ed4bd863ecfa6f838ce260bc26",
+      "start": 7994,
+      "end": 8026,
+      "argumentsChecksum": "sha256:808bc497f5af22c21a3daf28fc1662fbabcfbef45c40e332cdabc4026779a3e1",
+      "kind": "dynamic-evaluation",
+      "classification": "environment-indirection",
+      "requiredRuntimeControl": "bounded-environment-read",
+      "targets": [],
+      "prerequisites": [
+        "owned-environment-inputs"
+      ],
+      "reason": "eval dereferences an environment variable name, not an immutable resource. Keep validated names and host-owned environment access; preparation must not read credentials or evaluate this expression."
+    },
+    {
+      "consumerPath": "bin/gstack-config",
+      "consumerChecksum": "sha256:59eb7da3a8f0cab4d883b4172abef8b5e01f31c03dcf1e7f938e6f06dabba3be",
+      "start": 36081,
+      "end": 36102,
+      "argumentsChecksum": "sha256:c2d99ab912bd17dd2faf01d0c19eccd524b60cfd590a1d50abe886ea0adecb2e",
+      "kind": "dynamic-evaluation",
+      "classification": "environment-indirection",
+      "requiredRuntimeControl": "bounded-environment-read",
+      "targets": [],
+      "prerequisites": [
+        "owned-environment-inputs"
+      ],
+      "reason": "eval dereferences an environment variable name, not an immutable resource. Keep validated names and host-owned environment access; preparation must not read credentials or evaluate this expression."
+    },
+    {
+      "consumerPath": "bin/gstack-context-recovery",
+      "consumerChecksum": "sha256:354ea5066a0652508911b58184d844b41a617fc36a23058a33a1650e85aa6c52",
+      "start": 1281,
+      "end": 1322,
+      "argumentsChecksum": "sha256:7a0edec61999f3b2e5badc1ed4b1af0208072b6c2acfcb27b654daa97ee12d84",
+      "kind": "dynamic-evaluation",
+      "classification": "bundled-command-output",
+      "requiredRuntimeControl": "structured-helper-output",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "prerequisites": [],
+      "reason": "eval consumes shell assignments emitted by the pinned slug helper. Verify that helper, but replace or validate its output through structured Ling host handling before runtime execution."
+    },
+    {
+      "consumerPath": "bin/gstack-design-doc-find",
+      "consumerChecksum": "sha256:5a15b702a52f67f3baf927aa7fbf5d652d097f0c820187cf10a13a5f47c1c1ee",
+      "start": 939,
+      "end": 979,
+      "argumentsChecksum": "sha256:725a99fbfd626a04a9ea827f58c1a81555999e2fdc2c6bafd550969d97c43d53",
+      "kind": "dynamic-evaluation",
+      "classification": "bundled-command-output",
+      "requiredRuntimeControl": "structured-helper-output",
+      "targets": [
+        "bin/gstack-paths"
+      ],
+      "prerequisites": [],
+      "reason": "eval consumes the pinned paths helper's assignments. Package identity is reviewable without executing output; owned path binding and structured consumption remain runtime gates."
+    },
+    {
+      "consumerPath": "bin/gstack-developer-profile",
+      "consumerChecksum": "sha256:fc005645f305d9be958a9301288d5678d0b134739d47c7732e158c2ecf27834d",
+      "start": 2738,
+      "end": 2793,
+      "argumentsChecksum": "sha256:fce45fce982531243d4968483d397160969a963221f67f1985f65a13c706cd2e",
+      "kind": "dynamic-evaluation",
+      "classification": "bundled-command-output",
+      "requiredRuntimeControl": "structured-helper-output",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "prerequisites": [],
+      "reason": "eval consumes shell assignments emitted by the pinned slug helper. Verify that helper, but replace or validate its output through structured Ling host handling before runtime execution."
+    },
+    {
+      "consumerPath": "bin/gstack-distill-apply",
+      "consumerChecksum": "sha256:b7289750140e3fd098191974ad2dd90b1c852935e18d5145dc3a07cc8a40a784",
+      "start": 1610,
+      "end": 1665,
+      "argumentsChecksum": "sha256:2cf65ae3109661faf5a2c167271dc317d926495866ac96859a828e63355775db",
+      "kind": "dynamic-evaluation",
+      "classification": "bundled-command-output",
+      "requiredRuntimeControl": "structured-helper-output",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "prerequisites": [],
+      "reason": "eval consumes shell assignments emitted by the pinned slug helper. Verify that helper, but replace or validate its output through structured Ling host handling before runtime execution."
+    },
+    {
+      "consumerPath": "bin/gstack-distill-free-text",
+      "consumerChecksum": "sha256:a92e6dcf36f53d5dc1dd1ae5a5dd8a039018fb850b8cf57d9c1f9a95dbf86380",
+      "start": 2173,
+      "end": 2228,
+      "argumentsChecksum": "sha256:520956b041e8941c1410c4efa8228100feb3bf946126e6171f32d8484cdf1fe4",
+      "kind": "dynamic-evaluation",
+      "classification": "bundled-command-output",
+      "requiredRuntimeControl": "structured-helper-output",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "prerequisites": [],
+      "reason": "eval consumes shell assignments emitted by the pinned slug helper. Verify that helper, but replace or validate its output through structured Ling host handling before runtime execution."
+    },
+    {
+      "consumerPath": "bin/gstack-egress-lib.sh",
+      "consumerChecksum": "sha256:9fac216f6393ddeb6663e8645638cc6307c1071dd425da1ebd462dca4522b2e8",
+      "start": 3071,
+      "end": 3109,
+      "argumentsChecksum": "sha256:56dcfa609c2d8bb15eaa3d9c3f10649af56459bcb1dc0588dd285e378ac848c1",
+      "kind": "dynamic-evaluation",
+      "classification": "shell-introspection",
+      "requiredRuntimeControl": "owned-shell-introspection",
+      "targets": [],
+      "prerequisites": [
+        "owned-shell-runtime"
+      ],
+      "reason": "The zsh-only branch locates the sourced helper using a fixed introspection expression. No variable resolution occurs here; actual Bash/zsh behavior and owned roots require runtime acceptance."
+    },
+    {
+      "consumerPath": "bin/gstack-learnings-log",
+      "consumerChecksum": "sha256:34064f71c0bf8ceef8e383eb0962f521d7743c1ca3b02cbd7b003daa93967ce1",
+      "start": 869,
+      "end": 916,
+      "argumentsChecksum": "sha256:1a0711c5bc46c2c451352bf7766356095fd669bc7ec1477a104ad56c57a4987b",
+      "kind": "dynamic-evaluation",
+      "classification": "bundled-command-output",
+      "requiredRuntimeControl": "structured-helper-output",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "prerequisites": [],
+      "reason": "eval consumes shell assignments emitted by the pinned slug helper. Verify that helper, but replace or validate its output through structured Ling host handling before runtime execution."
+    },
+    {
+      "consumerPath": "bin/gstack-learnings-search",
+      "consumerChecksum": "sha256:bcd62c4b0f7df8fc82ac7d8a44a01afc3c52fe3dac9a057ca7fd59be31c0a504",
+      "start": 607,
+      "end": 654,
+      "argumentsChecksum": "sha256:2c89c2242b95b6c541bb538e8a492748c29afd113151ccb3f9b7e54520cd0136",
+      "kind": "dynamic-evaluation",
+      "classification": "bundled-command-output",
+      "requiredRuntimeControl": "structured-helper-output",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "prerequisites": [],
+      "reason": "eval consumes shell assignments emitted by the pinned slug helper. Verify that helper, but replace or validate its output through structured Ling host handling before runtime execution."
+    },
+    {
+      "consumerPath": "bin/gstack-paths",
+      "consumerChecksum": "sha256:cbe627bb0239453fffba4425b2ed6834cd7df05e47fa8cf6a01a2bae331c74c6",
+      "start": 3836,
+      "end": 3857,
+      "argumentsChecksum": "sha256:9e6e92aa81e0be07e7b0174f49138923c6b41609860d02b3b4f7e2067d3fdca7",
+      "kind": "dynamic-evaluation",
+      "classification": "environment-indirection",
+      "requiredRuntimeControl": "bounded-environment-read",
+      "targets": [],
+      "prerequisites": [
+        "owned-environment-inputs"
+      ],
+      "reason": "eval dereferences an environment variable name, not an immutable resource. Keep validated names and host-owned environment access; preparation must not read credentials or evaluate this expression."
+    },
+    {
+      "consumerPath": "bin/gstack-question-log",
+      "consumerChecksum": "sha256:cf839539c4950911495502b911d8ca26ecd23d9b580bd3fb0f79ee22f8caa4a8",
+      "start": 1906,
+      "end": 1953,
+      "argumentsChecksum": "sha256:933c91b100e28f55be198031caad71419a9e421a06314919dcd09ac07918e823",
+      "kind": "dynamic-evaluation",
+      "classification": "bundled-command-output",
+      "requiredRuntimeControl": "structured-helper-output",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "prerequisites": [],
+      "reason": "eval consumes shell assignments emitted by the pinned slug helper. Verify that helper, but replace or validate its output through structured Ling host handling before runtime execution."
+    },
+    {
+      "consumerPath": "bin/gstack-question-preference",
+      "consumerChecksum": "sha256:4b7c21acea7028e78f2b937b2f4ba34bd55329ed654d71677b03f3ffd4984d4c",
+      "start": 2405,
+      "end": 2460,
+      "argumentsChecksum": "sha256:a1a8f92e7db8c441ee9b374128046a9e95ee2e350e73a3483c4564b8ff6fba9e",
+      "kind": "dynamic-evaluation",
+      "classification": "bundled-command-output",
+      "requiredRuntimeControl": "structured-helper-output",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "prerequisites": [],
+      "reason": "eval consumes shell assignments emitted by the pinned slug helper. Verify that helper, but replace or validate its output through structured Ling host handling before runtime execution."
+    },
+    {
+      "consumerPath": "bin/gstack-review-log",
+      "consumerChecksum": "sha256:6e002da6f1981942440e1d8a797203e4799a5dc499677e5988c116b4e9287be2",
+      "start": 1141,
+      "end": 1188,
+      "argumentsChecksum": "sha256:6f36510683ce2426c6f5b40fb48f7610e270fc7372032c49371c88bf71d16169",
+      "kind": "dynamic-evaluation",
+      "classification": "bundled-command-output",
+      "requiredRuntimeControl": "structured-helper-output",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "prerequisites": [],
+      "reason": "eval consumes shell assignments emitted by the pinned slug helper. Verify that helper, but replace or validate its output through structured Ling host handling before runtime execution."
+    },
+    {
+      "consumerPath": "bin/gstack-review-read",
+      "consumerChecksum": "sha256:b58837b450f550a1f3ff8e2b2a8eb2b16ba2b2c5ecdff3be5c2a13b4502909e1",
+      "start": 766,
+      "end": 813,
+      "argumentsChecksum": "sha256:d6dff1d07d9afd8de010ad38c85fecaf8342f057568bf2e850a570a158c587d7",
+      "kind": "dynamic-evaluation",
+      "classification": "bundled-command-output",
+      "requiredRuntimeControl": "structured-helper-output",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "prerequisites": [],
+      "reason": "eval consumes shell assignments emitted by the pinned slug helper. Verify that helper, but replace or validate its output through structured Ling host handling before runtime execution."
+    },
+    {
+      "consumerPath": "bin/gstack-session-update",
+      "consumerChecksum": "sha256:4951401b30d2be3ad609bbc0642f737148d2d1a079d7afebca2c4be78a3825c7",
+      "start": 13450,
+      "end": 13468,
+      "argumentsChecksum": "sha256:5e826b542cca7d08de3ac827e02994d43b74c604c99c1b89998ce86ed48f94be",
+      "kind": "dynamic-evaluation",
+      "classification": "shell-introspection",
+      "requiredRuntimeControl": "owned-shell-introspection",
+      "targets": [],
+      "prerequisites": [
+        "owned-shell-runtime"
+      ],
+      "reason": "A fixed sh command observes its parent PID. Reuse Ling-owned process identity instead of treating a build-host observation as client acceptance."
+    },
+    {
+      "consumerPath": "bin/gstack-skill-start",
+      "consumerChecksum": "sha256:5e77750c63aa485cde8dcf68e8a1881b6b9182a1111f0866bb710499701f87de",
+      "start": 7262,
+      "end": 7308,
+      "argumentsChecksum": "sha256:78088b2b95df335a27e7ec4ccad910e96774f6e284d3be5d95932a3f32c9efff",
+      "kind": "dynamic-evaluation",
+      "classification": "bundled-command-output",
+      "requiredRuntimeControl": "structured-helper-output",
+      "targets": [
+        "bin/gstack-repo-mode"
+      ],
+      "prerequisites": [],
+      "reason": "eval consumes the pinned repo-mode helper's assignments. Preserve mode semantics through structured Ling handling, not unrestricted output evaluation."
+    },
+    {
+      "consumerPath": "bin/gstack-skill-start",
+      "consumerChecksum": "sha256:5e77750c63aa485cde8dcf68e8a1881b6b9182a1111f0866bb710499701f87de",
+      "start": 13370,
+      "end": 13411,
+      "argumentsChecksum": "sha256:127118c7b27b425544652f67ce4d93601d302faea7e63a783fffd12dbd8380e3",
+      "kind": "dynamic-evaluation",
+      "classification": "bundled-command-output",
+      "requiredRuntimeControl": "structured-helper-output",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "prerequisites": [],
+      "reason": "eval consumes shell assignments emitted by the pinned slug helper. Verify that helper, but replace or validate its output through structured Ling host handling before runtime execution."
+    },
+    {
+      "consumerPath": "bin/gstack-specialist-stats",
+      "consumerChecksum": "sha256:1e20d7df735ce2b47773347d1461d31e591c79e1b40413f7e1fa13649e208b31",
+      "start": 433,
+      "end": 480,
+      "argumentsChecksum": "sha256:7561194d1bd6aa1b95bb0ee2406bbb7b747766bdd70f406d95f33868eeb2eed4",
+      "kind": "dynamic-evaluation",
+      "classification": "bundled-command-output",
+      "requiredRuntimeControl": "structured-helper-output",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "prerequisites": [],
+      "reason": "eval consumes shell assignments emitted by the pinned slug helper. Verify that helper, but replace or validate its output through structured Ling host handling before runtime execution."
+    },
+    {
+      "consumerPath": "bin/gstack-timeline-log",
+      "consumerChecksum": "sha256:4bf0fa4e0262ed81a635fcd96ed7cf26d19a7e758c341742db2141b797005a1e",
+      "start": 718,
+      "end": 765,
+      "argumentsChecksum": "sha256:260c4762b5f3803ac5355f0ada18ece31cc2261a864797bbc91651441ba7bf94",
+      "kind": "dynamic-evaluation",
+      "classification": "bundled-command-output",
+      "requiredRuntimeControl": "structured-helper-output",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "prerequisites": [],
+      "reason": "eval consumes shell assignments emitted by the pinned slug helper. Verify that helper, but replace or validate its output through structured Ling host handling before runtime execution."
+    },
+    {
+      "consumerPath": "bin/gstack-timeline-read",
+      "consumerChecksum": "sha256:498c84a00d25b0099e76298d4a06bd7271a9a7ca670402a58f2b458c51343b9e",
+      "start": 569,
+      "end": 616,
+      "argumentsChecksum": "sha256:8445bfdeb487981252b78ad6bdcdeda99f9ef56582b00b5a15c27f37a46b5e9a",
+      "kind": "dynamic-evaluation",
+      "classification": "bundled-command-output",
+      "requiredRuntimeControl": "structured-helper-output",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "prerequisites": [],
+      "reason": "eval consumes shell assignments emitted by the pinned slug helper. Verify that helper, but replace or validate its output through structured Ling host handling before runtime execution."
+    },
+    {
+      "consumerPath": "bin/gstack-uninstall",
+      "consumerChecksum": "sha256:dc1518c2e69ea4ef1165f017a356091640370eebf209edee2f451c2cbe05c115",
+      "start": 6234,
+      "end": 6265,
+      "argumentsChecksum": "sha256:887789fcf002cfa629bad6418e162a9562e108f4c580f68be285350145028673",
+      "kind": "dynamic-evaluation",
+      "classification": "environment-indirection",
+      "requiredRuntimeControl": "bounded-environment-read",
+      "targets": [],
+      "prerequisites": [
+        "owned-environment-inputs"
+      ],
+      "reason": "eval dereferences an environment variable name, not an immutable resource. Keep validated names and host-owned environment access; preparation must not read credentials or evaluate this expression."
+    },
+    {
+      "consumerPath": "bin/gstack-verify-gate",
+      "consumerChecksum": "sha256:343fab371937d0a521fad5516757fc408f2e6fc4e3c59f0d486043c27caa8f8d",
+      "start": 6828,
+      "end": 6839,
+      "argumentsChecksum": "sha256:3d4cf83d30b80bb744c92d44600a555c2c9082126eea80641e98f94bc80cf2c0",
+      "kind": "dynamic-evaluation",
+      "classification": "user-command",
+      "requiredRuntimeControl": "approved-workspace-command",
+      "targets": [],
+      "prerequisites": [
+        "explicit-user-command-approval"
+      ],
+      "reason": "CMD is extracted from project content and checked against upstream trust state. Ling must enforce its own exact-command approval and workspace boundary; project text never grants execution authority."
+    },
+    {
+      "consumerPath": "careful/bin/check-careful.sh",
+      "consumerChecksum": "sha256:356a1684011b24cebe70e9cc1211aa6d198702011bb3eecba6e852f3190ac0be",
+      "start": 18918,
+      "end": 18974,
+      "argumentsChecksum": "sha256:49f690c3c1383bf0561f78e7e1241ac85b1d95ab0133619313b839177110ad0e",
+      "kind": "dynamic-evaluation",
+      "classification": "bundled-command-output",
+      "requiredRuntimeControl": "structured-helper-output",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "prerequisites": [],
+      "reason": "eval consumes shell assignments emitted by the pinned slug helper. Verify that helper, but replace or validate its output through structured Ling host handling before runtime execution."
+    },
+    {
+      "consumerPath": "setup",
+      "consumerChecksum": "sha256:9b3262aa2a3302e635f62f0dd1d6bc361da95b28d455f896c0bd8b479ee95ecb",
+      "start": 81002,
+      "end": 81019,
+      "argumentsChecksum": "sha256:c349eb750f079cfd33cc604d66f9ccbb717e5324961f082ed05184fae7277c1d",
+      "kind": "dynamic-evaluation",
+      "classification": "host-probe",
+      "requiredRuntimeControl": "owned-browser-probe",
+      "targets": [],
+      "prerequisites": [
+        "owned-playwright-browser",
+        "packaged-node-or-bun"
+      ],
+      "reason": "The selected Node/Bun Playwright launch probe is runtime behavior, not an immutable script endpoint. Preserve browser availability via Ling-owned probing without running global setup or cache/quarantine mutations."
+    }
+  ]
+}

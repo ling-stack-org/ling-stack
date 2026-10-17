@@ -298,6 +298,7 @@ export function createDaemonServer(
     dependencies.storeFactory ?? createOriginalOfficeDirectoryStoreFactory(runtimeSupervisor), {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
     onStoreInitialized: (cwd, store) => {
+      dependencies.initializeBundledSkills?.(store);
       // A process may have crossed the shell side-effect boundary before the
       // daemon disappeared. Expired executing claims are never retried; they
       // become explicit unknown outcomes before any recovery dispatch runs.

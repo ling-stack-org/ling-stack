@@ -86,6 +86,7 @@ export * from "./managed-official-skill-source.js";
 export { bindCoreOriginalProcessGuard, readCoreOriginalProcessEntry, isCoreOriginalLaunchRefusal } from "./original-host-process-entry.js";
 export type { CoreOriginalProcessSourceId, CoreOriginalProcessRecord, CoreOriginalProcessEntry, CoreOriginalProcessGuard } from "./original-host-process-entry.js";
 export * from "./skill-source-sync.js";
+export * from "./skill-source-definition.js";
 export * from "./skill-optimization-preview.js";
 export * from "./skill-source-runtime.js";
 export * from "./skill-regression-policy.js";
@@ -148,6 +149,7 @@ export {
 } from "@ling-stack/contracts";
 export * from "./remote-access-types.js";
 export * from "./effective-skills.js";
+export * from "./effective-skill-registry.js";
 export * from "./mcp-types.js";
 export * from "./mcp-metadata-types.js";
 export * from "./workspace-types.js";

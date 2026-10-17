@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   buildSkillSourceRuntimeFallbackPlan,
@@ -98,6 +99,74 @@ test("skill source runtime prompt records truncation evidence", () => {
   assert.equal(result.context.loadedChars, 40);
   assert.equal(result.context.truncated, true);
   assert.match(result.promptFragment, /truncated for this run/);
+});
+
+function completeSnapshot(markdown, overrides = {}) {
+  return { ...snapshot({ rawSkillMarkdown: markdown, warnings: [] }),
+    sourceChecksum: `sha256:${createHash("sha256").update(markdown).digest("hex")}`, ...overrides };
+}
+
+test("complete source mode includes the tail beyond the legacy 60000 character budget", () => {
+  const markdown = `${"Rule.\n".repeat(15000)}\nMANDATORY FINAL APPROVAL RULE\n`;
+  const result = buildSkillSourceRuntimePrompt({ snapshot: completeSnapshot(markdown), requireCompleteSource: true });
+  assert.equal(result.context.loaded, true);
+  assert.equal(result.context.truncated, false);
+  assert.equal(result.context.loadedChars, markdown.length);
+  assert.match(result.promptFragment, /MANDATORY FINAL APPROVAL RULE/);
+});
+
+test("complete source mode blocks inadequate, invalid and excessive budgets without partial instructions", () => {
+  for (const maxLoadedChars of [40, NaN, Infinity, -1, 0, 1.5]) {
+    const result = buildSkillSourceRuntimePrompt({ snapshot: completeSnapshot("x".repeat(120)), requireCompleteSource: true, maxLoadedChars });
+    assert.equal(result.context.loaded, false);
+    assert.equal(result.context.loadedChars, 0);
+    assert.equal(result.context.blockedReason, "source_context_budget_exceeded");
+    assert.equal(result.promptFragment, undefined);
+  }
+  const oversized = buildSkillSourceRuntimePrompt({ snapshot: completeSnapshot("x".repeat(256 * 1024 + 1)),
+    requireCompleteSource: true, maxLoadedChars: 999999 });
+  assert.equal(oversized.context.loaded, false);
+  assert.equal(oversized.promptFragment, undefined);
+});
+
+test("complete source mode rejects corrupt or previously truncated sources even with compiled views", () => {
+  for (const source of [
+    completeSnapshot("Source", { sourceChecksum: "sha256:tampered" }),
+    completeSnapshot("Source", { warnings: [{ code: "source_truncated", severity: "warning", message: "Incomplete" }] }),
+  ]) {
+    for (const optimizationMode of ["no_operation", "auto_safe"]) {
+      const result = resolveSkillSourceRuntimeView({ skillId: source.skillId, snapshot: source, compiledView: compiledView(),
+        requireCompleteSource: true, optimizationMode });
+      assert.equal(result.context.loaded, false);
+      assert.equal(result.promptFragment, undefined);
+    }
+  }
+});
+
+test("compiled views cannot bypass complete source budgets", () => {
+  for (const optimizationMode of ["auto_safe", "auto_runtime_experimental"]) {
+    for (const [markdown, maxLoadedChars] of [
+      ["Source", 5],
+      ["Source", NaN],
+      ["Source", Infinity],
+      ["Source", -1],
+      ["Source", 0],
+      ["Source", 1.5],
+      ["x".repeat(256 * 1024 + 1), undefined],
+      ["x".repeat(256 * 1024 + 1), 999999],
+    ]) {
+      const result = resolveSkillSourceRuntimeView({ skillId: "review", snapshot: completeSnapshot(markdown),
+        compiledView: compiledView(), requireCompleteSource: true, optimizationMode, maxLoadedChars });
+      assert.equal(result.context.loaded, false);
+      assert.equal(result.context.loadedChars, 0);
+      assert.equal(result.context.blockedReason, "source_context_budget_exceeded");
+      assert.equal(result.promptFragment, undefined);
+    }
+    const accepted = resolveSkillSourceRuntimeView({ skillId: "review", snapshot: completeSnapshot("Source"),
+      compiledView: compiledView(), requireCompleteSource: true, optimizationMode, maxLoadedChars: 6 });
+    assert.equal(accepted.context.loaded, true);
+    assert.equal(accepted.context.runtimeViewKind, "compiled_view");
+  }
 });
 
 test("skill source runtime prompt suppresses source text when error warnings exist", () => {

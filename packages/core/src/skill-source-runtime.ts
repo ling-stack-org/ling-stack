@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   SkillCompiledRuntimeView,
   SkillLazyReferenceKind,
@@ -11,10 +12,12 @@ import type {
 } from "./skill-types.js";
 
 export const DEFAULT_SKILL_SOURCE_RUNTIME_CONTEXT_CHARS = 60_000;
+export const MAX_COMPLETE_SKILL_SOURCE_RUNTIME_CHARS = 256 * 1024;
 
 export interface BuildSkillSourceRuntimePromptInput {
   readonly snapshot: SkillSourceSnapshot;
   readonly maxLoadedChars?: number;
+  readonly requireCompleteSource?: boolean;
 }
 
 export interface ResolveSkillSourceRuntimeViewInput {
@@ -24,12 +27,14 @@ export interface ResolveSkillSourceRuntimeViewInput {
   readonly optimizationMode?: SkillOptimizationMode;
   readonly runtimeSupportsCompiledContext?: boolean;
   readonly maxLoadedChars?: number;
+  readonly requireCompleteSource?: boolean;
 }
 
 export function buildSkillSourceRuntimePrompt(input: BuildSkillSourceRuntimePromptInput): SkillSourceRuntimePrompt {
   return buildOriginalSourceRuntimePrompt({
     snapshot: input.snapshot,
     maxLoadedChars: input.maxLoadedChars,
+    requireCompleteSource: input.requireCompleteSource,
     optimizationMode: "no_operation",
   });
 }
@@ -51,6 +56,12 @@ export function resolveSkillSourceRuntimeView(input: ResolveSkillSourceRuntimeVi
     };
   }
 
+  // Apply the same complete-source gate before either runtime view can be selected.
+  const completeSource = input.requireCompleteSource
+    ? buildOriginalSourceRuntimePrompt({ ...input, snapshot: input.snapshot, optimizationMode })
+    : undefined;
+  if (completeSource && !completeSource.context.loaded) return completeSource;
+
   if (compiledRuntimeRequested(optimizationMode)) {
     if (input.runtimeSupportsCompiledContext === false) {
       return disabledForRunnerRuntimePrompt(input.snapshot, optimizationMode);
@@ -66,17 +77,22 @@ export function resolveSkillSourceRuntimeView(input: ResolveSkillSourceRuntimeVi
         optimizationMode,
       });
     }
+    if (completeSource) {
+      return { ...completeSource, context: { ...completeSource.context, fallbackReason: "compiled_view_unavailable" } };
+    }
     return buildOriginalSourceRuntimePrompt({
       snapshot: input.snapshot,
       maxLoadedChars: input.maxLoadedChars,
+      requireCompleteSource: input.requireCompleteSource,
       optimizationMode,
       fallbackReason: "compiled_view_unavailable",
     });
   }
 
-  return buildOriginalSourceRuntimePrompt({
+  return completeSource ?? buildOriginalSourceRuntimePrompt({
     snapshot: input.snapshot,
     maxLoadedChars: input.maxLoadedChars,
+    requireCompleteSource: input.requireCompleteSource,
     optimizationMode,
   });
 }
@@ -110,16 +126,27 @@ export function buildSkillSourceRuntimeFallbackPlan(
 function buildOriginalSourceRuntimePrompt(input: {
   readonly snapshot: SkillSourceSnapshot;
   readonly maxLoadedChars?: number;
+  readonly requireCompleteSource?: boolean;
   readonly optimizationMode: SkillOptimizationMode;
   readonly fallbackReason?: string;
 }): SkillSourceRuntimePrompt {
-  const maxLoadedChars = Math.max(input.maxLoadedChars ?? DEFAULT_SKILL_SOURCE_RUNTIME_CONTEXT_CHARS, 1);
+  const requestedBudget = input.maxLoadedChars ?? (input.requireCompleteSource
+    ? MAX_COMPLETE_SKILL_SOURCE_RUNTIME_CHARS : DEFAULT_SKILL_SOURCE_RUNTIME_CONTEXT_CHARS);
+  const invalidBudget = !Number.isSafeInteger(requestedBudget) || requestedBudget < 1;
+  const maxLoadedChars = input.requireCompleteSource
+    ? invalidBudget ? 0 : Math.min(requestedBudget, MAX_COMPLETE_SKILL_SOURCE_RUNTIME_CHARS)
+    : Math.max(requestedBudget, 1);
   const sourceLengthChars = input.snapshot.rawSkillMarkdown.length;
   const hasErrorWarnings = input.snapshot.warnings.some((warning) => warning.severity === "error");
-  const loadedChars = hasErrorWarnings ? 0 : Math.min(sourceLengthChars, maxLoadedChars);
+  const incomplete = input.requireCompleteSource && input.snapshot.warnings.some(warning => warning.code === "source_truncated");
+  const budgetExceeded = input.requireCompleteSource && (invalidBudget || sourceLengthChars > maxLoadedChars);
+  const blockedReason = input.requireCompleteSource && sourceChecksumMismatch(input.snapshot) ? "source_snapshot_checksum_mismatch"
+    : hasErrorWarnings ? "source_snapshot_has_error_warnings"
+    : incomplete ? "source_snapshot_incomplete" : budgetExceeded ? "source_context_budget_exceeded" : undefined;
+  const loadedChars = blockedReason ? 0 : Math.min(sourceLengthChars, maxLoadedChars);
   const truncated = !hasErrorWarnings && sourceLengthChars > maxLoadedChars;
   const context: SkillSourceRuntimePrompt["context"] = {
-    loaded: !hasErrorWarnings,
+    loaded: !blockedReason,
     runtimeViewKind: "original_source",
     optimizationMode: input.optimizationMode,
     snapshotId: input.snapshot.id,
@@ -138,14 +165,14 @@ function buildOriginalSourceRuntimePrompt(input: {
     warningCount: input.snapshot.warnings.length,
     warningSeverities: uniqueStrings(input.snapshot.warnings.map((warning) => warning.severity)),
     referencedFiles: input.snapshot.referencedFiles,
-    includedRefs: hasErrorWarnings ? [] : [sourceRuntimeReference(input.snapshot, loadedChars)],
+    includedRefs: blockedReason ? [] : [sourceRuntimeReference(input.snapshot, loadedChars)],
     deferredRefs: input.snapshot.referencedFiles.map(fileRuntimeReference),
     materializedRefs: [],
-    blockedReason: hasErrorWarnings ? "source_snapshot_has_error_warnings" : undefined,
+    blockedReason,
     fallbackReason: input.fallbackReason,
   };
 
-  if (hasErrorWarnings) {
+  if (blockedReason) {
     return { context };
   }
 
@@ -441,4 +468,8 @@ function estimateTokensFromBytes(bytes: number): number {
 
 function uniqueStrings<T extends string>(values: readonly T[]): T[] {
   return [...new Set(values)];
+}
+
+function sourceChecksumMismatch(snapshot: SkillSourceSnapshot): boolean {
+  return snapshot.sourceChecksum !== `sha256:${createHash("sha256").update(snapshot.rawSkillMarkdown).digest("hex")}`;
 }

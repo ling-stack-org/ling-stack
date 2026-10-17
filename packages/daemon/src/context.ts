@@ -5,6 +5,7 @@ import type {
   SecretPurpose,
   SecretResolver,
   SecretStatus,
+  RunStore,
 } from "@ling-stack/core";
 import type {
   PiRunnerMcpToolCallResult,
@@ -148,6 +149,8 @@ export interface DaemonDependencies {
   readonly runner?: RunnerAdapter;
   readonly runnerRegistry?: RunnerRegistry;
   readonly storeFactory?: RunStoreFactory;
+  /** Authenticated bundled sources, initialized synchronously before recovery/read access. */
+  readonly initializeBundledSkills?: (store: RunStore) => void;
   /** Host build selection only. Never supplied by workspace policy, HTTP or model input. */
   readonly officeLocalNativeArtifact?: OfficeLocalReviewedNativeArtifact;
   readonly extensionRegistry?: LingExtensionRegistry;

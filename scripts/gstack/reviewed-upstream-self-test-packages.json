@@ -1,0 +1,195 @@
+{
+  "schemaVersion": 1,
+  "target": {
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "sourceManifestChecksum": "sha256:2921f0cfd111004b078f33b50b91efb053e5d81a661f9fc9473c9ff0e2dcbf8d",
+  "upstreamRevision": "47d639abffa882b8cbb641d7d1dedf08ecada9ec",
+  "sourceFileCount": 3714,
+  "marker": "claude-agent-sdk",
+  "compilerChecksum": "sha256:35d20dd0263e5c950194434b925454fdfa9ba6e4467da960410fa05b08a7a5b5",
+  "importGraphs": [
+    {
+      "dependencyScope": "client-command-imports",
+      "inputGraphChecksum": "sha256:68bb9ab0c134b6fb5dc16ebf34921c2f1d89698e3930039d5da42c9d5cad962e"
+    },
+    {
+      "dependencyScope": "native-build-imports",
+      "inputGraphChecksum": "sha256:1602c43eed46136ab3dc5f2ceaa0a6b13326063673bf9eaa5a11839ee6825636"
+    },
+    {
+      "dependencyScope": "node-browser-build-imports",
+      "inputGraphChecksum": "sha256:6d600f4e0dadef2065bc4e3f31f25506da0df7e1d80289133a59be76d0446f7a"
+    },
+    {
+      "dependencyScope": "diagram-build-imports",
+      "inputGraphChecksum": "sha256:6c90e83bd0548c8119fcc91ee4b90a8ddbe42769b612527a57d4e9133cfbd3b3"
+    },
+    {
+      "dependencyScope": "security-sidecar-build-imports",
+      "inputGraphChecksum": "sha256:7d7e3260c41a4797187501c4e7ea4819e823296051d99d1362d3354f2b0140ef"
+    }
+  ],
+  "references": [
+    {
+      "path": "runtime/.osv-scanner.toml",
+      "checksum": "sha256:07795e31dfc7fa47a7e58582ed16265cf377ed9f0ba3628f7873833acf293f90",
+      "classification": "upstream-dependency-metadata"
+    },
+    {
+      "path": "runtime/CHANGELOG.md",
+      "checksum": "sha256:25c506eec16b7382ca20f392493591f1c9270422ef5216792c254946cf06c5bf",
+      "classification": "documentation"
+    },
+    {
+      "path": "runtime/CONTRIBUTING.md",
+      "checksum": "sha256:199db865cdfc848e90be867b27210573a72abc34ff8c233e1fe061d806f62c73",
+      "classification": "documentation"
+    },
+    {
+      "path": "runtime/TODOS.md",
+      "checksum": "sha256:e8acdc6920cc698c9340f6b42d82269bfceb62047677f81d9bb231d3a35dcde6",
+      "classification": "documentation"
+    },
+    {
+      "path": "runtime/USING_GBRAIN_WITH_GSTACK.md",
+      "checksum": "sha256:3cb06f3928b9d2a71047fc7093f3c03167c69cbe719eaf27db06861d9d2f8806",
+      "classification": "documentation"
+    },
+    {
+      "path": "runtime/bun.lock",
+      "checksum": "sha256:565c1dbb50a46756cb0414ca35c08b9fe145a3c26cfa80070c42204bfa5a9a44",
+      "classification": "upstream-dependency-metadata"
+    },
+    {
+      "path": "runtime/docs/designs/FIX_WAVE_2026_10_06.md",
+      "checksum": "sha256:9ca83aac0e5c096d71e404c231442abf6e55b3fd344fc7d849648604e758688e",
+      "classification": "documentation"
+    },
+    {
+      "path": "runtime/lib/conductor-env-shim.ts",
+      "checksum": "sha256:2a38c54dcd2515d5c20732d2d2d27525836ac1c70e1ff2e2e2be8383c2f08874",
+      "classification": "comment-only"
+    },
+    {
+      "path": "runtime/package.json",
+      "checksum": "sha256:3f806fd76731275d4dad76e9f40af0675e567699d192a12f6528c806be6353c2",
+      "classification": "upstream-dependency-metadata"
+    },
+    {
+      "path": "runtime/scripts/preflight-agent-sdk.ts",
+      "checksum": "sha256:c687b0fcffa7f75c5eff4a63fb6c2421110f7400264e51f1ab81bbb53cb55981",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/agent-sdk-runner.test.ts",
+      "checksum": "sha256:da40b9f52f2c1122c10d43a96d8ab007fe5bf7b33b40e42245cf061cb40c9657",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/auq-mode-capture.test.ts",
+      "checksum": "sha256:57d9802014baa0afdce49d36a238a7b7fc5305655998c7003ddd991978b365c3",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/helpers/agent-sdk-runner.ts",
+      "checksum": "sha256:3d0b35e021405e97bf96d30a1e47a015f60ff8dc90bda7b9850ab143dee376ec",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/helpers/auq-parallel-worker.ts",
+      "checksum": "sha256:e9e2224563b5548869e1af0bd96a81965780a47fa75da30a5bfe9134ea3d4752",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/helpers/overlay-case.ts",
+      "checksum": "sha256:4b3db1ac326bbba4a46953c2a4ffe50d72ceccfa52a2207b54762aa972d50192",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/helpers/setup-gbrain-sandbox.ts",
+      "checksum": "sha256:6e586c043f200f0379a0afbf0978198aaf2f0ea9868ace069341af2a71b4a4e1",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/helpers/shared-libs-eval-fixture.ts",
+      "checksum": "sha256:72ddb489dffb97b9598937b9ef91c7fbb86a929cecdd1ecc72c1a2b2aa178f88",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/helpers/ship-hook-actor.ts",
+      "checksum": "sha256:87a109588b4b235528d64df37a69da2e19bcbd840026bbe8efe86166542ee0e3",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/helpers/ship-skip-actor.ts",
+      "checksum": "sha256:8cab120ca88d0f6e446bc57d1e8b9d0551caf25d9802c2c8dbc1853958dbd882",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/helpers/touchfiles-data.ts",
+      "checksum": "sha256:68ee3fa41c184013c88a5873090eb8043a89fba98c068178a23e96c953b9fbb2",
+      "classification": "self-test-path-data"
+    },
+    {
+      "path": "runtime/test/helpers/workflow-boundaries-fixture.ts",
+      "checksum": "sha256:2f8f646f1ea327958441dad054bda6921aeca40ce6ba120a171cfe7b655ada75",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/overlay-sdk-cancel-eof.test.ts",
+      "checksum": "sha256:77ef8af6c1c40263b8a907fe0811b53f5adce9f76167e1e9ecbdfc7295d1097d",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/shared-libs-cancellation.test.ts",
+      "checksum": "sha256:01e927b3dd88a3bb8a4b57e456890476c814142d88b78a4bf6d45eaf845ab571",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/shared-libs-revalidation-prompt.test.ts",
+      "checksum": "sha256:6598e4398accb4cd473abe2a55810c1b429f3cdfe73c13a399b0919e47bf305b",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/shared-libs-stage-actor.test.ts",
+      "checksum": "sha256:52c01bdee734a6f58f9605cbdac79677d6f75e58a14260f9dc740d8d23260eda",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/ship-hook-actor.test.ts",
+      "checksum": "sha256:49509b9d9d9be337e810df936da15e881b850eb4f1bac3c847fcb642e926221b",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/ship-skip-actor.test.ts",
+      "checksum": "sha256:6fadbe91a7101a7eccce476c6fcb4a8412f252188570e394b8e4ab834ebd28e6",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/skill-e2e-setup-gbrain-remote.test.ts",
+      "checksum": "sha256:be630762dbcaadebcca6489cc84e701faf8f164426f04683a8fcdefb9bea26a0",
+      "classification": "upstream-self-test"
+    },
+    {
+      "path": "runtime/test/workflow-boundaries-fixture.test.ts",
+      "checksum": "sha256:a3e77b3e7a567c8d78c03e66dc52e9a34f8d6e5725c6d0c1d681a4675876b8a3",
+      "classification": "upstream-self-test"
+    }
+  ],
+  "packages": [
+    {
+      "path": "node_modules/@anthropic-ai/claude-agent-sdk",
+      "name": "@anthropic-ai/claude-agent-sdk",
+      "version": "0.2.117",
+      "metadataChecksum": "sha256:df07db5ffd55e1e89d66a7bdc90f935966f4e348f0f0988179bcd8f94a3ddd7a"
+    },
+    {
+      "path": "node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64",
+      "name": "@anthropic-ai/claude-agent-sdk-darwin-arm64",
+      "version": "0.2.117",
+      "metadataChecksum": "sha256:8c14f8f3f1fa45d87f2ff5f7e5f721b1b4cea133e8a84506a24b15c442dc4a94"
+    }
+  ]
+}

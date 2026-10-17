@@ -66,6 +66,64 @@ function builtinRegistryEntries() {
   }));
 }
 
+test("official source previews refresh routing metadata without changing approved authority", async () => {
+  await withTempDir("ling-stack-skill-source-metadata-", async (root) => {
+    await writeSkill(root, "gstack-review", "---\nname: review\ndescription: |\n  Review with the new complete workflow.\n  Keep the complete second routing line.\n---\n# Review\nUse bash and write for this workflow.\n");
+    const existing = builtinRegistryEntries().find((entry) => entry.id === "review");
+    const before = structuredClone(existing);
+    const report = await previewGstackSkillSourceSync({
+      roots: [{ rootPath: root, sourceKind: "gstack-skill-directory", upstreamName: "gstack", upstreamVersion: "1.91.100.0" }],
+      registrySkills: [existing],
+      includeSkillIds: ["review"],
+    });
+    const definition = report.records[0].definitionPreview;
+    assert.equal(definition.name, "review");
+    assert.equal(definition.summary, "Review with the new complete workflow.");
+    assert.deepEqual(definition.promptFragments, ["Review with the new complete workflow.\nKeep the complete second routing line."]);
+    for (const key of ["id", "roleAffinity", "requiredTools", "requiredProviderCapabilities", "approvalProfile", "stateEffects"]) {
+      assert.deepEqual(definition[key], existing.definition[key], key);
+    }
+    assert.deepEqual(existing, before, "preview must not mutate registry state");
+    assert.match(report.records[0].snapshotPreview.rawSkillMarkdown, /Use bash and write/);
+  });
+});
+
+test("source previews do not overwrite custom metadata or treat non-gstack roots as official", async () => {
+  await withTempDir("ling-stack-skill-source-custom-metadata-", async (root) => {
+    await writeSkill(root, "gstack-review", "---\nname: review\ndescription: Upstream routing replacement.\n---\n# Review\n");
+    const builtin = builtinRegistryEntries().find((entry) => entry.id === "review");
+    for (const [entry, kind] of [
+      [{ ...builtin, source: "custom", packId: "user-pack", reviewStatus: "published" }, "gstack-skill-directory"],
+      [builtin, "workspace-skill-directory"],
+      [builtin, "codex-skill-directory"],
+    ]) {
+      const report = await previewGstackSkillSourceSync({
+        roots: [{ rootPath: root, sourceKind: kind }], registrySkills: [entry], includeSkillIds: ["review"],
+      });
+      assert.deepEqual(report.records[0].definitionPreview, entry.definition);
+    }
+  });
+});
+
+test("source preview consistently selects the active published snapshot and does not repeat updates", async () => {
+  await withTempDir("ling-stack-skill-source-active-snapshot-", async (root) => {
+    await writeSkill(root, "gstack-review", "---\nname: review\ndescription: Current review workflow.\n---\n# Current review\n");
+    const roots = [{ rootPath: root, sourceKind: "gstack-skill-directory", upstreamName: "gstack", upstreamVersion: "1.91.100.0" }];
+    const input = { roots, registrySkills: builtinRegistryEntries(), includeSkillIds: ["review"] };
+    const discovered = (await previewGstackSkillSourceSync(input)).records[0];
+    const current = {
+      ...discovered.snapshotPreview, id: "current-source", workspaceId: "workspace_default", reviewStatus: "published",
+      createdAt: "2026-10-14T01:00:00.000Z", updatedAt: "2026-10-14T02:00:00.000Z",
+    };
+    const previous = { ...current, id: "previous-source", sourceChecksum: "sha256:previous", updatedAt: "2026-10-14T01:00:00.000Z" };
+    for (const snapshots of [[current, previous], [previous, current]]) {
+      const record = (await previewGstackSkillSourceSync({ ...input, snapshots })).records[0];
+      assert.equal(record.existingSnapshotId, current.id);
+      assert.equal(record.state, "unchanged");
+    }
+  });
+});
+
 test("gstack source preview maps prefixed upstream skills to existing builtin ids", async () => {
   await withTempDir("ling-stack-skill-source-sync-", async (root) => {
     await writeSkill(root, "gstack-review", [

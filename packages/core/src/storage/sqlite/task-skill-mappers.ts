@@ -109,6 +109,7 @@ export function mapSkillSourceSnapshot(row: Record<string, SQLOutputValue>): Ski
     upstreamName: readNullableString(row, "upstream_name"),
     upstreamVersion: readNullableString(row, "upstream_version"),
     upstreamSkillPath: readNullableString(row, "upstream_skill_path"),
+    bundleUpdateMode: readNullableString(row, "bundle_update_mode") as SkillSourceSnapshot["bundleUpdateMode"],
     sourceChecksum: readString(row, "source_checksum"),
     rawSkillMarkdown: readString(row, "raw_skill_markdown"),
     rawSkillMarkdownArtifactId: readNullableString(row, "raw_skill_markdown_artifact_id"),

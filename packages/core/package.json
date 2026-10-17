@@ -29,6 +29,14 @@
       "types": "./dist/builtin-skill-packs.d.ts",
       "default": "./dist/builtin-skill-packs.js"
     },
+    "./bundled-skill-source": {
+      "types": "./dist/bundled-skill-source.d.ts",
+      "default": "./dist/bundled-skill-source.js"
+    },
+    "./bundled-skill-browser": {
+      "types": "./dist/bundled-skill-browser.d.ts",
+      "default": "./dist/bundled-skill-browser.js"
+    },
     "./skill-types": {
       "types": "./dist/skill-types.d.ts",
       "default": "./dist/skill-types.js"

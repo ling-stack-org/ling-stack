@@ -238,6 +238,8 @@ import {
   type CreateSkillRegressionRunInput,
   type CreateSkillSourceArtifactInput,
   type CreateSkillSourceSnapshotInput,
+  type PublishSkillSourceBatchInput,
+  type PublishedSkillSourceBatch,
   type ListSkillCompiledRuntimeViewOptions,
   type ListSkillRegressionRunsOptions,
   type ListSkillSourceArtifactOptions,
@@ -3435,6 +3437,10 @@ export class SqliteRunStore implements RunStore {
 
   upsertSkillSourceSnapshot(input: CreateSkillSourceSnapshotInput, now: string): SkillSourceSnapshot {
     return this.skillRegistry.upsertSkillSourceSnapshot(input, now);
+  }
+
+  publishSkillSourceBatch(input: PublishSkillSourceBatchInput, now: string): PublishedSkillSourceBatch {
+    return this.skillRegistry.publishSkillSourceBatch(input, now);
   }
 
   archiveSkillSourceSnapshot(skillId: string, now: string): SkillSourceSnapshot | undefined {

@@ -36,7 +36,6 @@ import {
   type WorkUnitAttempt,
   type WorkUnitKind,
   toRuntimeAttemptFence,
-  resolveSkillSourceRuntimeView,
 } from "@ling-stack/core";
 import type {
   PiRunnerApprovedToolContinuation,
@@ -86,6 +85,9 @@ import { resolveEligibleCuaDriverProjectionServerIds } from "../computer-use/pro
 import type { ComputerUseProjectionRegistry } from "../computer-use/registry.js";
 import { renderUsedMemoryPrompt } from "../memory/prompt.js";
 import { resolveCurrentRunSkill } from "./skill-selection.js";
+import { prepareRunSkillSource } from "./skill-source-context.js";
+import { withGstackHostContext } from "./gstack-host-context.js";
+import { restorePackagedSkillContext } from "../skills/packaged-runtime.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { listBundledPackageDescriptors } from "../plugins/source-index.js";
 import { createManagedPluginRuntimeSnapshot } from "../plugins/runtime-injection.js";
@@ -479,23 +481,10 @@ async function executeAdmittedRunRequest(
     const skillProviderPreset = runRequest.providerPresetId ? store.getProviderPreset(runRequest.providerPresetId) : undefined;
     selectedSkill = resolveCurrentRunSkill(store, runRequest);
     if (frozenExecution) {
-      selectedSkillSourceContext = frozenExecution.skillSourceContext;
+      selectedSkillSourceContext = restorePackagedSkillContext(frozenExecution.skillSourceContext, selectedSkill?.skillId);
     } else if (selectedSkill) {
       const skillOptimizationMode = runRequest.skillOptimizationMode ?? "no_operation";
-      const sourceSnapshot = store.getSkillSourceSnapshot(selectedSkill.skillId);
-      const compiledView = sourceSnapshot && skillRuntimeCompiledViewRequested(skillOptimizationMode)
-        ? store.listSkillCompiledRuntimeViews({
-            skillId: selectedSkill.skillId,
-            sourceSnapshotId: sourceSnapshot.id,
-            reviewStatus: "active",
-          })[0]
-        : undefined;
-      const sourcePrompt = resolveSkillSourceRuntimeView({
-        skillId: selectedSkill.skillId,
-        snapshot: sourceSnapshot,
-        compiledView,
-        optimizationMode: skillOptimizationMode,
-      });
+      const sourcePrompt = prepareRunSkillSource(store, selectedSkill.skillId, skillOptimizationMode);
       selectedSkillSourceContext = sourcePrompt.context;
       selectedSkillSourcePrompt = sourcePrompt.promptFragment;
     }
@@ -620,6 +609,9 @@ async function executeAdmittedRunRequest(
     runnerRequest = { ...runnerRequest, mediaGenerationTools: currentMediaTools,
       initialToolSurface: { mediaGeneration: currentMediaTools.length > 0, toolHydration: toolHydrationEnabled,
         userInput: options.enableUserInputPause === true && Boolean(turn.sourceItemId) } };
+    if (!frozenExecution && runnerResolution.runner.adapter instanceof PiRunnerAdapter) {
+      runnerRequest = withGstackHostContext(runnerRequest, selectedSkillSourceContext);
+    }
     let usedMemory = frozenExecution?.usedMemory ?? (memoryRecall && memoryRecall.memories.length > 0
       ? { memoryIds: memoryRecall.memories.map((item) => item.memory.id), recallQuery: memoryRecall.request.query,
           policyVersion: memoryRecall.policyVersion } : runRequest.preselectedMemoryUse);
@@ -670,7 +662,7 @@ async function executeAdmittedRunRequest(
       mcpToolAccess = { ...currentAccess, totalToolCount: mcpTools.length, servers: currentAccess.servers.map((server) => ({ ...server,
         tools: server.tools.filter((tool) => names.has(tool.registeredName)) })).filter((server) => server.tools.length > 0) };
       resolvedSecretValues = [resolvedProvider.apiKey, ...Object.values(resolvedProvider.headers ?? {})];
-      selectedSkillSourceContext = executionInput.skillSourceContext;
+      selectedSkillSourceContext = restorePackagedSkillContext(executionInput.skillSourceContext, selectedSkill?.skillId);
       usedMemory = executionInput.usedMemory;
       durableRunRequest = { ...durableRunRequest, runnerExecutionInput: executionInput,
         ...(preparedExecution ? { normalConversationPreparedExecutionRef: preparedExecution.ref } : {}) };
@@ -3018,10 +3010,6 @@ function selectHostCapabilityToolsForRun(
   return needsOpen
     ? hostCapabilityToolsV1.filter((tool) => tool.capabilityId === "host.open_local_target")
     : [];
-}
-
-function skillRuntimeCompiledViewRequested(mode: string): boolean {
-  return mode === "auto_safe" || mode === "auto_runtime_experimental";
 }
 
 function isExistingRunRepreparationOrigin(

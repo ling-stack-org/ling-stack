@@ -1,0 +1,1500 @@
+{
+  "schemaVersion": 1,
+  "reviewStatus": "reviewed-command-expression-mappings",
+  "releaseEligible": false,
+  "upstreamRevision": "47d639abffa882b8cbb641d7d1dedf08ecada9ec",
+  "sourceManifestChecksum": "sha256:2921f0cfd111004b078f33b50b91efb053e5d81a661f9fc9473c9ff0e2dcbf8d",
+  "callGraphChecksum": "sha256:5dc13f5ff671e44102cb3dab305952bfebb40a3e126113dcdd879aa6d06503df",
+  "commandSiteGraphChecksum": "sha256:ea8006d2f66b7574dc1ea27e7b9663dda16f668b10aa2a99daf1d021a7ce913d",
+  "entries": [
+    {
+      "commandRaw": "\"$GSTACK_LINK/setup\"",
+      "classification": "bundled-command",
+      "targets": [
+        "setup"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:1247d5eb1abb3f43afb16466f865ced31f45dc3185fc4c8dba3d171efe9cbb3d",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$GBRAIN_DETECT\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-gbrain-detect"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:c21526c923267bfff189622a5669069b507eff3b2f976cf604a70dd6ca40003c",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$URL_BIN\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-artifacts-url"
+      ],
+      "reason": "URL_BIN is the artifacts URL parser, not the remote URL helper; freeze the exact package counterpart.",
+      "siteCount": 4,
+      "siteGraphChecksum": "sha256:82b65ccd9cc1a6da0513e71cbb70e0e63829bf389187faaa7edce0da2b2812a4",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": []
+    },
+    {
+      "commandRaw": "$gh_ok",
+      "classification": "boolean-command",
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:b2f6956f2e29ae8d3805260b5d441c2dc27aecf7026255720f138581f6fd1246",
+      "targets": [],
+      "products": [],
+      "choices": [
+        "true",
+        "false"
+      ],
+      "requiredRuntimeControl": "structured-boolean-state",
+      "prerequisites": [
+        "owned-typed-state"
+      ],
+      "reason": "Source initializes and assigns only true/false. Consume bounded typed state instead of executing environment-provided command text."
+    },
+    {
+      "commandRaw": "$glab_ok",
+      "classification": "boolean-command",
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:530afcc495b5cdb37fff8553ef9070abb65da6dacd155140fdf99c4d57e39dc1",
+      "targets": [],
+      "products": [],
+      "choices": [
+        "true",
+        "false"
+      ],
+      "requiredRuntimeControl": "structured-boolean-state",
+      "prerequisites": [
+        "owned-typed-state"
+      ],
+      "reason": "Source initializes and assigns only true/false. Consume bounded typed state instead of executing environment-provided command text."
+    },
+    {
+      "commandRaw": "\"$SCRIPT_DIR/gstack-config\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-config"
+      ],
+      "siteCount": 3,
+      "siteGraphChecksum": "sha256:602f9fd4b0ec59bd7d7ca1f3029eb51c9e7dd1f676661f1dbe9d63a1ce6b0df8",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$WIREUP_BIN\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-gbrain-source-wireup"
+      ],
+      "siteCount": 3,
+      "siteGraphChecksum": "sha256:8ea8fe73e7c5d7413cc486bf77050e0868bd48fc6d5e39b0b9a344eb4a978cf8",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$CONFIG_BIN\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-config"
+      ],
+      "siteCount": 10,
+      "siteGraphChecksum": "sha256:5232a0f3ca9303eacb60249c72e5da4f66491e8c5d2188cd736ec3ec9077a248",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$SCRIPT_DIR/gstack-gbrain-source-wireup\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-gbrain-source-wireup"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:e9450afee70a3d93b0f1490e9640ce44ac21997c07ef12c8e850668896fca43b",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$SCRIPT_DIR/gstack-egress-receipt\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-egress-receipt"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:f8af577aeb5c462bf1b09bc25aa2c6d3c086612a4203d31dc2371f0a7d899194",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$SCRIPT_DIR/gstack-brain-enqueue\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-brain-enqueue"
+      ],
+      "siteCount": 6,
+      "siteGraphChecksum": "sha256:7f04d1921aef9209c922424eb49141087f1d20377c3c37cc8db0804deb920cb4",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$_gb_dir/bun\"",
+      "classification": "bun-runtime",
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:b2960a8ee8022f6cd79e1dd5d1462549d52415455b02c6384d9ce90c774fc090",
+      "targets": [],
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-bun",
+      "prerequisites": [
+        "verified-packaged-bun"
+      ],
+      "reason": "Use the verified packaged Bun, not PATH, HOME or a downloaded global install; original runtime selection is retained as pending host adaptation."
+    },
+    {
+      "commandRaw": "\"$BUN_DIR/bun\"",
+      "classification": "bun-runtime",
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:749eef1ad95a8fd09bdb5fac4bf9b20982d3a9f81c136a21de625cade5f502aa",
+      "targets": [],
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-bun",
+      "prerequisites": [
+        "verified-packaged-bun"
+      ],
+      "reason": "Use the verified packaged Bun, not PATH, HOME or a downloaded global install; original runtime selection is retained as pending host adaptation."
+    },
+    {
+      "commandRaw": "\"$_d/bun\"",
+      "classification": "bun-runtime",
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:23761b33266d2977acbc9a62b865cecce5004c6dffb66b9ec5f0e24056b7ecfa",
+      "targets": [],
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-bun",
+      "prerequisites": [
+        "verified-packaged-bun"
+      ],
+      "reason": "Use the verified packaged Bun, not PATH, HOME or a downloaded global install; original runtime selection is retained as pending host adaptation."
+    },
+    {
+      "commandRaw": "\"$RUNNER\"",
+      "classification": "bun-runtime",
+      "targets": [
+        "bin/gstack-runtime-pins.ts",
+        "lib/runtime-pins.ts"
+      ],
+      "reason": "The selected Bun executes the package runtime-pin reader; never copy or execute a discovered developer-global Bun.",
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:7f101d0c13c1bd4054009fe44619b0e2448330173ac38de2b00ba91e9990d998",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-bun",
+      "prerequisites": [
+        "verified-packaged-bun"
+      ]
+    },
+    {
+      "commandRaw": "\"$ROOT/bin/gstack-paths\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-paths"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:c383c2d5ed3c4a2997c1bf97516b1e0e84292031c0290042a174f44e79987091",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$ROOT/bin/gstack-doctor\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-doctor"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:e502973618a8bfd6de1db1d92e8b46d075aef68abede0299567d1881e2b7d1a6",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$ROOT/bin/gstack-browser-ensure\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-browser-ensure"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:866b61cce6be373ef9922b03f45d78ef713e2acfdebcdbc65a0e843c14ae53bb",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$ROOT/bin/gstack-upgrade\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-upgrade"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:c4ed4e117b1e2baf30b9a89cf6038e8e122f982490d901d5a6832cb714f5bf6c",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$_to\"",
+      "classification": "timeout-wrapper",
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:355a2a0173e7c9694de0dbc61b362666a3a973ffeb1fed729eeab4be7f91d186",
+      "targets": [],
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "owned-process-deadline",
+      "prerequisites": [
+        "owned-process-supervision"
+      ],
+      "reason": "Upstream selects gtimeout or timeout from PATH. Ling must supervise the owned child deadline independently of ambient executables."
+    },
+    {
+      "commandRaw": "\"$@\"",
+      "classification": "forwarded-command",
+      "reason": "These exact sites forward caller argv, including external sends. Approval must bind the effective command and effects; the egress helper's fail-open receipt branch cannot grant send authority.",
+      "siteCount": 6,
+      "siteGraphChecksum": "sha256:67ab1fab8ba1b7f8a51c2e3adcc89ea12df90c6154fb55b1502b7fb22eaa4d21",
+      "targets": [],
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "approved-exact-command",
+      "prerequisites": [
+        "explicit-command-and-external-effects-approval"
+      ]
+    },
+    {
+      "commandRaw": "\"$_log_bin\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-learnings-log"
+      ],
+      "reason": "The upstream probe reads a HOME/.claude helper. Ling must rebind it to the frozen package counterpart, never read or copy that user-global path.",
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:e0c1558b8010f96d95e000eceb72d33b6a1c7e6b4ffa3b841a6ac882b7442d99",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": []
+    },
+    {
+      "commandRaw": "\"$_GSTACK_CODEX_BIN/gstack-config\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-config"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:fd6b075af1d0c25f3c17e1cb777a68589462c5ffa991dce9dad8ff875fb9f171",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$1/bin/gstack-config\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-config"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:128806e896b1fc18858e2fc164e4d50b1433bdd010bdeadd6b74bc9d4bdd51c5",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$GSTACK_RELINK\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-relink"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:fc55975305fbefb4bacaa6ccb246557abc04caa2cd71b557122afc2ece2656bf",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$DETECT_BIN\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-gbrain-detect"
+      ],
+      "siteCount": 3,
+      "siteGraphChecksum": "sha256:09f3f24342dc85ea58cef72c1e281f0e0a4f4a786d0b425ed25844f4f316f0c5",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$PYTHON_CMD\"",
+      "classification": "python-runtime",
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:550da8e34bf8e65859fdc242ea2af1c900e8f59fab4ac275312ec7b3c7cab01f",
+      "targets": [],
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-python",
+      "prerequisites": [
+        "verified-python-runtime"
+      ],
+      "reason": "Upstream chooses Python through PATH for inline structured-data parsing. Verify a declared interpreter or an equivalent owned structured reader before execution."
+    },
+    {
+      "commandRaw": "\"$INSTALL_DIR/bin/gstack-relink\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-relink"
+      ],
+      "siteCount": 3,
+      "siteGraphChecksum": "sha256:630e5ab7406d2b26c1dfe6949588dbf9bc4100341885c05f8d7ff7dd132b38cc",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$0\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-config",
+        "bin/gstack-relink",
+        "bin/gstack-slug"
+      ],
+      "reason": "Self-calls originate in these three immutable consumers. Freeze each caller identity rather than treating arbitrary argv[0] as approved.",
+      "siteCount": 3,
+      "siteGraphChecksum": "sha256:23cef91289a1439f863e3c29b8f4f008177b95064823d5368410adb27e3702d1",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": []
+    },
+    {
+      "commandRaw": "\"$_BIN/gstack-slug\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "siteCount": 3,
+      "siteGraphChecksum": "sha256:9909fd73f93a96ded9865ae9fb12e426c88ad1b6962ae704b20c3eab5f450246",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$_BIN/gstack-decision-search\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-decision-search"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:b67997956489f8a619b0bcb975ec426a8af1d9d534694afc4f14d61a3c759de0",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$(dirname \"$0\")/gstack-paths\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-paths"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:f101d44f67bade3dbea0d3c83379b969bd8a3d199a93e9bc5bdf9de5f0db6c55",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$SCRIPT_DIR/gstack-slug\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "siteCount": 13,
+      "siteGraphChecksum": "sha256:7c221278174d96e3de5819cc6b9c06efba00ac3d5c7ed7d98b61fe5b19965273",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$SCRIPT_DIR_E/gstack-brain-enqueue\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-brain-enqueue"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:f1e8151e0261ba8da4724c597ae75f40824d4b0c38503c0ce10ed5a730f3c709",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$BIN/gstack-hook-check\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-hook-check"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:11431c2ae87f646ca9ac93f522c08c8afc9833a1c3413848e983a32e1c0188e6",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$BIN/gstack-config\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-config"
+      ],
+      "siteCount": 5,
+      "siteGraphChecksum": "sha256:26bf57b0b61bf9aa9eb6a137db7b85e0e38ef753e6c90fed82e91b6b188e6a6b",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$probe\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-codex-probe"
+      ],
+      "siteCount": 8,
+      "siteGraphChecksum": "sha256:408274db4307b8a7a684b9c7a198cddbaa7328291d6e10a84fc8a8ee7b8d7c55",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$cmd\"",
+      "classification": "configured-engine",
+      "reason": "Doctor resolves the Claude CLI or declared launcher override. Verify the configured engine and process ownership instead of trusting PATH or inherited environment.",
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:0f7dc83d899d26f158f34eb4522304184711a8ae9142561c29bbc8aa843c2dd0",
+      "targets": [],
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "configured-engine-identity",
+      "prerequisites": [
+        "configured-claude-engine",
+        "owned-process-supervision"
+      ]
+    },
+    {
+      "commandRaw": "\"$_dc_ln_dir/bun\"",
+      "classification": "bun-runtime",
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:a24e12782cbdf8b4d861d0e86e36e141b8f5519207a35a555086b6afb78ef393",
+      "targets": [],
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-bun",
+      "prerequisites": [
+        "verified-packaged-bun"
+      ],
+      "reason": "Use the verified packaged Bun, not PATH, HOME or a downloaded global install; original runtime selection is retained as pending host adaptation."
+    },
+    {
+      "commandRaw": "\"$bin\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-egress-receipt"
+      ],
+      "reason": "All three command-position aliases in the egress library refer to its receipt helper; actual sending is separately forwarded and approved.",
+      "siteCount": 3,
+      "siteGraphChecksum": "sha256:79ca16878c389ec97d9b4e6adc4daf239a074df5b338ede42fb071c87fa22ee5",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": []
+    },
+    {
+      "commandRaw": "\"$_ftd_to\"",
+      "classification": "timeout-wrapper",
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:670221d6684660902dfb7e7d68828254dfc3be3e4e785c94e3f25686f5dd77f6",
+      "targets": [],
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "owned-process-deadline",
+      "prerequisites": [
+        "owned-process-supervision"
+      ],
+      "reason": "Upstream selects gtimeout or timeout from PATH. Ling must supervise the owned child deadline independently of ambient executables."
+    },
+    {
+      "commandRaw": "$VALIDATE_ONLY",
+      "classification": "boolean-command",
+      "siteCount": 4,
+      "siteGraphChecksum": "sha256:292f2837262f0aba69bc0bd549cd0a00f119ec3d3e0ab0c4cebd724201fb2f3a",
+      "targets": [],
+      "products": [],
+      "choices": [
+        "true",
+        "false"
+      ],
+      "requiredRuntimeControl": "structured-boolean-state",
+      "prerequisites": [
+        "owned-typed-state"
+      ],
+      "reason": "Source initializes and assigns only true/false. Consume bounded typed state instead of executing environment-provided command text."
+    },
+    {
+      "commandRaw": "$DRY_RUN",
+      "classification": "boolean-command",
+      "siteCount": 3,
+      "siteGraphChecksum": "sha256:3914708a8ea1349af62b13e0b9d0cdbe58831dac558933177098f98591a254c0",
+      "targets": [],
+      "products": [],
+      "choices": [
+        "true",
+        "false"
+      ],
+      "requiredRuntimeControl": "structured-boolean-state",
+      "prerequisites": [
+        "owned-typed-state"
+      ],
+      "reason": "Source initializes and assigns only true/false. Consume bounded typed state instead of executing environment-provided command text."
+    },
+    {
+      "commandRaw": "$is_tty",
+      "classification": "boolean-command",
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:08034eb6304c9d8345c6c9f5f3ef12b37e83b2ff93f32f0ddfb5c9a6d15a16cd",
+      "targets": [],
+      "products": [],
+      "choices": [
+        "true",
+        "false"
+      ],
+      "requiredRuntimeControl": "structured-boolean-state",
+      "prerequisites": [
+        "owned-typed-state"
+      ],
+      "reason": "Source initializes and assigns only true/false. Consume bounded typed state instead of executing environment-provided command text."
+    },
+    {
+      "commandRaw": "\"${sync_cmd[@]}\"",
+      "classification": "service-command",
+      "reason": "The array runs gbrain sync with either an explicit source id or worktree. Account/service configuration and exact sync consent remain required.",
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:70b79995f07ac90b5d94176224ef0a162007fd289357b49e3dd642c4a7d4d4bc",
+      "targets": [],
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "approved-owned-service-command",
+      "prerequisites": [
+        "configured-gbrain-service",
+        "explicit-service-sync-approval"
+      ]
+    },
+    {
+      "commandRaw": "\"$BUN\"",
+      "classification": "bun-runtime",
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:fa04a260aeb9a864a7419b14f9852aad36ff85f2f460685f3469db1083e6b1f4",
+      "targets": [],
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-bun",
+      "prerequisites": [
+        "verified-packaged-bun"
+      ],
+      "reason": "Use the verified packaged Bun, not PATH, HOME or a downloaded global install; original runtime selection is retained as pending host adaptation."
+    },
+    {
+      "commandRaw": "\"$interp\"",
+      "classification": "shell-runtime",
+      "reason": "Hook shebangs select Bash or sh parse-only checks; verify the owned interpreter and hook input, including native Windows behavior.",
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:00d4253ea02f67e1518407dbfd7e33ffbcb6ac85703769373eda40f7fa927305",
+      "targets": [],
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-shell",
+      "prerequisites": [
+        "verified-shell-runtime",
+        "owned-hook-inputs"
+      ]
+    },
+    {
+      "commandRaw": "\"$1\"",
+      "classification": "launch-probe",
+      "reason": "The launch-probe argument is an executable target, not a package source file. Bind its generated identity and deadline before any --version execution.",
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:ffc00c17cb011213768542977d1aa1e81f13c8bbb30648bdbb5d7493c46792c7",
+      "targets": [],
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-launch-target",
+      "prerequisites": [
+        "verified-launch-target",
+        "owned-process-supervision"
+      ]
+    },
+    {
+      "commandRaw": "\"$GSTACK_CONFIG\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-config"
+      ],
+      "siteCount": 24,
+      "siteGraphChecksum": "sha256:e4183fe9de65f37748d94cd03249dc6322fd6a7f5bbce008ff4a6d1b0bc2ee96",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$SETTINGS_HOOK\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-settings-hook"
+      ],
+      "siteCount": 31,
+      "siteGraphChecksum": "sha256:db8393083d7870b707343f980d3cdfe7db2185d016a5aa775e7979e0ebec34b9",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$EGRESS_BIN\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-egress"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:bf7bd7c8b8929cb7d7207f8e9ec51b400e7c10def5c6faf2c2b28033caabe447",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$INSTALL_DIR/bin/gstack-patch-names\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-patch-names"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:a70aeab59909a5c32245c2e6b72788af7b76ba818f1ef3e27a2343eba2323bc0",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$SCRIPT_DIR/gstack-wtree\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-wtree"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:8ee78bfb38463c9afd16aef35392ebe4edb67de88e3f781e63ff2d04f6d93d2b",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$SCRIPT_DIR/gstack-session-kind\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-session-kind"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:1f853737b3497fa523b5cecc8fa57c32c859d8afc9ecbb9e88d9097411134564",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "${GSTACK_DIR}/bin/gstack-config",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-config"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:0fe4a3191df8baaa17b1bc45db7b8612a17767fd7ee3cff3e6199a3da7f7004a",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$GSTACK_DIR/bin/gstack-config\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-config"
+      ],
+      "siteCount": 7,
+      "siteGraphChecksum": "sha256:ebd2529a5cc4368f7eebc4a518eb96563ac51797556d255ec1f7dc2db5f7bf07",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$GSTACK_DIR/bin/gstack-patch-names\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-patch-names"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:7c7a8ed7233d16e78215e7c6a9f7cb5660910baa04ff84802b75c818da993f51",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$_CFG_BIN\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-config"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:585a377b215df682300ca9dca061b3cab60c7c4a2a206812cd3927e590c62454",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$_BIN/gstack-config\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-config"
+      ],
+      "siteCount": 8,
+      "siteGraphChecksum": "sha256:1fa184b5c66c27e249003f5a541e4655154d4369d5bcef6ed0a076a8ea02d901",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$_BIN/gstack-session-kind\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-session-kind"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:1d08840cfbf5ecf8056f40294ae200d7305d10cae4d3d57a103bca54dfeeef61",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$_BIN/gstack-brain-sync\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-brain-sync"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:6907bceefd3fe6123bfa4a908aa0a473cdea069a5740cf0d320d2c4909e7ec73",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$_BIN/gstack-timeline-log\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-timeline-log"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:1d541ef9a9548175af54105cf64159b5458b5d816827f1b98256beec4716c127",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$_BIN/gstack-telemetry-log\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-telemetry-log"
+      ],
+      "siteCount": 3,
+      "siteGraphChecksum": "sha256:191762a868d1c61262b2d0d172a2812f48ca6a304769bb37b094fcb62f0d7506",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$_BIN/gstack-update-check\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-update-check"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:1b4b75ad7b553dd44dfc7674b42b740eae7f98538776793b9bfc5c50cd6cdd20",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$_BIN/gstack-lease\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-lease"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:0d864c393f2d2dc1ac2ce251f72b7a649d599b1fa94ec2d18e3ea1ad96a50f82",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$_BIN/gstack-repo-mode\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-repo-mode"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:1f5f229c89415b2003b2117ba8993c5a797a634028c58b7fa0566d6142ec10c3",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$_BIN/gstack-first-task-detect\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-first-task-detect"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:6808b2cc033772649af77f7f4cad67d447d7993e568e3f8c9bf5cd262d1d0710",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$_BIN/gstack-learnings-search\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-learnings-search"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:71e9debfb7ecb23e9dea07ff95452d47fa0d627ec63b68997b607088ff3feda1",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$_BRAIN_CONFIG_BIN\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-config"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:555c024d91681dd638336f11ea36e0deeae408e1250d104d5e34fe5b1e507355",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$_BRAIN_SYNC_BIN\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-brain-sync"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:a03e65ea23b2ac117ccd31b07c3cebe1b7cf0887b457962e1add5f0b34125c90",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$CONFIG_CMD\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-config"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:7b14bb3bd30e1c938fcd4641b4d72bce9b6c2c6689b18e67417caa631b171b57",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$SYNC_CMD\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-telemetry-sync"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:229f23b7175289b00772cb26d39108a237f107330cf42b10c6fe840d606cc394",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$GSTACK_DIR/bin/gstack-egress-receipt\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-egress-receipt"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:1cbfba77ab89a54ec32ff70b2a0352576d48772ae49a2d25df850a55ea23bcea",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$TEL_CMD\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-telemetry-log"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:07300562ee2d05175ce7910858858d4974c5d37575322c6613d0e698523534d4",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$ROOT/bin/gstack-capy-install\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-capy-install"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:a0e7da7327c5f051cf16d8f3be059670d1ca3c65640e2104907c7a8b29df7bfc",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$ROOT/bin/gstack-lease\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-lease"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:9a7c11dabb1703a5e372f548d5eebf0c4d92a0249653b3db49f0a0cf5e9d07f8",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$_HOOK_DIR/../../bin/gstack-slug\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-slug"
+      ],
+      "reason": "Upstream relative hook traversal resolves to this immutable counterpart; Ling consumes only the canonical bundle path, never the traversal expression.",
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:0959b03e3443e75fbab1422e9669e27bcaeba840750130141d0d5377b46e02fe",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": []
+    },
+    {
+      "commandRaw": "\"$SCRIPT_DIR/bin/gstack-relink\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-relink"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:f314c6fd95c20454de76bcebe20db38369e8495673cd176f7f112209fe5e97ee",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"${HOME}/.claude/skills/gstack/bin/gstack-config\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-config"
+      ],
+      "reason": "Historical migration names a global Claude path. Retain source but rebind to frozen resources and Ling-owned migration; never mutate global installs.",
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:4b0c153ba5232134fad53875f36bf4bc4b6740b6e3d5d222d4b412595312cf7f",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": []
+    },
+    {
+      "commandRaw": "\"${CONFIG_BIN}\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-config"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:2923a35e19d345c2ded7dfa8188524b5d011464f3ab29453e1e688d2f0908eca",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"${SETTINGS_HOOK}\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-settings-hook"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:924b4ff44a885e2cfc0374e0ac57d12120dad9ddbfa379f97fbc6809c5b6f8a4",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$BUN_CMD\"",
+      "classification": "bun-runtime",
+      "targets": [
+        "package.json",
+        "browse/src/cli.ts",
+        "browse/src/find-browse.ts",
+        "design/src/cli.ts",
+        "make-pdf/src/cli.ts",
+        "bin/gstack-global-discover.ts",
+        "lib/cso/cli.ts",
+        "scripts/cso-eval-producer.ts"
+      ],
+      "reason": "Owned Bun runs declared build scripts and compiles these source entrypoints. This source-edge review does not approve generated executables or all run-alias/interpreter resources.",
+      "siteCount": 11,
+      "siteGraphChecksum": "sha256:c20def7183cd4f93d04863c34aa5e82d28634ba0c9cca64f2590afff1ccccbef",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-bun",
+      "prerequisites": [
+        "verified-packaged-bun"
+      ]
+    },
+    {
+      "commandRaw": "\"$CSO_CC\"",
+      "classification": "native-compiler",
+      "targets": [
+        "lib/cso/watchdog.c",
+        "lib/cso/launcher.c",
+        "lib/cso/publish-lock.c"
+      ],
+      "siteCount": 3,
+      "siteGraphChecksum": "sha256:7c784d6883b500ea24b05e82817843951ef843954c08eb4a62cf3e91b001fd79",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-native-compiler",
+      "prerequisites": [
+        "verified-native-build-toolchain"
+      ],
+      "reason": "These source inputs require a separately verified native build toolchain; source identity alone does not certify produced programs."
+    },
+    {
+      "commandRaw": "\"$CSO_EVALUATION_UNIT/gstack-cso-launcher\"",
+      "classification": "generated-program",
+      "targets": [
+        "scripts/build-cso.sh",
+        "lib/cso/launcher.c",
+        "lib/cso/cli.ts",
+        "lib/cso/runtime-catalog.json"
+      ],
+      "products": [
+        "bin/gstack-cso-launcher"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:66a9f730a2f0b871be760d52e3e7ec3636d372a82bffb655b75621d955ef7ecd",
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-program",
+      "prerequisites": [
+        "verified-generated-program",
+        "native-platform-acceptance"
+      ],
+      "reason": "The listed immutable sources produce these named programs. Inspecting source is not proof of generated program identity, signature or native execution."
+    },
+    {
+      "commandRaw": "\"$CSO_POWERSHELL\"",
+      "classification": "powershell-build",
+      "targets": [
+        "scripts/build-cso-windows.ps1",
+        "lib/cso/launcher-windows.c"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:c7b01ed9fc4bff253cf989482c6931e4ca3c63e996ed274db08647bd57e35328",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-powershell-build",
+      "prerequisites": [
+        "verified-windows-build-toolchain"
+      ],
+      "reason": "Windows build/probe uses the declared PowerShell script and native source. Verify PowerShell/MSVC/Git inputs on native Windows before executing."
+    },
+    {
+      "commandRaw": "\"$CSO_STAGE_LAUNCHER\"",
+      "classification": "generated-program",
+      "targets": [
+        "scripts/build-cso.sh",
+        "scripts/build-cso-windows.ps1",
+        "lib/cso/launcher.c",
+        "lib/cso/launcher-windows.c",
+        "lib/cso/cli.ts",
+        "lib/cso/runtime-catalog.json"
+      ],
+      "products": [
+        "bin/gstack-cso-launcher",
+        "bin/gstack-cso-launcher.exe"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:95ee0ad47fa188326581f8cbd3da8a888d684a6022666ed7f79318913758c5e4",
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-program",
+      "prerequisites": [
+        "verified-generated-program",
+        "native-platform-acceptance"
+      ],
+      "reason": "The listed immutable sources produce these named programs. Inspecting source is not proof of generated program identity, signature or native execution."
+    },
+    {
+      "commandRaw": "\"$here/ubi-runner.sh\"",
+      "classification": "bundled-command",
+      "targets": [
+        "scripts/ubicloud/ubi-runner.sh"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:e01e931471d9e194133d233fa273a22bc5b41e5e8112f6124441b9078c70ec7a",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$SOURCE_GSTACK_DIR/bin/gstack-config\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-config"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:c2ae685faab8acbb4348c48fc7717bef9fc60a65d52fae9d4972e90e657eee08",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$SOURCE_GSTACK_DIR/bin/gstack-patch-names\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-patch-names"
+      ],
+      "siteCount": 3,
+      "siteGraphChecksum": "sha256:d2fb93dd8cbef5ceebf0d4d5debca59d108a4ba6f8626636fb52aeaead15c851",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "$sudo",
+      "classification": "font-cache-command",
+      "reason": "Setup optionally prefixes font-cache updates with sudo. This requires explicit system-operation approval and cannot run during bundle preparation.",
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:2033a1cc4e6750724ceb499432a470a0fe1e03c28b710e2e4562b3313b9a6e83",
+      "targets": [],
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "approved-font-cache-operation",
+      "prerequisites": [
+        "explicit-system-font-operation-approval"
+      ]
+    },
+    {
+      "commandRaw": "\"$BROWSE_BIN\"",
+      "classification": "generated-program",
+      "targets": [
+        "browse/src/cli.ts"
+      ],
+      "products": [
+        "browse/dist/browse",
+        "browse/dist/browse.exe"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:23a1458510cbcf727b63d80d1fc4fdec8989526cfefc376f1a918d88b3b892fc",
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-program",
+      "prerequisites": [
+        "verified-generated-program",
+        "native-platform-acceptance"
+      ],
+      "reason": "The listed immutable sources produce these named programs. Inspecting source is not proof of generated program identity, signature or native execution."
+    },
+    {
+      "commandRaw": "\"$_ps\"",
+      "classification": "powershell-build",
+      "targets": [
+        "scripts/build-cso-windows.ps1",
+        "lib/cso/launcher-windows.c"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:81e6b61cbe98752dcad953faf0ea505ced7fb290eaf2cfaafc54c60a2d563f66",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-powershell-build",
+      "prerequisites": [
+        "verified-windows-build-toolchain"
+      ],
+      "reason": "Windows build/probe uses the declared PowerShell script and native source. Verify PowerShell/MSVC/Git inputs on native Windows before executing."
+    },
+    {
+      "commandRaw": "\"$_compiler\"",
+      "classification": "native-compiler",
+      "targets": [
+        "setup"
+      ],
+      "reason": "Setup selects a C toolchain to compile a generated inert probe. Binding setup is not a hash or acceptance proof for the probe or toolchain.",
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:3319835dd4d77c09d8e8aea880507318a2aa83ae50f3b89b0e8b274e2039f6a2",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-native-compiler",
+      "prerequisites": [
+        "verified-native-build-toolchain"
+      ]
+    },
+    {
+      "commandRaw": "\"$_bin_path\"",
+      "classification": "generated-program",
+      "targets": [
+        "browse/src/cli.ts",
+        "browse/src/find-browse.ts",
+        "design/src/cli.ts",
+        "make-pdf/src/cli.ts",
+        "bin/gstack-global-discover.ts"
+      ],
+      "products": [
+        "browse/dist/browse",
+        "browse/dist/find-browse",
+        "design/dist/design",
+        "make-pdf/dist/pdf",
+        "bin/gstack-global-discover"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:38d457d86731e1371f763820e02b9f08f94c86d0548849be0615fdea08ff1fa5",
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-program",
+      "prerequisites": [
+        "verified-generated-program",
+        "native-platform-acceptance"
+      ],
+      "reason": "The listed immutable sources produce these named programs. Inspecting source is not proof of generated program identity, signature or native execution."
+    },
+    {
+      "commandRaw": "\"$SOURCE_GSTACK_DIR/bin/gstack-cso-launcher$_EXE\"",
+      "classification": "generated-program",
+      "targets": [
+        "scripts/build-cso.sh",
+        "scripts/build-cso-windows.ps1",
+        "lib/cso/launcher.c",
+        "lib/cso/launcher-windows.c",
+        "lib/cso/cli.ts",
+        "lib/cso/runtime-catalog.json"
+      ],
+      "products": [
+        "bin/gstack-cso-launcher",
+        "bin/gstack-cso-launcher.exe"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:238da5b0af4184fec68d4429527d7f3645a44b820c0ad2f8c417c3bc78c9c231",
+      "choices": [],
+      "requiredRuntimeControl": "verified-owned-program",
+      "prerequisites": [
+        "verified-generated-program",
+        "native-platform-acceptance"
+      ],
+      "reason": "The listed immutable sources produce these named programs. Inspecting source is not proof of generated program identity, signature or native execution."
+    },
+    {
+      "commandRaw": "\"$fn\"",
+      "classification": "function-dispatch",
+      "targets": [
+        "setup"
+      ],
+      "choices": [
+        "create_codex_runtime_root",
+        "create_factory_runtime_root",
+        "create_opencode_runtime_root",
+        "create_cursor_runtime_root",
+        "create_copilot_runtime_root",
+        "create_agy_runtime_root"
+      ],
+      "reason": "The argument dispatches six declared setup functions; it is not an executable file. Ling needs its own transactional activation without executing upstream global setup.",
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:6a55e6e780eb4cb7b87938d8cad9df3fd4a093ba075dab73d4b5b07092154a25",
+      "products": [],
+      "requiredRuntimeControl": "bounded-owned-function-dispatch",
+      "prerequisites": [
+        "owned-runtime-root-transaction"
+      ]
+    },
+    {
+      "commandRaw": "\"$gstack_dir/bin/gstack-patch-names\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-patch-names"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:ceec361710df8b9027f755ae476e5a6c7efcc990d2f6cd5b2f9ebeb7a89ecf93",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$SOURCE_GSTACK_DIR/bin/gstack-telemetry-log\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-telemetry-log"
+      ],
+      "siteCount": 2,
+      "siteGraphChecksum": "sha256:6f980e704c6c2212cbc2e4d47ed9c6ee13b91fa3564964dd3a7e23aaa1edf7f5",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    },
+    {
+      "commandRaw": "\"$SOURCE_GSTACK_DIR/bin/gstack-hook-check\"",
+      "classification": "bundled-command",
+      "targets": [
+        "bin/gstack-hook-check"
+      ],
+      "siteCount": 1,
+      "siteGraphChecksum": "sha256:c029e691b197d08ba46f722fe3cb1fce1b4c34b0bfbefc9c1b52f32f40ff031d",
+      "products": [],
+      "choices": [],
+      "requiredRuntimeControl": "frozen-bundle-command",
+      "prerequisites": [],
+      "reason": "Rebind the declared package counterpart to the frozen Ling bundle; source text does not grant execution or external effects."
+    }
+  ]
+}

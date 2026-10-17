@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { buildSkillOptimizationPreview, createSqliteRunStore } from "../dist/index.js";
+import { SqliteSkillRegistryStore } from "../dist/storage/sqlite/skill-registry-store.js";
 
 async function withStore(prefix, fn) {
   const cwd = await mkdtemp(resolve(tmpdir(), prefix));
@@ -145,6 +147,88 @@ test("sqlite skill source lifecycle stores policy, artifacts, and rollback snaps
     assert.equal(rolledBack.id, "skill_source_review_v1");
     assert.equal(store.listSkillSourceArtifacts({ snapshotId: rolledBack.id }).length, 1);
     assert.equal(store.getSkillSourceSnapshotById("skill_source_review_v2").reviewStatus, "archived");
+  });
+});
+
+test("failed source rollback preserves the current snapshot and unrelated skill history", async () => {
+  await withStore("ling-stack-skill-rollback-atomic-", async (store, cwd) => {
+    store.upsertSkillSourceSnapshot(sourceSnapshotInput({ id: "review-old", reviewStatus: "archived" }), "2026-10-15T00:00:00.000Z");
+    store.upsertSkillSourceSnapshot(sourceSnapshotInput({ id: "review-current" }), "2026-10-15T01:00:00.000Z");
+    store.upsertSkillSourceSnapshot(sourceSnapshotInput({ id: "qa-current", skillId: "qa" }), "2026-10-15T01:00:00.000Z");
+    const before = store.listSkillSourceSnapshots({ includeArchived: true });
+    const database = new DatabaseSync(resolve(cwd, ".ling-stack", "ling-stack.sqlite"));
+    try {
+      database.exec(`CREATE TRIGGER reject_old_source_publication
+        BEFORE UPDATE OF review_status ON skill_source_snapshots
+        WHEN NEW.id = 'review-old' AND NEW.review_status = 'published'
+        BEGIN SELECT RAISE(ABORT, 'injected source rollback failure'); END;`);
+      assert.throws(() => store.rollbackSkillSourceSnapshot("review-old", "2026-10-15T02:00:00.000Z"), /injected source rollback failure/);
+      assert.deepEqual(store.listSkillSourceSnapshots({ includeArchived: true }), before);
+      database.exec("DROP TRIGGER reject_old_source_publication");
+      assert.equal(store.rollbackSkillSourceSnapshot("review-old", "2026-10-15T02:00:00.000Z").id, "review-old");
+      assert.deepEqual(store.getSkillSourceSnapshot("qa"), before.find(snapshot => snapshot.id === "qa-current"));
+    } finally { database.close(); }
+  });
+});
+
+test("rollback selects exactly one published source even when older data has multiple published snapshots", async () => {
+  await withStore("ling-stack-skill-rollback-history-", async (store, cwd) => {
+    const snapshots = [
+      sourceSnapshotInput({ id: "review-target", reviewStatus: "archived" }),
+      sourceSnapshotInput({ id: "review-a" }),
+      sourceSnapshotInput({ id: "review-b" }),
+    ].map(input => store.upsertSkillSourceSnapshot({ ...input,
+      sourceChecksum: `sha256-${input.id}`, rawSkillMarkdown: `# ${input.id}\n`,
+    }, "2026-10-15T01:00:00.000Z"));
+    const rolledBack = store.rollbackSkillSourceSnapshot("review-target", "2026-10-15T02:00:00.000Z");
+    assert.equal(rolledBack.id, "review-target");
+    assert.deepEqual(store.listSkillSourceSnapshots({ skillId: "review", reviewStatus: "published" }).map(snapshot => snapshot.id), ["review-target"]);
+    for (const snapshot of snapshots) {
+      const after = store.getSkillSourceSnapshotById(snapshot.id);
+      const { reviewStatus: _beforeStatus, updatedAt: _beforeUpdated, ...beforeContent } = snapshot;
+      const { reviewStatus: _afterStatus, updatedAt: _afterUpdated, ...afterContent } = after;
+      assert.deepEqual(afterContent, beforeContent);
+    }
+    const reopened = createSqliteRunStore(cwd);
+    try { assert.equal(reopened.getSkillSourceSnapshot("review").id, "review-target"); }
+    finally { reopened.close(); }
+  });
+});
+
+test("repeating rollback to the sole active source is idempotent and missing targets do not alter history", async () => {
+  await withStore("ling-stack-skill-rollback-idempotent-", async store => {
+    const original = store.upsertSkillSourceSnapshot(sourceSnapshotInput(), "2026-10-15T01:00:00.000Z");
+    assert.deepEqual(store.rollbackSkillSourceSnapshot(original.id, "2026-10-15T02:00:00.000Z"), original);
+    assert.equal(store.rollbackSkillSourceSnapshot("missing-source", "2026-10-15T03:00:00.000Z"), undefined);
+    assert.deepEqual(store.listSkillSourceSnapshots({ includeArchived: true }), [original]);
+  });
+});
+
+test("independent readers see the previous source until rollback commits and competing writers cannot interleave", async () => {
+  await withStore("ling-stack-skill-rollback-readers-", async (store, cwd) => {
+    store.upsertSkillSourceSnapshot(sourceSnapshotInput({ id: "review-old", reviewStatus: "archived" }), "2026-10-15T00:00:00.000Z");
+    store.upsertSkillSourceSnapshot(sourceSnapshotInput({ id: "review-current" }), "2026-10-15T01:00:00.000Z");
+    const databasePath = resolve(cwd, ".ling-stack", "ling-stack.sqlite");
+    const writer = new DatabaseSync(databasePath), observer = new DatabaseSync(databasePath);
+    const published = () => observer.prepare("SELECT id FROM skill_source_snapshots WHERE review_status = 'published' ORDER BY id").all().map(row => row.id);
+    let observations = 0;
+    try {
+      observer.exec("PRAGMA busy_timeout = 0");
+      writer.function("observe_source_rollback", () => {
+        observations++;
+        assert.deepEqual(published(), ["review-current"]);
+        assert.throws(() => observer.prepare("UPDATE skill_source_snapshots SET source_checksum = 'interleaved' WHERE id = 'review-old'").run(), /locked/);
+        return 1;
+      });
+      writer.exec(`CREATE TEMP TRIGGER observe_source_archival AFTER UPDATE OF review_status ON skill_source_snapshots
+        WHEN NEW.id = 'review-current' AND NEW.review_status = 'archived'
+        BEGIN SELECT observe_source_rollback(); END;`);
+      const result = new SqliteSkillRegistryStore({ database: writer }).rollbackSkillSourceSnapshot("review-old", "2026-10-15T02:00:00.000Z");
+      assert.equal(observations, 1);
+      assert.equal(result.id, "review-old");
+      assert.deepEqual(published(), ["review-old"]);
+      assert.equal(store.getSkillSourceSnapshot("review").sourceChecksum, "sha256-review-1");
+    } finally { observer.close(); writer.close(); }
   });
 });
 

@@ -1,0 +1,81 @@
+import assert from "node:assert/strict";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import test from "node:test";
+import { build } from "esbuild";
+import { bundleInventory, digest, readExecutableBundle } from "../../../scripts/gstack/executable-bundle.mjs";
+
+async function fixture(t) {
+  const work = await realpath(await mkdtemp(join(tmpdir(), "ling-desktop-gs-")));
+  t.after(() => rm(work, { recursive: true, force: true }));
+  const root = join(work, "bundle"); await mkdir(root);
+  const lock = JSON.parse(await readFile(new URL("../../../scripts/gstack/upstream-lock.json", import.meta.url)));
+  const skills = lock.skillIds.map(id => ({ id, entryPath: `skills/${id}/SKILL.md`, resourcePaths: [] }));
+  for (const skill of skills) {
+    await mkdir(dirname(join(root, skill.entryPath)), { recursive: true });
+    await writeFile(join(root, skill.entryPath), `# ${skill.id}\nFull instructions.\n`);
+  }
+  await writeFile(join(root, "LICENSE"), "MIT fixture\n");
+  const browserRoot = join(work, "gstack-browser"), framework = "Chromium.app/Contents/Frameworks/Chromium Framework.framework";
+  const browserEntry = "Chromium.app/Contents/MacOS/Chromium";
+  await mkdir(join(browserRoot, framework, "Versions/A"), { recursive: true });
+  await mkdir(dirname(join(browserRoot, browserEntry)), { recursive: true });
+  await writeFile(join(browserRoot, browserEntry), "browser fixture, never executed");
+  const browserFiles = await bundleInventory(browserRoot);
+  const links = [];
+  for (let i = 0; i < 5; i++) {
+    const path = `${framework}/alias-${i}`;
+    await symlink("Versions/A", join(browserRoot, path));
+    links.push({ path, linkTarget: "Versions/A", resolvedTarget: `${framework}/Versions/A` });
+  }
+  const browserBytes = JSON.stringify({ schemaVersion: 1, target: { platform: process.platform, arch: process.arch },
+    entryPath: browserEntry, files: browserFiles, links });
+  await writeFile(join(browserRoot, "browser-component.json"), browserBytes);
+  await writeFile(join(root, "executable-build.json"), JSON.stringify({ scope: "isolated-local-client", releaseEligible: false,
+    upstreamRevision: lock.revision, browser: { activation: "package-relative-only", componentChecksum: digest(Buffer.from(browserBytes)) } }));
+  const manifest = { schemaVersion: 1, packId: "gstack-default", deliveryStage: "executable",
+    upstream: { repository: "https://github.com/garrytan/gstack", revision: lock.revision, version: lock.version },
+    adaptationRevision: "ling-fixture", target: { platform: process.platform, arch: process.arch },
+    licensePath: "LICENSE", skills, files: await bundleInventory(root) };
+  await writeFile(join(root, "manifest.json"), JSON.stringify(manifest));
+  const bundle = await readExecutableBundle(root);
+  const selectionPath = join(work, "selection.json");
+  await writeFile(selectionPath, JSON.stringify({ root, identity: bundle.identity }));
+  const module = await import(`../scripts/packaged-gstack-resources.mjs?fixture=${encodeURIComponent(work)}`);
+  return { ...bundle, work, selectionPath, module };
+}
+test("build-owned selection copies one complete resource tree and verifies it after pack/sign", async t => {
+  const f = await fixture(t);
+  assert.deepEqual(await f.module.preparePackagedGstackBuild({ required: true, selectionPath: f.selectionPath }), f.identity);
+  const config = f.module.packagedGstackBuilderConfig();
+  assert.equal(config.extraResources.length, 2);
+  assert.equal(config.extraResources[0].from, f.root);
+  assert.equal(config.extraResources[0].to, "gstack");
+  assert.deepEqual(config.extraMetadata.lingPackagedGstack, f.identity);
+  const context = { electronPlatformName: "darwin", appOutDir: join(f.work, "out"),
+    packager: { appInfo: { productFilename: "Ling" }, config } };
+  const copied = join(context.appOutDir, "Ling.app/Contents/Resources/gstack");
+  await cp(f.root, copied, { recursive: true });
+  await cp(f.browser.root, join(context.appOutDir, "Ling.app/Contents/Resources/gstack-browser"), { recursive: true, verbatimSymlinks: true });
+  await f.module.verifyPackagedGstack(context);
+  await writeFile(join(copied, "LICENSE"), "changed");
+  await assert.rejects(f.module.verifyPackagedGstack(context), /bundle_resource_checksum_mismatch/);
+  await rm(f.selectionPath);
+  await assert.rejects(f.module.preparePackagedGstackBuild({ selectionPath: f.selectionPath }), { code: "ENOENT" });
+});
+test("package declarations without a selected build fail instead of silently skipping verification", async t => {
+  const f = await fixture(t);
+  await assert.rejects(f.module.verifyPackagedGstack({ packager: { config: { extraMetadata: { lingPackagedGstack: f.identity } } } }), /selection_missing/);
+});
+test("actual esbuild embeds exactly the authenticated identity module", async t => {
+  const f = await fixture(t);
+  const entry = fileURLToPath(new URL("../../../packages/daemon/dist/features/skills/packaged-identity.js", import.meta.url));
+  const injection = f.module.packagedGstackIdentityPlugin({ identity: f.identity });
+  const built = await build({ entryPoints: [entry], bundle: true, write: false, platform: "node", format: "esm", plugins: [injection.plugin] });
+  injection.assertIncluded();
+  const loaded = await import(`data:text/javascript;base64,${Buffer.from(built.outputFiles[0].contents).toString("base64")}`);
+  assert.deepEqual(loaded.readPackagedGstackIdentity(), f.identity);
+  assert.throws(() => f.module.packagedGstackIdentityPlugin({ identity: f.identity }).assertIncluded(), /not_bundled/);
+});
