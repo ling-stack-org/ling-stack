@@ -55,6 +55,17 @@ export interface UserInputAnswerSubmissionV1 {
   readonly answers: readonly UserInputAnswerV1[];
 }
 
+/** Durable Host acceptance only. Delivery and execution continue asynchronously. */
+export interface UserInputAnswerSubmissionResponseV1 {
+  readonly requestId: string;
+  readonly requestVersion: number;
+  readonly answerId: string;
+  readonly answerItemId: string;
+  readonly deliveryId: string;
+  readonly acceptedAt: string;
+  readonly replayed: boolean;
+}
+
 /**
  * Read-only subset of the authoritative request used for content validation.
  * Scope authorization and an atomic status/version CAS remain Host duties.

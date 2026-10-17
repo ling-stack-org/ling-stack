@@ -8,6 +8,7 @@ export * from "./controls/Select.js";
 export * from "./controls/Field.js";
 export * from "./controls/Switch.js";
 export * from "./controls/Checkbox.js";
+export * from "./controls/Radio.js";
 export * from "./desktop/CompactDesktopWindow.js";
 export * from "./desktop/CurrentSessionCapabilityControl.js";
 export * from "./feedback/Spinner.js";

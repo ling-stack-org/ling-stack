@@ -305,7 +305,7 @@ async function confirmAndOrchestrateProposal(
   };
 }
 
-function createStartOrchestratedRun(
+export function createStartOrchestratedRun(
   options: ChannelTurnDispatchExecutorOptions,
   store: RunStore,
   cwd: string,

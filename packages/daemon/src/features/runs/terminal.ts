@@ -23,9 +23,10 @@ export function appendFailureEvent(
   sinkClosed: boolean,
   sink: { writeEvent(event: string, data: unknown): void },
   extraData: Record<string, unknown> = {},
+  now?: string,
 ): RunEventEnvelope | undefined {
   try {
-    const envelope = store.appendExecutionEvent(runId, sourceFence, "run_error", { message, ...extraData });
+    const envelope = store.appendExecutionEvent(runId, sourceFence, "run_error", { message, ...extraData }, now);
     if (!sinkClosed) {
       sink.writeEvent(envelope.type, envelope);
     }

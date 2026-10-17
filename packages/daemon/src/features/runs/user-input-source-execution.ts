@@ -26,8 +26,10 @@ export function readUserInputSourceExecution(
     || typeof task.prompt !== "string" || !task.prompt.trim() || task.channelId !== source.channelId) throw invalid();
   let execution: PreparedRunnerInput;
   try {
-    execution = readPreparedRunnerInput(value, { cwd: source.cwd,
-      task: { id: source.taskId, title: task.title, prompt: task.prompt, ...(source.channelId ? { channelId: source.channelId } : {}) } });
+    execution = readPreparedRunnerInput(value, {
+      cwd: source.cwd,
+      task: task as unknown as PreparedRunnerInput["input"]["task"],
+    });
   } catch { throw invalid(); }
   if (execution.runnerId !== attempt.effectiveRunnerId
     || execution.input.provider.provider !== source.providerName || execution.input.provider.model !== source.providerModel

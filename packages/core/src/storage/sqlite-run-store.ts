@@ -2006,8 +2006,9 @@ export class SqliteRunStore implements RunStore {
     runId: string,
     type: K,
     data: RunEventDataByType[K],
+    now?: string,
   ): Extract<RunEventEnvelope, { readonly type: K }> {
-    return this.runEvents.appendEvent(runId, type, data);
+    return this.runEvents.appendEvent(runId, type, data, now);
   }
 
   appendControlPlaneEvent(input: AppendControlPlaneEventInput, now: string): ControlPlaneEvent {
@@ -2197,9 +2198,10 @@ export class SqliteRunStore implements RunStore {
     return this.hostMediaOperations.recordHostMediaEffectNoStart(...args);
   }
 
-  appendExecutionEvent<K extends RunEventType>(runId: string, sourceFence: RuntimeAttemptFenceV1, type: K, data: RunEventDataByType[K])
+  appendExecutionEvent<K extends RunEventType>(runId: string, sourceFence: RuntimeAttemptFenceV1, type: K,
+    data: RunEventDataByType[K], now?: string)
     : Extract<RunEventEnvelope, { readonly type: K }> {
-    return this.runEvents.appendExecutionEvent(runId, sourceFence, type, data);
+    return this.runEvents.appendExecutionEvent(runId, sourceFence, type, data, now);
   }
 
   isCurrentRunExecutionOwner(runId: string, sourceFence: RuntimeAttemptFenceV1, allowCleanup = false): boolean {
@@ -2218,9 +2220,9 @@ export class SqliteRunStore implements RunStore {
     return result;
   }
 
-  appendIgnoredRunnerCompletionEvent(runId: string, data: RunEventDataByType["stale_runner_completion_ignored"])
+  appendIgnoredRunnerCompletionEvent(runId: string, data: RunEventDataByType["stale_runner_completion_ignored"], now?: string)
     : Extract<RunEventEnvelope, { readonly type: "stale_runner_completion_ignored" }> {
-    return this.runEvents.appendIgnoredRunnerCompletionEvent(runId, data);
+    return this.runEvents.appendIgnoredRunnerCompletionEvent(runId, data, now);
   }
 
   getControlPlaneEventByIdempotency(workspaceId: string, idempotencyKey: string): ControlPlaneEvent | undefined {
@@ -3980,6 +3982,9 @@ export class SqliteRunStore implements RunStore {
   listDueUserInputDeliveries(input: Parameters<RunStore["listDueUserInputDeliveries"]>[0], now: string) {
     return this.userInputDelivery.listDue(input, now);
   }
+  listUserInputDispatchCandidates(input: Parameters<RunStore["listUserInputDispatchCandidates"]>[0], now: string) {
+    return this.userInputDelivery.listDispatchCandidates(input, now);
+  }
 
   claimUserInputDelivery(input: Parameters<RunStore["claimUserInputDelivery"]>[0], now: string) {
     return this.userInputDelivery.claim(input, now);
@@ -4006,6 +4011,9 @@ export class SqliteRunStore implements RunStore {
   }
   getUserInputContinuationReceipt(threadId: string, deliveryId: string) {
     return this.userInputContinuation.getReceipt(threadId, deliveryId);
+  }
+  failUserInputContinuationStartup(input: Parameters<RunStore["failUserInputContinuationStartup"]>[0], now: string) {
+    return this.userInputContinuation.failStartup(input, now);
   }
 
   cancelUserInputWait(input: Parameters<RunStore["cancelUserInputWait"]>[0], now: string) {

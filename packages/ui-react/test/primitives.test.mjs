@@ -43,6 +43,7 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
+  Radio,
   SegmentedControl,
   SegmentedControlItem,
   Select,
@@ -144,6 +145,21 @@ test("segmented control keeps exactly one semantic view selection", () => {
   assert.match(html, /role="radio" aria-checked="true"/u);
   assert.match(html, /data-state="on"/u);
   assert.match(html, /data-state="off"/u);
+});
+
+test("radio exposes a native single-choice control with a stable visual owner", () => {
+  const html = renderToStaticMarkup(createElement(Radio, {
+    checked: true,
+    label: "Keep drawing available",
+    name: "drawing",
+    readOnly: true,
+  }));
+
+  assert.match(html, /class="ling-ui-radio"/u);
+  assert.match(html, /type="radio"/u);
+  assert.match(html, /data-ling-control-native="true"/u);
+  assert.match(html, /data-checked="true"/u);
+  assert.match(html, /Keep drawing available/u);
 });
 
 test("theme picker exposes active, selected, applying, and unavailable theme states", () => {

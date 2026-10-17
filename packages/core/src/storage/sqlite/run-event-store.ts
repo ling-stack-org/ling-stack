@@ -34,22 +34,25 @@ export class SqliteRunEventStore {
     runId: string,
     type: K,
     data: RunEventDataByType[K],
+    now?: string,
   ): Extract<RunEventEnvelope, { readonly type: K }> {
-    return this.append(runId, type, data, { kind: "host" });
+    return this.append(runId, type, data, { kind: "host" }, now);
   }
 
-  appendExecutionEvent<K extends RunEventType>(runId: string, sourceFence: RuntimeAttemptFenceV1, type: K, data: RunEventDataByType[K])
+  appendExecutionEvent<K extends RunEventType>(runId: string, sourceFence: RuntimeAttemptFenceV1, type: K,
+    data: RunEventDataByType[K], now?: string)
     : Extract<RunEventEnvelope, { readonly type: K }> {
-    return this.append(runId, type, data, { kind: "execution", sourceFence });
+    return this.append(runId, type, data, { kind: "execution", sourceFence }, now);
   }
 
   /** A fixed audit kind cannot be used to bypass execution admission for tools or results. */
-  appendIgnoredRunnerCompletionEvent(runId: string, data: RunEventDataByType["stale_runner_completion_ignored"])
+  appendIgnoredRunnerCompletionEvent(runId: string, data: RunEventDataByType["stale_runner_completion_ignored"], now?: string)
     : Extract<RunEventEnvelope, { readonly type: "stale_runner_completion_ignored" }> {
-    return this.append(runId, "stale_runner_completion_ignored", data, { kind: "audit" });
+    return this.append(runId, "stale_runner_completion_ignored", data, { kind: "audit" }, now);
   }
 
-  private append<K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K], admission: EventAdmission)
+  private append<K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K], admission: EventAdmission,
+    now?: string)
     : Extract<RunEventEnvelope, { readonly type: K }> {
     if (type === "host_command_prepared" || type === "host_command_settled") {
       throw Object.assign(new Error("Command journal requires its dedicated Host API."), { code: "host_command_event_reserved" });
@@ -68,7 +71,7 @@ export class SqliteRunEventStore {
       id: createEventId(),
       runId,
       seq: this.nextEventSeq(runId),
-      ts: new Date().toISOString(),
+      ts: now ?? new Date().toISOString(),
       type,
       data: attributedData,
     } as unknown as Extract<RunEventEnvelope, { readonly type: K }>;

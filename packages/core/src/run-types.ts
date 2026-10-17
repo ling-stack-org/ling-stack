@@ -1740,12 +1740,13 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   markRunSucceeded(runId: string, endedAt: string, summaryPath?: string): void;
   markRunFailed(runId: string, endedAt: string, errorMessage: string, summaryPath?: string): void;
   markRunCancelled(runId: string, endedAt: string, summaryPath?: string): void;
-  appendEvent<K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K]): Extract<RunEventEnvelope, { readonly type: K }>;
+  appendEvent<K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K], now?: string): Extract<RunEventEnvelope, { readonly type: K }>;
   /** Runner callbacks must supply the Host identity captured before dispatch. */
-  appendExecutionEvent<K extends RunEventType>(runId: string, sourceFence: RuntimeAttemptFenceV1, type: K, data: RunEventDataByType[K]): Extract<RunEventEnvelope, { readonly type: K }>;
+  appendExecutionEvent<K extends RunEventType>(runId: string, sourceFence: RuntimeAttemptFenceV1, type: K,
+    data: RunEventDataByType[K], now?: string): Extract<RunEventEnvelope, { readonly type: K }>;
   isCurrentRunExecutionOwner(runId: string, sourceFence: RuntimeAttemptFenceV1, allowCleanup?: boolean): boolean;
   transitionRunExecutionStatus(input: Parameters<RunStore["transitionRunStatus"]>[0] & { readonly sourceFence: RuntimeAttemptFenceV1 }): TransitionResult<RunStatus>;
-  appendIgnoredRunnerCompletionEvent(runId: string, data: RunEventDataByType["stale_runner_completion_ignored"]): Extract<RunEventEnvelope, { readonly type: "stale_runner_completion_ignored" }>;
+  appendIgnoredRunnerCompletionEvent(runId: string, data: RunEventDataByType["stale_runner_completion_ignored"], now?: string): Extract<RunEventEnvelope, { readonly type: "stale_runner_completion_ignored" }>;
   appendControlPlaneEvent(input: AppendControlPlaneEventInput, now: string): ControlPlaneEvent;
   getControlPlaneEventByIdempotency(workspaceId: string, idempotencyKey: string): ControlPlaneEvent | undefined;
   listControlPlaneEvents(options: ListControlPlaneEventsOptions): ControlPlaneEvent[];
@@ -2167,6 +2168,7 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   getUserInputDelivery(threadId: string, deliveryId: string): import("./user-input-delivery-types.js").UserInputDelivery | undefined;
   getUserInputContinuationSeed(threadId: string, deliveryId: string): import("./user-input-continuation-types.js").UserInputContinuationSeed | undefined;
   listDueUserInputDeliveries(input: import("./user-input-delivery-types.js").ListDueUserInputDeliveries, now: string): readonly import("./user-input-delivery-types.js").UserInputDelivery[];
+  listUserInputDispatchCandidates(input: import("./user-input-delivery-types.js").ListUserInputDispatchCandidates, now: string): readonly import("./user-input-delivery-types.js").UserInputDispatchCandidate[];
   claimUserInputDelivery(input: import("./user-input-delivery-types.js").ClaimUserInputDelivery, now: string): import("./user-input-delivery-types.js").UserInputDelivery | null;
   retryUserInputDelivery(input: import("./user-input-delivery-types.js").RetryUserInputDelivery, now: string): import("./user-input-delivery-types.js").UserInputDelivery;
   saveUserInputContinuationPreparation(input: import("./user-input-host-continuation-types.js").SaveUserInputContinuationPreparation, now: string): { readonly snapshot: import("./user-input-host-continuation-types.js").UserInputContinuationPreparation; readonly idempotentReplay: boolean };
@@ -2175,6 +2177,7 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   getUserInputContinuationBinding(threadId: string, deliveryId: string): import("./user-input-host-continuation-types.js").UserInputContinuationBinding | undefined;
   acknowledgeUserInputContinuation(input: import("./user-input-host-continuation-types.js").AcknowledgeUserInputContinuation, now: string): { readonly receipt: import("./user-input-host-continuation-types.js").UserInputContinuationReceipt; readonly replayed: boolean };
   getUserInputContinuationReceipt(threadId: string, deliveryId: string): import("./user-input-host-continuation-types.js").UserInputContinuationReceipt | undefined;
+  failUserInputContinuationStartup(input: import("./user-input-host-continuation-types.js").FailUserInputContinuationStartup, now: string): boolean;
   cancelUserInputWait(input: import("./user-input-wait-types.js").CancelUserInputWait, now: string): import("./user-input-wait-types.js").CancelUserInputWaitResult;
   appendConversationUserTurn(input: AppendConversationUserTurnInput, now: string): AppendConversationUserTurnResult;
   appendConversationUserTurnWithAcceptedSnapshot(
@@ -2798,6 +2801,8 @@ export type RuntimeSupervisorStoreFacet = RunStoreFacet<
   | "expireResourceLeases"
   | "listResourceLeases"
   | "getBlockingResourceLease"
+  | "getUserInputContinuationBinding"
+  | "failUserInputContinuationStartup"
 >;
 
 export type WorkspaceStoreFacet = RunStoreFacet<

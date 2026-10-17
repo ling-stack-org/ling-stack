@@ -271,11 +271,78 @@
   overflow-wrap: anywhere;
 }
 
+.ling-ui-radio {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 32px;
+  align-items: center;
+  gap: var(--ling-space-3);
+  color: var(--ling-text-default);
+  cursor: pointer;
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.ling-ui-radio input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.ling-ui-radio-control {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--ling-border-strong);
+  border-radius: 50%;
+  background: var(--ling-bg-panel);
+  transition: background-color var(--ling-motion-fast) var(--ling-ease-standard), border-color var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.ling-ui-radio-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.ling-ui-radio[data-checked="true"] .ling-ui-radio-control {
+  border-color: var(--ling-action-accent);
+}
+
+.ling-ui-radio[data-checked="true"] .ling-ui-radio-dot {
+  background: var(--ling-action-accent);
+}
+
+.ling-ui-radio input:focus-visible + .ling-ui-radio-control {
+  outline: 2px solid var(--ling-border-focus);
+  outline-offset: 2px;
+}
+
+.ling-ui-radio[data-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.ling-ui-radio-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ling-ui-input,
   .ling-ui-select,
   .ling-ui-textarea,
-  .ling-ui-checkbox-control {
+  .ling-ui-checkbox-control,
+  .ling-ui-radio-control {
     transition-duration: var(--ling-motion-instant);
   }
 }

@@ -52,6 +52,8 @@ import type {
   ToolSurfaceResponse,
   RunWorkspaceChangesResponse,
   TurnWorkspaceChangesResponse,
+  UserInputAnswerSubmissionResponseV1,
+  UserInputAnswerSubmissionV1,
 } from "@ling-stack/contracts";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
@@ -266,6 +268,20 @@ export const runEndpoints = {
 
   async unpinLingThread(this: LingDaemonEndpointContext, cwd: string, threadId: string, input: LingThreadPinRequest = {}): Promise<LingThreadMutationResponse> {
       return this._post(`/threads/${encodeURIComponent(threadId)}/unpin`, { cwd }, input);
+    },
+
+  async submitUserInputAnswer(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    threadId: string,
+    requestId: string,
+    input: UserInputAnswerSubmissionV1,
+  ): Promise<UserInputAnswerSubmissionResponseV1> {
+      return this._post(
+        `/threads/${encodeURIComponent(threadId)}/user-input-requests/${encodeURIComponent(requestId)}/answers`,
+        { cwd },
+        input,
+      );
     },
 
   async getRun(this: LingDaemonEndpointContext, runId: string, cwd?: string): Promise<RunSession> {

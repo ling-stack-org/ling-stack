@@ -44,6 +44,8 @@ import type {
   RunSession,
   ShellSnapshotListResponse,
   ShellSnapshotResponse,
+  UserInputAnswerSubmissionResponseV1,
+  UserInputAnswerSubmissionV1,
 } from "../types.js";
 import { daemonClient } from "./client.js";
 
@@ -66,6 +68,15 @@ export async function listExecutionActions(
   } = {},
 ): Promise<ExecutionActionListResponse> {
   return daemonClient.listExecutionActions(cwd, options);
+}
+
+export async function submitUserInputAnswer(
+  cwd: string,
+  threadId: string,
+  requestId: string,
+  input: UserInputAnswerSubmissionV1,
+): Promise<UserInputAnswerSubmissionResponseV1> {
+  return daemonClient.submitUserInputAnswer(cwd, threadId, requestId, input);
 }
 
 export async function listLingThreads(cwd: string, options: LingThreadListRequest = {}): Promise<LingThreadListResponse> {

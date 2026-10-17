@@ -222,19 +222,10 @@ test("tool-only media generation is a successful visible result on every convers
       task: { id: continuationRun.taskId, title: "Channel continuation", prompt: "Generate" },
       cwd,
     });
-    const continuationRuntime = new RuntimeSupervisor(runtimeConfig(cwd));
-    try {
-      const execution = await runProviderMediaJobExecution({
-        cwd,
-        storeRegistry: continuationStoreRegistry,
-        secretResolver: emptySecretResolver,
-        mediaJobId: continuationMedia.details.mediaJobId,
-        hooks: mediaRuntimeHooks(continuationRuntime),
-      });
-      assert.equal(execution.statusCode, 200);
-    } finally {
-      continuationRuntime.releaseAll();
-    }
+    const continuationExecution = await fetch(`${baseUrl}/media-jobs/${encodeURIComponent(continuationMedia.details.mediaJobId)}`
+      + `/run?cwd=${encodeURIComponent(cwd)}`, { method: "POST" });
+    const continuationExecutionBody = await continuationExecution.json();
+    assert.equal(continuationExecution.status, 200, JSON.stringify(continuationExecutionBody));
     store.markRunStarted(continuationRun.id, now);
     store.markRunSucceeded(continuationRun.id, now);
     const continuationRunId = continuationRun.id;

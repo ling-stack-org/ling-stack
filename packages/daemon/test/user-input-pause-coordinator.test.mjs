@@ -192,14 +192,22 @@ test("an observation deadline can be retried only after real no-start evidence, 
   assert.equal((await f.coordinator.completeYield(yielded, 0)).kind, "committed");
 });
 
-test("SDK stop timestamps before the question or in the future cannot establish a checkpoint", async t => {
-  for (const stoppedAt of ["2000-01-01T00:00:00.000Z", "2100-01-01T00:00:00.000Z"]) {
-    const f = await fixture(t);
-    const receipt = f.coordinator.request("ask", input());
-    await assert.rejects(f.coordinator.completeYield(new PiRunnerYielded(receipt, stoppedAt)), error => error.code === "user_input_stop_time_invalid");
-    assert.equal(f.store.getUserInputWait(f.thread.id, receipt.requestId), undefined);
-    assert.equal(f.store.getRun(f.run.id).status, "running");
-  }
+test("an SDK stop timestamp before the question survives a wall-clock rollback", async t => {
+  const f = await fixture(t);
+  const receipt = f.coordinator.request("ask", input());
+  const result = await f.coordinator.completeYield(new PiRunnerYielded(receipt, "2000-01-01T00:00:00.000Z"));
+  assert.equal(result.kind, "committed");
+  assert.equal(f.store.getUserInputWait(f.thread.id, receipt.requestId)?.status, "waiting");
+  assert.equal(f.store.getRun(f.run.id).status, "yielded");
+});
+
+test("an SDK stop timestamp in the future cannot establish a checkpoint", async t => {
+  const f = await fixture(t);
+  const receipt = f.coordinator.request("ask", input());
+  await assert.rejects(f.coordinator.completeYield(new PiRunnerYielded(receipt, "2100-01-01T00:00:00.000Z")),
+    error => error.code === "user_input_stop_time_invalid");
+  assert.equal(f.store.getUserInputWait(f.thread.id, receipt.requestId), undefined);
+  assert.equal(f.store.getRun(f.run.id).status, "running");
 });
 
 for (const mode of ["required", "optional"]) {
