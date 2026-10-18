@@ -459,6 +459,8 @@ import type {
   CreateSkillRegressionRunInput,
   CreateSkillSourceArtifactInput,
   CreateSkillSourceSnapshotInput,
+  PublishSkillSourceBatchInput,
+  PublishedSkillSourceBatch,
   ListSkillCompiledRuntimeViewOptions,
   ListSkillRegressionRunsOptions,
   ListSkillSourceArtifactOptions,
@@ -1385,9 +1387,12 @@ export interface CreateRunInterventionInput {
 
 export interface ListRunInterventionsOptions {
   readonly sourceRunId?: string;
+  readonly idempotencyKey?: string;
   readonly sourceMessageIds?: readonly string[];
   readonly status?: RunInterventionStatus;
   readonly mode?: RunInterventionMode;
+  readonly hasContinuation?: boolean;
+  readonly newestFirst?: boolean;
   readonly limit?: number;
 }
 
@@ -1583,6 +1588,11 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   settleHostCommandExecution(ticket: import("./host-command-journal-types.js").HostCommandExecutionTicket, input: import("./host-command-journal-types.js").HostCommandSettlementInput): Extract<RunEventEnvelope, { readonly type: "host_command_settled" }>;
   listHostCommandWriteBlockers(cwd: string): import("@ling-stack/contracts").HostCommandWriteBlockerV1[];
   admitHostOperation(input: import("./host-operation-journal-types.js").AdmitHostOperationInput): import("./host-operation-journal-types.js").HostOperationTicket;
+  trackHostAttemptCompletion(source: import("./host-operation-journal-types.js").HostOperationSource,
+    lifetime: Promise<unknown>, verifyEffectCoverage?: () => import("./host-attempt-completion-types.js").HostAttemptEffectObservation): Promise<import("./host-attempt-completion-types.js").HostAttemptCompletionRecord>;
+  getHostAttemptCompletion(source: import("./host-operation-journal-types.js").HostOperationSource): import("./host-attempt-completion-types.js").HostAttemptCompletionRecord | undefined;
+  releaseHostAttemptResources(source: import("./host-operation-journal-types.js").HostOperationSource, releasedAt: string): void;
+  sealHostCompactionResourceBoundary(input: import("./host-compaction-resource-types.js").SealHostCompactionResourceBoundaryInput): string | undefined;
   bindHostOperationEvidence(ticket: import("./host-operation-journal-types.js").HostOperationTicket, evidence: import("./host-operation-journal-types.js").HostOperationEvidenceRef): import("./host-operation-journal-types.js").HostOperationRecord;
   launchHostOperation<T>(ticket: import("./host-operation-journal-types.js").HostOperationTicket, launch: () => T): T;
   continueHostOperationEffect<T>(ticket: import("./host-operation-journal-types.js").HostOperationTicket, effect: () => T, mode?: "forward" | "cleanup"): T;
@@ -1683,6 +1693,7 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   hardDeleteLingThread(threadId: string, input: HardDeleteLingThreadInput, now: string): HardDeleteLingThreadResult | undefined;
   findLingThreadByOwner(input: {
     readonly kind: LingThreadKind;
+    readonly surfaceKind?: LingThread["surfaceKind"];
     readonly taskId?: string;
     readonly workflowStepId?: string;
     readonly externalWorkId?: string;
@@ -1737,19 +1748,21 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   markRunSucceeded(runId: string, endedAt: string, summaryPath?: string): void;
   markRunFailed(runId: string, endedAt: string, errorMessage: string, summaryPath?: string): void;
   markRunCancelled(runId: string, endedAt: string, summaryPath?: string): void;
-  appendEvent<K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K]): Extract<RunEventEnvelope, { readonly type: K }>;
+  appendEvent<K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K], now?: string): Extract<RunEventEnvelope, { readonly type: K }>;
   /** Approval decisions use a stable Host idempotency identity, not a check-then-append projection. */
   appendApprovalDecisionEvent(
     runId: string,
     approvalId: string,
     type: Extract<RunEventType, "approval_approved" | "approval_denied" | "approval_expired" | "approval_cancelled">,
     data: RunEventDataByType[Extract<RunEventType, "approval_approved" | "approval_denied" | "approval_expired" | "approval_cancelled">],
+    now?: string,
   ): Extract<RunEventEnvelope, { readonly type: "approval_approved" | "approval_denied" | "approval_expired" | "approval_cancelled" }>;
   /** Runner callbacks must supply the Host identity captured before dispatch. */
-  appendExecutionEvent<K extends RunEventType>(runId: string, sourceFence: RuntimeAttemptFenceV1, type: K, data: RunEventDataByType[K]): Extract<RunEventEnvelope, { readonly type: K }>;
+  appendExecutionEvent<K extends RunEventType>(runId: string, sourceFence: RuntimeAttemptFenceV1, type: K,
+    data: RunEventDataByType[K], now?: string): Extract<RunEventEnvelope, { readonly type: K }>;
   isCurrentRunExecutionOwner(runId: string, sourceFence: RuntimeAttemptFenceV1, allowCleanup?: boolean): boolean;
   transitionRunExecutionStatus(input: Parameters<RunStore["transitionRunStatus"]>[0] & { readonly sourceFence: RuntimeAttemptFenceV1 }): TransitionResult<RunStatus>;
-  appendIgnoredRunnerCompletionEvent(runId: string, data: RunEventDataByType["stale_runner_completion_ignored"]): Extract<RunEventEnvelope, { readonly type: "stale_runner_completion_ignored" }>;
+  appendIgnoredRunnerCompletionEvent(runId: string, data: RunEventDataByType["stale_runner_completion_ignored"], now?: string): Extract<RunEventEnvelope, { readonly type: "stale_runner_completion_ignored" }>;
   appendControlPlaneEvent(input: AppendControlPlaneEventInput, now: string): ControlPlaneEvent;
   getControlPlaneEventByIdempotency(workspaceId: string, idempotencyKey: string): ControlPlaneEvent | undefined;
   listControlPlaneEvents(options: ListControlPlaneEventsOptions): ControlPlaneEvent[];
@@ -1854,6 +1867,13 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   cancelRunIntervention(interventionId: string, now: string, reason?: string): RunIntervention | undefined;
   createWorkUnit(input: CreateWorkUnitInput): WorkUnit;
   getWorkUnit(workUnitId: string): WorkUnit | undefined;
+  /** Host-only synchronous cancellation; never grants an execution or replay capability. */
+  withCancellationFence<T>(input: {
+    readonly runId?: string;
+    readonly workUnitId?: string;
+    readonly expectedAttemptId?: string | null;
+    readonly expectedRunId?: string | null;
+  }, mutate: (target: { readonly run?: RunSession; readonly workUnit?: WorkUnit }) => T): T;
   listWorkUnits(options?: ListWorkUnitsOptions): WorkUnit[];
   findWorkUnitByIdempotency(input: {
     readonly kind: WorkUnit["kind"];
@@ -2124,6 +2144,9 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
     input: import("./teammate-direct-message-runtime-types.js").CommitTeammateDirectMessageRuntimeInput,
     now: string,
   ): import("./teammate-direct-message-runtime-types.js").CommitTeammateDirectMessageRuntimeResult;
+  acceptTeammateDirectMessage(input: CreateTeammateDirectMessageInput & { readonly idempotencyKey: string; readonly requestFingerprint: string },
+    now: string): { readonly message: TeammateDirectMessage; readonly created: boolean };
+  getTeammateDirectMessageByIdempotencyKey(teammateId: string, key: string): TeammateDirectMessage | undefined;
   updateTeammateDirectMessageRuntime(
     id: string,
     input: {
@@ -2165,6 +2188,7 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   getUserInputDelivery(threadId: string, deliveryId: string): import("./user-input-delivery-types.js").UserInputDelivery | undefined;
   getUserInputContinuationSeed(threadId: string, deliveryId: string): import("./user-input-continuation-types.js").UserInputContinuationSeed | undefined;
   listDueUserInputDeliveries(input: import("./user-input-delivery-types.js").ListDueUserInputDeliveries, now: string): readonly import("./user-input-delivery-types.js").UserInputDelivery[];
+  listUserInputDispatchCandidates(input: import("./user-input-delivery-types.js").ListUserInputDispatchCandidates, now: string): readonly import("./user-input-delivery-types.js").UserInputDispatchCandidate[];
   claimUserInputDelivery(input: import("./user-input-delivery-types.js").ClaimUserInputDelivery, now: string): import("./user-input-delivery-types.js").UserInputDelivery | null;
   retryUserInputDelivery(input: import("./user-input-delivery-types.js").RetryUserInputDelivery, now: string): import("./user-input-delivery-types.js").UserInputDelivery;
   saveUserInputContinuationPreparation(input: import("./user-input-host-continuation-types.js").SaveUserInputContinuationPreparation, now: string): { readonly snapshot: import("./user-input-host-continuation-types.js").UserInputContinuationPreparation; readonly idempotentReplay: boolean };
@@ -2173,6 +2197,7 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   getUserInputContinuationBinding(threadId: string, deliveryId: string): import("./user-input-host-continuation-types.js").UserInputContinuationBinding | undefined;
   acknowledgeUserInputContinuation(input: import("./user-input-host-continuation-types.js").AcknowledgeUserInputContinuation, now: string): { readonly receipt: import("./user-input-host-continuation-types.js").UserInputContinuationReceipt; readonly replayed: boolean };
   getUserInputContinuationReceipt(threadId: string, deliveryId: string): import("./user-input-host-continuation-types.js").UserInputContinuationReceipt | undefined;
+  failUserInputContinuationStartup(input: import("./user-input-host-continuation-types.js").FailUserInputContinuationStartup, now: string): boolean;
   cancelUserInputWait(input: import("./user-input-wait-types.js").CancelUserInputWait, now: string): import("./user-input-wait-types.js").CancelUserInputWaitResult;
   appendConversationUserTurn(input: AppendConversationUserTurnInput, now: string): AppendConversationUserTurnResult;
   appendConversationUserTurnWithAcceptedSnapshot(
@@ -2623,6 +2648,7 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   getSkillSourceSnapshot(skillId: string, options?: Pick<ListSkillSourceSnapshotOptions, "reviewStatus" | "includeArchived">): SkillSourceSnapshot | undefined;
   getSkillSourceSnapshotById(id: string): SkillSourceSnapshot | undefined;
   upsertSkillSourceSnapshot(input: CreateSkillSourceSnapshotInput, now: string): SkillSourceSnapshot;
+  publishSkillSourceBatch(input: PublishSkillSourceBatchInput, now: string): PublishedSkillSourceBatch;
   archiveSkillSourceSnapshot(skillId: string, now: string): SkillSourceSnapshot | undefined;
   rollbackSkillSourceSnapshot(snapshotId: string, now: string): SkillSourceSnapshot | undefined;
   getOfficialSkillSourceSubscription(): OfficialSkillSourceSubscription | undefined;
@@ -2797,6 +2823,8 @@ export type RuntimeSupervisorStoreFacet = RunStoreFacet<
   | "expireResourceLeases"
   | "listResourceLeases"
   | "getBlockingResourceLease"
+  | "getUserInputContinuationBinding"
+  | "failUserInputContinuationStartup"
 >;
 
 export type WorkspaceStoreFacet = RunStoreFacet<
@@ -2843,6 +2871,8 @@ export type TeammateStoreFacet = RunStoreFacet<
   | "createTeammateDirectMessage"
   | "getTeammateDirectMessageRuntimeObservation"
   | "commitTeammateDirectMessageRuntime"
+  | "acceptTeammateDirectMessage"
+  | "getTeammateDirectMessageByIdempotencyKey"
   | "updateTeammateDirectMessageRuntime"
   | "createTeammateDirectLinkPreview"
   | "getTeammateDirectLinkPreview"
@@ -3180,6 +3210,7 @@ export type SkillRegistryStoreFacet = RunStoreFacet<
   | "getSkillSourceSnapshot"
   | "getSkillSourceSnapshotById"
   | "upsertSkillSourceSnapshot"
+  | "publishSkillSourceBatch"
   | "archiveSkillSourceSnapshot"
   | "rollbackSkillSourceSnapshot"
   | "getOfficialSkillSourceSubscription"

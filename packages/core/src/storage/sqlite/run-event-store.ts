@@ -15,6 +15,7 @@ import { mapRunEvent } from "./run-mappers.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import type { RuntimeAttemptFenceV1 } from "../../runtime-supervisor-types.js";
 import { runExecutionOwnerParameters, runExecutionOwnerSql } from "./run-execution-admission.js";
+import { afterCancellationCommit } from "./cancellation-transaction.js";
 
 type EventAdmission = { readonly kind: "host" | "audit" } | { readonly kind: "execution"; readonly sourceFence: RuntimeAttemptFenceV1 };
 
@@ -36,8 +37,9 @@ export class SqliteRunEventStore {
     runId: string,
     type: K,
     data: RunEventDataByType[K],
+    now?: string,
   ): Extract<RunEventEnvelope, { readonly type: K }> {
-    return this.append(runId, type, data, { kind: "host" });
+    return this.append(runId, type, data, { kind: "host" }, now);
   }
 
   /**
@@ -53,6 +55,7 @@ export class SqliteRunEventStore {
     approvalId: string,
     type: ApprovalDecisionEventType,
     data: RunEventDataByType[ApprovalDecisionEventType],
+    now?: string,
   ): Extract<RunEventEnvelope, { readonly type: ApprovalDecisionEventType }> {
     if (!approvalId || data.approvalId !== approvalId) {
       throw new Error("Approval decision event identity is invalid");
@@ -73,7 +76,7 @@ export class SqliteRunEventStore {
         id: eventId,
         runId,
         seq: this.nextEventSeq(runId),
-        ts: new Date().toISOString(),
+        ts: now ?? new Date().toISOString(),
         type,
         data: redactedData,
       } as Extract<RunEventEnvelope, { readonly type: ApprovalDecisionEventType }>;
@@ -84,7 +87,7 @@ export class SqliteRunEventStore {
         )`).run(envelope.id, envelope.runId, envelope.seq, envelope.ts, envelope.type,
           stringifyJson(envelope.data), runId);
       if (Number(inserted.changes) === 1) {
-        appendEventLogLine(run.eventLogPath, envelope);
+        afterCancellationCommit(this.context.database, () => appendEventLogLine(run.eventLogPath, envelope));
         return envelope;
       }
       const duplicate = this.findApprovalDecisionEvent(runId, approvalId);
@@ -100,18 +103,20 @@ export class SqliteRunEventStore {
     throw new Error(`Approval decision event could not be serialized: ${approvalId}`);
   }
 
-  appendExecutionEvent<K extends RunEventType>(runId: string, sourceFence: RuntimeAttemptFenceV1, type: K, data: RunEventDataByType[K])
+  appendExecutionEvent<K extends RunEventType>(runId: string, sourceFence: RuntimeAttemptFenceV1, type: K,
+    data: RunEventDataByType[K], now?: string)
     : Extract<RunEventEnvelope, { readonly type: K }> {
-    return this.append(runId, type, data, { kind: "execution", sourceFence });
+    return this.append(runId, type, data, { kind: "execution", sourceFence }, now);
   }
 
   /** A fixed audit kind cannot be used to bypass execution admission for tools or results. */
-  appendIgnoredRunnerCompletionEvent(runId: string, data: RunEventDataByType["stale_runner_completion_ignored"])
+  appendIgnoredRunnerCompletionEvent(runId: string, data: RunEventDataByType["stale_runner_completion_ignored"], now?: string)
     : Extract<RunEventEnvelope, { readonly type: "stale_runner_completion_ignored" }> {
-    return this.append(runId, "stale_runner_completion_ignored", data, { kind: "audit" });
+    return this.append(runId, "stale_runner_completion_ignored", data, { kind: "audit" }, now);
   }
 
-  private append<K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K], admission: EventAdmission)
+  private append<K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K], admission: EventAdmission,
+    now?: string)
     : Extract<RunEventEnvelope, { readonly type: K }> {
     if (type === "host_command_prepared" || type === "host_command_settled") {
       throw Object.assign(new Error("Command journal requires its dedicated Host API."), { code: "host_command_event_reserved" });
@@ -130,7 +135,7 @@ export class SqliteRunEventStore {
       id: createEventId(),
       runId,
       seq: this.nextEventSeq(runId),
-      ts: new Date().toISOString(),
+      ts: now ?? new Date().toISOString(),
       type,
       data: attributedData,
     } as unknown as Extract<RunEventEnvelope, { readonly type: K }>;
@@ -150,7 +155,7 @@ export class SqliteRunEventStore {
       Object.assign(error, { code: "stale_run_execution" });
       throw error;
     }
-    appendEventLogLine(run.eventLogPath, envelope);
+    afterCancellationCommit(this.context.database, () => appendEventLogLine(run.eventLogPath, envelope));
     if (type === "tool_start" || type === "tool_update" || type === "tool_end") {
       this.ports.rebuildLingThreadMetadata(run.threadId, envelope.ts);
     }

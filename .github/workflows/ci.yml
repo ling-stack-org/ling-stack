@@ -164,6 +164,9 @@ jobs:
           corepack enable
           corepack pnpm install --frozen-lockfile --prefer-offline
 
+      - name: Check production dependency update policy
+        run: node --test scripts/production-dependency-policy.test.mjs
+
       - name: Check dependency license policy
         run: corepack pnpm check:licenses
 

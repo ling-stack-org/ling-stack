@@ -11,6 +11,8 @@ import { fetchProvider } from "./provider-http.js";
 import { createPiSessionStopper, createPiTaskBoundary } from "./task-boundary.js";
 import { assertUserInputExecutionHandler } from "./extensions/user-input.js";
 import { PiRunnerYielded } from "./task-yield.js";
+import { createPiToolBoundaryObservation } from "./tool-boundary-observation.js";
+import { DEFAULT_TOOLS } from "./constants.js";
 import type { PiProviderErrorDiagnostic } from "./provider-error-diagnostic.js";
 import type { PiRunnerEvent, PiRunnerProviderConfig, PiRunnerResult, PiRunnerRunOptions } from "./types.js";
 import { formatTaskPrompt, throwIfAborted } from "./utils.js";
@@ -54,6 +56,20 @@ export class PiRunnerAdapter {
       throw new Error("Host compaction requires Run/Attempt identity, durable events, and a provider admission fence");
     }
     const sourceSignal = options.signal;
+    const replacedToolNames = new Set([...(options.mcpTools?.map(tool => tool.registeredName) ?? []),
+      ...(options.mediaGenerationTools?.map(tool => tool.name) ?? []), ...(options.hostCapabilityTools?.map(tool => tool.name) ?? [])]);
+    const builtinReads = new Set((options.tools ?? DEFAULT_TOOLS)
+      .filter(name => ["read", "grep", "find", "ls"].includes(name) && !replacedToolNames.has(name)));
+    const toolObservation = options.onToolBoundaryObservation && options.runId && options.runnerAttemptId
+      ? createPiToolBoundaryObservation(options.runId, options.runnerAttemptId) : undefined;
+    if (toolObservation) {
+      options.onToolBoundaryObservation!(toolObservation.receipt);
+      const onToolBefore = options.onToolBefore;
+      options = { ...options, onToolBefore: request => {
+        toolObservation.enter(request.toolCallId, request.toolName);
+        return onToolBefore?.(request) ?? { allowed: true };
+      } };
+    }
     const inputReceiver = createPiPreparedInputReceiver(options);
     if (inputReceiver) options = { ...options, preparedInput: inputReceiver.preparedInput };
     let session: Awaited<ReturnType<typeof createInitializedPiSession>> | undefined;
@@ -68,15 +84,22 @@ export class PiRunnerAdapter {
     };
     const hostBoundary = options.onTaskContinuationBoundary;
     const boundary = createPiTaskBoundary((options.hostCompactionEnabled || options.ordinaryProgressRecovery) && hostBoundary
-      ? { ...options, onTaskContinuationBoundary: (point) => hostBoundary(point,
-          point === "before_provider_request" && session
-            ? captureTaskModelView() : undefined) }
+      ? { ...options, onTaskContinuationBoundary: async (point) => {
+          if (point !== "before_provider_request") return hostBoundary(point);
+          toolObservation?.enterProviderBoundary();
+          try {
+            return await hostBoundary(point, session ? captureTaskModelView() : undefined);
+          } finally {
+            toolObservation?.leaveProviderBoundary();
+          }
+        } }
       : options, () => session && frozenAuthority ? { systemPrompt: frozenAuthority.systemPrompt, messages: session.state.messages,
           acceptedTaskPrompt, sessionId: session.sessionId, preparedInput: frozenAuthority } : undefined);
     options = boundary.options;
     const events: PiRunnerEvent[] = [];
     let sdkSettlement: { readonly aborted: boolean } | undefined;
     const emit = (event: PiRunnerEvent): void => {
+      if (event.type === "tool_start") toolObservation?.enter(event.toolCallId, event.toolName);
       events.push(event);
       options.onEvent?.(event);
     };
@@ -113,6 +136,12 @@ export class PiRunnerAdapter {
       if ((event.type === "message_start" || event.type === "message_end" || event.type === "message_update")
         && isPiHostResumeControl(event.message)) return;
       for (const translated of translatePiEvents(event)) {
+        if (translated.type === "tool_end") {
+          if (builtinReads.has(translated.toolName) && (!translated.isError || translated.toolName === "read")) {
+            toolObservation?.completeBuiltinRead(translated.toolCallId, translated.toolName);
+          }
+          toolObservation?.completeTool(translated.toolCallId, translated.toolName);
+        }
         if (translated.type === "context_compaction_start") {
           const contextSnapshot = captureTaskModelView();
           emit(contextSnapshot === undefined ? translated : { ...translated, contextSnapshot });
@@ -139,6 +168,7 @@ export class PiRunnerAdapter {
       model: options.provider.model,
     });
 
+    let sdkCleanupFailed = false;
     try {
       throwIfAborted(options.signal);
       if (!options.compactionRecovery) {
@@ -207,6 +237,7 @@ export class PiRunnerAdapter {
         await stopSession();
         await session.waitForIdle();
       } catch (failure) {
+        sdkCleanupFailed = true;
         // Even a non-Error/falsy rejection means cleanup was not proven.
         stopFailure = failure instanceof Error ? failure : new Error("Runner SDK cleanup failed.");
       }
@@ -233,6 +264,7 @@ export class PiRunnerAdapter {
       }
       unsubscribe();
       session.dispose();
+      if (!sdkCleanupFailed) toolObservation?.finish();
     }
   }
 

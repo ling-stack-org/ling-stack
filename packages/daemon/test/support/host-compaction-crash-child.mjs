@@ -12,7 +12,7 @@ import { RuntimeSupervisor } from "../../dist/runtime/supervisor.js";
 
 const cwd = process.argv[2];
 if (!cwd || !process.send) throw new Error("Crash fixture requires an isolated cwd and IPC parent.");
-const mode = process.argv[3] === "cancel" ? "cancel" : "crash";
+const mode = ["cancel", "initial-crash"].includes(process.argv[3]) ? process.argv[3] : "crash";
 
 function fixtureResponse({ toolCallId, name, args, text, inputTokens = 32_000 }) {
   const delta = toolCallId
@@ -48,12 +48,13 @@ class CrashAtProviderBoundaryRunner extends PiRunnerAdapter {
       },
       onTaskContinuationBoundary: async (point, modelView) => {
         await options.onTaskContinuationBoundary?.(point, modelView);
-        if (point !== "before_provider_request" || !this.wroteMarker) return;
+        if (point !== "before_provider_request"
+          || (mode === "initial-crash" ? this.summaryRequests === 0 : !this.wroteMarker)) return;
         const checkpoint = store.getLatestRunCompactionCheckpoint(options.runId);
         const writeEnd = store.listEvents(options.runId).findLast((event) => event.type === "tool_end"
           && event.data.toolName === "write" && !event.data.isError);
-        if (!checkpoint || !writeEnd || checkpoint.sourceEventSeq < writeEnd.seq) {
-          throw new Error("Host did not seal the completed write before provider admission.");
+        if (!checkpoint || (mode !== "initial-crash" && (!writeEnd || checkpoint.sourceEventSeq < writeEnd.seq))) {
+          throw new Error("Host did not seal the expected checkpoint before provider admission.");
         }
         let cancelled;
         if (mode === "cancel") {
@@ -69,7 +70,7 @@ class CrashAtProviderBoundaryRunner extends PiRunnerAdapter {
             }, { once: true });
           });
         }
-        process.send({ type: "ready", runId: options.runId, writeEndSeq: writeEnd.seq,
+        process.send({ type: "ready", runId: options.runId, writeEndSeq: writeEnd?.seq,
           checkpointId: checkpoint.id, summaryRequests: this.summaryRequests });
         if (mode === "cancel") {
           await cancelled;
@@ -144,8 +145,11 @@ try {
   createRunnerRegistry([{ id: "pi", displayName: "Real Pi SDK fixture", status: "enabled",
     adapter: new CrashAtProviderBoundaryRunner() }]),
   stores, activeRuns, supervisor, { resolve: () => ({ configured: false }) }, {});
+  const completedRun = runId ? store.getRun(runId) : undefined;
   const completion = { type: mode === "cancel" ? "completed" : "unexpected_completion", runId,
-    status: runId ? store.getRun(runId)?.status : "no_run" };
+    status: completedRun?.status ?? "no_run", error: completedRun?.errorMessage,
+    errorCodes: runId ? store.listEvents(runId).filter(event => event.type === "run_error")
+      .map(event => event.data.code) : [] };
   supervisor.releaseAll();
   stores.closeAll();
   process.send(completion);

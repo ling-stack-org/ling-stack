@@ -23,6 +23,10 @@ import { applyHostOfficeLocalDirectoryV2Migration } from "./host-office-local-di
 import { applyHostOfficeLocalDirectoryV2CertificateMigration } from "./host-office-local-directory-v2-certificate-migration.js";
 import { ensureLingTurnCursorIndexes } from "./ling-turn-cursor-indexes.js";
 import { applyProposedPlanRevisionMigration } from "./proposed-plan-revision-migration.js";
+import { applyTeammateDirectSubmissionMigration } from "./teammate-direct-submission-migration.js";
+import { applyHostAttemptCompletionMigration } from "./host-attempt-completion-migration.js";
+import { applyHostAttemptEffectCoverageMigration } from "./host-attempt-effect-coverage-migration.js";
+import { applyTeammateDirectInterventionFenceMigration } from "./teammate-direct-intervention-fence-migration.js";
 
 export interface SqliteRunStoreMigrationContext {
   readonly database: DatabaseSync;
@@ -4453,6 +4457,10 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         context.recordMigration(SKILL_SOURCE_SNAPSHOTS_MIGRATION_VERSION, SKILL_SOURCE_SNAPSHOTS_MIGRATION_NAME);
       }
     }
+    // Legacy/external snapshots stay unclassified until an explicit migration.
+    if (!context.hasColumn("skill_source_snapshots", "bundle_update_mode")) {
+      database.exec("ALTER TABLE skill_source_snapshots ADD COLUMN bundle_update_mode TEXT CHECK(bundle_update_mode IN ('follow', 'pinned'));");
+    }
     const hasSkillSourceUpgradeLifecycleMigration = context.hasMigration(SKILL_SOURCE_UPGRADE_LIFECYCLE_MIGRATION_VERSION);
     if (
       !hasSkillSourceUpgradeLifecycleMigration ||
@@ -5993,4 +6001,8 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
     hasColumn: context.hasColumn.bind(context),
     recordMigration: context.recordMigration.bind(context),
   });
+  applyTeammateDirectSubmissionMigration(context);
+  applyHostAttemptCompletionMigration(context);
+  applyHostAttemptEffectCoverageMigration(context);
+  applyTeammateDirectInterventionFenceMigration(context);
 }

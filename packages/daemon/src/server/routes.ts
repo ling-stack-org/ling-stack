@@ -78,6 +78,15 @@ export function parseRunRoute(
   return undefined;
 }
 
+export function parseUserInputAnswerSubmissionRoute(
+  pathname: string,
+): { readonly threadId: string; readonly requestId: string } | undefined {
+  const segments = decodeRouteSegments(pathname);
+  if (!segments || segments.length !== 5 || segments[0] !== "threads"
+    || segments[2] !== "user-input-requests" || segments[4] !== "answers") return undefined;
+  return { threadId: segments[1], requestId: segments[3] };
+}
+
 export function parseTurnRoute(
   pathname: string,
 ):

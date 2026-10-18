@@ -22,6 +22,7 @@ import {
   type ConversationTimelineDisclosureIntent,
   type ConversationViewRetainKeys,
 } from "../../shared/conversation/index.js";
+import { conversationMeasurementScrollEvent } from "../../shared/conversation/blocks/conversation-reading-anchor.js";
 import type {
   Channel,
   ChannelMention,
@@ -91,6 +92,7 @@ export interface ChannelMessageFeedState {
   readonly onScroll: (event: UIEvent<HTMLDivElement>) => void;
   readonly onUserScrollIntent: () => void;
   readonly onDisclosureIntent: (intent: ConversationTimelineDisclosureIntent) => void;
+  readonly onLocateIntent: () => void;
 }
 
 interface ChannelMessageFeedProps {
@@ -139,6 +141,9 @@ export function useChannelMessageFeed({
   const olderLoadSnapshotRef = useRef<OlderLoadAnchorSnapshot | undefined>(undefined);
   const initialLatestPendingRef = useRef(true);
   const pinnedFollowFrameRef = useRef<number | undefined>(undefined);
+  const layoutFrameRef = useRef<number | undefined>(undefined);
+  const layoutSizeRef = useRef<{ height: number; viewport: number } | undefined>(undefined);
+  const measurementScrollTopRef = useRef<number | undefined>(undefined);
   const [latestButtonVisible, setLatestButtonVisible] = useState(false);
   const [resetRevision, setResetRevision] = useState(0);
 
@@ -194,6 +199,7 @@ export function useChannelMessageFeed({
   const onDisclosureIntent = useCallback((intent: ConversationTimelineDisclosureIntent): void => {
     const feed = scrollRef.current;
     if (!feed) return;
+    measurementScrollTopRef.current = undefined;
     const row = Array.from(feed.querySelectorAll<HTMLElement>(conversationFocusBlockSelector))
       .find((element) => element.dataset.conversationRowKey === intent.rowKey);
     if (row) {
@@ -206,6 +212,20 @@ export function useChannelMessageFeed({
     pinnedToLatestRef.current = false;
     userScrollIntentRef.current = true;
     userScrollRenderSignatureRef.current = renderSignature;
+  }, [renderSignature]);
+
+  const onLocateIntent = useCallback((): void => {
+    measurementScrollTopRef.current = undefined;
+    autoFollowUntilRef.current = 0;
+    pinnedToLatestRef.current = false;
+    initialLatestPendingRef.current = false;
+    userScrollIntentRef.current = true;
+    userScrollRenderSignatureRef.current = renderSignature;
+    visibleAnchorRef.current = undefined;
+    if (pinnedFollowFrameRef.current !== undefined) {
+      globalThis.cancelAnimationFrame(pinnedFollowFrameRef.current);
+      pinnedFollowFrameRef.current = undefined;
+    }
   }, [renderSignature]);
 
   const restoreVisibleAnchor = useCallback((): void => {
@@ -248,6 +268,8 @@ export function useChannelMessageFeed({
     olderLoadSnapshotRef.current = undefined;
     initialLatestPendingRef.current = true;
     visibleAnchorRef.current = undefined;
+    layoutSizeRef.current = undefined;
+    measurementScrollTopRef.current = undefined;
     setLatestButtonVisible(false);
     setResetRevision((revision) => revision + 1);
   }, []);
@@ -258,6 +280,7 @@ export function useChannelMessageFeed({
       return;
     }
     autoFollowUntilRef.current = Date.now() + 1_000;
+    measurementScrollTopRef.current = undefined;
     userScrollIntentRef.current = false;
     userScrollRenderSignatureRef.current = "";
     feed.scrollLeft = 0;
@@ -312,6 +335,7 @@ export function useChannelMessageFeed({
 
   const onUserScrollIntent = useCallback((): void => {
     const feed = scrollRef.current;
+    measurementScrollTopRef.current = undefined;
     autoFollowUntilRef.current = 0;
     userScrollIntentRef.current = true;
     userScrollRenderSignatureRef.current = renderSignature;
@@ -319,6 +343,7 @@ export function useChannelMessageFeed({
       pinnedToLatestRef.current = false;
       return;
     }
+    layoutSizeRef.current = { height: feed.scrollHeight, viewport: feed.clientHeight };
     const pinnedToLatest = channelMessageFeedIsPinnedToLatest(feed);
     pinnedToLatestRef.current = pinnedToLatest;
     if (pinnedToLatest) {
@@ -360,6 +385,11 @@ export function useChannelMessageFeed({
     if (!feed) {
       return;
     }
+    const previousSize = layoutSizeRef.current;
+    const layoutChanged = previousSize && (previousSize.height !== feed.scrollHeight || previousSize.viewport !== feed.clientHeight);
+    // ResizeObserver reconciles layout movement before a scroll event can replace the anchor.
+    if (layoutChanged && visibleAnchorRef.current && !pinnedToLatestRef.current) return;
+    layoutSizeRef.current = { height: feed.scrollHeight, viewport: feed.clientHeight };
     const maxScrollTop = feed.scrollHeight - feed.clientHeight;
     const pinnedToLatest = channelMessageFeedIsPinnedToLatest(feed);
     const latestItem = items.at(-1);
@@ -398,7 +428,11 @@ export function useChannelMessageFeed({
     requestOlderIfNeeded(feed);
   }, [items, loading, protocolLoading, rememberVisibleAnchor, renderSignature, requestOlderIfNeeded]);
 
-  const onScroll = useCallback((_event: UIEvent<HTMLDivElement>): void => {
+  const onScroll = useCallback((): void => {
+    const feed = scrollRef.current;
+    if (feed && measurementScrollTopRef.current !== undefined
+      && Math.abs(feed.scrollTop - measurementScrollTopRef.current) <= 1) return;
+    measurementScrollTopRef.current = undefined;
     updateScrollPositionState();
   }, [updateScrollPositionState]);
 
@@ -407,9 +441,19 @@ export function useChannelMessageFeed({
     if (!feed) {
       return undefined;
     }
-    feed.addEventListener("scroll", updateScrollPositionState, { passive: true });
-    return () => feed.removeEventListener("scroll", updateScrollPositionState);
-  }, [updateScrollPositionState]);
+    const onMeasurementScroll = (event: Event) => {
+      const top = (event as CustomEvent<number>).detail;
+      if (Number.isFinite(top)) {
+        measurementScrollTopRef.current = Math.max(0, Math.min(top, feed.scrollHeight - feed.clientHeight));
+      }
+    };
+    feed.addEventListener(conversationMeasurementScrollEvent, onMeasurementScroll);
+    feed.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      feed.removeEventListener(conversationMeasurementScrollEvent, onMeasurementScroll);
+      feed.removeEventListener("scroll", onScroll);
+    };
+  }, [onScroll]);
 
   useEffect(() => {
     const feed = scrollRef.current;
@@ -417,16 +461,26 @@ export function useChannelMessageFeed({
       return undefined;
     }
     const observer = new ResizeObserver(() => {
-      schedulePinnedFollow();
-      updateScrollPositionState();
+      if (layoutFrameRef.current !== undefined) return;
+      layoutFrameRef.current = globalThis.requestAnimationFrame(() => {
+        layoutFrameRef.current = undefined;
+        layoutSizeRef.current = { height: feed.scrollHeight, viewport: feed.clientHeight };
+        if (pinnedToLatestRef.current) schedulePinnedFollow();
+        else if (!olderLoadSnapshotRef.current && Date.now() >= (restoreBlockedUntilRef.current ?? 0)) restoreVisibleAnchor();
+        updateScrollPositionState();
+      });
     });
     observer.observe(feed);
     const timelineElement = feed.querySelector<HTMLElement>('[data-conversation-timeline="true"]');
     if (timelineElement) {
       observer.observe(timelineElement);
     }
-    return () => observer.disconnect();
-  }, [renderSignature, schedulePinnedFollow, updateScrollPositionState]);
+    return () => {
+      observer.disconnect();
+      if (layoutFrameRef.current !== undefined) globalThis.cancelAnimationFrame(layoutFrameRef.current);
+      layoutFrameRef.current = undefined;
+    };
+  }, [renderSignature, restoreBlockedUntilRef, restoreVisibleAnchor, schedulePinnedFollow, updateScrollPositionState]);
 
   useEffect(() => () => {
     if (pinnedFollowFrameRef.current !== undefined) {
@@ -531,6 +585,7 @@ export function useChannelMessageFeed({
     onScroll,
     onUserScrollIntent,
     onDisclosureIntent,
+    onLocateIntent,
   };
 }
 

@@ -5,6 +5,7 @@ import type {
   SecretPurpose,
   SecretResolver,
   SecretStatus,
+  RunStore,
 } from "@ling-stack/core";
 import type {
   PiRunnerMcpToolCallResult,
@@ -22,6 +23,7 @@ import type { ExternalWorkBackgroundSchedulerRegistry } from "./features/externa
 import type { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
 import type { ProviderImportPreflightService } from "./features/providers/import-preflight.js";
 import type { ApprovalResumeCoordinator } from "./features/runs/approval-resume-coordinator.js";
+import type { UserInputDeliveryWorker } from "./features/runs/user-input-delivery-worker.js";
 import type { ControlPlaneEventHub } from "./features/control-plane/events.js";
 import type { ComputerUsePreviewProjection } from "@ling-stack/contracts";
 import type {
@@ -54,7 +56,6 @@ import type { HostCapabilityBridgeController } from "./features/runs/host-capabi
 import type { HostMcpOperation } from "./features/mcp/host-operation.js";
 import type { HostOfficeLocalMcpOperation } from "./features/mcp/office-local-mcp-operation.js";
 import type { HumanEvaluationService } from "./features/harness/evaluations/human-evaluation-service.js";
-import type { UserInputDeliveryWorkerRegistry } from "./features/runs/user-input-delivery-worker.js";
 
 export interface RunnerAdapter {
   /** Optional capability; absence must reject prepared execution, never fabricate evidence. */
@@ -149,6 +150,8 @@ export interface DaemonDependencies {
   readonly runner?: RunnerAdapter;
   readonly runnerRegistry?: RunnerRegistry;
   readonly storeFactory?: RunStoreFactory;
+  /** Authenticated bundled sources, initialized synchronously before recovery/read access. */
+  readonly initializeBundledSkills?: (store: RunStore) => void;
   /** Host build selection only. Never supplied by workspace policy, HTTP or model input. */
   readonly officeLocalNativeArtifact?: OfficeLocalReviewedNativeArtifact;
   readonly extensionRegistry?: LingExtensionRegistry;
@@ -207,10 +210,10 @@ export interface DaemonContext {
   readonly storeRegistry: RunStoreRegistry;
   readonly activeRuns: ActiveRunRegistry;
   readonly approvalResumeCoordinator: ApprovalResumeCoordinator;
+  readonly userInputDeliveryWorker: UserInputDeliveryWorker;
   readonly activeDirectReplies: ActiveDirectReplyRegistry;
   readonly channelReplyDispatchCoordinator: ChannelReplyDispatchCoordinator;
   readonly channelTurnDispatchWorker: ChannelTurnDispatchWorkerRegistry;
-  readonly userInputDeliveryWorker: UserInputDeliveryWorkerRegistry;
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
   readonly externalSecretStore: ExternalSecretStore;

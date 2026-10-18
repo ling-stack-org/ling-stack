@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode, type RefObject } from "react";
-import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode, type RefObject } from "react";
+import { defaultRangeExtractor, elementScroll, useVirtualizer, type Range, type VirtualItem } from "@tanstack/react-virtual";
 import {
   conversationTimelineRendererKey,
   fingerprintConversationTimeline,
@@ -28,6 +28,7 @@ import { ConversationTimelineResponseFooter, type ConversationTimelineResponseAc
 import { ConversationTimelineResponseFiles } from "./ConversationTimelineResponseFiles.js";
 import { ConversationTimelineProcessHeader } from "./ConversationTimelineProcessHeader.js";
 import type { WorkspaceRightDockReviewTarget } from "../../../features/workspace/right-dock/WorkspaceRightDock.js";
+import { conversationMeasurementScrollEvent, type ConversationReadingAnchor } from "../blocks/conversation-reading-anchor.js";
 
 export interface ConversationTimelineProps {
   /** Immutable, already-scoped canonical/display projection. */
@@ -70,6 +71,11 @@ export interface ConversationTimelineDisclosureIntent {
 export type ConversationTimelineLocateResult = "revealed" | "not_found" | "mount_failed";
 
 export interface ConversationTimelineItemLocator {
+  /** Mount a reading row (or collapsed parent) without expanding disclosure. */
+  readonly revealReadingAnchor: (
+    anchor: ConversationReadingAnchor,
+    reveal: (target: HTMLElement) => void,
+  ) => Promise<ConversationTimelineLocateResult>;
   readonly revealFirstMatchingItem: (
     itemIds: readonly string[],
     reveal: (target: HTMLElement) => void,
@@ -101,11 +107,17 @@ export function ConversationTimeline({
   className: customClassName,
   ariaLabel,
 }: ConversationTimelineProps): React.JSX.Element {
+  const { t } = useI18n();
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const timelineItems = useMemo(() => placeTimelineResponseReports(snapshot.items), [snapshot.items]);
   const responsePresentation = useMemo(() => projectTimelineResponsePresentation(timelineItems), [timelineItems]);
   const [hoveredResponseId, setHoveredResponseId] = useState<string>();
   const [focusedResponseId, setFocusedResponseId] = useState<string>();
+  const [focusedRowKey, setFocusedRowKey] = useState<string>();
+  const onRowFocus = useCallback((rowKey: string, responseId?: string) => {
+    setFocusedRowKey(rowKey);
+    setFocusedResponseId(responseId);
+  }, []);
   const responseIdForTarget = (target: EventTarget | null): string | undefined => target instanceof Element
     ? target.closest<HTMLElement>(".conversation-timeline-focus-block[data-conversation-response-id]")?.dataset.conversationResponseId
     : undefined;
@@ -113,6 +125,20 @@ export function ConversationTimeline({
   const displayModelRef = useRef(displayModel);
   displayModelRef.current = displayModel;
   const displayRows = displayModel.rows;
+  const focusedRowIndex = useMemo(() => focusedRowKey === undefined ? -1
+    : displayRows.findIndex(row => row.rowKey === focusedRowKey), [displayRows, focusedRowKey]);
+  const rangeExtractor = useCallback((range: Range) => {
+    const indexes = defaultRangeExtractor(range);
+    // Keep only the current keyboard owner mounted outside the viewport.
+    if (focusedRowIndex >= 0 && !indexes.includes(focusedRowIndex)) {
+      return [...indexes, focusedRowIndex].sort((left, right) => left - right);
+    }
+    return indexes;
+  }, [focusedRowIndex]);
+  const rowKeyForTarget = (target: EventTarget | null): string | undefined => target instanceof Element
+    && timelineRootRef.current?.contains(target)
+    ? target.closest<HTMLElement>("[data-conversation-row-key]")?.dataset.conversationRowKey
+    : undefined;
   const visibleIdentityOwners = useMemo(() => {
     const owners = new Set<string>();
     const seen = new Set<string>();
@@ -127,14 +153,29 @@ export function ConversationTimeline({
   const responseFooterRows = useMemo(() => projectTimelineResponseFooterRows(responsePresentation, displayRows.filter(row => row.kind !== "processHeader")), [responsePresentation, displayRows]);
   const virtualized = depth === 0 && Boolean(virtualScrollRef) &&
     displayModel.potentialRowCount >= timelineVirtualizationThreshold;
+  const [scrollOwnerReady, setScrollOwnerReady] = useState(false);
+  useEffect(() => {
+    setScrollOwnerReady(Boolean(virtualScrollRef?.current));
+  }, [virtualScrollRef, virtualized]);
   const virtualizer = useVirtualizer({
+    enabled: virtualized && scrollOwnerReady,
     count: virtualized ? displayRows.length : 0,
     getScrollElement: () => virtualScrollRef?.current ?? null,
+    initialOffset: () => virtualScrollRef?.current?.scrollTop ?? 0,
     estimateSize: (index) => estimateTimelineDisplayRowSize(displayRows[index]),
     getItemKey: (index) => displayRows[index]?.rowKey ?? index,
     gap: 10,
     overscan: 4,
+    rangeExtractor,
     useFlushSync: false,
+    scrollToFn: (offset, options, instance) => {
+      if (options.adjustments) {
+        instance.scrollElement?.dispatchEvent(new CustomEvent<number>(conversationMeasurementScrollEvent, {
+          detail: offset + options.adjustments,
+        }));
+      }
+      elementScroll(offset, options, instance);
+    },
   });
   const virtualItemByRowKey = new Map<string, VirtualItem>();
   for (const virtualItem of virtualizer.getVirtualItems()) {
@@ -161,8 +202,14 @@ export function ConversationTimeline({
     "aria-label": ariaLabel,
     onPointerOver: (event: React.PointerEvent<HTMLDivElement>) => setHoveredResponseId(responseIdForTarget(event.target)),
     onPointerLeave: () => setHoveredResponseId(undefined),
-    onFocusCapture: (event: React.FocusEvent<HTMLDivElement>) => setFocusedResponseId(responseIdForTarget(event.target)),
-    onBlurCapture: (event: React.FocusEvent<HTMLDivElement>) => setFocusedResponseId(responseIdForTarget(event.relatedTarget)),
+    onFocusCapture: (event: React.FocusEvent<HTMLDivElement>) => {
+      setFocusedResponseId(responseIdForTarget(event.target));
+      setFocusedRowKey(rowKeyForTarget(event.target));
+    },
+    onBlurCapture: (event: React.FocusEvent<HTMLDivElement>) => {
+      setFocusedResponseId(responseIdForTarget(event.relatedTarget));
+      setFocusedRowKey(rowKeyForTarget(event.relatedTarget));
+    },
   } as const;
 
   useEffect(() => {
@@ -170,6 +217,20 @@ export function ConversationTimeline({
       return undefined;
     }
     const locator: ConversationTimelineItemLocator = {
+      revealReadingAnchor: async (anchor, reveal) => {
+        const rows = displayModelRef.current.rows;
+        let index = rows.findIndex(row => row.rowKey === anchor.rowKey);
+        if (index < 0 && anchor.parentSubAgentId) {
+          index = rows.findIndex(row => row.depth === 0 && row.item.id === anchor.parentSubAgentId);
+        }
+        const row = rows[index];
+        if (!row) return "not_found";
+        if (virtualized) virtualizer.scrollToIndex(index, { align: "start" });
+        const target = await waitForTimelineRow(timelineRootRef, row.rowKey);
+        if (!target) return "mount_failed";
+        reveal(target);
+        return "revealed";
+      },
       revealFirstMatchingItem: async (itemIds, reveal) => {
         let location = findFirstDisplayLocation(displayModelRef.current, itemIds);
         if (!location) {
@@ -227,6 +288,7 @@ export function ConversationTimeline({
           style={{ height: `${virtualizer.getTotalSize()}px` }}
         >
           {displayModel.segments.map((segment) => renderTimelineSegment(segment, {
+            t,
             scopeKind: snapshot.scope.kind,
             renderUserInputAvatar,
             onSubmitUserInputAnswer,
@@ -242,6 +304,7 @@ export function ConversationTimeline({
             responseFooterRows,
             hoveredResponseId,
             focusedResponseId,
+            onRowFocus,
             renderSubAgentAvatar,
             setSubAgentExpanded,
             setBlockExpanded,
@@ -257,6 +320,7 @@ export function ConversationTimeline({
   return (
     <div ref={timelineRootRef} className={className} {...attrs}>
       {displayModel.segments.map((segment) => renderTimelineSegment(segment, {
+        t,
         scopeKind: snapshot.scope.kind,
         renderUserInputAvatar,
         onSubmitUserInputAnswer,
@@ -272,6 +336,7 @@ export function ConversationTimeline({
         responseFooterRows,
         hoveredResponseId,
         focusedResponseId,
+        onRowFocus,
         renderSubAgentAvatar,
         setSubAgentExpanded,
         setBlockExpanded,
@@ -357,11 +422,13 @@ type TimelineRenderContext = Pick<ConversationTimelineProps, "cwd" | "onOpenSour
 };
 
 interface TimelineSegmentRenderContext extends Omit<TimelineRenderContext, "depth"> {
+  readonly t: ReturnType<typeof useI18n>["t"];
   readonly visibleIdentityOwners: ReadonlySet<string>;
   readonly responsePresentation: TimelineResponsePresentation;
   readonly responseFooterRows: ReadonlyMap<string, ConversationTimelineResponse>;
   readonly hoveredResponseId?: string;
   readonly focusedResponseId?: string;
+  readonly onRowFocus: (rowKey: string, responseId?: string) => void;
   readonly renderResponseActions?: ConversationTimelineResponseActionsRenderer;
   readonly setSubAgentExpanded: (item: ConversationTimelineSubAgentItem, expanded: boolean) => void;
   readonly setBlockExpanded: (id: string, expanded: boolean) => void;
@@ -379,7 +446,7 @@ function renderTimelineSegment(
   }
   if (segment.kind === "processGroup") return <Fragment key={segment.headerRow.rowKey}>
     {renderTimelineDisplayRow(segment.headerRow, context)}
-    {segment.expanded ? <div id={segment.groupId} role="group" aria-label="Execution process"
+    {segment.expanded ? <div id={segment.groupId} role="group" aria-label={context.t("Execution details")}
       className="conversation-process-group" data-conversation-process-group={segment.headerRow.process.id}>
       {segment.childSegments.map(child => renderTimelineSegment(child, context))}
     </div> : null}
@@ -389,7 +456,11 @@ function renderTimelineSegment(
       <Fragment key={segment.headerRow.rowKey}>
         {renderTimelineDisplayRow(segment.headerRow, context)}
         {segment.expanded ? (
-          <div id={segment.groupId} role="group" aria-label="Batch operations"
+          <div id={segment.groupId} role="group" aria-label={segment.headerRow.item.kind === "commandBatch"
+            ? context.t("Ran {count} commands", { count: segment.headerRow.item.batch.commandCount })
+            : segment.headerRow.item.kind === "explorationBatch"
+              ? context.t("Read {count} items", { count: segment.headerRow.item.batch.children.length })
+              : context.t("Execution details")}
             className="conversation-timeline-batch-group"
             data-conversation-batch-group={segment.headerRow.item.id}>
             {segment.childSegments.map((child) => renderTimelineSegment(child, context))}
@@ -404,7 +475,7 @@ function renderTimelineSegment(
       id={segment.groupId}
       className="conversation-timeline-sub-agent-detail conversation-timeline-sub-agent-group"
       role="group"
-      aria-label={`${segment.item.label} activity`}
+      aria-label={segment.item.label}
       aria-busy={segment.item.lifecycle === "running" || segment.item.lifecycle === "waiting"}
       data-conversation-sub-agent-group="true"
       data-conversation-parent-sub-agent-id={segment.item.id}
@@ -443,6 +514,7 @@ function renderTimelineDisplayRow(
       ref={context.virtualized ? context.measureElement : undefined}
       className={className}
       tabIndex={-1}
+      onFocusCapture={() => context.onRowFocus(row.rowKey, response?.id)}
       data-index={virtualItem?.index}
       data-conversation-focus-block="true"
       data-conversation-row-key={row.rowKey}
@@ -541,7 +613,7 @@ function RootSubAgentTimelineItem({
 }): React.JSX.Element {
   const { t } = useI18n();
   const hasChildItems = item.childItems.length > 0;
-  const statusLabel = subAgentStatusLabel(item.lifecycle);
+  const statusLabel = t(subAgentStatusLabel(item.lifecycle));
 
   return (
     <section
@@ -564,7 +636,7 @@ function RootSubAgentTimelineItem({
         className="conversation-timeline-sub-agent-head"
         type="button"
         aria-expanded={expanded}
-        aria-controls={hasChildItems ? groupId : undefined}
+        aria-controls={hasChildItems && expanded ? groupId : undefined}
         aria-label={`${item.label} · ${statusLabel}. ${expanded ? t("Collapse details") : t("Expand details")}`}
         disabled={!hasChildItems}
         onClick={() => {

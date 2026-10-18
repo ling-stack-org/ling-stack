@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expandTimelineProcesses } from "./support/timeline-process";
 import type { WorkspaceChangesResponse } from "@ling-stack/contracts";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -102,7 +103,7 @@ test("Durable file-change evidence opens a capability-scoped diff in the Host do
     '[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]',
   ).first();
   await expect(timeline).toBeVisible();
-
+  await expandTimelineProcesses(timeline);
   const editRow = timeline.locator('.conversation-timeline-activity[data-conversation-timeline-kind="fileChange"]')
     .filter({ hasText: "Edited FileDiffSurface.tsx" });
   await expect(editRow).toHaveAttribute("data-conversation-action-id", "execution_action_ui2_file_diff");

@@ -1,15 +1,24 @@
 import { randomUUID } from "node:crypto";
-import type {
-  RunStore,
-  UserInputContinuationBinding,
-  UserInputContinuationClaim,
-  UserInputDelivery,
+import {
+  UserInputStoreError,
+  type RunStore,
+  type UserInputContinuationBinding,
+  type UserInputContinuationClaim,
+  type UserInputDelivery,
+  type UserInputDeliveryCursor,
 } from "@ling-stack/core";
+import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
+import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import type { RunRequest } from "./schemas.js";
 import {
   prepareUserInputContinuationRequest,
   readUserInputContinuationPreparedRequest,
 } from "./user-input-prepared-request.js";
+
+interface DiscoverySweep {
+  readonly cutoff: string;
+  readonly after?: UserInputDeliveryCursor;
+}
 
 export interface UserInputDeliveryExecution {
   readonly store: RunStore;
@@ -31,8 +40,11 @@ export interface UserInputDeliveryWorkerFailure {
 
 export interface UserInputDeliveryWorkerOptions {
   readonly execute: ExecuteUserInputDelivery;
+  readonly activeRuns?: Pick<ActiveRunRegistry, "isShuttingDown">;
+  readonly runtimeSupervisor?: RuntimeSupervisor;
   readonly ownerId?: string;
-  readonly concurrency?: number;
+  readonly pageSize?: number;
+  readonly maxInFlightPerStore?: number;
   readonly scanIntervalMs?: number;
   readonly leaseMs?: number;
   readonly retryDelayMs?: number;
@@ -41,246 +53,411 @@ export interface UserInputDeliveryWorkerOptions {
   readonly onError?: (failure: UserInputDeliveryWorkerFailure) => void;
 }
 
-interface WorkerEntry {
-  readonly store: RunStore;
-  timer?: ReturnType<typeof setInterval>;
+export interface UserInputDeliveryScanResult {
+  readonly scanned: number;
+  readonly dispatched: number;
+  readonly deferred: number;
 }
 
 export interface UserInputDeliveryWorkerSnapshot {
   readonly accepting: boolean;
+  readonly started: boolean;
   readonly registeredWorkspaceCount: number;
-  readonly pendingWorkspaceCount: number;
-  readonly activeCount: number;
+  readonly activeScanCount: number;
   readonly inFlightDeliveryCount: number;
 }
 
-type ProcessDisposition = "idle" | "processed" | "claim_lost" | "retained_binding";
+type ProcessDisposition = "processed" | "claim_lost" | "retained_binding";
+
+function emptyScan(): UserInputDeliveryScanResult {
+  return { scanned: 0, dispatched: 0, deferred: 0 };
+}
 
 /**
- * Durable answer outbox consumer. SQLite claims, bindings and receipts are the
- * authority; timers only wake the scanner and never carry delivery state.
+ * Durable answer outbox consumer. SQLite claims, prepared requests, immutable
+ * bindings and receiver receipts are authoritative. The process-local timer
+ * only wakes bounded discovery sweeps.
  */
-export class UserInputDeliveryWorkerRegistry {
-  private readonly entries = new Map<string, WorkerEntry>();
-  private readonly pending = new Set<string>();
-  private readonly inFlight = new Set<Promise<void>>();
+export class UserInputDeliveryWorker {
+  private readonly stores = new Set<RunStore>();
+  private readonly sweeps = new WeakMap<RunStore, DiscoverySweep>();
+  private readonly scans = new Map<RunStore, Promise<UserInputDeliveryScanResult>>();
+  private readonly executions = new Map<RunStore, Set<Promise<ProcessDisposition>>>();
   private readonly activeDeliveryKeys = new Set<string>();
-  private readonly concurrency: number;
+  private readonly ownerId: string;
+  private readonly pageSize: number;
+  private readonly maxInFlightPerStore: number;
   private readonly scanIntervalMs: number;
   private readonly leaseMs: number;
   private readonly retryDelayMs: number;
-  private readonly ownerId: string;
-  private accepting = true;
-  private active = 0;
+  private started = false;
+  private closing = false;
+  private timer?: ReturnType<typeof setInterval>;
 
   constructor(private readonly options: UserInputDeliveryWorkerOptions) {
-    this.concurrency = positiveInteger(options.concurrency, 1, "delivery worker concurrency");
-    this.scanIntervalMs = positiveInteger(options.scanIntervalMs, 5_000, "delivery scan interval");
-    this.leaseMs = positiveInteger(options.leaseMs, 60_000, "delivery lease");
-    this.retryDelayMs = positiveInteger(options.retryDelayMs, 5_000, "delivery retry delay");
     this.ownerId = options.ownerId ?? `user_input_delivery_worker_${randomUUID()}`;
+    this.pageSize = boundedInteger(options.pageSize, 100, 1, 500, "delivery page size");
+    this.maxInFlightPerStore = boundedInteger(
+      options.maxInFlightPerStore,
+      4,
+      1,
+      32,
+      "delivery per-store concurrency",
+    );
+    this.scanIntervalMs = positiveInteger(options.scanIntervalMs, 5_000, "delivery scan interval");
+    this.leaseMs = boundedInteger(options.leaseMs, 60_000, 1, 60_000, "delivery lease");
+    this.retryDelayMs = boundedInteger(options.retryDelayMs, 5_000, 1, 300_000, "delivery retry delay");
   }
 
   registerStore(store: RunStore): void {
-    if (!this.accepting || this.entries.has(store.paths.cwd)) return;
-    const entry: WorkerEntry = { store };
-    entry.timer = setInterval(() => this.wake(store), this.scanIntervalMs);
-    entry.timer.unref?.();
-    this.entries.set(store.paths.cwd, entry);
-    this.wake(store);
+    if (this.closing) return;
+    this.stores.add(store);
+    if (this.started) this.wake(store);
+  }
+
+  start(): void {
+    if (this.closing || this.started) return;
+    this.started = true;
+    for (const store of this.stores) this.wake(store);
+    this.timer = setInterval(() => {
+      for (const store of this.stores) this.wake(store);
+    }, this.scanIntervalMs);
+    this.timer.unref?.();
   }
 
   wake(store: RunStore): void {
-    if (!this.accepting) return;
-    if (!this.entries.has(store.paths.cwd)) this.registerStore(store);
-    if (!this.entries.has(store.paths.cwd)) return;
-    this.pending.add(store.paths.cwd);
-    this.pump();
+    if (this.closing) return;
+    if (!this.stores.has(store)) this.registerStore(store);
+    if (!this.started || this.isClosing()) return;
+    void this.scanStore(store).catch(() => {
+      this.failure({ cwd: store.paths.cwd, phase: "scan", code: "delivery_invalid" });
+    });
+  }
+
+  scanStore(store: RunStore): Promise<UserInputDeliveryScanResult> {
+    const current = this.scans.get(store);
+    if (current) return current;
+    if (this.isClosing()) return Promise.resolve(emptyScan());
+    const scan = Promise.resolve().then(() => this.scanPage(store)).finally(() => {
+      if (this.scans.get(store) === scan) this.scans.delete(store);
+    });
+    this.scans.set(store, scan);
+    return scan;
   }
 
   beginShutdown(): void {
-    this.accepting = false;
-    this.pending.clear();
-    for (const entry of this.entries.values()) {
-      if (entry.timer) clearInterval(entry.timer);
-      entry.timer = undefined;
-    }
+    this.closing = true;
+    this.started = false;
+    if (this.timer) clearInterval(this.timer);
+    this.timer = undefined;
   }
 
   async waitForIdle(): Promise<void> {
-    // Completion callbacks can synchronously queue another page while an
-    // earlier task settles, so observe until both queues are actually empty.
-    while (this.active > 0 || this.inFlight.size > 0 || this.pending.size > 0) {
-      if (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight]);
-      else await Promise.resolve();
+    while (this.scans.size > 0 || this.executions.size > 0) {
+      const pending = [
+        ...this.scans.values(),
+        ...[...this.executions.values()].flatMap((executions) => [...executions]),
+      ];
+      if (pending.length === 0) break;
+      await Promise.allSettled(pending);
     }
+  }
+
+  async close(): Promise<void> {
+    this.beginShutdown();
+    await this.waitForIdle();
+    this.stores.clear();
   }
 
   snapshot(): UserInputDeliveryWorkerSnapshot {
     return {
-      accepting: this.accepting,
-      registeredWorkspaceCount: this.entries.size,
-      pendingWorkspaceCount: this.pending.size,
-      activeCount: this.active,
+      accepting: !this.closing,
+      started: this.started,
+      registeredWorkspaceCount: this.stores.size,
+      activeScanCount: this.scans.size,
       inFlightDeliveryCount: this.activeDeliveryKeys.size,
     };
   }
 
-  private pump(): void {
-    while (this.accepting && this.active < this.concurrency && this.pending.size > 0) {
-      const cwd = [...this.pending].sort()[0]!;
-      this.pending.delete(cwd);
-      const entry = this.entries.get(cwd);
-      if (!entry) continue;
-      this.active += 1;
-      let task!: Promise<void>;
-      task = this.drain(entry.store).catch(() => undefined).finally(() => {
-        this.active -= 1;
-        this.inFlight.delete(task);
-        this.pump();
-      });
-      this.inFlight.add(task);
-    }
-  }
-
-  private async drain(store: RunStore): Promise<void> {
-    let after: { readonly createdAt: string; readonly deliveryId: string } | undefined;
-    while (this.accepting) {
-      const scannedAt = this.now();
-      let page: readonly UserInputDelivery[];
-      try {
-        page = store.listDueUserInputDeliveries({ after, limit: 500 }, scannedAt);
-      } catch {
-        this.failure({ cwd: store.paths.cwd, phase: "scan", code: "delivery_invalid" });
-        return;
-      }
-      if (page.length === 0) return;
-      for (const delivery of page) {
-        if (!this.accepting) return;
-        const key = `${store.paths.cwd}\0${delivery.deliveryId}`;
-        if (this.activeDeliveryKeys.has(key)) continue;
-        this.activeDeliveryKeys.add(key);
-        try {
-          await this.process(store, delivery);
-        } finally {
-          this.activeDeliveryKeys.delete(key);
-        }
-      }
-      const last = page.at(-1)!;
-      after = { createdAt: last.createdAt, deliveryId: last.deliveryId };
-      if (page.length < 500) return;
-    }
-  }
-
-  private async process(store: RunStore, candidate: UserInputDelivery): Promise<ProcessDisposition> {
-    const receipt = store.getUserInputContinuationReceipt(candidate.threadId, candidate.deliveryId);
-    if (receipt) return "processed";
-    let binding: UserInputContinuationBinding | undefined;
-    try {
-      binding = store.getUserInputContinuationBinding(candidate.threadId, candidate.deliveryId);
-    } catch {
-      this.failure({ cwd: store.paths.cwd, deliveryId: candidate.deliveryId, phase: "scan", code: "delivery_invalid" });
-      return "claim_lost";
-    }
-    if (binding) {
-      return this.executeBinding(store, candidate, binding);
-    }
-
-    const claimAt = this.now();
-    let claimed: UserInputDelivery | null;
-    try {
-      claimed = store.claimUserInputDelivery({
-        threadId: candidate.threadId,
-        deliveryId: candidate.deliveryId,
-        expectedRevision: candidate.revision,
-        ownerId: this.ownerId,
-        leaseMs: this.leaseMs,
-      }, claimAt);
-    } catch {
-      this.failure({ cwd: store.paths.cwd, deliveryId: candidate.deliveryId, phase: "claim", code: "claim_lost" });
-      return "claim_lost";
-    }
-    if (!claimed) return "processed";
-    const claim = continuationClaim(claimed);
-    let prepared: ReturnType<typeof prepareUserInputContinuationRequest>;
-    try {
-      prepared = prepareUserInputContinuationRequest(store, claim, claimAt);
-    } catch {
-      this.failure({ cwd: store.paths.cwd, deliveryId: candidate.deliveryId, phase: "prepare", code: "delivery_invalid" });
-      return "claim_lost";
-    }
-    try {
-      await this.options.execute({ store, threadId: candidate.threadId, deliveryId: candidate.deliveryId,
-        request: prepared.request, claim });
-      if (store.getUserInputContinuationReceipt(candidate.threadId, candidate.deliveryId)) return "processed";
-      if (store.getUserInputContinuationBinding(candidate.threadId, candidate.deliveryId)) return "retained_binding";
-      // Detached orchestration reports many pre-admission failures through its
-      // sink and resolves undefined. Durable state, not Promise rejection, is
-      // the completion receipt. Without binding or ACK this attempt must retry.
-      this.failure({ cwd: store.paths.cwd, deliveryId: candidate.deliveryId, phase: "execute", code: "receiver_unavailable" });
-      return this.retry(store, claim, candidate.deliveryId);
-    } catch {
-      if (store.getUserInputContinuationReceipt(candidate.threadId, candidate.deliveryId)) return "processed";
-      if (store.getUserInputContinuationBinding(candidate.threadId, candidate.deliveryId)) {
-        this.failure({ cwd: store.paths.cwd, deliveryId: candidate.deliveryId, phase: "execute", code: "receiver_unavailable" });
-        return "retained_binding";
-      }
-      this.failure({ cwd: store.paths.cwd, deliveryId: candidate.deliveryId, phase: "execute", code: "receiver_unavailable" });
-      return this.retry(store, claim, candidate.deliveryId);
-    }
-  }
-
-  private async executeBinding(store: RunStore, delivery: UserInputDelivery,
-    binding: UserInputContinuationBinding): Promise<ProcessDisposition> {
-    let prepared: ReturnType<typeof readUserInputContinuationPreparedRequest>;
-    try {
-      prepared = readUserInputContinuationPreparedRequest(store, delivery.threadId, delivery.deliveryId);
-    } catch {
-      this.failure({ cwd: store.paths.cwd, deliveryId: delivery.deliveryId, phase: "prepare", code: "delivery_invalid" });
-      return "retained_binding";
-    }
-    if (!prepared) {
-      this.failure({ cwd: store.paths.cwd, deliveryId: delivery.deliveryId, phase: "prepare", code: "delivery_invalid" });
-      return "retained_binding";
-    }
-    try {
-      await this.options.execute({ store, threadId: delivery.threadId, deliveryId: delivery.deliveryId,
-        request: prepared.request, binding });
-      return store.getUserInputContinuationReceipt(delivery.threadId, delivery.deliveryId) ? "processed" : "retained_binding";
-    } catch {
-      // Binding is immutable and owns a single successor. Never convert this
-      // path back to a fresh delivery retry or allocate another Run/Attempt.
-      this.failure({ cwd: store.paths.cwd, deliveryId: delivery.deliveryId, phase: "execute", code: "receiver_unavailable" });
-      return "retained_binding";
-    }
-  }
-
-  private retry(store: RunStore, claim: UserInputContinuationClaim, deliveryId: string): ProcessDisposition {
-    const settledAt = this.now();
-    try {
-      store.retryUserInputDelivery({
-        ...claim,
-        retryAt: new Date(Date.parse(settledAt) + this.retryDelayMs).toISOString(),
-        errorCode: "receiver_unavailable",
-      }, settledAt);
-      return "processed";
-    } catch {
-      this.failure({ cwd: store.paths.cwd, deliveryId, phase: "retry", code: "retry_lost" });
-      return "claim_lost";
-    }
-  }
-
-  private failure(failure: UserInputDeliveryWorkerFailure): void {
-    try { this.options.onError?.(failure); } catch { /* observers never own scheduling */ }
+  private isClosing(): boolean {
+    return this.closing || this.options.activeRuns?.isShuttingDown() === true;
   }
 
   private now(): string {
     return this.options.now?.() ?? new Date().toISOString();
   }
+
+  private async scanPage(store: RunStore): Promise<UserInputDeliveryScanResult> {
+    if (this.isClosing()) return emptyScan();
+    this.options.runtimeSupervisor?.getRuntime(store.paths.cwd, store);
+    const sweep = this.sweeps.get(store) ?? { cutoff: this.now() };
+    const capacity = this.maxInFlightPerStore - (this.executions.get(store)?.size ?? 0);
+    if (capacity <= 0) return emptyScan();
+
+    let page: readonly UserInputDelivery[];
+    try {
+      page = store.listDueUserInputDeliveries(
+        { after: sweep.after, limit: this.pageSize },
+        sweep.cutoff,
+      );
+    } catch {
+      this.failure({ cwd: store.paths.cwd, phase: "scan", code: "delivery_invalid" });
+      return emptyScan();
+    }
+
+    const boundedPage = page.filter((delivery) => delivery.createdAt <= sweep.cutoff);
+    if (boundedPage.length === 0) {
+      this.sweeps.delete(store);
+      return emptyScan();
+    }
+
+    const scheduled: Promise<ProcessDisposition>[] = [];
+    let scanned = 0;
+    let deferred = 0;
+    let after = sweep.after;
+
+    for (const delivery of boundedPage) {
+      if (this.isClosing() || scheduled.length >= capacity) break;
+      scanned += 1;
+      after = { createdAt: delivery.createdAt, deliveryId: delivery.deliveryId };
+      const key = deliveryKey(store, delivery.deliveryId);
+      if (this.activeDeliveryKeys.has(key)) {
+        deferred += 1;
+        continue;
+      }
+      scheduled.push(this.trackExecution(store, delivery, key));
+    }
+
+    if (after) this.sweeps.set(store, { cutoff: sweep.cutoff, after });
+    const results = await Promise.all(scheduled);
+    const dispatched = results.filter((result) => result === "processed" || result === "retained_binding").length;
+    deferred += results.length - dispatched;
+
+    const reachedCutoff = boundedPage.length < page.length;
+    const exhaustedPage = scanned === boundedPage.length && page.length < this.pageSize;
+    if (reachedCutoff || exhaustedPage) this.sweeps.delete(store);
+
+    if (!this.isClosing() && !reachedCutoff && !exhaustedPage) {
+      setImmediate(() => this.wake(store));
+    }
+    return { scanned, dispatched, deferred };
+  }
+
+  private trackExecution(
+    store: RunStore,
+    delivery: UserInputDelivery,
+    key: string,
+  ): Promise<ProcessDisposition> {
+    this.activeDeliveryKeys.add(key);
+    const executions = this.executions.get(store) ?? new Set<Promise<ProcessDisposition>>();
+    this.executions.set(store, executions);
+    let execution!: Promise<ProcessDisposition>;
+    execution = this.process(store, delivery).catch(() => {
+      this.failure({
+        cwd: store.paths.cwd,
+        deliveryId: delivery.deliveryId,
+        phase: "execute",
+        code: "receiver_unavailable",
+      });
+      return "claim_lost" as const;
+    }).finally(() => {
+      this.activeDeliveryKeys.delete(key);
+      executions.delete(execution);
+      if (executions.size === 0) this.executions.delete(store);
+      if (!this.isClosing()) setImmediate(() => this.wake(store));
+    });
+    executions.add(execution);
+    return execution;
+  }
+
+  private async process(store: RunStore, candidate: UserInputDelivery): Promise<ProcessDisposition> {
+    if (store.getUserInputContinuationReceipt(candidate.threadId, candidate.deliveryId)) return "processed";
+
+    let binding: UserInputContinuationBinding | undefined;
+    try {
+      binding = store.getUserInputContinuationBinding(candidate.threadId, candidate.deliveryId);
+    } catch {
+      this.failure({
+        cwd: store.paths.cwd,
+        deliveryId: candidate.deliveryId,
+        phase: "scan",
+        code: "delivery_invalid",
+      });
+      return "claim_lost";
+    }
+    if (binding) return this.executeBinding(store, candidate, binding);
+
+    const current = store.getUserInputDelivery(candidate.threadId, candidate.deliveryId);
+    if (!current) return "claim_lost";
+    const claimAt = this.now();
+    let claimed: UserInputDelivery | null;
+    try {
+      claimed = store.claimUserInputDelivery({
+        threadId: current.threadId,
+        deliveryId: current.deliveryId,
+        expectedRevision: current.revision,
+        ownerId: this.ownerId,
+        leaseMs: this.leaseMs,
+      }, claimAt);
+    } catch (error) {
+      if (error instanceof UserInputStoreError
+        && (error.code === "delivery_conflict" || error.code === "delivery_not_ready")) {
+        return "claim_lost";
+      }
+      this.failure({
+        cwd: store.paths.cwd,
+        deliveryId: candidate.deliveryId,
+        phase: "claim",
+        code: "claim_lost",
+      });
+      return "claim_lost";
+    }
+    if (!claimed) return "processed";
+
+    const claim = continuationClaim(claimed);
+    let prepared: ReturnType<typeof prepareUserInputContinuationRequest>;
+    try {
+      prepared = prepareUserInputContinuationRequest(store, claim, claimAt);
+    } catch {
+      this.failure({
+        cwd: store.paths.cwd,
+        deliveryId: candidate.deliveryId,
+        phase: "prepare",
+        code: "delivery_invalid",
+      });
+      return "claim_lost";
+    }
+
+    try {
+      await this.options.execute({
+        store,
+        threadId: candidate.threadId,
+        deliveryId: candidate.deliveryId,
+        request: prepared.request,
+        claim,
+      });
+      if (store.getUserInputContinuationReceipt(candidate.threadId, candidate.deliveryId)) return "processed";
+      if (store.getUserInputContinuationBinding(candidate.threadId, candidate.deliveryId)) return "retained_binding";
+      this.failure({
+        cwd: store.paths.cwd,
+        deliveryId: candidate.deliveryId,
+        phase: "execute",
+        code: "receiver_unavailable",
+      });
+      return this.retry(store, claim, claimed);
+    } catch {
+      if (store.getUserInputContinuationReceipt(candidate.threadId, candidate.deliveryId)) return "processed";
+      if (store.getUserInputContinuationBinding(candidate.threadId, candidate.deliveryId)) {
+        this.failure({
+          cwd: store.paths.cwd,
+          deliveryId: candidate.deliveryId,
+          phase: "execute",
+          code: "receiver_unavailable",
+        });
+        return "retained_binding";
+      }
+      this.failure({
+        cwd: store.paths.cwd,
+        deliveryId: candidate.deliveryId,
+        phase: "execute",
+        code: "receiver_unavailable",
+      });
+      return this.retry(store, claim, claimed);
+    }
+  }
+
+  private async executeBinding(
+    store: RunStore,
+    delivery: UserInputDelivery,
+    binding: UserInputContinuationBinding,
+  ): Promise<ProcessDisposition> {
+    let prepared: ReturnType<typeof readUserInputContinuationPreparedRequest>;
+    try {
+      prepared = readUserInputContinuationPreparedRequest(store, delivery.threadId, delivery.deliveryId);
+    } catch {
+      this.failure({
+        cwd: store.paths.cwd,
+        deliveryId: delivery.deliveryId,
+        phase: "prepare",
+        code: "delivery_invalid",
+      });
+      return "retained_binding";
+    }
+    if (!prepared) {
+      this.failure({
+        cwd: store.paths.cwd,
+        deliveryId: delivery.deliveryId,
+        phase: "prepare",
+        code: "delivery_invalid",
+      });
+      return "retained_binding";
+    }
+    try {
+      await this.options.execute({
+        store,
+        threadId: delivery.threadId,
+        deliveryId: delivery.deliveryId,
+        request: prepared.request,
+        binding,
+      });
+      return store.getUserInputContinuationReceipt(delivery.threadId, delivery.deliveryId)
+        ? "processed"
+        : "retained_binding";
+    } catch {
+      // A binding owns exactly one successor. Keep it recoverable and never
+      // allocate a second Run or Attempt after process failure.
+      this.failure({
+        cwd: store.paths.cwd,
+        deliveryId: delivery.deliveryId,
+        phase: "execute",
+        code: "receiver_unavailable",
+      });
+      return "retained_binding";
+    }
+  }
+
+  private retry(
+    store: RunStore,
+    claim: UserInputContinuationClaim,
+    delivery: UserInputDelivery,
+  ): ProcessDisposition {
+    const settledAt = this.now();
+    const multiplier = 2 ** Math.min(Math.max(delivery.attemptCount - 1, 0), 6);
+    const delayMs = Math.min(300_000, this.retryDelayMs * multiplier);
+    try {
+      store.retryUserInputDelivery({
+        ...claim,
+        retryAt: new Date(Date.parse(settledAt) + delayMs).toISOString(),
+        errorCode: "receiver_unavailable",
+      }, settledAt);
+      return "processed";
+    } catch {
+      this.failure({
+        cwd: store.paths.cwd,
+        deliveryId: delivery.deliveryId,
+        phase: "retry",
+        code: "retry_lost",
+      });
+      return "claim_lost";
+    }
+  }
+
+  private failure(failure: UserInputDeliveryWorkerFailure): void {
+    try {
+      this.options.onError?.(failure);
+    } catch {
+      // Observers never own scheduling or durable delivery state.
+    }
+  }
 }
 
+/** Transitional source alias; composition must instantiate exactly one worker. */
+export { UserInputDeliveryWorker as UserInputDeliveryWorkerRegistry };
+
 function continuationClaim(delivery: UserInputDelivery): UserInputContinuationClaim {
-  if (delivery.status !== "claimed" || !delivery.claim) throw new Error("Claimed delivery has no lease identity.");
+  if (delivery.status !== "claimed" || !delivery.claim) {
+    throw new Error("Claimed delivery has no lease identity.");
+  }
   return {
     threadId: delivery.threadId,
     deliveryId: delivery.deliveryId,
@@ -290,8 +467,28 @@ function continuationClaim(delivery: UserInputDelivery): UserInputContinuationCl
   };
 }
 
+function deliveryKey(store: RunStore, deliveryId: string): string {
+  return `${store.paths.cwd}\0${deliveryId}`;
+}
+
 function positiveInteger(value: number | undefined, fallback: number, field: string): number {
   const resolved = value ?? fallback;
-  if (!Number.isSafeInteger(resolved) || resolved < 1) throw new Error(`${field} must be a positive integer.`);
+  if (!Number.isSafeInteger(resolved) || resolved < 1) {
+    throw new TypeError(`${field} must be a positive integer.`);
+  }
+  return resolved;
+}
+
+function boundedInteger(
+  value: number | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+  field: string,
+): number {
+  const resolved = value ?? fallback;
+  if (!Number.isSafeInteger(resolved) || resolved < minimum || resolved > maximum) {
+    throw new TypeError(`${field} must be an integer from ${minimum} to ${maximum}.`);
+  }
   return resolved;
 }

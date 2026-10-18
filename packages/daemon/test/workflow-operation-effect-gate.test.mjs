@@ -156,6 +156,7 @@ test("literal native create matches exact content and never overwrites or follow
 test("typed bash and all undeclared tool families are structured blocked", () => {
   const f = fixture();
   assert.equal(gate(f, "bash", { command: "node app.js" }).code, "operation_binding_isolation_unavailable");
+  assert.equal(gate(f, "request_user_input", { schemaVersion: 1, questions: [] }), undefined);
   for (const name of ["grep", "find", "ls", "mcp__external", "image_generate", "request_permissions", "future_unknown"]) {
     assert.equal(gate(f, name, {}).code, "operation_binding_tool_out_of_scope", name);
   }

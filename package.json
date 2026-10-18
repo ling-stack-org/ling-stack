@@ -11,6 +11,7 @@
     "packages/*"
   ],
   "scripts": {
+    "gstack:managed": "node scripts/gstack/run-managed.mjs",
     "build": "corepack pnpm --workspace-concurrency=1 -r build",
     "check:docs": "node scripts/check-markdown-links.mjs",
     "check:i18n": "corepack pnpm --filter @ling-stack/localization test && corepack pnpm --filter @ling-stack/web check:i18n",
@@ -29,6 +30,8 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
+    "acorn": "8.19.0",
+    "tar": "7.5.22",
     "typescript": "^7.0.2"
   },
   "keywords": [

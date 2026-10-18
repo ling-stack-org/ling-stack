@@ -1,6 +1,4 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -10,11 +8,8 @@ import {
   isRecord,
 } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
+import { timelineResponseFooter } from "./support/timeline-response-footer";
 
-const evidenceDirectory = fileURLToPath(new URL(
-  "../../../docs/design/ui2.0升级/evidence/features/raw-text-controls/first-wave/",
-  import.meta.url,
-));
 const captureEvidence = process.env.LING_CAPTURE_UI2_EVIDENCE === "1";
 
 test("Channel Create uses shared fields without changing validation, project search, or teammate invites", async ({ page }) => {
@@ -126,7 +121,7 @@ test("dark reduced-motion Channel terminal and topic reply keep command and keyb
     hasText: "Open the shared-control topic reply.",
   });
   await rootMessage.hover();
-  await rootMessage.getByRole("button", { name: "Reply in topic" }).click();
+  await (await timelineResponseFooter(rootMessage)).getByRole("button", { name: "Reply in topic" }).click();
   const topicPanel = page.getByLabel("Topic replies");
   const replyInput = topicPanel.getByRole("textbox", { name: "Topic reply input" });
   await expect(replyInput).toHaveAttribute("data-ling-control-native", "true");
@@ -313,12 +308,11 @@ async function expectNoDocumentOverflow(page: Page): Promise<void> {
 
 async function captureSurface(page: Page, filename: string): Promise<void> {
   if (!captureEvidence) return;
-  await mkdir(evidenceDirectory, { recursive: true });
   await page.screenshot({
     animations: "disabled",
     caret: "hide",
     fullPage: true,
-    path: `${evidenceDirectory}${filename}`,
+    path: test.info().outputPath(filename),
   });
 }
 

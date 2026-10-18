@@ -15,6 +15,20 @@ const { projectConversationTimelineDisplayModel } = await vite.ssrLoadModule(
 );
 after(async () => vite.close());
 
+test("stable rows retain identity when history is prepended or canonical positions change", () => {
+  const first = message("stable-first", 0);
+  const second = message("stable-second", 1);
+  const before = projectConversationTimelineDisplayModel([first, second], new Map());
+  const after = projectConversationTimelineDisplayModel([
+    message("older", 0),
+    { ...first, threadSequence: 10, partIndex: 2 },
+    { ...second, threadSequence: 11, partIndex: 3, revision: 2 },
+  ], new Map());
+  for (const item of [first, second]) {
+    assert.equal(after.locationByItemId.get(item.id)?.rowKey, before.locationByItemId.get(item.id)?.rowKey);
+  }
+});
+
 function displayBatch(kind, count = 3, overrides = {}) {
   const children = Array.from({ length: count }, (_, index) => ({
     ...lineage, id: `${kind}:child:${index}`, kind: kind === "commandBatch" ? "commandExecution" : "exploration",
@@ -211,8 +225,8 @@ test("display row keys encode parent and item ids without delimiter collisions",
 
   assert.equal(childRows.length, 2);
   assert.equal(new Set(childRows.map((row) => row.rowKey)).size, 2);
-  assert.match(childRows[0].rowKey, /a%3Ab:c:/);
-  assert.match(childRows[1].rowKey, /a:b%3Ac:/);
+  assert.match(childRows[0].rowKey, /a%3Ab:c$/);
+  assert.match(childRows[1].rowKey, /a:b%3Ac$/);
 });
 
 test("display row keys remain stable across item revisions", () => {

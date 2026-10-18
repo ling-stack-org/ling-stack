@@ -132,6 +132,18 @@ test("shared surface shell delegates all display-row windowing to Timeline", asy
   assert.equal((timeline.match(/useVirtualizer\(/gu) ?? []).length, 1);
 });
 
+test("shared surface shell pauses auto-follow before interactive activations", async () => {
+  const shell = await readFile(
+    new URL("../src/shared/conversation/blocks/ConversationTimelineFeed.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(shell, /onKeyDownCapture:/);
+  assert.match(shell, /onPointerDownCapture:/);
+  assert.match(shell, /event\.key !== "Enter" && event\.key !== " "/);
+  assert.equal((shell.match(/onUserScrollIntent\?\.\(\);/gu) ?? []).length, 3);
+});
+
 test("private Timeline delegates canonical merging instead of rebasing message-local facts", async () => {
   const source = await readFile(privateFeedSourceUrl, "utf8");
   assert.equal((source.match(/projectTeammatePrivateTimelineItems\(/gu) ?? []).length, 1);

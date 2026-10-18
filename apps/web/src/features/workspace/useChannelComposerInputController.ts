@@ -2,20 +2,20 @@ import { useCallback, useEffect, useMemo, type DragEvent, type Dispatch, type Ke
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import {
   composerWorkspaceFileParts,
-  createAttachmentPreviewUrl,
   createLocalComposerAssetId,
   filterSlashCommandPickerOptions,
   findActiveSlashCommand,
   insertSlashCommandToken,
   parseComposerInputParts,
   parseComposerSlashIntent,
-  revokePendingAttachmentPreview,
   type ActiveSlashCommandPicker,
   type ComposerInputPart,
   type PendingAttachmentItem,
   type TokenizedComposerInputHandle,
 } from "../../shared/components/index.js";
 import type { Translate } from "../../i18n.js";
+import { deleteAttachment } from "../../api.js";
+import { useComposerAttachmentUploads } from "../../shared/conversation/use-composer-attachment-uploads.js";
 import type {
   ChannelAttachment,
   ChannelLinkPreview,
@@ -29,6 +29,7 @@ import { findMentionsInText, mentionTokenExistsInText, mergeMentions } from "./c
 interface ChannelComposerInputControllerInput {
   readonly cwd: string;
   readonly selectedChannelId: string;
+  readonly composerOwnerKey: string;
   readonly guidanceModeActive: boolean;
   readonly messageDraft: string;
   readonly setMessageDraft: Dispatch<SetStateAction<string>>;
@@ -91,12 +92,17 @@ export interface ChannelComposerInputController {
   readonly handleComposerDrop: (event: DragEvent<HTMLElement>) => void;
   readonly attachFiles: (files: FileList | readonly File[]) => Promise<void>;
   readonly removePendingAttachment: (localId: string) => void;
+  readonly retryPendingAttachment: (localId: string) => Promise<void>;
+  readonly attachmentCleanupFailures: readonly import("../../shared/components/composer-pending-assets.js").AttachmentCleanupFailure[];
+  readonly retryAttachmentCleanup: (localId: string) => Promise<void>;
+  readonly releaseAttachmentPreviews: (items: readonly PendingAttachmentItem<ChannelAttachment>[]) => void;
 }
 
 type ComposerSlashIntentForInput = ReturnType<typeof parseComposerSlashIntent>;
 
 export function useChannelComposerInputController({
   guidanceModeActive,
+  composerOwnerKey,
   attachmentPreviewUrlsRef,
   autoPreviewUrlsRef,
   composerInputRef,
@@ -267,51 +273,28 @@ export function useChannelComposerInputController({
     updateMentionPicker(value, caret);
   }, [setMessageDraft, setMessageMentions, setSendError, setSendState, teammateOptions, updateMentionPicker]);
 
-  const attachFiles = useCallback(async (files: FileList | readonly File[]): Promise<void> => {
-    const selectedFiles = Array.from(files).slice(0, 10);
-    if (selectedFiles.length === 0) {
-      return;
-    }
-    const uploadItems = selectedFiles.map((file) => {
-      const previewUrl = createAttachmentPreviewUrl(file);
-      if (previewUrl) {
-        attachmentPreviewUrlsRef.current.add(previewUrl);
-      }
+  const attachmentUploads = useComposerAttachmentUploads({
+    ownerKey: composerOwnerKey,
+    sourceCwd: cwd.trim(),
+    pending: pendingAttachments,
+    setPending: setPendingAttachments,
+    previewUrls: attachmentPreviewUrlsRef.current,
+    preserveDetachedDrafts: true,
+    interruptedUploadError: t("Upload failed"),
+    captureScope: () => {
+      const sourceCwd = cwd.trim();
       return {
-        localId: createLocalComposerAssetId("attachment"),
-        fileName: file.name,
-        sizeBytes: file.size,
-        state: "uploading" as const,
-        previewUrl,
+        upload: async (file: File) => {
+          const [attachment] = await onUploadAttachments([file]);
+          if (!attachment) throw new Error(t("Upload failed"));
+          return attachment;
+        },
+        remove: (attachment: ChannelAttachment) => deleteAttachment(sourceCwd, attachment.id),
       };
-    });
-    setPendingAttachments((current) => [...current, ...uploadItems]);
-    setComposerBusy(true);
-    try {
-      const uploaded = await onUploadAttachments(selectedFiles);
-      const uploadedByLocalId = new Map(uploadItems.map((item, index) => [item.localId, uploaded[index]]));
-      setPendingAttachments((current) => current.map((item) => {
-        const attachment = uploadedByLocalId.get(item.localId);
-        if (attachment) {
-          return { ...item, state: "ready", attachment };
-        }
-        if (uploadedByLocalId.has(item.localId)) {
-          return { ...item, state: "failed", error: t("Upload failed") };
-        }
-        return item;
-      }));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setPendingAttachments((current) => current.map((item) =>
-        uploadItems.some((upload) => upload.localId === item.localId)
-          ? { ...item, state: "failed", error: message }
-          : item,
-      ));
-    } finally {
-      setComposerBusy(false);
-    }
-  }, [attachmentPreviewUrlsRef, onUploadAttachments, setComposerBusy, setPendingAttachments, t]);
-
+    },
+  });
+  const attachFiles = attachmentUploads.attachFiles;
+  const removePendingAttachment = attachmentUploads.removeAttachment;
   const handleComposerPasteFiles = useCallback((files: readonly File[]): void => {
     void attachFiles(files);
   }, [attachFiles]);
@@ -378,14 +361,6 @@ export function useChannelComposerInputController({
       setComposerBusy(false);
     }
   }, [onCreateLinkPreview, setComposerBusy, setPendingLinkPreviews, t]);
-
-  const removePendingAttachment = useCallback((localId: string): void => {
-    setPendingAttachments((current) => {
-      const removed = current.find((item) => item.localId === localId);
-      revokePendingAttachmentPreview(removed, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
-      return current.filter((item) => item.localId !== localId);
-    });
-  }, [attachmentPreviewUrlsRef, setPendingAttachments]);
 
   useEffect(() => {
     if (!selectedChannelId) {
@@ -471,7 +446,7 @@ export function useChannelComposerInputController({
   const composerSlashCommandActive = composerSlashIntent.kind !== "none";
   const composerSlashTargetLabel = composerSlashCommandActive ? composerSlashCommandTargetLabel(composerSlashIntent, t) : "";
   const composerHasSendableContent = messageDraft.trim().length > 0 || readyAttachmentIds.length > 0 || readyLinkPreviewIds.length > 0 || composerFileRefs.length > 0;
-  const assetOperationPending = pendingAttachments.some((item) => item.state === "uploading") || pendingLinkPreviews.some((item) => item.state === "uploading");
+  const assetOperationPending = pendingAttachments.some((item) => item.state !== "ready") || pendingLinkPreviews.some((item) => item.state === "uploading");
   const pendingMessageAssetsVisible = pendingAttachments.length > 0;
 
   const handleComposerKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>, actions: ComposerKeyDownSubmissionActions): void => {
@@ -582,6 +557,10 @@ export function useChannelComposerInputController({
     handleComposerDrop,
     attachFiles,
     removePendingAttachment,
+    retryPendingAttachment: attachmentUploads.retryAttachment,
+    attachmentCleanupFailures: attachmentUploads.cleanupFailures,
+    retryAttachmentCleanup: attachmentUploads.retryCleanup,
+    releaseAttachmentPreviews: attachmentUploads.releasePreviews,
   };
 }
 

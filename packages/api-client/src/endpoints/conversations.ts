@@ -3,6 +3,8 @@ import type {
   ConversationAttachmentMutationResponse,
   ConversationDetailResponse,
   ConversationStreamRequest,
+  ConversationSubmissionQuery,
+  ConversationSubmissionReceipt,
   CreateConversationAttachmentRequest,
   EditConversationMessageRequest,
   EditConversationMessageResponse,
@@ -12,6 +14,9 @@ import type {
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
 export const conversationEndpoints = {
+  async getConversationSubmission(this: LingDaemonEndpointContext, cwd: string, query: ConversationSubmissionQuery): Promise<ConversationSubmissionReceipt> {
+    return this._get("/conversation-submissions", { cwd, ...query });
+  },
   async getConversation(this: LingDaemonEndpointContext, cwd: string, threadId: string): Promise<ConversationDetailResponse> {
     return this._get(`/conversations/${encodeURIComponent(threadId)}`, { cwd });
   },

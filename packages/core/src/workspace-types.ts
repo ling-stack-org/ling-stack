@@ -1125,6 +1125,7 @@ export interface TeammateDirectReplyIntervention {
   readonly threadId: string;
   readonly sourceMessageId: string;
   readonly sourceWorkUnitId?: string;
+  readonly sourceAttemptId?: string;
   readonly mode: TeammateDirectReplyInterventionMode;
   readonly status: TeammateDirectReplyInterventionStatus;
   readonly instruction: string;
@@ -1146,6 +1147,7 @@ export interface CreateTeammateDirectReplyInterventionInput {
   readonly threadId: string;
   readonly sourceMessageId: string;
   readonly sourceWorkUnitId?: string;
+  readonly sourceAttemptId?: string;
   readonly mode: TeammateDirectReplyInterventionMode;
   readonly instruction: string;
   readonly messagePayload?: TeammateDirectReplyInterventionMessagePayload;
@@ -1155,15 +1157,20 @@ export interface CreateTeammateDirectReplyInterventionInput {
 
 export interface ListTeammateDirectReplyInterventionsOptions {
   readonly teammateId?: string;
+  readonly idempotencyKey?: string;
   readonly threadId?: string;
   readonly sourceWorkUnitId?: string;
   readonly status?: TeammateDirectReplyInterventionStatus;
+  readonly statuses?: readonly TeammateDirectReplyInterventionStatus[];
   readonly mode?: TeammateDirectReplyInterventionMode;
+  readonly hasContinuation?: boolean;
+  readonly newestFirst?: boolean;
   readonly limit?: number;
 }
 
 export interface UpdateTeammateDirectReplyInterventionStatusInput {
   readonly interventionId: string;
+  readonly expectedStatuses?: readonly TeammateDirectReplyInterventionStatus[];
   readonly status: TeammateDirectReplyInterventionStatus;
   readonly continuationMessageId?: string | null;
   readonly continuationWorkUnitId?: string | null;

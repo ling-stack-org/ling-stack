@@ -3,6 +3,7 @@ import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, isRecord } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
 import { installChannelWorkCellFixture, installNormalWorkCellFixture, installTeammateWorkCellFixture } from "./support/conversation-work-cell-fixture";
+import { expandTimelineProcesses } from "./support/timeline-process";
 
 // Display-only fixtures exercise production renderers and the complete CSS
 // cascade. These tests are not evidence of a real model run or packaged app.
@@ -22,6 +23,7 @@ for (const theme of ["light", "dark"] as const) {
       await expectSemanticColor(message.locator(".message-inline-code"), "--text");
       await expectSemanticColor(message.locator(".message-code-block code"), "--text");
       await expectSemanticColor(message.locator(".message-code-block figcaption > span"), "--conversation-text-muted");
+      await expandTimelineProcesses(page.locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]'));
       await page.mouse.move(0, 0);
       await expectSemanticColor(page.locator('[data-conversation-timeline-kind="commandExecution"] .conversation-timeline-activity-main strong').first(), "--conversation-text-muted");
       await paragraph.hover();
@@ -49,6 +51,7 @@ for (const theme of ["light", "dark"] as const) {
       const narration = page.locator(".conversation-timeline-message.agentMessage .message-body-paragraph").first();
       await expect(narration).toBeVisible();
       await expectSemanticColor(narration, "--conversation-text-strong");
+      await expandTimelineProcesses(page.locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]'));
       const fact = page.locator(`[data-conversation-action-id="${command.id}"][data-conversation-timeline-kind="commandExecution"]`);
       const trigger = fact.locator("button.conversation-timeline-activity-main");
       await expect(trigger).toBeVisible();

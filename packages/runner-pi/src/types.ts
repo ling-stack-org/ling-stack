@@ -360,6 +360,8 @@ export interface PiRunnerOrdinaryProgressRecovery {
 }
 
 export interface PiRunnerRunOptions {
+  /** Host-only, memory-sealed observation from the actual SDK execution. */
+  readonly onToolBoundaryObservation?: (receipt: import("./tool-boundary-observation.js").PiToolBoundaryObservation) => void;
   /** Initial schema capabilities; not execution handlers or authorization grants. */
   readonly initialToolSurface?: {
     readonly mediaGeneration: boolean;

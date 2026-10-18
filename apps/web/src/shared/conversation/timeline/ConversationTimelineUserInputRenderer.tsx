@@ -7,11 +7,11 @@ import {
   type ConversationTimelineUserInputItem,
 } from "@ling-stack/conversation-ui-core";
 import { useI18n } from "../../../i18n.js";
+import { Button, InlineFeedback, Radio, Textarea } from "../../ui/index.js";
 import { MessageRow } from "../blocks/MessageRow.js";
 import { MessageBodyRenderer } from "../blocks/MessageBodyRenderer.js";
 import { LocalFileLink } from "../blocks/LocalFileLink.js";
 import { userInputHistoryPresentation } from "./user-input-history-presentation.js";
-import { Button } from "../../../shared/ui/index.js";
 import type { UserInputAnswerAcceptedResponseV1, UserInputAnswerCommandV1, UserInputAnswerV1 } from "../../../types.js";
 
 const surfaces: Record<ConversationTimelineScopeKind, ConversationInteractionSurfaceKind> = {
@@ -58,18 +58,22 @@ export function ConversationTimelineUserInputRenderer({ item, depth, cwd, scopeK
         {t(locallyAccepted ? "user_input.delivery.pending" : presentation.labelKey)}
       </span>}
       bodyNode={record.availability === "unavailable" ? null : <div className="conversation-user-input-content">
-        {record.kind === "user_input_request" ? record.questions.map((question, index) =>
+        {record.kind === "user_input_request" ? answerable && !locallyAccepted ? <UserInputAnswerForm
+          key={currentAuthorityToken}
+          request={record}
+          onSubmit={onSubmitAnswer}
+          onAccepted={() => setAcceptedAuthorityToken(record.answerAuthority!.token)}
+          renderBody={body}
+        /> : record.questions.map((question, index) =>
           <section key={question.questionId} aria-label={t("user_input.question_number", { number: index + 1 })}>
             {body(question.prompt)}
-            {question.options.length ? <ul className="conversation-user-input-options">
+            {question.options.length ? <ul className="conversation-user-input-options conversation-user-input-options-history">
               {question.options.map(option => <li key={option.optionId}>{option.label}</li>)}
             </ul> : null}
           </section>) : record.answers.map((answer, index) =>
           <section key={answer.questionId} aria-label={t("user_input.answer_number", { number: index + 1 })}>
             {body(answer.kind === "text" ? answer.text : answer.label)}
           </section>)}
-        {answerable && !locallyAccepted ? <UserInputAnswerForm request={record} onSubmit={onSubmitAnswer}
-          onAccepted={() => setAcceptedAuthorityToken(record.answerAuthority!.token)} /> : null}
       </div>}
       actionsNode={presentation.copyText !== undefined ? <MessageActionBar surface={surface}
         copiedLabel={t("Copied")} actions={[{ id: "copy", kind: "copy", label: t("Copy message"),
@@ -78,15 +82,16 @@ export function ConversationTimelineUserInputRenderer({ item, depth, cwd, scopeK
   </div>;
 }
 
-type AnswerDraft = { readonly kind: "option" | "text"; readonly value: string };
+type AnswerDrafts = Readonly<Record<string, UserInputAnswerV1 | undefined>>;
 
-function UserInputAnswerForm({ request, onSubmit, onAccepted }: {
+function UserInputAnswerForm({ request, onSubmit, onAccepted, renderBody }: {
   readonly request: Extract<ConversationTimelineUserInputItem["userInput"], { kind: "user_input_request" }>;
   readonly onSubmit: (command: UserInputAnswerCommandV1) => Promise<UserInputAnswerAcceptedResponseV1>;
   readonly onAccepted: () => void;
+  readonly renderBody: (text: string) => ReactNode;
 }): React.JSX.Element {
   const { t } = useI18n();
-  const [drafts, setDrafts] = useState<Record<string, AnswerDraft>>({});
+  const [drafts, setDrafts] = useState<AnswerDrafts>({});
   const [submitting, setSubmitting] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -94,21 +99,14 @@ function UserInputAnswerForm({ request, onSubmit, onAccepted }: {
   const idempotencyRef = useRef<{ readonly fingerprint: string; readonly key: string } | undefined>(undefined);
   const answers = useMemo<readonly UserInputAnswerV1[]>(() => request.questions.flatMap((question) => {
     const draft = drafts[question.questionId];
-    if (!draft?.value.trim()) return [];
-    return [draft.kind === "option"
-      ? { questionId: question.questionId, kind: "option" as const, optionId: draft.value }
-      : { questionId: question.questionId, kind: "text" as const, text: draft.value }];
+    if (!draft || (draft.kind === "text" && !draft.text.trim())) return [];
+    return [draft.kind === "text" ? { ...draft, text: draft.text.trim() } : draft];
   }), [drafts, request.questions]);
   const answered = new Set(answers.map(answer => answer.questionId));
   const valid = answers.length > 0 && request.questions.every(question => !question.required || answered.has(question.questionId));
 
-  const update = (questionId: string, draft: AnswerDraft | undefined): void => {
-    setDrafts(current => {
-      const next = { ...current };
-      if (draft) next[questionId] = draft;
-      else delete next[questionId];
-      return next;
-    });
+  const update = (questionId: string, answer: UserInputAnswerV1 | undefined): void => {
+    setDrafts(current => ({ ...current, [questionId]: answer }));
     setFailed(false);
   };
   const submit = async (): Promise<void> => {
@@ -117,7 +115,7 @@ function UserInputAnswerForm({ request, onSubmit, onAccepted }: {
     const previous = idempotencyRef.current;
     const idempotencyKey = previous?.fingerprint === fingerprint
       ? previous.key
-      : `answer:${request.requestId}:${request.requestVersion}:${globalThis.crypto.randomUUID()}`;
+      : `answer:${request.requestId}:${request.requestVersion}:${createSubmissionId()}`;
     idempotencyRef.current = { fingerprint, key: idempotencyKey };
     inFlightRef.current = true;
     setSubmitting(true);
@@ -135,27 +133,51 @@ function UserInputAnswerForm({ request, onSubmit, onAccepted }: {
     }
   };
 
-  return <form className="conversation-user-input-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+  return <form className="conversation-user-input-form" data-user-input-answer-form={request.requestId}
+    onSubmit={(event) => { event.preventDefault(); void submit(); }}>
     {request.questions.map((question, index) => {
       const draft = drafts[question.questionId];
       return <fieldset key={question.questionId} className="conversation-user-input-fieldset">
         <legend>{t("user_input.question_number", { number: index + 1 })}{question.required ? ` · ${t("Required")}` : ` · ${t("Optional")}`}</legend>
-        {question.options.map(option => <label key={option.optionId} className="conversation-user-input-choice">
-          <input type="radio" name={`answer:${request.requestId}:${question.questionId}`}
-            value={option.optionId} checked={draft?.kind === "option" && draft.value === option.optionId}
-            disabled={submitting || accepted}
-            onChange={() => update(question.questionId, { kind: "option", value: option.optionId })} />
-          <span>{option.label}</span>
-        </label>)}
-        {question.allowFreeText ? <textarea className="conversation-user-input-free-text" rows={3}
-          aria-label={question.prompt} value={draft?.kind === "text" ? draft.value : ""}
-          disabled={submitting || accepted}
-          onChange={(event) => update(question.questionId, event.currentTarget.value
-            ? { kind: "text", value: event.currentTarget.value } : undefined)} /> : null}
+        {renderBody(question.prompt)}
+        <div className="conversation-user-input-question-controls">
+          {question.options.length ? <div className="conversation-user-input-options" role="radiogroup"
+            aria-label={t("user_input.choose_answer")}>
+            {question.options.map(option => <Radio key={option.optionId}
+              name={`answer:${request.requestId}:${question.questionId}`} label={option.label}
+              checked={draft?.kind === "option" && draft.optionId === option.optionId}
+              disabled={submitting || accepted}
+              onChange={() => update(question.questionId, {
+                questionId: question.questionId,
+                kind: "option",
+                optionId: option.optionId,
+              })} />)}
+          </div> : null}
+          {question.allowFreeText ? <label className="conversation-user-input-free-text">
+            <span>{t(question.options.length ? "user_input.custom_answer" : "user_input.your_answer")}</span>
+            <Textarea rows={3} maxLength={8000} disabled={submitting || accepted}
+              aria-label={question.prompt}
+              placeholder={t("user_input.answer_placeholder")}
+              value={draft?.kind === "text" ? draft.text : ""}
+              onChange={(event) => update(question.questionId, event.currentTarget.value
+                ? { questionId: question.questionId, kind: "text", text: event.currentTarget.value }
+                : undefined)} />
+          </label> : null}
+        </div>
       </fieldset>;
     })}
-    {failed ? <div className="conversation-user-input-submit-error" role="alert">{t("Message failed")}</div> : null}
-    <Button type="submit" size="sm" variant="primary" disabled={!valid || accepted}
-      loading={submitting} loadingLabel={t("Sending...")}>{failed ? t("Retry") : t("Send")}</Button>
+    <div className="conversation-user-input-answer-form">
+      {failed ? <InlineFeedback tone="danger">{t("user_input.answer_failed")}</InlineFeedback> : null}
+      <Button type="submit" size="sm" variant="primary" disabled={!valid || accepted}
+        loading={submitting} loadingLabel={t("user_input.submitting_answer")}
+        title={failed ? t("Retry") : t("Send")}>
+        {t(failed ? "user_input.retry_answer" : "user_input.submit_answer")}
+      </Button>
+    </div>
   </form>;
+}
+
+function createSubmissionId(): string {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }

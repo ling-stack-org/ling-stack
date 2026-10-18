@@ -88,6 +88,22 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
     !isRecord(value.input.provider) || "apiKey" in value.input.provider || "headers" in value.input.provider ||
     !isDeepStrictEqual(redactSecrets(value), value)) throw new Error("Invalid prepared execution payload");
   const prepared = readPreparedPiInput(value.preparedInput);
+  if (value.skillSourceContext !== undefined) {
+    const context = value.skillSourceContext;
+    if (!isRecord(context) || typeof context.skillId !== "string" || !context.skillId || typeof context.loaded !== "boolean") {
+      throw new Error("Invalid prepared skill source context");
+    }
+    if (context.resourceBinding !== undefined) {
+      const binding = context.resourceBinding;
+      if (!isRecord(binding) || Object.keys(binding).length !== 4 ||
+        !["manifestChecksum", "sourceChecksum"].every(key => typeof binding[key] === "string" && /^sha256:[a-f0-9]{64}$/.test(binding[key])) ||
+        typeof binding.upstreamRevision !== "string" || !/^[a-f0-9]{40}$/.test(binding.upstreamRevision) ||
+        typeof binding.adaptationRevision !== "string" || !/^[a-zA-Z0-9._-]{1,128}$/.test(binding.adaptationRevision) ||
+        context.sourceKind !== "gstack-skill-directory" || !context.loaded || context.truncated || binding.sourceChecksum !== context.sourceChecksum) {
+        throw new Error("Invalid prepared skill resource binding");
+      }
+    }
+  }
   if (value.input.initialToolSurface !== undefined) {
     const surface = value.input.initialToolSurface;
     if (!isRecord(surface) || Object.keys(surface).some(key => !["mediaGeneration", "toolHydration", "userInput"].includes(key)) ||

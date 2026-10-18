@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { archiveLingThread, getConversation, listLingThreads, streamConversation } from "../../api.js";
+import { archiveLingThread, getConversation, getConversationSubmission, listLingThreads, streamConversation } from "../../api.js";
+import { LingDaemonError } from "@ling-stack/api-client";
+import { recoverSubmissionReceipt, submissionWasRejected } from "../../shared/conversation/conversation-submission-recovery.js";
+import { submissionLookupJournal } from "../../shared/conversation/conversation-submission-journal.js";
+import { validateConversationSubmissionReceipt } from "../../shared/conversation/submission-receipt-scope.js";
 import { readSseResponse } from "../../sse.js";
 import type {
   AuthorizationMode,
@@ -50,7 +54,9 @@ export interface ConversationSendInput {
 
 export interface ConversationStreamHandlers {
   readonly onReady?: (event: ConversationStreamReadyEvent) => void;
-  readonly onMessageAccepted?: (event: ConversationStreamReadyEvent) => void;
+  readonly onMessageAccepted?: (event?: ConversationStreamReadyEvent) => void;
+  readonly onSubmissionUnknown?: (recoveryOnly?: boolean) => void;
+  readonly onSubmissionRecovered?: (threadId: string, originalBody: string) => void;
   readonly onReplyLinked?: (target: NonNullable<ConversationStreamReadyEvent["activeReply"]>) => void;
   readonly onRunEvent?: (event: ConversationStreamRunEvent) => void;
   readonly onDone?: (event: ConversationStreamDoneEvent) => void;
@@ -376,6 +382,9 @@ export function useConversationDomain(input: {
     const originSurfaceIdentity = conversationSurfaceIdentityRef.current;
     let activeThreadId = originThreadId;
     let messageAccepted = false;
+    let submitted = false;
+    const submissionScope = { cwd: workspaceCwd, surface: "normal" as const, threadId: originThreadId || undefined };
+    const idempotencyKey = crypto.randomUUID();
     const busyOperation = conversationStreamBusyOwner.begin({
       workspaceCwd,
       identity: originSurfaceIdentity,
@@ -414,7 +423,35 @@ export function useConversationDomain(input: {
     }
 
     try {
+      const pendingKey = submissionLookupJournal.read(submissionScope);
+      if (pendingKey) {
+        const query = { surface: "normal" as const, idempotencyKey: pendingKey, threadId: originThreadId || undefined };
+        const receipt = await recoverSubmissionReceipt(async () => validateConversationSubmissionReceipt(
+          await getConversationSubmission(workspaceCwd, query), workspaceCwd, query));
+        if (!receipt?.threadId || !receipt.sourceItem) {
+          conversationErrors.report(streamOperation, input.translate("Pending confirmation"));
+          if (canCommitToSurface()) handlers.onSubmissionUnknown?.(true);
+          return;
+        }
+        activeThreadId = receipt.threadId;
+        const detail = await getConversation(workspaceCwd, activeThreadId);
+        if (detail.thread.id !== activeThreadId) throw new Error("Conversation response scope mismatch.");
+        if (canCommitToSurface(activeThreadId)) {
+          const original = detail.messages.find(item => item.id === receipt.sourceItemId);
+          handlers.onSubmissionRecovered?.(activeThreadId, original?.content ?? "");
+          commitSelectedConversationThreadId(activeThreadId);
+          commitConversationSurfaceIdentity(activeThreadId);
+          setSelectedConversationDetail(current => mergeConversationDetailSnapshots(current, detail));
+          conversationErrors.clear(streamOperation);
+        }
+        submissionLookupJournal.forget(submissionScope, pendingKey);
+        await refreshConversationThreads(workspaceCwd);
+        return;
+      }
+      submissionLookupJournal.remember(submissionScope, idempotencyKey);
+      submitted = true;
       const response = await streamConversation(workspaceCwd, {
+        idempotencyKey,
         threadId: originThreadId || undefined,
         message: message.message,
         attachmentIds: message.attachmentIds,
@@ -432,7 +469,7 @@ export function useConversationDomain(input: {
         tools: message.tools,
       });
       if (!response.ok || !response.body) {
-        throw new Error(await readResponseError(response));
+        throw new LingDaemonError(await readResponseError(response), response.status, response.statusText);
       }
       let evidenceRefreshTimer: ReturnType<typeof setTimeout> | undefined;
       let evidenceRefreshPromise: Promise<void> | undefined;
@@ -477,10 +514,12 @@ export function useConversationDomain(input: {
           void refreshActiveConversationEvidence();
         }, 250);
       };
-      await readSseResponse(response, (parsed) => {
+      const streamCompletion = readSseResponse(response, (parsed) => {
         if (parsed.event === "ready") {
           const event = JSON.parse(parsed.data) as ConversationStreamReadyEvent;
           activeThreadId = event.thread.id;
+          messageAccepted = true;
+          submissionLookupJournal.forget(submissionScope, idempotencyKey);
           handlers.onThreadBound?.(activeThreadId);
           retargetStreamOperation(activeThreadId);
           if (event.activeReply) {
@@ -497,6 +536,7 @@ export function useConversationDomain(input: {
             handlers.onReady?.(event);
             handlers.onMessageAccepted?.(event);
             messageAccepted = true;
+            submissionLookupJournal.forget(submissionScope, idempotencyKey);
             if (event.activeReply) handlers.onReplyLinked?.(event.activeReply);
           }
           return;
@@ -564,33 +604,77 @@ export function useConversationDomain(input: {
           if (canCommitToSurface(activeThreadId)) handlers.onError?.(messageText, event);
         }
       });
-      if (evidenceRefreshTimer !== undefined) {
-        clearTimeout(evidenceRefreshTimer);
-      }
-      evidenceRefreshRequested = false;
-      await evidenceRefreshPromise;
-      await refreshConversationThreads(workspaceCwd);
-      if (activeThreadId && canCommitToSurface(activeThreadId)) {
-        const refreshOperation = conversationErrors.begin({
-          workspaceCwd,
-          surface: "thread",
-          identity: activeThreadId,
-          scope: "refresh",
-        });
-        conversationErrors.clear(refreshOperation);
-        const detailRead = detailReadEpochRef.current.begin(JSON.stringify([workspaceCwd, activeThreadId]));
-        try {
-          const detail = await getConversation(workspaceCwd, activeThreadId);
-          if (detail.thread.id !== activeThreadId) throw new Error("Conversation response scope mismatch.");
+      try {
+        await streamCompletion;
+      } finally {
+        if (evidenceRefreshTimer !== undefined) clearTimeout(evidenceRefreshTimer);
+        evidenceRefreshRequested = false;
+        await evidenceRefreshPromise;
+        // A lost stream must reconcile accepted input just like a normal terminal event.
+        if (messageAccepted) await refreshConversationThreads(workspaceCwd);
+        if (messageAccepted && activeThreadId && canCommitToSurface(activeThreadId)) {
+          const refreshOperation = conversationErrors.begin({
+            workspaceCwd,
+            surface: "thread",
+            identity: activeThreadId,
+            scope: "refresh",
+          });
           conversationErrors.clear(refreshOperation);
-          if (detailReadEpochRef.current.isCurrent(detailRead) && canCommitToSurface(activeThreadId)) {
-            setSelectedConversationDetail((current) => mergeConversationDetailSnapshots(current, detail));
+          const detailRead = detailReadEpochRef.current.begin(JSON.stringify([workspaceCwd, activeThreadId]));
+          try {
+            const detail = await getConversation(workspaceCwd, activeThreadId);
+            if (detail.thread.id !== activeThreadId) throw new Error("Conversation response scope mismatch.");
+            conversationErrors.clear(refreshOperation);
+            if (detailReadEpochRef.current.isCurrent(detailRead) && canCommitToSurface(activeThreadId)) {
+              setSelectedConversationDetail((current) => mergeConversationDetailSnapshots(current, detail));
+            }
+          } catch (error) {
+            conversationErrors.report(refreshOperation, error instanceof Error ? error.message : String(error));
           }
-        } catch (error) {
-          conversationErrors.report(refreshOperation, error instanceof Error ? error.message : String(error));
         }
       }
+      if (!messageAccepted) throw new Error("Pending confirmation");
     } catch (error) {
+      if (!submitted) {
+        conversationErrors.report(streamOperation, input.translate("Pending confirmation"));
+        if (canCommitToSurface(activeThreadId)) handlers.onSubmissionUnknown?.(true);
+        return;
+      }
+      let rejectionConfirmed = false;
+      if (!messageAccepted) {
+        const query = { surface: "normal" as const, idempotencyKey, threadId: originThreadId || undefined };
+        const receipt = await recoverSubmissionReceipt(async () => validateConversationSubmissionReceipt(
+          await getConversationSubmission(workspaceCwd, query), workspaceCwd, query));
+        rejectionConfirmed = submissionWasRejected(error, receipt);
+        if (receipt?.threadId && receipt.turnId && receipt.sourceItemId) {
+          messageAccepted = true;
+          submissionLookupJournal.forget(submissionScope, idempotencyKey);
+          activeThreadId = receipt.threadId;
+          handlers.onThreadBound?.(activeThreadId);
+          retargetStreamOperation(activeThreadId);
+          if (canCommitToSurface(activeThreadId)) {
+            handlers.onMessageAccepted?.();
+            commitSelectedConversationThreadId(activeThreadId);
+            commitConversationSurfaceIdentity(activeThreadId);
+            const detailRead = detailReadEpochRef.current.begin(JSON.stringify([workspaceCwd, activeThreadId]));
+            try {
+              const detail = await getConversation(workspaceCwd, activeThreadId);
+              if (detail.thread.id !== activeThreadId) throw new Error("Conversation response scope mismatch.");
+              if (detailReadEpochRef.current.isCurrent(detailRead) && canCommitToSurface(activeThreadId)) {
+                setSelectedConversationDetail(current => mergeConversationDetailSnapshots(current, detail));
+              }
+            } catch (readError) {
+              conversationErrors.report(streamOperation, readError instanceof Error ? readError.message : String(readError));
+            }
+          }
+          await refreshConversationThreads(workspaceCwd);
+        } else if (!rejectionConfirmed) {
+          conversationErrors.report(streamOperation, input.translate("Pending confirmation"));
+          if (canCommitToSurface(activeThreadId)) handlers.onSubmissionUnknown?.();
+          return;
+        }
+      }
+      if (rejectionConfirmed) submissionLookupJournal.forget(submissionScope, idempotencyKey);
       const messageText = error instanceof Error ? error.message : String(error);
       conversationErrors.report(streamOperation, messageText);
       if (canCommitToSurface(activeThreadId)) handlers.onError?.(messageText);

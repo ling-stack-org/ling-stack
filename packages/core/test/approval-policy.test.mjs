@@ -1624,6 +1624,58 @@ test("approval resume claim atomically binds the replacement Attempt and observe
   }
 });
 
+test("approval resume claim releases source capacity after a validated approved handoff", async () => {
+  const fixture = await createApprovalResumeClaimFixture("approved-live-handoff");
+  try {
+    acquireApprovalResumeRuntimeResources(fixture, {
+      run: fixture.run,
+      workUnit: fixture.workUnit,
+      attempt: fixture.priorAttempt,
+    }, "2026-08-16T01:00:30.000Z");
+    void fixture.store.trackHostAttemptCompletion({ runId: fixture.run.id, ...fixture.priorFence }, new Promise(() => {}));
+
+    const claimed = fixture.store.commitApprovalResumeClaim(fixture.claim);
+
+    assert.equal(claimed.ok, true);
+    assert.equal(fixture.store.getHostAttemptCompletion({ runId: fixture.run.id, ...fixture.priorFence })?.drainedAt, undefined);
+    assert.equal(fixture.store.listResourceLeases({ attemptId: fixture.priorAttempt.id, status: "active" }).length, 0);
+    assert.equal(fixture.store.listResourceLeases({ attemptId: fixture.priorAttempt.id, status: "released" }).length, 1);
+    assert.equal(fixture.store.listRuntimeSemaphoreSlots({ ownerId: fixture.priorAttempt.id, status: "active" }).length, 0);
+    assert.equal(fixture.store.listRuntimeSemaphoreSlots({ ownerId: fixture.priorAttempt.id, status: "released" }).length, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("approval resume claim preserves source capacity while a Host operation remains unresolved", async () => {
+  const fixture = await createApprovalResumeClaimFixture("approved-blocked-handoff");
+  try {
+    acquireApprovalResumeRuntimeResources(fixture, {
+      run: fixture.run,
+      workUnit: fixture.workUnit,
+      attempt: fixture.priorAttempt,
+    }, "2026-08-16T01:00:30.000Z");
+    const source = { runId: fixture.run.id, ...fixture.priorFence };
+    void fixture.store.trackHostAttemptCompletion(source, new Promise(() => {}));
+    fixture.store.admitHostOperation({
+      operationId: "operation-approved-blocked-handoff",
+      source,
+      kind: "command",
+      toolCallId: fixture.approval.toolCallId,
+      admittedAt: "2026-08-16T01:00:40.000Z",
+    });
+
+    const claimed = fixture.store.commitApprovalResumeClaim(fixture.claim);
+
+    assert.equal(claimed.ok, true);
+    assert.equal(fixture.store.listHostOperationBlockers(source, fixture.claim.now).length, 1);
+    assert.equal(fixture.store.listResourceLeases({ attemptId: fixture.priorAttempt.id, status: "active" }).length, 1);
+    assert.equal(fixture.store.listRuntimeSemaphoreSlots({ ownerId: fixture.priorAttempt.id, status: "active" }).length, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("approval resume claim rolls back every durable write boundary", async (t) => {
   const faults = [
     {
@@ -2451,7 +2503,7 @@ function assertApprovalResumeConnectionReusable(fixture, suffix) {
   assert.equal(event.entityId, fixture.claim.approvalId);
 }
 
-function acquireApprovalResumeRuntimeResources(fixture, claim) {
+function acquireApprovalResumeRuntimeResources(fixture, claim, acquiredAt = "2026-08-16T01:02:10.000Z") {
   assert.ok(fixture.store.acquireResourceLease({
     workspaceId: "workspace_default",
     resourceType: "bound_path",
@@ -2462,7 +2514,7 @@ function acquireApprovalResumeRuntimeResources(fixture, claim) {
     attemptId: claim.attempt.id,
     runtimeInstanceId: claim.attempt.runtimeInstanceId,
     fencingToken: claim.attempt.fencingToken,
-    acquiredAt: "2026-08-16T01:02:10.000Z",
+    acquiredAt,
     expiresAt: "2026-08-16T02:02:10.000Z",
   }));
   assert.ok(fixture.store.acquireRuntimeSemaphoreSlot({
@@ -2476,7 +2528,7 @@ function acquireApprovalResumeRuntimeResources(fixture, claim) {
     attemptId: claim.attempt.id,
     runtimeInstanceId: claim.attempt.runtimeInstanceId,
     fencingToken: claim.attempt.fencingToken,
-    acquiredAt: "2026-08-16T01:02:10.000Z",
+    acquiredAt,
     expiresAt: "2026-08-16T02:02:10.000Z",
   }));
 }

@@ -12,6 +12,7 @@ import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS } from "../../../packages/daemon/src/runtime/sandbox/packaged-office-native-published-review.ts";
 import { PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS } from "../scripts/packaged-office-native-review-inputs.mjs";
+import { bundleInventory, digest, readExecutableBundle } from "../../../scripts/gstack/executable-bundle.mjs";
 
 const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
 const workspaceNames = ["browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"];
@@ -36,6 +37,22 @@ const newAuthoredRuntimeLeaves = [
   "packages/daemon/src/features/media/workflows/workflow-connection-check.ts",
   "packages/daemon/src/features/external-work/workflow-path-admission.ts",
   "packages/daemon/src/features/media/scene-cancellation.ts",
+  "packages/core/src/bundled-skill-source.ts",
+  "packages/core/src/bundled-skill-browser.ts",
+  "packages/daemon/src/features/skills/bundled-startup.ts",
+  "packages/daemon/src/features/skills/packaged-identity.ts",
+  "packages/daemon/src/features/skills/packaged-startup.ts",
+  "packages/daemon/src/features/skills/packaged-runtime.ts",
+  "packages/daemon/src/features/skills/packaged-history.ts",
+  "packages/daemon/src/features/skills/bundled-source-mode.ts",
+  "packages/core/src/effective-skill-registry.ts",
+  "packages/core/src/skill-source-definition.ts",
+  "packages/core/src/skill-source-selection.ts",
+  "packages/core/src/storage/sqlite/skill-source-publication.ts",
+  "packages/core/src/storage/sqlite/skill-source-rollback.ts",
+  "packages/daemon/src/features/runs/skill-source-context.ts",
+  "packages/daemon/src/features/runs/gstack-host-context.ts",
+  "packages/daemon/src/features/skills/source-publication.ts",
   "packages/daemon/src/server/rpc-outbound.ts",
   "packages/daemon/src/shared/sse-stream-writer.ts",
   "packages/core/src/storage/sqlite/ling-turn-cursor-indexes.ts",
@@ -293,7 +310,11 @@ function assertOriginalSourceOnlyBuild(f, bundle, index) {
     assert.equal(paths.includes(path), true, `actual esbuild metafile must contain the reviewed runtime leaf: ${name}`);
     assert.equal(hash(bytes), review.packagingSha256[name]);
     const inputName = Object.keys(observed.metafile.inputs).find(input => resolve(f.root, "apps/desktop", input) === path);
-    assert.equal(observed.metafile.inputs[inputName].bytes, bytes.length);
+    const loaded = name === "packages/daemon/src/features/skills/packaged-identity.ts"
+      ? bytes.toString().replace('const embeddedBundledGstackJson: string = "NO_PACKAGED_GSTACK_IDENTITY";',
+        `const embeddedBundledGstackJson: string = ${JSON.stringify(JSON.stringify(f.gsIdentity))};`)
+      : bytes;
+    assert.equal(observed.metafile.inputs[inputName].bytes, Buffer.byteLength(loaded));
     return [name, hash(bytes)];
   }));
   const reviewedAuthoredTypeOnlySha256 = Object.fromEntries(newAuthoredTypeOnlyInputs.map(name => {
@@ -337,6 +358,32 @@ async function approvedSyntheticFixture(t) {
   }
   linkExistingDependencies(join(repositoryRoot, "node_modules"), join(root, "node_modules"), root);
   linkExistingDependencies(join(repositoryRoot, "apps/desktop/node_modules"), join(root, "apps/desktop/node_modules"), root);
+  // Disposable data only: the original builder/verifiers stay unchanged and
+  // no synthetic browser executable or generated daemon is run.
+  const selected = join(root, ".ling-stack/build/synthetic-gstack"), gs = join(selected, "gstack"), browser = join(selected, "gstack-browser");
+  const lock = JSON.parse(readFileSync(join(root, "scripts/gstack/upstream-lock.json"), "utf8"));
+  const skills = lock.skillIds.map(id => ({ id, entryPath: `skills/${id}/SKILL.md`, resourcePaths: [] }));
+  for (const skill of skills) newFile(join(gs, skill.entryPath), `# ${skill.id}\nSynthetic source fixture.\n`);
+  newFile(join(gs, "LICENSE"), "MIT fixture\n");
+  const entryPath = "Chromium.app/Contents/MacOS/Chromium", framework = "Chromium.app/Contents/Frameworks/Chromium Framework.framework";
+  newFile(join(browser, entryPath), "SYNTHETIC BROWSER DATA NEVER EXECUTED");
+  mkdirSync(join(browser, framework, "Versions/A"), { recursive: true });
+  const browserFiles = await bundleInventory(browser), links = [];
+  for (let i = 0; i < 5; i++) {
+    const path = `${framework}/alias-${i}`;
+    symlinkSync("Versions/A", join(browser, path));
+    links.push({ path, linkTarget: "Versions/A", resolvedTarget: `${framework}/Versions/A` });
+  }
+  const browserBytes = Buffer.from(JSON.stringify({ schemaVersion: 1, target: { platform: process.platform, arch: process.arch },
+    entryPath, files: browserFiles, links }));
+  newFile(join(browser, "browser-component.json"), browserBytes);
+  newFile(join(gs, "executable-build.json"), JSON.stringify({ scope: "isolated-local-client", releaseEligible: false,
+    upstreamRevision: lock.revision, browser: { activation: "package-relative-only", componentChecksum: digest(browserBytes) } }));
+  newFile(join(gs, "manifest.json"), JSON.stringify({ schemaVersion: 1, packId: "gstack-default", deliveryStage: "executable",
+    upstream: { repository: "https://github.com/garrytan/gstack", revision: lock.revision, version: lock.version }, adaptationRevision: "ling-synthetic",
+    target: { platform: process.platform, arch: process.arch }, licensePath: "LICENSE", skills, files: await bundleInventory(gs) }));
+  const gsIdentity = (await readExecutableBundle(gs)).identity;
+  newFile(join(root, ".ling-stack/build/gstack-desktop-selection.json"), JSON.stringify({ root: gs, identity: gsIdentity }));
   const temporary = join(root, "temporary"); mkdirSync(temporary);
   // Standard publication fixture seams only. The fixed daemon builder remains
   // byte-for-byte the authored implementation and still calls actual esbuild.
@@ -461,7 +508,7 @@ async function approvedSyntheticFixture(t) {
   const officeApi = await import(pathToFileURL(join(scripts, "build-packaged-office-native.mjs")).href);
   const reviewApi = await import(pathToFileURL(join(scripts, "packaged-office-native-review.mjs")).href);
   return {
-    root, counts, builds, reviewApi, reviewPath,
+    root, counts, builds, reviewApi, reviewPath, gsIdentity,
     async bundle() {
       const token = await daemonApi.buildFreshPackagedDaemonForMacOffice();
       return officeApi.withOriginalPackagedOfficeNativePublication(token, async () => {

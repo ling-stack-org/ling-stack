@@ -3,14 +3,12 @@ import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { parseDocument } from "yaml";
-import { readOnlyRunTools, type RunTool } from "./approval-policy.js";
-import type { ProviderCapability } from "./provider-types.js";
 import { buildSkillSourceContextFindings } from "./skill-source-health.js";
+import { parseSkillFrontMatter, previewSkillSourceDefinition, splitMarkdownFrontMatter } from "./skill-source-definition.js";
+import { selectActiveSkillSourceSnapshots } from "./skill-source-selection.js";
 import type {
-  AiTeammateRoleKey,
   CreateSkillSourceSnapshotInput,
   SkillAgentMetadata,
-  SkillDefinition,
   SkillRegistryEntry,
   SkillSourceFileKind,
   SkillSourceFileRef,
@@ -70,13 +68,6 @@ interface DiscoveredSkillSource {
   readonly warnings: readonly SkillSourceWarning[];
   readonly semanticProfile: SkillSourceSemanticProfile;
 }
-
-interface ParsedFrontMatter {
-  readonly frontMatter: SkillSourceFrontMatter;
-  readonly warnings: readonly SkillSourceWarning[];
-}
-
-const chatReasoningCapabilities = ["chat", "reasoning"] as const satisfies readonly ProviderCapability[];
 
 export async function resolveSkillSourceRoots(input: ResolveSkillSourceRootsInput = {}): Promise<SkillSourceScanRoot[]> {
   const home = input.homeDir ?? homedir();
@@ -190,7 +181,7 @@ export async function previewGstackSkillSourceSync(input: PreviewGstackSkillSour
   const includeIds = input.includeSkillIds ? new Set(input.includeSkillIds) : undefined;
   const excludeIds = new Set(input.excludeSkillIds ?? []);
   const skillsById = new Map(input.registrySkills.map((skill) => [skill.id, skill]));
-  const publishedSnapshots = (input.snapshots ?? []).filter((snapshot) => snapshot.reviewStatus === "published");
+  const publishedSnapshots = selectActiveSkillSourceSnapshots(input.snapshots ?? []);
   const snapshotsBySkillId = new Map(publishedSnapshots.map((snapshot) => [snapshot.skillId, snapshot]));
   const records: SkillSourceSyncPreviewRecord[] = [];
 
@@ -203,7 +194,7 @@ export async function previewGstackSkillSourceSync(input: PreviewGstackSkillSour
       const existingSkill = skillsById.get(skillId);
       const existingSnapshot = snapshotsBySkillId.get(skillId);
       const state = classifyDiscoveredSource(source, existingSkill, existingSnapshot);
-      const definitionPreview = existingSkill?.definition ?? normalizeDefinitionFromSource(skillId, source);
+      const definitionPreview = previewSkillSourceDefinition(skillId, source, existingSkill);
       const snapshotPreview = buildSnapshotPreview(skillId, source, state);
       const diff = existingSnapshot && snapshotPreview ? buildSourceSyncDiff(existingSnapshot, source, snapshotPreview) : [];
       const contextFindings = buildSkillSourceContextFindings({
@@ -239,6 +230,7 @@ export async function previewGstackSkillSourceSync(input: PreviewGstackSkillSour
         definitionPreview,
         snapshotPreview,
         existingSnapshotId: existingSnapshot?.id,
+        existingSnapshotChecksum: existingSnapshot?.sourceChecksum,
         diff,
         semanticProfile: source.semanticProfile,
         semanticDiff,
@@ -276,6 +268,7 @@ export async function previewGstackSkillSourceSync(input: PreviewGstackSkillSour
       referencedFiles: snapshot.referencedFiles,
       warnings: [...snapshot.warnings, warning],
       existingSnapshotId: snapshot.id,
+      existingSnapshotChecksum: snapshot.sourceChecksum,
       diff: [],
       semanticDiff: [],
       contextFindings: buildSkillSourceContextFindings({
@@ -389,83 +382,6 @@ async function readSkillSource(
     referencedFiles,
     warnings,
     semanticProfile,
-  };
-}
-
-function parseSkillFrontMatter(markdown: string): ParsedFrontMatter {
-  const { frontMatter: frontMatterText } = splitMarkdownFrontMatter(markdown);
-  if (!frontMatterText.trim()) {
-    return {
-      frontMatter: {},
-      warnings: [{
-        code: "missing_metadata",
-        severity: "warning",
-        message: "SKILL.md has no YAML front matter.",
-        location: "SKILL.md",
-      }],
-    };
-  }
-  const document = parseDocument(frontMatterText);
-  if (document.errors.length > 0) {
-    return {
-      frontMatter: {},
-      warnings: [{
-        code: "missing_metadata",
-        severity: "warning",
-        message: `SKILL.md front matter parse error: ${document.errors[0].message}`,
-        location: "SKILL.md",
-      }],
-    };
-  }
-  const raw = document.toJSON();
-  if (!isRecord(raw)) {
-    return {
-      frontMatter: {},
-      warnings: [{
-        code: "missing_metadata",
-        severity: "warning",
-        message: "SKILL.md front matter must be an object.",
-        location: "SKILL.md",
-      }],
-    };
-  }
-  const parsedFrontMatter = {
-    name: readOptionalString(raw.name),
-    description: readOptionalString(raw.description),
-  };
-  const warnings: SkillSourceWarning[] = [];
-  if (!parsedFrontMatter.name) {
-    warnings.push({
-      code: "missing_metadata",
-      severity: "warning",
-      message: "SKILL.md front matter is missing name.",
-      location: "SKILL.md:name",
-    });
-  }
-  if (!parsedFrontMatter.description) {
-    warnings.push({
-      code: "missing_metadata",
-      severity: "info",
-      message: "SKILL.md front matter is missing description.",
-      location: "SKILL.md:description",
-    });
-  }
-  return { frontMatter: parsedFrontMatter, warnings };
-}
-
-function splitMarkdownFrontMatter(markdown: string): { readonly frontMatter: string; readonly body: string } {
-  const normalized = markdown.replace(/\r\n/g, "\n");
-  if (!normalized.startsWith("---\n")) {
-    return { frontMatter: "", body: normalized };
-  }
-  const end = normalized.indexOf("\n---", 4);
-  if (end === -1) {
-    return { frontMatter: "", body: normalized };
-  }
-  const afterMarker = normalized.startsWith("\n", end + 4) ? end + 5 : end + 4;
-  return {
-    frontMatter: normalized.slice(4, end),
-    body: normalized.slice(afterMarker),
   };
 }
 
@@ -999,63 +915,6 @@ function resolveSkillIdForSource(source: DiscoveredSkillSource, skillsById: Read
   return rawCandidates[0] ?? normalizeGstackSkillId(source.skillDirectoryName);
 }
 
-function normalizeDefinitionFromSource(skillId: string, source: DiscoveredSkillSource): SkillDefinition {
-  const summary = source.frontMatter.description ?? source.agentMetadata?.shortDescription ?? `Source-backed skill imported from ${source.skillDirectoryName}.`;
-  return {
-    id: skillId,
-    name: source.frontMatter.name ?? source.agentMetadata?.displayName ?? titleizeSkillId(skillId),
-    summary: firstLine(summary),
-    roleAffinity: inferRoleAffinity(skillId, summary),
-    promptFragments: [summary],
-    requiredTools: inferRequiredTools(source),
-    requiredProviderCapabilities: chatReasoningCapabilities,
-    approvalProfile: source.warnings.some((warning) => warning.code === "destructive_command" || warning.code === "external_send_claim")
-      ? { mode: "strict", risk: "high", requiredForTools: ["bash", "edit", "write"], requiredForActions: ["external_send", "deploy"] }
-      : source.warnings.some((warning) => warning.code === "host_specific_tool" || warning.code === "unsupported_tool")
-        ? { mode: "standard", risk: "medium", requiredForTools: ["bash"] }
-        : { mode: "none" },
-    stateEffects: [],
-  };
-}
-
-function inferRoleAffinity(skillId: string, summary: string): readonly AiTeammateRoleKey[] {
-  const text = `${skillId} ${summary}`.toLowerCase();
-  if (text.includes("security") || text.includes("cso")) {
-    return ["security"];
-  }
-  if (text.includes("deploy") || text.includes("ship") || text.includes("release") || text.includes("land")) {
-    return ["release"];
-  }
-  if (text.includes("doc")) {
-    return ["docs"];
-  }
-  if (text.includes("design")) {
-    return ["designer"];
-  }
-  if (text.includes("qa") || text.includes("test")) {
-    return ["qa"];
-  }
-  if (text.includes("office") || text.includes("discover") || text.includes("plan") || text.includes("spec")) {
-    return ["product", "architect"];
-  }
-  if (text.includes("implement") || text.includes("build") || text.includes("code") || text.includes("debug") || text.includes("investigate")) {
-    return ["engineer"];
-  }
-  return ["custom"];
-}
-
-function inferRequiredTools(source: DiscoveredSkillSource): readonly RunTool[] {
-  const tools = new Set<RunTool>(readOnlyRunTools);
-  if (source.warnings.some((warning) => warning.code === "host_specific_tool" || warning.code === "destructive_command")) {
-    tools.add("bash");
-  }
-  if (source.markdown.includes("apply_patch") || /\b(edit|write)\b/i.test(source.markdown)) {
-    tools.add("edit");
-    tools.add("write");
-  }
-  return [...tools];
-}
-
 async function readGstackVersion(skillRootPath: string): Promise<string | undefined> {
   let current = resolve(skillRootPath);
   for (let index = 0; index < 6; index += 1) {
@@ -1168,10 +1027,6 @@ function normalizeRelativePath(path: string): string {
 function firstLine(value: string): string {
   const line = value.trim().split(/\r?\n/).find((item) => item.trim());
   return line?.trim() ?? "";
-}
-
-function titleizeSkillId(skillId: string): string {
-  return skillId.split("-").filter(Boolean).map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`).join(" ");
 }
 
 function readOptionalString(value: unknown): string | undefined {

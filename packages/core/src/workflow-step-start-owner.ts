@@ -136,14 +136,14 @@ export function workflowStepStartOwnerMatches(left: WorkflowStepStartOwnerV1 | u
 
 /** A malformed/missing owner never means preparing. Callers must explicitly block it. */
 export function classifyWorkflowStepStartOwner(store: WorkflowStepStartReadStore, step: ChannelWorkflowStep, now: string,
-  options: { readonly requireActiveLease?: boolean } = {},
+  options: { readonly requireActiveLease?: boolean; readonly allowWaitingForInput?: boolean } = {},
 ): { readonly status: "preparing" | "linked"; readonly owner: WorkflowStepStartOwnerV1 } | { readonly status: "invalid"; readonly code: string } {
   const owner = step.metadata?.startOwner;
   if (!isWorkflowStepStartOwnerV1(owner)) return { status: "invalid", code: "workflow_start_owner_missing" };
   const workflow = store.getChannelWorkflow(step.workflowId);
   const task = store.getTask(owner.taskId);
-  if (!workflow || !["running", "waiting_for_approval", "waiting_for_input", "blocked"].includes(workflow.status)
-    || !["claimed", "running", "waiting_for_approval", "waiting_for_input"].includes(step.status)
+  if (!workflow || !["running", "waiting_for_approval", "blocked", ...(options.allowWaitingForInput ? ["waiting_for_input"] : [])].includes(workflow.status)
+    || !["running", "waiting_for_approval", ...(options.allowWaitingForInput ? ["waiting_for_input"] : [])].includes(step.status)
     || step.taskId !== owner.taskId || !task || task.channelId !== step.channelId
     || task.assigneeTeammateId !== step.toParticipantId
     || workflowStepStartAuthorityBasis(store, step) !== owner.authorityBasis) return { status: "invalid", code: "workflow_start_owner_stale" };

@@ -12,6 +12,7 @@ import { syncLingThreadForTerminalRun } from "../dist/features/runs/threads.js";
 import { buildConversationContextProjection } from "../dist/features/channels/context-processing/conversation-context-projector.js";
 import { prepareChannelCreateBody } from "./conversation-model-test-fixture.mjs";
 import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
+import { ToolFreePiRunner } from "./support/tool-free-pi-runner.mjs";
 
 test("Ling thread kind runtime constants stay in sync across packages", () => {
   assert.deepEqual([...contractLingThreadKinds], [...coreLingThreadKinds]);
@@ -1715,32 +1716,16 @@ class SuccessfulRunner {
   }
 }
 
-class UsageRunner {
+class UsageRunner extends ToolFreePiRunner {
   constructor(usage) {
-    this.usage = usage;
+    super();
+    this.fixtureUsage = usage;
     this.calls = [];
   }
 
   async runTask(options) {
     this.calls.push(options);
-    options.onEvent?.({
-      type: "run_start",
-      taskId: options.task.id,
-      cwd: options.cwd,
-      provider: options.provider.provider,
-      model: options.provider.model,
-    });
-    options.onEvent?.({
-      type: "run_end",
-      taskId: options.task.id,
-      messageCount: 1,
-      usage: this.usage,
-    });
-    return {
-      taskId: options.task.id,
-      events: [],
-      messages: [{ role: "assistant", content: "done" }],
-    };
+    return super.runTask(options, () => "done");
   }
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useCallback, useLayoutEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { PendingAttachmentItem } from "../../shared/components/index.js";
 import type { ChannelAttachment, ChannelMention } from "../../types.js";
 import type { ActiveMentionPicker, ChannelComposerSendState } from "./ChannelComposer.js";
@@ -6,7 +6,7 @@ import type { PendingLinkPreviewItem } from "./useChannelComposerDraftController
 import type { ChannelThreadReplySnapshot } from "./useChannelThreadReplyController.js";
 
 interface ChannelComposerSnapshotControllerInput {
-  readonly selectedChannelId: string;
+  readonly ownerKey: string;
   readonly messageDraft: string;
   readonly setMessageDraft: Dispatch<SetStateAction<string>>;
   readonly pendingAttachments: readonly PendingAttachmentItem<ChannelAttachment>[];
@@ -45,12 +45,16 @@ export interface DetachedChannelSendSnapshot {
 }
 
 export interface ChannelComposerSnapshotController {
-  readonly rememberDetachedSendFailure: (
-    channelId: string,
-    snapshot: DetachedChannelSendSnapshot,
-    errorMessage: string,
-  ) => void;
-  readonly rememberDetachedSendSuccess: (channelId: string) => void;
+  readonly beginSend: (ownerKey: string, sendId: string) => void;
+  readonly isLatestSend: (ownerKey: string, sendId: string) => boolean;
+  readonly settleDetachedSend: (
+    ownerKey: string,
+    sendId: string,
+    outcome?: {
+      readonly restore?: DetachedChannelSendSnapshot;
+      readonly errorMessage?: string;
+    },
+  ) => boolean;
 }
 
 export function useChannelComposerSnapshotController({
@@ -61,7 +65,7 @@ export function useChannelComposerSnapshotController({
   pendingAttachments,
   pendingLinkPreviews,
   restoreThreadReplySnapshot,
-  selectedChannelId,
+  ownerKey,
   sendError,
   sendState,
   setMentionActiveIndex,
@@ -74,12 +78,13 @@ export function useChannelComposerSnapshotController({
   setSendState,
   threadReplySnapshot,
 }: ChannelComposerSnapshotControllerInput): ChannelComposerSnapshotController {
-  const previousChannelIdRef = useRef(selectedChannelId);
+  const previousOwnerKeyRef = useRef(ownerKey);
   const composerSnapshotsRef = useRef<Record<string, ChannelComposerSnapshot>>({});
+  const latestSendIdsRef = useRef(new Map<string, string>());
   const onChannelSwitchRef = useRef(onChannelSwitch);
   const latestSnapshotRef = useRef<ChannelComposerSnapshot | undefined>(undefined);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     onChannelSwitchRef.current = onChannelSwitch;
   }, [onChannelSwitch]);
 
@@ -115,29 +120,49 @@ export function useChannelComposerSnapshotController({
     },
   }), []);
 
-  const rememberDetachedSendFailure = useCallback((
-    channelId: string,
-    snapshot: DetachedChannelSendSnapshot,
-    errorMessage: string,
-  ): void => {
-    const current = composerSnapshotsRef.current[channelId] ?? emptyComposerSnapshot();
-    composerSnapshotsRef.current[channelId] = {
-      ...current,
-      ...snapshot,
-      sendState: "failed",
-      sendError: errorMessage,
-    };
-  }, [emptyComposerSnapshot]);
-
-  const rememberDetachedSendSuccess = useCallback((channelId: string): void => {
-    const current = composerSnapshotsRef.current[channelId];
-    if (!current) return;
-    composerSnapshotsRef.current[channelId] = {
-      ...current,
-      sendState: "idle",
-      sendError: "",
-    };
+  const beginSend = useCallback((ownerKey: string, sendId: string): void => {
+    latestSendIdsRef.current.set(ownerKey, sendId);
   }, []);
+
+  const isLatestSend = useCallback((ownerKey: string, sendId: string): boolean => (
+    latestSendIdsRef.current.get(ownerKey) === sendId
+  ), []);
+
+  const settleDetachedSend = useCallback((sendOwnerKey: string, sendId: string, outcome?: {
+    readonly restore?: DetachedChannelSendSnapshot;
+    readonly errorMessage?: string;
+  }): boolean => {
+    if (!isLatestSend(sendOwnerKey, sendId)) return false;
+    latestSendIdsRef.current.delete(sendOwnerKey);
+    const visible = previousOwnerKeyRef.current === sendOwnerKey;
+    const current = (visible ? latestSnapshotRef.current : composerSnapshotsRef.current[sendOwnerKey])
+      ?? emptyComposerSnapshot();
+    const restore = outcome?.restore;
+    const settled: ChannelComposerSnapshot = {
+      ...current,
+      messageDraft: current.messageDraft.trim() ? current.messageDraft : restore?.messageDraft ?? current.messageDraft,
+      messageMentions: current.messageMentions.length ? current.messageMentions : restore?.messageMentions ?? current.messageMentions,
+      pendingAttachments: current.pendingAttachments.length ? current.pendingAttachments : restore?.pendingAttachments ?? current.pendingAttachments,
+      pendingLinkPreviews: current.pendingLinkPreviews.length ? current.pendingLinkPreviews : restore?.pendingLinkPreviews ?? current.pendingLinkPreviews,
+      sendState: outcome?.errorMessage ? "failed" : "idle",
+      sendError: outcome?.errorMessage ?? "",
+    };
+    composerSnapshotsRef.current[sendOwnerKey] = settled;
+    // A -> B -> A may reopen the same owner while its old request is still pending.
+    if (visible) {
+      latestSnapshotRef.current = settled;
+      if (restore) {
+        setMessageDraft(current => current.trim() ? current : restore.messageDraft);
+        setMessageMentions(current => current.length ? current : restore.messageMentions);
+        setPendingAttachments(current => current.length ? current : restore.pendingAttachments);
+        setPendingLinkPreviews(current => current.length ? current : restore.pendingLinkPreviews);
+      }
+      setSendState(settled.sendState);
+      setSendError(settled.sendError);
+    }
+    return visible;
+  }, [emptyComposerSnapshot, isLatestSend, setMessageDraft, setMessageMentions,
+    setPendingAttachments, setPendingLinkPreviews, setSendError, setSendState]);
 
   const applyComposerSnapshot = useCallback((snapshot: ChannelComposerSnapshot): void => {
     setMessageDraft(snapshot.messageDraft);
@@ -163,27 +188,26 @@ export function useChannelComposerSnapshotController({
     setSendState,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     latestSnapshotRef.current = readCurrentComposerSnapshot();
   }, [readCurrentComposerSnapshot]);
 
-  useEffect(() => {
-    const previousChannelId = previousChannelIdRef.current;
-    previousChannelIdRef.current = selectedChannelId;
-    if (!previousChannelId || previousChannelId === selectedChannelId) {
+  useLayoutEffect(() => {
+    const previousOwnerKey = previousOwnerKeyRef.current;
+    previousOwnerKeyRef.current = ownerKey;
+    if (previousOwnerKey === ownerKey) {
       return;
     }
-    composerSnapshotsRef.current[previousChannelId] = latestSnapshotRef.current ?? readCurrentComposerSnapshot();
+    composerSnapshotsRef.current[previousOwnerKey] = latestSnapshotRef.current ?? readCurrentComposerSnapshot();
     applyComposerSnapshot(
-      selectedChannelId
-        ? composerSnapshotsRef.current[selectedChannelId] ?? emptyComposerSnapshot()
-        : emptyComposerSnapshot(),
+      composerSnapshotsRef.current[ownerKey] ?? emptyComposerSnapshot(),
     );
     onChannelSwitchRef.current();
-  }, [applyComposerSnapshot, emptyComposerSnapshot, readCurrentComposerSnapshot, selectedChannelId]);
+  }, [applyComposerSnapshot, emptyComposerSnapshot, readCurrentComposerSnapshot, ownerKey]);
 
   return {
-    rememberDetachedSendFailure,
-    rememberDetachedSendSuccess,
+    beginSend,
+    isLatestSend,
+    settleDetachedSend,
   };
 }

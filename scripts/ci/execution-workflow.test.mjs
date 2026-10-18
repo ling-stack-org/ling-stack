@@ -51,6 +51,8 @@ test("every expensive job requires complete execution and retains its scope sele
   const common = jobSource("common-fast");
   assert.match(common, /run: node --test scripts\/check-public-repo-safety\.test\.mjs scripts\/ci\/\*\.test\.mjs/u);
   assert.match(common, /name: Scan Git history for secrets\n        if: needs\.scope\.outputs\.execution-tier == 'complete' && needs\.scope\.outputs\.mode != 'docs'/u);
+  const dependencyPolicy = jobSource("dependency-policy");
+  assert.match(dependencyPolicy, /name: Check production dependency update policy\n        run: node --test scripts\/production-dependency-policy\.test\.mjs/u);
 });
 
 test("unrelated labels cannot cancel validation or publish the required context", () => {

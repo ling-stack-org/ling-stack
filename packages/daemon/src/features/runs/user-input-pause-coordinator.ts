@@ -127,7 +127,6 @@ export class UserInputPauseCoordinator {
     if (!persisted || persisted.requestId !== required.requestId || persisted.requestVersion !== required.requestVersion) {
       throw invalid("user_input_request_changed");
     }
-    if (timestamp(yielded.sdkStoppedAt) < timestamp(persisted.createdAt)) throw invalid("user_input_stop_time_invalid");
     try {
       const result = this.#store.commitUserInputYield({ threadId: persisted.source.threadId, requestId: required.requestId,
         expectedRequestVersion: required.requestVersion, sourceFence: this.#fence,

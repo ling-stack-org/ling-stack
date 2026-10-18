@@ -1,4 +1,5 @@
 import type {
+  ExecutionCancellationRequest,
   CreateLingThreadRequest,
   CreateRunInterventionRequest,
   LingThreadArchiveRequest,
@@ -43,6 +44,8 @@ import type {
   RunSession,
   ShellSnapshotListResponse,
   ShellSnapshotResponse,
+  UserInputAnswerSubmissionResponseV1,
+  UserInputAnswerSubmissionV1,
 } from "../types.js";
 import { daemonClient } from "./client.js";
 
@@ -65,6 +68,15 @@ export async function listExecutionActions(
   } = {},
 ): Promise<ExecutionActionListResponse> {
   return daemonClient.listExecutionActions(cwd, options);
+}
+
+export async function submitRunUserInputAnswer(
+  cwd: string,
+  threadId: string,
+  requestId: string,
+  input: UserInputAnswerSubmissionV1,
+): Promise<UserInputAnswerSubmissionResponseV1> {
+  return daemonClient.submitRunUserInputAnswer(cwd, threadId, requestId, input);
 }
 
 export async function listLingThreads(cwd: string, options: LingThreadListRequest = {}): Promise<LingThreadListResponse> {
@@ -289,8 +301,8 @@ export async function unpinLingThread(
   return daemonClient.unpinLingThread(cwd, threadId, input);
 }
 
-export async function listRunInterventions(cwd: string, runId: string, limit = 100): Promise<RunInterventionListResponse> {
-  return daemonClient.listRunInterventions(cwd, runId, limit);
+export async function listRunInterventions(cwd: string, runId: string, limit = 100, idempotencyKey?: string): Promise<RunInterventionListResponse> {
+  return daemonClient.listRunInterventions(cwd, runId, limit, idempotencyKey);
 }
 
 export async function createRunIntervention(
@@ -329,6 +341,6 @@ export async function getRunShellSnapshot(runId: string, snapshotId: string, cwd
   return daemonClient.getRunShellSnapshot(runId, snapshotId, cwd);
 }
 
-export async function cancelRun(cwd: string, runId: string): Promise<RunCancelResponse> {
-  return daemonClient.cancelRun(cwd, runId);
+export async function cancelRun(cwd: string, runId: string, input: ExecutionCancellationRequest = {}): Promise<RunCancelResponse> {
+  return daemonClient.cancelRun(cwd, runId, input);
 }

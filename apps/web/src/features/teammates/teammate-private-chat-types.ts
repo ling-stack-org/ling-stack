@@ -7,6 +7,7 @@ import type {
   UIEvent,
 } from "react";
 import type { ComposerInputPart, PendingAttachmentItem } from "../../shared/components/index.js";
+import type { ConversationTimelineItemLocator } from "../../shared/conversation/timeline/ConversationTimeline.js";
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import type {
   AiTeammate,
@@ -56,6 +57,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly normalizedMessageSearchQuery: string;
   readonly privateFeedRef: RefObject<HTMLDivElement | null>;
+  readonly privateFeedLocatorRef: RefObject<ConversationTimelineItemLocator | null>;
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly runs: readonly RunSession[];
@@ -132,6 +134,9 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly onRemoveComposerFileReference: (raw: string, occurrenceIndex: number) => void;
   readonly onRemovePendingLinkPreview: (previewId: string) => void;
   readonly onRemovePendingAttachment: (localId: string) => void | Promise<void>;
+  readonly onRetryPendingAttachment?: (localId: string) => void | Promise<void>;
+  readonly attachmentCleanupFailures?: readonly import("../../shared/components/composer-pending-assets.js").AttachmentCleanupFailure[];
+  readonly onRetryAttachmentCleanup?: (localId: string) => void | Promise<void>;
   readonly authorizationMode: AuthorizationMode;
   readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
   readonly workspaceAccessMode: WorkspaceAccessMode;

@@ -39,6 +39,7 @@ import {
 } from "../channels/schemas.js";
 
 export interface TeammateDirectMessageRequest {
+  readonly idempotencyKey?: string;
   readonly body: string;
   readonly attachmentIds: readonly string[];
   readonly linkPreviewIds: readonly string[];
@@ -239,6 +240,7 @@ export function parseTeammateDirectMessageRequest(value: unknown): TeammateDirec
   const body = readString(value, "body");
   const input: TeammateDirectMessageRequest = {
     body,
+    idempotencyKey: readOptionalString(value, "idempotencyKey"),
     attachmentIds: readOptionalStringArray(value, "attachmentIds") ?? [],
     linkPreviewIds: readOptionalStringArray(value, "linkPreviewIds") ?? [],
     fileRefs: readOptionalChannelMessageFileRefs(value, "fileRefs") ?? [],

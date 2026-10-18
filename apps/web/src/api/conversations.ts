@@ -8,6 +8,11 @@ import type {
   UserInputAnswerCommandV1,
 } from "../types.js";
 import { daemonClient } from "./client.js";
+import type { ConversationSubmissionQuery, ConversationSubmissionReceipt } from "../types.js";
+
+export function getConversationSubmission(cwd: string, query: ConversationSubmissionQuery): Promise<ConversationSubmissionReceipt> {
+  return daemonClient.getConversationSubmission(cwd, query);
+}
 import { fileToBase64 } from "./file-uploads.js";
 
 export async function getConversation(cwd: string, threadId: string): Promise<ConversationDetailResponse> {

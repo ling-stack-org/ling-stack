@@ -453,6 +453,9 @@ export class SqliteTeammateDirectStore {
       threadId: input.threadId,
       sourceMessageId: input.sourceMessageId,
       sourceWorkUnitId: input.sourceWorkUnitId,
+      sourceAttemptId: input.sourceAttemptId ?? (input.sourceWorkUnitId
+        ? this.context.database.prepare("SELECT active_attempt_id FROM work_units WHERE id=?").get(input.sourceWorkUnitId)?.active_attempt_id as string | undefined
+        : undefined),
       mode: input.mode,
       status: "queued",
       instruction: input.instruction,
@@ -471,6 +474,7 @@ export class SqliteTeammateDirectStore {
           thread_id,
           source_message_id,
           source_work_unit_id,
+          source_attempt_id,
           mode,
           status,
           instruction,
@@ -484,7 +488,7 @@ export class SqliteTeammateDirectStore {
           started_at,
           completed_at,
           failure_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         intervention.id,
@@ -493,6 +497,7 @@ export class SqliteTeammateDirectStore {
         intervention.threadId,
         intervention.sourceMessageId,
         intervention.sourceWorkUnitId ?? null,
+        intervention.sourceAttemptId ?? null,
         intervention.mode,
         intervention.status,
         intervention.instruction,
@@ -526,6 +531,10 @@ export class SqliteTeammateDirectStore {
       clauses.push("teammate_id = ?");
       params.push(options.teammateId);
     }
+    if (options.idempotencyKey !== undefined) {
+      clauses.push("idempotency_key = ?");
+      params.push(options.idempotencyKey);
+    }
     if (options.threadId) {
       clauses.push("thread_id = ?");
       params.push(options.threadId);
@@ -538,21 +547,27 @@ export class SqliteTeammateDirectStore {
       clauses.push("status = ?");
       params.push(options.status);
     }
+    if (options.statuses) {
+      if (!options.statuses.length) return [];
+      clauses.push(`status IN (${options.statuses.map(() => "?").join(",")})`);
+      params.push(...options.statuses);
+    }
     if (options.mode) {
       clauses.push("mode = ?");
       params.push(options.mode);
     }
+    if (options.hasContinuation) clauses.push("continuation_work_unit_id IS NOT NULL");
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
     params.push(limit);
     return this.context.database
-      .prepare(`${teammateDirectReplyInterventionSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at ASC, rowid ASC LIMIT ?`)
+      .prepare(`${teammateDirectReplyInterventionSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY ${options.newestFirst ? "started_at DESC, rowid DESC" : "created_at ASC, rowid ASC"} LIMIT ?`)
       .all(...params)
       .map((row) => mapTeammateDirectReplyIntervention(row as Record<string, SQLOutputValue>));
   }
 
   updateTeammateDirectReplyInterventionStatus(input: UpdateTeammateDirectReplyInterventionStatusInput): TeammateDirectReplyIntervention | undefined {
     const existing = this.getTeammateDirectReplyIntervention(input.interventionId);
-    if (!existing) {
+    if (!existing || (input.expectedStatuses && !input.expectedStatuses.includes(existing.status))) {
       return undefined;
     }
     const continuationMessageId = input.continuationMessageId === undefined ? existing.continuationMessageId ?? null : input.continuationMessageId;
@@ -560,7 +575,7 @@ export class SqliteTeammateDirectStore {
     const startedAt = input.startedAt === undefined ? existing.startedAt ?? null : input.startedAt;
     const completedAt = input.completedAt === undefined ? existing.completedAt ?? null : input.completedAt;
     const failureReason = input.failureReason === undefined ? existing.failureReason ?? null : input.failureReason;
-    this.context.database
+    const result = this.context.database
       .prepare(`
         UPDATE teammate_direct_reply_interventions
         SET status = ?,
@@ -570,7 +585,12 @@ export class SqliteTeammateDirectStore {
             started_at = ?,
             completed_at = ?,
             failure_reason = ?
-        WHERE id = ?
+        WHERE id = ? AND status = ?
+          AND (? <> 'starting_continuation' OR NOT EXISTS (
+            SELECT 1 FROM teammate_direct_reply_interventions AS other
+            WHERE other.thread_id=teammate_direct_reply_interventions.thread_id
+              AND other.id<>teammate_direct_reply_interventions.id AND other.status='starting_continuation'
+          ))
       `)
       .run(
         input.status,
@@ -581,8 +601,10 @@ export class SqliteTeammateDirectStore {
         completedAt,
         failureReason,
         input.interventionId,
+        existing.status,
+        input.status,
       );
-    return this.getTeammateDirectReplyIntervention(input.interventionId);
+    return Number(result.changes) === 1 ? this.getTeammateDirectReplyIntervention(input.interventionId) : undefined;
   }
 
   cancelTeammateDirectReplyIntervention(interventionId: string, now: string, reason?: string): TeammateDirectReplyIntervention | undefined {
@@ -590,16 +612,17 @@ export class SqliteTeammateDirectStore {
     if (!existing) {
       return undefined;
     }
-    if (existing.status === "started" || existing.status === "cancelled" || existing.status === "failed") {
+    if (existing.status === "starting_continuation" || existing.status === "started" || existing.status === "cancelled" || existing.status === "failed") {
       return existing;
     }
     return this.updateTeammateDirectReplyInterventionStatus({
       interventionId,
+      expectedStatuses: ["queued", "cancelling_source"],
       status: "cancelled",
       completedAt: now,
       failureReason: reason ?? "cancelled",
       now,
-    });
+    }) ?? this.getTeammateDirectReplyIntervention(interventionId);
   }
 
   createTeammatePrivateAttachment(input: CreateTeammatePrivateAttachmentInput): TeammatePrivateAttachment {

@@ -20,6 +20,7 @@ import type {
   TeammateDirectLinkPreviewMutationResponse,
   TeammateDirectMessageListResponse,
   TeammateDirectMessageMutationResponse,
+  TeammateDirectMessageSubmissionReceipt,
   TeammateDirectInterventionListResponse,
   TeammateDirectInterventionResponse,
   TeammateDirectReplyCancelResponse,
@@ -117,6 +118,11 @@ export async function createTeammatePersonaDraft(
   return daemonClient.createTeammatePersonaDraft(cwd, teammateId, input);
 }
 
+export async function getTeammateDirectMessageSubmission(cwd: string, teammateId: string,
+  idempotencyKey: string): Promise<TeammateDirectMessageSubmissionReceipt> {
+  return daemonClient.getTeammateDirectMessageSubmission(cwd, teammateId, idempotencyKey);
+}
+
 export async function getTeammateDirectThread(cwd: string, teammateId: string): Promise<TeammateDirectThreadResponse> {
   return daemonClient.getTeammateDirectThread(cwd, teammateId);
 }
@@ -177,8 +183,8 @@ export async function getTeammateDirectRuntime(cwd: string, teammateId: string):
   return daemonClient.getTeammateDirectRuntime(cwd, teammateId);
 }
 
-export async function listTeammateDirectInterventions(cwd: string, teammateId: string): Promise<TeammateDirectInterventionListResponse> {
-  return daemonClient.listTeammateDirectInterventions(cwd, teammateId);
+export async function listTeammateDirectInterventions(cwd: string, teammateId: string, idempotencyKey?: string): Promise<TeammateDirectInterventionListResponse> {
+  return daemonClient.listTeammateDirectInterventions(cwd, teammateId, idempotencyKey);
 }
 
 export async function createTeammateDirectIntervention(

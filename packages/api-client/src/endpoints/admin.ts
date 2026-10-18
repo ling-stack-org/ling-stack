@@ -1,4 +1,5 @@
 import type {
+  ApprovalDetailResponse,
   ApprovalListResponse,
   ApprovalCommandRuleListResponse,
   ApprovalCommandRuleMutationResponse,
@@ -290,6 +291,10 @@ export const adminEndpoints = {
         mediaJobId: options.mediaJobId,
         limit: options.limit,
       });
+    },
+
+  async getApproval(this: LingDaemonEndpointContext, cwd: string, approvalId: string): Promise<ApprovalDetailResponse> {
+      return this._get(`/approvals/${encodeURIComponent(approvalId)}`, { cwd });
     },
 
   async approveApproval(

@@ -393,6 +393,9 @@ export function hasCommittedRunCompactionReceipt(context: SqliteStoreContext, po
       if (event.type === "turn_end") continue;
       if (event.type === "artifact_created" && record(event.data.artifact)
         && event.data.artifact.id === checkpoint.contextSnapshotArtifactId) continue;
+      // Pi starts the next logical turn after installing an initial compaction view,
+      // before the next provider request has produced any observable progress.
+      if (installed && event.type === "turn_start" && event.data.attemptId === sourceFence.attemptId) continue;
       if (installed && recoveryTargetFence && ["run_start", "turn_start"].includes(event.type)) {
         recoveryBookkeeping.push(event); continue;
       }

@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -681,10 +682,10 @@ function relativeFrom(root, path) {
 async function findGitExecutable() {
   if (process.platform === "win32") {
     const result = await execFileAsync("where.exe", ["git.exe"]);
-    return result.stdout.split(/\r?\n/u).find(Boolean);
+    return realpath(result.stdout.split(/\r?\n/u).find(Boolean));
   }
   const result = await execFileAsync("/usr/bin/which", ["git"]);
-  return result.stdout.trim();
+  return realpath(result.stdout.trim());
 }
 
 async function sha256File(path) {

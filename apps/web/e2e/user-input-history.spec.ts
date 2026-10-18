@@ -122,3 +122,86 @@ for (const surface of ["normal", "private"] as const) {
     });
   }
 }
+
+test("pending answer form submits beside existing generated media without hiding the drawing result", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+    localStorage.setItem("ling-stack.themeSelection", JSON.stringify({ themeId: "ling-light", mode: "fixed" }));
+    localStorage.setItem("ling-stack.themeBootstrapSelection", JSON.stringify({ themeId: "ling-light", mode: "fixed" }));
+  });
+  const browserErrors: string[] = [];
+  page.on("console", message => { if (message.type() === "error") browserErrors.push(message.text()); });
+  page.on("pageerror", error => browserErrors.push(error.message));
+  const state = createBaseState({ approvalStatus: "expired" });
+  const title = installNormalWorkCellFixture(state);
+  const thread = state.threads.find(value => value.kind === "conversation")!;
+  const link = state.turnRunLinks.find(value => state.turns.some(turn => turn.id === value.turnId && turn.threadId === thread.id))!;
+  state.runs = state.runs.map(run => run.id === link.runId
+    ? { ...run, status: "yielded", endedAt: undefined, updatedAt: "2026-09-08T06:00:00.000Z" }
+    : run);
+  state.threads = state.threads.map(value => value.id === thread.id
+    ? { ...value, status: "waiting_for_input", activeRunId: link.runId, updatedAt: "2026-09-08T06:00:00.000Z" }
+    : value);
+  state.turns = state.turns.map(turn => turn.id === link.turnId
+    ? { ...turn, status: "waiting_for_input", completedAt: undefined, updatedAt: "2026-09-08T06:00:00.000Z" }
+    : turn);
+  state.terminalReports = [];
+  const sourceItemId = `conversation-user:${link.turnId}`;
+  const attemptId = `attempt_${link.runId}`;
+  state.executionActions = state.executionActions.map((action, index) => action.runId === link.runId ? {
+    ...action,
+    revision: action.revision ?? 1,
+    attemptId,
+    participantId: "ling_agent",
+    workflowStepId: undefined,
+    sourceEventSequence: (index + 1) * 2,
+  } : action);
+  const now = "2026-09-08T06:00:00.000Z";
+  const source = { workspaceId: thread.workspaceId, threadId: thread.id, turnId: link.turnId, runId: link.runId,
+    attemptId, participantId: "ling_agent", workUnitId: "input-unit", sourceItemId };
+  const request: UserInputTranscriptItemV1 = { availability: "available", itemId: "input-question-pending",
+    kind: "user_input_request", requestId: "input-request-pending", requestVersion: 1, source,
+    runEventPosition: { runId: link.runId, attemptId, afterEventSequence: 2, afterEventId: `event_${link.runId}_2` },
+    status: "pending", statusRevision: 1, waitMode: "required", questions: [{ questionId: "scope",
+      prompt: "Should the drawing workflow remain available?", required: true, allowFreeText: true,
+      options: [{ optionId: "keep", label: "Keep drawing available" }] }], createdAt: now, updatedAt: now };
+  state.userInputs = [request];
+  state.conversationItems ??= [];
+  state.conversationItems.push({ schemaVersion: 1, id: request.itemId, workspaceId: thread.workspaceId,
+    threadId: thread.id, turnId: link.turnId, sequence: 101, kind: request.kind, status: "committed",
+    actorType: "ling_agent", actorId: source.participantId, visibility: "thread_participants", revision: 1,
+    domainRefs: [], payload: { requestId: request.requestId, requestVersion: 1,
+      runEventPosition: request.runEventPosition }, createdAt: now, updatedAt: now, committedAt: now } as ConversationItemV1);
+  state.conversationGeneratedMedia = [{ mediaJobId: "media_existing_drawing", runId: link.runId,
+    operation: "image_generate", target: { kind: "provider", id: "provider:seedream", displayName: "Seedream Studio" },
+    prompt: "A precise product illustration", status: "running", artifacts: [], createdAt: now, updatedAt: now }];
+
+  await mockDaemon(page, state);
+  let submitted: unknown;
+  await page.route(`http://127.0.0.1:17891/threads/${encodeURIComponent(thread.id)}/user-input-requests/`
+    + `${encodeURIComponent(request.requestId)}/answers**`, async route => {
+    submitted = route.request().postDataJSON();
+    await route.fulfill({ status: 201, json: { requestId: request.requestId, requestVersion: 1,
+      answerId: "answer-ui", answerItemId: "answer-item-ui", deliveryId: "delivery-ui",
+      acceptedAt: now, replayed: false } });
+  });
+  await page.goto("/");
+  await page.getByRole("button").filter({ hasText: title }).last().click();
+
+  const questionRow = page.locator('[data-conversation-timeline-kind="userInputRequest"]');
+  const mediaBlock = page.getByLabel("Conversation page").getByLabel("Generated media");
+  await expect(questionRow).toHaveCount(1);
+  await expect(mediaBlock).toBeVisible();
+  await expect(mediaBlock).toContainText("Seedream Studio");
+  const keepDrawingRadio = questionRow.getByRole("radio", { name: "Keep drawing available", exact: true });
+  await questionRow.getByText("Keep drawing available", { exact: true }).click();
+  await expect(keepDrawingRadio).toBeChecked();
+  await questionRow.getByRole("button", { name: "Submit answer", exact: true }).click();
+  await expect(questionRow).toContainText("Answer saved");
+  await expect(questionRow).not.toContainText("Waiting for your answer");
+  await expect(mediaBlock).toBeVisible();
+  expect(submitted).toMatchObject({ requestId: request.requestId, expectedVersion: 1, expectedStatusRevision: 1,
+    answers: [{ questionId: "scope", kind: "option", optionId: "keep" }] });
+  await page.screenshot({ path: testInfo.outputPath("answer-form-with-generated-media.png"), fullPage: true });
+  expect(browserErrors).toEqual([]);
+});

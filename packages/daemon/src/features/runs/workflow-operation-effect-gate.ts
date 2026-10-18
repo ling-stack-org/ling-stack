@@ -48,6 +48,10 @@ export function workflowOperationAuthorityRejection(input: {
     return blocked("operation_binding_run_inactive", "Terminal or inactive Runs cannot dispatch another typed effect.");
   }
   const { request } = input;
+  // Structured questions are a control-plane pause, not a file or command
+  // effect. The dedicated user-input coordinator owns their validation,
+  // durability and resume authority.
+  if (request.toolName === "request_user_input") return undefined;
   if (!isAbsolute(context.run.cwd) || !isAbsolute(request.cwd) || resolve(request.cwd) !== resolve(context.run.cwd)
     || (isRecord(request.input) && request.input.cwd !== undefined
       && (typeof request.input.cwd !== "string" || resolve(request.input.cwd) !== resolve(context.run.cwd)))) {

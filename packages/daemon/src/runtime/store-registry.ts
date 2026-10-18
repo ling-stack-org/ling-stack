@@ -10,6 +10,7 @@ export interface RunStoreRegistryOptions {
   readonly beforeRecovery?: (cwd: string, store: RunStore) => void;
   readonly onStoreInitialized?: (cwd: string, store: RunStore) => void | Promise<void>;
   readonly trustedWorkspaceRoots?: readonly string[];
+  readonly recoverOnOpen?: boolean;
 }
 
 export class RunStoreRegistry {
@@ -38,9 +39,11 @@ export class RunStoreRegistry {
     const store = this.storeFactory(cwd);
     try {
       this.options.beforeRecovery?.(cwd, store);
-      const now = new Date().toISOString();
-      store.recoverStaleRuns(now);
-      store.recoverStaleChannelWorkflows(now);
+      if (this.options.recoverOnOpen !== false) {
+        const now = new Date().toISOString();
+        store.recoverStaleRuns(now);
+        store.recoverStaleChannelWorkflows(now);
+      }
       this.storesByCwd.set(cwd, store);
       void Promise.resolve(this.options.onStoreInitialized?.(cwd, store)).catch(() => undefined);
     } catch (error) {

@@ -51,6 +51,9 @@ export type TeammatePrivateChatComposerProps = Pick<TeammatePrivateChatSurfacePr
   | "onPromoteDirectGuidance"
   | "onRemoveComposerFileReference"
   | "onRemovePendingAttachment"
+  | "onRetryPendingAttachment"
+  | "attachmentCleanupFailures"
+  | "onRetryAttachmentCleanup"
   | "onRemovePendingLinkPreview"
   | "onUploadPrivateFiles"
   | "openDirectInterventions"
@@ -93,6 +96,9 @@ export function TeammatePrivateChatComposer({
   onPromoteDirectGuidance,
   onRemoveComposerFileReference,
   onRemovePendingAttachment,
+  onRetryPendingAttachment,
+  attachmentCleanupFailures = [],
+  onRetryAttachmentCleanup,
   onRemovePendingLinkPreview,
   onUploadPrivateFiles,
   openDirectInterventions,
@@ -135,8 +141,8 @@ export function TeammatePrivateChatComposer({
       ) : null}
       {directReplyActive || visibleDirectInterventions.length > 0 ? (
         <ConversationGuidanceStrip
-          title={directReplyActive ? t("Replying") : t("Private guidance")}
-          description={directReplyActive ? t("Stop the current reply or queue new guidance.") : t("Guidance is queued.")}
+          title={directGuidanceSubmitting === "stop" ? t("Stopping") : directReplyActive ? t("Replying") : t("Private guidance")}
+          description={directGuidanceSubmitting === "stop" ? undefined : directReplyActive ? t("Stop the current reply or queue new guidance.") : t("Guidance is queued.")}
           submitting={directGuidanceSubmitting}
           stopDisabled={!directReplyActive}
           items={visibleDirectInterventions.map((intervention) => {
@@ -188,7 +194,7 @@ export function TeammatePrivateChatComposer({
         onDragOver={onComposerDragOver}
         onDragLeave={onComposerDragLeave}
         onDrop={onComposerDrop}
-        previewNode={pendingAttachments.length > 0 || pendingDirectLinkPreviews.length > 0 || composerFileReferenceParts.length > 0 ? (
+        previewNode={pendingAttachments.length > 0 || attachmentCleanupFailures.length > 0 || pendingDirectLinkPreviews.length > 0 || composerFileReferenceParts.length > 0 ? (
           <ComposerPendingAssetStrip
             attachments={pendingAttachments}
             leadingItems={composerFileReferenceTokens.map(({ occurrenceIndex, part }, index) => (
@@ -207,6 +213,9 @@ export function TeammatePrivateChatComposer({
               detail: preview.normalizedUrl,
             }))}
             onRemoveAttachment={onRemovePendingAttachment}
+            onRetryAttachment={onRetryPendingAttachment}
+            cleanupFailures={attachmentCleanupFailures}
+            onRetryCleanup={onRetryAttachmentCleanup}
             onRemoveLink={onRemovePendingLinkPreview}
           />
         ) : null}
@@ -289,6 +298,7 @@ export function TeammatePrivateChatComposer({
             variant="primary"
             icon={SendIcon}
             label={sendLabel}
+            aria-label={sendLabel}
             loading={privateComposerSending}
             loadingLabel={privateComposerSendingLabel}
             onClick={controller.submitComposer}

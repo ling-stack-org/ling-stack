@@ -132,11 +132,11 @@ test("1280x800 Ling Dark gives Code and Mermaid CopyAction one Radix Tooltip and
 
   await test.step("Mermaid CopyAction uses the package Radix Tooltip", async () => {
     const mermaidCopy = mermaid.locator("button.message-code-copy");
-    await expect(mermaidCopy).toHaveAccessibleName("Copy Mermaid source");
+    await expect(mermaidCopy).toHaveAccessibleName("Copy code");
     await mermaid.hover();
-    await exerciseCopyAction(page, mermaidCopy, "Copy Mermaid source");
+    await exerciseCopyAction(page, mermaidCopy, "Copy code");
     await expect.poll(() => copiedText(page)).toContain("Package --> Boundary");
-    await expect(mermaid.getByRole("button", { name: "Copy Mermaid source" })).toBeVisible({ timeout: 3_000 });
+    await expect(mermaid.getByRole("button", { name: "Copy code" })).toBeVisible({ timeout: 3_000 });
   });
 
   await test.step("Code CopyAction uses the package Radix Tooltip", async () => {

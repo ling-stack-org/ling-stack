@@ -242,9 +242,9 @@ async function directAxes(f, endpoint, selection) {
   assert.ok(reply.linkedRunId);
   assert.equal(f.calls.length, 1, "a blocked reply must not satisfy the success case");
   if (endpoint === "sse") {
-    assert.deepEqual(events.map(event => event.event), ["ready", "run_linked", "delta", "done"]);
-    assert.equal(events[1].data.linkedRunId, reply.linkedRunId);
-    assert.equal(events[2].data.delta, REPLY);
+    assert.deepEqual(events.map(event => event.event), ["accepted", "ready", "run_linked", "delta", "done"]);
+    assert.equal(events[2].data.linkedRunId, reply.linkedRunId);
+    assert.equal(events[3].data.delta, REPLY);
   }
   const run = await persistedRun(f, reply.linkedRunId);
   assertAxes(run.requestSnapshot, selection);
@@ -360,7 +360,7 @@ async function fullAccessFence(f) {
       assert.equal(f.calls.length, 0, "a Full Access request without confirmation must not reach the Runner");
       assert.equal(facts(f).runs, before.runs);
       assert.equal(facts(f).workUnits, before.workUnits);
-      if (endpoint === "sse") assert.deepEqual(events.map(event => event.event), ["ready", "blocked"]);
+      if (endpoint === "sse") assert.deepEqual(events.map(event => event.event), ["accepted", "ready", "blocked"]);
     }
   }
 }

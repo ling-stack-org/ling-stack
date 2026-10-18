@@ -54,6 +54,7 @@ import { useNormalConversationOperationOwner } from "./useNormalConversationOper
 import { useChannelPlanHistory } from "./useChannelPlanHistory.js";
 import { useWorkspaceTerminalSession } from "./WorkspaceTerminalPanel.js";
 import { submitNormalConversationGuidance } from "./normal-conversation-guidance-controller.js";
+import { hasPendingNormalGuidance } from "./normal-conversation-guidance.js";
 import { createNormalConversationMessageEditController } from "./normal-conversation-message-edit-controller.js";
 import { useNormalConversationDropController } from "./useNormalConversationDropController.js";
 
@@ -147,7 +148,7 @@ export function ConversationHome({
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
   const permissionSelectionBoundThreadRef = useRef("");
   const sendBusy = sending || localSending || guidanceOperation.busy;
-  const composerBusy = sendBusy;
+  const composerBusy = sendBusy || !conversationIdentityController.ready;
   const activeReply = sendLifecycle.activeReplies[0] ?? (activeRun && activeReplyStatus(activeRun.status) ? {
     runId: activeRun.id,
     sourceRunId: activeRun.parentRunId ?? activeRun.id,
@@ -158,6 +159,7 @@ export function ConversationHome({
     createdAt: activeRun.createdAt,
     updatedAt: activeRun.updatedAt,
   } : undefined);
+  const guidancePending = hasPendingNormalGuidance(workspaceCwd, detailContext?.threadId);
   const attachmentController = useNormalConversationAttachmentController({
     composerBusy,
     ownerKey: conversationIdentityController.ownerKey,
@@ -168,8 +170,9 @@ export function ConversationHome({
     translate: t,
   });
   const { pendingAttachments, readyAttachmentIds } = attachmentController;
+  const recoveryDraftRef = useRef<{ threadId: string; draft: string; attachments: typeof pendingAttachments } | undefined>(undefined);
   const composerDropController = useNormalConversationDropController({
-    blocked: sendBusy,
+    blocked: composerBusy,
     resetKey: conversationIdentityController.ownerKey,
     onFiles: attachmentController.attachFiles,
   });
@@ -352,7 +355,14 @@ export function ConversationHome({
   );
 
   useEffect(() => {
-    setDraft(initialDraft);
+    const recovery = recoveryDraftRef.current;
+    if (recovery?.threadId === conversationIdentityController.identity) {
+      setDraft(recovery.draft);
+      attachmentController.restoreForIdentity(recovery.attachments, conversationIdentityController.capture());
+      recoveryDraftRef.current = undefined;
+    } else {
+      setDraft(initialDraft);
+    }
   }, [conversationIdentityController.ownerKey, initialDraft]);
 
   useEffect(() => {
@@ -421,18 +431,18 @@ export function ConversationHome({
 
   async function submitDraft(): Promise<void> {
     const trimmedDraft = draft.trim();
-    if (!trimmedDraft && readyAttachmentIds.length === 0 && composerFileRefs.length === 0) {
+    if (!guidancePending && !trimmedDraft && readyAttachmentIds.length === 0 && composerFileRefs.length === 0) {
       actionFeedback.report("validation", t("Type a message before sending."));
       return;
     }
-    if (pendingAttachments.some((item) => item.state === "uploading")) {
+    if (pendingAttachments.some((item) => item.state !== "ready")) {
       actionFeedback.report("validation", t("Wait for attachments to finish uploading."));
       return;
     }
     if (composerBusy) {
       return;
     }
-    if (activeReply) {
+    if (activeReply || hasPendingNormalGuidance(workspaceCwd, detailContext?.threadId)) {
       await submitRunGuidance(trimmedDraft);
       return;
     }
@@ -468,6 +478,8 @@ export function ConversationHome({
     const readyAttachmentIdsSnapshot = readyAttachmentIds;
     const commitGuard = conversationIdentityController.createCommitGuard();
     let sendBound = false;
+    let submissionUnknown = false;
+    let recoveryOnly = false;
     const onThreadBound = (threadId: string): void => {
       permissionSelectionBoundThreadRef.current = threadId;
       onFullAccessConversationBound?.(threadId);
@@ -528,11 +540,38 @@ export function ConversationHome({
         onMessageAccepted: () => {
           sendLifecycle.accept(sendOperation);
         },
+        onSubmissionUnknown: (onlyQueries) => {
+          submissionUnknown = true;
+          recoveryOnly = Boolean(onlyQueries);
+          if (shouldCommit()) actionFeedback.report("stream", t("Pending confirmation"));
+        },
+        onSubmissionRecovered: (threadId, originalBody) => {
+          if (!shouldCommit(threadId)) return;
+          recoveryOnly = true;
+          const retainedDraft = trimmedDraft === originalBody.trim() && !pendingAttachmentsSnapshot.length ? "" : trimmedDraft;
+          recoveryDraftRef.current = { threadId, draft: retainedDraft, attachments: pendingAttachmentsSnapshot };
+          setMessages(current => current.filter(item => item.id !== pendingUserMessage.id));
+          setDraft(retainedDraft);
+          attachmentController.restoreForIdentity(pendingAttachmentsSnapshot, operationIdentity);
+        },
         onReplyLinked: (target) => {
           sendLifecycle.accept(sendOperation);
           sendLifecycle.link(sendOperation, target);
         },
       });
+      if (submissionUnknown) {
+        sendLifecycle.defer(sendOperation);
+        if (recoveryOnly && shouldCommit()) {
+          setMessages(current => current.filter(item => item.id !== pendingUserMessage.id));
+          setDraft(trimmedDraft);
+          attachmentController.restoreForIdentity(pendingAttachmentsSnapshot, operationIdentity);
+        }
+        return;
+      }
+      if (recoveryOnly) {
+        sendLifecycle.defer(sendOperation);
+        return;
+      }
       if (sendBound) {
         attachmentController.markSendBound(pendingAttachmentsSnapshot);
       } else if (commitGuard()) {
@@ -557,29 +596,28 @@ export function ConversationHome({
   }
 
   async function submitRunGuidance(body: string): Promise<void> {
-    try {
-      await submitNormalConversationGuidance({
-        activeReply,
-        threadId: detailContext?.threadId,
-        workspaceCwd,
-        body,
-        fileRefs: composerFileRefs,
-        notReadyMessage: t("This conversation is not ready for another message yet."),
-        attachmentController,
-        identityController: conversationIdentityController,
-        operationOwner: guidanceOperation,
-        actionFeedback,
-        onAccepted: (message) => {
-          setMessages((current) => upsertConversationHomeMessage(current, message));
-          setDraft("");
-          setSlashPicker(undefined);
-          setSlashActiveIndex(0);
-        },
-        refresh: refreshConversationSurface,
-      });
-    } catch {
-      setDraft(body);
-    }
+    await submitNormalConversationGuidance({
+      activeReply,
+      threadId: detailContext?.threadId,
+      workspaceCwd,
+      body,
+      fileRefs: composerFileRefs,
+      notReadyMessage: t("This conversation is not ready for another message yet."),
+      attachmentController,
+      identityController: conversationIdentityController,
+      operationOwner: guidanceOperation,
+      actionFeedback,
+      onAccepted: (message) => {
+        setMessages((current) => upsertConversationHomeMessage(current, message));
+        setDraft(current => current.trim() === body ? "" : current);
+        setSlashPicker(undefined);
+        setSlashActiveIndex(0);
+      },
+      onRecovered: clearDraft => {
+        if (clearDraft) setDraft(current => current.trim() === body ? "" : current);
+      },
+      refresh: refreshConversationSurface,
+    });
   }
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
@@ -694,9 +732,11 @@ export function ConversationHome({
       selectedThinkingLevel={selectedThinkingLevel}
       selectedReasoningSummary={selectedReasoningSummary}
       sendBusy={sendBusy}
+      scopeReady={conversationIdentityController.ready}
+      recoveringSubmission={guidancePending}
       activeRun={Boolean(activeReply)}
       stopping={stopping}
-      canSend={(Boolean(activeReply) || activeModelReady) && Boolean(draft.trim() || readyAttachmentIds.length > 0 || composerFileRefs.length > 0)}
+      canSend={!pendingAttachments.some(item => item.state !== "ready") && (guidancePending || (Boolean(activeReply) || activeModelReady) && Boolean(draft.trim() || readyAttachmentIds.length > 0 || composerFileRefs.length > 0))}
       notice={conversationErrorMessage || actionFeedback.message}
       dragActive={composerDropController.active}
       onDraftChange={(value, caret) => {
@@ -714,6 +754,9 @@ export function ConversationHome({
       onDrop={composerDropController.onDrop}
       onOpenModelWorkbench={onOpenModelWorkbench}
       onRemoveAttachment={attachmentController.removeAttachment}
+      onRetryAttachment={attachmentController.retryAttachment}
+      attachmentCleanupFailures={attachmentController.cleanupFailures}
+      onRetryAttachmentCleanup={attachmentController.retryCleanup}
       onAuthorizationModeChange={setSelectedAuthorizationMode}
       onPermissionPresetChange={(preset) => {
         if (preset !== "full_access") {

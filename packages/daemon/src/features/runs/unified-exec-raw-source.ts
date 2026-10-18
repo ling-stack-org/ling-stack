@@ -43,7 +43,10 @@ function spawnOwnedRaw(token: object, expectedEntry: ProtectedHostActorEntryId):
     requireSource(file, "unified_exec_raw_argv_invalid");
     return spawn(file, args, options);
   }
-  return spawn(command.shell ?? "bash", ["-lc", command.command], options);
+  const shellCommand = launch.environment.LING_GSTACK_PATH_PREFIX
+    ? 'PATH="$LING_GSTACK_PATH_PREFIX:$PATH"; export PATH; ' + command.command
+    : command.command;
+  return spawn(command.shell ?? "bash", ["-lc", shellCommand], options);
 }
 export const UNIFIED_EXEC_RAW_ACTOR_ENTRY = defineProtectedHostActorEntry("unified_exec_raw",
   (token: object) => spawnOwnedRaw(token, "unified_exec_raw"));

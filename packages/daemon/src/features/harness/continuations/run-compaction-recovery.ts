@@ -18,7 +18,7 @@ export function assessRunCompactionRecovery(input: {
   readonly store: Pick<RunStore,
     | "readSnapshot" | "getLatestRunCompactionStart" | "getLatestRunCompactionCheckpoint" | "getRunCompactionCheckpoint"
     | "getArtifact" | "getLatestWorkspaceProvenanceWatermark" | "listHarnessToolExecutions"
-    | "listHostCommandWriteBlockers" | "listEvents">;
+    | "listHostCommandWriteBlockers" | "listHostOperationBlockers" | "listEvents">;
   readonly run: RunSession;
   readonly sourceAttempt: WorkUnitAttempt;
   readonly policySnapshot: EffectiveRunPolicySnapshot;
@@ -69,7 +69,10 @@ export function assessRunCompactionRecovery(input: {
       execution.state === "unknown_outcome"
       || execution.state === "executing"
       || execution.state === "committing_evidence")
-      || input.store.listHostCommandWriteBlockers(input.run.cwd).some((item) => item.runId === input.run.id);
+      || input.store.listHostCommandWriteBlockers(input.run.cwd).some((item) => item.runId === input.run.id)
+      || input.store.listHostOperationBlockers({ runId: input.run.id, workUnitId: input.sourceAttempt.workUnitId,
+        attemptId: input.sourceAttempt.id, runtimeInstanceId: input.sourceAttempt.runtimeInstanceId,
+        fencingToken: input.sourceAttempt.fencingToken }).length > 0;
     if (effectUnknown || checkpoint.unresolvedToolCallIds.length > 0
       || checkpoint.unresolvedApprovalIds.length > 0 || checkpoint.unresolvedQuestionIds.length > 0) {
       return blocked("checkpoint.effect_unknown", checkpoint.id);
@@ -101,9 +104,10 @@ function hasPostCheckpointProgress(
         continue;
       }
       if (!installed && (event.type === "assistant_text_delta" || event.type === "assistant_thinking_delta"
-        || event.type === "assistant_reasoning_summary" || event.type === "message_end"
-        || event.type === "turn_start" || event.type === "turn_end")) continue;
-      if (event.type === "turn_end") continue;
+        || event.type === "assistant_reasoning_summary" || event.type === "message_end")) continue;
+      // Pi opens the next turn before entering the provider admission hook.
+      // Empty lifecycle markers carry no output, execution or new model view.
+      if (event.type === "turn_start" || event.type === "turn_end") continue;
       if (event.type === "artifact_created" && isRecord(event.data.artifact)
         && event.data.artifact.id === checkpoint.contextSnapshotArtifactId) continue;
       return true;

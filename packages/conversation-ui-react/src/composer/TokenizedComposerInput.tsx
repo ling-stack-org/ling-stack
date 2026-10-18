@@ -22,6 +22,7 @@ export interface TokenizedComposerInputProps {
   readonly placeholder: string;
   readonly ariaLabel: string;
   readonly title?: string;
+  readonly readOnly?: boolean;
   readonly style?: CSSProperties;
   readonly executableSlashCommandId?: string;
   readonly executableSlashTargetLabel?: string;
@@ -42,6 +43,7 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
     onSelect,
     parts,
     placeholder,
+    readOnly = false,
     style,
     title,
     value,
@@ -95,6 +97,7 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
   }, [executableSlashCommandId, executableSlashTargetLabel, parts, value]);
 
   function emitChange(caret = readSelectionOffset(editorRef.current, "end", value.length)): void {
+    if (readOnly) return;
     const serializedValue = serializeComposerDom(editorRef.current);
     const normalized = normalizeAtomicTokenBoundaryValue(parts, serializedValue, caret);
     currentValueRef.current = normalized.value;
@@ -118,6 +121,7 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
   }
 
   function applyTextEdit(insertedText: string, start = readCurrentSelectionOffset("start"), end = readCurrentSelectionOffset("end")): void {
+    if (readOnly) return;
     const currentValue = currentValueRef.current;
     const rangeStart = Math.max(0, Math.min(start, end, currentValue.length));
     const rangeEnd = Math.max(rangeStart, Math.min(Math.max(start, end), currentValue.length));
@@ -141,6 +145,7 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
   }
 
   const handleBeforeInput: FormEventHandler<HTMLDivElement> = (event) => {
+    if (readOnly) { event.preventDefault(); return; }
     const nativeEvent = event.nativeEvent as InputEvent;
     if (nativeEvent.isComposing || composingRef.current || nativeEvent.inputType === "insertCompositionText") {
       return;
@@ -187,10 +192,11 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
     <div
       ref={editorRef}
       className={value ? "tokenized-composer-input has-value" : "tokenized-composer-input"}
-      contentEditable="plaintext-only"
+      contentEditable={readOnly ? false : "plaintext-only"}
       role="textbox"
       aria-label={ariaLabel}
       aria-multiline="true"
+      aria-readonly={readOnly || undefined}
       aria-placeholder={placeholder}
       data-placeholder={placeholder}
       data-value={value}
@@ -216,6 +222,7 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
         emitChange();
       }}
       onKeyDown={(event) => {
+        if (readOnly) return;
         onKeyDown(event);
         if (event.defaultPrevented) {
           return;
@@ -228,6 +235,7 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
       onKeyUp={() => onSelect(serializeComposerDom(editorRef.current), readSelectionOffset(editorRef.current, "end", value.length))}
       onMouseUp={() => onSelect(serializeComposerDom(editorRef.current), readSelectionOffset(editorRef.current, "end", value.length))}
       onPaste={(event) => {
+        if (readOnly) { event.preventDefault(); return; }
         const files = clipboardFiles(event.clipboardData);
         if (files.length > 0) {
           event.preventDefault();

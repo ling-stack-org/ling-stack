@@ -485,7 +485,7 @@ export function WorkspaceClientView({
   activeRunId,
   latestStatus,
   isRunning,
-  isCancellingRun,
+  cancellingRunIds,
   approvalPolicy,
   authorizationMode,
   permissionMode,
@@ -656,7 +656,7 @@ export function WorkspaceClientView({
   readonly activeRunId: string;
   readonly latestStatus: string;
   readonly isRunning: boolean;
-  readonly isCancellingRun: boolean;
+  readonly cancellingRunIds: readonly string[];
   readonly approvalPolicy: ApprovalPolicy | undefined;
   readonly authorizationMode: AuthorizationMode;
   readonly permissionMode: SessionPermissionMode;
@@ -784,8 +784,10 @@ export function WorkspaceClientView({
       .filter((entry) => entry.surface === "workflow")
       .map((entry) => [entry.identity, entry.message]),
   ), [channelFeedbackEntries]);
-  const selectedChannelIdRef = useRef(selectedChannelId);
-  selectedChannelIdRef.current = selectedChannelId;
+  const channelComposerOwnerKey = JSON.stringify([cwd.trim(), selectedChannelId, selectedChannelBranchRootThreadId ?? "root"]);
+  const channelComposerOwnerRef = useRef({ key: channelComposerOwnerKey });
+  if (channelComposerOwnerRef.current.key !== channelComposerOwnerKey) channelComposerOwnerRef.current = { key: channelComposerOwnerKey };
+  const channelComposerOwner = channelComposerOwnerRef.current;
   const selectedChannelWorkspace = selectedChannel ? resolveChannelWorkspaceBinding(selectedChannel, cwd) : undefined;
   const selectedChannelExecutionPath = selectedChannel && selectedChannelWorkspace ? resolveChannelWorkspaceExecutionPath(selectedChannelWorkspace, selectedChannel, cwd) : "";
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
@@ -1856,6 +1858,7 @@ export function WorkspaceClientView({
     teammateLabel: channelGuidanceTeammateLabel,
   });
   const activeConversationTarget = channelGuidanceTarget.activeTarget;
+  const isCancellingRun = Boolean(activeConversationTarget && cancellingRunIds.includes(activeConversationTarget.activeReply.runId));
   const guidanceModeActive = channelGuidanceTarget.guidanceModeActive;
   const activeConversationSourceRunId = channelGuidanceTarget.sourceRunId;
   const threadReplyController = useChannelThreadReplyController({
@@ -1869,7 +1872,7 @@ export function WorkspaceClientView({
     onSendMessage,
   });
   const channelComposerSnapshots = useChannelComposerSnapshotController({
-    selectedChannelId,
+    ownerKey: channelComposerOwnerKey,
     messageDraft,
     setMessageDraft,
     pendingAttachments,
@@ -2420,7 +2423,7 @@ export function WorkspaceClientView({
       activeTaskRunAction={activeTaskRunAction}
       taskActionPending={taskActionPending}
       activeLeaseCount={activeLeaseCount}
-      isCancellingRun={isCancellingRun}
+      isCancellingRun={Boolean(selectedTask.currentRunId && cancellingRunIds.includes(selectedTask.currentRunId))}
       approvalPolicy={approvalPolicy}
       permissionMode={permissionMode}
       permissionPreset={permissionPreset}
@@ -2521,9 +2524,14 @@ export function WorkspaceClientView({
     handleComposerDrop,
     attachFiles,
     removePendingAttachment,
+    retryPendingAttachment,
+    attachmentCleanupFailures,
+    retryAttachmentCleanup,
+    releaseAttachmentPreviews,
   } = useChannelComposerInputController({
     cwd,
     selectedChannelId,
+    composerOwnerKey: channelComposerOwnerKey,
     guidanceModeActive,
     messageDraft,
     setMessageDraft,
@@ -3065,6 +3073,7 @@ export function WorkspaceClientView({
       showComposerFeedback("info", t("Source unavailable"));
       return;
     }
+    messageFeedState.onLocateIntent();
     void locator.revealFirstMatchingItem([...targetFeedItemIds], revealConversationTarget)
       .then((result) => {
         if (result === "not_found") {
@@ -3098,6 +3107,7 @@ export function WorkspaceClientView({
     handleChannelComposerSubmit,
     dismissSendError,
   } = useChannelComposerActionsController({
+    composerOwnerKey: channelComposerOwnerKey,
     cwd,
     selectedChannelId,
     selectedChannelBranchRootThreadId,
@@ -3126,7 +3136,7 @@ export function WorkspaceClientView({
     setMentionActiveIndex,
     setPendingChannelSendPreview,
     autoPreviewUrlsRef,
-    attachmentPreviewUrlsRef,
+    releaseAttachmentPreviews,
     teammateOptions,
     slashCommands,
     channelAttachmentById,
@@ -3146,9 +3156,8 @@ export function WorkspaceClientView({
     onCompleteGoal: completeChannelGoal,
     onClearGoal: clearChannelGoal,
     onSendMessage,
-    isChannelCurrent: (channelId) => selectedChannelIdRef.current === channelId,
-    rememberDetachedSendFailure: channelComposerSnapshots.rememberDetachedSendFailure,
-    rememberDetachedSendSuccess: channelComposerSnapshots.rememberDetachedSendSuccess,
+    isComposerCurrent: (ownerKey) => channelComposerOwnerRef.current === channelComposerOwner && ownerKey === channelComposerOwner.key,
+    composerSnapshots: channelComposerSnapshots,
     onCancelActiveReply: (target) => {
       if (target.activeReply.workUnitId) {
         onCancelWorkUnit(target.activeReply.workUnitId);
@@ -3426,6 +3435,9 @@ export function WorkspaceClientView({
       onGoalClear={clearChannelGoalFromPanel}
       onToggleGoalExpanded={() => setChannelGoalExpanded((expanded) => !expanded)}
       onRemovePendingAttachment={removePendingAttachment}
+      onRetryPendingAttachment={retryPendingAttachment}
+      attachmentCleanupFailures={attachmentCleanupFailures}
+      onRetryAttachmentCleanup={retryAttachmentCleanup}
       onResizePointerCancel={handleComposerResizePointerEnd}
       onResizePointerDown={handleComposerResizePointerDown}
       onResizePointerMove={handleComposerResizePointerMove}

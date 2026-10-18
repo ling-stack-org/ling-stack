@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { ArrowDown, Copy, FileText, Pencil } from "lucide-react";
 import { attachmentContentUrl, submitUserInputAnswer } from "../../api.js";
 import { useI18n } from "../../i18n.js";
@@ -16,7 +16,6 @@ import {
   mountConversationTimeline,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
-  type ConversationTimelineItemLocator,
   InlineMessageEditor,
   MessageActionBar,
   MessageRow,
@@ -44,8 +43,7 @@ import {
 import { requestTimelineWorkspaceFileOpen } from "../../shared/conversation/timeline/workspace-file-capability.js";
 import { timelineMessageChromeOwnerIds } from "../../shared/conversation/timeline/timeline-message-chrome-owners.js";
 import { NormalConversationResponseActions } from "./NormalConversationResponseActions.js";
-
-const latestThresholdPx = 56;
+import { useConversationReadingViewport } from "../../shared/conversation/blocks/use-conversation-reading-viewport.js";
 
 export interface NormalConversationFeedProps {
   readonly messages: readonly ConversationHomeMessage[];
@@ -97,11 +95,6 @@ export function NormalConversationFeed({
   workspaceCwd,
 }: NormalConversationFeedProps): React.JSX.Element {
   const { t } = useI18n();
-  const feedRef = useRef<HTMLDivElement | null>(null);
-  const timelineItemLocatorRef = useRef<ConversationTimelineItemLocator | null>(null);
-  const tailReconciliationFrameRef = useRef<number | undefined>(undefined);
-  const stickToLatestRef = useRef(true);
-  const [latestButtonVisible, setLatestButtonVisible] = useState(false);
   const [feedbackById, setFeedbackById] = useState<Record<string, "up" | "down">>({});
   const composerGateApprovalByRunId = useMemo(
     () => buildComposerGateApprovalPresentationByRunId(composerGateApprovals, t),
@@ -175,75 +168,19 @@ export function NormalConversationFeed({
     [feedItems],
   );
 
-  const scrollToLatest = useCallback((behavior: ScrollBehavior = "smooth"): void => {
-    const feed = feedRef.current;
-    if (!feed) {
-      return;
-    }
-    feed.scrollTo({ top: feed.scrollHeight, behavior });
-    stickToLatestRef.current = true;
-    setLatestButtonVisible(false);
-  }, []);
-
-  const pauseTimelineAutoFollow = useCallback((): void => {
-    stickToLatestRef.current = false;
-  }, []);
-
-  const reconcileTail = useCallback((): void => {
-    const feed = feedRef.current;
-    if (!feed) {
-      return;
-    }
-    if (stickToLatestRef.current) {
-      feed.scrollTop = feed.scrollHeight;
-      setLatestButtonVisible(false);
-      return;
-    }
-    setLatestButtonVisible(distanceFromLatest(feed) > latestThresholdPx);
-  }, []);
-
-  const scheduleTailReconciliation = useCallback((): void => {
-    if (tailReconciliationFrameRef.current !== undefined) {
-      return;
-    }
-    tailReconciliationFrameRef.current = globalThis.requestAnimationFrame(() => {
-      tailReconciliationFrameRef.current = undefined;
-      reconcileTail();
-    });
-  }, [reconcileTail]);
-
-  useLayoutEffect(() => {
-    const feed = feedRef.current;
-    if (!feed) {
-      return;
-    }
-    scheduleTailReconciliation();
-  }, [itemIdentityKey, scheduleTailReconciliation]);
-
-  useLayoutEffect(() => {
-    const feed = feedRef.current;
-    if (!feed || typeof ResizeObserver === "undefined") {
-      return undefined;
-    }
-    const observer = new ResizeObserver(() => scheduleTailReconciliation());
-    Array.from(feed.children).forEach((child) => observer.observe(child));
-    return () => observer.disconnect();
-  }, [itemIdentityKey, scheduleTailReconciliation]);
-
-  useLayoutEffect(() => {
-    return () => {
-      if (tailReconciliationFrameRef.current !== undefined) {
-        globalThis.cancelAnimationFrame(tailReconciliationFrameRef.current);
-        tailReconciliationFrameRef.current = undefined;
-      }
-    };
-  }, []);
-
-  function handleFeedScroll(event: UIEvent<HTMLDivElement>): void {
-    const atLatest = distanceFromLatest(event.currentTarget) <= latestThresholdPx;
-    stickToLatestRef.current = atLatest;
-    setLatestButtonVisible(!atLatest);
-  }
+  const {
+    scrollRef: feedRef,
+    locatorRef: timelineItemLocatorRef,
+    latestButtonVisible,
+    scrollToLatest,
+    pauseAutoFollow: pauseTimelineAutoFollow,
+    onScroll: handleFeedScroll,
+  } = useConversationReadingViewport({
+    scopeKey: timelineSnapshot.scope.threadId,
+    revision: feedItems,
+    contentKey: itemIdentityKey,
+    searchActive,
+  });
 
   function toggleFeedback(messageId: string, feedback: "up" | "down"): void {
     setFeedbackById((current) => {
@@ -509,15 +446,6 @@ function groupGeneratedMediaByRunId(
   return grouped;
 }
 
-/**
- * Compatibility adapter for an optimistic normal feed that has not received
- * the canonical Continuity projection yet.  It preserves the feed order and
- * re-bases local positions so the surface still owns one deterministic
- * Timeline instead of one Timeline per message.
- */
-function distanceFromLatest(element: HTMLElement): number {
-  return Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight);
-}
 
 function formatBytes(value: number): string {
   if (value < 1024) {

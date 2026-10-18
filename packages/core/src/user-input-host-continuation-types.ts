@@ -1,5 +1,7 @@
 import type { RuntimeAttemptFenceV1 } from "./runtime-supervisor-types.js";
 import type { RetryUserInputDelivery } from "./user-input-delivery-types.js";
+import type { EffectiveRunPolicySnapshot } from "./session-permissions.js";
+import type { WorkflowStepStartOwnerV1 } from "./workflow-step-start-owner.js";
 
 export interface UserInputSnapshotRef { readonly id: string; readonly fingerprint: string }
 export type UserInputContinuationClaim = Pick<RetryUserInputDelivery, "threadId" | "deliveryId" | "expectedRevision" | "ownerId" | "claimToken">;
@@ -45,9 +47,13 @@ export interface UserInputContinuationExecutionPlan {
 export interface AdmitUserInputContinuation extends UserInputContinuationClaim {
   readonly executionRef: UserInputSnapshotRef;
   readonly runtimeInstanceId: string;
+  readonly effectivePolicySnapshot?: EffectiveRunPolicySnapshot;
+  readonly workflowStartOwner?: WorkflowStepStartOwnerV1;
 }
 /** Historical binding is immutable; a getter does not grant this fence current execution rights. */
 export interface UserInputContinuationBinding extends UserInputContinuationRecord {
+  readonly effectivePolicySnapshot?: EffectiveRunPolicySnapshot;
+  readonly workflowStartOwner?: WorkflowStepStartOwnerV1;
   readonly executionRef: UserInputSnapshotRef;
   readonly runId: string;
   readonly fence: RuntimeAttemptFenceV1;
@@ -73,4 +79,13 @@ export interface AcknowledgeUserInputContinuation {
   readonly bindingRef: UserInputSnapshotRef;
   readonly sourceFence: RuntimeAttemptFenceV1;
   readonly receipt: UserInputRunnerAcceptance;
+}
+/** Host-only settlement for an admitted continuation that never started. */
+export interface FailUserInputContinuationStartup {
+  readonly threadId: string;
+  readonly deliveryId: string;
+  readonly bindingRef: UserInputSnapshotRef;
+  readonly sourceFence: RuntimeAttemptFenceV1;
+  readonly errorCode: string;
+  readonly errorMessage: string;
 }

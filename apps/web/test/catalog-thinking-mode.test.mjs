@@ -40,7 +40,7 @@ async function sendThroughHome(level = "off", extra = {}) {
   const requests = [];
   h.render(h.module.ConversationHome, {
     initialDraft: "Do not run tools. Offline payload fixture only.", initialProviderPresetId: model.id, initialThinkingLevel: level,
-    conversationIdentity: "draft:catalog-fixture", defaultProviderLabel: model.label, defaultProviderPresetId: model.id,
+    conversationIdentity: "draft:11011", defaultProviderLabel: model.label, defaultProviderPresetId: model.id,
     modelOptions: [model], slashCommands: [], workspaceCwd: "/isolated/catalog-fixture", inlineApprovalViews: [],
     approvalErrors: {}, resolvingApprovals: new Set(), onSendConversation: async request => { requests.push(request); }, ...extra,
   });

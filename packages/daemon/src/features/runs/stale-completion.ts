@@ -67,7 +67,7 @@ export function auditIgnoredRunnerCompletion(input: {
   }
 
   try {
-    const envelope = input.store.appendIgnoredRunnerCompletionEvent(currentRun.id, payload);
+    const envelope = input.store.appendIgnoredRunnerCompletionEvent(currentRun.id, payload, reportedAt);
     if (payload.workUnitId) {
       appendRuntimeIgnoredCompletionEvent(input.store, payload.workUnitId, payload, envelope);
     }

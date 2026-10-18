@@ -4,10 +4,20 @@ import { HttpError } from "../../errors.js";
 import type { RunRequest } from "./schemas.js";
 
 /** Rebuild continuation ownership only from an already linked canonical Run. Never synthesize a missing marker. */
-export function captureWorkflowStartOwner(store: RunStore, request: RunRequest, continuationRunId?: string): WorkflowStepStartOwnerV1 | undefined {
+export function captureWorkflowStartOwner(
+  store: RunStore,
+  request: RunRequest,
+  continuationRunId?: string,
+  options: { readonly waitingForInput?: boolean } = {},
+): WorkflowStepStartOwnerV1 | undefined {
   if (!request.workflowStepId) return undefined;
   const step = store.getChannelWorkflowStep(request.workflowStepId);
-  const classified = step && classifyWorkflowStepStartOwner(store, step, new Date().toISOString());
+  const classified = step && classifyWorkflowStepStartOwner(
+    store,
+    step,
+    new Date().toISOString(),
+    options.waitingForInput ? { requireActiveLease: false, allowWaitingForInput: true } : {},
+  );
   const owner = request.workflowStartOwner ?? (continuationRunId && step?.runId === continuationRunId
     && classified?.status === "linked" ? classified.owner : undefined);
   if (!step || !owner || !classified || classified.status === "invalid"
@@ -49,6 +59,9 @@ export function assertWorkflowRunAdmission(store: RunStore, run: RunSession, own
 
 function rejectPreparedWorkflowRun(store: RunStore, runId: string, code: string): void {
   const run = store.getRun(runId);
+  // Answer admission owns atomic Task/wait/outbox cleanup. A partial generic
+  // terminal transition would destroy the exact unstarted fence it requires.
+  if (run?.continuationReason === "user_input_answer") return;
   const unit = run?.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;
   const attempt = unit?.activeAttemptId ? store.getWorkUnitAttempt(unit.activeAttemptId) : undefined;
   if (!run || !unit || !attempt || unit.linkedRunId !== run.id || !["queued", "running"].includes(run.status)) return;

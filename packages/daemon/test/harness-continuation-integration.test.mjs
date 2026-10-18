@@ -495,9 +495,10 @@ test("the task WorkUnit retry API dispatches one fenced runner_retry continuatio
   assert.equal(continuations.length, 1);
 });
 
-test("daemon recovery preparation failure atomically closes the activated continuation lineage", async (t) => {
+for (const surface of ["task", "conversation", "teammate_direct"]) {
+test(`daemon recovery preparation failure atomically closes the activated ${surface} lineage`, async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-harness-daemon-recovery-failure-"));
-  const seeded = await seedRecoverableHarnessRun(cwd, "preparation-failure");
+  const seeded = await seedRecoverableHarnessRun(cwd, "preparation-failure", false, surface);
   const stores = new RunStoreRegistry(createSqliteRunStore);
   const supervisor = new RuntimeSupervisor(resolveConfig({
     defaultWorkspaceCwd: cwd,
@@ -555,7 +556,7 @@ test("daemon recovery preparation failure atomically closes the activated contin
   assert.equal(errors.at(-1)?.message, "FAULT_AFTER_CONTINUATION_ACTIVATION");
   assert.equal(store.getRun(seeded.runId)?.status, "failed");
   assert.equal(store.getWorkUnit(seeded.workUnitId)?.status, "failed");
-  assert.equal(store.getTask(store.getRun(seeded.runId).taskId)?.status, "failed");
+  assert.equal(store.getTask(store.getRun(seeded.runId).taskId)?.status, surface === "task" ? "failed" : undefined);
   const attempts = store.listWorkUnitAttempts(seeded.workUnitId);
   assert.deepEqual(attempts.map((attempt) => attempt.status), ["lost", "failed"]);
   const continuation = store.findRunnerContinuationByIdempotencyKey(`${runnerContinuationIdempotencyKey({
@@ -571,6 +572,7 @@ test("daemon recovery preparation failure atomically closes the activated contin
   assert.equal(store.listRuntimeSemaphoreSlots({ status: "active", limit: 100 }).length, 0);
   assert.equal(calls.length, 0);
 });
+}
 
 test("daemon recovery duplicate scans dispatch one in-process continuation", async (t) => {
   const fixture = await createDaemonRecoveryCoordinatorFixture(t, "duplicate-scan");
@@ -684,8 +686,9 @@ test("daemon recovery policy drift fails before creating a replacement Attempt",
   assert.equal(calls.length, 0);
 });
 
-test("daemon recovery provider preflight failure settles the stale Run once with visible error", async (t) => {
-  const fixture = await createDaemonRecoveryCoordinatorFixture(t, "provider-blocked");
+for (const surface of ["task", "conversation", "teammate_direct"]) {
+test(`daemon recovery provider preflight failure settles the stale ${surface} Run once with visible error`, async (t) => {
+  const fixture = await createDaemonRecoveryCoordinatorFixture(t, "provider-blocked", false, surface);
   fixture.store.recordProviderCheckResult(fixture.seeded.presetId, {
     ok: false,
     code: "network_failed",
@@ -701,22 +704,23 @@ test("daemon recovery provider preflight failure settles the stale Run once with
       return { taskId: options.task.id, events: [], messages: [] };
     }
   }
+  const executeRecovery = (input) => {
+    dispatches.push(input);
+    return executeExistingRunContinuation(
+      input,
+      { ...createDetachedRunExecutionSink(), writeError: (_status, body) => errors.push(body) },
+      createRunnerRegistry([{ id: "pi", displayName: "Fixture", status: "enabled", adapter: new BlockedRecoveryRunner() }]),
+      fixture.stores,
+      fixture.activeRuns,
+      fixture.supervisor,
+      { resolve: () => ({ configured: false }) },
+      {},
+    );
+  };
   const coordinator = new DaemonRunnerRecoveryCoordinator({
     runtimeSupervisor: fixture.supervisor,
     activeRuns: fixture.activeRuns,
-    executeExistingRunContinuation: (input) => {
-      dispatches.push(input);
-      return executeExistingRunContinuation(
-        input,
-        { ...createDetachedRunExecutionSink(), writeError: (_status, body) => errors.push(body) },
-        createRunnerRegistry([{ id: "pi", displayName: "Fixture", status: "enabled", adapter: new BlockedRecoveryRunner() }]),
-        fixture.stores,
-        fixture.activeRuns,
-        fixture.supervisor,
-        { resolve: () => ({ configured: false }) },
-        {},
-      );
-    },
+    executeExistingRunContinuation: executeRecovery,
   });
   t.after(() => coordinator.beginShutdown());
   coordinator.registerStore(fixture.store);
@@ -728,7 +732,7 @@ test("daemon recovery provider preflight failure settles the stale Run once with
   assert.equal(run?.status, "failed");
   assert.match(run?.errorMessage ?? "", /network_failed/);
   assert.equal(fixture.store.getWorkUnit(fixture.seeded.workUnitId)?.status, "failed");
-  assert.equal(fixture.store.getTask(run.taskId)?.status, "failed");
+  assert.equal(fixture.store.getTask(run.taskId)?.status, surface === "task" ? "failed" : undefined);
   assert.equal(fixture.store.getLingThread(run.threadId)?.status, "failed");
   assert.deepEqual(fixture.store.listWorkUnitAttempts(fixture.seeded.workUnitId).map((attempt) => attempt.status), ["lost"]);
   const terminalEvents = fixture.store.listEvents(run.id, { limit: 100 }).filter((event) => event.type === "run_error");
@@ -747,6 +751,7 @@ test("daemon recovery provider preflight failure settles the stale Run once with
   assert.equal(dispatches.length, 1);
   assert.equal(runnerCalls.length, 0);
 });
+}
 
 test("stale recovery failure cannot close a Run after its replacement Attempt takes ownership", async (t) => {
   const fixture = await createDaemonRecoveryCoordinatorFixture(t, "provider-race");
@@ -962,7 +967,23 @@ test("A21 real non-compacted worker crash restores the exact committed SDK and w
   coordinator.registerStore(fixture.store);
   coordinator.start();
   await waitForCondition(() => errors.length > 0 || ["succeeded", "failed"].includes(fixture.store.getRun(fixture.source.runId)?.status),
-    "non-compacted checkpoint recovery did not finish", 10_000);
+    "non-compacted checkpoint recovery did not finish", 10_000).catch(error => {
+    const run = fixture.store.getRun(fixture.source.runId);
+    const workUnit = fixture.store.getWorkUnit(fixture.source.workUnitId);
+    assert.fail(JSON.stringify({ message: error.message, errors,
+      run: run && { status: run.status, errorCode: run.errorCode, errorMessage: run.errorMessage },
+      workUnit: workUnit && { status: workUnit.status, activeAttemptId: workUnit.activeAttemptId,
+        errorCode: workUnit.errorCode, errorMessage: workUnit.errorMessage },
+      attempts: fixture.store.listWorkUnitAttempts(fixture.source.workUnitId).map(attempt => ({ id: attempt.id,
+        status: attempt.status, errorCode: attempt.errorCode, errorMessage: attempt.errorMessage })),
+      leases: fixture.store.listResourceLeases({ workUnitId: fixture.source.workUnitId, limit: 100 }).map(lease => ({
+        status: lease.status, attemptId: lease.attemptId, releaseReason: lease.releaseReason })),
+      semaphores: fixture.store.listRuntimeSemaphoreSlots({ workUnitId: fixture.source.workUnitId, limit: 100 }).map(slot => ({
+        status: slot.status, attemptId: slot.attemptId, releaseReason: slot.releaseReason })),
+      completion: fixture.store.getHostAttemptCompletion({ runId: fixture.source.runId,
+        ...toRuntimeAttemptFence(fixture.store.getWorkUnitAttempt(fixture.source.attemptId)) }),
+      dispatches: runner.dispatches, requests: transport.requests.length }));
+  });
   const recoveredRun = fixture.store.getRun(fixture.source.runId);
   t.diagnostic(JSON.stringify({ recoveryStatus: recoveredRun.status, error: recoveredRun.errorMessage, errors,
     contextRoles: runner.contexts.map(context => context.map(message => message.role)),
@@ -1113,6 +1134,38 @@ test("A21 real-SDK fixture preserves falsy Host boundary rejections without issu
     assert.equal(runner.contexts.length, 0);
     assert.equal(transport.requests.length, 0);
   }
+});
+
+test("daemon restart cannot activate a compacted checkpoint without its sealed Host resource boundary", async (t) => {
+  const fixture = await createDaemonRecoveryCoordinatorFixture(t, "compaction-boundary-missing", "committed");
+  const boundary = fixture.store.listArtifacts(fixture.seeded.runId).find(artifact =>
+    artifact.contentType === "application/vnd.ling.host-compaction-resource-boundary+json");
+  assert.ok(boundary, "the positive fixture must first have a valid resource boundary");
+  fixture.store.database.prepare("DELETE FROM artifacts WHERE id=?").run(boundary.id);
+  const calls = [], errors = [];
+  class UnverifiedCompactionRunner extends PiRunnerAdapter {
+    async runTask(options) { calls.push(options); assert.fail("Missing Host evidence must not dispatch a replacement."); }
+  }
+  const coordinator = new DaemonRunnerRecoveryCoordinator({
+    runtimeSupervisor: fixture.supervisor,
+    activeRuns: fixture.activeRuns,
+    executeExistingRunContinuation: input => executeExistingRunContinuation(
+      input,
+      { ...createDetachedRunExecutionSink(), writeError: (_status, body) => errors.push(body) },
+      createRunnerRegistry([{ id: "pi", displayName: "Fixture", status: "enabled", adapter: new UnverifiedCompactionRunner() }]),
+      fixture.stores, fixture.activeRuns, fixture.supervisor,
+      { resolve: () => ({ configured: false }) }, {},
+    ),
+  });
+  t.after(() => coordinator.beginShutdown());
+  coordinator.registerStore(fixture.store);
+  coordinator.start();
+  await waitForCondition(() => errors.length > 0, "missing resource boundary was not rejected");
+  assert.equal(errors[0].error, "continuation.activation_checkpoint_unverified");
+  assert.equal(calls.length, 0);
+  assert.equal(fixture.store.listWorkUnitAttempts(fixture.seeded.workUnitId).length, 1);
+  assert.equal(fixture.store.getWorkUnit(fixture.seeded.workUnitId).status, "stale");
+  assert.equal(fixture.store.getRun(fixture.seeded.runId).status, "running");
 });
 
 test("daemon restart restores a completed compacted Run without replaying the prompt", async (t) => {
@@ -1596,6 +1649,41 @@ test("a failed consequential tool remains effect-unknown after compaction", asyn
   assert.equal(store.getLatestRunCompactionCheckpoint(run.id).id, previous.id);
 });
 
+for (const kind of ["mcp", "media", "host_capability", "plugin"]) {
+  test(`a sealed compaction view cannot hide a pending ${kind} Host operation`, async t => {
+    const { store, seeded } = await createActiveCompactionProgressFixture(t, `host-blocker-${kind}`);
+    const run = store.getRun(seeded.runId);
+    const attempt = store.getWorkUnitAttempt(seeded.attemptId);
+    const sourceFence = toRuntimeAttemptFence(attempt);
+    const policySnapshot = readStoredEffectivePolicySnapshot(run.requestSnapshot);
+    const checkpoint = store.getLatestRunCompactionCheckpoint(run.id);
+    const modelView = store.getArtifact(checkpoint.summaryArtifactId).sealedPayload.modelView;
+    const source = { runId: run.id, ...sourceFence };
+    assert.equal(assessRunCompactionRecovery({ store, run, sourceAttempt: attempt, policySnapshot }).kind, "verified");
+    const ticket = store.admitHostOperation({ source, operationId: `pending-${kind}`, kind, toolCallId: `call-${kind}` });
+    assert.equal(store.listHostOperationBlockers(source).length, 1);
+    const assess = () => assessRunCompactionRecovery({ store, run, sourceAttempt: attempt, policySnapshot });
+    const progress = () => commitRunCompactionProgress({ store, run, attempt, sourceFence, policySnapshot,
+      modelView, activeToolCallIds: [] });
+    assert.equal(assess().code, "checkpoint.effect_unknown");
+    assert.deepEqual(progress(), { kind: "blocked", code: "checkpoint.effect_unknown" });
+    assert.equal(store.getLatestRunCompactionCheckpoint(run.id).id, checkpoint.id);
+    store.settleHostOperation(ticket, { kind: "known_no_start", settledAt: new Date().toISOString() });
+    assert.equal(store.listHostOperationBlockers(source).length, 0);
+    assert.equal(assess().kind, "verified");
+    assert.equal(progress().kind, "not_needed");
+    const unknown = store.admitHostOperation({ source, operationId: `unknown-${kind}`, kind, toolCallId: `unknown-call-${kind}` });
+    store.settleHostOperation(unknown, { kind: "unknown_outcome", code: "controlled_transport_loss" });
+    assert.equal(assess().code, "checkpoint.effect_unknown");
+    assert.deepEqual(progress(), { kind: "blocked", code: "checkpoint.effect_unknown" });
+    const reopened = createSqliteRunStore(store.paths.cwd);
+    try {
+      assert.equal(assessRunCompactionRecovery({ store: reopened, run, sourceAttempt: attempt, policySnapshot }).code,
+        "checkpoint.effect_unknown");
+    } finally { reopened.close(); }
+  });
+}
+
 test("compaction recovery rejects drift, unknown effects and corrupted sealed evidence", async (t) => {
   const fixture = await createDaemonRecoveryCoordinatorFixture(t, "compaction-safety", "committed");
   const run = fixture.store.getRun(fixture.seeded.runId);
@@ -1850,6 +1938,19 @@ async function seedRecoverableHarnessRun(cwd, suffix, withCompaction = false, su
             content: [{ type: "text", text: "already completed before crash" }] }],
       });
       assert.equal(result.kind, "committed", JSON.stringify(result));
+    }
+    const checkpoint = store.getLatestRunCompactionCheckpoint(run.id);
+    if (checkpoint) {
+      // This fixture explicitly owns its synthetic source and completed read
+      // inventory. It cannot borrow drain/effect proof from the replacement.
+      const toolCallIds = withCompaction === "tool_result" ? ["before-restart"]
+        : withCompaction === "progress" ? ["already-done"] : [];
+      assert.equal(typeof store.sealHostCompactionResourceBoundary({
+        source: { runId: run.id, ...fence }, checkpointId: checkpoint.id,
+        inventory: { schemaVersion: 1, toolCallIds,
+          settledBuiltinReads: toolCallIds.map(toolCallId => ({ toolCallId, toolName: "read" })) },
+        now: new Date().toISOString(),
+      }), "string", "the explicitly constructed checkpoint must seal its own Host boundary before restart");
     }
   }
   store.transitionLingTurnStatus({ turnId: turn.id, expectedStatus: "open", event: "start", actor: "system", now });

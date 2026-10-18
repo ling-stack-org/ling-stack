@@ -6,6 +6,7 @@ export type ConversationSendPhase =
   | "message_accepted"
   | "reply_linked"
   | "settled"
+  | "confirmation_unknown"
   | "failed_before_accept";
 
 export interface ConversationSendOperation {
@@ -98,6 +99,15 @@ export class ConversationSendLifecycleStore {
     if (!this.#operation(operation)) return false;
     this.#operations.delete(operation.requestId);
     this.#terminalPhase = "settled";
+    this.#publish();
+    return true;
+  }
+
+  defer(operation: ConversationSendOperation): boolean {
+    const state = this.#operation(operation);
+    if (!state || state.phase !== "submitting") return false;
+    this.#operations.delete(operation.requestId);
+    this.#terminalPhase = "confirmation_unknown";
     this.#publish();
     return true;
   }

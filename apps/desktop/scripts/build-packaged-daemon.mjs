@@ -8,6 +8,7 @@ import { buildFreshRestrictedCommandHelperPublication, readOriginalRestrictedCom
 import { buildFreshPackagedOfficeNativePublication, readOriginalPackagedOfficeNativePublication,
   readActiveOriginalPackagedOfficeNativePublication } from "./build-packaged-office-native.mjs";
 import { createReviewedOfficeDaemonSourceInputs } from "./packaged-office-daemon-source-inputs.mjs";
+import { preparePackagedGstackBuild, packagedGstackIdentityPlugin } from "./packaged-gstack-resources.mjs";
 
 const desktopRoot = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
 const emittedCliPath = resolve(desktopRoot, "dist/daemon/cli.mjs");
@@ -174,6 +175,8 @@ async function bundleOriginalDaemon(prepareOriginals) {
 
 async function buildOriginalDaemonBundle(codesignReceipt, officeReceipt, sourceInputs) {
   requireBundle(Boolean(officeReceipt) === Boolean(sourceInputs));
+  const gstackIdentity = await preparePackagedGstackBuild({ required: Boolean(officeReceipt) });
+  const gstack = packagedGstackIdentityPlugin({ identity: gstackIdentity, sourceInputs });
   const definitions = [
     {
       name: "codesign", suffix: /packaged-codesign-published-review\.js$/,
@@ -200,7 +203,7 @@ async function buildOriginalDaemonBundle(codesignReceipt, officeReceipt, sourceI
     bundle: true, platform: "node", format: "esm", outfile: "dist/daemon/cli.mjs",
     ...(sourceInputs ? { write: false, metafile: true, tsconfigRaw: sourceInputs.tsconfigRaw, target: "es2022" } : {}),
     banner: { js: 'import { createRequire as __lingCreateRequire } from "node:module"; const require = __lingCreateRequire(import.meta.url);' },
-    plugins: [...definitions.map(item => ({
+    plugins: [gstack.plugin, ...definitions.map(item => ({
       name: `original-${item.name}-review-literal`,
       setup(plugin) {
         plugin.onLoad({ filter: sourceInputs ? new RegExp(item.suffix.source.replace("\\.js", "\\.ts")) : item.suffix }, args => {
@@ -216,6 +219,7 @@ async function buildOriginalDaemonBundle(codesignReceipt, officeReceipt, sourceI
     })), ...(sourceInputs ? [sourceInputs.plugin] : [])],
   });
   const originalOutput = officeReceipt ? pinOriginalBuildOutput(result) : undefined;
+  gstack.assertIncluded();
   sourceInputs?.assertOriginalInputs(result);
   for (const item of definitions) {
     if (item.receipt && item.visits !== 1) throw new Error(`packaged_${item.name}_review_module_not_bundled`);

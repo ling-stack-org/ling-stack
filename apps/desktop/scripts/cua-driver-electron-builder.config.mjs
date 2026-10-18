@@ -9,6 +9,7 @@ import {
   validateCuaDriverPackageAuthority,
 } from "../shared/cua-driver-package-authority-contract.mjs";
 import { resolveSigningProfile } from "./cua-driver-signing/signing-contract.mjs";
+import { preparePackagedGstackBuild, packagedGstackBuilderConfig } from "./packaged-gstack-resources.mjs";
 
 const packageJson = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),
@@ -26,6 +27,8 @@ if (localElectronDist) {
   }
 }
 const baseBuild = packageJson.build;
+await preparePackagedGstackBuild();
+const gstackBuild = packagedGstackBuilderConfig();
 const packageProvider = process.env.LING_CUA_DRIVER_PACKAGE_PROVIDER === "1";
 const packageResourcesRoot = process.env.LING_CUA_PACKAGE_RESOURCES_ROOT;
 const packageHostAuthorityJson = process.env.LING_CUA_PACKAGE_HOST_AUTHORITY_JSON;
@@ -58,6 +61,7 @@ export default {
   asar: true,
   extraMetadata: {
     ...(baseBuild.extraMetadata ?? {}),
+    ...(gstackBuild.extraMetadata ?? {}),
     [CUA_DRIVER_PACKAGE_AUTHORITY_METADATA_KEY]: packageHostAuthority,
   },
   electronFuses: {
@@ -73,12 +77,14 @@ export default {
   },
   extraResources: [
     ...(baseBuild.extraResources ?? []),
+    ...(gstackBuild.extraResources ?? []),
     ...(packageProvider
       ? [{ from: resolve(packageResourcesRoot), to: "providers/cua-driver" }]
       : []),
   ],
   mac: {
     ...baseBuild.mac,
+    ...(gstackBuild.mac ?? {}),
     ...(signingProfile.signingTier === "unsigned_dev"
       ? {
           identity: "-",

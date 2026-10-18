@@ -120,6 +120,35 @@ export class SqliteRunProgressCheckpointStore {
     return readSqliteWithinTransaction(this.context.database, () => this.validateActivation(input, continuationId, targetFence));
   }
 
+  /** Exact A-to-B capacity handoff after ordinary progress is reverified in the activation transaction. */
+  releaseSourceResourcesWithinTransaction(input: CommitExistingRunContinuationInput): boolean {
+    if (input.preparation.origin !== "daemon_recovery" || !input.recoveryProgressCheckpointGuard
+      || input.preparation.targetAttempt.runtimeInstanceId === input.preparation.sourceFence.runtimeInstanceId) return false;
+    const verified = readSqliteWithinTransaction(this.context.database, () => {
+      this.validateActivation(input);
+      const source = input.preparation.sourceFence;
+      const owner = this.context.database.prepare(`SELECT attempt.status AS attempt_status,unit.status AS unit_status,
+        unit.active_attempt_id,run.status AS run_status FROM work_unit_attempts AS attempt
+        JOIN work_units AS unit ON unit.id=attempt.work_unit_id
+        JOIN run_sessions AS run ON run.id=unit.linked_run_id
+        WHERE run.id=? AND run.work_unit_id=unit.id AND attempt.id=? AND attempt.work_unit_id=?
+          AND attempt.runtime_instance_id=? AND attempt.fencing_token=?`)
+        .get(input.preparation.runId, source.attemptId, source.workUnitId, source.runtimeInstanceId, source.fencingToken);
+      if (!owner || owner.attempt_status !== "lost" || owner.unit_status !== "stale"
+        || owner.active_attempt_id !== source.attemptId || !["queued", "running"].includes(String(owner.run_status))) return false;
+      return true;
+    });
+    if (!verified) return false;
+    const source = input.preparation.sourceFence;
+    for (const table of ["resource_leases", "runtime_semaphore_slots"] as const) {
+      this.context.database.prepare(`UPDATE ${table} SET status='released',released_at=?,release_reason=?
+        WHERE status='active' AND work_unit_id=? AND attempt_id=? AND runtime_instance_id=? AND fencing_token=?`)
+        .run(input.now, `run-progress-checkpoint-handoff:${input.preparation.idempotencyKey}`,
+          source.workUnitId, source.attemptId, source.runtimeInstanceId, source.fencingToken);
+    }
+    return true;
+  }
+
   private validateActivation(input: CommitExistingRunContinuationInput, continuationId?: string,
     targetFence?: RuntimeAttemptFenceV1): void {
     if (input.preparation.origin !== "daemon_recovery") return;

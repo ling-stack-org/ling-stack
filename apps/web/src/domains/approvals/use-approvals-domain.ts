@@ -1,17 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import {
   approveApproval,
   cancelExternalWorkAction,
   denyApproval,
   executeExternalWorkAction,
+  getApproval,
   getExternalWorkAction,
   listApprovals,
 } from "../../api.js";
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
 import type { DomainEvent } from "../../app/domain-events.js";
-import { mergeApprovalsForRun, upsertApproval } from "../../lib/approvals.js";
+import { useI18n } from "../../i18n.js";
+import { mergeApprovalSnapshot, mergeApprovalsForRun, upsertApproval } from "../../lib/approvals.js";
 import { removeRecordKey } from "../../lib/records.js";
+import { daemonBaseUrl } from "../../api/client.js";
+import { approvalDecisionLookupJournal } from "../../lib/approval-decision-lookup-journal.js";
 import type {
+  ApprovalMutationResponse,
   ApprovalRequest,
   ExternalWorkActionMutationResponse,
   ExternalWorkActionView,
@@ -51,11 +56,41 @@ export interface ApprovalsActions {
 
 export type ApprovalsController = DomainController<ApprovalsState, ApprovalsActions>;
 
+interface ApprovalObservation {
+  readonly visible: readonly ApprovalRequest[];
+  readonly resolved: ReadonlyMap<string, ApprovalRequest>;
+}
+
+type ApprovalObservationUpdate =
+  | { readonly type: "reset" }
+  | { readonly type: "snapshot"; readonly approvals: readonly ApprovalRequest[]; readonly runId?: string }
+  | { readonly type: "upsert"; readonly approval: ApprovalRequest };
+
+function emptyApprovalObservation(): ApprovalObservation {
+  return { visible: [], resolved: new Map() };
+}
+
+function observeApprovals(current: ApprovalObservation, update: ApprovalObservationUpdate): ApprovalObservation {
+  if (update.type === "reset") return emptyApprovalObservation();
+  // List omission may hide a row, but cannot undo an observed durable decision.
+  const incoming = mergeApprovalSnapshot([...current.visible, ...current.resolved.values()],
+    update.type === "snapshot" ? update.approvals : [update.approval]);
+  const visible = update.type === "upsert" ? upsertApproval(current.visible, incoming[0]!)
+    : update.runId ? mergeApprovalsForRun(current.visible, incoming, update.runId) : incoming;
+  const resolved = new Map(current.resolved);
+  for (const approval of incoming) {
+    if (approval.status !== "pending") resolved.set(approval.id, approval);
+  }
+  return { visible, resolved };
+}
+
 export function useApprovalsDomain(input: {
   readonly cwd: string;
   readonly emitEvent: (event: DomainEvent) => Promise<void>;
 }): ApprovalsController {
-  const [approvals, setApprovals] = useState<readonly ApprovalRequest[]>([]);
+  const { t } = useI18n();
+  const [approvalObservation, updateApprovals] = useReducer(observeApprovals, undefined, emptyApprovalObservation);
+  const approvals = approvalObservation.visible;
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [resolvingApprovals, setResolvingApprovals] = useState<Record<string, ApprovalResolution>>({});
@@ -64,24 +99,30 @@ export function useApprovalsDomain(input: {
   const [externalActionBusy, setExternalActionBusy] = useState<Record<string, ExternalActionBusyState>>({});
   const [error, setError] = useState<DomainError | undefined>();
   const resolvingApprovalsRef = useRef<Set<string>>(new Set());
+  const emitEventRef = useRef(input.emitEvent);
   const cwdRef = useRef(input.cwd.trim());
   const previousCwdRef = useRef(input.cwd.trim());
   const listRequestSequenceRef = useRef(0);
+  const listRequestCwdRef = useRef("");
+  const externalRequestSequenceRef = useRef(0);
   const externalDetailRequestRef = useRef(new Map<string, number>());
   const externalMutationRequestRef = useRef(new Map<string, number>());
   const externalActionBusyRef = useRef(new Map<string, ExternalActionOperation>());
 
   cwdRef.current = input.cwd.trim();
+  emitEventRef.current = input.emitEvent;
 
   useEffect(() => {
     const cwd = input.cwd.trim();
     if (previousCwdRef.current === cwd) return;
     previousCwdRef.current = cwd;
+    // Startup may request the selected workspace before its render commits.
+    if (listRequestCwdRef.current !== cwd) listRequestSequenceRef.current += 1;
     resolvingApprovalsRef.current.clear();
     externalActionBusyRef.current.clear();
     externalDetailRequestRef.current.clear();
     externalMutationRequestRef.current.clear();
-    setApprovals([]);
+    updateApprovals({ type: "reset" });
     setSelectedApprovalId("");
     setResolvingApprovals({});
     setApprovalErrors({});
@@ -94,8 +135,9 @@ export function useApprovalsDomain(input: {
   async function refreshApprovals(cwd = input.cwd, runId?: string): Promise<void> {
     const workspaceCwd = cwd.trim();
     const requestId = ++listRequestSequenceRef.current;
+    listRequestCwdRef.current = workspaceCwd;
     if (!workspaceCwd) {
-      setApprovals([]);
+      updateApprovals({ type: "reset" });
       return;
     }
 
@@ -104,7 +146,9 @@ export function useApprovalsDomain(input: {
       setError(undefined);
       const response = await listApprovals(workspaceCwd, { runId });
       if (!isCurrentListRequest(workspaceCwd, requestId) || response.cwd !== workspaceCwd) return;
-      setApprovals((current) => (runId ? mergeApprovalsForRun(current, response.approvals, runId) : response.approvals));
+      updateApprovals({ type: "snapshot", approvals: response.approvals, runId });
+      await recoverDecisionLookups(workspaceCwd, requestId);
+      if (!isCurrentListRequest(workspaceCwd, requestId)) return;
       await refreshExternalActionDetails(workspaceCwd, response.approvals);
     } catch (caught) {
       if (!isCurrentListRequest(workspaceCwd, requestId)) return;
@@ -112,6 +156,48 @@ export function useApprovalsDomain(input: {
       setError({ scope: "load", message });
     } finally {
       if (isCurrentListRequest(workspaceCwd, requestId)) setIsLoading(false);
+    }
+  }
+
+  async function recoverDecisionLookups(cwd: string, requestId: number): Promise<void> {
+    const scope = { daemonBaseUrl, cwd };
+    for (const lookup of approvalDecisionLookupJournal.read(scope)) {
+      if (!isCurrentListRequest(cwd, requestId)) return;
+      const mutationKey = `approval:${lookup.approvalId}`;
+      const originalMutation = externalMutationRequestRef.current.get(mutationKey);
+      if (resolvingApprovalsRef.current.has(lookup.approvalId)) continue;
+      let receipt: Awaited<ReturnType<typeof getApproval>>;
+      try {
+        receipt = await getApproval(cwd, lookup.approvalId);
+        if (!isCurrentListRequest(cwd, requestId)
+          || externalMutationRequestRef.current.get(mutationKey) !== originalMutation) continue;
+        if (receipt?.approval?.id !== lookup.approvalId
+          || !["pending", "approved", "denied", "expired", "cancelled"].includes(receipt.approval.status)) {
+          throw new Error(t("Pending confirmation"));
+        }
+      } catch {
+        if (!isCurrentListRequest(cwd, requestId)
+          || externalMutationRequestRef.current.get(mutationKey) !== originalMutation) continue;
+        setApprovalErrors(current => ({ ...current, [lookup.approvalId]: t("Pending confirmation") }));
+        continue;
+      }
+      try {
+        updateApprovals({ type: "upsert", approval: receipt.approval });
+        approvalDecisionLookupJournal.forget(scope, lookup);
+        if (receipt.approval.status === "pending") continue;
+        setApprovalErrors(current => removeRecordKey(current, lookup.approvalId));
+        await emitEventRef.current({ type: "approval.resolved", approvalId: lookup.approvalId,
+          runId: receipt.approval.runId, mediaJobId: receipt.approval.mediaJobId,
+          externalWorkActionId: receipt.approval.externalWorkActionId,
+          reconciliationPending: !Array.isArray(receipt.postCommitEffects)
+            || receipt.postCommitEffects.some(effect => !effect || effect.approvalId !== lookup.approvalId
+              || effect.status !== "completed"),
+        });
+      } catch (caught) {
+        if (!isCurrentListRequest(cwd, requestId)
+          || externalMutationRequestRef.current.get(mutationKey) !== originalMutation) continue;
+        setError({ scope: "load", message: caught instanceof Error ? caught.message : String(caught) });
+      }
     }
   }
 
@@ -126,7 +212,7 @@ export function useApprovalsDomain(input: {
 
     await Promise.all(
       [...new Set(actionIds)].map(async (actionId) => {
-        const requestId = (externalDetailRequestRef.current.get(actionId) ?? 0) + 1;
+        const requestId = ++externalRequestSequenceRef.current;
         externalDetailRequestRef.current.set(actionId, requestId);
         try {
           const response = await getExternalWorkAction(workspaceCwd, actionId);
@@ -209,30 +295,25 @@ export function useApprovalsDomain(input: {
     }
 
     const cwd = cwdRef.current;
-    const requestId = (externalMutationRequestRef.current.get(`approval:${approvalId}`) ?? 0) + 1;
+    const requestId = ++externalRequestSequenceRef.current;
+    const lookupScope = { daemonBaseUrl, cwd };
+    const lookup = { approvalId, token: crypto.randomUUID() };
     externalMutationRequestRef.current.set(`approval:${approvalId}`, requestId);
     resolvingApprovalsRef.current.add(approvalId);
     setResolvingApprovals((current) => ({ ...current, [approvalId]: decision }));
     setApprovalErrors((current) => removeRecordKey(current, approvalId));
-    try {
-      const approvalBeforeResolution = approvals.find((approval) => approval.id === approvalId);
-      const response =
-        decision !== "deny"
-          ? await approveApproval(cwd, approvalId, {
-              reason,
-              decisionKind: decision === "approve_command_rule" ? "approve_command_rule" : "approve_once",
-              proposedRuleFingerprint,
-            })
-          : await denyApproval(cwd, approvalId, reason);
+    const approvalBeforeResolution = approvals.find((approval) => approval.id === approvalId);
+    async function applyResolution(response: ApprovalMutationResponse): Promise<void> {
       if (!isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) return;
       setSelectedApprovalId(response.approval.id);
-      setApprovals((current) => upsertApproval(current, response.approval));
+      updateApprovals({ type: "upsert", approval: response.approval });
+      approvalDecisionLookupJournal.forget(lookupScope, lookup);
       setApprovalErrors((current) => removeRecordKey(current, approvalId));
       if (response.approval.externalWorkActionId) {
         await refreshExternalActionDetailsByIds(cwd, [response.approval.externalWorkActionId]);
       }
-
-      await input.emitEvent({
+      if (!isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) return;
+      await emitEventRef.current({
         type: "approval.resolved",
         approvalId,
         runId: response.approval.runId || approvalBeforeResolution?.runId,
@@ -240,23 +321,66 @@ export function useApprovalsDomain(input: {
         externalWorkActionId: response.approval.externalWorkActionId || approvalBeforeResolution?.externalWorkActionId,
         reconciliationPending: response.postCommit?.status === "deferred",
       });
+    }
+    try {
+      approvalDecisionLookupJournal.remember(lookupScope, lookup);
+      let response: ApprovalMutationResponse;
+      try {
+        response = decision !== "deny"
+          ? await approveApproval(cwd, approvalId, {
+              reason,
+              decisionKind: decision === "approve_command_rule" ? "approve_command_rule" : "approve_once",
+              proposedRuleFingerprint,
+            })
+          : await denyApproval(cwd, approvalId, reason);
+        if (response?.approval?.id !== approvalId
+          || !["approved", "denied", "expired", "cancelled"].includes(response.approval.status)) {
+          throw new Error(t("Pending confirmation"));
+        }
+      } catch (caught) {
+        if (!isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) return;
+        // A missing or unusable response is not a rejection. Read the original receipt, never replay it.
+        const receipt = await getApproval(cwd, approvalId).catch(() => undefined);
+        if (!isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) return;
+        if (receipt?.approval?.id === approvalId
+          && ["approved", "denied", "expired", "cancelled"].includes(receipt.approval.status)) {
+          response = {
+            approval: receipt.approval,
+            ...(!Array.isArray(receipt.postCommitEffects)
+              || receipt.postCommitEffects.some(effect => !effect || effect.approvalId !== approvalId || effect.status !== "completed") ? {
+              postCommit: { status: "deferred", code: "approval_postcommit_reconciliation_required" },
+            } as const : {}),
+          };
+        } else {
+          const message = caught instanceof Error ? caught.message : String(caught);
+          await refreshApprovals(cwd);
+          if (isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) {
+            setApprovalErrors((current) => ({ ...current, [approvalId]: message }));
+          }
+          return;
+        }
+      }
+      try {
+        await applyResolution(response);
+      } catch (caught) {
+        if (!isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) return;
+        const message = caught instanceof Error ? caught.message : String(caught);
+        setError({ scope: "load", message });
+      }
     } catch (caught) {
-      if (!isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) return;
-      const message = caught instanceof Error ? caught.message : String(caught);
-      await refreshApprovals(cwd);
       if (isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) {
-        setApprovalErrors((current) => ({ ...current, [approvalId]: message }));
+        setApprovalErrors(current => ({ ...current, [approvalId]: caught instanceof Error ? caught.message : String(caught) }));
       }
     } finally {
-      resolvingApprovalsRef.current.delete(approvalId);
-      if (cwdRef.current === cwd && externalMutationRequestRef.current.get(`approval:${approvalId}`) === requestId) {
+      if (isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) {
+        resolvingApprovalsRef.current.delete(approvalId);
         setResolvingApprovals((current) => removeRecordKey(current, approvalId));
       }
     }
   }
 
   function upsertApprovalAction(approval: ApprovalRequest): void {
-    setApprovals((current) => upsertApproval(current, approval));
+    updateApprovals({ type: "upsert", approval });
     setSelectedApprovalId(approval.id);
   }
 
@@ -266,7 +390,7 @@ export function useApprovalsDomain(input: {
     externalActionBusyRef.current.clear();
     externalDetailRequestRef.current.clear();
     externalMutationRequestRef.current.clear();
-    setApprovals([]);
+    updateApprovals({ type: "reset" });
     setSelectedApprovalId("");
     setResolvingApprovals({});
     setApprovalErrors({});
@@ -290,7 +414,7 @@ export function useApprovalsDomain(input: {
   }
 
   function beginExternalAction(actionId: string, operation: ExternalActionOperation): number {
-    const requestId = (externalMutationRequestRef.current.get(actionId) ?? 0) + 1;
+    const requestId = ++externalRequestSequenceRef.current;
     externalMutationRequestRef.current.set(actionId, requestId);
     externalActionBusyRef.current.set(actionId, operation);
     setExternalActionBusy((current) => ({ ...current, [actionId]: { busy: operation } }));

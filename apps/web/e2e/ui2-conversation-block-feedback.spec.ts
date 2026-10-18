@@ -6,6 +6,7 @@ import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, type MockState } from "./support/mock-state";
 import { captureP6FeedbackEvidence } from "./support/p6-feedback-evidence";
 import { openEngineeringChannel } from "./support/test-helpers";
+import { expandTimelineProcesses } from "./support/timeline-process";
 
 const hookPath = fileURLToPath(new URL(
   "../src/features/workspace/useChannelConversationBlockInteractions.tsx",
@@ -62,6 +63,7 @@ test("copy and expand success use deduped 3000ms global Toast without local stat
     "1440x960-ling-light-copy-success-toast.png",
   );
 
+  await expandTimelineProcesses(feed);
   const expandableBlock = feed.locator(
     "[data-conversation-focus-block='true'][data-feed-item-kind='commandBatch']",
   ).first();

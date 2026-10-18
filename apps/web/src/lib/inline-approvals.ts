@@ -1,4 +1,4 @@
-import { effectiveApprovalStatus } from "./approvals.js";
+import { effectiveApprovalStatus, mergeApprovalSnapshot } from "./approvals.js";
 import { readDataString } from "./data.js";
 import {
   resolveRuntimeApprovalOwner,
@@ -50,7 +50,7 @@ export function buildInlineApprovalViews(
   approvals: readonly ApprovalRequest[],
   context: InlineApprovalContext,
 ): InlineApprovalView[] {
-  const uniqueApprovals = [...new Map(approvals.map((approval) => [approval.id, approval])).values()];
+  const uniqueApprovals = mergeApprovalSnapshot([], approvals);
   return uniqueApprovals
     .filter((approval) => isInlineApprovalEligible(approval, context))
     .sort((left, right) => {

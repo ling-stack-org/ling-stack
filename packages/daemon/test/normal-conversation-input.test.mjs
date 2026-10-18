@@ -416,6 +416,29 @@ test("local-user continuation freezes a new source while retaining intervention 
   }
 });
 
+test("normal queued guidance binds its uploaded file to one continuation input and replays without new ownership", async t => {
+  const f = await fixture(t, { sourceRequest: { permissionPreset: "workspace_collaboration" } });
+  const attachment = persistConversationAttachment(f.store, { threadId: f.thread.id, fileName: "guidance.txt", contentType: "text/plain",
+    contentBase64: Buffer.from("Original guidance attachment bytes").toString("base64") });
+  const sourceRun = f.store.getRun("old-run");
+  const intervention = f.store.createRunIntervention({ sourceRunId: sourceRun.id, mode: "queue_followup", instruction: "Use the guidance file",
+    messagePayload: { body: "Use the guidance file", attachmentIds: [attachment.id], linkPreviewIds: [], fileRefs: [] },
+    requestedBy: "local-user", idempotencyKey: "guidance-with-file" }, new Date().toISOString());
+  const request = buildRunInterventionContinuationRequest(f.store, sourceRun, intervention);
+  assert.deepEqual(request.conversationAttachmentIds, [attachment.id]);
+  assert.equal(request.permissionPreset, "workspace_collaboration");
+  assert.equal(request.parentRunId, sourceRun.id);
+  assert.equal(request.interventionId, intervention.id);
+  assert.equal(f.store.getLingTurn(request.turnId).interventionId, intervention.id);
+  assert.deepEqual(f.store.getConversationItem(request.sourceMessageId).payload.attachmentIds, [attachment.id]);
+  assert.equal(f.store.getConversationAttachment(attachment.id).turnId, request.turnId);
+  f.store.close(); f.store = createSqliteRunStore(f.cwd);
+  const replay = buildRunInterventionContinuationRequest(f.store, f.store.getRun(sourceRun.id), f.store.getRunIntervention(intervention.id));
+  assert.equal(replay.sourceMessageId, request.sourceMessageId);
+  assert.equal(replay.turnId, request.turnId);
+  assert.deepEqual(replay.conversationAttachmentIds, [attachment.id]);
+});
+
 test("system continuation freezes its own source and request across no-Run reopen without relabelling the parent", async (t) => {
   const f = await fixture(t);
   await dispatch(f, {}, async (request) => { persist(f, request); return "current-run"; });

@@ -13,6 +13,38 @@ const stoppedAt = "2026-09-07T00:00:01.000Z";
 const committedAt = "2026-09-07T00:00:02.000Z";
 const code = (expected) => (error) => error.code === expected;
 
+test("verified yield atomically releases original resources while its enclosing Host observation is pending", async t => {
+  const f = await fixture(t);
+  let finish;
+  const observation = f.store.trackHostAttemptCompletion({ runId: f.run.id, ...f.fence },
+    new Promise(resolve => { finish = resolve; }));
+  assert.equal(f.store.releaseResourceLeasesForAttempt(f.fence, committedAt, "user_input_yielded"), 0,
+    "a release reason is not the verified yield transaction");
+  assert.equal(f.store.releaseRuntimeSemaphoreSlotsForAttempt(f.fence, committedAt, "user_input_yielded"), 0);
+  const result = f.yield();
+  assert.equal(result.wait.status, "waiting");
+  assert.equal(f.store.getWorkUnit(f.unit.id).activeAttemptId, undefined);
+  assert.equal(f.store.listResourceLeases({ status: "active" }).length, 0);
+  assert.equal(f.store.listRuntimeSemaphoreSlots({ status: "active" }).length, 0);
+  assert.equal(f.store.getHostAttemptCompletion({ runId: f.run.id, ...f.fence }).drainedAt, undefined);
+  finish();
+  await observation;
+});
+
+for (const table of ["resource_leases", "runtime_semaphore_slots"]) {
+  test(`verified yield rolls back both resource tables and checkpoint when ${table} cleanup fails`, async t => {
+    const f = await fixture(t);
+    f.db.exec(`CREATE TRIGGER reject_yield_cleanup BEFORE UPDATE ON ${table}
+      WHEN NEW.status='released' BEGIN SELECT RAISE(ABORT,'controlled yield cleanup failure'); END`);
+    assert.throws(() => f.yield(), /controlled yield cleanup failure/);
+    assert.equal(f.store.getUserInputWait(f.thread.id, f.request.requestId), undefined);
+    assert.equal(f.store.getRun(f.run.id).status, "running");
+    assert.equal(f.store.getWorkUnit(f.unit.id).activeAttemptId, f.attempt.id);
+    assert.equal(f.store.listResourceLeases({ status: "active" }).length, 1);
+    assert.equal(f.store.listRuntimeSemaphoreSlots({ status: "active" }).length, 1);
+  });
+}
+
 test("normal conversation with only a run task snapshot can atomically wait", async (t) => {
   const f = await fixture(t, "required", false, false);
   const result = f.yield();

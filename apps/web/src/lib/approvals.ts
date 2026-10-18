@@ -140,7 +140,24 @@ export function mergeApprovalsForRun(
   runId: string,
 ): readonly ApprovalRequest[] {
   const otherApprovals = current.filter((approval) => approval.runId !== runId);
-  return [...nextRunApprovals, ...otherApprovals];
+  return [...mergeApprovalSnapshot(current, nextRunApprovals), ...otherApprovals];
+}
+
+/** Snapshot arrival order cannot reopen an already resolved request. */
+export function mergeApprovalSnapshot(
+  current: readonly ApprovalRequest[],
+  incoming: readonly ApprovalRequest[],
+): readonly ApprovalRequest[] {
+  const known = new Map(current.map((approval) => [approval.id, approval]));
+  const next = new Map<string, ApprovalRequest>();
+  for (const approval of incoming) {
+    next.set(approval.id, reconcileApproval(next.get(approval.id) ?? known.get(approval.id), approval));
+  }
+  return [...next.values()];
+}
+
+function reconcileApproval(current: ApprovalRequest | undefined, incoming: ApprovalRequest): ApprovalRequest {
+  return current && current.status !== "pending" && incoming.status !== current.status ? current : incoming;
 }
 
 export function approvalOwnerLabels(approval: ApprovalRequest): readonly string[] {
@@ -193,7 +210,7 @@ export function upsertApproval(current: readonly ApprovalRequest[], next: Approv
   if (existingIndex === -1) {
     return [next, ...current];
   }
-  return current.map((approval, index) => (index === existingIndex ? next : approval));
+  return current.map((approval, index) => (index === existingIndex ? reconcileApproval(approval, next) : approval));
 }
 
 export function readApprovalActionType(data: unknown): ApprovalActionType {

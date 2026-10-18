@@ -2,7 +2,7 @@
 
 Status: active release boundary
 Owner: repository maintainers
-Last verified: 2026-10-09
+Last verified: 2026-10-13
 Document type: release policy
 Code and workflow anchors: `package.json`, `apps/desktop/package.json`,
 `.github/workflows/ci.yml`
@@ -33,6 +33,29 @@ changes may occur in minor releases but must still be documented.
 - Integration components such as the Chrome Extension and Browser Host have independent
   compatibility versions; do not rewrite them merely to match the product release tag.
 - Do not create or move a release tag to repair an artifact. Publish a new prerelease.
+
+### Release Naming
+
+- Use `v<product-version>` for every new release tag: `v0.1.2-alpha.2`,
+  `v0.1.2-beta.1`, `v0.1.2-rc.1`, or `v0.1.2` for a stable release only after its gates pass.
+- Use `Ling Stack <tag>` as the GitHub Release title, for example
+  `Ling Stack v0.1.2-alpha.2`.
+- Do not include a platform, `dev` prefix, date, commit hash, or packaging recipe
+  revision in the tag or title. Record the full source commit, date, development-only
+  status, verification scope, and known limits in the release notes and evidence.
+  A concise name does not change release readiness or signing requirements.
+- Publish one Release per product version. macOS and Windows assets belong to the
+  same Release and must use the same reviewed source commit. Identify platform and
+  architecture in asset filenames, not separate release tags. Different source
+  commits require different product versions and Releases.
+- Check the remote tag before publication. An existing published tag is never
+  overwritten or reused for a different commit. A new candidate advances the
+  prerelease number and matching product versions before building.
+- Keep historical platform/date/SHA tags and immutable release assets unchanged.
+  The published `desktop-dev-0.1.2-alpha.1-20261013-dfb61ac` tag is a legacy
+  naming exception; it must not be renamed or mapped onto the existing
+  `v0.1.2-alpha.1` source tag. Editing a display title does not rename its tag or
+  invalidate the original artifact checksums and evidence.
 
 ## Source Release Checklist
 

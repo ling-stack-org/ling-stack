@@ -1,5 +1,12 @@
 export type PendingAssetState = "uploading" | "ready" | "blocked" | "failed";
 
+export interface AttachmentCleanupFailure {
+  readonly localId: string;
+  readonly fileName: string;
+  readonly error: string;
+  readonly retrying: boolean;
+}
+
 export interface PendingAttachmentItem<TAttachment> {
   readonly localId: string;
   readonly fileName: string;
@@ -9,6 +16,10 @@ export interface PendingAttachmentItem<TAttachment> {
   readonly attachment?: TAttachment;
   readonly error?: string;
   readonly deleteOnRemove?: boolean;
+  readonly sourceFile?: File;
+  readonly uploadOwnerKey?: string;
+  readonly uploadAttemptId?: string;
+  readonly sourceCwd?: string;
 }
 
 export function createLocalComposerAssetId(prefix: string): string {

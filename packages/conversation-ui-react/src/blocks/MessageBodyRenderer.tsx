@@ -6,7 +6,7 @@ import {
   type MessageInlineToken,
 } from "@ling-stack/conversation-ui-core";
 import { CopyActionButton } from "../feedback/CopyActionButton.js";
-import { MathContent, MermaidBlock } from "./RichContent.js";
+import { MathContent, MermaidBlock, type MermaidBlockLabels } from "./RichContent.js";
 
 export interface MessageCodeBlockRenderInput {
   readonly code: string;
@@ -37,6 +37,7 @@ export interface MessageBodyRendererProps {
   readonly renderLocalFile?: (input: MessageLocalFileRenderInput) => ReactNode;
   readonly onOpenLocalFile?: (reference: LocalFileReference) => void;
   readonly onDeferredContentReady?: (target: Element | null) => void;
+  readonly mermaidLabels?: MermaidBlockLabels;
 }
 
 export function MessageBodyRenderer({
@@ -51,6 +52,7 @@ export function MessageBodyRenderer({
   renderLocalFile,
   onOpenLocalFile,
   onDeferredContentReady,
+  mermaidLabels,
 }: MessageBodyRendererProps): React.JSX.Element {
   const blocks = parseMessageBody(text, cwd, { allowMarkdown, streaming });
   const rootClassName = [
@@ -72,12 +74,14 @@ export function MessageBodyRenderer({
         renderLocalFile,
         streaming,
         onDeferredContentReady,
+        mermaidLabels,
       }))}
     </div>
   );
 }
 
 interface RenderBlockOptions {
+  readonly mermaidLabels?: MermaidBlockLabels;
   readonly onOpenLocalFile?: (reference: LocalFileReference) => void;
   readonly renderCodeBlock?: (input: MessageCodeBlockRenderInput) => ReactNode;
   readonly renderDiffBlock?: (input: MessageDiffBlockRenderInput) => ReactNode;
@@ -110,7 +114,7 @@ function renderBlock(
       );
     }
     case "mermaid":
-      return <MermaidBlock key={`mermaid-${index}`} source={block.source} complete={block.complete} onDeferredContentReady={options.onDeferredContentReady} />;
+      return <MermaidBlock key={`mermaid-${index}`} source={block.source} complete={block.complete} labels={options.mermaidLabels} onDeferredContentReady={options.onDeferredContentReady} />;
     case "math":
       return <MathContent key={`math-${index}`} source={block.source} display complete={block.complete} onDeferredContentReady={options.onDeferredContentReady} />;
     case "heading": {

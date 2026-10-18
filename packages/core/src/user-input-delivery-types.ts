@@ -28,6 +28,19 @@ export interface ListDueUserInputDeliveries {
   readonly after?: UserInputDeliveryCursor;
   readonly limit?: number;
 }
+export interface UserInputDeliveryDiscoveryCursor {
+  readonly createdAt: string;
+  readonly deliveryId: string;
+}
+export interface UserInputDispatchCandidate extends UserInputDeliveryDiscoveryCursor {
+  readonly threadId: string;
+}
+/** Workspace-wide discovery only. Claiming still performs the authoritative readiness checks. */
+export interface ListUserInputDispatchCandidates {
+  readonly createdAtOrBefore: string;
+  readonly after?: UserInputDeliveryDiscoveryCursor;
+  readonly limit?: number;
+}
 export interface ClaimUserInputDelivery {
   readonly threadId: string;
   readonly deliveryId: string;

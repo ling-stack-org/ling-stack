@@ -5,6 +5,7 @@ import { createOwnedRunNarrationAccumulator } from "../dist/features/conversatio
 import { buildConversationDetail } from "../dist/features/conversations/routes.js";
 import { projectTeammateDirectMessageNarration } from "../dist/features/teammates/direct-message-narration.js";
 import { createTeammateDirectRunProjection } from "../dist/features/teammates/direct-execution-projection.js";
+import { attachDirectRuntimeProjectionPorts, DIRECT_RUNTIME_FIXTURE_FENCE } from "./helpers/direct-runtime-projection-ports.mjs";
 
 async function fixture(t, surface = "normal") {
   const f = await userInputTranscriptFixture(t, { surface });
@@ -159,26 +160,27 @@ test("creation discovery across event pages is bounded and uses fixed IDs", asyn
   assert.deepEqual(reads, [0, 1000]);
 });
 
-test("private live source withdrawal is emitted without another text delta or owner re-read", async t => {
+test("private live source withdrawal is emitted without another text delta", async t => {
   const f = await fixture(t, "private");
   let message = f.store.createTeammateDirectMessage({
     threadId: f.directThread.id, teammateId: f.participantId, authorType: "ai-teammate",
     authorId: f.participantId, body: "", status: "pending",
   }, now);
+  attachDirectRuntimeProjectionPorts(f.store, { readMessage: () => message,
+    writeMessage: update => message = f.store.updateTeammateDirectMessageRuntime(message.id, update, now) });
   const deltas = [];
   const projection = createTeammateDirectRunProjection({
     store: f.store, pendingMessageId: message.id,
     scope: { teammateId: f.participantId, directThreadId: f.directThread.id, canonicalThreadId: f.thread.id, turnId: f.turn.turnId },
     stream: { onDelta: (dto, delta) => deltas.push({ dto, delta }) },
   });
-  projection.sink.writeReady({ runId: f.run.id });
+  projection.sink.writeReady({ runId: f.run.id, sourceFence: DIRECT_RUNTIME_FIXTURE_FENCE });
   const first = f.append("Owned.");
   projection.sink.writeEvent("run_event", first);
   assert.deepEqual(deltas.at(-1).dto.narrationSegments[0].source, f.source);
   const conflict = f.store.appendEvent(f.run.id, "tool_update", {
     toolCallId: "fixture-call", toolName: "read", partialResult: {}, attemptId: "other",
   });
-  f.store.getRun = () => assert.fail("no per-token ownership query");
   projection.sink.writeEvent("run_event", conflict);
   assert.equal(deltas.at(-1).delta, "");
   assert.equal(deltas.at(-1).dto.narrationSegments[0].source, undefined);

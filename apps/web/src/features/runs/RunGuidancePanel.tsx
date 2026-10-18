@@ -1,4 +1,4 @@
-import { Clock3, Pencil, Square, Workflow } from "lucide-react";
+import { Clock3, Pencil, RotateCcw, Square, Workflow } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { Button, EmptyState, InlineFeedback, InspectorSection, Textarea } from "../../shared/ui/index.js";
 import type { RunSession } from "../../types.js";
@@ -15,6 +15,9 @@ export function RunGuidancePanel({ cwd, run, canRedirect, onRefreshRun }: {
   const { state, actions } = useRunInterventionController({ cwd, run, onRefreshRun });
   const queueKey = "create:queue_followup";
   const redirectKey = "create:interrupt_redirect";
+  const creating = state.busyKeys.has(queueKey) || state.busyKeys.has(redirectKey);
+  const errorLabel = (error: string) => error === "missing_instruction" ? t("Please enter guidance first.")
+    : error === "Pending confirmation" ? t("Pending confirmation") : error;
   return (
     <InspectorSection
       className="run-guidance-panel"
@@ -33,8 +36,10 @@ export function RunGuidancePanel({ cwd, run, canRedirect, onRefreshRun }: {
           rows={3}
           value={state.instruction}
         />
-        {state.errors[queueKey] ? <InlineFeedback tone="danger">{state.errors[queueKey] === "missing_instruction" ? t("Please enter guidance first.") : state.errors[queueKey]}</InlineFeedback> : null}
-        {state.errors[redirectKey] ? <InlineFeedback tone="danger">{state.errors[redirectKey] === "missing_instruction" ? t("Please enter guidance first.") : state.errors[redirectKey]}</InlineFeedback> : null}
+        {state.errors[queueKey] ? <InlineFeedback tone="danger">{errorLabel(state.errors[queueKey])}</InlineFeedback> : null}
+        {state.errors[redirectKey] ? <InlineFeedback tone="danger">{errorLabel(state.errors[redirectKey])}</InlineFeedback> : null}
+        {state.pendingConfirmation && !state.errors[queueKey] && !state.errors[redirectKey]
+          ? <InlineFeedback tone="warning">{t("Pending confirmation")}</InlineFeedback> : null}
         {state.errors.refresh ? (
           <InlineFeedback tone={state.loadState === "stale" ? "warning" : "danger"}>
             <span>{state.errors.refresh}</span>
@@ -42,8 +47,8 @@ export function RunGuidancePanel({ cwd, run, canRedirect, onRefreshRun }: {
           </InlineFeedback>
         ) : null}
         <div className="runs-form-actions">
-          <Button disabled={!state.instruction.trim()} leadingIcon={<Clock3 size={14} />} loading={state.busyKeys.has(queueKey)} onClick={() => void actions.create("queue_followup")} size="sm">{t("Queue guidance")}</Button>
-          <Button aria-label={t("Redirect current run")} disabled={!state.instruction.trim() || !canRedirect} leadingIcon={<Square size={14} />} loading={state.busyKeys.has(redirectKey)} onClick={() => void actions.create("interrupt_redirect")} size="sm" variant="danger">{t("Stop and redirect")}</Button>
+          <Button disabled={!state.pendingConfirmation && !state.instruction.trim()} leadingIcon={state.pendingConfirmation ? <RotateCcw size={14} /> : <Clock3 size={14} />} loading={creating} onClick={() => void actions.create("queue_followup")} size="sm">{state.pendingConfirmation ? t("Retry") : t("Queue guidance")}</Button>
+          <Button aria-label={t("Redirect current run")} disabled={creating || state.pendingConfirmation || !state.instruction.trim() || !canRedirect} leadingIcon={<Square size={14} />} loading={state.busyKeys.has(redirectKey)} onClick={() => void actions.create("interrupt_redirect")} size="sm" variant="danger">{t("Stop and redirect")}</Button>
         </div>
         {state.interventions.length === 0 && state.loadState !== "loading" ? <EmptyState compact icon={<Clock3 />} title={t("No guidance queued for this run")} /> : (
           <div className="runs-section-list">

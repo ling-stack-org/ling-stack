@@ -9,6 +9,7 @@ import { CodeBlock } from "./CodeBlock.js";
 import { DiffCodeBlock } from "./DiffCodeBlock.js";
 import { LocalFileLink } from "./LocalFileLink.js";
 import { notifyConversationDeferredContentReady } from "./deferred-rendering.js";
+import { useI18n } from "../../../i18n.js";
 
 export interface MessageBodyRendererProps {
   readonly text: string;
@@ -26,10 +27,15 @@ export function MessageBodyRenderer({
   renderLocalFile,
   ...props
 }: MessageBodyRendererProps): React.JSX.Element {
+  const { t } = useI18n();
   const sharedProps: SharedMessageBodyRendererProps = {
     ...props,
     onOpenLocalFile,
     onDeferredContentReady: notifyConversationDeferredContentReady,
+    mermaidLabels: {
+      expand: t("Expand details"), copy: t("Copy code"), copied: t("Copied"), unavailable: t("Preview unavailable"),
+      title: t("Preview"), close: t("Close preview"),
+    },
     renderCodeBlock: ({ code, language, highlight }) => (
       <CodeBlock code={code} language={language} highlight={highlight} />
     ),

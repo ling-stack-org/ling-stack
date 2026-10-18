@@ -11,7 +11,7 @@ import type { SqliteStoreContext } from "./store-context.js";
 
 type WaitPorts = UserInputSourcePorts & Pick<RunStore,
   "getTask" | "transitionRunStatus" | "transitionTaskStatus" | "transitionWorkUnitStatus" | "updateWorkUnitAttemptStatus"
-  | "appendRuntimeEvent" | "releaseResourceLeasesForAttempt" | "releaseRuntimeSemaphoreSlotsForAttempt"
+  | "appendRuntimeEvent"
   | "transitionChannelWorkflowStepStatus" | "getChannelWorkflow" | "updateLingThread" | "reconcileLingTurnStatus">;
 
 /** Owns the atomic physical-close/logical-wait transaction. Never starts or stops a process. */
@@ -110,9 +110,9 @@ export class SqliteUserInputWaitStore {
       if (!this.ports.updateWorkUnitAttemptStatus({ ...source.fence, status: "yielded", endedAt: input.quiescence.stoppedAt, now })) {
         throw new UserInputStoreError("source_conflict");
       }
-      // Release while the old fence is still current; the same transaction then clears it.
-      this.ports.releaseResourceLeasesForAttempt(source.fence, now, "user_input_yielded");
-      this.ports.releaseRuntimeSemaphoreSlotsForAttempt(source.fence, now, "user_input_yielded");
+      // This transaction already verified physical quiescence. Its enclosing
+      // Host observer may still be pending until the yield callback returns.
+      this.releaseVerifiedYieldResources(source.fence, now);
       const cleared = database.prepare(`UPDATE work_units SET active_attempt_id=NULL WHERE id=?
         AND active_attempt_id=? AND status='waiting_for_input'`).run(source.fence.workUnitId, source.fence.attemptId);
       if (Number(cleared.changes) !== 1) throw new UserInputStoreError("source_conflict");
@@ -144,6 +144,18 @@ export class SqliteUserInputWaitStore {
   private readRow(threadId: string, requestId: string): UserInputRow | undefined {
     return this.context.database.prepare("SELECT * FROM user_input_requests WHERE workspace_id=? AND thread_id=? AND request_id=?")
       .get(DEFAULT_WORKSPACE_ID, threadId, requestId) as UserInputRow | undefined;
+  }
+
+  private releaseVerifiedYieldResources(fence: UserInputYieldCheckpoint["source"]["fence"], now: string): void {
+    for (const table of ["resource_leases", "runtime_semaphore_slots"]) {
+      this.context.database.prepare(`UPDATE ${table} SET status='released', released_at=?, release_reason='user_input_yielded'
+        WHERE work_unit_id=? AND attempt_id=? AND runtime_instance_id=? AND fencing_token=? AND status='active'
+          AND EXISTS (SELECT 1 FROM work_unit_attempts AS attempt JOIN work_units AS unit ON unit.id=attempt.work_unit_id
+            WHERE attempt.id=${table}.attempt_id AND attempt.work_unit_id=${table}.work_unit_id
+              AND attempt.runtime_instance_id=${table}.runtime_instance_id AND attempt.fencing_token=${table}.fencing_token
+              AND unit.active_attempt_id=attempt.id AND attempt.status='yielded' AND unit.status='waiting_for_input')`)
+        .run(now, fence.workUnitId, fence.attemptId, fence.runtimeInstanceId, fence.fencingToken);
+    }
   }
 }
 

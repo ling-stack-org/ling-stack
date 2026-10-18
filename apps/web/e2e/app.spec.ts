@@ -1,5 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { timelineBatchGroup } from "./support/timeline-batch-group";
+import { timelineResponseFooter } from "./support/timeline-response-footer";
+import { installEarlyMeasurementScroll } from "./support/early-measurement-scroll";
 import { mockDaemon, type MockExecutionAction } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -437,7 +439,7 @@ test("recent conversations only show records created from the conversation home"
   await expect(conversationPage.locator(".normal-conversation-message-row.ai-teammate")).toHaveCount(1);
   const assistantRow = conversationPage.locator(".normal-conversation-message-row.ai-teammate").first();
   await expect(assistantRow.locator(".conversation-work-cell")).toHaveCount(0);
-  const assistantActions = assistantRow.locator(".normal-conversation-message-actions.message-action-bar");
+  const assistantActions = (await timelineResponseFooter(assistantRow)).locator(".normal-conversation-message-actions.message-action-bar");
   await expect(assistantActions).toHaveCount(1);
   await expect(assistantActions.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
   await expect(assistantActions.getByRole("button", { name: "Like response", exact: true })).toHaveCount(1);
@@ -469,7 +471,8 @@ test("recent conversations only show records created from the conversation home"
   await expect(navigation.locator(".sidebar-recent-row").first()).toContainText("Second local conversation");
 });
 
-test("normal conversation virtualizes a long canonical timeline without adding a nested scroll owner", async ({ page }) => {
+for (const earlyMeasurement of [false, true]) {
+test(`normal conversation virtualizes a long canonical timeline without adding a nested scroll owner${earlyMeasurement ? " (scroll before measurement commit)" : ""}`, async ({ page }, testInfo) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   const threadId = "thread_normal_virtualized_history";
@@ -606,6 +609,10 @@ test("normal conversation virtualizes a long canonical timeline without adding a
     return stable;
   }).toBe(true);
   if (!anchorBefore) throw new Error("Normal conversation anchor did not stabilize");
+  if (earlyMeasurement) {
+    await installEarlyMeasurementScroll(feed);
+    await page.screenshot({ path: testInfo.outputPath("reading-before-remeasurement.png") });
+  }
   const expandedAboveAnchor = await feed.evaluate((element) => {
     const feedRect = element.getBoundingClientRect();
     const row = Array.from(element.querySelectorAll<HTMLElement>(".conversation-timeline-virtual-row"))
@@ -616,6 +623,7 @@ test("normal conversation virtualizes a long canonical timeline without adding a
     return true;
   });
   expect(expandedAboveAnchor).toBe(true);
+  if (earlyMeasurement) await expect.poll(() => feed.getAttribute("data-test-early-measurement-scrolls")).not.toBe("0");
   await expect.poll(async () => {
     const anchorAfter = await readFirstVisibleAnchor();
     return Boolean(
@@ -624,9 +632,11 @@ test("normal conversation virtualizes a long canonical timeline without adding a
       && Math.abs(anchorAfter.offsetTop - (anchorBefore?.offsetTop ?? 0)) <= 4
     );
   }).toBe(true);
+  if (earlyMeasurement) await page.screenshot({ path: testInfo.outputPath("reading-after-remeasurement.png") });
   await page.getByRole("button", { name: "Jump to latest message" }).click();
   await expect(conversationPage.getByText("Normal history assistant 60", { exact: true })).toBeVisible();
 });
+}
 
 test("normal conversation queues approvals in its composer gate", async ({ page }) => {
   await useEnglishLocale(page);
@@ -1287,7 +1297,7 @@ test("latest normal conversation prompt edits in place and hides the superseded 
   await expect.poll(() => state.lastConversationMessageEditRequest?.expectedRevision).toBe(2);
 });
 
-test("executed normal conversation renders one structured terminal report", async ({ page }) => {
+test("executed normal conversation retains one useful supplemental terminal report", async ({ page }) => {
   const runtimeErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") runtimeErrors.push(`${message.text()} @ ${message.location().url || "unknown"}`);
@@ -1348,8 +1358,8 @@ test("executed normal conversation renders one structured terminal report", asyn
     eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
     threadId,
     turnId,
-    createdAt,
-    startedAt: createdAt,
+    createdAt: "2026-07-11T03:00:30.000Z",
+    startedAt: "2026-07-11T03:00:30.000Z",
     updatedAt: completedAt,
     endedAt: completedAt,
   }, {
@@ -1390,9 +1400,9 @@ test("executed normal conversation renders one structured terminal report", asyn
     createdAt: completedAt,
   }];
   state.executionActions = [
-    mockCommandExecutionAction("normal_typecheck", threadId, runId, "corepack pnpm --filter @ling-stack/web typecheck", "2026-07-13T04:00:10.000Z", 1200),
-    mockCommandExecutionAction("normal_i18n", threadId, runId, "corepack pnpm --filter @ling-stack/web check:i18n", "2026-07-13T04:00:12.000Z", 700),
-    mockCommandExecutionAction("normal_diff", threadId, runId, "git diff --check", "2026-07-13T04:00:14.000Z", 300),
+    mockCommandExecutionAction("normal_typecheck", threadId, runId, "corepack pnpm --filter @ling-stack/web typecheck", "2026-07-11T03:00:40.000Z", 1200),
+    mockCommandExecutionAction("normal_i18n", threadId, runId, "corepack pnpm --filter @ling-stack/web check:i18n", "2026-07-11T03:00:42.000Z", 700),
+    mockCommandExecutionAction("normal_diff", threadId, runId, "git diff --check", "2026-07-11T03:00:44.000Z", 300),
     mockCommandExecutionAction("normal_prior", threadId, priorRunId, "echo prior attempt", "2026-07-11T03:00:10.000Z", 200),
     ...state.executionActions,
   ];
@@ -1411,7 +1421,13 @@ test("executed normal conversation renders one structured terminal report", asyn
       status: "succeeded",
       title: "结构化终局报告已接入普通会话",
       summary: "执行过程保留在工作记录中，最终结果由 TerminalReport 独立展示。",
-      corrections: [],
+      corrections: [{
+        id: "correction_terminal_report_conversation",
+        originalAssumption: "Only provider narration contains the final file evidence.",
+        correctedFact: "Committed report evidence owns the final file summary.",
+        confidence: "high",
+        sourceRefs: [],
+      }],
       sourceRefs: [{ kind: "turn", id: turnId, visibility: "conversation" }],
     },
     changes: Array.from({ length: 12 }, (_, index) => ({
@@ -1566,6 +1582,7 @@ test("executed normal conversation renders one structured terminal report", asyn
   await expect(assistantRow).not.toContainText("ConversationHome.tsx");
   await expect(assistantRow.locator(".terminal-report-block")).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await timeline.locator('[data-conversation-process-header][aria-expanded="false"]').click();
   const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"]');
   await expect(commandBatch).toHaveCount(1);
   await expect(commandBatch.locator(".conversation-command-batch-header")).toContainText("已运行 3 个命令");
@@ -1580,8 +1597,10 @@ test("executed normal conversation renders one structured terminal report", asyn
   const terminalResponse = timeline.locator(".conversation-timeline-terminal-response");
   const terminalReport = terminalResponse.locator('[data-conversation-timeline-kind="terminalReport"]');
   await expect(terminalResponse).toHaveCount(1);
-  await expect(terminalResponse).toContainText("结构化终局报告已接入普通会话");
+  await expect(terminalResponse).toContainText("执行详情");
+  await expect(terminalResponse).not.toContainText("结构化终局报告已接入普通会话");
   await terminalReport.locator(".conversation-timeline-activity-main").click();
+  await expect(terminalResponse).toContainText("Committed report evidence owns the final file summary.");
   await expect(terminalResponse).toContainText("执行过程保留在工作记录中，最终结果由 TerminalReport 独立展示。");
   await expect(terminalResponse).toContainText("Web typecheck");
   await expect(terminalResponse).toContainText("ConversationHome-1.tsx");

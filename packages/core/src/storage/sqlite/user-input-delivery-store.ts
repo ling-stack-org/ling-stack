@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { RunStore } from "../../run-types.js";
-import type { ClaimUserInputDelivery, ListDueUserInputDeliveries, RetryUserInputDelivery, UserInputDelivery } from "../../user-input-delivery-types.js";
+import type { ClaimUserInputDelivery, ListDueUserInputDeliveries, ListUserInputDispatchCandidates, RetryUserInputDelivery,
+  UserInputDelivery, UserInputDispatchCandidate } from "../../user-input-delivery-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import { UserInputStoreError, type UserInputRequest } from "../../user-input-store-types.js";
 import { readSqliteSnapshot } from "./read-snapshot.js";
@@ -23,6 +24,7 @@ export class SqliteUserInputDeliveryStore {
   constructor(private readonly context: SqliteStoreContext, private readonly events: SqliteControlPlaneStore, private readonly ports: DeliveryPorts) {}
 
   get(threadId: string, deliveryId: string): UserInputDelivery | undefined {
+    if (!validDeliveryKey(threadId) || !validDeliveryKey(deliveryId)) return undefined;
     return readSqliteSnapshot(this.context.database, () => readUserInputDelivery(this.context, this.ports, threadId, deliveryId)?.delivery);
   }
 
@@ -60,6 +62,25 @@ export class SqliteUserInputDeliveryStore {
         + " JOIN user_input_answers a ON a.answer_id=d.answer_id JOIN user_input_requests r ON r.request_id=a.request_id"
         + ` WHERE ${clauses.join(" AND ")} ORDER BY d.created_at,d.delivery_id LIMIT ?`).all(...params);
       return rows.map(row => this.require(String(row.thread_id), String(row.delivery_id)).delivery);
+    });
+  }
+
+  listDispatchCandidates(input: ListUserInputDispatchCandidates, now: string): readonly UserInputDispatchCandidate[] {
+    const nowMs = userInputTimestamp(now), cutoffMs = userInputTimestamp(input.createdAtOrBefore), limit = input.limit ?? 100;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500 || cutoffMs > nowMs
+      || input.after && (typeof input.after.deliveryId !== "string" || typeof input.after.createdAt !== "string")) {
+      throw new UserInputStoreError("invalid_input");
+    }
+    return readSqliteSnapshot(this.context.database, () => {
+      const rows = this.context.database.prepare("SELECT d.delivery_id,d.created_at,r.thread_id FROM user_input_deliveries d"
+        + " JOIN user_input_answers a ON a.answer_id=d.answer_id JOIN user_input_requests r ON r.request_id=a.request_id"
+        + " WHERE r.workspace_id=? AND typeof(d.delivery_id)='text' AND typeof(d.created_at)='text' AND typeof(r.thread_id)='text' AND d.created_at<=?"
+        + " AND (? IS NULL OR d.created_at>? OR (d.created_at=? AND d.delivery_id>?))"
+        + " AND (d.status='pending' OR (d.status='claimed' AND d.claim_expires_at<=?) OR (d.status='failed' AND d.retry_at<=?))"
+        + " ORDER BY d.created_at,d.delivery_id LIMIT ?")
+        .all(DEFAULT_WORKSPACE_ID, input.createdAtOrBefore, input.after?.createdAt ?? null,
+          input.after?.createdAt ?? null, input.after?.createdAt ?? null, input.after?.deliveryId ?? null, now, now, limit);
+      return rows.map(row => ({ threadId: String(row.thread_id), deliveryId: String(row.delivery_id), createdAt: String(row.created_at) }));
     });
   }
 

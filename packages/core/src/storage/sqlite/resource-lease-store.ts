@@ -1,3 +1,4 @@
+import type { SQLOutputValue } from "node:sqlite";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import type { RuntimeAttemptFenceV1, RuntimeResourceRenewal } from "../../runtime-supervisor-types.js";
 import { assertRuntimeResourceRenewal } from "../../runtime-resource-renewal.js";
@@ -11,6 +12,7 @@ import {
 import { mapResourceLease } from "./runtime-work-mappers.js";
 import { resourceLeaseSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { withCancelledAttemptResourceVeto } from "./cancelled-attempt-resource-veto.js";
 
 export class SqliteResourceLeaseStore {
   private readonly context: SqliteStoreContext;
@@ -153,8 +155,9 @@ export class SqliteResourceLeaseStore {
   }
 
   releaseResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number {
-    const result = this.context.database
-      .prepare(`
+    return withCancelledAttemptResourceVeto(this.context.database, fence, releasedAt, () => {
+      const result = this.context.database
+        .prepare(`
         UPDATE resource_leases
         SET status = 'released', released_at = ?, release_reason = ?
         WHERE work_unit_id = ?
@@ -172,28 +175,66 @@ export class SqliteResourceLeaseStore {
               AND attempts.fencing_token = resource_leases.fencing_token
               AND units.active_attempt_id = attempts.id
           )
-      `)
-      .run(
-        releasedAt,
-        releaseReason,
-        fence.workUnitId,
-        fence.attemptId,
-        fence.runtimeInstanceId,
-        fence.fencingToken,
-      );
-    return Number(result.changes);
+        `)
+        .run(
+          releasedAt,
+          releaseReason,
+          fence.workUnitId,
+          fence.attemptId,
+          fence.runtimeInstanceId,
+          fence.fencingToken,
+        );
+      return Number(result.changes);
+    });
   }
 
   expireResourceLeases(now: string): number {
-    const result = this.context.database
-      .prepare(`
-        UPDATE resource_leases
-        SET status = 'expired', released_at = ?, release_reason = COALESCE(release_reason, 'expired')
-        WHERE status = 'active' AND expires_at <= ?
-          AND (
-            (owner_type IN ('workflow_step','system') AND work_unit_id IS NULL AND attempt_id IS NULL
-              AND runtime_instance_id IS NULL AND fencing_token IS NULL)
-            OR EXISTS (
+    const rows = this.context.database.prepare(`
+      SELECT id, work_unit_id, attempt_id, runtime_instance_id, fencing_token
+      FROM resource_leases
+      WHERE status = 'active' AND expires_at <= ?
+        AND (
+          (owner_type IN ('workflow_step','system') AND work_unit_id IS NULL AND attempt_id IS NULL
+            AND runtime_instance_id IS NULL AND fencing_token IS NULL)
+          OR EXISTS (
+            SELECT 1 FROM work_unit_attempts AS attempts
+            JOIN work_units AS units ON units.id = attempts.work_unit_id
+            WHERE attempts.id = resource_leases.attempt_id
+              AND attempts.work_unit_id = resource_leases.work_unit_id
+              AND attempts.runtime_instance_id = resource_leases.runtime_instance_id
+              AND attempts.fencing_token = resource_leases.fencing_token
+              AND units.workspace_id = resource_leases.workspace_id
+              AND attempts.status IN ('succeeded','failed','cancelled','lost','yielded')
+              AND attempts.ended_at IS NOT NULL
+          )
+        )
+      ORDER BY id
+    `).all(now) as Record<string, SQLOutputValue>[];
+    let count = 0;
+    for (const row of rows) {
+      const id = typeof row.id === "string" ? row.id : undefined;
+      if (!id) continue;
+      if (row.attempt_id === null) {
+        count += Number(this.context.database.prepare(`
+          UPDATE resource_leases
+          SET status = 'expired', released_at = ?, release_reason = COALESCE(release_reason, 'expired')
+          WHERE id = ? AND status = 'active' AND expires_at <= ?
+            AND owner_type IN ('workflow_step','system') AND work_unit_id IS NULL AND attempt_id IS NULL
+            AND runtime_instance_id IS NULL AND fencing_token IS NULL
+        `).run(now, id, now).changes);
+        continue;
+      }
+      if (typeof row.work_unit_id !== "string" || typeof row.attempt_id !== "string"
+        || typeof row.runtime_instance_id !== "string" || typeof row.fencing_token !== "string") continue;
+      const fence = { workUnitId: row.work_unit_id, attemptId: row.attempt_id,
+        runtimeInstanceId: row.runtime_instance_id, fencingToken: row.fencing_token };
+      count += withCancelledAttemptResourceVeto(this.context.database, fence, now, () =>
+        Number(this.context.database.prepare(`
+          UPDATE resource_leases
+          SET status = 'expired', released_at = ?, release_reason = COALESCE(release_reason, 'expired')
+          WHERE id = ? AND status = 'active' AND expires_at <= ?
+            AND work_unit_id = ? AND attempt_id = ? AND runtime_instance_id = ? AND fencing_token = ?
+            AND EXISTS (
               SELECT 1 FROM work_unit_attempts AS attempts
               JOIN work_units AS units ON units.id = attempts.work_unit_id
               WHERE attempts.id = resource_leases.attempt_id
@@ -204,10 +245,9 @@ export class SqliteResourceLeaseStore {
                 AND attempts.status IN ('succeeded','failed','cancelled','lost','yielded')
                 AND attempts.ended_at IS NOT NULL
             )
-          )
-      `)
-      .run(now, now);
-    return Number(result.changes);
+        `).run(now, id, now, fence.workUnitId, fence.attemptId, fence.runtimeInstanceId, fence.fencingToken).changes));
+    }
+    return count;
   }
 
   listResourceLeases(options: ListResourceLeasesOptions = {}): ResourceLease[] {

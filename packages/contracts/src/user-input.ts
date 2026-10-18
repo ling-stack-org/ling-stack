@@ -55,6 +55,17 @@ export interface UserInputAnswerSubmissionV1 {
   readonly answers: readonly UserInputAnswerV1[];
 }
 
+/** Durable Host acceptance only. Delivery and execution continue asynchronously. */
+export interface UserInputAnswerSubmissionResponseV1 {
+  readonly requestId: string;
+  readonly requestVersion: number;
+  readonly answerId: string;
+  readonly answerItemId: string;
+  readonly deliveryId: string;
+  readonly acceptedAt: string;
+  readonly replayed: boolean;
+}
+
 /**
  * Public optimistic authority for one visible question snapshot. The token is
  * Host-derived from private source lineage; it is not a runtime fence, claim,
