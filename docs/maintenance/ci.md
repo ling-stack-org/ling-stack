@@ -26,6 +26,8 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 
 该分支的 Daemon 测试拆为四个 `macos-26` shard，使用稳定的文件分配和独立的 `LING_STACK_HOME`。每个 shard 以 `--test-concurrency=1` 运行，避免测试间共享状态；新增或删除测试文件会自动重新平衡。完整执行档位下选择 Daemon 时，还会运行 Linux restricted-command 拒绝契约和一个真实 macOS helper／Seatbelt smoke 任务。
 
+Daemon 分片的任务上限为 40 分钟，包含依赖安装及原生准备。运行 `39274142315` 的分片 1 在 25 分钟上限前已连续通过 1,584 个顶层测试，尚有文件未执行；该调整只补足运行预算，未减少测试或修改并发，也不代表性能优化。
+
 完整 Daemon 分片使用 macOS，是为了让 Darwin 专属正向用例实际执行。[平台契约测试](../../scripts/ci/platform-lanes.test.mjs)当前明确保护这一要求，不能只改 `runs-on`，让 Linux 上的跳过被当成原生验证成功。
 
 Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，因此不会在 shard 中重复执行。`quality` 汇总任务保留检查名 `Typecheck, unit tests, and Web build`，统一判断适用任务的结果。
