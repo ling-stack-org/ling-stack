@@ -35,7 +35,9 @@ import type {
   HarnessFeatureSnapshotV1,
   RunnerContinuationOrigin,
   WorkflowParticipantProviderBindingV1,
+  ExecutionBindingRequest,
 } from "@ling-stack/contracts";
+import { isExternalExecutionEngineId, parseExecutionBindingRequest } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import type { WorkflowOperationExecutionSnapshot } from "./workflow-operation-snapshot.js";
 import type { UserInputContinuationContext } from "./user-input-continuation-context.js";
@@ -72,6 +74,7 @@ export interface RunRequest extends Omit<
 > {
   readonly workspaceCwd?: string;
   readonly providerPresetId?: string;
+  readonly executionBinding?: ExecutionBindingRequest;
   /** Internal-only immutable provider ownership snapshot for workflow participant Runs. */
   readonly providerBinding?: WorkflowParticipantProviderBindingV1;
   readonly provider?: PiRunnerProviderConfig;
@@ -146,12 +149,27 @@ export function parseRunRequest(value: unknown): RunRequest {
   const workspaceCwd = readOptionalString(value, "workspaceCwd");
   const task = value.task;
   const provider = value.provider;
-  const providerPresetId = readOptionalString(value, "providerPresetId");
+  const executionBinding = readExecutionBinding(value.executionBinding);
+  if (executionBinding && (provider !== undefined || value.providerPresetId !== undefined
+    && (executionBinding.kind !== "pi_provider" || value.providerPresetId !== executionBinding.providerPresetId))) {
+    throw new HttpError(400, "execution_binding_conflict", "execution_binding_conflict");
+  }
+  const providerPresetId = executionBinding?.kind === "pi_provider"
+    ? executionBinding.providerPresetId : readOptionalString(value, "providerPresetId");
   const teammateId = readOptionalString(value, "teammateId");
   const workflowStepId = readOptionalString(value, "workflowStepId");
   const threadId = readOptionalString(value, "threadId");
   const turnId = readOptionalString(value, "turnId");
-  const runnerId = readOptionalString(value, "runnerId");
+  const requestedRunnerId = readOptionalString(value, "runnerId");
+  const boundRunnerId = executionBinding?.kind === "native_profile" ? executionBinding.engineId
+    : executionBinding?.kind === "pi_provider" ? "pi" : undefined;
+  if (boundRunnerId && requestedRunnerId !== undefined && requestedRunnerId !== boundRunnerId) {
+    throw new HttpError(400, "execution_binding_conflict", "execution_binding_conflict");
+  }
+  const runnerId = boundRunnerId ?? requestedRunnerId;
+  if (!executionBinding && isExternalExecutionEngineId(runnerId)) {
+    throw new HttpError(409, "legacy_runner_migration_required", "Select a native profile before starting this engine.");
+  }
   const requestedSkillId = readOptionalString(value, "requestedSkillId");
   const skillOptimizationMode = readOptionalSkillOptimizationMode(value, "skillOptimizationMode");
   const skipProviderPreflight = readOptionalBoolean(value, "skipProviderPreflight") ?? false;
@@ -173,7 +191,7 @@ export function parseRunRequest(value: unknown): RunRequest {
   if (providerPresetId && provider !== undefined) {
     throw new Error("providerPresetId and provider cannot both be supplied");
   }
-  if (!providerPresetId && provider === undefined) {
+  if (!executionBinding && !providerPresetId && provider === undefined) {
     throw new Error("Either providerPresetId or provider is required");
   }
 
@@ -181,6 +199,7 @@ export function parseRunRequest(value: unknown): RunRequest {
     cwd,
     workspaceCwd,
     providerPresetId,
+    executionBinding,
     teammateId,
     workflowStepId,
     threadId,
@@ -218,6 +237,15 @@ export function parseRunRequest(value: unknown): RunRequest {
   };
   assertFullAccessPermissionConfirmed(runRequest);
   return runRequest;
+}
+
+function readExecutionBinding(value: unknown): ExecutionBindingRequest | undefined {
+  if (value === undefined) return undefined;
+  try {
+    return parseExecutionBindingRequest(value);
+  } catch {
+    throw new HttpError(400, "execution_binding_invalid", "execution_binding_invalid");
+  }
 }
 
 function readOptionalLingConversationTone(record: Record<string, unknown>, key: string): LingConversationTone | undefined {

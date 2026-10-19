@@ -1,5 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
+import { readExecutionEngineHostAuthority, type ExecutionEngineHostAuthority } from "@ling-stack/core/execution-engine-host-authority";
 import { access, mkdir } from "node:fs/promises";
 import { connect } from "node:net";
 import { resolve as resolvePath } from "node:path";
@@ -80,6 +82,8 @@ export interface DesktopDaemonLifecycleOptions {
   readonly packaged?: boolean;
   readonly desktopBridgeToken?: string;
   readonly browserHostPath?: string;
+  readonly engineSupervisorPath?: string;
+  readonly imageSanitizerPath?: string;
   readonly cuaDriverFeatureFlags?: CuaDriverFeatureFlags;
   /** Test seam for evaluating the platform-specific bundled gate. */
   readonly platform?: string;
@@ -95,6 +99,7 @@ export class DesktopDaemonLifecycle {
   private readonly cuaDriverFeatureFlags: CuaDriverFeatureFlags;
   private readonly bundledCuaDriverGateEnabled: boolean;
   private child: ChildProcess | undefined;
+  private engineAuthority: { readonly child: ChildProcess; readonly result: Promise<ExecutionEngineHostAuthority | undefined> } | undefined;
   private statusValue: DesktopDaemonStatus;
   private cuaDriverAuthorityTupleValue: DesktopDaemonCuaDriverAuthorityTuple | undefined;
   private cuaDriverAuthorityGeneration = 0;
@@ -121,6 +126,20 @@ export class DesktopDaemonLifecycle {
 
   get status(): DesktopDaemonStatus {
     return this.statusValue;
+  }
+
+  async getExecutionEngineAuthority(): Promise<ExecutionEngineHostAuthority> {
+    const owner = this.engineAuthority;
+    if (!owner || !this.ownsLiveEngineAuthority(owner.child)) throw new Error("engine_host_authority_unavailable");
+    const result = await owner.result;
+    if (!result || this.engineAuthority !== owner || !this.ownsLiveEngineAuthority(owner.child)) throw new Error("engine_host_authority_unavailable");
+    return result;
+  }
+
+  private ownsLiveEngineAuthority(child: ChildProcess): boolean {
+    return this.child === child && child.exitCode === null && child.signalCode === null
+      && this.statusValue.state === "connected" && this.statusValue.ownedByDesktop
+      && !this.stopOwnedDaemonPromise && !this.restartPromise;
   }
 
   /** Authority is memory-only and changes only after a new authenticated handshake. */
@@ -227,12 +246,15 @@ export class DesktopDaemonLifecycle {
           LING_STACK_HOST: url.hostname,
           LING_STACK_PORT: url.port || (url.protocol === "https:" ? "443" : "80"),
           LING_STACK_DEFAULT_WORKSPACE_CWD: this.defaultWorkspaceCwd,
+          LING_STACK_ENGINE_AUTHORITY_FD: "3",
           // Desktop is the trusted local host for command execution. The
           // daemon still applies its approval policy and persists validated
           // command evidence; this only makes the bash surface available to
           // the packaged runner.
           LING_STACK_RUNTIME_UNIFIED_EXEC: "1",
           ...(this.options.browserHostPath ? { LING_BROWSER_HOST_PATH: this.options.browserHostPath } : {}),
+          LING_ENGINE_SUPERVISOR_PATH: this.options.engineSupervisorPath,
+          LING_IMAGE_SANITIZER_PATH: this.options.imageSanitizerPath,
           ...(this.options.desktopBridgeToken
             ? {
                 LING_DESKTOP_BRIDGE_TOKEN: this.options.desktopBridgeToken,
@@ -251,6 +273,14 @@ export class DesktopDaemonLifecycle {
     }
     this.options.onDiagnostic?.("daemon.spawned", { pid: child.pid ?? null, baseUrl: this.options.baseUrl });
     this.child = child;
+    const channel = child.stdio?.[3];
+    this.engineAuthority = {
+      child,
+      result: channel instanceof Readable && child.pid
+        ? readExecutionEngineHostAuthority({ channel, baseUrl: this.options.baseUrl, pid: child.pid,
+            timeoutMs: this.options.startupTimeoutMs ?? DEFAULT_DAEMON_STARTUP_TIMEOUT_MS }).catch(() => undefined)
+        : Promise.resolve(undefined),
+    };
     let resolveChildExit: (exit: DesktopDaemonOwnedExit) => void = () => undefined;
     const childExit = new Promise<DesktopDaemonOwnedExit>((resolve) => {
       resolveChildExit = resolve;
@@ -264,6 +294,7 @@ export class DesktopDaemonLifecycle {
       childSpawnError = error;
       if (this.child === child) {
         this.child = undefined;
+        this.engineAuthority = undefined;
         this.update({
           state: "disconnected",
           baseUrl: this.options.baseUrl,
@@ -285,6 +316,7 @@ export class DesktopDaemonLifecycle {
         return;
       }
       this.child = undefined;
+      this.engineAuthority = undefined;
       this.clearCuaDriverAuthorityTuple();
       this.update({
         state: "disconnected",
@@ -485,6 +517,7 @@ export class DesktopDaemonLifecycle {
     if (!pending) {
       const child = this.child;
       this.child = undefined;
+      this.engineAuthority = undefined;
       pending = child ? this.stopChild(child) : Promise.resolve();
       this.stopOwnedDaemonPromise = pending;
       pending.then(
@@ -659,7 +692,7 @@ function defaultSpawnDaemon(input: {
   return spawn(input.executable, [...input.args], {
     cwd: input.cwd,
     env: input.env,
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "ignore", "pipe"],
     windowsHide: true,
   });
 }

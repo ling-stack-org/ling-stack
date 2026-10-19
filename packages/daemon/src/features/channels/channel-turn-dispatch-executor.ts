@@ -15,6 +15,7 @@ import {
 } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
 import type { HostCapabilityBridgeController } from "../runs/host-capability-bridge-controller.js";
+import type { NativeRunDispatcher } from "../runs/native-run-dispatcher.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import type { ProviderInvocationFailureSink } from "../providers/runtime-invocations.js";
 import { createAiChannelReply } from "./ai-replies.js";
@@ -54,6 +55,7 @@ export interface ChannelTurnDispatchExecutorOptions {
   readonly startupState: StartupStateRegistry;
   readonly computerUsePreviews: ComputerUseProjectionRegistry;
   readonly hostCapabilityBridge: HostCapabilityBridgeController;
+  readonly nativeRunDispatcher?: NativeRunDispatcher;
   readonly replyDispatchCoordinator: ChannelReplyDispatchCoordinator;
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
   readonly webFetch?: typeof globalThis.fetch;
@@ -266,6 +268,7 @@ function createStartRun(options: ChannelTurnDispatchExecutorOptions) {
         startupState: options.startupState,
         computerUsePreviews: options.computerUsePreviews,
         hostCapabilityBridge: options.hostCapabilityBridge,
+        nativeRunDispatcher: options.nativeRunDispatcher,
       },
     );
 }
@@ -349,6 +352,7 @@ export function createStartOrchestratedRun(
           startupState: options.startupState,
           computerUsePreviews: options.computerUsePreviews,
           hostCapabilityBridge: options.hostCapabilityBridge,
+          nativeRunDispatcher: options.nativeRunDispatcher,
         },
       ).then(resolveOnce, () => resolveOnce(undefined));
     });

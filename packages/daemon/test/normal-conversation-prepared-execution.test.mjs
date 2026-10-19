@@ -18,6 +18,7 @@ import { saveNormalConversationPreparedRequest } from "../dist/features/conversa
 import { restoreNormalConversationExecutionOptions } from "../dist/features/conversations/normal-conversation-prepared-execution.js";
 import { handleConversationStream } from "../dist/features/conversations/routes.js";
 import { handleLingThreadItem } from "../dist/features/runs/thread-routes.js";
+import { patchWorkspaceRuntimeSettings } from "../dist/runtime/runner-settings.js";
 
 async function fixture(t, { unsupported = false, actorType = "local_user" } = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-n03-execution-"));
@@ -62,6 +63,62 @@ async function fixture(t, { unsupported = false, actorType = "local_user" } = {}
     f.runners, f.registry, f.active, f.supervisor, { resolve: () => ({ configured: false }) }, {});
   return f;
 }
+
+test("new conversation without an execution selection cannot leave a thread or accepted turn", async t => {
+  const f = await fixture(t);
+  const before = f.store.listLingThreads({ limit: 100 }).map(thread => thread.id);
+  class Response extends EventEmitter {
+    body = ""; statusCode = 200;
+    writeHead(status) { this.statusCode = status; }
+    setHeader() {} end(value = "") { this.body += value; }
+  }
+  const response = new Response(), request = Readable.from([JSON.stringify({ message: "Cannot select", idempotencyKey: "missing-selection" })]);
+  request.method = "POST"; request.url = `/api/conversations/stream?cwd=${encodeURIComponent(f.cwd)}`; request.headers = { host: "fixture" };
+  await handleConversationStream(request, response, { host: "fixture", port: 1, maxBodyBytes: 100_000 }, f.registry, f.runners,
+    () => assert.fail("missing selection cannot start"));
+  assert.equal(response.statusCode, 409, response.body);
+  assert.equal(JSON.parse(response.body).error, "execution_selection_required");
+  assert.deepEqual(f.store.listLingThreads({ limit: 100 }).map(thread => thread.id), before);
+});
+
+for (const explicit of [true, false]) test(`typed Pi conversation prepares, executes and replays (${explicit ? "explicit" : "workspace default"})`, async t => {
+  const f = await fixture(t);
+  const binding = { kind: "pi_provider", providerPresetId: f.preset.id };
+  if (!explicit) patchWorkspaceRuntimeSettings(f.store, f.runners, { defaultExecutionBinding: binding }, new Date().toISOString());
+  class Response extends EventEmitter {
+    body = ""; statusCode = 200; writableEnded = false; headersSent = false;
+    writeHead(status) { this.statusCode = status; this.headersSent = true; }
+    setHeader() {} flushHeaders() {}
+    write(value) { this.body += value; }
+    end(value = "") { this.body += value; this.writableEnded = true; }
+  }
+  const input = { threadId: f.request.threadId, message: "TYPED_PI_CURRENT", idempotencyKey: `typed-pi-${explicit}`,
+    ...(explicit ? { executionBinding: binding } : {}) };
+  const send = async () => {
+    const response = new Response();
+    const request = Readable.from([JSON.stringify(input)]);
+    request.method = "POST"; request.url = `/api/conversations/stream?cwd=${encodeURIComponent(f.cwd)}`; request.headers = { host: "fixture" };
+    await handleConversationStream(request, response, { host: "fixture", port: 1, maxBodyBytes: 100_000 }, f.registry, f.runners,
+      (runRequest, sink) => executeRunRequest(runRequest, sink, f.runners, f.registry, f.active, f.supervisor,
+        { resolve: () => ({ configured: false }) }, {}));
+    assert.equal(response.statusCode, 200, response.body);
+    assert.match(response.body, /event: done/);
+    return response;
+  };
+  await send();
+  assert.equal(f.calls.length, 1);
+  const run = f.store.listRuns()[0];
+  assert.equal(run.status, "succeeded");
+  assert.deepEqual(run.requestSnapshot.executionBinding, binding);
+  const source = f.store.getLingTurnForRun(run.id).sourceItemId;
+  const execution = f.store.getConversationPreparedInput(source, "execution");
+  assert.deepEqual(f.calls[0].preparedInput, execution.payload.preparedInput);
+  assert.match(f.calls[0].task.prompt, /TYPED_PI_CURRENT/);
+  f.store.updateProviderPreset(f.preset.id, { enabled: false }, new Date().toISOString());
+  const replay = await send();
+  assert.match(replay.body, new RegExp(run.id));
+  assert.equal(f.calls.length, 1, "accepted replay cannot create another model request after revocation");
+});
 
 test("Daemon persists final SDK input before a WorkUnit/Run and consumes it", async (t) => {
   const f = await fixture(t);

@@ -1,0 +1,261 @@
+.execution-engines-settings {
+  display: grid;
+  align-content: start;
+  gap: 24px;
+  width: 100%;
+  max-width: 800px;
+  min-width: 0;
+  margin-inline: auto;
+}
+
+.execution-engines-settings h1 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 28px;
+  letter-spacing: 0;
+}
+
+.engine-settings-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.engine-settings-row {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding-block: 16px;
+}
+
+.engine-settings-row + .engine-settings-row {
+  border-top: 1px solid var(--ling-border-default);
+}
+
+.engine-settings-row-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  min-height: 36px;
+}
+
+.engine-settings-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.engine-settings-name strong {
+  color: var(--ling-text-strong);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.engine-settings-name > span,
+.engine-probe-result,
+.engine-settings-details {
+  color: var(--ling-text-soft);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.engine-settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.engine-probe-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.engine-settings-details summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  cursor: pointer;
+}
+
+.engine-settings-details > div {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+  padding-block-start: 12px;
+}
+
+.engine-settings-details p,
+.engine-settings-details dl,
+.engine-settings-details dd {
+  margin: 0;
+}
+
+.engine-settings-details dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.engine-authorization,
+.engine-profile-fields {
+  display: grid;
+  gap: 16px;
+}
+
+.engine-authorization-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+
+.engine-authorization-controls .ling-ui-field {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.engine-profile-form {
+  min-width: 0;
+}
+
+.engine-profile-footer {
+  flex-wrap: wrap;
+}
+
+.engine-profile-footer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.engine-profile-region {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.engine-profile-fields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.engine-key-configuration {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  min-width: 0;
+}
+
+.engine-key-wide {
+  grid-column: 1 / -1;
+}
+
+.engine-profile-error {
+  margin-block-start: 16px;
+}
+
+.engine-settings-session {
+  justify-self: start;
+}
+
+.engine-login-body {
+  display: grid;
+  gap: 16px;
+}
+
+.engine-login-body p {
+  margin: 0;
+}
+
+.engine-login-terminal {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.engine-workspace-policy,
+.engine-workspace-form {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.engine-workspace-policy h2 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.engine-workspace-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.engine-workspace-choices legend {
+  padding: 0 0 12px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ling-text-soft);
+}
+
+.engine-workspace-choice-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  overflow-wrap: anywhere;
+}
+
+.engine-workspace-choice-label small {
+  color: var(--ling-text-soft);
+  font-size: 12px;
+}
+
+.engine-workspace-form > .ling-ui-field {
+  width: min(100%, 360px);
+}
+
+.engine-workspace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.engine-workspace-policy > .ling-ui-button {
+  justify-self: start;
+}
+
+@media (max-width: 900px) {
+  .engine-workspace-choices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.engine-secret-field {
+  display: grid;
+  gap: 4px;
+}
+
+.engine-secret-field > button {
+  justify-self: start;
+}

@@ -9,7 +9,7 @@ import { createDaemonServer } from "../dist/index.js";
 test("HTTP provider saves reject explicit empty capabilities without inheriting or persisting chat", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-provider-empty-capabilities-"));
   const store = createSqliteRunStore(cwd);
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, { storeFactory: () => store });
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd }, { storeFactory: () => store });
   try {
     await daemon.start();
     const address = daemon.server.address();

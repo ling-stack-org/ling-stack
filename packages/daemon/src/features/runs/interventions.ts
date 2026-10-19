@@ -40,6 +40,7 @@ import {
 import { buildRunInterventionContinuationRequest } from "./run-intervention-continuation-request.js";
 import { assertNoUnsafeRequiredPause } from "./user-input-cancellation-guard.js";
 import { continuationSourceReady } from "../../runtime/continuation-source-barrier.js";
+import type { NativeRunDispatcher } from "./native-run-dispatcher.js";
 
 const runControlService = new RunControlService();
 
@@ -57,6 +58,7 @@ export async function handleRunInterventions(
   computerUsePreviews: ComputerUseProjectionRegistry,
   controlPlaneEvents: ControlPlaneEventHub,
   startupState: StartupStateRegistry | undefined,
+  nativeRunDispatcher: NativeRunDispatcher | undefined,
   sourceRunId: string,
 ): Promise<void> {
   const store = storeRegistry.findStoreForRun(sourceRunId, url.searchParams.get("cwd") ?? undefined);
@@ -151,6 +153,7 @@ export async function handleRunInterventions(
         computerUsePreviews,
         controlPlaneEvents,
         startupState,
+        nativeRunDispatcher,
       });
     }
     writeJson(response, 201, { cwd: store.paths.cwd, intervention: store.getRunIntervention(intervention.id) ?? intervention });
@@ -242,6 +245,7 @@ export function handleRunInterventionPromote(
   computerUsePreviews: ComputerUseProjectionRegistry,
   controlPlaneEvents: ControlPlaneEventHub,
   startupState: StartupStateRegistry | undefined,
+  nativeRunDispatcher: NativeRunDispatcher | undefined,
   interventionId: string,
 ): void {
   const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
@@ -286,6 +290,7 @@ export function handleRunInterventionPromote(
       computerUsePreviews,
       controlPlaneEvents,
       startupState,
+      nativeRunDispatcher,
     }).catch(() => {});
     writeJson(response, 202, {
       cwd: resolved.cwd,
@@ -350,6 +355,7 @@ export function handleRunInterventionPromote(
     computerUsePreviews,
     controlPlaneEvents,
     startupState,
+    nativeRunDispatcher,
   }).catch(() => {});
 
   writeJson(response, 200, {
@@ -373,6 +379,7 @@ export async function maybeStartNextRunInterventionContinuation(input: {
   readonly computerUsePreviews: ComputerUseProjectionRegistry;
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly startupState?: StartupStateRegistry;
+  readonly nativeRunDispatcher?: NativeRunDispatcher;
 }): Promise<void> {
   if (input.terminalRun?.interventionId) {
     completeTerminalRunIntervention(input.store, input.terminalRun);
@@ -438,6 +445,7 @@ export async function maybeStartNextRunInterventionContinuation(input: {
           controlPlaneEvents: input.controlPlaneEvents,
           startupState: input.startupState,
           computerUsePreviews: input.computerUsePreviews,
+          nativeRunDispatcher: input.nativeRunDispatcher,
           onRunReady: (runId) => {
             const run = input.store.getRun(runId);
             const started = input.store.updateRunInterventionStatus({

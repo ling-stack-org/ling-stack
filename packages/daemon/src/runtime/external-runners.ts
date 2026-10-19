@@ -1,7 +1,6 @@
 import type { DaemonConfig, ResolvedDaemonConfig } from "../config.js";
 import type { RunnerAdapter } from "../context.js";
-import { createCodexAppServerAdapter } from "./adapters/codex-app-server.js";
-import { createOpenClawAcpAdapter } from "./adapters/openclaw-acp.js";
+import { createUnverifiedToolExecutionConformance } from "./runner-tool-conformance.js";
 import type { RunnerToolExecutionConformanceV1 } from "./runner-tool-conformance.js";
 import type { RegisteredRunner } from "./runners.js";
 
@@ -62,32 +61,31 @@ export function getExternalRunnerProfile(id: string): ExternalRunnerProfile | un
   return externalRunnerProfiles.find((profile) => profile.id === id);
 }
 
-export function listExternalRunnerRegistrations(config: RunnerConfig = {}): RegisteredRunner[] {
+/** Historical identities remain discoverable, but endpoint configuration has no execution authority. */
+export function listExternalRunnerRegistrations(_config: RunnerConfig = {}): RegisteredRunner[] {
   return externalRunnerProfiles.map((profile) => {
-    const runnerConfig = readExternalRunnerConfig(config, profile.id);
-    const enabled = externalRunnerGatesPassed(runnerConfig);
     return {
       id: profile.id,
       displayName: profile.displayName,
-      status: enabled ? "enabled" as const : "disabled" as const,
-      adapter: enabled ? createExternalRunnerAdapter(profile, runnerConfig.endpoint) : createDisabledExternalRunnerAdapter(profile.id),
+      status: "disabled" as const,
+      adapter: createDisabledExternalRunnerAdapter(profile.id),
       executionBoundary: "external",
       adapterRevision: profile.adapterRevision,
       supportedProviderApis: profile.supportedProviderApis,
       supportedTools: profile.supportedTools,
       toolSideEffects: profile.toolSideEffects,
-      toolExecutionConformance: profile.toolExecutionConformance,
+      toolExecutionConformance: createUnverifiedToolExecutionConformance(profile.adapterRevision),
       capabilities: profile.capabilities,
-      resumeCapabilities: profile.resumeCapabilities,
+      resumeCapabilities: { nativeResume: false, hostApprovalContinuation: [] },
       nativeResumeConformance: {
         revision: `${profile.id}:resume-protocol-v1`,
-        readinessPassed: runnerConfig.readinessPassed === true,
+        readinessPassed: false,
         conformancePassed: false,
         abortPropagationVerified: false,
         approvalBridgeVerified: false,
       },
       featureFlag: profile.featureFlag,
-      disabledReason: enabled ? undefined : futureRunnerDisabledReason(profile.displayName, runnerConfig),
+      disabledReason: "legacy_runner_migration_required: endpoint execution is retired; select a verified native profile.",
     };
   });
 }
@@ -111,43 +109,6 @@ export function readExternalRunnerConfig(config: RunnerConfig, runnerId: Externa
     endpoint: runner?.endpoint,
     readinessPassed: runner?.readinessPassed,
   };
-}
-
-function externalRunnerGatesPassed(config: ReturnType<typeof readExternalRunnerConfig>): boolean {
-  return config.enabled === true &&
-    Boolean(config.endpoint) &&
-    config.readinessPassed === true;
-}
-
-function futureRunnerDisabledReason(displayName: string, config: ReturnType<typeof readExternalRunnerConfig>): string {
-  if (!config.enabled) {
-    return "Feature flag is disabled.";
-  }
-  if (!config.endpoint) {
-    return `${displayName} feature flag is enabled, but no endpoint is configured.`;
-  }
-  if (!config.readinessPassed) {
-    return `${displayName} feature flag is enabled, but runner readiness has not been confirmed.`;
-  }
-  return `${displayName} feature flag is enabled, but runner gates did not pass.`;
-}
-
-function createExternalRunnerAdapter(profile: ExternalRunnerProfile, endpoint: string | undefined): RunnerAdapter {
-  if (!endpoint) {
-    return createDisabledExternalRunnerAdapter(profile.id);
-  }
-  if (profile.id === CODEX_APP_SERVER_RUNNER_ID) {
-    return createCodexAppServerAdapter({
-      baseUrl: endpoint,
-      adapterRevision: profile.adapterRevision,
-      toolExecutionConformance: profile.toolExecutionConformance,
-    });
-  }
-  return createOpenClawAcpAdapter({
-    endpoint,
-    adapterRevision: profile.adapterRevision,
-    toolExecutionConformance: profile.toolExecutionConformance,
-  });
 }
 
 function readOnlyExternalToolSideEffects(): RegisteredRunner["toolSideEffects"] {
@@ -180,7 +141,7 @@ function readOnlyExternalToolConformance(adapterRevision: string): RunnerToolExe
 function createDisabledExternalRunnerAdapter(id: string): RunnerAdapter {
   return {
     async runTask() {
-      throw new Error(`Runner ${id} is disabled. Enable and pass conformance before use.`);
+      throw new Error(`legacy_runner_migration_required: runner ${id} endpoint execution is disabled; select a native profile.`);
     },
   };
 }

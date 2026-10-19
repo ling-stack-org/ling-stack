@@ -11,7 +11,7 @@ import { readNormalConversationRequestContext } from "./normal-conversation-cont
 import { inlineProviderDescriptor, restorePreparedInlineProvider } from "./normal-conversation-prepared-provider.js";
 
 const requestKeys = new Set([
-  "workspaceCwd", "cwd", "task", "providerPresetId", "provider", "threadId", "turnId", "teammateId",
+  "executionBinding", "workspaceCwd", "cwd", "task", "providerPresetId", "provider", "threadId", "turnId", "teammateId",
   "createdByActor", "tools", "authorizationMode", "workspaceAccessMode", "permissionPreset", "permissionMode",
   "permissionConfirmation", "thinkingLevel", "reasoningSummary", "lingConversationTone", "responseLanguage", "appendSystemPrompt",
   "conversationAttachmentIds", "conversationFileRefs", "normalConversationContext", "normalConversationAcceptedSnapshotId",

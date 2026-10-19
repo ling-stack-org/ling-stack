@@ -173,13 +173,36 @@ function removePost153ConversationOverlays(database) {
     DELETE FROM schema_migrations WHERE version IN (163,164,165,166,167,168);`);
 }
 
+/** Removes only the row-free native execution overlays added after schema168. */
+function removePost168NativeExecutionOverlays(database) {
+  database.exec(`ALTER TABLE host_attempt_completions DROP COLUMN native_effect_inventory_json;
+    DROP INDEX native_openclaw_session_identity;
+    ALTER TABLE native_execution_bindings DROP COLUMN openclaw_agent_id;
+    ALTER TABLE native_execution_bindings DROP COLUMN openclaw_session_key;
+    ALTER TABLE native_execution_bindings DROP COLUMN openclaw_accepted_at;
+    DROP INDEX native_host_terminal_identity;
+    ALTER TABLE native_host_operations DROP COLUMN terminal_id;
+    ALTER TABLE native_host_operations DROP COLUMN terminal_started_at;
+    ALTER TABLE native_host_operations DROP COLUMN terminal_exit_json;
+    ALTER TABLE native_host_operations DROP COLUMN reply_status;
+    ALTER TABLE native_host_operations DROP COLUMN reply_observed_at;
+    DROP TABLE native_host_operations;
+    DROP TABLE native_host_actions;
+    ALTER TABLE native_submissions DROP COLUMN native_prompt_request_key;
+    DROP TABLE native_approval_requests;
+    DROP INDEX native_submission_active_scope;
+    DROP TABLE native_submissions;
+    DROP TABLE native_execution_bindings;
+    DELETE FROM schema_migrations WHERE version IN (169,170,171,172,173,174,175);`);
+}
+
 test("delegation migration has the release schema 154 identity", () => {
   assert.equal(DELEGATION_MIGRATION_VERSION, 154);
   assert.equal(DELEGATION_MIGRATION_NAME, "create_delegation_tree_v1");
   assert.equal(typeof applyDelegationMigration, "function");
 });
 
-test("real schema153 upgrades through168 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
+test("real schema153 upgrades through175 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
   const f = await fileFixture(t, "full-schema");
   const first = f.own(createSqliteRunStore(f.cwd));
   const channel = first.handle.createChannel({ name: "Legacy", boundPath: f.cwd }, now);
@@ -204,6 +227,7 @@ test("real schema153 upgrades through168 preserving historical SQL/markers/rows 
     DELETE FROM schema_migrations WHERE version IN (161,162);`);
   // Remove only the new row-free sidecar before reconstructing schema153.
   removeQaOverlayForLegacyFixture(old.handle);
+  removePost168NativeExecutionOverlays(old.handle);
   removePost153ConversationOverlays(old.handle);
   for (const name of RUN_EVALUATION_TASK_SCHEMA_OBJECTS.filter(name => !name.startsWith("sqlite_autoindex_"))) {
     const object = old.handle.prepare("SELECT type FROM sqlite_master WHERE name=?").get(name);
@@ -259,6 +283,7 @@ test("real schema153 upgrades through168 preserving historical SQL/markers/rows 
     "sqlite_autoindex_host_attempt_completions_1", "host_attempt_completion_immutable_identity",
     "host_attempt_completion_immutable_terminal"]);
   assert.deepEqual(schema(database).filter((row) => !row.tbl_name.startsWith("delegation_")
+    && !row.tbl_name.startsWith("native_")
     && !["mcp_authority_revisions", "ling_thread_proposed_plans", "teammate_direct_messages", "teammate_direct_reply_interventions"].includes(row.name)
     && !providerOverlay.has(row.name) && !incidentProvenanceOverlay.has(row.name) && !evaluationTaskOverlay.has(row.name)
     && !conversationExperienceOverlay.has(row.name)
@@ -279,7 +304,17 @@ test("real schema153 upgrades through168 preserving historical SQL/markers/rows 
   assert.deepEqual(directInterventionColumns.slice(0, oldDirectInterventionColumns.length), oldDirectInterventionColumns);
   assert.deepEqual(directInterventionColumns.slice(oldDirectInterventionColumns.length).map(column => column.name), ["source_attempt_id"]);
   assert.deepEqual(database.prepare("SELECT server_id, server_revision, tools_revision FROM mcp_authority_revisions ORDER BY server_id").all(), oldAuthorityRows);
-  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162,163,164,165,166,167,168) ORDER BY version").all(), oldMarkers);
+  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175) ORDER BY version").all(), oldMarkers);
+  assert.deepEqual(database.prepare("SELECT version,name FROM schema_migrations WHERE version BETWEEN 169 AND 175 ORDER BY version").all()
+    .map(row => ({ version: row.version, name: row.name })), [
+    { version: 169, name: "native_execution_journal" },
+    { version: 170, name: "native_acp_prompt_correlation" },
+    { version: 171, name: "native_host_effect_journal" },
+    { version: 172, name: "native_host_reply_observations" },
+    { version: 173, name: "native_host_terminal_lifecycle" },
+    { version: 174, name: "native_openclaw_session_identity" },
+    { version: 175, name: "original_native_attempt_effect_inventory" },
+  ]);
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=168").get().name, "teammate_direct_intervention_source_attempt");
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=167").get().name, "original_host_tracked_effect_coverage");
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=166").get().name, "original_host_tool_free_completion");
@@ -288,7 +323,7 @@ test("real schema153 upgrades through168 preserving historical SQL/markers/rows 
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=163").get().name, "add_proposed_plan_revision");
   assert.deepEqual(database.prepare("PRAGMA table_info(host_attempt_completions)").all().map(column => column.name),
     ["attempt_id", "schema_version", "run_id", "work_unit_id", "runtime_instance_id", "fencing_token", "registered_at", "drained_at",
-      "effect_coverage", "tracked_tool_calls_json"]);
+      "effect_coverage", "tracked_tool_calls_json", "native_effect_inventory_json"]);
   assert.equal(database.prepare("SELECT count(*) AS n FROM host_attempt_completions").get().n, 0);
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=162").get().name, "add_media_workflow_connection_check_authority");
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=161").get().name, "create_run_progress_checkpoint_authority");

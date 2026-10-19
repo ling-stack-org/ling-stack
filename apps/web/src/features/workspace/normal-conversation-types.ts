@@ -1,3 +1,4 @@
+import type { ExecutionBindingRequest } from "@ling-stack/contracts";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import type {
   AuthorizationMode,
@@ -34,6 +35,7 @@ export interface ConversationHomeProjectSelection {
 }
 
 export interface ConversationHomeModelOption {
+  readonly executionBinding?: ExecutionBindingRequest;
   readonly id: string;
   readonly displayName: string;
   readonly label?: string;
@@ -46,6 +48,7 @@ export interface ConversationHomeModelOption {
 }
 
 export interface ConversationHomeModelSelection {
+  readonly executionBinding?: ExecutionBindingRequest;
   readonly providerPresetId?: string;
   readonly thinkingLevel?: ProviderThinkingMode;
   readonly reasoningSummary?: ReasoningSummaryMode;
@@ -138,6 +141,7 @@ export interface ConversationHomeProps {
   readonly modelOptions: readonly ConversationHomeModelOption[];
   readonly slashCommands: readonly ComposerSlashCommandOption[];
   readonly workspaceCwd: string;
+  readonly executionSelectionRevision?: string;
   readonly conversationErrorMessage?: string;
   readonly sending?: boolean;
   readonly activeRun?: RunSession;

@@ -3,7 +3,6 @@ import { projectConversationUserInputs } from "./user-input-transcript.js";
 import {
   DEFAULT_WORKSPACE_ID,
   LING_AGENT_ID,
-  redactSecrets,
   type ConversationAttachment,
   type LingConversationTone,
   type LingThread,
@@ -37,22 +36,23 @@ import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js"
 import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 import { isRecord, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { persistConversationAttachment, CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES } from "../channels/attachments.js";
-import { inferUserLanguage, responseLanguageInstruction } from "../channels/response-language.js";
 import { parseChannelAttachmentRequest, readOptionalChannelMessageFileRefs } from "../channels/schemas.js";
 import { buildEffectiveConfigResponse } from "../settings/effective-config.js";
 import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
 import { materializeInlineConversationAttachments, type ConversationAttachmentMaterialization } from "./materialization.js";
-import { lingConversationToneInstruction } from "./conversation-tone.js";
 import { projectConversationActiveReplyTarget } from "./active-reply-target.js";
 import { projectNormalExecutionContextSnapshots } from "./normal-execution-context-snapshots.js";
 import { ConversationNarrationAccumulator } from "./narration-segments.js";
 import { createOwnedRunNarrationAccumulator } from "./narration-owner.js";
 import { prepareNormalConversationInput } from "./normal-conversation-input.js";
-import { normalSubmissionThreadId } from "./submission-receipts.js";
+import { normalSubmissionThreadId, readConversationSubmission } from "./submission-receipts.js";
 import { saveNormalConversationPreparedRequest } from "./normal-conversation-prepared-request.js";
-import { renderNormalConversationRunPrompt, type NormalConversationContextSnapshot } from "./normal-conversation-context.js";
+import { buildConversationRunRequest, resolveConversationResponseLanguage } from "./conversation-run-request.js";
+export { resolveConversationResponseLanguage } from "./conversation-run-request.js";
+import { resolveConversationExecutionSelection, inheritConversationExecutionSelection } from "./conversation-execution-selection.js";
+import { parseExecutionBindingRequest } from "@ling-stack/contracts";
 import { projectTerminalReportDto } from "../channels/terminal-report-routes.js";
 import { listExecutionActions } from "../runs/execution-actions.js";
 import {
@@ -94,23 +94,24 @@ export async function startConversationReplacementRun(input: {
 }): Promise<{ readonly turn: LingTurn; readonly runId?: string }> {
   const now = new Date().toISOString();
   const previousSnapshot = readRecord(input.previousRun?.requestSnapshot);
-  const providerPresetId = input.providerPresetId
-    ?? input.previousRun?.providerPresetId
-    ?? readOptionalRecordString(previousSnapshot, "providerPresetId");
-  if (!providerPresetId) {
-    throw new HttpError(409, "edit_replacement_start_failed", "No provider preset is available for the replacement conversation run.");
-  }
   const revision = input.store.listConversationMessageRevisions({ surface: "normal_conversation", messageId: input.messageId })
     .find((revision) => revision.id === input.revisionId);
   if (!revision || revision.ownerId !== input.thread.id || revision.body !== input.message ||
     JSON.stringify(revision.attachmentIds) !== JSON.stringify(input.attachmentIds)) {
     throw new HttpError(409, "edit_replacement_source_mismatch", "Replacement preparation requires its committed message revision.");
   }
+  const replacementKey = `message-edit:${revision.id}`;
+  const existingInput = input.store.getConversationItemByIdempotencyKey(input.thread.id,
+    `normal-conversation:${input.thread.id}:${replacementKey}`);
+  // New replacements require a selection before creating a canonical turn.
+  // Accepted replacements retain their persisted replay even after revocation.
+  const selection = existingInput ? undefined
+    : inheritConversationExecutionSelection(input.store, input.runnerRegistry, input.previousRun, input.providerPresetId);
   const replacementSource = input.previousRun ? input.store.getLingTurnForRun(input.previousRun.id)
     : input.store.getConversationItem(input.messageId)?.turnId;
   const prepared = prepareNormalConversationInput({ store: input.store, thread: input.thread, message: input.message,
     title: conversationTitle(input.message), attachmentIds: input.attachmentIds, fileRefs: revision.fileRefs,
-    idempotencyKey: `message-edit:${revision.id}`,
+    idempotencyKey: replacementKey,
     replacementSourceTurnId: typeof replacementSource === "string" ? replacementSource : replacementSource?.id, now });
   const { turn, attachments } = prepared;
   if (prepared.replayRequest) {
@@ -120,6 +121,8 @@ export async function startConversationReplacementRun(input: {
     store: input.store, attachments, now, imageVisionSummarizer: input.imageVisionSummarizer,
   });
   const effectiveConfig = await buildEffectiveConfigResponse({ cwd: input.workspaceCwd, store: input.store, runnerRegistry: input.runnerRegistry });
+  const inheritIndependentPermissions = input.permissionPreset === undefined || input.permissionPreset === "custom"
+    || input.permissionPreset === previousSnapshot.permissionPreset;
   const streamInput: ConversationStreamRequest = {
     threadId: input.thread.id,
     message: input.message,
@@ -127,11 +130,13 @@ export async function startConversationReplacementRun(input: {
     fileRefs: [...revision.fileRefs],
     projectPath: readOptionalRecordString(previousSnapshot, "projectPath")
       ?? (input.previousRun?.cwd && input.previousRun.cwd !== input.workspaceCwd ? input.previousRun.cwd : undefined),
-    providerPresetId,
+    ...(selection ?? inheritConversationExecutionSelection(input.store, input.runnerRegistry, input.previousRun, input.providerPresetId)),
     thinkingLevel: readThinkingLevel(readOptionalRecordString(previousSnapshot, "thinkingLevel")),
     reasoningSummary: readReasoningSummary(readOptionalRecordString(previousSnapshot, "reasoningSummary")),
     permissionPreset: input.permissionPreset ?? readPermissionPreset(readOptionalRecordString(previousSnapshot, "permissionPreset")),
     permissionMode: readPermissionMode(readOptionalRecordString(previousSnapshot, "permissionMode")),
+    authorizationMode: inheritIndependentPermissions ? readAuthorizationMode(readOptionalRecordString(previousSnapshot, "authorizationMode")) : undefined,
+    workspaceAccessMode: inheritIndependentPermissions ? readWorkspaceAccessMode(readOptionalRecordString(previousSnapshot, "workspaceAccessMode")) : undefined,
     responseLanguage: readResponseLanguagePreference(readOptionalRecordString(previousSnapshot, "responseLanguage")),
     tools: readOptionalStringArray(previousSnapshot, "tools", runTools),
     idempotencyKey: prepared.idempotencyKey,
@@ -155,7 +160,6 @@ export async function startConversationReplacementRun(input: {
   return { turn, runId };
 }
 
-const defaultConversationTools: readonly RunTool[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 const thinkingLevels: readonly RunThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
 const reasoningSummaryModes = ["auto", "concise", "detailed", "none"] as const;
 const runTools: readonly RunTool[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
@@ -188,6 +192,10 @@ export async function handleConversationStream(
     const input = parseConversationStreamRequest(await readJsonBody(request, config.maxBodyBytes));
     const store = storeRegistry.getStore(workspaceCwd);
     const now = new Date().toISOString();
+    const accepted = input.idempotencyKey && readConversationSubmission(store,
+      { surface: "normal", idempotencyKey: input.idempotencyKey, threadId: input.threadId });
+    const selection = accepted && accepted.status === "accepted" ? undefined
+      : resolveConversationExecutionSelection(store, runnerRegistry, input);
     const thread = resolveConversationThread(store, input, now);
     const prepared = prepareNormalConversationInput({ store, thread, message: input.message,
       title: conversationTitle(input.message.trim() || "User attached files."), attachmentIds: input.attachmentIds ?? [],
@@ -343,7 +351,7 @@ export async function handleConversationStream(
       workspaceCwd,
       thread,
       turn,
-      input: { ...input, idempotencyKey: prepared.idempotencyKey },
+      input: { ...input, ...(selection ?? resolveConversationExecutionSelection(store, runnerRegistry, input)), idempotencyKey: prepared.idempotencyKey },
       lingConversationTone: effectiveConfig!.values.lingConversationTone.value,
       defaultReasoningSummary: effectiveConfig!.values.reasoningSummary.value,
       attachments: conversationAttachments,
@@ -658,10 +666,9 @@ function parseConversationStreamRequest(value: unknown): ConversationStreamReque
   if (attachmentIds.length > 10) {
     throw new Error("A conversation message can reference at most 10 attachments.");
   }
-  const providerPresetId = readString(value, "providerPresetId").trim();
-  if (!providerPresetId) {
-    throw new Error("providerPresetId is required.");
-  }
+  const providerPresetId = readOptionalString(value, "providerPresetId")?.trim() || undefined;
+  const executionBinding = value.executionBinding === undefined ? undefined : parseExecutionBindingRequest(value.executionBinding);
+  if (executionBinding && providerPresetId) throw new Error("Choose an execution binding or a provider preset.");
   return {
     threadId: readOptionalString(value, "threadId")?.trim() || undefined,
     message,
@@ -669,6 +676,7 @@ function parseConversationStreamRequest(value: unknown): ConversationStreamReque
     fileRefs,
     projectPath: readOptionalString(value, "projectPath")?.trim() || undefined,
     providerPresetId,
+    executionBinding,
     thinkingLevel: readThinkingLevel(readOptionalString(value, "thinkingLevel")),
     reasoningSummary: readReasoningSummary(readOptionalString(value, "reasoningSummary")),
     authorizationMode: readAuthorizationMode(readOptionalString(value, "authorizationMode")),
@@ -708,66 +716,6 @@ function resolveConversationThread(store: RunStore, input: ConversationStreamReq
     objective: input.message.trim(),
     status: "open",
   }, now);
-}
-
-function buildConversationRunRequest(input: {
-  readonly workspaceCwd: string;
-  readonly thread: LingThread;
-  readonly turn: LingTurn;
-  readonly input: ConversationStreamRequest;
-  readonly lingConversationTone: LingConversationTone;
-  readonly defaultReasoningSummary: NonNullable<ConversationStreamRequest["reasoningSummary"]>;
-  readonly attachments: readonly ConversationAttachment[];
-  readonly attachmentMaterializations: ReadonlyMap<string, ConversationAttachmentMaterialization>;
-  readonly normalConversationContext: NormalConversationContextSnapshot;
-  readonly normalConversationAcceptedSnapshotId?: string;
-}): RunRequest {
-  const toneInstruction = lingConversationToneInstruction(input.lingConversationTone);
-  const responseLanguagePreference = input.input.responseLanguage ?? "follow_user";
-  const responseLanguage = resolveConversationResponseLanguage(
-    responseLanguagePreference,
-    input.input.message,
-  );
-  const appendSystemPrompt = [
-    toneInstruction,
-    responseLanguageInstruction(responseLanguagePreference),
-  ].filter((instruction) => instruction.trim());
-  return {
-    workspaceCwd: input.workspaceCwd,
-    cwd: input.input.projectPath || input.workspaceCwd,
-    task: redactSecrets({
-      id: conversationRunTaskId(input.turn.id),
-      title: input.turn.title,
-      prompt: renderNormalConversationRunPrompt(input.normalConversationContext, buildConversationRunPrompt(
-        input.input.message,
-        input.attachments,
-        input.attachmentMaterializations,
-        input.input.fileRefs ?? [],
-      )),
-    }) as RunRequest["task"],
-    threadId: input.thread.id,
-    turnId: input.turn.id,
-    teammateId: LING_AGENT_ID,
-    createdByActor: input.turn.createdByActor,
-    providerPresetId: input.input.providerPresetId,
-    tools: input.input.tools ?? defaultConversationTools,
-    authorizationMode: input.input.authorizationMode,
-    workspaceAccessMode: input.input.workspaceAccessMode,
-    permissionPreset: input.input.permissionPreset,
-    permissionMode: input.input.permissionMode,
-    permissionConfirmation: input.input.permissionConfirmation,
-    thinkingLevel: input.input.thinkingLevel,
-    reasoningSummary: input.input.reasoningSummary ?? input.defaultReasoningSummary,
-    lingConversationTone: input.lingConversationTone,
-    responseLanguage,
-    appendSystemPrompt,
-    conversationAttachmentIds: input.attachments.map((attachment) => attachment.id),
-    conversationFileRefs: input.input.fileRefs ?? [],
-    normalConversationContext: input.normalConversationContext,
-    normalConversationAcceptedSnapshotId: input.normalConversationAcceptedSnapshotId,
-    contextProjection: input.normalConversationContext.projection,
-    idempotencyKey: input.input.idempotencyKey ?? `conversation:${input.turn.id}`,
-  };
 }
 
 function createUserTranscriptMessage(
@@ -900,10 +848,6 @@ function conversationTitle(message: string): string {
   return oneLine.length > 48 ? `${oneLine.slice(0, 45)}...` : oneLine || "New conversation";
 }
 
-function conversationRunTaskId(turnId: string): string {
-  return `conversation:${turnId}`;
-}
-
 function conversationAssistantMessageId(turnId: string): string {
   return `conversation-assistant:${turnId}`;
 }
@@ -1003,64 +947,6 @@ function readPermissionConfirmation(value: unknown): ConversationStreamRequest["
 
 function readResponseLanguagePreference(value: string | undefined): ResponseLanguagePreference | undefined {
   return value === "follow_user" || isSupportedLocale(value) ? value : undefined;
-}
-
-export function resolveConversationResponseLanguage(
-  responseLanguage: ResponseLanguagePreference | undefined,
-  message: string,
-): Exclude<ResponseLanguagePreference, "follow_user"> {
-  return responseLanguage && responseLanguage !== "follow_user" ? responseLanguage : inferUserLanguage(message);
-}
-
-function buildConversationRunPrompt(
-  message: string,
-  attachments: readonly ConversationAttachment[],
-  materializations: ReadonlyMap<string, ConversationAttachmentMaterialization>,
-  fileRefs: readonly ChannelMessageFileRef[],
-): string {
-  const trimmedMessage = message.trim();
-  const parts = [
-    trimmedMessage || "User attached files.",
-    renderConversationAttachmentsForPrompt(attachments, materializations),
-    renderConversationFileRefsForPrompt(fileRefs),
-  ].filter((part) => part.trim());
-  return parts.join("\n\n");
-}
-
-function renderConversationFileRefsForPrompt(fileRefs: readonly ChannelMessageFileRef[]): string {
-  if (fileRefs.length === 0) {
-    return "";
-  }
-  return [
-    "Workspace file references:",
-    ...fileRefs.map((fileRef, index) => `- ${index + 1}. ${fileRef.label ? `${fileRef.label}: ` : ""}${fileRef.path}${fileRef.line ? `:${fileRef.line}` : ""}`),
-    "Treat these as user-supplied references only. Existing workspace and approval policy still controls access.",
-  ].join("\n");
-}
-
-function renderConversationAttachmentsForPrompt(
-  attachments: readonly ConversationAttachment[],
-  materializations: ReadonlyMap<string, ConversationAttachmentMaterialization>,
-): string {
-  if (attachments.length === 0) {
-    return "";
-  }
-  return [
-    "Attached files:",
-    ...attachments.map((attachment, index) => {
-      const materialization = materializations.get(attachment.id);
-      const header = `- ${index + 1}. ${attachment.fileName} (${attachment.kind}, ${attachment.contentType}, ${attachment.sizeBytes} bytes, materialization=${materialization?.status ?? "metadata_only"})`;
-      if (materialization?.status === "available" && materialization.contentText?.trim()) {
-        return `${header}\n  Content${materialization.truncated ? " (truncated)" : ""}:\n${indentAttachmentContent(materialization.contentText)}`;
-      }
-      return header;
-    }),
-    "Use only the listed attachment content. Do not infer unseen file contents.",
-  ].join("\n");
-}
-
-function indentAttachmentContent(content: string): string {
-  return content.trim().split(/\r?\n/).map((line) => `  ${line}`).join("\n");
 }
 
 function conversationAttachmentsFromRunSnapshot(store: RunStore, run: RunSession | undefined): readonly ConversationAttachment[] {

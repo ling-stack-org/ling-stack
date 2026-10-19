@@ -23,7 +23,7 @@ async function fixture(t) {
     const url = new URL(request.url, "http://127.0.0.1");
     const action = url.pathname.startsWith("/runs/")
       ? handleRunInterventions(request, response, config, url, undefined, registry, activeRuns,
-        undefined, undefined, undefined, undefined, undefined, undefined, url.pathname.split("/")[2])
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, url.pathname.split("/")[2])
       : handleTeammateDirectInterventions(request, response, config, registry, url.pathname.split("/")[2], directService);
     void action.catch(error => { response.writeHead(500, { "Content-Type": "application/json" }); response.end(JSON.stringify({ message: error.message })); });
   });
