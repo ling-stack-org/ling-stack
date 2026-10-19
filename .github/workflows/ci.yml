@@ -5,8 +5,9 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled]
   workflow_dispatch:
   schedule:
-    # Full platform regression is weekly; normal PRs retain affected checks.
-    - cron: "17 3 * * 1"
+    # Daily full Linux/macOS regression at 11:17 Asia/Shanghai (03:17 UTC).
+    # Normal PRs retain affected checks and Draft execution policy.
+    - cron: "17 3 * * *"
 
 concurrency:
   # Unrelated labels must neither cancel validation nor replace its check result.
@@ -334,10 +335,10 @@ jobs:
     # Full discovery is unchanged: original Darwin-only positive cases must
     # execute on the real Host, not skip or weaken the production platform gate.
     runs-on: macos-26
-    # Daemon tests start an isolated runtime for each integration fixture. As
-    # the suite grows, the heaviest shard can legitimately exceed the generic
-    # 15-minute job budget even when every test is progressing and passing.
-    timeout-minutes: 25
+    # Run 39274142315 reached 1,584 passing tests in shard 1 before the 25m
+    # job limit cancelled it while tests were still progressing. Include setup
+    # and room for the remaining files without changing discovery or isolation.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
