@@ -47,7 +47,7 @@
     "smol-toml": "1.9.1"
   },
   "devDependencies": {
-    "@babel/parser": "7.29.8",
+    "@babel/parser": "8.0.7",
     "@types/pdf-parse": "1.1.5",
     "@types/proper-lockfile": "4.1.4",
     "@types/ws": "^8.5.13",
