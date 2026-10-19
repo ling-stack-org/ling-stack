@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -18,6 +18,7 @@ test("development resourcesRoot is appPath/resources", async (t) => {
   );
   const paths = await resolveDesktopResourcePaths(app, "/ignored/packaged/resources");
   assert.equal(paths.resourcesRoot, resolve(fixture.appPath, "resources"));
+  assert.equal(paths.imageSanitizerPath, resolve(fixture.root, "packages/daemon/dist/native/image-sanitizer", imageExecutable()));
 });
 
 test("packaged resourcesRoot is Electron process.resourcesPath", async (t) => {
@@ -27,6 +28,10 @@ test("packaged resourcesRoot is Electron process.resourcesPath", async (t) => {
   await mkdir(join(packagedResourcesPath, "browser-host"), { recursive: true });
   await mkdir(join(packagedResourcesPath, "restricted-command"), { recursive: true });
   await mkdir(join(packagedResourcesPath, "office-local", "source"), { recursive: true });
+  if (process.platform === "win32") {
+    await mkdir(join(packagedResourcesPath, "engine-supervisor"), { recursive: true });
+    await writeFile(join(packagedResourcesPath, "engine-supervisor/ling-engine-supervisor.exe"), "fixture");
+  }
   await writeFile(join(packagedResourcesPath, "web", "index.html"), "fixture");
   await writeFile(
     join(packagedResourcesPath, "browser-host", process.platform === "win32" ? "ling-browser-host.exe" : "ling-browser-host"),
@@ -36,12 +41,20 @@ test("packaged resourcesRoot is Electron process.resourcesPath", async (t) => {
   await writeFile(join(packagedResourcesPath, "restricted-command", "manifest.json"), "{}");
   await writeFile(join(packagedResourcesPath, "office-local", "office-local.node"), "test-only addon bytes");
   await writeFile(join(packagedResourcesPath, "office-local", "build-manifest.json"), "test-only build data");
+  await mkdir(join(packagedResourcesPath, "image-sanitizer"));
+  const imagePath = join(packagedResourcesPath, "image-sanitizer", imageExecutable());
+  await writeFile(imagePath, "test-only codec bytes");
+  await writeFile(join(packagedResourcesPath, "image-sanitizer/build-metadata.json"), "{}");
+  await writeFile(join(packagedResourcesPath, "image-sanitizer/THIRD_PARTY_LICENSES.txt"), "test-only notices");
   const app = { isPackaged: true, getAppPath: () => fixture.appPath };
 
   assert.equal(resolveDesktopResourcesRoot(app, packagedResourcesPath), resolve(packagedResourcesPath));
   const paths = await resolveDesktopResourcePaths(app, packagedResourcesPath);
   assert.equal(paths.resourcesRoot, resolve(packagedResourcesPath));
   assert.equal(paths.webIndexPath, resolve(packagedResourcesPath, "web/index.html"));
+  assert.equal(paths.imageSanitizerPath, imagePath);
+  await unlink(imagePath);
+  await assert.rejects(resolveDesktopResourcePaths(app, packagedResourcesPath), { name: "DesktopResourceResolutionError" });
   assert.equal(
     paths.browserHostPath,
     resolve(packagedResourcesPath, "browser-host", process.platform === "win32" ? "ling-browser-host.exe" : "ling-browser-host"),
@@ -147,3 +160,5 @@ function entryStylesheetPaths(html) {
     return match[1];
   });
 }
+
+function imageExecutable() { return process.platform === "win32" ? "ling-image-sanitizer.exe" : "ling-image-sanitizer"; }

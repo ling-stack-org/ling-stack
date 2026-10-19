@@ -10,7 +10,7 @@ import { persistConversationAttachment } from "../dist/features/channels/attachm
 test("thread hard delete removes archived conversation data and keeps unlinked run history", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-thread-hard-delete-"));
   const store = createSqliteRunStore(cwd);
-  const daemon = await startDaemonForTest({ storeFactory: () => store });
+  const daemon = await startDaemonForTest(cwd, { storeFactory: () => store });
   try {
     await requestJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}`);
     const now = "2026-07-11T00:00:00.000Z";
@@ -80,7 +80,7 @@ test("thread hard delete removes archived conversation data and keeps unlinked r
 test("thread hard delete rejects unsafe records and enabled automation targets", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-thread-hard-delete-guards-"));
   const store = createSqliteRunStore(cwd);
-  const daemon = await startDaemonForTest({ storeFactory: () => store });
+  const daemon = await startDaemonForTest(cwd, { storeFactory: () => store });
   try {
     await requestJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}`);
     const now = "2026-07-11T00:00:00.000Z";
@@ -176,10 +176,11 @@ test("thread hard delete rejects unsafe records and enabled automation targets",
   }
 });
 
-async function startDaemonForTest(dependencies = {}) {
+async function startDaemonForTest(cwd, dependencies = {}) {
   const daemon = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
+    defaultWorkspaceCwd: cwd,
     channels: { intentSelector: false },
   }, dependencies);
   await daemon.start();

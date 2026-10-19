@@ -151,6 +151,18 @@ const capabilities: LingDesktopCapabilities = {
     rejectPairing: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessPairingReject),
     revoke: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessRevoke),
   },
+  executionEngines: {
+    listProfiles: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEnginesList),
+    getProfile: (engineId) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineProfileGet, engineId),
+    saveProfile: (engineId, request) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineProfileSave, engineId, request),
+    saveProfileWithSecret: (engineId, request) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineProfileSecretSave, engineId, request),
+    disconnectProfile: (engineId, revision) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineProfileDisconnect, engineId, revision),
+    probeProfile: (engineId, revision) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineProfileProbe, engineId, revision),
+    probeConnection: (engineId, revision) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineConnectionProbe, engineId, revision),
+    startLogin: (engineId, revision, method) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineLoginStart, engineId, revision, method),
+    getLogin: (engineId, operationId) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineLoginGet, engineId, operationId),
+    cancelLogin: (engineId, operationId) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineLoginCancel, engineId, operationId),
+  },
   ...(computerControlPlatform === "macos" || computerControlPlatform === "windows"
     ? {
         computerControl: {

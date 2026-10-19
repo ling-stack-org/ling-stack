@@ -56,6 +56,8 @@ import type { HostCapabilityBridgeController } from "./features/runs/host-capabi
 import type { HostMcpOperation } from "./features/mcp/host-operation.js";
 import type { HostOfficeLocalMcpOperation } from "./features/mcp/office-local-mcp-operation.js";
 import type { HumanEvaluationService } from "./features/harness/evaluations/human-evaluation-service.js";
+import type { EngineManagementFeature, EngineManagementFeatureOptions } from "./features/execution-engines/feature.js";
+import type { NativeRunDispatcher, NativeRunTargetDispatcher } from "./features/runs/native-run-dispatcher.js";
 
 export interface RunnerAdapter {
   /** Optional capability; absence must reject prepared execution, never fabricate evidence. */
@@ -195,6 +197,9 @@ export interface DaemonDependencies {
   readonly computerUseTargetOwnershipTimeoutMs?: number;
   readonly remoteAccessManagementCapability?: string;
   readonly remoteAccessStateDir?: string;
+  readonly engineManagement?: Partial<EngineManagementFeatureOptions>;
+  /** Trusted embedding/test seam. Null intentionally keeps native execution fail-closed. */
+  readonly nativeRunTargetDispatcher?: NativeRunTargetDispatcher | null;
   /** Pass null only for fail-closed embedding/tests that intentionally disable Mobile send. */
   readonly remoteReplyDispatcher?: RemoteReplyDispatcher | null;
   readonly chromeBrowserExtensionIds?: readonly string[];
@@ -239,6 +244,8 @@ export interface DaemonContext {
   readonly computerUseRouteToken?: string;
   readonly computerUseTargetOwnershipTimeoutMs?: number;
   readonly remoteAccess: RemoteAccessController;
+  readonly engineManagement: EngineManagementFeature;
+  readonly nativeRunDispatcher?: NativeRunDispatcher;
   readonly chromeBrowserSessions: ChromeBrowserSessionController;
   readonly chromeBrowserPlugin: ChromeBrowserPluginService;
   readonly officeDriverController: OfficeDriverController;

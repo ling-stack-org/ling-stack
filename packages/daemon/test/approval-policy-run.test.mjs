@@ -10,7 +10,7 @@ import { deflateSync } from "node:zlib";
 import { DEFAULT_WORKSPACE_ID, createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
 import { auditIgnoredRunnerCompletion } from "../dist/features/runs/stale-completion.js";
-import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
+import { ensureGitRepo, ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 import { ToolFreePiRunner } from "./support/tool-free-pi-runner.mjs";
 import { createHostToolResultAdapter } from "../../runner-pi/dist/host-tool-results.js";
 import { convertMessages } from "../../runner-pi/node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js";
@@ -113,6 +113,7 @@ test("runtime runner settings api seeds Pi defaults and explicit runner requests
 
     const seeded = await getJson(`${daemon.url}/runtime/settings?cwd=${encodeURIComponent(cwd)}`);
     assert.deepEqual(seeded.settings, {
+      schemaVersion: 2,
       workspaceId: DEFAULT_WORKSPACE_ID,
       defaultRunnerId: "pi",
       allowedRunnerIds: ["pi"],
@@ -140,8 +141,8 @@ test("runtime runner settings api seeds Pi defaults and explicit runner requests
       ...runBody(cwd, "task_explicit_unknown_runner"),
       runnerId: "codex-app-server",
     });
-    assert.equal(explicit.status, 400);
-    assert.equal(explicit.body.error, "unsupported_runner");
+    assert.equal(explicit.status, 409);
+    assert.equal(explicit.body.error, "legacy_runner_migration_required");
 
     const { runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_workspace_default_runner"));
     assert.ok(runId);
@@ -954,22 +955,30 @@ test("unified exec run cancellation kills command and leaves the run cancelled",
   }
 });
 
-test("assignee approval profile tightens workspace approval policy", async () => {
+for (const [command, profile, actionType] of [
+  ["echo profile-gated", { requiredForTools: ["bash"] }, "bash"],
+  ["git commit -m profile-gated", { requiredForActions: ["git_commit"] }, "git_commit"],
+]) test(`assignee approval profile gates ${actionType} despite workspace bash=allow`, async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-policy-profile-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_bash_profile",
     toolName: "bash",
-    input: { command: "echo profile-gated", prefix_rule: ["echo"] },
+    input: { command, prefix_rule: ["echo"] },
   });
   const daemon = await startDaemonForTest(runner);
   try {
+    if (actionType === "git_commit") {
+      await ensureGitRepo(cwd);
+      await writeFile(resolve(cwd, "README.md"), "profile-gated\n", "utf8");
+      execFileSync("git", ["add", "README.md"], { cwd, stdio: "ignore" });
+    }
     await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
     const response = await postRunStream(daemon.url, {
       ...runBody(cwd, "task_bash_profile"),
       approvalProfile: {
         mode: "standard",
         risk: "medium",
-        requiredForTools: ["bash"],
+        ...profile,
       },
     });
     const sse = createSseReader(response);
@@ -980,6 +989,9 @@ test("assignee approval profile tightens workspace approval policy", async () =>
     const requested = await waitForSseEvent(sse, "approval_requested");
     const approvalId = requested.data.data.approvalId;
     const [pending] = await listApprovals(daemon.url, cwd, runId);
+    assert.equal(pending.actionType, actionType);
+    assert.equal(pending.status, "pending");
+    assert.equal(runner.decisions.length, 0);
     assert.deepEqual(pending.availableDecisions, ["approve_once", "deny"]);
     assert.equal(pending.proposedCommandRule, undefined);
     const approval = await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
@@ -5503,7 +5515,7 @@ class ThreadResumeRunner {
 function assertHandledCommand(decision, expectedMetadata, expectedOutput) {
   const { handledResult, ...metadata } = decision;
   assert.deepEqual(metadata, expectedMetadata);
-  assert.equal(handledResult.isError, false);
+  assert.equal(handledResult.isError, false, JSON.stringify(handledResult));
   assert.equal(handledResult.details.unifiedExec.status, "succeeded");
   assert.equal(handledResult.details.unifiedExec.exitCode, 0);
   assert.ok(handledResult.details.unifiedExec.stdout.preview.includes(expectedOutput));

@@ -73,9 +73,10 @@ function scanPrivatePaths(file, text) {
     if (!allowedUserSegments.has(match[1])) addFailure(file, text, match.index, "personal macOS user path");
   }
   for (const match of text.matchAll(/\/Volumes\/([^\/\s"'`]+)/g)) {
-    // The fixed OS-owned Preboot location is not a user's mounted volume.
-    // A standalone volume with the same name must still be reported.
-    if (match[1] === "Preboot" && /(?:^|[\s"'`])\/System$/.test(text.slice(0, match.index))) continue;
+    // Fixed OS-owned locations are not personal mounted volumes. Standalone
+    // volumes, lookalikes and private paths below these locations still fail.
+    if ((match[1] === "Preboot" || match[1] === "Data")
+      && /(?:^|[\s"'`])\/System$/.test(text.slice(0, match.index))) continue;
     if (!allowedVolumeSegments.has(match[1])) addFailure(file, text, match.index, "personal macOS volume path");
   }
   for (const match of text.matchAll(/[A-Za-z]:\\Users\\([^\\\s"'`]+)/g)) {

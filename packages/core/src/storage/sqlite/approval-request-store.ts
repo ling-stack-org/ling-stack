@@ -13,6 +13,7 @@ import {
 } from "../../approval-types.js";
 import { approvalSideEffectFingerprintV1 } from "../../approval-checkpoints.js";
 import { redactSecrets } from "../../redaction.js";
+import { ApprovalDecisionUnavailableError, assertApprovalDecisionAvailable } from "../../approval-decisions.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import { stringifyJson } from "./helpers.js";
 import { mapApprovalCommandRule, mapApprovalRequest } from "./approval-media-mappers.js";
@@ -417,6 +418,7 @@ export class SqliteApprovalRequestStore {
       if (existing.status !== "pending") {
         throw new Error(`Approval request is not pending: ${id}`);
       }
+      assertApprovalDecisionAvailable(existing, "approve_command_rule");
       const proposal = existing.proposedCommandRule;
       if (
         existing.actionType !== "bash" ||
@@ -513,11 +515,18 @@ export class SqliteApprovalRequestStore {
       throw new Error(`Approval request is not pending: ${id}`);
     }
 
+    const decisionKind = status === "approved"
+      ? (input.decisionKind ?? "approve_once")
+      : status === "denied" ? "deny" : undefined;
+    if (status === "approved") {
+      assertApprovalDecisionAvailable(existing, decisionKind);
+      if (decisionKind === "approve_permission_scope" && (!existing.expiresAt
+        || !Number.isFinite(Date.parse(existing.expiresAt)) || !Number.isFinite(Date.parse(now))
+        || Date.parse(existing.expiresAt) <= Date.parse(now))) throw new ApprovalDecisionUnavailableError();
+    }
+
     this.context.database.exec("SAVEPOINT approval_request_resolution");
     try {
-      const decisionKind = status === "approved"
-        ? (input.decisionKind ?? "approve_once")
-        : status === "denied" ? "deny" : undefined;
       const update = this.context.database
         .prepare(`
           UPDATE approval_requests

@@ -1,3 +1,4 @@
+import type { ExecutionBindingRequest } from "@ling-stack/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { archiveLingThread, getConversation, getConversationSubmission, listLingThreads, streamConversation } from "../../api.js";
 import { LingDaemonError } from "@ling-stack/api-client";
@@ -40,7 +41,8 @@ export interface ConversationSendInput {
   readonly attachmentIds?: readonly string[];
   readonly fileRefs?: readonly ChannelMessageFileRef[];
   readonly projectPath?: string;
-  readonly providerPresetId: string;
+  readonly providerPresetId?: string;
+  readonly executionBinding?: ExecutionBindingRequest;
   readonly thinkingLevel?: ProviderThinkingMode;
   readonly reasoningSummary?: ReasoningSummaryMode;
   readonly authorizationMode?: AuthorizationMode;
@@ -458,6 +460,7 @@ export function useConversationDomain(input: {
         fileRefs: message.fileRefs,
         projectPath: message.projectPath,
         providerPresetId: message.providerPresetId,
+        executionBinding: message.executionBinding,
         thinkingLevel: normalizeThinkingLevel(message.thinkingLevel),
         reasoningSummary: message.reasoningSummary,
         authorizationMode: message.authorizationMode,

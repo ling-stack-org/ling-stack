@@ -17,9 +17,10 @@ export function readWorkUnitStopEvidence(store: RunStore, unit: WorkUnit, attemp
         ? "drained" as const : observed.localExecution;
       const operations = store.listHostOperationBlockers(source);
       const commands = store.listHostCommandWriteBlockers(run.cwd).filter(command => command.runId === run.id && command.attemptId === attempt.id);
-      const effects = observed.effects === "unknown" || operations.some(operation => operation.phase === "unknown_outcome")
+      const effects = observed.effects === "unknown" || completion?.nativeEffectStatus === "unknown"
+        || operations.some(operation => operation.phase === "unknown_outcome")
         || commands.some(command => command.state === "stop_unconfirmed") ? "unknown"
-        : operations.length || commands.length || observed.effects === "pending" ? "pending"
+        : operations.length || commands.length || observed.effects === "pending" || completion?.nativeEffectStatus === "pending" ? "pending"
         // The in-memory group covers only enrolled executors. Even an empty
         // group needs the closed SDK/Host inventory before certifying effects.
         : completion?.drainedAt && completion.effectCoverage ? "settled" : "unverified";

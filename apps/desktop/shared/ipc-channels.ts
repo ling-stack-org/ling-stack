@@ -19,6 +19,16 @@ export const DESKTOP_THEME_PACKAGE_IPC_CHANNELS = {
 } as const satisfies Readonly<Record<DesktopThemePackageIpcChannelKey, string>>;
 
 export const DESKTOP_IPC_CHANNELS = {
+  executionEnginesList: "ling-desktop:execution-engines:list",
+  executionEngineProfileGet: "ling-desktop:execution-engines:profile-get",
+  executionEngineProfileSave: "ling-desktop:execution-engines:profile-save",
+  executionEngineProfileSecretSave: "ling-desktop:execution-engines:profile-secret-save",
+  executionEngineProfileDisconnect: "ling-desktop:execution-engines:profile-disconnect",
+  executionEngineProfileProbe: "ling-desktop:execution-engines:profile-probe",
+  executionEngineConnectionProbe: "ling-desktop:execution-engines:connection-probe",
+  executionEngineLoginStart: "ling-desktop:execution-engines:login-start",
+  executionEngineLoginGet: "ling-desktop:execution-engines:login-get",
+  executionEngineLoginCancel: "ling-desktop:execution-engines:login-cancel",
   daemonStatus: "ling-desktop:daemon:status",
   daemonRestart: "ling-desktop:daemon:restart",
   mobileAccessStatus: "ling-desktop:mobile-access:status",

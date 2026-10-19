@@ -407,6 +407,8 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
           desktopBridgeToken: bridgeToken,
           browserHostPath: resources.browserHostPath,
           packaged: app.isPackaged,
+          engineSupervisorPath: resources.engineSupervisorPath,
+          imageSanitizerPath: resources.imageSanitizerPath,
           cuaDriverFeatureFlags: featureFlags,
           ...(smokeHeadless && app.runningUnderARM64Translation ? { startupTimeoutMs: 60_000 } : {}),
           onUnexpectedExit: (details) => {
@@ -619,6 +621,11 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     windowControlsEnabled: process.platform === "win32",
     navigationIntents: desktopNavigationIntents,
     themeStore: desktopRendererThemeStore,
+    executionEngines: { baseUrl: daemonBaseUrl, trustedDocumentUrl: pathToFileURL(resources.webIndexPath).href,
+      getAuthority: () => {
+        if (!desktopRuntime) throw new Error("engine_host_authority_unavailable");
+        return desktopRuntime.getExecutionEngineAuthority();
+      } },
     mobileAccess: new DesktopMobileAccessClient({
       daemonBaseUrl,
       desktopBridgeToken: bridgeToken,

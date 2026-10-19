@@ -2759,6 +2759,7 @@ export function AppShell(): React.JSX.Element {
               />
               ) : (
                 <ConversationHome
+                  executionSelectionRevision={JSON.stringify([settingsDomain.state.runtimeSettings?.updatedAt, approvalPolicy])}
                   conversationTitle={selectedConversationDetail?.thread.title ?? ""}
                   initialMessages={selectedConversationMessages}
                   initialProjectPath={selectedConversationProjectPath}
@@ -2837,7 +2838,8 @@ export function AppShell(): React.JSX.Element {
                       attachmentIds: input.attachmentIds,
                       fileRefs: input.fileRefs,
                       projectPath: input.project.projectPath,
-                      providerPresetId: input.model.providerPresetId || defaultConversationProviderPresetId,
+                      providerPresetId: input.model.executionBinding ? undefined : input.model.providerPresetId || defaultConversationProviderPresetId,
+                      executionBinding: input.model.executionBinding,
                       thinkingLevel: input.model.thinkingLevel,
                       reasoningSummary: input.model.reasoningSummary,
                       authorizationMode: input.authorization.authorizationMode,

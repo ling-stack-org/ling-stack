@@ -27,7 +27,13 @@ test("macOS system Preboot path does not imply a personal volume", t => {
   assert.equal(result.status, 0, result.stderr);
 });
 
-for (const segments of [["", "Volumes", "Preboot", "personal"], ["", "private", "System", "Volumes", "Preboot"], ["", "System", "Volumes", "private-owner"], ["", "Users", "private-owner", "project"]]) {
+test("macOS system Data path does not imply a personal volume", t => {
+  const result = scan(t, JSON.stringify(["", "System", "Volumes", "Data"].join("/")));
+  assert.equal(result.status, 0, result.stderr);
+});
+
+for (const segments of [["", "Volumes", "Preboot", "personal"], ["", "private", "System", "Volumes", "Preboot"], ["", "System", "Volumes", "private-owner"], ["", "Users", "private-owner", "project"],
+  ["", "Volumes", "Data", "personal"], ["", "private", "System", "Volumes", "Data"], ["", "System", "Volumes", "Data-owner"], ["", "System", "Volumes", "Data", "Users", "private-owner", "project"]]) {
   test(`private path remains blocked: ${segments.slice(1).join(" > ")}`, t => {
     const result = scan(t, JSON.stringify(segments.join("/")));
     assert.equal(result.status, 1);

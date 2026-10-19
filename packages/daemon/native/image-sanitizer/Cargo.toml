@@ -1,0 +1,19 @@
+[package]
+name = "ling-image-sanitizer"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+png = { version = "=0.18.1", default-features = false }
+jpeg-decoder = { path = "vendor/jpeg-decoder", version = "=0.3.2", default-features = false, features = ["platform_independent"] }
+image-webp = { version = "=0.2.4", default-features = false }
+crc32fast = "=1.5.2"
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
+moxcms = { version = "=0.9.1", default-features = false, features = ["lut", "options"] }
+
+[profile.release]
+panic = "abort"
+strip = true
+lto = "thin"

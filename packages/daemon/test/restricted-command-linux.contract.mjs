@@ -41,8 +41,11 @@ test("real Linux refuses packaged discovery before bundle verification", () => {
 test("HTTP proposal confirmation on Linux rejects before creating Task, Run, or Workflow", async t => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-linux-platform-confirm-"));
   const store = createSqliteRunStore(cwd);
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0,
-    sandbox: { restrictedCommands: unavailableConfig } }, { storeFactory: () => store });
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd,
+    sandbox: { restrictedCommands: unavailableConfig } }, { storeFactory(requestedCwd) {
+      assert.equal(requestedCwd, cwd, "The Linux contract must only open its temporary workspace.");
+      return store;
+    } });
   t.after(async () => { await daemon.stop(); await rm(cwd, { recursive: true, force: true }); });
   await daemon.start();
   const now = new Date().toISOString();

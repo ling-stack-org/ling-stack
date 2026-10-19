@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +8,62 @@ import test from "node:test";
 import { DesktopDaemonLifecycle } from "../dist/main/daemon-lifecycle.js";
 
 const existingEntryPath = fileURLToPath(import.meta.url);
+
+test("Desktop engine authority is memory-only and belongs to its live owned child", async (t) => {
+  const child = createFakeChild();
+  const channel = new PassThrough();
+  child.stdio = [null, null, null, channel];
+  const authority = engineAuthorityFixture(child.pid);
+  const inputs = [];
+  const lifecycle = engineLifecycle(child, (input) => inputs.push(input));
+  t.after(() => lifecycle.stopOwnedDaemon());
+  channel.end(JSON.stringify(authority));
+  await lifecycle.ensureStarted();
+  assert.deepEqual(await lifecycle.getExecutionEngineAuthority(), authority);
+  assert.equal(JSON.stringify(inputs).includes(authority.credentials.capability), false);
+  assert.equal(JSON.stringify(lifecycle.status).includes(authority.credentials.capability), false);
+  assert.equal(inputs[0].env.LING_STACK_ENGINE_AUTHORITY_FD, "3");
+  await lifecycle.stopOwnedDaemon();
+  await assert.rejects(lifecycle.getExecutionEngineAuthority(), /engine_host_authority_unavailable/);
+});
+
+test("stopping while the startup authority is in flight rejects its late result", async () => {
+  const child = createFakeChild();
+  const channel = new PassThrough();
+  child.stdio = [null, null, null, channel];
+  const lifecycle = engineLifecycle(child);
+  await lifecycle.ensureStarted();
+  const pending = lifecycle.getExecutionEngineAuthority();
+  const rejected = assert.rejects(pending, /engine_host_authority_unavailable/);
+  await lifecycle.stopOwnedDaemon();
+  channel.end(JSON.stringify(engineAuthorityFixture(child.pid)));
+  await rejected;
+});
+
+test("reusing an external daemon never grants engine management authority", async () => {
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:17991", daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd: "/tmp/ling-desktop-workspace", fetch: async () => daemonHealth("/tmp/ling-desktop-workspace"),
+    spawnDaemon: () => { throw new Error("must not spawn"); },
+  });
+  assert.equal((await lifecycle.ensureStarted()).ownedByDesktop, false);
+  await assert.rejects(lifecycle.getExecutionEngineAuthority(), /engine_host_authority_unavailable/);
+});
+
+function engineAuthorityFixture(pid) {
+  return { schemaVersion: 1, instanceId: "11111111-1111-1111-1111-111111111111", baseUrl: "http://127.0.0.1:17991", pid,
+    credentials: { capability: "fixture".repeat(7), csrfToken: "csrf".repeat(11) } };
+}
+
+function engineLifecycle(child, onSpawn = () => {}) {
+  let probes = 0;
+  return new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:17991", daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd: "/tmp/ling-desktop-workspace", probePort: async () => "free",
+    fetch: async () => ++probes === 1 ? Promise.reject(new TypeError("fetch failed")) : daemonHealth("/tmp/ling-desktop-workspace"),
+    spawnDaemon: (input) => { onSpawn(input); return child; },
+  });
+}
 
 test("Desktop daemon starts in the selected workspace and stops the owned child", async () => {
   const child = createFakeChild();
@@ -62,6 +119,7 @@ test("packaged Desktop marks only its fixed child bootstrap as packaged", async 
     daemonEntryPath: existingEntryPath,
     defaultWorkspaceCwd: "/tmp/ling-desktop-packaged-workspace",
     packaged: true,
+    imageSanitizerPath: "/fixed/product/image-sanitizer/ling-image-sanitizer",
     fetch: async () => ++healthChecks === 1
       ? Promise.reject(new TypeError("fetch failed"))
       : daemonHealth("/tmp/ling-desktop-packaged-workspace"),
@@ -70,6 +128,7 @@ test("packaged Desktop marks only its fixed child bootstrap as packaged", async 
   });
   await lifecycle.ensureStarted();
   assert.equal(inputs[0].env.LING_STACK_PACKAGED_DESKTOP, "1");
+  assert.equal(inputs[0].env.LING_IMAGE_SANITIZER_PATH, "/fixed/product/image-sanitizer/ling-image-sanitizer");
   await lifecycle.stopOwnedDaemon();
 });
 

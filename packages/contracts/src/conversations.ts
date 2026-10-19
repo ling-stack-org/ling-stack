@@ -96,13 +96,16 @@ export interface ConversationTranscriptMessage {
   readonly updatedAt: string;
 }
 
+import type { ExecutionBindingRequest } from "./execution-engines.js";
+
 export interface ConversationStreamRequest {
   readonly threadId?: string;
   readonly message: string;
   readonly attachmentIds?: readonly string[];
   readonly fileRefs?: readonly ChannelMessageFileRef[];
   readonly projectPath?: string;
-  readonly providerPresetId: string;
+  readonly providerPresetId?: string;
+  readonly executionBinding?: ExecutionBindingRequest;
   readonly thinkingLevel?: RunThinkingLevel;
   readonly reasoningSummary?: ReasoningSummaryMode;
   readonly authorizationMode?: AuthorizationMode;

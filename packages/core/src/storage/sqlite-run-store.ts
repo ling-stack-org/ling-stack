@@ -589,6 +589,9 @@ import { applyApprovalResumeBasisMigration } from "./sqlite/approval-resume-basi
 import { applyChannelParticipantAuthorityMigration } from "./sqlite/channel-participant-authority-migration.js";
 import { applyChannelProposalBlockerMigration } from "./sqlite/channel-proposal-blocker-migration.js";
 import { applyRuntimeAttemptFenceMigration } from "./sqlite/runtime-attempt-fence-migration.js";
+import { applyNativeExecutionMigration, applyNativeAcpCorrelationMigration, applyNativeHostEffectMigration, applyNativeHostReplyMigration, applyNativeHostTerminalMigration, applyNativeOpenClawSessionMigration, applyNativeAttemptCompletionMigration } from "./sqlite/native-execution-migration.js";
+import { SqliteNativeExecutionStore } from "./sqlite/native-execution-store.js";
+import type { NativeExecutionStore } from "../native-execution-types.js";
 import {
   isJsonRecord,
   isRecord,
@@ -769,6 +772,7 @@ export class SqliteRunStore implements RunStore {
   private readonly approvalResumes: SqliteApprovalResumeStore;
   private readonly approvalRequests: SqliteApprovalRequestStore;
   private readonly approvalPostCommit: SqliteApprovalPostCommitStore;
+  private readonly nativeExecutions: SqliteNativeExecutionStore;
   private readonly artifacts: SqliteArtifactStore;
   private readonly controlPlane: SqliteControlPlaneStore;
   private readonly runEvents: SqliteRunEventStore;
@@ -927,6 +931,26 @@ export class SqliteRunStore implements RunStore {
         assertWorkspaceSnapshotFence: (cwd) => this.assertWorkspaceSnapshotFence(cwd),
       },
     );
+    this.nativeExecutions = new SqliteNativeExecutionStore({ database: this.database }, {
+      artifacts: { artifactsDir: this.paths.artifactsDir,
+        createArtifact: input => this.createArtifact(input), getArtifact: id => this.getArtifact(id) },
+      wait: {
+        getRun: id => this.getRun(id),
+        getWorkUnit: id => this.getWorkUnit(id),
+        getWorkUnitAttempt: id => this.getWorkUnitAttempt(id),
+        transitionRunStatus: input => this.runSessions.transitionRunStatus(input),
+        transitionWorkUnitStatus: input => this.transitionWorkUnitStatus(input),
+        updateWorkUnitAttemptStatus: input => this.updateWorkUnitAttemptStatus(input),
+        getLingThread: id => this.getLingThread(id),
+        updateLingThread: (id, input, now) => this.updateLingThread(id, input, now),
+        expireApprovalRequest: (id, input, now) => this.expireApprovalRequest(id, input, now),
+        appendEvent: (id, type, data) => this.appendEvent(id, type, data),
+      },
+      createApprovalRequest: (input, now) => this.createApprovalRequest(input, now),
+      getApprovalRequest: (id) => this.getApprovalRequest(id),
+      cancelApprovalRequest: (id, now) => { this.cancelApprovalRequest(id, {}, now); },
+      assertWorkspaceSnapshotFence: (cwd) => this.assertWorkspaceSnapshotFence(cwd),
+    });
     this.artifacts = new SqliteArtifactStore(
       { database: this.database },
       {
@@ -1140,6 +1164,8 @@ export class SqliteRunStore implements RunStore {
       markRunFailed: (runId, endedAt, errorMessage) => this.markRunFailed(runId, endedAt, errorMessage),
       getRun: (runId) => this.getRun(runId),
       getWorkUnit: (workUnitId) => this.getWorkUnit(workUnitId),
+      getWorkUnitAttempt: (attemptId) => this.getWorkUnitAttempt(attemptId),
+      findWorkUnitAttemptTerminalAudit: (attempt) => this.runtimeWorkUnits.findWorkUnitAttemptTerminalAudit(attempt),
       getLingThread: (threadId) => this.getLingThread(threadId),
       updateLingThread: (threadId, input, now) => this.updateLingThread(threadId, input, now),
       listRecoverableChannelWorkflows: () => this.channelWorkflows.listRecoverableChannelWorkflows(),
@@ -1645,6 +1671,21 @@ export class SqliteRunStore implements RunStore {
             hasMigration: (version) => this.hasMigration(version),
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
+          for (const applyMigration of [
+            applyNativeExecutionMigration,
+            applyNativeAcpCorrelationMigration,
+            applyNativeHostEffectMigration,
+            applyNativeHostReplyMigration,
+            applyNativeHostTerminalMigration,
+            applyNativeOpenClawSessionMigration,
+            applyNativeAttemptCompletionMigration,
+          ]) {
+            applyMigration({
+              database: this.database,
+              hasMigration: (version) => this.hasMigration(version),
+              recordMigration: (version, name) => this.recordMigration(version, name),
+            });
+          }
         }
       });
     } catch (error) {
@@ -1662,6 +1703,110 @@ export class SqliteRunStore implements RunStore {
 
   createLingThread(input: CreateLingThreadInput, now: string): LingThread {
     return this.lingThreads.createLingThread(input, now);
+  }
+
+  resolveNativeExecutionGeneration(...args: Parameters<NativeExecutionStore["resolveNativeExecutionGeneration"]>) {
+    return this.nativeExecutions.resolveNativeExecutionGeneration(...args);
+  }
+
+  reserveNativeExecution(...args: Parameters<NativeExecutionStore["reserveNativeExecution"]>) {
+    return this.nativeExecutions.reserveNativeExecution(...args);
+  }
+
+  getNativeExecutionBinding(id: string) { return this.nativeExecutions.getNativeExecutionBinding(id); }
+  getNativeSubmission(id: string) { return this.nativeExecutions.getNativeSubmission(id); }
+  listNativeAttemptSubmissions(...args: Parameters<NativeExecutionStore["listNativeAttemptSubmissions"]>) {
+    return this.nativeExecutions.listNativeAttemptSubmissions(...args);
+  }
+  listUnresolvedNativeSubmissions(limit?: number) { return this.nativeExecutions.listUnresolvedNativeSubmissions(limit); }
+
+  bindNativeExecutionSession(...args: Parameters<NativeExecutionStore["bindNativeExecutionSession"]>) {
+    return this.nativeExecutions.bindNativeExecutionSession(...args);
+  }
+
+  prepareNativeOpenClawSession(...args: Parameters<NativeExecutionStore["prepareNativeOpenClawSession"]>) {
+    return this.nativeExecutions.prepareNativeOpenClawSession(...args);
+  }
+
+  beginNativeSubmission(...args: Parameters<NativeExecutionStore["beginNativeSubmission"]>) {
+    return this.nativeExecutions.beginNativeSubmission(...args);
+  }
+
+  acceptNativeSubmission(...args: Parameters<NativeExecutionStore["acceptNativeSubmission"]>) {
+    return this.nativeExecutions.acceptNativeSubmission(...args);
+  }
+
+  markNativeSubmissionUnknown(...args: Parameters<NativeExecutionStore["markNativeSubmissionUnknown"]>) {
+    return this.nativeExecutions.markNativeSubmissionUnknown(...args);
+  }
+
+  finishNativeSubmission(...args: Parameters<NativeExecutionStore["finishNativeSubmission"]>) {
+    return this.nativeExecutions.finishNativeSubmission(...args);
+  }
+
+  createNativeApproval(...args: Parameters<NativeExecutionStore["createNativeApproval"]>) {
+    return this.nativeExecutions.createNativeApproval(...args);
+  }
+
+  getNativeApprovalCorrelation(id: string) { return this.nativeExecutions.getNativeApprovalCorrelation(id); }
+
+  reserveNativeHostAction(...args: Parameters<NativeExecutionStore["reserveNativeHostAction"]>) {
+    return this.nativeExecutions.reserveNativeHostAction(...args);
+  }
+
+  getNativeHostAction(id: string) { return this.nativeExecutions.getNativeHostAction(id); }
+  listNativeHostOperations(actionId: string) { return this.nativeExecutions.listNativeHostOperations(actionId); }
+
+  claimNativeHostOperation(...args: Parameters<NativeExecutionStore["claimNativeHostOperation"]>) {
+    return this.nativeExecutions.claimNativeHostOperation(...args);
+  }
+
+  settleNativeHostOperation(...args: Parameters<NativeExecutionStore["settleNativeHostOperation"]>) {
+    return this.nativeExecutions.settleNativeHostOperation(...args);
+  }
+
+  recordNativeHostTerminalStart(...args: Parameters<NativeExecutionStore["recordNativeHostTerminalStart"]>) {
+    return this.nativeExecutions.recordNativeHostTerminalStart(...args);
+  }
+
+  settleNativeHostTerminalExit(...args: Parameters<NativeExecutionStore["settleNativeHostTerminalExit"]>) {
+    return this.nativeExecutions.settleNativeHostTerminalExit(...args);
+  }
+
+  assertNativeHostTerminalReply(...args: Parameters<NativeExecutionStore["assertNativeHostTerminalReply"]>) {
+    return this.nativeExecutions.assertNativeHostTerminalReply(...args);
+  }
+
+  assertNativeHostOperationReply(...args: Parameters<NativeExecutionStore["assertNativeHostOperationReply"]>) {
+    return this.nativeExecutions.assertNativeHostOperationReply(...args);
+  }
+
+  observeNativeHostOperationReply(...args: Parameters<NativeExecutionStore["observeNativeHostOperationReply"]>) {
+    return this.nativeExecutions.observeNativeHostOperationReply(...args);
+  }
+
+  synchronizeNativeApprovalWait(...args: Parameters<NativeExecutionStore["synchronizeNativeApprovalWait"]>) {
+    return this.nativeExecutions.synchronizeNativeApprovalWait(...args);
+  }
+
+  publishNativeApprovalDecision(...args: Parameters<NativeExecutionStore["publishNativeApprovalDecision"]>) {
+    return this.nativeExecutions.publishNativeApprovalDecision(...args);
+  }
+
+  appendNativeRunEvents(...args: Parameters<NativeExecutionStore["appendNativeRunEvents"]>) {
+    return this.nativeExecutions.appendNativeRunEvents(...args);
+  }
+
+  claimNativeApprovalReply(...args: Parameters<NativeExecutionStore["claimNativeApprovalReply"]>) {
+    return this.nativeExecutions.claimNativeApprovalReply(...args);
+  }
+
+  settleNativeApprovalReply(...args: Parameters<NativeExecutionStore["settleNativeApprovalReply"]>) {
+    return this.nativeExecutions.settleNativeApprovalReply(...args);
+  }
+
+  resolveNativeApprovalRequest(...args: Parameters<NativeExecutionStore["resolveNativeApprovalRequest"]>) {
+    return this.nativeExecutions.resolveNativeApprovalRequest(...args);
   }
 
   resolveOrCreateConversationThread(

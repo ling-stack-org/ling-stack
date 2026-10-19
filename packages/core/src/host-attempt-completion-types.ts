@@ -7,7 +7,8 @@ export interface HostAttemptCompletionRecord {
   readonly registeredAt: string;
   readonly drainedAt?: string;
   /** Only a Host-verified, original SDK boundary observation may set this. */
-  readonly effectCoverage?: "pi_no_tools_v1" | "pi_tracked_tools_v1";
+  readonly effectCoverage?: "pi_no_tools_v1" | "pi_tracked_tools_v1" | "native_journal_v1";
+  readonly nativeEffectStatus?: "settled" | "pending" | "unknown" | "unverified";
 }
 
 export interface HostAttemptEffectInventory {
@@ -19,4 +20,10 @@ export interface HostAttemptEffectInventory {
   }[];
 }
 
-export type HostAttemptEffectObservation = boolean | readonly string[] | HostAttemptEffectInventory;
+export interface NativeAttemptEffectInventory {
+  readonly schemaVersion: 1;
+  readonly kind: "native_journal_v1";
+  readonly submissionIds: readonly string[];
+}
+
+export type HostAttemptEffectObservation = boolean | readonly string[] | HostAttemptEffectInventory | NativeAttemptEffectInventory;

@@ -1,9 +1,12 @@
 import { closeSync, constants, createReadStream, fstatSync, openSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
+  ApprovalDecisionUnavailableError,
   approvalStatuses,
   approvalToolDecisions,
   defaultApprovalToolDecisions,
+  isApprovalGrantDecisionKind,
+  syncExternalWorkActionForApproval,
   type ApprovalPolicyUpdateInput,
   type ApprovalRequest,
   type ApprovalStatus,
@@ -30,6 +33,7 @@ import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { buildArtifactPreview } from "../previews/content-preview.js";
 import { inferArtifactContentType, MAX_ARTIFACT_RANGE_BYTES, MAX_ARTIFACT_TRANSFER_BYTES, readArtifactContentRange, resolveArtifactContentPath } from "./artifacts.js";
 import { listExecutionActions } from "./execution-actions.js";
+import { readNativeArtifactContent } from "../../runtime/adapters/native-artifact-files.js";
 import { parseRunRequest, type RunRequest } from "./schemas.js";
 import { isApprovalCommandRuleProposalCurrent } from "./approval-command-rules.js";
 import { isPrivateHostRecoveryArtifact, projectPublicRunEventEnvelope, toPublicArtifactMetadata } from "./public-artifacts.js";
@@ -238,8 +242,9 @@ export function handleGetArtifactContent(
   }
 
   try {
-    const stats = statSync(artifactPath);
-    if (!stats.isFile()) {
+    const nativeContent = readNativeArtifactContent(lookup.store.paths.artifactsDir, lookup.artifact);
+    const stats = nativeContent ? undefined : statSync(artifactPath);
+    if (!nativeContent && !stats?.isFile()) {
       writeJson(response, 404, {
         error: "artifact_content_not_found",
         message: `Artifact content is not a file: ${lookup.artifact.id}`,
@@ -247,14 +252,30 @@ export function handleGetArtifactContent(
       return;
     }
 
-    const ranged = offset !== undefined || requestedLimit !== undefined
-      ? readArtifactContentRange(artifactPath, offset ?? 0, requestedLimit ?? MAX_ARTIFACT_RANGE_BYTES)
-      : undefined;
+    const ranged = nativeContent
+      ? (() => {
+          const rangeOffset = offset ?? 0;
+          if (rangeOffset > nativeContent.byteLength || (rangeOffset === nativeContent.byteLength && nativeContent.byteLength > 0)) {
+            throw new Error("Artifact range offset exceeds content size.");
+          }
+          const rangeLimit = requestedLimit ?? (offset !== undefined ? MAX_ARTIFACT_RANGE_BYTES : nativeContent.byteLength || 1);
+          const endExclusive = Math.min(nativeContent.byteLength, rangeOffset + rangeLimit);
+          return {
+            content: nativeContent.subarray(rangeOffset, endExclusive),
+            offset: rangeOffset,
+            endExclusive,
+            sizeBytes: nativeContent.byteLength,
+            partial: rangeOffset > 0 || endExclusive < nativeContent.byteLength,
+          };
+        })()
+      : offset !== undefined || requestedLimit !== undefined
+        ? readArtifactContentRange(artifactPath, offset ?? 0, requestedLimit ?? MAX_ARTIFACT_RANGE_BYTES)
+        : undefined;
     if (!ranged) {
-      if (stats.size > MAX_ARTIFACT_TRANSFER_BYTES) {
+      if (stats!.size > MAX_ARTIFACT_TRANSFER_BYTES) {
         writeJson(response, 413, {
           error: "artifact_transfer_budget_exceeded",
-          message: `Artifact is ${stats.size} bytes; request a range of at most ${MAX_ARTIFACT_RANGE_BYTES} bytes.`,
+          message: `Artifact is ${stats!.size} bytes; request a range of at most ${MAX_ARTIFACT_RANGE_BYTES} bytes.`,
         });
         return;
       }
@@ -352,6 +373,7 @@ export function handleGetArtifactPreview(
     writeJson(response, 200, buildArtifactPreview({
       artifact: lookup.artifact,
       contentPath: artifactPath,
+      content: readNativeArtifactContent(lookup.store.paths.artifactsDir, lookup.artifact),
       maxBytes,
       imageUrl: lookup.artifact.type === "image" ? artifactContentUrl(url, lookup.artifact.id) : undefined,
     }));
@@ -642,7 +664,7 @@ export async function handleApprovalItem(
     const decisionKind = route.action === "approve" && isRecord(body)
       ? readOptionalString(body, "decisionKind")
       : undefined;
-    if (decisionKind !== undefined && decisionKind !== "approve_once" && decisionKind !== "approve_command_rule") {
+    if (decisionKind !== undefined && !isApprovalGrantDecisionKind(decisionKind)) {
       writeJson(response, 400, { error: "bad_request", message: `Unsupported approval decision kind: ${decisionKind}` });
       return;
     }
@@ -657,9 +679,7 @@ export async function handleApprovalItem(
         return;
       }
     }
-    const normalizedDecisionKind: ResolveApprovalRequestInput["decisionKind"] = decisionKind === "approve_command_rule"
-      ? "approve_command_rule"
-      : decisionKind === "approve_once" ? "approve_once" : undefined;
+    const normalizedDecisionKind = decisionKind;
     const decision: ResolveApprovalRequestInput = {
       reason: isRecord(body) ? readOptionalString(body, "reason") : undefined,
       resolvedBy: "local-user" as const,
@@ -709,6 +729,10 @@ export async function handleApprovalItem(
       } } : {}),
     });
   } catch (error) {
+    if (error instanceof ApprovalDecisionUnavailableError) {
+      writeJson(response, 409, { error: error.code, message: error.message });
+      return;
+    }
     const commandRuleConflict = error instanceof Error && error.message.includes("command rule");
     const staleExecution = error instanceof Error && error.message.includes("Approval execution no longer active");
     writeJson(response, commandRuleConflict || staleExecution ? 409 : 400, {

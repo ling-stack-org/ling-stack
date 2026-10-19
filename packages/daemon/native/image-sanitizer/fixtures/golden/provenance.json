@@ -1,0 +1,150 @@
+{
+  "source": "Independent Node fixture module, generated using previously installed sharp 0.34.5",
+  "sourceSHA256": "911df664b80a699b38d27171af50e5bdef32483c38f407ba976461aac8395a0e",
+  "cases": [
+    {
+      "name": "png/1.png",
+      "width": 3,
+      "height": 2,
+      "sha256": "d37831ea6a054ea7f8acb715ba844e0651d57f27d4f7251c3f3320ac99d9a73c"
+    },
+    {
+      "name": "png/2.png",
+      "width": 3,
+      "height": 2,
+      "sha256": "62427d24e6dfaaed167d3d02f3ff4879f37f50d55a84fc9ea2f87f2720ac3c4c"
+    },
+    {
+      "name": "png/3.png",
+      "width": 3,
+      "height": 2,
+      "sha256": "8c805e147d70024f1047c77c5fa7f086f9db860794b35c3d9288acb7bb78860e"
+    },
+    {
+      "name": "png/4.png",
+      "width": 3,
+      "height": 2,
+      "sha256": "923478d72b8b4ec52928479c13b96206a1b888e4d29af61c4679cca6a33c2478"
+    },
+    {
+      "name": "png/5.png",
+      "width": 2,
+      "height": 3,
+      "sha256": "035a02e13d618bbe909e8ab30e7972bc3999f2be1147fc2e9514752d95464cbd"
+    },
+    {
+      "name": "png/6.png",
+      "width": 2,
+      "height": 3,
+      "sha256": "10678da5cd24b15c079617c82e3a99b167c1f365dc55af4e7bc11f9ee4a03f7b"
+    },
+    {
+      "name": "png/7.png",
+      "width": 2,
+      "height": 3,
+      "sha256": "b4967d5e200ac25ad7d33ce7b2705ddf91ea84a28bfe152a9dd51ff0387cd598"
+    },
+    {
+      "name": "png/8.png",
+      "width": 2,
+      "height": 3,
+      "sha256": "e9753a7e30456ead78febb9c2d23e74a25b8663e0c8b03be951c8e601d75b694"
+    },
+    {
+      "name": "jpeg/1.jpg",
+      "width": 3,
+      "height": 2,
+      "sha256": "cf8a52f86e1eaebd026773eacd13b79cd0a5c7561776be0294cc67b44d16c9f4"
+    },
+    {
+      "name": "jpeg/2.jpg",
+      "width": 3,
+      "height": 2,
+      "sha256": "8a07a4c9480632a962216f1ee3cb1d949f91fc0afaedaab0a431d51e7f51b2e5"
+    },
+    {
+      "name": "jpeg/3.jpg",
+      "width": 3,
+      "height": 2,
+      "sha256": "14f81ca82c3886e04564e3671c9983bb2a3fe596afedf0a3b9c6917f3cd74da6"
+    },
+    {
+      "name": "jpeg/4.jpg",
+      "width": 3,
+      "height": 2,
+      "sha256": "e66443e1ddb56ffed5666c2ec8fbb5dc987c1075534d46e57f38288f801cf738"
+    },
+    {
+      "name": "jpeg/5.jpg",
+      "width": 2,
+      "height": 3,
+      "sha256": "6e73a9e6a5e944b29cbf4a3e2c48ea68a7cf030e7dd958841c1660c9441a1c97"
+    },
+    {
+      "name": "jpeg/6.jpg",
+      "width": 2,
+      "height": 3,
+      "sha256": "a7eddfe7fdd009abbbba144cc9a9f304890f83465c191923c1cbbea25c795f8d"
+    },
+    {
+      "name": "jpeg/7.jpg",
+      "width": 2,
+      "height": 3,
+      "sha256": "a1a18a3f817d2a9ede3fab40e3c6c6fbfc6067d512c16e5429fad98d0914050f"
+    },
+    {
+      "name": "jpeg/8.jpg",
+      "width": 2,
+      "height": 3,
+      "sha256": "5de1207c0c50149695f5c2bd0174b40ba19769edb4295e429d0108c7c4743944"
+    },
+    {
+      "name": "webp/1.webp",
+      "width": 3,
+      "height": 2,
+      "sha256": "b061ad09363e2628396f213c39e955a1db51fa80b3d1b341e4a12ea6df57a8a8"
+    },
+    {
+      "name": "webp/2.webp",
+      "width": 3,
+      "height": 2,
+      "sha256": "a270fae7eebf8d49dbb699e1a4c047c7de53f6aa60e788c4d8778baee3775b10"
+    },
+    {
+      "name": "webp/3.webp",
+      "width": 3,
+      "height": 2,
+      "sha256": "7b8bba37874a0f2ceb70854d5a09598d5cf1889186a74301c7a8584982b86d9c"
+    },
+    {
+      "name": "webp/4.webp",
+      "width": 3,
+      "height": 2,
+      "sha256": "0df59bd006230417611694fde63ddd58a25a5656530febe6d2bb3142d0a6ebfb"
+    },
+    {
+      "name": "webp/5.webp",
+      "width": 2,
+      "height": 3,
+      "sha256": "06dcf3fdf21be89ba983bc18bdee53f31f1a340b262e9a978f4ad4bd71affb8c"
+    },
+    {
+      "name": "webp/6.webp",
+      "width": 2,
+      "height": 3,
+      "sha256": "bb59ad2f5e56a1aff002a95edc37231a82b3257465046f1760eb795f4417f761"
+    },
+    {
+      "name": "webp/7.webp",
+      "width": 2,
+      "height": 3,
+      "sha256": "949e53a036b445d0a8a7123d04c148721e1656e9106a4f8d5f94184cf84767ab"
+    },
+    {
+      "name": "webp/8.webp",
+      "width": 2,
+      "height": 3,
+      "sha256": "ee6fbe774986cdeb1f5c9cf894b29346092e37b36522eb36525ac461773bccfd"
+    }
+  ]
+}

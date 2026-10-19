@@ -1,5 +1,8 @@
 import {
+  isAuthorizationMode,
+  isWorkspaceAccessMode,
   permissionPresets,
+  responseLanguages,
   redactSecrets,
   sessionPermissionModes,
   type PermissionConfirmation,
@@ -15,7 +18,8 @@ import {
   type SkillApprovalProfile,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
-import { isConversationContextProjectionMetadata, type ConversationContextProjectionMetadata } from "@ling-stack/contracts";
+import { isConversationContextProjectionMetadata, isExternalExecutionEngineId, parseExecutionBindingRequest, type ConversationContextProjectionMetadata } from "@ling-stack/contracts";
+import { HttpError } from "../../errors.js";
 import { isRecord } from "../../shared/validation.js";
 import { buildChannelReplyContinuationContext } from "../channels/channel-reply-continuation-context.js";
 import type { RunRequest } from "./schemas.js";
@@ -23,6 +27,7 @@ import { prepareNormalConversationInput } from "../conversations/normal-conversa
 import { saveNormalConversationPreparedRequest } from "../conversations/normal-conversation-prepared-request.js";
 import { renderNormalConversationRunPrompt } from "../conversations/normal-conversation-context.js";
 import { requireNormalContinuationSource } from "../conversations/normal-conversation-continuation-source.js";
+import { readNativeResponsePreferences } from "../conversations/native-response-preferences.js";
 
 export function buildRunInterventionContinuationRequest(
   store: RunStore,
@@ -32,6 +37,11 @@ export function buildRunInterventionContinuationRequest(
   secretResolver?: SecretResolver,
 ): RunRequest {
   const snapshot = isRecord(sourceRun.requestSnapshot) ? sourceRun.requestSnapshot : {};
+  const executionBinding = snapshot.executionBinding === undefined ? undefined : parseExecutionBindingRequest(snapshot.executionBinding);
+  if (!executionBinding && (isExternalExecutionEngineId(snapshot.runnerId) || isExternalExecutionEngineId(sourceRun.providerName))) {
+    throw new HttpError(409, "legacy_runner_migration_required", "The source run has no native profile binding; select and validate a profile before continuing.");
+  }
+  const native = executionBinding?.kind === "native_profile";
   const taskSnapshot = isRecord(sourceRun.taskSnapshot) ? sourceRun.taskSnapshot : {};
   const originalTitle = readSnapshotString(taskSnapshot, "title") ?? readSnapshotString(isRecord(snapshot.task) ? snapshot.task : {}, "title") ?? sourceRun.taskId;
   const originalPrompt = readSnapshotString(taskSnapshot, "prompt") ?? readSnapshotString(isRecord(snapshot.task) ? snapshot.task : {}, "prompt") ?? "";
@@ -76,12 +86,13 @@ export function buildRunInterventionContinuationRequest(
   const request: RunRequest = {
     workspaceCwd: readSnapshotString(snapshot, "workspaceCwd") ?? sourceRun.cwd,
     cwd: readSnapshotString(snapshot, "cwd") ?? sourceRun.cwd,
-    providerPresetId: channelContinuation?.providerPresetId ?? providerPresetId,
-    provider: channelContinuation ? undefined : inlineProvider,
+    executionBinding,
+    providerPresetId: native ? undefined : channelContinuation?.providerPresetId ?? providerPresetId,
+    provider: executionBinding || channelContinuation ? undefined : inlineProvider,
     threadId: channelContinuation?.threadId ?? sourceRun.threadId,
     turnId: channelContinuation?.turnId ?? normalInput?.turn.id,
     teammateId: channelContinuation?.targetTeammateId ?? readSnapshotString(snapshot, "teammateId") ?? sourceRun.teammateId,
-    runnerId: channelContinuation?.runnerId ?? readSnapshotString(snapshot, "runnerId"),
+    runnerId: native ? executionBinding.engineId : channelContinuation?.runnerId ?? readSnapshotString(snapshot, "runnerId"),
     requestedSkillId,
     skipProviderPreflight: readSnapshotBoolean(snapshot, "skipProviderPreflight") ?? false,
     idempotencyKey: normalInput?.idempotencyKey ?? `run_intervention:${intervention.id}`,
@@ -107,11 +118,19 @@ export function buildRunInterventionContinuationRequest(
     approvalProfile: isRecord(snapshot.approvalProfile) ? snapshot.approvalProfile as unknown as SkillApprovalProfile : undefined,
     permissionPreset,
     permissionMode,
+    authorizationMode: typeof snapshot.authorizationMode === "string" && isAuthorizationMode(snapshot.authorizationMode) ? snapshot.authorizationMode : undefined,
+    workspaceAccessMode: typeof snapshot.workspaceAccessMode === "string" && isWorkspaceAccessMode(snapshot.workspaceAccessMode) ? snapshot.workspaceAccessMode : undefined,
     permissionConfirmation,
     thinkingLevel: readSnapshotThinkingLevel(snapshot, "thinkingLevel"),
     reasoningSummary: readSnapshotReasoningSummary(snapshot, "reasoningSummary"),
     systemPrompt: channelContinuation?.systemPromptInstruction ?? inheritedSystemPrompt,
     appendSystemPrompt,
+    nativeResponsePreferences: readNativeResponsePreferences(snapshot.nativeResponsePreferences),
+    lingConversationTone: snapshot.lingConversationTone === "friendly" || snapshot.lingConversationTone === "pragmatic"
+      || snapshot.lingConversationTone === "none" ? snapshot.lingConversationTone : undefined,
+    responseLanguage: typeof snapshot.responseLanguage === "string"
+      && responseLanguages.includes(snapshot.responseLanguage as typeof responseLanguages[number])
+      ? snapshot.responseLanguage as typeof responseLanguages[number] : undefined,
     contextProjection: channelContinuation?.contextProjection ?? normalInput?.context.projection ??
       (sourceThread?.kind === "conversation" ? undefined : readSnapshotContextProjection(snapshot)),
     normalConversationContext: normalInput?.context,
