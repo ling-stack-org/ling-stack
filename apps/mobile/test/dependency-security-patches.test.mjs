@@ -11,7 +11,7 @@ const expoRequire = createRequire(localRequire.resolve("expo/package.json"));
 const nativeRequire = createRequire(expoRequire.resolve("react-native/package.json"));
 const nativeCliRequire = createRequire(nativeRequire.resolve("@react-native/community-cli-plugin/package.json"));
 const metroRequire = createRequire(nativeCliRequire.resolve("metro/package.json"));
-// SDK57's Metro uses its own image parser. Resolve the patched dependency from
+// Expo's Metro uses its own image parser. Resolve the patched dependency from
 // its real PPTX consumer instead of accepting Metro's hoisted fallback.
 const daemonRequire = createRequire(new URL("../../../packages/daemon/package.json", import.meta.url));
 const pptxRequire = createRequire(daemonRequire.resolve("pptxgenjs"));
