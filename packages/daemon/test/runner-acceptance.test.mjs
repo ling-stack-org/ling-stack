@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { assessRunnerAcceptance } from "../dist/runtime/runner-acceptance.js";
 
@@ -136,3 +137,29 @@ test("parent-thread inheritance cannot reuse task acceptance", async () => {
       error => error.code === "native_execution_verification_mismatch");
   }
 });
+
+for (const engineId of ["kimi-acp", "openclaw-acp"]) {
+  test(`ACP admission for ${engineId} binds verification to the installed SDK version`, async () => {
+    const { assertNativeExecutionAccepted } = await import("../dist/features/execution-engines/native-admission.js");
+    const { fixtureNativeAcceptance, fixtureNativePolicy } = await import("./support/fixture-native-acceptance.mjs");
+    const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.resolve("@agentclientprotocol/sdk")), "utf8"));
+    const input = { runRequest: { cwd: "/fixture", task: {}, executionBinding: {
+      kind: "native_profile", engineId, profileId: "profile", profileRevision: 1,
+    } }, store: {}, effectivePolicySnapshot: {}, signal: new AbortController().signal };
+    const profile = { id: "profile", revision: 1, configuration: { engineId }, configurationFingerprint: "config" };
+    const installation = { runtimeVersion: "fixture", executableDigest: "digest" };
+    const observed = [];
+    const options = { readWorkspaceSettings: () => fixtureNativePolicy(engineId), readAcceptanceEvidence(current) {
+      observed.push(current);
+      return fixtureNativeAcceptance(current);
+    } };
+    const assertCurrent = await assertNativeExecutionAccepted(options, input, profile, installation);
+    assertCurrent();
+    assert.ok(observed.length >= 2, "admission and final submission must both check verification");
+    for (const current of observed) assert.equal(current.sdkVersion, `@agentclientprotocol/sdk@${version}`);
+
+    const previousSdkEvidence = fixtureNativeAcceptance({ ...observed[0], sdkVersion: "@agentclientprotocol/sdk@1.3.0" });
+    await assert.rejects(assertNativeExecutionAccepted({ ...options, readAcceptanceEvidence: () => previousSdkEvidence }, input, profile, installation),
+      error => error.code === "native_execution_verification_mismatch");
+  });
+}
