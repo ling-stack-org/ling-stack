@@ -50,6 +50,7 @@ import { prepareNormalConversationInput } from "./normal-conversation-input.js";
 import { normalSubmissionThreadId, readConversationSubmission } from "./submission-receipts.js";
 import { saveNormalConversationPreparedRequest } from "./normal-conversation-prepared-request.js";
 import { buildConversationRunRequest, resolveConversationResponseLanguage } from "./conversation-run-request.js";
+import { readNativeResponsePreferences } from "./native-response-preferences.js";
 export { resolveConversationResponseLanguage } from "./conversation-run-request.js";
 import { resolveConversationExecutionSelection, inheritConversationExecutionSelection } from "./conversation-execution-selection.js";
 import { parseExecutionBindingRequest } from "@ling-stack/contracts";
@@ -137,7 +138,8 @@ export async function startConversationReplacementRun(input: {
     permissionMode: readPermissionMode(readOptionalRecordString(previousSnapshot, "permissionMode")),
     authorizationMode: inheritIndependentPermissions ? readAuthorizationMode(readOptionalRecordString(previousSnapshot, "authorizationMode")) : undefined,
     workspaceAccessMode: inheritIndependentPermissions ? readWorkspaceAccessMode(readOptionalRecordString(previousSnapshot, "workspaceAccessMode")) : undefined,
-    responseLanguage: readResponseLanguagePreference(readOptionalRecordString(previousSnapshot, "responseLanguage")),
+    responseLanguage: readNativeResponsePreferences(previousSnapshot.nativeResponsePreferences)?.language
+      ?? readResponseLanguagePreference(readOptionalRecordString(previousSnapshot, "responseLanguage")),
     tools: readOptionalStringArray(previousSnapshot, "tools", runTools),
     idempotencyKey: prepared.idempotencyKey,
   };

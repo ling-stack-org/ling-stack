@@ -734,6 +734,56 @@ for (const [name, change] of [
   assert.equal(f.store.reserveNativeExecution(options.reservation, now()).submission.status, "not_submitted");
 });
 
+for (const [allowedTools, expected] of [
+  [[], ["Bash", "Read", "Write", "Edit"]],
+  [["read", "grep", "find", "ls"], ["Bash", "Write", "Edit"]],
+  [["bash", "edit", "write"], ["Read"]],
+]) test(`owned Kimi enforces the request tool upper bound: ${allowedTools.join(",")}`, { timeout: 8000 }, async t => {
+  const f = await fixture(t), options = f.makeOptions();
+  const before = await readFile(join(f.home, "config.toml"), "utf8");
+  options.configuration.allowedTools = allowedTools;
+  options.reservation.selection.configurationFingerprint = acpConfigurationFingerprint(
+    { engineId: "kimi-acp", expectedVersion: options.process.expectedVersion }, options.configuration);
+  await executeOwnedKimiPrompt({ ...options, launch: (...args) => {
+    const config = parse(readFileSync(join(args[2].env.KIMI_CODE_HOME, "config.toml"), "utf8"));
+    assert.deepEqual(config.tools.disabled, expected);
+    return options.launch(...args);
+  } });
+  assert.equal(await readFile(join(f.home, "config.toml"), "utf8"), before);
+});
+
+for (const scenario of ["file-read", "file-write", "file-edit", "approval", "host-read", "host-write", "host-edit", "host-terminal"]) {
+  test(`owned Kimi empty request tools reject ${scenario} without approval or host effects`, { timeout: 8000 }, async t => {
+    const f = await fixture(t, scenario), options = f.makeOptions(), path = join(f.cwd, "native-file.txt");
+    await writeFile(path, "First\nLast\nFirst");
+    options.configuration.allowedTools = [];
+    options.reservation.selection.configurationFingerprint = acpConfigurationFingerprint(
+      { engineId: "kimi-acp", expectedVersion: options.process.expectedVersion }, options.configuration);
+    const events = [];
+    const execution = executeOwnedKimiPrompt({ ...options, onEvent: event => events.push(event) });
+    // This adversarial peer ends its prompt without closing the denied edit's in-progress tool.
+    if (scenario === "host-edit") await assert.rejects(execution, { code: "invalid_event" });
+    else await execution;
+    assert.equal(events.some(event => event.type === "approval_requested"), false);
+    assert.equal(await readFile(path, "utf8"), "First\nLast\nFirst");
+    assert.equal(f.store.listApprovalRequests({ runId: options.reservation.runId }).length, 0);
+    assert.equal(f.requests.some(request => request.method === "owned-file-result"), false);
+    for (const reply of f.requests.filter(request => request.id === "owned-permission")) {
+      assert.equal(reply.result.outcome.optionId, "reject");
+    }
+    for (const reply of f.requests.filter(request => ["owned-host-read", "owned-host-write", "owned-host-baseline", "owned-host-terminal"].includes(request.id))) {
+      assert.ok(reply.error, "disabled host callbacks must return a protocol error");
+    }
+  });
+}
+
+test("owned Kimi rejects a changed tool constraint before reserving or launching an existing native selection", async t => {
+  const f = await fixture(t), options = f.makeOptions();
+  options.configuration.allowedTools = [];
+  await assert.rejects(executeOwnedKimiPrompt(options), { code: "invalid_execution" });
+  assert.equal(f.commands.length, 0);
+});
+
 for (const kind of ["missing", "malformed", "oversized", "symlink", "hardlink", "state-alias"]) test(`owned Kimi rejects ${kind} native configuration or state`,
   { timeout: 8000 }, async t => {
     const f = await fixture(t), options = f.makeOptions(), config = join(f.home, "config.toml");

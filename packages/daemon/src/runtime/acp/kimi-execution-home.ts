@@ -8,6 +8,7 @@ import type { KimiActionPreparationOptions } from "./kimi-action-preparation.js"
 import { openKimiModelTransport, type KimiModelAuthentication } from "./kimi-model-transport.js";
 import type { NativeSecretRegistry } from "../adapters/native-stream-redaction.js";
 import { normalizeKimiModelConfiguration } from "./kimi-model-configuration.js";
+import type { RunTool } from "@ling-stack/contracts";
 
 const stateDirectories = ["sessions", "store", "cache", "logs", "blobs"] as const;
 const tools = { Bash: "bash", Read: "read", Write: "write", Edit: "edit" } as const;
@@ -19,6 +20,7 @@ type ProjectedConfiguration = RecordValue & { readonly tools: { readonly enabled
 export async function prepareKimiExecutionHome(sourceHome: string,
   policy: Pick<KimiActionPreparationOptions, "policy" | "effectivePolicySnapshot">, readOnly: boolean, signal: AbortSignal,
   options: { readonly modelId?: string; readonly assertCurrent?: () => void; readonly modelSignal?: AbortSignal;
+    readonly allowedTools?: readonly RunTool[];
     readonly assertPreparationCurrent?: () => void; readonly authentication?: KimiModelAuthentication;
     readonly secretRegistry?: NativeSecretRegistry } = {}) {
   let home: string | undefined;
@@ -32,7 +34,7 @@ export async function prepareKimiExecutionHome(sourceHome: string,
     const configPath = join(sourceHome, "config.toml"), configIdentity = identity(configPath, false);
     const original = await readNativeAuthFile(configPath);
     assertCurrent(configIdentity);
-    const config = projectConfiguration(parse(original), policy, readOnly);
+    const config = projectConfiguration(parse(original), policy, readOnly, options.allowedTools);
     const bindings: Identity[] = [];
     for (const name of stateDirectories) {
       const path = join(sourceHome, name);
@@ -78,7 +80,7 @@ export async function prepareKimiExecutionHome(sourceHome: string,
 }
 
 function projectConfiguration(value: unknown, policy: Pick<KimiActionPreparationOptions, "policy" | "effectivePolicySnapshot">,
-  readOnly: boolean): ProjectedConfiguration {
+  readOnly: boolean, allowedTools?: readonly RunTool[]): ProjectedConfiguration {
   if (!record(value) || !keys(value, ["default_model", "default_permission_mode", "default_plan_mode", "telemetry",
     "merge_all_available_skills", "providers", "models", "thinking", "tools", "services"])) throw invalid();
   if (!text(value.default_model) || !record(value.models) || !record(value.providers)
@@ -97,6 +99,7 @@ function projectConfiguration(value: unknown, policy: Pick<KimiActionPreparation
   const enabled = record(value.tools) && strings(value.tools.enabled) ? value.tools.enabled : [];
   const disabled = record(value.tools) && strings(value.tools.disabled) ? value.tools.disabled : [];
   const denied = Object.entries(tools).filter(([native, host]) => disabled.includes(native)
+    || (allowedTools !== undefined && !allowedTools.includes(host))
     || (enabled.length > 0 && !enabled.includes(native)) || policy.policy.toolDecisions[host] === "deny"
     || policy.effectivePolicySnapshot?.toolDecisions?.[host] === "deny"
     || ((readOnly || value.default_plan_mode === true) && ["write", "edit"].includes(host))

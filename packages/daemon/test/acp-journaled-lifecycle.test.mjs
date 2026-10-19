@@ -461,6 +461,17 @@ test("ACP configuration fingerprint distinguishes model, mode and thought level"
     acpConfigurationFingerprint(target, { ...configuration, modelId: "selected", thoughtLevel: "high" }));
 });
 
+test("Kimi tool constraints bind the native identity and cannot leak into OpenClaw configuration", () => {
+  const target = { engineId: "kimi-acp", expectedVersion: "fixture" }, configuration = { cwd: "/tmp/owned" };
+  assert.notEqual(acpConfigurationFingerprint(target, configuration), acpConfigurationFingerprint(target, { ...configuration, allowedTools: [] }));
+  assert.notEqual(acpConfigurationFingerprint(target, { ...configuration, allowedTools: [] }),
+    acpConfigurationFingerprint(target, { ...configuration, allowedTools: ["read"] }));
+  assert.equal(acpConfigurationFingerprint(target, { ...configuration, allowedTools: ["read", "bash"] }),
+    acpConfigurationFingerprint(target, { ...configuration, allowedTools: ["bash", "read"] }));
+  assert.throws(() => acpConfigurationFingerprint({ engineId: "openclaw-acp", expectedVersion: "fixture", agentId: "main" },
+    { ...configuration, allowedTools: [] }), { code: "unsupported_capability" });
+});
+
 test("unavailable selected model settles the reserved attempt as not submitted without binding a native session", async t => {
   const f = await setup(t, { selection: { modelId: "missing" }, configuration: { modelId: "missing" } });
   await assert.rejects(f.lifecycle.open(), { code: "unsupported_capability" });

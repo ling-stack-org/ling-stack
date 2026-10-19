@@ -233,7 +233,7 @@ test("isolated embedded startup rejects unverified native conversation while pre
   assert.equal(canonical.threadStatus, "failed");
   assert.equal(canonical.acceptedSnapshotId, canonical.preparedAcceptedSnapshotId);
   assert.equal(canonical.acceptedFingerprint, canonical.preparedParentFingerprint);
-  assert.deepEqual(canonical.tools, []);
+  assert.deepEqual(canonical.tools, ["read", "grep", "find", "ls", "bash", "edit", "write"]);
   assert.equal(canonical.authorizationMode, "smart");
   assert.equal(canonical.workspaceAccessMode, "read_only");
   assert.equal(facts.execution.newNativeSubmissions.length, 0);

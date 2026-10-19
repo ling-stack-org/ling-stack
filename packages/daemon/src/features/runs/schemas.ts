@@ -42,6 +42,7 @@ import { HttpError } from "../../errors.js";
 import type { WorkflowOperationExecutionSnapshot } from "./workflow-operation-snapshot.js";
 import type { UserInputContinuationContext } from "./user-input-continuation-context.js";
 import type { NormalConversationContextSnapshot } from "../conversations/normal-conversation-context.js";
+import type { NativeResponsePreferences } from "../conversations/native-response-preferences.js";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
 import {
   isRecord,
@@ -126,6 +127,8 @@ export interface RunRequest extends Omit<
   /** Internal immutable request preparation, never accepted by external parsing. */
   readonly normalConversationPreparedRequestRef?: { readonly id: string; readonly fingerprint: string };
   readonly normalConversationPreparedExecutionRef?: { readonly id: string; readonly fingerprint: string };
+  /** Internal ACP presentation intent. Public Run parsing never accepts this field. */
+  readonly nativeResponsePreferences?: NativeResponsePreferences;
   /** Internal frozen private input evidence; external parsing never accepts this field. */
   readonly teammateDirectInputRef?: { readonly id: string; readonly fingerprint: string };
   /** Host-produced source SDK input. External parsing never accepts or restores it as authority. */

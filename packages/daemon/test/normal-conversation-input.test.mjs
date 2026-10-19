@@ -416,6 +416,47 @@ test("local-user continuation freezes a new source while retaining intervention 
   }
 });
 
+for (const mode of ["queue_followup", "interrupt_redirect"]) for (const language of ["follow_user", "zh-CN"]) {
+  test(`ACP ${mode} preserves original ${language} preference through English guidance and durable replay`, async t => {
+    const original = { tone: "friendly", language };
+    const f = await fixture(t, { sourceRequest: { nativeResponsePreferences: original,
+      lingConversationTone: "friendly", responseLanguage: "zh-CN",
+      executionBinding: { kind: "native_profile", engineId: "kimi-acp", profileId: "fixture", profileRevision: 1 } } });
+    const sourceRun = f.store.getRun("old-run");
+    const intervention = f.store.createRunIntervention({ sourceRunId: sourceRun.id, mode, instruction: "Please check the next step",
+      requestedBy: "local-user", idempotencyKey: `${mode}-${language}` }, new Date().toISOString());
+    const request = buildRunInterventionContinuationRequest(f.store, sourceRun, intervention);
+    assert.deepEqual(request.nativeResponsePreferences, original);
+    assert.equal(request.appendSystemPrompt, undefined);
+    assert.equal(request.responseLanguage, "zh-CN", "resolved metadata does not replace original follow_user intent");
+    const replay = buildRunInterventionContinuationRequest(f.store, sourceRun, intervention);
+    assert.deepEqual(replay.nativeResponsePreferences, original);
+    assert.deepEqual(replay, request);
+  });
+}
+
+for (const language of ["follow_user", "zh-CN"]) {
+  test(`ACP replacement retains original ${language} intent when a Chinese message is edited to English`, async t => {
+    const f = await fixture(t, { sourceRequest: { nativeResponsePreferences: { tone: "friendly", language }, responseLanguage: "zh-CN",
+      executionBinding: { kind: "native_profile", engineId: "kimi-acp", profileId: "fixture", profileRevision: 1 } } });
+    let request;
+    await editConversationMessage(f.store, { surface: "normal_conversation", ownerId: f.thread.id, messageId: "conversation-user:old",
+      expectedRevision: 1, body: "Please check this English message", idempotencyKey: `language-edit-${language}` }, {
+      activeRuns: new ActiveRunRegistry(), startReplacement: async ({ revision }) => {
+        const result = await startConversationReplacementRun({ store: f.store, workspaceCwd: f.cwd, thread: f.thread,
+          message: revision.body, messageId: revision.messageId, revisionId: revision.id, attachmentIds: revision.attachmentIds,
+          runnerRegistry: registry, previousRun: f.store.getRun("old-run"), startRun: async (value, sink) => {
+            request = value; sink.writeReady({ runId: "replacement-run" }); return "replacement-run";
+          } });
+        return { replacementTurnId: result.turn.id, replacementRunId: result.runId };
+      },
+    });
+    assert.equal(request.nativeResponsePreferences.language, language);
+    assert.equal(request.responseLanguage, language === "follow_user" ? "en-US" : "zh-CN");
+    assert.equal(request.appendSystemPrompt, undefined);
+  });
+}
+
 test("normal queued guidance binds its uploaded file to one continuation input and replays without new ownership", async t => {
   const f = await fixture(t, { sourceRequest: { permissionPreset: "workspace_collaboration" } });
   const attachment = persistConversationAttachment(f.store, { threadId: f.thread.id, fileName: "guidance.txt", contentType: "text/plain",

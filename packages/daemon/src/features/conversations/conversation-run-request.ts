@@ -30,6 +30,8 @@ export function buildConversationRunRequest(input: {
     toneInstruction,
     responseLanguageInstruction(responseLanguagePreference),
   ].filter((instruction) => instruction.trim());
+  const acp = input.input.executionBinding?.kind === "native_profile"
+    && ["kimi-acp", "openclaw-acp"].includes(input.input.executionBinding.engineId);
   return {
     workspaceCwd: input.workspaceCwd,
     cwd: input.input.projectPath || input.workspaceCwd,
@@ -61,7 +63,9 @@ export function buildConversationRunRequest(input: {
     reasoningSummary: input.input.reasoningSummary ?? input.defaultReasoningSummary,
     lingConversationTone: input.lingConversationTone,
     responseLanguage,
-    appendSystemPrompt,
+    // ACP has no system role. Its typed presentation preferences use a separate user-level content block.
+    ...(acp ? { nativeResponsePreferences: { tone: input.lingConversationTone, language: responseLanguagePreference } }
+      : { appendSystemPrompt }),
     conversationAttachmentIds: input.attachments.map((attachment) => attachment.id),
     conversationFileRefs: input.input.fileRefs ?? [],
     normalConversationContext: input.normalConversationContext,

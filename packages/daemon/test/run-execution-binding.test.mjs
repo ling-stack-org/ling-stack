@@ -13,6 +13,7 @@ import { parseRunRequest } from "../dist/features/runs/schemas.js";
 import { createDetachedRunExecutionSink, executeRunRequest } from "../dist/features/runs/orchestrator.js";
 import { createNativeRunDispatcher } from "../dist/features/runs/native-run-dispatcher.js";
 import { createExecutionEngineRunTargetDispatcher } from "../dist/features/execution-engines/run-target-dispatcher.js";
+import { acpConfigurationFingerprint } from "../dist/runtime/acp/journaled-lifecycle.js";
 import { maybeStartNextRunInterventionContinuation } from "../dist/features/runs/interventions.js";
 import { fixtureNativeAcceptance, fixtureNativePolicy } from "./support/fixture-native-acceptance.mjs";
 import { loadWorkspaceRuntimeSettings, patchWorkspaceRuntimeSettings } from "../dist/runtime/runner-settings.js";
@@ -1326,3 +1327,97 @@ test("concurrent native first requests create one turn and one execution after a
   const run = fixture.store.getRun(results[0]);
   assert.equal(fixture.store.listLingTurns({ threadId: run.threadId, limit: 100 }).length, 1);
 });
+
+for (const engineId of ["codex-app-server", "openclaw-acp"]) {
+  for (const tools of [[], ["read", "grep", "find", "ls"], ["bash"]]) {
+    test(`${engineId} rejects a tool subset before resolving native authority: ${tools.join(",")}`, async () => {
+      let profiles = 0, probes = 0, executions = 0;
+      const dispatcher = createExecutionEngineRunTargetDispatcher({
+        getProfileStore() { profiles++; throw new Error("must reject before profile access"); },
+        probeInstallation() { probes++; throw new Error("must not probe"); },
+        executeCodex() { executions++; throw new Error("must not execute"); },
+        executeOpenClaw() { executions++; throw new Error("must not execute"); },
+      });
+      const input = { runRequest: { ...base, tools, executionBinding: { ...native, engineId,
+        ...(engineId === "openclaw-acp" ? { nativeModelId: undefined } : {}) } } };
+      await assert.rejects(dispatcher.assertAvailable(input), { code: "native_execution_tools_unsupported" });
+      await assert.rejects(dispatcher.dispatch(input), { code: "native_execution_tools_unsupported" });
+      assert.deepEqual([profiles, probes, executions], [0, 0, 0]);
+    });
+  }
+}
+
+for (const create of [createCodexTargetFixture, createOpenClawTargetFixture]) {
+  test(`${create.name} preserves the ordinary conversation tool set`, async t => {
+    const fixture = create(t), input = fixture.input();
+    input.runRequest.tools = ["read", "grep", "find", "ls", "bash", "edit", "write"];
+    await fixture.dispatcher.dispatch(input);
+    assert.equal(fixture.executions.length, 1);
+  });
+}
+
+test("Kimi request tools are snapshotted before an asynchronous admission and bind the execution identity", async t => {
+  const fixture = createKimiTargetFixture(t), input = fixture.input();
+  input.runRequest.tools = ["read", "grep", "find", "ls"];
+  const pending = fixture.dispatcher.dispatch(input);
+  input.runRequest.tools.push("bash");
+  await pending;
+  const execution = fixture.executions[0];
+  assert.deepEqual(execution.configuration.allowedTools, ["read", "grep", "find", "ls"]);
+  assert.notEqual(execution.reservation.selection.configurationFingerprint,
+    acpConfigurationFingerprint({ engineId: "kimi-acp", expectedVersion: execution.process.expectedVersion },
+      { ...execution.configuration, allowedTools: [...execution.configuration.allowedTools, "bash"] }));
+});
+
+for (const engineId of ["kimi-acp", "openclaw-acp"]) {
+  for (const patch of [{ systemPrompt: "CUSTOM_SYSTEM_ONLY" }, { appendSystemPrompt: ["CUSTOM_APPEND_ONLY"] }]) {
+    test(`${engineId} rejects unsupported system instructions before profile access (${Object.keys(patch)[0]})`, async () => {
+      const dispatcher = createExecutionEngineRunTargetDispatcher({
+        getProfileStore() { assert.fail("unsupported system instructions cannot access a profile"); },
+      });
+      const input = { runRequest: { ...base, ...patch, executionBinding: { ...native, engineId, nativeModelId: undefined } } };
+      await assert.rejects(dispatcher.assertAvailable(input), { code: "native_execution_system_instructions_unsupported" });
+      await assert.rejects(dispatcher.dispatch(input), { code: "native_execution_system_instructions_unsupported" });
+    });
+  }
+}
+
+test("Codex preserves separate native base and developer instructions without promoting task text", async t => {
+  const fixture = createCodexTargetFixture(t), input = fixture.input();
+  input.runRequest.systemPrompt = "CUSTOM_SYSTEM_ONLY";
+  input.runRequest.appendSystemPrompt = ["FIRST_APPEND", "SECOND_APPEND"];
+  await fixture.dispatcher.dispatch(input);
+  const execution = fixture.executions[0];
+  assert.equal(execution.configuration.baseInstructions, "CUSTOM_SYSTEM_ONLY");
+  assert.equal(execution.configuration.developerInstructions, "FIRST_APPEND\n\nSECOND_APPEND");
+  assert.equal(execution.input.input[0].text, base.task.prompt);
+  assert.doesNotMatch(JSON.stringify(execution.input), /CUSTOM_SYSTEM_ONLY|FIRST_APPEND|SECOND_APPEND/);
+});
+
+for (const create of [createKimiTargetFixture, createOpenClawTargetFixture]) {
+  test(`${create.name} sends typed response preferences as a separate user-level content block`, async t => {
+    const fixture = create(t), input = fixture.input();
+    input.runRequest.lingConversationTone = "friendly";
+    input.runRequest.responseLanguage = "zh-CN";
+    await fixture.dispatcher.dispatch(input);
+    const blocks = fixture.executions[0].input;
+    assert.equal(blocks.length, 2);
+    assert.match(blocks[0].text, /^Ling response preferences \(user-level\):/);
+    assert.match(blocks[0].text, /friendly/);
+    assert.match(blocks[0].text, /Chinese|中文/);
+    assert.equal(blocks[1].text, base.task.prompt);
+  });
+}
+
+for (const create of [createKimiTargetFixture, createOpenClawTargetFixture]) {
+  test(`${create.name} keeps follow_user distinct from the previous resolved language`, async t => {
+    const fixture = create(t), input = fixture.input();
+    input.runRequest.responseLanguage = "zh-CN";
+    input.runRequest.nativeResponsePreferences = { tone: "friendly", language: "follow_user" };
+    input.runRequest.task = { ...input.runRequest.task, prompt: "Please continue in the current language" };
+    await fixture.dispatcher.dispatch(input);
+    const blocks = fixture.executions[0].input;
+    assert.match(blocks[0].text, /most recent user message/);
+    assert.equal(blocks[1].text, input.runRequest.task.prompt);
+  });
+}

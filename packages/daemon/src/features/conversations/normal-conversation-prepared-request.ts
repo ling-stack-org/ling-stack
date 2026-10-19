@@ -9,6 +9,7 @@ import { isRecord } from "../../shared/validation.js";
 import { parseRunRequest, type RunRequest } from "../runs/schemas.js";
 import { readNormalConversationRequestContext } from "./normal-conversation-context.js";
 import { inlineProviderDescriptor, restorePreparedInlineProvider } from "./normal-conversation-prepared-provider.js";
+import { readNativeResponsePreferences } from "./native-response-preferences.js";
 
 const requestKeys = new Set([
   "executionBinding", "workspaceCwd", "cwd", "task", "providerPresetId", "provider", "threadId", "turnId", "teammateId",
@@ -17,10 +18,10 @@ const requestKeys = new Set([
   "conversationAttachmentIds", "conversationFileRefs", "normalConversationContext", "normalConversationAcceptedSnapshotId",
   "contextProjection", "idempotencyKey", "runnerId", "requestedSkillId", "skipProviderPreflight", "approvalProfile",
   "systemPrompt", "agentDir", "skipMemoryRecall", "sourceMessageId", "linkedMessageId", "parentRunId",
-  "interventionId", "continuationReason", "runtimeToolFeatures",
+  "interventionId", "continuationReason", "runtimeToolFeatures", "nativeResponsePreferences",
 ]);
 const internalKeys = new Set(["normalConversationContext", "normalConversationAcceptedSnapshotId", "contextProjection",
-  "conversationAttachmentIds", "conversationFileRefs", "createdByActor", "skipMemoryRecall", "sourceMessageId", "linkedMessageId"]);
+  "conversationAttachmentIds", "conversationFileRefs", "createdByActor", "skipMemoryRecall", "sourceMessageId", "linkedMessageId", "nativeResponsePreferences"]);
 
 interface PreparedRequestPayload {
   readonly schemaVersion: 1;
@@ -100,6 +101,7 @@ function validatePayload(value: unknown, expected: { threadId: string; turnId: s
     throw new Error("Invalid prepared request payload");
   }
   const request = value.request;
+  readNativeResponsePreferences(request.nativeResponsePreferences);
   if (Object.keys(request).some((key) => !requestKeys.has(key))) throw new Error("Invalid prepared request fields");
   const parsed = parseRunRequest(request);
   for (const [key, item] of Object.entries(request)) {

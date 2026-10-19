@@ -1,4 +1,4 @@
-import type { ExecutionEngineInstallationProbe, ExecutionEngineProfile } from "@ling-stack/contracts";
+import type { ExecutionEngineInstallationProbe, ExecutionEngineProfile, RunTool } from "@ling-stack/contracts";
 import { resolve } from "node:path";
 import {
   ExecutionEngineProfileError,
@@ -16,6 +16,12 @@ import { executeOwnedKimiPrompt, type OwnedKimiExecutionOptions } from "../../ru
 import { executeOwnedCodexTurn, type OwnedCodexExecutionOptions } from "../../runtime/adapters/codex/owned-execution.js";
 import { codexConfigurationFingerprint } from "../../runtime/adapters/codex/journaled-lifecycle.js";
 import type { CodexThreadConfiguration } from "../../runtime/adapters/codex/live-client.js";
+import { HttpError } from "../../errors.js";
+import { lingConversationToneInstruction } from "../conversations/conversation-tone.js";
+import { responseLanguageInstruction } from "../channels/response-language.js";
+import { readNativeResponsePreferences } from "../conversations/native-response-preferences.js";
+
+const nativeRunTools: readonly RunTool[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 
 export interface ExecutionEngineRunTargetDispatcherOptions extends NativeAdmissionOptions {
   readonly getProfileStore: () => ExecutionEngineProfileStore;
@@ -56,6 +62,15 @@ export function createExecutionEngineRunTargetDispatcher(
   const prepare = async (input: NativeRunAdmissionInput) => {
       const binding = input.runRequest.executionBinding;
       if (binding.engineId !== "openclaw-acp" && binding.engineId !== "codex-app-server" && binding.engineId !== "kimi-acp") unavailable();
+      const tools = input.runRequest.tools;
+      if (tools !== undefined && (!Array.isArray(tools) || tools.some(tool => !nativeRunTools.includes(tool))
+        || (binding.engineId !== "kimi-acp" && nativeRunTools.some(tool => !tools.includes(tool))))) {
+        throw new HttpError(409, "native_execution_tools_unsupported", "This native engine cannot enforce the requested tool subset.");
+      }
+      if (binding.engineId !== "codex-app-server" && (input.runRequest.systemPrompt !== undefined
+        || (input.runRequest.appendSystemPrompt?.length ?? 0) > 0)) {
+        throw new HttpError(409, "native_execution_system_instructions_unsupported", "This native engine cannot preserve system instruction roles.");
+      }
       if ((binding.engineId === "openclaw-acp" && binding.nativeModelId !== undefined)
         || (binding.engineId === "codex-app-server" && !binding.nativeModelId)) unavailable();
 
@@ -89,8 +104,9 @@ export function createExecutionEngineRunTargetDispatcher(
   };
 
   return {
-    async assertAvailable(input) { await prepare(input); },
+    async assertAvailable(input) { await prepare(snapshotAdmission(input)); },
     async dispatch(input) {
+      input = snapshotAdmission(input);
       const { profileStore, profile, installation, assertCurrentAuthority } = await prepare(input);
       const binding = input.runRequest.executionBinding;
 
@@ -99,6 +115,9 @@ export function createExecutionEngineRunTargetDispatcher(
           cwd: input.runRequest.cwd,
           ...(binding.nativeModelId ? { modelId: binding.nativeModelId } : {}),
           ...(input.effectivePolicySnapshot.conversationMode === "plan" ? { modeId: "plan" as const } : {}),
+          ...(input.runRequest.tools === undefined ? {} : {
+            allowedTools: nativeRunTools.filter(tool => input.runRequest.tools!.includes(tool)),
+          }),
         };
         const target = { engineId: "kimi-acp" as const, expectedVersion: installation.runtimeVersion };
         const selection: NativeExecutionSelection = {
@@ -115,7 +134,7 @@ export function createExecutionEngineRunTargetDispatcher(
           store: input.store,
           reservation: { runId: input.run.id, generation, fence, selection },
           configuration,
-          input: [{ type: "text", text: input.runRequest.task.prompt }],
+          input: acpPromptInput(input),
           process: {
             executablePath: profile.configuration.executablePath,
             executableDigest: installation.executableDigest,
@@ -146,6 +165,10 @@ export function createExecutionEngineRunTargetDispatcher(
           modelProvider: "openai",
           approvalPolicy: "on-request",
           sandbox: codexSandbox(input),
+          ...(input.runRequest.systemPrompt === undefined ? {} : { baseInstructions: input.runRequest.systemPrompt }),
+          ...((input.runRequest.appendSystemPrompt?.length ?? 0) === 0 ? {} : {
+            developerInstructions: input.runRequest.appendSystemPrompt!.join("\n\n"),
+          }),
         };
         const selection: NativeExecutionSelection = {
           engineId: "codex-app-server",
@@ -212,7 +235,7 @@ export function createExecutionEngineRunTargetDispatcher(
         store: input.store,
         reservation: { runId: input.run.id, generation, fence, selection },
         configuration,
-        input: [{ type: "text", text: input.runRequest.task.prompt }],
+        input: acpPromptInput(input),
         process: {
           executablePath: profile.configuration.executablePath,
           executableDigest: installation.executableDigest,
@@ -233,6 +256,20 @@ export function createExecutionEngineRunTargetDispatcher(
       });
     },
   };
+}
+
+function snapshotAdmission<T extends NativeRunAdmissionInput>(input: T): T {
+  return { ...input, runRequest: structuredClone(input.runRequest), approvalPolicy: structuredClone(input.approvalPolicy),
+    effectivePolicySnapshot: structuredClone(input.effectivePolicySnapshot) };
+}
+
+function acpPromptInput(input: NativeRunTargetDispatchInput) {
+  const request = input.runRequest;
+  const original = readNativeResponsePreferences(request.nativeResponsePreferences);
+  const tone = original?.tone ?? request.lingConversationTone, language = original?.language ?? request.responseLanguage;
+  const preferences = [tone && lingConversationToneInstruction(tone), language && responseLanguageInstruction(language)].filter(Boolean).join("\n");
+  return [...(preferences ? [{ type: "text" as const, text: `Ling response preferences (user-level):\n${preferences}` }] : []),
+    { type: "text" as const, text: request.task.prompt }];
 }
 
 function codexSandbox(input: NativeRunTargetDispatchInput): CodexThreadConfiguration["sandbox"] {

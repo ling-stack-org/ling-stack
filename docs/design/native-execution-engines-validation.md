@@ -548,6 +548,43 @@ failed receipts remain historical. This is adapter regression evidence, not a
 new real OpenClaw run, public Run/Attempt cancellation certification, signed
 package acceptance or production publication.
 
+## PR review follow-up: native request options
+
+The review of PR #564 confirmed that the native dispatcher omitted requested tool
+restrictions and system instructions. Workspace approval policy alone does not
+enforce an empty or restricted request tool list. The repair projects Kimi's
+request ceiling into its isolated tool configuration and host policy, and binds
+that ceiling to native configuration identity. Codex/OpenClaw tool subsets are
+explicitly unsupported before native preparation; ordinary complete-tool
+conversation requests remain supported.
+
+Codex uses its native base/developer instruction fields. ACP rejects explicit
+system instruction fields. Ordinary ACP conversation tone/language preferences
+retain the original typed settings, including follow_user, and are sent in a
+labelled user-level block, with the original task in its own block. Continuations
+preserve typed preferences; message replacements preserve original language intent;
+this does not add a system role to ACP or rewrite previously accepted snapshots.
+OpenClaw Gateway capabilities and user account configuration remain outside the
+repair. Existing real-engine candidate receipts belong to earlier source
+snapshots and do not certify these new option-projection paths.
+
+Focused verification for the frozen repair snapshot passed 373 cases in grouped
+runs, with zero final skips: six complete suites (run execution binding, ACP
+journaled lifecycle, Kimi owned execution, conversation request builder, normal
+conversation input and native conversation) passed 297; the Codex live-client and
+OpenClaw owned-execution suites passed 69; and the complete native Codex candidate
+suite passed 7 after its durable comparator was corrected. The earlier combined
+adjacent run recorded 75/76, with only that stale candidate comparator failing;
+its log remains historical. TypeScript and diff checks also passed. This is not
+a single full-repository test run.
+
+The `pr-delivery/native-request-contract-fix/` evidence directory contains raw
+RED/GREEN logs, a handoff report and the 18-file SHA-256 source manifest verified
+before staging. Final-commit CI is tracked separately in `pr-delivery/`; earlier
+CI at `6048ced4` does not validate this repair. Synthetic native peers test
+projection, refusal, journal identity and host callback boundaries; they do not
+replace real-engine or signed-package acceptance.
+
 ## Remaining acceptance gates
 
 - Real engines, accounts, platform/architecture/surface combinations and signed

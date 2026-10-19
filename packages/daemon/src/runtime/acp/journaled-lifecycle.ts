@@ -379,9 +379,11 @@ export function acpConfigurationFingerprint(target: AcpTarget, configuration: Ac
   if (!["kimi-acp", "openclaw-acp"].includes(target.engineId) || !text(target.expectedVersion) || !text(configuration.cwd)) throw new AcpLifecycleError("invalid_input");
   let agentId: string | undefined;
   if (target.engineId === "openclaw-acp") {
+    if (configuration.allowedTools !== undefined) throw new AcpLifecycleError("unsupported_capability");
     try { agentId = normalizeOpenClawAgentId(target.agentId); }
     catch { throw new AcpLifecycleError("invalid_input"); }
   } else if (target.agentId !== undefined) throw new AcpLifecycleError("invalid_input");
   return createHash("sha256").update(JSON.stringify({ engineId: target.engineId, expectedVersion: target.expectedVersion, agentId,
-    cwd: configuration.cwd, modelId: configuration.modelId, modeId: configuration.modeId, thoughtLevel: configuration.thoughtLevel })).digest("hex");
+    cwd: configuration.cwd, modelId: configuration.modelId, modeId: configuration.modeId, thoughtLevel: configuration.thoughtLevel,
+    allowedTools: configuration.allowedTools && [...configuration.allowedTools].sort() })).digest("hex");
 }

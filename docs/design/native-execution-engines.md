@@ -82,6 +82,31 @@ or failed preparation has no authority over a run linked by another request.
 Protocol events supplied by native targets are already durably journaled. Forward
 them once; do not append a second event with the same meaning.
 
+## Request option projection
+
+A caller's tool selection is an upper bound, independent of workspace approval
+policy. Kimi intersects it with its supported native tools, profile configuration
+and host policy; excluded tools cannot regain authority through approval or host
+callbacks. The host-only selection participates in the native configuration
+fingerprint, including recovery. It is not an ACP wire configuration option.
+Codex and OpenClaw currently accept the complete Ling tool grant or an internal
+request without a narrower tool selection. Explicit subsets, including an empty
+list and the HTTP read-only default, are rejected before profile probing or native
+execution because these integrations cannot guarantee the requested tool set.
+
+Codex maps systemPrompt to native baseInstructions and appendSystemPrompt to
+native developerInstructions; both participate in the configuration identity.
+The current ACP integrations have no supported system-instruction slot and reject
+explicit systemPrompt/appendSystemPrompt rather than changing their authority.
+For ordinary ACP conversations, the trusted request builder preserves the typed
+tone and original response-language preference, including follow_user, instead
+of creating those system fields.
+The dispatcher renders them as a separately labelled user-level preference block
+before the task content. These are presentation preferences, not system-level
+security instructions. Continuations and message replacements retain the original
+typed language preference rather than freezing a previous inferred language. Existing
+accepted ACP snapshots with explicit system fields are not silently rewritten.
+
 ## Supervision and terminal ordering
 
 Use distinct heartbeat and meaningful-event clocks. Heartbeats renew the current

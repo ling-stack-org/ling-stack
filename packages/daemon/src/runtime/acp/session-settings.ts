@@ -1,5 +1,6 @@
 import { isAbsolute } from "node:path";
 import type { SessionConfigOption, SessionModeState } from "@agentclientprotocol/sdk";
+import type { RunTool } from "@ling-stack/contracts";
 import { AcpLifecycleError, record, text } from "./live-errors.js";
 
 export interface AcpSessionConfiguration {
@@ -7,6 +8,8 @@ export interface AcpSessionConfiguration {
   readonly modelId?: string;
   readonly modeId?: "default" | "plan";
   readonly thoughtLevel?: string;
+  /** Host-enforced upper bound, not an ACP session setting or permission grant. */
+  readonly allowedTools?: readonly RunTool[];
 }
 export interface AcpSessionSettingsSnapshot {
   readonly configOptions: readonly SessionConfigOption[];
@@ -14,10 +17,13 @@ export interface AcpSessionSettingsSnapshot {
 }
 
 export function validateAcpSessionConfiguration(value: unknown): asserts value is AcpSessionConfiguration {
-  if (!record(value) || Object.keys(value).some(key => !["cwd", "modelId", "modeId", "thoughtLevel"].includes(key))
+  if (!record(value) || Object.keys(value).some(key => !["cwd", "modelId", "modeId", "thoughtLevel", "allowedTools"].includes(key))
     || !text(value.cwd) || !isAbsolute(value.cwd)
     || [value.modelId, value.thoughtLevel].some(item => item !== undefined && !text(item))
-    || (value.modeId !== undefined && value.modeId !== "default" && value.modeId !== "plan")) invalid("invalid_input");
+    || (value.modeId !== undefined && value.modeId !== "default" && value.modeId !== "plan")
+    || (value.allowedTools !== undefined && (!Array.isArray(value.allowedTools) || value.allowedTools.length > 7
+      || new Set(value.allowedTools).size !== value.allowedTools.length
+      || value.allowedTools.some(tool => !["read", "grep", "find", "ls", "bash", "edit", "write"].includes(tool))))) invalid("invalid_input");
 }
 
 /** Owns the native catalog and confirmed choices, never arbitrary permission configuration. */
@@ -35,6 +41,7 @@ export class AcpSessionSettings {
 
   constructor(engineId: "kimi-acp" | "openclaw-acp", configuration: AcpSessionConfiguration) {
     validateAcpSessionConfiguration(configuration);
+    if (engineId !== "kimi-acp" && configuration.allowedTools !== undefined) invalid("unsupported_capability");
     this.#configuration = structuredClone(configuration);
     this.#engineId = engineId;
   }

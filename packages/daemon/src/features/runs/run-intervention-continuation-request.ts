@@ -2,6 +2,7 @@ import {
   isAuthorizationMode,
   isWorkspaceAccessMode,
   permissionPresets,
+  responseLanguages,
   redactSecrets,
   sessionPermissionModes,
   type PermissionConfirmation,
@@ -26,6 +27,7 @@ import { prepareNormalConversationInput } from "../conversations/normal-conversa
 import { saveNormalConversationPreparedRequest } from "../conversations/normal-conversation-prepared-request.js";
 import { renderNormalConversationRunPrompt } from "../conversations/normal-conversation-context.js";
 import { requireNormalContinuationSource } from "../conversations/normal-conversation-continuation-source.js";
+import { readNativeResponsePreferences } from "../conversations/native-response-preferences.js";
 
 export function buildRunInterventionContinuationRequest(
   store: RunStore,
@@ -123,6 +125,12 @@ export function buildRunInterventionContinuationRequest(
     reasoningSummary: readSnapshotReasoningSummary(snapshot, "reasoningSummary"),
     systemPrompt: channelContinuation?.systemPromptInstruction ?? inheritedSystemPrompt,
     appendSystemPrompt,
+    nativeResponsePreferences: readNativeResponsePreferences(snapshot.nativeResponsePreferences),
+    lingConversationTone: snapshot.lingConversationTone === "friendly" || snapshot.lingConversationTone === "pragmatic"
+      || snapshot.lingConversationTone === "none" ? snapshot.lingConversationTone : undefined,
+    responseLanguage: typeof snapshot.responseLanguage === "string"
+      && responseLanguages.includes(snapshot.responseLanguage as typeof responseLanguages[number])
+      ? snapshot.responseLanguage as typeof responseLanguages[number] : undefined,
     contextProjection: channelContinuation?.contextProjection ?? normalInput?.context.projection ??
       (sourceThread?.kind === "conversation" ? undefined : readSnapshotContextProjection(snapshot)),
     normalConversationContext: normalInput?.context,

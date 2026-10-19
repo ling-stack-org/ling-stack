@@ -221,7 +221,9 @@ export async function runProductionRejection({ root, paths, profile, model, prov
       executionBinding: selected.executionBinding };
     requireFact(availability.status === 200 && facts.availability.status === "blocked" && facts.availability.reason === rejection,
       "production_rejection_availability_not_blocked");
-    facts.input = { message, executionBinding: binding, tools: [], authorizationMode: "smart", workspaceAccessMode: "read_only",
+    // Exercise the certification gate with the native engine's enforceable tool set.
+    // A restricted tool request must be rejected earlier by its independent request contract.
+    facts.input = { message, executionBinding: binding, tools: ["read", "grep", "find", "ls", "bash", "edit", "write"], authorizationMode: "smart", workspaceAccessMode: "read_only",
       permissionMode: "custom", responseLanguage: "en", idempotencyKey: "candidate-production-rejection" };
     const stream = await request("/conversations/stream", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(facts.input), terminalError: true });
@@ -273,7 +275,7 @@ export async function runProductionRejection({ root, paths, profile, model, prov
       || input.acceptedSnapshotId !== input.preparedAcceptedSnapshotId || input.acceptedSnapshotId !== input.preparedRequestAcceptedSnapshotId
       || input.acceptedFingerprint !== input.preparedParentFingerprint || input.threadId !== input.preparedThreadId
       || input.turnId !== input.preparedTurnId || input.sourceItemId !== input.preparedSourceItemId || !input.preparedPromptIncludesInput
-      || !isDeepStrictEqual(input.executionBinding, facts.input?.executionBinding) || !isDeepStrictEqual(input.tools, [])
+      || !isDeepStrictEqual(input.executionBinding, facts.input?.executionBinding) || !isDeepStrictEqual(input.tools, facts.input?.tools)
       || input.authorizationMode !== "smart" || input.workspaceAccessMode !== "read_only" || input.permissionMode !== "custom"
       || facts.execution.newNativeSubmissions.length || facts.execution.newNonterminalExecutions.length || facts.execution.newSuccessfulRuns.length) {
       facts.failure ??= "production_rejection_durable_facts_mismatch";

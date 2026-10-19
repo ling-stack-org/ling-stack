@@ -20,6 +20,7 @@ import type { KimiModelAuthentication } from "./kimi-model-transport.js";
 import { NativeSecretRegistry } from "../adapters/native-stream-redaction.js";
 import { KimiHostFiles } from "./kimi-host-files.js";
 import { KimiHostTerminals } from "./kimi-host-terminals.js";
+import { readOnlyRunTools, riskyRunTools } from "@ling-stack/core";
 
 export interface KimiExecutionAuthentication {
   readonly store: ExecutionEngineProfileStore;
@@ -59,9 +60,18 @@ export class OwnedKimiExecutionError extends Error {
 
 /** Executes one existing Run/Attempt using the concrete Kimi policy, journal and owned native process. */
 export async function executeOwnedKimiPrompt(request: OwnedKimiExecutionOptions) {
+  const approvalPolicy = structuredClone(request.approvalPolicy);
+  if (request.configuration.allowedTools !== undefined) {
+    const excluded = Object.fromEntries([...readOnlyRunTools, ...riskyRunTools]
+      .filter(tool => !request.configuration.allowedTools!.includes(tool)).map(tool => [tool, "deny" as const]));
+    Object.assign(approvalPolicy, { policy: { ...approvalPolicy.policy,
+      toolDecisions: { ...approvalPolicy.policy.toolDecisions, ...excluded } },
+    ...(approvalPolicy.effectivePolicySnapshot ? { effectivePolicySnapshot: { ...approvalPolicy.effectivePolicySnapshot,
+      toolDecisions: { ...approvalPolicy.effectivePolicySnapshot.toolDecisions, ...excluded } } } : {}) });
+  }
   const options: OwnedKimiExecutionOptions = { ...request, reservation: structuredClone(request.reservation),
     configuration: structuredClone(request.configuration), input: structuredClone(request.input),
-    process: structuredClone(request.process), approvalPolicy: structuredClone(request.approvalPolicy),
+    process: structuredClone(request.process), approvalPolicy,
     output: structuredClone(request.output), authentication: request.authentication ? { ...request.authentication,
       profile: structuredClone(request.authentication.profile) } : undefined };
   const grace = options.interruptGraceMs ?? 3000;
@@ -166,6 +176,7 @@ export async function executeOwnedKimiPrompt(request: OwnedKimiExecutionOptions)
     const readOnly = policy?.conversationMode === "plan" || policy?.workspaceAccessMode === "read_only"
       || options.configuration.modeId === "plan";
     executionHome = await prepareKimiExecutionHome(home, options.approvalPolicy, readOnly, executionAbort.signal, {
+      allowedTools: options.configuration.allowedTools,
       modelId: options.configuration.modelId, modelSignal: AbortSignal.any([options.signal, executionAbort.signal]),
       authentication: modelAuthentication, secretRegistry, assertPreparationCurrent: () => assertOwned(["reserved"]),
       // Inference can precede the first ACP event that acknowledges this prompt.

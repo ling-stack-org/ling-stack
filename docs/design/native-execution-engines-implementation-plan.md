@@ -297,3 +297,9 @@ Claude Agent SDK 与 sharp/libvips 已替换并从声明/lockfile 移除；现�
 随后交付 [受控 Codex 候选工具](../../scripts/native-execution-engines/README.md)：严格配置、直接原生二进制摘要、源码/实际 dist 冻结、逐事件认证配置复核、固定场景和精确私有目录清理。11 项工具/协议行为测试和145项 CI 公共测试通过。第一次真实运行将合法的“拒绝后原生中断”误判为失败；原记录保留，补回归先红后绿，只修正候选验证器，不改生产执行。第二次在 macOS arm64、Codex 0.158.0、gpt-6-sol 上通过连接、精确对话、重开库恢复、取消、命令批准/拒绝与单文件原生修改；进程/回调排空、临时区删除及用户配置/认证未改均已核对。报告 exit2、incomplete，productionCertification/published 均 false。完整 release、生产/资源准入、跨工作区及签名包检查没有被窄场景替代。
 
 验证记录见 [验收记录](native-execution-engines-validation.md)。T7 仍须收齐 Electron 剩余交互与完整 Main、其他真实引擎、完整可信检查编排/发布及发布后生产请求、目标平台签名打包和多语言人工质量证据。两包完整自动回归已取得通过结果，真实 fileChange 已有当前 macOS/指定模型候选通过证据；不等于整个仓库、跨平台或正式发布验收完成。缺可信证据的原生生产组合继续阻塞。没有提交、推送、修改用户配置或迁移用户数据库，原暂存 patch/index entries 保持原样。未勾选项不得推定完成；模拟测试不替代真实引擎和平台验收。
+
+### PR #564 收尾复审
+
+上述提交前快照和验收结果保留原归属。用户随后授权提交并合并 PR #564；代码已推送到独立分支，合并仍须以最终提交的 CI 和审查结果为准。
+
+远端复审发现请求级工具限制、systemPrompt/appendSystemPrompt 没有完整投影到原生分支。收尾适配遵循 [请求选项约定](native-execution-engines.md#request-option-projection)：Kimi 将请求工具作为原生配置和宿主策略的上限，并纳入恢复身份；Codex/OpenClaw 无法保证的工具子集在探测和启动前明确拒绝。Codex 使用原生 system/developer 字段；ACP 不支持的显式 system 字段明确拒绝。普通 ACP 对话保留语气/语言的类型化偏好，通过独立、明确标注的用户级内容传达，续跑继续继承，不冒充 system 层级，也不回写旧已接受输入。该修复不扩展 Gateway 能力或修改用户配置。完整回归结果与源快照另记于验收记录及 `pr-delivery/`，T7 仍未关闭。
