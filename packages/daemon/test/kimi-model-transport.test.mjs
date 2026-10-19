@@ -52,7 +52,7 @@ test("Kimi execution home projects only the selected model and no persistent aut
   const home = await f.prepare({ modelId: "chosen" });
   assert.deepEqual(Object.keys(home.projected.models), ["chosen"]);
   assert.equal(home.projected.default_model, "chosen");
-  assert.deepEqual(home.projected.models.chosen, f.config.models.chosen);
+  assert.deepEqual(home.projected.models.chosen, parse(stringify(f.config.models.chosen)));
   assert.deepEqual(Object.keys(home.projected.providers), ["selected"]);
   assert.equal(home.provider.api_key, "ling-relay");
   assert.equal(home.provider.oauth, undefined);
