@@ -27,7 +27,7 @@ function dismissalIdentity(consumerName, dependencyName) {
 
 test("Tooltip, Dialog, Popover, Menu and Toast share one installed dismissal stack", () => {
   // This Radix context owns document-level Escape handling and must be a singleton.
-  // The targeted patch override intentionally reconciles upstream exact pins.
+  // Keep every consumer on the upgraded upstream layer and the same context.
   const identities = [
     dismissalIdentity("@radix-ui/react-tooltip"),
     dismissalIdentity("@radix-ui/react-dialog"),
@@ -36,7 +36,7 @@ test("Tooltip, Dialog, Popover, Menu and Toast share one installed dismissal sta
     dismissalIdentity("@radix-ui/react-toast"),
   ];
   for (const identity of identities) {
-    assert.equal(identity.version, "1.1.20", identity.consumer);
+    assert.equal(identity.version, "1.2.1", identity.consumer);
     assert.equal(identity.cjs, identities[0].cjs, `${identity.consumer}: CJS singleton`);
     assert.equal(identity.esm, identities[0].esm, `${identity.consumer}: ESM singleton`);
   }
