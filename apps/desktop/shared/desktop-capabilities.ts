@@ -1,4 +1,18 @@
-import type { ComputerUseRuntimeStatus } from "@ling-stack/contracts";
+import type { ComputerUseRuntimeStatus, ExecutionEngineConnectionProbe, ExecutionEngineInstallationProbe, ExecutionEngineLoginMethod, ExecutionEngineLoginOperation, ExecutionEngineProfileListResponse, ExecutionEngineProfileResponse,
+  ExternalExecutionEngineId, SaveExecutionEngineProfileRequest, SaveExecutionEngineSecretRequest } from "@ling-stack/contracts";
+
+export interface DesktopExecutionEngineCapabilities {
+  saveProfileWithSecret(engineId: ExternalExecutionEngineId, request: SaveExecutionEngineSecretRequest): Promise<ExecutionEngineProfileResponse>;
+  listProfiles(): Promise<ExecutionEngineProfileListResponse>;
+  getProfile(engineId: ExternalExecutionEngineId): Promise<ExecutionEngineProfileResponse>;
+  saveProfile(engineId: ExternalExecutionEngineId, input: SaveExecutionEngineProfileRequest): Promise<ExecutionEngineProfileResponse>;
+  disconnectProfile(engineId: ExternalExecutionEngineId, expectedRevision: number): Promise<ExecutionEngineProfileResponse>;
+  probeProfile(engineId: ExternalExecutionEngineId, expectedRevision: number): Promise<ExecutionEngineInstallationProbe>;
+  probeConnection(engineId: ExternalExecutionEngineId, expectedRevision: number): Promise<ExecutionEngineConnectionProbe>;
+  startLogin(engineId: ExternalExecutionEngineId, expectedRevision: number, method: ExecutionEngineLoginMethod): Promise<ExecutionEngineLoginOperation>;
+  getLogin(engineId: ExternalExecutionEngineId, operationId: string): Promise<ExecutionEngineLoginOperation>;
+  cancelLogin(engineId: ExternalExecutionEngineId, operationId: string): Promise<ExecutionEngineLoginOperation>;
+}
 import {
   SUPPORTED_LOCALES,
   isSupportedLocale,
@@ -262,6 +276,7 @@ export interface LingDesktopCapabilities {
     restart(): Promise<DesktopDaemonStatus>;
   };
   readonly mobileAccess?: DesktopMobileAccessCapabilities;
+  readonly executionEngines?: DesktopExecutionEngineCapabilities;
   /** Present only when this packaged host carries bundled provider authority. */
   readonly computerControl?: ComputerControlDesktopCapability;
   /** Desktop-owned preference, independent from Cua Driver readiness. */

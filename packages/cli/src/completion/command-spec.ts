@@ -37,6 +37,9 @@ export const commandSpec: CommandSpec = {
   summary: "Ling Stack CLI",
   options: globalOptions,
   subcommands: [
+    command("engine", "Authorize local execution-engine management", [
+      command("authorize", "Create a one-use local Web enrollment code", [], [option("--origin", "required"), option("--start-daemon")]),
+    ]),
     command("restart", "Restart local daemon and Web UI", [], [
       option("--force"),
       option("--skip-build"),

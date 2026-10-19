@@ -42,7 +42,11 @@ function isOriginalKeychainSecurityRefusal(error: unknown): boolean {
   return isProtectedHostActorEntryLaunchRefusal(KEYCHAIN_SECURITY_ACTOR_ENTRY, error);
 }
 
-export function createSystemKeychainSecretStore(): ExternalSecretStore {
+export function createSystemKeychainSecretStore(options: { readonly readTimeoutMs?: number } = {}): ExternalSecretStore {
+  if (options.readTimeoutMs !== undefined && (!Number.isSafeInteger(options.readTimeoutMs) || options.readTimeoutMs <= 0)) {
+    throw new Error("Invalid keychain read timeout.");
+  }
+  const readBounds = options.readTimeoutMs === undefined ? {} : { timeout: options.readTimeoutMs, killSignal: "SIGKILL" as const };
   const service = "ling-stack";
   const unavailable = (ref: string, message = "Keychain secret store is unavailable in this runtime."): SecretStatus => ({
     ref,
@@ -80,6 +84,7 @@ export function createSystemKeychainSecretStore(): ExternalSecretStore {
       }
       try {
         runKeychainSecurity(["find-generic-password", "-s", service, "-a", parsed.name], {
+          ...readBounds,
           stdio: ["ignore", "ignore", "pipe"],
         });
         return { ref, kind: "keychain", configured: true };
@@ -106,6 +111,7 @@ export function createSystemKeychainSecretStore(): ExternalSecretStore {
       const parsed = parseSecretRef(ref);
       try {
         const value = runKeychainSecurity(["find-generic-password", "-s", service, "-a", parsed.name, "-w"], {
+          ...readBounds,
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
         }).trim();

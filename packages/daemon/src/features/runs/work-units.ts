@@ -1,6 +1,7 @@
 import type { RunEventEnvelope, RunEventType, RunStore } from "@ling-stack/core";
 import { isTerminalWorkUnitStatus, transitionWorkUnitTerminal } from "../../runtime/work-units.js";
 import { approvalEventReflectsRunState } from "./approval-event-state.js";
+import { isNativeApprovalEvent } from "./native-approval-events.js";
 
 export function syncWorkUnitForRunEvent(
   store: RunStore,
@@ -9,6 +10,7 @@ export function syncWorkUnitForRunEvent(
   type: RunEventType,
   envelope: RunEventEnvelope,
 ): void {
+  if (isNativeApprovalEvent(store, envelope)) return;
   const current = store.getWorkUnit(workUnitId);
   if (!current || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
     return;

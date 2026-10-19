@@ -49,6 +49,7 @@ export type RunTransitionEvent =
   | "runner_started"
   | "runner_yielded"
   | "approval_requested"
+  | "approval_wait_ended"
   | "approval_approved"
   | "approval_denied"
   | "approval_expired"
@@ -125,6 +126,7 @@ export type WorkUnitTransitionEvent =
   | "user_input_answered"
   | "runner_started"
   | "approval_requested"
+  | "approval_wait_ended"
   | "approval_approved"
   | "approval_denied"
   | "approval_expired"
@@ -191,6 +193,7 @@ const runTransitions: Readonly<Record<RunStatus, Partial<Record<RunTransitionEve
     cancel: "cancelled",
   },
   waiting_for_approval: {
+    approval_wait_ended: "running",
     approval_approved: "running",
     approval_denied: "failed",
     approval_expired: "failed",
@@ -293,6 +296,7 @@ const workUnitTransitions: Readonly<Record<WorkUnitStatus, Partial<Record<WorkUn
     cancel: "cancelling",
   },
   waiting_for_approval: {
+    approval_wait_ended: "running",
     approval_approved: "running",
     approval_denied: "failed",
     approval_expired: "failed",

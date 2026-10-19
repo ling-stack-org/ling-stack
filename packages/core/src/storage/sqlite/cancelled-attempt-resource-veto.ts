@@ -4,6 +4,7 @@ import { UserInputStoreError } from "../../user-input-store-types.js";
 import { assertUserInputDurableQuiescence } from "./user-input-durable-quiescence.js";
 import { readTrackedToolCoverage } from "./host-attempt-tracked-coverage.js";
 import { readHostOperationBlockers } from "./host-operation-journal-store.js";
+import { isNativeCompletionSource, readNativeAttemptEffectStatus } from "./host-attempt-native-coverage.js";
 
 /** A durable veto, not evidence of local callback drain or permission to resume. */
 export function withCancelledAttemptResourceVeto(database: DatabaseSync, fence: RuntimeAttemptFenceV1,
@@ -49,16 +50,20 @@ function withResourceReleaseTransaction(database: DatabaseSync, release: () => n
 
 function mayReleaseCancelledAttemptResources(database: DatabaseSync, fence: RuntimeAttemptFenceV1, releasedAt: string): boolean {
   const owner = database.prepare(`SELECT attempt.status AS attempt_status, attempt.error_code AS attempt_error_code, unit.status AS unit_status,
-    run.status AS run_status FROM work_unit_attempts AS attempt JOIN work_units AS unit ON unit.id=attempt.work_unit_id
+    run.id AS run_id,run.status AS run_status FROM work_unit_attempts AS attempt JOIN work_units AS unit ON unit.id=attempt.work_unit_id
     LEFT JOIN run_sessions AS run ON run.id=unit.linked_run_id
     WHERE attempt.id=? AND attempt.work_unit_id=? AND attempt.runtime_instance_id=? AND attempt.fencing_token=?`)
     .get(fence.attemptId, fence.workUnitId, fence.runtimeInstanceId, fence.fencingToken);
   if (!owner) return false;
   // A registered original lifetime is an independent veto, including terminal
   // callbacks outside Broker enforcement and expiry after a Daemon restart.
-  const completion = database.prepare(`SELECT run_id,drained_at,effect_coverage,tracked_tool_calls_json FROM host_attempt_completions
+  const completion = database.prepare(`SELECT run_id,drained_at,effect_coverage,tracked_tool_calls_json,native_effect_inventory_json FROM host_attempt_completions
     WHERE work_unit_id=? AND attempt_id=? AND runtime_instance_id=? AND fencing_token=?`)
     .get(fence.workUnitId, fence.attemptId, fence.runtimeInstanceId, fence.fencingToken);
+  if (typeof owner.run_id === "string" && isNativeCompletionSource(database, { runId: owner.run_id, ...fence })) {
+    const source = { runId: owner.run_id, ...fence };
+    if (!completion?.drained_at || readNativeAttemptEffectStatus(database, source, completion.native_effect_inventory_json) !== "settled") return false;
+  }
   const approvedApprovalHandoff = completion && owner.run_status === "waiting_for_approval"
     && owner.unit_status === "waiting_for_approval"
     && (owner.attempt_status === "waiting_for_approval"
@@ -91,6 +96,7 @@ function mayReleaseCancelledAttemptResources(database: DatabaseSync, fence: Runt
   // A drained local callback group alone says nothing about off/shadow effects.
   // Legacy records without a registered lifetime keep their existing vetoes.
   if (completion && completion.effect_coverage !== "pi_no_tools_v1"
+    && readNativeAttemptEffectStatus(database, { runId: String(completion.run_id), ...fence }, completion.native_effect_inventory_json) !== "settled"
     && !readTrackedToolCoverage(database, { runId: String(completion.run_id), ...fence }, completion.tracked_tool_calls_json, releasedAt)) return false;
   // Verify historical source facts under the same transaction as the release.
   const runs = database.prepare("SELECT id FROM run_sessions WHERE work_unit_id=? ORDER BY id").all(fence.workUnitId);

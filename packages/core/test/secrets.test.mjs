@@ -109,3 +109,11 @@ test("redaction preserves shared references while stopping true cycles", () => {
     },
   });
 });
+
+test("redaction applies every supported string pattern in one idempotent pass", () => {
+  const input = { preview: "Bearer DEMO_TOKEN\nsk-DEMO_TOKEN_123\nBasic DEMO_BASIC\nextra-fixture-value" };
+  const expected = { preview: "[REDACTED]\n[REDACTED]\n[REDACTED]\n[REDACTED]" };
+  const result = redactSecrets(input, ["extra-fixture-value"]);
+  assert.deepEqual(result, expected);
+  assert.deepEqual(redactSecrets(result, ["extra-fixture-value"]), expected);
+});

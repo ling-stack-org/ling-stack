@@ -8,8 +8,9 @@ import { startFakeAcpServer } from "../dist/runtime/acp/fake-server.js";
 import { createCodexAppServerAdapter } from "../dist/runtime/adapters/codex-app-server.js";
 import { startFakeCodexAppServer } from "../dist/runtime/adapters/fake-codex-app-server.js";
 import { createOpenClawAcpAdapter } from "../dist/runtime/adapters/openclaw-acp.js";
+import { UnsupportedRunnerError } from "../dist/runtime/runners.js";
 
-test("openclaw-acp registry selection executes fake ACP through normalized events", async () => {
+test("openclaw-acp adapter executes fake ACP through normalized events with a Host receipt", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-openclaw-acp-adapter-"));
   const artifactRoot = resolve(cwd, "runtime-state", "artifacts");
   const acp = await startFakeAcpServer({
@@ -31,24 +32,19 @@ test("openclaw-acp registry selection executes fake ACP through normalized event
     },
   });
   try {
-    const registry = createDefaultRunnerRegistry(new RecordingRunner(), {
-      runners: {
-        openclawAcp: {
-          enabled: true,
-          endpoint: acp.endpoint,
-          readinessPassed: true,
-        },
-      },
+    const adapter = createOpenClawAcpAdapter({
+      endpoint: acp.endpoint,
+      adapterRevision: "ling-acp/0.1:adapter-v1",
+      toolExecutionConformance: readOnlyReceipt("ling-acp/0.1:adapter-v1"),
     });
-    const resolution = registry.resolve({ requestedRunnerId: "openclaw-acp", explicitFallbackPolicy: "disabled" });
     const events = [];
-    const result = await resolution.runner.adapter.runTask({
+    const result = await adapter.runTask({
       ...baseRunOptions(cwd),
       runtimePaths: { artifactsDir: artifactRoot },
       onEvent: (event) => events.push(event),
     });
 
-    assert.equal(resolution.effectiveRunnerId, "openclaw-acp");
+    assert.equal(acp.requests.find(request => request.method === "session/run")?.params.runnerId, "openclaw-acp");
     assert.equal(result.taskId, "task_external");
     assert.deepEqual(events.map((event) => event.type), [
       "run_start",
@@ -91,16 +87,13 @@ test("external adapter accepts only requested read-only proposals from its curat
     },
   });
   try {
-    const registry = createDefaultRunnerRegistry(new RecordingRunner(), {
-      runners: { openclawAcp: { enabled: true, endpoint: acp.endpoint, readinessPassed: true } },
-    });
-    const resolution = registry.resolve({
-      requestedRunnerId: "openclaw-acp",
-      explicitFallbackPolicy: "disabled",
-      tools: ["read"],
+    const adapter = createOpenClawAcpAdapter({
+      endpoint: acp.endpoint,
+      adapterRevision: "ling-acp/0.1:adapter-v1",
+      toolExecutionConformance: readOnlyReceipt("ling-acp/0.1:adapter-v1"),
     });
     const events = [];
-    await resolution.runner.adapter.runTask({
+    await adapter.runTask({
       ...baseRunOptions(cwd),
       tools: ["read"],
       onEvent: (event) => events.push(event),
@@ -164,17 +157,14 @@ test("external adapter rejects unrequested side-effect proposals without asking 
     },
   });
   try {
-    const registry = createDefaultRunnerRegistry(new RecordingRunner(), {
-      runners: { openclawAcp: { enabled: true, endpoint: acp.endpoint, readinessPassed: true } },
-    });
-    const resolution = registry.resolve({
-      requestedRunnerId: "openclaw-acp",
-      explicitFallbackPolicy: "disabled",
-      tools: ["read"],
+    const adapter = createOpenClawAcpAdapter({
+      endpoint: acp.endpoint,
+      adapterRevision: "ling-acp/0.1:adapter-v1",
+      toolExecutionConformance: readOnlyReceipt("ling-acp/0.1:adapter-v1"),
     });
     const approvals = [];
     await assert.rejects(
-      () => resolution.runner.adapter.runTask({
+      () => adapter.runTask({
         ...baseRunOptions(cwd),
         tools: ["read"],
         onApprovalRequired: async (request) => {
@@ -403,6 +393,37 @@ test("codex-app-server adapter fails closed before session run on malformed init
   }
 });
 
+test("retired endpoint registry requests fail without contacting backends or silently falling back to Pi", async () => {
+  const acp = await startFakeAcpServer();
+  const codex = await startFakeCodexAppServer();
+  const pi = new RecordingRunner();
+  try {
+    const registry = createDefaultRunnerRegistry(pi, {
+      runners: {
+        openclawAcp: { enabled: true, endpoint: acp.endpoint, readinessPassed: true, conformancePassed: true },
+        codexAppServer: { enabled: true, baseUrl: codex.baseUrl, readinessPassed: true, conformancePassed: true },
+      },
+    });
+    for (const runnerId of ["openclaw-acp", "codex-app-server"]) {
+      const runner = registry.get(runnerId);
+      assert.equal(runner.status, "disabled");
+      assert.match(runner.disabledReason, /legacy_runner_migration_required/);
+      for (const explicitFallbackPolicy of [undefined, "disabled"]) {
+        assert.throws(() => registry.resolve({ requestedRunnerId: runnerId, explicitFallbackPolicy, tools: ["read"] }),
+          error => error instanceof UnsupportedRunnerError && error.requestedRunnerId === runnerId
+            && error.fallbackReason.code === "disabled_requested_runner");
+      }
+      await assert.rejects(() => runner.adapter.runTask(baseRunOptions(tmpdir())), /legacy_runner_migration_required/);
+    }
+    assert.deepEqual(acp.requests, []);
+    assert.deepEqual(codex.requests, []);
+    assert.equal(pi.calls, 0);
+  } finally {
+    await acp.close();
+    await codex.close();
+  }
+});
+
 function baseRunOptions(cwd) {
   return {
     cwd,
@@ -448,7 +469,10 @@ function isRecord(value) {
 }
 
 class RecordingRunner {
+  calls = 0;
+
   async runTask(options) {
+    this.calls++;
     return { taskId: options.task.id, events: [], messages: [] };
   }
 }

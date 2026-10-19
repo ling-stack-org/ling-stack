@@ -8,11 +8,12 @@ import { createDaemonServer } from "../dist/index.js";
 import { startFakeAcpServer } from "../dist/runtime/acp/fake-server.js";
 import { startFakeCodexAppServer } from "../dist/runtime/adapters/fake-codex-app-server.js";
 
-test("runner readiness routes expose external runners after gates pass", async () => {
+test("runner readiness routes keep retired endpoints blocked even after legacy gates pass", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runner-readiness-"));
   const acp = await startFakeAcpServer({ capabilities: { approvalBridge: false } });
   const codex = await startFakeCodexAppServer({ capabilities: { approvalBridge: false, nativeResume: false } });
   const daemon = await startDaemonForTest({
+    defaultWorkspaceCwd: cwd,
     runners: {
       codexAppServer: {
         enabled: true,
@@ -33,27 +34,27 @@ test("runner readiness routes expose external runners after gates pass", async (
     const codexRunner = runners.runners.find((runner) => runner.id === "codex-app-server");
     assert.equal(pi.status, "enabled");
     assert.equal(pi.readiness.status, "ready");
-    assert.equal(openclaw.status, "enabled");
-    assert.equal(openclaw.readiness.status, "ready");
-    assert.equal(codexRunner.status, "enabled");
-    assert.equal(codexRunner.readiness.status, "ready");
+    assert.equal(openclaw.status, "disabled");
+    assert.equal(openclaw.readiness.status, "blocked");
+    assert.equal(codexRunner.status, "disabled");
+    assert.equal(codexRunner.readiness.status, "blocked");
 
     const readiness = await getJson(`${daemon.url}/runners/openclaw-acp/readiness?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(readiness.cwd, cwd);
     assert.equal(readiness.readiness.runnerId, "openclaw-acp");
-    assert.equal(readiness.readiness.status, "ready");
-    assert.equal(readiness.readiness.featureFlagEnabled, true);
-    assert.equal(readiness.readiness.toolExecutionConformance.status, "verified");
-    assert.equal(readiness.readiness.toolExecutionConformance.nativeSideEffectMode, "disabled");
+    assert.equal(readiness.readiness.status, "blocked");
+    assert.equal(readiness.readiness.featureFlagEnabled, false);
+    assert.equal(readiness.readiness.toolExecutionConformance.status, "blocked");
+    assert.equal(readiness.readiness.toolExecutionConformance.nativeSideEffectMode, "unverified");
     assert.equal(readiness.readiness.toolExecutionConformance.approvalBridgeVerified, false);
-    assert.deepEqual(readiness.readiness.toolExecutionConformance.curatedTools, ["read", "grep", "find", "ls"]);
-    assert.equal(readiness.readiness.endpointReachable, true);
-    assert.equal(readiness.readiness.capabilityNegotiated, true);
-    assert.deepEqual(blockerCodes(readiness), []);
+    assert.deepEqual(readiness.readiness.toolExecutionConformance.curatedTools, []);
+    assert.equal(readiness.readiness.endpointReachable, false);
+    assert.equal(readiness.readiness.capabilityNegotiated, false);
+    assert.deepEqual(blockerCodes(readiness), ["legacy_runner_migration_required"]);
 
     const snapshot = await getJson(`${daemon.url}/control-plane/snapshot?cwd=${encodeURIComponent(cwd)}&domains=runners`);
     assert.equal(snapshot.domains.runners.ok, true);
-    assert.equal(snapshot.domains.runners.data.runners.find((runner) => runner.id === "openclaw-acp").readiness.status, "ready");
+    assert.equal(snapshot.domains.runners.data.runners.find((runner) => runner.id === "openclaw-acp").readiness.status, "blocked");
 
     const missing = await requestJson(`${daemon.url}/runners/missing/readiness?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(missing.status, 404);
@@ -70,10 +71,11 @@ test("runner readiness routes expose external runners after gates pass", async (
   }
 });
 
-test("runner readiness keeps ACP capability failures blocked", async () => {
+test("legacy ACP capability responses cannot re-enable a retired runner", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runner-readiness-acp-"));
   const acp = await startFakeAcpServer({ capabilities: { artifacts: false } });
   const daemon = await startDaemonForTest({
+    defaultWorkspaceCwd: cwd,
     runners: {
       openclawAcp: {
         enabled: true,
@@ -84,10 +86,9 @@ test("runner readiness keeps ACP capability failures blocked", async () => {
   });
   try {
     const readiness = await getJson(`${daemon.url}/runners/openclaw-acp/readiness?cwd=${encodeURIComponent(cwd)}`);
-    assert.equal(readiness.readiness.endpointReachable, true);
+    assert.equal(readiness.readiness.endpointReachable, false);
     assert.equal(readiness.readiness.capabilityNegotiated, false);
-    assert.equal(blockerCodes(readiness).includes("missing_capability_negotiation"), true);
-    assert.equal(blockerCodes(readiness).includes("adapter_not_implemented"), false);
+    assert.deepEqual(blockerCodes(readiness), ["legacy_runner_migration_required"]);
   } finally {
     await daemon.close();
     await acp.close();
@@ -95,17 +96,15 @@ test("runner readiness keeps ACP capability failures blocked", async () => {
   }
 });
 
-test("runner readiness reports feature flag and endpoint blockers by default", async () => {
+test("default readiness explains native migration instead of suggesting legacy endpoint activation", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runner-readiness-default-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest({ defaultWorkspaceCwd: cwd });
   try {
     const readiness = await getJson(`${daemon.url}/runners/codex-app-server/readiness?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(readiness.readiness.status, "blocked");
     assert.equal(readiness.readiness.featureFlagEnabled, false);
-    assert.equal(readiness.readiness.toolExecutionConformance.status, "verified");
-    assert.equal(blockerCodes(readiness).includes("feature_flag_disabled"), true);
-    assert.equal(blockerCodes(readiness).includes("missing_endpoint"), true);
-    assert.equal(blockerCodes(readiness).includes("adapter_not_implemented"), false);
+    assert.equal(readiness.readiness.toolExecutionConformance.status, "blocked");
+    assert.deepEqual(blockerCodes(readiness), ["legacy_runner_migration_required"]);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

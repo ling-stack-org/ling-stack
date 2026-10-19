@@ -4,7 +4,7 @@ import { approvalSideEffectFingerprintV1, isApprovalResumeBasisV1, buildChannelT
 import type { PiRunnerApprovalRequest } from "@ling-stack/runner-pi";
 import { isRecord } from "../../shared/validation.js";
 import { findMatchingApprovalCommandRulesForCommand } from "./approval-command-rules.js";
-import { classifyBashRiskFlags } from "./action-classifier.js";
+import { classifyBashActionType, classifyBashRiskFlags } from "./action-classifier.js";
 
 /** Read within the caller's SQLite launch snapshot. A matching rule or approved text is not resume authority. */
 export function assertCommandLaunchApproval(input: {
@@ -25,17 +25,18 @@ export function assertCommandLaunchApproval(input: {
   };
   const snapshot = isRecord(source.requestSnapshot) ? source.requestSnapshot : {};
   const command = isRecord(request.input) && typeof request.input.command === "string" ? request.input.command : "";
+  const actionType = classifyBashActionType(command);
   const riskFlags = classifyBashRiskFlags(command);
   const risk = riskFlags.includes("git_force_push") ? "critical" : riskFlags.length ? "high" : "medium";
   const payload = { type: "bash" as const, cwd: request.cwd, command, riskFlags };
   const publishedPayload = redactSecrets(payload, input.extraSecrets ?? []) as typeof payload;
-  const review = buildChannelTeamRiskReviewDecision({ actionType: "bash", risk, payload });
+  const review = buildChannelTeamRiskReviewDecision({ actionType, risk, payload });
   requireApproval(review.status !== "blocked", "risk_denied");
   if (input.approvalId === undefined) {
     const profile = input.approvalProfile ?? (isRecord(snapshot.approvalProfile) ? snapshot.approvalProfile : undefined);
     const unforced = !profile || profile.mode === "none" || profile.mode !== "strict"
       && !(Array.isArray(profile?.requiredForTools) && profile.requiredForTools.includes("bash"))
-      && !(Array.isArray(profile?.requiredForActions) && profile.requiredForActions.includes("bash"));
+      && !(Array.isArray(profile?.requiredForActions) && profile.requiredForActions.includes(actionType));
     if (unforced && policy.toolDecisions.bash === "allow" && review.status === "not_required") return;
     requireApproval(unforced && review.status === "not_required" && findMatchingApprovalCommandRulesForCommand(store, command), "approval_required");
     return;
@@ -49,14 +50,14 @@ export function assertCommandLaunchApproval(input: {
     && approval.channelId === source.channelId && checkpoint.channelId === source.channelId
     && approval.workflowStepId === undefined && checkpoint.workflowStepId === undefined
     && approval.toolCallId === request.toolCallId && checkpoint.toolCallId === request.toolCallId
-    && approval.actionType === "bash" && checkpoint.actionType === "bash"
+    && approval.actionType === actionType && checkpoint.actionType === actionType
     && approval.payload.type === "bash" && approval.payload.cwd === publishedPayload.cwd && approval.payload.command === publishedPayload.command
     && isDeepStrictEqual(checkpoint.sideEffect, approval.payload)
     && isApprovalResumeBasisV1(basis) && basis.approvalId === approval.id && basis.runId === source.id
     && basis.workUnitId === fence.workUnitId && basis.workflowStepId === source.workflowStepId
     && basis.delegatedRequirementFingerprint === input.delegatedRequirementFingerprint
-    && basis.toolCallId === request.toolCallId && basis.actionType === "bash"
-    && basis.sideEffectFingerprint === approvalSideEffectFingerprintV1({ actionType: "bash", toolCallId: request.toolCallId, sideEffect: approval.payload }),
+    && basis.toolCallId === request.toolCallId && basis.actionType === actionType
+    && basis.sideEffectFingerprint === approvalSideEffectFingerprintV1({ actionType, toolCallId: request.toolCallId, sideEffect: approval.payload }),
     "approval_invalid");
   // Narrow only after the entire structured lineage above has passed.
   if (!approval || !checkpoint || !isApprovalResumeBasisV1(basis)) throw new Error(input.codePrefix + "_approval_invalid");

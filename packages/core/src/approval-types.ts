@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { HostCapabilityCallV1, RuntimeAttemptFenceV1 } from "@ling-stack/contracts";
+import type { HostCapabilityCallV1, NativePermissionRequestPayload, RuntimeAttemptFenceV1 } from "@ling-stack/contracts";
+export type { NativePermissionRequestPayload, NativePermissionResource, NativePermissionTarget } from "@ling-stack/contracts";
 import type { ApplyPatchFormat, PatchPlan, PatchSummary } from "./patch/index.js";
 import type { RunTool } from "./approval-policy.js";
 import type { UnifiedExecEnvironmentSummary } from "./exec/unified-exec-types.js";
@@ -28,7 +29,7 @@ export type ApprovalRisk = "low" | "medium" | "high" | "critical";
 
 export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
 
-export const approvalDecisionKinds = ["approve_once", "approve_command_rule", "deny"] as const;
+export const approvalDecisionKinds = ["approve_once", "approve_command_rule", "approve_permission_scope", "deny"] as const;
 export type ApprovalDecisionKind = (typeof approvalDecisionKinds)[number];
 
 export type SystemReviewerApprovalDecision = "approve" | "deny";
@@ -229,7 +230,8 @@ export type ApprovalPayload =
       readonly target: unknown;
       readonly preview: string;
     }
-  | RuntimePermissionRequestPayload;
+  | RuntimePermissionRequestPayload
+  | NativePermissionRequestPayload;
 
 export interface ApprovalRequest {
   readonly id: string;
@@ -279,7 +281,7 @@ export interface CreateApprovalRequestInput {
 export interface ResolveApprovalRequestInput {
   readonly reason?: string;
   readonly resolvedBy?: "local-user" | "system-reviewer";
-  readonly decisionKind?: Extract<ApprovalDecisionKind, "approve_once" | "approve_command_rule">;
+  readonly decisionKind?: Exclude<ApprovalDecisionKind, "deny">;
   readonly proposedRuleFingerprint?: string;
   /** Captured pre-execution cleanup authority; rechecked inside the denied/cancelled UPDATE. */
   readonly executionCleanup?: {

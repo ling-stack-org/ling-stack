@@ -66,8 +66,8 @@ test("tool load requests materialize catalog summary without changing execution 
   });
 
   try {
-    const fixture = seedToolSurfaceFixture(store, cwd);
     await daemon.start();
+    const fixture = seedToolSurfaceFixture(store, cwd);
     const baseUrl = serverBaseUrl(daemon);
 
     const response = await postJson(
@@ -256,9 +256,9 @@ test("tool load requests reject over-budget namespace materialization before run
   });
 
   try {
+    await daemon.start();
     const fixture = seedToolSurfaceFixture(store, cwd);
     seedManyToolServer(store, 65);
-    await daemon.start();
     const baseUrl = serverBaseUrl(daemon);
 
     const response = await postJsonResponse(

@@ -171,7 +171,7 @@ export class SqliteRunInterventionStore {
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     params.push(limit);
     return this.context.database
-      .prepare(`${runInterventionSelectSql(whereClause)} ORDER BY ${options.newestFirst ? "started_at DESC, rowid DESC" : "created_at ASC, id ASC"} LIMIT ?`)
+      .prepare(`${runInterventionSelectSql(whereClause)} ORDER BY ${options.newestFirst ? "started_at DESC, rowid DESC" : "created_at ASC, rowid ASC"} LIMIT ?`)
       .all(...params)
       .map((row) => mapRunIntervention(row as Record<string, SQLOutputValue>));
   }
@@ -193,7 +193,7 @@ export class SqliteRunInterventionStore {
           FROM run_interventions
           WHERE source_run_id = ?
             AND status IN (${placeholders})
-          ORDER BY created_at ASC, id ASC
+          ORDER BY created_at ASC, rowid ASC
           LIMIT 1
         )
           AND status IN (${placeholders})
@@ -252,9 +252,9 @@ export class SqliteRunInterventionStore {
           AND items.kind IN ('assistant_message', 'system_event')
           AND (
             earlier.created_at < current.created_at
-            OR (earlier.created_at = current.created_at AND earlier.id < current.id)
+            OR (earlier.created_at = current.created_at AND earlier.rowid < current.rowid)
           )
-        ORDER BY earlier.created_at DESC, earlier.id DESC
+        ORDER BY earlier.created_at DESC, earlier.rowid DESC
         ${limit === undefined ? "" : "LIMIT ?"}
       `);
     const parameters: readonly (string | number)[] = [
