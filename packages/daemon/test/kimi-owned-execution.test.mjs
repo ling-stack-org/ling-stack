@@ -615,7 +615,7 @@ test("owned Kimi projects native tool policy without changing its saved profile 
     assert.notEqual(executionHome, f.home, "Do not launch from the mutable account profile");
     const projected = parse(readFileSync(join(executionHome, "config.toml"), "utf8"));
     assert.equal(projected.default_permission_mode, "manual"); assert.equal(projected.telemetry, false);
-    assert.deepEqual(projected.tools, { enabled: ["Bash", "Read", "Write", "Edit"], disabled: ["Write"] });
+    assert.deepEqual(projected.tools, parse(stringify({ enabled: ["Bash", "Read", "Write", "Edit"], disabled: ["Write"] })));
     assert.deepEqual(projected.models, parse(original).models);
     assert.equal(projected.providers.test.api_key, "ling-relay");
     assert.match(projected.providers.test.base_url, /^http:\/\/127\.0\.0\.1:\d+\/v1$/);
@@ -708,7 +708,7 @@ for (const [name, nativeTools, changes, expected] of [
   if (changes.snapshot) options.approvalPolicy.effectivePolicySnapshot = changes.snapshot;
   await executeOwnedKimiPrompt({ ...options, launch: (...args) => {
     const config = parse(readFileSync(join(args[2].env.KIMI_CODE_HOME, "config.toml"), "utf8"));
-    assert.deepEqual(config.tools, { enabled: ["Bash", "Read", "Write", "Edit"], disabled: expected });
+    assert.deepEqual(config.tools, parse(stringify({ enabled: ["Bash", "Read", "Write", "Edit"], disabled: expected })));
     return options.launch(...args);
   } });
   assert.equal(await readFile(join(f.home, "config.toml"), "utf8"), original);
