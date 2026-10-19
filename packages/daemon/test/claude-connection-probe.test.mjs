@@ -23,7 +23,7 @@ test("Claude public CLI probing adds no proprietary SDK or bundled CLI dependenc
   const root = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8"));
   assert.equal(daemon.dependencies["@anthropic-ai/claude-agent-sdk"], undefined);
   assert.equal(daemon.dependencies["@anthropic-ai/claude-code"], undefined);
-  assert.equal(daemon.dependencies["@anthropic-ai/sdk"], "0.112.1");
+  assert.equal(daemon.dependencies["@anthropic-ai/sdk"], "0.135.0");
   assert.equal((root.pnpm.ignoredOptionalDependencies ?? []).includes("@anthropic-ai/claude-agent-sdk-*"), false);
 });
 
