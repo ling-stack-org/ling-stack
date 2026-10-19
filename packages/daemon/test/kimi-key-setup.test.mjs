@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import { parse } from "smol-toml";
+import { parse, stringify } from "smol-toml";
 import { ExecutionEngineProfileStore, resolveUserConfigPaths } from "@ling-stack/core";
 import { runEngineLogin } from "../dist/features/execution-engines/native-login.js";
 import { prepareNativeAuthHome } from "../dist/features/execution-engines/native-auth-home.js";
@@ -121,11 +121,11 @@ test("Kimi API-key setup stages official TOML, verifies ACP and adopts only afte
   assert.equal(readFileSync(join(f.oldHome, "config.toml"), "utf8"), "# preserve old account\n");
   const configPath = join(home, "config.toml");
   assert.equal(statSync(configPath).mode & 0o777, 0o600);
-  assert.deepEqual(parse(readFileSync(configPath, "utf8")), {
+  assert.deepEqual(parse(readFileSync(configPath, "utf8")), parse(stringify({
     default_model: "ling-default", default_permission_mode: "manual", telemetry: false, merge_all_available_skills: false,
     providers: { ling: { type: "kimi", base_url: model.baseUrl, api_key: f.key } },
     models: { "ling-default": { provider: "ling", model: model.modelId, max_context_size: model.maxContextSize } },
-  });
+  })));
   assert.equal(JSON.stringify(updated).includes(f.key), false);
   assert.equal(f.messages.join("").includes(f.key), false);
   assert.deepEqual(f.secrets, Array.from({ length: 2 }, () => ({ ref: "env:KIMI_KEY_FIXTURE", purpose: "provider_api_key" })));
