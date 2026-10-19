@@ -44,7 +44,7 @@
     "@anthropic-ai/sdk": "0.112.1",
     "@napi-rs/keyring": "2.0.0",
     "proper-lockfile": "4.1.2",
-    "smol-toml": "1.8.0"
+    "smol-toml": "1.9.0"
   },
   "devDependencies": {
     "@babel/parser": "7.29.8",
