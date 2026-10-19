@@ -321,6 +321,7 @@ class RpcConnection {
         controlPlaneEvents: this.context.controlPlaneEvents,
         startupState: this.context.startupState,
         computerUsePreviews: this.context.computerUsePreviews,
+        nativeRunDispatcher: this.context.nativeRunDispatcher,
       },
     );
     return { accepted: true };
@@ -394,6 +395,7 @@ class RpcConnection {
       controlPlaneEvents: this.context.controlPlaneEvents,
       startupState: this.context.startupState,
       computerUsePreviews: this.context.computerUsePreviews,
+      nativeRunDispatcher: this.context.nativeRunDispatcher,
     });
   }
 

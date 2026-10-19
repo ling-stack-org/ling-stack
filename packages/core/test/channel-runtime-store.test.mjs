@@ -2525,116 +2525,153 @@ test("recoverStaleChannelWorkflows reconciles running steps from linked terminal
   }
 });
 
-test("startup recovery preserves an enforced Harness task Run for daemon-owned continuation", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runtime-recover-harness-run-"));
-  const now = "2026-09-13T01:00:00.000Z";
-  const recoveredAt = "2026-09-13T01:01:00.000Z";
-  const store = createSqliteRunStore(cwd);
-  try {
-    const channel = store.createChannel({ name: "Harness recovery", boundPath: cwd }, now);
-    const task = store.createTask({
-      channelId: channel.id,
-      title: "Recover Harness run",
-      prompt: "Continue from frozen input.",
-    }, now);
-    const thread = store.createLingThread({
-      kind: "task",
-      taskId: task.id,
-      channelId: channel.id,
-      title: task.title,
-      objective: task.prompt,
-    }, now);
-    const turn = store.createLingTurn({
-      threadId: thread.id,
-      kind: "initial_request",
-      title: task.title,
-      userInstruction: task.prompt,
-      taskId: task.id,
-      channelId: channel.id,
-      createdByActor: "local-user",
-    }, now);
-    const runId = "run_recover_enforced_harness";
-    const workUnit = store.createWorkUnit({
-      id: "work_unit_recover_enforced_harness",
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      kind: "task_run",
-      ownerType: "task",
-      ownerId: task.id,
-      taskId: task.id,
-      channelId: channel.id,
-      runnerId: "pi",
-      effectiveRunnerId: "pi",
-      idempotencyKey: "recover-enforced-harness",
-      createdByActor: "system",
-      request: { runId },
-      now,
-    });
-    const attempt = store.createWorkUnitAttempt({
-      id: "attempt_recover_enforced_harness",
-      workUnitId: workUnit.id,
-      attemptNumber: 1,
-      runtimeInstanceId: "runtime_before_restart",
-      runnerId: "pi",
-      effectiveRunnerId: "pi",
-      now,
-    });
-    const run = store.createRun({
-      id: runId,
-      cwd,
-      taskId: task.id,
-      channelId: channel.id,
-      threadId: thread.id,
-      turnId: turn.id,
-      workUnitId: workUnit.id,
-      providerName: "test-provider",
-      providerModel: "test-model",
-      taskSnapshot: { id: task.id, title: task.title, prompt: task.prompt, channelId: channel.id },
-      providerSnapshot: { provider: "test-provider", model: "test-model" },
-      requestSnapshot: {
+for (const recoveryCase of ["active", "startup-lost", "long-history", "other-loss", "stale-active-attempt", "other-error", "cancelling", "missing-audit", "attempt-other-error"]) {
+  test(`startup recovery preserves only recoverable enforced Harness task Runs: ${recoveryCase}`, async () => {
+    const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runtime-recover-harness-run-"));
+    const now = "2026-09-13T01:00:00.000Z";
+    const recoveredAt = "2026-09-13T01:01:00.000Z";
+    const store = createSqliteRunStore(cwd);
+    try {
+      const channel = store.createChannel({ name: "Harness recovery", boundPath: cwd }, now);
+      const task = store.createTask({
+        channelId: channel.id,
+        title: "Recover Harness run",
+        prompt: "Continue from frozen input.",
+      }, now);
+      const thread = store.createLingThread({
+        kind: "task",
+        taskId: task.id,
+        channelId: channel.id,
+        title: task.title,
+        objective: task.prompt,
+      }, now);
+      const turn = store.createLingTurn({
+        threadId: thread.id,
+        kind: "initial_request",
+        title: task.title,
+        userInstruction: task.prompt,
+        taskId: task.id,
+        channelId: channel.id,
+        createdByActor: "local-user",
+      }, now);
+      const runId = "run_recover_enforced_harness";
+      const workUnit = store.createWorkUnit({
+        id: "work_unit_recover_enforced_harness",
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        kind: "task_run",
+        ownerType: "task",
+        ownerId: task.id,
+        taskId: task.id,
+        channelId: channel.id,
+        runnerId: "pi",
+        effectiveRunnerId: "pi",
+        idempotencyKey: "recover-enforced-harness",
+        createdByActor: "system",
+        request: { runId },
+        now,
+      });
+      const attempt = store.createWorkUnitAttempt({
+        id: "attempt_recover_enforced_harness",
+        workUnitId: workUnit.id,
+        attemptNumber: 1,
+        runtimeInstanceId: "runtime_before_restart",
+        runnerId: "pi",
+        effectiveRunnerId: "pi",
+        now,
+      });
+      const run = store.createRun({
+        id: runId,
         cwd,
-        task: { id: task.id, title: task.title, prompt: task.prompt, channelId: channel.id },
+        taskId: task.id,
+        channelId: channel.id,
         threadId: thread.id,
         turnId: turn.id,
-        harnessFeatureSnapshot: {
-          schemaVersion: 1,
-          continuations: "enforce",
-          toolBroker: "off",
-          evaluations: "off",
-          evaluationModelGate: "shadow",
-          delegations: "off",
-          delegationMaxDepth: 3,
+        workUnitId: workUnit.id,
+        providerName: "test-provider",
+        providerModel: "test-model",
+        taskSnapshot: { id: task.id, title: task.title, prompt: task.prompt, channelId: channel.id },
+        providerSnapshot: { provider: "test-provider", model: "test-model" },
+        requestSnapshot: {
+          cwd,
+          task: { id: task.id, title: task.title, prompt: task.prompt, channelId: channel.id },
+          threadId: thread.id,
+          turnId: turn.id,
+          harnessFeatureSnapshot: {
+            schemaVersion: 1,
+            continuations: "enforce",
+            toolBroker: "off",
+            evaluations: "off",
+            evaluationModelGate: "shadow",
+            delegations: "off",
+            delegationMaxDepth: 3,
+          },
+          runnerExecutionInput: { schemaVersion: 1 },
         },
-        runnerExecutionInput: { schemaVersion: 1 },
-      },
-      contextViewId: "context_recover_enforced_harness",
-      contextViewCreatedAt: now,
-      createdAt: now,
-    });
-    store.linkRunToWorkUnit(run.id, workUnit.id, now);
-    store.markRunStarted(run.id, now);
-    assert.equal(store.transitionTaskStatus({ taskId: task.id, expectedStatus: "todo", event: "claim",
-      actor: "system", reason: `run:${run.id}`, now }).ok, true);
-    const fence = {
-      workUnitId: workUnit.id,
-      attemptId: attempt.id,
-      runtimeInstanceId: attempt.runtimeInstanceId,
-      fencingToken: attempt.fencingToken,
-    };
-    assert.equal(store.transitionWorkUnitStatus({ ...fence, activeAttemptId: attempt.id, expectedStatus: "queued",
-      event: "claim", actor: "system", now }).ok, true);
-    assert.equal(store.transitionWorkUnitStatus({ ...fence, expectedStatus: "claimed", event: "runner_started",
-      actor: "runner", now }).ok, true);
-    assert.ok(store.updateWorkUnitAttemptStatus({ ...fence, status: "started", now, startedAt: now }));
+        contextViewId: "context_recover_enforced_harness",
+        contextViewCreatedAt: now,
+        createdAt: now,
+      });
+      store.linkRunToWorkUnit(run.id, workUnit.id, now);
+      store.markRunStarted(run.id, now);
+      assert.equal(store.transitionTaskStatus({ taskId: task.id, expectedStatus: "todo", event: "claim",
+        actor: "system", reason: `run:${run.id}`, now }).ok, true);
+      const fence = {
+        workUnitId: workUnit.id,
+        attemptId: attempt.id,
+        runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken,
+      };
+      assert.equal(store.transitionWorkUnitStatus({ ...fence, activeAttemptId: attempt.id, expectedStatus: "queued",
+        event: "claim", actor: "system", now }).ok, true);
+      assert.equal(store.transitionWorkUnitStatus({ ...fence, expectedStatus: "claimed", event: "runner_started",
+        actor: "runner", now }).ok, true);
+      assert.ok(store.updateWorkUnitAttemptStatus({ ...fence, status: "started", now, startedAt: now }));
 
-    assert.equal(store.recoverStaleRuns(recoveredAt), 0);
-    assert.equal(store.getRun(run.id).status, "running");
-    assert.equal(store.getWorkUnit(workUnit.id).status, "running");
-    assert.equal(store.listEvents(run.id, { limit: 100 }).some((event) => event.type === "run_error"), false);
-  } finally {
-    store.close();
-    await rm(cwd, { recursive: true, force: true });
-  }
-});
+      if (recoveryCase === "long-history") {
+        for (let seq = 0; seq < 1001; seq += 1) {
+          store.appendRuntimeEvent({ ...fence, type: "work_unit_progress", actor: "runner", ts: now, data: {} });
+        }
+      }
+      if (["stale-active-attempt", "missing-audit", "attempt-other-error"].includes(recoveryCase)) {
+        assert.equal(store.transitionWorkUnitStatus({ ...fence, expectedStatus: "running", event: "runner_lost",
+          actor: "system", now: recoveredAt, errorCode: "runtime_stale",
+          errorMessage: "runtime-startup-reconcile" }).ok, true);
+        if (recoveryCase !== "stale-active-attempt") {
+          assert.ok(store.updateWorkUnitAttemptStatus({ ...fence, status: "lost", now: recoveredAt,
+            endedAt: recoveredAt, errorCode: recoveryCase === "attempt-other-error" ? "unrelated_failure" : "runtime_stale",
+            errorMessage: "runtime-startup-reconcile" }));
+          if (recoveryCase === "attempt-other-error") {
+            store.appendTerminalRuntimeAudit({ capability: { ...fence, attemptStatus: "lost", transitionedAt: recoveredAt },
+              type: "work_unit_stale", actor: "system", data: { fromStatus: "running", toStatus: "stale",
+                errorCode: "runtime_stale", errorMessage: "runtime-startup-reconcile" } });
+          }
+        }
+      } else if (recoveryCase !== "active") {
+        if (recoveryCase === "cancelling") {
+          assert.equal(store.transitionWorkUnitStatus({ ...fence, expectedStatus: "running", event: "cancel",
+            actor: "local-user", now: recoveredAt }).ok, true);
+          assert.equal(store.getWorkUnitAttempt(attempt.id).abortRequestedAt, undefined,
+            "crash before the separate Attempt abort marker must not permit replay");
+        }
+        assert.ok(store.transitionWorkUnitAttemptTerminal({ ...fence,
+          event: recoveryCase === "cancelling" ? "cancel_timeout" : "runner_lost", attemptStatus: "lost",
+          runtimeEventType: "work_unit_stale", actor: "system", now: recoveredAt,
+          errorCode: recoveryCase === "other-error" ? "unrelated_failure" : "runtime_stale",
+          errorMessage: recoveryCase === "other-loss" ? "idle-timeout" : "runtime-startup-reconcile" }));
+      }
+      const recoverable = ["active", "startup-lost", "long-history"].includes(recoveryCase);
+      assert.equal(store.recoverStaleRuns(recoveredAt), recoverable ? 0 : 1);
+      assert.equal(store.getRun(run.id).status, recoverable ? "running" : "failed");
+      assert.equal(store.getWorkUnit(workUnit.id).status, recoveryCase === "active" ? "running" : "stale");
+      assert.equal(store.listEvents(run.id, { limit: 100 }).some((event) => event.type === "run_error"), !recoverable);
+      assert.equal(store.recoverStaleRuns(recoveredAt), 0, "startup recovery is idempotent");
+    } finally {
+      store.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+}
 
 test("startup recovery preserves a waiting Run with a valid pending approval resume checkpoint", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runtime-recover-approval-checkpoint-"));

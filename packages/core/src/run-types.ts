@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ApplyProposedPlanArtifactActionInput, ProposedPlanArtifactActionResult } from "./proposed-plan-mutation.js";
+import type { NativeExecutionStore } from "./native-execution-types.js";
 import type {
   ConversationItemV1,
   CompactionCheckpoint,
@@ -1549,7 +1550,7 @@ export interface ControlPlaneReplayWindowResult {
   readonly events: readonly ControlPlaneEvent[];
 }
 
-export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
+export interface RunStore extends NativeExecutionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
   listApprovalPostCommitEffects(options?: {
     readonly approvalId?: string;
     readonly status?: import("./approval-postcommit-types.js").ApprovalPostCommitEffectStatus;

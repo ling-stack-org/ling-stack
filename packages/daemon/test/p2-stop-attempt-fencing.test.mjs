@@ -123,11 +123,15 @@ async function httpFixture(t, f, registerExecution = true) {
     });
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  t.after(async () => {
+  let stopped = false;
+  const stopForRestart = async () => {
+    if (stopped) return;
+    stopped = true;
     supervisor.releaseAll(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
-  });
+  };
+  t.after(stopForRestart);
   const base = `http://127.0.0.1:${server.address().port}`;
-  return { activeDirectReplies, activeRuns, tracker, finishExecution,
+  return { activeDirectReplies, activeRuns, tracker, finishExecution, stopForRestart,
     getDetail: async () => {
       const response = await fetch(`${base}/work-units/${f.unit.id}?cwd=${encodeURIComponent(f.cwd)}`);
       assert.equal(response.status, 200);
@@ -529,6 +533,7 @@ test("Daemon restart cannot manufacture callback or Host evidence from terminal 
   http.finishExecution();
   assert.equal((await http.getDetail()).stopEvidence.attempts[0].effects, "unverified",
     "an empty live executor group cannot manufacture a durable coverage receipt");
+  await http.stopForRestart();
   const restarted = await httpFixture(t, f, false);
   const detail = await restarted.getDetail();
   assert.equal(detail.workUnit.status, "cancelled");
@@ -553,6 +558,7 @@ test("a stop-unconfirmed command vetoes an otherwise empty Host group before and
   assert.equal(detail.stopEvidence.attempts[0].effects, "unknown");
   assert.equal(f.store.listResourceLeases({ status: "active" }).length, 1);
   assert.equal(f.store.listRuntimeSemaphoreSlots({ status: "active" }).length, 1);
+  await http.stopForRestart();
   const restarted = await httpFixture(t, f, false);
   assert.equal((await restarted.getDetail()).stopEvidence.attempts[0].effects, "unknown");
 });

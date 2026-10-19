@@ -25,7 +25,27 @@ export type ApprovalRisk = "low" | "medium" | "high" | "critical";
 
 export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
 export type LingApprovalCheckpointStatus = ApprovalStatus | "resume_pending" | "resumed" | "resume_failed";
-export type ApprovalDecisionKind = "approve_once" | "approve_command_rule" | "deny";
+export type ApprovalDecisionKind = "approve_once" | "approve_command_rule" | "approve_permission_scope" | "deny";
+
+export type NativePermissionTarget =
+  | { readonly kind: "path"; readonly path: string }
+  | { readonly kind: "glob"; readonly pattern: string }
+  | { readonly kind: "special"; readonly name: "root" | "minimal" | "project_roots" | "tmpdir" | "slash_tmp"; readonly subpath?: string };
+
+export type NativePermissionResource =
+  | { readonly kind: "network"; readonly access: "connect" }
+  | { readonly kind: "filesystem"; readonly access: "read" | "write" | "deny"; readonly target: NativePermissionTarget };
+
+/** A normalized proposal, not an engine wire response or a reusable Ling runtime grant. */
+export interface NativePermissionRequestPayload {
+  readonly type: "native_permission_request";
+  readonly version: 1;
+  readonly scope: "turn";
+  readonly cwd: string;
+  readonly reason: string;
+  readonly resources: readonly NativePermissionResource[];
+  readonly fileSystemScanDepth?: number;
+}
 
 export interface ApprovalCommandRuleProposal {
   readonly prefix: readonly string[];
@@ -155,7 +175,7 @@ export interface ApprovalMutationResponse {
 
 export interface ResolveApprovalRequest {
   readonly reason?: string;
-  readonly decisionKind?: "approve_once" | "approve_command_rule";
+  readonly decisionKind?: Exclude<ApprovalDecisionKind, "deny">;
   readonly proposedRuleFingerprint?: string;
 }
 

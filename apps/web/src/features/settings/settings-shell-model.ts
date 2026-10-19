@@ -4,6 +4,7 @@ import {
   Bot,
   Box,
   Brain,
+  CircuitBoard,
   Database,
   GitBranch,
   Palette,
@@ -18,6 +19,7 @@ import {
 
 export type SettingsSectionId =
   | "model-workbench"
+  | "execution-engines"
   | "ai-teammates"
   | "ai-councils"
   | "approval-strategy"
@@ -60,6 +62,7 @@ export const settingsSectionGroups: readonly SettingsSectionGroupDefinition[] = 
     heading: "Workspace tools",
     items: [
       { id: "model-workbench", label: "Model Workbench", icon: Box },
+      { id: "execution-engines", label: "Execution engines", icon: CircuitBoard },
       { id: "ai-teammates", label: "Teammate Management", icon: Bot },
       { id: "ai-councils", pageTitle: "Council Workspace", label: "Council Workspace", icon: Brain },
       { id: "approval-strategy", label: "Default authorization", icon: Shield },

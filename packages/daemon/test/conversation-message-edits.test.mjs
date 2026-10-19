@@ -13,6 +13,7 @@ import {
   filterSupersededTeammateDirectMessages,
 } from "../dist/features/conversations/supersession-projection.js";
 import { ActiveRunRegistry } from "../dist/runtime/active-runs.js";
+import { createRunnerRegistry } from "../dist/runtime/runners.js";
 
 const emptyEditFields = {
   mentions: [],
@@ -67,6 +68,14 @@ test("conversation replacement preflight failure does not leave an orphan turn",
       title: "Replacement preflight",
       objective: "Replacement preflight",
     }, "2026-07-12T02:59:00.000Z");
+    const original = store.createLingTurn({ threadId: thread.id, kind: "initial_request", title: "Original",
+      userInstruction: "Original", teammateId: LING_AGENT_ID, createdByActor: "local-user" }, "2026-07-12T02:59:01.000Z");
+    const messageId = `conversation-user:${original.id}`;
+    const committed = store.commitConversationMessageEdit({ surface: "normal_conversation", ownerId: thread.id,
+      laneId: thread.id, messageId, expectedRevision: 1, current: { ...emptyEditFields, body: "Original" },
+      replacement: { ...emptyEditFields, body: "Edited request" }, sourceTurnId: original.id,
+      supersededTurnId: original.id, supersededRunIds: [], supersededResponseMessageIds: [], idempotencyKey: "preflight-edit" },
+      "2026-07-12T02:59:02.000Z");
 
     await assert.rejects(
       startConversationReplacementRun({
@@ -74,15 +83,17 @@ test("conversation replacement preflight failure does not leave an orphan turn",
         workspaceCwd: cwd,
         thread,
         message: "Edited request",
-        messageId: "conversation-user:original",
+        messageId,
+        revisionId: committed.revision.id,
         attachmentIds: [],
-        runnerRegistry: undefined,
+        runnerRegistry: createRunnerRegistry([{ id: "pi", displayName: "Fixture", status: "enabled",
+          adapter: { runTask: async () => assert.fail("preflight must not execute") } }]),
         startRun: async () => undefined,
       }),
-      /No provider preset is available/,
+      { code: "execution_selection_required" },
     );
 
-    assert.deepEqual(store.listLingTurns({ threadId: thread.id, limit: 20 }), []);
+    assert.deepEqual(store.listLingTurns({ threadId: thread.id, limit: 20 }).map(turn => turn.id), [original.id]);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

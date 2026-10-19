@@ -1,5 +1,12 @@
 # External Agent Runner Adapters Implementation Plan
 
+> Historical plan. The user-approved 2026-10-18 change retires endpoint activation
+> and migrates to native profiles. Follow
+> [Native Execution Engines](native-execution-engines.md) and its
+> [implementation plan](native-execution-engines-implementation-plan.md) for
+> current delivery and validation. Do not reopen legacy network activation from
+> this historical plan.
+
 ## Purpose
 
 This document breaks the future Codex app-server, OpenClaw/ACP, Hermes, and other

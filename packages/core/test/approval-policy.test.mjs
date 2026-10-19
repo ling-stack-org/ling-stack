@@ -874,7 +874,7 @@ test("sqlite store atomically claims pending interventions beyond the first hist
   }
 });
 
-test("sqlite store loads only the latest completed intervention replies before the current item", async () => {
+for (const sameTimestamp of [false, true]) test(`sqlite store loads only the latest completed intervention replies before the current item (${sameTimestamp ? "same timestamp" : "distinct timestamps"})`, async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-run-intervention-replies-"));
   const store = createSqliteRunStore(cwd);
   try {
@@ -894,7 +894,7 @@ test("sqlite store loads only the latest completed intervention replies before t
 
     const replyIds = [];
     for (let index = 0; index < 8; index += 1) {
-      const timestamp = new Date(Date.parse("2026-08-08T00:00:00.000Z") + index * 1_000).toISOString();
+      const timestamp = new Date(Date.parse("2026-08-08T00:00:00.000Z") + (sameTimestamp ? 0 : index * 1_000)).toISOString();
       const reply = appendChannelItemFixture(store, {
         channelId: channel.id,
         kind: "ai_reply",
@@ -920,6 +920,7 @@ test("sqlite store loads only the latest completed intervention replies before t
         now: timestamp,
       });
       const intervention = store.createRunIntervention({
+        id: `rint_reply_${8 - index}`,
         sourceRunId: "run_reply_context_source",
         mode: "queue_followup",
         instruction: `guidance ${index}`,
@@ -937,11 +938,12 @@ test("sqlite store loads only the latest completed intervention replies before t
       replyIds.push(reply.id);
     }
     const current = store.createRunIntervention({
+      id: "rint_reply_0_current",
       sourceRunId: "run_reply_context_source",
       mode: "queue_followup",
       instruction: "current guidance",
       idempotencyKey: "reply-context-current",
-    }, "2026-08-08T00:00:09.000Z");
+    }, sameTimestamp ? "2026-08-08T00:00:00.000Z" : "2026-08-08T00:00:09.000Z");
 
     assert.deepEqual(
       store.listPriorRunInterventionReplyMessages({

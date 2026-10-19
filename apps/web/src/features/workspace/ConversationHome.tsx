@@ -1,3 +1,4 @@
+import { useNativeConversationSelection } from "./useNativeConversationSelection.js";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import {
@@ -84,9 +85,10 @@ export function ConversationHome({
   conversationIdentity,
   defaultProviderLabel,
   defaultProviderPresetId,
-  modelOptions,
+  modelOptions: piModelOptions,
   slashCommands,
   workspaceCwd,
+  executionSelectionRevision,
   conversationErrorMessage = "",
   sending = false,
   activeRun,
@@ -208,9 +210,16 @@ export function ConversationHome({
     () => filterSlashCommandPickerOptions(slashCommands, slashPicker),
     [slashCommands, slashPicker],
   );
-  const activeProviderPresetId = selectedProviderPresetId || defaultProviderPresetId;
+  const selectionAccessMode = workspaceAccessModeForPermissionPreset(selectedPermissionPreset);
+  const selectionLegacyPermission = authorizationAndAccessToLegacyPermission(selectedAuthorizationMode, selectionAccessMode);
+  const nativeSelection = useNativeConversationSelection(workspaceCwd, { threadId: detailContext?.threadId,
+    projectPath: project.projectPath, authorizationMode: selectedAuthorizationMode, workspaceAccessMode: selectionAccessMode,
+    ...selectionLegacyPermission }, t("Native execution is blocked. Review the engine configuration and execution verification."), executionSelectionRevision);
+  const modelOptions = nativeSelection.option ? [nativeSelection.option, ...piModelOptions] : piModelOptions;
+  const effectiveDefaultModelId = nativeSelection.defaultId ?? defaultProviderPresetId;
+  const activeProviderPresetId = selectedProviderPresetId || effectiveDefaultModelId;
   const activeModelOption = modelOptions.find((option) => option.id === activeProviderPresetId);
-  const activeModelReady = Boolean(activeModelOption?.runnable ?? activeModelOption?.enabled);
+  const activeModelReady = (!nativeSelection.pending || Boolean(selectedProviderPresetId)) && Boolean(activeModelOption?.runnable ?? activeModelOption?.enabled);
   const thinkingMenuOptions = useMemo(
     () => normalConversationThinkingOptions(activeModelOption?.thinkingModes ?? []),
     [activeModelOption?.thinkingModes],
@@ -300,8 +309,9 @@ export function ConversationHome({
       : undefined;
   const messageEditController = createNormalConversationMessageEditController({
     workspaceCwd,
+    detailContext,
     threadId: detailContext?.threadId,
-    providerPresetId: activeProviderPresetId,
+    providerPresetId: activeModelOption?.executionBinding ? undefined : activeProviderPresetId,
     permissionPreset: selectedPermissionPreset,
     identityController: conversationIdentityController,
     editOperation: editSaveOperation,
@@ -447,7 +457,7 @@ export function ConversationHome({
       return;
     }
     const providerPresetId = activeProviderPresetId.trim();
-    if (!providerPresetId || !activeModelReady) {
+    if ((!providerPresetId && !activeModelOption?.executionBinding) || !activeModelReady) {
       actionFeedback.report("validation", activeModelOption?.blocker || t("Please configure a chat model before sending."));
       return;
     }
@@ -508,7 +518,7 @@ export function ConversationHome({
         fileRefs: composerFileRefs,
         project: project.projectPath ? project : {},
         model: {
-          providerPresetId,
+          ...(activeModelOption?.executionBinding ? { executionBinding: activeModelOption.executionBinding } : { providerPresetId }),
           ...(thinkingEnabled && selectedThinkingLevel !== "off" ? { thinkingLevel: selectedThinkingLevel } : {}),
           reasoningSummary: selectedReasoningSummary,
         },
@@ -727,7 +737,7 @@ export function ConversationHome({
       fullAccessConfirmed={fullAccessConfirmed}
       modelOptions={modelOptions}
       selectedProviderPresetId={selectedProviderPresetId}
-      defaultProviderPresetId={defaultProviderPresetId}
+      defaultProviderPresetId={effectiveDefaultModelId}
       defaultProviderLabel={defaultProviderLabel}
       selectedThinkingLevel={selectedThinkingLevel}
       selectedReasoningSummary={selectedReasoningSummary}

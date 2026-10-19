@@ -43,6 +43,7 @@ import {
 import { useArchivedSettingsController } from "./useArchivedSettingsController.js";
 import { ComputerControlSettingsPage } from "./computer-control/ComputerControlSettingsPage.js";
 import { MobileAccessSettingsPage } from "./mobile-access/MobileAccessSettingsPage.js";
+import { ExecutionEnginesSettingsPage } from "./execution-engines/ExecutionEnginesSettingsPage.js";
 
 export type { SettingsSectionId } from "./settings-shell-model.js";
 
@@ -333,6 +334,8 @@ export function SettingsPage({
         ) : null}
 
         {visibleActiveSection === "mobile-access" && !workspaceToolDetailOpen ? <MobileAccessSettingsPage /> : null}
+
+        {visibleActiveSection === "execution-engines" && !workspaceToolDetailOpen ? <ExecutionEnginesSettingsPage cwd={cwd} /> : null}
 
         {visibleActiveSection === "approval-strategy" && !workspaceToolDetailOpen ? (
           <ExecutionPermissionsSettingsPanel

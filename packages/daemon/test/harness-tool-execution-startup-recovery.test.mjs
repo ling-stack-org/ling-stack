@@ -78,13 +78,14 @@ test("daemon startup settles the expired ToolExecution tail beyond 500 before re
   assert.equal(rows().filter(row => row.state === "executing" || row.state === "committing_evidence").length, 502);
 
   const daemon = f.createDaemon();
+  await daemon.start();
   const first = rows();
   assert.equal(first.filter(row => row.state === "unknown_outcome").length, 501,
     "all eligible pages must settle synchronously before any recovery dispatch can observe the Store");
   assert.ok(first.slice(0, 501).every(row => row.revision === 3 && row.failure_code === "tool.unknown_side_effect_outcome"));
   assert.deepEqual({ ...first[501] }, { id: "startup-tool-0501", state: "executing", revision: 2, failure_code: null });
   await daemon.stop();
-  f.createDaemon();
+  await f.createDaemon().start();
   assert.deepEqual(rows(), first, "a second real startup must not re-settle or replay the prior tool effects");
 });
 

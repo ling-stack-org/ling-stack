@@ -1,0 +1,11 @@
+{
+  "name": "jpeg-decoder",
+  "version": "0.3.2",
+  "registryCrateSHA256": "00810f1d8b74be64b13dbf3db89ac67740615d6c891f0e7b6179326533011a07",
+  "gitHead": "eb2d7c0f6a2d0298aba7a7f8b9ca1440353e8f8c",
+  "changedFiles": [
+    "src/huffman.rs"
+  ],
+  "unifiedPatchSHA256": "3a530e7e28c8d3cfcf5becf1977fa320ead151d80111d8c35f5002362546d45b",
+  "selectedLicense": "MIT"
+}
