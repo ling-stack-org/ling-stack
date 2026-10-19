@@ -28,9 +28,9 @@ function runQuality(overrides = {}) {
   });
 }
 
-test("PR transitions and full-ci labels trigger validation while full regression is weekly", () => {
+test("PR transitions and full-ci labels trigger validation while full regression is daily", () => {
   assert.match(workflow, /types: \[opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled\]/u);
-  assert.match(workflow, /cron: "17 3 \* \* 1"/u);
+  assert.match(workflow, /cron: "17 3 \* \* \*"/u);
   assert.doesNotMatch(workflow, /^  (?:push|paths|paths-ignore):/mu);
   assert.match(jobSource("scope"), /--event-file "\$GITHUB_EVENT_PATH"/u);
   assert.match(jobSource("scope"), /--base="\$BASE_SHA"/u);
