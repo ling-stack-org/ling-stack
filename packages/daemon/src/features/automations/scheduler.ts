@@ -13,6 +13,7 @@ import type { StartupStateRegistry } from "../../startup/state.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import type { ComputerUseProjectionRegistry } from "../computer-use/registry.js";
 import { createDetachedRunExecutionSink, executeRunRequest } from "../runs/orchestrator.js";
+import type { NativeRunDispatcher } from "../runs/native-run-dispatcher.js";
 import { maybeStartNextRunInterventionContinuation } from "../runs/interventions.js";
 import { runAutomation } from "./run.js";
 import { AutomationRecurrenceError, computeNextAutomationRunAt } from "./recurrence.js";
@@ -67,6 +68,7 @@ export class AutomationSchedulerRegistry {
     private readonly computerUsePreviews: ComputerUseProjectionRegistry,
     private readonly controlPlaneEvents: ControlPlaneEventHub,
     private readonly startupState?: StartupStateRegistry,
+    private readonly nativeRunDispatcher?: NativeRunDispatcher,
   ) {}
 
   start(cwd: string): { readonly scheduler: AutomationSchedulerState; readonly duplicate: boolean } {
@@ -328,6 +330,7 @@ export class AutomationSchedulerRegistry {
               controlPlaneEvents: this.controlPlaneEvents,
               startupState: this.startupState,
               computerUsePreviews: this.computerUsePreviews,
+              nativeRunDispatcher: this.nativeRunDispatcher,
             },
           ),
       });
@@ -461,6 +464,7 @@ export class AutomationSchedulerRegistry {
       controlPlaneEvents: this.controlPlaneEvents,
       startupState: this.startupState,
       computerUsePreviews: this.computerUsePreviews,
+      nativeRunDispatcher: this.nativeRunDispatcher,
     });
   }
 

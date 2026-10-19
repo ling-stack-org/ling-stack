@@ -1,4 +1,6 @@
 import type {
+  ConversationExecutionSelectionQuery,
+  ConversationExecutionSelectionResponse,
   HarnessDiagnosticQueryV1,
   ExecutionCancellationRequest,
   ListResourceLeasesRequest,
@@ -101,4 +103,8 @@ export async function retryWorkUnit(cwd: string, workUnitId: string): Promise<Wo
 
 export async function reconcileWorkUnit(cwd: string, workUnitId: string): Promise<WorkUnitMutationResponse> {
   return daemonClient.reconcileWorkUnit(cwd, workUnitId);
+}
+
+export async function getConversationExecutionSelection(cwd: string, query: ConversationExecutionSelectionQuery = {}): Promise<ConversationExecutionSelectionResponse> {
+  return daemonClient.getConversationExecutionSelection(cwd, query);
 }

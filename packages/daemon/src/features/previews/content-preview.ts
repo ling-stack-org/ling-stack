@@ -22,6 +22,8 @@ const MAX_PREVIEW_BYTES = 64 * 1024;
 export interface BuildArtifactPreviewInput {
   readonly artifact: RunArtifact;
   readonly contentPath: string;
+  /** Already verified bytes; never reopen the path after a security-sensitive read. */
+  readonly content?: Buffer;
   readonly maxBytes?: number;
   readonly imageUrl?: string;
 }
@@ -66,6 +68,7 @@ export function buildArtifactPreview(input: BuildArtifactPreviewInput): PreviewC
     ref,
     kind,
     contentPath: input.contentPath,
+    content: input.content,
     maxBytes,
     imageUrl: input.imageUrl,
     fileName: input.artifact.path,
@@ -220,6 +223,7 @@ function buildPreviewResponse(input: {
   readonly ref: PreviewFileRef;
   readonly kind: PreviewContentKind;
   readonly contentPath: string;
+  readonly content?: Buffer;
   readonly maxBytes: number;
   readonly imageUrl?: string;
   readonly fileName: string;
@@ -227,10 +231,10 @@ function buildPreviewResponse(input: {
   readonly extractedText?: string;
   readonly extractedTextTruncated?: boolean;
 }): PreviewContentResponse {
-  const stats = statSync(input.contentPath);
-  const sizeBytes = stats.size;
+  const stats = input.content ? undefined : statSync(input.contentPath);
+  const sizeBytes = input.content?.length ?? stats!.size;
 
-  if (!stats.isFile()) {
+  if (stats && !stats.isFile()) {
     return {
       ref: { ...input.ref, previewable: false },
       kind: "unsupported",
@@ -275,7 +279,9 @@ function buildPreviewResponse(input: {
     };
   }
 
-  const { buffer, truncated } = readPreviewBytes(input.contentPath, input.maxBytes);
+  const { buffer, truncated } = input.content
+    ? { buffer: input.content.subarray(0, input.maxBytes), truncated: input.content.length > input.maxBytes }
+    : readPreviewBytes(input.contentPath, input.maxBytes);
   const decoded = decodeUtf8(buffer);
   if (!decoded.ok) {
     return {

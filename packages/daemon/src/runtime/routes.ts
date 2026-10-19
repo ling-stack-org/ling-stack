@@ -10,7 +10,7 @@ import type {
   WorkUnitStatus,
 } from "@ling-stack/core";
 import { DEFAULT_WORKSPACE_ID } from "@ling-stack/core";
-import type { ExecutionCancellationRequest, RunCancelResponse, WorkUnitDetailResponse } from "@ling-stack/contracts";
+import { parseExecutionBindingRequest, type ExecutionCancellationRequest, type RunCancelResponse, type WorkUnitDetailResponse } from "@ling-stack/contracts";
 import { readWorkUnitStopEvidence } from "./work-unit-stop-evidence.js";
 import { parseExecutionCancellationRequest } from "../shared/cancellation-request.js";
 import type { LingExtensionMetadata, LingExtensionRegistry } from "@ling-stack/plugin-sdk";
@@ -28,6 +28,7 @@ import {
   listRunnerItems,
   loadWorkspaceRuntimeSettings,
   patchWorkspaceRuntimeSettings,
+  RuntimeSettingsConflictError,
   type WorkspaceRuntimeSettingsPatch,
 } from "./runner-settings.js";
 import {
@@ -352,8 +353,8 @@ export async function handleRuntimeSettings(
     }
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for runtime settings` });
   } catch (error) {
-    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
-      error: error instanceof HttpError ? error.code : "bad_request",
+    writeJson(response, error instanceof RuntimeSettingsConflictError ? 409 : error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof RuntimeSettingsConflictError ? "runtime_settings_conflict" : error instanceof HttpError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }
@@ -673,7 +674,16 @@ function parseWorkspaceRuntimeSettingsPatch(value: unknown): WorkspaceRuntimeSet
   if (!isRecord(value)) {
     throw new Error("Runtime settings patch must be a JSON object");
   }
+  if (value.schemaVersion !== undefined && value.schemaVersion !== 2) throw new Error("schemaVersion must be 2");
+  if (value.confirmNativeMigration !== undefined && typeof value.confirmNativeMigration !== "boolean") {
+    throw new Error("confirmNativeMigration must be a boolean");
+  }
   return removeUndefined({
+    schemaVersion: value.schemaVersion as 2 | undefined,
+    confirmNativeMigration: value.confirmNativeMigration as boolean | undefined,
+    defaultExecutionBinding: value.defaultExecutionBinding === null ? null
+      : value.defaultExecutionBinding === undefined ? undefined : parseExecutionBindingRequest(value.defaultExecutionBinding),
+    expectedUpdatedAt: readOptionalString(value, "expectedUpdatedAt"),
     defaultRunnerId: readOptionalString(value, "defaultRunnerId"),
     allowedRunnerIds: readOptionalStringArray(value, "allowedRunnerIds"),
     explicitRunnerFallback: readOptionalRunnerFallbackPolicy(value, "explicitRunnerFallback"),

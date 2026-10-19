@@ -110,7 +110,7 @@ jobs:
         run: node scripts/check-public-repo-safety.mjs
 
       - name: Check scanner boundaries, execution policy, classification, and platform CI gates
-        run: node --test scripts/check-public-repo-safety.test.mjs scripts/ci/*.test.mjs
+        run: node --test scripts/check-public-repo-safety.test.mjs scripts/ci/*.test.mjs scripts/native-execution-engines/verify-codex.test.mjs
 
       - name: Scan Git history for secrets
         if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs'
@@ -207,8 +207,19 @@ jobs:
           corepack enable
           corepack pnpm install --frozen-lockfile --prefer-offline
 
+      - name: Set up the pinned image codec toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal
+
       - name: Build selected graph without nested package builds
+        env:
+          RUSTUP_TOOLCHAIN: 1.97.1
         run: node scripts/ci/run-packages.mjs --task=build:ci --packages="$SELECTED_PACKAGES" --closure=true
+
+      - name: Test bounded image codec contracts
+        if: needs.scope.outputs.daemon == 'true'
+        env:
+          RUSTUP_TOOLCHAIN: 1.97.1
+        run: corepack pnpm --filter @ling-stack/daemon test:image-sanitizer
 
       - name: Upload reusable build outputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -362,6 +373,14 @@ jobs:
         with:
           name: ci-dist
           path: .
+
+      # ci-dist comes from Ubuntu; native codecs must be rebuilt on this macOS host.
+      - name: Build the host image codec
+        env:
+          RUSTUP_TOOLCHAIN: 1.97.1
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          corepack pnpm --filter @ling-stack/daemon build:image-sanitizer
 
       - name: Run isolated daemon shard
         run: node scripts/ci/daemon-test-shard.mjs --shard=${{ matrix.shard }} --shard-count=4

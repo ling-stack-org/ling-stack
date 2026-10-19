@@ -143,6 +143,7 @@ export interface CodexAppServerRunnerConfig {
   readonly enabled?: boolean;
   readonly baseUrl?: string;
   readonly launchMode?: "external";
+  /** Legacy test flags are parsed for compatibility but never authorize external execution. */
   readonly readinessPassed?: boolean;
 }
 
@@ -150,6 +151,7 @@ export interface OpenClawAcpRunnerConfig {
   readonly enabled?: boolean;
   readonly endpoint?: string;
   readonly workspaceMode?: "bound_path";
+  /** Legacy test flags are parsed for compatibility but never authorize external execution. */
   readonly readinessPassed?: boolean;
 }
 

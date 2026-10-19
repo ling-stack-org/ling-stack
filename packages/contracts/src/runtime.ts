@@ -5,6 +5,7 @@ import type { RunnerToolHydrationCapability } from "./tool-surfaces.js";
 import type { ApprovalCommandRuleProposal, ApprovalDecisionKind } from "./approvals.js";
 import type { RunProviderErrorDiagnostic, RunProviderRetryEvidence } from "./provider-diagnostics.js";
 import type { HarnessFeatureSnapshotV1 } from "./harness.js";
+import type { ExecutionBindingRequest } from "./execution-engines.js";
 
 export type RuntimePermissionRequestKind =
   | "core_tool"
@@ -208,15 +209,29 @@ export type RunnerRequestSource =
   | "user_explicit";
 
 export interface WorkspaceRuntimeSettings {
+  readonly schemaVersion?: 1 | 2;
   readonly workspaceId: string;
   readonly defaultRunnerId: string;
+  readonly defaultExecutionBinding?: ExecutionBindingRequest;
+  /** Read-only preview. Legacy grants are excluded from the effective allowlist. */
+  readonly migration?: WorkspaceRuntimeMigrationPreview;
   readonly allowedRunnerIds: readonly string[];
   readonly explicitRunnerFallback: RunnerFallbackPolicy;
   readonly implicitRunnerFallback: RunnerFallbackPolicy;
   readonly updatedAt: string;
 }
 
+export interface WorkspaceRuntimeMigrationPreview {
+  readonly status: "required";
+  readonly legacyAllowedRunnerIds: readonly string[];
+  readonly legacyDefaultRunnerId?: string;
+}
+
 export interface WorkspaceRuntimeSettingsPatch {
+  readonly schemaVersion?: 2;
+  readonly confirmNativeMigration?: boolean;
+  readonly defaultExecutionBinding?: ExecutionBindingRequest | null;
+  readonly expectedUpdatedAt?: string;
   readonly defaultRunnerId?: string;
   readonly allowedRunnerIds?: readonly string[];
   readonly explicitRunnerFallback?: RunnerFallbackPolicy;
@@ -227,6 +242,7 @@ export interface RunnerListItem {
   readonly id: string;
   readonly displayName: string;
   readonly status: "enabled" | "disabled";
+  readonly profileSelection?: "supported" | "unsupported";
   readonly aliases?: readonly string[];
   readonly supportedProviderApis?: readonly string[];
   readonly supportedTools?: readonly string[];
@@ -952,4 +968,15 @@ export interface RunInterventionResponse {
   readonly intervention: RunIntervention;
   readonly run?: RunSession;
   readonly event?: RunEventEnvelope;
+}
+
+/** Read-only projection for the workspace's native default on the normal conversation surface. */
+export type ConversationExecutionSelectionQuery = Pick<import("./conversations.js").ConversationStreamRequest,
+  "threadId" | "projectPath" | "authorizationMode" | "workspaceAccessMode" | "permissionPreset" | "permissionMode">;
+export interface ConversationExecutionSelectionResponse {
+  readonly cwd: string;
+  readonly status: "not_selected" | "ready" | "blocked";
+  readonly defaultRunnerId: string;
+  readonly executionBinding?: import("./execution-engines.js").ExecutionBindingRequest;
+  readonly reason?: string;
 }

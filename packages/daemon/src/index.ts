@@ -42,6 +42,7 @@ import {
 } from "./features/runs/interventions.js";
 import { createDefaultMcpBroker } from "./features/mcp/broker.js";
 import { createSystemKeychainSecretStore } from "./features/providers/keychain-secret-store.js";
+import { createEngineSecretStore, withEngineSecretResolver } from "./features/execution-engines/engine-secret-store.js";
 import { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
 import { ProviderImportPreflightService } from "./features/providers/import-preflight.js";
 import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
@@ -62,10 +63,11 @@ import {
   executeUserInputAnswerContinuation,
 } from "./features/runs/orchestrator.js";
 import { resumePendingMediaJobExecutions, syncMediaJobForApprovalDecision } from "./features/media/executor.js";
+import { createNativeRunDispatcher } from "./features/runs/native-run-dispatcher.js";
 import { publishConversationMediaProjectionChange } from "./features/media/conversation-events.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
 import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type RunnerRegistry } from "./runtime/runners.js";
-import { listExternalRunnerRegistrations } from "./runtime/external-runners.js";
+import { listNativeRunnerRegistrations } from "./runtime/native-runners.js";
 import { RunStoreRegistry, type RunStoreFactory } from "./runtime/store-registry.js";
 import { RuntimeSupervisor } from "./runtime/supervisor.js";
 import { createOriginalOfficeDirectoryStoreFactory } from "./features/office-documents/office-local-directory-core-authority.js";
@@ -122,6 +124,7 @@ import { createCuaDriverGenerationBroker } from "./features/plugins/cua-driver-g
 import { WorkspaceFileCapabilityRegistry } from "./features/previews/workspace-file-capabilities.js";
 import { createCuaDriverDescriptor } from "./features/plugins/presets.js";
 import { RemoteAccessController } from "./features/remote-access/controller.js";
+import { EngineManagementFeature } from "./features/execution-engines/feature.js";
 import { DefaultRemoteReplyDispatcher } from "./features/remote-access/default-reply-dispatcher.js";
 import { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
 
@@ -234,6 +237,8 @@ export interface DaemonServer {
     readonly capability: string;
     readonly csrfToken: string;
   };
+  /** Trusted embedding only. Never serialize this object into health or browser responses. */
+  readonly engineManagement: EngineManagementFeature["credentials"];
   start(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -246,7 +251,19 @@ export function createDaemonServer(
   const runnerRegistry = dependencies.runnerRegistry ?? createDefaultRunnerRegistry(dependencies.runner, resolvedConfig);
   const extensionRegistry = dependencies.extensionRegistry ?? createDefaultLingExtensionRegistry();
   const externalSecretStore = dependencies.externalSecretStore ?? createSystemKeychainSecretStore();
-  const secretResolver = dependencies.secretResolver ?? createCompositeSecretResolver({ keychainResolver: externalSecretStore });
+  const engineSecretStore = dependencies.engineManagement?.secretStore ?? createEngineSecretStore();
+  const baseSecretResolver = dependencies.secretResolver
+    ?? createCompositeSecretResolver({ keychainResolver: externalSecretStore });
+  const secretResolver = withEngineSecretResolver(engineSecretStore, baseSecretResolver);
+  const defaultStoragePaths = resolveStoragePaths(resolvedConfig.defaultWorkspaceCwd);
+  const engineManagement = new EngineManagementFeature({
+    userPaths: defaultStoragePaths.user,
+    runnerRegistry,
+    allowedOrigins: [],
+    secretStore: engineSecretStore,
+    secretResolver: baseSecretResolver,
+    ...dependencies.engineManagement,
+  });
   const externalWorkFetch = dependencies.externalWorkFetch;
   const webFetch = dependencies.webFetch ?? dependencies.channelWebFetch;
   const webResolveHostAddresses = dependencies.webResolveHostAddresses ?? dependencies.channelWebResolveHostAddresses;
@@ -471,6 +488,21 @@ export function createDaemonServer(
   });
   const backgroundSchedulers = new ExternalWorkBackgroundSchedulerRegistry(storeRegistry, secretResolver, externalWorkFetch);
   const activeRuns = new ActiveRunRegistry();
+  const nativeRunTargetDispatcher = dependencies.nativeRunTargetDispatcher === undefined
+    ? engineManagement.runTargetDispatcher
+    : dependencies.nativeRunTargetDispatcher;
+  const nativeRunDispatcher = nativeRunTargetDispatcher
+    ? createNativeRunDispatcher({
+        runnerRegistry,
+        storeRegistry,
+        activeRuns,
+        runtimeSupervisor,
+        secretResolver,
+        startupState,
+        controlPlaneEvents,
+        target: nativeRunTargetDispatcher,
+      })
+    : undefined;
   automationSchedulers = new AutomationSchedulerRegistry(
     runnerRegistry,
     storeRegistry,
@@ -481,6 +513,7 @@ export function createDaemonServer(
     computerUsePreviews,
     controlPlaneEvents,
     startupState,
+    nativeRunDispatcher,
   );
   startupOptionalWarmups = new StartupOptionalWarmupCoordinator({
     startupState,
@@ -514,6 +547,7 @@ export function createDaemonServer(
       controlPlaneEvents,
       startupState,
       computerUsePreviews,
+      nativeRunDispatcher,
     });
     daemonRunnerRecoveryCoordinator?.recoverStore(store);
   };
@@ -529,6 +563,7 @@ export function createDaemonServer(
     startupState,
     computerUsePreviews,
     hostCapabilityBridge,
+    nativeRunDispatcher,
     replyDispatchCoordinator: channelReplyDispatchCoordinator,
     imageVisionSummarizer,
     webFetch,
@@ -631,7 +666,6 @@ export function createDaemonServer(
   const remoteAccessManagementCapability = dependencies.remoteAccessManagementCapability
     ?? process.env.LING_MOBILE_ACCESS_MANAGEMENT_CAPABILITY
     ?? randomBytes(32).toString("base64url");
-  const defaultStoragePaths = resolveStoragePaths(resolvedConfig.defaultWorkspaceCwd);
   const remoteReplyDispatcher = dependencies.remoteReplyDispatcher === null
     ? undefined
     : dependencies.remoteReplyDispatcher ?? new DefaultRemoteReplyDispatcher({
@@ -646,6 +680,7 @@ export function createDaemonServer(
       controlPlaneEvents,
       startupState,
       computerUsePreviews,
+      nativeRunDispatcher,
     });
   const remoteAccess = new RemoteAccessController({
     store: storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
@@ -704,6 +739,8 @@ export function createDaemonServer(
       ?? process.env.LING_DESKTOP_BRIDGE_TOKEN,
     computerUseTargetOwnershipTimeoutMs: dependencies.computerUseTargetOwnershipTimeoutMs,
     remoteAccess,
+    engineManagement,
+    nativeRunDispatcher,
     chromeBrowserSessions,
     chromeBrowserPlugin,
     officeDriverController,
@@ -766,6 +803,7 @@ export function createDaemonServer(
       capability: remoteAccessManagementCapability,
       csrfToken: remoteAccess.csrfToken,
     },
+    engineManagement: engineManagement.credentials,
     start: async () => {
       cuaDriverActivationCoordinator.resetForDaemonStart();
       await new Promise<void>((resolve, reject) => {
@@ -941,9 +979,15 @@ export function createDaemonServer(
         await providerImportShutdown;
         await cuaDriverActivationCoordinator.shutdown();
         await activeRuns.waitForIdle();
+        const engineManagementShutdown = engineManagement.close().then(
+          () => ({ ok: true as const }),
+          (error: unknown) => ({ ok: false as const, error }),
+        );
         await storeRegistry.mediaLocalExecutions.waitForIdle();
         runtimeSupervisor.releaseAll();
         storeRegistry.closeAll();
+        const engineShutdown = await engineManagementShutdown;
+        if (!engineShutdown.ok) throw engineShutdown.error;
       });
     },
   };
@@ -1043,7 +1087,7 @@ export function createDefaultRunnerRegistry(
       },
       toolHydration: piToolHydration,
     },
-    ...listExternalRunnerRegistrations(config),
+    ...listNativeRunnerRegistrations(),
   ], DEFAULT_RUNNER_ID);
 }
 

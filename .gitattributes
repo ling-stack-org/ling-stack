@@ -1,3 +1,8 @@
 # Unified diffs require a single-space line to preserve blank context lines.
 apps/desktop/resources/providers/cua-driver/*/patches/*/*.patch whitespace=-blank-at-eol
 patches/*.patch whitespace=-blank-at-eol
+
+# Preserve the vendored upstream documentation bytes and recorded provenance.
+packages/daemon/native/image-sanitizer/vendor/jpeg-decoder/src/decoder.rs whitespace=-blank-at-eol
+# Unified diffs require a single-space line to preserve blank context lines.
+packages/daemon/native/image-sanitizer/vendor/jpeg-decoder/strict-entropy.patch whitespace=-blank-at-eol

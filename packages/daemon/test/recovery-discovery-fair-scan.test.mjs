@@ -236,6 +236,9 @@ test("a failed first scheduled query commits no cutoff or cursor", async (t) => 
 test("different stores and stale kinds do not share sweep positions", async (t) => {
   const first = await createRecoveryDiscoveryFixture(t, "store-first");
   const second = await createRecoveryDiscoveryFixture(t, "store-second");
+  // One supervisor owns both stores for the coordinator and releases both locks.
+  second.supervisor.releaseAll();
+  first.supervisor.getRuntime(second.cwd, second.store);
   const valid = await first.seedRun("conversation", "a-valid");
   first.seedBlockedStalePrefix(valid);
   const firstTask = await first.seedRun("task", "first-task");

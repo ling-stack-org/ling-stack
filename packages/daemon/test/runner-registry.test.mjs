@@ -10,6 +10,18 @@ import {
   UnsupportedRunnerError,
 } from "../dist/index.js";
 
+test("default catalog describes all native choices without granting generic execution", async () => {
+  const registry = createDefaultRunnerRegistry(new RecordingRunner());
+  for (const id of ["codex-app-server", "kimi-acp", "openclaw-acp"]) {
+    const runner = registry.get(id);
+    assert.ok(runner, `${id} must be discoverable`);
+    assert.equal(runner.profileSelection, "supported");
+    assert.equal(runner.status, "disabled", "execution availability belongs to a verified profile and surface");
+    await assert.rejects(runner.adapter.runTask({}), /legacy_runner_migration_required/);
+  }
+  assert.equal(registry.get("claude-agent-sdk").profileSelection, "unsupported");
+});
+
 test("runner registry resolves default pi and legacy pi alias", () => {
   const runner = new RecordingRunner();
   const registry = createRunnerRegistry([{
@@ -126,8 +138,9 @@ test("default runner registry exposes disabled future adapters and fails closed"
   assert.equal(pi.toolHydration.supportsToolHydration, false);
   assert.equal(pi.toolHydration.conformance, "unverified");
   const codex = runners.find((runner) => runner.id === "codex-app-server");
-  assert.equal(codex.featureFlag, "runners.codexAppServer.enabled");
-  assert.equal(codex.disabledReason, "Feature flag is disabled.");
+  assert.equal(codex.featureFlag, undefined, "retired endpoint flags cannot activate native execution");
+  assert.equal(codex.profileSelection, "supported");
+  assert.match(codex.disabledReason, /legacy_runner_migration_required/);
 
   assert.throws(
     () => registry.resolve({
@@ -177,7 +190,7 @@ test("runner resume capability requires typed metadata, adapter operation, and e
     hostApprovalContinuation: ["bash"],
   });
   assert.equal(codex.capabilities.includes("native_resume"), false);
-  assert.equal(codex.resumeCapabilities.nativeResume, true);
+  assert.equal(codex.resumeCapabilities.nativeResume, false);
   assert.deepEqual(resolveRunnerResumeCapabilities(codex), {
     nativeResume: false,
     hostApprovalContinuation: [],
@@ -286,10 +299,10 @@ test("future runner feature flags do not enable adapters without readiness", () 
   const codex = runners.find((runner) => runner.id === "codex-app-server");
   const openclaw = runners.find((runner) => runner.id === "openclaw-acp");
   assert.equal(codex.status, "disabled");
-  assert.match(codex.disabledReason, /readiness has not been confirmed/);
+  assert.match(codex.disabledReason, /legacy_runner_migration_required/);
   assert.deepEqual(codex.capabilities.includes("native_resume"), false);
   assert.equal(openclaw.status, "disabled");
-  assert.match(openclaw.disabledReason, /readiness has not been confirmed/);
+  assert.match(openclaw.disabledReason, /legacy_runner_migration_required/);
   assert.deepEqual(openclaw.capabilities.includes("mcp_tools"), false);
 
   assert.throws(
@@ -317,7 +330,7 @@ test("future runner still fails closed until readiness is confirmed", () => {
   for (const runnerId of ["codex-app-server", "openclaw-acp"]) {
     const runner = registry.list().find((item) => item.id === runnerId);
     assert.equal(runner.status, "disabled");
-    assert.match(runner.disabledReason, /readiness has not been confirmed/i);
+    assert.match(runner.disabledReason, /legacy_runner_migration_required/i);
     assert.throws(
       () => registry.resolve({ requestedRunnerId: runnerId, explicitFallbackPolicy: "disabled" }),
       (error) =>
@@ -327,7 +340,7 @@ test("future runner still fails closed until readiness is confirmed", () => {
   }
 });
 
-test("future runner adapters become selectable only after all static gates pass", () => {
+test("legacy endpoint adapters remain retired even when all old static flags pass", () => {
   const registry = createDefaultRunnerRegistry(new RecordingRunner(), {
     runners: {
       codexAppServer: {
@@ -345,15 +358,15 @@ test("future runner adapters become selectable only after all static gates pass"
 
   for (const runnerId of ["codex-app-server", "openclaw-acp"]) {
     const runner = registry.list().find((item) => item.id === runnerId);
-    assert.equal(runner.status, "enabled");
-    const resolution = registry.resolve({
+    assert.equal(runner.status, "disabled");
+    assert.match(runner.disabledReason, /legacy_runner_migration_required/);
+    assert.throws(() => registry.resolve({
       requestedRunnerId: runnerId,
       explicitFallbackPolicy: "disabled",
       tools: ["read"],
-    });
-    assert.equal(resolution.effectiveRunnerId, runnerId);
-    assert.equal(resolution.runner.adapter, runner.adapter);
-    assert.equal(resolveRunnerToolExecutionGate(runner, ["read"]).ok, true);
+    }), (error) => error instanceof UnsupportedRunnerError
+      && error.fallbackReason.code === "disabled_requested_runner");
+    assert.equal(resolveRunnerToolExecutionGate(runner, ["read"]).ok, false);
   }
 });
 

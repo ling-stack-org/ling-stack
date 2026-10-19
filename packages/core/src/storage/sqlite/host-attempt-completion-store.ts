@@ -1,6 +1,7 @@
 import type { HostOperationSource } from "../../host-operation-journal-types.js";
 import type { HostAttemptCompletionRecord, HostAttemptEffectObservation } from "../../host-attempt-completion-types.js";
 import { readTrackedToolCoverage, verifiedTrackedToolCalls } from "./host-attempt-tracked-coverage.js";
+import { isNativeCompletionSource, nativeAttemptInventory, readNativeAttemptEffectStatus } from "./host-attempt-native-coverage.js";
 import { readString, rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { isCurrentRunExecutionOwner } from "./run-execution-admission.js";
 import type { SqliteStoreContext } from "./store-context.js";
@@ -49,12 +50,15 @@ export class SqliteHostAttemptCompletionStore {
     const finish = () => this.write(() => {
       const drainedAt = new Date().toISOString();
       const observation = verifyEffectCoverage?.();
-      const coverage = observation === true ? "pi_no_tools_v1" : "unverified";
-      const tracked = verifiedTrackedToolCalls(db, captured, observation, drainedAt);
-      const changed = db.prepare(`UPDATE host_attempt_completions AS c SET drained_at=?,effect_coverage=?,tracked_tool_calls_json=?
+      const native = isNativeCompletionSource(db, captured);
+      const coverage = !native && observation === true ? "pi_no_tools_v1" : "unverified";
+      const tracked = native ? undefined : verifiedTrackedToolCalls(db, captured, observation, drainedAt);
+      const nativeInventory = native ? nativeAttemptInventory(observation) : undefined;
+      const changed = db.prepare(`UPDATE host_attempt_completions AS c SET drained_at=?,effect_coverage=?,tracked_tool_calls_json=?,native_effect_inventory_json=?
         WHERE c.run_id=? AND c.work_unit_id=? AND c.attempt_id=? AND c.runtime_instance_id=? AND c.fencing_token=?
           AND c.drained_at IS NULL AND ${capturedSourceSql}`)
-        .run(drainedAt, coverage, tracked ? JSON.stringify(tracked) : null, captured.runId, captured.workUnitId, captured.attemptId,
+        .run(drainedAt, coverage, tracked ? JSON.stringify(tracked) : null, nativeInventory ? JSON.stringify(nativeInventory) : null,
+          captured.runId, captured.workUnitId, captured.attemptId,
           captured.runtimeInstanceId, captured.fencingToken);
       if (changed.changes !== 1) throw new Error("host_attempt_completion_invalid_source");
       const fact = this.getHostAttemptCompletion(captured);
@@ -70,12 +74,16 @@ export class SqliteHostAttemptCompletionStore {
         AND ${capturedSourceSql}`)
       .get(source.runId, source.workUnitId, source.attemptId, source.runtimeInstanceId, source.fencingToken);
     if (!row) return undefined;
+    const native = isNativeCompletionSource(this.context.database, source);
+    const nativeStatus = native ? readNativeAttemptEffectStatus(this.context.database, source, row.native_effect_inventory_json) : undefined;
     return Object.freeze({ schemaVersion: 1, source: Object.freeze({ runId: readString(row, "run_id"),
       workUnitId: readString(row, "work_unit_id"), attemptId: readString(row, "attempt_id"),
       runtimeInstanceId: readString(row, "runtime_instance_id"), fencingToken: readString(row, "fencing_token") }),
       registeredAt: readString(row, "registered_at"),
-      ...(row.drained_at !== null && row.effect_coverage === "pi_no_tools_v1" ? { effectCoverage: "pi_no_tools_v1" as const }
-        : row.drained_at !== null && readTrackedToolCoverage(this.context.database, source, row.tracked_tool_calls_json,
+      ...(nativeStatus ? { nativeEffectStatus: nativeStatus } : {}),
+      ...(nativeStatus === "settled" && row.drained_at !== null ? { effectCoverage: "native_journal_v1" as const }
+        : !native && row.drained_at !== null && row.effect_coverage === "pi_no_tools_v1" ? { effectCoverage: "pi_no_tools_v1" as const }
+        : !native && row.drained_at !== null && readTrackedToolCoverage(this.context.database, source, row.tracked_tool_calls_json,
           new Date().toISOString()) ? { effectCoverage: "pi_tracked_tools_v1" as const } : {}),
       ...(row.drained_at === null ? {} : { drainedAt: readString(row, "drained_at") }) });
   }

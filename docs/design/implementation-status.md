@@ -2,7 +2,7 @@
 
 Status: current planning index
 Owner: repository maintainers
-Last verified: 2026-10-17 (P2 and bundled GStack rows only; other work retains its owning plan's verification date)
+Last verified: 2026-10-19 (Native Execution Engines row); 2026-10-17 (P2 and bundled GStack rows); other work retains its owning plan's verification date
 Document type: governance index
 
 ## Purpose
@@ -28,6 +28,7 @@ counts, screenshots, hashes and run diaries belong in CI or Release artifacts.
 
 | Work | Current boundary | Closure condition |
 |---|---|---|
+| [Native Execution Engines](native-execution-engines-implementation-plan.md) | T0–T6 implemented; complete frozen-source Core/daemon regression passes with explicit skips. License replacements and synthetic browser flows verified. Codex real owned scenes pass on their named snapshots. Kimi CLI 2.2.0 is installed locally; isolated real conversation, database-reopen recovery and cancellation pass after sandbox adaptation. OpenClaw real conversation/recovery pass after preventing detached self-respawn. Ling's completed-output delivery and cleanup cancellation races are repaired with adapter regression; host authority and identity revocation remain enforced. Electron IPC/migration/blocked composer have partial interaction evidence. See the validation record for source boundaries and failed historical runs | T7: OpenClaw approval/remote-stop and its retained unknown submission remain external acceptance boundaries, excluded from the Ling-only repair. Electron remaining interaction, complete Main/default startup, trusted checks/publication and production requests, other platforms/signing and language quality remain open. No production evidence was published or whole-repository pass claimed; uncertified native combinations stay blocked |
 | [P2 Conversation Experience](five-point-optimization-implementation-plan.md) | UX1-UX3 source/local complete with concerns. Rebased onto `origin/main@a44c4377`; Core 3339, Daemon 4899 plus one existing skip, Runner 407, Contracts 88, API 91, Web 520, Desktop Node 2426 plus four conditional skips, renderer 28, accessibility 3 and P2 browser 285 pass. No UX4 | Review/CI/merge plus provider, installed-client, native Windows and packaging gates remain open. Native follow-up uses a local protocol fixture and normal chat, not all-surface external execution. Unknown effects stay blocked; original failed/interrupted reports remain retained. |
 | [Bundled GStack Client](gstack-bundled-client-upgrade-implementation-plan.md) | Independent source delivery for GStack `1.91.101.0`, all 57 skills, original TestSavant, package-owned browser, source publication, follow/pin/rollback, and frozen resource binding | Review and merge the source PR, then complete Mac/Windows package, simulated-offline, damaged-resource, and 57 real-workflow acceptance without mixing the separate conversation answer/recovery UI follow-up |
 | [Channel Execution Completion](channel-execution-completion-implementation-plan.md) | Required-participant fan-in, operation evidence, TerminalReport/source-Turn convergence, clean-break Attempt fencing, restart recovery, migration rollback/reopen, and aggregate source verification are green on the isolated delivery branch | Review the isolated diff, open PR/CI, merge, verify the actual remote `main` merge commit, then clean exact QA resources |
@@ -56,7 +57,6 @@ counts, screenshots, hashes and run diaries belong in CI or Release artifacts.
 | Work | Decision required |
 |---|---|
 | [Core Tools Runtime Boundary](core-tools-runtime-boundary-implementation-plan.md) | Approve removal of built-in tools from Plugin presentation while preserving approval and diagnostics ownership |
-| [External Agent Runner Adapters](external-agent-runner-adapters-implementation-plan.md) | Approve ACP/Codex/OpenClaw/Hermes adapters after readiness and conformance gates |
 | [Mobile Remote Access](mobile-remote-access-implementation-plan.md) | Mobile remains outside current acceptance until explicitly reopened after security review |
 | [Work Board Reopening](ui2.0升级/modules/14-Work-Board-implementation-plan.md) | Reopen only after workspace projection and fresh browser acceptance |
 | [Startup And Diagnostics Reopening](ui2.0升级/modules/settings/08-Startup与Diagnostics-implementation-plan.md) | Reopen only after product-copy and current-state revalidation |

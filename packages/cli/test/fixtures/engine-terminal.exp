@@ -1,0 +1,5 @@
+set timeout 20
+spawn -noecho {*}$argv
+interact
+catch wait result
+exit [lindex $result 3]
