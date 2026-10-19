@@ -28,7 +28,7 @@
     "@modelcontextprotocol/sdk": "1.32.1",
     "@xmldom/xmldom": "0.9.12",
     "diff": "9.0.0",
-    "docx": "9.9.0",
+    "docx": "9.11.0",
     "jszip": "3.10.2",
     "officeparser": "8.1.1",
     "pdf-parse": "2.4.5",

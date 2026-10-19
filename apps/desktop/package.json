@@ -52,7 +52,7 @@
   },
   "dependencies": {
     "@ling-stack/browser-host": "workspace:*",
-    "@napi-rs/canvas": "1.0.10",
+    "@napi-rs/canvas": "1.0.11",
     "@ling-stack/api-client": "workspace:*",
     "@ling-stack/contracts": "workspace:*",
     "@ling-stack/localization": "workspace:*",
