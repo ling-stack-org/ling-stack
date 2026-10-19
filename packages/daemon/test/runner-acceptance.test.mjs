@@ -158,8 +158,10 @@ for (const engineId of ["kimi-acp", "openclaw-acp"]) {
     assert.ok(observed.length >= 2, "admission and final submission must both check verification");
     for (const current of observed) assert.equal(current.sdkVersion, `@agentclientprotocol/sdk@${version}`);
 
-    const previousSdkEvidence = fixtureNativeAcceptance({ ...observed[0], sdkVersion: "@agentclientprotocol/sdk@1.3.0" });
-    await assert.rejects(assertNativeExecutionAccepted({ ...options, readAcceptanceEvidence: () => previousSdkEvidence }, input, profile, installation),
-      error => error.code === "native_execution_verification_mismatch");
+    for (const previousVersion of ["1.3.0", "1.8.0"]) {
+      const previousSdkEvidence = fixtureNativeAcceptance({ ...observed[0], sdkVersion: `@agentclientprotocol/sdk@${previousVersion}` });
+      await assert.rejects(assertNativeExecutionAccepted({ ...options, readAcceptanceEvidence: () => previousSdkEvidence }, input, profile, installation),
+        error => error.code === "native_execution_verification_mismatch");
+    }
   });
 }

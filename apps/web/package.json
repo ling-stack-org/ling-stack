@@ -25,7 +25,7 @@
     "@ling-stack/core": "workspace:*",
     "@ling-stack/localization": "workspace:*",
     "@ling-stack/ui-react": "workspace:*",
-    "@tanstack/react-virtual": "3.14.20",
+    "@tanstack/react-virtual": "3.14.21",
     "@xyflow/react": "^12.9.3",
     "katex": "^0.19.0",
     "lucide-react": "1.58.0",

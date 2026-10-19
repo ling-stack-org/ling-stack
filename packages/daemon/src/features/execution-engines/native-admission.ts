@@ -29,7 +29,7 @@ export async function assertNativeExecutionAccepted(options: NativeAdmissionOpti
       : thread?.kind === "automation" ? "automation" : thread?.kind === "external_work" ? "external_work"
       : input.runRequest.task.channelId ? "channel" : input.workflowSurface ?? "task";
     return { runnerId: binding.engineId, runtimeVersion: installation.runtimeVersion ?? "",
-      sdkVersion: binding.engineId === "codex-app-server" ? "codex-app-server-schema-v2" : "@agentclientprotocol/sdk@1.8.0",
+      sdkVersion: binding.engineId === "codex-app-server" ? "codex-app-server-schema-v2" : "@agentclientprotocol/sdk@1.9.0",
       adapterVersion: `${binding.engineId}:native-adapter-v1`, executableDigest: installation.executableDigest ?? "",
       platform: process.platform, architecture: process.arch, profileId: profile.id, profileRevision: profile.revision,
       configurationFingerprint: runnerAcceptanceFingerprint({ profile: profile.configurationFingerprint, binding }),
