@@ -10,6 +10,8 @@ import { createWorkflowOperationExecutionSnapshot } from "../dist/features/runs/
 import { typedOperation } from "./support/workflow-operation-gate-fixture.mjs";
 import { prepareFixtureTaskInput } from "./support/prepared-input-fixture.mjs";
 import { capturePreparedRunnerInput } from "../dist/features/runs/prepared-runner-input.js";
+import { createWorkflowAgentContextStamp } from "../dist/features/channels/agent-context-consistency.js";
+import { buildConversationContextProjection } from "../dist/features/channels/context-processing/conversation-context-projector.js";
 
 async function fixture(t, surface = "normal", sourceOptions = {}) {
   const f = await userInputTranscriptFixture(t, { surface, ...sourceOptions });
@@ -191,6 +193,42 @@ test("typed workflow preparation preserves the full required operation and parti
   assert.deepEqual(request.executionOperationBindings, f.sourceRequest.executionOperationBindings);
   assert.deepEqual(request.workflowOperationExecution, f.sourceRequest.workflowOperationExecution);
 });
+async function workflowContextFixture(t) {
+  const f = await typedFixture(t);
+  f.store.updateChannelWorkflow(f.workflow.id, { metadata: { ...f.workflow.metadata,
+    sourceMessageId: f.turn.item.id, sourceTurnId: f.turn.turnId } }, now);
+  f.step = f.store.updateChannelWorkflowStep(f.step.id, { metadata: { ...f.step.metadata,
+    sourceMessageId: f.turn.item.id } }, now);
+  const projection = buildConversationContextProjection({ store: f.store,
+    sourceItemId: f.turn.item.id, view: "workflow_step", includeSourceTurnItems: false });
+  const stamp = createWorkflowAgentContextStamp({ store: f.store, sourceItemId: f.turn.item.id,
+    contextProjection: projection.metadata, consumerTeammateId: f.participantId });
+  // This preparation test only needs the consumed provenance metadata. Model
+  // input still comes from the separately captured, exact SDK execution.
+  f.sourceRequest.contextPack = { agentContext: stamp, contextProjection: projection.metadata };
+  f.saveSource();
+  return f;
+}
+test("workflow answer preparation retains the exact consumed Host context stamp", async t => {
+  const f = await workflowContextFixture(t); f.start();
+  const prepared = f.prepare();
+  assert.deepEqual(prepared.request.contextPack, f.sourceRequest.contextPack);
+  assert.deepEqual(f.prepare(), prepared);
+});
+for (const corruption of ["missing", "foreign-participant", "foreign-source", "projection-mismatch"]) {
+  test(`workflow answer preparation rejects ${corruption} consumed context stamp`, async t => {
+    const f = await workflowContextFixture(t);
+    const pack = f.sourceRequest.contextPack;
+    if (corruption === "missing") delete pack.agentContext;
+    if (corruption === "foreign-participant") pack.agentContext.consumerTeammateId = "foreign-agent";
+    if (corruption === "foreign-source") pack.agentContext.sourceItemId = "foreign-source-item";
+    if (corruption === "projection-mismatch") pack.contextProjection = { ...pack.contextProjection,
+      projectionVersion: "foreign-projection" };
+    f.saveSource(); f.start();
+    assert.throws(() => f.prepare(), error => error.code === "user_input_source_request_invalid");
+    assert.equal(f.store.getUserInputContinuationPreparation(f.thread.id, f.delivery.deliveryId, "request"), undefined);
+  });
+}
 for (const key of ["delegatedRequirement", "executionOperationBindings", "workflowOperationExecution"]) {
   test(`typed workflow cannot downgrade a missing ${key} to an unrestricted continuation`, async t => {
     const f = await typedFixture(t); delete f.sourceRequest[key]; f.saveSource(); f.start();

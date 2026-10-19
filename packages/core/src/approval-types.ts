@@ -357,6 +357,7 @@ export const approvalActionTypes: readonly ApprovalActionType[] = [
   "provider_change",
   "workflow_step",
   "mcp_tool_call",
+  "host_capability",
   "runtime_permission_request",
 ];
 

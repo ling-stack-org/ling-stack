@@ -78,6 +78,7 @@ test("daemon startup settles the expired ToolExecution tail beyond 500 before re
   assert.equal(rows().filter(row => row.state === "executing" || row.state === "committing_evidence").length, 502);
 
   const daemon = f.createDaemon();
+  await daemon.start();
   const first = rows();
   assert.equal(first.filter(row => row.state === "unknown_outcome").length, 501,
     "all eligible pages must settle synchronously before any recovery dispatch can observe the Store");

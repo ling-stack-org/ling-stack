@@ -74,7 +74,8 @@ test("daemon startup replaces a stale reply child without duplicating its assist
       linkedMessageId: seed.replyItemId,
       limit: 100,
     });
-    assert.deepEqual(childUnits.map((workUnit) => workUnit.status).sort(), ["failed", "succeeded"]);
+    assert.deepEqual(childUnits.map((workUnit) => workUnit.status).sort(), ["stale", "succeeded"],
+      "startup fencing preserves the retired child's stale owner state before the replacement succeeds");
     assert.deepEqual(recovered.store.listRuns({ channelId: seed.channelId, limit: 100 }).map((run) => run.status).sort(), ["failed", "succeeded"]);
     assert.equal(runner.replyRuns.length, 1);
   } finally {

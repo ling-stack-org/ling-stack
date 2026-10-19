@@ -211,7 +211,7 @@ test("retired roots reject new factories, existing factory calls, capture and li
 });
 
 // Actual runtime.lock cleanup fault, NOT native identity cleanup or genuine Host binding.
-test("root retires all transports before an actual runtime-lock cleanup error and does not retry it", t => {
+test("root retires all transports before an actual runtime-lock cleanup error and retries only the retained owner", t => {
   const f = fixture(t), channels = [transport(f.open("first")), transport(f.open("second"))];
   for (const channel of channels) {
     retainOriginalRuntimeSupervisorOfficeStoreBridge(f.supervisor, channel.store, channel.setup);
@@ -219,24 +219,31 @@ test("root retires all transports before an actual runtime-lock cleanup error an
   }
   const locks = channels.map(channel => join(channel.store.paths.cwd, ".ling-stack", "runtime.lock"));
   for (const path of locks) assert.ok(existsSync(path));
-  const unlink = fs.unlinkSync, observed = []; let assertionFailure;
+  const unlink = fs.unlinkSync, observed = []; let assertionFailure, refused = false;
   const patch = t.mock.method(fs, "unlinkSync", path => {
     observed.push(path);
     try {
       assert.equal(isOriginalRuntimeSupervisorOfficeRoot(f.supervisor), false);
       for (const channel of channels) assertRetired(channel);
     } catch (error) { assertionFailure = error; throw error; }
-    if (path === locks[0]) throw Object.assign(new Error("actual runtime lock cleanup failed"), { code: "EIO" });
+    if (path === locks[0] && !refused) {
+      refused = true;
+      throw Object.assign(new Error("actual runtime lock cleanup failed"), { code: "EIO" });
+    }
     return unlink(path);
   });
   syncBuiltinESMExports();
   try {
-    f.supervisor.releaseAll();
-    if (assertionFailure) throw assertionFailure; // releaseAll intentionally catches lock errors.
+    assert.throws(() => f.supervisor.releaseAll(), error => error instanceof AggregateError
+      && error.message === "runtime_supervisor_release_incomplete"
+      && error.errors.some(entry => entry?.message === "actual runtime lock cleanup failed"));
+    if (assertionFailure) throw assertionFailure; // releaseAll drains neighboring owners before surfacing cleanup errors.
     assert.deepEqual(observed, locks);
     assert.equal(existsSync(locks[0]), true);
     assert.equal(existsSync(locks[1]), false);
-    f.supervisor.releaseAll(); assert.deepEqual(observed, locks);
+    f.supervisor.releaseAll(); assert.deepEqual(observed, [...locks, locks[0]]);
+    assert.equal(existsSync(locks[0]), false);
+    f.supervisor.releaseAll(); assert.deepEqual(observed, [...locks, locks[0]]);
     for (const channel of channels) assertRetired(channel);
   } finally { patch.mock.restore(); syncBuiltinESMExports(); }
 });
@@ -310,7 +317,7 @@ test("constructor-private Registry readers reject copied registries without touc
 test("real stage cannot pass private Office inventory through public no-op checks and failed begin stays closed",
   { skip: process.platform !== "darwin" }, t => {
     const f = registeredStage(t);
-    assert.equal(readOriginalProtectedHostActorEntries().length, 20);
+    assert.equal(readOriginalProtectedHostActorEntries().length, 21);
     f.registry.assertStageCurrent(f.stage); // Control: actual original stage/source is currently valid.
     assert.ok(Object.isFrozen(f.stage)); assert.deepEqual(Reflect.ownKeys(f.stage), []);
     let publicCalls = 0;

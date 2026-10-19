@@ -27,6 +27,10 @@ const addedDependencyGroups = Object.freeze({
     "apps/desktop/scripts/packaged-codesign-review-publication.mjs",
     "apps/desktop/scripts/packaged-office-native-asar-checks.mjs",
     "apps/desktop/scripts/packaged-office-native-review-inputs.mjs",
+    "apps/desktop/scripts/stage-development-bundled-plugins.mjs",
+    "packages/daemon/src/features/plugins/bundled/cua-driver/.ling-plugin/plugin.json",
+    "packages/daemon/src/features/plugins/bundled/cua-driver/mcp-server.json",
+    "packages/daemon/src/features/plugins/bundled/cua-driver/README.md",
   ],
   helper: [
     "native/sandbox/Cargo.toml", "native/sandbox/Cargo.lock", "native/sandbox/rust-toolchain.toml",
@@ -98,6 +102,19 @@ test("Office recovery discovery validation remains an explicit packaging source 
 test("C001 parent-lease stream writer remains an explicit packaging source input", () => {
   assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(
     "apps/desktop/scripts/cua-driver-parent-lease-stream-writer.mjs"));
+});
+
+test("Office bundled-plugin staging code and copied metadata remain in the fixed review closure", () => {
+  const stageScript = "apps/desktop/scripts/stage-development-bundled-plugins.mjs";
+  const metadata = [
+    "packages/daemon/src/features/plugins/bundled/cua-driver/.ling-plugin/plugin.json",
+    "packages/daemon/src/features/plugins/bundled/cua-driver/mcp-server.json",
+    "packages/daemon/src/features/plugins/bundled/cua-driver/README.md",
+  ];
+  assert.ok(PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS.includes(stageScript));
+  for (const path of [stageScript, ...metadata]) {
+    assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path), path);
+  }
 });
 
 /** Disposable, explicitly synthetic compiler/signature fixture. It never approves product sources. */

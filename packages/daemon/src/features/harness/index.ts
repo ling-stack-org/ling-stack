@@ -27,6 +27,13 @@ export { createRunEvaluationQaModelConfiguration, runEvaluationQaModelConfigurat
 export type { RunEvaluationQaModelConfiguration, RunEvaluationQaModelConfigurationInput,
   RunEvaluationQaModelConfigurationFacts } from "./evaluations/qa-model-preparation.js";
 export { createRunEvaluationQaModelHostAdapter } from "./evaluations/qa-model-coordinator.js";
+export {
+  reconcileRunEvaluationTasksAtStartup,
+  RunEvaluationTaskWorkerComposition,
+  type RunEvaluationQaTaskWorkerActivation,
+  type RunEvaluationTaskStartupRecoveryResult,
+  type RunEvaluationTaskWorkerCompositionOptions,
+} from "./evaluations/task-worker-composition.js";
 export { createRunEvaluationQaOwnedModelBatch, runEvaluationQaOwnedModelBatchFacts,
   createRunEvaluationQaProviderCurrentness } from "./evaluations/qa-model-owned-batch.js";
 export type { RunEvaluationQaOwnedModelBatch } from "./evaluations/qa-model-owned-batch.js";

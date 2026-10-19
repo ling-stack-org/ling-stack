@@ -96,6 +96,50 @@ test("skill revision preview is side-effect free and publication preserves owner
   }
 });
 
+test("skill revision approval action decoder rejects unknown actions and accepts Host capability", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-revision-actions-"));
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const skill = await publishImportedSkill(baseUrl, cwd, {
+      id: "approval-action-decoder-skill",
+      name: "Approval action decoder skill",
+      summary: "Verify the runtime approval action closed set.",
+      promptFragments: ["Use only the declared Host capability."],
+      requiredTools: ["read"],
+      requiredProviderCapabilities: ["chat"],
+      approvalProfile: { mode: "none" },
+    });
+    const definition = {
+      name: skill.definition.name,
+      summary: skill.definition.summary,
+      promptFragments: skill.definition.promptFragments,
+      requiredTools: skill.definition.requiredTools,
+      requiredProviderCapabilities: skill.definition.requiredProviderCapabilities,
+      approvalProfile: { mode: "strict", risk: "medium", requiredForActions: ["unknown_host_action"] },
+    };
+    const invalid = await postJsonResponse(
+      `${baseUrl}/skills/${skill.id}/revision-preview?cwd=${encodeURIComponent(cwd)}`,
+      { expectedUpdatedAt: skill.updatedAt, definition });
+    assert.equal(invalid.status, 400);
+    assert.equal((await invalid.json()).error, "skill_revision_invalid");
+
+    definition.approvalProfile.requiredForActions = ["host_capability"];
+    const preview = await postJson(
+      `${baseUrl}/skills/${skill.id}/revision-preview?cwd=${encodeURIComponent(cwd)}`,
+      { expectedUpdatedAt: skill.updatedAt, definition });
+    assert.deepEqual(preview.preview.definition.approvalProfile.requiredForActions, ["host_capability"]);
+    assert.equal(preview.preview.requiresConfirmation, true);
+  } finally {
+    await daemon.stop();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("skill revision rejects read-only sources and preserves AI candidate lineage", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-revision-ai-"));
   const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 });

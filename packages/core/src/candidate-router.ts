@@ -90,5 +90,6 @@ function containsSecretAdjacentText(text: string): boolean {
 }
 
 function looksScheduled(text: string): boolean {
-  return /\b(every|daily|weekly|monthly|cron|schedule|scheduled|monitor|reminder|friday|monday|每周|每天|定时|提醒)\b/.test(text);
+  return /\b(every|daily|weekly|monthly|cron|schedule|scheduled|monitor|reminder|friday|monday)\b/.test(text)
+    || /(每周|每天|定时|提醒)/u.test(text);
 }

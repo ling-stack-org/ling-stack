@@ -772,7 +772,7 @@ test("channel team metrics exposes visible evidence total separately from team e
   }
 });
 
-test("approval-only workflow owner closes immediately after approval", async () => {
+test("ordinary tool approval cannot synthesize workflow completion without execution evidence", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-approval-owner-"));
   const store = createSqliteRunStore(cwd);
   let workflow;
@@ -783,7 +783,7 @@ test("approval-only workflow owner closes immediately after approval", async () 
     workflow = store.createChannelWorkflow({
       channelId: channel.id,
       title: "Review risky command",
-      objective: "Close the approval-only workflow owner.",
+      objective: "Do not turn a tool approval into workflow completion.",
       status: "waiting_for_approval",
       createdBy: "system",
     }, "2026-06-11T00:01:00.000Z");
@@ -801,7 +801,7 @@ test("approval-only workflow owner closes immediately after approval", async () 
       actionType: "bash",
       risk: "high",
       title: "Review risky shell command",
-      description: "Approval-only legacy workflow step.",
+      description: "Tool approval carries workflow lineage, but has no owning Run or workflow gate.",
       payload: { type: "bash", cwd, command: "git status --short", riskFlags: ["requires_user_review"] },
     }, "2026-06-11T00:01:20.000Z");
     store.close();
@@ -814,9 +814,14 @@ test("approval-only workflow owner closes immediately after approval", async () 
       assert.equal(resolved.approval.status, "approved");
 
       const workflowResponse = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}?cwd=${encodeURIComponent(cwd)}`);
-      assert.equal(workflowResponse.workflow.status, "succeeded");
+      assert.equal(workflowResponse.workflow.status, "waiting_for_approval",
+        "an approved tool request is not evidence of workflow execution or completion");
       const stepsResponse = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
-      assert.equal(stepsResponse.workflowSteps.find((candidate) => candidate.id === step.id)?.status, "succeeded");
+      const unchangedStep = stepsResponse.workflowSteps.find((candidate) => candidate.id === step.id);
+      assert.equal(unchangedStep?.status, "waiting_for_approval");
+      assert.equal(unchangedStep.taskId, undefined);
+      assert.equal(unchangedStep.runId, undefined);
+      assert.equal(unchangedStep.resultSummary, undefined);
     } finally {
       await daemon.close();
     }
@@ -6404,16 +6409,25 @@ test("proposal provider preflight blocks missing workspace default and freezes c
     } = qaStep.metadata;
     store.database.prepare("UPDATE channel_workflow_steps SET metadata_json = ? WHERE id = ?")
       .run(JSON.stringify(qaMetadataWithoutBinding), qaStep.id);
+    const invalidBasisStep = store.getChannelWorkflowStep(qaStep.id);
+    const priorLeases = store.listResourceLeases({ resourceType: "workflow_step", resourceKey: qaStep.id, limit: 100 });
+    let missingBindingValidationCalls = 0;
     const missingBinding = prepareWorkflowStepStart(
       store,
       qaStep.id,
       { mode: "create_and_run_task" },
       cwd,
-      () => undefined,
+      () => { missingBindingValidationCalls += 1; },
     );
-    assert.equal(missingBinding.kind, "blocked");
-    assert.match(missingBinding.blocker, /no valid frozen provider binding/);
+    // An invalid manifest authority basis is rejected before provider preflight,
+    // resource admission or task creation, even when no approval gate is configured.
+    assert.equal(missingBinding.kind, "error", JSON.stringify(missingBinding));
+    assert.equal(missingBinding.statusCode, 409);
+    assert.equal(missingBinding.code, "workflow_pre_approval_basis_stale");
+    assert.equal(missingBindingValidationCalls, 0);
     const missingBindingStep = store.getChannelWorkflowStep(qaStep.id);
+    assert.deepEqual(missingBindingStep, invalidBasisStep);
+    assert.deepEqual(store.listResourceLeases({ resourceType: "workflow_step", resourceKey: qaStep.id, limit: 100 }), priorLeases);
     assert.equal(missingBindingStep.taskId, undefined);
     assert.equal(missingBindingStep.runId, undefined);
   } finally {

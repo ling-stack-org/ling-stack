@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
+import { mkdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync } from "node:fs";
 import test from "node:test";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { stream } from "../../runner-pi/node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js";
 import { PiRunnerAdapter } from "../../runner-pi/dist/index.js";
 import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, toRuntimeAttemptFence } from "../../core/dist/index.js";
@@ -41,6 +42,7 @@ async function fixture(t, answerText = "深色", transcriptOptions = undefined) 
     task: f.sourceTask,
     provider: f.sourceProvider,
     tools: ["read", "write"],
+    initialToolSurface: { userInput: true },
   };
   const preparedInput = await prepareFixtureTaskInput(sourceOptions);
   const runnerExecutionInput = capturePreparedRunnerInput({ runnerId: f.attempt.effectiveRunnerId, options: sourceOptions, preparedInput });
@@ -104,13 +106,14 @@ async function admitClaim({ store, request, claim }, runtimeInstanceId = "worker
   }, claimedAt);
 }
 
-function acknowledge(store, threadId, deliveryId, binding, accepted = recoveredAt) {
+function acknowledge(store, threadId, deliveryId, binding, claim, accepted = recoveredAt) {
   const execution = store.getUserInputContinuationPreparation(threadId, deliveryId, "execution");
   return store.acknowledgeUserInputContinuation({
     threadId,
     deliveryId,
     bindingRef: { id: binding.id, fingerprint: binding.fingerprint },
     sourceFence: binding.fence,
+    claim: { ownerId: claim.ownerId, claimToken: claim.claimToken },
     receipt: {
       schemaVersion: 1,
       boundary: "pi-session-ready",
@@ -124,6 +127,7 @@ function acknowledge(store, threadId, deliveryId, binding, accepted = recoveredA
 
 function worker(t, options) {
   const value = new UserInputDeliveryWorkerRegistry({ scanIntervalMs: 60_000, leaseMs: 1_000, ...options });
+  value.start();
   t.after(async () => {
     value.beginShutdown();
     await value.waitForIdle();
@@ -179,7 +183,7 @@ async function seedAdditionalDelivery(f, answerText) {
     prompt: "Preserve the independent second project.", channelId: channel.id };
   const provider = { provider: "fixture", model: "fixture", api: "openai-completions",
     baseUrl: "https://fixture.invalid/v1", authHeader: false, reasoning: false };
-  const sourceOptions = { cwd, task, provider, tools: [] };
+  const sourceOptions = { cwd, task, provider, tools: [], initialToolSurface: { userInput: true } };
   const runnerExecutionInput = capturePreparedRunnerInput({ runnerId: attempt.effectiveRunnerId,
     options: sourceOptions, preparedInput: await prepareFixtureTaskInput(sourceOptions) });
   const sourceRequest = { ...sourceOptions, workspaceCwd: f.cwd, threadId: thread.id, turnId: turn.turnId,
@@ -245,8 +249,8 @@ function deferred() {
 }
 
 async function waitUntil(read, description, timeoutMs = 5_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  const deadline = performance.now() + timeoutMs;
+  while (performance.now() < deadline) {
     const value = read();
     if (value) return value;
     await new Promise(resolve => setTimeout(resolve, 10));
@@ -304,6 +308,7 @@ test("binding without ACK survives a worker Store close and resumes without allo
   const first = worker(t, {
     ownerId: "delivery-worker-before-restart",
     now: () => claimedAt,
+    retryDelayMs: 2_000,
     execute: async input => {
       firstBinding = await admitClaim(input, "runtime-before-restart");
       throw new Error("receiver initialization failed");
@@ -317,24 +322,67 @@ test("binding without ACK survives a worker Store close and resumes without allo
   const reopened = createSqliteRunStore(f.cwd);
   t.after(() => reopened.close());
   const recovered = [];
+  let recoveryNow = claimedAt;
   const second = worker(t, {
     ownerId: "delivery-worker-after-restart",
-    now: () => claimedAt,
+    now: () => recoveryNow,
     execute: async input => {
       recovered.push(input);
-      acknowledge(input.store, input.threadId, input.deliveryId, input.binding);
+      acknowledge(input.store, input.threadId, input.deliveryId, input.binding, input.claim);
       return input.binding.runId;
     },
   });
   second.registerStore(reopened);
   await second.waitForIdle();
 
+  assert.equal(recovered.length, 0, "restart must honor the durable retry backoff");
+  const deferred = reopened.getUserInputDelivery(f.thread.id, f.receipt.deliveryId);
+  assert.equal(deferred.claim, null);
+  assert.equal(deferred.retryAt, recoveredAt);
+  recoveryNow = recoveredAt;
+  await second.scanStore(reopened);
+  await second.waitForIdle();
+
   assert.equal(recovered.length, 1);
-  assert.equal(recovered[0].claim, undefined);
+  assert.equal(recovered[0].claim.expectedRevision, firstBinding.deliveryRevision);
+  assert.equal(recovered[0].claim.ownerId, "delivery-worker-after-restart");
   assert.deepEqual(recovered[0].binding, firstBinding);
   assert.equal(reopened.listWorkUnitAttempts(f.unit.id).length, 2);
   assert.equal(reopened.getUserInputDelivery(f.thread.id, f.receipt.deliveryId).status, "applied");
   assert.equal(reopened.getRun(firstBinding.runId).status, "running");
+});
+
+test("a stale initial worker cannot defer the replacement recovery lease after admission", async t => {
+  const f = await fixture(t);
+  let currentTime = claimedAt;
+  let binding, replacement;
+  const failures = [];
+  const first = worker(t, {
+    ownerId: "delivery-worker-stale-after-admission",
+    now: () => currentTime,
+    onError: failure => failures.push(failure),
+    execute: async input => {
+      binding = await admitClaim(input);
+      currentTime = recoveredAt;
+      replacement = input.store.claimUserInputContinuationRecovery({
+        threadId: input.threadId, deliveryId: input.deliveryId,
+        bindingRef: { id: binding.id, fingerprint: binding.fingerprint },
+        sourceFence: binding.fence, ownerId: "replacement-recovery-worker", leaseMs: 1_000,
+      }, currentTime);
+      assert.equal(replacement.status, "claimed");
+      throw new Error("original receiver no longer owns the delivery");
+    },
+  });
+  first.registerStore(f.store);
+  await first.waitForIdle();
+  const delivery = f.store.getUserInputDelivery(f.thread.id, f.receipt.deliveryId);
+  assert.equal(delivery.claim.ownerId, replacement.claim.ownerId);
+  assert.equal(delivery.claim.token, replacement.claim.claimToken);
+  assert.equal(delivery.retryAt, null);
+  assert.equal(delivery.lastErrorCode, null);
+  assert.equal(delivery.successorRunId, binding.runId);
+  assert.equal(f.store.listWorkUnitAttempts(f.unit.id).length, 2);
+  assert.ok(failures.some(failure => failure.phase === "retry" && failure.code === "retry_lost"));
 });
 
 test("runtime startup reconciliation preserves an admitted binding until its real receiver ACK", async t => {
@@ -359,14 +407,18 @@ test("runtime startup reconciliation preserves an admitted binding until its rea
     assert.equal(f.store.getWorkUnit(binding.fence.workUnitId).status, "claimed");
     assert.equal(f.store.getWorkUnitAttempt(binding.fence.attemptId).status, "created");
     assert.equal(f.store.getUserInputContinuationReceipt(f.thread.id, f.receipt.deliveryId), undefined);
+    const deferred = f.store.getUserInputDelivery(f.thread.id, f.receipt.deliveryId);
+    assert.equal(deferred.claim, null);
+    assert.ok(deferred.retryAt > recoveredAt, "fixture must cross the durable receiver backoff before recovery");
+    const restartedAt = new Date(Date.parse(deferred.retryAt) + 1).toISOString();
 
     const recovered = [];
     const second = worker(t, {
       ownerId: "delivery-worker-after-runtime-restart",
-      now: () => recoveredAt,
+      now: () => restartedAt,
       execute: async input => {
         recovered.push(input);
-        acknowledge(input.store, input.threadId, input.deliveryId, input.binding);
+        acknowledge(input.store, input.threadId, input.deliveryId, input.binding, input.claim, restartedAt);
         return input.binding.runId;
       },
     });
@@ -411,6 +463,7 @@ test("real daemon restart reuses admitted bindings and frees the single worker s
   const releaseFirstProvider = deferred();
   let firstFetchCount = 0;
   let secondFetchCount = 0;
+  const prestartEvidence = [];
   try {
     await firstDaemon.start();
     const firstBinding = await waitForBinding(
@@ -423,6 +476,13 @@ test("real daemon restart reuses admitted bindings and frees the single worker s
       "the single worker slot must remain occupied until the first durable ACK");
     assert.equal(f.store.getRun(firstBinding.runId).status, "queued");
     await firstDaemon.stop();
+
+    const deferred = f.store.getUserInputDelivery(f.thread.id, f.receipt.deliveryId);
+    assert.equal(deferred.claim, null, "stopped pre-ACK execution must release only its own recovery claim");
+    assert.ok(deferred.retryAt);
+    // Advance only the fixture wall clock beyond the persisted backoff. Real
+    // worker timers and the existing bounded provider observation stay intact.
+    t.mock.timers.enable({ apis: ["Date"], now: Date.parse(deferred.retryAt) + 1 });
 
     class RestartedFixtureRunner extends PiRunnerAdapter {
       registerCustomProviderIfNeeded(runtime, provider) {
@@ -448,7 +508,18 @@ test("real daemon restart reuses admitted bindings and frees the single worker s
       }
     }
     restartedDaemon = createDaemonServer({ defaultWorkspaceCwd: f.cwd, host: "127.0.0.1", port: 0,
-      channels: { terminalReports: false } }, { runner: new RestartedFixtureRunner() });
+      channels: { terminalReports: false } }, { runner: new RestartedFixtureRunner(), storeFactory: cwd => {
+        const store = createSqliteRunStore(cwd);
+        const recover = store.recoverUserInputContinuationPrestart.bind(store);
+        t.mock.method(store, "recoverUserInputContinuationPrestart", input => {
+          const result = recover(input);
+          prestartEvidence.push({ result, attempt: store.getWorkUnitAttempt(input.sourceFence.attemptId),
+            slots: store.listRuntimeSemaphoreSlots({ ownerId: input.sourceFence.attemptId }),
+            runtimeEvents: store.listRuntimeEvents(input.sourceFence.workUnitId) });
+          return result;
+        });
+        return store;
+      } });
     await restartedDaemon.start();
 
     try {
@@ -460,7 +531,8 @@ test("real daemon restart reuses admitted bindings and frees the single worker s
         delivery: f.store.getUserInputDelivery(f.thread.id, f.receipt.deliveryId),
         binding: recoveredBinding,
         receipt: f.store.getUserInputContinuationReceipt(f.thread.id, f.receipt.deliveryId),
-        run: recoveredRun,
+        run: recoveredRun && { status: recoveredRun.status, errorMessage: recoveredRun.errorMessage },
+        prestartEvidence,
         workUnit: recoveredBinding ? f.store.getWorkUnit(recoveredBinding.fence.workUnitId) : undefined,
         attempts: recoveredBinding ? f.store.listWorkUnitAttempts(recoveredBinding.fence.workUnitId) : [],
         events: recoveredBinding ? f.store.listEvents(recoveredBinding.runId, { limit: 100 }) : [],
@@ -506,6 +578,87 @@ test("real daemon restart reuses admitted bindings and frees the single worker s
     if (firstDaemon.server.listening) await firstDaemon.stop();
   }
 });
+
+for (const mirrorFailure of ["directory", "symlink_loop"]) {
+test(`real daemon retries a committed run_created mirror ${mirrorFailure} I/O failure without ACK or duplicate model execution`, { timeout: 20_000 }, async t => {
+  const f = await fixture(t, "MIRROR_RECOVERY_ANSWER", { surface: "channel" });
+  let mirrorPath;
+  let providerCalls = 0;
+  class MirrorRecoveryRunner extends PiRunnerAdapter {
+    registerCustomProviderIfNeeded(runtime, provider) {
+      super.registerCustomProviderIfNeeded(runtime, provider);
+      runtime.registerProvider(provider.provider, { api: "openai-completions",
+        streamSimple: (model, context, options) => stream(model, context, { ...options, fetch: async () => {
+          providerCalls += 1;
+          return successfulProviderResponse("Mirror recovery completed.");
+        } }),
+      });
+    }
+  }
+  const daemonConfig = { defaultWorkspaceCwd: f.cwd, host: "127.0.0.1", port: 0,
+    channels: { terminalReports: false } };
+  const dependencies = { runner: new MirrorRecoveryRunner(), storeFactory: cwd => {
+      const store = createSqliteRunStore(cwd);
+      const publish = store.publishUserInputContinuationRunCreated.bind(store);
+      t.mock.method(store, "publishUserInputContinuationRunCreated", (input, now) => {
+        if (!mirrorPath) {
+          mirrorPath = store.getRun(input.runId).eventLogPath;
+          // Real filesystem failure after SQLite commit, not a fake Store outcome.
+          mkdirSync(dirname(mirrorPath), { recursive: true });
+          if (mirrorFailure === "directory") mkdirSync(mirrorPath);
+          else {
+            symlinkSync(mirrorPath, mirrorPath);
+            assert.throws(() => readFileSync(mirrorPath), error => error.code === "ELOOP");
+          }
+        }
+        return publish(input, now);
+      });
+      return store;
+    } };
+  let daemon = createDaemonServer(daemonConfig, dependencies);
+  try {
+    await daemon.start();
+    const binding = await waitForBinding(f.store, f.thread.id, f.receipt.deliveryId, "the mirror recovery binding");
+    await waitUntil(() => {
+      const delivery = f.store.getUserInputDelivery(f.thread.id, f.receipt.deliveryId);
+      return delivery.retryAt || delivery.status === "failed" || f.store.getRun(binding.runId).status === "failed";
+    }, "durable backoff or a terminal startup failure after mirror I/O");
+    const deferred = f.store.getUserInputDelivery(f.thread.id, f.receipt.deliveryId);
+    assert.equal(deferred.status, "claimed");
+    assert.equal(deferred.claim, null);
+    assert.ok(deferred.retryAt, "mirror I/O must preserve the binding with durable backoff, not fail startup");
+    assert.equal(f.store.getRun(binding.runId).status, "queued");
+    assert.equal(f.store.getUserInputContinuationReceipt(f.thread.id, f.receipt.deliveryId), undefined);
+    assert.equal(providerCalls, 0, "mirror must finish before ACK and model execution");
+    const committed = f.store.listEvents(binding.runId).filter(event => event.type === "run_created");
+    assert.equal(committed.length, 1);
+    await daemon.stop();
+    if (mirrorFailure === "directory") rmdirSync(mirrorPath);
+    else unlinkSync(mirrorPath);
+    t.mock.timers.enable({ apis: ["Date"], now: Date.parse(deferred.retryAt) + 1 });
+    // A real fresh daemon supplies a deterministic discovery wake after the
+    // persisted due time; do not race the production 5s poll with a 5s assert.
+    daemon = createDaemonServer(daemonConfig, dependencies);
+    await daemon.start();
+    try {
+      await waitUntil(() => f.store.getRun(binding.runId).status === "succeeded", "mirror recovery terminal state");
+    } catch {
+      assert.fail(`Mirror recovery did not finish: ${JSON.stringify({ providerCalls,
+        delivery: f.store.getUserInputDelivery(f.thread.id, f.receipt.deliveryId),
+        run: { status: f.store.getRun(binding.runId).status, errorMessage: f.store.getRun(binding.runId).errorMessage },
+        eventTypes: f.store.listEvents(binding.runId).map(event => event.type) })}`);
+    }
+    assert.equal(providerCalls, 1);
+    assert.equal(f.store.getUserInputContinuationBinding(f.thread.id, f.receipt.deliveryId).id, binding.id);
+    assert.equal(f.store.listWorkUnitAttempts(f.unit.id).length, 2);
+    assert.deepEqual(f.store.listEvents(binding.runId).filter(event => event.type === "run_created"), committed);
+    assert.deepEqual(readFileSync(mirrorPath, "utf8").trim().split("\n").map(JSON.parse)
+      .filter(event => event.type === "run_created"), committed);
+  } finally {
+    if (daemon.server.listening) await daemon.stop();
+  }
+});
+}
 
 test("delivery execution is detached from SSE and retries a pre-admission receiver failure", async t => {
   const f = await fixture(t);

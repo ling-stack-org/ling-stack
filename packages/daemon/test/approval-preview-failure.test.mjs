@@ -69,8 +69,10 @@ test("original Git preview refusals close their owning approval before escaping"
       if (scenario === "harness_failed") t.mock.method(f.store, "resolveHarnessToolApproval", () => { throw cleanupFailure; });
       const handler = createRunApprovalHandler({ ...f.options,
         appendAndMaybeStream(type, data) {
-          if (scenario === "event_failed" && type === "approval_cancelled") throw cleanupFailure;
           return f.options.appendAndMaybeStream(type, data);
+        },
+        streamEnvelope(event) {
+          if (scenario === "event_failed" && event.type === "approval_cancelled") throw cleanupFailure;
         },
         onApprovalWaitStarted() { callbacks.started += 1; paused = true; },
         onApprovalResolved(approval) {
@@ -98,7 +100,7 @@ test("original Git preview refusals close their owning approval before escaping"
       const events = f.store.listEvents(f.run.id, { limit: 100 });
       assert.equal(events.some(event => ["approval_requested", "host_command_prepared"].includes(event.type)), false);
       assert.equal(events.filter(event => event.type === "approval_cancelled").length,
-        ["harness_failed", "callback_failed"].includes(scenario) ? 1 : 0);
+        ["harness_failed", "event_failed", "callback_failed"].includes(scenario) ? 1 : 0);
       assert.equal(callbacks.started, 1);
       assert.deepEqual(callbacks.resolved.map(approval => approval.status), pending ? [] : [approval.status]);
       assert.equal(callbacks.abandoned, pending || scenario === "callback_failed" ? 1 : 0);
@@ -293,7 +295,8 @@ test("original Git preview refusals close their owning approval before escaping"
             const now = new Date().toISOString();
             const denied = f.other.denyApprovalRequest(data.approvalId, { reason: "neighboring human denial" }, now);
             const postCommit = reconcileApprovalPostCommitEffects({ store: f.other, approval: denied, cwd: f.run.cwd, now });
-            assert.equal(postCommit.deferred, false, "use the real Host post-commit decision publication, not an unfenced runner write");
+            assert.equal(postCommit.deferred, true,
+              "owner evidence stays pending until the run handler leaves waiting_for_approval");
             hostDecisionEvent = f.other.listEvents(f.run.id).find(event => event.type === "approval_denied" && event.data.approvalId === denied.id);
             assert.ok(hostDecisionEvent);
           }

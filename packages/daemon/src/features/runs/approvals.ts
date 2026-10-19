@@ -1432,7 +1432,7 @@ function findApprovalDecisionEvent(
     .listEvents(approval.runId, { afterSeq, limit: 1000 })
     .find(
       (event) =>
-        (event.type === "approval_approved" || event.type === "approval_denied" || event.type === "approval_expired") &&
+        event.type === approvalDecisionEventType(approval) &&
         isRecord(event.data) &&
         event.data.approvalId === approval.id,
     );

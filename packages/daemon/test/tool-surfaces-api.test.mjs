@@ -66,8 +66,8 @@ test("tool load requests materialize catalog summary without changing execution 
   });
 
   try {
-    const fixture = seedToolSurfaceFixture(store, cwd);
     await daemon.start();
+    const fixture = seedToolSurfaceFixture(store, cwd);
     const baseUrl = serverBaseUrl(daemon);
 
     const response = await postJson(
@@ -256,9 +256,9 @@ test("tool load requests reject over-budget namespace materialization before run
   });
 
   try {
+    await daemon.start();
     const fixture = seedToolSurfaceFixture(store, cwd);
     seedManyToolServer(store, 65);
-    await daemon.start();
     const baseUrl = serverBaseUrl(daemon);
 
     const response = await postJsonResponse(
@@ -281,6 +281,40 @@ test("tool load requests reject over-budget namespace materialization before run
       event.type === "tool_namespace_materialized" || event.type === "tool_hydration_rejected").length, 0);
     const errorJson = JSON.stringify(response.body);
     assert.doesNotMatch(errorJson, /inputSchema|over-budget-secret|load-too-many-tools|schema-secret-marker/);
+  } finally {
+    await daemon.stop();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("tool load requests reject a source whose execution owner was retired during startup recovery", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-tool-load-stale-owner-"));
+  const store = createSqliteRunStore(cwd);
+  const daemon = createDaemonServer({
+    host: "127.0.0.1",
+    port: 0,
+    defaultWorkspaceCwd: cwd,
+  }, {
+    runner: new NoopRunner(),
+    storeFactory: () => store,
+  });
+
+  try {
+    const fixture = seedToolSurfaceFixture(store, cwd);
+    await daemon.start();
+    const response = await postJsonResponse(
+      `${serverBaseUrl(daemon)}/runs/${encodeURIComponent(fixture.runId)}/tool-load-requests?cwd=${encodeURIComponent(cwd)}`,
+      {
+        scope: { kind: "namespace", namespaceId: "mcp:mcp_files" },
+        reason: "must not hydrate after recovery retired the owner",
+        idempotencyKey: "stale-owner-tool-load",
+      },
+    );
+
+    assert.equal(response.status, 409);
+    assert.equal(response.body.error, "tool_materialization_denied");
+    assert.equal(store.listRuntimeEvents(fixture.workUnitId, { limit: 10 }).some((event) =>
+      event.type === "tool_namespace_materialized" || event.type === "tool_hydration_rejected"), false);
   } finally {
     await daemon.stop();
     await rm(cwd, { recursive: true, force: true });

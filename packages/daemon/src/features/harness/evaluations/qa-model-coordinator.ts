@@ -16,7 +16,7 @@ import { admitRunEvaluationQaModelTransport, createRunEvaluationQaModelTransport
 import { runEvaluationQaOwnedModelBatchInput, type RunEvaluationQaOwnedModelBatch } from "./qa-model-owned-batch.js";
 
 type QaWorkerStore = RunEvaluationTaskWorkerStore & RunEvaluationQaStore & Pick<RunStore, "getArtifact" | "createArtifact">;
-/** Explicit QA-only composition. No production registration, route, Agent SDK or history/Memory reader. */
+/** Explicit QA-only adapter. Only trusted Host composition may register it; there is no route, Agent SDK or history/Memory reader. */
 export function createRunEvaluationQaModelHostAdapter(options: {
   readonly store: QaWorkerStore;
   readonly ownedBatch: RunEvaluationQaOwnedModelBatch;

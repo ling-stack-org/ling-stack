@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
-import type { RunStore, UserInputContinuationBinding, UserInputContinuationExecutionPlan } from "@ling-stack/core";
+import type { RunStore, UserInputContinuationBinding, UserInputContinuationClaim,
+  UserInputContinuationExecutionPlan } from "@ling-stack/core";
 import { PiRunnerAdapter, readPreparedPiInput, type PiRunnerRunOptions } from "@ling-stack/runner-pi";
 import type { RunnerAdapter } from "../../context.js";
 import { HttpError } from "../../errors.js";
@@ -17,6 +18,7 @@ export function withUserInputContinuationReceiver(input: {
   readonly store: ReceiverStore;
   readonly threadId: string;
   readonly binding: UserInputContinuationBinding;
+  readonly claim: UserInputContinuationClaim;
   readonly adapter: RunnerAdapter;
   readonly options: PiRunnerRunOptions;
   readonly now?: () => string;
@@ -53,7 +55,8 @@ export function withUserInputContinuationReceiver(input: {
       signal.throwIfAborted();
       const acceptedAt = input.now?.() ?? new Date().toISOString();
       const accepted = store.acknowledgeUserInputContinuation({ threadId, deliveryId: binding.deliveryId,
-        bindingRef: { id: binding.id, fingerprint: binding.fingerprint }, sourceFence: binding.fence, receipt },
+        bindingRef: { id: binding.id, fingerprint: binding.fingerprint }, sourceFence: binding.fence,
+        claim: { ownerId: input.claim.ownerId, claimToken: input.claim.claimToken }, receipt },
       acceptedAt);
       // Read-only ACK replay is valid audit/recovery, never permission to send the model twice.
       if (accepted.replayed) return reject("user_input_already_received");

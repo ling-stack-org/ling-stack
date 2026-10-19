@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
+  approvalActionTypes,
   DEFAULT_WORKSPACE_ID,
   providerCapabilities,
   readOnlyRunTools,
@@ -10,7 +11,6 @@ import {
   type SkillRegistryEntry,
 } from "@ling-stack/core";
 import type {
-  ApprovalActionType,
   ApprovalRisk,
   SkillApprovalMode,
   SkillApprovalProfile,
@@ -33,25 +33,6 @@ import { skillPermissionWarnings } from "./schemas.js";
 const toolNames = [...readOnlyRunTools, ...riskyRunTools] as readonly ToolName[];
 const approvalModes = ["none", "standard", "strict"] as const satisfies readonly SkillApprovalMode[];
 const approvalRisks = ["low", "medium", "high", "critical"] as const satisfies readonly ApprovalRisk[];
-const approvalActionTypes = [
-  "read",
-  "grep",
-  "find",
-  "ls",
-  "write",
-  "edit",
-  "bash",
-  "git_commit",
-  "git_push",
-  "external_send",
-  "deploy",
-  "media_cost",
-  "credential_change",
-  "provider_change",
-  "workflow_step",
-  "mcp_tool_call",
-  "runtime_permission_request",
-] as const satisfies readonly ApprovalActionType[];
 
 type SkillRouteStore = ReturnType<RunStoreRegistry["getStore"]>;
 

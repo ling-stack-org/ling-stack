@@ -33,20 +33,27 @@ export function mapUserInputDelivery(row: UserInputRow): UserInputDelivery {
       || (lastErrorCode !== null && !deliveryRetryCodes.includes(lastErrorCode))
       || (successorRunId !== null && !validDeliveryKey(successorRunId))) throw new Error("invalid");
     if (status === "claimed") {
-      if (!validDeliveryKey(claimOwner) || !validDeliveryKey(token) || !expiry || !successorRunId || Number(row.attempt_count) < 1
-        || retryAt || userInputTimestamp(expiry) <= userInputTimestamp(updatedAt)) throw new Error("invalid");
+      const hasCompleteClaim = validDeliveryKey(claimOwner) && validDeliveryKey(token) && Boolean(expiry);
+      const hasNoClaim = claimOwner === undefined && token === undefined && expiry === undefined;
+      if (!successorRunId || Number(row.attempt_count) < 1 || !hasCompleteClaim && !hasNoClaim
+        || hasCompleteClaim && (retryAt || lastErrorCode || userInputTimestamp(expiry!) <= userInputTimestamp(updatedAt))
+        || hasNoClaim && (!retryAt || !lastErrorCode || userInputTimestamp(retryAt) < userInputTimestamp(updatedAt))) throw new Error("invalid");
     } else if (claimOwner !== undefined || token !== undefined || expiry !== undefined) throw new Error("invalid");
     if (status === "failed") {
       if (!retryAt || !lastErrorCode || !successorRunId || Number(row.attempt_count) < 1
         || userInputTimestamp(retryAt) < userInputTimestamp(updatedAt)) throw new Error("invalid");
-    } else if (retryAt !== null) throw new Error("invalid");
+    } else if (status !== "claimed" && retryAt !== null) throw new Error("invalid");
     if (status === "pending" && (Number(row.attempt_count) !== 0 || successorRunId || lastErrorCode)) throw new Error("invalid");
     return {
       deliveryId: readString(row, "delivery_id"), answerId: readString(row, "answer_id"),
       requestId: readString(row, "request_id"), requestVersion: 1, threadId: readString(row, "thread_id"),
       consumerWorkUnitId: readString(row, "consumer_work_unit_id"), status, revision: Number(row.status_revision),
       attemptCount: Number(row.attempt_count), createdAt, updatedAt, successorRunId,
-      claim: status === "claimed" ? { ownerId: claimOwner!, token: token!, expiresAt: expiry! } : null, retryAt, lastErrorCode,
+      claim: status === "claimed" && claimOwner && token && expiry
+        ? { ownerId: claimOwner, token, expiresAt: expiry }
+        : null,
+      retryAt,
+      lastErrorCode,
     };
   } catch { throw new UserInputStoreError("invalid_record"); }
 }

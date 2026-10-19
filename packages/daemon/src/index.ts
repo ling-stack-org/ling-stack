@@ -56,6 +56,7 @@ import { syncWorkflowApprovalDecision } from "./features/channels/orchestrator.j
 import { DaemonRunnerRecoveryCoordinator } from "./features/harness/continuations/daemon-recovery-coordinator.js";
 import { reconcileHarnessToolExecutionsAtStartup } from "./features/harness/tool-execution/recovery.js";
 import { RunEvaluationSchedulerRegistry } from "./features/harness/evaluations/scheduler.js";
+import { RunEvaluationTaskWorkerComposition } from "./features/harness/evaluations/task-worker-composition.js";
 import {
   createDetachedRunExecutionSink,
   executeExistingRunContinuation,
@@ -276,6 +277,9 @@ export function createDaemonServer(
   let approvalAutoReviewRecoveryCoordinator: ApprovalAutoReviewRecoveryCoordinator | undefined;
   let daemonRunnerRecoveryCoordinator: DaemonRunnerRecoveryCoordinator | undefined;
   let runEvaluationScheduler: RunEvaluationSchedulerRegistry | undefined;
+  const runEvaluationTaskWorkers = new RunEvaluationTaskWorkerComposition({
+    activation: dependencies.runEvaluationQaTaskWorker,
+  });
   // Chrome/Office plugin synchronization opens the Store during construction.
   // The same original Supervisor must exist before any default Store is opened;
   // an injected factory remains untrusted and is never retrofitted with custody.
@@ -333,6 +337,7 @@ export function createDaemonServer(
     approvalResumeCoordinator?.registerStore(store);
     approvalAutoReviewRecoveryCoordinator?.registerStore(store);
     daemonRunnerRecoveryCoordinator?.registerStore(store);
+    runEvaluationTaskWorkers.registerStore(cwd, store);
     runEvaluationScheduler?.registerStore(store);
     startupOptionalWarmups?.start(cwd, store);
     reconcileAllContinuityWorkflows(store, { cause: "startup" });
@@ -546,7 +551,7 @@ export function createDaemonServer(
       const accepted = new Promise<string>((resolve) => { resolveAccepted = resolve; });
       const completion = executeUserInputContinuation(
         { request: input.request, threadId: input.threadId, deliveryId: input.deliveryId,
-          ...(input.claim ? { claim: input.claim } : { binding: input.binding! }) },
+          claim: input.claim, ...(input.binding ? { binding: input.binding } : {}) },
         createDetachedRunExecutionSink(),
         runnerRegistry,
         storeRegistry,
@@ -914,6 +919,7 @@ export function createDaemonServer(
       approvalRecoveryTimer = undefined;
       daemonRunnerRecoveryCoordinator.beginShutdown();
       userInputDeliveryWorker.beginShutdown();
+      runEvaluationTaskWorkers.beginShutdown();
       runEvaluationScheduler.beginShutdown();
       channelTurnDispatchReady = false;
       channelTurnDispatchWorker.beginShutdown();
@@ -952,6 +958,7 @@ export function createDaemonServer(
         await channelTurnDispatchWorker.close();
         await userInputDeliveryWorker.close();
         await automationSchedulers.waitForIdle();
+        await runEvaluationTaskWorkers.waitForIdle();
         await runEvaluationScheduler.waitForIdle();
         await providerImportShutdown;
         await cuaDriverActivationCoordinator.shutdown();

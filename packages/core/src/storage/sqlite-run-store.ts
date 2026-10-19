@@ -632,6 +632,7 @@ import { SqliteUserInputWaitCancellationStore } from "./sqlite/user-input-wait-c
 import { SqliteUserInputDeliveryStore } from "./sqlite/user-input-delivery-store.js";
 import { SqliteUserInputPreparationStore } from "./sqlite/user-input-preparation-store.js";
 import { SqliteUserInputHostContinuationStore } from "./sqlite/user-input-host-continuation-store.js";
+import { SqliteUserInputPrestartRecoveryStore } from "./sqlite/user-input-prestart-recovery-store.js";
 import { applyUserInputDeliveryMigration } from "./sqlite/user-input-delivery-migration.js";
 import { readSqliteSnapshot } from "./sqlite/read-snapshot.js";
 import { SqliteConversationThreadTopologyStore } from "./sqlite/conversation-thread-topology-store.js";
@@ -839,6 +840,7 @@ export class SqliteRunStore implements RunStore {
   private readonly userInputDelivery: SqliteUserInputDeliveryStore;
   private readonly userInputPreparation: SqliteUserInputPreparationStore;
   private readonly userInputContinuation: SqliteUserInputHostContinuationStore;
+  private readonly userInputPrestartRecovery: SqliteUserInputPrestartRecoveryStore;
   private readonly conversationThreadTopology: SqliteConversationThreadTopologyStore;
   private readonly conversationContext: SqliteConversationContextStore;
   private readonly channelRouteDecisions: SqliteChannelRouteDecisionStore;
@@ -886,6 +888,7 @@ export class SqliteRunStore implements RunStore {
     this.conversationTurnIngest = new SqliteConversationTurnIngestStore(
       { database: this.database },
       this.conversationItems,
+      this,
     );
     this.conversationContext = new SqliteConversationContextStore({ database: this.database });
     this.conversationAcceptedInput = new SqliteConversationAcceptedInputStore({ database: this.database }, this.conversationTurnIngest);
@@ -1109,6 +1112,11 @@ export class SqliteRunStore implements RunStore {
     );
     this.userInputContinuation = new SqliteUserInputHostContinuationStore({ database: this.database }, this,
       this.userInputDelivery, this.userInputPreparation, this.runSessions, this.runtimeWorkUnits, this.controlPlane);
+    this.userInputPrestartRecovery = new SqliteUserInputPrestartRecoveryStore(
+      { database: this.database },
+      (threadId, deliveryId) => this.userInputContinuation.readBindingWithinTransaction(threadId, deliveryId),
+      (runId) => this.runSessions.getRun(runId),
+    );
     this.runEvents = new SqliteRunEventStore(
       { database: this.database },
       {
@@ -4061,6 +4069,21 @@ export class SqliteRunStore implements RunStore {
   }
   failUserInputContinuationStartup(input: Parameters<RunStore["failUserInputContinuationStartup"]>[0], now: string) {
     return this.userInputContinuation.failStartup(input, now);
+  }
+  claimUserInputContinuationRecovery(input: Parameters<RunStore["claimUserInputContinuationRecovery"]>[0], now: string) {
+    return this.userInputPrestartRecovery.claim(input, now);
+  }
+  renewUserInputContinuationLease(input: Parameters<RunStore["renewUserInputContinuationLease"]>[0], now: string) {
+    return this.userInputPrestartRecovery.renew(input, now);
+  }
+  deferUserInputContinuationRecovery(input: Parameters<RunStore["deferUserInputContinuationRecovery"]>[0], now: string) {
+    return this.userInputPrestartRecovery.defer(input, now);
+  }
+  recoverUserInputContinuationPrestart(input: Parameters<RunStore["recoverUserInputContinuationPrestart"]>[0]) {
+    return this.userInputPrestartRecovery.recover(input);
+  }
+  publishUserInputContinuationRunCreated(input: Parameters<RunStore["publishUserInputContinuationRunCreated"]>[0], now: string) {
+    return this.userInputPrestartRecovery.publishRunCreated(input, now);
   }
 
   cancelUserInputWait(input: Parameters<RunStore["cancelUserInputWait"]>[0], now: string) {

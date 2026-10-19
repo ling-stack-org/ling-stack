@@ -56,7 +56,7 @@ async function fixture(t, surface = "normal", sourceOptions = {}, answers) {
       preparedInput: await f.adapter.prepareTaskInput(f.options) }) };
   f.db.prepare("UPDATE run_sessions SET task_snapshot_json=?,request_snapshot_json=?,provider_snapshot_json=? WHERE id=?")
     .run(JSON.stringify(f.options.task), JSON.stringify(sourceRequest), JSON.stringify(f.options.provider), f.run.id);
-  f.submit(answers); f.delivery = f.claim();
+  f.submit(answers); f.delivery = f.claim({ leaseMs: 60_000 });
   const claim = { threadId: f.thread.id, deliveryId: f.delivery.deliveryId, expectedRevision: f.delivery.revision,
     ownerId: f.delivery.claim.ownerId, claimToken: f.delivery.claim.token };
   f.preparedRequest = prepareUserInputContinuationRequest(f.store, claim, claimedAt);
@@ -74,8 +74,9 @@ async function fixture(t, surface = "normal", sourceOptions = {}, answers) {
     runnerExecutionInput,
   } }, claimedAt).snapshot;
   f.binding = f.store.admitUserInputContinuation({ ...claim, executionRef: ref(prepared), runtimeInstanceId: "receiver-runtime" }, claimedAt);
+  f.receiverClaim = { ...claim, expectedRevision: f.binding.deliveryRevision };
   f.attach = (changes = {}) => withUserInputContinuationReceiver({ store: f.store, threadId: f.thread.id, binding: f.binding,
-    adapter: f.adapter, options: f.options, now: () => f.receiverNow ?? now, ...changes });
+    claim: f.receiverClaim, adapter: f.adapter, options: f.options, now: () => f.receiverNow ?? now, ...changes });
   return f;
 }
 for (const surface of ["normal", "private", "channel"]) {
@@ -176,6 +177,20 @@ test("Host ACK persistence failure prevents the first model transport", async t 
   assert.equal(f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId).status, "claimed");
 });
 
+test("receiver requires the current claim before expiry and rejects it at the expiry boundary", async t => {
+  const current = await fixture(t);
+  current.receiverNow = new Date(Date.parse(current.delivery.claim.expiresAt) - 1).toISOString();
+  await current.adapter.runTask(current.attach());
+  assert.equal(current.wire.length, 1);
+
+  const expired = await fixture(t);
+  expired.receiverNow = expired.delivery.claim.expiresAt;
+  await assert.rejects(expired.adapter.runTask(expired.attach()), error => error.code === "delivery_conflict");
+  assert.equal(expired.wire.length, 0);
+  assert.equal(expired.store.getUserInputContinuationReceipt(expired.thread.id, expired.delivery.deliveryId), undefined);
+  assert.equal(expired.store.getUserInputDelivery(expired.thread.id, expired.delivery.deliveryId).status, "claimed");
+});
+
 for (const surface of ["normal", "private", "channel"]) {
   test(`second ${surface} question resumes from its own admitted SDK input after SQLite reopen`, async t => {
     const f = await fixture(t, surface, surface === "channel" ? { storedTask: true, workflow: true } : {},
@@ -203,7 +218,7 @@ for (const surface of ["normal", "private", "channel"]) {
     try {
       const at = "2026-09-07T00:00:10.000Z";
       f.delivery = reopened.claimUserInputDelivery({ threadId: f.thread.id, deliveryId: answer.deliveryId,
-        expectedRevision: 1, ownerId: "second-worker", leaseMs: 1000 }, at);
+        expectedRevision: 1, ownerId: "second-worker", leaseMs: 60_000 }, at);
       const claim = { threadId: f.thread.id, deliveryId: f.delivery.deliveryId, expectedRevision: f.delivery.revision,
         ownerId: f.delivery.claim.ownerId, claimToken: f.delivery.claim.token };
       const preparedRequest = prepareUserInputContinuationRequest(reopened, claim, at), request = preparedRequest.request;
@@ -219,6 +234,7 @@ for (const surface of ["normal", "private", "channel"]) {
           runRequestSnapshot: { ...request, runnerExecutionInput }, providerSnapshot: runnerExecutionInput.input.provider,
           preparedInput: f.preparedInput, preparedInputFingerprint: f.preparedInput.fingerprint, runnerExecutionInput } }, at).snapshot;
       f.binding = reopened.admitUserInputContinuation({ ...claim, executionRef: ref(execution), runtimeInstanceId: "second-runtime" }, at);
+      f.receiverClaim = { ...claim, expectedRevision: f.binding.deliveryRevision };
       f.executionNow = at; f.receiverNow = "2026-09-07T00:00:11.000Z";
       await f.adapter.runTask(f.attach({ store: reopened }));
       assert.equal(f.wire.length, 2);

@@ -18,6 +18,28 @@ const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.me
 const workspaceNames = ["browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"];
 const reviewedLeaf = "packages/core/src/original-office-host-bridge.ts";
 const compiledLeaf = "packages/core/dist/original-office-host-bridge.js";
+const requiredQuestionAndApprovalClosureInputs = [
+  "packages/core/src/storage/sqlite/user-input-admission-policy.ts",
+  "packages/core/src/storage/sqlite/user-input-answer-authority.ts",
+  "packages/core/src/storage/sqlite/user-input-prestart-recovery-store.ts",
+  "packages/core/src/storage/sqlite/user-input-run-created-replay.ts",
+  "packages/core/src/storage/sqlite/user-input-startup-failure.ts",
+  "packages/core/src/storage/sqlite/user-input-workflow-admission.ts",
+  "packages/daemon/src/features/conversations/user-input-answer-route.ts",
+  "packages/daemon/src/features/runs/approval-decision-projection.ts",
+  "packages/daemon/src/features/runs/approval-postcommit-evidence.ts",
+  "packages/daemon/src/features/runs/user-input-answer-dispatch.ts",
+  "packages/daemon/src/features/runs/user-input-answer-routes.ts",
+  "packages/daemon/src/features/runs/user-input-continuation-context.ts",
+  "packages/daemon/src/features/runs/user-input-continuation-receiver.ts",
+  "packages/daemon/src/features/runs/user-input-delivery-worker.ts",
+  "packages/daemon/src/features/runs/user-input-execution-preparation.ts",
+  "packages/daemon/src/features/runs/user-input-prepared-request.ts",
+  "packages/daemon/src/features/runs/user-input-source-execution.ts",
+  "packages/daemon/src/features/runs/user-input-source-policy.ts",
+  "packages/daemon/src/features/runs/user-input-workflow-terminal.ts",
+  "packages/daemon/src/features/runs/workflow-step-input-turn.ts",
+];
 const newAuthoredRuntimeLeaves = [
   "packages/daemon/src/runtime/workspace-runtime-owner.ts",
   "packages/daemon/src/features/runs/approval-event-state.ts",
@@ -80,6 +102,7 @@ const newAuthoredRuntimeLeaves = [
   "packages/core/src/storage/sqlite/delegation-migration.ts",
   "packages/core/src/storage/sqlite/delegation-mappers.ts",
   "packages/core/src/storage/sqlite/delegation-store.ts",
+  "packages/core/src/harness/delegation-authority.ts",
   "packages/core/src/storage/sqlite/harness-diagnostics-mappers.ts",
   "packages/core/src/storage/sqlite/harness-diagnostics-store.ts",
   "packages/core/src/storage/sqlite/harness-diagnostics-validation.ts",
@@ -109,6 +132,7 @@ const newAuthoredRuntimeLeaves = [
   "packages/daemon/src/features/harness/evaluations/task-worker-input.ts",
   "packages/daemon/src/features/harness/evaluations/task-worker-prepared.ts",
   "packages/daemon/src/features/harness/evaluations/task-worker.ts",
+  "packages/daemon/src/features/harness/evaluations/task-worker-composition.ts",
   "packages/core/src/harness/evaluation-qa.ts",
   "packages/core/src/storage/sqlite/run-evaluation-qa-validation.ts",
   "packages/core/src/storage/sqlite/run-evaluation-qa-mappers.ts",
@@ -131,6 +155,7 @@ const newAuthoredRuntimeLeaves = [
   "packages/daemon/src/features/harness/evaluations/human-evaluation-routes.ts",
   "packages/daemon/src/features/harness/evaluations/human-evaluation-service.ts",
   "packages/daemon/src/features/harness/evaluations/human-evaluation-report.ts",
+  ...requiredQuestionAndApprovalClosureInputs,
 ];
 // This contract is exported with `export type *`; esbuild correctly erases it.
 // It remains an explicit reviewed source and gets every fail-closed check below.
@@ -150,6 +175,14 @@ test("Office packaging review requires every new browser lifecycle, Pi, progress
   for (const name of newAuthoredRequiredInputs) {
     assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(name), true,
       `Runtime leaf must be an explicit required review input: ${name}`);
+  }
+});
+
+test("Office fixed review closure explicitly pins required-question and approval authored sources", () => {
+  assert.equal(requiredQuestionAndApprovalClosureInputs.length, 20);
+  for (const name of requiredQuestionAndApprovalClosureInputs) {
+    assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(name), true,
+      `Required-question or approval source must be an explicit fixed review input: ${name}`);
   }
 });
 

@@ -18,6 +18,7 @@ import type {
 import type { RunRequest } from "./schemas.js";
 import { publishNormalNarrationAfterRun } from "../conversations/normal-narration-publication.js";
 import { approvalEventReflectsRunState } from "./approval-event-state.js";
+import { ensureWorkflowStepInputTurn } from "./workflow-step-input-turn.js";
 
 export function ensureLingThreadForRun(store: RunStore, runRequest: RunRequest, now: string): LingThread {
   if (runRequest.threadId) {
@@ -99,6 +100,10 @@ export function ensureLingTurnForRun(store: RunStore, thread: LingThread, runReq
       throw new Error(`Ling turn cannot be reused: ${runRequest.turnId}`);
     }
     return turn;
+  }
+
+  if (thread.kind === "workflow_step" && runRequest.workflowStepId) {
+    return ensureWorkflowStepInputTurn(store, thread, runRequest, inferLingTurnKind(thread, runRequest), now);
   }
 
   const sourceTurn = runRequest.parentRunId ? store.getLingTurnForRun(runRequest.parentRunId) : undefined;

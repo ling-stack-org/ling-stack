@@ -179,7 +179,7 @@ export interface RunEvaluationTaskWorkerRegistryOptions {
   readonly onError?: (error: unknown) => void;
 }
 
-/** Explicit independent internal worker. No production registration, enrollment or ordinary Run quota. */
+/** Explicit independent internal worker. Registration is Host-only; there is no automatic enrollment or ordinary Run quota. */
 export class RunEvaluationTaskWorkerRegistry {
   private readonly entries = new Map<string, WorkerEntry>();
   private readonly pending = new Set<string>();

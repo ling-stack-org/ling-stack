@@ -2198,6 +2198,11 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   acknowledgeUserInputContinuation(input: import("./user-input-host-continuation-types.js").AcknowledgeUserInputContinuation, now: string): { readonly receipt: import("./user-input-host-continuation-types.js").UserInputContinuationReceipt; readonly replayed: boolean };
   getUserInputContinuationReceipt(threadId: string, deliveryId: string): import("./user-input-host-continuation-types.js").UserInputContinuationReceipt | undefined;
   failUserInputContinuationStartup(input: import("./user-input-host-continuation-types.js").FailUserInputContinuationStartup, now: string): boolean;
+  claimUserInputContinuationRecovery(input: import("./user-input-host-continuation-types.js").ClaimUserInputContinuationRecovery, now: string): import("./user-input-host-continuation-types.js").ClaimUserInputContinuationRecoveryResult;
+  renewUserInputContinuationLease(input: import("./user-input-host-continuation-types.js").RenewUserInputContinuationLease, now: string): import("./user-input-host-continuation-types.js").RenewUserInputContinuationLeaseResult;
+  deferUserInputContinuationRecovery(input: import("./user-input-host-continuation-types.js").DeferUserInputContinuationRecovery, now: string): boolean;
+  recoverUserInputContinuationPrestart(input: import("./user-input-host-continuation-types.js").RecoverUserInputContinuationPrestart): import("./user-input-host-continuation-types.js").RecoverUserInputContinuationPrestartResult;
+  publishUserInputContinuationRunCreated(input: import("./user-input-host-continuation-types.js").PublishUserInputContinuationRunCreated, now: string): import("./user-input-host-continuation-types.js").PublishUserInputContinuationRunCreatedResult;
   cancelUserInputWait(input: import("./user-input-wait-types.js").CancelUserInputWait, now: string): import("./user-input-wait-types.js").CancelUserInputWaitResult;
   appendConversationUserTurn(input: AppendConversationUserTurnInput, now: string): AppendConversationUserTurnResult;
   appendConversationUserTurnWithAcceptedSnapshot(

@@ -83,14 +83,14 @@ export async function userInputTranscriptFixture(t, {
     } }, acceptedAt);
     return f.receipt;
   };
-  f.claim = () => {
+  f.claim = ({ leaseMs = 1000 } = {}) => {
     f.store.commitUserInputYield({
       threadId: f.thread.id, requestId: f.request.requestId, expectedRequestVersion: 1,
       sourceFence: toRuntimeAttemptFence(f.attempt),
       quiescence: { kind: "runner_quiesced", runnerId: f.attempt.runnerId, stoppedAt: acceptedAt, lastRunEventSeq: 0 },
     }, "2026-09-07T00:00:02.000Z");
     return f.store.claimUserInputDelivery({
-      threadId: f.thread.id, deliveryId: f.receipt.deliveryId, expectedRevision: 1, ownerId: "host-worker", leaseMs: 1000,
+      threadId: f.thread.id, deliveryId: f.receipt.deliveryId, expectedRevision: 1, ownerId: "host-worker", leaseMs,
     }, claimedAt);
   };
   f.read = (itemIds = [f.request.itemId, ...(f.receipt ? [f.receipt.answerItemId] : [])]) =>

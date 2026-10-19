@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { resolveRuntimePaths } from "../../core/dist/index.js";
-import { createSqliteRunStore } from "../../core/dist/index.js";
+import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, toRuntimeAttemptFence } from "../../core/dist/index.js";
 import { PiRunnerAdapter } from "../../runner-pi/dist/index.js";
 import { stream } from "../../runner-pi/node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js";
 import * as host from "../dist/features/runs/orchestrator.js";
@@ -22,6 +22,7 @@ import { createDelegatedStepRequirement } from "../dist/features/channels/workfl
 import { createWorkflowOperationExecutionSnapshot } from "../dist/features/runs/workflow-operation-snapshot.js";
 import { typedOperation } from "./support/workflow-operation-gate-fixture.mjs";
 import { createUserInputWorkflowTerminalHook } from "../dist/features/runs/user-input-workflow-terminal.js";
+import { prepareUserInputContinuationRequest } from "../dist/features/runs/user-input-prepared-request.js";
 
 const clock = () => new Date().toISOString();
 const question = { schemaVersion: 1, waitMode: "required", questions: [
@@ -91,7 +92,7 @@ async function fixture(t, surface = "normal", sourcePolicy = {}, { storedTask = 
     store.recordProviderCheckResult(mediaPreset.id, { ok: true, code: "ready", message: "Schema fixture only", checkedAt: clock() });
   }
   const f = { cwd, stores, active, supervisor, store, workers, teammateId, channel, task, thread, turn, preset,
-    workflow: workflowRecord, step, workflowStartOwner, mediaPreset, calls: [], errors: [], askAgain: false };
+    workflow: workflowRecord, step, workflowStartOwner, mediaPreset, calls: [], errors: [], events: [], askAgain: false };
   class Runner extends PiRunnerAdapter {
     registerCustomProviderIfNeeded(runtime, provider) {
       super.registerCustomProviderIfNeeded(runtime, provider);
@@ -127,7 +128,9 @@ async function fixture(t, surface = "normal", sourcePolicy = {}, { storedTask = 
   }
   f.adapter = new Runner();
   f.runners = createRunnerRegistry([{ id: "pi", displayName: "Real SDK fixture", status: "enabled", adapter: f.adapter }]);
-  f.sink = () => ({ ...host.createDetachedRunExecutionSink(), writeError: (status, error) => f.errors.push({ status, ...error }) });
+  f.sink = () => ({ ...host.createDetachedRunExecutionSink(),
+    writeEvent: (type, data) => f.events.push({ type, data }),
+    writeError: (status, error) => f.errors.push({ status, ...error }) });
   f.options = { enableUserInputPause: true, afterRunYielded: (_run, wait) => { f.wait = wait; } };
   f.sourceId = await host.executeRunRequest({ cwd: executionCwd, workspaceCwd: cwd, threadId: thread.id, turnId: turn.turnId,
     sourceMessageId: turn.item.id, teammateId, providerPresetId: preset.id, agentDir: join(cwd, "agent"),
@@ -146,18 +149,60 @@ async function fixture(t, surface = "normal", sourcePolicy = {}, { storedTask = 
       expectedRevision: 1, ownerId: "host-fixture", leaseMs: 60000 }, clock()) : store.getUserInputDelivery(thread.id, answer.deliveryId);
     if (autoClaim) f.claim = { threadId: thread.id, deliveryId: f.delivery.deliveryId, expectedRevision: f.delivery.revision,
       ownerId: f.delivery.claim.ownerId, claimToken: f.delivery.claim.token };
+    f.preparedRequest = undefined;
   };
-  f.dispatch = () => host.executeUserInputAnswerContinuation({ cwd, claim: f.claim },
+  f.dispatch = () => {
+    f.preparedRequest ??= prepareUserInputContinuationRequest(f.store, f.claim, clock());
+    return host.executeUserInputContinuation({ request: f.preparedRequest.request,
+      threadId: f.thread.id, deliveryId: f.delivery.deliveryId, claim: f.claim },
     f.sink(), f.runners, stores, active, supervisor, { resolve: () => undefined }, {}, f.options);
+  };
   f.answer();
   return f;
 }
+function executeWorkerDelivery(f, input) {
+  let accept;
+  const accepted = new Promise(resolve => { accept = resolve; });
+  const completion = host.executeUserInputContinuation({ request: input.request,
+    threadId: input.threadId, deliveryId: input.deliveryId,
+    claim: input.claim, ...(input.binding ? { binding: input.binding } : {}) },
+  f.sink(), f.runners, f.stores, f.active, f.supervisor, { resolve: () => undefined }, {}, {
+    ...f.options,
+    onUserInputReceiverAccepted: ({ runId }) => accept(runId),
+  });
+  return Promise.race([accepted, completion]);
+}
 function worker(f, options = {}) {
   const w = new UserInputDeliveryWorker({ activeRuns: f.active, runtimeSupervisor: f.supervisor,
-    execute: ({ claim, onRunReady }) => host.executeUserInputAnswerContinuation({ cwd: f.cwd, claim },
-      f.sink(), f.runners, f.stores, f.active, f.supervisor, { resolve: () => undefined }, {}, { ...f.options, onRunReady }), ...options });
+    execute: input => executeWorkerDelivery(f, input), ...options });
   f.workers.push(w);
   return w;
+}
+
+function occupyProviderCapacity(f) {
+  const acquiredAt = clock();
+  const expiresAt = new Date(Date.parse(acquiredAt) + 60_000).toISOString();
+  const attempts = [];
+  for (let index = 0; index < 4; index += 1) {
+    const suffix = randomUUID();
+    const unit = f.store.createWorkUnit({ workspaceId: DEFAULT_WORKSPACE_ID, kind: "task_run", ownerType: "task",
+      ownerId: `provider-blocker-${suffix}`, runnerId: "pi", idempotencyKey: `provider-blocker-${suffix}`,
+      request: {}, createdByActor: "system", now: acquiredAt });
+    const attempt = f.store.createWorkUnitAttempt({ workUnitId: unit.id, attemptNumber: 1,
+      runtimeInstanceId: `provider-blocker-runtime-${suffix}`, runnerId: "pi", now: acquiredAt });
+    const slot = f.store.acquireRuntimeSemaphoreSlot({ workspaceId: DEFAULT_WORKSPACE_ID, resourceType: "provider",
+      resourceKey: f.preset.id, limit: 4, ownerType: "work_unit_attempt", ownerId: attempt.id,
+      ...toRuntimeAttemptFence(attempt), acquiredAt, expiresAt });
+    assert.ok(slot);
+    attempts.push(attempt);
+  }
+  return {
+    release() {
+      for (const attempt of attempts) {
+        f.store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), clock(), "fixture-unblocked");
+      }
+    },
+  };
 }
 for (const surface of ["normal", "private", "channel"]) {
   test(`answer worker discovers and dispatches the real ${surface} Host continuation`, async t => {
@@ -197,7 +242,9 @@ test("answer worker persists pre-admission backoff and recovers after provider c
   f.store.updateProviderPreset(f.preset.id, { enabled: true }, clock());
   f.store.recordProviderCheckResult(f.preset.id, { ok: true, code: "ready", message: "Repaired scripted fixture", checkedAt: clock() });
   now += 5001; t.mock.timers.setTime(now);
-  assert.equal((await w.scanStore(f.store)).dispatched, 1, JSON.stringify(f.errors));
+  const retried = await w.scanStore(f.store);
+  assert.equal(retried.dispatched, 1, JSON.stringify({ errors: f.errors, scan: retried,
+    delivery: f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId) }));
   await f.active.waitForIdle();
   assert.equal(f.calls.length, 2);
 });
@@ -288,11 +335,9 @@ test("a long admitted answer does not prevent another thread from dispatching", 
   let release;
   const barrier = new Promise(resolve => { release = resolve; });
   f.continuationBarrier = barrier;
-  const w = worker(f, { pageSize: 1, execute: async ({ claim, onRunReady }) => {
-    const current = claim.threadId === f.thread.id ? f : later;
-    const id = await host.executeUserInputAnswerContinuation({ cwd: f.cwd, claim }, current.sink(), current.runners,
-      f.stores, f.active, f.supervisor, { resolve: () => undefined }, {}, { ...current.options, onRunReady });
-    return id;
+  const w = worker(f, { pageSize: 1, execute: input => {
+    const current = input.threadId === f.thread.id ? f : later;
+    return executeWorkerDelivery(current, input);
   } });
   try {
     assert.equal((await w.scanStore(f.store)).dispatched, 1);
@@ -450,14 +495,28 @@ test(`answer terminal hook rechecks ${mutation} authority after its base callbac
 
 test("Daemon restart completes an optional last step interrupted after answer admission but before start", { timeout: 20000 }, async t => {
   const f = await fixture(t, "channel", {}, { workflow: true, workflowPolicy: "skip_if_optional" });
-  // Simulate the crash boundary, not a failed-run result: admission is durable,
-  // but neither startup cleanup nor Runner/provider execution has happened.
-  const slot = t.mock.method(f.store, "acquireRuntimeSemaphoreSlot", () => undefined);
-  const cleanup = t.mock.method(f.store, "failUserInputContinuationStartup", () => false);
+  // A real external provider-capacity conflict leaves the admitted binding
+  // recoverable. Releasing it before restart simulates the interrupted Host
+  // disappearing without converting a transient conflict into terminal failure.
+  const blockers = occupyProviderCapacity(f);
   assert.equal(await f.dispatch(), undefined);
-  slot.mock.restore(); cleanup.mock.restore();
   assert.equal(f.store.getRun(f.delivery.successorRunId).status, "queued");
   assert.equal(f.store.getChannelWorkflowStep(f.step.id).status, "running");
+  assert.ok(f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId));
+  assert.ok(f.store.getUserInputContinuationBinding(f.thread.id, f.delivery.deliveryId));
+  blockers.release();
+  const shortened = f.store.renewUserInputContinuationLease({ threadId: f.thread.id, deliveryId: f.delivery.deliveryId,
+    ownerId: f.claim.ownerId, claimToken: f.claim.claimToken, leaseMs: 1 }, clock());
+  assert.equal(shortened.status, "renewed");
+  for (let i = 0; i < 100 && f.store.listDueUserInputDeliveries({ limit: 100 }, clock()).length === 0; i += 1) {
+    await new Promise(resolve => setTimeout(resolve, 2));
+  }
+  assert.equal(f.store.listDueUserInputDeliveries({ limit: 100 }, clock()).length, 1);
+  const reopened = createSqliteRunStore(f.cwd);
+  try {
+    assert.ok(reopened.getUserInputContinuationBinding(f.thread.id, f.delivery.deliveryId));
+    assert.equal(reopened.listDueUserInputDeliveries({ limit: 100 }, clock()).length, 1);
+  } finally { reopened.close(); }
   f.supervisor.releaseAll();
   const daemon = createDaemonServer({ defaultWorkspaceCwd: f.cwd, port: 0, channels: { terminalReports: false } }, {
     runnerRegistry: f.runners, storeFactory: createSqliteRunStore,
@@ -465,6 +524,11 @@ test("Daemon restart completes an optional last step interrupted after answer ad
   });
   t.after(async () => { if (daemon.server.listening) await daemon.stop(); });
   await daemon.start();
+  // Daemon startup schedules durable outbox recovery; terminal settlement is
+  // asynchronous and must be observed from SQLite rather than assumed at listen time.
+  for (let i = 0; i < 100 && f.store.getRun(f.delivery.successorRunId).status === "queued"; i += 1) {
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
   assert.equal(f.store.getRun(f.delivery.successorRunId).status, "failed");
   assert.equal(f.store.getChannelWorkflowStep(f.step.id).status, "skipped");
   assert.equal(f.store.getChannelWorkflow(f.workflow.id).status, "succeeded");
@@ -491,6 +555,49 @@ for (const surface of ["normal", "private", "channel"]) {
     assert.equal(f.active.get(id), undefined);
   });
 }
+for (const seam of ["prestart", "publication"]) {
+  test(`expired answer claim cannot authorize ${seam} after preparation time advances`, async t => {
+    const f = await fixture(t);
+    const expiredAt = Date.parse(f.delivery.claim.expiresAt) + 1;
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    let checkedAt;
+    const recover = f.store.recoverUserInputContinuationPrestart.bind(f.store);
+    f.store.recoverUserInputContinuationPrestart = input => {
+      if (seam === "prestart") checkedAt = input.now;
+      const result = recover(input);
+      if (seam === "publication") t.mock.timers.setTime(expiredAt);
+      return result;
+    };
+    const publish = f.store.publishUserInputContinuationRunCreated.bind(f.store);
+    f.store.publishUserInputContinuationRunCreated = (input, at) => {
+      if (seam === "publication") checkedAt = at;
+      return publish(input, at);
+    };
+    if (seam === "prestart") {
+      const admit = f.store.admitUserInputContinuation.bind(f.store);
+      f.store.admitUserInputContinuation = (input, at) => {
+        const binding = admit(input, at);
+        t.mock.timers.setTime(expiredAt);
+        return binding;
+      };
+    }
+
+    await f.dispatch();
+
+    const binding = f.store.getUserInputContinuationBinding(f.thread.id, f.delivery.deliveryId);
+    assert.ok(binding);
+    assert.ok(Date.parse(checkedAt) >= expiredAt, "each authority write must obtain fresh lifecycle time");
+    assert.equal(f.store.getRun(binding.runId).status, "queued");
+    assert.equal(f.calls.length, 1, "expired ownership must not reach a continuation model request");
+    assert.equal(f.store.getUserInputContinuationReceipt(f.thread.id, f.delivery.deliveryId), undefined);
+    assert.equal(f.store.listEvents(binding.runId).filter(event => event.type === "run_created").length, 0);
+    if (seam === "prestart") {
+      assert.equal(f.store.listResourceLeases({ attemptId: binding.fence.attemptId, status: "active" }).length, 0);
+      assert.equal(f.store.listRuntimeSemaphoreSlots({ ownerId: binding.fence.attemptId, status: "active" }).length, 0);
+    }
+  });
+}
+
 test("request preparation time remains the lifecycle lower bound after a pre-admission wall-clock rollback", async t => {
   const f = await fixture(t);
   const requestTime = Date.parse(f.delivery.updatedAt) + 1000;
@@ -662,7 +769,7 @@ test("a canonical workflow step resumes with fresh ownership after its pause rel
   assert.equal(f.store.getChannelWorkflowStep(f.step.id).status, "waiting_for_input");
   const id = await f.dispatch();
   assert.ok(id, JSON.stringify(f.errors));
-  assert.equal(f.store.getRun(id).status, "succeeded");
+  assert.equal(f.store.getRun(id).status, "succeeded", JSON.stringify({ errors: f.errors, events: f.events }));
   assert.equal(f.store.getChannelWorkflowStep(f.step.id).runId, id);
   assert.equal(f.store.getChannelWorkflowStep(f.step.id).status, "succeeded");
   assert.equal(f.store.getChannelWorkflow(f.workflow.id).status, "succeeded");
@@ -693,9 +800,31 @@ test("a workflow may ask twice while rotating and releasing only its own leases"
   assert.notEqual(step.metadata.startOwner.leaseId, firstOwner.leaseId);
   assert.equal(f.store.listResourceLeases({ resourceType: "workflow_step", resourceKey: step.id, status: "active" }).length, 0);
 });
-test("startup semaphore conflict settles Task and Thread without an ACK or automatic retry", async t => {
+test("startup semaphore conflict keeps the admitted answer recoverable without terminal settlement", async t => {
   const f = await fixture(t, "channel", {}, { storedTask: true });
-  t.mock.method(f.store, "acquireRuntimeSemaphoreSlot", () => undefined);
+  const blockers = occupyProviderCapacity(f);
+  try {
+    assert.equal(await f.dispatch(), undefined);
+    const run = f.store.getRun(f.delivery.successorRunId);
+    assert.equal(run.status, "queued");
+    assert.equal(f.store.getWorkUnit(run.workUnitId).status, "claimed");
+    assert.equal(f.store.getTask(f.task.id).status, "claimed");
+    assert.equal(f.store.getTask(f.task.id).currentRunId, run.id);
+    assert.equal(f.store.getLingThread(f.thread.id).activeRunId, run.id);
+    assert.equal(f.store.getLingThread(f.thread.id).status, "running");
+    assert.equal(f.store.getUserInputContinuationReceipt(f.thread.id, f.delivery.deliveryId), undefined);
+    assert.equal(f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId).status, "claimed");
+    assert.equal(f.store.getUserInputWait(f.thread.id, f.wait.checkpoint.requestId).status, "resuming");
+    assert.ok(f.store.getUserInputContinuationBinding(f.thread.id, f.delivery.deliveryId));
+    assert.equal(f.calls.length, 1);
+  } finally {
+    blockers.release();
+  }
+});
+
+test("permanent startup authority loss settles Task and Thread without an ACK or automatic retry", async t => {
+  const f = await fixture(t, "channel", {}, { storedTask: true });
+  t.mock.method(f.store, "recoverUserInputContinuationPrestart", () => ({ status: "changed" }));
   assert.equal(await f.dispatch(), undefined);
   const run = f.store.getRun(f.delivery.successorRunId);
   assert.equal(run.status, "failed");
@@ -712,7 +841,7 @@ test("startup semaphore conflict settles Task and Thread without an ACK or autom
 });
 test("workflow startup failure releases only its fresh lease and settles the owned step", async t => {
   const f = await fixture(t, "channel", {}, { workflow: true, workflowPolicy: "fail_workflow" });
-  t.mock.method(f.store, "acquireRuntimeSemaphoreSlot", () => undefined);
+  t.mock.method(f.store, "recoverUserInputContinuationPrestart", () => ({ status: "changed" }));
   assert.equal(await f.dispatch(), undefined);
   const run = f.store.getRun(f.delivery.successorRunId), step = f.store.getChannelWorkflowStep(f.step.id);
   assert.equal(run.status, "failed");
@@ -731,9 +860,10 @@ for (const [policy, stepStatus, workflowStatus] of [
 ]) {
   test(`workflow answer startup failure respects ${policy ?? "default"} policy`, async t => {
     const f = await fixture(t, "channel", {}, { workflow: true, workflowPolicy: policy });
-    t.mock.method(f.store, "acquireRuntimeSemaphoreSlot", () => undefined);
+    t.mock.method(f.store, "recoverUserInputContinuationPrestart", () => ({ status: "changed" }));
     assert.equal(await f.dispatch(), undefined);
-    assert.equal(f.store.getChannelWorkflowStep(f.step.id).status, stepStatus);
+    assert.equal(f.store.getChannelWorkflowStep(f.step.id).status, stepStatus,
+      JSON.stringify({ errors: f.errors, events: f.events }));
     assert.equal(f.store.getChannelWorkflow(f.workflow.id).status, workflowStatus);
     assert.equal(f.store.getTask(f.task.id).status, "failed");
     assert.equal(f.store.listResourceLeases({ resourceType: "workflow_step", resourceKey: f.step.id, status: "active" }).length, 0);

@@ -1,10 +1,13 @@
-import type { RuntimeAttemptFenceV1 } from "./runtime-supervisor-types.js";
 import type { RetryUserInputDelivery } from "./user-input-delivery-types.js";
+import type { AcquireRuntimeSemaphoreSlotInput, RuntimeAttemptFenceV1, RuntimeSemaphoreSlot } from "./runtime-supervisor-types.js";
+import type { CreateResourceLeaseInput, ResourceLease } from "./channel-runtime-types.js";
 import type { EffectiveRunPolicySnapshot } from "./session-permissions.js";
 import type { WorkflowStepStartOwnerV1 } from "./workflow-step-start-owner.js";
+import type { RunEventDataByType, RunEventEnvelope } from "./run-types.js";
 
 export interface UserInputSnapshotRef { readonly id: string; readonly fingerprint: string }
 export type UserInputContinuationClaim = Pick<RetryUserInputDelivery, "threadId" | "deliveryId" | "expectedRevision" | "ownerId" | "claimToken">;
+export type UserInputContinuationLeaseIdentity = Pick<UserInputContinuationClaim, "ownerId" | "claimToken">;
 export type UserInputPreparationStage = "request" | "execution";
 export interface UserInputContinuationRecord {
   readonly id: string;
@@ -78,6 +81,7 @@ export interface AcknowledgeUserInputContinuation {
   readonly deliveryId: string;
   readonly bindingRef: UserInputSnapshotRef;
   readonly sourceFence: RuntimeAttemptFenceV1;
+  readonly claim: UserInputContinuationLeaseIdentity;
   readonly receipt: UserInputRunnerAcceptance;
 }
 /** Host-only settlement for an admitted continuation that never started. */
@@ -86,6 +90,84 @@ export interface FailUserInputContinuationStartup {
   readonly deliveryId: string;
   readonly bindingRef: UserInputSnapshotRef;
   readonly sourceFence: RuntimeAttemptFenceV1;
+  readonly claim: UserInputContinuationLeaseIdentity;
   readonly errorCode: string;
   readonly errorMessage: string;
+}
+
+export interface ClaimUserInputContinuationRecovery {
+  readonly threadId: string;
+  readonly deliveryId: string;
+  readonly bindingRef: UserInputSnapshotRef;
+  readonly sourceFence: RuntimeAttemptFenceV1;
+  readonly ownerId: string;
+  readonly leaseMs: number;
+}
+
+export type ClaimUserInputContinuationRecoveryResult =
+  | { readonly status: "claimed"; readonly claim: UserInputContinuationClaim; readonly expiresAt: string }
+  | { readonly status: "busy" | "changed" };
+
+export interface RenewUserInputContinuationLease extends UserInputContinuationLeaseIdentity {
+  readonly threadId: string;
+  readonly deliveryId: string;
+  readonly leaseMs: number;
+}
+
+export type RenewUserInputContinuationLeaseResult =
+  | { readonly status: "renewed"; readonly expiresAt: string }
+  | { readonly status: "lost" };
+
+export interface DeferUserInputContinuationRecovery extends UserInputContinuationClaim {
+  readonly bindingRef: UserInputSnapshotRef;
+  readonly sourceFence: RuntimeAttemptFenceV1;
+  readonly retryAt: string;
+  readonly errorCode: "recoverable_failure";
+}
+
+export interface RecoverUserInputContinuationPrestart {
+  readonly claim: UserInputContinuationClaim;
+  readonly bindingRef: UserInputSnapshotRef;
+  readonly sourceFence: RuntimeAttemptFenceV1;
+  readonly runId: string;
+  readonly leases: readonly CreateResourceLeaseInput[];
+  readonly semaphores: readonly AcquireRuntimeSemaphoreSlotInput[];
+  readonly now: string;
+  readonly expiresAt: string;
+}
+
+export type RecoverUserInputContinuationPrestartResult =
+  | {
+      readonly status: "ready";
+      readonly leases: readonly ResourceLease[];
+      readonly semaphores: readonly RuntimeSemaphoreSlot[];
+    }
+  | {
+      readonly status: "busy";
+      readonly kind: "resource" | "semaphore" | "sqlite";
+      readonly resourceType?: string;
+      readonly resourceKey?: string;
+    }
+  | { readonly status: "changed" };
+
+export interface PublishUserInputContinuationRunCreated {
+  readonly claim: UserInputContinuationClaim;
+  readonly bindingRef: UserInputSnapshotRef;
+  readonly sourceFence: RuntimeAttemptFenceV1;
+  readonly runId: string;
+  readonly workspaceCwd: string;
+  readonly data: RunEventDataByType["run_created"];
+}
+
+export interface PublishUserInputContinuationRunCreatedResult {
+  readonly event: Extract<RunEventEnvelope, { readonly type: "run_created" }>;
+  readonly replayed: boolean;
+}
+
+/** Publication is retryable; neither phase permits ACK or any model call yet. */
+export class UserInputRunCreatedDeferredError extends Error {
+  constructor(readonly phase: "commit" | "mirror") {
+    super("User input Run-created publication is temporarily unavailable.");
+    this.name = "UserInputRunCreatedDeferredError";
+  }
 }

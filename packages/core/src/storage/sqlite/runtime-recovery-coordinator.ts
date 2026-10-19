@@ -144,12 +144,22 @@ export class SqliteRuntimeRecoveryCoordinator {
       return false;
     }
     const workUnit = this.ports.getWorkUnit(run.workUnitId);
+    const attempt = workUnit?.activeAttemptId
+      ? this.ports.getWorkUnitAttempt(workUnit.activeAttemptId)
+      : undefined;
+    const activeOwner = workUnit
+      ? ["claimed", "running", "cancelling"].includes(workUnit.status)
+      : false;
+    const startupFencedOwner = workUnit?.status === "stale"
+      && workUnit.errorCode === "runtime_stale"
+      && attempt?.workUnitId === workUnit.id
+      && attempt.status === "lost";
     const thread = run.threadId ? this.ports.getLingThread(run.threadId) : undefined;
     if (!workUnit
       || !["task_run", "conversation_run", "teammate_direct_reply"].includes(workUnit.kind)
       || workUnit.linkedRunId !== run.id
       || !workUnit.activeAttemptId
-      || !["claimed", "running", "cancelling"].includes(workUnit.status)) {
+      || (!activeOwner && !startupFencedOwner)) {
       return false;
     }
     if (workUnit.kind === "conversation_run" && thread?.kind !== "conversation") return false;

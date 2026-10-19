@@ -16,7 +16,7 @@ import { readUserInputDelivery, validDeliveryKey, validDeliveryRevision } from "
 import { assertUserInputAdmissionPolicy } from "./user-input-admission-policy.js";
 import { activateUserInputWorkflowAdmission, prepareUserInputWorkflowAdmission,
   type UserInputWorkflowAdmissionPorts } from "./user-input-workflow-admission.js";
-import { isWorkflowStepStartOwnerV1 } from "../../workflow-step-start-owner.js";
+import { isWorkflowStepStartOwnerV1, workflowStepStartOwnerMatches } from "../../workflow-step-start-owner.js";
 import { failUserInputStartupWithinTransaction, type UserInputStartupFailurePorts } from "./user-input-startup-failure.js";
 import { userInputTimestamp } from "./user-input-records.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
@@ -61,6 +61,12 @@ export class SqliteUserInputHostContinuationStore {
       || !same(receipt.acceptance, this.acceptance(seed, binding))
       || userInputTimestamp(receipt.createdAt) < userInputTimestamp(binding.createdAt)) throw new UserInputStoreError("invalid_record");
     return receipt;
+  }
+
+  /** Internal recovery composition only. The caller must already own the write transaction. */
+  readBindingWithinTransaction(threadId: string, deliveryId: string): UserInputContinuationBinding | undefined {
+    const seed = this.preparation.seedWithinTransaction(threadId, deliveryId);
+    return seed ? this.readBinding(seed) : undefined;
   }
 
   admit(input: AdmitUserInputContinuation, now: string): UserInputContinuationBinding {
@@ -141,6 +147,8 @@ export class SqliteUserInputHostContinuationStore {
       const wait = this.ports.getUserInputWait(seed.source.threadId, seed.request.requestId);
       if (bound.delivery.status === "applied") throw new UserInputStoreError("invalid_record");
       if (bound.delivery.status !== "claimed" || bound.delivery.revision !== binding.deliveryRevision
+        || bound.delivery.claim?.ownerId !== captured.claim.ownerId || bound.delivery.claim.token !== captured.claim.claimToken
+        || Date.parse(bound.delivery.claim.expiresAt) <= userInputTimestamp(now)
         || !wait || wait.status !== "resuming" || wait.revision !== binding.waitRevision
         || userInputTimestamp(now) < userInputTimestamp(bound.delivery.updatedAt)) throw new UserInputStoreError("delivery_conflict");
       this.assertCurrentReceiver(seed, binding, "prepared");
@@ -179,6 +187,8 @@ export class SqliteUserInputHostContinuationStore {
         || attempt?.status !== "created" || attempt.startedAt || attempt.endedAt
         || !same(toRuntimeAttemptFence(attempt), binding.fence) || this.readReceiptWithinTransaction(captured.threadId, captured.deliveryId)
         || bound?.delivery.status !== "claimed" || bound.delivery.revision !== binding.deliveryRevision
+        || bound.delivery.claim?.ownerId !== captured.claim.ownerId || bound.delivery.claim.token !== captured.claim.claimToken
+        || Date.parse(bound.delivery.claim.expiresAt) <= userInputTimestamp(now)
         || wait?.status !== "resuming" || wait.revision !== binding.waitRevision) return false;
       if (userInputTimestamp(now) < userInputTimestamp(bound.delivery.updatedAt)) throw new UserInputStoreError("delivery_conflict");
       failUserInputStartupWithinTransaction(this.context, this.ports, seed, binding, captured, now);
@@ -261,10 +271,13 @@ export class SqliteUserInputHostContinuationStore {
     }
     if (s.workflowStepId) {
       const step = this.ports.getChannelWorkflowStep(s.workflowStepId), workflow = step ? this.ports.getChannelWorkflow(step.workflowId) : undefined;
-      if (!step || step.status !== (phase === "prepared" ? "claimed" : "running")
+      const admissionOwned = binding.workflowStartOwner !== undefined;
+      const expectedStatus = admissionOwned ? "running" : phase === "prepared" ? "claimed" : "running";
+      if (!step || step.status !== expectedStatus
         || step.runId !== binding.runId || step.toParticipantId !== s.participantId
         || step.workspaceId !== s.workspaceId || step.channelId !== s.channelId || !workflow || workflow.workspaceId !== s.workspaceId
-        || workflow.channelId !== s.channelId || !["running", "waiting_for_input"].includes(workflow.status)) {
+        || workflow.channelId !== s.channelId || !["running", "waiting_for_input"].includes(workflow.status)
+        || admissionOwned && !workflowStepStartOwnerMatches(step.metadata?.startOwner, binding.workflowStartOwner!)) {
         throw new UserInputStoreError("source_conflict");
       }
     }
@@ -281,7 +294,7 @@ export class SqliteUserInputHostContinuationStore {
     if (s.taskBinding.kind === "stored_task") requireTransition(this.ports.transitionTaskStatus({
       taskId: s.taskBinding.taskId, expectedStatus: "claimed", event: "start_run", actor: "system",
       currentRunId: binding.runId, now }));
-    if (s.workflowStepId) requireTransition(this.ports.transitionChannelWorkflowStepStatus({
+    if (s.workflowStepId && !binding.workflowStartOwner) requireTransition(this.ports.transitionChannelWorkflowStepStatus({
       workflowStepId: s.workflowStepId, expectedStatus: "claimed", event: "start", actor: "system",
       runId: binding.runId, now }));
   }

@@ -2654,6 +2654,22 @@ test("startup recovery preserves an enforced Harness task Run for daemon-owned c
     assert.equal(store.getRun(run.id).status, "running");
     assert.equal(store.getWorkUnit(workUnit.id).status, "running");
     assert.equal(store.listEvents(run.id, { limit: 100 }).some((event) => event.type === "run_error"), false);
+
+    assert.ok(store.transitionWorkUnitAttemptTerminal({
+      ...fence,
+      event: "runner_lost",
+      attemptStatus: "lost",
+      runtimeEventType: "work_unit_stale",
+      actor: "system",
+      now: recoveredAt,
+      errorCode: "runtime_stale",
+      errorMessage: "runtime-startup-reconcile",
+    }));
+    assert.equal(store.getWorkUnit(workUnit.id).status, "stale");
+    assert.equal(store.getWorkUnitAttempt(attempt.id).status, "lost");
+    assert.equal(store.recoverStaleRuns("2026-09-13T01:02:00.000Z"), 0);
+    assert.equal(store.getRun(run.id).status, "running");
+    assert.equal(store.listEvents(run.id, { limit: 100 }).some((event) => event.type === "run_error"), false);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

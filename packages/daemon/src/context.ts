@@ -56,6 +56,7 @@ import type { HostCapabilityBridgeController } from "./features/runs/host-capabi
 import type { HostMcpOperation } from "./features/mcp/host-operation.js";
 import type { HostOfficeLocalMcpOperation } from "./features/mcp/office-local-mcp-operation.js";
 import type { HumanEvaluationService } from "./features/harness/evaluations/human-evaluation-service.js";
+import type { RunEvaluationQaTaskWorkerActivation } from "./features/harness/evaluations/task-worker-composition.js";
 
 export interface RunnerAdapter {
   /** Optional capability; absence must reject prepared execution, never fabricate evidence. */
@@ -150,6 +151,8 @@ export interface DaemonDependencies {
   readonly runner?: RunnerAdapter;
   readonly runnerRegistry?: RunnerRegistry;
   readonly storeFactory?: RunStoreFactory;
+  /** Optional in-memory QA Provider authority. Absence keeps model task execution disabled. */
+  readonly runEvaluationQaTaskWorker?: RunEvaluationQaTaskWorkerActivation;
   /** Authenticated bundled sources, initialized synchronously before recovery/read access. */
   readonly initializeBundledSkills?: (store: RunStore) => void;
   /** Host build selection only. Never supplied by workspace policy, HTTP or model input. */

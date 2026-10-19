@@ -33,7 +33,17 @@ async function fixture(t, kind = "task_run", linked = true) {
   registry.getStore(cwd);
   const db = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
   db.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=50");
-  t.after(async () => { db.close(); store.close(); await rm(cwd, { recursive: true, force: true }); });
+  const deferredCleanup = [];
+  t.after(async () => {
+    const failures = [];
+    for (const cleanup of deferredCleanup.reverse()) {
+      try { await cleanup(); } catch (error) { failures.push(error); }
+    }
+    try { db.close(); } catch (error) { failures.push(error); }
+    try { store.close(); } catch (error) { failures.push(error); }
+    try { await rm(cwd, { recursive: true, force: true }); } catch (error) { failures.push(error); }
+    if (failures.length) throw new AggregateError(failures, "p2_stop_fixture_cleanup_incomplete", { cause: failures[0] });
+  });
   const channel = store.createChannel({ name: "Stop fence", boundPath: cwd }, now);
   const task = store.createTask({ channelId: channel.id, title: "Stop fence", prompt: "Local controlled execution" }, now);
   const thread = kind === "teammate_direct_reply" ? store.getOrCreateTeammateDirectThread("teammate_builtin_engineer", now) : undefined;
@@ -67,7 +77,7 @@ async function fixture(t, kind = "task_run", linked = true) {
   activeRun.streamEnvelope = event => activeRun.events.push(event);
   const service = new RunControlService();
   return { cwd, store, registry, db, task, thread, message, unit: store.getWorkUnit(unit.id), attempt, run: store.getRun(run.id),
-    activeRun, service, acquire };
+    activeRun, service, acquire, deferCleanup(cleanup) { deferredCleanup.push(cleanup); } };
 }
 
 function snapshot(f) {
@@ -123,11 +133,19 @@ async function httpFixture(t, f, registerExecution = true) {
     });
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  t.after(async () => {
-    supervisor.releaseAll(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
-  });
+  let closePromise;
+  const close = () => closePromise ??= (async () => {
+    const failures = [];
+    server.closeAllConnections();
+    try {
+      await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    } catch (error) { failures.push(error); }
+    try { supervisor.releaseAll(); } catch (error) { failures.push(error); }
+    if (failures.length) throw new AggregateError(failures, "p2_stop_http_fixture_cleanup_incomplete", { cause: failures[0] });
+  })();
+  f.deferCleanup(close);
   const base = `http://127.0.0.1:${server.address().port}`;
-  return { activeDirectReplies, activeRuns, tracker, finishExecution,
+  return { activeDirectReplies, activeRuns, tracker, finishExecution, close,
     getDetail: async () => {
       const response = await fetch(`${base}/work-units/${f.unit.id}?cwd=${encodeURIComponent(f.cwd)}`);
       assert.equal(response.status, 200);
@@ -531,6 +549,7 @@ test("Daemon restart cannot manufacture callback or Host evidence from terminal 
   http.finishExecution();
   assert.equal((await http.getDetail()).stopEvidence.attempts[0].effects, "unverified",
     "an empty live executor group cannot manufacture a durable coverage receipt");
+  await http.close();
   const restarted = await httpFixture(t, f, false);
   const detail = await restarted.getDetail();
   assert.equal(detail.workUnit.status, "cancelled");
@@ -555,6 +574,7 @@ test("a stop-unconfirmed command vetoes an otherwise empty Host group before and
   assert.equal(detail.stopEvidence.attempts[0].effects, "unknown");
   assert.equal(f.store.listResourceLeases({ status: "active" }).length, 1);
   assert.equal(f.store.listRuntimeSemaphoreSlots({ status: "active" }).length, 1);
+  await http.close();
   const restarted = await httpFixture(t, f, false);
   assert.equal((await restarted.getDetail()).stopEvidence.attempts[0].effects, "unknown");
 });

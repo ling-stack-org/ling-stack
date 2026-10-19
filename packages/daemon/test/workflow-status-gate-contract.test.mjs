@@ -77,6 +77,13 @@ function compile(f, kind, statuses) {
     parseWorkflowTemplateCompileRequest(definition(kind, statuses), f.channel.id), new Date().toISOString());
 }
 
+function definitionWithApprovalActions(kind, actions) {
+  const body = definition(kind, undefined);
+  const step = kind === "graph" ? body.workflowGraph.nodes[0] : body.customTemplate.steps[0];
+  step.gates[0].approvalProfile.requiredForActions = actions;
+  return body;
+}
+
 function durableState(store) {
   return Object.fromEntries(["channel_workflows", "channel_workflow_steps", "tasks", "run_sessions",
     "approval_requests", "artifacts", "state_transition_events", "conversation_items"]
@@ -104,6 +111,18 @@ test("B008 runtime status lists and query readers include the exact legal closed
     for (const status of ["", "unknown", "WAITING_FOR_INPUT", "waiting_for_inputs"]) {
       assert.throws(() => read(new URL(`http://b008.invalid/?status=${status}`), "status"), /must be one of/u);
     }
+  }
+});
+
+test("workflow template approval action decoder accepts Host capability and rejects unknown actions", () => {
+  for (const kind of ["graph", "custom"]) {
+    const parsed = parseWorkflowTemplateCompileRequest(
+      definitionWithApprovalActions(kind, ["host_capability"]), "channel_runtime_action_decoder");
+    const step = kind === "graph" ? parsed.workflowGraph.nodes[0] : parsed.customTemplate.steps[0];
+    assert.deepEqual(step.gates[0].approvalProfile.requiredForActions, ["host_capability"]);
+    assert.throws(() => parseWorkflowTemplateCompileRequest(
+      definitionWithApprovalActions(kind, ["unknown_host_action"]), "channel_runtime_action_decoder"),
+    /requiredForActions/u);
   }
 });
 

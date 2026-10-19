@@ -116,6 +116,87 @@ test("private system input preserves its source actor and owner on replay", asyn
   assert.throws(() => store.appendConversationUserTurn({ ...input, actorType: "local_user" }, later));
 });
 
+test("workflow system input inherits durable task and step owners with its own canonical context", async (t) => {
+  const { store, thread: parent } = await fixture(t, "conversation");
+  const channel = store.createChannel({ name: "Forwarded workflow", boundPath: store.paths.cwd }, now);
+  const task = store.createTask({ channelId: channel.id, title: "Child", prompt: "Read accepted input" }, now);
+  const workflow = store.createChannelWorkflow({ channelId: channel.id, title: "Workflow", objective: "Forward input", createdBy: "local-user" }, now);
+  const step = store.createChannelWorkflowStep({ workflowId: workflow.id, title: "Read", prompt: "Read accepted input",
+    toParticipantId: "ling_agent", toParticipantLabel: "Ling" }, now);
+  const source = store.appendConversationUserTurn(request(parent, "parent-source"), now);
+  const thread = store.createLingThread({ kind: "workflow_step", channelId: channel.id, taskId: task.id,
+    workflowId: workflow.id, workflowStepId: step.id, teammateId: "ling_agent", title: "Child", objective: "Forward input" }, now);
+  const input = { ...request(thread, "forwarded"), channelId: channel.id, actorType: "system", actorId: "workflow-dispatch",
+    turnKind: "workflow_step", domainRefs: [{ type: "conversation_item", id: source.item.id }, { type: "workflow_step", id: step.id }] };
+  const created = store.appendConversationUserTurn(input, now);
+  const turn = store.getLingTurn(created.turnId);
+  assert.equal(turn.taskId, task.id);
+  assert.equal(turn.workflowStepId, step.id);
+  assert.equal(turn.sourceItemId, created.item.id);
+  assert.equal(turn.sourceTurnId, undefined, "cross-thread ancestry belongs in domainRefs, not sourceTurnId");
+  assert.equal(turn.createdByActor, "system");
+  assert.equal(created.item.actorType, "system");
+  assert.equal(created.item.threadId, thread.id);
+  assert.notEqual(created.contextSegmentId, source.contextSegmentId);
+  assert.equal(store.getContextSegment(created.contextSegmentId).threadId, thread.id);
+  assert.equal(store.appendConversationUserTurn(input, later).idempotentReplay, true);
+});
+
+test("workflow input generation is read under the canonical transaction and preserves the exact Run prompt", async (t) => {
+  const f = await workflowInputFixture(t);
+  const readStep = f.store.getChannelWorkflowStep.bind(f.store);
+  let guardedReads = 0;
+  f.store.getChannelWorkflowStep = (id) => {
+    assert.throws(() => f.database.exec("BEGIN IMMEDIATE"), /locked|busy/iu,
+      "fresh generation reads must occur while canonical append owns the write lock");
+    guardedReads += 1;
+    return readStep(id);
+  };
+  const result = f.store.appendConversationUserTurn(f.input, now);
+  assert.ok(guardedReads > 0);
+  const turn = f.store.getLingTurn(result.turnId);
+  assert.equal(turn.taskId, f.generation.task.id);
+  assert.notEqual(turn.userInstruction, f.generation.task.prompt);
+  assert.equal(turn.userInstruction, f.input.userInstruction);
+  assert.equal(result.item.payload.body, f.input.payload.body);
+  assert.equal(result.item.actorType, "system");
+  assert.equal(f.store.appendConversationUserTurn(f.input, later).idempotentReplay, true);
+});
+
+test("workflow input rejects a replaced start owner atomically without an orphan Turn or sequence", async (t) => {
+  const f = await workflowInputFixture(t);
+  const step = f.store.getChannelWorkflowStep(f.step.id);
+  f.store.updateChannelWorkflowStep(step.id, {
+    metadata: { ...step.metadata, startOwner: { ...f.generation.owner, leaseId: "replaced-generation-lease" } },
+  }, later);
+  const before = f.store.getLingThread(f.thread.id).nextItemSequence;
+  assert.throws(() => f.store.appendConversationUserTurn(f.input, later), /generation lineage/iu);
+  assert.equal(f.store.getLingTurn(f.input.turnId), undefined);
+  assert.equal(f.store.getConversationItem(f.input.itemId), undefined);
+  assert.equal(f.store.getLingThread(f.thread.id).nextItemSequence, before);
+  assert.equal(f.database.prepare("SELECT COUNT(*) AS count FROM context_segments WHERE thread_id = ?").get(f.thread.id).count, 0);
+});
+
+test("workflow input retry owns the current Task without rewriting historical Thread or Turn owners", async (t) => {
+  const f = await workflowInputFixture(t);
+  const first = f.store.appendConversationUserTurn(f.input, now);
+  const settled = f.store.settleChannelWorkflowStepStartFailure({ workflowStepId: f.step.id,
+    owner: f.generation.owner, leaseId: f.lease.id, blocker: "Prepare a new retry generation", now: later });
+  assert.equal(settled.status, "linked", JSON.stringify(settled));
+  const generation = beginWorkflowInputGeneration(f, later);
+  const input = { ...f.input, ...request(f.thread, "current-generation-retry"),
+    channelId: f.channel.id, actorType: "system", actorId: "workflow-dispatch", turnKind: "workflow_step",
+    workflowStepStart: { workflowId: f.workflow.id, workflowStepId: f.step.id,
+      taskId: generation.task.id, owner: generation.owner } };
+  const second = f.store.appendConversationUserTurn(input, later);
+  assert.notEqual(second.turnId, first.turnId);
+  assert.equal(f.store.getLingTurn(second.turnId).taskId, generation.task.id);
+  assert.equal(f.store.getLingTurn(first.turnId).taskId, f.generation.task.id);
+  assert.equal(f.store.getLingThread(f.thread.id).taskId, f.generation.task.id);
+  assert.equal(f.store.getContextSegment(second.contextSegmentId).threadId, f.thread.id);
+  assert.equal(f.store.appendConversationUserTurn(input, later).turnId, second.turnId);
+});
+
 test("replay rejects stored visibility and owner divergence instead of returning a widened item", async (t) => {
   const { store, thread, database } = await fixture(t, "teammate_direct");
   const input = request(thread, "visibility");
@@ -180,4 +261,39 @@ async function fixture(t, kind) {
     objective: "Canonical conversation scope",
   }, now);
   return { cwd, store, database, thread };
+}
+
+async function workflowInputFixture(t) {
+  const f = await fixture(t, "conversation");
+  f.database.exec("PRAGMA busy_timeout=1");
+  f.channel = f.store.createChannel({ name: "Current workflow input", boundPath: f.cwd }, now);
+  f.workflow = f.store.createChannelWorkflow({ channelId: f.channel.id, title: "Current workflow", objective: "Canonical input",
+    status: "ready", createdBy: "local-user" }, now);
+  f.step = f.store.createChannelWorkflowStep({ workflowId: f.workflow.id, title: "Current step", prompt: "Original Task instruction",
+    toParticipantId: "ling_agent", toParticipantLabel: "Ling" }, now);
+  f.generation = beginWorkflowInputGeneration(f, now);
+  f.thread = f.store.createLingThread({ kind: "workflow_step", channelId: f.channel.id,
+    workflowId: f.workflow.id, workflowStepId: f.step.id, taskId: f.generation.task.id,
+    teammateId: "ling_agent", title: "Stable workflow Thread", objective: "Stable logical step" }, now);
+  const base = request(f.thread, "current-generation");
+  f.input = { ...base, channelId: f.channel.id, actorType: "system", actorId: "workflow-dispatch", turnKind: "workflow_step",
+    userInstruction: "Rendered context pack plus the current Task instruction.",
+    payload: { ...base.payload, body: "Rendered context pack plus the current Task instruction." },
+    workflowStepStart: { workflowId: f.workflow.id, workflowStepId: f.step.id,
+      taskId: f.generation.task.id, owner: f.generation.owner } };
+  return f;
+}
+
+function beginWorkflowInputGeneration(f, at) {
+  const lease = f.store.acquireResourceLease({ workspaceId: f.channel.workspaceId,
+    resourceType: "workflow_step", resourceKey: f.step.id, ownerType: "workflow_step", ownerId: f.step.id,
+    acquiredAt: at, expiresAt: "2026-09-05T14:00:00.000Z" });
+  assert.ok(lease);
+  const generation = f.store.beginChannelWorkflowStepStart({ workflowStepId: f.step.id,
+    expected: f.store.getChannelWorkflowStep(f.step.id), leaseId: lease.id,
+    task: { channelId: f.channel.id, title: "Current Task", prompt: "Original Task instruction", assigneeTeammateId: "ling_agent" },
+    now: at });
+  assert.equal(generation.status, "begun", JSON.stringify(generation));
+  f.lease = lease;
+  return generation;
 }

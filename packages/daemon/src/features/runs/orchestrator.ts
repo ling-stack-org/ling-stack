@@ -27,6 +27,7 @@ import {
   type UserInputContinuationBinding,
   type UserInputContinuationClaim,
   type UserInputContinuationSeed,
+  UserInputRunCreatedDeferredError,
   type RunStatus,
   type RunStore,
   type RunTool,
@@ -111,8 +112,10 @@ import {
   acquireRunRuntimeSemaphores,
   claimPreparedRunTask,
   prepareRunConcurrency,
+  recoverPreparedRunConcurrency,
   releasePreparedRunResources,
   type PreparedRunConcurrency,
+  UserInputContinuationPrestartDeferredError,
 } from "./concurrency.js";
 import {
   createMcpToolCallHandler,
@@ -189,6 +192,9 @@ import { AttemptHostOperationTracker } from "../../runtime/attempt-host-operatio
 import { observeHostCompactionResourceBoundary } from "../harness/continuations/host-compaction-resource-boundary.js";
 import { UserInputPauseCoordinator } from "./user-input-pause-coordinator.js";
 import { withUserInputContinuationReceiver } from "./user-input-continuation-receiver.js";
+import { failUserInputAnswerStartup, finalizeUserInputAnswerWorkflow } from "./user-input-answer-dispatch.js";
+import { prepareUserInputContinuationExecution, type UserInputPreparedExecution } from "./user-input-execution-preparation.js";
+import { readUserInputSourceExecution } from "./user-input-source-execution.js";
 import { providerForRunPersistence } from "./provider-persistence.js";
 import {
   createProviderInvocationObserver,
@@ -207,7 +213,7 @@ interface ExistingRunContinuationExecutionOptions {
 interface UserInputContinuationExecutionOptions {
   readonly threadId: string;
   readonly deliveryId: string;
-  readonly claim?: UserInputContinuationClaim;
+  readonly claim: UserInputContinuationClaim;
   readonly binding?: UserInputContinuationBinding;
 }
 
@@ -408,9 +414,10 @@ export function executeUserInputContinuation(
   mcpBroker: McpBroker,
   options: ExecuteRunRequestOptions = {},
 ): Promise<string | undefined> {
-  if (Boolean(input.claim) === Boolean(input.binding)) {
+  if (input.claim.threadId !== input.threadId || input.claim.deliveryId !== input.deliveryId
+    || input.binding && input.binding.deliveryId !== input.deliveryId) {
     writeRunPreparationFailure(sink, 409, { error: "user_input_continuation_identity_invalid",
-      message: "Exactly one durable delivery claim or admitted binding is required." });
+      message: "The durable delivery claim and admitted binding must identify the same continuation." });
     return Promise.resolve(undefined);
   }
   const completion = Promise.resolve().then(() => {
@@ -474,7 +481,10 @@ async function executeAdmittedRunRequest(
   let compactionRecoveryCheckpointId: string | undefined;
   const existingContinuation = options.existingRunContinuation;
   const userInputContinuation = options.userInputContinuation;
+  let userInputClaim = userInputContinuation?.claim;
   let userInputSeed: UserInputContinuationSeed | undefined;
+  let userInputSourceRun: RunSession | undefined;
+  let userInputPrepared: UserInputPreparedExecution | undefined;
   let userInputBinding: UserInputContinuationBinding | undefined;
   let workflowStartOwner: import("@ling-stack/core").WorkflowStepStartOwnerV1 | undefined;
   let lifecycleTimeMs = Number.NEGATIVE_INFINITY;
@@ -503,7 +513,14 @@ async function executeAdmittedRunRequest(
     if (userInputContinuation) {
       userInputSeed = store.getUserInputContinuationSeed(userInputContinuation.threadId, userInputContinuation.deliveryId);
       if (userInputSeed) raiseLifecycleTimeFloor(userInputSeed.createdAt);
-      if (!userInputSeed || userInputSeed.source.cwd !== runRequest.cwd
+      userInputSourceRun = userInputSeed ? store.getRun(userInputSeed.source.runId) : undefined;
+      const requestPreparation = store.getUserInputContinuationPreparation(
+        userInputContinuation.threadId,
+        userInputContinuation.deliveryId,
+        "request",
+      );
+      if (requestPreparation) raiseLifecycleTimeFloor(requestPreparation.createdAt);
+      if (!userInputSeed || !userInputSourceRun || userInputSeed.source.cwd !== runRequest.cwd
         || userInputSeed.source.threadId !== runRequest.threadId || userInputSeed.source.turnId !== runRequest.turnId
         || userInputSeed.source.taskBinding.taskId !== runRequest.task.id
         || userInputSeed.source.participantId !== (runRequest.teammateId ?? "ling_agent")
@@ -517,6 +534,7 @@ async function executeAdmittedRunRequest(
       turn = store.getLingTurn(userInputSeed.source.turnId);
       userInputBinding = userInputContinuation.binding;
       if (userInputBinding) {
+        raiseLifecycleTimeFloor(userInputBinding.createdAt);
         const current = store.getUserInputContinuationBinding(userInputContinuation.threadId, userInputContinuation.deliveryId);
         if (!current || !isDeepStrictEqual(current, userInputBinding)) {
           throw new HttpError(409, "user_input_binding_changed", "Durable answer binding changed before execution.");
@@ -563,16 +581,25 @@ async function executeAdmittedRunRequest(
     if ((existingContinuation || userInputBinding) && !existingRunnerExecution) {
       throw new HttpError(409, "continuation_source_incomplete", "Existing Run has no valid frozen Runner execution input.");
     }
-    const frozenExecution = preparedExecution?.payload ?? existingRunnerExecution;
-    const policyRequest = runRequest;
-    assertFullAccessPermissionConfirmed(runRequest);
+    const userInputSourceExecution = userInputSeed && userInputSourceRun
+      ? readUserInputSourceExecution(store, userInputSourceRun, userInputSeed)
+      : undefined;
+    const frozenExecution = preparedExecution?.payload ?? existingRunnerExecution ?? userInputSourceExecution;
+    const policyRequest = userInputContinuation && runRequest.userInputContinuationContext
+      ? {
+          ...runRequest,
+          ...runRequest.userInputContinuationContext.sourcePolicyIntent,
+          permissionConfirmation: undefined,
+        }
+      : runRequest;
+    assertFullAccessPermissionConfirmed(policyRequest);
     validateWorkflowStepOwner(store, runRequest);
-    workflowStartOwner = captureWorkflowStartOwner(
-      store,
-      runRequest,
-      existingContinuation?.runId ?? userInputSeed?.source.runId,
-      { waitingForInput: Boolean(userInputContinuation) },
-    );
+    workflowStartOwner = userInputBinding?.workflowStartOwner ?? captureWorkflowStartOwner(
+        store,
+        runRequest,
+        existingContinuation?.runId ?? userInputSeed?.source.runId,
+        { waitingForInput: Boolean(userInputContinuation) },
+      );
     runtime = runtimeSupervisor.getRuntime(workspaceCwd, store);
     resolvedProvider = resolveProviderForRun(store, runRequest, secretResolver, {
       providerWebSocketFallbackEnabled: runtimeSupervisor.getTransportFeatures().providerWebSocketFallback,
@@ -611,8 +638,8 @@ async function executeAdmittedRunRequest(
       ? mergeRunTools(runRequest.tools ?? [], selectedSkill.requiredTools)
       : runRequest.tools;
     runtimeApprovalProfile = selectedSkill
-      ? mergeApprovalProfiles(runRequest.approvalProfile, selectedSkill.skill.approvalProfile)
-      : runRequest.approvalProfile;
+      ? mergeApprovalProfiles(policyRequest.approvalProfile, selectedSkill.skill.approvalProfile)
+      : policyRequest.approvalProfile;
     runtimeSettings = loadWorkspaceRuntimeSettings(store, runnerRegistry);
     const effectiveReasoningSummary = runRequest.reasoningSummary
       ?? store.getWorkspaceSettings().defaultReasoningSummary
@@ -699,9 +726,12 @@ async function executeAdmittedRunRequest(
       ? { kind: workUnit.kind, ownerType: workUnit.ownerType, ownerId: workUnit.ownerId }
       : resolveRunWorkUnitOwner(thread, runRequest, turn.id);
     // Definitions belong to initial model input; executable handlers require the real Run below.
-    const mediaGenerationEligible = isConversationMediaGenerationEligible({
-      createdByActor: runRequest.createdByActor, workUnitKind: workUnitOwner.kind,
-    });
+    const mediaGenerationEligible = frozenExecution
+      ? frozenExecution.input.initialToolSurface?.mediaGeneration === true
+      : isConversationMediaGenerationEligible({
+          createdByActor: runRequest.createdByActor,
+          workUnitKind: workUnitOwner.kind,
+        });
     const currentMediaTools = mediaGenerationEligible ? createConversationMediaGenerationToolDefinitions(
       listConversationMediaGenerationTargets(store, secretResolver)) : [];
     const toolHydrationEnabled = runnerResolution.runner.toolHydration?.mode === "daemon_hydrated" &&
@@ -719,13 +749,23 @@ async function executeAdmittedRunRequest(
       if (activeRuns.isShuttingDown()) throw new HttpError(503, "runtime_shutting_down", "Runtime is shutting down.");
       assertHostCapabilitiesCurrent();
     };
-    if (!existingContinuation && !userInputContinuation) {
+    if (userInputContinuation?.claim && !userInputBinding) {
+      userInputPrepared = await prepareUserInputContinuationExecution({
+        store,
+        claim: userInputContinuation.claim,
+        runnerId: runnerResolution.effectiveRunnerId,
+        adapter: runnerResolution.runner.adapter,
+        currentOptions: runnerRequest,
+        now: lifecycleNow,
+        assertCurrent: assertPreparationCurrent,
+      });
+    } else if (!existingContinuation && !userInputContinuation) {
       preparedExecution = await prepareNormalConversationExecution({ store, request: runRequest,
         runnerId: runnerResolution.effectiveRunnerId, adapter: runnerResolution.runner.adapter, options: runnerRequest,
         usedMemory, skillSourceContext: selectedSkillSourceContext, assertCurrent: assertPreparationCurrent });
     }
-    let executionInput = existingRunnerExecution ?? preparedExecution?.payload;
-    if (!existingContinuation && !executionInput && runnerResolution.runner.adapter instanceof PiRunnerAdapter) {
+    let executionInput = userInputPrepared?.execution ?? existingRunnerExecution ?? preparedExecution?.payload;
+    if (!existingContinuation && !userInputContinuation && !executionInput && runnerResolution.runner.adapter instanceof PiRunnerAdapter) {
       // All Pi surfaces retain the actual SDK input, not an approximation rebuilt
       // from requestSnapshot after a question or restart. Normal first-writer input is reused.
       const preparedInput = await runnerResolution.runner.adapter.prepareTaskInput(runnerRequest);
@@ -736,7 +776,7 @@ async function executeAdmittedRunRequest(
     const refreshPreparedExecution = (): void => {
       if (!executionInput) return;
       // Recheck after awaiting SDK preparation. A snapshot never authorizes a revoked provider/tool.
-      if (existingContinuation || userInputBinding) {
+      if (existingContinuation || userInputContinuation) {
         assertPreparedRunnerMemoryCurrent(runStore, runRequest, executionInput);
       } else {
         assertPreparedExecutionMemoryCurrent(runStore, runRequest, executionInput);
@@ -794,8 +834,8 @@ async function executeAdmittedRunRequest(
     // SDK/backend setup both await. Policy must be read after them, not before.
     refreshPreparedExecution();
     selectedSkill = resolveCurrentRunSkill(store, runRequest);
-    runtimeApprovalProfile = selectedSkill ? mergeApprovalProfiles(runRequest.approvalProfile, selectedSkill.skill.approvalProfile)
-      : runRequest.approvalProfile;
+    runtimeApprovalProfile = selectedSkill ? mergeApprovalProfiles(policyRequest.approvalProfile, selectedSkill.skill.approvalProfile)
+      : policyRequest.approvalProfile;
     if (executionInput && selectedSkill) {
       const permitted = mergeRunTools(runRequest.tools ?? [], selectedSkill.requiredTools);
       if (runtimeTools?.some((tool) => !permitted.includes(tool))) throw new HttpError(409, "prepared_skill_tools_changed",
@@ -1085,52 +1125,22 @@ async function executeAdmittedRunRequest(
       if (!userInputBinding) {
         const claim = userInputContinuation.claim;
         if (!claim) throw new HttpError(409, "user_input_claim_missing", "Durable answer claim is missing.");
-        prepareManagedRuntime();
-        const admissionAt = new Date().toISOString();
-        const runRequestSnapshot = {
-          ...durableRunRequest,
-          permissionMode: effectivePolicySnapshot.mode,
-          effectivePolicySnapshot,
-          workspaceCwd,
-          executionCwd: runRequest.cwd,
-          channelWorkspaceBinding: channelWorkspaceSnapshot,
-          threadId: persistenceThread.id,
-          turnId: persistenceTurn.id,
-          provider: persistenceProvider,
-          runnerResolution: toRunnerResolutionSnapshot(persistenceRunnerResolution),
-          runtimeSettings,
-          runtimeToolFeatures,
-          selectedSkillId: selectedSkill?.skillId,
-          skillSourceContext: selectedSkillSourceContext,
-          mcpToolAccess,
-          managedPluginRuntime,
-          runnerExecutionInput: executionInput,
-        };
-        const preparedRequest = store.getUserInputContinuationPreparation(claim.threadId, claim.deliveryId, "request");
-        if (!preparedRequest) throw new HttpError(409, "user_input_prepared_request_missing",
-          "Durable answer request preparation is missing.");
-        const prepared = store.saveUserInputContinuationPreparation({ ...claim, stage: "execution",
-          parentRef: { id: preparedRequest.id, fingerprint: preparedRequest.fingerprint },
-          payload: {
-            schemaVersion: 1,
-            runnerId: runnerResolution.effectiveRunnerId,
-            providerName: persistenceProvider.provider,
-            providerModel: persistenceProvider.model,
-            providerPresetId: runRequest.providerPresetId,
-            selectedSkillId: selectedSkill?.skillId,
-            taskSnapshot: runRequest.task,
-            providerSnapshot: { providerPresetId: runRequest.providerPresetId, ...persistenceProvider },
-            requestSnapshot: runRequest,
-            runRequestSnapshot,
-            preparedInput: executionInput.preparedInput,
-            preparedInputFingerprint: executionInput.preparedInput.fingerprint,
-            runnerExecutionInput: executionInput,
-          },
-        }, admissionAt).snapshot;
+        if (!userInputPrepared) {
+          throw new HttpError(409, "user_input_execution_preparation_missing", "Answer execution preparation is missing.");
+        }
+        const admissionAt = lifecycleNow();
         userInputBinding = store.admitUserInputContinuation({ ...claim,
-          executionRef: { id: prepared.id, fingerprint: prepared.fingerprint },
-          runtimeInstanceId: runtime.runtimeInstanceId }, admissionAt);
-        createdAt = admissionAt;
+          executionRef: userInputPrepared.ref,
+          runtimeInstanceId: runtime.runtimeInstanceId,
+          effectivePolicySnapshot,
+          workflowStartOwner,
+        }, admissionAt);
+        raiseLifecycleTimeFloor(userInputBinding.createdAt);
+        createdAt = userInputBinding.createdAt;
+        // Admission advances the durable delivery revision without replacing its claim.
+        // Only this successful Host admission can promote the pre-admission revision.
+        userInputClaim = { ...claim, expectedRevision: userInputBinding.deliveryRevision };
+        workflowStartOwner = userInputBinding.workflowStartOwner;
       }
       run = store.getRun(userInputBinding.runId);
       workUnit = store.getWorkUnit(userInputBinding.fence.workUnitId);
@@ -1185,25 +1195,43 @@ async function executeAdmittedRunRequest(
     if (!attempt) {
       throw new HttpError(409, "user_input_dispatch_attempt_missing", "Answer continuation has no runnable attempt.");
     }
-    preparedConcurrency = prepareRunConcurrency({
-      store,
-      runRequest,
-      runId,
-      workUnit,
-      attempt,
-      existingContinuationId: existingContinuation ? continuationExecution?.continuation.id : undefined,
-      now: createdAt,
-    });
-    acquireRunRuntimeSemaphores({
-      store,
-      workUnit,
-      attempt,
-      channel: preparedConcurrency.channel,
-      channelParallelLimit: runRequest.channelParallelLimit,
-      providerKey: runRequest.providerPresetId ?? `${resolvedProvider.provider}:${resolvedProvider.model}`,
-      runnerId: runnerResolution.effectiveRunnerId,
-      now: createdAt,
-    });
+    const providerConcurrencyKey = runRequest.providerPresetId
+      ?? `${resolvedProvider.provider}:${resolvedProvider.model}`;
+    if (userInputContinuation && userInputBinding) {
+      preparedConcurrency = recoverPreparedRunConcurrency({
+        store,
+        claim: userInputClaim!,
+        binding: userInputBinding,
+        runRequest,
+        runId,
+        workUnit,
+        attempt,
+        channelParallelLimit: runRequest.channelParallelLimit,
+        providerKey: providerConcurrencyKey,
+        runnerId: runnerResolution.effectiveRunnerId,
+        now: lifecycleNow(),
+      });
+    } else {
+      preparedConcurrency = prepareRunConcurrency({
+        store,
+        runRequest,
+        runId,
+        workUnit,
+        attempt,
+        existingContinuationId: existingContinuation ? continuationExecution?.continuation.id : undefined,
+        now: createdAt,
+      });
+      acquireRunRuntimeSemaphores({
+        store,
+        workUnit,
+        attempt,
+        channel: preparedConcurrency.channel,
+        channelParallelLimit: runRequest.channelParallelLimit,
+        providerKey: providerConcurrencyKey,
+        runnerId: runnerResolution.effectiveRunnerId,
+        now: createdAt,
+      });
+    }
     if (!userInputContinuation && (!existingContinuation
       || existingContinuation.origin === "runner_retry"
       || existingContinuation.origin === "manual_resume"
@@ -1344,7 +1372,7 @@ async function executeAdmittedRunRequest(
       );
     }
     if (!existingContinuation) {
-      store.appendEvent(run.id, "run_created", {
+      const runCreatedData = {
         taskId: run.taskId,
         workUnitId: workUnit.id,
         attemptId: attempt.id,
@@ -1384,20 +1412,36 @@ async function executeAdmittedRunRequest(
           workUnitId: lease.workUnitId,
           attemptId: lease.attemptId,
         })),
-      });
-      appendRunCreatedControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, run, createdAt);
+      };
+      if (userInputContinuation && userInputBinding) {
+        store.publishUserInputContinuationRunCreated({
+          claim: userInputClaim!,
+          bindingRef: { id: userInputBinding.id, fingerprint: userInputBinding.fingerprint },
+          sourceFence: userInputBinding.fence,
+          runId: run.id,
+          workspaceCwd,
+          data: runCreatedData,
+        }, lifecycleNow());
+      } else {
+        store.appendEvent(run.id, "run_created", runCreatedData, createdAt);
+      }
+      appendRunCreatedControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, run, createdAt,
+        userInputBinding ? `user-input-run-created:${userInputBinding.deliveryId}:${run.id}` : undefined);
     }
     if (run && !userInputContinuation) commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner);
   } catch (error) {
     if (userInputContinuation) {
-      if (preparedConcurrency.leases.length > 0 && store && attempt) {
-        const now = lifecycleNow();
-        store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), now, "user-input-prepare-deferred");
-        store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), now, "user-input-prepare-deferred");
+      const failureCode = error instanceof HttpError ? error.code : "user_input_receiver_unavailable";
+      const failureMessage = error instanceof Error ? error.message : String(error);
+      const recoverable = error instanceof UserInputContinuationPrestartDeferredError
+        || error instanceof UserInputRunCreatedDeferredError;
+      if (!recoverable && userInputBinding && store) {
+        failUserInputAnswerStartup(store, userInputBinding, userInputClaim!,
+          failureCode, failureMessage, lifecycleNow());
       }
       writeRunPreparationFailure(sink, error instanceof HttpError ? error.statusCode : 503, {
-        error: error instanceof HttpError ? error.code : "user_input_receiver_unavailable",
-        message: error instanceof Error ? error.message : String(error),
+        error: failureCode,
+        message: failureMessage,
       });
       return undefined;
     }
@@ -1736,7 +1780,7 @@ async function executeAdmittedRunRequest(
     abortController,
     streamEnvelope,
     completion: runCompletion,
-    runtimeInstanceId: runtime.runtimeInstanceId,
+    runtimeInstanceId: attempt.runtimeInstanceId,
     workUnitId: workUnit.id,
     attemptId: attempt.id,
     fencingToken: attempt.fencingToken,
@@ -2606,8 +2650,10 @@ async function executeAdmittedRunRequest(
           store,
           threadId: userInputContinuation!.threadId,
           binding: userInputBinding,
+          claim: userInputClaim!,
           adapter: runnerResolution.runner.adapter,
           options: continuationRunnerRequest,
+          now: lifecycleNow,
           onAccepted: (acceptedAt) => {
             startObservedRuntime(acceptedAt, true);
             flushPendingUserInputRunnerEvents();
@@ -2789,12 +2835,23 @@ async function executeAdmittedRunRequest(
     const observedRun = store.getRun(run.id);
     const observedWorkUnit = store.getWorkUnit(workUnit.id);
     const observedAttempt = store.getWorkUnitAttempt(attempt.id);
-    if (userInputBinding
+    const unacknowledgedUserInputStartup = Boolean(userInputBinding
       && !store.getUserInputContinuationReceipt(userInputContinuation!.threadId, userInputBinding.deliveryId)
       && observedRun?.status === "queued"
       && observedWorkUnit?.status === "claimed"
       && observedWorkUnit.activeAttemptId === attempt.id
-      && observedAttempt?.status === "created") {
+      && observedAttempt?.status === "created");
+    if (unacknowledgedUserInputStartup && userInputBinding
+      && error instanceof HttpError && error.code === "workflow_start_owner_stale"
+      && failUserInputAnswerStartup(store, userInputBinding, userInputClaim!,
+        error.code, error.message, executionNow())) {
+      if (!sinkClosed) {
+        sink.writeError(error.statusCode, { error: error.code, message: error.message });
+        sink.end();
+      }
+      return undefined;
+    }
+    if (unacknowledgedUserInputStartup && userInputBinding) {
       // The Pi session never crossed the durable receiver boundary. Keep the
       // admitted binding intact so another daemon can reopen the same frozen
       // Run/Attempt; no model request, terminal state, or applied answer exists.
@@ -3149,6 +3206,9 @@ async function executeAdmittedRunRequest(
           // lifetime and finish durable cleanup before admitting another Run.
           resolveRunCompletion?.();
           await durableAttemptCompletion;
+          if (userInputBinding) {
+            finalizeUserInputAnswerWorkflow(store, userInputBinding, terminalRun, terminalRun.endedAt ?? executionNow());
+          }
           await options.afterRunTerminal?.(terminalRun);
         }
       } finally {
@@ -3281,6 +3341,7 @@ function appendRunCreatedControlPlaneEvent(
   cwd: string,
   run: RunSession,
   now: string,
+  idempotencyKey?: string,
 ): void {
   if (!hub) {
     return;
@@ -3292,6 +3353,7 @@ function appendRunCreatedControlPlaneEvent(
     entityType: "run",
     entityId: run.id,
     action: "run.created",
+    idempotencyKey,
     data: {
       status: run.status,
       taskId: run.taskId,
