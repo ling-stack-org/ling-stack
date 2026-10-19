@@ -7,10 +7,10 @@ const expoRequire = createRequire(mobileRequire.resolve("expo/package.json"));
 // Use the same semver implementation as Expo's dependency checker.
 const expoCliRequire = createRequire(expoRequire.resolve("@expo/cli/package.json"));
 const { intersects, satisfies } = expoCliRequire("semver");
-const { dependencies } = mobileRequire("./package.json");
+const { dependencies, devDependencies } = mobileRequire("./package.json");
 const bundled = expoRequire("./bundledNativeModules.json");
 
-for (const [name, declaredRange] of Object.entries(dependencies)) {
+for (const [name, declaredRange] of Object.entries({ ...dependencies, ...devDependencies })) {
   const supportedRange = bundled[name];
   if (!supportedRange) continue;
 
