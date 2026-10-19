@@ -148,7 +148,11 @@ export class ExecutionEngineProfileStore {
       }));
   }
 
-  /** Retain before dispatch, including unopened/archived workspace bindings. Never exposed as a browser mutation. */
+  /**
+   * Opt-in host-only pin; callers own its retain/release lifecycle, including archived bindings they protect.
+   * Workspace defaults do not implicitly acquire a permanent pin: profile changes invalidate their revisioned selection.
+   * Never exposed as a browser mutation.
+   */
   retainReference(engineId: ExternalExecutionEngineId, expectedRevision: number, reference: ExecutionEngineProfileReference): void {
     validateReference(reference);
     assertProfileRevision(expectedRevision);

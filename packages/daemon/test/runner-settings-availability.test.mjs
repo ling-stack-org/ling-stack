@@ -3,8 +3,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { ExecutionEngineProfileStore, resolveUserConfigPaths } from "@ling-stack/core";
+import { createExecutionEngineRunTargetDispatcher } from "../dist/features/execution-engines/run-target-dispatcher.js";
 import { createRunnerRegistry } from "../dist/runtime/runners.js";
 import { loadWorkspaceRuntimeSettings, patchWorkspaceRuntimeSettings } from "../dist/runtime/runner-settings.js";
+import { fixtureNativeAcceptance } from "./support/fixture-native-acceptance.mjs";
 
 function registry(externalStatus = "disabled") {
   const adapter = { async runTask() { throw new Error("unexpected execution"); } };
@@ -57,6 +60,81 @@ test("native migration requires confirmation, CAS and a complete default binding
   assert.throws(() => patchWorkspaceRuntimeSettings(store, runners, { expectedUpdatedAt: current.updatedAt, allowedRunnerIds: [] }), /runtime_settings_conflict/);
   assert.throws(() => patchWorkspaceRuntimeSettings(store, runners, { defaultExecutionBinding: null, schemaVersion: 2, confirmNativeMigration: true, expectedUpdatedAt: next.updatedAt }), /native_default_binding_required/);
   assert.equal(readFileSync(path, "utf8"), saved);
+});
+
+test("saved native defaults allow profile edits and require explicit reselection with current verification", async (t) => {
+  const { store, path } = fixture(t, {
+    schemaVersion: 2, defaultRunnerId: "pi", allowedRunnerIds: ["pi"], updatedAt: "2026-09-09T00:00:00.000Z",
+  });
+  const runners = registry("enabled");
+  const profileStore = new ExecutionEngineProfileStore(resolveUserConfigPaths({ userRootDir: join(store.paths.cwd, "user") }));
+  const settings = () => loadWorkspaceRuntimeSettings(store, runners, { userRuntimeDefaults: {} });
+  const select = (profile, confirmNativeMigration = true) => patchWorkspaceRuntimeSettings(store, runners, {
+    schemaVersion: 2, confirmNativeMigration, expectedUpdatedAt: settings().updatedAt,
+    defaultRunnerId: "codex-app-server", allowedRunnerIds: ["pi", "codex-app-server"],
+    defaultExecutionBinding: { kind: "native_profile", engineId: "codex-app-server",
+      profileId: profile.id, profileRevision: profile.revision, nativeModelId: "gpt-fixture" },
+  });
+  const probes = [];
+  let identity, evidence;
+  const dispatcher = createExecutionEngineRunTargetDispatcher({
+    getProfileStore: () => profileStore,
+    readWorkspaceSettings: settings,
+    readAcceptanceEvidence(current) { identity = current; return evidence; },
+    secretResolver: { status: () => "missing", resolve: ref => ({ ref, configured: false, status: "missing" }) },
+    probeInstallation: async profile => {
+      probes.push(profile.revision);
+      return { profileId: profile.id, profileRevision: profile.revision,
+        configurationFingerprint: profile.configurationFingerprint, checkedAt: new Date().toISOString(),
+        status: "installed", authentication: "authenticated", connection: "connected",
+        runtimeVersion: "2026.9.10", executableDigest: "b".repeat(64) };
+    },
+    executeCodex() { assert.fail("availability checks must not execute a model"); },
+  });
+  const input = () => ({
+    runRequest: { cwd: store.paths.cwd, executionBinding: settings().defaultExecutionBinding,
+      task: { id: "policy-fixture", title: "Policy fixture", prompt: "Do not execute" } }, store,
+    effectivePolicySnapshot: { mode: "workspace_write", workspaceAccessMode: "workspace_write",
+      conversationMode: "default", toolDecisions: {}, allowedWritePaths: [store.paths.cwd],
+      workspacePolicyUpdatedAt: "2026-09-09T00:00:00.000Z", riskNotes: [] },
+    signal: new AbortController().signal,
+  });
+  try {
+    const first = profileStore.save({ engineId: "codex-app-server", executablePath: process.execPath,
+      authProfileId: "codex-policy-fixture" }, 0);
+    const saved = select(first);
+    assert.deepEqual(profileStore.listReferences("codex-app-server"), []);
+    await assert.rejects(dispatcher.assertAvailable(input()), { code: "native_execution_verification_missing" });
+    evidence = fixtureNativeAcceptance(identity);
+    await dispatcher.assertAvailable(input());
+
+    const bytes = readFileSync(path, "utf8");
+    const changed = profileStore.save({ ...first.configuration, authProfileId: "codex-policy-reconfigured" }, first.revision);
+    assert.equal(changed.id, first.id);
+    assert.equal(changed.revision, first.revision + 1);
+    assert.deepEqual(settings().defaultExecutionBinding, saved.defaultExecutionBinding);
+    const priorProbeCount = probes.length;
+    await assert.rejects(dispatcher.assertAvailable(input()), { code: "profile_revision_conflict" });
+    assert.equal(probes.length, priorProbeCount, "the stale saved default is rejected before probing");
+    assert.equal(readFileSync(path, "utf8"), bytes, "profile edits must not silently reselect a default");
+
+    assert.throws(() => select(changed, false), /migration_confirmation_required/);
+    assert.equal(readFileSync(path, "utf8"), bytes);
+    const reselected = select(changed);
+    assert.equal(reselected.defaultExecutionBinding.profileRevision, changed.revision);
+    assert.equal(reselected.defaultExecutionBinding.profileId, first.id);
+    assert.equal(reselected.defaultExecutionBinding.nativeModelId, "gpt-fixture");
+    assert.deepEqual(reselected.allowedRunnerIds, saved.allowedRunnerIds);
+    await assert.rejects(dispatcher.assertAvailable(input()), { code: "native_execution_verification_mismatch" });
+    assert.equal(evidence.identity.profileRevision, first.revision);
+    assert.equal(identity.profileRevision, changed.revision);
+    assert.notEqual(identity.configurationFingerprint, evidence.identity.configurationFingerprint);
+    evidence = fixtureNativeAcceptance(identity);
+    await dispatcher.assertAvailable(input());
+    assert.deepEqual(profileStore.listReferences("codex-app-server"), []);
+  } finally {
+    profileStore.close();
+  }
 });
 
 test("retired runner policy intent stays readable without blocking an explicit Pi run", (t) => {
