@@ -5,8 +5,9 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled]
   workflow_dispatch:
   schedule:
-    # Full platform regression is weekly; normal PRs retain affected checks.
-    - cron: "17 3 * * 1"
+    # Daily full Linux/macOS regression at 11:17 Asia/Shanghai (03:17 UTC).
+    # Normal PRs retain affected checks and Draft execution policy.
+    - cron: "17 3 * * *"
 
 concurrency:
   # Unrelated labels must neither cancel validation nor replace its check result.
