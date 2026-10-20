@@ -98,10 +98,18 @@ jobs:
           git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
           git commit -m "chore: refresh provider model catalog"
           git push --force-with-lease origin "HEAD:$branch"
-          pull_requests_json="$(gh pr list --state open --head "$branch" --base main --limit 2 --json number,state,headRefName,baseRefName,isCrossRepository)"
-          pull_request="$(printf '%s' "$pull_requests_json" | node scripts/ci/provider-model-catalog-pr.mjs "$branch")"
+          pull_requests_json="$(gh pr list --state open --head "$branch" --base main --limit 2 --json number,state,headRefName,baseRefName,isCrossRepository,author)"
+          pull_request="$(printf '%s' "$pull_requests_json" | node scripts/ci/provider-model-catalog-pr.mjs "$branch" "$APP_SLUG")"
           if [ -n "$pull_request" ]; then
             gh pr edit "$pull_request" --title "chore: refresh provider model catalog" --body "Automated reviewed data refresh from the MIT-licensed models.dev catalog. This PR changes metadata only and does not enable provider adapters or runtime permissions."
           else
             gh pr create --base main --head "$branch" --title "chore: refresh provider model catalog" --body "Automated reviewed data refresh from the MIT-licensed models.dev catalog. This PR changes metadata only and does not enable provider adapters or runtime permissions."
+            pull_requests_json="$(gh pr list --state open --head "$branch" --base main --limit 2 --json number,state,headRefName,baseRefName,isCrossRepository,author)"
+            pull_request="$(printf '%s' "$pull_requests_json" | node scripts/ci/provider-model-catalog-pr.mjs "$branch" "$APP_SLUG")"
+            if [ -z "$pull_request" ]; then
+              echo "::error::The catalog PR was created but could not be selected safely."
+              exit 1
+            fi
           fi
+          head_commit="$(git rev-parse HEAD)"
+          gh pr merge "$pull_request" --auto --squash --match-head-commit "$head_commit"

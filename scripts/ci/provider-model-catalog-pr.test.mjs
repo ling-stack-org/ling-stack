@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const workflow = readFileSync(resolve(repositoryRoot, ".github/workflows/sync-provider-model-catalog.yml"), "utf8");
 const branch = "automation/provider-model-catalog";
+const appSlug = "catalog-sync";
 
 function shellStep(name) {
   const start = workflow.indexOf(`      - name: ${name}\n`);
@@ -34,12 +35,15 @@ function executable(directory, name, script) {
 const refreshStep = shellStep("Refresh reviewed catalog data");
 
 function pullRequest(overrides = {}) {
-  return { number: 123, state: "OPEN", headRefName: branch, baseRefName: "main", isCrossRepository: false, ...overrides };
+  return {
+    number: 123, state: "OPEN", headRefName: branch, baseRefName: "main", isCrossRepository: false,
+    author: { login: `app/${appSlug}`, is_bot: true }, ...overrides,
+  };
 }
 
 async function select(records) {
   const { selectOpenCatalogPullRequest } = await import("./provider-model-catalog-pr.mjs");
-  return selectOpenCatalogPullRequest(JSON.stringify(records), branch);
+  return selectOpenCatalogPullRequest(JSON.stringify(records), branch, appSlug);
 }
 
 function runPrStep(records, listExitCode = 0) {
@@ -50,23 +54,30 @@ function runPrStep(records, listExitCode = 0) {
   return spawnSync("bash", ["-c", `
 set -euo pipefail
 branch="${branch}"
+APP_SLUG="${appSlug}"
+created=false
 gh() {
   printf 'GH_CALL:%s\\n' "$*" >&2
   if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
     if [ "$CATALOG_LIST_EXIT_CODE" != "0" ]; then return "$CATALOG_LIST_EXIT_CODE"; fi
-    printf '%s' "$CATALOG_PR_FIXTURE"
+    if [ "$created" = "true" ]; then printf '%s' "$CATALOG_CREATED_PR_FIXTURE"; else printf '%s' "$CATALOG_PR_FIXTURE"; fi
+  elif [ "$1" = "pr" ] && [ "$2" = "create" ]; then
+    created=true
   fi
 }
 ${prStep}
 `], {
     cwd: repositoryRoot,
-    env: { ...process.env, CATALOG_PR_FIXTURE: JSON.stringify(records), CATALOG_LIST_EXIT_CODE: String(listExitCode) },
+    env: {
+      ...process.env, CATALOG_PR_FIXTURE: JSON.stringify(records), CATALOG_LIST_EXIT_CODE: String(listExitCode),
+      CATALOG_CREATED_PR_FIXTURE: JSON.stringify([pullRequest()]),
+    },
     encoding: "utf8",
   });
 }
 
 test("workflow queries exact open head/base and preserves the existing leased push", () => {
-  assert.match(workflow, /gh pr list --state open --head "\$branch" --base main --limit 2 --json number,state,headRefName,baseRefName,isCrossRepository/u);
+  assert.match(workflow, /gh pr list --state open --head "\$branch" --base main --limit 2 --json number,state,headRefName,baseRefName,isCrossRepository,author/u);
   assert.doesNotMatch(workflow, /gh pr view/u);
   assert.match(workflow, /git push --force-with-lease origin "HEAD:\$branch"/u);
   assert.match(workflow, /gh pr edit "\$pull_request"/u);
@@ -89,7 +100,8 @@ test("App credentials stay on main and use a repository-scoped token with read-o
     "GH_TOKEN: ${{ steps.catalog-app.outputs.token }}",
     "APP_SLUG: ${{ steps.catalog-app.outputs.app-slug }}",
   ]) assert.ok(workflow.includes(binding), `workflow must bind ${binding}`);
-  assert.doesNotMatch(workflow, /github\.token|secrets\.GITHUB_TOKEN|skip-token-revoke|gh pr merge/u);
+  assert.doesNotMatch(workflow, /github\.token|secrets\.GITHUB_TOKEN|skip-token-revoke|--admin/u);
+  assert.match(workflow, /gh pr merge "\$pull_request" --auto --squash --match-head-commit "\$head_commit"/u);
 });
 
 test("configuration validation accepts the App RSA key and rejects missing or invalid credentials without echoing them", () => {
@@ -153,10 +165,15 @@ appendFileSync(process.env.CATALOG_CALL_LOG, JSON.stringify({ command: process.a
   executable(directory, "git", `${common}
 const command = args[4];
 if (command === "diff") process.exit(process.env.CATALOG_UNCHANGED === "true" ? 0 : 1);
+if (command === "rev-parse") process.stdout.write("2103d234d64d0bbd2323bc535d284af988fa540a\\n");
 `);
   executable(directory, "gh", `${common}
 if (args[0] === "api") process.stdout.write(process.env.CATALOG_BOT_ID);
-if (args[0] === "pr" && args[1] === "list") process.stdout.write(process.env.CATALOG_PR_FIXTURE);
+if (args[0] === "pr" && args[1] === "create") require("node:fs").writeFileSync(process.env.CATALOG_CREATE_MARKER, "created");
+if (args[0] === "pr" && args[1] === "list") {
+  const created = require("node:fs").existsSync(process.env.CATALOG_CREATE_MARKER);
+  process.stdout.write(created ? process.env.CATALOG_CREATED_PR_FIXTURE : process.env.CATALOG_PR_FIXTURE);
+}
 `);
   const result = spawnSync("bash", ["-c", `
 node() {
@@ -169,6 +186,8 @@ ${refreshStep}
     env: {
       ...process.env, PATH: `${directory}:${process.env.PATH}`, GH_TOKEN: token, APP_SLUG: slug,
       CATALOG_CALL_LOG: logFile, CATALOG_BOT_ID: botId, CATALOG_PR_FIXTURE: JSON.stringify(records),
+      CATALOG_CREATED_PR_FIXTURE: JSON.stringify([pullRequest()]),
+      CATALOG_CREATE_MARKER: resolve(directory, "created"),
       CATALOG_UNCHANGED: String(unchanged),
     },
     encoding: "utf8",
@@ -201,6 +220,8 @@ test("refresh pushes the leased automation branch and creates or edits the PR un
     const mutation = result.calls.find(call => call.command === "gh" && call.args[0] === "pr" && ["create", "edit"].includes(call.args[1]));
     assert.ok(mutation, "a changed catalog must create or edit a PR");
     assert.equal(mutation.args[1], records.length ? "edit" : "create");
+    const merge = result.calls.find(call => call.command === "gh" && call.args[0] === "pr" && call.args[1] === "merge");
+    assert.deepEqual(merge?.args, ["pr", "merge", "123", "--auto", "--squash", "--match-head-commit", "2103d234d64d0bbd2323bc535d284af988fa540a"]);
     assert.doesNotMatch(result.stdout + result.stderr, /test-app-installation-token/u);
   }
 });
@@ -224,13 +245,15 @@ test("selector returns no PR only for an empty successful query", async () => {
 test("selector rejects closed, merged, mismatched, forked, or malformed records", async () => {
   for (const overrides of [
     { state: "MERGED" }, { state: "CLOSED" }, { headRefName: "another-branch" },
-    { baseRefName: "develop" }, { isCrossRepository: true }, { number: 0 }, { number: "123" },
+    { baseRefName: "develop" }, { isCrossRepository: true }, { author: { login: "gansx", is_bot: false } },
+    { author: { login: "app/another-app", is_bot: true } }, { number: 0 }, { number: "123" },
   ]) {
     await assert.rejects(() => select([pullRequest(overrides)]), /Unexpected catalog pull request/u);
   }
   await assert.rejects(() => select({}), /must be an array/u);
   const { selectOpenCatalogPullRequest } = await import("./provider-model-catalog-pr.mjs");
-  assert.throws(() => selectOpenCatalogPullRequest("not JSON", branch), /JSON/u);
+  assert.throws(() => selectOpenCatalogPullRequest("not JSON", branch, appSlug), /JSON/u);
+  assert.throws(() => selectOpenCatalogPullRequest("[]", branch, ""), /slug/u);
 });
 
 test("selector refuses to choose among multiple open matches", async () => {
@@ -243,6 +266,7 @@ test("workflow creates a fresh PR after the previous PR is closed or merged", ()
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stderr, /GH_CALL:pr list --state open --head automation\/provider-model-catalog --base main/u);
   assert.match(result.stderr, /GH_CALL:pr create --base main --head automation\/provider-model-catalog/u);
+  assert.match(result.stderr, /GH_CALL:pr merge 123 --auto --squash --match-head-commit/u);
   assert.doesNotMatch(result.stderr, /GH_CALL:pr edit/u);
 });
 
@@ -250,6 +274,7 @@ test("workflow edits the exact single open PR by number", () => {
   const result = runPrStep([pullRequest()]);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stderr, /GH_CALL:pr edit 123 /u);
+  assert.match(result.stderr, /GH_CALL:pr merge 123 --auto --squash --match-head-commit/u);
   assert.doesNotMatch(result.stderr, /GH_CALL:pr create/u);
 });
 

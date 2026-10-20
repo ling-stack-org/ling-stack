@@ -84,8 +84,9 @@ only fields used by Ling:
 - upstream last-updated date.
 
 The initial source is the MIT-licensed `models.dev` catalog. A repository workflow runs
-the generator on a schedule and opens or updates a pull request. It never commits to
-`main` directly and never auto-enables runtime adapters.
+the generator on a schedule, opens or updates a pull request, and requests auto-merge
+after the protected checks pass. It never commits to `main` directly and never
+auto-enables runtime adapters.
 
 The daily workflow runs at 10:23 Asia/Shanghai (`23 2 * * *` UTC), only from `main`.
 It uses a dedicated GitHub App installation token for both the catalog branch push
@@ -98,15 +99,21 @@ this one-time setup; repository admin access alone is insufficient:
    write permission or branch-protection bypass is needed.
 2. Install it for the selected `ling-stack` repository only and generate its PEM RSA
    private key. Keep the key out of source control and workflow logs.
-3. Set repository variable `MODEL_CATALOG_APP_CLIENT_ID` to the App's Client ID and
+3. Enable the repository's **Allow auto-merge** setting. Keep the protected `main`
+   ruleset enabled so the required CI gate and resolved-review-thread policy remain
+   mandatory; do not grant the App a branch-protection bypass.
+4. Set repository variable `MODEL_CATALOG_APP_CLIENT_ID` to the App's Client ID and
    repository secret `MODEL_CATALOG_APP_PRIVATE_KEY` to the private key. Merge the
    workflow change through normal review, then dispatch it from `main` and verify
-   that its generated PR starts CI without a manual workflow approval.
+   that its generated PR starts CI without a manual workflow approval, enters
+   auto-merge, and merges only after the protected checks pass.
 
 Missing or invalid configuration fails before token creation or any branch write;
 there is no built-in-token or personal-token fallback. Tokens are restricted to the
 current repository and revoked after the job. Normal CI and main branch protection
-still apply; this workflow never merges the PR.
+still apply. The workflow requests squash auto-merge for only the exact, same-repository
+catalog branch PR authored by the configured App, pins the expected head commit, and
+never uses an administrator bypass.
 
 ### Connector releases
 
