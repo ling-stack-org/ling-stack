@@ -10,11 +10,12 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   sync:
+    # Keep App-backed synchronization on reviewed main only.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -22,6 +23,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
@@ -31,12 +33,53 @@ jobs:
       - name: Check catalog PR synchronization safety
         run: node --test scripts/ci/provider-model-catalog-pr.test.mjs
 
+      - name: Validate catalog App configuration
+        env:
+          MODEL_CATALOG_APP_CLIENT_ID: ${{ vars.MODEL_CATALOG_APP_CLIENT_ID }}
+          MODEL_CATALOG_APP_PRIVATE_KEY: ${{ secrets.MODEL_CATALOG_APP_PRIVATE_KEY }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createPrivateKey } from "node:crypto";
+          const clientId = process.env.MODEL_CATALOG_APP_CLIENT_ID;
+          if (!clientId || /\s/u.test(clientId)) {
+            console.error("::error::Set repository variable MODEL_CATALOG_APP_CLIENT_ID to the installed GitHub App's Client ID.");
+            process.exit(1);
+          }
+          try {
+            const key = createPrivateKey(process.env.MODEL_CATALOG_APP_PRIVATE_KEY ?? "");
+            if (key.asymmetricKeyType !== "rsa") throw new Error("Expected an RSA private key.");
+          } catch {
+            console.error("::error::Set repository secret MODEL_CATALOG_APP_PRIVATE_KEY to the installed GitHub App's PEM RSA private key. The App must be installed for this repository with Contents and Pull requests read/write permissions.");
+            process.exit(1);
+          }
+          NODE
+
+      - name: Create repository-scoped catalog App token
+        id: catalog-app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.MODEL_CATALOG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MODEL_CATALOG_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Refresh reviewed catalog data
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.catalog-app.outputs.token }}
+          APP_SLUG: ${{ steps.catalog-app.outputs.app-slug }}
         run: |
           set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ] || [ -z "${APP_SLUG:-}" ]; then
+            echo "::error::Catalog App token or identity is missing; refusing to push or create a PR. Check the App installation and repository permissions."
+            exit 1
+          fi
+          # Clear inherited helpers so git and gh both use this step's App token.
+          git() {
+            command git -c credential.helper= -c 'credential.helper=!gh auth git-credential' "$@"
+          }
           branch="automation/provider-model-catalog"
           git fetch origin main "$branch" || git fetch origin main
           git checkout -B "$branch" origin/main
@@ -46,8 +89,13 @@ jobs:
             echo "Catalog is already current."
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bot_id="$(gh api "users/${APP_SLUG}[bot]" --jq .id)"
+          if ! [[ "$bot_id" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Unable to resolve the catalog App bot identity; refusing to push."
+            exit 1
+          fi
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
           git commit -m "chore: refresh provider model catalog"
           git push --force-with-lease origin "HEAD:$branch"
           pull_requests_json="$(gh pr list --state open --head "$branch" --base main --limit 2 --json number,state,headRefName,baseRefName,isCrossRepository)"
