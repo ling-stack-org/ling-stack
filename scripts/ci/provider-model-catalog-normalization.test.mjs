@@ -9,15 +9,16 @@ test("catalog token limits preserve output capacity that leaves room for model i
   });
 });
 
-test("catalog token limits bound output capacity to leave a positive input budget", () => {
-  for (const [context, output] of [
-    [8_192, 8_192],
-    [8_192, 16_384],
-    [8_192, 7_680],
+test("catalog token limits bound invalid output capacity to leave a usable input budget", () => {
+  for (const [context, output, expectedOutput] of [
+    [8_192, 8_192, 6_656],
+    [8_192, 16_384, 6_656],
+    [8_192, 7_680, 6_656],
+    [1_048_576, 1_048_576, 16_384],
   ]) {
     assert.deepEqual(normalizeModelTokenLimits({ context, output }), {
       contextWindow: context,
-      maxTokens: 7_679,
+      maxTokens: expectedOutput,
     });
   }
 });
