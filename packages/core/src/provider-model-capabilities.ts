@@ -195,21 +195,21 @@ function isKnownOpenAiReasoningModel(model: string, kind: ProviderKind, provider
   if (kind !== "openai" && kind !== "openai-compatible" && providerId !== "openai") {
     return false;
   }
-  return /(^|[-_/])(?:gpt-5|o1|o3|o4)(?=$|[-_/.])/u.test(model) || model.includes("codex");
+  return /(^|[-_/])(?:gpt-(?:5|6|daybreak)|o1|o3|o4)(?=$|[-_/.])/u.test(model) || model.includes("codex");
 }
 
 function isKnownAnthropicThinkingModel(model: string, kind: ProviderKind, providerId: string): boolean {
   if (kind !== "anthropic" && kind !== "openai-compatible" && providerId !== "anthropic") {
     return false;
   }
-  return model.includes("claude-3-7") || model.includes("claude-sonnet-4") || model.includes("claude-opus-4") || model.includes("claude-4");
+  return /claude-(?:3-7|4|5|(?:fable|haiku|opus|sonnet)-(?:4|5))(?=$|[-_/.])/u.test(model);
 }
 
 function isKnownGeminiThinkingModel(model: string, kind: ProviderKind, providerId: string): boolean {
   if (kind !== "google" && kind !== "openai-compatible" && providerId !== "google" && providerId !== "gemini") {
     return false;
   }
-  return model.includes("gemini-2.5");
+  return /gemini-(?:2\.5|3|4)(?=$|[-_/.])/u.test(model);
 }
 
 function isKnownDeepSeekReasoningModel(model: string, kind: ProviderKind, providerId: string): boolean {
