@@ -127,6 +127,9 @@ test("generation model catalog recognizes public image families without marking 
     ["qwen-image-edit", ["image_generate", "image_edit"]],
     ["ideogram-ai/ideogram-v3-quality", ["image_generate"]],
     ["xai/grok-imagine", ["image_generate"]],
+    ["xai/grok-imagine-video", ["video_generate"]],
+    ["grok-imagine-video-1.5", ["video_generate"]],
+    ["grok-imagine-video-1.5-lite", ["video_generate"]],
   ];
 
   for (const [modelId, capabilities] of cases) {

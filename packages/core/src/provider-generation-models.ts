@@ -16,6 +16,7 @@ export type GenerationModelFamilyId =
   | "black-forest-labs"
   | "qwen-image"
   | "ideogram"
+  | "xai-grok-imagine-video"
   | "xai-grok-imagine";
 
 export interface GenerationModelFamilyInference {
@@ -110,6 +111,13 @@ const generationFamilyRules: readonly GenerationModelFamilyRule[] = [
     ownedBy: "ideogram",
     capabilities: ["image_generate"],
     supportedParameters: ["size", "seed"],
+  },
+  {
+    familyId: "xai-grok-imagine-video",
+    modelPattern: /(?:^|[/_-])grok-imagine-video(?=$|[/_.-])/i,
+    ownedBy: "xai",
+    capabilities: ["video_generate"],
+    supportedParameters: ["ratio", "duration"],
   },
   {
     familyId: "xai-grok-imagine",
