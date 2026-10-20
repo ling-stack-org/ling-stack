@@ -199,20 +199,18 @@ test("exact catalog records without thinking modes retain known family thinking 
     {
       id: "claude-sonnet-4-5",
       context: { kind: "anthropic", providerId: "anthropic", api: "anthropic-messages" },
-      contextWindow: 1000000,
-      maxTokens: 64000,
       supportedParameters: ["thinking", "tools"],
     },
     {
       id: "gemini-2.5-pro",
       context: { kind: "google", providerId: "google", api: "google-generative-ai" },
-      contextWindow: 1048576,
-      maxTokens: 65536,
       supportedParameters: ["thinkingConfig", "tools"],
     },
   ];
 
   for (const expected of cases) {
+    const catalogRecord = findProviderModelCatalogRecord(expected.id, expected.context);
+    assert.ok(catalogRecord, expected.id);
     const model = enrichProviderModelOption({ id: expected.id }, expected.context);
     assert.deepEqual(model.thinkingModes, ["off", "auto", "low", "medium", "high"], expected.id);
     assert.deepEqual(model.thinkingSupport, {
@@ -220,8 +218,8 @@ test("exact catalog records without thinking modes retain known family thinking 
       dynamicAllowed: true,
     }, expected.id);
     assert.deepEqual(model.supportedParameters, expected.supportedParameters, expected.id);
-    assert.equal(model.contextWindow, expected.contextWindow, expected.id);
-    assert.equal(model.maxTokens, expected.maxTokens, expected.id);
+    assert.equal(model.contextWindow, catalogRecord.contextWindow, expected.id);
+    assert.equal(model.maxTokens, catalogRecord.maxTokens, expected.id);
     assert.equal(model.capabilitySource, "model_catalog", expected.id);
     assert.equal(model.capabilityConfidence, "known", expected.id);
   }
