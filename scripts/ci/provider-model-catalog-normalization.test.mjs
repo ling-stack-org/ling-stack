@@ -9,7 +9,7 @@ test("catalog token limits preserve output capacity that leaves room for model i
   });
 });
 
-test("catalog token limits omit output capacity that cannot leave a positive input budget", () => {
+test("catalog token limits bound output capacity to leave a positive input budget", () => {
   for (const [context, output] of [
     [8_192, 8_192],
     [8_192, 16_384],
@@ -17,9 +17,16 @@ test("catalog token limits omit output capacity that cannot leave a positive inp
   ]) {
     assert.deepEqual(normalizeModelTokenLimits({ context, output }), {
       contextWindow: context,
-      maxTokens: undefined,
+      maxTokens: 7_679,
     });
   }
+});
+
+test("catalog token limits omit an unusably small paired budget", () => {
+  assert.deepEqual(normalizeModelTokenLimits({ context: 512, output: 512 }), {
+    contextWindow: undefined,
+    maxTokens: undefined,
+  });
 });
 
 test("catalog token limits retain valid standalone capacities", () => {

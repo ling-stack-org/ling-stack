@@ -1,12 +1,20 @@
 const RESERVED_RUNTIME_OVERHEAD_TOKENS = 512;
 
 export function normalizeModelTokenLimits(limit) {
-  const contextWindow = positiveInteger(limit?.context);
+  let contextWindow = positiveInteger(limit?.context);
   const outputLimit = positiveInteger(limit?.output);
-  const maxTokens = contextWindow !== undefined && outputLimit !== undefined
-    && outputLimit + RESERVED_RUNTIME_OVERHEAD_TOKENS >= contextWindow
-    ? undefined
-    : outputLimit;
+  let maxTokens = outputLimit;
+
+  if (contextWindow !== undefined && outputLimit !== undefined
+    && outputLimit + RESERVED_RUNTIME_OVERHEAD_TOKENS >= contextWindow) {
+    const largestSafeOutput = contextWindow - RESERVED_RUNTIME_OVERHEAD_TOKENS - 1;
+    if (largestSafeOutput > 0) {
+      maxTokens = Math.min(outputLimit, largestSafeOutput);
+    } else {
+      contextWindow = undefined;
+      maxTokens = undefined;
+    }
+  }
 
   return { contextWindow, maxTokens };
 }
