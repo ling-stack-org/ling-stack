@@ -7,14 +7,15 @@ export function normalizeModelTokenLimits(limit) {
   const outputLimit = positiveInteger(limit?.output);
   let maxTokens = outputLimit;
 
-  if (contextWindow !== undefined && outputLimit !== undefined
-    && outputLimit + RESERVED_RUNTIME_OVERHEAD_TOKENS >= contextWindow) {
+  if (contextWindow !== undefined) {
     const largestSafeOutput = contextWindow - RESERVED_RUNTIME_OVERHEAD_TOKENS - MINIMUM_INPUT_BUDGET_TOKENS;
-    if (largestSafeOutput > 0) {
-      maxTokens = Math.min(outputLimit, DEFAULT_OUTPUT_LIMIT_TOKENS, largestSafeOutput);
-    } else {
+    if (largestSafeOutput <= 0) {
       contextWindow = undefined;
       maxTokens = undefined;
+    } else if (outputLimit === undefined) {
+      maxTokens = DEFAULT_OUTPUT_LIMIT_TOKENS > largestSafeOutput ? largestSafeOutput : undefined;
+    } else if (outputLimit > largestSafeOutput) {
+      maxTokens = Math.min(outputLimit, DEFAULT_OUTPUT_LIMIT_TOKENS, largestSafeOutput);
     }
   }
 
