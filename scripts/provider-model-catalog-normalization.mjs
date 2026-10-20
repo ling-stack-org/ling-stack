@@ -1,5 +1,6 @@
 const RESERVED_RUNTIME_OVERHEAD_TOKENS = 512;
 const MINIMUM_INPUT_BUDGET_TOKENS = 1_024;
+const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
 const DEFAULT_OUTPUT_LIMIT_TOKENS = 16_384;
 
 export function normalizeModelTokenLimits(limit) {
@@ -7,7 +8,14 @@ export function normalizeModelTokenLimits(limit) {
   const outputLimit = positiveInteger(limit?.output);
   let maxTokens = outputLimit;
 
-  if (contextWindow !== undefined) {
+  if (contextWindow === undefined && outputLimit !== undefined) {
+    const fallbackSafeOutput = DEFAULT_CONTEXT_WINDOW_TOKENS
+      - RESERVED_RUNTIME_OVERHEAD_TOKENS
+      - MINIMUM_INPUT_BUDGET_TOKENS;
+    if (outputLimit > fallbackSafeOutput) {
+      maxTokens = Math.min(outputLimit, DEFAULT_OUTPUT_LIMIT_TOKENS, fallbackSafeOutput);
+    }
+  } else if (contextWindow !== undefined) {
     const largestSafeOutput = contextWindow - RESERVED_RUNTIME_OVERHEAD_TOKENS - MINIMUM_INPUT_BUDGET_TOKENS;
     if (largestSafeOutput <= 0) {
       contextWindow = undefined;

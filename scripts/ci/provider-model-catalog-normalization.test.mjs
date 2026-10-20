@@ -35,6 +35,14 @@ test("catalog token limits retain valid standalone capacities", () => {
     contextWindow: undefined,
     maxTokens: 4_096,
   });
+  assert.deepEqual(normalizeModelTokenLimits({ output: 100_000 }), {
+    contextWindow: undefined,
+    maxTokens: 100_000,
+  });
+  assert.deepEqual(normalizeModelTokenLimits({ output: 128_000 }), {
+    contextWindow: undefined,
+    maxTokens: 16_384,
+  });
   assert.deepEqual(normalizeModelTokenLimits({ context: 8_192 }), {
     contextWindow: 8_192,
     maxTokens: 6_656,
