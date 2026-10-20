@@ -13,6 +13,7 @@ import {
   isProviderModelCatalogStale,
   normalizeMediaProviderCompat,
   normalizeProviderPresetForMediaRuntime,
+  resolveProviderModelThinkingModes,
   resolveGenerationProviderRuntimeState,
   resolveMediaProviderRuntimeState,
   shouldAutoEnableLiveMediaTransport,
@@ -225,6 +226,50 @@ test("exact catalog records without thinking modes retain known family thinking 
     assert.equal(model.maxTokens, catalogRecord.maxTokens, expected.id);
     assert.equal(model.capabilitySource, "model_catalog", expected.id);
     assert.equal(model.capabilityConfidence, "known", expected.id);
+  }
+});
+
+test("new provider model generations inherit provider-specific reasoning metadata", () => {
+  const cases = [
+    {
+      ids: ["gpt-6-astra", "gpt-6.1-sol", "gpt-daybreak-blue-latest"],
+      context: { kind: "openai", providerId: "openai", api: "openai-responses" },
+      supportedParameters: ["reasoning_effort", "tools", "response_format"],
+    },
+    {
+      ids: [
+        "claude-fable-5",
+        "claude-fable-5-1",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-haiku-5-5",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+      ],
+      context: { kind: "anthropic", providerId: "anthropic", api: "anthropic-messages" },
+      supportedParameters: ["thinking", "tools"],
+    },
+    {
+      ids: ["gemini-4-argon"],
+      context: { kind: "google", providerId: "google", api: "google-generative-ai" },
+      supportedParameters: ["thinkingConfig", "tools"],
+    },
+  ];
+
+  for (const expected of cases) {
+    for (const id of expected.ids) {
+      const model = enrichProviderModelOption({ id }, expected.context);
+      assert.ok(model.capabilities.includes("reasoning"), id);
+      assert.ok(model.capabilities.includes("tool_call"), id);
+      assert.deepEqual(model.supportedParameters, expected.supportedParameters, id);
+      assert.ok(model.thinkingModes.some((mode) => mode !== "off" && mode !== "auto"), id);
+      assert.ok(resolveProviderModelThinkingModes({
+        model: id,
+        kind: expected.context.kind,
+        providerId: expected.context.providerId,
+        api: expected.context.api,
+      }).includes("high"), id);
+    }
   }
 });
 
