@@ -2,6 +2,7 @@ import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { trimBoundaryCharacters } from "./string-boundaries.js";
 
 export interface LocalFileReference {
   readonly raw: string;
@@ -521,11 +522,11 @@ function stripWrappingQuotes(value: string): string {
 }
 
 function trimTrailingUrlPunctuation(value: string): string {
-  return value.replace(/[),.;!?]+$/g, "");
+  return trimBoundaryCharacters(value, "),.;!?", "end");
 }
 
 function trimTrailingPathPunctuation(value: string): string {
-  return value.replace(/[),.;!?]+$/g, "");
+  return trimBoundaryCharacters(value, "),.;!?", "end");
 }
 
 function normalizePath(value: string): string {

@@ -144,3 +144,12 @@ test("message body collects unique file references from nested structured blocks
     "docs/design/conversation-shared-capabilities.md",
   ]);
 });
+
+test("message tokenization trims long punctuation runs in linear boundary helpers", () => {
+  const punctuation = "!".repeat(100_000);
+  const tokens = splitInlineTokens(`https://example.com/docs${punctuation} src/index.ts${punctuation}`, "/workspace/ling-stack");
+  const link = tokens.find((token) => token.kind === "web_link");
+  const file = tokens.find((token) => token.kind === "local_file");
+  assert.equal(link?.kind === "web_link" ? link.href : undefined, "https://example.com/docs");
+  assert.equal(file?.kind === "local_file" ? file.reference.displayPath : undefined, "src/index.ts");
+});

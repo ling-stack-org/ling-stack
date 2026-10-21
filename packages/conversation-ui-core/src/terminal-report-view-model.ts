@@ -14,6 +14,7 @@ import {
   userVisibleTerminalReportChanges,
 } from "./terminal-report-visibility.js";
 import { projectVisibleTerminalReportContent } from "./terminal-report-presentation.js";
+import { extractWrappedSection, trimBoundaryCharacters } from "./string-boundaries.js";
 
 interface TerminalReportSourceRefInput {
   readonly kind: string;
@@ -300,10 +301,17 @@ function uniqueSourceRefs(refs: readonly TerminalReportSourceRefInput[]): Termin
  */
 function compactTerminalReportTitle(value: string): string {
   const normalized = value.replace(/\s+/gu, " ").trim();
-  const wrapped = normalized.match(
-    /(?:原始请求|Original request)\s*[:：]\s*(.+?)(?=\s+(?:执行任务|已物化的执行操作|建议协作步骤|Requested objective|No literal file content|Materialized operations|Participant operation ownership|Permission boundary)\b|$)/iu,
-  )?.[1]?.trim();
-  const candidate = (wrapped || normalized).replace(/^\*+|\*+$/gu, "").trim();
+  const wrapped = extractWrappedSection(normalized, ["原始请求", "Original request"], [
+    "执行任务",
+    "已物化的执行操作",
+    "建议协作步骤",
+    "Requested objective",
+    "No literal file content",
+    "Materialized operations",
+    "Participant operation ownership",
+    "Permission boundary",
+  ]);
+  const candidate = trimBoundaryCharacters(wrapped || normalized, "*").trim();
   return candidate.length > 180 ? `${candidate.slice(0, 177).trimEnd()}...` : candidate;
 }
 

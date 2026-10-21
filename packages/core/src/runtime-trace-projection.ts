@@ -18,6 +18,7 @@ import type {
   ProjectLingTraceInput,
   ProjectLingTraceResult,
 } from "./runtime-trace-types.js";
+import { trimBoundaryCharacters } from "./string-boundaries.js";
 
 export function projectLingTrace(input: ProjectLingTraceInput): ProjectLingTraceResult {
   const traceId = createLingTraceId(input.subjectKind, input.subjectId);
@@ -490,7 +491,7 @@ function latestDefined(values: readonly (string | undefined)[]): string | undefi
 }
 
 function safeIdFragment(value: string): string {
-  const cleaned = value.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  const cleaned = trimBoundaryCharacters(value.replace(/[^A-Za-z0-9._-]+/g, "_"), "_");
   return cleaned || "unknown";
 }
 

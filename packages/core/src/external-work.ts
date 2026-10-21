@@ -59,7 +59,7 @@ export function updateExternalWorkflowSecretRef(markdown: string, secretRef: str
 }
 
 export function renderExternalWorkflowPrompt(template: string, input: { readonly item: ExternalWorkItem }): string {
-  return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_match, expression: string) => {
+  return template.replace(/\{\{([^}]+)\}\}/g, (_match, expression: string) => {
     const path = expression.trim();
     if (!path.startsWith("item.")) {
       throw new ExternalWorkflowValidationError(`Unknown workflow prompt variable: ${path}`);

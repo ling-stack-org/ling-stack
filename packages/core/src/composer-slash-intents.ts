@@ -1,3 +1,5 @@
+import { trimBoundaryCharacters } from "./string-boundaries.js";
+
 export type ComposerSlashIntent =
   | { readonly kind: "none" }
   | {
@@ -314,7 +316,7 @@ function isSessionCommandOption(command: ComposerSlashCommandOption): boolean {
 }
 
 function normalizeLabel(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
+  return trimBoundaryCharacters(value.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-"), "-");
 }
 
 function teammateMentionAliases(teammate: ComposerSlashMentionOption): readonly string[] {

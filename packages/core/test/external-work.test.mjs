@@ -45,6 +45,11 @@ Labels: {{ item.labels }}
 Head: {{ item.headSha }}
 `;
 
+test("workflow prompt rendering handles long malformed placeholders without backtracking", () => {
+  const template = `${"{{".repeat(50_000)}${" ".repeat(100_000)}`;
+  assert.equal(renderExternalWorkflowPrompt(template, { item: { identifier: "#1" } }), template);
+});
+
 const linearWorkflowMarkdown = `---
 source:
   kind: linear

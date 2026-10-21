@@ -1,4 +1,5 @@
 import { parseLocalFileReference } from "./message-body.js";
+import { trimBoundaryCharacters } from "./string-boundaries.js";
 
 export type ComposerInputPart =
   | { readonly type: "text"; readonly text: string }
@@ -254,7 +255,7 @@ function mergeAdjacentTextParts(parts: readonly ComposerInputPart[]): readonly C
 }
 
 function normalizeLabel(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
+  return trimBoundaryCharacters(value.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-"), "-");
 }
 
 function readKnownMentionAtStart(
@@ -319,7 +320,7 @@ function readUrlAtStart(
 }
 
 function trimUrlToken(value: string): string {
-  let next = trimNaturalLanguageSuffix(value).replace(/[.,;:!?，。！？；：、]+$/u, "");
+  let next = trimBoundaryCharacters(trimNaturalLanguageSuffix(value), ".,;:!?，。！？；：、", "end");
   while (next.endsWith(")") || next.endsWith("]")) {
     const opener = next.endsWith(")") ? "(" : "[";
     const closer = next.endsWith(")") ? ")" : "]";

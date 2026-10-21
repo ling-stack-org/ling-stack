@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import { DEFAULT_WORKSPACE_ID, type Channel } from "./workspace-types.js";
 import { redactSecrets } from "./redaction.js";
+import { trimBoundaryCharacters } from "./string-boundaries.js";
 import { createCoreOriginalProcessEntry, isCoreOriginalLaunchRefusal, type CoreOriginalProcessEntry } from "./original-host-process-entry.js";
 import type {
   ChannelStoreFacet,
@@ -117,7 +118,7 @@ export function createGitHubExternalWorkAdapter(options: GitHubExternalWorkAdapt
   if (!fetchImpl) {
     throw new Error("A fetch implementation is required for GitHub external work polling.");
   }
-  const apiBaseUrl = (options.apiBaseUrl ?? "https://api.github.com").replace(/\/+$/, "");
+  const apiBaseUrl = trimBoundaryCharacters(options.apiBaseUrl ?? "https://api.github.com", "/", "end");
 
   return {
     id: "github-readonly",

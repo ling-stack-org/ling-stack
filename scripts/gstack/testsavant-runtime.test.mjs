@@ -44,6 +44,10 @@ test("platform resolver uses only packaged Node, and child environment excludes 
     API_KEY: "not-real", PATH: "evil", HOME: "/empty", SystemRoot: "C:\\Windows" }), { HOME: "/empty", SystemRoot: "C:\\Windows" });
 });
 
+test("TestSavant plain text decoding preserves nested entities for a later layer", () => {
+  assert.equal(testsavantPlainText("<p>&amp;lt; &lt;</p>"), "&lt; <");
+});
+
 test("the actual gs route receives its vocabulary, without changing the upstream combiner thresholds", () => {
   for (const [input, output] of [["safe", "safe"], ["log_only", "safe"], ["warn", "suspicious"], ["block", "unsafe"]]) {
     assert.equal(testsavantRouteVerdict({ verdict: input }), output);

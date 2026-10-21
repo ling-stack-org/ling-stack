@@ -14,7 +14,7 @@ import type {
   MediaVendorTransportRequest,
   MediaVendorTransportResult,
 } from "../types.js";
-import { isRecord, removeUndefined } from "../utils.js";
+import { isRecord, removeUndefined, stripTrailingSlashes } from "../utils.js";
 import { createSeedanceStatusEndpoint, decodeSeedanceTaskStatusResponse, type SeedanceTerminalObservation } from "./seedance-task-status.js";
 
 const MAX_MEDIA_VENDOR_VIDEO_BYTES = 512 * 1024 * 1024;
@@ -42,7 +42,7 @@ export async function submitSeedanceVideoTask(
   request: MediaVendorTransportRequest,
   options: LiveMediaVendorTransportOptions,
 ): Promise<MediaExecutionSubmission> {
-  const endpoint = `${options.baseUrl?.replace(/\/+$/, "")}/contents/generations/tasks`;
+  const endpoint = `${stripTrailingSlashes(options.baseUrl)}/contents/generations/tasks`;
   const payload = buildSeedanceVideoTaskPayload(request.requestPlan);
   const httpClient = options.httpClient ?? defaultMediaVendorHttpClient;
   const abortController = new AbortController();
@@ -226,7 +226,7 @@ export async function executeSeedanceVideoTask(
   request: MediaVendorTransportRequest,
   options: LiveMediaVendorTransportOptions,
 ): Promise<MediaVendorTransportResult> {
-  const endpoint = `${options.baseUrl?.replace(/\/+$/, "")}/contents/generations/tasks`;
+  const endpoint = `${stripTrailingSlashes(options.baseUrl)}/contents/generations/tasks`;
   const payload = buildSeedanceVideoTaskPayload(request.requestPlan);
   const httpClient = options.httpClient ?? defaultMediaVendorHttpClient;
   const abortController = new AbortController();
