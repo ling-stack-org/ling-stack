@@ -3,11 +3,11 @@ import type { ProviderModelCatalogManifest, ProviderModelCatalogRecord } from ".
 
 export const providerModelCatalogManifest = {
   "schemaVersion": 1,
-  "version": "models.dev:5ca65c73bbd3",
+  "version": "models.dev:86c9ea58a935",
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
   "license": "MIT",
-  "generatedAt": "2026-10-20T10:40:26.193Z",
+  "generatedAt": "2026-10-21T07:49:09.903Z",
   "updatedAt": "2026-10-19"
 } as const satisfies ProviderModelCatalogManifest;
 
@@ -2243,6 +2243,29 @@ export const providerModelCatalogRecords = [
     "contextWindow": 131072,
     "maxTokens": 65536,
     "updatedAt": "2026-06-30"
+  },
+  {
+    "providerId": "google",
+    "id": "gemini-pro-latest",
+    "displayName": "Gemini Pro Latest",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "contextWindow": 1048576,
+    "maxTokens": 65536,
+    "updatedAt": "2026-02-19"
   },
   {
     "providerId": "google",
@@ -5323,7 +5346,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 256000,
     "maxTokens": 16384,
-    "updatedAt": "2026-06-15"
+    "updatedAt": "2026-02-13"
   },
   {
     "providerId": "stepfun",
@@ -5366,7 +5389,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 256000,
     "maxTokens": 16384,
-    "updatedAt": "2026-06-29"
+    "updatedAt": "2026-05-29"
   },
   {
     "providerId": "stepfun",
