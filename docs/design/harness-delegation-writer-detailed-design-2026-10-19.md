@@ -474,6 +474,12 @@ resume 在同事务中再次验证当前 parent fence、冻结权限与当前撤
 新建单调 fence 的 Attempt。child Run 和 reservation/deadline 不变；新 Attempt 仍需要
 真实 adapter acceptance 才能从 resuming 进入 running。
 
+resume 的 sealed control fact 同时绑定 `callId`、parent fence、预期 step revision、
+被中断的 source fence、以及新建的 target fence。首次调用必须完成上述实时校验；
+同一调用的响应丢失重试只读取并校验该事实，不重新 dispatch，也不因随后 ACK、终态、
+绝对 deadline 到期、Store 重开或后继 Attempt 而改写原结果。相同 `callId` 配合不同
+parent fence/revision，或 fact 与 source/target Attempt lineage 不一致，必须明确冲突。
+
 现有 reader 默认保留 whole-run fail-closed 行为。仅真实 committed delegation ownership
 可采用 exact-attempt scope；排除旧 Attempt 的 facts 前，必须验证原始 owner/fence、
 terminal Attempt、原始 drained lifetime，并继续验证旧 receipts/journal。不能通过 SQL

@@ -362,6 +362,22 @@ test("resume current revocation or expired deadline rolls back the new Attempt a
   }
 });
 
+test("resume control artifact failure rolls the target Attempt and transition back atomically", async t => {
+  const f = await fixture(t, true), previous = await stopped(f);
+  const input = { reservationId: f.child.reservation.id, expectedStepRevision: previous.runtime.step.revision,
+    runtimeInstanceId: "runtime-2", parentFence: f.fence, callId: "resume-artifact-fault", now: clock(f) };
+  f.setFaultPort("artifact");
+  assert.throws(() => f.lifecycle.resumeDelegatedChild(input), /injected-artifact-fault/);
+  assert.equal(f.store.getDelegationStep(f.child.stepId).state, "interrupted");
+  assert.equal(f.store.getWorkUnit(f.child.childWorkUnit.id).status, "cancelled");
+  assert.equal(f.store.listWorkUnitAttempts(f.child.childWorkUnit.id).length, 1);
+  f.setFaultPort(undefined);
+  const resumed = f.lifecycle.resumeDelegatedChild(input);
+  assert.equal(resumed.replayed, false);
+  assert.equal(resumed.step.state, "resuming");
+  assert.equal(f.store.listWorkUnitAttempts(f.child.childWorkUnit.id).length, 2);
+});
+
 async function terminal(f, started = f.start(f.claim())) {
   const fence = toRuntimeAttemptFence(started.attempt);
   await f.store.trackHostAttemptCompletion({ runId: started.run.id, ...fence }, Promise.resolve(), () => true);

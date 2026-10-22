@@ -231,29 +231,51 @@ export class SqliteDelegationLifecycleStore {
     const callId = delegationId(request.callId), now = delegationTimestamp(request.now);
     return this.transaction(() => {
       const runtime = this.read(id);
+      const key = `delegation-resume:${parentFence.attemptId}:${callId}`;
+      // A response-loss retry is an observation of the immutable control fact,
+      // not a new authority check or dispatch. Look it up by call identity across
+      // parent Attempts so a replaced fence cannot reuse the same call silently.
+      const priors = this.context.database.prepare(`SELECT m.* FROM delegation_messages m
+        JOIN artifacts a ON a.id=m.body_artifact_id
+        WHERE m.delegation_step_id=? AND m.direction='parent_to_child' AND m.kind='control'
+          AND json_extract(a.sealed_payload_json,'$.kind')='delegation.resume.v1'
+          AND json_extract(a.sealed_payload_json,'$.callId')=? LIMIT 2`).all(runtime.step.id, callId);
+      if (priors.length) {
+        if (priors.length !== 1) fail("delegation.idempotency_conflict");
+        const message = mapDelegationMessage(priors[0] as Record<string, SQLOutputValue>);
+        if (message.idempotencyKey !== key || message.delegationStepId !== runtime.step.id
+          || message.direction !== "parent_to_child" || message.kind !== "control") fail("delegation.idempotency_conflict");
+        this.assertMessageArtifact(message.bodyArtifactId, runtime.step.parentRunId, message.digest);
+        const artifact = this.ports.getArtifact(message.bodyArtifactId);
+        const payload = delegationRecord(artifact?.sealedPayload,
+          ["schemaVersion", "kind", "parentFence", "expectedStepRevision", "callId", "sourceFence", "targetFence", "requestedAt"],
+          "delegation.persisted_fact_invalid");
+        const persistedParent = delegationFence(payload.parentFence), sourceFence = delegationFence(payload.sourceFence);
+        const targetFence = delegationFence(payload.targetFence), requestedAt = delegationTimestamp(payload.requestedAt,
+          "delegation.persisted_fact_invalid");
+        if (payload.schemaVersion !== 1 || payload.kind !== "delegation.resume.v1" || payload.callId !== callId
+          || payload.expectedStepRevision !== revision || !sameFence(persistedParent, parentFence)
+          || requestedAt !== message.createdAt || runtime.step.revision < revision + 1) fail("delegation.idempotency_conflict");
+        const sourceAttempt = this.ports.getWorkUnitAttempt(sourceFence.attemptId);
+        const targetAttempt = this.ports.getWorkUnitAttempt(targetFence.attemptId);
+        if (!sourceAttempt || !targetAttempt || sourceAttempt.workUnitId !== runtime.workUnit.id
+          || targetAttempt.workUnitId !== runtime.workUnit.id
+          || !sameFence(sourceFence, toRuntimeAttemptFence(sourceAttempt))
+          || !sameFence(targetFence, toRuntimeAttemptFence(targetAttempt))
+          || sourceAttempt.status !== "cancelled" || sourceAttempt.errorCode !== "delegation_interrupted"
+          || !sourceAttempt.abortRequestedAt || !sourceAttempt.endedAt
+          || targetAttempt.attemptNumber !== sourceAttempt.attemptNumber + 1
+          || targetAttempt.createdAt !== requestedAt || targetAttempt.createdAt < sourceAttempt.endedAt
+          || runtime.workUnit.attemptCount < targetAttempt.attemptNumber) fail("delegation.idempotency_conflict");
+        return { ...runtime, attempt: targetAttempt, replayed: true };
+      }
       this.liveReservation(runtime, now);
       this.assertParentOwner(runtime, parentFence);
-      const key = `delegation-resume:${parentFence.attemptId}:${callId}`;
-      const payload = { schemaVersion: 1, kind: "delegation.resume.v1", parentFence, expectedStepRevision: revision };
-      const digest = delegationDigest(payload);
-      const prior = this.context.database.prepare("SELECT * FROM delegation_messages WHERE idempotency_key=?").get(key);
-      if (prior) {
-        const message = mapDelegationMessage(prior as Record<string, SQLOutputValue>);
-        if (message.delegationStepId !== runtime.step.id || message.direction !== "parent_to_child"
-          || message.kind !== "control" || message.digest !== digest) fail("delegation.idempotency_conflict");
-        this.assertMessageArtifact(message.bodyArtifactId, runtime.step.parentRunId, digest);
-        if (runtime.step.state === "resuming" && runtime.step.revision === revision + 1 && runtime.workUnit.status === "claimed"
-          && runtime.attempt?.status === "created" && runtime.attempt.runtimeInstanceId === runtimeInstanceId) {
-          return { ...runtime, attempt: runtime.attempt, replayed: true };
-        }
-        fail("delegation.idempotency_conflict");
-      }
       if (runtime.step.state !== "interrupted" || runtime.step.revision !== revision || runtime.run.status !== "running"
         || runtime.run.endedAt || runtime.workUnit.status !== "cancelled" || runtime.attempt?.status !== "cancelled") fail("delegation.lifecycle_conflict");
       const previousFence = toRuntimeAttemptFence(runtime.attempt);
       if (!hasDelegationStoppedHandoff(this.context.database, previousFence, now)) fail("delegation.recovery_required");
       this.assertNoActiveResources(previousFence);
-      this.insertControl(runtime, key, payload, now);
       this.transitionStep(runtime, "resuming", now);
       const queued = this.ports.transitionWorkUnitStatus({ workUnitId: runtime.workUnit.id, expectedStatus: "cancelled", event: "retry",
         actor: "system", idempotencyKey: `delegation:${runtime.step.id}:${revision}:resume-queue`, now, endedAt: null,
@@ -266,6 +288,10 @@ export class SqliteDelegationLifecycleStore {
         requestedRunnerId: runtime.workUnit.requestedRunnerId, effectiveRunnerId: runnerId, status: "created", now });
       this.ports.assertDispatchAuthorityWithinTransaction({ childRunId: runtime.run.id, stepId: runtime.step.id,
         sourceFence: toRuntimeAttemptFence(attempt), now });
+      const targetFence = toRuntimeAttemptFence(attempt);
+      const payload = { schemaVersion: 1, kind: "delegation.resume.v1", parentFence, expectedStepRevision: revision,
+        callId, sourceFence: previousFence, targetFence, requestedAt: now };
+      this.insertControl(runtime, key, payload, now);
       const claimed = this.ports.transitionWorkUnitStatus({ workUnitId: runtime.workUnit.id, expectedStatus: "queued", event: "claim", actor: "system",
         idempotencyKey: `delegation:${attempt.id}:resume-claim`, activeAttemptId: attempt.id, now, endedAt: null });
       if (!claimed.ok) fail("delegation.lifecycle_conflict");
