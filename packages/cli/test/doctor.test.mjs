@@ -70,7 +70,8 @@ test("doctor exits non-zero and prints next step when provider preflight is miss
     assert.match(result.stdout, /providers\.preflight\s+no runnable provider has a successful preflight check/);
     assert.match(result.stdout, /corepack pnpm(?: --dir [^\n]+)? ling provider check-all/);
     const installed = await runCli(daemon.url, cwd, ["doctor"], { env: { npm_lifecycle_event: "" } });
-    assert.match(installed.stdout, /Next:\s+ling-stack provider check-all/);
+    assert.match(installed.stdout, /^  ling-stack provider check-all$/m);
+    assert.doesNotMatch(installed.stdout, /corepack pnpm/);
     const summary = await runCli(daemon.url, cwd, ["doctor", "--summary"], { env: { npm_lifecycle_event: "ling" } });
     assert.match(summary.stdout, /corepack pnpm ling provider check-all/);
   } finally {
