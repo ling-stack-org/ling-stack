@@ -7,6 +7,12 @@ export function formatDateTime(value: string): string {
   });
 }
 
+/** Registry metadata uses the Unix epoch when its update time is unknown. */
+export function formatKnownDateTime(value: string, unknownLabel: string): string {
+  const timestamp = Date.parse(value);
+  return !Number.isFinite(timestamp) || timestamp === 0 ? unknownLabel : formatDateTime(value);
+}
+
 /** Compact elapsed time for conversation chrome; absent/invalid facts stay absent. */
 export function formatElapsedDuration(durationMs: number | undefined, locale: string): string | undefined {
   if (durationMs === undefined || !Number.isFinite(durationMs) || durationMs < 0) return undefined;

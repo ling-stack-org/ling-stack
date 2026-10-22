@@ -1,6 +1,6 @@
 import { type KeyboardEvent, type MouseEvent } from "react";
 import { Archive, Trash2 } from "lucide-react";
-import { formatDateTime } from "../../lib/formatting.js";
+import { formatKnownDateTime } from "../../lib/formatting.js";
 import {
   EmptyState,
   IconButton,
@@ -104,7 +104,7 @@ export function SkillLibraryTable({
                   {entry.definition.summary || "-"}
                 </TableCell>
                 <TableCell className="settings-skill-bound-cell">{boundTeammates.length > 0 ? boundTeammates.join(", ") : t("Unbound")}</TableCell>
-                <TableCell className="settings-skill-updated-cell">{formatDateTime(entry.updatedAt)}</TableCell>
+                <TableCell className="settings-skill-updated-cell">{formatKnownDateTime(entry.updatedAt, entry.source === "builtin" ? t("Built-in") : t("Unknown"))}</TableCell>
                 {variant !== "builtin" ? (
                   <TableCell className="settings-skill-action-cell">
                     {canArchive ? (

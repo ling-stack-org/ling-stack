@@ -846,7 +846,7 @@ export const zhCN = {
     "role.architect": "架构",
     "role.engineer": "工程",
     "role.designer": "设计",
-    "role.qa": "QA",
+    "role.qa": "测试",
     "role.security": "安全",
     "role.release": "发布",
     "role.docs": "文档",

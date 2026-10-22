@@ -45,6 +45,8 @@ Coding Agent 通过 Pi runtime adapter 执行，实际可用工具取决于平�
 
 需要 Git、**Node.js 22.22.1 或更新版本**，以及 **Corepack 和 pnpm 10**。
 仓库固定使用 pnpm `10.0.0`；CI 的 Node 基线为 `22.22.1`。
+Web/daemon 构建还需要 **Rust 1.89 或更新版本和 Cargo**，用于编译原生图片清理程序。
+请通过 [rustup](https://rustup.rs/) 安装；CI 使用 Rust `1.97.1`。
 
 ### 1. 安装并构建
 

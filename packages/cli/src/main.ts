@@ -2201,7 +2201,9 @@ function doctorNextCommands(report: DoctorReport): readonly string[] {
       }
     }
   }
-  return [...commands];
+  return [...commands].map((command) => process.env.npm_lifecycle_event === "ling"
+    ? command.replace(/^ling-stack\b/u, "corepack pnpm ling")
+    : command);
 }
 
 function titleCase(value: string): string {

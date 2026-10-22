@@ -320,6 +320,8 @@ export function NormalConversationComposer({
             options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}
             disabled={configurationLocked}
             disabledReason={t("Permission is locked while the current message is running.")}
+            selectedPermissionLabel={t("Selected permission preset {label}")}
+            menuLabel={t("Permission preset")}
             onPresetChange={onPermissionPresetChange}
           />
         </>

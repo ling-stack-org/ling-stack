@@ -1,15 +1,20 @@
 # Daemon API
 
-The daemon is the local process that connects the future CLI, web UI, and desktop shell to Ling Stack runners.
+The daemon is the local process that connects the CLI, Web UI, and desktop shell to Ling Stack runners.
 
 ## Start
 
-Current manual foreground start:
+After following the source build prerequisites in [Getting started](getting-started.md),
+start the daemon from the repository root:
 
 ```bash
-corepack pnpm --filter @ling-stack/daemon build
-node packages/daemon/dist/cli.js
+corepack pnpm ling daemon start --foreground
 ```
+
+The CLI also provides `daemon start` (background), `status`, `stop`, `restart`, and
+`logs`, plus read-only `doctor` checks. Direct `node packages/daemon/dist/cli.js`
+startup is available for low-level debugging; it bypasses the CLI lifecycle state
+and log setup, so those files may be absent in doctor output.
 
 Environment variables:
 
@@ -24,9 +29,8 @@ Provider presets can reference secrets from the daemon process environment:
 LOCAL_RELAY_API_KEY=sk-local
 ```
 
-Background daemon lifecycle commands are not part of the current HTTP API contract.
-The P0 design for `ling-stack daemon start`, `status`, `stop`, `restart`, `logs`, and
-read-only doctor checks lives in [Daemon Lifecycle and Doctor P0](design/daemon-lifecycle-p0.md).
+Daemon lifecycle commands are CLI operations rather than HTTP endpoints. Their
+design is described in [Daemon Lifecycle and Doctor P0](design/daemon-lifecycle-p0.md).
 
 ## Health
 
@@ -50,11 +54,15 @@ not expose full startup diagnostics. `readiness` is a lightweight aggregate for 
 default workspace and may be `starting`, `ready`, `degraded`, or `failed`. Clients that
 need phase diagnostics should call `/startup/status`.
 
-The current implementation does not expose lifecycle metadata such as pid, version,
-started time, host, port, state path, or log path. The P0 daemon lifecycle design may
-extend `/health` with those fields after `.ling-stack/daemon/daemon.json` and
-`.ling-stack/logs/daemon.log` exist. Until then, clients must treat those fields as
-optional and unavailable.
+The current HTTP response does not expose lifecycle metadata such as pid, version,
+started time, host, port, state path, or log path. Use `corepack pnpm ling daemon status`
+and `corepack pnpm ling doctor` for lifecycle diagnostics. Clients must not require
+those metadata fields in `/health`.
+
+On hosts without the supported system keychain, `secret_resolver` is reported as
+`degraded` and recommends `env:` secret references. This capability diagnostic is
+separate from `ok: true` process reachability and does not by itself mean that an
+environment-backed provider is unavailable.
 
 ## Startup Readiness
 

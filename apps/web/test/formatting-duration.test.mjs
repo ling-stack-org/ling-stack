@@ -2,6 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as formatting from "../src/lib/formatting.ts";
 
+test("unknown metadata timestamps never turn into a localized 1969 or 1970 update date", () => {
+  assert.equal(typeof formatting.formatKnownDateTime, "function");
+  for (const value of ["1970-01-01T00:00:00.000Z", "", "invalid"]) {
+    assert.equal(formatting.formatKnownDateTime(value, "Built-in"), "Built-in");
+    assert.equal(formatting.formatKnownDateTime(value, "未提供"), "未提供");
+  }
+  const actual = "2026-10-22T09:42:00.000Z";
+  assert.equal(formatting.formatKnownDateTime(actual, "Built-in"), formatting.formatDateTime(actual));
+});
+
 test("process durations use localized whole hours, minutes and seconds", () => {
   assert.equal(typeof formatting.formatElapsedDuration, "function");
   for (const [duration, expected] of [

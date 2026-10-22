@@ -222,6 +222,39 @@ jobs:
           RUSTUP_TOOLCHAIN: 1.97.1
         run: corepack pnpm --filter @ling-stack/daemon test:image-sanitizer
 
+      - name: Check real source daemon lifecycle and fresh-workspace doctor on Linux
+        if: contains(needs.scope.outputs.packages, '"@ling-stack/cli"')
+        working-directory: packages/cli
+        run: node --test test/daemon-lifecycle.test.mjs
+
+      - name: Install browser for production Web smoke
+        if: needs.scope.outputs.web == 'true'
+        working-directory: apps/web
+        run: corepack pnpm exec playwright install --with-deps chromium --only-shell
+
+      - name: Check production Web QA regressions on Linux
+        if: needs.scope.outputs.web == 'true'
+        working-directory: apps/web
+        env:
+          LING_PLAYWRIGHT_PREVIEW: "1"
+          LING_PLAYWRIGHT_REUSE_SERVER: "0"
+          LING_CAPTURE_UI2_EVIDENCE: "1"
+        run: >-
+          corepack pnpm exec playwright test
+          e2e/ui2-shell-feedback-permission.spec.ts e2e/ui2-settings-skill-library.spec.ts
+          e2e/ui2-teammate-management-skills.spec.ts e2e/ui2-council-members.spec.ts
+          --grep 'without a configured model|full access confirmation|built-in skill timestamps|Chinese built-in skill|Chinese QA member'
+          --reporter=line
+
+      - name: Preserve Linux production Web smoke evidence
+        if: always() && needs.scope.outputs.web == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-linux-source-web-smoke
+          if-no-files-found: error
+          retention-days: 7
+          path: apps/web/test-results/**
+
       - name: Upload reusable build outputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
