@@ -1,4 +1,4 @@
-import { formatDateTime } from "../../lib/formatting.js";
+import { formatKnownDateTime } from "../../lib/formatting.js";
 import { Pencil } from "lucide-react";
 import { Button, InspectorSection, StatusIndicator } from "../../shared/ui/index.js";
 import type {
@@ -150,7 +150,7 @@ export function SkillCompactInspector({
         />
       </InspectorSection>
 
-      <small className="settings-skill-updated-line">{t("Updated {time}", { time: formatDateTime(skill.updatedAt) })}</small>
+      <small className="settings-skill-updated-line">{t("Updated {time}", { time: formatKnownDateTime(skill.updatedAt, t("Unknown")) })}</small>
     </div>
   );
 }

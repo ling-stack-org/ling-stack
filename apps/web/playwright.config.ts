@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 const testPort = Number.parseInt(process.env.LING_PLAYWRIGHT_PORT ?? "4174", 10);
 const testBaseUrl = `http://127.0.0.1:${testPort}`;
+const usePreview = process.env.LING_PLAYWRIGHT_PREVIEW === "1";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -17,9 +18,10 @@ export default defineConfig({
     baseURL: testBaseUrl,
     locale: "en-US",
     trace: "on-first-retry",
+    screenshot: process.env.LING_CAPTURE_UI2_EVIDENCE === "1" ? "on" : "off",
   },
   webServer: {
-    command: `corepack pnpm exec vite --host 127.0.0.1 --port ${testPort} --strictPort`,
+    command: `corepack pnpm exec vite ${usePreview ? "preview " : ""}--host 127.0.0.1 --port ${testPort} --strictPort`,
     url: testBaseUrl,
     reuseExistingServer: process.env.LING_PLAYWRIGHT_REUSE_SERVER !== "0",
     timeout: 30_000,

@@ -11,13 +11,25 @@ if (!["darwin", "linux", "win32"].includes(process.platform) || !["arm64", "x64"
 }
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const native = join(root, "native/image-sanitizer");
+const manifest = parse(await readFile(join(native, "Cargo.toml"), "utf8"));
+const minimumRust = manifest.package["rust-version"];
+const toolchainHelp = `Rust ${minimumRust}+ and Cargo are required to build the image sanitizer. Install or update Rust with rustup (https://rustup.rs); CI uses Rust 1.97.1.`;
 const rustc = spawnSync("rustc", ["-vV"], { cwd: native, shell: false, encoding: "utf8" });
+if (rustc.status !== 0) throw new Error(`${toolchainHelp} ${rustc.error?.message ?? rustc.stderr}`);
+const release = /^release: (\d+\.\d+\.\d+)/mu.exec(rustc.stdout)?.[1];
+const required = minimumRust.split(".").map(Number);
+const actual = release?.split(".").map(Number);
+if (!actual || actual[0] < required[0] || (actual[0] === required[0] && actual[1] < required[1])) {
+  throw new Error(`${toolchainHelp} Unsupported compiler: found ${release ?? "unknown"}.`);
+}
 const target = /^host: (\S+)$/mu.exec(rustc.stdout ?? "")?.[1];
-if (rustc.status !== 0 || !target || !target.startsWith(process.arch === "arm64" ? "aarch64-" : "x86_64-")
+if (!target || !target.startsWith(process.arch === "arm64" ? "aarch64-" : "x86_64-")
   || !(process.platform === "darwin" ? target.endsWith("apple-darwin")
     : process.platform === "win32" ? target.includes("windows-") : target.includes("linux-"))) {
   throw new Error("image_sanitizer_build_host_mismatch");
 }
+const cargo = spawnSync("cargo", ["--version"], { cwd: native, shell: false, encoding: "utf8" });
+if (cargo.status !== 0) throw new Error(`${toolchainHelp} ${cargo.error?.message ?? cargo.stderr}`);
 const graph = spawnSync("cargo", ["metadata", "--locked", "--format-version=1", "--filter-platform", target, "--manifest-path", join(native, "Cargo.toml")],
   { cwd: native, shell: false, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
 if (graph.status !== 0) throw new Error("image_sanitizer_dependency_graph_failed");

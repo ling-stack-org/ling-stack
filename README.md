@@ -76,8 +76,10 @@ and workspace policy.
 
 ## Quick Start From Source
 
-Requirements: Git, Node.js **22.22.1 or newer**, and **Corepack with pnpm 10**.
-The repository pins pnpm `10.0.0`; Node `22.22.1` is the CI baseline.
+Requirements: Git, Node.js **22.22.1 or newer**, **Corepack with pnpm 10**, and
+**Rust with Cargo** (install with [rustup](https://rustup.rs/)). The Web/daemon build
+compiles a native image sanitizer whose dependencies require Rust **1.89 or newer**.
+CI uses Rust `1.97.1` and Node `22.22.1`; the repository pins pnpm `10.0.0`.
 
 ### 1. Install and build the local Web stack
 
@@ -91,6 +93,11 @@ corepack pnpm --workspace-concurrency=1 --filter '@ling-stack/cli...' -r build
 
 The filtered build includes the CLI, daemon, Web app, and their workspace dependencies.
 Desktop and Mobile builds have separate setup requirements.
+
+On a fresh checkout, `pnpm install` may warn that the `ling-stack-daemon` bin cannot
+be linked because `packages/daemon/dist/cli.js` does not exist yet. Continue with the
+build above; use `corepack pnpm ling` for the source CLI. Node 22 may also print an
+experimental SQLite warning; that warning alone does not indicate a failed command.
 
 ### 2. Start the daemon
 

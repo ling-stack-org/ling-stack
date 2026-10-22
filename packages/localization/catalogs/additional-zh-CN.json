@@ -348,5 +348,15 @@
   "Authorize these native engines and retire the legacy endpoint configuration.": "授权所选原生引擎，并停用旧连接配置。",
   "Execution is not supported for this engine.": "此引擎暂不支持执行。",
   "Native execution is blocked. Review the engine configuration and execution verification.": "原生执行暂不可用，请检查引擎配置和执行验收。",
-  "Workspace execution configuration could not be loaded.": "无法读取工作区执行配置。"
+  "Workspace execution configuration could not be loaded.": "无法读取工作区执行配置。",
+  "Browse": "浏览器检查",
+  "Checkpoint": "工作检查点",
+  "Context Save": "保存上下文",
+  "Diagram": "绘制图表",
+  "Unfreeze": "解除编辑限制",
+  "Drive a browser-style QA pass, verify page state, and capture reproducible UI evidence.": "执行浏览器界面检查，核实页面状态，并留存可复现的界面证据。",
+  "Save or restore working-state checkpoints for long or interrupted sessions.": "为长时间运行或中断的会话保存或恢复工作状态检查点。",
+  "Capture current git state, decisions, validation, and remaining work for later resumption.": "记录当前 Git 状态、已作决定、验证结果和剩余工作，便于之后继续。",
+  "Create architecture, flow, or process diagrams from implementation-backed source material.": "依据实际实现创建架构图、流程图或过程图。",
+  "Clear a previously selected edit boundary after the user widens the work scope.": "在用户扩大工作范围后，解除先前设置的编辑边界。"
 }

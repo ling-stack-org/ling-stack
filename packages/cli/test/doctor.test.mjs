@@ -63,12 +63,16 @@ test("doctor exits non-zero and prints next step when provider preflight is miss
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-doctor-"));
   try {
     await prepareDoctorWorkspace(cwd);
-    const result = await runCli(daemon.url, cwd, ["doctor"]);
+    const result = await runCli(daemon.url, cwd, ["doctor"], { env: { npm_lifecycle_event: "ling" } });
 
     assert.equal(result.code, 4);
     assert.match(result.stdout, /Status: fail/);
     assert.match(result.stdout, /providers\.preflight\s+no runnable provider has a successful preflight check/);
-    assert.match(result.stdout, /ling-stack provider check-all/);
+    assert.match(result.stdout, /corepack pnpm(?: --dir [^\n]+)? ling provider check-all/);
+    const installed = await runCli(daemon.url, cwd, ["doctor"], { env: { npm_lifecycle_event: "" } });
+    assert.match(installed.stdout, /Next:\s+ling-stack provider check-all/);
+    const summary = await runCli(daemon.url, cwd, ["doctor", "--summary"], { env: { npm_lifecycle_event: "ling" } });
+    assert.match(summary.stdout, /corepack pnpm ling provider check-all/);
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await daemon.close();

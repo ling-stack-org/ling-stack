@@ -60,6 +60,8 @@ README는 상단에 링크된 8개 언어로 제공됩니다. 다른 문서는 �
 
 필수 조건: Git, **Node.js 22.22.1 이상**, **Corepack과 pnpm 10**.
 저장소는 pnpm `10.0.0`을 고정하며, CI의 Node 기준 버전은 `22.22.1`입니다.
+Web/daemon 빌드에는 네이티브 이미지 정제기를 위한 **Rust 1.89 이상과 Cargo**도 필요합니다.
+[rustup](https://rustup.rs/)으로 설치하세요. CI는 Rust `1.97.1`을 사용합니다.
 
 ### 1. 설치 및 빌드
 

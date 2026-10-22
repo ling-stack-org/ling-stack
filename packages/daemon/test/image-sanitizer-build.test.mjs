@@ -1,10 +1,49 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { verifyImageCodecDependencies } from "../scripts/image-codec-dependencies.mjs";
+
+test("image sanitizer build explains a missing or outdated Rust toolchain before compiling", {
+  skip: process.platform === "win32" ? "Executable PATH fixtures require POSIX shebang support" : false,
+}, async t => {
+  const tools = await mkdtemp(join(tmpdir(), "ling-codec-toolchain-"));
+  t.after(() => rm(tools, { recursive: true, force: true }));
+  const build = new URL("../scripts/build-image-sanitizer.mjs", import.meta.url);
+  const run = () => spawnSync(process.execPath, [build.pathname], {
+    env: { ...process.env, PATH: tools }, encoding: "utf8",
+  });
+  const missing = run();
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /Rust .*Cargo.*required/);
+  assert.match(missing.stderr, /rustup/);
+
+  const rustc = join(tools, "rustc");
+  const host = `${process.arch === "arm64" ? "aarch64" : "x86_64"}-${process.platform === "darwin" ? "apple-darwin" : "unknown-linux-gnu"}`;
+  const compiler = version => `#!${process.execPath}\nconsole.log("rustc ${version}\\nrelease: ${version}\\nhost: ${host}");\n`;
+  await writeFile(rustc, compiler("1.85.1"));
+  await chmod(rustc, 0o755);
+  const outdated = run();
+  assert.notEqual(outdated.status, 0);
+  assert.match(outdated.stderr, /Rust 1\.89(?:\.0)?\+.*found 1\.85\.1/);
+  assert.match(outdated.stderr, /rustup/);
+
+  await writeFile(rustc, compiler("1.89.0"));
+  const missingCargo = run();
+  assert.notEqual(missingCargo.status, 0);
+  assert.match(missingCargo.stderr, /Rust .*Cargo.*required/);
+  assert.doesNotMatch(missingCargo.stderr, /Unsupported compiler/);
+
+  const cargo = join(tools, "cargo");
+  await writeFile(cargo, `#!${process.execPath}\nprocess.exit(process.argv[2] === "--version" ? 0 : 1);\n`);
+  await chmod(cargo, 0o755);
+  const accepted = run();
+  assert.match(accepted.stderr, /image_sanitizer_dependency_graph_failed/,
+    "the minimum accepted toolchain proceeds to dependency review");
+});
 
 test("codec build reviews the reachable Cargo graph, including newly enabled optional dependencies", async t => {
   const root = await mkdtemp(join(tmpdir(), "ling-codec-license-"));

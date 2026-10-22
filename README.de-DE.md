@@ -62,6 +62,8 @@ Coding-Agent-Aufgaben nutzen den Pi-Laufzeitadapter. Verfügbare Werkzeuge häng
 
 Voraussetzungen: Git, **Node.js 22.22.1 oder neuer** und **Corepack mit pnpm 10**.
 Das Repository legt pnpm `10.0.0` fest; die Node-Basisversion der CI ist `22.22.1`.
+Der Web-/Daemon-Build benötigt außerdem **Rust ab Version 1.89 und Cargo** für die native Bildbereinigung.
+Installation über [rustup](https://rustup.rs/); die CI verwendet Rust `1.97.1`.
 
 ### 1. Installieren und bauen
 

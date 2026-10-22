@@ -6,8 +6,10 @@ daemon, and CLI; native Desktop integrations have additional platform gates.
 
 ## Install And Start
 
-Use Git, Node.js 22.22.1 or newer, and Corepack with pnpm 10. The repository pins pnpm
-10.0.0, and CI uses Node 22.22.1.
+Use Git, Node.js 22.22.1 or newer, Corepack with pnpm 10, and Rust with Cargo
+([rustup installation](https://rustup.rs/)). The daemon build compiles the native
+image sanitizer even when using only the Web UI. Its dependencies require Rust
+1.89 or newer; CI uses Rust 1.97.1 and Node 22.22.1. The repository pins pnpm 10.0.0.
 
 ```bash
 git clone https://github.com/ling-stack-org/ling-stack.git
@@ -19,6 +21,11 @@ corepack pnpm --workspace-concurrency=1 --filter '@ling-stack/cli...' -r build
 
 The build selects the CLI and its dependencies, including the daemon and Web app.
 It leaves Desktop and Mobile development setup separate.
+
+A fresh install may warn that the `ling-stack-daemon` bin target is missing before
+the daemon has been built. Continue with the build, and invoke the source CLI using
+`corepack pnpm ling`. Node 22's experimental SQLite warning is informational; check
+the command's exit status and diagnostics to determine whether it succeeded.
 
 Start the daemon from the repository root in one terminal:
 
@@ -35,6 +42,10 @@ corepack pnpm ling ui --foreground --open
 The Web UI opens at `http://127.0.0.1:5173`, and the daemon listens at
 `http://127.0.0.1:17891`. Keep both terminals running. To stop them, press `Ctrl+C`
 in each terminal.
+
+`ling ui` starts the Vite development server. A successful source UI check does not
+validate the built production pages; use the Web package's `preview` command for
+that separate check after building.
 
 In a third terminal, check the daemon:
 
