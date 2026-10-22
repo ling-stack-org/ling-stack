@@ -1,5 +1,10 @@
 # E6 implementation checkpoint — 2026-10-19
 
+Historical backup record. Its then-pending implementation/main-integration
+statements are not current status. Continue from
+[the 2026-10-22 acceptance checkpoint](e6-acceptance-status-2026-10-22.md)
+and `output/e6-20260928/CONTINUE-HERE.md`; preserve the original evidence below.
+
 ## Purpose and scope
 
 This is a user-requested source backup, not a release or an acceptance verdict.
