@@ -88,8 +88,11 @@ real user database, or credentials are used.
 
 `scripts/harness-reliability-benchmark.mjs` measures real continuation/Attempt
 preparation, evaluation claims, and normal-task queue latency with and without
-real rule-evaluation scheduler contention. Arm order alternates. Defaults are
-50 warmups and 250 samples per arm. Hard gates remain:
+real rule-evaluation scheduler contention. A fixed-seed, exactly balanced shuffle
+independently assigns arm order and adjacent input blocks inside the warmup and
+measured populations. This avoids aliasing either arm to periodic SQLite
+checkpoint/cache work while keeping every run reproducible. Defaults are 50
+warmups and 250 samples per arm. Hard gates remain:
 
 - Continuation/dispatch bookkeeping p95 ≤ 25 ms.
 - Evaluation claim transaction p95 ≤ 20 ms.

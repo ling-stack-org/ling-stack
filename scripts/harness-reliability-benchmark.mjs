@@ -27,6 +27,25 @@ export function performanceGate(metrics, { sampleCount, warmupCount }) {
   return { passed: Object.values(gates).every(Boolean), gates };
 }
 
+export function foregroundBatchSizeFor(count) {
+  if (!Number.isSafeInteger(count) || count < 1 || count > 4_000) throw new TypeError("benchmark_size_invalid");
+  return Math.max(1, Math.min(16, Math.floor(10_000 / (count * 2))));
+}
+
+export function balancedArmScheduleFor(count, salt = "arm-order") {
+  if (!Number.isSafeInteger(count) || count < 1 || count > 2_000 || typeof salt !== "string" || !salt) {
+    throw new TypeError("benchmark_schedule_invalid");
+  }
+  const schedule = Array.from({ length: count }, (_, index) => index >= Math.floor(count / 2));
+  let state = Number.parseInt(createHash("sha256").update(`${HARNESS_CORPUS_SPEC.seed}:${salt}:${count}`).digest("hex").slice(0, 8), 16) >>> 0;
+  for (let index = schedule.length - 1; index > 0; index -= 1) {
+    state ^= state << 13; state ^= state >>> 17; state ^= state << 5; state >>>= 0;
+    const swapIndex = state % (index + 1);
+    [schedule[index], schedule[swapIndex]] = [schedule[swapIndex], schedule[index]];
+  }
+  return schedule;
+}
+
 /** A repeatable local synthetic gate, not a packaged GUI or external Provider performance claim. */
 export async function runHarnessReliabilityBenchmark({ sampleCount = 250, warmupCount = 50 } = {}) {
   if (![sampleCount, warmupCount].every(value => Number.isSafeInteger(value) && value >= 1 && value <= 2000)) throw new TypeError("benchmark_size_invalid");
@@ -37,7 +56,17 @@ export async function runHarnessReliabilityBenchmark({ sampleCount = 250, warmup
   // alternate between red and green. Keep the same real queue competition, but
   // measure a bounded foreground batch so the denominator is stable. The corpus
   // cap still bounds callers that request the largest accepted sample counts.
-  const foregroundBatchSize = Math.max(1, Math.min(16, Math.floor(10_000 / (count * 2))));
+  const foregroundBatchSize = foregroundBatchSizeFor(count);
+  // Alternating ABAB aliases with periodic SQLite checkpoint/cache work: one
+  // arm can inherit the slow parity even though both paths are unchanged.
+  // Keep the receipt deterministic and exactly balanced, but shuffle order and
+  // input identity independently inside warmup and measured populations.
+  const balancedSegments = salt => [
+    ...balancedArmScheduleFor(warmupCount, `${salt}:warmup`),
+    ...balancedArmScheduleFor(sampleCount, `${salt}:samples`),
+  ];
+  const evaluationFirstSchedule = balancedSegments("evaluation-first");
+  const evaluationUsesFirstBlockSchedule = balancedSegments("evaluation-input-block");
   const corpus = await createHarnessReliabilityCorpus({
     targets: count * 2 * foregroundBatchSize,
     evaluations: count * 2,
@@ -89,13 +118,11 @@ export async function runHarnessReliabilityBenchmark({ sampleCount = 250, warmup
       const secondBlock = corpus.preparations.slice(pairStart + foregroundBatchSize, pairStart + foregroundBatchSize * 2);
       assert.equal(firstBlock.length, foregroundBatchSize);
       assert.equal(secondBlock.length, foregroundBatchSize);
-      // Alternate both execution order and which adjacent input block belongs
-      // to each arm, so row parity/cache drift cannot masquerade as evaluation
-      // contention.
-      const baselineInputs = index % 2 ? secondBlock : firstBlock;
-      const evaluationInputs = index % 2 ? firstBlock : secondBlock;
+      const evaluationUsesFirstBlock = evaluationUsesFirstBlockSchedule[index];
+      const baselineInputs = evaluationUsesFirstBlock ? secondBlock : firstBlock;
+      const evaluationInputs = evaluationUsesFirstBlock ? firstBlock : secondBlock;
       let baseline; let enabled;
-      if (index % 2) {
+      if (evaluationFirstSchedule[index]) {
         enabled = await measureQueued(evaluationInputs, true); baseline = await measureQueued(baselineInputs, false);
       } else {
         baseline = await measureQueued(baselineInputs, false); enabled = await measureQueued(evaluationInputs, true);
@@ -120,12 +147,15 @@ export async function runHarnessReliabilityBenchmark({ sampleCount = 250, warmup
     }
     return {
       schemaVersion: 1, scope: "synthetic_on_disk_sqlite_same_process_scheduler", externalProviderCalls: 0,
-      corpus: { ...HARNESS_CORPUS_SPEC, targets: count * 2, evaluations: count * 2, digest: corpus.corpusDigest },
+      corpus: { ...HARNESS_CORPUS_SPEC, targets: count * 2 * foregroundBatchSize,
+        evaluations: count * 2, digest: corpus.corpusDigest },
       environment: { node: process.version, sqlite: corpus.database.prepare("SELECT sqlite_version() AS version").get().version,
         platform: platform(), osRelease: release(), cpu: cpus()[0]?.model ?? "unknown", logicalCpus: cpus().length,
         totalMemoryBytes: totalmem(), freeMemoryBytes: freemem(), gitHead: git("rev-parse", "HEAD"),
         gitTrackedDirty: Boolean(git("status", "--porcelain", "--untracked-files=no")), sourceDigests },
-      measurements: { sampleCount, warmupCount, foregroundBatchSize, metrics,
+      measurements: { sampleCount, warmupCount, foregroundBatchSize,
+        schedule: { seed: HARNESS_CORPUS_SPEC.seed, evaluationFirst: evaluationFirstSchedule,
+          evaluationUsesFirstBlock: evaluationUsesFirstBlockSchedule }, metrics,
         samples: { claimMs: claim, dispatchMs: dispatch, normalQueueMs: baselineQueue, evaluationQueueMs: evaluationQueue } },
       ...performanceGate(metrics, { sampleCount, warmupCount }),
       limits: ["Synthetic local corpus, not macOS packaged/GUI acceptance.", "No external Provider or dynamic delegation execution is measured.",
