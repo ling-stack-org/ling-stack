@@ -30,7 +30,7 @@ import {
   Workflow,
 } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
-import type { AiTeammateTemplate } from "@ling-stack/core";
+import type { AiTeammateTemplate } from "@ling-stack/core/skill-types";
 import type {
   ConversationProtocolAction,
   ConversationTimelineApprovalItem,
