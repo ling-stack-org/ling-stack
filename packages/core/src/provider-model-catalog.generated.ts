@@ -3,11 +3,11 @@ import type { ProviderModelCatalogManifest, ProviderModelCatalogRecord } from ".
 
 export const providerModelCatalogManifest = {
   "schemaVersion": 1,
-  "version": "models.dev:86c9ea58a935",
+  "version": "models.dev:1f64ed468596",
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
   "license": "MIT",
-  "generatedAt": "2026-10-21T07:49:09.903Z",
+  "generatedAt": "2026-10-22T07:45:03.817Z",
   "updatedAt": "2026-10-19"
 } as const satisfies ProviderModelCatalogManifest;
 
@@ -1670,7 +1670,6 @@ export const providerModelCatalogRecords = [
     ],
     "capabilities": [
       "chat",
-      "reasoning",
       "vision"
     ],
     "contextWindow": 32768,
@@ -4361,7 +4360,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 164000,
     "maxTokens": 16384,
-    "updatedAt": "2025-11-25"
+    "updatedAt": "2025-05-28"
   },
   {
     "providerId": "siliconflow",
@@ -4376,7 +4375,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 164000,
     "maxTokens": 16384,
-    "updatedAt": "2025-11-25"
+    "updatedAt": "2025-03-24"
   },
   {
     "providerId": "siliconflow",
@@ -4396,7 +4395,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 164000,
     "maxTokens": 16384,
-    "updatedAt": "2025-11-25"
+    "updatedAt": "2025-08-21"
   },
   {
     "providerId": "siliconflow",
@@ -4436,7 +4435,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 164000,
     "maxTokens": 16384,
-    "updatedAt": "2025-12-03"
+    "updatedAt": "2025-12-01"
   },
   {
     "providerId": "siliconflow",
@@ -4545,11 +4544,13 @@ export const providerModelCatalogRecords = [
     "id": "google/gemma-4-12B-it",
     "displayName": "Gemma 4 12B IT",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
     "maxTokens": 16384,
@@ -4560,11 +4561,13 @@ export const providerModelCatalogRecords = [
     "id": "google/gemma-4-26B-A4B-it",
     "displayName": "Gemma 4 26B A4B IT",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
     "maxTokens": 16384,
@@ -4575,11 +4578,13 @@ export const providerModelCatalogRecords = [
     "id": "google/gemma-4-31B-it",
     "displayName": "Gemma 4 31B IT",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
     "maxTokens": 16384,
@@ -4629,7 +4634,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 197000,
     "maxTokens": 131000,
-    "updatedAt": "2026-06-15"
+    "updatedAt": "2026-02-12"
   },
   {
     "providerId": "siliconflow",
@@ -4683,7 +4688,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 262000,
     "maxTokens": 16384,
-    "updatedAt": "2026-06-15"
+    "updatedAt": "2026-04-20"
   },
   {
     "providerId": "siliconflow",
@@ -4748,12 +4753,11 @@ export const providerModelCatalogRecords = [
     ],
     "capabilities": [
       "chat",
-      "tool_call",
       "reasoning"
     ],
     "contextWindow": 131000,
     "maxTokens": 8000,
-    "updatedAt": "2025-11-25"
+    "updatedAt": "2025-08-05"
   },
   {
     "providerId": "siliconflow",
@@ -4763,12 +4767,11 @@ export const providerModelCatalogRecords = [
       "text"
     ],
     "capabilities": [
-      "chat",
-      "tool_call"
+      "chat"
     ],
     "contextWindow": 131000,
     "maxTokens": 8000,
-    "updatedAt": "2025-11-25"
+    "updatedAt": "2025-08-05"
   },
   {
     "providerId": "siliconflow",
@@ -4798,7 +4801,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 33000,
     "maxTokens": 4000,
-    "updatedAt": "2025-11-25"
+    "updatedAt": "2024-09-19"
   },
   {
     "providerId": "siliconflow",
@@ -4833,7 +4836,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 262000,
     "maxTokens": 16384,
-    "updatedAt": "2025-11-25"
+    "updatedAt": "2025-07-28"
   },
   {
     "providerId": "siliconflow",
@@ -4853,7 +4856,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 131000,
     "maxTokens": 16384,
-    "updatedAt": "2025-11-25"
+    "updatedAt": "2025-04-28"
   },
   {
     "providerId": "siliconflow",
@@ -4873,7 +4876,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 131000,
     "maxTokens": 16384,
-    "updatedAt": "2025-11-25"
+    "updatedAt": "2025-04-29"
   },
   {
     "providerId": "siliconflow",
@@ -4888,7 +4891,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 262000,
     "maxTokens": 16384,
-    "updatedAt": "2025-11-25"
+    "updatedAt": "2025-07-31"
   },
   {
     "providerId": "siliconflow",
@@ -4903,7 +4906,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 262000,
     "maxTokens": 16384,
-    "updatedAt": "2025-11-25"
+    "updatedAt": "2025-07-22"
   },
   {
     "providerId": "siliconflow",
@@ -4920,7 +4923,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 262000,
     "maxTokens": 16384,
-    "updatedAt": "2025-11-25"
+    "updatedAt": "2025-10-04"
   },
   {
     "providerId": "siliconflow",
@@ -4997,11 +5000,13 @@ export const providerModelCatalogRecords = [
     "id": "Qwen/Qwen3.5-122B-A10B",
     "displayName": "Qwen3.5 122B-A10B",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
     "maxTokens": 16384,
@@ -5012,11 +5017,13 @@ export const providerModelCatalogRecords = [
     "id": "Qwen/Qwen3.5-27B",
     "displayName": "Qwen3.5 27B",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
     "maxTokens": 16384,
@@ -5027,11 +5034,13 @@ export const providerModelCatalogRecords = [
     "id": "Qwen/Qwen3.5-35B-A3B",
     "displayName": "Qwen3.5 35B-A3B",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
     "maxTokens": 16384,
@@ -5057,26 +5066,30 @@ export const providerModelCatalogRecords = [
     "id": "Qwen/Qwen3.5-9B",
     "displayName": "Qwen/Qwen3.5-9B",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
     "maxTokens": 16384,
-    "updatedAt": "2026-04-24"
+    "updatedAt": "2026-02-23"
   },
   {
     "providerId": "siliconflow",
     "id": "Qwen/Qwen3.6-27B",
     "displayName": "Qwen3.6 27B",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
     "maxTokens": 16384,
@@ -5087,11 +5100,13 @@ export const providerModelCatalogRecords = [
     "id": "Qwen/Qwen3.6-35B-A3B",
     "displayName": "Qwen3.6 35B-A3B",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
     "maxTokens": 16384,
@@ -5126,8 +5141,8 @@ export const providerModelCatalogRecords = [
       "reasoning"
     ],
     "contextWindow": 262000,
-    "maxTokens": 16384,
-    "updatedAt": "2026-02-11"
+    "maxTokens": 66000,
+    "updatedAt": "2026-02-13"
   },
   {
     "providerId": "siliconflow",
@@ -5138,7 +5153,6 @@ export const providerModelCatalogRecords = [
     ],
     "capabilities": [
       "chat",
-      "tool_call",
       "reasoning"
     ],
     "thinkingModes": [
@@ -5178,7 +5192,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 131000,
     "maxTokens": 16384,
-    "updatedAt": "2025-11-25"
+    "updatedAt": "2025-07-28"
   },
   {
     "providerId": "siliconflow",
@@ -5193,8 +5207,8 @@ export const providerModelCatalogRecords = [
       "reasoning"
     ],
     "contextWindow": 205000,
-    "maxTokens": 16384,
-    "updatedAt": "2026-06-15"
+    "maxTokens": 131072,
+    "updatedAt": "2026-02-12"
   },
   {
     "providerId": "siliconflow",
@@ -5210,7 +5224,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 205000,
     "maxTokens": 131000,
-    "updatedAt": "2026-04-08"
+    "updatedAt": "2026-04-07"
   },
   {
     "providerId": "siliconflow",
@@ -5496,12 +5510,14 @@ export const providerModelCatalogRecords = [
     "id": "doubao-seed-1-6-251015",
     "displayName": "Seed 1.6",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
       "tool_call",
-      "reasoning"
+      "reasoning",
+      "vision"
     ],
     "thinkingModes": [
       "off",
