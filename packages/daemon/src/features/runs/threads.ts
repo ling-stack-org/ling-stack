@@ -19,6 +19,7 @@ import type { RunRequest } from "./schemas.js";
 import { publishNormalNarrationAfterRun } from "../conversations/normal-narration-publication.js";
 import { approvalEventReflectsRunState } from "./approval-event-state.js";
 import { ensureWorkflowStepInputTurn } from "./workflow-step-input-turn.js";
+import { isNativeApprovalEvent } from "./native-approval-events.js";
 
 export function ensureLingThreadForRun(store: RunStore, runRequest: RunRequest, now: string): LingThread {
   if (runRequest.threadId) {
@@ -167,6 +168,7 @@ export function syncLingThreadForRunEvent(
   if (!run?.threadId || envelope.runId !== run.id) {
     return;
   }
+  if (isNativeApprovalEvent(store, envelope)) return;
   if (type !== "run_cancelled" && !approvalEventReflectsRunState(store, envelope)) return;
 
   if (type === "approval_requested") {

@@ -1,4 +1,5 @@
 import type { LingApprovalCheckpoint } from "../../approval-checkpoints.js";
+import type { RuntimeEvent, WorkUnit, WorkUnitAttempt } from "../../runtime-supervisor-types.js";
 import { classifyWorkflowStepStartOwner, type WorkflowStepStartReadStore,
   type WorkflowStepStartFailureInput, type WorkflowStepStartCommitResult } from "../../workflow-step-start-owner.js";
 import type { ApprovalRequest, ListApprovalRequestsOptions } from "../../approval-types.js";
@@ -38,7 +39,9 @@ export interface SqliteRuntimeRecoveryCoordinatorPorts extends Pick<RunStore,
   readonly appendRunEvent: <K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K]) => unknown;
   readonly markRunFailed: (runId: string, endedAt: string, errorMessage: string) => void;
   readonly getRun: (runId: string) => RunSession | undefined;
-  readonly getWorkUnit: (workUnitId: string) => import("../../runtime-supervisor-types.js").WorkUnit | undefined;
+  readonly getWorkUnit: (workUnitId: string) => WorkUnit | undefined;
+  readonly getWorkUnitAttempt: (attemptId: string) => WorkUnitAttempt | undefined;
+  readonly findWorkUnitAttemptTerminalAudit: (attempt: WorkUnitAttempt) => RuntimeEvent | undefined;
   readonly getLingThread: (threadId: string) => LingThread | undefined;
   readonly updateLingThread: (threadId: string, input: UpdateLingThreadInput, now: string) => LingThread | undefined;
   readonly listRecoverableChannelWorkflows: () => ChannelWorkflow[];
@@ -103,8 +106,9 @@ export class SqliteRuntimeRecoveryCoordinator {
         // The daemon owns restart continuation for enforced Harness task,
         // conversation, and private Runs. Channel reply children have their
         // own dispatch recovery path and must not be claimed here.
-        // Core preserves the logical Run until RuntimeSupervisor fences the
-        // abandoned Attempt and the daemon creates its replacement atomically.
+        // Runtime custody may already have fenced the abandoned Attempt.
+        // Preserve the logical Run for the daemon's atomic replacement only
+        // while its active or exact startup-loss evidence remains recoverable.
         continue;
       }
       if (!resumableApproval && runBeforeRecovery && this.isRecoverableUserInputReceiver(runBeforeRecovery)) {
@@ -144,22 +148,29 @@ export class SqliteRuntimeRecoveryCoordinator {
       return false;
     }
     const workUnit = this.ports.getWorkUnit(run.workUnitId);
-    const attempt = workUnit?.activeAttemptId
-      ? this.ports.getWorkUnitAttempt(workUnit.activeAttemptId)
-      : undefined;
-    const activeOwner = workUnit
-      ? ["claimed", "running", "cancelling"].includes(workUnit.status)
-      : false;
-    const startupFencedOwner = workUnit?.status === "stale"
-      && workUnit.errorCode === "runtime_stale"
-      && attempt?.workUnitId === workUnit.id
-      && attempt.status === "lost";
     const thread = run.threadId ? this.ports.getLingThread(run.threadId) : undefined;
     if (!workUnit
       || !["task_run", "conversation_run", "teammate_direct_reply"].includes(workUnit.kind)
       || workUnit.linkedRunId !== run.id
-      || !workUnit.activeAttemptId
-      || (!activeOwner && !startupFencedOwner)) {
+      || !workUnit.activeAttemptId) {
+      return false;
+    }
+    if (workUnit.status === "stale") {
+      const attempt = this.ports.getWorkUnitAttempt(workUnit.activeAttemptId);
+      if (workUnit.errorCode !== "runtime_stale" || workUnit.errorMessage !== "runtime-startup-reconcile"
+        || !attempt || attempt.id !== workUnit.activeAttemptId || attempt.workUnitId !== workUnit.id
+        || attempt.attemptNumber !== workUnit.attemptCount || attempt.status !== "lost"
+        || attempt.errorCode !== "runtime_stale" || attempt.errorMessage !== "runtime-startup-reconcile") {
+        return false;
+      }
+      const audit = this.ports.findWorkUnitAttemptTerminalAudit(attempt);
+      if (!audit || audit.type !== "work_unit_stale" || audit.actor !== "system" || !attempt.endedAt
+        || audit.ts !== attempt.endedAt || !isRecord(audit.data)
+        || (audit.data.fromStatus !== "claimed" && audit.data.fromStatus !== "running") || audit.data.toStatus !== "stale"
+        || audit.data.errorCode !== "runtime_stale" || audit.data.errorMessage !== "runtime-startup-reconcile") {
+        return false;
+      }
+    } else if (!["claimed", "running", "cancelling"].includes(workUnit.status)) {
       return false;
     }
     if (workUnit.kind === "conversation_run" && thread?.kind !== "conversation") return false;

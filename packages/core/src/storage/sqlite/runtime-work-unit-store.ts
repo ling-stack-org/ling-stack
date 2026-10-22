@@ -679,6 +679,15 @@ export class SqliteRuntimeWorkUnitStore {
     }, true, capability.attemptStatus === "lost");
   }
 
+  findWorkUnitAttemptTerminalAudit(attempt: WorkUnitAttempt): RuntimeEvent | undefined {
+    const row = this.context.database.prepare(`${runtimeEventSelectSql(`
+      WHERE work_unit_id = ? AND attempt_id = ? AND runtime_instance_id = ? AND fencing_token = ?
+        AND type IN ('work_unit_succeeded', 'work_unit_failed', 'work_unit_cancelled', 'work_unit_stale')
+    `)} ORDER BY seq ASC LIMIT 1`)
+      .get(attempt.workUnitId, attempt.id, attempt.runtimeInstanceId, attempt.fencingToken);
+    return row ? mapRuntimeEvent(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
   appendRuntimeDiagnosticEvent(input: AppendRuntimeDiagnosticEventInput): RuntimeEvent {
     const workUnit = this.getWorkUnit(input.workUnitId);
     if (!workUnit) {

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { RuntimeAttemptFenceV1 } from "@ling-stack/contracts";
+import type { RuntimeAttemptFenceV1, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
 
 export type { RuntimeAttemptFenceV1 } from "@ling-stack/contracts";
 
@@ -118,14 +118,7 @@ export type RunnerRequestSource =
   | "run_request"
   | "user_explicit";
 
-export interface WorkspaceRuntimeSettings {
-  readonly workspaceId: string;
-  readonly defaultRunnerId: string;
-  readonly allowedRunnerIds: readonly string[];
-  readonly explicitRunnerFallback: RunnerFallbackPolicy;
-  readonly implicitRunnerFallback: RunnerFallbackPolicy;
-  readonly updatedAt: string;
-}
+export type { WorkspaceRuntimeSettings } from "@ling-stack/contracts";
 
 export interface WorkUnit {
   readonly id: string;

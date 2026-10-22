@@ -9,7 +9,7 @@
   "main": "./dist/main/entry.js",
   "scripts": {
     "generate:icons": "node scripts/generate-brand-icons.mjs",
-    "build": "corepack pnpm build:office-driver && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/chrome-extension build && corepack pnpm --filter @ling-stack/web build && corepack pnpm --filter @ling-stack/daemon build && tsc -p tsconfig.main.json && esbuild preload/main-window.ts preload/computer-use-preview.ts --bundle --platform=node --format=cjs --external:electron --outdir=dist/preload --out-extension:.js=.cjs && node scripts/build-packaged-daemon.mjs && node scripts/stage-development-bundled-plugins.mjs && vite build --config vite.config.ts",
+    "build": "corepack pnpm build:office-driver && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/chrome-extension build && corepack pnpm --filter @ling-stack/web build && corepack pnpm --filter @ling-stack/daemon build && tsc -p tsconfig.main.json && esbuild preload/main-window.ts preload/computer-use-preview.ts --bundle --platform=node --format=cjs --external:electron --outdir=dist/preload --out-extension:.js=.cjs && corepack pnpm build:engine-secret-worker && node scripts/build-packaged-daemon.mjs && node scripts/stage-development-bundled-plugins.mjs && vite build --config vite.config.ts",
     "build:office-driver": "node scripts/build-office-driver.mjs",
     "typecheck:ci": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "typecheck": "corepack pnpm --filter @ling-stack/localization build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/ui-react build && corepack pnpm --filter @ling-stack/api-client build && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
@@ -48,7 +48,8 @@
     "screenshots:verify:computer-use": "corepack pnpm build && electron tests/screenshot-app",
     "build:restricted-command-helper:mac": "node scripts/build-restricted-command-helper.mjs --platform darwin",
     "package:mac": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build && node scripts/package-macos-with-office.mjs",
-    "package:win": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform win32-x64 -- --win nsis --x64"
+    "package:win": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm --filter @ling-stack/daemon build:engine-supervisor && corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform win32-x64 -- --win nsis --x64",
+    "build:engine-secret-worker": "esbuild ../../packages/daemon/dist/features/execution-engines/engine-secret-worker.js --bundle --platform=node --format=esm --external:@napi-rs/keyring --outfile=dist/daemon/engine-secret-worker.js"
   },
   "dependencies": {
     "@ling-stack/browser-host": "workspace:*",
@@ -61,7 +62,9 @@
     "mammoth": "1.13.0",
     "pdf-parse": "2.4.5",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "@napi-rs/keyring": "2.0.0",
+    "@ling-stack/core": "workspace:*"
   },
   "devDependencies": {
     "@electron/asar": "4.3.1",
@@ -82,7 +85,7 @@
     "appId": "com.lingstack.desktop",
     "productName": "Ling Stack",
     "afterPack": "./scripts/cua-driver-signing/after-pack.mjs",
-    "afterSign": "./scripts/cua-driver-signing/after-sign.mjs",
+    "afterSign": "./scripts/after-sign.mjs",
     "artifactBuildCompleted": "./scripts/cua-driver-signing/artifact-build-completed.mjs",
     "directories": {
       "output": "release"
@@ -150,6 +153,16 @@
           "ling-browser-host.exe",
           "build-metadata.json"
         ]
+      },
+      {
+        "from": "../../packages/daemon/dist/native/image-sanitizer",
+        "to": "image-sanitizer",
+        "filter": [
+          "ling-image-sanitizer",
+          "ling-image-sanitizer.exe",
+          "build-metadata.json",
+          "THIRD_PARTY_LICENSES.txt"
+        ]
       }
     ],
     "mac": {
@@ -160,12 +173,18 @@
         {
           "from": "dist/human-evaluation",
           "to": "human-evaluation",
-          "filter": ["ling-human-evaluation-helper"]
+          "filter": [
+            "ling-human-evaluation-helper"
+          ]
         },
         {
           "from": "dist/office-local",
           "to": "office-local",
-          "filter": ["office-local.node", "build-manifest.json", "source/**/*"]
+          "filter": [
+            "office-local.node",
+            "build-manifest.json",
+            "source/**/*"
+          ]
         },
         {
           "from": "dist/restricted-command",
@@ -183,6 +202,16 @@
       ]
     },
     "win": {
+      "extraResources": [
+        {
+          "from": "../../packages/daemon/dist/native/engine-supervisor",
+          "to": "engine-supervisor",
+          "filter": [
+            "ling-engine-supervisor.exe",
+            "build-metadata.json"
+          ]
+        }
+      ],
       "icon": "build/icon.ico",
       "artifactName": "Ling-Stack-${version}-windows-${arch}-setup.${ext}",
       "requestedExecutionLevel": "asInvoker",
@@ -195,6 +224,9 @@
       "perMachine": false,
       "packElevateHelper": false,
       "include": "build/installer.nsh"
-    }
+    },
+    "asarUnpack": [
+      "**/node_modules/@napi-rs/keyring*/**/*.node"
+    ]
   }
 }

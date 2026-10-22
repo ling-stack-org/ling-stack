@@ -181,6 +181,7 @@ async function startDaemonForTest(cwd, dependencies = {}) {
     defaultWorkspaceCwd: cwd,
     host: "127.0.0.1",
     port: 0,
+    defaultWorkspaceCwd: cwd,
     channels: { intentSelector: false },
   }, dependencies);
   await daemon.start();

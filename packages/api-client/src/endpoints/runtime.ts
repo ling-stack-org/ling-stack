@@ -1,4 +1,6 @@
 import type {
+  ConversationExecutionSelectionQuery,
+  ConversationExecutionSelectionResponse,
   HarnessDiagnosticQueryV1,
   ExecutionCancellationRequest,
   RunnerListResponse,
@@ -20,6 +22,9 @@ import type {
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
 export const runtimeEndpoints = {
+  async getConversationExecutionSelection(this: LingDaemonEndpointContext, cwd: string, query: ConversationExecutionSelectionQuery = {}): Promise<ConversationExecutionSelectionResponse> {
+    return this._get("/runtime/conversation-execution", { cwd, ...query });
+  },
   async getRuntime(this: LingDaemonEndpointContext, cwd: string): Promise<RuntimeResponse> {
       return this._get("/runtime", { cwd });
     },

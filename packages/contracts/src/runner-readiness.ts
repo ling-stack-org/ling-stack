@@ -1,6 +1,7 @@
 export type RunnerReadinessStatus = "ready" | "blocked" | "degraded" | "unknown";
 
 export type RunnerReadinessBlockerCode =
+  | "legacy_runner_migration_required"
   | "feature_flag_disabled"
   | "missing_endpoint"
   | "endpoint_unreachable"

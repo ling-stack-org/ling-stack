@@ -1,0 +1,72 @@
+--- jpeg-decoder-0.3.2/src/huffman.rs
++++ vendor/jpeg-decoder/src/huffman.rs
+@@ -1,3 +1,5 @@
++// Ling Stack modification: distinguish real entropy bits from zero-padded lookahead.
++// Reject truncated scans and extraneous/non-1 scan padding. See STRICT-PATCH.md.
+ use alloc::borrow::ToOwned;
+ use alloc::vec;
+ use alloc::vec::Vec;
+@@ -15,6 +17,8 @@
+     bits: u64,
+     num_bits: u8,
+     marker: Option<Marker>,
++    real_bits: u8,
++    consumed_padding: bool,
+ }
+ 
+ impl HuffmanDecoder {
+@@ -23,6 +27,8 @@
+             bits: 0,
+             num_bits: 0,
+             marker: None,
++            real_bits: 0,
++            consumed_padding: false,
+         }
+     }
+ 
+@@ -98,10 +104,19 @@
+     pub fn reset(&mut self) {
+         self.bits = 0;
+         self.num_bits = 0;
++        self.real_bits = 0;
++        self.consumed_padding = false;
+     }
+ 
+     pub fn take_marker<R: Read>(&mut self, reader: &mut R) -> Result<Option<Marker>> {
+-        self.read_bits(reader).map(|_| self.marker.take())
++        self.read_bits(reader)?;
++        if self.consumed_padding || self.real_bits > 7
++            || (self.real_bits > 0
++                && (self.bits >> (64 - self.real_bits)) != (1_u64 << self.real_bits) - 1)
++        {
++            return Err(Error::Format("invalid entropy length or scan padding".to_owned()));
++        }
++        Ok(self.marker.take())
+     }
+ 
+     #[inline]
+@@ -116,6 +131,8 @@
+     fn consume_bits(&mut self, count: u8) {
+         debug_assert!(self.num_bits >= count);
+ 
++        if count > self.real_bits { self.consumed_padding = true; }
++        self.real_bits = self.real_bits.saturating_sub(count);
+         self.bits <<= count as usize;
+         self.num_bits -= count;
+     }
+@@ -123,6 +140,7 @@
+     fn read_bits<R: Read>(&mut self, reader: &mut R) -> Result<()> {
+         while self.num_bits <= 56 {
+             // Fill with zero bits if we have reached the end.
++            let synthetic = self.marker.is_some();
+             let byte = match self.marker {
+                 Some(_) => 0,
+                 None => read_u8(reader)?,
+@@ -152,6 +170,7 @@
+                 }
+             }
+ 
++            if !synthetic { self.real_bits += 8; }
+             self.bits |= (byte as u64) << (56 - self.num_bits);
+             self.num_bits += 8;
+         }

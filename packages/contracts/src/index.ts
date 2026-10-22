@@ -18,6 +18,8 @@ export * from "./run-compaction-checkpoints.js";
 export * from "./run-event-validation.js";
 export * from "./provider-diagnostics.js";
 export type * from "./runner-readiness.js";
+export * from "./runner-acceptance.js";
+export * from "./execution-engines.js";
 export * from "./threads.js";
 export type * from "./conversations.js";
 export * from "./conversation-continuity.js";

@@ -39,6 +39,10 @@ export function appendApprovalDecisionEvent(
   store: RunStore,
   approval: ApprovalRequest,
 ): void {
+  // Native decisions carry their own atomic lineage and delivery publication.
+  // Keep that path before the Pi/workflow decision projection to avoid a second
+  // decision event or a non-native resume of the same approval.
+  if (store.publishNativeApprovalDecision?.(approval.id, approval.resolvedAt ?? new Date().toISOString())) return;
   const runId = resolveApprovalDecisionRunId(store, approval);
   if (!runId) {
     const payload = approval.payload;

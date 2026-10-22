@@ -21,6 +21,8 @@ import type { DesktopRuntime } from "./desktop-runtime.js";
 import { DesktopNavigationIntentStore } from "./navigation-intent.js";
 import { DesktopRendererThemeStore } from "./renderer-theme-store.js";
 import { sendToLiveDesktopWindow } from "./safe-window-send.js";
+import { registerExecutionEngineIpc } from "./execution-engines/ipc.js";
+import { createHostExecutionEngineClient } from "./execution-engines/client.js";
 
 const MAX_HOST_OBSTACLES = 128;
 const MAX_DESKTOP_COORDINATE = 1_000_000;
@@ -45,11 +47,18 @@ export function registerDesktopIpc(input: {
   readonly navigationIntents?: DesktopNavigationIntentStore;
   readonly themeStore?: DesktopRendererThemeStore;
   readonly mobileAccess?: DesktopMobileAccessCapabilities;
+  readonly executionEngines?: { readonly baseUrl: string; readonly trustedDocumentUrl: string;
+    readonly getAuthority: Parameters<typeof createHostExecutionEngineClient>[1] };
   readonly windowControlsEnabled?: boolean;
   readonly fixedComputerUseConversationId?: string;
   readonly ipcMainImpl?: Pick<IpcMain, "handle" | "on" | "removeHandler" | "removeAllListeners">;
 }): () => void {
   const desktopIpcMain = input.ipcMainImpl ?? resolveIpcMain();
+  const unregisterExecutionEngines = input.executionEngines ? registerExecutionEngineIpc({
+    ipcMainImpl: desktopIpcMain, getMainWindow: input.getMainWindow,
+    trustedDocumentUrl: input.executionEngines.trustedDocumentUrl,
+    getClient: () => createHostExecutionEngineClient(input.executionEngines!.baseUrl, input.executionEngines!.getAuthority),
+  }) : undefined;
   const navigationIntents = input.navigationIntents ?? new DesktopNavigationIntentStore();
   const themeStore = input.themeStore ?? new DesktopRendererThemeStore();
   let pendingRendererSelectionObserved = false;
@@ -481,6 +490,7 @@ export function registerDesktopIpc(input: {
     );
   });
   return () => {
+    unregisterExecutionEngines?.();
     unsubscribeStatus();
     unsubscribeNavigationIntents();
     windowControlOwner?.off("maximize", reportWindowState);

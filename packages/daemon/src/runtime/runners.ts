@@ -25,6 +25,7 @@ export interface RegisteredRunner {
   readonly id: string;
   readonly displayName: string;
   readonly status: "enabled" | "disabled";
+  readonly profileSelection?: "supported" | "unsupported";
   readonly adapter: RunnerAdapter;
   readonly aliases?: readonly string[];
   readonly supportedProviderApis?: readonly string[];

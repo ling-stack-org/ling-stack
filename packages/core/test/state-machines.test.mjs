@@ -69,7 +69,7 @@ test("stale expected status is rejected before applying a transition", () => {
   });
 });
 
-test("run approval round trip returns to running only after approval", () => {
+test("run approval round trip returns to running after approval", () => {
   const waiting = transitionRun({
     entityId: "run_1",
     currentStatus: "running",
@@ -115,6 +115,16 @@ test("pre-run preparation failure can close claimed tasks and queued Runs", () =
     event: "runner_failed",
     actor: "system",
   }), { ok: true, from: "queued", to: "failed" });
+});
+
+test("ending a native human wait is distinct from Pi denial and cannot revive terminal work", () => {
+  for (const transition of [transitionRun, transitionWorkUnit]) {
+    assert.deepEqual(transition({ entityId: "native", currentStatus: "waiting_for_approval", event: "approval_wait_ended", actor: "system" }),
+      { ok: true, from: "waiting_for_approval", to: "running" });
+    assert.deepEqual(transition({ entityId: "pi", currentStatus: "waiting_for_approval", event: "approval_denied", actor: "local-user" }),
+      { ok: true, from: "waiting_for_approval", to: "failed" });
+    assert.equal(transition({ entityId: "terminal", currentStatus: "succeeded", event: "approval_wait_ended", actor: "system" }).ok, false);
+  }
 });
 
 test("approval states are terminal after a decision", () => {

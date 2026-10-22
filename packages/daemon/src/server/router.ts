@@ -1,3 +1,4 @@
+import { handleConversationExecutionSelection } from "../runtime/conversation-execution-route.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defaultProviderTemplates, executeExternalWorkAction, toRuntimeAttemptFence } from "@ling-stack/core";
 import type { AiTeammate, RunSession, RunStore, TeammateDirectMessage, TeammateDirectThread } from "@ling-stack/core";
@@ -374,6 +375,9 @@ export async function routeRequest(
   context: DaemonContext,
 ): Promise<void> {
   if (await handleHumanEvaluationDesktopRoute(request, response, context)) return;
+  if (await context.engineManagement.handle(request, response)) {
+    return;
+  }
   if (await context.remoteAccess.handleManagementRequest(request, response)) {
     return;
   }
@@ -401,6 +405,7 @@ export async function routeRequest(
     startupState,
     computerUsePreviews,
     hostCapabilityBridge,
+    nativeRunDispatcher,
     cuaDriverActivationService,
     workspaceFileCapabilities,
   } = context;
@@ -444,6 +449,7 @@ export async function routeRequest(
       controlPlaneEvents,
       startupState,
       computerUsePreviews,
+      nativeRunDispatcher,
     });
   };
   const retryTaskRun = (input: {
@@ -531,6 +537,7 @@ export async function routeRequest(
         controlPlaneEvents,
         startupState,
         computerUsePreviews,
+        nativeRunDispatcher,
       },
     );
   const directReplyControl = new DirectReplyControlService({
@@ -771,6 +778,7 @@ export async function routeRequest(
               controlPlaneEvents,
               startupState,
               computerUsePreviews,
+              nativeRunDispatcher,
             },
           )),
       automationSchedulers,
@@ -982,6 +990,7 @@ export async function routeRequest(
             startupState,
             computerUsePreviews,
             hostCapabilityBridge,
+            nativeRunDispatcher,
           },
         );
       },
@@ -1158,6 +1167,7 @@ export async function routeRequest(
           startupState,
           computerUsePreviews,
           hostCapabilityBridge: context.hostCapabilityBridge,
+          nativeRunDispatcher,
         },
       ), imageVisionSummarizer);
     return;
@@ -1232,6 +1242,7 @@ export async function routeRequest(
               controlPlaneEvents,
               startupState,
               computerUsePreviews,
+              nativeRunDispatcher,
             },
           )),
       startForkRun: async (runRequest) =>
@@ -1251,6 +1262,7 @@ export async function routeRequest(
               controlPlaneEvents,
               startupState,
               computerUsePreviews,
+              nativeRunDispatcher,
             },
           )),
     });
@@ -1394,6 +1406,11 @@ export async function routeRequest(
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/runtime/conversation-execution") {
+    await handleConversationExecutionSelection(response, url, nativeRunDispatcher);
+    return;
+  }
+
   if (url.pathname === "/runtime/settings") {
     await handleRuntimeSettings(request, response, url, storeRegistry, runnerRegistry, config.maxBodyBytes, controlPlaneEvents);
     return;
@@ -1451,6 +1468,7 @@ export async function routeRequest(
           startupState,
           computerUsePreviews,
           hostCapabilityBridge: context.hostCapabilityBridge,
+          nativeRunDispatcher,
         },
       ));
     return;
@@ -1480,6 +1498,7 @@ export async function routeRequest(
       computerUsePreviews,
       controlPlaneEvents,
       startupState,
+      nativeRunDispatcher,
       runRoute.runId,
     );
     return;
@@ -1569,6 +1588,7 @@ export async function routeRequest(
         computerUsePreviews,
         controlPlaneEvents,
         startupState,
+        nativeRunDispatcher,
         runInterventionRoute.interventionId,
       );
       return;
@@ -1787,6 +1807,7 @@ export async function routeRequest(
             startupState,
             computerUsePreviews,
             hostCapabilityBridge,
+            nativeRunDispatcher,
           },
         ).then(resolveOnce, () => resolveOnce(undefined));
       });
@@ -2149,6 +2170,7 @@ export async function routeRequest(
               controlPlaneEvents,
               startupState,
               computerUsePreviews,
+              nativeRunDispatcher,
             },
           ),
         secretResolver,
@@ -2661,6 +2683,7 @@ export async function routeRequest(
               controlPlaneEvents,
               startupState,
               computerUsePreviews,
+              nativeRunDispatcher,
             },
           );
         },

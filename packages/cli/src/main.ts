@@ -40,6 +40,7 @@ import {
 } from "./doctor/checks.js";
 import { CliError, errorMessage } from "./errors.js";
 import { runBrowserHostCommand } from "./browser-host-command.js";
+import { runExecutionEngineCommand } from "./execution-engine-command.js";
 import { generateCompletionScript, supportedCompletionShells, type CompletionShell } from "./completion/scripts.js";
 import { parseRunStreamRecord, type RunEventEnvelope, type RunStreamRecord } from "./run/events.js";
 import { readRunPromptInput } from "./run/input.js";
@@ -268,6 +269,8 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
   }
 
   switch (command) {
+    case "engine":
+      return await runExecutionEngineCommand(rest, parsed.options);
     case "init":
       return await handleInit(rest, parsed.options);
     case "doctor":
@@ -7452,6 +7455,10 @@ function shellQuote(value: string): string {
 }
 
 function printCommandHelp(command: string, subcommand?: string): void {
+  if (command === "engine") {
+    console.log("Usage: ling engine authorize --origin http://127.0.0.1:5175 --start-daemon [--daemon-url http://127.0.0.1:17891]\nStarts a new foreground daemon. Requires an interactive terminal; never takes over an existing daemon.");
+    return;
+  }
   if (command === "init") {
     printInitHelp();
     return;
@@ -7548,6 +7555,7 @@ Usage:
   ling-stack [global options] daemon stop
   ling-stack [global options] daemon restart
   ling-stack [global options] daemon logs
+  ling-stack [global options] engine authorize --origin <local-web-origin>
   ling-stack [global options] browser-host install
   ling-stack [global options] browser-host status
   ling-stack [global options] browser-host uninstall

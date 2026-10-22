@@ -1,5 +1,11 @@
 # Runner Adapters
 
+> 2026-10-18 design change: endpoint-based Codex/OpenClaw activation and rollout
+> sections below are historical and superseded by
+> [Native Execution Engines](native-execution-engines.md). Legacy endpoint flags
+> are being retired; native selection requires an explicit profile and current
+> acceptance. Implementation is tracked in the linked native plan.
+
 ## Purpose
 
 This document defines how Ling Stack should add non-Pi execution backends after the

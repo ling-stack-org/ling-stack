@@ -99,7 +99,7 @@ export type DesktopRuntimeDaemon = Pick<
   | "restart"
   | "stopOwnedDaemon"
   | "onStatusChanged"
->;
+> & Partial<Pick<DesktopDaemonLifecycle, "getExecutionEngineAuthority">>;
 
 export interface DesktopRuntimeOptions {
   readonly daemon: DesktopRuntimeDaemon;
@@ -208,6 +208,11 @@ export class DesktopRuntime {
 
   get status(): DesktopDaemonStatus {
     return this.options.daemon.status;
+  }
+
+  async getExecutionEngineAuthority(): ReturnType<DesktopDaemonLifecycle["getExecutionEngineAuthority"]> {
+    if (!this.options.daemon.getExecutionEngineAuthority) throw new Error("engine_host_authority_unavailable");
+    return this.options.daemon.getExecutionEngineAuthority();
   }
 
   get cuaDriverCoordinator(): DesktopRuntimeCuaDriverCoordinator | undefined {

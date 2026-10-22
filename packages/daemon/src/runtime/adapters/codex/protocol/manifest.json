@@ -1,0 +1,548 @@
+{
+  "repository": "https://github.com/openai/codex",
+  "revision": "16ff14c266179e6a762dc8081e9dab73a96683e0",
+  "license": "Apache-2.0",
+  "transform": "TypeScript AST module specifiers gain .js for NodeNext; declarations unchanged",
+  "roots": [
+    "InitializeParams.ts",
+    "InitializeResponse.ts",
+    "v2/ThreadStartParams.ts",
+    "v2/ThreadStartResponse.ts",
+    "v2/ThreadResumeParams.ts",
+    "v2/ThreadResumeResponse.ts",
+    "v2/ThreadReadParams.ts",
+    "v2/ThreadReadResponse.ts",
+    "v2/TurnStartParams.ts",
+    "v2/TurnStartResponse.ts",
+    "v2/TurnInterruptParams.ts",
+    "v2/TurnInterruptResponse.ts",
+    "v2/TurnStartedNotification.ts",
+    "v2/TurnCompletedNotification.ts",
+    "v2/AgentMessageDeltaNotification.ts",
+    "v2/ItemStartedNotification.ts",
+    "v2/ItemCompletedNotification.ts",
+    "v2/CommandExecutionOutputDeltaNotification.ts",
+    "v2/CommandExecutionRequestApprovalParams.ts",
+    "v2/CommandExecutionRequestApprovalResponse.ts",
+    "v2/FileChangeRequestApprovalParams.ts",
+    "v2/FileChangeRequestApprovalResponse.ts",
+    "v2/PermissionsRequestApprovalParams.ts",
+    "v2/PermissionsRequestApprovalResponse.ts",
+    "v2/ToolRequestUserInputParams.ts",
+    "v2/ToolRequestUserInputResponse.ts",
+    "v2/ReasoningTextDeltaNotification.ts",
+    "v2/ReasoningSummaryTextDeltaNotification.ts",
+    "v2/ErrorNotification.ts",
+    "v2/DynamicToolCallParams.ts",
+    "v2/DynamicToolCallResponse.ts",
+    "v2/ServerRequestResolvedNotification.ts",
+    "v2/ModelReroutedNotification.ts",
+    "v2/FileChangePatchUpdatedNotification.ts"
+  ],
+  "files": {
+    "AbsolutePathBuf.ts": {
+      "upstreamSha256": "a79d31d5e8f24c58c8cce2633e5e4fc5b0bb88d1c44c69e7ce7d0dc7c1252272",
+      "localSha256": "a79d31d5e8f24c58c8cce2633e5e4fc5b0bb88d1c44c69e7ce7d0dc7c1252272"
+    },
+    "AgentPath.ts": {
+      "upstreamSha256": "cabca56f2e5aaba035115f39b9bf021d8896eb544bb128b7f4a5ec8a8314ebbb",
+      "localSha256": "cabca56f2e5aaba035115f39b9bf021d8896eb544bb128b7f4a5ec8a8314ebbb"
+    },
+    "ClientInfo.ts": {
+      "upstreamSha256": "c3f38c70ffff810867af87a536d915dadea9e4b547343611c4e14731bcb7c648",
+      "localSha256": "c3f38c70ffff810867af87a536d915dadea9e4b547343611c4e14731bcb7c648"
+    },
+    "FunctionCallOutputBody.ts": {
+      "upstreamSha256": "29879d8884c7031f104c56b462fdd9d09395d8c2f90eb10f67bfe00ed36b3234",
+      "localSha256": "873af82f0a4b81454a934ed7413257b734bf9f907fa4ad6183c0337c0216dfcf"
+    },
+    "FunctionCallOutputContentItem.ts": {
+      "upstreamSha256": "9eeae66678a736333a5a9ab116b186662512525cf1b3093a14e13e4d12fb78e5",
+      "localSha256": "bb7b83b66d7a17c839b65914941ec3b0dc33917343155c28bb48781b132370c8"
+    },
+    "ImageDetail.ts": {
+      "upstreamSha256": "cf2036b2af8a0e42de8934caec9cebe36169d5e86aeb5504a2ebc859596e4414",
+      "localSha256": "cf2036b2af8a0e42de8934caec9cebe36169d5e86aeb5504a2ebc859596e4414"
+    },
+    "ImageGenerationFailure.ts": {
+      "upstreamSha256": "55c9800942e70ba048a32073a79f56e66723ebe67141f0ab2ecc94f62bb3ab3e",
+      "localSha256": "55c9800942e70ba048a32073a79f56e66723ebe67141f0ab2ecc94f62bb3ab3e"
+    },
+    "ImageGenerationItem.ts": {
+      "upstreamSha256": "d25b8c44e4e2aa8ef2338056b930933c5ffff3b8f2408bed8a537be7c50a53d3",
+      "localSha256": "33e398250ecba5e297ec1141dedf7d4c43450351cfd8095a4322370345745d08"
+    },
+    "InitializeCapabilities.ts": {
+      "upstreamSha256": "4abc3c8bf9f039c61a0ee0f92c21854e350ce9ef4ef6b770178040e47744cd7b",
+      "localSha256": "0364a2a494d26d1aba0d2f8ce8b7ef2f167ef3fc21aa06976eec10137ab9bac3"
+    },
+    "InitializeParams.ts": {
+      "upstreamSha256": "bfc13b4fc9e37f629ee67b42d6e7f342ba38668ff528e738a911de5ebcfd545f",
+      "localSha256": "ca8a88e48daad3563e222fbd14f8dacde34947f1b77d1853ed7dd7d06eae31ad"
+    },
+    "InitializeResponse.ts": {
+      "upstreamSha256": "4feabcb66d4bf01869d2780beaec1838d41b30213cdf57de175298aed01f5379",
+      "localSha256": "86ff3b5c39977e4cf1dec10f0fa379ae100e7ff604159c1b6d493bdba946948d"
+    },
+    "LegacyAppPathString.ts": {
+      "upstreamSha256": "74517cf53c55fa2086b7a0c364efcc3a90804ca118d0c679f244bdd682bd6632",
+      "localSha256": "74517cf53c55fa2086b7a0c364efcc3a90804ca118d0c679f244bdd682bd6632"
+    },
+    "MessagePhase.ts": {
+      "upstreamSha256": "9b9cac40f1eb1d9c9c387b90fd9f87873727e010f46e478230aff17fd3ec460c",
+      "localSha256": "9b9cac40f1eb1d9c9c387b90fd9f87873727e010f46e478230aff17fd3ec460c"
+    },
+    "Personality.ts": {
+      "upstreamSha256": "51eee5332b3af52cce2117922688523e90808390eec477434d9a089b36a21163",
+      "localSha256": "51eee5332b3af52cce2117922688523e90808390eec477434d9a089b36a21163"
+    },
+    "ReasoningEffort.ts": {
+      "upstreamSha256": "a29212fd92094fc023f5d8727412325c60b05dfb429a1e6291b60ceba1eb1743",
+      "localSha256": "a29212fd92094fc023f5d8727412325c60b05dfb429a1e6291b60ceba1eb1743"
+    },
+    "ReasoningSummary.ts": {
+      "upstreamSha256": "1d56c8b72bf6806438e612e1a14a567ceab91be91a4bcb0ca192f898fe0bf9bc",
+      "localSha256": "1d56c8b72bf6806438e612e1a14a567ceab91be91a4bcb0ca192f898fe0bf9bc"
+    },
+    "RequestId.ts": {
+      "upstreamSha256": "beeb38dfd0b050b171141bd66d51663786a50a81cbe904ba9b006289a101fd39",
+      "localSha256": "beeb38dfd0b050b171141bd66d51663786a50a81cbe904ba9b006289a101fd39"
+    },
+    "serde_json/JsonValue.ts": {
+      "upstreamSha256": "8697aaaa4cbe8f91492fe36dc545cc53a26e53143371c22c08385969d4e3cc61",
+      "localSha256": "8697aaaa4cbe8f91492fe36dc545cc53a26e53143371c22c08385969d4e3cc61"
+    },
+    "SleepItem.ts": {
+      "upstreamSha256": "a6b65ce2d5cbc15c7c261640deea953f2216198617e828584e85e5ee3c0e223a",
+      "localSha256": "a6b65ce2d5cbc15c7c261640deea953f2216198617e828584e85e5ee3c0e223a"
+    },
+    "SubAgentSource.ts": {
+      "upstreamSha256": "6fa78b756bd916c4254a9c84655dbbcc45654790f7a9890f6809c4fbf8e45ecb",
+      "localSha256": "ccb19145f1364882675026f9a0cd26dc823dab3498c1543ff5f5b54a55ed596f"
+    },
+    "ThreadId.ts": {
+      "upstreamSha256": "7ffbbefebc5e49a3215dacf4639d4fdd79c5577f9cebdf46760bdfa7312a1109",
+      "localSha256": "7ffbbefebc5e49a3215dacf4639d4fdd79c5577f9cebdf46760bdfa7312a1109"
+    },
+    "v2/AdditionalFileSystemPermissions.ts": {
+      "upstreamSha256": "c26c68250553698af4f9affd0b991e64e5841384f07199940d6f211f0cef11be",
+      "localSha256": "c9b276f5a2d085f3bbed31a35eac49485eb6f63688f1ac0380f51f9ef7cbb62d"
+    },
+    "v2/AdditionalNetworkPermissions.ts": {
+      "upstreamSha256": "7b1a37a73699dfea562f7b4cc1b71cffa8f42371b11248dc7ff7582c0f8e3f94",
+      "localSha256": "7b1a37a73699dfea562f7b4cc1b71cffa8f42371b11248dc7ff7582c0f8e3f94"
+    },
+    "v2/AgentMessageDelivery.ts": {
+      "upstreamSha256": "2fa497987aab791b697c9dee5cdd634ec566bf0b82cd56b5a796f26241a95957",
+      "localSha256": "2fa497987aab791b697c9dee5cdd634ec566bf0b82cd56b5a796f26241a95957"
+    },
+    "v2/AgentMessageDeltaNotification.ts": {
+      "upstreamSha256": "bb538862f093bd22278bea3b3343037525a9218fbddef534e37e048347c10805",
+      "localSha256": "bb538862f093bd22278bea3b3343037525a9218fbddef534e37e048347c10805"
+    },
+    "v2/ApprovalsReviewer.ts": {
+      "upstreamSha256": "0ba0d2403a6987128af58e825fb0d0e05d61891ce5a35e7ba1f94afe51a57630",
+      "localSha256": "0ba0d2403a6987128af58e825fb0d0e05d61891ce5a35e7ba1f94afe51a57630"
+    },
+    "v2/AskForApproval.ts": {
+      "upstreamSha256": "81dd17defd9a7fd4785346d3ce54c14243353b43174c7417827210cbd3ef3c52",
+      "localSha256": "81dd17defd9a7fd4785346d3ce54c14243353b43174c7417827210cbd3ef3c52"
+    },
+    "v2/AsyncUserInputQuestion.ts": {
+      "upstreamSha256": "5487c76860dfb8aca91c318c1b7da4381dbd10423a4bcec8e8345c21b746bf95",
+      "localSha256": "5487c76860dfb8aca91c318c1b7da4381dbd10423a4bcec8e8345c21b746bf95"
+    },
+    "v2/ByteRange.ts": {
+      "upstreamSha256": "dd61c4b71554053feaecec39f41015a5db3869b28b19b7c9a85ee73f3502a4e4",
+      "localSha256": "dd61c4b71554053feaecec39f41015a5db3869b28b19b7c9a85ee73f3502a4e4"
+    },
+    "v2/CodexErrorInfo.ts": {
+      "upstreamSha256": "dfbd23d5c20965172e3f9057c66e8631665cef7de80ddae1ded39d230ece441a",
+      "localSha256": "9b8a616db7c38c96bba5b3ee4717b91570d8159e3b38dbc3094f72803c143b19"
+    },
+    "v2/CollabAgentState.ts": {
+      "upstreamSha256": "ea8bb25942c0ac161368f5fabd1252e4a1dabb496819513333f339e6647f3bd4",
+      "localSha256": "e7eebb2f64af317a9b2ddab73ea848b69b88a79c82ec388b91230413a9865bed"
+    },
+    "v2/CollabAgentStatus.ts": {
+      "upstreamSha256": "0ec81079c0ca4737c448fc415250fc9c93d1385e7aafbc468226cf9ecabe8630",
+      "localSha256": "0ec81079c0ca4737c448fc415250fc9c93d1385e7aafbc468226cf9ecabe8630"
+    },
+    "v2/CollabAgentTool.ts": {
+      "upstreamSha256": "f862671cb8716d09835d7190cb9fabb4f0701ee3b3728503cd38773b0187978b",
+      "localSha256": "f862671cb8716d09835d7190cb9fabb4f0701ee3b3728503cd38773b0187978b"
+    },
+    "v2/CollabAgentToolCallStatus.ts": {
+      "upstreamSha256": "3909932a15d459bc5574f598d272f7b19556c930e4852a09f8b28098b38e7821",
+      "localSha256": "3909932a15d459bc5574f598d272f7b19556c930e4852a09f8b28098b38e7821"
+    },
+    "v2/CommandAction.ts": {
+      "upstreamSha256": "df8e6909e1e46e352ada64e766c3d6c93552199ce2448b35b83912efb2fe8917",
+      "localSha256": "4b6ba412a985207fb48ae4fcc79e79b374a4a2f0e80a3934e18b1516bafa604b"
+    },
+    "v2/CommandExecutionApprovalDecision.ts": {
+      "upstreamSha256": "9283d7206bc8df353c4fcc9a14682b5f69f7f288d666f975356762ed49d5bc6b",
+      "localSha256": "0542cc4381533875bb4428f5a96bdb566a44a28a75323d49d251a6a969a7de9d"
+    },
+    "v2/CommandExecutionApprovalKind.ts": {
+      "upstreamSha256": "16f398d31bf73bf7ca9e8694701fd9d2f5d745f6cde8032b81d4c1bfb43d12b6",
+      "localSha256": "16f398d31bf73bf7ca9e8694701fd9d2f5d745f6cde8032b81d4c1bfb43d12b6"
+    },
+    "v2/CommandExecutionOutputDeltaNotification.ts": {
+      "upstreamSha256": "20e015b65e534534a846bbe6ec74bdbfff7cde1401728d3f0f81127dd20a9f89",
+      "localSha256": "20e015b65e534534a846bbe6ec74bdbfff7cde1401728d3f0f81127dd20a9f89"
+    },
+    "v2/CommandExecutionRequestApprovalParams.ts": {
+      "upstreamSha256": "b3425c5bc97dd9a1d74d33ef1cb42d56049da7e4704435021d50fa4eb404abbe",
+      "localSha256": "399756eb5a266a8b32d26d3bd6bba5638ee0ba4c858b4a77c6b26378f35f5d9b"
+    },
+    "v2/CommandExecutionRequestApprovalResponse.ts": {
+      "upstreamSha256": "454ceee4decc66a9c070273d4344fa8a0187732cd884b8b60edda3a17766aa95",
+      "localSha256": "adeb00ed275078257b4a21798d0fb011319cc85fea26002b179f6f42207ab704"
+    },
+    "v2/CommandExecutionSource.ts": {
+      "upstreamSha256": "f915112d4ef81b80d65ab1c5c106fa7e46f24ee2d7969f752abda1c786e53327",
+      "localSha256": "f915112d4ef81b80d65ab1c5c106fa7e46f24ee2d7969f752abda1c786e53327"
+    },
+    "v2/CommandExecutionStatus.ts": {
+      "upstreamSha256": "8e0e8aa0a3f4caeaa32f2ac2aa62d2e9737004f5ab33f5f37e2dfe114d4e3301",
+      "localSha256": "8e0e8aa0a3f4caeaa32f2ac2aa62d2e9737004f5ab33f5f37e2dfe114d4e3301"
+    },
+    "v2/DynamicToolCallOutputContentItem.ts": {
+      "upstreamSha256": "9eebff80cb251a368d772ff75313de20d23dfef0ed6dc7f61630da9040b7e425",
+      "localSha256": "9eebff80cb251a368d772ff75313de20d23dfef0ed6dc7f61630da9040b7e425"
+    },
+    "v2/DynamicToolCallParams.ts": {
+      "upstreamSha256": "6524a162207514c3a50a1e65f9abed9c59d97f38fb9cf221f740340ef5c5051f",
+      "localSha256": "02c6a233480727d693d0d0250558dfe22b5e5efe6229508c75625feca41d493a"
+    },
+    "v2/DynamicToolCallResponse.ts": {
+      "upstreamSha256": "df53cf5e967d26aa59615db06f4179a7b2330f44df4298a8393eaf9f48f7e115",
+      "localSha256": "6eeccb1a70537c996a4a53349edff3cdb74b120678a7b339560c881dd20f19f8"
+    },
+    "v2/DynamicToolCallStatus.ts": {
+      "upstreamSha256": "b5502e1c25b51fdad7404eed25f9ab40d9eb9b130c61c4da2134cfbdc0c4c0f5",
+      "localSha256": "b5502e1c25b51fdad7404eed25f9ab40d9eb9b130c61c4da2134cfbdc0c4c0f5"
+    },
+    "v2/ErrorNotification.ts": {
+      "upstreamSha256": "f30701035a45042495c0cbf41d4002f9e1a2c2b8c41bd4762ed6588338c6d5e1",
+      "localSha256": "844a28005d7c06b56fd83cbe1202e8943426654b536040a62e9e22cfb03a5f5f"
+    },
+    "v2/ExecPolicyAmendment.ts": {
+      "upstreamSha256": "eae3c3f9c81a40ffffe5de29e274b322db8200591ba39306daa27794a2deffa0",
+      "localSha256": "eae3c3f9c81a40ffffe5de29e274b322db8200591ba39306daa27794a2deffa0"
+    },
+    "v2/FileChangeApprovalDecision.ts": {
+      "upstreamSha256": "8a5aa00ea5e9c7b0856da23daa6e799dc1c5f15d16553ce59390ec73b65c8430",
+      "localSha256": "8a5aa00ea5e9c7b0856da23daa6e799dc1c5f15d16553ce59390ec73b65c8430"
+    },
+    "v2/FileChangePatchUpdatedNotification.ts": {
+      "upstreamSha256": "c7a287dd5f82dbe8ae6018240d3b284999c5c9e578dc5c6d0772cf6e75103de1",
+      "localSha256": "e35e5bc0a0050762febfd6199f4b8d1d7fb991ab4591e118709b163189183f8a"
+    },
+    "v2/FileChangeRequestApprovalParams.ts": {
+      "upstreamSha256": "32ec2fef83e1e17db98ea0b9b86baaa5c8bf2e8979988f5ad8fef3a93ab15074",
+      "localSha256": "32ec2fef83e1e17db98ea0b9b86baaa5c8bf2e8979988f5ad8fef3a93ab15074"
+    },
+    "v2/FileChangeRequestApprovalResponse.ts": {
+      "upstreamSha256": "527a9af90f753e2b7f1852415523443fc9745376bb2c4b0b735f900c8da8fc71",
+      "localSha256": "c7c0a57e085077823b53a00c9a30ea1208f8cf565ab6a68e2f47760793c66ecb"
+    },
+    "v2/FileSystemAccessMode.ts": {
+      "upstreamSha256": "36689572cd7c9e23ec2fa01912b8ca2abd331608dfd89b691b87351b5e520389",
+      "localSha256": "36689572cd7c9e23ec2fa01912b8ca2abd331608dfd89b691b87351b5e520389"
+    },
+    "v2/FileSystemPath.ts": {
+      "upstreamSha256": "e0279cd26713e84898352d23f02798912ca2ff69c796f58ff9606a6cd5f4d45f",
+      "localSha256": "2af5d9c4b0de4ed7ffc3ca8bb22d418bccc68b46d4c7b1f87adec8eda6fef1e6"
+    },
+    "v2/FileSystemSandboxEntry.ts": {
+      "upstreamSha256": "f27cc590b6aa56f41c8c9168c6012c0e562e952bc2657421e9fa48c108084151",
+      "localSha256": "b1c4a6c6c3a588e14af48306c5e8678afd287cbff19647d5c3481d21a37e7f15"
+    },
+    "v2/FileSystemSpecialPath.ts": {
+      "upstreamSha256": "b38fce284661d5495836cf6c0833547912845146cb06de542041ec776a4d9bfd",
+      "localSha256": "a10a4420d463a7222b5670b22149626e38cb8d7e3235f6865517b0412a426da1"
+    },
+    "v2/FileUpdateChange.ts": {
+      "upstreamSha256": "71acccec19639609d9a2a7f42de4bc53e540692afcbd29de0735826541dbe5a0",
+      "localSha256": "44d26d479756b731f76537a7a291f99d9ceba59fae0916d86025990f22279a9d"
+    },
+    "v2/GitInfo.ts": {
+      "upstreamSha256": "ae05c1fdc69bba0d6aea22f2f7a8e2f7c5b494330d6827cfac9ec9a9cc290269",
+      "localSha256": "ae05c1fdc69bba0d6aea22f2f7a8e2f7c5b494330d6827cfac9ec9a9cc290269"
+    },
+    "v2/GrantedPermissionProfile.ts": {
+      "upstreamSha256": "8371f4208b11169274a7b46f2ecc464fc1ec7b153718a5420f64cbec262828cd",
+      "localSha256": "19191e0bc68a2a75fc8fe3a96fc292439a5e8fe920b23f43ea6c46dd44f1cc04"
+    },
+    "v2/HookPromptFragment.ts": {
+      "upstreamSha256": "391260c67d7fbd0aaf3f641c3764892f655871047085df45048057066db1d0ea",
+      "localSha256": "391260c67d7fbd0aaf3f641c3764892f655871047085df45048057066db1d0ea"
+    },
+    "v2/ItemCompletedNotification.ts": {
+      "upstreamSha256": "f995b1554728867f7464f6f26154e0a0a947f0e6b7b247bdcd24214484cfa836",
+      "localSha256": "f79cddf5fef00d9d7d40b0c86885f0f9a183cfcf2f5dcd0d9461c2b3a1978829"
+    },
+    "v2/ItemStartedNotification.ts": {
+      "upstreamSha256": "99f52740d4e34f5c2b9850953ef8b41aaf3283ff3a733021d04a2dcec3681cce",
+      "localSha256": "21e11ac674eaa9a0264a4b82f8d03d1622b9c71ba6b78e577c5afa143aa4a252"
+    },
+    "v2/McpToolCallAppContext.ts": {
+      "upstreamSha256": "5de0ef0ec8a5b74b51421f43012bb0a69dbaebbe7a5604c592336f94ad01c279",
+      "localSha256": "5de0ef0ec8a5b74b51421f43012bb0a69dbaebbe7a5604c592336f94ad01c279"
+    },
+    "v2/McpToolCallError.ts": {
+      "upstreamSha256": "639a626f2b8932812fd0c94c027b35aea0dd8fad18bcc720d690ef5f824d2c75",
+      "localSha256": "639a626f2b8932812fd0c94c027b35aea0dd8fad18bcc720d690ef5f824d2c75"
+    },
+    "v2/McpToolCallResult.ts": {
+      "upstreamSha256": "12c5eea02e7f24e3c64114837dc070186e6a807694034e746bac2f8d03d50fbd",
+      "localSha256": "763ac90c9aa5cb4fb0245b277bfa2fb8a0d168a05c8105381066dce08cc8dc14"
+    },
+    "v2/McpToolCallStatus.ts": {
+      "upstreamSha256": "cd64f4dbfbeccfd1c5a5c5982ccddd803b6ea1a909c8756e0b9274bbf34e515c",
+      "localSha256": "cd64f4dbfbeccfd1c5a5c5982ccddd803b6ea1a909c8756e0b9274bbf34e515c"
+    },
+    "v2/MemoryCitation.ts": {
+      "upstreamSha256": "1321da58b2371042e969191c90a7cb57d413c44908a82122184b787473860c75",
+      "localSha256": "5577ad2090862aa0ca047aa483f7e8545e316ac319725055b9d3f01b34892a45"
+    },
+    "v2/MemoryCitationEntry.ts": {
+      "upstreamSha256": "b0a7a2a637e64c04df5da35880065941f0a3d033ebb220d67b1766e72cb4b18c",
+      "localSha256": "b0a7a2a637e64c04df5da35880065941f0a3d033ebb220d67b1766e72cb4b18c"
+    },
+    "v2/MisalignmentErrorDetails.ts": {
+      "upstreamSha256": "355907f4fd3c628f14f6f8681839a6a4380a97c74de93ddff1111ade584fed4b",
+      "localSha256": "8f4827ad9912091231c0edace4d825ed89e22a1ac7124901fe5e1bb85f142b7c"
+    },
+    "v2/MisalignmentSteer.ts": {
+      "upstreamSha256": "4f3eb00040e49c4e7a38d6f6115c1c1d0c00e40dbb6a12430a1dd1dc7ea3bb22",
+      "localSha256": "4f3eb00040e49c4e7a38d6f6115c1c1d0c00e40dbb6a12430a1dd1dc7ea3bb22"
+    },
+    "v2/ModelReroutedNotification.ts": {
+      "upstreamSha256": "6beb04909e0acdbe0486fa58d8d823aa964f8e70dd9e2133dc4b43761e22edf6",
+      "localSha256": "ca9559ead3f072c493eaf3a722cd4a5487ec1de0d36a6d29b2830ac02e09d202"
+    },
+    "v2/ModelRerouteReason.ts": {
+      "upstreamSha256": "a7d637ad4aa97c1695dabbce11cb20d77cae71cae4598f350a27f9ad8c1534f9",
+      "localSha256": "a7d637ad4aa97c1695dabbce11cb20d77cae71cae4598f350a27f9ad8c1534f9"
+    },
+    "v2/NetworkAccess.ts": {
+      "upstreamSha256": "3622aa2cccf2a1835cd561d97187db75eba8cc379c03e56b5d1c91ab901da9dc",
+      "localSha256": "3622aa2cccf2a1835cd561d97187db75eba8cc379c03e56b5d1c91ab901da9dc"
+    },
+    "v2/NetworkApprovalContext.ts": {
+      "upstreamSha256": "f5fb2588e2a7caf33d4d25f8f98e03f6abd58e1cfc65d6ae6d918536d417c825",
+      "localSha256": "e23801c4971d9804b946800f916e7623bd07c4db84b685e50a25331c01717ce7"
+    },
+    "v2/NetworkApprovalProtocol.ts": {
+      "upstreamSha256": "50489d7ee01bb75b2ad453e2f976e8b92a3334a973637c0c36ccd1c547a0d894",
+      "localSha256": "50489d7ee01bb75b2ad453e2f976e8b92a3334a973637c0c36ccd1c547a0d894"
+    },
+    "v2/NetworkPolicyAmendment.ts": {
+      "upstreamSha256": "2219666281d984a6edf51fcdbd93df7b88e4c51f4fe8a306989e68f430ffb2fe",
+      "localSha256": "b9a041d58792738cf5862f41cffca8f6098a8adf8f1c4f8c0bc99883b5ec5685"
+    },
+    "v2/NetworkPolicyRuleAction.ts": {
+      "upstreamSha256": "8d6d5aa29ce47bdaec03eedc56543629344b9a424a293258116f44a212b507fc",
+      "localSha256": "8d6d5aa29ce47bdaec03eedc56543629344b9a424a293258116f44a212b507fc"
+    },
+    "v2/NonSteerableTurnKind.ts": {
+      "upstreamSha256": "94d47f993e7c00ca78c5c2b28d71fab767ce59ff8da60c4458bffff08755e863",
+      "localSha256": "94d47f993e7c00ca78c5c2b28d71fab767ce59ff8da60c4458bffff08755e863"
+    },
+    "v2/PatchApplyStatus.ts": {
+      "upstreamSha256": "b2a140e4b5f2de8f051bf5c52ce2cf975987180253b29287d64fd52715bca192",
+      "localSha256": "b2a140e4b5f2de8f051bf5c52ce2cf975987180253b29287d64fd52715bca192"
+    },
+    "v2/PatchChangeKind.ts": {
+      "upstreamSha256": "20e95907d698efbef2fa9d9ab00392b10caf127dfc5e0df1ba9878ad6f42531d",
+      "localSha256": "20e95907d698efbef2fa9d9ab00392b10caf127dfc5e0df1ba9878ad6f42531d"
+    },
+    "v2/PermissionGrantScope.ts": {
+      "upstreamSha256": "2ea29b4448c98516a2e1e4f5bbc22e95147ad46cbc0fd0c83377c2fa4db37f8d",
+      "localSha256": "2ea29b4448c98516a2e1e4f5bbc22e95147ad46cbc0fd0c83377c2fa4db37f8d"
+    },
+    "v2/PermissionsRequestApprovalParams.ts": {
+      "upstreamSha256": "fdc9d6b3b32b17bbddfc12f88270fa73cd239e5ef62262ae143d72a653a242d2",
+      "localSha256": "cbd7199b46bb3300e86c0d91b4727b82d0063413e35bd161bbda4539a6773793"
+    },
+    "v2/PermissionsRequestApprovalResponse.ts": {
+      "upstreamSha256": "60259c885b04fe35e3596d74921b3ca8c8cba3cb5bd582305b9d90e14fff9930",
+      "localSha256": "dd7fd422057a47c429eba34b945b02328dd73e9afb4bbecea9d19790f7397fbe"
+    },
+    "v2/ReasoningSummaryTextDeltaNotification.ts": {
+      "upstreamSha256": "46edaeb45c009106583d4793419b1a60b621cf93aecba734b7ef103178416261",
+      "localSha256": "46edaeb45c009106583d4793419b1a60b621cf93aecba734b7ef103178416261"
+    },
+    "v2/ReasoningTextDeltaNotification.ts": {
+      "upstreamSha256": "be86447b21cca238370ec3074d903dbedd6f28f298b482d2938e46f39fd1c2ae",
+      "localSha256": "be86447b21cca238370ec3074d903dbedd6f28f298b482d2938e46f39fd1c2ae"
+    },
+    "v2/RequestPermissionProfile.ts": {
+      "upstreamSha256": "b79d118592a8d3281f00e3defa0eb4abc96da4b42387d6c4ccf0d8a5be60926e",
+      "localSha256": "0d09972c6fa2636dd0d05f7b0b4ac34c728a24e0816943e3afeb0b9d99fed7c6"
+    },
+    "v2/SandboxMode.ts": {
+      "upstreamSha256": "8a59381e04efa84f9001e5c24444ee26fccf8f9e10bcfb02d2f6a24e85898843",
+      "localSha256": "8a59381e04efa84f9001e5c24444ee26fccf8f9e10bcfb02d2f6a24e85898843"
+    },
+    "v2/SandboxPolicy.ts": {
+      "upstreamSha256": "f5a4b24c0de4945e77c1573306ae4cb98a29103a6c64ee23264dc9d35a977e85",
+      "localSha256": "98a67b2337f9a579a352ba8e4ae65f3cb6cfe8fae0c4b7fc8bdfd1cb142c0616"
+    },
+    "v2/ServerRequestResolvedNotification.ts": {
+      "upstreamSha256": "e428ba289071d7b2e04cedc8b3cd7e6adbe57409dbbc333c38178b316f122ec5",
+      "localSha256": "94995f9d434f7f5076381546cd99b27fe89293f93fe6d46ba2212aef4889f4ea"
+    },
+    "v2/SessionSource.ts": {
+      "upstreamSha256": "9623b5e498a83918d84201cb227c420879ca1b645877f4570141e1cac2038f81",
+      "localSha256": "ff49430ecbf188b2874d124d51d87f7f6c2bdd38dec313cd4620b62dec122a26"
+    },
+    "v2/SubAgentActivityKind.ts": {
+      "upstreamSha256": "01aa0e764bdc6fa0e527d16626334ad790bc9b0766241d49af900e3fe681d883",
+      "localSha256": "01aa0e764bdc6fa0e527d16626334ad790bc9b0766241d49af900e3fe681d883"
+    },
+    "v2/TextElement.ts": {
+      "upstreamSha256": "a6f412c3f9875b39b021d6ad116ed9e887180f9d574720a76f031bfed66c5a93",
+      "localSha256": "22aaef8159d2f09af4d6dc54e58441999a5b3596c0916c698074242d24b12e6b"
+    },
+    "v2/Thread.ts": {
+      "upstreamSha256": "0c10a33684e76bbc65ad4fa283679b70fe20b356853e2fc3e893812698f58c2e",
+      "localSha256": "4976e745c3f5ca312d0da8384e1b412c1d1a689643d4d3ec7680cbd367b5e1e6"
+    },
+    "v2/ThreadActiveFlag.ts": {
+      "upstreamSha256": "0e17998362c085d594478d3fac2a330e89ab49669f8481e9f4791272932e3cfd",
+      "localSha256": "0e17998362c085d594478d3fac2a330e89ab49669f8481e9f4791272932e3cfd"
+    },
+    "v2/ThreadHistoryMode.ts": {
+      "upstreamSha256": "d04b0642316299374bf7075f68d1faee8f503bb568983075f955ce939a4b6add",
+      "localSha256": "d04b0642316299374bf7075f68d1faee8f503bb568983075f955ce939a4b6add"
+    },
+    "v2/ThreadItem.ts": {
+      "upstreamSha256": "ee25d621ee645f49a88e494effcdf625d88cc229edbb184827d8cf4c135ff6f4",
+      "localSha256": "96a702bdd1f86f6a9ad688ed3e6a68ba7050b72822400e4be3a63b101b4ce3c0"
+    },
+    "v2/ThreadReadParams.ts": {
+      "upstreamSha256": "c24743cb5655b4c71a853a2a290412d78e1a27e0278f2a0cde9bd9d9b78118a8",
+      "localSha256": "c24743cb5655b4c71a853a2a290412d78e1a27e0278f2a0cde9bd9d9b78118a8"
+    },
+    "v2/ThreadReadResponse.ts": {
+      "upstreamSha256": "09d84ab28738dd7f906f7adf4dc741e745d5ee826029653f4d7741c4953a7b42",
+      "localSha256": "28abb9f1643172f34156eca039862f485e2530dc2f879bccf80810372ee947c4"
+    },
+    "v2/ThreadResumeParams.ts": {
+      "upstreamSha256": "02f6d2d99d1cfb42ca2ef4647d731fee0b3801c25a61451b41f041b97adff649",
+      "localSha256": "d73e627967f07a3d417265d7466d446cbf90397ef5381391767e39c7838cdecd"
+    },
+    "v2/ThreadResumeResponse.ts": {
+      "upstreamSha256": "98bd0d6fe7bb5e6d95d223e9fecf1282dd1af3be821b201ce7db57fe74b0b3e7",
+      "localSha256": "3d15ebc6cac2b60cc040af548946768c11862c27c8952e0d5c6d4137f0d72073"
+    },
+    "v2/ThreadSection.ts": {
+      "upstreamSha256": "c4bea0195a8cfa657f585db2698f4684a2bd1231f68c53f88f6aea87669f8ee5",
+      "localSha256": "aac3ccfa2c5420d1b9f8a56d6008b23369ee5790d91bdfecff0c7d52d9bb7f3c"
+    },
+    "v2/ThreadSectionAppearance.ts": {
+      "upstreamSha256": "e56160b23e50b1019b41e8d69c55d7a910fecd9a41f60e4657e49ea06a557827",
+      "localSha256": "e56160b23e50b1019b41e8d69c55d7a910fecd9a41f60e4657e49ea06a557827"
+    },
+    "v2/ThreadSource.ts": {
+      "upstreamSha256": "d850342355769c7de914d16fb2e555056c30d46dd1a407ad1702b210244b58c4",
+      "localSha256": "d850342355769c7de914d16fb2e555056c30d46dd1a407ad1702b210244b58c4"
+    },
+    "v2/ThreadStartParams.ts": {
+      "upstreamSha256": "3a8e4943c6a9a86de42037096cedb86ac6abef491fb7ca424752663116c24fef",
+      "localSha256": "89857f5293273a6d6a87e6172eabcc97f8787b2866881870287a830349bafd38"
+    },
+    "v2/ThreadStartResponse.ts": {
+      "upstreamSha256": "efc3d5df82b8f6f7d320fc97e2c51e8f25dc38195ae49af55f37b2ead8a05464",
+      "localSha256": "f77bd16931684be8d59b0fc645752a91b8193f505b16da13add6870e3ecf9ca2"
+    },
+    "v2/ThreadStartSource.ts": {
+      "upstreamSha256": "7352677b98e02cd1bd82e764582a818f3f59574842444f13e61656261cfa2ea2",
+      "localSha256": "7352677b98e02cd1bd82e764582a818f3f59574842444f13e61656261cfa2ea2"
+    },
+    "v2/ThreadStatus.ts": {
+      "upstreamSha256": "374f9ea8a23a06808bda3435d0854aa92303547bc87a92046b6af22b6e962352",
+      "localSha256": "f47e1a803675acc8f52aa0cce5c3a461c4268f33367fedf1a5c04ac97b30dbd9"
+    },
+    "v2/ToolRequestUserInputAnswer.ts": {
+      "upstreamSha256": "271fbffc377b53570fae244df734bb666cb902bdff633bf27842a5bdd7e3d628",
+      "localSha256": "271fbffc377b53570fae244df734bb666cb902bdff633bf27842a5bdd7e3d628"
+    },
+    "v2/ToolRequestUserInputOption.ts": {
+      "upstreamSha256": "ec2f4b008b872a96c8460f4a830b8d0c20b60ef0421541970e3db62f329ef485",
+      "localSha256": "ec2f4b008b872a96c8460f4a830b8d0c20b60ef0421541970e3db62f329ef485"
+    },
+    "v2/ToolRequestUserInputParams.ts": {
+      "upstreamSha256": "0e3063b70a99b815e170b3c157416924315308a1c8af201dcc2f3fb459e4144a",
+      "localSha256": "7299b0a997e9b8cc2158b318c701dc2558deb63865ad28ff4f1ed375be8ea0dc"
+    },
+    "v2/ToolRequestUserInputQuestion.ts": {
+      "upstreamSha256": "d0eaa32baa3b41a8ee3a3b764e84ffd75f7474f385eebeb779fe61f18deb2b24",
+      "localSha256": "f38592527bbaf585343c051b392e9f43e0ca5dd89b4417efc0c1de36713bad1d"
+    },
+    "v2/ToolRequestUserInputResponse.ts": {
+      "upstreamSha256": "39e4959095a1b31de3f7bf28422a6536d51d651581ad1f50bc5e30c02140498b",
+      "localSha256": "aab0b68d428393835862f69c9bf06bac417a3cd68cffb413efcca0a838ece04b"
+    },
+    "v2/Turn.ts": {
+      "upstreamSha256": "5a0852e46a13446ccb3aa3f493c06a9151a43772d530521789ac741ed115da5f",
+      "localSha256": "acaea8712132b044c5c51dc67f779a3a3041ff0cd466b205cd672f97dfca7fe7"
+    },
+    "v2/TurnCompletedNotification.ts": {
+      "upstreamSha256": "1f56d73cb06876533fb224cd285634d3e090b21b647009be0e7c622937e40d3e",
+      "localSha256": "0c27d8d18c8030f413c2281e3c7f5625b6da5956333bbc2c8a397f2df9d30815"
+    },
+    "v2/TurnError.ts": {
+      "upstreamSha256": "8ffd5f469dc6c3074d983bcacc3b26fc1582e558d101b0f7d5ba3b57f720719e",
+      "localSha256": "0c285797a0fdb9b4533943aec30b39c2163206ea48b20d6994585eb4e606a4ce"
+    },
+    "v2/TurnInterruptParams.ts": {
+      "upstreamSha256": "643034c3d25c23c7700236d4d1ff16286565786d48148e85b0c4761fe46d3804",
+      "localSha256": "643034c3d25c23c7700236d4d1ff16286565786d48148e85b0c4761fe46d3804"
+    },
+    "v2/TurnInterruptResponse.ts": {
+      "upstreamSha256": "3994cb114b2c4a2e81ba3a349c3a7d1f13ce1b165776b2162b52c9a114c24bc4",
+      "localSha256": "3994cb114b2c4a2e81ba3a349c3a7d1f13ce1b165776b2162b52c9a114c24bc4"
+    },
+    "v2/TurnItemsView.ts": {
+      "upstreamSha256": "df5e5fd79e6c28ff89e5e201c761535d7988fbaa9caa5fc6bf71f655f353668c",
+      "localSha256": "df5e5fd79e6c28ff89e5e201c761535d7988fbaa9caa5fc6bf71f655f353668c"
+    },
+    "v2/TurnStartedNotification.ts": {
+      "upstreamSha256": "95135229129526d7d9e1db077962210ca5b564adc5fe414ff07e9a65ba43adcf",
+      "localSha256": "c832f6d3bca20c398de79d288ec65fa6c1987e950c52693b700c6b7242bf0850"
+    },
+    "v2/TurnStartParams.ts": {
+      "upstreamSha256": "049f50eff62666ed07e171d8d0a8ec08e745f697d71972a4a169e4fb7b3682d2",
+      "localSha256": "08f1324f94fc1700edf961f5753deb7332a421c6cecf6f1ac500b019ae493873"
+    },
+    "v2/TurnStartResponse.ts": {
+      "upstreamSha256": "974c520197188b7399836fda0ef1b11e43df618d25295463d2e229e1efa88ffd",
+      "localSha256": "b0dee9129d1d3e908d518e951ffb312b5fbfb8fe3d1eed2bcad349c777debd55"
+    },
+    "v2/TurnStatus.ts": {
+      "upstreamSha256": "c69049363f97e97844e9fc851f0cd4122da057ba1371de003a28c00ab7a6ef1a",
+      "localSha256": "c69049363f97e97844e9fc851f0cd4122da057ba1371de003a28c00ab7a6ef1a"
+    },
+    "v2/TurnToolOutput.ts": {
+      "upstreamSha256": "6cd2705dfb62b22df331f044ab73530cc37fe82c7c6f43ec5379208563b1343e",
+      "localSha256": "b16908b17ba6f7b38d15b912d50921d43938ac48d8657347b9e938441a4ef666"
+    },
+    "v2/UserInput.ts": {
+      "upstreamSha256": "20bb8914250b88e4831123fed101a7ea2336efab4c2b13fd6336651ff0c65808",
+      "localSha256": "eaaa351ea1c3bb9b34c7c830f41ee4af24f22fa09dfff45ce9c8edf10220212c"
+    },
+    "v2/WebSearchAction.ts": {
+      "upstreamSha256": "f1dc1197e35b48fd16134a80353ebb606256126a634b4580406a5bffed1b0395",
+      "localSha256": "f1dc1197e35b48fd16134a80353ebb606256126a634b4580406a5bffed1b0395"
+    },
+    "WebSearchItem.ts": {
+      "upstreamSha256": "a1b284386beaf4c0c3e96aaee8f6e8dede09212b4f41977baf8fbccc637bf236",
+      "localSha256": "2eb21c6c69865f9778c84a1db8c1d32f038a4ca99ee4218377cc9ffea868e101"
+    }
+  }
+}

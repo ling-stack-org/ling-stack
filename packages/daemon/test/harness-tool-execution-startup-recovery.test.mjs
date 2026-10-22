@@ -85,7 +85,7 @@ test("daemon startup settles the expired ToolExecution tail beyond 500 before re
   assert.ok(first.slice(0, 501).every(row => row.revision === 3 && row.failure_code === "tool.unknown_side_effect_outcome"));
   assert.deepEqual({ ...first[501] }, { id: "startup-tool-0501", state: "executing", revision: 2, failure_code: null });
   await daemon.stop();
-  f.createDaemon();
+  await f.createDaemon().start();
   assert.deepEqual(rows(), first, "a second real startup must not re-settle or replay the prior tool effects");
 });
 

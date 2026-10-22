@@ -24,6 +24,7 @@ import { createAiChannelReply } from "../channels/ai-replies.js";
 import { getChannelMessageView } from "../channels/conversation-item-messages.js";
 import { createDetachedRunExecutionSink, executeRunRequest } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
+import type { NativeRunDispatcher } from "../runs/native-run-dispatcher.js";
 import { startDetachedRunAndResolveReady } from "../runs/detached.js";
 import type { ProviderStartupRefreshService } from "../providers/startup-refresh.js";
 import { createAiTeammateDirectReply } from "../teammates/direct-replies.js";
@@ -49,6 +50,7 @@ export interface DefaultRemoteReplyDispatcherOptions {
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly startupState: StartupStateRegistry;
   readonly computerUsePreviews: ComputerUseProjectionRegistry;
+  readonly nativeRunDispatcher?: NativeRunDispatcher;
 }
 
 /**
@@ -110,6 +112,7 @@ export class DefaultRemoteReplyDispatcher implements RemoteReplyDispatcher {
           controlPlaneEvents: this.options.controlPlaneEvents,
           startupState: this.options.startupState,
           computerUsePreviews: this.options.computerUsePreviews,
+          nativeRunDispatcher: this.options.nativeRunDispatcher,
         },
       ),
       store: this.options.store,
@@ -163,6 +166,7 @@ export class DefaultRemoteReplyDispatcher implements RemoteReplyDispatcher {
         controlPlaneEvents: this.options.controlPlaneEvents,
         startupState: this.options.startupState,
         computerUsePreviews: this.options.computerUsePreviews,
+        nativeRunDispatcher: this.options.nativeRunDispatcher,
       },
     ));
     if (!runId) {
@@ -205,6 +209,7 @@ export class DefaultRemoteReplyDispatcher implements RemoteReplyDispatcher {
           controlPlaneEvents: this.options.controlPlaneEvents,
           startupState: this.options.startupState,
           computerUsePreviews: this.options.computerUsePreviews,
+          nativeRunDispatcher: this.options.nativeRunDispatcher,
         },
       ),
       store: this.options.store,
