@@ -21,8 +21,10 @@ Owner: Web AppShell, conversation surfaces, and approval presentation
 
 ## Slice 1: Sidebar Titles
 
-- Move status and row tools out of grid flow into a right overlay. Give the title the
-  full row width and detect overflow with `ResizeObserver`.
+- Move non-waiting status and row tools out of grid flow into a right overlay. Give
+  the title the full row width and detect overflow with `ResizeObserver`. A visible
+  waiting-for-approval text label occupies a dedicated column, leaving the remaining
+  width for the title so they do not overlap.
 - Apply right-edge fade only to overflowing labels. Hover/focus moves the title track to
   its measured end and leaves/blur resets it; reduced motion skips movement.
 - Extend the shared Sidebar tooltip with an optional rich, non-interactive preview made
