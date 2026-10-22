@@ -314,6 +314,39 @@ test("resume retains child Run and deadline, creates a monotonic Attempt, and ne
   assert.equal(f.store.getWorkUnitAttempt(previous.started.attempt.id).status, "cancelled");
 });
 
+// Regression: response-loss retries of an accepted resume are observations,
+// even after Store reconstruction and the original absolute deadline.
+test("accepted resume replays from its sealed control fact after Store reconstruction and deadline", async t => {
+  const f = await fixture(t, true), previous = await stopped(f);
+  const input = { reservationId: f.child.reservation.id, expectedStepRevision: previous.runtime.step.revision,
+    runtimeInstanceId: "runtime-2", parentFence: f.fence, callId: "resume-response-loss", now: clock(f) };
+  const claimed = f.lifecycle.resumeDelegatedChild(input);
+  const acceptedAt = clock(f);
+  const resumed = f.start(claimed, { observation: f.observe(claimed,
+    { observationId: "accepted-response-loss", observedAt: acceptedAt }), now: acceptedAt });
+  const attempts = f.store.listWorkUnitAttempts(resumed.workUnit.id).length;
+  const authorizations = f.authorizations();
+  const reopened = new SqliteDelegationLifecycleStore({ database: f.db }, f.ports);
+  assert.throws(() => reopened.resumeDelegatedChild({ ...input, expectedStepRevision: input.expectedStepRevision + 1 }),
+    { code: "delegation.idempotency_conflict" });
+  assert.throws(() => reopened.resumeDelegatedChild({ ...input,
+    parentFence: { ...input.parentFence, fencingToken: `${BigInt(input.parentFence.fencingToken) + 1n}` } }),
+  { code: "delegation.idempotency_conflict" });
+  const brokenLineage = new SqliteDelegationLifecycleStore({ database: f.db }, { ...f.ports,
+    getWorkUnitAttempt: id => {
+      const attempt = f.ports.getWorkUnitAttempt(id);
+      return attempt?.id === claimed.attempt.id ? { ...attempt, fencingToken: `${BigInt(attempt.fencingToken) + 1n}` } : attempt;
+    } });
+  assert.throws(() => brokenLineage.resumeDelegatedChild(input), { code: "delegation.idempotency_conflict" });
+  const replayed = reopened.resumeDelegatedChild({ ...input, runtimeInstanceId: "runtime-after-restart",
+    now: f.child.reservation.deadlineAt });
+  assert.equal(replayed.replayed, true);
+  assert.equal(replayed.attempt.id, claimed.attempt.id);
+  assert.equal(replayed.step.state, "running");
+  assert.equal(f.store.listWorkUnitAttempts(resumed.workUnit.id).length, attempts);
+  assert.equal(f.authorizations(), authorizations);
+});
+
 test("resume current revocation or expired deadline rolls back the new Attempt and step transition", async t => {
   for (const fault of ["revoked", "deadline"]) {
     const f = await fixture(t, true), previous = await stopped(f);
@@ -329,8 +362,8 @@ test("resume current revocation or expired deadline rolls back the new Attempt a
   }
 });
 
-async function terminal(f) {
-  const started = f.start(f.claim()), fence = toRuntimeAttemptFence(started.attempt);
+async function terminal(f, started = f.start(f.claim())) {
+  const fence = toRuntimeAttemptFence(started.attempt);
   await f.store.trackHostAttemptCompletion({ runId: started.run.id, ...fence }, Promise.resolve(), () => true);
   const now = clock(f);
   assert.equal(f.store.transitionRunStatus({ runId: started.run.id, expectedStatus: "running", event: "runner_succeeded", actor: "system",
@@ -342,6 +375,54 @@ async function terminal(f) {
     receipt: f.childReceipt({ kind: "verified_usage", childRunId: started.run.id, sourceFence: fence }), now });
   return { started, fence, now };
 }
+
+// Regression: a completed child and a later resume must not erase the durable
+// response of an older resume call or create another Attempt.
+test("terminal and successor attempts preserve old resume response-loss replay", async t => {
+  const terminalFixture = await fixture(t, true), previous = await stopped(terminalFixture);
+  const input = { reservationId: terminalFixture.child.reservation.id,
+    expectedStepRevision: previous.runtime.step.revision, runtimeInstanceId: "runtime-2",
+    parentFence: terminalFixture.fence, callId: "resume-terminal-response-loss", now: clock(terminalFixture) };
+  const claimed = terminalFixture.lifecycle.resumeDelegatedChild(input);
+  const terminalAcceptedAt = clock(terminalFixture);
+  const resumed = terminalFixture.start(claimed, {
+    observation: terminalFixture.observe(claimed,
+      { observationId: "accepted-terminal-response-loss", observedAt: terminalAcceptedAt }), now: terminalAcceptedAt });
+  const ended = await terminal(terminalFixture, resumed);
+  terminalFixture.lifecycle.commitDelegatedChildTerminal({ reservationId: terminalFixture.child.reservation.id,
+    sourceFence: ended.fence, now: ended.now });
+  const terminalAttempts = terminalFixture.store.listWorkUnitAttempts(resumed.workUnit.id).length;
+  const terminalReplay = terminalFixture.lifecycle.resumeDelegatedChild({ ...input, now: terminalFixture.child.reservation.deadlineAt });
+  assert.equal(terminalReplay.replayed, true);
+  assert.equal(terminalReplay.attempt.id, claimed.attempt.id);
+  assert.equal(terminalReplay.step.state, "succeeded");
+  assert.equal(terminalFixture.store.listWorkUnitAttempts(resumed.workUnit.id).length, terminalAttempts);
+
+  const successorFixture = await fixture(t, true), firstStopped = await stopped(successorFixture);
+  const firstInput = { reservationId: successorFixture.child.reservation.id,
+    expectedStepRevision: firstStopped.runtime.step.revision, runtimeInstanceId: "runtime-2",
+    parentFence: successorFixture.fence, callId: "resume-before-successor", now: clock(successorFixture) };
+  const firstClaim = successorFixture.lifecycle.resumeDelegatedChild(firstInput);
+  const successorAcceptedAt = clock(successorFixture);
+  const firstResume = successorFixture.start(firstClaim, {
+    observation: successorFixture.observe(firstClaim,
+      { observationId: "accepted-before-successor", observedAt: successorAcceptedAt }), now: successorAcceptedAt });
+  const firstFence = toRuntimeAttemptFence(firstResume.attempt);
+  await successorFixture.store.trackHostAttemptCompletion({ runId: firstResume.run.id, ...firstFence }, Promise.resolve(), () => true);
+  successorFixture.lifecycle.requestDelegatedChildInterrupt({ reservationId: successorFixture.child.reservation.id,
+    parentFence: successorFixture.fence, callId: "interrupt-before-successor", now: clock(successorFixture) });
+  const interrupted = successorFixture.lifecycle.commitDelegatedChildInterrupted({ reservationId: successorFixture.child.reservation.id,
+    sourceFence: firstFence, now: clock(successorFixture) });
+  successorFixture.lifecycle.resumeDelegatedChild({ reservationId: successorFixture.child.reservation.id,
+    expectedStepRevision: interrupted.step.revision, runtimeInstanceId: "runtime-3", parentFence: successorFixture.fence,
+    callId: "resume-successor", now: clock(successorFixture) });
+  const successorAttempts = successorFixture.store.listWorkUnitAttempts(firstResume.workUnit.id).length;
+  const oldReplay = successorFixture.lifecycle.resumeDelegatedChild(firstInput);
+  assert.equal(oldReplay.replayed, true);
+  assert.equal(oldReplay.attempt.id, firstClaim.attempt.id);
+  assert.equal(oldReplay.step.state, "resuming");
+  assert.equal(successorFixture.store.listWorkUnitAttempts(firstResume.workUnit.id).length, successorAttempts);
+});
 
 test("a terminal delegated Host source projects runId away before the strict stopped-handoff check", async t => {
   const f = await fixture(t, true), started = f.start(f.claim());
