@@ -53,6 +53,7 @@ export class DaemonRunnerRecoveryCoordinator {
   private readonly dispatches = new WeakMap<RunStore, Set<string>>();
   private readonly discoverySweeps = new WeakMap<RunStore, StoreDiscoverySweeps>();
   private readonly scansInProgress = new WeakSet<RunStore>();
+  private readonly inFlight = new Set<Promise<unknown>>();
   private started = false;
   private shuttingDown = false;
   private scanTimer?: ReturnType<typeof setInterval>;
@@ -93,6 +94,11 @@ export class DaemonRunnerRecoveryCoordinator {
     this.started = false;
     if (this.scanTimer) clearInterval(this.scanTimer);
     this.scanTimer = undefined;
+  }
+
+  /** Admission closes synchronously; actual recovery callbacks retain Store ownership until settled. */
+  async waitForIdle(): Promise<void> {
+    while (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight]);
   }
 
   recoverStore(store: RunStore): DaemonRunnerRecoveryResult {
@@ -153,9 +159,7 @@ export class DaemonRunnerRecoveryCoordinator {
           preparedExecution: scheduled.execution,
         });
         dispatched += 1;
-        void completion.catch(() => undefined).finally(() => {
-          dispatches.delete(scheduled.run.id);
-        });
+        this.trackDispatch(completion, () => dispatches.delete(scheduled.run.id));
       } catch {
         dispatches.delete(scheduled.run.id);
         skipped += 1;
@@ -186,9 +190,7 @@ export class DaemonRunnerRecoveryCoordinator {
             idempotencyDiscriminator: "runtime-startup",
           });
           dispatched += 1;
-          void completion.catch(() => undefined).finally(() => {
-            dispatches.delete(run.id);
-          });
+          this.trackDispatch(completion, () => dispatches.delete(run.id));
         } catch {
           dispatches.delete(run.id);
           skipped += 1;
@@ -200,6 +202,14 @@ export class DaemonRunnerRecoveryCoordinator {
 
   private isShuttingDown(): boolean {
     return this.shuttingDown || this.options.activeRuns.isShuttingDown();
+  }
+
+  private trackDispatch(completion: Promise<unknown>, cleanup: () => void): void {
+    const owned = completion.then(() => undefined, () => undefined).finally(() => {
+      cleanup();
+      this.inFlight.delete(owned);
+    });
+    this.inFlight.add(owned);
   }
 
   private discoverySweepsFor(store: RunStore): StoreDiscoverySweeps {

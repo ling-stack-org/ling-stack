@@ -66,6 +66,7 @@ export interface RunRequest extends Omit<
   | "onToolBefore"
   | "onEvent"
   | "provider"
+  | "providerBudget"
   | "tools"
   | "mcpTools"
   | "onMcpToolCall"

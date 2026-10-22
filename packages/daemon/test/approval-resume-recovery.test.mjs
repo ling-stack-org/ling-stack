@@ -1307,7 +1307,8 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     ...(taskChannel ? { channelId: taskChannel.id } : {}),
   };
   const threadRequest = { cwd, task: taskSnapshot, ...(sdkOptions.reviewLineage ? { teammateId: "ling_agent" } : {}),
-    ...(workflowStart ? { workflowStepId: workflowStart.step.id, teammateId: "ling_agent" } : {}) };
+    ...(workflowStart ? { workflowStepId: workflowStart.step.id, workflowStartOwner: workflowStart.owner,
+      teammateId: "ling_agent" } : {}) };
   const thread = harness && (sdkOptions.realSdk || sdkOptions.reviewLineage) ? ensureLingThreadForRun(store, threadRequest, now) : harness ? store.createLingThread({
     kind: "conversation",
     teammateId: "ling_agent",

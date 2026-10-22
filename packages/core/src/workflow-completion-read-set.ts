@@ -7,6 +7,7 @@ import {
 import type { ApprovalRequest } from "./approval-types.js";
 import type { RunArtifact, RunSession, RunStore } from "./run-types.js";
 import type { ChannelWorkflow, ChannelWorkflowStep } from "./workspace-types.js";
+import type { DelegationCompletionEvidenceV1 } from "./delegation-completion-evidence.js";
 
 export interface WorkflowCompletionDerivedEvidenceV1 {
   readonly executionActionProjectionFingerprint: string;
@@ -21,6 +22,7 @@ export interface WorkflowCompletionExpectedReadSetV1 {
   readonly runs: readonly WorkflowCompletionRunReadV1[];
   readonly approvals: readonly WorkflowCompletionApprovalReadV1[];
   readonly artifacts: readonly WorkflowCompletionArtifactReadV1[];
+  readonly delegations: DelegationCompletionEvidenceV1;
   readonly canonicalFingerprint: string;
   readonly derivedEvidence: WorkflowCompletionDerivedEvidenceV1;
 }
@@ -42,6 +44,7 @@ export function workflowCompletionGateBasisFingerprintV1(input: {
   readonly graphFingerprint: string;
   readonly participantResults: readonly WorkflowParticipantCompletionResultV1[];
   readonly steps: readonly ChannelWorkflowStep[];
+  readonly delegationCompletionFingerprint?: string;
 }): string {
   return workflowCompletionBasisFingerprintV1({
     workflowId: input.workflowId,
@@ -49,6 +52,7 @@ export function workflowCompletionGateBasisFingerprintV1(input: {
     manifestFingerprint: input.manifestFingerprint,
     graphFingerprint: input.graphFingerprint,
     participantResults: input.participantResults,
+    ...(input.delegationCompletionFingerprint ? { delegationCompletionFingerprint: input.delegationCompletionFingerprint } : {}),
     steps: [...input.steps].sort((left, right) => left.id.localeCompare(right.id)).map((step) => ({
       id: step.id,
       status: step.status,
@@ -117,6 +121,7 @@ type WorkflowCompletionReadStore = Pick<RunStore,
   | "listApprovalRequests"
   | "getArtifact"
   | "listArtifacts"
+  | "getDelegationCompletionEvidence"
 >;
 
 export function buildWorkflowCompletionExpectedReadSet(input: {
@@ -145,6 +150,7 @@ export function buildWorkflowCompletionExpectedReadSet(input: {
     runs,
     approvals,
     artifacts,
+    delegations: input.store.getDelegationCompletionEvidence({ rootRunIds: runIds }),
   };
   return {
     ...canonical,
@@ -154,6 +160,11 @@ export function buildWorkflowCompletionExpectedReadSet(input: {
       referencedActionIds: uniqueSorted(input.derivedEvidence.referencedActionIds),
     },
   };
+}
+
+/** Preserve the established static basis when there is no dynamic subtree. */
+export function workflowDelegationCompletionFingerprintV1(evidence: DelegationCompletionEvidenceV1): string | undefined {
+  return evidence.steps.length || evidence.issues.length ? evidence.fingerprint : undefined;
 }
 
 export function workflowCompletionReadSetFingerprintV1(value: unknown): string {

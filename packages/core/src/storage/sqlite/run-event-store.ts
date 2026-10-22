@@ -118,7 +118,7 @@ export class SqliteRunEventStore {
   private append<K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K], admission: EventAdmission,
     now?: string)
     : Extract<RunEventEnvelope, { readonly type: K }> {
-    if (type === "host_command_prepared" || type === "host_command_settled") {
+    if (type === "host_command_prepared" || type === "host_command_settled" || type === "delegation_instruction_checkpointed") {
       throw Object.assign(new Error("Command journal requires its dedicated Host API."), { code: "host_command_event_reserved" });
     }
     const run = this.ports.getRun(runId);

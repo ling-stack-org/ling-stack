@@ -37,3 +37,6 @@ export {
 export { createRunEvaluationQaOwnedModelBatch, runEvaluationQaOwnedModelBatchFacts,
   createRunEvaluationQaProviderCurrentness } from "./evaluations/qa-model-owned-batch.js";
 export type { RunEvaluationQaOwnedModelBatch } from "./evaluations/qa-model-owned-batch.js";
+export { createRunEvaluationQaPilotReview, runEvaluationQaModelPilot } from "./evaluations/qa-model-pilot-runner.js";
+export type { RunEvaluationQaPilotCase, RunEvaluationQaPilotExecution, RunEvaluationQaPilotOptions,
+  RunEvaluationQaPilotResult, RunEvaluationQaPilotReviewV1 } from "./evaluations/qa-model-pilot-runner.js";

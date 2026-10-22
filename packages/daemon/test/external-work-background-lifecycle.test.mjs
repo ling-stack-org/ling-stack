@@ -212,6 +212,37 @@ test("A16 stop and stopAll preserve the first stoppedAt across controlled clock 
   assert.equal(fixture.transport.calls.length, 0);
 });
 
+test("T13B permanent admission close rejects starts while an admitted timer poll actually drains", { timeout: 15_000 }, async t => {
+  const fixture = await createFixture(t);
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.parse("2026-10-19T02:00:00.000Z") });
+  const gate = fixture.transport.holdNext("poll");
+  const started = await fixture.track(fixture.scheduler.start(fixture.cwd, { ...fixture.input, runImmediately: false }));
+  t.mock.timers.tick(60_000);
+  await waitFor(gate.entered, "the real timer poll must be admitted before shutdown");
+
+  fixture.scheduler.stopAdmission();
+  const stopped = entryById(fixture, started.scheduler.id);
+  assert.equal(stopped.status, "stopped");
+  await assert.rejects(fixture.scheduler.start(fixture.cwd, fixture.input), /external_work_scheduler_shutdown/);
+  // Even an invalid workspace must be rejected before touching a new Store.
+  await assert.rejects(fixture.scheduler.start(join(fixture.cwd, "never-opened"), fixture.input), /external_work_scheduler_shutdown/);
+  let idle = false;
+  const draining = fixture.scheduler.waitForIdle().then(() => { idle = true; });
+  await nextTurn();
+  assert.equal(idle, false, "closing timers is not evidence that an in-flight poll has settled");
+
+  gate.release();
+  await draining;
+  assert.equal(entryById(fixture, started.scheduler.id).tickCount, 1);
+  assert.equal(entryById(fixture, started.scheduler.id).stoppedAt, stopped.stoppedAt);
+  assert.equal(entryById(fixture, started.scheduler.id).nextPollAt, undefined);
+  fixture.scheduler.stopAll();
+  await assert.rejects(fixture.scheduler.start(fixture.cwd, fixture.input), /external_work_scheduler_shutdown/);
+  t.mock.timers.tick(180_000);
+  await nextTurn();
+  assert.equal(fixture.transport.calls.length, 1, "shutdown must neither start a successor nor rearm the old poll");
+});
+
 for (const stopping of ["stop", "stopAll"]) {
   for (const outcome of ["success", "error"]) {
     test(`A16 timer-admitted ${outcome} cannot rearm after ${stopping}`, { timeout: 15_000 }, async t => {

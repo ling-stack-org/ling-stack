@@ -14,6 +14,11 @@ export interface PiProviderBoundaryInventory {
   readonly settledBuiltinReads: readonly PiCompletedBuiltinRead[];
 }
 
+export interface PiCompletedTool {
+  readonly toolCallId: string;
+  readonly toolName: string;
+}
+
 const observations = new WeakMap<PiToolBoundaryObservation, { ended: boolean; entered: boolean; ids: Set<string>;
   names: Map<string, string>; reads: Map<string, PiCompletedBuiltinRead>; invalid: boolean;
   pending: Set<string>; completed: Set<string>; providerBoundary: boolean }>();
@@ -80,6 +85,21 @@ export function readPiCompletedToolCalls(receipt: PiToolBoundaryObservation | un
   if (!receipt || receipt.runId !== runId || receipt.attemptId !== attemptId) return undefined;
   const state = observations.get(receipt);
   return state?.ended && !state.invalid ? Object.freeze([...state.ids]) : undefined;
+}
+
+/** Closed original SDK tool inventory, including the exact registered name. */
+export function readPiCompletedTools(receipt: PiToolBoundaryObservation | undefined,
+  runId: string, attemptId: string): readonly PiCompletedTool[] | undefined {
+  if (!receipt || receipt.runId !== runId || receipt.attemptId !== attemptId) return undefined;
+  const state = observations.get(receipt);
+  if (!state?.ended || state.invalid || state.ids.size !== state.completed.size) return undefined;
+  const result: PiCompletedTool[] = [];
+  for (const toolCallId of state.ids) {
+    const toolName = state.names.get(toolCallId);
+    if (!toolName) return undefined;
+    result.push(Object.freeze({ toolCallId, toolName }));
+  }
+  return Object.freeze(result);
 }
 
 export function isPiToolFreeCompletion(receipt: PiToolBoundaryObservation | undefined,

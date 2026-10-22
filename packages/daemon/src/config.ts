@@ -1,5 +1,7 @@
 import { resolve as resolvePath } from "node:path";
-import type { LingSandboxPolicyProfileId } from "@ling-stack/core";
+import { delegationBudget, resolveDelegationPriceForBudget,
+  type LingSandboxPolicyProfileId, type DelegationTokenPriceSnapshot } from "@ling-stack/core";
+import type { DelegationBudgetV1 } from "@ling-stack/contracts";
 import type { RestrictedCommandRuntimeConfig } from "./runtime/sandbox/restricted-command-runtime.js";
 
 export interface DaemonConfig {
@@ -28,6 +30,12 @@ export interface HarnessFeatureConfig {
   readonly delegations?: {
     readonly mode?: "off" | "shadow" | "enforce";
     readonly maxDepth?: number;
+    /** Explicit Host-selected accepted workflows. Model request metadata cannot opt in. */
+    readonly selectedWorkflowIds?: readonly string[];
+    /** Trusted Host startup configuration; never read from a Goal or model request. */
+    readonly rootBudget?: DelegationBudgetV1;
+    readonly currency?: string;
+    readonly prices?: readonly DelegationTokenPriceSnapshot[];
   };
 }
 
@@ -190,6 +198,10 @@ export interface ResolvedDaemonConfig {
     readonly delegations: {
       readonly mode: "off" | "shadow" | "enforce";
       readonly maxDepth: number;
+      readonly selectedWorkflowIds: readonly string[];
+      readonly rootBudget?: DelegationBudgetV1;
+      readonly currency?: string;
+      readonly prices?: readonly DelegationTokenPriceSnapshot[];
     };
   };
 }
@@ -275,13 +287,49 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
       },
       delegations: {
         mode: resolveHarnessMode(config.harness?.delegations?.mode, process.env.LING_STACK_HARNESS_DELEGATIONS_MODE),
+        selectedWorkflowIds: captureDelegationWorkflowIds(config.harness?.delegations?.selectedWorkflowIds),
         maxDepth: resolveHarnessDelegationMaxDepth(
           config.harness?.delegations?.maxDepth,
           process.env.LING_STACK_HARNESS_DELEGATION_MAX_DEPTH,
         ),
+        ...captureDelegationBudgetConfiguration(config.harness?.delegations),
       },
     },
   };
+}
+
+function captureDelegationWorkflowIds(input: readonly string[] | undefined): readonly string[] {
+  if (input === undefined) return Object.freeze([]);
+  if (!Array.isArray(input) || input.length > 100 || input.some(id => typeof id !== "string" ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,255}$/.test(id)) || new Set(input).size !== input.length) {
+    throw new Error("delegation.workflow_selection_invalid");
+  }
+  return Object.freeze([...input]);
+}
+
+/** Capture startup values by value. An absent price is not a guessed free rate. */
+function captureDelegationBudgetConfiguration(input: HarnessFeatureConfig["delegations"]): {
+  readonly rootBudget?: DelegationBudgetV1;
+  readonly currency?: string;
+  readonly prices?: readonly DelegationTokenPriceSnapshot[];
+} {
+  const rootBudget = input?.rootBudget === undefined ? undefined : delegationBudget(input.rootBudget);
+  const currency = input?.currency;
+  if (currency !== undefined && (typeof currency !== "string" || !/^[A-Z]{3}$/u.test(currency))) {
+    throw new Error("delegation.invalid_currency");
+  }
+  const source = input?.prices;
+  if (source !== undefined && (!Array.isArray(source) || source.length > 1000)) throw new Error("delegation.price_registry_invalid");
+  const seen = new Set<string>();
+  const prices = source?.map(entry => {
+    const price = resolveDelegationPriceForBudget({ currency: entry.currency, scope: entry.scope, price: entry })!;
+    const key = JSON.stringify([price.currency, price.scope]);
+    if (seen.has(key)) throw new Error("delegation.price_registry_scope_duplicate");
+    seen.add(key);
+    return price;
+  });
+  return Object.freeze({ ...(rootBudget ? { rootBudget } : {}), ...(currency ? { currency } : {}),
+    ...(prices ? { prices: Object.freeze(prices) } : {}) });
 }
 
 function resolveHarnessMode(

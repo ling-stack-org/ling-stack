@@ -12,6 +12,10 @@ import { isOwnedOfficeLocalNativeRuntime, captureOriginalOfficeDirectoryRuntimeC
   assertOriginalOfficeDirectoryRuntimeLeaseReleasedV2,
   type OfficeLocalNativeTypedScope } from "./office-local-native-runtime.js";
 import type { HostOfficeLocalDirectoryCloseClaimV2, HostOfficeLocalDirectoryCommittedPairV2 } from "@ling-stack/core";
+import type { SecretResolver } from "@ling-stack/core";
+import type { RunnerRegistry } from "../../runtime/runners.js";
+import { createOriginalDelegationStoreComposition, type OriginalDelegationLifecycle } from "../harness/delegations/store-composition.js";
+import { createDelegatedRunDispatchAuthority } from "../harness/delegations/delegated-run-dispatch.js";
 
 interface CompositionStore {
   readonly supervisor: RuntimeSupervisor;
@@ -30,13 +34,22 @@ function requireOriginal(value: unknown): asserts value {
 }
 
 /** Trusted startup factory. It constructs the exact Store; no caller factory/endpoint/reader retrofit. */
-export function createOriginalOfficeDirectoryStoreFactory(supervisor: RuntimeSupervisor): RunStoreFactory {
+export function createOriginalOfficeDirectoryStoreFactory(supervisor: RuntimeSupervisor,
+  delegationDependencies?: { readonly runnerRegistry: RunnerRegistry; readonly secretResolver: SecretResolver;
+    readonly onDelegationStore?: (store: RunStore, lifecycle: OriginalDelegationLifecycle) => void }): RunStoreFactory {
   requireOriginal(isOriginalRuntimeSupervisorOfficeRoot(supervisor));
   return (cwd: string): RunStore => {
     requireOriginal(isOriginalRuntimeSupervisorOfficeRoot(supervisor));
     const { reader, setup } = createOriginalOfficeHostBridgeForComposition();
-    const store = new SqliteRunStore({ cwd, paths: resolveStoragePaths(cwd).workspace, originalOfficeHostBridge: reader });
+    const delegation = supervisor.getHarnessFeatures().delegations.mode === "off" ? undefined
+      : delegationDependencies ? createOriginalDelegationStoreComposition({ supervisor,
+        runnerRegistry: delegationDependencies.runnerRegistry, secretResolver: delegationDependencies.secretResolver,
+        delegatedDispatchAuthority: createDelegatedRunDispatchAuthority() }) : undefined;
+    if (supervisor.getHarnessFeatures().delegations.mode !== "off" && !delegation) throw new Error("delegation.host_composition_unavailable");
+    const store = new SqliteRunStore({ cwd, paths: resolveStoragePaths(cwd).workspace, originalOfficeHostBridge: reader,
+      ...(delegation ? { delegationHostBinding: delegation.binding } : {}) });
     try {
+      delegation?.bindExactStore(store);
       const originalCustody = (custodyRef: object): Custody => {
         const original = custodies.get(custodyRef);
         requireOriginal(original && original.store === store && original.runtime.store === store
@@ -58,6 +71,7 @@ export function createOriginalOfficeDirectoryStoreFactory(supervisor: RuntimeSup
       sealOriginalOfficeHostBridgeForComposition(setup, store, endpoint);
       retainOriginalRuntimeSupervisorOfficeStoreBridge(supervisor, store, setup);
       stores.set(store, Object.freeze({ supervisor, setup }));
+      if (delegation) delegationDependencies?.onDelegationStore?.(store, delegation.lifecycle);
       return store;
     } catch (error) {
       try { store.close(); }

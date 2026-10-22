@@ -171,6 +171,12 @@ async function executeNativeRunRequest(
   let workflowStartOwner: WorkflowStepStartOwnerV1 | undefined;
 
   try {
+    const delegationFeatures = dependencies.runtimeSupervisor.getHarnessFeatures().delegations;
+    if (delegationFeatures.mode !== "off" && (delegationFeatures.rootBudget?.tokenBudget !== undefined
+      || delegationFeatures.rootBudget?.costBudgetMicros !== undefined)) {
+      throw new HttpError(409, "delegation.native_budget_gate_unavailable",
+        "Native execution has no verified per-invocation delegation budget gate. Select Pi or remove the token/cost cap.");
+    }
     store = dependencies.storeRegistry.getStore(workspaceCwd);
     const duplicate = findExistingIdempotentRunRequest(store, runRequest);
     if (duplicate?.linkedRunId) throw new DuplicateRunRequestError(duplicate.linkedRunId);

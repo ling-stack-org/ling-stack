@@ -10,6 +10,7 @@ import { createPiPreparedInputReceiver } from "./prepared-input-receiver.js";
 import { fetchProvider } from "./provider-http.js";
 import { createPiSessionStopper, createPiTaskBoundary } from "./task-boundary.js";
 import { assertUserInputExecutionHandler } from "./extensions/user-input.js";
+import { assertDelegationExecutionHandler } from "./extensions/delegation.js";
 import { PiRunnerYielded } from "./task-yield.js";
 import { createPiToolBoundaryObservation } from "./tool-boundary-observation.js";
 import { DEFAULT_TOOLS } from "./constants.js";
@@ -40,6 +41,7 @@ export class PiRunnerAdapter {
   /** Resolves only on completion; required input rejects with PiRunnerYielded after SDK idle. */
   async runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult> {
     assertUserInputExecutionHandler(options);
+    assertDelegationExecutionHandler(options);
     if (options.ordinaryProgressRecovery !== undefined) {
       if (options.compactionRecovery || options.approvedToolContinuation) {
         throw new Error("Pi ordinary progress recovery cannot be combined with compaction or approved tool continuation");

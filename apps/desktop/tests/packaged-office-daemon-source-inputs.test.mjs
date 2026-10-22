@@ -186,6 +186,11 @@ test("Office fixed review closure explicitly pins required-question and approval
   }
 });
 
+test("Office review closure pins the Broker command result trust boundary", () => {
+  assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(
+    "packages/daemon/src/features/harness/tool-execution/broker-command-result.ts"), true);
+});
+
 test("Office fixed fresh daemon must not consume a stale compiled bridge with unchanged reviewed TS (real esbuild, synthetic native only)", {
   skip: process.platform !== "darwin" || process.arch !== "arm64",
 }, async t => {

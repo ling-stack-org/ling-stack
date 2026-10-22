@@ -26,6 +26,7 @@ import { runSessionSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import type { RuntimeAttemptFenceV1 } from "../../runtime-supervisor-types.js";
 import { isCurrentRunExecutionOwner, runExecutionOwnerParameters, runExecutionOwnerSql } from "./run-execution-admission.js";
+import { assertDelegationCompletionSatisfied } from "../../delegation-completion-barrier.js";
 
 export interface SqliteRunSessionStorePorts {
   readonly insertLingTurnRun: (turnId: string, runId: string, role: LingTurnRunRole, createdAt: string) => LingTurnRun;
@@ -43,6 +44,7 @@ export interface SqliteRunSessionStorePorts {
   readonly recordRunSelection: (run: RunSession) => void;
   /** Reject new/promoted execution while an explicit workspace restore owns the fence. */
   readonly assertWorkspaceSnapshotFence?: (cwd: string) => void;
+  readonly getDelegationCompletionEvidence: RunStore["getDelegationCompletionEvidence"];
 }
 
 export class SqliteRunSessionStore {
@@ -264,7 +266,10 @@ export class SqliteRunSessionStore {
   }
 
   markRunSucceeded(runId: string, endedAt: string, summaryPath?: string): void {
-    this.updateRunStatus(runId, "succeeded", undefined, endedAt, null, summaryPath, endedAt);
+    this.withCompletionTransaction(() => {
+      if (this.getRun(runId)) this.assertDescendantsComplete(runId);
+      this.updateRunStatus(runId, "succeeded", undefined, endedAt, null, summaryPath, endedAt);
+    });
   }
 
   markRunFailed(runId: string, endedAt: string, errorMessage: string, summaryPath?: string): void {
@@ -284,6 +289,13 @@ export class SqliteRunSessionStore {
   }
 
   private transition(input: Parameters<RunStore["transitionRunStatus"]>[0], admission:
+    { readonly kind: "host" } | { readonly kind: "execution"; readonly sourceFence: RuntimeAttemptFenceV1 }): TransitionResult<RunStatus> {
+    return input.event === "runner_succeeded"
+      ? this.withCompletionTransaction(() => this.transitionWithinTransaction(input, admission))
+      : this.transitionWithinTransaction(input, admission);
+  }
+
+  private transitionWithinTransaction(input: Parameters<RunStore["transitionRunStatus"]>[0], admission:
     { readonly kind: "host" } | { readonly kind: "execution"; readonly sourceFence: RuntimeAttemptFenceV1 }): TransitionResult<RunStatus> {
     const run = this.getRun(input.runId);
     if (!run) {
@@ -312,6 +324,7 @@ export class SqliteRunSessionStore {
     if (!result.ok) {
       return result;
     }
+    if (result.to === "succeeded") this.assertDescendantsComplete(run.id);
     if (["queued", "running", "waiting_for_approval"].includes(result.to)) {
       this.ports.assertWorkspaceSnapshotFence?.(run.cwd);
     }
@@ -360,6 +373,25 @@ export class SqliteRunSessionStore {
     this.ports.reconcileLingTurnStatusForRun(input.runId, input.now);
     this.ports.rebuildLingThreadMetadata(run.threadId, input.now);
     return result;
+  }
+
+  private assertDescendantsComplete(runId: string): void {
+    assertDelegationCompletionSatisfied(this.ports.getDelegationCompletionEvidence({ rootRunIds: [runId] }));
+  }
+
+  /** Joins approval/lifecycle transactions without committing the caller's writes. */
+  private withCompletionTransaction<T>(write: () => T): T {
+    const db = this.context.database;
+    db.exec("SAVEPOINT run_success_delegation_barrier");
+    try {
+      const result = write();
+      db.exec("RELEASE run_success_delegation_barrier");
+      return result;
+    } catch (error) {
+      db.exec("ROLLBACK TO run_success_delegation_barrier");
+      db.exec("RELEASE run_success_delegation_barrier");
+      throw error;
+    }
   }
 
   private updateRunStatus(

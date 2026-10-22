@@ -155,9 +155,40 @@ function schema(database) {
   return database.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all();
 }
 
+const harnessReliabilityOverlay = new Set([
+  "harness_projection_checkpoints", "harness_projection_rows", "harness_artifact_retention",
+  "harness_artifact_pins", "harness_artifact_pin_events", "harness_artifact_gc_receipts",
+  "idx_harness_retention_due",
+]);
+function isHarnessReliabilityOverlay(row) {
+  return harnessReliabilityOverlay.has(row.name)
+    || harnessReliabilityOverlay.has(row.tbl_name)
+    || ["trg_harness_epoch_", "trg_harness_projection_integrity_", "trg_harness_gc_receipts_",
+      "trg_harness_pin_events_", "trg_harness_pruned_artifact_"].some(prefix => row.name.startsWith(prefix));
+}
+
 /** Only removes the row-free overlay in this test's temporary full-schema database. */
 function removeDelegationOverlay(database) {
   database.exec("DROP TABLE delegation_messages; DROP TABLE delegation_steps; DELETE FROM schema_migrations WHERE version=154");
+}
+
+/** Remove the row-free post-175 sidecars before their referenced 154/161 tables. */
+function removePost175HarnessOverlays(database) {
+  for (const row of database.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_harness_%'").all()) {
+    assert.match(row.name, /^[a-z0-9_]+$/u);
+    database.exec(`DROP TRIGGER ${row.name}`);
+  }
+  database.exec(`DROP TABLE delegation_instruction_receipts;
+    DROP TABLE harness_projection_rows;
+    DROP TABLE harness_artifact_pins;
+    DROP TABLE harness_artifact_pin_events;
+    DROP TABLE harness_artifact_gc_receipts;
+    DROP TABLE harness_artifact_retention;
+    DROP TABLE harness_projection_checkpoints;
+    DROP TABLE delegation_budget_charges;
+    DROP TABLE delegation_budget_reservations;
+    DROP TABLE delegation_root_budgets;
+    DELETE FROM schema_migrations WHERE version IN (176,177,178);`);
 }
 
 /** Removes only the row-free post-153 overlays so this fixture is a genuine schema153 database. */
@@ -202,7 +233,7 @@ test("delegation migration has the release schema 154 identity", () => {
   assert.equal(typeof applyDelegationMigration, "function");
 });
 
-test("real schema153 upgrades through175 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
+test("real schema153 upgrades through178 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
   const f = await fileFixture(t, "full-schema");
   const first = f.own(createSqliteRunStore(f.cwd));
   const channel = first.handle.createChannel({ name: "Legacy", boundPath: f.cwd }, now);
@@ -218,6 +249,7 @@ test("real schema153 upgrades through175 preserving historical SQL/markers/rows 
   const old = f.open(path);
   // Reconstruct schema153 by removing exactly the later, row-free overlays.
   // Do not hide them from the baseline while leaving their markers installed.
+  removePost175HarnessOverlays(old.handle);
   old.handle.exec(`DROP TRIGGER media_workflow_check_insert;
     DROP TRIGGER media_workflow_check_update;
     DROP TRIGGER media_workflow_check_delete;
@@ -284,6 +316,7 @@ test("real schema153 upgrades through175 preserving historical SQL/markers/rows 
     "host_attempt_completion_immutable_terminal"]);
   assert.deepEqual(schema(database).filter((row) => !row.tbl_name.startsWith("delegation_")
     && !row.tbl_name.startsWith("native_")
+    && !isHarnessReliabilityOverlay(row)
     && !["mcp_authority_revisions", "ling_thread_proposed_plans", "teammate_direct_messages", "teammate_direct_reply_interventions"].includes(row.name)
     && !providerOverlay.has(row.name) && !incidentProvenanceOverlay.has(row.name) && !evaluationTaskOverlay.has(row.name)
     && !conversationExperienceOverlay.has(row.name)
@@ -304,7 +337,7 @@ test("real schema153 upgrades through175 preserving historical SQL/markers/rows 
   assert.deepEqual(directInterventionColumns.slice(0, oldDirectInterventionColumns.length), oldDirectInterventionColumns);
   assert.deepEqual(directInterventionColumns.slice(oldDirectInterventionColumns.length).map(column => column.name), ["source_attempt_id"]);
   assert.deepEqual(database.prepare("SELECT server_id, server_revision, tools_revision FROM mcp_authority_revisions ORDER BY server_id").all(), oldAuthorityRows);
-  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175) ORDER BY version").all(), oldMarkers);
+  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178) ORDER BY version").all(), oldMarkers);
   assert.deepEqual(database.prepare("SELECT version,name FROM schema_migrations WHERE version BETWEEN 169 AND 175 ORDER BY version").all()
     .map(row => ({ version: row.version, name: row.name })), [
     { version: 169, name: "native_execution_journal" },

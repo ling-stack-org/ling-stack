@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { setImmediate as yieldToForeground } from "node:timers/promises";
 import {
   RunEvaluationInputError,
   type CreateRunEvaluationGradeInput,
@@ -15,7 +16,7 @@ export type RunEvaluationSchedulerStore = Pick<
   | keyof RunEvaluationStore
 >;
 
-export type RunEvaluationProcessDisposition = "idle" | "completed" | "failed" | "requeued" | "claim_lost";
+export type RunEvaluationProcessDisposition = "idle" | "stopped" | "completed" | "failed" | "requeued" | "claim_lost";
 
 export interface RunEvaluationProcessResult {
   readonly disposition: RunEvaluationProcessDisposition;
@@ -28,10 +29,12 @@ export interface ProcessNextRunEvaluationOptions {
   readonly now?: string;
   readonly leaseMs?: number;
   readonly retryDelayMs?: number;
+  readonly signal?: AbortSignal;
   readonly grade?: (input: {
     readonly store: RunEvaluationSchedulerStore;
     readonly evaluation: NonNullable<ReturnType<RunEvaluationSchedulerStore["getRunEvaluation"]>>;
     readonly now: string;
+    readonly signal?: AbortSignal;
   }) => CreateRunEvaluationGradeInput | Promise<CreateRunEvaluationGradeInput>;
 }
 
@@ -39,9 +42,16 @@ export interface ProcessNextRunEvaluationOptions {
 export async function processNextRunEvaluation(
   options: ProcessNextRunEvaluationOptions,
 ): Promise<RunEvaluationProcessResult> {
+  if (options.signal?.aborted) return { disposition: "stopped" };
+  // The worker is low priority. Defer even its synchronous SQLite claim and
+  // deterministic grader until already queued foreground callbacks have run.
+  // A microtask alone still runs before that foreground work.
+  await yieldToForeground();
+  if (options.signal?.aborted) return { disposition: "stopped" };
   const now = options.now ?? new Date().toISOString();
   const leaseMs = positiveInteger(options.leaseMs, 60_000, "evaluation lease");
   const retryDelayMs = positiveInteger(options.retryDelayMs, 5_000, "evaluation retry delay");
+  if (options.signal?.aborted) return { disposition: "stopped" };
   const candidate = options.store.listClaimableRunEvaluations({ now, limit: 1 })[0];
   if (!candidate) return { disposition: "idle" };
   const claimToken = `evaluation_claim_${randomUUID()}`;
@@ -64,11 +74,14 @@ export async function processNextRunEvaluation(
   });
   if (!grading.ok) return { disposition: "claim_lost", evaluationId: candidate.id };
   try {
+    options.signal?.throwIfAborted();
     const grade = await (options.grade ?? ((input) => executeDeterministicRuleEvaluation(input)))({
       store: options.store,
       evaluation: grading.value,
       now,
+      signal: options.signal,
     });
+    options.signal?.throwIfAborted();
     const completed = options.store.completeRunEvaluation({
       evaluationId: candidate.id,
       expectedRevision: grading.value.revision,
@@ -127,7 +140,7 @@ export interface RunEvaluationSchedulerOptions {
 export class RunEvaluationSchedulerRegistry {
   private readonly entries = new Map<string, SchedulerEntry>();
   private readonly pending = new Set<string>();
-  private readonly inFlight = new Set<Promise<void>>();
+  private readonly inFlight = new Map<Promise<void>, AbortController>();
   private readonly concurrency: number;
   private readonly scanIntervalMs: number;
   private readonly leaseMs: number;
@@ -168,8 +181,12 @@ export class RunEvaluationSchedulerRegistry {
     }
   }
 
+  abortOwned(): void {
+    for (const controller of this.inFlight.values()) controller.abort(new Error("evaluation_scheduler_shutdown"));
+  }
+
   async waitForIdle(): Promise<void> {
-    await Promise.allSettled([...this.inFlight]);
+    while (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight.keys()]);
   }
 
   private pump(): void {
@@ -179,14 +196,17 @@ export class RunEvaluationSchedulerRegistry {
       const entry = this.entries.get(cwd);
       if (!entry) continue;
       this.active += 1;
+      const controller = new AbortController();
       let task!: Promise<void>;
-      task = processNextRunEvaluation({
+      // Own the promise/controller before a re-entrant grader or Store can request shutdown.
+      task = Promise.resolve().then(() => processNextRunEvaluation({
         store: entry.store,
         workerId: this.workerId,
         leaseMs: this.leaseMs,
         retryDelayMs: this.retryDelayMs,
         grade: this.options.grade,
-      }).then((result) => {
+        signal: controller.signal,
+      })).then((result) => {
         if (result.disposition === "completed" || result.disposition === "failed") {
           this.pending.add(cwd);
         }
@@ -197,7 +217,7 @@ export class RunEvaluationSchedulerRegistry {
         this.inFlight.delete(task);
         this.pump();
       });
-      this.inFlight.add(task);
+      this.inFlight.set(task, controller);
     }
   }
 }

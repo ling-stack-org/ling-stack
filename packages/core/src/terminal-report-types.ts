@@ -33,6 +33,12 @@ export type TerminalReportSourceRefKind =
   | "deployment"
   | "memory"
   | "context_source"
+  | "delegation_step"
+  | "delegation_result"
+  | "delegation_budget_reservation"
+  | "delegation_budget_charge"
+  | "runtime_attempt"
+  | "host_attempt_completion"
   | "external";
 
 export interface TerminalReportSourceRef {
@@ -156,6 +162,8 @@ export interface TerminalReportEvidenceSnapshot {
   readonly approvals: readonly TerminalReportEvidenceApproval[];
   readonly risks: readonly TerminalReportEvidenceRisk[];
   readonly references: readonly TerminalReportSourceRef[];
+  /** Host subtree read-set used for synthesis, persisted across restart/recovery. */
+  readonly delegationCompletionFingerprint?: string;
   readonly evidenceFingerprint: string;
   readonly generatedAt: string;
 }

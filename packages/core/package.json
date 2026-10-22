@@ -5,6 +5,10 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./delegation-host-store-bridge": {
+      "types": "./dist/delegation-host-store-bridge.d.ts",
+      "default": "./dist/delegation-host-store-bridge.js"
+    },
     "./execution-engine-host-authority": {
       "types": "./dist/execution-engine-host-authority.d.ts",
       "default": "./dist/execution-engine-host-authority.js"

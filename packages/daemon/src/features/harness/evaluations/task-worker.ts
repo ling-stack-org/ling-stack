@@ -214,9 +214,17 @@ export class RunEvaluationTaskWorkerRegistry {
 
   /** Close forward admission synchronously before signalling only owned adapters. */
   beginShutdown(): void {
+    this.stopAdmission();
+    this.abortOwned();
+  }
+
+  stopAdmission(): void {
     this.stopped = true;
     this.pending.clear();
     for (const entry of this.entries.values()) if (entry.timer) clearInterval(entry.timer);
+  }
+
+  abortOwned(): void {
     for (const controller of this.inFlight.values()) controller.abort();
   }
 

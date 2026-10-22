@@ -16,8 +16,10 @@ import { fileOperationCandidate } from "./channel-operation-candidate-fixture.mj
 const DEFAULT_TIMEOUT_MS = 10_000;
 const QUESTION_PARTICIPANT_ID = "teammate_builtin_engineer";
 const BARRIER_PARTICIPANT_ID = "teammate_builtin_qa";
+const ENTRY_PARTICIPANT_ID = "ling_agent";
 const QUESTION_PATH = "required-question-a.txt";
 const BARRIER_PATH = "required-question-b.txt";
+const ENTRY_PATH = "required-question-entry.txt";
 const SOURCE_BODY = "@Engineer @QA 并行完成两个 required read：Engineer 回答必要问题后读取 required-question-a.txt；QA 读取 required-question-b.txt。两位都必须提供真实 read evidence 后才能完成。";
 
 const REQUIRED_QUESTION = Object.freeze({
@@ -37,6 +39,7 @@ export async function createRequiredQuestionChannelFixture(t, options = {}) {
   const ownsCwd = options.cwd === undefined;
   await writeFile(join(cwd, QUESTION_PATH), "question-participant-proof\n", "utf8");
   await writeFile(join(cwd, BARRIER_PATH), "barrier-participant-proof\n", "utf8");
+  await writeFile(join(cwd, ENTRY_PATH), "parallel-entry-proof\n", "utf8");
 
   const stores = new Map();
   const runContext = new AsyncLocalStorage();
@@ -130,6 +133,16 @@ export async function createRequiredQuestionChannelFixture(t, options = {}) {
               return textResponse(JSON.stringify(buildDeterministicTerminalReportContent(JSON.parse(snapshotText))));
             }
 
+            if (execution.participantId === ENTRY_PARTICIPANT_ID && execution.participantRunOrdinal === 1) {
+              assert.equal(options.parallelWorkflow, true, "only the explicit parallel fixture owns an entry participant");
+              if (execution.requestIndex === 1) {
+                assert.ok(toolNames.includes("read"), "the graph entry must execute a real read");
+                return toolResponse("read", { path: ENTRY_PATH }, "parallel-entry-read");
+              }
+              assert.equal(execution.requestIndex, 2, "the entry must finish after one real read");
+              return textResponse("The entry read is complete; Engineer and QA may run independently.");
+            }
+
             if (execution.participantId === QUESTION_PARTICIPANT_ID && execution.participantRunOrdinal === 1) {
               assert.ok(
                 toolNames.includes("request_user_input"),
@@ -155,7 +168,7 @@ export async function createRequiredQuestionChannelFixture(t, options = {}) {
               }
               assert.equal(execution.requestIndex, 2, "barrier participant must pause after one real read");
               barrierEvidenceReached.resolve();
-              await barrier.promise;
+              await bounded(barrier.promise, "QA terminal barrier", options.timeoutMs);
               return textResponse("QA read the required proof file and may now finish.");
             }
 
@@ -171,33 +184,47 @@ export async function createRequiredQuestionChannelFixture(t, options = {}) {
     }
   }
 
-  const runner = new RequiredQuestionPiRunner();
-  const daemon = createDaemonServer({
-    host: "127.0.0.1",
-    port: 0,
-    defaultWorkspaceCwd: cwd,
-    channels: {
-      autoRoute: false,
-      intentSelector: true,
-      terminalReports: true,
-      teamObserverBus: false,
-    },
-  }, {
-    runner,
-    storeFactory(storeCwd) {
-      const store = createSqliteRunStore(storeCwd);
-      stores.set(storeCwd, store);
-      return store;
-    },
-  });
-  await daemon.start();
-  const address = daemon.server.address();
-  assert.ok(address && typeof address === "object");
-  const url = `http://127.0.0.1:${address.port}`;
+  let daemon;
+  let runner;
+  let url;
+  let store;
+  const daemonInstances = [];
+  async function startDaemonInstance() {
+    runner = new RequiredQuestionPiRunner();
+    daemon = createDaemonServer({
+      host: "127.0.0.1",
+      port: 0,
+      defaultWorkspaceCwd: cwd,
+      channels: {
+        autoRoute: false,
+        intentSelector: true,
+        terminalReports: true,
+        teamObserverBus: false,
+      },
+    }, {
+      runner,
+      storeFactory(storeCwd) {
+        const store = createSqliteRunStore(storeCwd);
+        stores.set(storeCwd, store);
+        return store;
+      },
+    });
+    await bounded(daemon.start(), "Daemon start", options.timeoutMs);
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    url = `http://127.0.0.1:${address.port}`;
+    // Opening the public snapshot initializes a fresh Store through the new
+    // Daemon's own registry, rather than reusing the previous connection.
+    await requestJson(`${url}/control-plane/snapshot?cwd=${encodeURIComponent(cwd)}&domains=runs`, {}, [200]);
+    store = stores.get(cwd);
+    assert.ok(store);
+    daemonInstances.push({ daemon, runner, store });
+  }
+  await startDaemonInstance();
 
   t.after(async () => {
     barrier.resolve();
-    await daemon.stop();
+    await bounded(daemon.stop(), "Daemon cleanup stop", options.timeoutMs);
     if (ownsCwd) await rm(cwd, { recursive: true, force: true });
   });
 
@@ -214,8 +241,6 @@ export async function createRequiredQuestionChannelFixture(t, options = {}) {
     reasoning: true,
     enabled: true,
   })).provider;
-  const store = stores.get(cwd);
-  assert.ok(store);
   store.recordProviderCheckResult(provider.id, {
     ok: true,
     code: "ready",
@@ -256,8 +281,9 @@ export async function createRequiredQuestionChannelFixture(t, options = {}) {
 
   const fixture = {
     cwd,
-    url,
-    store,
+    get url() { return url; },
+    get store() { return store; },
+    get daemonGeneration() { return daemonInstances.length; },
     channel,
     participants,
     providerCalls,
@@ -274,6 +300,7 @@ export async function createRequiredQuestionChannelFixture(t, options = {}) {
       },
     },
     async postChannelTurn() {
+      assert.notEqual(options.parallelWorkflow, true, "explicit parallel coverage must use postParallelWorkflow");
       assert.equal(state.created, undefined, "the fixture owns exactly one source channel Turn");
       const created = await postJson(`${url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
         body: SOURCE_BODY,
@@ -293,8 +320,47 @@ export async function createRequiredQuestionChannelFixture(t, options = {}) {
       state.steps = created.autoStartedWorkflow.workflowSteps;
       return created;
     },
+    async postParallelWorkflow() {
+      assert.equal(options.parallelWorkflow, true, "parallel graph must be selected before starting the fixture");
+      assert.equal(state.created, undefined, "the fixture owns exactly one accepted workflow");
+      const created = await postJson(`${url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
+        title: "Required question explicit parallel fan-in",
+        objective: "After the entry read, Engineer asks its required scope question and reads its proof; QA independently reads its proof. Both required siblings must finish.",
+        providerPresetId: provider.id,
+        autoStart: true,
+        workflowGraph: {
+          schemaVersion: 1,
+          id: "required-question-parallel-graph",
+          name: "Required question explicit parallel fan-in",
+          entryNodeId: "entry",
+          maxParallelSteps: 2,
+          nodes: [
+            { id: "entry", kind: "step", name: "Read the shared entry", teammateId: ENTRY_PARTICIPANT_ID,
+              prompt: `Read ${ENTRY_PATH}, then finish so Engineer and QA can run independently.`,
+              requiredTools: ["read"], autoStart: true, providerPresetId: provider.id },
+            { id: "engineer", kind: "step", name: "Required Engineer question and read", teammateId: QUESTION_PARTICIPANT_ID,
+              prompt: `Ask the required scope question, then read ${QUESTION_PATH} after the answer.`,
+              requiredTools: ["read"], autoStart: true, providerPresetId: provider.id },
+            { id: "qa", kind: "step", name: "Independent QA read", teammateId: BARRIER_PARTICIPANT_ID,
+              prompt: `Independently read ${BARRIER_PATH}, then finish. Do not wait for Engineer's answer.`,
+              requiredTools: ["read"], autoStart: true, providerPresetId: provider.id },
+          ],
+          edges: [
+            { id: "entry-engineer", fromNodeId: "entry", toNodeId: "engineer", condition: { kind: "all_succeeded" } },
+            { id: "entry-qa", fromNodeId: "entry", toNodeId: "qa", condition: { kind: "all_succeeded" } },
+          ],
+          termination: { success: "all_required_succeeded", onFailedRequiredNode: "block_for_user", onApprovalDenied: "block_for_user" },
+        },
+      });
+      assert.ok(created.workflow && Array.isArray(created.workflowSteps));
+      state.created = created;
+      state.workflow = created.workflow;
+      state.steps = created.workflowSteps;
+      await postJson(`${url}/workflows/${encodeURIComponent(created.workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+      return created;
+    },
     async waitForQuestion() {
-      assert.ok(state.sourceItem, "postChannelTurn must run before waitForQuestion");
+      assert.ok(state.workflow, "a public channel Turn or workflow graph must start before waitForQuestion");
       await waitForCondition(() => {
         const sourceStep = state.steps
           .map((step) => store.getChannelWorkflowStep(step.id))
@@ -381,6 +447,21 @@ export async function createRequiredQuestionChannelFixture(t, options = {}) {
     actionsForRun(runId) {
       return listAllExecutionActionsForRun(store, runId);
     },
+    async restartDaemon() {
+      const previous = daemonInstances.at(-1);
+      await bounded(daemon.stop(), "Daemon restart stop", options.timeoutMs);
+      stores.delete(cwd);
+      await startDaemonInstance();
+      const current = daemonInstances.at(-1);
+      assert.notEqual(current.daemon, previous.daemon, "restart must construct a new Daemon");
+      assert.notEqual(current.runner, previous.runner, "restart must construct a new Pi Runner");
+      assert.notEqual(current.store, previous.store, "restart must reopen SQLite through a new Store");
+      return { generation: daemonInstances.length };
+    },
+    async readWorkflowSteps() {
+      const result = await requestJson(`${url}/workflows/${encodeURIComponent(state.workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`, {}, [200]);
+      return result.body.workflowSteps;
+    },
   };
   return fixture;
 }
@@ -388,11 +469,22 @@ export async function createRequiredQuestionChannelFixture(t, options = {}) {
 export async function waitForCondition(predicate, label, timeoutMs = DEFAULT_TIMEOUT_MS, describe) {
   const deadline = Date.now() + (timeoutMs ?? DEFAULT_TIMEOUT_MS);
   while (Date.now() < deadline) {
-    if (await predicate()) return;
+    if (await bounded(Promise.resolve().then(predicate), label, Math.max(1, deadline - Date.now()))) return;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   const detail = describe ? ` Latest: ${JSON.stringify(describe())}` : "";
   assert.fail(`Timed out waiting for ${label}.${detail}`);
+}
+
+async function bounded(promise, label, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    })]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function describeFixtureState(fixture) {
@@ -505,7 +597,7 @@ async function putJson(url, body) {
 }
 
 async function requestJson(url, init, expectedStatuses) {
-  const response = await fetch(url, init);
+  const response = await fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS) });
   const text = await response.text();
   assert.ok(expectedStatuses.includes(response.status), `${response.status} ${response.statusText}: ${text}`);
   return { response, body: text ? JSON.parse(text) : undefined };

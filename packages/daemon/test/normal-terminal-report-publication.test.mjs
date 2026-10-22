@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { injectUnverifiedRequiredDelegation } from "./support/terminal-report-delegation-injection.mjs";
 import { buildDeterministicTerminalReport, captureNormalTerminalReportBasis, createSqliteRunStore, resolveRuntimePaths } from "../../core/dist/index.js";
 import { collectRunTerminalReportEvidence, collectTurnTerminalReportEvidence } from "../dist/features/channels/terminal-report-evidence.js";
 import {
@@ -15,6 +16,17 @@ import {
 
 const now = "2026-09-06T04:00:00.000Z";
 const later = "2026-09-06T04:01:00.000Z";
+
+test("a successful normal source cannot publish partial success to bypass an unverified required child", async t => {
+  const f = await fixture(t);
+  injectUnverifiedRequiredDelegation(f.store, f.run.id, later);
+  const basis = captureNormalTerminalReportBasis(f.store, { kind: "turn", id: f.turn.id });
+  assert.equal(basis.turnStatus, "succeeded");
+  assert.equal(basis.successAllowed, false);
+  const result = await processTurnTerminalReport(f.store, f.turn.id, { now: later });
+  assert.equal(result.record.report.outcome.status, "blocked");
+  assert.equal(f.store.getConversationItem(result.record.resultItemId).kind, "terminal_report");
+});
 
 test("system-origin normal completion publishes and recovers one fact result without a user actor", async (t) => {
   const f = await fixture(t, "system");

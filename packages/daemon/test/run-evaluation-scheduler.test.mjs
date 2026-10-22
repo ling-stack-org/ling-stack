@@ -108,6 +108,28 @@ test("rule scheduler completes sealed JSON evaluation and records deterministic 
   assert.equal(rationale.sealedPayload.rationale.total, 2);
 });
 
+test("low priority evaluation yields before claim and grading to already queued foreground work", async t => {
+  const f = await fixture(t);
+  const order = [];
+  const claim = f.store.claimRunEvaluation.bind(f.store);
+  f.store.claimRunEvaluation = input => { order.push("evaluation-claim"); return claim(input); };
+  const foreground = new Promise(resolve => setImmediate(() => { order.push("foreground"); resolve(); }));
+  const evaluation = processNextRunEvaluation({ store: f.store, workerId: "low-priority", now: later });
+  assert.deepEqual(order, []);
+  await foreground;
+  assert.equal((await evaluation).disposition, "completed");
+  assert.deepEqual(order, ["foreground", "evaluation-claim"]);
+});
+
+test("shutdown during the foreground yield stops evaluation before any durable claim", async t => {
+  const f = await fixture(t);
+  const abort = new AbortController();
+  const evaluation = processNextRunEvaluation({ store: f.store, workerId: "stopped-before-claim", now: later, signal: abort.signal });
+  abort.abort();
+  assert.deepEqual(await evaluation, { disposition: "stopped" });
+  assert.equal(f.store.getRunEvaluation(f.evaluation.id).state, "queued");
+});
+
 test("malformed rule input fails closed instead of retrying or fabricating a grade", async (t) => {
   const f = await fixture(t, {
     schemaVersion: 1,

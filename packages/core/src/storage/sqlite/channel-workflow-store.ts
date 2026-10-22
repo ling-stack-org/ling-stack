@@ -16,6 +16,7 @@ import type {
   WorkflowCompletionGateV1,
 } from "@ling-stack/contracts";
 import type { RunEventEnvelope, RunStore } from "../../run-types.js";
+import { assertDelegationCompletionSatisfied } from "../../delegation-completion-barrier.js";
 import {
   buildWorkflowCompletionExpectedReadSet,
   workflowCompletionGateBasisFingerprintV1,
@@ -119,6 +120,7 @@ export interface SqliteChannelWorkflowStorePorts {
   readonly listApprovalRequests: (options?: import("../../approval-types.js").ListApprovalRequestsOptions) => import("../../approval-types.js").ApprovalRequest[];
   readonly getArtifact: (id: string) => import("../../run-types.js").RunArtifact | undefined;
   readonly listArtifacts: (runId: string) => import("../../run-types.js").RunArtifact[];
+  readonly getDelegationCompletionEvidence: import("../../run-types.js").RunStore["getDelegationCompletionEvidence"];
 }
 
 function completionTarget(
@@ -675,6 +677,10 @@ export class SqliteChannelWorkflowStore {
   }
 
   updateChannelWorkflow(id: string, input: UpdateChannelWorkflowInput, now: string): ChannelWorkflow | undefined {
+    return this.withCompletionTransaction(() => this.updateChannelWorkflowWithinTransaction(id, input, now));
+  }
+
+  private updateChannelWorkflowWithinTransaction(id: string, input: UpdateChannelWorkflowInput, now: string): ChannelWorkflow | undefined {
     const existing = this.getChannelWorkflow(id);
     if (!existing) {
       return undefined;
@@ -687,6 +693,7 @@ export class SqliteChannelWorkflowStore {
       metadata: nullableUpdate(input.metadata, existing.metadata),
       updatedAt: now,
     };
+    if (next.status === "succeeded") this.assertDescendantsComplete(id);
     this.context.database
       .prepare(`
         UPDATE channel_workflows
@@ -706,6 +713,18 @@ export class SqliteChannelWorkflowStore {
     readonly idempotencyKey?: string;
     readonly now: string;
   }): TransitionResult<ChannelWorkflowStatus> {
+    return this.withCompletionTransaction(() => this.transitionChannelWorkflowWithinTransaction(input));
+  }
+
+  private transitionChannelWorkflowWithinTransaction(input: {
+    readonly workflowId: string;
+    readonly expectedStatus?: ChannelWorkflowStatus;
+    readonly event: WorkflowTransitionEvent;
+    readonly actor: StateTransitionActor;
+    readonly reason?: string;
+    readonly idempotencyKey?: string;
+    readonly now: string;
+  }): TransitionResult<ChannelWorkflowStatus> {
     const workflow = this.getChannelWorkflow(input.workflowId);
     if (!workflow) {
       return { ok: false, code: "stale_transition", currentStatus: input.expectedStatus ?? "cancelled" };
@@ -713,6 +732,7 @@ export class SqliteChannelWorkflowStore {
     if (input.idempotencyKey) {
       const existing = this.ports.findStateTransitionByIdempotency("workflow", input.workflowId, input.idempotencyKey);
       if (existing) {
+        if (workflow.status === "succeeded") this.assertDescendantsComplete(workflow.id);
         return { ok: true, from: workflow.status, to: workflow.status, duplicate: true };
       }
     }
@@ -728,6 +748,7 @@ export class SqliteChannelWorkflowStore {
     if (!result.ok) {
       return result;
     }
+    if (result.to === "succeeded") this.assertDescendantsComplete(workflow.id);
     const update = this.context.database
       .prepare("UPDATE channel_workflows SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
       .run(result.to, input.now, input.workflowId, result.from);
@@ -794,6 +815,7 @@ export class SqliteChannelWorkflowStore {
         gate,
         workflow: currentWorkflow,
         steps: currentSteps,
+        delegations: actual.delegations,
       })) {
         this.context.database.exec("ROLLBACK;");
         return { ok: false, code: "invalid_transition", currentStatus: currentWorkflow.status };
@@ -1614,6 +1636,28 @@ export class SqliteChannelWorkflowStore {
     return result;
   }
 
+  private assertDescendantsComplete(workflowId: string): void {
+    const steps = this.listChannelWorkflowSteps({ workflowId, complete: true });
+    assertDelegationCompletionSatisfied(this.ports.getDelegationCompletionEvidence({
+      rootRunIds: [...new Set(steps.flatMap(step => step.runId ? [step.runId] : []))].sort(),
+    }));
+  }
+
+  /** Keeps the original caller transaction intact, including approval recovery. */
+  private withCompletionTransaction<T>(write: () => T): T {
+    const db = this.context.database;
+    db.exec("SAVEPOINT workflow_success_delegation_barrier");
+    try {
+      const result = write();
+      db.exec("RELEASE workflow_success_delegation_barrier");
+      return result;
+    } catch (error) {
+      db.exec("ROLLBACK TO workflow_success_delegation_barrier");
+      db.exec("RELEASE workflow_success_delegation_barrier");
+      throw error;
+    }
+  }
+
   private nextWorkflowStepPosition(workflowId: string): number {
     const row = this.context.database
       .prepare("SELECT COALESCE(MAX(position), 0) + 1 AS next_position FROM channel_workflow_steps WHERE workflow_id = ?")
@@ -1697,7 +1741,9 @@ function isCompletionGateConsistentWithCanonicalState(input: {
   readonly gate: WorkflowCompletionGateV1;
   readonly workflow: ChannelWorkflow;
   readonly steps: readonly ChannelWorkflowStep[];
+  readonly delegations: import("../../delegation-completion-evidence.js").DelegationCompletionEvidenceV1;
 }): boolean {
+  if (input.gate.status === "verified" && input.delegations.status !== "satisfied") return false;
   const manifest = input.workflow.metadata?.requiredParticipantManifest;
   const sourceDecisionId = input.workflow.metadata?.sourceIntentDecisionId;
   const graph = input.workflow.metadata?.workflowGraph;
@@ -1741,6 +1787,7 @@ function isCompletionGateConsistentWithCanonicalState(input: {
     graphFingerprint: input.gate.graphFingerprint,
     participantResults: input.gate.participantResults,
     steps: input.steps,
+    delegationCompletionFingerprint: input.delegations.steps.length || input.delegations.issues.length ? input.delegations.fingerprint : undefined,
   });
   return basisFingerprint === input.gate.basisFingerprint;
 }

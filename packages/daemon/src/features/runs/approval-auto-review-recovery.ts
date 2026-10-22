@@ -29,6 +29,8 @@ export interface ApprovalAutoReviewRecoveryResult {
  */
 export class ApprovalAutoReviewRecoveryCoordinator {
   private readonly recoveries = new WeakMap<RunStore, Promise<ApprovalAutoReviewRecoveryResult>>();
+  private readonly inFlight = new Map<Promise<ApprovalAutoReviewRecoveryResult>, AbortController>();
+  private stopped = false;
 
   constructor(private readonly options: {
     readonly runtimeSupervisor: RuntimeSupervisor;
@@ -42,20 +44,31 @@ export class ApprovalAutoReviewRecoveryCoordinator {
   }
 
   recoverStore(store: RunStore): Promise<ApprovalAutoReviewRecoveryResult> {
+    if (this.stopped) return Promise.resolve({ reviewed: 0, approved: 0, denied: 0, manual: 0, skipped: 0 });
     const existing = this.recoveriesFor(store);
     if (existing) return existing;
-    const recovery = this.runRecovery(store).finally(() => {
+    const controller = new AbortController();
+    const recovery = Promise.resolve().then(() => this.runRecovery(store, controller.signal)).finally(() => {
       if (this.recoveries.get(store) === recovery) this.recoveries.delete(store);
+      this.inFlight.delete(recovery);
     });
     this.recoveries.set(store, recovery);
+    this.inFlight.set(recovery, controller);
     return recovery;
   }
+
+  beginShutdown(): void { this.stopped = true; }
+
+  abortOwned(): void { for (const controller of this.inFlight.values()) controller.abort(new Error("approval_recovery_shutdown")); }
+
+  async waitForIdle(): Promise<void> { while (this.inFlight.size) await Promise.allSettled([...this.inFlight.keys()]); }
 
   private recoveriesFor(store: RunStore): Promise<ApprovalAutoReviewRecoveryResult> | undefined {
     return this.recoveries.get(store);
   }
 
-  private async runRecovery(store: RunStore): Promise<ApprovalAutoReviewRecoveryResult> {
+  private async runRecovery(store: RunStore, signal: AbortSignal): Promise<ApprovalAutoReviewRecoveryResult> {
+    signal.throwIfAborted();
     this.options.runtimeSupervisor.getRuntime(store.paths.cwd, store);
     this.options.approvalResumeCoordinator.registerStore(store);
     let reviewed = 0;
@@ -65,12 +78,14 @@ export class ApprovalAutoReviewRecoveryCoordinator {
     let skipped = 0;
 
     for (const approval of store.listApprovalRequests({ status: "denied", limit: 500 })) {
+      if (signal.aborted || this.stopped) break;
       if (approval.resolvedBy !== "system-reviewer") continue;
       const finalized = this.options.approvalResumeCoordinator.finalizeSuspendedApprovalDenial({ store, approval });
       if (finalized.status === "finalized") denied += 1;
     }
 
     for (const approval of store.listApprovalRequests({ status: "pending", limit: 500 })) {
+      if (signal.aborted || this.stopped) break;
       const prepared = prepareRecoverableReview(store, approval.id);
       if (!prepared) {
         skipped += 1;
@@ -117,11 +132,13 @@ export class ApprovalAutoReviewRecoveryCoordinator {
           sourceAuthority: "recoverable_suspension",
           effectivePolicySnapshot: prepared.policy,
           extraSecrets: providerSecrets(provider),
+          signal,
         });
       } catch {
         manual += 1;
         continue;
       }
+      if (signal.aborted || this.stopped) break;
       reviewed += 1;
       if (outcome.status === "manual") {
         manual += 1;

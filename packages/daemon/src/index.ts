@@ -58,8 +58,15 @@ import { DaemonRunnerRecoveryCoordinator } from "./features/harness/continuation
 import { reconcileHarnessToolExecutionsAtStartup } from "./features/harness/tool-execution/recovery.js";
 import { RunEvaluationSchedulerRegistry } from "./features/harness/evaluations/scheduler.js";
 import { RunEvaluationTaskWorkerComposition } from "./features/harness/evaluations/task-worker-composition.js";
+import { HarnessProjectionReconciler } from "./features/harness/reliability/projection-reconciler.js";
+import { HarnessLifecycleCoordinator } from "./features/harness/reliability/lifecycle-coordinator.js";
+import { HarnessArtifactRetentionService } from "./features/harness/reliability/artifact-retention-service.js";
+import { assertDelegationRecoveryParentCurrent, createDelegationRuntimeRegistry, createDelegationWorkflowSelector,
+  type DelegationRuntimeRegistry } from "./features/harness/delegations/runtime-registry.js";
+import type { OriginalDelegationLifecycle } from "./features/harness/delegations/store-composition.js";
 import {
   createDetachedRunExecutionSink,
+  executeDelegatedRunRequest,
   executeExistingRunContinuation,
   executeUserInputContinuation,
 } from "./features/runs/orchestrator.js";
@@ -294,6 +301,21 @@ export function createDaemonServer(
   let approvalAutoReviewRecoveryCoordinator: ApprovalAutoReviewRecoveryCoordinator | undefined;
   let daemonRunnerRecoveryCoordinator: DaemonRunnerRecoveryCoordinator | undefined;
   let runEvaluationScheduler: RunEvaluationSchedulerRegistry | undefined;
+  let harnessShuttingDown = false;
+  const harnessProjectionStores = new Set<RunStore>();
+  const harnessProjectionReconciler = new HarnessProjectionReconciler({ pageSize: 100, maxPagesPerDomain: 16 });
+  const harnessArtifactRetention = new HarnessArtifactRetentionService({ pageSize: 100, maxPagesPerSweep: 16 });
+  let harnessProjectionTimer: ReturnType<typeof setInterval> | undefined;
+  const reconcileHarnessProjections = (store: RunStore): void => {
+    if (harnessShuttingDown) return;
+    void harnessProjectionReconciler.reconcileStore(store).catch(() => {
+      // Derived metadata failure cannot authorize execution or fabricate a ready checkpoint.
+      if (!harnessShuttingDown) console.warn("harness_projection_reconcile_incomplete: checkpoint remains rebuildable");
+    });
+    void harnessArtifactRetention.collectStore(store).catch(() => {
+      if (!harnessShuttingDown) console.warn("harness_artifact_retention_incomplete: enrolled bodies remain protected");
+    });
+  };
   const runEvaluationTaskWorkers = new RunEvaluationTaskWorkerComposition({
     activation: dependencies.runEvaluationQaTaskWorker,
   });
@@ -320,9 +342,13 @@ export function createDaemonServer(
     ? { officeLocalNativeArtifact: dependencies.officeLocalNativeArtifact }
     : undefined);
   let workspaceCustodyReady = false;
+  let delegationRuntimeRegistry: DelegationRuntimeRegistry | undefined;
+  const pendingDelegationStores = new Map<RunStore, OriginalDelegationLifecycle>();
+  const originalDelegationStores = new WeakSet<RunStore>();
   const pendingOwnedStores = new Map<RunStore, string>();
   const initializedOwnedStores = new WeakSet<RunStore>();
   const initializeOwnedStore = (cwd: string, store: RunStore): void => {
+    if (harnessShuttingDown) throw new Error("runtime_shutting_down");
     if (initializedOwnedStores.has(store)) return;
     runtimeSupervisor.getRuntime(cwd, store);
     const recoveryNow = new Date().toISOString();
@@ -341,10 +367,11 @@ export function createDaemonServer(
     approvalRecoveryStores.add(store);
     userInputDeliveryWorker.registerStore(store);
     configureNormalNarrationPublication(store, (event) => controlPlaneEvents.publish(event));
-    void recoverNormalNarrationPublications(store, new Date().toISOString()).catch(() => {
+    const narrationRecovery = recoverNormalNarrationPublications(store, new Date().toISOString()).catch(() => {
       // Do not leak database/provider details, but do not hide a failed recovery sweep.
       console.warn("normal_narration_recovery_failed: pending publications remain recoverable");
     });
+    activeRuns.trackCompletion(narrationRecovery);
     configureTerminalReportStore(store, {
       enabled: resolvedConfig.channels.terminalReports === true,
       runnerRegistry,
@@ -354,23 +381,34 @@ export function createDaemonServer(
     approvalResumeCoordinator?.registerStore(store);
     approvalAutoReviewRecoveryCoordinator?.registerStore(store);
     daemonRunnerRecoveryCoordinator?.registerStore(store);
+    if (originalDelegationStores.has(store)) delegationRuntimeRegistry?.recoverStore(store);
     runEvaluationTaskWorkers.registerStore(cwd, store);
     runEvaluationScheduler?.registerStore(store);
     startupOptionalWarmups?.start(cwd, store);
     reconcileAllContinuityWorkflows(store, { cause: "startup" });
     if (resolvedConfig.channels.terminalReports === true) {
-      void recoverTerminalReports(store).catch(() => {
+      const terminalReportRecovery = recoverTerminalReports(store).catch(() => {
         console.warn("terminal_report_recovery_failed: conflicting sources remain recoverable");
       });
+      activeRuns.trackCompletion(terminalReportRecovery);
     }
+    harnessProjectionStores.add(store);
+    reconcileHarnessProjections(store);
     if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
     initializedOwnedStores.add(store);
     pendingOwnedStores.delete(store);
   };
   const storeRegistry = new RunStoreRegistry(
-    dependencies.storeFactory ?? createOriginalOfficeDirectoryStoreFactory(runtimeSupervisor), {
+    dependencies.storeFactory ?? createOriginalOfficeDirectoryStoreFactory(runtimeSupervisor, { runnerRegistry, secretResolver,
+      onDelegationStore: (store, lifecycle) => {
+        originalDelegationStores.add(store);
+        if (delegationRuntimeRegistry) delegationRuntimeRegistry.registerStore(store, lifecycle);
+        else pendingDelegationStores.set(store, lifecycle);
+      },
+    }), {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
     beforeRecovery: (cwd, store) => {
+      if (harnessShuttingDown) throw new Error("runtime_shutting_down");
       // Both default and injected factories must pass the original Supervisor's
       // workspace owner before any registry or initialized-store recovery runs.
       runtimeSupervisor.getRuntime(cwd, store);
@@ -578,6 +616,20 @@ export function createDaemonServer(
     webResolveHostAddresses,
     afterRunTerminal: afterChannelRunTerminal,
   };
+  // Explicit typed Host startup selection. No HTTP/model request can add an
+  // ID, and a normal installation leaves dynamic producers closed by default.
+  const selectedDelegationWorkflowIds = resolvedConfig.harness.delegations.selectedWorkflowIds;
+  delegationRuntimeRegistry = createDelegationRuntimeRegistry({
+    supervisor: runtimeSupervisor, activeRuns,
+    ...(selectedDelegationWorkflowIds.length ? { isWorkflowSelected: createDelegationWorkflowSelector(selectedDelegationWorkflowIds) } : {}),
+    assertRecoveryParentCurrent: input => assertDelegationRecoveryParentCurrent({ ...input, activeRuns }),
+    executeDelegatedRunRequest: input => executeDelegatedRunRequest(input, createDetachedRunExecutionSink(),
+      runnerRegistry, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker, {
+        controlPlaneEvents, startupState, computerUsePreviews, hostCapabilityBridge, enableUserInputPause: true,
+      }),
+  });
+  for (const [store, lifecycle] of pendingDelegationStores) delegationRuntimeRegistry.registerStore(store, lifecycle);
+  pendingDelegationStores.clear();
   userInputDeliveryWorker = new UserInputDeliveryWorker({
     activeRuns,
     runtimeSupervisor,
@@ -768,7 +820,7 @@ export function createDaemonServer(
     humanEvaluations,
   };
   const server = createServer((request, response) => {
-    if (activeRuns.isShuttingDown()) {
+    if (harnessShuttingDown || activeRuns.isShuttingDown()) {
       writeJson(response, 503, { error: "runtime_shutting_down", message: "Runtime is shutting down." });
       return;
     }
@@ -811,6 +863,112 @@ export function createDaemonServer(
       })
     : undefined;
 
+  let networkShutdown: Promise<void> | undefined;
+  let remoteAccessShutdown: Promise<void> | undefined;
+  let providerImportShutdown: Promise<void> | undefined;
+  const harnessLifecycle = new HarnessLifecycleCoordinator({
+    stopExternalAdmission: () => {
+      harnessShuttingDown = true;
+      humanEvaluations.close();
+      if (approvalRecoveryTimer) clearInterval(approvalRecoveryTimer);
+      approvalRecoveryTimer = undefined;
+      if (harnessProjectionTimer) clearInterval(harnessProjectionTimer);
+      harnessProjectionTimer = undefined;
+      harnessProjectionReconciler.beginShutdown();
+      harnessArtifactRetention.beginShutdown();
+      providerStartupRefresh.beginShutdown();
+      channelTurnDispatchReady = false;
+      // Initiate network close, but do not await active routes before their adapters receive abort.
+      networkShutdown = new Promise<void>((resolve, reject) => {
+        if (!server.listening) { resolve(); return; }
+        server.close(error => error ? reject(error) : resolve());
+      });
+      remoteAccessShutdown = remoteAccess.stop();
+      // Preserve failures for the real settle stage without an unhandled rejection in the meantime.
+      void networkShutdown.catch(() => undefined);
+      void remoteAccessShutdown.catch(() => undefined);
+    },
+    closeResources: async () => {
+      // Native engine disposal can still own local files/Stores. It must finish before lease/Store close.
+      await engineManagement.close();
+      runtimeSupervisor.releaseAll();
+      storeRegistry.closeAll();
+      harnessProjectionStores.clear();
+    },
+  });
+  harnessLifecycle.register({
+    domain: "continuation", enabled: true,
+    stopAdmission: () => {
+      daemonRunnerRecoveryCoordinator?.beginShutdown();
+      userInputDeliveryWorker.beginShutdown();
+      approvalAutoReviewRecoveryCoordinator?.beginShutdown();
+      channelTurnDispatchWorker.beginShutdown();
+      backgroundSchedulers.stopAdmission();
+      automationSchedulers.stopAll();
+    },
+    abortOwned: () => {
+      approvalAutoReviewRecoveryCoordinator?.abortOwned();
+      harnessProjectionReconciler.abortOwned();
+      harnessArtifactRetention.abortOwned();
+    },
+    settle: () => settleHarnessLifetimes([
+      channelTurnDispatchWorker.close(), userInputDeliveryWorker.close(),
+      daemonRunnerRecoveryCoordinator?.waitForIdle() ?? Promise.resolve(),
+      approvalAutoReviewRecoveryCoordinator?.waitForIdle() ?? Promise.resolve(),
+      automationSchedulers.waitForIdle(), backgroundSchedulers.waitForIdle(),
+      providerStartupRefresh.waitForIdle(), harnessProjectionReconciler.waitForIdle(),
+      harnessArtifactRetention.waitForIdle(),
+      networkShutdown ?? Promise.resolve(), remoteAccessShutdown ?? Promise.resolve(),
+    ]),
+  });
+  harnessLifecycle.register({
+    domain: "tool_execution", enabled: true,
+    stopAdmission: () => {
+      storeRegistry.mediaLocalExecutions.stopAdmission();
+      cuaDriverActivationCoordinator.beginShutdown();
+    },
+    abortOwned: async () => {
+      activeRuns.suspendAll("daemon_restart");
+      activeDirectReplies.cancelAll();
+      channelReplyDispatchCoordinator.close();
+      storeRegistry.mediaLocalExecutions.abortOwned();
+      providerImportShutdown = providerImportPreflight.shutdown();
+      void providerImportShutdown.catch(() => undefined);
+      // Keep the established broker-before-controller shutdown order, even if the broker fails.
+      await shutdownAfterNativeBroker(async () => { await chromeBrowserNativeBroker?.close(); }, async () => {
+        controlPlaneEvents.closeAll();
+        computerUsePreviews.closeAll();
+        hostCapabilityBridge.close();
+        cuaDriverDesktopBridgeAuthority.clear();
+        lockedComputerControl?.close();
+        chromeBrowserSessions.close();
+        officeDriverController.close();
+        chromeBrowserWebSocketServer.close();
+        rpcWebSocketServer.close();
+        server.closeAllConnections();
+      });
+    },
+    settle: () => settleHarnessLifetimes([
+      activeRuns.waitForIdle(), cuaDriverActivationCoordinator.shutdown(), providerImportShutdown ?? Promise.resolve(),
+      // A timeout rejects this domain and keeps Stores/leases alive. It is never an idle receipt.
+      storeRegistry.mediaLocalExecutions.waitForIdle(5_000),
+    ]),
+  });
+  harnessLifecycle.register({
+    domain: "evaluation", enabled: resolvedConfig.harness.evaluations.mode !== "off" || dependencies.runEvaluationQaTaskWorker !== undefined,
+    stopAdmission: () => { runEvaluationTaskWorkers.stopAdmission(); runEvaluationScheduler?.beginShutdown(); },
+    abortOwned: () => { runEvaluationTaskWorkers.abortOwned(); runEvaluationScheduler?.abortOwned(); },
+    settle: () => settleHarnessLifetimes([runEvaluationTaskWorkers.waitForIdle(), runEvaluationScheduler?.waitForIdle() ?? Promise.resolve()]),
+  });
+  harnessLifecycle.register({
+    // Ordinary installations stay closed; selected QA workflows use the same
+    // production executor and keep actual child completion in this barrier.
+    domain: "delegation", enabled: delegationRuntimeRegistry.isEnabled(),
+    stopAdmission: () => delegationRuntimeRegistry!.stopAdmission(),
+    abortOwned: () => delegationRuntimeRegistry!.abortOwned(),
+    settle: () => delegationRuntimeRegistry!.settle(),
+  });
+
   const daemon: DaemonServer = {
     server,
     config: resolvedConfig,
@@ -823,6 +981,7 @@ export function createDaemonServer(
     },
     engineManagement: engineManagement.credentials,
     start: async () => {
+      if (harnessShuttingDown) throw new Error("runtime_shutting_down");
       cuaDriverActivationCoordinator.resetForDaemonStart();
       await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
@@ -942,6 +1101,10 @@ export function createDaemonServer(
         recoverApprovals();
         approvalRecoveryTimer = setInterval(recoverApprovals, 10_000);
         approvalRecoveryTimer.unref();
+        harnessProjectionTimer = setInterval(() => {
+          for (const store of harnessProjectionStores) reconcileHarnessProjections(store);
+        }, 10_000);
+        harnessProjectionTimer.unref();
         resumePendingMediaJobExecutions({
           cwd: resolvedConfig.defaultWorkspaceCwd,
           storeRegistry,
@@ -951,69 +1114,20 @@ export function createDaemonServer(
       }, () => daemon.stop());
     },
     stop: async () => {
-      humanEvaluations.close();
-      storeRegistry.mediaLocalExecutions.beginShutdown();
-      if (approvalRecoveryTimer) clearInterval(approvalRecoveryTimer);
-      approvalRecoveryTimer = undefined;
-      daemonRunnerRecoveryCoordinator.beginShutdown();
-      userInputDeliveryWorker.beginShutdown();
-      runEvaluationTaskWorkers.beginShutdown();
-      runEvaluationScheduler.beginShutdown();
-      channelTurnDispatchReady = false;
-      channelTurnDispatchWorker.beginShutdown();
-      activeRuns.suspendAll("daemon_restart");
-      activeDirectReplies.cancelAll();
-      channelReplyDispatchCoordinator.close();
-      backgroundSchedulers.stopAll();
-      automationSchedulers.stopAll();
-      cuaDriverActivationCoordinator.beginShutdown();
-      const providerImportShutdown = providerImportPreflight.shutdown();
-      await remoteAccess.stop();
-      await shutdownAfterNativeBroker(async () => { await chromeBrowserNativeBroker?.close(); }, async () => {
-        await new Promise<void>((resolve, reject) => {
-          controlPlaneEvents.closeAll();
-          computerUsePreviews.closeAll();
-          hostCapabilityBridge.close();
-          cuaDriverDesktopBridgeAuthority.clear();
-          lockedComputerControl?.close();
-          chromeBrowserSessions.close();
-          officeDriverController.close();
-          chromeBrowserWebSocketServer.close();
-          rpcWebSocketServer.close();
-          if (!server.listening) {
-            resolve();
-            return;
-          }
-          server.close((error) => {
-            if (error) {
-              reject(error);
-              return;
-            }
-            resolve();
-          });
-          server.closeAllConnections();
-        });
-        await channelTurnDispatchWorker.close();
-        await userInputDeliveryWorker.close();
-        await automationSchedulers.waitForIdle();
-        await runEvaluationTaskWorkers.waitForIdle();
-        await runEvaluationScheduler.waitForIdle();
-        await providerImportShutdown;
-        await cuaDriverActivationCoordinator.shutdown();
-        await activeRuns.waitForIdle();
-        const engineManagementShutdown = engineManagement.close().then(
-          () => ({ ok: true as const }),
-          (error: unknown) => ({ ok: false as const, error }),
-        );
-        await storeRegistry.mediaLocalExecutions.waitForIdle(5_000);
-        runtimeSupervisor.releaseAll();
-        storeRegistry.closeAll();
-        const engineShutdown = await engineManagementShutdown;
-        if (!engineShutdown.ok) throw engineShutdown.error;
-      });
+      const receipt = await harnessLifecycle.shutdown();
+      if (receipt.status !== "closed") {
+        throw new AggregateError(harnessLifecycle.getFailureCauses().map(failure => failure.error), "harness_shutdown_incomplete_stores_retained");
+      }
     },
   };
   return daemon;
+}
+
+/** Await every actual tail even if another tail fails; keep the original errors for Host diagnosis. */
+async function settleHarnessLifetimes(lifetimes: readonly Promise<unknown>[]): Promise<void> {
+  const settled = await Promise.allSettled(lifetimes);
+  const failures = settled.filter((result): result is PromiseRejectedResult => result.status === "rejected").map(result => result.reason as unknown);
+  if (failures.length) throw new AggregateError(failures, "harness_owned_lifetime_settle_failed");
 }
 
 function readChromeBrowserExtensionIds(value: string | undefined): readonly string[] {

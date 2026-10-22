@@ -8,7 +8,6 @@ import {
   type RunSession,
   type RunStore,
   type RuntimeAttemptFenceV1,
-  type UnifiedExecResult,
 } from "@ling-stack/core";
 import type {
   HarnessMode,
@@ -32,6 +31,7 @@ import {
   type FileMutationRecoveryBasis,
 } from "./executors/file-mutation.js";
 import { recordNativeFileMutationCompletion } from "./native-file-mutation-completion.js";
+import { readBrokerCommandResult, type BrokerCommandResult } from "./broker-command-result.js";
 
 const TOOL_EXECUTION_LEASE_GRACE_MS = 2 * 60 * 1000;
 const DEFAULT_TOOL_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -721,7 +721,7 @@ function finishFromHandledResult(
   execution: HarnessToolExecutionV1,
   handled: PiRunnerToolHandledResult,
 ): void {
-  const result = readUnifiedResult(handled);
+  const result = readUnifiedResult(handled, input);
   const current = input.store.getHarnessToolExecution(execution.id);
   if (!current || isTerminal(current.state)) return;
   const blockers = input.store.listHostCommandWriteBlockers(input.run.cwd)
@@ -738,7 +738,7 @@ function finishFromHandledResult(
     nextState: outcome.state,
     resultDigest: digestHarnessToolValue(result),
     resultSummary: boundedUnifiedResultSummary(result, blockers.map((item) => item.executionId)),
-    evidenceArtifactIds: result.artifacts.map((artifact) => artifact.artifactId),
+    evidenceArtifactIds: result.denied ? [] : result.artifacts.map((artifact) => artifact.artifactId),
     failureCode: outcome.failureCode,
     now: new Date().toISOString(),
   });
@@ -752,7 +752,15 @@ function commitUnknownOutcome(
   error: unknown,
 ): void {
   if (current.state !== "executing" || !current.claimOwner || !current.claimToken) return;
-  const result = durableResult ? readUnifiedResult(durableResult) : undefined;
+  let result: BrokerCommandResult | undefined;
+  if (durableResult) {
+    try { result = readUnifiedResult(durableResult, input); }
+    catch (invalid) {
+      if (!(invalid instanceof Error) || invalid.message !== "tool_executor_result_invalid") throw invalid;
+      // Do not parse the same malformed result again while recording failure.
+      // Without a validated result, retain unknown outcome and its original error.
+    }
+  }
   const finished = input.store.finishHarnessToolExecution({
     executionId: current.id,
     expectedRevision: current.revision,
@@ -764,17 +772,18 @@ function commitUnknownOutcome(
     resultSummary: result
       ? boundedUnifiedResultSummary(result, ["evidence_commit_failed"])
       : { status: "unknown_outcome", reason: "executor_or_evidence_commit_failed" },
-    evidenceArtifactIds: result?.artifacts.map((artifact) => artifact.artifactId) ?? [],
+    evidenceArtifactIds: result && !result.denied ? result.artifacts.map((artifact) => artifact.artifactId) : [],
     failureCode: "tool.unknown_side_effect_outcome",
     now: new Date().toISOString(),
   });
   if (!finished.ok && input.mode === "enforce") throw brokerMutationError("commit_unknown_outcome", finished.code);
 }
 
-function outcomeForUnifiedResult(result: UnifiedExecResult): {
+function outcomeForUnifiedResult(result: BrokerCommandResult): {
   readonly state: "succeeded" | "failed" | "cancelled";
   readonly failureCode?: HarnessToolExecutionFailureCode;
 } {
+  if (result.denied) return { state: "failed", failureCode: "tool.policy_denied" };
   if (result.status === "succeeded") return { state: "succeeded" };
   if (result.cancelled || result.status === "cancelled") {
     return { state: "cancelled", failureCode: "tool.execution_cancelled" };
@@ -785,7 +794,9 @@ function outcomeForUnifiedResult(result: UnifiedExecResult): {
   return { state: "failed", failureCode: "tool.executor_failed" };
 }
 
-function boundedUnifiedResultSummary(result: UnifiedExecResult, blockers: readonly string[]): Readonly<Record<string, unknown>> {
+function boundedUnifiedResultSummary(result: BrokerCommandResult, blockers: readonly string[]): Readonly<Record<string, unknown>> {
+  if (result.denied) return { status: blockers.length ? "unknown_outcome" : "failed", denied: true, reason: result.reason.slice(0, 2_000),
+    ...(blockers.length ? { writeBlockerExecutionIds: blockers } : {}) };
   return {
     status: blockers.length > 0 ? "unknown_outcome" : result.status,
     exitCode: result.exitCode,
@@ -800,10 +811,9 @@ function boundedUnifiedResultSummary(result: UnifiedExecResult, blockers: readon
   };
 }
 
-function readUnifiedResult(handled: PiRunnerToolHandledResult): UnifiedExecResult {
-  const details = handled.details;
-  if (!isRecord(details) || !isRecord(details.unifiedExec)) throw new Error("tool_executor_result_invalid");
-  return details.unifiedExec as unknown as UnifiedExecResult;
+function readUnifiedResult(handled: PiRunnerToolHandledResult, input: HarnessBashToolContext): BrokerCommandResult {
+  return readBrokerCommandResult(handled, { runId: input.run.id, taskId: input.run.taskId,
+    toolCallId: input.request.toolCallId, approvalId: input.approvalId });
 }
 
 function readTimeoutMs(value: unknown): number | undefined {

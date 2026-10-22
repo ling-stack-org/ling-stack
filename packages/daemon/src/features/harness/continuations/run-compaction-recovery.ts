@@ -21,6 +21,8 @@ export function assessRunCompactionRecovery(input: {
     | "listHostCommandWriteBlockers" | "listHostOperationBlockers" | "listEvents">;
   readonly run: RunSession;
   readonly sourceAttempt: WorkUnitAttempt;
+  /** Supplied only after the delegated recovery helper verifies the stopped A/current B edge. */
+  readonly recoveryBookkeepingAttemptId?: string;
   readonly policySnapshot: EffectiveRunPolicySnapshot;
 }): RunCompactionRecoveryAssessment {
   return input.store.readSnapshot(() => {
@@ -62,7 +64,8 @@ export function assessRunCompactionRecovery(input: {
     if (checkpoint.workspaceProvenanceWatermark !== input.store.getLatestWorkspaceProvenanceWatermark()) {
       return blocked("checkpoint.source_watermark_changed", checkpoint.id);
     }
-    if (hasPostCheckpointProgress(input.store, input.run.id, checkpoint, checkpoint.sourceEventSeq === start.seq)) {
+    if (hasPostCheckpointProgress(input.store, input.run, checkpoint, checkpoint.sourceEventSeq === start.seq,
+      input.recoveryBookkeepingAttemptId)) {
       return blocked("checkpoint.effect_unknown", checkpoint.id);
     }
     const effectUnknown = input.store.listHarnessToolExecutions(input.run.id).some((execution) =>
@@ -89,14 +92,16 @@ export function assessRunCompactionRecovery(input: {
 /** An older SDK view cannot replay any progress observed after it was sealed. */
 function hasPostCheckpointProgress(
   store: Pick<RunStore, "listEvents">,
-  runId: string,
+  run: RunSession,
   checkpoint: RunCompactionCheckpointV1,
   requiresInstallEvent: boolean,
+  recoveryAttemptId?: string,
 ): boolean {
   let afterSeq = checkpoint.sourceEventSeq;
   let installed = !requiresInstallEvent;
+  let recoveryStartSeen = false;
   for (;;) {
-    const page = store.listEvents(runId, { afterSeq, limit: 1000 });
+    const page = store.listEvents(run.id, { afterSeq, limit: 1000 });
     for (const event of page) {
       if (!installed && event.type === "context_compaction_end"
         && event.data.attemptId === checkpoint.attemptId && event.data.outcome === "sdk_installed") {
@@ -110,6 +115,16 @@ function hasPostCheckpointProgress(
       if (event.type === "turn_start" || event.type === "turn_end") continue;
       if (event.type === "artifact_created" && isRecord(event.data.artifact)
         && event.data.artifact.id === checkpoint.contextSnapshotArtifactId) continue;
+      if (installed && recoveryAttemptId && !recoveryStartSeen && event.type === "run_start"
+        && event.data.attemptId === recoveryAttemptId && event.data.taskId === run.taskId
+        && event.data.cwd === run.cwd && event.data.provider === run.providerName && event.data.model === run.providerModel) {
+        const keys = Object.keys(event.data).sort().join(",");
+        const hasType = Object.prototype.hasOwnProperty.call(event.data, "type");
+        if (hasType && event.data.type !== "run_start"
+          || keys !== ["attemptId", "taskId", "cwd", "provider", "model", ...(hasType ? ["type"] : [])].sort().join(",")) return true;
+        recoveryStartSeen = true;
+        continue;
+      }
       return true;
     }
     if (page.length < 1000) return !installed;

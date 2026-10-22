@@ -1,7 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 import { isHostCapabilityToolDefinitionV1 } from "@ling-stack/contracts";
 import { redactSecrets, type RunStore, type SkillSourceRuntimeContext } from "@ling-stack/core";
-import { assertPreparedPiTaskInput, readPreparedPiInput, type PiRunnerPreparedInput, type PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import { assertPreparedPiTaskInput, DELEGATION_TOOL_NAMES, readPreparedPiInput,
+  type PiRunnerPreparedInput, type PiRunnerRunOptions } from "@ling-stack/runner-pi";
 import { HttpError } from "../../errors.js";
 import { isRecord } from "../../shared/validation.js";
 import type { RunRequest } from "./schemas.js";
@@ -53,6 +54,7 @@ export function restorePreparedRunnerOptions(
   });
   if (payload.toolHydrationEnabled && !(current.initialToolSurface?.toolHydration ?? Boolean(current.onToolHydrationRequest)) ||
     payload.input.initialToolSurface?.userInput === true && current.initialToolSurface?.userInput !== true ||
+    payload.input.initialToolSurface?.delegation === true && current.initialToolSurface?.delegation !== true ||
     !requiredRuntimeToolFeaturesRemainAvailable(payload.input.runtimeToolFeatures, current.runtimeToolFeatures)) {
     throw new HttpError(409, "prepared_tool_capability_changed", "Prepared runtime tool capabilities changed.");
   }
@@ -106,9 +108,11 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
   }
   if (value.input.initialToolSurface !== undefined) {
     const surface = value.input.initialToolSurface;
-    if (!isRecord(surface) || Object.keys(surface).some(key => !["mediaGeneration", "toolHydration", "userInput"].includes(key)) ||
+    if (!isRecord(surface) || Object.keys(surface).some(key => !["mediaGeneration", "toolHydration", "userInput", "delegation"].includes(key)) ||
       Object.values(surface).some(selected => typeof selected !== "boolean") ||
-      surface.userInput !== undefined && prepared.tools.some(tool => tool.name === "request_user_input") !== surface.userInput) {
+      surface.userInput !== undefined && prepared.tools.some(tool => tool.name === "request_user_input") !== surface.userInput ||
+      prepared.tools.filter(tool => (DELEGATION_TOOL_NAMES as readonly string[]).includes(tool.name)).length
+        !== (surface.delegation === true ? DELEGATION_TOOL_NAMES.length : 0)) {
       throw new Error("Invalid prepared user-input tool surface");
     }
   }

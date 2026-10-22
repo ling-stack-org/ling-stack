@@ -52,6 +52,25 @@ export class SqliteRunEvaluationQaStore implements RunEvaluationQaStore {
     const row = this.context.database.prepare("SELECT * FROM run_evaluation_qa_requests WHERE id=?").get(id);
     return row ? mapQaRequest(row as Row) : undefined;
   }
+  getRunEvaluationQaRequestForTask(taskId: string) {
+    taskIdentity(taskId);
+    const rows = this.context.database.prepare("SELECT * FROM run_evaluation_qa_requests WHERE task_id=? ORDER BY id LIMIT 2").all(taskId);
+    if (rows.length > 1) throw new RunEvaluationInputError("evaluation.task_invalid");
+    if (!rows.length) return undefined;
+    const request = mapQaRequest(rows[0] as Row);
+    const task = this.tasks.getRunEvaluationTask(taskId);
+    const enrollment = this.getRunEvaluationQaEnrollment(taskId);
+    const batch = enrollment ? this.getRunEvaluationQaBatch(enrollment.batchId) : undefined;
+    const scope = this.getRunEvaluationQaScope();
+    if (!task || !enrollment || !batch || !scope
+      || request.taskId !== task.id || request.enrollmentId !== enrollment.id
+      || request.batchId !== enrollment.batchId || request.namespaceId !== batch.namespaceId
+      || batch.namespaceId !== scope.namespaceId || enrollment.evaluationId !== task.evaluationId
+      || enrollment.evaluationKey !== task.evaluationKey) {
+      throw new RunEvaluationInputError("evaluation.task_invalid");
+    }
+    return request;
+  }
   /** Filter the current enrolled batch before LIMIT; unrelated queue prefixes cannot starve it. */
   listClaimableRunEvaluationQaTasks(input: ListClaimableRunEvaluationQaTasksInput) {
     validateQaInput(input, "list");

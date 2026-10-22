@@ -13,6 +13,7 @@ import type { SqliteStoreContext } from "./store-context.js";
 import type { HostMediaExecutionRecord } from "../../host-media-operation-types.js";
 import { HostOfficeLocalJournalGate } from "./host-office-local-journal-gate.js";
 import { assertHostLaunchPreflight } from "./host-launch-preflight.js";
+import { hostAttemptReadScopeForSource } from "./host-attempt-read-scope.js";
 
 interface TicketState {
   readonly source: HostOperationSource;
@@ -252,7 +253,8 @@ export class SqliteHostOperationJournalStore {
   }
   listHostOperationBlockers(source: HostOperationSource, stoppedAt?: string): HostOperationRecord[] {
     const captured = { ...source };
-    return readSqliteSnapshot(this.context.database, () => readHostOperationBlockers(this.context.database, captured, stoppedAt));
+    return readSqliteSnapshot(this.context.database, () => readHostOperationBlockers(this.context.database, captured, stoppedAt,
+      hostAttemptReadScopeForSource(this.context.database, captured)));
   }
 
   /** Internal Media facts preparation, with both original private capabilities under one writer lock. */
@@ -479,9 +481,9 @@ function isNativeNoActiveRollback(error: unknown): boolean {
 
 /** Caller-owned write transaction, used by both yield and answer-delivery claim. */
 export function readHostOperationBlockers(database: SqliteStoreContext["database"], source: HostOperationSource,
-  stoppedAt?: string): HostOperationRecord[] {
+  stoppedAt?: string, scope: import("./host-attempt-read-scope.js").HostAttemptReadScope = "whole_run"): HostOperationRecord[] {
   if (stoppedAt) hostOperationTimestamp(stoppedAt);
-  const operations = readSourceHostOperations(database, source);
+  const operations = readSourceHostOperations(database, source, scope, stoppedAt);
   for (const operation of operations) {
     if (operation.parentOperationId) {
       const parent = readHostOperation(database, operation.parentOperationId);

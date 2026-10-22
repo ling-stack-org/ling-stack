@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { ApplyProposedPlanArtifactActionInput, ProposedPlanArtifactActionResult } from "./proposed-plan-mutation.js";
 import type { NativeExecutionStore } from "./native-execution-types.js";
+import type { HarnessArtifactRetentionStore, HarnessProjectionStore } from "./harness/reliability.js";
+import type { DelegationCompletionEvidenceV1, GetDelegationCompletionEvidenceInput } from "./delegation-completion-evidence.js";
 import type {
   ConversationItemV1,
   CompactionCheckpoint,
@@ -1462,6 +1464,8 @@ export interface RunArtifact {
   readonly contentType?: string;
   readonly sizeBytes?: number;
   readonly sealedPayload?: unknown;
+  /** Present only after Host-authorized body GC; contentSha256 remains unchanged. */
+  readonly sealedPayloadState?: "pruned";
   readonly contentSha256?: string;
   readonly createdAt: string;
 }
@@ -1558,7 +1562,8 @@ export interface ClaimSnapshotRestoreFenceInput {
   readonly now: string;
 }
 
-export interface RunStore extends NativeExecutionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
+export interface RunStore extends NativeExecutionStore, HarnessProjectionStore, HarnessArtifactRetentionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
+  getDelegationCompletionEvidence(input: GetDelegationCompletionEvidenceInput): DelegationCompletionEvidenceV1;
   listApprovalPostCommitEffects(options?: {
     readonly approvalId?: string;
     readonly status?: import("./approval-postcommit-types.js").ApprovalPostCommitEffectStatus;
@@ -1815,6 +1820,7 @@ export interface RunStore extends NativeExecutionStore, DelegationQueryStore, Ha
   listWorkspaceMutationRecords(options?: ListWorkspaceMutationRecordsOptions): WorkspaceMutationRecord[];
   getLatestWorkspaceProvenanceWatermark(workspaceId?: string): string;
   commitRunProgressCheckpoint(input: import("./run-progress-checkpoint-types.js").CommitRunProgressCheckpointInput): import("./run-progress-checkpoint-types.js").CommitRunProgressCheckpointResult;
+  listPendingDelegationInstructionIds(input: import("./run-progress-checkpoint-types.js").ListPendingDelegationInstructionsInput): readonly string[];
   readRunProgressCheckpointForRecovery(input: import("./run-progress-checkpoint-types.js").ReadRunProgressCheckpointForRecoveryInput): import("./run-progress-checkpoint-types.js").ReadRunProgressCheckpointForRecoveryResult;
   createCompactionCheckpoint(input: CreateCompactionCheckpointInput): CompactionCheckpoint;
   getCompactionCheckpoint(id: string): CompactionCheckpoint | undefined;

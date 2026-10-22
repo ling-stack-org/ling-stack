@@ -918,6 +918,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/harness/evaluations/human-evaluation-service.ts",
   "packages/daemon/src/features/harness/index.ts",
   "packages/daemon/src/features/harness/tool-execution/broker.ts",
+  "packages/daemon/src/features/harness/tool-execution/broker-command-result.ts",
   "packages/daemon/src/features/harness/tool-execution/executors/file-mutation.ts",
   "packages/daemon/src/features/harness/tool-execution/native-file-mutation-completion.ts",
   "packages/daemon/src/features/harness/tool-execution/recovery.ts",

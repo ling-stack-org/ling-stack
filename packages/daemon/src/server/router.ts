@@ -1808,6 +1808,7 @@ export async function routeRequest(
             computerUsePreviews,
             hostCapabilityBridge,
             nativeRunDispatcher,
+            enableUserInputPause: true,
           },
         ).then(resolveOnce, () => resolveOnce(undefined));
       });

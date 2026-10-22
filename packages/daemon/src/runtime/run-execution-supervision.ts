@@ -25,6 +25,8 @@ export function createRunExecutionSupervision(input: {
   readonly now?: () => string;
   readonly retainAuthority?: () => boolean;
   readonly waitingForContinuation?: () => boolean;
+  /** Frozen tree deadline: unlike a task timeout, approval/pauses never extend it. */
+  readonly absoluteDeadlineAt?: string;
 }): RunExecutionSupervision {
   const { store, runId, workUnit, attempt, activeRuns, signal } = input;
   const now = input.now ?? (() => new Date().toISOString());
@@ -37,6 +39,12 @@ export function createRunExecutionSupervision(input: {
   let started = false;
   let stopped = false;
   let hardTimer: ReturnType<typeof setTimeout> | undefined;
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  const absoluteDeadline = input.absoluteDeadlineAt === undefined ? undefined : Date.parse(input.absoluteDeadlineAt);
+  if (absoluteDeadline !== undefined && (!Number.isFinite(absoluteDeadline)
+    || new Date(absoluteDeadline).toISOString() !== input.absoluteDeadlineAt)) throw new TypeError("Invalid execution absolute deadline");
+  const deadlineMonotonicStart = performance.now();
+  const deadlineBudgetMs = absoluteDeadline === undefined ? undefined : Math.max(0, absoluteDeadline - Date.parse(now()));
 
   const heartbeat = (source: "supervisor" | "runner" = "supervisor", detail?: unknown): void => {
     const ts = now();
@@ -61,6 +69,20 @@ export function createRunExecutionSupervision(input: {
     activeRuns.requestStop(runId, { kind: "runtime_failure", code, reason });
   };
   const clearHard = (): void => { if (hardTimer !== undefined) clearTimeout(hardTimer); hardTimer = undefined; };
+  const clearDeadline = (): void => { if (deadlineTimer !== undefined) clearTimeout(deadlineTimer); deadlineTimer = undefined; };
+  const scheduleDeadline = (): void => {
+    if (absoluteDeadline === undefined || deadlineBudgetMs === undefined || stopped || signal.aborted) return;
+    const remaining = Math.min(absoluteDeadline - Date.parse(now()),
+      deadlineBudgetMs - Math.max(0, performance.now() - deadlineMonotonicStart));
+    deadlineTimer = setTimeout(() => {
+      deadlineTimer = undefined;
+      if (stopped || retained() || signal.aborted) return;
+      if (Date.parse(now()) >= absoluteDeadline || performance.now() - deadlineMonotonicStart >= deadlineBudgetMs) {
+        requestAbort("hard_timeout", "delegation.deadline_exceeded");
+      } else scheduleDeadline();
+    }, Math.max(1, Math.min(remaining, 2_147_483_647)));
+    deadlineTimer.unref?.();
+  };
   const account = (): void => {
     const monotonic = performance.now();
     if (started) remainingMs -= Math.max(0, monotonic - activeSince);
@@ -116,11 +138,12 @@ export function createRunExecutionSupervision(input: {
     if (performance.now() - lastActivityAt > current.timeoutPolicy.idleTimeoutMs) requestAbort("idle_timeout");
   }, workUnit.timeoutPolicy.heartbeatIntervalMs);
   heartbeatTimer.unref?.();
+  scheduleDeadline();
 
   return {
     start() { started = true; activeSince = performance.now(); clearHard(); scheduleHard(); },
     activity() { lastActivityAt = performance.now(); }, heartbeat, pause, resume, approvalWaitChanged, requestAbort,
-    stopWatchdogs() { stopped = true; clearHard(); },
-    dispose() { stopped = true; clearHard(); clearInterval(heartbeatTimer); },
+    stopWatchdogs() { stopped = true; clearHard(); clearDeadline(); },
+    dispose() { stopped = true; clearHard(); clearDeadline(); clearInterval(heartbeatTimer); },
   };
 }

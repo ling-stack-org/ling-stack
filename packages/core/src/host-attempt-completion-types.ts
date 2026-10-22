@@ -18,6 +18,11 @@ export interface HostAttemptEffectInventory {
     readonly toolCallId: string;
     readonly toolName: "read" | "grep" | "find" | "ls";
   }[];
+  /** Host-completed delegation calls; mutating members are reverified against immutable Core facts. */
+  readonly settledDelegationCalls?: readonly {
+    readonly toolCallId: string;
+    readonly toolName: "spawn_agent" | "send_message" | "wait_agent" | "interrupt_agent" | "resume_agent";
+  }[];
 }
 
 export interface NativeAttemptEffectInventory {

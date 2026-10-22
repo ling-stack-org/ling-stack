@@ -1,6 +1,6 @@
 # H10 Delegation Writer 详细设计
 
-状态：设计冻结，等待分阶段实现。  
+状态：设计冻结，已有分阶段实现候选，等待当前组合验证和真实客户端验收。
 范围：H10 root budget authority、delegation writer、reservation/settlement；以及必须预留的 H11/H12 接缝。  
 不代表：dynamic child 已启用、G19/G20 已通过、H11/H12 已完成，或 packaged macOS 已验收。
 
@@ -145,9 +145,10 @@ settleDelegatedChild(input): DelegationBudgetReservation
 
 H10 不在 public `RunStore` 暴露可由普通 route 直接传 raw JSON 的宽 mutation API。
 
-## 5. Migration 169 候选结构
+## 5. Migration 176 候选结构
 
-提交前必须重新检查 migration head；本文记录时 head 为 168，169 仅是候选。
+最初设计在 head 168 上预留 169；整合原生执行引擎后已顺延为 176（T13B 为 177）。
+禁止修改既有 migration 154；提交前仍应重新检查 migration head 与 startup assertions。
 
 ### 5.1 `delegation_root_budgets`
 
@@ -402,7 +403,8 @@ artifact id + digest”作为新 authority。
 
 1. 使用 pure authority helper 计算 effective child budget/deadline；
 2. 校验 price scope；
-3. 计算直接 parent allocation 的已用、active reservation 和 unresolved contribution；
+3. 从直接 parent 沿 `parentReservationId` 逐级校验每个祖先 allocation 的已用、
+   active reservation 和 unresolved contribution，不能漏掉中间层；
 4. 同时校验 root ledger；
 5. 任一 token/cost/time 维度超限即 rollback；
 6. 创建 reservation row。
@@ -460,6 +462,60 @@ Runner。Runner 的真实 start 被 Host 接受时，一个 start commit 完成�
 - daemon restart：SQLite state/lease 为权威，EventHub 只负责唤醒；
 - stale child Attempt completion 不能终结 step 或 parent workflow。
 
+### 8.4 interruption overlay 与 Attempt 读取范围
+
+中断不等于取消逻辑任务。Host 把 child WorkUnit/Attempt 置为 cancelling，并保存绑定
+parent fence、child source fence 和 call id 的 sealed control message；child Run 保持 running。
+只有原始 Host lifetime 已 drained、工具与 native effect journals 已逐项重验、durable
+quiescence 已成立，才允许物理 Attempt/WorkUnit cancelled、step interrupted，并释放该
+Attempt 的资源。该例外仅允许资源清理，不赋予执行、resume 或成功权限。
+
+resume 在同事务中再次验证当前 parent fence、冻结权限与当前撤权、绝对 deadline，
+新建单调 fence 的 Attempt。child Run 和 reservation/deadline 不变；新 Attempt 仍需要
+真实 adapter acceptance 才能从 resuming 进入 running。
+
+现有 reader 默认保留 whole-run fail-closed 行为。仅真实 committed delegation ownership
+可采用 exact-attempt scope；排除旧 Attempt 的 facts 前，必须验证原始 owner/fence、
+terminal Attempt、原始 drained lifetime，并继续验证旧 receipts/journal。不能通过 SQL
+只筛当前 attempt 而遗忘 orphan、pending、unknown 或 stale 历史。
+
+### 8.5 late acceptance 与拒收停止
+
+claim replay 是观察，不重新 dispatch。adapter Promise 完成不等于已启动；只有实际
+acceptance callback 能提交 start。callback 失败、被 adapter 吞掉异常或 Promise 结束后
+晚到的 acceptance，都由 coordinator exact-once 持有物理 stop Promise；shutdown/recovery
+必须等待 drainRejectedStarts，失败不能吞掉，也不能伪造 no-dispatch 退款。
+
+### 8.6 原始准备工件与真实 Pi ACK
+
+执行准备沿用现有 Run orchestrator 的 policy、工具、secret rebinding 和 SDK preflight；
+不建立第二个 Runner loop。Host 在第一次模型调用前提交唯一 child-owned
+`delegation.execution.v1` sealed artifact，内容包括原始第一个 Attempt fence、
+non-secret request、实际 SDK prepared input、effective policy 和准备时间。
+
+- private factory 的 preparation token 经 constructor reader 验真；普通 JSON、复制 token、
+  同形 reader 和另一 factory 的 token 均不能作为准备权威。
+- Core `commitDelegatedChildStart` 强制验证原始准备工件，不能仅凭 start observation
+  绕过准备。工件缺失或冲突时保持 claimed/unknown，不自动补造新输入或重新 dispatch。
+- 真实接收点为 `PiRunnerRunOptions.onPreparedInputAccepted` 的 `pi-session-ready` ACK：
+  精确核对 Run、当前 Attempt、Task、SDK fingerprint、完整 non-secret Provider descriptor、
+  deadline，以及接收时仍 current 的 fence 与 sealed artifact。
+- 一次 callback 已尝试后，不允许因 COMMIT 失败、回调中取消或重复 ACK 再次执行模型；
+  由现有 orchestrator 持有 physical stop/drain，未证实停止则保留不确定状态和预留。
+- resume 仍读取第一个 Attempt 的原始准备工件，ACK 绑定新的单调 Attempt；
+  nested child 的继承输入来自父 child 原始准备工件，不来自后来聊天或 minimal request。
+- inline Provider 凭据及 headers 不入工件；每个 child 的真实 Provider 原件必须由
+  同一 Host composition 单独绑定，不能拿 root 的 Provider 引用冒充 child 准入。
+- SDK prepared input 的 fingerprint 绑定其原始 JSON 属性顺序。仅
+  `delegation.execution.v1` 使用保序的 data-only 序列化和字节 SHA-256：先拒绝
+  getter、Proxy、函数及 `toJSON` 等非纯数据，再保留原始 `JSON.stringify`
+  顺序入库与读回核验；不得排序其嵌套键，也不得为迁就排序结果重算 SDK fingerprint。
+  预算、控制、结果等其他工件仍保留既有 canonical JSON，不扩大例外。
+
+当前 prepared-input receiver 和低层事务测试只是实现候选。读取初始 prompt 不等于
+恢复已执行工具之后的 transcript；在完整 continuation/停止/恢复/汇合及 packaged
+验收通过前，动态 producer 仍关闭，不得把重新 prompt 说成无重复执行的恢复。
+
 ## 9. H12 精确接缝
 
 H12 读取原子 delegation facts，不读取 UI batch 数量或模型总结：
@@ -471,6 +527,17 @@ H12 读取原子 delegation facts，不读取 UI batch 数量或模型总结：
   仍是 outstanding child，不能被 fan-in 漏掉；
 - accepted workflow graph 保持不变，delegation tree 作为 completion overlay；
 - TerminalReport lineage 指向 step、reservation、child Run、Attempt 和 evidence refs。
+
+terminal producer 必须与 step 终态同事务创建 child-owned sealed `delegation.result.v1`
+artifact 和唯一的 `child_to_parent/result` message。payload 包括 step/reservation/root/
+parent/child identity、完整当前 source fence、真实 outcome、settlementDigest，以及固定三类
+原子引用：Host attempt completion、settled budget reservation、该 child Run 所有
+measured/cancelled-before-dispatch Provider charge。引用用原始记录的稳定 digest，不能从
+模型文本、UI batch 或任意 caller refs 生成。
+
+fan-in reader 必须独立重读这些原子事实、重新计算 completion coverage/quiescence 与 refs。
+终态 step 缺结果、重复结果、unknown charge、stale fence 或 digest 不符均 fail closed；
+不能在 restart 后仅根据终态 UI 回填成功结果。
 
 ## 10. 稳定错误码
 

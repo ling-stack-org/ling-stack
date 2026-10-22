@@ -59,6 +59,10 @@ export function validateTerminalReportEvidenceSnapshot(snapshot: TerminalReportE
   if (!snapshot.objective.trim() || !isIsoTimestamp(snapshot.terminalAt) || !isIsoTimestamp(snapshot.generatedAt)) {
     issues.push(issue("terminal_report_schema_invalid", "snapshot", "Snapshot objective or timestamps are invalid."));
   }
+  if (snapshot.delegationCompletionFingerprint !== undefined
+    && !/^[a-f0-9]{64}$/u.test(snapshot.delegationCompletionFingerprint)) {
+    issues.push(issue("terminal_report_schema_invalid", "snapshot.delegationCompletionFingerprint", "Delegation completion fingerprint is invalid."));
+  }
   const expectedFingerprint = computeTerminalReportEvidenceFingerprint(snapshot);
   if (snapshot.evidenceFingerprint !== expectedFingerprint) {
     issues.push(issue("terminal_report_fingerprint_mismatch", "snapshot.evidenceFingerprint", "Snapshot fingerprint does not match its evidence body."));

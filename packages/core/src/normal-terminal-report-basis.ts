@@ -5,6 +5,7 @@ import { readNormalTerminalToolBarrier, type UnsettledNormalTool } from "./norma
 export type NormalTerminalReportReadStore = Pick<RunStore,
   | "getLingTurn" | "getLingTurnForRun" | "getLingThread" | "listLingTurnRuns"
   | "getConversationItem" | "getRun" | "listEvents" | "listApprovalRequests" | "listArtifacts"
+  | "getDelegationCompletionEvidence"
 >;
 
 export interface NormalTerminalReportBasis {
@@ -17,6 +18,7 @@ export interface NormalTerminalReportBasis {
   readonly effectiveRunId: string;
   readonly effectiveRunStatus: string;
   readonly successAllowed: boolean;
+  readonly delegationSuccessAllowed: boolean;
   readonly runIds: readonly string[];
   readonly settled: boolean;
   /** Non-success publication only; never proof of tool/process settlement. */
@@ -54,8 +56,11 @@ export function captureNormalTerminalReportBasis(
   if (!effectiveRun) return undefined;
   const currentValidationIds = new Set(links.filter((link) => link.role === "validation"
     && link.attemptNumber > effectiveLink!.attemptNumber).map((link) => link.runId));
+  const currentSuccessRunIds = [effectiveRun.id, ...currentValidationIds];
+  const delegations = store.getDelegationCompletionEvidence({ rootRunIds: currentSuccessRunIds });
   const successAllowed = effectiveRun.status === "succeeded"
-    && runs.filter((run) => run && currentValidationIds.has(run.id)).every((run) => run?.status === "succeeded");
+    && runs.filter((run) => run && currentValidationIds.has(run.id)).every((run) => run?.status === "succeeded")
+    && delegations.status === "satisfied";
   let settled = terminal(turn.status) && !turn.activeRunId;
   let failurePublicationAllowed = ["failed", "cancelled", "blocked"].includes(turn.status)
     && !turn.activeRunId && !successAllowed;
@@ -79,11 +84,15 @@ export function captureNormalTerminalReportBasis(
   return {
     source, workspaceId: turn.workspaceId, threadId: thread.id, turnId: turn.id, sourceItemId: item.id,
     turnStatus: turn.status, effectiveRunId: effectiveRun.id, effectiveRunStatus: effectiveRun.status, successAllowed,
+    delegationSuccessAllowed: delegations.status === "satisfied",
     runIds: links.map((link) => link.runId), settled, failurePublicationAllowed, unsettledTools,
     // Publication changes the thread sequence; unrelated later turns must not
     // invalidate this Turn's result. Only stable thread scope belongs here.
     fingerprint: fingerprint({ source, thread: { id: thread.id, kind: thread.kind, workspaceId: thread.workspaceId,
-      channelId: thread.channelId }, turn, item, links, evidence }),
+      channelId: thread.channelId }, turn, item, links, evidence,
+      // No dynamic work preserves the static fingerprint. Required descendants
+      // and their original facts participate in the publication CAS, not UI batches.
+      ...(delegations.steps.length || delegations.issues.length ? { delegations } : {}) }),
   };
 }
 

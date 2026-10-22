@@ -373,7 +373,15 @@ export class MediaLocalExecutionRegistry {
   }
 
   beginShutdown(): void {
+    this.stopAdmission();
+    this.abortOwned();
+  }
+
+  stopAdmission(): void {
     this.#shutdown = true;
+  }
+
+  abortOwned(): void {
     for (const entry of this.#active) this.#stop(entry, "shutdown");
     this.#notify();
   }

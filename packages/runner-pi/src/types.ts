@@ -77,6 +77,55 @@ export interface PiRunnerProviderInvocationSettledReceipt extends PiRunnerProvid
   readonly errorDiagnostic?: PiProviderErrorDiagnostic;
 }
 
+/** Host-private hard budget gate. Unlike invocation observers, failures stop execution. */
+export interface PiRunnerProviderBudgetRequest {
+  readonly invocationId: string;
+  readonly taskId: string;
+  readonly runId: string;
+  readonly attemptId: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly api: string;
+  readonly contextWindowTokens: number;
+  readonly maxOutputTokens: number;
+  readonly payloadSha256: string;
+  /** Frozen actual adapter payload; private Host memory only, never persisted/logged wholesale. */
+  readonly payload: unknown;
+}
+
+export interface PiRunnerProviderBudgetReservation {
+  readonly reservationId: string;
+  /** Actual adapter/Host upper bounds, never the projected-context estimate. */
+  readonly reservedTokens?: number;
+  readonly reservedCostMicros?: number;
+}
+
+export interface PiRunnerProviderBudgetIdentity {
+  readonly invocationId: string;
+  readonly reservationId: string;
+  readonly runId: string;
+  readonly attemptId: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly api: string;
+}
+
+/** Constructor-only capability: never hydrate these functions from a Run snapshot or model DTO. */
+export interface PiRunnerProviderBudgetPort {
+  readonly requiresTokenUpperBound: boolean;
+  readonly requiresCostUpperBound: boolean;
+  /** Must reserve durably and synchronously before a Provider may send. Async functions are rejected. */
+  readonly reserve: (request: PiRunnerProviderBudgetRequest) => PiRunnerProviderBudgetReservation;
+  readonly settle: (receipt: PiRunnerProviderBudgetIdentity & {
+    readonly outcome: "succeeded" | "provider_error";
+    readonly usage: PiRunnerTokenUsage;
+  }) => void;
+  /** Unknown/cancelled is retained liability, never cancelled_before_dispatch or a refund. */
+  readonly settleUnknown: (receipt: PiRunnerProviderBudgetIdentity & {
+    readonly outcome: "unknown" | "cancelled" | "local_rejected";
+  }) => void;
+}
+
 export interface PiRunnerApprovalRequest {
   readonly toolCallId: string;
   readonly toolName: PiRunnerApprovalToolName;
@@ -327,6 +376,29 @@ export interface PiRunnerUserInputYieldDirective {
   readonly requestVersion: number;
 }
 
+/** Core-sealed parent instruction. Extra identity fields are private Runner metadata, not model-authored authority. */
+export interface PiRunnerDelegationInstructionMessage {
+  readonly role: "user";
+  readonly content: string;
+  readonly timestamp: number;
+  readonly delegationInstruction: {
+    readonly messageId: string;
+    readonly digest: string;
+  };
+}
+
+/** Inject only the exact Host-committed instruction batch at its SDK transcript boundary. */
+export interface PiRunnerDelegationInstructionDirective {
+  readonly kind: "delegation_instructions";
+  readonly schemaVersion: 1;
+  readonly insertAfterMessageCount: number;
+  readonly messages: readonly PiRunnerDelegationInstructionMessage[];
+}
+
+export type PiRunnerTaskContinuationDirective =
+  | PiRunnerUserInputYieldDirective
+  | PiRunnerDelegationInstructionDirective;
+
 /** Host persistence receipt only; optional questions do not stop execution. */
 export interface PiRunnerUserInputOptionalReceipt {
   readonly kind: "user_input_optional";
@@ -359,6 +431,21 @@ export interface PiRunnerOrdinaryProgressRecovery {
   readonly modelView: readonly unknown[];
 }
 
+export type PiRunnerDelegationToolName = "spawn_agent" | "send_message" | "wait_agent" | "interrupt_agent" | "resume_agent";
+/** Closed, model-visible receipt. Host runtime/custody and private artifacts never cross this boundary. */
+export interface PiRunnerDelegationToolResult {
+  readonly status: string;
+  readonly reservationId?: string;
+  readonly childRunId?: string;
+  readonly stepId?: string;
+  readonly code?: string;
+  readonly state?: string;
+  readonly messageId?: string;
+  readonly timedOut?: boolean;
+  readonly stepRevision?: number;
+  readonly [key: string]: unknown;
+}
+
 export interface PiRunnerRunOptions {
   /** Host-only, memory-sealed observation from the actual SDK execution. */
   readonly onToolBoundaryObservation?: (receipt: import("./tool-boundary-observation.js").PiToolBoundaryObservation) => void;
@@ -368,6 +455,8 @@ export interface PiRunnerRunOptions {
     readonly toolHydration: boolean;
     /** Schema-only preparation is permitted; execution still requires the live Host handler. */
     readonly userInput?: boolean;
+    /** Original Host registry selection; callback presence alone never enables schema preparation. */
+    readonly delegation?: boolean;
   };
   /** Host-owned preparation evidence; never a permission grant or a session history. */
   readonly preparedInput?: PiRunnerPreparedInput;
@@ -423,6 +512,8 @@ export interface PiRunnerRunOptions {
   readonly onProviderInvocationAdmitted?: (receipt: PiRunnerProviderInvocationAdmittedReceipt) => void;
   /** Observe the same logical stream's outcome without consuming model events. */
   readonly onProviderInvocationSettled?: (receipt: PiRunnerProviderInvocationSettledReceipt) => void;
+  /** Independent hard authority gate; observer callbacks above are never budget authorization. */
+  readonly providerBudget?: PiRunnerProviderBudgetPort;
   /** Host authority check for every tool, including tools outside the approval catalog. */
   readonly onToolBefore?: (request: {
     readonly toolCallId: string;
@@ -444,13 +535,21 @@ export interface PiRunnerRunOptions {
     boundary: "before_agent_start" | "before_provider_request" | "tool_call",
     /** Host-only SDK view at provider admission; never serialized as a RunEvent. */
     modelView?: readonly unknown[],
-  ) => Promise<void | PiRunnerUserInputYieldDirective>;
+  ) => Promise<void | PiRunnerTaskContinuationDirective>;
+  /** Internal failure latch because Pi reports some context-hook failures and continues. */
+  readonly onTaskContinuationDirectiveFailure?: (error: unknown) => never;
   /** Internal opt-in. Production must install the complete Host pause/answer chain first. */
   readonly onUserInputRequest?: (request: {
     readonly toolCallId: string;
     /** Untrusted questions only. Scope, identity, fence and stop proof belong to Host. */
     readonly input: unknown;
   }) => PiRunnerUserInputRequestReceipt | Promise<PiRunnerUserInputRequestReceipt>;
+  readonly onDelegationToolCall?: (request: {
+    readonly toolName: PiRunnerDelegationToolName;
+    readonly toolCallId: string;
+    /** Untrusted objective/control parameters; parent scope and fence are Host-captured. */
+    readonly input: unknown;
+  }) => PiRunnerDelegationToolResult | Promise<PiRunnerDelegationToolResult>;
   readonly onMcpToolCall?: (request: PiRunnerMcpToolCallRequest) => PiRunnerMcpToolCallResult | Promise<PiRunnerMcpToolCallResult>;
   readonly onMediaGenerationToolCall?: (
     request: PiRunnerMediaGenerationToolCallRequest,

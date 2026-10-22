@@ -28,7 +28,7 @@ import {
 import type { ChannelIntentExecutionOperationV1 } from "@ling-stack/contracts";
 import { formatSynchronousCatalogMessage, isSupportedLocale } from "@ling-stack/localization";
 import { listAllExecutionActionsForRun } from "../runs/execution-actions.js";
-import { isWorkspaceDeliverableArtifact } from "../runs/public-artifacts.js";
+import { isWorkspaceDeliverableArtifact, projectConversationArtifacts } from "../runs/public-artifacts.js";
 import { redactEvidenceText } from "./context-processing/evidence.js";
 import { inferUserLanguage } from "./response-language.js";
 import { boundedMarkdownText } from "./markdown-text.js";
@@ -36,6 +36,7 @@ import { buildWorkflowEvidence } from "./workflow-evidence.js";
 import { verifyWorkflowStepExecutionOperations } from "./workflow-operation-evidence.js";
 import { collectTerminalInterruptionRisks, terminalReportFailureSummary } from "./terminal-report-interruption-risks.js";
 import { extractWorkflowStepChangedPaths } from "./workflow-step-packets.js";
+import { collectTerminalReportDelegationEvidence, type TerminalReportDelegationEvidence } from "./terminal-report-delegation-evidence.js";
 
 export interface TerminalReportEvidenceBudgets {
   readonly steps: number;
@@ -72,7 +73,19 @@ export function collectWorkflowTerminalReportEvidence(
   workflowId: string,
   options: TerminalReportEvidenceCollectionOptions = {},
 ): TerminalReportEvidenceSnapshot {
+  return store.readSnapshot(() => collectWorkflowEvidenceWithinSnapshot(store, workflowId, options));
+}
+
+function collectWorkflowEvidenceWithinSnapshot(
+  store: RunStore,
+  workflowId: string,
+  options: TerminalReportEvidenceCollectionOptions,
+): TerminalReportEvidenceSnapshot {
   const evidence = buildWorkflowEvidence(store, workflowId);
+  const delegations = collectTerminalReportDelegationEvidence(store, {
+    rootRunIds: evidence.steps.flatMap(item => item.step.runId ? [item.step.runId] : []),
+    workspaceId: evidence.workflow.workspaceId, channelId: evidence.workflow.channelId,
+  });
   const sourceTerminalState = workflowTerminalState(evidence.workflow.status);
   const configuredLanguage = evidence.workflow.metadata?.responseLanguage;
   const language = options.language ?? (isSupportedLocale(configuredLanguage)
@@ -112,7 +125,7 @@ export function collectWorkflowTerminalReportEvidence(
   const participants = aggregateWorkflowParticipants(store, evidence, budgets.summaryCharacters);
   const risks = [...interruptionRisks, ...collectWorkflowRisks(evidence, checks, budgets.summaryCharacters)];
 
-  return finalizeSnapshot({
+  return finalizeSnapshotWithDelegations(store, delegations, {
     workspaceId: evidence.workflow.workspaceId,
     surface: "channel",
     channelId: evidence.workflow.channelId,
@@ -120,17 +133,19 @@ export function collectWorkflowTerminalReportEvidence(
     source: { kind: "workflow", id: evidence.workflow.id },
     objective: boundedMarkdownEvidenceText(evidence.workflow.objective || evidence.workflow.title, budgets.summaryCharacters),
     language,
-    terminalState,
+    terminalState: delegationTerminalState(terminalState, delegations),
     terminalAt: evidence.workflow.updatedAt,
-    steps,
+    steps: [...steps, ...delegations.steps],
     operations,
     checks,
-    participants,
+    participants: mergeDelegationParticipants(participants, delegations.participants),
     artifacts,
     approvals,
-    risks,
+    risks: [...risks, ...delegations.risks],
+    ...delegationFingerprint(delegations),
     references: [
       sourceRef,
+      ...delegations.references,
       ...(evidence.workflow.metadata?.sourceMessageId
         ? [sourceRefFor("message", evidence.workflow.metadata.sourceMessageId, "Source message")]
         : []),
@@ -143,6 +158,14 @@ export function collectRunTerminalReportEvidence(
   runId: string,
   options: TerminalReportEvidenceCollectionOptions = {},
 ): TerminalReportEvidenceSnapshot {
+  return store.readSnapshot(() => collectRunEvidenceWithinSnapshot(store, runId, options));
+}
+
+function collectRunEvidenceWithinSnapshot(
+  store: RunStore,
+  runId: string,
+  options: TerminalReportEvidenceCollectionOptions,
+): TerminalReportEvidenceSnapshot {
   const run = store.getRun(runId);
   if (!run) {
     throw new Error(`Run not found for terminal report evidence: ${runId}`);
@@ -151,6 +174,11 @@ export function collectRunTerminalReportEvidence(
   const turn = store.getLingTurnForRun(run.id);
   const thread = turn ? store.getLingThread(turn.threadId) : run.threadId ? store.getLingThread(run.threadId) : undefined;
   const task = store.getTask(run.taskId);
+  const delegationRootIds = turn && thread?.kind === "conversation" && !run.channelId
+    ? currentTurnDelegationRootIds(store.listLingTurnRuns(turn.id)) : [run.id];
+  const delegations = collectTerminalReportDelegationEvidence(store, { rootRunIds: delegationRootIds,
+    workspaceId: turn?.workspaceId ?? thread?.workspaceId ?? "workspace_default",
+    channelId: run.channelId ?? turn?.channelId ?? thread?.channelId, threadId: turn?.threadId ?? run.threadId });
   const budgets = resolveBudgets(options.budgets);
   const sourceRef = sourceRefFor("run", run.id, task?.title ?? turn?.title ?? "Run");
   const artifactsRaw = store.listArtifacts(run.id);
@@ -170,7 +198,7 @@ export function collectRunTerminalReportEvidence(
     ? undefined
     : readRunAssistantSummary(store, run.id, budgets.summaryCharacters) ?? terminalReportFailureSummary(run, language);
 
-  return finalizeSnapshot({
+  return finalizeSnapshotWithDelegations(store, delegations, {
     workspaceId: turn?.workspaceId ?? thread?.workspaceId ?? "workspace_default",
     surface: surfaceForThread(thread?.kind, run.channelId),
     channelId: run.channelId ?? turn?.channelId ?? thread?.channelId,
@@ -180,7 +208,7 @@ export function collectRunTerminalReportEvidence(
     source: { kind: "run", id: run.id },
     objective: boundedMarkdownEvidenceText(workflowStep?.prompt || task?.prompt || task?.title || turn?.userInstruction || turn?.title || "Complete the run.", budgets.summaryCharacters),
     language,
-    terminalState,
+    terminalState: delegationTerminalState(terminalState, delegations),
     terminalAt: run.endedAt ?? run.updatedAt,
     steps: [{
       id: `run-step:${run.id}`,
@@ -193,10 +221,10 @@ export function collectRunTerminalReportEvidence(
       changedPaths,
       artifactIds: artifactsRaw.map((artifact) => artifact.id),
       sourceRefs: uniqueRefs([sourceRef, ...artifactsRaw.filter(isWorkspaceDeliverableArtifact).map((artifact) => artifactRef(artifact))]),
-    }],
+    }, ...delegations.steps],
     operations: executedActions.map((action) => mapOperation(action, artifactsById, budgets.summaryCharacters, run.cwd)),
     checks: executedActions.filter(isCheckAction).map((action) => mapCheck(action, budgets.summaryCharacters, { interruptionRisks })),
-    participants: run.teammateId && runHasAgentActivity(store, run) ? [{
+    participants: mergeDelegationParticipants(run.teammateId && runHasAgentActivity(store, run) ? [{
       agentId: run.teammateId,
       displayName: teammate?.displayName ?? run.teammateId,
       roleKey: teammate?.roleKey,
@@ -205,7 +233,7 @@ export function collectRunTerminalReportEvidence(
       runIds: [run.id],
       contributionSummaries: resultSummary ? [boundedMarkdownEvidenceText(resultSummary, budgets.summaryCharacters)] : [],
       sourceRefs: [sourceRef],
-    }] : [],
+    }] : [], delegations.participants),
     artifacts: artifactsRaw.map((artifact) => mapArtifact(
       artifact,
       false,
@@ -213,9 +241,11 @@ export function collectRunTerminalReportEvidence(
     )),
     approvals: approvalsRaw.map(mapApproval),
     risks: [...interruptionRisks,
-      ...collectRunRisks(run, executedActions, approvalsRaw, sourceRef, budgets.summaryCharacters, language)],
+      ...collectRunRisks(run, executedActions, approvalsRaw, sourceRef, budgets.summaryCharacters, language), ...delegations.risks],
+    ...delegationFingerprint(delegations),
     references: [
       sourceRef,
+      ...delegations.references,
       ...(turn ? [sourceRefFor("turn", turn.id, turn.title)] : []),
       ...(turn?.sourceItemId ? [sourceRefFor("conversation_item", turn.sourceItemId, "Source item")] : []),
     ],
@@ -226,6 +256,14 @@ export function collectTurnTerminalReportEvidence(
   store: RunStore,
   turnId: string,
   options: TerminalReportEvidenceCollectionOptions = {},
+): TerminalReportEvidenceSnapshot {
+  return store.readSnapshot(() => collectTurnEvidenceWithinSnapshot(store, turnId, options));
+}
+
+function collectTurnEvidenceWithinSnapshot(
+  store: RunStore,
+  turnId: string,
+  options: TerminalReportEvidenceCollectionOptions,
 ): TerminalReportEvidenceSnapshot {
   const turn = store.getLingTurn(turnId);
   if (!turn) {
@@ -238,6 +276,8 @@ export function collectTurnTerminalReportEvidence(
   const runs = runLinks
     .map((link) => store.getRun(link.runId))
     .filter((run): run is RunSession => Boolean(run));
+  const delegations = collectTerminalReportDelegationEvidence(store, { rootRunIds: currentTurnDelegationRootIds(runLinks),
+    workspaceId: turn.workspaceId, channelId: turn.channelId ?? thread?.channelId, threadId: turn.threadId });
   const artifactsRaw = uniqueById(runs.flatMap((run) => store.listArtifacts(run.id)));
   const actions = uniqueById(runs.flatMap((run) => listAllExecutionActionsForRun(store, run.id)));
   const executedActions = actions.filter(hasExecutedActionEvidence);
@@ -260,7 +300,7 @@ export function collectTurnTerminalReportEvidence(
       )),
   );
 
-  return finalizeSnapshot({
+  return finalizeSnapshotWithDelegations(store, delegations, {
     workspaceId: turn.workspaceId,
     surface: surfaceForThread(thread?.kind, turn.channelId),
     channelId: turn.channelId ?? thread?.channelId,
@@ -270,16 +310,16 @@ export function collectTurnTerminalReportEvidence(
     source: { kind: "turn", id: turn.id },
     objective: boundedMarkdownEvidenceText(turn.userInstruction || turn.title, budgets.summaryCharacters),
     language,
-    terminalState,
+    terminalState: delegationTerminalState(terminalState, delegations),
     terminalAt: turn.completedAt ?? turn.updatedAt,
-    steps: runs.map((run, index) => mapTurnRunStep(
+    steps: [...runs.map((run, index) => mapTurnRunStep(
       store,
       turn,
       run,
       index,
       budgets.summaryCharacters,
       executedActions.filter((action) => action.runId === run.id),
-    )),
+    )), ...delegations.steps],
     operations: executedActions.map((action) => mapOperation(
       action,
       artifactsById,
@@ -287,7 +327,7 @@ export function collectTurnTerminalReportEvidence(
       action.runId ? runCwds.get(action.runId) : undefined,
     )),
     checks: executedActions.filter(isCheckAction).map((action) => mapCheck(action, budgets.summaryCharacters, { interruptionRisks })),
-    participants,
+    participants: mergeDelegationParticipants(participants, delegations.participants),
     artifacts: artifactsRaw.map((artifact) => mapArtifact(
       artifact,
       false,
@@ -295,12 +335,114 @@ export function collectTurnTerminalReportEvidence(
     )),
     approvals: approvalsRaw.map(mapApproval),
     risks: [...interruptionRisks,
-      ...collectTurnRisks(turn, runs, executedActions, approvalsRaw, sourceRef, budgets.summaryCharacters, language)],
+      ...collectTurnRisks(turn, runs, executedActions, approvalsRaw, sourceRef, budgets.summaryCharacters, language), ...delegations.risks],
+    ...delegationFingerprint(delegations),
     references: [
       sourceRef,
+      ...delegations.references,
       ...(turn.sourceItemId ? [sourceRefFor("conversation_item", turn.sourceItemId, "Source item")] : []),
       ...runs.map((run) => sourceRefFor("run", run.id, store.getTask(run.taskId)?.title ?? "Run")),
     ],
+  }, options, budgets, sourceRef);
+}
+
+function currentTurnDelegationRootIds(runLinks: readonly LingTurnRun[]): readonly string[] {
+  const ordered = [...runLinks].sort((a, b) => a.attemptNumber - b.attemptNumber || a.runId.localeCompare(b.runId));
+  const effective = ordered.filter(link => link.role !== "validation").at(-1);
+  return effective
+    ? [effective.runId, ...ordered.filter(link => link.role === "validation" && link.attemptNumber > effective.attemptNumber).map(link => link.runId)]
+    : [];
+}
+
+function delegationFingerprint(evidence: TerminalReportDelegationEvidence): { readonly delegationCompletionFingerprint?: string } {
+  return evidence.basis.steps.length || evidence.basis.issues.length
+    ? { delegationCompletionFingerprint: evidence.basis.fingerprint } : {};
+}
+
+function delegationTerminalState(
+  state: TerminalReportOutcomeStatus,
+  evidence: TerminalReportDelegationEvidence,
+): TerminalReportOutcomeStatus {
+  if (state !== "succeeded" && state !== "partially_succeeded" || evidence.basis.status === "satisfied") return state;
+  return evidence.basis.status === "failed" || evidence.basis.status === "cancelled" ? evidence.basis.status : "blocked";
+}
+
+function mergeDelegationParticipants(
+  original: readonly TerminalReportEvidenceParticipant[],
+  delegated: readonly TerminalReportEvidenceParticipant[],
+): TerminalReportEvidenceParticipant[] {
+  const byAgent = new Map(original.map(participant => [participant.agentId, participant]));
+  for (const participant of delegated) {
+    const previous = byAgent.get(participant.agentId);
+    byAgent.set(participant.agentId, previous ? { ...previous,
+      status: foldParticipantStatus(previous.status, participant.status),
+      workflowStepIds: uniqueStrings([...previous.workflowStepIds, ...participant.workflowStepIds]),
+      runIds: uniqueStrings([...previous.runIds, ...participant.runIds]),
+      contributionSummaries: uniqueStrings([...previous.contributionSummaries, ...participant.contributionSummaries]),
+      sourceRefs: uniqueRefs([...previous.sourceRefs, ...participant.sourceRefs]),
+    } : participant);
+  }
+  return [...byAgent.values()];
+}
+
+function finalizeSnapshotWithDelegations(
+  store: RunStore,
+  delegations: TerminalReportDelegationEvidence,
+  input: Omit<TerminalReportEvidenceSnapshot, "schemaVersion" | "id" | "evidenceFingerprint" | "generatedAt">,
+  options: TerminalReportEvidenceCollectionOptions,
+  budgets: TerminalReportEvidenceBudgets,
+  sourceRef: TerminalReportSourceRef,
+): TerminalReportEvidenceSnapshot {
+  // Reuse the exact Host action, check, artifact and interruption projection
+  // used by top-level Runs. A child does not get a second evidence vocabulary.
+  const runs = delegations.runs;
+  if (!runs.length) return finalizeSnapshot(input, options, budgets, sourceRef);
+  const actions = uniqueById(runs.flatMap(run => listAllExecutionActionsForRun(store, run.id))).filter(hasExecutedActionEvidence);
+  const artifacts = uniqueById(runs.flatMap(run => projectConversationArtifacts(store.listArtifacts(run.id), actions)))
+    .filter(isWorkspaceDeliverableArtifact);
+  const approvals = uniqueById(runs.flatMap(run => store.listApprovalRequests({ runId: run.id, complete: true })));
+  const artifactsById = new Map(artifacts.map(artifact => [artifact.id, artifact]));
+  const runCwds = new Map(runs.map(run => [run.id, run.cwd] as const));
+  const workspaceRefs = collectWorkspaceFileRefsByArtifactId(actions, runCwds);
+  const interruptionRisks = collectTerminalInterruptionRisks(store, runs, input.language, actions);
+  const operations = actions.map(action => mapOperation(action, artifactsById, budgets.summaryCharacters,
+    action.runId ? runCwds.get(action.runId) : undefined));
+  const byRun = new Map(runs.map(run => [run.id, run]));
+  const steps = input.steps.map(step => {
+    const run = step.runId ? byRun.get(step.runId) : undefined;
+    if (!run || !step.id.startsWith("delegation-step:")) return step;
+    return { ...step,
+      changedPaths: changedPathsFromActions(actions.filter(action => action.runId === run.id), run.cwd),
+      artifactIds: artifacts.filter(artifact => artifact.runId === run.id).map(artifact => artifact.id),
+      sourceRefs: uniqueRefs([...step.sourceRefs,
+        ...operations.filter(operation => operation.runId === run.id).flatMap(operation => operation.sourceRefs),
+        ...artifacts.filter(artifact => artifact.runId === run.id).map(artifact => artifactRef(artifact))]),
+    };
+  });
+  const participants = input.participants.map(participant => {
+    const ownRuns = runs.filter(run => participant.runIds.includes(run.id));
+    if (!ownRuns.length) return participant;
+    return { ...participant,
+      contributionSummaries: uniqueStrings([...participant.contributionSummaries,
+        ...ownRuns.map(run => readRunEvidenceContribution(store, run, budgets.summaryCharacters))]),
+      sourceRefs: uniqueRefs([...participant.sourceRefs,
+        ...operations.filter(operation => operation.runId && participant.runIds.includes(operation.runId)).flatMap(operation => operation.sourceRefs)]),
+    };
+  });
+  const terminalState = input.terminalState === "succeeded" || input.terminalState === "partially_succeeded"
+    ? delegationTerminalState(deriveCompositeAtomicTerminalState(input.terminalState, [input.terminalState,
+      ...runs.filter(run => ["succeeded", "failed", "cancelled"].includes(run.status)).map(run =>
+        deriveAtomicUnitStatus(runTerminalState(run.status), actions.filter(action => action.runId === run.id)))]), delegations)
+    : input.terminalState;
+  return finalizeSnapshot({ ...input, terminalState, steps, participants,
+    operations: uniqueById([...input.operations, ...operations]),
+    checks: uniqueById([...input.checks, ...actions.filter(isCheckAction)
+      .map(action => mapCheck(action, budgets.summaryCharacters, { interruptionRisks }))]),
+    artifacts: uniqueById([...input.artifacts, ...artifacts.map(artifact => mapArtifact(artifact, false, workspaceRefs.get(artifact.id) ?? []))]),
+    approvals: uniqueById([...input.approvals, ...approvals.map(mapApproval)]),
+    risks: uniqueById([...input.risks, ...interruptionRisks, ...runs.flatMap(run => collectRunRisks(run,
+      actions.filter(action => action.runId === run.id), approvals.filter(approval => approval.runId === run.id),
+      sourceRefFor("run", run.id, "Delegated run"), budgets.summaryCharacters, input.language))]),
   }, options, budgets, sourceRef);
 }
 
@@ -310,6 +452,56 @@ function finalizeSnapshot(
   budgets: TerminalReportEvidenceBudgets,
   sourceRef: TerminalReportSourceRef,
 ): TerminalReportEvidenceSnapshot {
+  // SQLite control artifacts are audit anchors, not files produced for the
+  // user. Their virtual paths otherwise pass the existing workspace-file
+  // predicate and can even overwrite a restricted result reference. Keep the
+  // audit reference without attaching it to a visible row (which would hide
+  // that entire row under the shared source-ref privacy rules).
+  const delegationControlIds = new Set(input.artifacts
+    .filter(artifact => artifact.path?.startsWith("sqlite:delegation-"))
+    .map(artifact => artifact.id));
+  if (delegationControlIds.size) {
+    const visibleRefs = (refs: readonly TerminalReportSourceRef[]) => refs
+      .filter(ref => ref.kind !== "artifact" || !delegationControlIds.has(ref.id));
+    const auditRefs: TerminalReportSourceRef[] = [...delegationControlIds]
+      .map(id => ({ kind: "artifact", id, visibility: "developer_only", sensitivity: "normal" }));
+    input = { ...input,
+      steps: input.steps.map(step => ({ ...step,
+        artifactIds: step.artifactIds.filter(id => !delegationControlIds.has(id)), sourceRefs: visibleRefs(step.sourceRefs) })),
+      operations: input.operations.map(row => ({ ...row, sourceRefs: visibleRefs(row.sourceRefs) })),
+      checks: input.checks.map(row => ({ ...row, sourceRefs: visibleRefs(row.sourceRefs) })),
+      participants: input.participants.map(row => ({ ...row, sourceRefs: visibleRefs(row.sourceRefs) })),
+      artifacts: input.artifacts.filter(artifact => !delegationControlIds.has(artifact.id)),
+      approvals: input.approvals.map(row => ({ ...row, sourceRefs: visibleRefs(row.sourceRefs) })),
+      risks: input.risks.map(row => ({ ...row, sourceRefs: visibleRefs(row.sourceRefs) })),
+      references: [...visibleRefs(input.references), ...auditRefs],
+    };
+  }
+  // One identity may arrive from both delegated audit lineage and the shared
+  // action projection. Preserve the strongest Host policy everywhere before
+  // deduplication/budgeting; an alias must never downgrade the same fact.
+  const groups = [input.steps, input.operations, input.checks, input.participants,
+    input.artifacts, input.approvals, input.risks];
+  const policies = new Map<string, TerminalReportSourceRef>();
+  const visibility = { conversation: 0, folded_evidence: 1, developer_only: 2 } as const;
+  const sensitivity = { normal: 0, private: 1, secret_adjacent: 2 } as const;
+  for (const ref of [...input.references, ...groups.flatMap(rows => rows.flatMap(row => row.sourceRefs))]) {
+    const key = JSON.stringify([ref.kind, ref.id]), previous = policies.get(key);
+    policies.set(key, previous ? { ...ref,
+      visibility: visibility[previous.visibility] > visibility[ref.visibility] ? previous.visibility : ref.visibility,
+      sensitivity: sensitivity[previous.sensitivity ?? "normal"] > sensitivity[ref.sensitivity ?? "normal"]
+        ? previous.sensitivity : ref.sensitivity,
+    } : ref);
+  }
+  const restrict = (refs: readonly TerminalReportSourceRef[]) => refs.map(ref => {
+    const policy = policies.get(JSON.stringify([ref.kind, ref.id]))!;
+    return { ...ref, visibility: policy.visibility, sensitivity: policy.sensitivity };
+  });
+  const restrictRows = <T extends { readonly sourceRefs: readonly TerminalReportSourceRef[] }>(rows: readonly T[]): T[] =>
+    rows.map(row => ({ ...row, sourceRefs: restrict(row.sourceRefs) }));
+  input = { ...input, steps: restrictRows(input.steps), operations: restrictRows(input.operations),
+    checks: restrictRows(input.checks), participants: restrictRows(input.participants), artifacts: restrictRows(input.artifacts),
+    approvals: restrictRows(input.approvals), risks: restrictRows(input.risks), references: restrict(input.references) };
   const truncationRisks: TerminalReportEvidenceRisk[] = [];
   const steps = boundedItems(input.steps, budgets.steps, "steps", truncationRisks, sourceRef, input.language);
   const operations = boundedItems(input.operations, budgets.operations, "operations", truncationRisks, sourceRef, input.language);
@@ -350,6 +542,7 @@ function finalizeSnapshot(
       ...approvals.flatMap((item) => item.sourceRefs),
       ...risks.flatMap((item) => item.sourceRefs),
     ]),
+    ...(input.delegationCompletionFingerprint === undefined ? {} : { delegationCompletionFingerprint: input.delegationCompletionFingerprint }),
     generatedAt,
   };
   const snapshot: TerminalReportEvidenceSnapshot = {

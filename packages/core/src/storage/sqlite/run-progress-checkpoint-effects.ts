@@ -35,10 +35,19 @@ export function runHasOrdinaryProgress(events: readonly RunEventEnvelope[]): boo
 export function validateRunProgressEffects(store: RunProgressEffectStore, run: RunSession,
   events: readonly RunEventEnvelope[], modelView: readonly unknown[], sourceFence: RuntimeAttemptFenceV1, database: DatabaseSync): readonly string[] {
   const last = modelView.at(-1);
-  if (modelView.length === 0 || modelView.length > 1000 || !record(last) || last.role !== "toolResult") throw blocked();
+  if (modelView.length === 0 || modelView.length > 1000 || !record(last)) throw blocked();
   const first = modelView[0], prepared = readRunProgressFrozenExecution(run).preparedInput;
   if (!record(prepared) || typeof prepared.userPrompt !== "string" || !prepared.userPrompt.trim()
     || !record(first) || first.role !== "user" || !acceptedUserContent(first.content, prepared.userPrompt)) throw blocked();
+  if (modelView.length === 1) {
+    if (events.some(event => !["run_created", "run_start", "turn_start", "delegation_instruction_checkpointed"].includes(event.type))
+      || store.listHarnessToolExecutions(run.id).length
+      || store.listHostCommandWriteBlockers(run.cwd).some(item => item.runId === run.id)
+      || store.listApprovalRequests({ runId: run.id, status: "pending", limit: 1 }).length) throw blocked();
+    assertNoUnsettledHostFacts(database, store, run.id, sourceFence.workUnitId);
+    return [];
+  }
+  if (last.role !== "toolResult") throw blocked();
   const calls = new Map<string, Record<string, unknown>>(), results = new Map<string, Record<string, unknown>>();
   for (const [index, message] of modelView.entries()) {
     if (!record(message) || !["user", "assistant", "toolResult"].includes(String(message.role))) throw blocked();

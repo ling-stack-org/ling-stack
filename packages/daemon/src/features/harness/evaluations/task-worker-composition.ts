@@ -128,9 +128,18 @@ export class RunEvaluationTaskWorkerComposition {
   }
 
   beginShutdown(): void {
+    this.stopAdmission();
+    this.abortOwned();
+  }
+
+  stopAdmission(): void {
     if (this.stopped) return;
     this.stopped = true;
-    for (const worker of this.workers.values()) worker.beginShutdown();
+    for (const worker of this.workers.values()) worker.stopAdmission();
+  }
+
+  abortOwned(): void {
+    for (const worker of this.workers.values()) worker.abortOwned();
   }
 
   async waitForIdle(): Promise<void> {
