@@ -94,7 +94,7 @@ const autoThinkingSupport: ProviderThinkingSupport = {
 
 const providerModelCatalog: readonly ProviderModelCatalogEntry[] = [
   {
-    modelPattern: /(^|[-_/])(?:gpt-5|o1|o3|o4)(?=$|[-_/.])|codex/i,
+    modelPattern: /(^|[-_/])(?:gpt-(?:5|6|daybreak)|o1|o3|o4)(?=$|[-_/.])|codex/i,
     providerIds: ["openai", "openai-codex"],
     kinds: ["openai", "openai-compatible"],
     input: ["text", "image"],
@@ -105,7 +105,7 @@ const providerModelCatalog: readonly ProviderModelCatalogEntry[] = [
     supportedParameters: ["reasoning_effort", "tools", "response_format"],
   },
   {
-    modelPattern: /claude-(?:3-7|4|sonnet-4|opus-4)/i,
+    modelPattern: /claude-(?:3-7|4|5|(?:fable|haiku|opus|sonnet)-(?:4|5))(?=$|[-_/.])/i,
     providerIds: ["anthropic"],
     kinds: ["anthropic", "openai-compatible"],
     input: ["text", "image"],
@@ -116,7 +116,7 @@ const providerModelCatalog: readonly ProviderModelCatalogEntry[] = [
     supportedParameters: ["thinking", "tools"],
   },
   {
-    modelPattern: /gemini-(?:2\.5|3)/i,
+    modelPattern: /gemini-(?:2\.5|3|4)(?=$|[-_/.])/i,
     providerIds: ["google", "google-gemini", "gemini"],
     kinds: ["google", "openai-compatible"],
     input: ["text", "image"],

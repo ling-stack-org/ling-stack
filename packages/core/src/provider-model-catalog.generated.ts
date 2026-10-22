@@ -3,12 +3,12 @@ import type { ProviderModelCatalogManifest, ProviderModelCatalogRecord } from ".
 
 export const providerModelCatalogManifest = {
   "schemaVersion": 1,
-  "version": "models.dev:30010ab6f9b9",
+  "version": "models.dev:1f64ed468596",
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
   "license": "MIT",
-  "generatedAt": "2026-09-22T03:15:00.287Z",
-  "updatedAt": "2026-09-21"
+  "generatedAt": "2026-10-22T07:45:03.817Z",
+  "updatedAt": "2026-10-19"
 } as const satisfies ProviderModelCatalogManifest;
 
 export const providerModelCatalogRecords = [
@@ -27,6 +27,7 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "off",
       "auto",
+      "low",
       "high",
       "xhigh"
     ],
@@ -48,9 +49,7 @@ export const providerModelCatalogRecords = [
     ],
     "thinkingModes": [
       "off",
-      "minimal",
-      "low",
-      "medium",
+      "auto",
       "high",
       "xhigh"
     ],
@@ -73,12 +72,14 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "thinkingModes": [
+      "off",
+      "auto",
       "low",
       "high",
       "xhigh"
     ],
     "contextWindow": 1048576,
-    "maxTokens": 1048576,
+    "maxTokens": 16384,
     "updatedAt": "2026-07-16"
   },
   {
@@ -222,8 +223,7 @@ export const providerModelCatalogRecords = [
       "text"
     ],
     "capabilities": [
-      "chat",
-      "tool_call"
+      "chat"
     ],
     "contextWindow": 8192,
     "maxTokens": 512
@@ -677,6 +677,10 @@ export const providerModelCatalogRecords = [
       "reasoning",
       "vision"
     ],
+    "thinkingModes": [
+      "off",
+      "auto"
+    ],
     "contextWindow": 131072,
     "maxTokens": 32768
   },
@@ -789,6 +793,28 @@ export const providerModelCatalogRecords = [
     "contextWindow": 262144,
     "maxTokens": 65536,
     "updatedAt": "2026-02-15"
+  },
+  {
+    "providerId": "alibaba",
+    "id": "qwen3.5-flash",
+    "displayName": "Qwen3.5 Flash",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "auto"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 65536,
+    "updatedAt": "2026-02-23"
   },
   {
     "providerId": "alibaba",
@@ -922,6 +948,28 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "alibaba",
+    "id": "qwen3.7-flash",
+    "displayName": "Qwen3.7 Flash",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "auto"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 131072,
+    "updatedAt": "2026-07-15"
+  },
+  {
+    "providerId": "alibaba",
     "id": "qwen3.7-max",
     "displayName": "Qwen3.7 Max",
     "input": [
@@ -937,7 +985,7 @@ export const providerModelCatalogRecords = [
       "auto"
     ],
     "contextWindow": 1000000,
-    "maxTokens": 65536,
+    "maxTokens": 131072,
     "updatedAt": "2026-05-21"
   },
   {
@@ -959,7 +1007,7 @@ export const providerModelCatalogRecords = [
       "auto"
     ],
     "contextWindow": 1000000,
-    "maxTokens": 65536,
+    "maxTokens": 131072,
     "updatedAt": "2026-06-04"
   },
   {
@@ -1011,6 +1059,30 @@ export const providerModelCatalogRecords = [
     "contextWindow": 1000000,
     "maxTokens": 131072,
     "updatedAt": "2026-08-03"
+  },
+  {
+    "providerId": "alibaba",
+    "id": "qwen3.8-omni-flash",
+    "displayName": "Qwen3.8 Omni Flash",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "low",
+      "medium",
+      "xhigh"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 131072,
+    "updatedAt": "2026-09-17"
   },
   {
     "providerId": "alibaba",
@@ -1111,6 +1183,32 @@ export const providerModelCatalogRecords = [
     "contextWindow": 200000,
     "maxTokens": 64000,
     "updatedAt": "2025-10-15"
+  },
+  {
+    "providerId": "anthropic",
+    "id": "claude-haiku-5-5",
+    "displayName": "Claude Haiku 5.5",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "auto",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-10-07"
   },
   {
     "providerId": "anthropic",
@@ -1256,6 +1354,30 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "anthropic",
+    "id": "claude-opus-5-5",
+    "displayName": "Claude Opus 5.5",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-09-22"
+  },
+  {
+    "providerId": "anthropic",
     "id": "claude-sonnet-4-5",
     "displayName": "Claude Sonnet 4.5 (latest)",
     "input": [
@@ -1268,7 +1390,7 @@ export const providerModelCatalogRecords = [
       "reasoning",
       "vision"
     ],
-    "contextWindow": 1000000,
+    "contextWindow": 200000,
     "maxTokens": 64000,
     "updatedAt": "2025-09-29"
   },
@@ -1286,7 +1408,7 @@ export const providerModelCatalogRecords = [
       "reasoning",
       "vision"
     ],
-    "contextWindow": 1000000,
+    "contextWindow": 200000,
     "maxTokens": 64000,
     "updatedAt": "2025-09-29"
   },
@@ -1341,9 +1463,33 @@ export const providerModelCatalogRecords = [
     "updatedAt": "2026-06-30"
   },
   {
+    "providerId": "anthropic",
+    "id": "claude-sonnet-5-5",
+    "displayName": "Claude Sonnet 5.5",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-09-28"
+  },
+  {
     "providerId": "deepseek",
     "id": "deepseek-flash",
-    "displayName": "DeepSeek V4.1 Flash",
+    "displayName": "DeepSeek V4.1 Flash 1017",
     "input": [
       "text",
       "image"
@@ -1361,9 +1507,9 @@ export const providerModelCatalogRecords = [
       "high",
       "xhigh"
     ],
-    "contextWindow": 1000000,
-    "maxTokens": 384000,
-    "updatedAt": "2026-09-10"
+    "contextWindow": 1048576,
+    "maxTokens": 393216,
+    "updatedAt": "2026-10-17"
   },
   {
     "providerId": "deepseek",
@@ -1386,9 +1532,9 @@ export const providerModelCatalogRecords = [
       "high",
       "xhigh"
     ],
-    "contextWindow": 1000000,
-    "maxTokens": 384000,
-    "updatedAt": "2026-09-10"
+    "contextWindow": 1048576,
+    "maxTokens": 393216,
+    "updatedAt": "2026-10-17"
   },
   {
     "providerId": "deepseek",
@@ -1411,9 +1557,9 @@ export const providerModelCatalogRecords = [
       "high",
       "xhigh"
     ],
-    "contextWindow": 1000000,
-    "maxTokens": 384000,
-    "updatedAt": "2026-09-10"
+    "contextWindow": 1048576,
+    "maxTokens": 393216,
+    "updatedAt": "2026-10-17"
   },
   {
     "providerId": "deepseek",
@@ -1434,8 +1580,8 @@ export const providerModelCatalogRecords = [
       "high",
       "xhigh"
     ],
-    "contextWindow": 1000000,
-    "maxTokens": 384000,
+    "contextWindow": 1048576,
+    "maxTokens": 393216,
     "updatedAt": "2026-08-22"
   },
   {
@@ -1488,8 +1634,8 @@ export const providerModelCatalogRecords = [
       "reasoning",
       "vision"
     ],
-    "contextWindow": 131072,
-    "maxTokens": 65536,
+    "contextWindow": 128000,
+    "maxTokens": 64000,
     "updatedAt": "2025-10-07"
   },
   {
@@ -1524,11 +1670,10 @@ export const providerModelCatalogRecords = [
     ],
     "capabilities": [
       "chat",
-      "reasoning",
       "vision"
     ],
     "contextWindow": 32768,
-    "maxTokens": 32768,
+    "maxTokens": 16384,
     "updatedAt": "2025-08-26"
   },
   {
@@ -1562,7 +1707,7 @@ export const providerModelCatalogRecords = [
     ],
     "capabilities": [],
     "contextWindow": 8192,
-    "maxTokens": 16384,
+    "maxTokens": 6656,
     "updatedAt": "2025-05-01"
   },
   {
@@ -1592,7 +1737,7 @@ export const providerModelCatalogRecords = [
     ],
     "capabilities": [],
     "contextWindow": 8192,
-    "maxTokens": 16384,
+    "maxTokens": 6656,
     "updatedAt": "2025-05-01"
   },
   {
@@ -1636,7 +1781,7 @@ export const providerModelCatalogRecords = [
       "low",
       "high"
     ],
-    "contextWindow": 131072,
+    "contextWindow": 65536,
     "maxTokens": 32768,
     "updatedAt": "2026-05-28"
   },
@@ -1674,8 +1819,8 @@ export const providerModelCatalogRecords = [
       "minimal",
       "high"
     ],
-    "contextWindow": 65536,
-    "maxTokens": 65536,
+    "contextWindow": 131072,
+    "maxTokens": 32768,
     "updatedAt": "2026-05-28"
   },
   {
@@ -1696,7 +1841,7 @@ export const providerModelCatalogRecords = [
       "high"
     ],
     "contextWindow": 65536,
-    "maxTokens": 65536,
+    "maxTokens": 16384,
     "updatedAt": "2026-02-26"
   },
   {
@@ -1742,7 +1887,7 @@ export const providerModelCatalogRecords = [
       "high"
     ],
     "contextWindow": 65536,
-    "maxTokens": 65536,
+    "maxTokens": 4096,
     "updatedAt": "2026-06-30"
   },
   {
@@ -1804,7 +1949,7 @@ export const providerModelCatalogRecords = [
       "reasoning"
     ],
     "contextWindow": 8192,
-    "maxTokens": 16384,
+    "maxTokens": 6656,
     "updatedAt": "2026-04-15"
   },
   {
@@ -1909,7 +2054,7 @@ export const providerModelCatalogRecords = [
       "chat"
     ],
     "contextWindow": 16384,
-    "maxTokens": 32768,
+    "maxTokens": 14848,
     "updatedAt": "2026-06-09"
   },
   {
@@ -1981,6 +2126,29 @@ export const providerModelCatalogRecords = [
     "contextWindow": 1048576,
     "maxTokens": 65536,
     "updatedAt": "2026-09-02"
+  },
+  {
+    "providerId": "google",
+    "id": "gemini-4-argon",
+    "displayName": "Gemini 4 Argon",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "contextWindow": 1048576,
+    "maxTokens": 32768,
+    "updatedAt": "2026-10-13"
   },
   {
     "providerId": "google",
@@ -2077,6 +2245,29 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "google",
+    "id": "gemini-pro-latest",
+    "displayName": "Gemini Pro Latest",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "contextWindow": 1048576,
+    "maxTokens": 65536,
+    "updatedAt": "2026-02-19"
+  },
+  {
+    "providerId": "google",
     "id": "gemma-4-26b-a4b-it",
     "displayName": "Gemma 4 26B A4B IT",
     "input": [
@@ -2162,8 +2353,6 @@ export const providerModelCatalogRecords = [
     "capabilities": [
       "vision"
     ],
-    "contextWindow": 480,
-    "maxTokens": 8192,
     "updatedAt": "2026-01-01"
   },
   {
@@ -2176,9 +2365,7 @@ export const providerModelCatalogRecords = [
     ],
     "capabilities": [
       "vision"
-    ],
-    "contextWindow": 480,
-    "maxTokens": 8192
+    ]
   },
   {
     "providerId": "google",
@@ -2191,8 +2378,6 @@ export const providerModelCatalogRecords = [
     "capabilities": [
       "vision"
     ],
-    "contextWindow": 480,
-    "maxTokens": 8192,
     "updatedAt": "2026-03-31"
   },
   {
@@ -2309,9 +2494,48 @@ export const providerModelCatalogRecords = [
       "off",
       "auto"
     ],
-    "contextWindow": 1048576,
-    "maxTokens": 512000,
+    "contextWindow": 1000000,
+    "maxTokens": 524288,
     "updatedAt": "2026-06-25"
+  },
+  {
+    "providerId": "minimax",
+    "id": "MiniMax-M3.1-Flash",
+    "displayName": "MiniMax-M3.1-Flash",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 524288,
+    "updatedAt": "2026-10-19"
+  },
+  {
+    "providerId": "mistral",
+    "id": "codestral-2508",
+    "displayName": "Codestral 25.08",
+    "input": [
+      "text"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call"
+    ],
+    "contextWindow": 256000,
+    "maxTokens": 8192,
+    "updatedAt": "2025-07-30"
   },
   {
     "providerId": "mistral",
@@ -2340,7 +2564,7 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2025-12-09"
   },
   {
@@ -2355,7 +2579,7 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2025-12-09"
   },
   {
@@ -2370,7 +2594,7 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 128000,
-    "maxTokens": 128000,
+    "maxTokens": 16384,
     "updatedAt": "2025-07-10"
   },
   {
@@ -2385,7 +2609,7 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2025-12-02"
   },
   {
@@ -2400,7 +2624,7 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 128000,
-    "maxTokens": 128000,
+    "maxTokens": 16384,
     "updatedAt": "2025-05-07"
   },
   {
@@ -2415,8 +2639,29 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 128000,
-    "maxTokens": 128000,
+    "maxTokens": 16384,
     "updatedAt": "2025-07-10"
+  },
+  {
+    "providerId": "mistral",
+    "id": "glm-5-2",
+    "displayName": "GLM-5.2",
+    "input": [
+      "text"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning"
+    ],
+    "thinkingModes": [
+      "off",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1048576,
+    "maxTokens": 131072,
+    "updatedAt": "2026-06-13"
   },
   {
     "providerId": "mistral",
@@ -2432,68 +2677,135 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 256000,
-    "maxTokens": 256000,
+    "maxTokens": 16384,
     "updatedAt": "2025-12-09"
+  },
+  {
+    "providerId": "mistral",
+    "id": "labs-leanstral-1-5-1",
+    "displayName": "Leanstral 1.5",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "high"
+    ],
+    "contextWindow": 262144,
+    "maxTokens": 128000,
+    "updatedAt": "2026-06-30"
   },
   {
     "providerId": "mistral",
     "id": "magistral-medium-latest",
     "displayName": "Magistral Medium (latest)",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
       "tool_call",
-      "reasoning"
+      "reasoning",
+      "vision"
     ],
-    "contextWindow": 128000,
+    "thinkingModes": [
+      "off",
+      "high"
+    ],
+    "contextWindow": 262144,
     "maxTokens": 16384,
     "updatedAt": "2025-03-20"
   },
   {
     "providerId": "mistral",
-    "id": "magistral-small",
-    "displayName": "Magistral Small",
+    "id": "ministral-14b-2512",
+    "displayName": "Ministral 3 14B",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
       "tool_call",
-      "reasoning"
+      "vision"
     ],
-    "contextWindow": 128000,
-    "maxTokens": 128000,
-    "updatedAt": "2025-03-17"
+    "contextWindow": 262144,
+    "maxTokens": 16384,
+    "updatedAt": "2025-12-02"
+  },
+  {
+    "providerId": "mistral",
+    "id": "ministral-3b-2512",
+    "displayName": "Ministral 3 3B",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "vision"
+    ],
+    "contextWindow": 131072,
+    "maxTokens": 16384,
+    "updatedAt": "2025-12-02"
   },
   {
     "providerId": "mistral",
     "id": "ministral-3b-latest",
     "displayName": "Ministral 3B (latest)",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
-    "contextWindow": 128000,
+    "contextWindow": 131072,
     "maxTokens": 128000,
     "updatedAt": "2024-10-04"
+  },
+  {
+    "providerId": "mistral",
+    "id": "ministral-8b-2512",
+    "displayName": "Ministral 3 8B",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "vision"
+    ],
+    "contextWindow": 262144,
+    "maxTokens": 16384,
+    "updatedAt": "2025-12-02"
   },
   {
     "providerId": "mistral",
     "id": "ministral-8b-latest",
     "displayName": "Ministral 8B (latest)",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
-    "contextWindow": 128000,
+    "contextWindow": 262144,
     "maxTokens": 128000,
     "updatedAt": "2024-10-04"
   },
@@ -2540,8 +2852,30 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2025-12-02"
+  },
+  {
+    "providerId": "mistral",
+    "id": "mistral-large-4",
+    "displayName": "Mistral Large 4",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "high"
+    ],
+    "contextWindow": 1048576,
+    "maxTokens": 262144,
+    "updatedAt": "2026-10-06"
   },
   {
     "providerId": "mistral",
@@ -2557,7 +2891,7 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2025-12-02"
   },
   {
@@ -2574,7 +2908,7 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 131072,
-    "maxTokens": 131072,
+    "maxTokens": 16384,
     "updatedAt": "2025-05-07"
   },
   {
@@ -2591,7 +2925,7 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2025-08-12"
   },
   {
@@ -2613,7 +2947,7 @@ export const providerModelCatalogRecords = [
       "high"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2026-04-29"
   },
   {
@@ -2635,7 +2969,7 @@ export const providerModelCatalogRecords = [
       "high"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2026-04-29"
   },
   {
@@ -2650,7 +2984,7 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 128000,
-    "maxTokens": 128000,
+    "maxTokens": 16384,
     "updatedAt": "2024-07-01"
   },
   {
@@ -2688,7 +3022,7 @@ export const providerModelCatalogRecords = [
       "off",
       "high"
     ],
-    "contextWindow": 256000,
+    "contextWindow": 262144,
     "maxTokens": 256000,
     "updatedAt": "2026-03-16"
   },
@@ -2710,24 +3044,9 @@ export const providerModelCatalogRecords = [
       "off",
       "high"
     ],
-    "contextWindow": 256000,
+    "contextWindow": 262144,
     "maxTokens": 256000,
     "updatedAt": "2026-03-16"
-  },
-  {
-    "providerId": "mistral",
-    "id": "open-mistral-7b",
-    "displayName": "Mistral 7B",
-    "input": [
-      "text"
-    ],
-    "capabilities": [
-      "chat",
-      "tool_call"
-    ],
-    "contextWindow": 8000,
-    "maxTokens": 8000,
-    "updatedAt": "2023-09-27"
   },
   {
     "providerId": "mistral",
@@ -2741,38 +3060,8 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 128000,
-    "maxTokens": 128000,
+    "maxTokens": 16384,
     "updatedAt": "2024-07-01"
-  },
-  {
-    "providerId": "mistral",
-    "id": "open-mixtral-8x22b",
-    "displayName": "Mixtral 8x22B",
-    "input": [
-      "text"
-    ],
-    "capabilities": [
-      "chat",
-      "tool_call"
-    ],
-    "contextWindow": 64000,
-    "maxTokens": 64000,
-    "updatedAt": "2024-04-17"
-  },
-  {
-    "providerId": "mistral",
-    "id": "open-mixtral-8x7b",
-    "displayName": "Mixtral 8x7B",
-    "input": [
-      "text"
-    ],
-    "capabilities": [
-      "chat",
-      "tool_call"
-    ],
-    "contextWindow": 32000,
-    "maxTokens": 32000,
-    "updatedAt": "2023-12-11"
   },
   {
     "providerId": "mistral",
@@ -2788,7 +3077,7 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 128000,
-    "maxTokens": 128000,
+    "maxTokens": 16384,
     "updatedAt": "2024-09-01"
   },
   {
@@ -2805,7 +3094,7 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 128000,
-    "maxTokens": 128000,
+    "maxTokens": 16384,
     "updatedAt": "2024-11-04"
   },
   {
@@ -2815,7 +3104,7 @@ export const providerModelCatalogRecords = [
     "capabilities": [
       "chat"
     ],
-    "updatedAt": "2026-02-01"
+    "updatedAt": "2026-02-04"
   },
   {
     "providerId": "mistral",
@@ -2825,7 +3114,22 @@ export const providerModelCatalogRecords = [
       "text"
     ],
     "capabilities": [],
-    "updatedAt": "2026-03-01"
+    "updatedAt": "2026-03-23"
+  },
+  {
+    "providerId": "mistral",
+    "id": "voxtral-small-2507",
+    "displayName": "Voxtral Small",
+    "input": [
+      "text"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call"
+    ],
+    "contextWindow": 32768,
+    "maxTokens": 16384,
+    "updatedAt": "2025-07-15"
   },
   {
     "providerId": "mistral",
@@ -2838,8 +3142,8 @@ export const providerModelCatalogRecords = [
       "chat",
       "tool_call"
     ],
-    "contextWindow": 32000,
-    "maxTokens": 32000,
+    "contextWindow": 32768,
+    "maxTokens": 16384,
     "updatedAt": "2025-07-15"
   },
   {
@@ -2859,7 +3163,7 @@ export const providerModelCatalogRecords = [
       "high",
       "xhigh"
     ],
-    "contextWindow": 1000000,
+    "contextWindow": 1048576,
     "maxTokens": 131072,
     "updatedAt": "2026-06-13"
   },
@@ -2880,7 +3184,7 @@ export const providerModelCatalogRecords = [
       "high",
       "xhigh"
     ],
-    "contextWindow": 1000000,
+    "contextWindow": 1048576,
     "maxTokens": 131072,
     "updatedAt": "2026-08-14"
   },
@@ -2903,8 +3207,8 @@ export const providerModelCatalogRecords = [
       "auto"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
-    "updatedAt": "2026-04-21"
+    "maxTokens": 16384,
+    "updatedAt": "2026-04-20"
   },
   {
     "providerId": "moonshotai",
@@ -2921,7 +3225,7 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2026-06-12"
   },
   {
@@ -2939,7 +3243,7 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2026-06-12"
   },
   {
@@ -2957,14 +3261,12 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "thinkingModes": [
-      "off",
-      "auto",
       "low",
       "high",
       "xhigh"
     ],
     "contextWindow": 1048576,
-    "maxTokens": 131072,
+    "maxTokens": 16384,
     "updatedAt": "2026-07-16"
   },
   {
@@ -3007,7 +3309,7 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 8192,
-    "maxTokens": 8192,
+    "maxTokens": 6656,
     "updatedAt": "2024-04-09"
   },
   {
@@ -3307,27 +3609,6 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "openai",
-    "id": "gpt-5.2-chat-latest",
-    "displayName": "GPT-5.2 Chat",
-    "input": [
-      "text",
-      "image"
-    ],
-    "capabilities": [
-      "chat",
-      "tool_call",
-      "reasoning",
-      "vision"
-    ],
-    "thinkingModes": [
-      "medium"
-    ],
-    "contextWindow": 128000,
-    "maxTokens": 16384,
-    "updatedAt": "2025-12-11"
-  },
-  {
-    "providerId": "openai",
     "id": "gpt-5.2-pro",
     "displayName": "GPT-5.2 Pro",
     "input": [
@@ -3348,23 +3629,6 @@ export const providerModelCatalogRecords = [
     "contextWindow": 400000,
     "maxTokens": 128000,
     "updatedAt": "2025-12-11"
-  },
-  {
-    "providerId": "openai",
-    "id": "gpt-5.3-chat-latest",
-    "displayName": "GPT-5.3 Chat (latest)",
-    "input": [
-      "text",
-      "image"
-    ],
-    "capabilities": [
-      "chat",
-      "tool_call",
-      "vision"
-    ],
-    "contextWindow": 128000,
-    "maxTokens": 16384,
-    "updatedAt": "2026-03-03"
   },
   {
     "providerId": "openai",
@@ -3688,6 +3952,130 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "openai",
+    "id": "gpt-6-luna",
+    "displayName": "GPT-6 Luna",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1050000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-09-22"
+  },
+  {
+    "providerId": "openai",
+    "id": "gpt-6-sol",
+    "displayName": "GPT-6 Sol",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1050000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-09-22"
+  },
+  {
+    "providerId": "openai",
+    "id": "gpt-6.1-sol",
+    "displayName": "GPT-6.1 Sol",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1050000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-09-29"
+  },
+  {
+    "providerId": "openai",
+    "id": "gpt-daybreak-blue-latest",
+    "displayName": "Daybreak Blue",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1050000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-08-07"
+  },
+  {
+    "providerId": "openai",
+    "id": "gpt-daybreak-red-latest",
+    "displayName": "Daybreak Red",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 400000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-08-07"
+  },
+  {
+    "providerId": "openai",
     "id": "gpt-image-1",
     "displayName": "gpt-image-1",
     "input": [
@@ -3955,7 +4343,7 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 262000,
-    "maxTokens": 262000,
+    "maxTokens": 16384,
     "updatedAt": "2025-11-25"
   },
   {
@@ -3971,8 +4359,8 @@ export const providerModelCatalogRecords = [
       "reasoning"
     ],
     "contextWindow": 164000,
-    "maxTokens": 164000,
-    "updatedAt": "2025-11-25"
+    "maxTokens": 16384,
+    "updatedAt": "2025-05-28"
   },
   {
     "providerId": "siliconflow",
@@ -3986,8 +4374,8 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 164000,
-    "maxTokens": 164000,
-    "updatedAt": "2025-11-25"
+    "maxTokens": 16384,
+    "updatedAt": "2025-03-24"
   },
   {
     "providerId": "siliconflow",
@@ -4006,8 +4394,8 @@ export const providerModelCatalogRecords = [
       "auto"
     ],
     "contextWindow": 164000,
-    "maxTokens": 164000,
-    "updatedAt": "2025-11-25"
+    "maxTokens": 16384,
+    "updatedAt": "2025-08-21"
   },
   {
     "providerId": "siliconflow",
@@ -4026,7 +4414,7 @@ export const providerModelCatalogRecords = [
       "auto"
     ],
     "contextWindow": 164000,
-    "maxTokens": 164000,
+    "maxTokens": 16384,
     "updatedAt": "2025-11-25"
   },
   {
@@ -4046,8 +4434,8 @@ export const providerModelCatalogRecords = [
       "auto"
     ],
     "contextWindow": 164000,
-    "maxTokens": 164000,
-    "updatedAt": "2025-12-03"
+    "maxTokens": 16384,
+    "updatedAt": "2025-12-01"
   },
   {
     "providerId": "siliconflow",
@@ -4066,7 +4454,7 @@ export const providerModelCatalogRecords = [
       "auto"
     ],
     "contextWindow": 164000,
-    "maxTokens": 164000,
+    "maxTokens": 16384,
     "updatedAt": "2025-11-25"
   },
   {
@@ -4156,14 +4544,16 @@ export const providerModelCatalogRecords = [
     "id": "google/gemma-4-12B-it",
     "displayName": "Gemma 4 12B IT",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2026-06-09"
   },
   {
@@ -4171,14 +4561,16 @@ export const providerModelCatalogRecords = [
     "id": "google/gemma-4-26B-A4B-it",
     "displayName": "Gemma 4 26B A4B IT",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2026-04-02"
   },
   {
@@ -4186,14 +4578,16 @@ export const providerModelCatalogRecords = [
     "id": "google/gemma-4-31B-it",
     "displayName": "Gemma 4 31B IT",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2026-04-02"
   },
   {
@@ -4208,7 +4602,7 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 131000,
-    "maxTokens": 131000,
+    "maxTokens": 16384,
     "updatedAt": "2025-11-25"
   },
   {
@@ -4240,7 +4634,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 197000,
     "maxTokens": 131000,
-    "updatedAt": "2026-06-15"
+    "updatedAt": "2026-02-12"
   },
   {
     "providerId": "siliconflow",
@@ -4275,7 +4669,7 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 262000,
-    "maxTokens": 262000,
+    "maxTokens": 16384,
     "updatedAt": "2026-01-27"
   },
   {
@@ -4293,8 +4687,8 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 262000,
-    "maxTokens": 262000,
-    "updatedAt": "2026-06-15"
+    "maxTokens": 16384,
+    "updatedAt": "2026-04-20"
   },
   {
     "providerId": "siliconflow",
@@ -4311,7 +4705,7 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2026-06-12"
   },
   {
@@ -4359,12 +4753,11 @@ export const providerModelCatalogRecords = [
     ],
     "capabilities": [
       "chat",
-      "tool_call",
       "reasoning"
     ],
     "contextWindow": 131000,
     "maxTokens": 8000,
-    "updatedAt": "2025-11-25"
+    "updatedAt": "2025-08-05"
   },
   {
     "providerId": "siliconflow",
@@ -4374,12 +4767,11 @@ export const providerModelCatalogRecords = [
       "text"
     ],
     "capabilities": [
-      "chat",
-      "tool_call"
+      "chat"
     ],
     "contextWindow": 131000,
     "maxTokens": 8000,
-    "updatedAt": "2025-11-25"
+    "updatedAt": "2025-08-05"
   },
   {
     "providerId": "siliconflow",
@@ -4409,7 +4801,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 33000,
     "maxTokens": 4000,
-    "updatedAt": "2025-11-25"
+    "updatedAt": "2024-09-19"
   },
   {
     "providerId": "siliconflow",
@@ -4428,7 +4820,7 @@ export const providerModelCatalogRecords = [
       "auto"
     ],
     "contextWindow": 131000,
-    "maxTokens": 131000,
+    "maxTokens": 16384,
     "updatedAt": "2025-11-25"
   },
   {
@@ -4443,8 +4835,8 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 262000,
-    "maxTokens": 262000,
-    "updatedAt": "2025-11-25"
+    "maxTokens": 16384,
+    "updatedAt": "2025-07-28"
   },
   {
     "providerId": "siliconflow",
@@ -4463,8 +4855,8 @@ export const providerModelCatalogRecords = [
       "auto"
     ],
     "contextWindow": 131000,
-    "maxTokens": 131000,
-    "updatedAt": "2025-11-25"
+    "maxTokens": 16384,
+    "updatedAt": "2025-04-28"
   },
   {
     "providerId": "siliconflow",
@@ -4483,8 +4875,8 @@ export const providerModelCatalogRecords = [
       "auto"
     ],
     "contextWindow": 131000,
-    "maxTokens": 131000,
-    "updatedAt": "2025-11-25"
+    "maxTokens": 16384,
+    "updatedAt": "2025-04-29"
   },
   {
     "providerId": "siliconflow",
@@ -4498,8 +4890,8 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 262000,
-    "maxTokens": 262000,
-    "updatedAt": "2025-11-25"
+    "maxTokens": 16384,
+    "updatedAt": "2025-07-31"
   },
   {
     "providerId": "siliconflow",
@@ -4513,8 +4905,8 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 262000,
-    "maxTokens": 262000,
-    "updatedAt": "2025-11-25"
+    "maxTokens": 16384,
+    "updatedAt": "2025-07-22"
   },
   {
     "providerId": "siliconflow",
@@ -4530,8 +4922,8 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 262000,
-    "maxTokens": 262000,
-    "updatedAt": "2025-11-25"
+    "maxTokens": 16384,
+    "updatedAt": "2025-10-04"
   },
   {
     "providerId": "siliconflow",
@@ -4548,7 +4940,7 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 262000,
-    "maxTokens": 262000,
+    "maxTokens": 16384,
     "updatedAt": "2025-11-25"
   },
   {
@@ -4565,7 +4957,7 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 262000,
-    "maxTokens": 262000,
+    "maxTokens": 16384,
     "updatedAt": "2025-11-25"
   },
   {
@@ -4583,7 +4975,7 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 262000,
-    "maxTokens": 262000,
+    "maxTokens": 16384,
     "updatedAt": "2025-11-25"
   },
   {
@@ -4600,7 +4992,7 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 262000,
-    "maxTokens": 262000,
+    "maxTokens": 16384,
     "updatedAt": "2025-11-25"
   },
   {
@@ -4608,14 +5000,16 @@ export const providerModelCatalogRecords = [
     "id": "Qwen/Qwen3.5-122B-A10B",
     "displayName": "Qwen3.5 122B-A10B",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2026-02-23"
   },
   {
@@ -4623,14 +5017,16 @@ export const providerModelCatalogRecords = [
     "id": "Qwen/Qwen3.5-27B",
     "displayName": "Qwen3.5 27B",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2026-02-23"
   },
   {
@@ -4638,14 +5034,16 @@ export const providerModelCatalogRecords = [
     "id": "Qwen/Qwen3.5-35B-A3B",
     "displayName": "Qwen3.5 35B-A3B",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2026-02-23"
   },
   {
@@ -4660,7 +5058,7 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2026-02-15"
   },
   {
@@ -4668,29 +5066,33 @@ export const providerModelCatalogRecords = [
     "id": "Qwen/Qwen3.5-9B",
     "displayName": "Qwen/Qwen3.5-9B",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
-    "updatedAt": "2026-04-24"
+    "maxTokens": 16384,
+    "updatedAt": "2026-02-23"
   },
   {
     "providerId": "siliconflow",
     "id": "Qwen/Qwen3.6-27B",
     "displayName": "Qwen3.6 27B",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2026-04-22"
   },
   {
@@ -4698,14 +5100,16 @@ export const providerModelCatalogRecords = [
     "id": "Qwen/Qwen3.6-35B-A3B",
     "displayName": "Qwen3.6 35B-A3B",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2026-04-17"
   },
   {
@@ -4737,8 +5141,8 @@ export const providerModelCatalogRecords = [
       "reasoning"
     ],
     "contextWindow": 262000,
-    "maxTokens": 262000,
-    "updatedAt": "2026-02-11"
+    "maxTokens": 66000,
+    "updatedAt": "2026-02-13"
   },
   {
     "providerId": "siliconflow",
@@ -4749,7 +5153,6 @@ export const providerModelCatalogRecords = [
     ],
     "capabilities": [
       "chat",
-      "tool_call",
       "reasoning"
     ],
     "thinkingModes": [
@@ -4757,7 +5160,7 @@ export const providerModelCatalogRecords = [
       "auto"
     ],
     "contextWindow": 131000,
-    "maxTokens": 131000,
+    "maxTokens": 16384,
     "updatedAt": "2025-11-25"
   },
   {
@@ -4773,7 +5176,7 @@ export const providerModelCatalogRecords = [
       "reasoning"
     ],
     "contextWindow": 262144,
-    "maxTokens": 262144,
+    "maxTokens": 16384,
     "updatedAt": "2026-07-06"
   },
   {
@@ -4788,8 +5191,8 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 131000,
-    "maxTokens": 131000,
-    "updatedAt": "2025-11-25"
+    "maxTokens": 16384,
+    "updatedAt": "2025-07-28"
   },
   {
     "providerId": "siliconflow",
@@ -4804,8 +5207,8 @@ export const providerModelCatalogRecords = [
       "reasoning"
     ],
     "contextWindow": 205000,
-    "maxTokens": 205000,
-    "updatedAt": "2026-06-15"
+    "maxTokens": 131072,
+    "updatedAt": "2026-02-12"
   },
   {
     "providerId": "siliconflow",
@@ -4821,7 +5224,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 205000,
     "maxTokens": 131000,
-    "updatedAt": "2026-04-08"
+    "updatedAt": "2026-04-07"
   },
   {
     "providerId": "siliconflow",
@@ -4921,7 +5324,7 @@ export const providerModelCatalogRecords = [
       "tool_call"
     ],
     "contextWindow": 32768,
-    "maxTokens": 32768,
+    "maxTokens": 16384,
     "updatedAt": "2026-02-13"
   },
   {
@@ -4956,8 +5359,8 @@ export const providerModelCatalogRecords = [
       "high"
     ],
     "contextWindow": 256000,
-    "maxTokens": 256000,
-    "updatedAt": "2026-06-15"
+    "maxTokens": 16384,
+    "updatedAt": "2026-02-13"
   },
   {
     "providerId": "stepfun",
@@ -4976,7 +5379,7 @@ export const providerModelCatalogRecords = [
       "high"
     ],
     "contextWindow": 256000,
-    "maxTokens": 256000,
+    "maxTokens": 16384,
     "updatedAt": "2026-04-02"
   },
   {
@@ -4999,8 +5402,31 @@ export const providerModelCatalogRecords = [
       "high"
     ],
     "contextWindow": 256000,
-    "maxTokens": 256000,
-    "updatedAt": "2026-06-29"
+    "maxTokens": 16384,
+    "updatedAt": "2026-05-29"
+  },
+  {
+    "providerId": "stepfun",
+    "id": "step-5-preview",
+    "displayName": "Step 5 Preview",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 65536,
+    "updatedAt": "2026-09-20"
   },
   {
     "providerId": "stepfun",
@@ -5084,12 +5510,14 @@ export const providerModelCatalogRecords = [
     "id": "doubao-seed-1-6-251015",
     "displayName": "Seed 1.6",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
       "tool_call",
-      "reasoning"
+      "reasoning",
+      "vision"
     ],
     "thinkingModes": [
       "off",
@@ -5300,7 +5728,7 @@ export const providerModelCatalogRecords = [
       "xhigh"
     ],
     "contextWindow": 256000,
-    "maxTokens": 256000,
+    "maxTokens": 16384,
     "updatedAt": "2026-06-23"
   },
   {
@@ -5326,7 +5754,7 @@ export const providerModelCatalogRecords = [
       "xhigh"
     ],
     "contextWindow": 256000,
-    "maxTokens": 256000,
+    "maxTokens": 16384,
     "updatedAt": "2026-06-23"
   },
   {
@@ -5351,7 +5779,7 @@ export const providerModelCatalogRecords = [
       "high"
     ],
     "contextWindow": 256000,
-    "maxTokens": 256000,
+    "maxTokens": 16384,
     "updatedAt": "2026-06-23"
   },
   {
@@ -5377,7 +5805,7 @@ export const providerModelCatalogRecords = [
       "xhigh"
     ],
     "contextWindow": 256000,
-    "maxTokens": 256000,
+    "maxTokens": 16384,
     "updatedAt": "2026-06-23"
   },
   {
@@ -5503,7 +5931,8 @@ export const providerModelCatalogRecords = [
       "off",
       "low",
       "medium",
-      "high"
+      "high",
+      "xhigh"
     ],
     "contextWindow": 1000000,
     "maxTokens": 30000,
@@ -5526,10 +5955,11 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "low",
       "medium",
-      "high"
+      "high",
+      "xhigh"
     ],
     "contextWindow": 500000,
-    "maxTokens": 500000,
+    "maxTokens": 16384,
     "updatedAt": "2026-07-08"
   },
   {
@@ -5553,7 +5983,7 @@ export const providerModelCatalogRecords = [
       "xhigh"
     ],
     "contextWindow": 500000,
-    "maxTokens": 500000,
+    "maxTokens": 16384,
     "updatedAt": "2026-08-12"
   },
   {
@@ -5577,7 +6007,7 @@ export const providerModelCatalogRecords = [
       "xhigh"
     ],
     "contextWindow": 500000,
-    "maxTokens": 500000,
+    "maxTokens": 16384,
     "updatedAt": "2026-09-21"
   },
   {
@@ -5595,7 +6025,7 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 256000,
-    "maxTokens": 256000,
+    "maxTokens": 16384,
     "updatedAt": "2026-04-16"
   },
   {
@@ -5610,6 +6040,7 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 16000,
+    "maxTokens": 14464,
     "updatedAt": "2026-01-28"
   },
   {
@@ -5624,6 +6055,7 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "contextWindow": 16000,
+    "maxTokens": 14464,
     "updatedAt": "2026-04-03"
   },
   {
@@ -5637,7 +6069,6 @@ export const providerModelCatalogRecords = [
     "capabilities": [
       "vision"
     ],
-    "contextWindow": 1024,
     "updatedAt": "2026-01-28"
   },
   {
@@ -5651,8 +6082,20 @@ export const providerModelCatalogRecords = [
     "capabilities": [
       "vision"
     ],
-    "contextWindow": 1024,
     "updatedAt": "2026-05-30"
+  },
+  {
+    "providerId": "xai",
+    "id": "grok-imagine-video-1.5-lite",
+    "displayName": "Grok Imagine Video 1.5 Lite",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "vision"
+    ],
+    "updatedAt": "2026-10-01"
   },
   {
     "providerId": "zai",
@@ -5933,6 +6376,8 @@ export const providerModelCatalogRecords = [
       "reasoning"
     ],
     "thinkingModes": [
+      "off",
+      "auto",
       "high",
       "xhigh"
     ],
@@ -6253,7 +6698,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 204800,
     "maxTokens": 131072,
-    "updatedAt": "2026-02-11"
+    "updatedAt": "2026-02-12"
   },
   {
     "providerId": "zhipuai",
@@ -6273,7 +6718,7 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 200000,
     "maxTokens": 131072,
-    "updatedAt": "2026-03-27"
+    "updatedAt": "2026-04-07"
   },
   {
     "providerId": "zhipuai",
@@ -6288,6 +6733,8 @@ export const providerModelCatalogRecords = [
       "reasoning"
     ],
     "thinkingModes": [
+      "off",
+      "auto",
       "high",
       "xhigh"
     ],

@@ -10,7 +10,7 @@ import {
 } from "@ling-stack/core";
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 import type { MemoryObject } from "@ling-stack/core";
-import type { ConversationGeneratedMedia, ConversationItemV1, ConversationReasoningSummaryRecord, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings, WorkUnitDetailResponse } from "@ling-stack/contracts";
+import type { ConversationExecutionSelectionResponse, ConversationGeneratedMedia, ConversationItemV1, ConversationReasoningSummaryRecord, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings, WorkUnitDetailResponse } from "@ling-stack/contracts";
 import { isSupportedLocale, type SupportedLocale } from "@ling-stack/localization";
 
 const configuredWorkspaceCwd = process.env.LING_PLAYWRIGHT_WORKSPACE_CWD;
@@ -8310,6 +8310,20 @@ export async function handleDaemonRoute(
         },
       },
     });
+    return;
+  }
+  if (request.method() === "GET" && path === "/runtime/conversation-execution") {
+    const requestedCwd = url.searchParams.get("cwd");
+    if (!requestedCwd) {
+      await route.fulfill({ status: 400, json: { error: "bad_request", message: "cwd is required" } });
+      return;
+    }
+    const { defaultRunnerId, defaultExecutionBinding } = state.runtimeSettings;
+    // Synthetic settings alone cannot certify native execution readiness.
+    const selection: ConversationExecutionSelectionResponse = defaultRunnerId === "pi" && !defaultExecutionBinding
+      ? { cwd: requestedCwd, defaultRunnerId, status: "not_selected" }
+      : { cwd: requestedCwd, defaultRunnerId, status: "blocked", executionBinding: defaultExecutionBinding, reason: "native_execution_unavailable" };
+    await route.fulfill({ json: selection });
     return;
   }
   if (request.method() === "GET" && path === "/runtime/settings") {

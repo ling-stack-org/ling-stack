@@ -96,8 +96,10 @@ test("receipt collector hashes persisted bytes, separates metadata seal, and bin
     bytesSha256: item.bytesSha256, remoteDescriptorDigest: item.remoteDescriptorDigest, collectedAt: artifact.createdAt });
   assert.ok(artifact.path.includes(`generation-${hash("generation")}`));
   assert.ok(artifact.path.includes(`execution-${hash("execution")}`));
+  // Completion must precede persistence even when the clock advances between reads.
+  const completedAt = now();
   const manifest = f.store.createArtifact({ runId: "run", type: "json", path: "media/manifest.json", createdAt: now(),
-    sealedPayload: { ...f.base, kind: "media_manifest_v1", outcome: "collected", items: result.manifestItems, completedAt: now() } });
+    sealedPayload: { ...f.base, kind: "media_manifest_v1", outcome: "collected", items: result.manifestItems, completedAt } });
   f.store.recordHostMediaArtifactManifest(f.ticket, manifest.id);
   assert.equal(f.other.getHostMediaExecution("execution").manifestArtifactId, manifest.id);
   assert.equal(f.other.getHostOperation("parent").phase, "admitted", "collection must not mint a launch or settlement");
@@ -219,8 +221,9 @@ test("a partial collection manifest includes every confirmed artifact and passes
   f.store.createArtifact = input => { const row = create(input); if (++calls === 2) throw new Error("postcommit collection failed"); return row; };
   const error = collectionError(() => collect(f, [candidate(), candidate(1)]));
   assert.equal(error.unconfirmedWrite, false); assert.equal(error.manifestItems.length, 2);
+  const completedAt = now();
   const manifest = create({ runId: "run", type: "json", path: "media/partial-manifest.json", createdAt: now(),
-    sealedPayload: { ...f.base, kind: "media_manifest_v1", outcome: "collection_failed", items: error.manifestItems, completedAt: now() } });
+    sealedPayload: { ...f.base, kind: "media_manifest_v1", outcome: "collection_failed", items: error.manifestItems, completedAt } });
   f.store.recordHostMediaArtifactManifest(f.ticket, manifest.id);
   assert.equal(f.other.getHostMediaExecution("execution").manifestArtifactId, manifest.id);
 });

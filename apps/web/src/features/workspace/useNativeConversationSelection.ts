@@ -7,6 +7,7 @@ export function useNativeConversationSelection(cwd: string, query: ConversationE
   const key = JSON.stringify({ cwd, query, revision });
   const [state, setState] = useState<{ key: string; selection?: ConversationExecutionSelectionResponse; error?: boolean }>();
   useEffect(() => {
+    if (!cwd) return;
     let active = true, generation = 0;
     const refresh = async () => {
       const current = ++generation;

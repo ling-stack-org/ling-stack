@@ -15,7 +15,10 @@ export async function writeKimiApiKey(home: string, configuration: KimiApiKeyCon
 export async function assertKimiApiKey(home: string, configuration: KimiApiKeyConfiguration, expectedKey: string): Promise<void> {
   try {
     const value = parse(await readNativeAuthFile(join(home, "config.toml")));
-    if (!isDeepStrictEqual(value, nativeConfiguration(configuration, expectedKey))) {
+    // smol-toml tables have null prototypes. Compare two TOML values so exact
+    // content checks do not confuse the parser's representation with key drift.
+    const expected = parse(stringify(nativeConfiguration(configuration, expectedKey)));
+    if (!isDeepStrictEqual(value, expected)) {
       throw new EngineCredentialError("engine_native_auth_mismatch");
     }
   } catch (error) {

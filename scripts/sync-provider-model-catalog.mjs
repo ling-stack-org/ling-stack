@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizeModelTokenLimits } from "./provider-model-catalog-normalization.mjs";
 
 const SOURCE_URL = "https://models.dev/api.json";
 const TRUSTED_PROVIDER_IDS = [
@@ -96,6 +97,7 @@ function normalizeModel(providerId, value) {
 
   const thinkingModes = normalizeThinkingModes(value.reasoning_options);
   const limit = isRecord(value.limit) ? value.limit : undefined;
+  const tokenLimits = normalizeModelTokenLimits(limit);
   return omitUndefined({
     providerId,
     id: value.id.trim(),
@@ -103,8 +105,8 @@ function normalizeModel(providerId, value) {
     input: input.length > 0 ? input : undefined,
     capabilities,
     thinkingModes: thinkingModes.length > 0 ? thinkingModes : undefined,
-    contextWindow: positiveInteger(limit?.context),
-    maxTokens: positiveInteger(limit?.output),
+    contextWindow: tokenLimits.contextWindow,
+    maxTokens: tokenLimits.maxTokens,
     updatedAt: normalizedDate(value.last_updated),
   });
 }
@@ -163,10 +165,6 @@ async function readExistingOutput() {
 function normalizedDate(value) {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
   return value;
-}
-
-function positiveInteger(value) {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
 function stringArray(value) {
