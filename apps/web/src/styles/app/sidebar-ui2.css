@@ -139,6 +139,32 @@
   transform: translateY(-50%);
 }
 
+.channel-left-drawer .sidebar-row-shell[data-sidebar-row-status="waiting"] {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.channel-left-drawer .sidebar-row-shell[data-sidebar-row-status="waiting"] > .sidebar-row-status {
+  position: static;
+  width: auto;
+  max-width: 144px;
+  margin-right: 8px;
+  transform: none;
+}
+
+.channel-left-drawer .sidebar-row-shell[data-sidebar-row-status="waiting"] .sidebar-object-status {
+  width: auto;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--ling-status-success-bg);
+  color: var(--ling-status-success);
+  font-weight: 650;
+}
+
+.channel-left-drawer .sidebar-row-shell[data-sidebar-row-status="waiting"] .ling-ui-status-indicator-dot {
+  display: none;
+}
+
 .channel-left-drawer .sidebar-row-shell[data-sidebar-row-actions="true"]:hover > .sidebar-row-status,
 .channel-left-drawer .sidebar-row-shell[data-sidebar-row-actions="true"]:focus-within > .sidebar-row-status {
   opacity: 0;

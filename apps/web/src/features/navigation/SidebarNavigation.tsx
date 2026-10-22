@@ -540,21 +540,22 @@ function renderSidebarNotification(
   }
 
   if (notification.primaryStatus) {
-    const label = notification.primaryStatus === "waiting" && (notification.count ?? 0) > 0
+    const accessibleLabel = notification.primaryStatus === "waiting" && (notification.count ?? 0) > 0
       ? labels.pendingApprovals(notification.count ?? 0)
       : labels[notification.primaryStatus];
+    const label = notification.primaryStatus === "waiting" ? labels.waiting : accessibleLabel;
     const tone = notification.primaryStatus === "failed"
       ? "danger"
       : notification.primaryStatus === "paused"
         ? "neutral"
         : notification.primaryStatus === "waiting"
-          ? "warning"
+          ? "success"
           : "info";
     return (
       <StatusIndicator
-        aria-label={label}
+        aria-label={accessibleLabel}
         className="sidebar-object-status"
-        compact
+        compact={notification.primaryStatus !== "waiting"}
         data-sidebar-primary-status={notification.primaryStatus}
         label={label}
         role="status"
