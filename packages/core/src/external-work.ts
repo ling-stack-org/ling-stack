@@ -59,17 +59,45 @@ export function updateExternalWorkflowSecretRef(markdown: string, secretRef: str
 }
 
 export function renderExternalWorkflowPrompt(template: string, input: { readonly item: ExternalWorkItem }): string {
-  return template.replace(/\{\{([^}]+)\}\}/g, (_match, expression: string) => {
-    const path = expression.trim();
-    if (!path.startsWith("item.")) {
-      throw new ExternalWorkflowValidationError(`Unknown workflow prompt variable: ${path}`);
+  const parts: string[] = [];
+  let cursor = 0;
+  let opening: number | undefined;
+  let index = 0;
+  while (index < template.length) {
+    const character = template[index];
+    const nextCharacter = template[index + 1];
+    if (character === "{" && nextCharacter === "{") {
+      if (opening === undefined) opening = index;
+      index += 1;
+      continue;
     }
-    const value = readDotPath(input, path);
-    if (value === undefined || value === null) {
-      throw new ExternalWorkflowValidationError(`Unknown workflow prompt variable: ${path}`);
+    if (character !== "}") {
+      index += 1;
+      continue;
     }
-    return formatPromptValue(value);
-  });
+    if (nextCharacter !== "}") {
+      opening = undefined;
+      index += 1;
+      continue;
+    }
+    if (opening !== undefined && index > opening + 2) {
+      parts.push(template.slice(cursor, opening));
+      const path = template.slice(opening + 2, index).trim();
+      if (!path.startsWith("item.")) {
+        throw new ExternalWorkflowValidationError(`Unknown workflow prompt variable: ${path}`);
+      }
+      const value = readDotPath(input, path);
+      if (value === undefined || value === null) {
+        throw new ExternalWorkflowValidationError(`Unknown workflow prompt variable: ${path}`);
+      }
+      parts.push(formatPromptValue(value));
+      cursor = index + 2;
+    }
+    opening = undefined;
+    index += 2;
+  }
+  parts.push(template.slice(cursor));
+  return parts.join("");
 }
 
 export function normalizeGitHubExternalWorkItem(input: {
