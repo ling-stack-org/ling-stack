@@ -55,6 +55,7 @@ async function fixture(t) {
   const codesign = Object.freeze({ synthetic: "codesign publication (not approval)" });
   const state = { active: publication, original: publication, token, publication, codesignToken, codesign, sourceReview,
     nativeBuilds: 0, codesignBuilds: 0, buildCompleted: false, builds: [], outputs: [], afterBuild: undefined, afterOriginalRead: undefined,
+    gstackPreparations: [],
     readOriginal(receipt) {
       if (receipt !== token || !state.original) throw new Error("synthetic_original_token_invalid");
       state.afterOriginalRead?.(); return state.original;
@@ -82,6 +83,12 @@ async function fixture(t) {
         if (receipt !== state.codesignToken) throw new Error("synthetic_codesign_token_invalid"); return state.codesign;
       }`],
     ["./packaged-office-native-review.mjs", bridge + "export function readReviewedPackagedOfficeSource() { return state.sourceReview; }"],
+    ["./packaged-gstack-resources.mjs", bridge + `
+      export async function preparePackagedGstackBuild(options) { state.gstackPreparations.push(options); return undefined; }
+      export function packagedGstackIdentityPlugin({ identity }) {
+        if (identity !== undefined) throw new Error("synthetic_gstack_identity_unexpected");
+        return { plugin: { name: "synthetic-gstack-identity", setup() {} }, assertIncluded() {} };
+      }`],
   ]);
   const loader = registerHooks({ resolve(specifier, context, nextResolve) {
     if ([url, pathToFileURL(join(dirname(modulePath), "packaged-office-daemon-source-inputs.mjs")).href].includes(context.parentURL)
@@ -126,6 +133,7 @@ test("Office emitted CLI pins: real esbuild, synthetic publication/signature, no
     assert.equal(pins.evidenceKind, "original_emitted_cli_byte_pins_only"); assert.equal(pins.path, f.cliPath);
     assert.equal(pins.sizeBytes, readFileSync(f.cliPath).length); assert.equal(pins.sha256, hash(readFileSync(f.cliPath)));
     assert.deepEqual(readFileSync(f.cliPath), f.state.outputs[0][0]); assert.equal(f.state.builds[0].write, false);
+    assert.deepEqual(f.state.gstackPreparations, [{ required: true }]);
     assert.doesNotMatch(readFileSync(f.cliPath, "utf8"), /NO_PACKAGED_(?:OFFICE_NATIVE|CODESIGN)_REVIEW/u);
     assert.equal("bytes" in pins, false); assert.equal("token" in pins, false); assert.equal("authority" in pins, false);
     assert.equal(f.api.readActiveOriginalPackagedOfficeDaemonBundle.length, 0);
