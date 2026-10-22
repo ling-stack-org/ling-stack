@@ -1643,17 +1643,29 @@ export class SqliteChannelWorkflowStore {
     }));
   }
 
-  /** Keeps the original caller transaction intact, including approval recovery. */
+  /** Owns an immediate transaction unless an approval/lifecycle caller already owns one. */
   private withCompletionTransaction<T>(write: () => T): T {
     const db = this.context.database;
-    db.exec("SAVEPOINT workflow_success_delegation_barrier");
+    let ownsTransaction = true;
+    try {
+      db.exec("BEGIN IMMEDIATE");
+    } catch (error) {
+      if (!(error instanceof Error)
+        || (error as NodeJS.ErrnoException).code !== "ERR_SQLITE_ERROR"
+        || error.message !== "cannot start a transaction within a transaction") throw error;
+      ownsTransaction = false;
+      db.exec("SAVEPOINT workflow_success_delegation_barrier");
+    }
     try {
       const result = write();
-      db.exec("RELEASE workflow_success_delegation_barrier");
+      db.exec(ownsTransaction ? "COMMIT" : "RELEASE workflow_success_delegation_barrier");
       return result;
     } catch (error) {
-      db.exec("ROLLBACK TO workflow_success_delegation_barrier");
-      db.exec("RELEASE workflow_success_delegation_barrier");
+      if (ownsTransaction) rollbackOwnedSqliteTransaction(db);
+      else {
+        db.exec("ROLLBACK TO workflow_success_delegation_barrier");
+        db.exec("RELEASE workflow_success_delegation_barrier");
+      }
       throw error;
     }
   }

@@ -1723,6 +1723,9 @@ export class SqliteRunStore implements RunStore {
             applyHarnessReliabilityMigration,
             applyDelegationInstructionMigration,
           ]) {
+            // Historical Continuity fixtures have no sealed artifact columns yet.
+            // Normal startup installs retention after the authority cutover above.
+            if (options.deferContinuityV2MigrationForTest && applyMigration === applyHarnessReliabilityMigration) continue;
             applyMigration({
               database: this.database,
               hasMigration: (version) => this.hasMigration(version),
