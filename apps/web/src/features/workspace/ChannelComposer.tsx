@@ -570,6 +570,8 @@ export function ChannelComposer({
             options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}
             disabled={permissionLocked}
             disabledReason={t("Permission is locked while this channel run or message is active.")}
+            selectedPermissionLabel={t("Selected permission preset {label}")}
+            menuLabel={t("Permission preset")}
             onPresetChange={onPermissionPresetChange}
           />
           {planModeChipVisible ? (

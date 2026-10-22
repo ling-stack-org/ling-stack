@@ -164,6 +164,29 @@ test("a user binding can be removed without exposing Registry archive controls",
   expect(runtimeErrors).toEqual([]);
 });
 
+test("Chinese built-in skill names and summaries stay translated", async ({ page }) => {
+  await prepareSurface(page, { theme: "light", width: 1440, height: 960, locale: "zh-CN" });
+  const state = createSkillsState("teammate_translated_skills", "技能审查员");
+  const expected = [
+    ["browse", "浏览器检查", "执行浏览器界面检查"],
+    ["checkpoint", "工作检查点", "为长时间运行或中断的会话"],
+    ["context-save", "保存上下文", "记录当前 Git 状态"],
+    ["diagram", "绘制图表", "依据实际实现创建"],
+    ["unfreeze", "解除编辑限制", "在用户扩大工作范围后"],
+  ] as const;
+  const builtins = createBaseState({ approvalStatus: "expired" });
+  state.skillRegistryEntries.push(...expected.map(([id]) => findSkillEntry(builtins, id)));
+  await mockDaemon(page, state);
+  await page.goto("/");
+  const skills = await openSkills(page, "技能审查员", chineseLabels);
+  for (const [id, name, summary] of expected) {
+    const row = skillRowById(skills, id);
+    await expect(row).toContainText(name);
+    await expect(row).toContainText(summary);
+  }
+  await captureEvidence(page, "1440x960-built-in-skills-zh-CN.png");
+});
+
 test("long skill lists use an overlay scrollbar and protected Ling Agent has no binding page", async ({ page }) => {
   await prepareSurface(page, { theme: "dark", width: 1280, height: 800, locale: "zh-CN", reducedMotion: "reduce" });
   const runtimeErrors = collectRuntimeErrors(page);

@@ -36,6 +36,8 @@ Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，�
 
 所有任务固定 Node `22.22.1`。构建只执行一次 `build:ci` 拓扑构建，短期 `dist` artifact 供类型检查、单元测试和 Daemon 分片复用；`test:ci` 不隐式重建依赖。本地通过不替代 GitHub 对当前待检提交的干净 runner 验证，完整 CI 成功也不替代 packaged 产品验收。
 
+Linux 构建任务在选中 CLI 时运行真实 daemon 生命周期和新工作区 doctor 检查；未配置 provider 的新工作区预期返回诊断退出码 4。在选中 Web 时，使用生产构建的 Vite preview 运行六项 Playwright 回归，覆盖权限、内置技能元数据和中文角色。浏览器测试使用模拟 daemon 数据，不包含真实模型调用。当前运行的截图与测试结果上传为 `ci-linux-source-web-smoke` artifact，保留七天。
+
 本地化包的 `typecheck:ci` 和 `test:ci` 已补齐；前者在干净 runner 重新生成未跟踪的 TypeScript 目录文件后检查类型，后者执行翻译目录完整性、占位符检查及本地化单元测试，复用构建阶段的 `dist`。新增[入口覆盖契约](../../scripts/ci/package-script-coverage.test.mjs)，要求分类器选中的每个类型检查／测试包都有对应 CI 脚本，防止 `--if-present` 静默跳过漏配包。
 
 ## 2026-10-19 补充规则评估
@@ -46,7 +48,7 @@ Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，�
 | CodeQL / Copilot Autofix | 尚未启用；建议先为 JavaScript/TypeScript 配置 CodeQL 默认扫描，观察首次结果。Autofix 提供修复建议，需要审查与测试，不自动合并 |
 | 仓库级密钥扫描／推送保护 | GitHub 开关目前关闭；建议开启。现有完整非文档 CI 会运行 Gitleaks，但它在上传后执行，且 Draft／文档范围跳过，不能代替推送时拦截 |
 | 新披露的依赖漏洞 | Dependabot 告警、安全更新及每周版本更新已配置；CI 另测已有安全补丁与许可策略。若增加漏洞严重性阻断，应先核对现存告警、补丁和无上游修复的基线，不能将旧告警直接当作本次改动引入 |
-| 浏览器与桌面交互 | 当前主 CI 的 Web 单测和规则检查不执行 Playwright E2E，Desktop 主要只有类型检查。建议后续接入隔离、无需真实账号与服务的关键流程 smoke，再逐步扩大；不把每日现有矩阵成功视为桌面打包或设备验收 |
+| 浏览器与桌面交互 | 选中 Web 时执行六项生产预览 Playwright smoke，使用模拟 daemon 数据并保留截图；Desktop 主要只有类型检查。后续可逐步扩大交互覆盖；不把每日现有矩阵成功视为桌面打包或设备验收 |
 
 本次未变更 GitHub 安全设置、分支保护、Dependabot 更新频率或发布流程。回退方式为撤销本次 CI 修改提交；调度恢复每周，既有 PR 与手动完整验证仍在。
 

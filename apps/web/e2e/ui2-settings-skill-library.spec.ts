@@ -9,6 +9,27 @@ const evidenceDirectory = fileURLToPath(new URL(
   import.meta.url,
 ));
 
+for (const [locale, timezoneId] of [["en-US", "America/New_York"], ["zh-CN", "Asia/Shanghai"]] as const) {
+  test.describe(`built-in metadata in ${locale}`, () => {
+    test.use({ timezoneId });
+    test("built-in skill timestamps stay unknown", async ({ page }) => {
+      await prepareSurface(page, "light", locale, 1440, 960);
+      const state = createBaseState({ approvalStatus: "expired" });
+      await mockDaemon(page, state);
+      await page.goto("/");
+      const panel = await openSkillLibrary(page);
+      await panel.getByRole("tab", { name: /Built-in skills|内置技能/ }).click();
+      const row = panel.locator('[data-skill-id="implement"]');
+      await expect(row.locator(".settings-skill-updated-cell")).toHaveText(locale === "zh-CN" ? "内置" : "Built-in");
+      await row.click();
+      const updated = panel.locator(".settings-skill-updated-line");
+      await expect(updated).toContainText(locale === "zh-CN" ? "未知" : "Unknown");
+      await expect(updated).not.toContainText(/1969|1970|12\/31|01\/01/);
+      await captureEvidence(page, `1440x960-built-in-unknown-date-${locale}.png`);
+    });
+  });
+}
+
 test("Skill Library keeps loading, no-result, shared controls, and editor geometry inside the Settings shell", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSurface(page, "light", "en-US", 1440, 960);

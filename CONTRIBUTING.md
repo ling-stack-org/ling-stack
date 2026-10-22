@@ -28,6 +28,8 @@ Requirements:
 
 - Git and Node.js 22.22.1 or newer
 - Corepack with pnpm 10
+- Rust 1.89 or newer and Cargo, installed with [rustup](https://rustup.rs/), for the
+  daemon's native image sanitizer; CI uses Rust 1.97.1
 
 ```bash
 git clone https://github.com/ling-stack-org/ling-stack.git

@@ -62,6 +62,8 @@ Los agentes de programación utilizan el adaptador de ejecución Pi. Las herrami
 
 Requisitos: Git, **Node.js 22.22.1 o posterior** y **Corepack con pnpm 10**.
 El repositorio fija pnpm `10.0.0`; la versión de referencia de Node en la CI es `22.22.1`.
+La compilación de Web y daemon también requiere **Rust 1.89 o posterior y Cargo** para el saneamiento nativo de imágenes.
+Instálalos con [rustup](https://rustup.rs/); la CI utiliza Rust `1.97.1`.
 
 ### 1. Instalar y compilar
 

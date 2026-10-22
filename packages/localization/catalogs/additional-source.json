@@ -348,5 +348,15 @@
   "Authorize these native engines and retire the legacy endpoint configuration.": "Authorize these native engines and retire the legacy endpoint configuration.",
   "Execution is not supported for this engine.": "Execution is not supported for this engine.",
   "Native execution is blocked. Review the engine configuration and execution verification.": "Native execution is blocked. Review the engine configuration and execution verification.",
-  "Workspace execution configuration could not be loaded.": "Workspace execution configuration could not be loaded."
+  "Workspace execution configuration could not be loaded.": "Workspace execution configuration could not be loaded.",
+  "Browse": "Browse",
+  "Checkpoint": "Checkpoint",
+  "Context Save": "Context Save",
+  "Diagram": "Diagram",
+  "Unfreeze": "Unfreeze",
+  "Drive a browser-style QA pass, verify page state, and capture reproducible UI evidence.": "Drive a browser-style QA pass, verify page state, and capture reproducible UI evidence.",
+  "Save or restore working-state checkpoints for long or interrupted sessions.": "Save or restore working-state checkpoints for long or interrupted sessions.",
+  "Capture current git state, decisions, validation, and remaining work for later resumption.": "Capture current git state, decisions, validation, and remaining work for later resumption.",
+  "Create architecture, flow, or process diagrams from implementation-backed source material.": "Create architecture, flow, or process diagrams from implementation-backed source material.",
+  "Clear a previously selected edit boundary after the user widens the work scope.": "Clear a previously selected edit boundary after the user widens the work scope."
 }
