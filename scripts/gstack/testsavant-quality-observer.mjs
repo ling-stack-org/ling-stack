@@ -30,7 +30,11 @@ export function observeTestsavantQualityRuntime(root) {
   } });
   const original = process.dlopen;
   process.dlopen = function(module, filename, ...args) {
-    const canonical = realpathSync(filename);
+    // Resolve the ordinary spelling before Node 22's permission-aware realpath;
+    // the exact namespace comparison below still rejects links and aliases.
+    const ordinary = process.platform === "win32" && filename.startsWith("\\\\?\\")
+      ? filename.startsWith("\\\\?\\UNC\\") ? `\\\\${filename.slice(8)}` : filename.slice(4) : filename;
+    const canonical = realpathSync(ordinary);
     if (filename !== canonical && (process.platform !== "win32" || filename !== toNamespacedPath(canonical))) {
       throw new Error("testsavant_quality_dependency_invalid");
     }

@@ -55,7 +55,11 @@ registerHooks({ load(url, context, nextLoad) {
 } });
 const originalDlopen = process.dlopen;
 process.dlopen = function(module, filename, ...args) {
-  const canonical = realpathSync(filename);
+  // Node 22's permission-aware realpath cannot walk a namespaced drive root.
+  // Resolve its ordinary spelling, then require the exact canonical namespace.
+  const ordinary = process.platform === "win32" && filename.startsWith("\\\\?\\")
+    ? filename.startsWith("\\\\?\\UNC\\") ? `\\\\${filename.slice(8)}` : filename.slice(4) : filename;
+  const canonical = realpathSync(ordinary);
   // Node's Windows .node loader passes exactly toNamespacedPath(filename).
   // Admit that spelling only; aliases and links must still fail closed.
   if (filename !== canonical && (process.platform !== "win32" || filename !== toNamespacedPath(canonical))) {

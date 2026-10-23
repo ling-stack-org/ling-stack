@@ -77,3 +77,16 @@ lookup, another recovery deleting the same partial directory, and lock removal
 sharing denial after owner release. Confirmed dead-owner cleanup paths survive
 lock retries; only concurrent absence is tolerated during partial cleanup.
 Persistent claim/removal errors still fail after the bounded retry budget.
+
+On 2026-10-24, hosted packaging diagnostics identified the ASAR duplicate-Office
+name check as the App-copy failure. The newly collected distribution sources
+included `native/office-local` and were inadvertently selected a second time by
+`dist/**/*`. A separate static review approved excluding `dist/distribution`
+from the runtime ASAR while retaining its unchanged complete `extraResources`
+copy. Actual Builder matchers confirmed the before/after selection; a regression
+uses the real copy and ASAR APIs to retain the CLI and compare external source,
+license and manifest bytes. Only the `apps/desktop/package.json` packaging pin
+was rebound, to `52497a6d81dba42d11f03729c5d5bb7b86339b3ad993703bd83177d7917ea3cb`.
+The other 1,499 packaging pins, native inputs, source list and original
+ASAR/native/signature/final-archive gates remain unchanged. This source review
+does not grant build, signature, runtime or final-archive acceptance.

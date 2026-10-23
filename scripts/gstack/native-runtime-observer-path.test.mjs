@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,7 +36,12 @@ function windowsFixture(kind) {
   const stats = file => ({ dev: 1, ino: 2, size: file.size ?? file.bytes.length, mtimeMs: file.changeAfterRead && file.read ? 2 : 1,
     ctimeMs: 1, isFile: () => true, isSymbolicLink: () => false });
   const disk = { constants: fs.constants,
-    realpathSync: path => resolutions.get(path) ?? missing(), lstatSync: path => stats(entry(path)),
+    // Node 22's permission-aware JS realpath fails on a namespaced drive root
+    // before reaching the file (EISDIR for `D:`). Resolve the ordinary spelling.
+    realpathSync: path => {
+      if (path.startsWith("\\\\?\\")) throw Object.assign(new Error("namespaced drive root"), { code: "EISDIR" });
+      return resolutions.get(path) ?? missing();
+    }, lstatSync: path => stats(entry(path)),
     readFileSync: path => { const file = entry(path); file.read = true; return file.bytes; },
     openSync: path => { const id = descriptors.size + 1; descriptors.set(id, { file: entry(path), offset: 0 }); return id; },
     fstatSync: fd => stats(descriptors.get(fd).file), closeSync: fd => descriptors.delete(fd),
@@ -50,6 +56,24 @@ function windowsFixture(kind) {
 }
 
 for (const kind of ["security", "testsavant"]) {
+  test(`${kind}: real Windows permission-aware filesystem accepts the loader's namespace spelling`, { skip: process.platform !== "win32" }, t => {
+    const root = fs.realpathSync(fs.mkdtempSync(win32.join(tmpdir(), "ling-observer-permission-")));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const canonical = win32.join(root, "binding.node");
+    fs.writeFileSync(canonical, "actual filesystem bytes");
+    const source = `import * as fs from "node:fs"; import vm from "node:vm";
+      import { createHash } from "node:crypto"; import { win32 } from "node:path";
+      import { fileURLToPath, pathToFileURL } from "node:url";
+      const sources = ${JSON.stringify(sources)};
+      ${hooks.toString()}
+      const fixture = hooks(${JSON.stringify(kind)}, ${JSON.stringify(root)}, win32, fs);
+      fixture.load(${JSON.stringify(canonical)});
+      fixture.load(win32.toNamespacedPath(${JSON.stringify(canonical)}));
+      if (fixture.calls.length !== 2 || fixture.finish().inputs.length !== 1) throw new Error("native observation missing");`;
+    const result = spawnSync(process.execPath, ["--permission", `--allow-fs-read=${root}`, "--input-type=module", "--eval", source], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+  });
+
   test(`${kind}: Windows native hook admits only canonical or its exact namespace spelling`, () => {
     const fixture = windowsFixture(kind), namespaced = win32.toNamespacedPath(fixture.canonical);
     for (const filename of [fixture.canonical, namespaced]) assert.equal(fixture.load(filename), fixture.nativeResult);
@@ -66,6 +90,7 @@ for (const kind of ["security", "testsavant"]) {
       namespaced.replace("D:", "d:"), namespaced.replaceAll("\\", "/"),
       fixture.canonical.replace("\\native\\", "\\native\\..\\native\\"), "node_modules\\native\\binding.node"]) {
       fixture.resolutions.set(alias, fixture.canonical);
+      if (alias.startsWith("\\\\?\\")) fixture.resolutions.set(alias.slice(4), fixture.canonical);
       assert.throws(() => fixture.load(alias), /external_or_linked_input|dependency_invalid/u, alias);
     }
     for (const outside of ["D:\\fixture\\outside.node", "E:\\outside.node"]) {

@@ -35,7 +35,7 @@
     "apps/desktop/scripts/engine-supervisor-package.mjs": "b2726052967bbd0735fe4c5371a566d519f9dc8eb1ab59b3de75e115570e82e7",
     "LICENSE": "b369b7547a372d61515d3ac92c231582e31043cb0bc0e62e39724a00cf568830",
     "apps/desktop/main/resource-paths.ts": "4170b6d41abb8bda7e75376d23f4691b1271b9dfc6a72a80543a11f331f12ae1",
-    "apps/desktop/package.json": "19886b503102ebc0aa834fa72dbadae1c0c1a963cc2b36b23c123efbb864d187",
+    "apps/desktop/package.json": "52497a6d81dba42d11f03729c5d5bb7b86339b3ad993703bd83177d7917ea3cb",
     "apps/desktop/scripts/build-packaged-daemon.mjs": "7cdd2fffea5dadaea2739de899a57512a2adec1ba71ef848e41e633c448aabff",
     "apps/desktop/scripts/build-packaged-office-native.mjs": "174583e1fb863ecd6e54e392b4dda2b66350d4556f4d16e691db1c9aaf1fc4a1",
     "apps/desktop/scripts/build-restricted-command-helper.mjs": "d36cee647574abd69f5ed6c3436d8580d8c99bc218be4ba4f00c7aefb451b927",
