@@ -195,6 +195,7 @@ export async function createRequiredQuestionChannelFixture(t, options = {}) {
       host: "127.0.0.1",
       port: 0,
       defaultWorkspaceCwd: cwd,
+      harness: { toolBroker: { mode: "enforce" } },
       channels: {
         autoRoute: false,
         intentSelector: true,

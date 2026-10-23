@@ -12,13 +12,18 @@ const policyFiles = ["resource-workspace.mjs", "run-managed.mjs", "managed-integ
 const policyChecksum = async () => createHash("sha256").update(Buffer.concat(await Promise.all(
   policyFiles.map(path => readFile(join(scripts, path)))))).digest("hex");
 const operations = {
+  "source-fetch": ["collect-pinned-source.mjs", 1, 2],
+  "shell-parser": ["build-shell-parser.mjs", 1, 2],
+  "browser-inputs": ["collect-executable-browser-inputs.mjs", 3, 3],
+  "select-executable": ["select-executable-bundle.mjs", 2, 2],
+  "reviewed-resource": ["rebuild-reviewed-resource-stage.mjs", 4, 4],
   source: ["build-source-bundle.mjs", 2, 3], native: ["build-native-runtime.mjs", 2, 3],
   resource: ["prepare-platform-resource-stage.mjs", 8, 8],
   "browser-archives": ["collect-browser-archives.mjs", 3, 3],
   "chromium-snapshot": ["collect-chromium-snapshot.mjs", 3, 3],
   "ungoogled-candidate": ["collect-ungoogled-chromium.mjs", 3, 3],
   "testsavant-model": ["collect-testsavant-model.mjs", 0, 0],
-  executable: ["assemble-executable-bundle.mjs", 3, 3],
+  executable: ["assemble-executable-bundle.mjs", 5, 5],
 };
 
 export function managedNodeArguments(operation, args) {
@@ -128,10 +133,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const [operation, root, ...args] = process.argv.slice(2);
   if (operation === "init" && root && args.length === 1) {
     process.stdout.write(`${JSON.stringify(await initResourceWorkspace({ root: resolve(root), mountPath: args[0] }), null, 2)}\n`);
+  } else if (operation === "init-local" && root && !args.length) {
+    process.stdout.write(`${JSON.stringify(await initResourceWorkspace({ root: resolve(root), storageMode: "local-bounded" }), null, 2)}\n`);
   } else if (operation === "inspect" && root && !args.length) {
     process.stdout.write(`${JSON.stringify(await resourceCheckpoint(resolve(root)), null, 2)}\n`);
   } else {
-    if (!root) throw new Error("Usage: run-managed.mjs <init|inspect|source|native|resource|test|browser-archives|chromium-snapshot|ungoogled-candidate|testsavant-model> <external-workspace> <arguments...>");
+    if (!root) throw new Error("Usage: run-managed.mjs <init|init-local|inspect|source-fetch|source|shell-parser|native|resource|reviewed-resource|test|browser-inputs|browser-archives|chromium-snapshot|ungoogled-candidate|testsavant-model|executable|select-executable> <managed-workspace> <arguments...>");
     const result = await runManagedNode({ root: resolve(root), args: managedNodeArguments(operation, args) });
     process.stderr.write(`${JSON.stringify(result)}\n`);
     process.exitCode = result.exitCode;

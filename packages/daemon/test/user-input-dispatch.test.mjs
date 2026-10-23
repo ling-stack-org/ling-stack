@@ -36,7 +36,8 @@ function response(delta, finish) {
 async function fixture(t, surface = "normal", sourcePolicy = {}, { storedTask = false, workflow = false, workflowPolicy, requiredOperation = false, executionSubdir = false, media = false, autoClaim = true, shared } = {}) {
   const cwd = shared?.cwd ?? await mkdtemp(join(tmpdir(), "ling-answer-dispatch-"));
   const stores = shared?.stores ?? new RunStoreRegistry(createSqliteRunStore), active = shared?.active ?? new ActiveRunRegistry();
-  const supervisor = shared?.supervisor ?? new RuntimeSupervisor(resolveConfig({ defaultWorkspaceCwd: cwd }));
+  const supervisor = shared?.supervisor ?? new RuntimeSupervisor(resolveConfig({ defaultWorkspaceCwd: cwd,
+    harness: { toolBroker: { mode: "enforce" } } }));
   const workers = shared?.workers ?? [];
   if (!shared) t.after(async () => { for (const worker of workers) await worker.close();
     await active.waitForIdle(); supervisor.releaseAll(); stores.closeAll(); await rm(cwd, { recursive: true, force: true }); });
@@ -357,7 +358,8 @@ test("a long admitted answer does not prevent another thread from dispatching", 
 test("Daemon startup dispatches a persisted answer without a public Run request", { timeout: 20000 }, async t => {
   const f = await fixture(t, "normal", {}, { autoClaim: false });
   f.supervisor.releaseAll();
-  const daemon = createDaemonServer({ defaultWorkspaceCwd: f.cwd, port: 0, channels: { terminalReports: false } }, {
+  const daemon = createDaemonServer({ defaultWorkspaceCwd: f.cwd, port: 0,
+    harness: { toolBroker: { mode: "enforce" } }, channels: { terminalReports: false } }, {
     runnerRegistry: f.runners, storeFactory: createSqliteRunStore,
     secretResolver: { resolve: () => undefined, status: () => ({ status: "missing" }) },
   });
@@ -391,7 +393,8 @@ test("a competing Daemon cannot mutate an active answer before workspace custody
       .map(value => createHash("sha256").update(JSON.stringify(value)).digest("hex"));
     const before = snapshot();
     await assert.rejects(async () => {
-      daemon = createDaemonServer({ defaultWorkspaceCwd: f.cwd, port: 0, channels: { terminalReports: false } }, {
+      daemon = createDaemonServer({ defaultWorkspaceCwd: f.cwd, port: 0,
+        harness: { toolBroker: { mode: "enforce" } }, channels: { terminalReports: false } }, {
         runnerRegistry: f.runners, storeFactory: createSqliteRunStore,
         secretResolver: { resolve: () => undefined, status: () => ({ status: "missing" }) },
       });
@@ -416,7 +419,8 @@ test(`Daemon answer completion: ${scenario}`, { timeout: 20000 }, async t => {
       requestedRunnerId: "pi", requiredTools: ["read"], autoStart: true } }, clock());
   assert.equal(next.status, "queued");
   f.supervisor.releaseAll();
-  const daemon = createDaemonServer({ defaultWorkspaceCwd: f.cwd, port: 0, channels: { terminalReports: false } }, {
+  const daemon = createDaemonServer({ defaultWorkspaceCwd: f.cwd, port: 0,
+    harness: { toolBroker: { mode: "enforce" } }, channels: { terminalReports: false } }, {
     runnerRegistry: f.runners, storeFactory: createSqliteRunStore,
     secretResolver: { resolve: () => undefined, status: () => ({ status: "missing" }) },
   });
@@ -518,7 +522,8 @@ test("Daemon restart completes an optional last step interrupted after answer ad
     assert.equal(reopened.listDueUserInputDeliveries({ limit: 100 }, clock()).length, 1);
   } finally { reopened.close(); }
   f.supervisor.releaseAll();
-  const daemon = createDaemonServer({ defaultWorkspaceCwd: f.cwd, port: 0, channels: { terminalReports: false } }, {
+  const daemon = createDaemonServer({ defaultWorkspaceCwd: f.cwd, port: 0,
+    harness: { toolBroker: { mode: "enforce" } }, channels: { terminalReports: false } }, {
     runnerRegistry: f.runners, storeFactory: createSqliteRunStore,
     secretResolver: { resolve: () => undefined, status: () => ({ status: "missing" }) },
   });

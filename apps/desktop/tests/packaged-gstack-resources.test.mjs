@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { build } from "esbuild";
 import { bundleInventory, digest, readExecutableBundle } from "../../../scripts/gstack/executable-bundle.mjs";
 
-async function fixture(t) {
+async function fixture(t, { builderSkippedFiles = false } = {}) {
   const work = await realpath(await mkdtemp(join(tmpdir(), "ling-desktop-gs-")));
   t.after(() => rm(work, { recursive: true, force: true }));
   const root = join(work, "bundle"); await mkdir(root);
@@ -18,9 +19,15 @@ async function fixture(t) {
     await writeFile(join(root, skill.entryPath), `# ${skill.id}\nFull instructions.\n`);
   }
   await writeFile(join(root, "LICENSE"), "MIT fixture\n");
+  if (builderSkippedFiles) {
+    await mkdir(join(root, "runtime/node_modules/tr46/lib"), { recursive: true });
+    await writeFile(join(root, "runtime/node_modules/tr46/lib/.gitkeep"), "authenticated placeholder\n");
+    await writeFile(join(root, "runtime/.DS_Store"), "authenticated inert fixture\n");
+  }
   const browserRoot = join(work, "gstack-browser"), framework = "Chromium.app/Contents/Frameworks/Chromium Framework.framework";
   const browserEntry = "Chromium.app/Contents/MacOS/Chromium";
   await mkdir(join(browserRoot, framework, "Versions/A"), { recursive: true });
+  await writeFile(join(browserRoot, framework, "Versions/A/framework.bin"), "inert framework fixture");
   await mkdir(dirname(join(browserRoot, browserEntry)), { recursive: true });
   await writeFile(join(browserRoot, browserEntry), "browser fixture, never executed");
   const browserFiles = await bundleInventory(browserRoot);
@@ -68,6 +75,25 @@ test("build-owned selection copies one complete resource tree and verifies it af
 test("package declarations without a selected build fail instead of silently skipping verification", async t => {
   const f = await fixture(t);
   await assert.rejects(f.module.verifyPackagedGstack({ packager: { config: { extraMetadata: { lingPackagedGstack: f.identity } } } }), /selection_missing/);
+});
+test("actual Builder copy preserves manifest-authenticated files omitted by its directory walker", async t => {
+  const f = await fixture(t, { builderSkippedFiles: true });
+  await f.module.preparePackagedGstackBuild({ required: true, selectionPath: f.selectionPath });
+  const config = f.module.packagedGstackBuilderConfig();
+  const require = createRequire(import.meta.url);
+  const builderRequire = createRequire(require.resolve("electron-builder/package.json"));
+  const { FileMatcher, copyFiles } = builderRequire("app-builder-lib/out/fileMatcher.js");
+  const context = { electronPlatformName: "darwin", appOutDir: join(f.work, "actual-builder"),
+    packager: { appInfo: { productFilename: "Ling" }, config } };
+  const resources = join(context.appOutDir, "Ling.app/Contents/Resources");
+  await copyFiles(config.extraResources.map(item => new FileMatcher(item.from,
+    join(resources, item.to), value => value, item.filter)), undefined, false);
+  for (const path of ["runtime/node_modules/tr46/lib/.gitkeep", "runtime/.DS_Store"]) {
+    assert.deepEqual(await readFile(join(resources, "gstack", path)), await readFile(join(f.root, path)));
+  }
+  await f.module.verifyPackagedGstack(context);
+  await writeFile(join(resources, "gstack/runtime/node_modules/tr46/lib/.gitkeep"), "changed");
+  await assert.rejects(f.module.verifyPackagedGstack(context), /bundle_resource_checksum_mismatch/);
 });
 test("actual esbuild embeds exactly the authenticated identity module", async t => {
   const f = await fixture(t);

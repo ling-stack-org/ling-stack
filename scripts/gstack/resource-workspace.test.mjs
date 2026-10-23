@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -17,14 +17,15 @@ test("capacity admission reserves the complete copy and free-space floor, never 
 });
 
 async function workspace(t) {
-  const parent = await mkdtemp(join(tmpdir(), "gstack-governance-test-"));
+  const parent = await realpath(await mkdtemp(join(tmpdir(), "gstack-governance-test-")));
   const leases = [];
   t.after(async () => {
     for (const lease of leases) await lease.release();
     await rm(parent, { recursive: true, force: true });
   });
   const root = join(parent, "managed");
-  await initResourceWorkspace({ root, mountPath: process.env.LING_GSTACK_TEST_MOUNT });
+  await initResourceWorkspace(process.env.LING_GSTACK_TEST_MOUNT
+    ? { root, mountPath: process.env.LING_GSTACK_TEST_MOUNT } : { root, storageMode: "local-bounded" });
   return { root, parent, async acquire(options) {
     const lease = await acquireResourceLease(root, options);
     leases.push(lease);
@@ -48,7 +49,8 @@ test("one exclusive lease routes temporary and cache writes externally and refus
   assert.equal(lease.env.BUN_INSTALL_CACHE_DIR, join(root, "cache/bun"));
   assert.equal(lease.env.HOME, join(lease.scratchPath, "home"));
   await assert.rejects(acquireResourceLease(root), /workspace_busy/);
-  const alternate = await workspace(t);
+  const alternate = process.env.LING_GSTACK_TEST_MOUNT ? await workspace(t) : { root: join(parent, "alternate") };
+  if (!process.env.LING_GSTACK_TEST_MOUNT) await initResourceWorkspace({ root: alternate.root, storageMode: "local-bounded" });
   await assert.rejects(acquireResourceLease(alternate.root), /workspace_busy/);
   await assert.rejects(managedResourceWrite(join(parent, "escape"), { kind: "resource", env: lease.env }), /outside_workspace/);
   await assert.rejects(managedResourceWrite(join(root, "artifacts/resource/new"), { kind: "resource", env: {} }), /lease_required/);
@@ -74,14 +76,15 @@ test("retention refuses a third successful generation instead of inventing anoth
   assert.deepEqual(await readdir(artifacts), ["current", "previous"]);
 });
 
-test("a changed volume receipt and abandoned scratch both fail closed", async t => {
+test("a changed storage receipt and abandoned scratch both fail closed", async t => {
   const { root } = await workspace(t);
   await mkdir(join(root, "runs/interrupted"));
   await assert.rejects(acquireResourceLease(root), /scratch_requires_review/);
   await rm(join(root, "runs/interrupted"), { recursive: true });
   const path = join(root, ".gstack-resource-workspace.json");
   const receipt = JSON.parse(await readFile(path, "utf8"));
-  receipt.mountInode += 1;
+  if (receipt.storageMode === "local-bounded") receipt.localParentInode += 1;
+  else receipt.mountInode += 1;
   await writeFile(path, JSON.stringify(receipt));
-  await assert.rejects(openResourceWorkspace(root), /mount_identity/);
+  await assert.rejects(openResourceWorkspace(root), /(?:mount|local)_identity/);
 });

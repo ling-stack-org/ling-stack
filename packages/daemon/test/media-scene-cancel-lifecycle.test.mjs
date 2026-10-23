@@ -682,6 +682,7 @@ async function createCapturedCase(t, kind) {
   const stores = new RunStoreRegistry(requestedCwd => { assert.equal(requestedCwd, cwd); return store; });
   assert.equal(stores.getStore(cwd), store);
   const config = resolveConfig({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd,
+    harness: { toolBroker: { mode: "enforce" } },
     channels: { autoRoute: false, intentSelector: false, terminalReports: false } });
   const supervisor = new RuntimeSupervisor(config);
   const hooks = {

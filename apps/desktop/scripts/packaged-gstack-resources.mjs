@@ -1,6 +1,6 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
-import { resolve, dirname, join } from "node:path";
+import { resolve, dirname, join, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readExecutableBundle } from "../../../scripts/gstack/executable-bundle.mjs";
 
@@ -25,8 +25,14 @@ export async function preparePackagedGstackBuild({ required = false, selectionPa
 }
 export function packagedGstackBuilderConfig() {
   if (!active) return {};
+  // Builder's directory walker skips these names before applying any filter.
+  // Explicit file sets preserve only entries already authenticated by the full
+  // selected manifest; the post-copy complete inventory/hash guard stays intact.
+  const exactFiles = active.source.manifest.files
+    .filter(file => [".gitkeep", ".DS_Store"].includes(basename(file.path)))
+    .map(file => ({ from: join(active.root, file.path), to: `gstack/${file.path}` }));
   return { extraResources: [{ from: active.root, to: "gstack", filter: ["**/*"] },
-      { from: active.browser.root, to: "gstack-browser", filter: ["**/*"] }],
+      { from: active.browser.root, to: "gstack-browser", filter: ["**/*"] }, ...exactFiles],
     extraMetadata: { lingPackagedGstack: active.identity },
     mac: { signIgnore: ["/[Rr]esources/gstack(?:-browser)?/"] } };
 }

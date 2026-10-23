@@ -17,8 +17,98 @@ the continuation order in the historical 2026-10-19 backup note.
 
 ## Latest verification delta — 2026-10-23
 
-This replaces the in-progress verification statements below, not their retained
-failure records. No package approval, real model call or final E6 verdict follows.
+### Current P1 resource rebuild overlay
+
+Execution now follows `e6-remaining-work-plan-2026-10-23.md` P1→P2→P3/P4→P5.
+The former external-volume/selection-only block below is historical, not a request
+to supply a resource disk or reduce QA scope. The user selected explicit
+`local-bounded` storage; fixed source/model/native resources are built. Restoring
+the exact reviewed Bun1.4.2 resolved the compiler-only mismatch without changing
+any reviewed source/import pins. Resource stage actually exited0, SHA256
+`58dff1d02f2839af8acdb180cdd75ff0bed4576e0ae1a997351aeed76c8bde93`.
+Browser retry session79852 actually exited0 (192819ms): all three official
+archives and the fixed DMG were verified; version/transport/inventory match the
+existing pins and the read-only mount was detached. Executable session76789
+actually exited0 (65488ms),29635 files,1296949186 bytes. First selection
+session37198 actually exited0 (9612ms),reused=false,manifest SHA256
+`42e8edca5d7f7ba275d462756fc8ab85e1c9638b69f9811994bafb895b034d00`.
+P1 is complete. The original macOS QA package command session55530 exited1 at
+afterPack: Builder's directory walker dropped the single authenticated
+`runtime/node_modules/tr46/lib/.gitkeep` file. No extra file was present.
+Manifest-derived exact file mappings fix the copy, retaining full verification.
+The real Builder copy regression went RED→GREEN; the three-file adjacency
+passed72/72,zero skips. Only one approved packaging input changed, with all15
+native and other1590 packaging inputs unchanged. Independent delta review and a
+new concrete user approval are required before packaging again; approved data
+has not been updated and the failed App was not launched.
+
+Independent build-helper review exposed parser copy-snapshot ABA and an existing
+assembly empty-reservation cleanup bug. Both forced probes now reject/clean
+correctly and targeted regressions pass. Browser's first live acquisition
+exited1 because isolated HOME hides gh login configuration; public fixed-upstream
+metadata now has a bounded credential-free reader. Incremental independent
+review is complete with zero unresolved findings; the final related9-file
+regression passed34/34 with no skips. The formal Office source reader still exits0: all15/1591 approved
+inputs are unchanged. These helper changes do not silently grant new approval.
+
+No new package, GUI acceptance, model evaluation, commit, push or merge has
+occurred. The accepted Core/Daemon/Runner baselines below are not being rerun.
+
+### Current authoritative overlay: validation passed; package input missing
+
+This section supersedes the running-suite and pending-approval statements retained
+below. The full D0–E6 objective is unchanged. This is not final E6 acceptance.
+
+- The durable complete Daemon run has actually exited0:7419 tests,7407 passed,
+  zero failed/cancelled,12 existing platform/launcher skips. Its508 files match
+  the original complete glob; no split, exclusion, retry or timeout relaxation
+  was used. The final log and child-close receipt are retained as
+  `daemon-complete-durable-final-20261023.tap` and `.receipt.json` under the
+  ignored output directory. `sourceUnchanged=true`; original failed and
+  interrupted runs remain historical evidence, not passing runs.
+- The current-input synthetic SQLite/scheduler benchmark ran once after the
+  full suite, actually exited0, and passed all five original gates with250
+  measured samples/50 warmups. It made no external Provider calls and does not
+  prove GUI or real-model performance.
+- The user approved the exact frozen packet with SHA256
+  `bd2f18a45a38bc5d65d70caca4d2a380503f81ec4ed7e34247a856e5568c1ce9`,
+  for isolated macOS QA only. All15 native/1591 packaging inputs and actual
+  compiler/SDK/headers/runtime/signing were rechecked against it. The old
+  manifest was preserved; the new manifest SHA256 is
+  `fcdad830ab3fea9b34264704c545babab1fd7e10d12e9775e4c24ea1e65ee941`.
+  The formal source reader passed before and after the attempted build. The
+  original pending packet is unchanged; no release approval is inferred.
+- The actual original QA package command exited1 because
+  `.ling-stack/build/gstack-desktop-selection.json` is absent. The Office
+  source-build lane requires an authenticated immutable external GStack bundle;
+  a global installation or fixture identity cannot substitute. Searches of
+  local worktrees/common resource locations found no selection, and current
+  disk/volume inventory contains no recoverable GStack resource volume. No
+  GStack upgrade or bypass was performed. The failed build log is retained as
+  `human-qa-package-missing-gstack-selection-20261023.log` under output.
+- No new QA App was generated or launched. All20 current-package cases and
+  their required K/U/S increments remain unverified; historical R03 acceptance
+  is retained without pretending it was rerun on a nonexistent new package.
+  Dynamic-child, fan-in, question recovery, Office native behavior and UI
+  assertions still require their actual packaged evidence.
+- H09 separately still requires an authorized Provider/model with proved hard
+  output-cap support, current genuine Host source and user-performed human
+  authentication. The existing local CPA management URL does not resolve that
+  capability gap. No new generation was sent.
+
+Next: restore and verify an existing external bundle's exact root/identity, then
+resume the unchanged QA package command. An alternative QA-only non-GStack lane
+would change approved source inputs and therefore needs an explicit scope
+decision, new delta review and specific packet approval; it must not silently
+inherit this approval. Prefer Codex built-in Computer Use for actual GUI work;
+`cua-driver` is fallback only. Windows, global GStack upgrade and main CI remain
+deferred. Do not rerun accepted suites or reconstruct completed implementations
+merely because historical paragraphs below describe their earlier gaps.
+
+### Retained preceding verification history
+
+The following statements retain their original evidence and limitations; use
+the current overlay above for completion and blocking status.
 
 ### Later suspension delta — 2026-10-23
 

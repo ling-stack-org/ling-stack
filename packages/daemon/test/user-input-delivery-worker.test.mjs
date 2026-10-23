@@ -458,6 +458,7 @@ test("real daemon restart reuses admitted bindings and frees the single worker s
   }
 
   let firstDaemon = createDaemonServer({ defaultWorkspaceCwd: f.cwd, host: "127.0.0.1", port: 0,
+    harness: { toolBroker: { mode: "enforce" } },
     channels: { terminalReports: false } }, { runner: new PreAckFailureRunner() });
   let restartedDaemon;
   const releaseFirstProvider = deferred();
@@ -508,6 +509,7 @@ test("real daemon restart reuses admitted bindings and frees the single worker s
       }
     }
     restartedDaemon = createDaemonServer({ defaultWorkspaceCwd: f.cwd, host: "127.0.0.1", port: 0,
+      harness: { toolBroker: { mode: "enforce" } },
       channels: { terminalReports: false } }, { runner: new RestartedFixtureRunner(), storeFactory: cwd => {
         const store = createSqliteRunStore(cwd);
         const recover = store.recoverUserInputContinuationPrestart.bind(store);
@@ -596,6 +598,7 @@ test(`real daemon retries a committed run_created mirror ${mirrorFailure} I/O fa
     }
   }
   const daemonConfig = { defaultWorkspaceCwd: f.cwd, host: "127.0.0.1", port: 0,
+    harness: { toolBroker: { mode: "enforce" } },
     channels: { terminalReports: false } };
   const dependencies = { runner: new MirrorRecoveryRunner(), storeFactory: cwd => {
       const store = createSqliteRunStore(cwd);

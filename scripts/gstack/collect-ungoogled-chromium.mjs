@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { readPublicGstackGithubMetadata } from "./public-github-metadata.mjs";
 import { managedResourceWrite, resourceCheckpoint } from "./resource-workspace.mjs";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -17,7 +17,7 @@ const overlap = (root, path) => {
   return !r || !isAbsolute(r) && r !== ".." && !r.startsWith("../") && !r.startsWith("..\\");
 };
 const inputNames = ["collect-ungoogled-chromium.mjs", "ungoogled-chromium-candidate.json", "collect-browser-archives.mjs",
-  "runtime-dependency-audit.mjs", "upstream-lock.json"];
+  "runtime-dependency-audit.mjs", "upstream-lock.json", "public-github-metadata.mjs"];
 const inputRecords = () => Promise.all(inputNames.map(async path => ({ path, checksum: checksum(await readFile(new URL(path, import.meta.url))) })));
 
 export function validateUngoogledChromiumPin(pin) {
@@ -51,10 +51,10 @@ export function validateUngoogledChromiumPin(pin) {
 async function github(endpoint) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      return JSON.parse(execFileSync("gh", ["api", endpoint], { encoding: "utf8", timeout: 30_000,
-        maxBuffer: 4 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] }));
+      return await readPublicGstackGithubMetadata(endpoint);
     } catch (error) {
-      const transient = error.code === "ETIMEDOUT" || /TLS handshake timeout|connection reset|HTTP 50[234]/i.test(String(error.stderr));
+      const transient = /ECONNRESET|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT/.test(error.cause?.code ?? error.code ?? "")
+        || /^gstack_github_metadata_http_50[234]$/.test(error.message);
       if (!transient || attempt === 2) throw error;
       await new Promise(resolve => setTimeout(resolve, attempt ? 1000 : 250));
     }

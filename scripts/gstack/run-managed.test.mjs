@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,10 +8,11 @@ import { initResourceWorkspace } from "./resource-workspace.mjs";
 import { managedNodeArguments, runManagedNode } from "./run-managed.mjs";
 
 async function fixture(t) {
-  const parent = await mkdtemp(join(tmpdir(), "gstack-supervisor-test-"));
+  const parent = await realpath(await mkdtemp(join(tmpdir(), "gstack-supervisor-test-")));
   t.after(() => rm(parent, { recursive: true, force: true }));
   const root = join(parent, "managed");
-  await initResourceWorkspace({ root, mountPath: process.env.LING_GSTACK_TEST_MOUNT });
+  await initResourceWorkspace(process.env.LING_GSTACK_TEST_MOUNT
+    ? { root, mountPath: process.env.LING_GSTACK_TEST_MOUNT } : { root, storageMode: "local-bounded" });
   return { root, additionalBytes: 1024 * 1024, onOutput: () => {} };
 }
 
@@ -24,6 +25,12 @@ test("the managed test CLI enforces serial files and rejects injected node flags
   assert.throws(() => managedNodeArguments("browser-archives", ["a", "b", "c", "ignored"]), /arguments/);
   assert.ok(managedNodeArguments("testsavant-model", [])[0].endsWith("collect-testsavant-model.mjs"));
   assert.throws(() => managedNodeArguments("testsavant-model", ["override"]), /arguments/);
+  assert.throws(() => managedNodeArguments("executable", ["stage", "inspection", "output"]), /arguments/);
+  assert.ok(managedNodeArguments("executable", ["stage", "inspection", "archives", "output", "sha256:fixture"])[0].endsWith("assemble-executable-bundle.mjs"));
+  assert.ok(managedNodeArguments("browser-inputs", ["stage", "output", "hash"])[0].endsWith("collect-executable-browser-inputs.mjs"));
+  assert.ok(managedNodeArguments("select-executable", ["root", "hash"])[0].endsWith("select-executable-bundle.mjs"));
+  assert.ok(managedNodeArguments("reviewed-resource", ["source", "output", "parser", "hash"])[0].endsWith("rebuild-reviewed-resource-stage.mjs"));
+  assert.throws(() => managedNodeArguments("reviewed-resource", ["source", "output"]), /arguments/);
 });
 
 test("real-resource test entrypoints refuse ungoverned invocation before reading inputs", () => {
