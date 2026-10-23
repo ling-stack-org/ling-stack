@@ -70,7 +70,7 @@
     "apps/desktop/scripts/macos-development-signing.mjs": "336b21271cbb786a81bdaf3723a1d8d1a7c84b6e53cc866280b02408a0cebd6d",
     "apps/desktop/scripts/native/cua-driver-package-atomic-publish.cc": "5ae38dcacd8cb30f0083cff829d1e6e6bf5527b778be002e1d3605caf3d4d197",
     "apps/desktop/scripts/native/human-evaluation-darwin.swift": "1c54b9fe8efc77148359cfcfa1d0ac6eb9203f8352b82e62c179cbbe0932ae89",
-    "apps/desktop/scripts/package-macos-with-office.mjs": "6536d52e97362e9f21febf07b388e6bcb5b75f049f94367c4895acbbfc9dd49a",
+    "apps/desktop/scripts/package-macos-with-office.mjs": "0c96a59d1a4e15f3dedd739ef59c0f79668ad155408103b8f11197a05f29e5d2",
     "apps/desktop/scripts/packaged-office-daemon-source-inputs.mjs": "b8ee0e7391f3deb5bb68f0634b95461616b24ef67ac7f257796367a0c19ae829",
     "apps/desktop/scripts/packaged-codesign-review-publication.mjs": "86df26e926fe0243df55a9ffa897faab91bf7fe282b197c6ccdc2e84864da909",
     "apps/desktop/scripts/packaged-office-native-asar-checks.mjs": "4382194ce4b4ac20b93879550bbeb91a880546113c675dcba50373930d194f03",

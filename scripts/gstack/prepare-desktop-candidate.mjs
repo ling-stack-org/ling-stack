@@ -44,10 +44,11 @@ export function parseDesktopCandidateArguments(args) {
   return options;
 }
 
-// The SDK review currently admits only the native macOS arm64 graph/compiler.
-// Windows keeps its complete dependencies until its own evidence is approved.
+// Each admitted native target has an independent fixed SDK/compiler/graph review.
+// Other targets keep their complete dependencies until their evidence is approved.
 export function desktopCandidatePackageSelection(target = { platform: process.platform, arch: process.arch }) {
-  return target.platform === "darwin" && target.arch === "arm64" ? "reviewed-sdk-only" : "retain-complete-upstream";
+  return target.platform === "darwin" && target.arch === "arm64" || target.platform === "win32" && target.arch === "x64"
+    ? "reviewed-sdk-only" : "retain-complete-upstream";
 }
 
 export function desktopCandidatePaths(root) {

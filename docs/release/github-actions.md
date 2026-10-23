@@ -1,7 +1,8 @@
 # GitHub Actions 桌面开发预发布
 
 工作流是 [Desktop prerelease](../../.github/workflows/desktop-prerelease.yml)。它固定一个完整源码 SHA，
-分别在原生 macOS arm64、Windows x64 runner 上构建，汇总为一个 **Draft prerelease**。
+分别在原生 macOS arm64、Windows x64 runner 上构建，默认仅生成 **Actions artifacts**。
+手动选择 `create_draft=true` 时，才会在两平台都成功后汇总为一个 **Draft prerelease**。
 macOS 使用 ad-hoc 签名，不含 Developer ID 或公证；Windows 不含 Authenticode 发行者签名。
 两种开发包都不需要先购买代码签名证书。
 

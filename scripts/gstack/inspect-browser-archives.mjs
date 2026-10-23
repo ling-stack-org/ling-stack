@@ -1,20 +1,21 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { validateBrowserArchivePlan, verifyBrowserArchiveSource } from "./collect-browser-archives.mjs";
 import { inspectBrowserZip } from "./inspect-browser-zip.mjs";
+import { publishStagedDirectory } from "./publish-staged-directory.mjs";
 
 const checksum = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const digest = value => /^sha256:[a-f0-9]{64}$/u.test(value ?? "");
 const fail = reason => { throw new Error(`gstack_browser_${reason}`); };
 const collectorNames = ["collect-browser-archives.mjs", "upstream-lock.json", "runtime-dependency-audit.mjs",
-  "build-native-runtime.mjs", "public-domain-package-review.mjs", "reviewed-public-domain-packages.json"];
+  "build-native-runtime.mjs", "public-domain-package-review.mjs", "reviewed-public-domain-packages.json", "publish-staged-directory.mjs"];
 const inspectorNames = ["inspect-browser-archives.mjs", "inspect-browser-zip.mjs", "collect-browser-archives.mjs",
-  "runtime-dependency-audit.mjs", "upstream-lock.json"];
+  "runtime-dependency-audit.mjs", "upstream-lock.json", "publish-staged-directory.mjs"];
 const exists = path => lstat(path).then(() => true, error => { if (error.code === "ENOENT") return false; throw error; });
 const contains = (root, path) => {
   const value = relative(root, path);
@@ -152,19 +153,16 @@ export async function inspectGstackBrowserArchives({ outputPath, onProgress = ()
     pendingGates: ["exact-archive-license-review", "owned-resource-materialization", "real-browser-execution", "installed-client-acceptance"] };
   await mkdir(dirname(output), { recursive: true });
   const temporary = await mkdtemp(join(dirname(output), ".gstack-browser-inspection-"));
-  let reserved = false;
   try {
     const candidate = join(temporary, "candidate"); await mkdir(candidate);
     for (const [name, bytes] of [["browser-member-inventory.json", inventoryBytes], ["browser-license-candidates.json", noticeBytes],
       ["browser-member-inspection.json", `${JSON.stringify(receipt, null, 2)}\n`]]) await writeFile(join(candidate, name), bytes, { flag: "wx" });
     await verifyBrowserArchiveCandidates(options);
     if (!isDeepStrictEqual(await inspectorInputs(), inputs)) fail("inspection_inputs_changed");
-    await mkdir(output); reserved = true;
-    await rename(candidate, output); reserved = false;
+    await publishStagedDirectory(candidate, output);
     return receipt;
   } finally {
-    try { if (reserved) await rmdir(output); }
-    finally { await rm(temporary, { recursive: true, force: true }); }
+    await rm(temporary, { recursive: true, force: true });
   }
 }
 

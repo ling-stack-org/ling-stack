@@ -64,8 +64,13 @@ export async function packageMacosWithOffice() {
             }
             assertPackagedOfficeSigningConfig(config);
             assertPackagedOfficeSigningEnvironment(process.env);
-            await build({ projectDir: desktopRoot, publish: "never",
-              targets: Platform.MAC.createTarget(["dmg", "zip"], Arch.arm64), config });
+            // Builder otherwise skips even ad-hoc signing in PR jobs. Only
+            // the admitted fixed no-credential lane owns this temporary input.
+            process.env.CSC_FOR_PULL_REQUEST = "true";
+            try {
+              await build({ projectDir: desktopRoot, publish: "never",
+                targets: Platform.MAC.createTarget(["dmg", "zip"], Arch.arm64), config });
+            } finally { delete process.env.CSC_FOR_PULL_REQUEST; }
             return 0;
           });
         });

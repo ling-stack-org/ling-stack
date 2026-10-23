@@ -11,7 +11,8 @@ const scopes = ["client-command-imports", "native-build-imports", "node-browser-
 const sdk = "node_modules/@anthropic-ai/claude-agent-sdk";
 const nativeSdk = `${sdk}-darwin-arm64`;
 
-async function fixture(t) {
+async function fixture(t, target = { platform: "darwin", arch: "arm64" }) {
+  const nativeSdk = `${sdk}-${target.platform}-${target.arch}`;
   const parent = await realpath(await mkdtemp(join(tmpdir(), "ling-self-test-selection-")));
   t.after(() => rm(parent, { recursive: true, force: true }));
   const stage = await mkdtemp(join(parent, ".gstack-resource-stage-"));
@@ -32,7 +33,7 @@ async function fixture(t) {
   const sourceBytes = JSON.stringify(source);
   await write("source-manifest.json", sourceBytes);
   const native = { schemaVersion: 1, deliveryStage: "native-dependencies", upstreamRevision: source.upstream.revision,
-    sourceManifestChecksum: hash(sourceBytes), target: { platform: "darwin", arch: "arm64" }, components: [] };
+    sourceManifestChecksum: hash(sourceBytes), target, components: [] };
   await write("native-build.json", JSON.stringify(native));
   const packageRecords = [];
   for (const path of [sdk, nativeSdk]) {
@@ -88,6 +89,25 @@ test("reviewed exclusion removes only the two self-test packages from owned stag
   await assert.rejects(readFile(join(f.runtime, nativeSdk, "package.json")), { code: "ENOENT" });
   assert.match(await readFile(join(f.runtime, "node_modules/@anthropic-ai/sdk/index.mjs"), "utf8"), /API must not execute/);
   for (const file of f.source.files) assert.equal(hash(await readFile(join(f.candidate, file.path))), file.checksum);
+});
+
+test("Windows exclusion uses its exact native package and preserves client sources and optional API", async t => {
+  const f = await fixture(t, { platform: "win32", arch: "x64" });
+  const report = await filterGstackUpstreamSelfTestPackages(f.options);
+  assert.deepEqual(report.excludedPackages.map(pkg => pkg.name), ["@anthropic-ai/claude-agent-sdk", "@anthropic-ai/claude-agent-sdk-win32-x64"]);
+  await assert.rejects(readFile(join(f.runtime, `${sdk}-win32-x64/package.json`)), { code: "ENOENT" });
+  assert.match(await readFile(join(f.runtime, "node_modules/@anthropic-ai/sdk/index.mjs"), "utf8"), /API must not execute/);
+  for (const file of f.source.files) assert.equal(hash(await readFile(join(f.candidate, file.path))), file.checksum);
+});
+
+test("default catalogs bind their own platform before admitting native receipts", async t => {
+  for (const target of [{ platform: "darwin", arch: "arm64" }, { platform: "win32", arch: "x64" }]) {
+    const f = await fixture(t, target);
+    const { reviewPath, expectedReviewChecksum, ...options } = f.options;
+    await assert.rejects(filterGstackUpstreamSelfTestPackages(options), /native_receipt_invalid/);
+    await assert.rejects(filterGstackUpstreamSelfTestPackages({ ...options, target: { ...target, arch: "unreviewed" } }), /target_not_reviewed/);
+    assert.match(await readFile(join(f.runtime, sdk, "sdk.mjs"), "utf8"), /SDK must not execute/);
+  }
 });
 
 test("retained or installed resource roots cannot be used as exclusion staging", async t => {

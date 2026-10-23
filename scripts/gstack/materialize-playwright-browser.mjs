@@ -82,7 +82,7 @@ export async function materializePlaywrightBrowser({ resourceStagePath, archiveP
   if (!isDeepStrictEqual(inventory.target, target) || inventory.archiveReceiptChecksum !== expectedArchiveReceiptChecksum ||
     inventory.upstreamRevision !== verified.receipt.upstreamRevision || !isDeepStrictEqual(inventory.source, receipt.source) ||
     !Array.isArray(inventory.archives) || inventory.archives.length !== 3) fail("inventory_identity_invalid");
-  const inspectorNames = ["inspect-browser-archives.mjs", "inspect-browser-zip.mjs", "collect-browser-archives.mjs", "runtime-dependency-audit.mjs", "upstream-lock.json"];
+  const inspectorNames = ["inspect-browser-archives.mjs", "inspect-browser-zip.mjs", "collect-browser-archives.mjs", "runtime-dependency-audit.mjs", "upstream-lock.json", "publish-staged-directory.mjs"];
   if (!Array.isArray(receipt.inspectorInputChecksums) || !isDeepStrictEqual(receipt.inspectorInputChecksums.map(row => row.path).sort(), inspectorNames.sort()) ||
     !isDeepStrictEqual(inventory.inspectorInputChecksums, receipt.inspectorInputChecksums)) fail("inspector_identity_invalid");
   for (const input of receipt.inspectorInputChecksums) {

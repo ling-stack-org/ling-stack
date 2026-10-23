@@ -32,9 +32,10 @@ test("ephemeral storage stays bound to one hosted job and its canonical temporar
   await mkdir(root);
 });
 
-test("desktop SDK exclusions stay limited to the independently reviewed native macOS target", () => {
+test("desktop SDK exclusions stay limited to independently reviewed native targets", () => {
   assert.equal(desktopCandidatePackageSelection({ platform: "darwin", arch: "arm64" }), "reviewed-sdk-only");
-  for (const target of [{ platform: "win32", arch: "x64" }, { platform: "darwin", arch: "x64" },
+  assert.equal(desktopCandidatePackageSelection({ platform: "win32", arch: "x64" }), "reviewed-sdk-only");
+  for (const target of [{ platform: "win32", arch: "arm64" }, { platform: "darwin", arch: "x64" },
     { platform: "linux", arch: "arm64" }]) {
     assert.equal(desktopCandidatePackageSelection(target), "retain-complete-upstream");
   }

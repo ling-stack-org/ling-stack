@@ -139,10 +139,25 @@ jobs:
         run: |
           node --test scripts/ci/desktop-release.test.mjs scripts/ci/desktop-package.test.mjs \
             scripts/gstack/source-checkout.test.mjs \
+            scripts/gstack/filter-upstream-self-test-packages.test.mjs \
+            scripts/gstack/prepare-desktop-candidate.test.mjs scripts/gstack/prepare-platform-resource-stage.test.mjs \
             scripts/gstack/native-runtime-observer-path.test.mjs \
             scripts/gstack/publish-staged-directory.test.mjs \
             scripts/gstack/testsavant-model-cache.test.mjs scripts/gstack/testsavant-model-state.test.mjs \
             apps/desktop/tests/distribution*.test.mjs
+      - name: Check browser publication with bounded managed fixtures
+        if: env.DESKTOP_OPERATION == 'build'
+        run: |
+          node --input-type=module <<'NODE'
+          import { join } from "node:path";
+          import { initResourceWorkspace } from "./scripts/gstack/resource-workspace.mjs";
+          import { runManagedNode } from "./scripts/gstack/run-managed.mjs";
+          const root = join(process.env.RUNNER_TEMP, "gstack-contract-fixtures");
+          await initResourceWorkspace({ root, ciEphemeral: true });
+          const result = await runManagedNode({ root, additionalBytes: 0,
+            args: ["--test", "scripts/gstack/collect-browser-archives.test.mjs", "scripts/gstack/browser-publication-pipeline.test.mjs"] });
+          if (result.exitCode !== 0) throw new Error(`gstack_browser_contracts_failed:${result.reason ?? result.exitCode}`);
+          NODE
       - name: Inspect current distribution inputs without approving redistribution
         run: |
           node apps/desktop/scripts/distribution/materials.mjs inspect \
@@ -232,6 +247,7 @@ jobs:
         with:
           name: desktop-evidence-${{ matrix.target }}
           path: .codex-artifacts/desktop-release/**
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14
 

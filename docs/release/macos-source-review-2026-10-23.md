@@ -123,3 +123,15 @@ to `928069518382b89bbcfcac8a95e469e14c62543de139f43f79e22413cb88f466`.
 The real Builder-copy regression fails with the original inventory error before
 the fix and passes after it. These reviews do not grant native candidate or
 installed-client acceptance.
+
+Hosted run 40028538469 reached the original strict signature check, which
+rejected Builder's PR signing skip. An independent review approved setting
+`CSC_FOR_PULL_REQUEST=true` only inside the fixed entry's final admitted,
+awaited Builder call, with unconditional cleanup. Caller-supplied signing inputs
+remain rejected; fixed ad-hoc configuration, default signer, no credential
+import, no notarization, native publication and final archive gates remain.
+Only `apps/desktop/scripts/package-macos-with-office.mjs` was rebound, to
+`0c96a59d1a4e15f3dedd739ef59c0f79668ad155408103b8f11197a05f29e5d2`.
+Imports and fixed roots are unchanged. Orchestration regressions cover success,
+failure, external-input rejection and cleanup; actual hosted ad-hoc identity,
+strict signature and final ZIP/DMG acceptance remain required.

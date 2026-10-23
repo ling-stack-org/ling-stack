@@ -23,6 +23,7 @@ const lock = JSON.parse(await readFile(join(scriptRoot, "upstream-lock.json"), "
 const reviewed = JSON.parse(await readFile(join(scriptRoot, "reviewed-source-bundle.json"), "utf8"));
 const adaptationPaths = ["prepare-platform-resource-stage.mjs", "publish-staged-directory.mjs", "filter-native-platform-resources.mjs",
   "filter-upstream-self-test-packages.mjs", "reviewed-upstream-self-test-packages.json",
+  "reviewed-upstream-self-test-packages-win32-x64.json",
   "filter-reviewed-build-packages.mjs", "filter-build-only-type-packages.mjs", "reviewed-build-only-type-packages.json",
   "materialize-command-links.mjs", "runtime-dependency-audit.mjs", "install-reviewed-notices.mjs",
   "public-domain-package-review.mjs", "reviewed-public-domain-packages.json", "verify-shared-command-closure.mjs",
