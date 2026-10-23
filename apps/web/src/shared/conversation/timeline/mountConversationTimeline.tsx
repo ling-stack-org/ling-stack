@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import {
   fingerprintConversationTimeline,
   type TimelineSnapshot,
@@ -11,8 +11,10 @@ import {
 } from "../view-store/conversation-view-provider.js";
 import { useConversationViewReconciliation } from "../view-store/use-conversation-view-reconciliation.js";
 import { collectConversationTimelineViewRetainKeys } from "./conversation-timeline-view-retain-keys.js";
+import { LocalFilePreviewContext } from "../blocks/local-file-preview-context.js";
 
 export interface ConversationTimelineMountInput extends Omit<ConversationTimelineProps, "snapshot"> {
+  readonly onOpenNativeFile?: NonNullable<React.ContextType<typeof LocalFilePreviewContext>>["openPreview"];
   readonly snapshot: TimelineSnapshot;
   /** Existing surface keys that must remain live beside typed Timeline keys. */
   readonly viewStateRetainKeys?: ConversationViewRetainKeys;
@@ -31,10 +33,26 @@ export interface ConversationTimelineMount {
 export function mountConversationTimeline(
   input: ConversationTimelineMountInput,
 ): ConversationTimelineMount {
+  const { onOpenNativeFile, ...timelineInput } = input;
   return {
-    node: <ConversationTimelineMountRoot {...input} />,
+    node: onOpenNativeFile ? <LocalFilePreviewProvider key={[input.cwd, input.snapshot.scope.kind, input.snapshot.scope.threadId, input.snapshot.scope.anchorItemId].join(":")} cwd={input.cwd} openPreview={onOpenNativeFile}>
+      <ConversationTimelineMountRoot {...timelineInput} />
+    </LocalFilePreviewProvider> : <ConversationTimelineMountRoot {...timelineInput} />,
     fingerprint: fingerprintConversationTimeline(input.snapshot.items),
   };
+}
+
+function LocalFilePreviewProvider({ cwd, openPreview, children }: {
+  readonly cwd?: string;
+  readonly openPreview: NonNullable<ConversationTimelineMountInput["onOpenNativeFile"]>;
+  readonly children: ReactNode;
+}): React.JSX.Element {
+  const sequence = useRef(0);
+  useEffect(() => () => { sequence.current += 1; }, []);
+  return <LocalFilePreviewContext.Provider value={{ cwd, openPreview, beginRequest: () => {
+    const current = ++sequence.current;
+    return (preview) => { if (sequence.current === current) openPreview(preview); };
+  } }}>{children}</LocalFilePreviewContext.Provider>;
 }
 
 function ConversationTimelineMountRoot({

@@ -1069,6 +1069,10 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         return teammate ? <TeammateAvatarView teammate={teammate} cwd={input.cwd} compact /> : <AvatarInitial label="A" tone="teal" />;
       },
       onOpenSourceRef: handleOpenTimelineSourceRef,
+      onOpenNativeFile: (localFile) => {
+        const target = { path: localFile.path, line: localFile.line, localFile };
+        input.onOpenTerminalReportFile(target);
+      },
       onOpenReview: input.onOpenReview,
       onInvokeProtocolAction: input.onInvokeProtocolAction,
       onDisclosureIntent: input.onTimelineDisclosureIntent,

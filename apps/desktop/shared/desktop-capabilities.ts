@@ -258,6 +258,7 @@ export interface ComputerUsePreviewPreferences {
 }
 
 export interface LingDesktopCapabilities {
+  readonly localFiles?: import("./local-file-capabilities.js").DesktopLocalFileCapabilities;
   readonly humanEvaluation?: import("./human-evaluation-capabilities.js").DesktopHumanEvaluationCapabilities;
   readonly platform: DesktopPlatform;
   readonly daemonBaseUrl: string;

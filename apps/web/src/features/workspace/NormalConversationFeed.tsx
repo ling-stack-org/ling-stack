@@ -216,6 +216,7 @@ export function NormalConversationFeed({
             itemLocatorRef: timelineItemLocatorRef,
             onDisclosureIntent: pauseTimelineAutoFollow,
             onOpenSourceRef: handleOpenTimelineSourceRef,
+            onOpenNativeFile: (localFile) => onOpenReportFile({ path: localFile.path, line: localFile.line, localFile }),
             onOpenReview,
             renderResponseActions: (response, copyText) => {
               const messageId = response.message?.logicalMessageId ?? response.message?.itemId;

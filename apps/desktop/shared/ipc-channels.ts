@@ -1,5 +1,10 @@
 import type { DesktopThemePackageIpcChannelKey } from "./theme-package-capabilities.js";
 
+export const DESKTOP_LOCAL_FILE_IPC_CHANNELS = {
+  inspect: "ling-desktop:local-file:inspect",
+  menu: "ling-desktop:local-file:menu",
+} as const;
+
 export const DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS = {
   submit: "ling-desktop:human-evaluation:submit",
   cancel: "ling-desktop:human-evaluation:cancel",
