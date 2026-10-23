@@ -3,17 +3,17 @@ import { spawnSync } from "node:child_process";
 import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { inventoryApplicationTree } from "../release/desktop-payload.mjs";
 import { smokeWindowsInstaller } from "../release/windows-installer-smoke.mjs";
 import { collectGstackEvidence } from "../release/collect-gstack-evidence.mjs";
 
 test("package diagnostics preserve fatal status and nested assertion stacks", () => {
-  const result = spawnSync(process.execPath, ["--import", fileURLToPath(new URL("../release/desktop-package-diagnostics.mjs", import.meta.url)),
+  const result = spawnSync(process.execPath, ["--import", new URL("../release/desktop-package-diagnostics.mjs", import.meta.url).href,
     "--eval", 'throw new Error("synthetic_outer", { cause: new Error("synthetic_inner") });'], { encoding: "utf8" });
   assert.equal(result.status, 1);
   const diagnostic = result.stderr.split("\n").find(line => line.startsWith("desktop_package_failure_causes="));
+  assert.ok(diagnostic, result.stderr);
   const causes = JSON.parse(diagnostic.slice("desktop_package_failure_causes=".length));
   assert.equal(causes.length, 2);
   assert.match(causes[0], /synthetic_outer/u);
