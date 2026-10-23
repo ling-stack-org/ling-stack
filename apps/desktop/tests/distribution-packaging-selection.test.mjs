@@ -35,7 +35,7 @@ test("Builder keeps complete distribution materials outside app.asar", async t =
   await createPackage(packed, archive);
   const archivePaths = listPackage(archive).map(path => path.replaceAll("\\", "/"));
   assert.ok(archivePaths.includes("/dist/daemon/cli.mjs"));
-  assert.equal(extractFile(archive, "dist/daemon/cli.mjs").toString(), "fixture daemon");
+  assert.equal(extractFile(archive, join("dist", "daemon", "cli.mjs")).toString(), "fixture daemon");
   assert.ok(!archivePaths.some(path => path === "/dist/distribution" || path.startsWith("/dist/distribution/")),
     "distribution must have a single extraResources copy; its Office source must not enter the runtime ASAR");
   const distribution = config.extraResources.filter(entry => entry.from === "dist/distribution");
