@@ -10,6 +10,7 @@ import {
   workspaceFileCodePreview,
 } from "./DockReviewCodePreview.js";
 import type { WorkspaceRightDockFileTarget } from "./WorkspaceRightDock.js";
+import { DockLocalFilePreview } from "./DockLocalFilePreview.js";
 
 export function DockFileItemDetail({
   item,
@@ -47,10 +48,17 @@ export function DockFileItemDetail({
 export function DockWorkspaceFilePreview({
   cwd,
   target,
+  onNavigateLocalFile,
 }: {
   readonly cwd: string;
   readonly target: WorkspaceRightDockFileTarget;
+  readonly onNavigateLocalFile?: (file: NonNullable<WorkspaceRightDockFileTarget["localFile"]>) => void;
 }): React.JSX.Element {
+  if (target.localFile) return <DockLocalFilePreview initial={target.localFile} onNavigate={onNavigateLocalFile} />;
+  return <DockWorkspaceResourcePreview cwd={cwd} target={target} />;
+}
+
+function DockWorkspaceResourcePreview({ cwd, target }: { readonly cwd: string; readonly target: WorkspaceRightDockFileTarget }): React.JSX.Element {
   const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
