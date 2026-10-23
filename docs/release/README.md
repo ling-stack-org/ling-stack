@@ -19,6 +19,10 @@ Code and workflow anchors: `package.json`, `apps/desktop/package.json`,
 
 Making the repository public is not permission to publish an unsigned Desktop artifact.
 
+For the maintainer-triggered native build and Draft prerelease workflow, see
+[GitHub Actions desktop prereleases](github-actions.md). Draft creation preserves
+the development-only signing and acceptance boundaries described here.
+
 ## Versioning
 
 Future releases use Semantic Versioning. Before `1.0.0`, incompatible product or API

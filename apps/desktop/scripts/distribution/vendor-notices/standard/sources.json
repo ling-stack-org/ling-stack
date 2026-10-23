@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "repository": "spdx/license-list-data",
+  "revision": "31ba1a50e5397e00a304dbadc76531740e89ee48",
+  "scope": "Canonical standard license texts accompanying the exact published package SPDX declaration. These generic texts do not fabricate package-specific copyright or erase supplied notices.",
+  "entries": [
+    {
+      "id": "Apache-2.0",
+      "path": "Apache-2.0.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/31ba1a50e5397e00a304dbadc76531740e89ee48/text/Apache-2.0.txt",
+      "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff"
+    },
+    {
+      "id": "MIT",
+      "path": "MIT.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/31ba1a50e5397e00a304dbadc76531740e89ee48/text/MIT.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "id": "ISC",
+      "path": "ISC.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/31ba1a50e5397e00a304dbadc76531740e89ee48/text/ISC.txt",
+      "sha256": "521c6f0ed8e64736684f89843d16a4df6b4b7449acbcfc6ca6630a3037ca8c53"
+    },
+    {
+      "id": "BSD-2-Clause",
+      "path": "BSD-2-Clause.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/31ba1a50e5397e00a304dbadc76531740e89ee48/text/BSD-2-Clause.txt",
+      "sha256": "f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df"
+    },
+    {
+      "id": "BSD-3-Clause",
+      "path": "BSD-3-Clause.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/31ba1a50e5397e00a304dbadc76531740e89ee48/text/BSD-3-Clause.txt",
+      "sha256": "5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d"
+    },
+    {
+      "id": "0BSD",
+      "path": "0BSD.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/31ba1a50e5397e00a304dbadc76531740e89ee48/text/0BSD.txt",
+      "sha256": "e3f18c71e10d673590eb9856c1d79dd3b4b0d65404efb5e8584dbede7edd608b"
+    }
+  ]
+}

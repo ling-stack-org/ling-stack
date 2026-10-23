@@ -47,9 +47,28 @@ async function externalMount(mountPath, hostPath) {
   return { mountPath: path, mountDevice: info.dev, mountInode: info.ino };
 }
 
-export async function initResourceWorkspace({ root, mountPath }) {
+export async function hostedRunnerStorage(root, env = process.env) {
+  if (env.GITHUB_ACTIONS !== "true" || env.RUNNER_ENVIRONMENT !== "github-hosted" ||
+    !/^\d+$/.test(env.GITHUB_RUN_ID ?? "") || !/^\d+$/.test(env.GITHUB_RUN_ATTEMPT ?? "") ||
+    !/^[a-zA-Z0-9_-]+$/.test(env.GITHUB_JOB ?? "") || !env.RUNNER_TEMP || !isAbsolute(env.RUNNER_TEMP)) {
+    throw new Error("gstack_resource_github_hosted_identity_required");
+  }
+  const mountPath = resolve(env.RUNNER_TEMP), path = resolve(root);
+  const info = await lstat(mountPath);
+  if (!info.isDirectory() || info.isSymbolicLink() || await realpath(mountPath) !== mountPath ||
+    path === mountPath || !within(mountPath, path) || await canonicalDestination(path) !== path) {
+    throw new Error("gstack_resource_ephemeral_path_invalid");
+  }
+  return { mountPath, mountDevice: info.dev, mountInode: info.ino,
+    storagePolicy: "github-hosted-ephemeral", runnerIdentity: {
+      runId: env.GITHUB_RUN_ID, runAttempt: env.GITHUB_RUN_ATTEMPT, job: env.GITHUB_JOB } };
+}
+
+export async function initResourceWorkspace({ root, mountPath, ciEphemeral = false }) {
   const hostPath = await realpath(homedir());
-  const mount = await externalMount(mountPath, hostPath);
+  // Disposable hosted jobs may use their own temporary disk; local hosts keep
+  // the external-volume requirement. Capacity and single-writer gates are equal.
+  const mount = ciEphemeral ? await hostedRunnerStorage(root) : await externalMount(mountPath, hostPath);
   const path = resolve(root);
   if (!within(mount.mountPath, path) || path === mount.mountPath || await canonicalDestination(path) !== path) {
     throw new Error("gstack_resource_workspace_path_alias");
@@ -78,7 +97,12 @@ export async function openResourceWorkspace(root) {
   if (await realpath(path) !== path || !(await lstat(path)).isDirectory()) throw new Error("gstack_resource_workspace_path_alias");
   const record = JSON.parse(await readFile(join(path, marker), "utf8"));
   if (!record.hostPath || !isAbsolute(record.hostPath)) throw new Error("gstack_resource_mount_identity_mismatch");
-  const mount = await externalMount(record.mountPath, record.hostPath);
+  const mount = record.storagePolicy === "github-hosted-ephemeral"
+    ? await hostedRunnerStorage(root) : await externalMount(record.mountPath, record.hostPath);
+  if (record.storagePolicy && record.storagePolicy !== "github-hosted-ephemeral" ||
+    record.storagePolicy === "github-hosted-ephemeral" && JSON.stringify(record.runnerIdentity) !== JSON.stringify(mount.runnerIdentity)) {
+    throw new Error("gstack_resource_runner_identity_mismatch");
+  }
   if (record.schemaVersion !== 1 || record.owner !== "ling-gstack-build" || record.root !== path ||
     record.target !== `${process.platform}-${process.arch}` || !within(mount.mountPath, path) ||
     record.mountDevice !== mount.mountDevice || record.mountInode !== mount.mountInode ||

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { appendFile, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, realpath, statfs, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { isDeepStrictEqual } from "node:util";
@@ -22,6 +22,12 @@ export async function inspectDesktopPrerequisites() {
     try { checks.push({ name, status: "passed", observation: await operation() }); }
     catch (error) { checks.push({ name, status: "blocked", reason: error.message }); }
   };
+  await check("native-build-storage-observation", async () => {
+    const directory = await realpath(process.env.RUNNER_TEMP ?? evidenceRoot);
+    const volume = await statfs(directory);
+    return { directory, availableBytes: volume.bavail * volume.bsize, totalBytes: volume.blocks * volume.bsize,
+      approval: "not_granted", budgetCheck: "gstack_producer_checks_live_capacity_before_each_stage" };
+  });
   if (target === "macos-arm64") {
     let runtimeObservation;
     await check("native-toolchain-observation", async () => {

@@ -55,8 +55,14 @@ export async function readPackagedBrowseBuildPins({ root, expectedReceiptChecksu
   const browser = await readFile(join(root, "browser-selection.json"), "utf8").then(JSON.parse,
     error => { if (error.code !== "ENOENT") throw error; });
   if (browser) {
+    const slug = process.platform === "darwin" && ["arm64", "x64"].includes(process.arch) ? `mac-${process.arch}`
+      : process.platform === "win32" && process.arch === "x64" ? "win64" : undefined;
+    const registryEntry = slug && (process.platform === "win32" ? "../../gstack-browser/chrome-win64/chrome.exe"
+      : `../../gstack-browser/chrome-${slug}/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`);
+    const admittedEntry = browser.entryPath === "../../gstack-browser/Chromium.app/Contents/MacOS/Chromium"
+      && process.platform === "darwin" && process.arch === "arm64" || browser.source === "playwright-registry" && browser.entryPath === registryEntry;
     if (browser.activation !== "package-relative-only" || !/^sha256:[a-f0-9]{64}$/.test(browser.entryChecksum)
-      || browser.entryPath !== "../../gstack-browser/Chromium.app/Contents/MacOS/Chromium" || !/^sha256:[a-f0-9]{64}$/.test(browser.componentChecksum)
+      || !admittedEntry || !/^sha256:[a-f0-9]{64}$/.test(browser.componentChecksum)
       || browser.target?.platform !== process.platform
       || browser.target?.arch !== process.arch) throw new Error("packaged_browse_browser_selection_invalid");
     pins.browser = { path: browser.entryPath, checksum: browser.entryChecksum, componentChecksum: browser.componentChecksum };

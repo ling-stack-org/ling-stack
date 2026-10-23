@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { assembleRelease, collectTarget, desktopTargets, prereleaseVersion, readCandidate, validateCandidate } from "../release/desktop-release.mjs";
+import { assembleRelease, collectTarget, desktopTargets, fileRecord, prereleaseVersion, readCandidate, validateCandidate } from "../release/desktop-release.mjs";
 import { createDesktopDraft, verifyAssembledRelease } from "../release/create-desktop-draft.mjs";
 
 const input = { sha: "a".repeat(40), tag: "v0.1.2-alpha.2", versionFile: "0.1.2-alpha.2",
@@ -116,7 +116,8 @@ async function prepareBoth(t) {
     const evidenceRoot = join(root, `evidence-${target}`);
     await mkdir(evidenceRoot);
     await writeFile(join(evidenceRoot, "package-verification.json"), JSON.stringify({ ...candidate, target,
-      status: "passed", acceptance: "archive_contents_and_unsigned_structure_only" }));
+      status: "passed", acceptance: "archive_contents_and_unsigned_structure_only",
+      archives: await Promise.all(suffixes.map(suffix => fileRecord(join(releases, `Ling-Stack-${candidate.version}-${suffix}`)))) }));
     await writeFile(join(evidenceRoot, "prerequisites.json"), JSON.stringify({ ...candidate, target, buildPrerequisitesPass: true }));
     await writeFile(join(evidenceRoot, "distribution.tar.gz"), "synthetic test distribution archive");
     const manifest = await collectTarget({ candidate, target, releaseRoot: releases, evidenceRoot, outputRoot });
@@ -136,6 +137,23 @@ test("one release binds both targets to one version/SHA and hashes the actual do
   assert.equal(checksums.trim().split("\n").length, 11);
   assert.match(await readFile(join(f.args.outputRoot, "release-notes.md"), "utf8"), /without Developer ID or notarization/u);
   await assert.rejects(assembleRelease(f.args), /EEXIST/u);
+});
+
+test("collection rejects archives replaced after package verification", async t => {
+  const f = await prepareBoth(t), target = "windows-x64";
+  await writeFile(join(f.root, "releases", `Ling-Stack-${candidate.version}-windows-x64-setup.exe`), "replacement before collection");
+  await assert.rejects(collectTarget({ candidate, target, releaseRoot: join(f.root, "releases"),
+    evidenceRoot: join(f.root, `evidence-${target}`), outputRoot: join(f.root, "recollect") }), /verification archives/u);
+});
+
+test("assembly rejects archive replacement even when the asset manifest was rehashed", async t => {
+  const f = await prepareBoth(t), path = join(f.combined, "desktop-windows-x64.json");
+  const manifest = JSON.parse(await readFile(path, "utf8"));
+  const asset = join(f.combined, manifest.artifacts[0].name);
+  await writeFile(asset, "replacement with matching new manifest hash");
+  manifest.artifacts[0] = await fileRecord(asset);
+  await writeFile(path, JSON.stringify(manifest));
+  await assert.rejects(assembleRelease(f.args), /verification archives/u);
 });
 
 for (const mutation of ["different-source", "different-version", "changed-archive", "changed-evidence", "missing-evidence", "missing-target", "extra-file", "path-traversal"]) {

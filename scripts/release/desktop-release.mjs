@@ -70,20 +70,30 @@ export function targetEvidence(target) {
     .map(name => `desktop-${target}-${name}`);
 }
 
-function assertPackageReport(report, candidate, target) {
+function assertPackageReport(report, candidate, target, artifacts) {
   if (report.sourceSha !== candidate.sourceSha || report.version !== candidate.version || report.target !== target
     || report.status !== "passed" || report.acceptance !== "archive_contents_and_unsigned_structure_only") {
     throw new Error("Missing matching package verification; runtime acceptance cannot be inferred from archive checks");
   }
+  if (!Array.isArray(report.archives) || report.archives.length !== artifacts.length
+    || report.archives.some((archive, index) => archive.name !== artifacts[index].name
+      || archive.sizeBytes !== artifacts[index].sizeBytes || archive.sha256 !== artifacts[index].sha256)) {
+    throw new Error("Package verification archives do not match the release artifact bytes");
+  }
+}
+
+function assertPrerequisites(prerequisites, candidate, target) {
+  if (prerequisites.sourceSha !== candidate.sourceSha || prerequisites.target !== target
+    || prerequisites.buildPrerequisitesPass !== true) throw new Error("Missing matching successful build prerequisites");
 }
 
 export async function collectTarget({ candidate, target, releaseRoot, evidenceRoot, outputRoot }) {
   const names = targetAssets(candidate, target);
   const report = JSON.parse(await readFile(join(evidenceRoot, "package-verification.json"), "utf8"));
-  assertPackageReport(report, candidate, target);
   const prerequisites = JSON.parse(await readFile(join(evidenceRoot, "prerequisites.json"), "utf8"));
-  if (prerequisites.sourceSha !== candidate.sourceSha || prerequisites.target !== target
-    || prerequisites.buildPrerequisitesPass !== true) throw new Error("Missing matching successful build prerequisites");
+  assertPrerequisites(prerequisites, candidate, target);
+  const originalArtifacts = await Promise.all(names.map(name => fileRecord(join(releaseRoot, name))));
+  assertPackageReport(report, candidate, target, originalArtifacts);
   // A fresh output directory prevents stale candidates from joining a later run.
   await mkdir(outputRoot);
   const artifacts = [];
@@ -94,6 +104,7 @@ export async function collectTarget({ candidate, target, releaseRoot, evidenceRo
     if (JSON.stringify(copied) !== JSON.stringify(record)) throw new Error("Release artifact changed while collecting");
     artifacts.push(record);
   }
+  assertPackageReport(report, candidate, target, artifacts);
   const evidence = [];
   for (const [index, name] of ["prerequisites.json", "package-verification.json", "distribution.tar.gz"].entries()) {
     const source = await fileRecord(join(evidenceRoot, name));
@@ -103,6 +114,8 @@ export async function collectTarget({ candidate, target, releaseRoot, evidenceRo
     if (copied.sha256 !== source.sha256 || copied.sizeBytes !== source.sizeBytes) throw new Error("Release evidence changed while collecting");
     evidence.push(copied);
   }
+  assertPackageReport(JSON.parse(await readFile(join(outputRoot, targetEvidence(target)[1]), "utf8")), candidate, target, artifacts);
+  assertPrerequisites(JSON.parse(await readFile(join(outputRoot, targetEvidence(target)[0]), "utf8")), candidate, target);
   const manifest = { ...candidate, target, artifacts, evidence };
   await writeFile(join(outputRoot, `desktop-${target}.json`), JSON.stringify(manifest, null, 2) + "\n", { flag: "wx" });
   return manifest;
@@ -130,7 +143,8 @@ export async function verifyTargetInputs({ candidate, inputRoot }) {
       if (current.sizeBytes !== artifact.sizeBytes || current.sha256 !== artifact.sha256) throw new Error("Release asset checksum mismatch");
       expectedFiles.add(artifact.name);
     }
-    assertPackageReport(JSON.parse(await readFile(join(inputRoot, evidenceNames[1]), "utf8")), candidate, target);
+    assertPackageReport(JSON.parse(await readFile(join(inputRoot, evidenceNames[1]), "utf8")), candidate, target, manifest.artifacts);
+    assertPrerequisites(JSON.parse(await readFile(join(inputRoot, evidenceNames[0]), "utf8")), candidate, target);
     expectedFiles.add(name);
     manifests.push(manifest);
   }
@@ -143,6 +157,8 @@ export async function assembleRelease({ candidate, inputRoot, outputRoot }) {
   if (actual.length !== expectedFiles.size || actual.some(name => !expectedFiles.has(name))) throw new Error("Unexpected or duplicated target files");
   await mkdir(outputRoot);
   for (const name of expectedFiles) await copyFile(join(inputRoot, name), join(outputRoot, name));
+  const copied = await verifyTargetInputs({ candidate, inputRoot: outputRoot });
+  if (JSON.stringify(copied.manifests) !== JSON.stringify(manifests)) throw new Error("Target manifests changed while assembling");
   const files = await Promise.all([...expectedFiles].sort().map(name => fileRecord(join(outputRoot, name))));
   await writeFile(join(outputRoot, "checksums.txt"), files.map(file => `${file.sha256}  ${file.name}\n`).join(""), { flag: "wx" });
   const combined = { ...candidate, targets: manifests };

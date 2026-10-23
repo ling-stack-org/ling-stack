@@ -17,7 +17,12 @@ const inputs = new Map(), addons = new Set();
 function record(absolute) {
   const path = localPath(absolute);
   const before = lstatSync(absolute);
-  if (!before.isFile() || before.isSymbolicLink() || before.size > 128 * 1024 ** 2) throw new Error("security_runtime_input_invalid");
+  // The admitted macOS universal Node includes both native slices (currently
+  // 231 MiB). Its bytes are independently bound by the caller before/after
+  // this probe; keep the smaller limit for every dependency and module input.
+  const maximumBytes = absolute === process.execPath && path === `tools/node${process.platform === "win32" ? ".exe" : ""}`
+    ? 256 * 1024 ** 2 : 128 * 1024 ** 2;
+  if (!before.isFile() || before.isSymbolicLink() || before.size > maximumBytes) throw new Error("security_runtime_input_invalid");
   const fd = openSync(absolute, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
     const opened = fstatSync(fd), hash = createHash("sha256"), buffer = Buffer.alloc(64 * 1024);

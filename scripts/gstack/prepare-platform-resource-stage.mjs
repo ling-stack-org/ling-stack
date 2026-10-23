@@ -113,7 +113,9 @@ async function inventory(root, prefix = "") {
 // A reproducible preparation receipt is not an executable bundle or release approval.
 export async function prepareGstackPlatformResourceStage({ nativeCandidatePath, outputPath,
   expectedNativeBuildChecksum, target = { platform: process.platform, arch: process.arch },
-  shellPath = process.platform === "win32" ? undefined : "/bin/bash", parserPath, expectedParserChecksum, onProgress = () => {} }) {
+  shellPath = process.platform === "win32" ? undefined : "/bin/bash", parserPath, expectedParserChecksum,
+  parserProvenance, packageSelection = "reviewed-prune", onProgress = () => {} }) {
+  if (!["reviewed-prune", "retain-complete-upstream"].includes(packageSelection)) throw new Error("gstack_resource_package_selection_invalid");
   if (!/^sha256:[a-f0-9]{64}$/.test(expectedNativeBuildChecksum ?? "")) throw new Error("gstack_resource_native_receipt_required");
   if (!["darwin", "win32"].includes(target.platform) || !["arm64", "x64"].includes(target.arch)) throw new Error("gstack_resource_target_invalid");
   if (typeof shellPath !== "string" || !isAbsolute(shellPath)) throw new Error("gstack_resource_shell_interpreter_required");
@@ -146,6 +148,14 @@ export async function prepareGstackPlatformResourceStage({ nativeCandidatePath, 
     await resourceCheckpoint(lease.root);
     await verifyNativeInput(candidate, expectedNativeBuildChecksum, target);
     const runtime = join(candidate, "runtime");
+    if (parserProvenance) {
+      if (parserProvenance.binding !== "pinned-module-and-repeated-native-byte-identity" ||
+        parserProvenance.artifact?.checksum !== expectedParserChecksum || parserProvenance.releaseEligible !== false ||
+        parserProvenance.target?.platform !== target.platform || parserProvenance.target?.arch !== target.arch) {
+        throw new Error("gstack_resource_parser_provenance_invalid");
+      }
+      await writeFile(join(candidate, "shell-parser-build.json"), `${JSON.stringify(parserProvenance, null, 2)}\n`, { flag: "wx" });
+    }
     onProgress("materialize package commands using packaged Node");
     const links = await materializeGstackCommandLinks({ runtimeRoot: runtime, target });
     await writeFile(join(candidate, "command-link-materialization.json"), `${JSON.stringify({
@@ -167,14 +177,27 @@ export async function prepareGstackPlatformResourceStage({ nativeCandidatePath, 
       expectedSourceManifestChecksum: reviewed.manifestChecksum });
     const buildImportBytes = Buffer.from(`${JSON.stringify(bundledBuildImports, null, 2)}\n`);
     await writeFile(join(candidate, "bundled-build-imports.json"), buildImportBytes);
-    onProgress("exclude exact reviewed upstream self-test packages from private staging, preserving client API and external CLI paths");
-    const selfTestSelection = await filterGstackUpstreamSelfTestPackages({ runtimeRoot: runtime, stagingRoot: temporary,
-      target, expectedNativeBuildChecksum, importReports: [sharedCommands, ...bundledBuildImports] });
+    // Historical pruning catalogs bind a particular platform, compiler and
+    // import graph. Portable candidates retain dependencies instead of treating
+    // those exclusions as approval for another toolchain.
+    const retainedSelection = category => ({ schemaVersion: 1, deliveryStage: "resource-prerequisites",
+      selectionScope: "complete-upstream-retained", category, releaseEligible: false, target,
+      sourceManifestChecksum: reviewed.manifestChecksum, inputNativeBuildChecksum: expectedNativeBuildChecksum,
+      importGraphs: [sharedCommands, ...bundledBuildImports].map(({ dependencyScope, inputGraphChecksum, compilerChecksum }) => ({
+        dependencyScope, inputGraphChecksum, compilerChecksum,
+      })), excludedPackages: [], removedResources: [], removedSizeBytes: 0,
+      completeRuntimeSelection: "pending", compiledArtifactBinding: "pending",
+      pendingGates: ["toolchain-specific-pruning-review", "complete-dynamic-resource-selection", "redistribution-review", "installed-client-acceptance"] });
+    onProgress(packageSelection === "reviewed-prune" ? "exclude exact reviewed upstream self-test packages from private staging, preserving client API and external CLI paths"
+      : "retain complete upstream self-test dependencies; historical toolchain-specific exclusions are not reused");
+    const selfTestSelection = packageSelection === "reviewed-prune" ? await filterGstackUpstreamSelfTestPackages({ runtimeRoot: runtime, stagingRoot: temporary,
+      target, expectedNativeBuildChecksum, importReports: [sharedCommands, ...bundledBuildImports] }) : retainedSelection("upstream-self-test-packages");
     const selectionBytes = Buffer.from(`${JSON.stringify(selfTestSelection, null, 2)}\n`);
     await writeFile(join(candidate, "self-test-package-selection.json"), selectionBytes);
-    onProgress("exclude exact reviewed build-only declarations, preserving Bun and upstream build inputs");
-    const typeSelection = await filterGstackBuildOnlyTypePackages({ runtimeRoot: runtime, stagingRoot: temporary,
-      target, expectedNativeBuildChecksum, importReports: [sharedCommands, ...bundledBuildImports] });
+    onProgress(packageSelection === "reviewed-prune" ? "exclude exact reviewed build-only declarations, preserving Bun and upstream build inputs"
+      : "retain complete build-only declarations; all command and bundled import verification remains required");
+    const typeSelection = packageSelection === "reviewed-prune" ? await filterGstackBuildOnlyTypePackages({ runtimeRoot: runtime, stagingRoot: temporary,
+      target, expectedNativeBuildChecksum, importReports: [sharedCommands, ...bundledBuildImports] }) : retainedSelection("build-only-type-packages");
     const typeSelectionBytes = Buffer.from(`${JSON.stringify(typeSelection, null, 2)}\n`);
     await writeFile(join(candidate, "build-only-type-package-selection.json"), typeSelectionBytes);
     const selectedImports = [await verifyGstackClientCommandImports({ runtimeRoot: runtime,
@@ -230,7 +253,7 @@ export async function prepareGstackPlatformResourceStage({ nativeCandidatePath, 
       packageAcceptance: "pending", releaseEligible: false, upstreamRevision: native.upstreamRevision,
       upstreamVersion: native.upstreamVersion, nativeAdaptationRevision: native.adaptationRevision,
       adaptationRevision: `ling-${createHash("sha256").update(adaptationInputs).digest("hex")}`,
-      inputNativeBuildChecksum: expectedNativeBuildChecksum, target, inventoryChecksum: checksum(inventoryBytes),
+      inputNativeBuildChecksum: expectedNativeBuildChecksum, target, packageSelection, inventoryChecksum: checksum(inventoryBytes),
       fileCount: files.length, materializedCommands: links.length, removedPlatformFiles: platformResources.removedResources.length,
       sharedCommandEntrypoints: sharedCommands.entrypoints.length, sharedCommandInputCount: sharedCommands.inputs.length,
       sharedCommandDependencyScope: sharedCommands.dependencyScope,

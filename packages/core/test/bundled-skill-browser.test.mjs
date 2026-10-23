@@ -49,3 +49,25 @@ test("unlisted files, escaping or retargeted aliases and modified manifests reje
     assert.throws(() => admitted.assertCurrent(), /component_invalid/);
   });
 });
+
+test("Playwright Windows components require the exact package entry and zero links", async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "ling-browser-win-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const entryPath = "chrome-win64/chrome.exe", bytes = Buffer.from("fixture only; never executed");
+  await mkdir(join(root, "chrome-win64"));
+  await writeFile(join(root, entryPath), bytes);
+  const target = { platform: "win32", arch: "x64" };
+  const base = { schemaVersion: 1, source: "playwright-registry", target, entryPath,
+    files: [{ path: entryPath, checksum: digest(bytes), sizeBytes: bytes.length }], links: [] };
+  async function verify(manifest, expected = target) {
+    const data = JSON.stringify(manifest); await writeFile(join(root, "browser-component.json"), data);
+    return () => verifyBundledBrowser(root, digest(data), expected);
+  }
+  const admitted = (await verify(base))();
+  admitted.assertCurrent();
+  for (const mutation of [{ source: "download" }, { entryPath: "chrome-win64/other.exe" },
+    { links: [{ path: "chrome-win64/alias", linkTarget: "chrome.exe", resolvedTarget: entryPath }] }]) {
+    assert.throws(await verify({ ...base, ...mutation }), /component_invalid/);
+  }
+  assert.throws(await verify(base, { platform: "win32", arch: "arm64" }), /component_invalid/);
+});

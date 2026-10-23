@@ -6,3 +6,7 @@ patches/*.patch whitespace=-blank-at-eol
 packages/daemon/native/image-sanitizer/vendor/jpeg-decoder/src/decoder.rs whitespace=-blank-at-eol
 # Unified diffs require a single-space line to preserve blank context lines.
 packages/daemon/native/image-sanitizer/vendor/jpeg-decoder/strict-entropy.patch whitespace=-blank-at-eol
+
+# Retain original upstream license bytes, including intentional trailing spaces.
+apps/desktop/scripts/distribution/vendor-notices/NSIS-COPYING -text whitespace=-blank-at-eol
+apps/desktop/scripts/distribution/vendor-notices/standard/*.txt -text whitespace=-blank-at-eol

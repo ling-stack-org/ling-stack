@@ -26,9 +26,10 @@ export function packagedBrowseLaunch() {
   verify(resolve(dist, "bun-polyfill.cjs"), pins.polyfill, 2 * 1024 ** 2);
   let browser;
   if (pins.browser) {
-    if (pins.browser.path !== "../../gstack-browser/Chromium.app/Contents/MacOS/Chromium") throw new Error("packaged_browse_browser_selection_invalid");
-    browser = verifyBundledBrowser(resolve(runtime, "../../gstack-browser"), pins.browser.componentChecksum,
-      { platform: process.platform, arch: process.arch }).entry;
+    const component = verifyBundledBrowser(resolve(runtime, "../../gstack-browser"), pins.browser.componentChecksum,
+      { platform: process.platform, arch: process.arch });
+    browser = component.entry;
+    if (resolve(runtime, pins.browser.path) !== browser) throw new Error("packaged_browse_browser_selection_invalid");
     verify(browser, pins.browser.checksum, 256 * 1024 ** 2);
   }
   return { runtime: "node", script, node, ...(browser ? { browser } : {}) };

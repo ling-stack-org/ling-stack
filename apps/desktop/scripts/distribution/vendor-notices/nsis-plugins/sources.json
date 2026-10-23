@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "scope": "Unmodified original paired plug-in source archives, bound to the current compiler/resource DLL digests. Original LGPL/SDK notices are retained; no entire-plugin public-domain assertion.",
+  "entries": [
+    {
+      "name": "StdUtils",
+      "version": "1.14",
+      "file": "StdUtils.2018-10-27.sources.tbz2",
+      "url": "https://github.com/lordmulder/stdutils/releases/download/1.14/StdUtils.2018-10-27.sources.tbz2",
+      "sha256": "c5e3b1a66219bc9564c2ccc1702691327eecf044ad33404ac268d725d22dca49",
+      "binarySha256": "b72e9013a6204e9f01076dc38dabbf30870d44dfc66962adbf73619d4331601e",
+      "sizeBytes": 206896
+    },
+    {
+      "name": "nsis7z",
+      "version": "19.00",
+      "file": "Nsis7z_19.00.7z",
+      "url": "https://nsis.sourceforge.io/mediawiki/images/6/69/Nsis7z_19.00.7z",
+      "sha256": "6f2f3730049926f40442ee0c8b7d3e3dee7ace544d82467ff8059ea3f4201c58",
+      "binarySha256": "b393f05e8ff919ef071181050e1873c9a776e1a0ae8329aefff7007d0cadf592",
+      "sizeBytes": 461078
+    }
+  ]
+}

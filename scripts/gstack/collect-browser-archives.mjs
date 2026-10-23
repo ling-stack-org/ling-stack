@@ -73,7 +73,9 @@ export async function verifyBrowserArchiveSource({ resourceStagePath, expectedRe
   for (const file of files) {
     if (paths.has(file.path) || !digest(file.checksum)) throw new Error("gstack_browser_source_inventory_invalid");
     paths.add(file.path);
-    const bytes = await plainBytes(root, file.path, 128 * 1024 * 1024);
+    // A universal macOS Node may contain both CPU slices; package files retain
+    // the smaller bound and the exact Node entry remains inventory-hash bound.
+    const bytes = await plainBytes(root, file.path, (file.path === nodePath ? 256 : 128) * 1024 * 1024);
     if (bytes.length !== file.sizeBytes || checksum(bytes) !== file.checksum) throw new Error(`gstack_browser_source_changed:${file.path}`);
   }
   if (required.some(path => !paths.has(path))) throw new Error("gstack_browser_source_incomplete");

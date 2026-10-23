@@ -16,6 +16,8 @@ test("resource preparation requires a detached native receipt and never overwrit
   await assert.rejects(prepareGstackPlatformResourceStage({ nativeCandidatePath: input, outputPath: output,
     target: { platform: "darwin", arch: "arm64" } }), /gstack_resource_native_receipt_required/);
   await assert.rejects(prepareGstackPlatformResourceStage({ nativeCandidatePath: input, outputPath: output,
+    packageSelection: "automatic-fallback", target: { platform: "darwin", arch: "arm64" } }), /gstack_resource_package_selection_invalid/);
+  await assert.rejects(prepareGstackPlatformResourceStage({ nativeCandidatePath: input, outputPath: output,
     expectedNativeBuildChecksum: `sha256:${"0".repeat(64)}`, target: { platform: "darwin", arch: "arm64" } }), /gstack_resource_output_already_exists/);
   assert.equal(await readFile(join(output, "KEEP"), "utf8"), "existing resources");
 });

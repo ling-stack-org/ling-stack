@@ -18,8 +18,8 @@ export interface VerifiedBundledBrowser {
   readonly assertCurrent: () => void;
 }
 
-/** Separate platform component: only the five authenticated macOS framework
- * aliases may be links. The ordinary skill/dependency verifier stays link-free. */
+/** Separate platform component: macOS framework aliases are authenticated;
+ * Windows resources stay link-free. Skill/dependency resources stay link-free. */
 export function verifyBundledBrowser(root: string, checksum: string, target: { platform: string; arch: string }): VerifiedBundledBrowser {
   root = resolve(root);
   if (realpathSync(root) !== root || !lstatSync(root).isDirectory() || !/^sha256:[a-f0-9]{64}$/.test(checksum)) fail();
@@ -28,25 +28,36 @@ export function verifyBundledBrowser(root: string, checksum: string, target: { p
   const bytes = readFileSync(manifestPath);
   if (digest(bytes) !== checksum) fail();
   const manifest = JSON.parse(bytes.toString());
+  const legacy = target.platform === "darwin" && target.arch === "arm64" &&
+    manifest.entryPath === "Chromium.app/Contents/MacOS/Chromium" && manifest.source === undefined;
+  const slug = target.platform === "darwin" && ["arm64", "x64"].includes(target.arch)
+    ? `mac-${target.arch}` : target.platform === "win32" && target.arch === "x64" ? "win64" : undefined;
+  const app = slug && `chrome-${slug}/Google Chrome for Testing.app`;
+  const playwright = slug && manifest.source === "playwright-registry" && manifest.entryPath ===
+    (target.platform === "win32" ? "chrome-win64/chrome.exe" : `${app}/Contents/MacOS/Google Chrome for Testing`);
+  const prefix = legacy ? "Chromium.app/" : `chrome-${slug}/`;
+  const framework = legacy ? "Chromium.app/Contents/Frameworks/Chromium Framework.framework/"
+    : `${app}/Contents/Frameworks/Google Chrome for Testing Framework.framework/`;
   if (manifest.schemaVersion !== 1 || manifest.target?.platform !== target.platform || manifest.target?.arch !== target.arch ||
-    target.platform !== "darwin" || target.arch !== "arm64" || manifest.entryPath !== "Chromium.app/Contents/MacOS/Chromium" ||
+    (!legacy && !playwright) ||
     !Array.isArray(manifest.files) || !manifest.files.length || manifest.files.length > 5000 ||
-    !Array.isArray(manifest.links) || manifest.links.length !== 5) fail();
+    !Array.isArray(manifest.links) || manifest.links.length !== (target.platform === "win32" ? 0 : 5)) fail();
   const files = new Map<string, { path: string; checksum: string; sizeBytes: number }>();
   const links = new Map<string, { path: string; linkTarget: string; resolvedTarget: string }>();
   for (const row of manifest.files) {
     const path = logical(row.path);
-    if (!path.startsWith("Chromium.app/") || files.has(path) || !/^sha256:[a-f0-9]{64}$/.test(row.checksum) ||
+    if (!path.startsWith(prefix) || files.has(path) || !/^sha256:[a-f0-9]{64}$/.test(row.checksum) ||
       !Number.isSafeInteger(row.sizeBytes) || row.sizeBytes < 0 || row.sizeBytes > 512 * 1024 ** 2) fail();
     files.set(path, row);
   }
   for (const row of manifest.links) {
     const path = logical(row.path), destination = logical(row.resolvedTarget);
-    if (!path.startsWith("Chromium.app/Contents/Frameworks/Chromium Framework.framework/") ||
-      !destination.startsWith("Chromium.app/") || files.has(path) || links.has(path) || typeof row.linkTarget !== "string" ||
+    if (!path.startsWith(framework) ||
+      !destination.startsWith(prefix) || files.has(path) || links.has(path) || typeof row.linkTarget !== "string" ||
       row.linkTarget.startsWith("/") || /[\\:\x00-\x1f\x7f]/.test(row.linkTarget)) fail();
     links.set(path, row);
   }
+  if (!files.has(manifest.entryPath)) fail();
   const facts: { path: string; stat: BigIntStats }[] = [{ path: manifestPath, stat: manifestStat }];
   const directories: { path: string; stat: BigIntStats }[] = [];
   let count = 0, total = 0;
@@ -71,7 +82,7 @@ export function verifyBundledBrowser(root: string, checksum: string, target: { p
       if (!row || BigInt(row.sizeBytes) !== stat.size || realpathSync(full) !== full) return fail();
       total += row.sizeBytes;
       if (total > 2 * 1024 ** 3) fail();
-      const fd = openSync(full, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const fd = openSync(full, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
       try {
         if (!same(stat, fstatSync(fd, { bigint: true }))) fail();
         const hash = createHash("sha256"), buffer = Buffer.alloc(128 * 1024);

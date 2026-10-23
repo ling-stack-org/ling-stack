@@ -4,14 +4,14 @@ import { basename, dirname, isAbsolute, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compilerInputPath, readGstackClosureFileRecord } from "./verify-shared-command-closure.mjs";
 import { requireResourceLease, resourceCheckpoint, within } from "./resource-workspace.mjs";
-import { testsavantGsClientPlugin, testsavantHealthSource } from "./build-testsavant-component.mjs";
+import { testsavantGsClientPlugin, testsavantHealthSource, testsavantRequiredModelSource } from "./build-testsavant-component.mjs";
 import { admitTestsavantComponent } from "./testsavant-gs-client.mjs";
 import { packagedBrowserSource } from "./packaged-browser-source.mjs";
 
 const checksum = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const validChecksum = value => /^sha256:[a-f0-9]{64}$/.test(value ?? "");
 const tooling = ["build-node-server-resource.mjs", "build-portable-resources.ts", "build-diagram-resource.mjs", "verify-shared-command-closure.mjs", "resource-workspace.mjs",
-  "build-managed-node-server.mjs", "build-testsavant-component.mjs", "testsavant-gs-client.mjs", "testsavant-packaged-client.mjs", "testsavant-client.mjs", "packaged-browser-source.mjs"];
+  "build-managed-node-server.mjs", "build-testsavant-component.mjs", "testsavant-gs-client.mjs", "testsavant-packaged-client.mjs", "testsavant-client.mjs", "testsavant-model-cache.mjs", "testsavant-model-pin.json", "packaged-browser-source.mjs"];
 const scripts = dirname(fileURLToPath(import.meta.url));
 const external = ["playwright", "playwright-core", "diff", "bun:sqlite", "@ngrok/ngrok", "socks", "sharp"];
 const define = { __dirname: "__browseNodeSrcDir", "import.meta.dir": "__browseNodeSrcDir" };
@@ -64,7 +64,7 @@ async function buildNodeResource({ runtimeRoot, outputRoot = runtimeRoot,
   const componentAdmission = testsavantComponent && { runtimeRoot: root,
     modelRoot: join(output, "models/testsavant-small"), componentRoot: resolve(testsavantComponent.root),
     componentChecksum: testsavantComponent.checksum };
-  if (componentAdmission) await admitTestsavantComponent(componentAdmission);
+  if (componentAdmission) componentAdmission.modelMode = (await admitTestsavantComponent(componentAdmission)).modelMode;
   for (const [path, label] of [[root, "input"], [output, "output"]]) {
     const stat = await lstat(path);
     if (!stat.isDirectory() || stat.isSymbolicLink() || await realpath(path) !== path) fail(`${label}_root_invalid`);
@@ -127,7 +127,8 @@ async function buildNodeResource({ runtimeRoot, outputRoot = runtimeRoot,
   async function compile() {
     let result;
       try { result = await Bun.build({ ...recipe, entrypoints: [join(root, entry)],
-        ...(componentAdmission ? { plugins: [testsavantGsClientPlugin({ componentChecksum: componentAdmission.componentChecksum })] } : {}) }); }
+        ...(componentAdmission ? { plugins: [testsavantGsClientPlugin({ componentChecksum: componentAdmission.componentChecksum,
+          modelMode: componentAdmission.modelMode ?? "bundled" })] } : {}) }); }
     catch (error) { fail(`compile_failed:${String(error).slice(0, 1000)}`); }
     if (!result.success || result.outputs.length !== 1 || !result.metafile?.inputs) fail(`compile_failed:${result.logs.map(String).join("\n").slice(0, 1000)}`);
     const bytes = Buffer.from(await result.outputs[0].arrayBuffer());
@@ -151,6 +152,8 @@ async function buildNodeResource({ runtimeRoot, outputRoot = runtimeRoot,
       const actual = await input(path);
       const size = componentAdmission && path === "browse/src/routes/core.ts"
         ? Buffer.byteLength(testsavantHealthSource(await readFile(join(root, path), "utf8"), componentAdmission.componentChecksum))
+        : componentAdmission?.modelMode === "download-required" && path === "browse/src/routes/pty.ts"
+          ? Buffer.byteLength(testsavantRequiredModelSource(await readFile(join(root, path), "utf8")))
         : componentAdmission && path === "browse/src/browser-manager.ts"
           ? Buffer.byteLength(packagedBrowserSource(await readFile(join(root, path), "utf8"))) : actual.sizeBytes;
       if (size !== info.bytes) fail("build_inputs_changed");
