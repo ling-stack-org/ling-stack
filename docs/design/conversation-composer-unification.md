@@ -385,8 +385,8 @@ right tools: model/thinking controls when editable, read-only model status when 
 Toolbar rules:
 
 - icon buttons are 30-32px with transparent default background,
-- authorization uses the same compact trigger across channel, normal, and private
-  surfaces,
+- normal conversation places authorization choices inside its compact permission menu;
+  channel and private chat retain separate compact authorization triggers,
 - model picker is right aligned and appears only for normal conversation,
 - teammate private chat can show read-only effective model status, but not a model
   picker,

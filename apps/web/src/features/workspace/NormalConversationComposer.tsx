@@ -1,14 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type Ref } from "react";
-import { ArrowUp, Brain, Check, ChevronDown, CircleAlert, FileText, ListTree, Plus, RotateCcw, Search, SlidersHorizontal, Square } from "lucide-react";
+import { type DragEvent, type KeyboardEvent, type Ref } from "react";
+import { ArrowUp, CircleAlert, FileText, Plus, RotateCcw, SlidersHorizontal, Square } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import { useI18n } from "../../i18n.js";
 import {
-  conversationAuthorizationModeMenuOptions,
-  conversationPermissionPresetMenuOptions,
-} from "../../lib/session-permissions.js";
-import {
-  ComposerAuthorizationMenu,
-  ComposerPermissionMenu,
   ConversationComposerShell,
   ConversationStatusStrip,
   TokenizedComposerInput,
@@ -16,26 +10,15 @@ import {
   type TokenizedComposerInputProps,
 } from "../../shared/conversation/index.js";
 import {
-  Button,
   IconButton,
   InlineFeedback,
-  Input,
-  Menu,
-  MenuContent,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuTrigger,
   StatusIndicator,
 } from "../../shared/ui/index.js";
 import { ComposerPendingAssetStrip, type ActiveSlashCommandPicker, type PendingAttachmentItem } from "../../shared/components/index.js";
-import type { AuthorizationMode, ConversationAttachment, PermissionPreset, ProviderThinkingMode, ReasoningSummaryMode } from "../../types.js";
-import {
-  normalConversationModelLabel,
-  normalConversationThinkingLabel,
-  normalConversationThinkingOptions,
-  reasoningSummaryLabel,
-  reasoningSummaryOptions,
-} from "./normal-conversation-composer-options.js";
+import type { AuthorizationMode, ConversationAttachment, PermissionPreset, ProviderThinkingMode } from "../../types.js";
+import { normalConversationModelLabel } from "./normal-conversation-composer-options.js";
+import { ConversationModelControl } from "./ConversationModelControl.js";
+import { ConversationPermissionControl } from "./ConversationPermissionControl.js";
 import type { ConversationHomeModelOption } from "./normal-conversation-types.js";
 
 export interface NormalConversationComposerProps {
@@ -54,7 +37,6 @@ export interface NormalConversationComposerProps {
   readonly defaultProviderPresetId: string;
   readonly defaultProviderLabel: string;
   readonly selectedThinkingLevel: ProviderThinkingMode;
-  readonly selectedReasoningSummary: ReasoningSummaryMode;
   readonly sendBusy: boolean;
   readonly scopeReady?: boolean;
   readonly recoveringSubmission?: boolean;
@@ -81,7 +63,6 @@ export interface NormalConversationComposerProps {
   readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
   readonly onModelChange: (option: ConversationHomeModelOption) => void;
   readonly onThinkingLevelChange: (level: ProviderThinkingMode) => void;
-  readonly onReasoningSummaryChange: (mode: ReasoningSummaryMode) => void;
   readonly onSubmit: () => void | Promise<void>;
   readonly onStop?: () => void | Promise<void>;
 }
@@ -117,14 +98,12 @@ export function NormalConversationComposer({
   onStop,
   onSubmit,
   onThinkingLevelChange,
-  onReasoningSummaryChange,
   pendingAttachments,
   authorizationMode,
   permissionPreset,
   fullAccessConfirmed,
   selectedProviderPresetId,
   selectedThinkingLevel,
-  selectedReasoningSummary,
   sendBusy,
   scopeReady = true,
   recoveringSubmission = false,
@@ -134,74 +113,10 @@ export function NormalConversationComposer({
   stopping,
 }: NormalConversationComposerProps): React.JSX.Element {
   const { t } = useI18n();
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [thinkingMenuOpen, setThinkingMenuOpen] = useState(false);
-  const [reasoningSummaryMenuOpen, setReasoningSummaryMenuOpen] = useState(false);
-  const [modelSearch, setModelSearch] = useState("");
-  const modelSearchRef = useRef<HTMLInputElement | null>(null);
   const activeProviderPresetId = selectedProviderPresetId || defaultProviderPresetId;
   const activeModelOption = modelOptions.find((option) => option.id === activeProviderPresetId);
   const modelReady = Boolean(activeModelOption?.runnable ?? activeModelOption?.enabled);
   const activeModelLabel = activeModelOption ? normalConversationModelLabel(activeModelOption) : defaultProviderLabel;
-  const thinkingOptions = useMemo(
-    () => normalConversationThinkingOptions(activeModelOption?.thinkingModes ?? []),
-    [activeModelOption?.thinkingModes],
-  );
-  const thinkingEnabled = thinkingOptions.length > 0;
-  const activeThinkingLabel = normalConversationThinkingLabel(selectedThinkingLevel, t);
-  const thinkingOff = selectedThinkingLevel === "off";
-  const activeReasoningSummaryLabel = reasoningSummaryLabel(selectedReasoningSummary, t);
-  const normalizedModelSearch = modelSearch.trim().toLowerCase();
-  const visibleModelOptions = useMemo(() => {
-    if (!normalizedModelSearch) {
-      return modelOptions;
-    }
-    return modelOptions.filter((option) => [
-      option.displayName,
-      option.label ?? "",
-      option.model,
-      option.providerId ?? "",
-    ].join(" ").toLowerCase().includes(normalizedModelSearch));
-  }, [modelOptions, normalizedModelSearch]);
-
-  useEffect(() => {
-    if (!sendBusy && !activeRun) {
-      return;
-    }
-    setModelMenuOpen(false);
-    setThinkingMenuOpen(false);
-    setReasoningSummaryMenuOpen(false);
-  }, [activeRun, sendBusy]);
-
-  useEffect(() => {
-    if (!thinkingEnabled && thinkingMenuOpen) {
-      setThinkingMenuOpen(false);
-    }
-  }, [thinkingEnabled, thinkingMenuOpen]);
-
-  useEffect(() => {
-    if (!modelMenuOpen) {
-      return;
-    }
-    const frame = globalThis.requestAnimationFrame(() => modelSearchRef.current?.focus());
-    return () => globalThis.cancelAnimationFrame(frame);
-  }, [modelMenuOpen]);
-
-  function selectModel(option: ConversationHomeModelOption): void {
-    onModelChange(option);
-    setModelMenuOpen(false);
-    setModelSearch("");
-  }
-
-  function selectThinkingLevel(level: ProviderThinkingMode): void {
-    onThinkingLevelChange(level);
-    setThinkingMenuOpen(false);
-  }
-
-  function selectReasoningSummary(mode: ReasoningSummaryMode): void {
-    onReasoningSummaryChange(mode);
-    setReasoningSummaryMenuOpen(false);
-  }
 
   const configurationLocked = sendBusy || activeRun || !scopeReady;
   const attachmentsLocked = sendBusy || !scopeReady;
@@ -306,177 +221,28 @@ export function NormalConversationComposer({
               }}
             />
           </label>
-          <ComposerAuthorizationMenu
-            mode={authorizationMode}
-            options={conversationAuthorizationModeMenuOptions(t)}
+          <ConversationPermissionControl
+            authorizationMode={authorizationMode}
+            permissionPreset={permissionPreset}
+            fullAccessConfirmed={fullAccessConfirmed}
             disabled={configurationLocked}
-            disabledReason={t("Authorization is locked while the current message is running.")}
-            selectedModeLabel={t("Selected authorization mode {label}")}
-            menuLabel={t("Authorization mode")}
-            onModeChange={onAuthorizationModeChange}
-          />
-          <ComposerPermissionMenu
-            preset={permissionPreset}
-            options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}
-            disabled={configurationLocked}
-            disabledReason={t("Permission is locked while the current message is running.")}
-            selectedPermissionLabel={t("Selected permission preset {label}")}
-            menuLabel={t("Permission preset")}
-            onPresetChange={onPermissionPresetChange}
+            onAuthorizationModeChange={onAuthorizationModeChange}
+            onPermissionPresetChange={onPermissionPresetChange}
           />
         </>
       )}
       rightToolsNode={(
         <>
-          {thinkingEnabled ? (
-            <Menu open={thinkingMenuOpen} onOpenChange={setThinkingMenuOpen}>
-              <MenuTrigger asChild>
-                <Button
-                  className={thinkingOff ? "conversation-thinking-button off" : "conversation-thinking-button active"}
-                  variant="ghost"
-                  size="sm"
-                  leadingIcon={<Brain size={15} />}
-                  trailingIcon={<ChevronDown className={thinkingMenuOpen ? "expanded" : ""} size={13} />}
-                  aria-label={t("Selected thinking mode {label}", { label: activeThinkingLabel })}
-                  title={thinkingOff
-                    ? t("Thinking is off; no thinking level will be sent.")
-                    : t("This thinking level will be sent with the next message.")}
-                  disabled={configurationLocked}
-                >
-                  {thinkingOff ? t("Thinking off") : t("Thinking {label}", { label: activeThinkingLabel })}
-                </Button>
-              </MenuTrigger>
-              <MenuContent
-                className="conversation-thinking-menu"
-                side="top"
-                align="end"
-                sideOffset={8}
-                aria-label={t("Thinking mode")}
-              >
-                <MenuRadioGroup value={selectedThinkingLevel}>
-                  {thinkingOptions.map((level) => {
-                    const selected = level === selectedThinkingLevel;
-                    return (
-                      <MenuRadioItem
-                        key={level}
-                        className={selected ? "conversation-thinking-option selected" : "conversation-thinking-option"}
-                        value={level}
-                        onSelect={(event) => {
-                          event.preventDefault();
-                          selectThinkingLevel(level);
-                        }}
-                      >
-                        <span>{normalConversationThinkingLabel(level, t)}</span>
-                        {selected ? <Check size={14} /> : null}
-                      </MenuRadioItem>
-                    );
-                  })}
-                </MenuRadioGroup>
-              </MenuContent>
-            </Menu>
-          ) : null}
-          {thinkingEnabled ? (
-            <Menu open={reasoningSummaryMenuOpen} onOpenChange={setReasoningSummaryMenuOpen}>
-              <MenuTrigger asChild>
-                <Button
-                  className="conversation-reasoning-summary-button"
-                  variant="ghost"
-                  size="sm"
-                  leadingIcon={<ListTree size={15} />}
-                  trailingIcon={<ChevronDown className={reasoningSummaryMenuOpen ? "expanded" : ""} size={13} />}
-                  aria-label={t("Selected reasoning summary {label}", { label: activeReasoningSummaryLabel })}
-                  title={t("Choose how much provider-safe reasoning summary to show.")}
-                  disabled={configurationLocked}
-                >
-                  {t("Summary {label}", { label: activeReasoningSummaryLabel })}
-                </Button>
-              </MenuTrigger>
-              <MenuContent
-                className="conversation-reasoning-summary-menu"
-                side="top"
-                align="end"
-                sideOffset={8}
-                aria-label={t("Reasoning summary")}
-              >
-                <MenuRadioGroup value={selectedReasoningSummary}>
-                  {reasoningSummaryOptions.map((mode) => (
-                    <MenuRadioItem
-                      key={mode}
-                      value={mode}
-                      onSelect={(event) => {
-                        event.preventDefault();
-                        selectReasoningSummary(mode);
-                      }}
-                    >
-                      <span>{reasoningSummaryLabel(mode, t)}</span>
-                      {mode === selectedReasoningSummary ? <Check size={14} /> : null}
-                    </MenuRadioItem>
-                  ))}
-                </MenuRadioGroup>
-              </MenuContent>
-            </Menu>
-          ) : null}
-          <Menu
-            open={modelMenuOpen}
-            onOpenChange={(open) => {
-              setModelMenuOpen(open);
-              if (!open) setModelSearch("");
-            }}
-          >
-            <MenuTrigger asChild>
-              <Button
-                className="conversation-model-trigger"
-                variant="ghost"
-                size="sm"
-                trailingIcon={<ChevronDown className={modelMenuOpen ? "expanded" : ""} size={13} />}
-                aria-label={t("Selected model {label}", { label: activeModelLabel })}
-                disabled={configurationLocked}
-              >
-                {activeModelLabel}
-              </Button>
-            </MenuTrigger>
-            <MenuContent
-              className="conversation-model-menu"
-              side="top"
-              align="end"
-              sideOffset={8}
-              aria-label={t("Model options")}
-            >
-              <Input
-                ref={modelSearchRef}
-                containerClassName="conversation-model-search"
-                size="sm"
-                prefix={<Search size={14} />}
-                value={modelSearch}
-                onChange={(event) => setModelSearch(event.target.value)}
-                onKeyDown={(event) => event.stopPropagation()}
-                placeholder={t("Search models")}
-                aria-label={t("Search models")}
-              />
-              <MenuRadioGroup className="conversation-model-list" value={activeProviderPresetId}>
-                {visibleModelOptions.length > 0 ? visibleModelOptions.map((option) => {
-                  const selected = option.id === activeProviderPresetId;
-                  return (
-                    <MenuRadioItem
-                      key={option.id}
-                      className={selected ? "conversation-model-option selected" : "conversation-model-option"}
-                      value={option.id}
-                      onSelect={(event) => {
-                        event.preventDefault();
-                        selectModel(option);
-                      }}
-                    >
-                      <span className="conversation-model-option-copy"><strong>{normalConversationModelLabel(option)}</strong></span>
-                      {option.id === defaultProviderPresetId ? <span className="conversation-model-default-chip">{t("Default")}</span> : null}
-                      {selected ? <Check size={14} /> : null}
-                    </MenuRadioItem>
-                  );
-                }) : (
-                  <span className="conversation-model-empty">{t("No matching models")}</span>
-                )}
-              </MenuRadioGroup>
-            </MenuContent>
-          </Menu>
+          <ConversationModelControl
+            modelOptions={modelOptions}
+            selectedProviderPresetId={selectedProviderPresetId}
+            defaultProviderPresetId={defaultProviderPresetId}
+            defaultProviderLabel={defaultProviderLabel}
+            thinkingLevel={selectedThinkingLevel}
+            disabled={configurationLocked}
+            onModelChange={onModelChange}
+            onThinkingLevelChange={onThinkingLevelChange}
+          />
           <IconButton
             className="conversation-home-send normal-conversation-send"
             icon={ActionIcon}

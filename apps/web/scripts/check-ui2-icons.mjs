@@ -60,6 +60,7 @@ const typedActionOwners = [
   "src/features/workspace/ChannelHeaderToolbar.tsx",
   "src/features/workspace/ChannelNameField.tsx",
   "src/features/workspace/ChannelTeammateManagerPanel.tsx",
+  "src/features/workspace/ConversationModelControl.tsx",
   "src/features/workspace/NormalConversationComposer.tsx",
   "src/features/workspace/NormalConversationFeed.tsx",
   "src/features/workspace/ThreadReplyPanel.tsx",

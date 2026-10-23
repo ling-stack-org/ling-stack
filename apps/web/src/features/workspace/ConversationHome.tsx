@@ -705,7 +705,10 @@ export function ConversationHome({
       return;
     }
     setSelectedProviderPresetId(option.id);
-    setSelectedThinkingLevel("off");
+    setSelectedThinkingLevel((current) => {
+      const supported = normalConversationThinkingOptions(option.thinkingModes ?? []);
+      return supported.includes(current) ? current : "off";
+    });
     actionFeedback.clear("validation");
   }
 
@@ -714,12 +717,6 @@ export function ConversationHome({
       return;
     }
     setSelectedThinkingLevel(level);
-    actionFeedback.clear("validation");
-  }
-
-  function selectReasoningSummary(mode: ReasoningSummaryMode): void {
-    if (composerBusy || activeReply) return;
-    setSelectedReasoningSummary(mode);
     actionFeedback.clear("validation");
   }
 
@@ -740,7 +737,6 @@ export function ConversationHome({
       defaultProviderPresetId={effectiveDefaultModelId}
       defaultProviderLabel={defaultProviderLabel}
       selectedThinkingLevel={selectedThinkingLevel}
-      selectedReasoningSummary={selectedReasoningSummary}
       sendBusy={sendBusy}
       scopeReady={conversationIdentityController.ready}
       recoveringSubmission={guidancePending}
@@ -787,7 +783,6 @@ export function ConversationHome({
       }}
       onModelChange={selectModel}
       onThinkingLevelChange={selectThinkingLevel}
-      onReasoningSummaryChange={selectReasoningSummary}
       onSubmit={submitDraft}
       onStop={activeReply && onStopConversation ? () => onStopConversation(activeReply) : undefined}
     />
