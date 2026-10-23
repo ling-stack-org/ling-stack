@@ -16,6 +16,8 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ### Changed
 
+- Normal conversations now combine model selection and reasoning strength in one
+  compact popover, with authorization choices inside the permission menu.
 - Simplified the public README and added source setup, troubleshooting, and platform
   development-package instructions with a fresh workspace screenshot.
 
