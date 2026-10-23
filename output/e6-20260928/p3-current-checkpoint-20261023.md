@@ -6,6 +6,21 @@ This is the concise current entry. Older append-only records are history, not a 
 
 ### Current execution — saved merge and completed delta reviews
 
+#### New package is complete; GUI is waiting for manual Mac unlock
+
+- Original package session3129 actual exit0. ASAR SHA
+  `9a3f5450456f868ad232d51f02de53bec5eb96d6c8f289777521bd0f29c258f8`;
+  three packaged modules match dist, strict deep codesign passes, QA marker and
+  fixed GStack identity match. See `p3-main-packaged-readback-20261024.md`.
+- Correct isolated App is running: Main69127/Daemon69142,17928 owned by69142.
+  Built-in Cua returned explicit Mac locked/unlock unavailable. No workaround,
+  GUI/model task, system authentication or false screenshot pass. User notified.
+- New Host public readback recovers original private3 files exactly,+36/-0;
+  not a new GUI approval/navigation pass. Continue the already running app after
+  manual unlock, following new charter. Do not rebuild/re-ask/repeat accepted cases.
+
+All subsequent "Next: package once" bullets are completed history.
+
 - New frozen pending packet `office-human-qa-p3-main-delta-frozen-20261024.json`
   SHA`3c5c7367f4d968bb229245b5b60d07bc166751e4010412a76154a1213d07e062`
   remains approved=false. Standing internal QA authorization applied only the
