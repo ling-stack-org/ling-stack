@@ -344,8 +344,11 @@
   right: 0;
   z-index: 12;
   display: grid;
+  grid-auto-rows: max-content;
   gap: 2px;
   width: 190px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 6px;
   border: 1px solid var(--border);
   border-radius: 7px;

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mockDaemon, cwd } from "./support/mock-daemon";
 import { createBaseState, createMockTeammate } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
@@ -103,3 +103,74 @@ for (const surface of ["normal", "private"] as const) {
     expect(f.detailReads).toBe(1);
   });
 }
+
+async function openShortFileReview(page: Page): Promise<Locator> {
+  await prepare(page);
+  await page.route("**/workspace/changes?**", async (route) => {
+    await route.fulfill({ json: { cwd, state: "dirty", additions: 2, deletions: 2, totalFileCount: 2, truncated: false, checkedAt: "2026-10-23T08:00:00Z",
+      files: ["src/panel.ts", "notes.md"].map((path) => ({ path, kind: "modified", staged: false, unstaged: true, untracked: false, additions: 1, deletions: 1, truncated: false,
+        diff: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n` })) } });
+  });
+  await page.getByRole("button", { name: "Summary", exact: true }).click();
+  await page.locator(".work-summary-change").click();
+  const review = page.getByLabel("Channel workspace dock");
+  await expect(review.locator(".workspace-change-file-section")).toHaveCount(2);
+  return review;
+}
+
+async function expectMenuItemReceivesPointer(item: Locator): Promise<void> {
+  // DOM visibility and bounding boxes do not detect content-visibility paint clipping.
+  await expect.poll(() => item.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+  })).toBe(true);
+}
+
+test("file open menus escape short and collapsed diff cards and launch the selected file", async ({ page }) => {
+  const review = await openShortFileReview(page);
+  const cards = review.locator(".workspace-change-file-section");
+  for (const [index, path] of ["src/panel.ts", "notes.md"].entries()) {
+    const card = cards.nth(index);
+    for (const collapsed of [false, true]) {
+      if (collapsed) await card.locator(".workspace-change-file-toggle").click();
+      await card.getByRole("button", { name: "Open with", exact: true }).click();
+      const menu = card.locator(".workspace-file-open-popover");
+      await expect(menu.getByRole("button")).toHaveCount(4);
+      for (const item of await menu.locator("button, a").all()) await expectMenuItemReceivesPointer(item);
+      await mkdir(evidence, { recursive: true });
+      await page.screenshot({ path: `${evidence}/open-menu-${index}-${collapsed ? "collapsed" : "expanded"}.png` });
+      const request = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/workspace-files/open");
+      await menu.getByRole("button", { name: "Terminal", exact: true }).click();
+      const launch = await request;
+      expect(new URL(launch.url()).searchParams.get("path")).toBe(path);
+      expect(launch.postDataJSON()).toEqual({ target: "terminal" });
+      await expect(menu).toHaveCount(0);
+    }
+  }
+});
+
+test("file open menu flips and scrolls in a short drawer, and closes on outside click", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 400 });
+  const review = await openShortFileReview(page);
+  const card = review.locator(".workspace-change-file-section").last();
+  await card.getByRole("button", { name: "Open with", exact: true }).click();
+  const menu = card.locator(".workspace-file-open-popover");
+  await expect(menu.getByRole("button")).toHaveCount(4);
+  await expect(card.locator(".workspace-file-open-menu")).toHaveClass(/above/);
+  const scrollable = await menu.evaluate((element) => element.scrollHeight > element.clientHeight);
+  expect(scrollable).toBe(true);
+  for (const item of await menu.locator("button, a").all()) {
+    await item.scrollIntoViewIfNeeded();
+    await expectMenuItemReceivesPointer(item);
+  }
+  const download = menu.getByRole("link", { name: "Download", exact: true });
+  await download.scrollIntoViewIfNeeded();
+  await expectMenuItemReceivesPointer(download);
+  const bounds = await menu.boundingBox();
+  expect(bounds!.y).toBeGreaterThanOrEqual(0);
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(400);
+  await mkdir(evidence, { recursive: true });
+  await page.screenshot({ path: `${evidence}/open-menu-short-drawer.png` });
+  await review.locator(".workspace-change-review-summary").click();
+  await expect(menu).toHaveCount(0);
+});

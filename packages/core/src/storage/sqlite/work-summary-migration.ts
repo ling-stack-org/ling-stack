@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const WORK_SUMMARY_MIGRATION_VERSION = 175;
+export const WORK_SUMMARY_MIGRATION_VERSION = 176;
 export function applyWorkSummaryMigration(input: {
   readonly database: DatabaseSync;
   readonly hasMigration: (version: number) => boolean;

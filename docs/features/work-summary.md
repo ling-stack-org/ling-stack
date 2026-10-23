@@ -30,7 +30,7 @@ daemon 通过现有 SecretResolver 读取 `GITHUB_TOKEN` 或 `GH_TOKEN`。未配
 ## 模块职责
 
 - `packages/contracts/src/work-summary.ts` 定义传输契约；API client 封装读取、PR 关联和净变更详情请求。
-- `packages/core/src/storage/sqlite/work-summary-store.ts` 保存 PR 关联，migration 175 建表。
+- `packages/core/src/storage/sqlite/work-summary-store.ts` 保存 PR 关联，migration 176 建表。
 - `packages/daemon/src/features/work-summary/` 分开路由、聚合、Git、GitHub 和有界缓存。
 - `apps/web/src/features/workspace/work-summary/` 分开共享导航上下文、面板、分组、变更、提交、PR 行及刷新状态。三个会话页面保留各自抽屉控制器。
 - `WorkspaceClientView.tsx` 保留频道编排，类型、环境加载、面板导航、标题区域和弹层组合分别抽到相邻模块。
