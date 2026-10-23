@@ -114,6 +114,18 @@ test("raw token removal trims duplicate whitespace at removal boundary", () => {
   assert.equal(removeComposerInputRawToken("Run /review  now", "/review"), "Run now");
 });
 
+test("composer parsing handles long boundary runs without changing tokens", () => {
+  const punctuation = "!".repeat(100_000);
+  const parts = parseComposerInputParts(`https://example.com/docs${punctuation}`);
+  assert.equal(parts[0]?.type, "url_ref");
+  assert.equal(parts[0]?.raw, "https://example.com/docs");
+
+  const paddedId = `${"-".repeat(100_000)}review${"-".repeat(100_000)}`;
+  const command = parseComposerInputParts("/review", { slashCommands: [{ id: paddedId, label: "Review" }] });
+  assert.equal(command[0]?.type, "slash_command");
+  assert.equal(command[0]?.commandId, paddedId);
+});
+
 test("permission confirmation is derived from explicit option metadata", () => {
   assert.equal(conversationPermissionPresetRequiresConfirmation("full_access"), true);
   assert.equal(conversationPermissionPresetRequiresConfirmation("read_only"), false);

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { SkillSourceScanRoot } from "./skill-types.js";
 import { createCoreOriginalProcessEntry, isCoreOriginalLaunchRefusal } from "./original-host-process-entry.js";
+import { trimBoundaryCharacters } from "./string-boundaries.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -179,7 +180,7 @@ async function readGstackVersion(repoRoot: string): Promise<string | undefined> 
 
 function normalizeGithubPath(host: string, pathname: string): string | undefined {
   const normalizedHost = host.trim().toLowerCase();
-  const normalizedPath = pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "").toLowerCase();
+  const normalizedPath = trimBoundaryCharacters(pathname, "/").replace(/\.git$/i, "").toLowerCase();
   return normalizedHost && normalizedPath ? `${normalizedHost}/${normalizedPath}` : undefined;
 }
 

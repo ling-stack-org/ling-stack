@@ -4,6 +4,7 @@ import {
   isKnownGenerationModel,
   isOpenAIImagesGenerationModel,
 } from "./provider-generation-models.js";
+import { trimBoundaryCharacters } from "./string-boundaries.js";
 
 export type ProviderAdapterMediaKind = "seedream" | "seedance" | "jimeng";
 
@@ -97,10 +98,10 @@ export function builtinMediaModelCandidates(kind: ProviderAdapterMediaKind | und
 
 export function normalizeProviderBaseUrlForAdapter(input: Pick<ProviderAdapterInput, "api" | "kind" | "baseUrl">): string {
   const rawBaseUrl = input.baseUrl?.trim() || defaultProviderBaseUrl(input);
-  const withoutTrailingSlash = rawBaseUrl.replace(/\/+$/, "");
+  const withoutTrailingSlash = trimBoundaryCharacters(rawBaseUrl, "/", "end");
   try {
     const url = new URL(withoutTrailingSlash);
-    let pathname = url.pathname.replace(/\/+$/, "");
+    let pathname = trimBoundaryCharacters(url.pathname, "/", "end");
     for (const suffix of endpointSuffixes) {
       if (pathname.endsWith(suffix)) {
         pathname = pathname.slice(0, -suffix.length);
@@ -110,7 +111,7 @@ export function normalizeProviderBaseUrlForAdapter(input: Pick<ProviderAdapterIn
     url.pathname = pathname || "/";
     url.search = "";
     url.hash = "";
-    return url.toString().replace(/\/+$/, "");
+    return trimBoundaryCharacters(url.toString(), "/", "end");
   } catch {
     return withoutTrailingSlash;
   }

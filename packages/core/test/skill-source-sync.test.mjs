@@ -11,12 +11,20 @@ import {
   getBuiltinSkillPack,
   ManagedOfficialSkillSourceError,
   normalizeOfficialGstackOrigin,
+  normalizeGstackSkillId,
   officialGstackSourceScanRoot,
   previewGstackSkillSourceSync,
   refreshManagedOfficialGstackSource,
   resolveLocalGstackSkillSourceRoots,
   resolveSkillSourceRoots,
 } from "../dist/index.js";
+
+test("skill identifiers and MCP claims handle long ambiguous delimiters", () => {
+  assert.equal(normalizeGstackSkillId(`${"/".repeat(100_000)}review${"-".repeat(100_000)}`), "review");
+  const tool = `mcp__server${"_".repeat(100_000)}__tool`;
+  const profile = buildSkillSourceSemanticProfile({ markdown: `Use ${tool} and MCP__Server__Tool, but not mcp____.`, sourceChecksum: "sha256:long" });
+  assert.deepEqual(profile.toolClaims, [tool, "mcp__server__tool"]);
+});
 
 async function withTempDir(prefix, fn) {
   const root = await mkdtemp(resolve(tmpdir(), prefix));

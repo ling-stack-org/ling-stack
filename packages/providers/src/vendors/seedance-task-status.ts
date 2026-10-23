@@ -1,4 +1,4 @@
-import { isRecord } from "../utils.js";
+import { isRecord, stripTrailingSlashes } from "../utils.js";
 import type { MediaRemoteTerminalObservation } from "@ling-stack/contracts";
 
 /** Decoded protocol facts only. Host transport and Core lineage still decide settlement. */
@@ -80,7 +80,7 @@ export function createSeedanceStatusEndpoint(baseUrl: string | undefined, extern
     if ((base.protocol !== "http:" && base.protocol !== "https:") || base.username || base.password || base.search || base.hash) {
       return undefined;
     }
-    return `${baseUrl.replace(/\/+$/, "")}/contents/generations/tasks/${encodeURIComponent(externalOperationId)}`;
+    return `${stripTrailingSlashes(baseUrl)}/contents/generations/tasks/${encodeURIComponent(externalOperationId)}`;
   } catch {
     return undefined;
   }

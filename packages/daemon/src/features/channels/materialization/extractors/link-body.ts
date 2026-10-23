@@ -1,6 +1,7 @@
 import type { LingInputExtractor } from "../registry.js";
 import { decidePublicLinkMaterializationPolicy } from "../policy.js";
 import { preparePinnedPublicHttpRequest, PublicHttpError } from "../../../../shared/public-http-transport.js";
+import { decodeHtmlEntitiesOnce, stripUnreadableHtml } from "../../../../shared/html-text.js";
 
 export const linkBodyExtractorV1: LingInputExtractor = {
   id: "link_body_v1",
@@ -242,18 +243,7 @@ function isSupportedLinkBodyContentType(contentType: string): boolean {
 }
 
 export function extractReadableHtmlText(html: string): string {
-  const body = /<body\b[^>]*>([\s\S]*?)<\/body>/iu.exec(html)?.[1] ?? html;
-  return normalizeExtractedText(
-    body
-      .replace(/<script\b[\s\S]*?<\/script>/giu, " ")
-      .replace(/<style\b[\s\S]*?<\/style>/giu, " ")
-      .replace(/<noscript\b[\s\S]*?<\/noscript>/giu, " ")
-      .replace(/<svg\b[\s\S]*?<\/svg>/giu, " ")
-      .replace(/<(?:nav|footer|form|aside)\b[\s\S]*?<\/(?:nav|footer|form|aside)>/giu, " ")
-      .replace(/<br\s*\/?>/giu, "\n")
-      .replace(/<\/(?:p|div|section|article|main|h[1-6]|li|tr)>/giu, "\n")
-      .replace(/<[^>]+>/gu, " "),
-  );
+  return normalizeExtractedText(stripUnreadableHtml(html));
 }
 
 export function normalizeExtractedText(value: string): string {
@@ -266,15 +256,7 @@ export function normalizeExtractedText(value: string): string {
 }
 
 function decodeHtmlEntities(value: string): string {
-  return value
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, "\"")
-    .replace(/&#39;/g, "'")
-    .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
-    .replace(/&#x([0-9a-f]+);/giu, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 16)));
+  return decodeHtmlEntitiesOnce(value, { numeric: true });
 }
 
 function publicLinkPolicyMessage(reason: string): string {

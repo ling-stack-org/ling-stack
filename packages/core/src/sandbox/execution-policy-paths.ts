@@ -1,5 +1,6 @@
 import { posix, win32 } from "node:path";
 import { ExecutionSandboxPolicyError } from "./execution-policy-types.js";
+import { trimBoundaryCharacters } from "../string-boundaries.js";
 
 /** Lexical checks only. They do not establish realpath, reparse-point or inode authority. */
 export function executionSandboxPaths(platform: "darwin" | "win32") {
@@ -19,8 +20,9 @@ export function executionSandboxPaths(platform: "darwin" | "win32") {
     } else if (!paths.isAbsolute(value) || value.startsWith("//")) {
       throw new ExecutionSandboxPolicyError("invalid_sandbox_path");
     }
-    const normalized = paths.normalize(value).replace(platform === "win32" ? /[\\/]+$/u : /\/+$/u, "");
-    if (!normalized || normalized === paths.parse(normalized).root.replace(/[\\/]+$/u, "")) throw new ExecutionSandboxPolicyError("invalid_sandbox_path");
+    const trailingSeparators = platform === "win32" ? "\\/" : "/";
+    const normalized = trimBoundaryCharacters(paths.normalize(value), trailingSeparators, "end");
+    if (!normalized || normalized === trimBoundaryCharacters(paths.parse(normalized).root, trailingSeparators, "end")) throw new ExecutionSandboxPolicyError("invalid_sandbox_path");
     return platform === "win32" ? normalized[0].toUpperCase() + normalized.slice(1) : normalized;
   }
   const inside = (candidate: string, root: string): boolean => key(candidate) === key(root) || key(candidate).startsWith(key(root) + paths.sep);

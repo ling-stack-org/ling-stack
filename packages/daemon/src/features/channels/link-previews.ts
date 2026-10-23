@@ -7,6 +7,7 @@ import { writeJson } from "../../shared/response.js";
 import { preparePinnedPublicHttpRequest, PublicHttpError } from "../../shared/public-http-transport.js";
 import { validateChannelMessageOwner } from "./protocol.js";
 import { parseChannelLinkPreviewRequest, type ChannelLinkPreviewRequest } from "./schemas.js";
+import { decodeHtmlEntitiesOnce } from "../../shared/html-text.js";
 
 const CHANNEL_LINK_PREVIEW_TIMEOUT_MS = 5_000;
 const CHANNEL_LINK_PREVIEW_MAX_BYTES = 192 * 1024;
@@ -251,13 +252,7 @@ function readTitle(html: string): string | undefined {
 }
 
 function decodeHtmlEntities(value: string): string {
-  return value
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, "\"")
-    .replace(/&#39;/g, "'")
-    .trim();
+  return decodeHtmlEntitiesOnce(value, { names: ["amp", "lt", "gt", "quot", "#39"] }).trim();
 }
 
 export function normalizePreviewUrl(rawUrl: string): string {
