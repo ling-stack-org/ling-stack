@@ -838,6 +838,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/control-plane/routes.ts",
   "packages/daemon/src/features/control-plane/snapshots.ts",
   "packages/daemon/src/features/conversations/active-reply-target.ts",
+  "packages/daemon/src/features/conversations/context-compaction-projection.ts",
   "packages/daemon/src/features/conversations/conversation-tone.ts",
   "packages/daemon/src/features/conversations/materialization.ts",
   "packages/daemon/src/features/conversations/message-edits.ts",

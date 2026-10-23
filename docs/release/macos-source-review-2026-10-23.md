@@ -11,8 +11,8 @@ The original same-process publication receipts, staged file identities,
 signature transforms and final descriptor checks remain in place. Tests cannot
 generate or refresh these committed approval rows.
 
-The fixed authored list now contains 1,500 inputs and 41 explicit roots. A
-recursive Babel AST audit observed 4,493 literal authored edges, no unresolved
+The fixed authored list now contains 1,501 inputs and 41 explicit roots. A
+recursive Babel AST audit observed 4,496 literal authored edges, no unresolved
 imports and no parse errors. The existing early-entry QA exclusion of
 `apps/desktop/main/main.ts` remains explicit; this is not a claim to review the
 entire Main graph. Nonliteral imports were checked against the fixed Builder
@@ -90,3 +90,15 @@ was rebound, to `52497a6d81dba42d11f03729c5d5bb7b86339b3ad993703bd83177d7917ea3c
 The other 1,499 packaging pins, native inputs, source list and original
 ASAR/native/signature/final-archive gates remain unchanged. This source review
 does not grant build, signature, runtime or final-archive acceptance.
+
+Mainline PR #585 added a durable compaction-lifecycle projection. An independent
+static review checked the five changed daemon inputs and the new
+`context-compaction-projection.ts`: existing visible conversation/run anchors
+and event-persistence fences remain, and no Office, signing or permission
+authority changes. An in-memory Babel audit added exactly three authored edges
+to that one type-import-only module, with no new unresolved imports or parse
+errors. After merging main, only those five existing daemon digests, the new
+source entry and the fixed list's own digest were rebound. The closure now has
+1,501 inputs and 4,496 edges; its 41 roots and existing Main early-entry exclusion
+remain unchanged. All 15 original Office native source digests remain unchanged.
+This static review is separate from candidate build and installed-user acceptance.
