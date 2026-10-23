@@ -73,6 +73,7 @@ import {
   projectUnboundConversationInterventionMessages,
 } from "./runtime-projection.js";
 import { projectConversationReasoningSummaries } from "./reasoning-summary-projection.js";
+import { projectConversationContextCompactions } from "./context-compaction-projection.js";
 import { projectConversationArtifacts } from "../runs/public-artifacts.js";
 
 type StartConversationRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
@@ -574,6 +575,13 @@ export function buildConversationDetail(
     runLinks,
     runs,
     reasoningSummaries: projectConversationReasoningSummaries({
+      store,
+      thread,
+      runLinks,
+      runs,
+      items: conversationItems,
+    }),
+    contextCompactions: projectConversationContextCompactions({
       store,
       thread,
       runLinks,

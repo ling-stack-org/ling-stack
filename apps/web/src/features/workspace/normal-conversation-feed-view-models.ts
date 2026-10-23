@@ -85,6 +85,7 @@ export function projectNormalConversationFeedItems(input: {
       id: `message:${message.role === "user" ? "user" : "agent"}:${message.id}`,
       role: message.role === "user" ? "user" : "agent",
       markdown: messagePresentation.body,
+      waitingPlaceholder: bodyStreaming && !message.content.trim() && !message.narrationSegments?.length && !message.errorMessage?.trim(),
       phase: message.role === "assistant" && (message.status === "succeeded" || relatedRun?.status === "succeeded") ? "final" : "commentary",
       revision: message.revision,
       threadSequence: 0,

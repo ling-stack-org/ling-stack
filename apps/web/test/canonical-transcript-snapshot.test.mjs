@@ -8,6 +8,26 @@ import { batchCanonicalTranscriptItems } from "@ling-stack/conversation-ui-core"
 import { projectConversationDetailTimeline, resolveConversationContextSnapshots } from "../src/domains/conversations/canonical-transcript-snapshot.ts";
 import { mergeConversationDetailSnapshots } from "../src/domains/conversations/conversation-detail-merge.ts";
 
+test("compaction completion survives stale detail replay and follows supersession tombstones", () => {
+  const detail = detailFixture();
+  const assistant = detail.conversationItems.find(row => row.kind === "assistant_message");
+  assistant.domainRefs = [{ type: "run", id: "run-1" }];
+  assistant.turnId = "turn-1";
+  const record = { id: "compact", revision: 20, workspaceId: "workspace-1", threadId: "thread-1", turnId: "turn-1",
+    runId: "run-1", attemptId: "attempt-1", participantId: "ling", anchorItemId: assistant.id,
+    eventId: "event-10", eventSequence: 10, status: "running", reason: "threshold", summary: "",
+    sourceRefs: [{ kind: "conversation_item", id: assistant.id }, { kind: "run", id: "run-1" },
+      { kind: "attempt", id: "attempt-1" }, { kind: "run_event", id: "event-10" }] };
+  detail.contextCompactions = [record];
+  const settled = { ...detail, contextCompactions: [{ ...record, status: "succeeded", revision: 24 }] };
+  const replay = mergeConversationDetailSnapshots(mergeConversationDetailSnapshots(detail, settled), detail);
+  assert.equal(replay.contextCompactions[0].status, "succeeded");
+  assert.equal(projectConversationDetailTimeline(replay).items.find(row => row.kind === "contextCompaction").status, "succeeded");
+  const replaced = mergeConversationDetailSnapshots(replay, { ...settled,
+    supersessionTombstones: { turnIds: ["turn-1"], runIds: ["run-1"], responseMessageIds: [] } });
+  assert.deepEqual(replaced.contextCompactions, []);
+});
+
 test("all conversation detail surfaces preserve report reference privacy", () => {
   for (const kind of ["conversation", "teammate_private", "channel_discussion"]) {
     const detail = detailFixture({ kind });

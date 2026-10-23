@@ -326,6 +326,8 @@ export function WorkspaceClientView({
   channelTurnContextAssignments,
   channelUserInputs,
   channelReasoningSummaries,
+  channelContextCompactions,
+  channelConversationRefreshToken,
   channelGeneratedMedia,
   memoryById,
   usedMemoryEvents,
@@ -1525,6 +1527,7 @@ export function WorkspaceClientView({
   const guidanceModeActive = channelGuidanceTarget.guidanceModeActive;
   const activeConversationSourceRunId = channelGuidanceTarget.sourceRunId;
   const threadReplyController = useChannelThreadReplyController({
+    refreshToken: channelConversationRefreshToken,
     cwd,
     selectedChannelId,
     channelMessages,
@@ -2932,6 +2935,7 @@ export function WorkspaceClientView({
 
   const messageRenderers = createChannelMessageRenderers({
     runLifecycles: runById,
+    contextSegmentIdByItemId: channelContextSegmentIdByItemId,
     allLocalTeammateById,
     allLocalTeammateByName,
     attachmentContentUrl,
@@ -2943,6 +2947,7 @@ export function WorkspaceClientView({
     channelConversationItems: channelConversationItemsForDisplay,
     channelUserInputs,
     channelReasoningSummaries,
+    channelContextCompactions,
     channelWorkflows: channelWorkflowsForDisplay,
     terminalReports: terminalReportsForDisplay,
     conversationWorkCellByThreadId,
@@ -3971,6 +3976,7 @@ export function WorkspaceClientView({
             conversationItems: threadReplyController.conversationItems,
             userInputs: threadReplyController.userInputs,
             reasoningSummaries: threadReplyController.reasoningSummaries,
+            contextCompactions: threadReplyController.contextCompactions,
             teammates: teammateOptions,
             memoryById,
             usedMemoryEvents,

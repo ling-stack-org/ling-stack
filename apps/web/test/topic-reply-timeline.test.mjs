@@ -109,3 +109,27 @@ test("provider-safe reasoning is placed before its final topic reply without exp
   assert.equal(rows[reasoningIndex].summary, "检查了边界。");
   assert.equal(JSON.stringify(rows).includes("raw thinking"), false);
 });
+
+
+test("topic compaction is anchored before its own reply and cannot cross a topic switch", () => {
+  const data = input();
+  data.conversationItems[3] = { ...data.conversationItems[3], domainRefs: [{ type: "run", id: "run" }] };
+  const record = {
+    id: "compaction", revision: 4, ...scope, turnId: "turn", runId: "run", anchorItemId: "reply-after",
+    eventId: "event-start", eventSequence: 3, status: "running", reason: "threshold", summary: "",
+    sourceRefs: [{ kind: "conversation_item", id: "reply-after" }, { kind: "run", id: "run" },
+      { kind: "run_event", id: "event-start" }],
+  };
+  data.contextCompactions = [record];
+  const before = projectTopicReplyTimeline(data);
+  const compactionIndex = before.findIndex(row => row.kind === "contextCompaction");
+  assert.ok(compactionIndex > 0 && compactionIndex < before.findIndex(row => row.itemId === "reply-after" && row.kind === "agentMessage"));
+  const after = projectTopicReplyTimeline({ ...data, contextCompactions: [{ ...record, revision: 6, status: "succeeded" }] });
+  assert.equal(after[compactionIndex].id, before[compactionIndex].id);
+  assert.equal(after[compactionIndex].status, "succeeded");
+  assert.equal(after[compactionIndex].revision, 6);
+  for (const fields of [{ workspaceId: "foreign" }, { threadId: "foreign" }, { turnId: "foreign" }, { runId: "foreign" }]) {
+    assert.equal(projectTopicReplyTimeline({ ...data, contextCompactions: [{ ...record, ...fields }] })
+      .some(row => row.kind === "contextCompaction"), false);
+  }
+});

@@ -13,6 +13,7 @@ export interface ConversationTimelineMessageInput {
   readonly id: string;
   readonly role: "user" | "agent";
   readonly markdown: string;
+  readonly waitingPlaceholder?: boolean;
   readonly revision?: number;
   readonly threadSequence: number;
   readonly partIndex?: number;
@@ -56,6 +57,8 @@ export function createConversationTimelineMessageItem(
     id: input.id,
     kind: input.role === "user" ? "userMessage" : "agentMessage",
     markdown: input.markdown,
+    ...(input.waitingPlaceholder && input.role === "agent" && (input.status === "pending" || input.status === "running")
+      ? { waitingPlaceholder: true } : {}),
     phase: input.phase ?? (input.role === "agent" && input.status === "succeeded" ? "final" : "commentary"),
     revision: Number.isSafeInteger(revision) && (revision ?? 0) >= 0 ? revision ?? 1 : 1,
     threadSequence: input.threadSequence,

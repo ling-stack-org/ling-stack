@@ -191,6 +191,17 @@ export interface CanonicalCompactionRecord {
   readonly threadId: string;
   readonly turnId?: string;
   readonly anchorItemId: string;
+  readonly runId?: string;
+  readonly attemptId?: string;
+  readonly participantId?: string;
+  readonly workUnitId?: string;
+  readonly workflowStepId?: string;
+  readonly status?: "running" | "succeeded" | "failed" | "cancelled" | "blocked";
+  readonly eventId?: string;
+  readonly eventSequence?: number;
+  readonly reason?: "manual" | "threshold" | "overflow";
+  readonly tokensBefore?: number;
+  readonly estimatedTokensAfter?: number;
   readonly summary: string;
   readonly compactedTurnCount?: number;
   readonly snapshotRef?: CanonicalSourceRef;
@@ -624,13 +635,15 @@ export function projectCanonicalConversationTimeline(
   const auditItems = anchoredProjection.auditActions
     .map((entry) => projectCanonicalAction(entry, input.scope, diagnostics))
     .sort(compareTimelineItems);
+  const compactionRows = projected.filter(item => item.kind === "contextCompaction" && item.sourceEventSequence !== undefined);
+  const compactionRowIds = new Set(compactionRows.map(item => item.id));
   return {
     sourceSequence: input.sourceSequence,
     sourceRevision: input.sourceRevision,
     // The canonical projector deliberately returns atomic items only. Display
     // batching is a separate, reversible projection owned by the shared adapter;
     // completion, fan-in, and TerminalReport consumers must never see a batch.
-    items: mergeConversationRunNarration(projected.sort(compareTimelineItems), [...committedNarration, ...reasoningRows]),
+    items: mergeConversationRunNarration(projected.filter(item => !compactionRowIds.has(item.id)).sort(compareTimelineItems), [...committedNarration, ...reasoningRows, ...compactionRows]),
     auditItems,
     terminalEvidence: projected.flatMap(terminalEvidenceForTimelineItem),
     diagnostics,
@@ -1044,10 +1057,23 @@ function projectSupplementalEvidence(
 
   const latestCompactions = latestSupplementalById(input.compactions ?? [], diagnostics, "compaction");
   for (const compaction of sortSupplementalRecords(latestCompactions.values())) {
-    if (!inScope(compaction.workspaceId, compaction.threadId)) continue;
+    if (!inScope(compaction.workspaceId, compaction.threadId, compaction.runId, compaction.participantId)
+      || (input.scope.attemptId && compaction.attemptId !== input.scope.attemptId)
+      || (input.scope.turnId && compaction.turnId !== input.scope.turnId)) continue;
     const anchor = itemsById.get(compaction.anchorItemId);
     if (!anchor) {
       diagnostics.push({ code: "missing_anchor", sourceRefs: toSourceRefs(compaction.sourceRefs), message: `Compaction ${compaction.id} has no conversation-item anchor.` });
+      continue;
+    }
+    if (compaction.eventSequence !== undefined && (!Number.isSafeInteger(compaction.eventSequence)
+      || compaction.eventSequence < 1 || !compaction.runId || compaction.turnId !== anchor.turnId
+      || anchor.kind !== "assistant_message"
+      || anchor.domainRefs?.filter(ref => ref.type === "run").length !== 1
+      || !anchor.domainRefs.some(ref => ref.type === "run" && ref.id === compaction.runId)
+      || !compaction.sourceRefs.some(ref => ref.kind === "run" && ref.id === compaction.runId)
+      || !compaction.sourceRefs.some(ref => ref.kind === "run_event" && ref.id === compaction.eventId)
+      || (compaction.attemptId && !compaction.sourceRefs.some(ref => ref.kind === "attempt" && ref.id === compaction.attemptId)))) {
+      diagnostics.push({ code: "missing_lineage", sourceRefs: toSourceRefs(compaction.sourceRefs), message: `Compaction ${compaction.id} is missing durable Run lineage.` });
       continue;
     }
     append(anchor, {
@@ -1056,14 +1082,26 @@ function projectSupplementalEvidence(
       revision: compaction.revision,
       threadSequence: anchor.sequence,
       partIndex: 0,
-      status: "succeeded",
+      status: compaction.status ?? "succeeded",
       turnId: compaction.turnId ?? anchor.turnId ?? input.scope.turnId,
       itemId: anchor.id,
+      runId: compaction.runId,
+      attemptId: compaction.attemptId,
+      participantId: compaction.participantId,
+      workUnitId: compaction.workUnitId,
+      workflowStepId: compaction.workflowStepId ?? null,
+      sourceEventSequence: compaction.eventSequence,
       sourceRefs: toSourceRefs(compaction.sourceRefs),
-      title: "Context compacted",
+      title: compaction.status === "running" ? "Compacting context…"
+        : compaction.status === "failed" ? "Context compaction failed"
+          : compaction.status === "cancelled" ? "Context compaction cancelled"
+            : compaction.status === "blocked" ? "Compaction result unavailable" : "Context compacted",
       summary: compaction.summary,
       description: compaction.summary,
       compactedTurnCount: compaction.compactedTurnCount,
+      reason: compaction.reason,
+      tokensBefore: compaction.tokensBefore,
+      estimatedTokensAfter: compaction.estimatedTokensAfter,
       snapshotRef: compaction.snapshotRef ? toSourceRefs([compaction.snapshotRef])[0] : undefined,
     } satisfies ConversationTimelineContextCompactionItem);
   }

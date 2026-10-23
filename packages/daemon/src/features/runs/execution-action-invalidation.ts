@@ -6,6 +6,23 @@ import {
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { appendControlPlaneEvent } from "../control-plane/events.js";
 
+/** Compaction is a system lifecycle, with its own invalidation identity. */
+export function appendContextCompactionInvalidation(input: {
+  readonly store: RunStore;
+  readonly hub: ControlPlaneEventHub | undefined;
+  readonly cwd: string;
+  readonly event: RunEventEnvelope;
+}): void {
+  if (!input.hub || !["context_compaction_start", "context_compaction_end"].includes(input.event.type)) return;
+  appendControlPlaneEvent(input.store, input.hub, {
+    workspaceId: DEFAULT_WORKSPACE_ID, cwd: input.cwd, domain: "runs",
+    entityType: "context_compaction", entityId: input.event.runId,
+    action: "context_compaction.revised",
+    data: { runId: input.event.runId, runEventType: input.event.type, revision: input.event.seq },
+    idempotencyKey: `context-compaction-revision:${input.event.runId}:${input.event.seq}`,
+  }, input.event.ts);
+}
+
 /**
  * Publish the durable revision of one tool action through the existing
  * control-plane stream. The Run event remains authoritative; this event only

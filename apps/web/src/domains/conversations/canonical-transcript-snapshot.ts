@@ -121,13 +121,13 @@ export function projectConversationDetailTimeline(
     )),
     artifacts: visibleDetailArtifacts(detail.artifacts, actions).map((artifact) => toCanonicalArtifactRecord(artifact, actions, itemById, detail.thread.id)),
     plans,
-    compactions,
+    compactions: [...compactions, ...(detail.contextCompactions ?? [])],
     reasoningSummaries,
     terminalReports,
     participantSpans,
     contextSegmentIdByItemId,
     sourceSequence,
-    sourceRevision: `${detail.thread.updatedAt}:${maxItemRevision}:${maxActionRevision}:${maxReasoningRevision}:${plans.map((plan) => `${plan.id}:${plan.revision}`).join(",")}:${compactions.map((record) => `${record.id}:${record.revision}`).join(",")}:${participantSpans.map((span) => `${span.id}:${span.revision}`).join(",")}:${userInputTranscriptRevisionSignature(detail.userInputs)}`,
+    sourceRevision: `${detail.thread.updatedAt}:${maxItemRevision}:${maxActionRevision}:${maxReasoningRevision}:${plans.map((plan) => `${plan.id}:${plan.revision}`).join(",")}:${[...compactions, ...(detail.contextCompactions ?? [])].map((record) => `${record.id}:${record.revision}`).join(",")}:${participantSpans.map((span) => `${span.id}:${span.revision}`).join(",")}:${userInputTranscriptRevisionSignature(detail.userInputs)}`,
     initialDiagnostics: adapterDiagnostics,
   });
 }
@@ -353,13 +353,13 @@ function buildParticipantSpans(input: {
       )),
       artifacts: visibleDetailArtifacts(input.detail.artifacts ?? [], childActions).filter((artifact) => artifact.runId === childRun.id).map((artifact) => toCanonicalArtifactRecord(artifact, childActions, new Map(childItems.map((item) => [item.id, item])), input.scope.threadId)),
       plans: [],
-      compactions: [],
+      compactions: (input.detail.contextCompactions ?? []).filter(record => record.runId === childRun.id),
       reasoningSummaries: (input.detail.reasoningSummaries ?? [])
         .filter((summary) => summary.runId === childRun.id)
         .map(toCanonicalReasoningSummaryRecord),
       participantSpans: [],
       sourceSequence: childItems.reduce((max, item) => Math.max(max, item.sequence), 0),
-      sourceRevision: `${childRun.id}:${childRun.updatedAt}:${childActions.reduce((max, action) => Math.max(max, action.revision), 0)}:${(input.detail.reasoningSummaries ?? []).filter((summary) => summary.runId === childRun.id).reduce((max, summary) => Math.max(max, summary.revision), 0)}:${userInputTranscriptRevisionSignature(userInputs.filter(record => childUserInputIds.has(record.itemId)))}`,
+      sourceRevision: `${childRun.id}:${childRun.updatedAt}:${childActions.reduce((max, action) => Math.max(max, action.revision), 0)}:${(input.detail.reasoningSummaries ?? []).filter((summary) => summary.runId === childRun.id).reduce((max, summary) => Math.max(max, summary.revision), 0)}:${(input.detail.contextCompactions ?? []).filter(record => record.runId === childRun.id).map(record => `${record.id}:${record.revision}`).join(",")}:${userInputTranscriptRevisionSignature(userInputs.filter(record => childUserInputIds.has(record.itemId)))}`,
       contextSegmentIdByItemId: selectContextSegments(input.contextSegmentIdByItemId, childItems),
     });
     input.diagnostics.push(...childProjection.diagnostics);
