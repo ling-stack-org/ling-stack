@@ -62,7 +62,7 @@
     "packages/daemon/src/runtime/delegated-terminal-handoff.ts": "b4a89ccfeebdae0373597ddffe110be0263d512454ae2cb5fc1e4c2a9068cce5",
     "packages/daemon/src/runtime/run-shutdown-coordinator.ts": "41e0509ae6645d71f84807b1e8144958aa4aebf6795c48fe5c3e83fe3488c2cd",
     "packages/daemon/src/runtime/run-suspension-order.ts": "22425cb7e092e79d84f89f1a0a16468588520ce9e7d6cb5f1a87861e5c413e26",
-    "apps/desktop/scripts/packaged-gstack-resources.mjs": "c943cc1dd97f48e7ee6b8ed17aab29e4ec34d0ec283473bef1246647481dead4",
+    "apps/desktop/scripts/packaged-gstack-resources.mjs": "3a313dc1687667e5c2d698f241732b4c277795d72d954c1848ef9c4355cd153c",
     "scripts/gstack/executable-bundle.mjs": "8ca9097f5c2e87bc998e28ccdbbdba2cf89022552ff495e3980bf162deed3609",
     "scripts/gstack/upstream-lock.json": "6c666b7e9a40510404f565fe1599954126f82f472651c954496c663ec513d815",
     "apps/desktop/main/entry.ts": "a338765dc59416e7f1ea065d8a00c125dc889ec3affeeee05ac922eff0fd56d3",

@@ -31,8 +31,8 @@
  * using Node's native TypeScript stripping (fixed build runtime Node 22.22.1).
  * This does not attest the ordinary developer lane's existing dist or vendor
  * generated files. Source config changes require a new explicit review.
- * Human QA's two early-entry sources are explicit non-Office-build review inputs:
- * their inclusion pins the QA isolation code, not the entire generated Main graph.
+ * Human QA's early-entry/lifecycle sources are explicit non-Office-build review
+ * inputs: their inclusion pins QA isolation/startup, not the entire Main graph.
  *
  * A graph change requires an explicit review of this fixed list. It must not
  * silently discover, regenerate, approve, or refresh digests during a build.
@@ -80,6 +80,9 @@ export const PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS = Object.freeze([
 ]);
 
 export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
+  // Explicit cold resource-bootstrap delta; listing alone grants no approval.
+  "apps/desktop/main/daemon-lifecycle.ts",
+  "packages/core/src/daemon-resource-bootstrap.ts",
   // Explicit graceful-tree/final-settlement/terminal-handoff review delta.
   // Merely listing these inputs grants no approval; current bytes need review.
   "packages/core/src/run-final-settlement-types.ts",

@@ -13,7 +13,8 @@
 - 此次只读核查未刷新远端；本地记录显示已整合 `main@9014741d`（#578），
   不能据此宣称当前远端没有更新。最终提交/合并前再核对一次，不在验收中途无条件滚动基线。
 - 前述验收文档、已批准 Office manifest、四个测试夹具已随 checkpoint 保存；
-  当前追加差量为 P2 宏路径边界修复与对应记录。原 untracked crash report 保留且不纳入提交。
+  当前追加差量为 P2 冷资源 bootstrap/服务 readiness 分层修复与对应记录。
+  宏路径修复已获具体批准并真实打包；原 untracked crash report 保留且不纳入提交。
 - 最新 Core 完整回归 4431/4431、Runner 567/567、Office source closure 1343/1343
   已有 exit0 证据；Daemon 完整回归 7419 项中 7407 通过、12 既有 skip、零失败/取消，
   actual exit0，`sourceUnchanged=true`。不要因编写新计划而重跑。
@@ -85,15 +86,42 @@ canonical 路径与目录身份检查、最多两代及中断残留阻断。监�
 
 依赖：P1。
 
-当前状态：P1已通过，原命令的真实打包session55530已exit1；当前日志为
+历史复制故障：P1已通过，原命令的真实打包session55530已exit1；当时日志为
 `output/e6-20260928/human-qa-package-resource-restored-20261023.log`。
 完整校验在afterPack拒绝：Builder walker漏复制清单内一项`.gitkeep`。根因已复现，
 已从已验证manifest增加精确单文件映射，真实Builder复制回归RED→GREEN；原邻接72/72。
 独审随后发现 Builder 会把字面路径中的 `${…}` 当宏展开。现对所有输出映射的 from/to
 在返回配置前拒绝宏语法；真实 expandMacro 回归在修前五场景全失败，修后邻接78/78、无skip。
-此改动仍只改变一项Office打包审核输入；补最终差量独审及新具体pending记录后，
-须用户本人批准该新记录，才能再打新包。旧批准不自动覆盖新字节。
-没有启动失败产物，也没有GUI验收，不把局部复制回归计为打包通过。
+此一项差量已独审并获用户具体批准。后继session36004真实打包exit0，身份与codesign
+均已读回匹配；完整产物指纹见`output/e6-20260928/p2-packaged-identity-readback-20261023.md`。
+
+当前新阻碍：正确隔离启动上述新包后，真实界面显示本地服务20秒启动超时；已保留截图并
+正常退出，未进行会话或模型调用。完整固定资源认证/保留先于listen/FD3，实测原保留34.2s，
+8worker候选保留24.3s；不能只优化或扩大HTTP probe时限就宣布完成。
+
+冷启动补充契约（实现与本轮差量独审已完成，尚待新具体批准及新包GUI复测）：
+
+1. 普通/开发服务readiness仍为20s；packaged资源准备另有固定60s绝对预算，不由活动续期。
+2. Desktop只从自己spawn的child继承FD4读取单个有界记录，严格核schema/phase/pid并等待EOF。
+   Daemon在完整资源认证/保留后才写`resources_ready`并关闭FD4，之后才启动服务；不信日志、
+   文件、HTTP或模型文本来宣称资源成功。完整资源缺失/损坏仍失败关闭，不切回旧builtins。
+3. FD3引擎权威保留独立校验与PID/endpoint绑定，读取总预算涵盖资源阶段；取消或child终止
+   时立即撤销两个reader，不能因原20s早到而丢失真实权威。排队IO错误必须安全排空到close，
+   不允许Promise虽拒绝但Desktop因未处理error崩溃。
+4. verifier最多8个worker，保留原inventory/path/inode/stat/SHA256守卫；首次错误停止新准入，
+   等已打开句柄全部关闭后拒绝，lazy读取仍重新校验。不是缓存跳过验证。
+5. 资源阶段成功后才开始普通20s readiness；缺失/伪造/错误PID/超时/退出/取消都不产生连接成功。
+   不自动重放任务，不接管未知stale writer；失败QA缓存经精确核验后仅可恢复隔离，不删历史。
+6. 固定Office审核清单显式纳入新协议和Main阶段控制器。独审与新具体用户批准后才重打QA包，
+   不能沿用Builder-copy批准覆盖本轮新源码；正式发布仍禁止。
+
+当前完整资源bootstrap（production准备函数、真实App资源、独立cache）实测27.4s退出0，
+仅证明资源路径可在候选预算内完成，不是新包GUI通过。
+最终相关12文件组合1497/1497、零失败/取消/跳过、actual exit0；Core/Daemon/Desktop Main
+编译与diff-check通过。两独立差量审阅均已完成，选定输入未解决finding=0，报告位于
+`output/e6-20260928/p2-cold-preflight-independent-review-20261023.md`和
+`output/e6-20260928/p2-bootstrap-independent-review-20261023.md`。
+下一步只冻结并展示新pending packet，不重复既有长套、P1重建或旧CPA调查。
 
 - 冻结最终输入并检查是否改变既有批准的 closure；未变输入复用原审阅，新增变化单独审阅。
 - 如改变受审输入，展示新具体 packet 请求批准；不重新审阅全部已确认未变内容，

@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import { readExecutionEngineHostAuthority, type ExecutionEngineHostAuthority } from "@ling-stack/core/execution-engine-host-authority";
+import { DAEMON_RESOURCE_BOOTSTRAP_TIMEOUT_MS, DaemonResourceBootstrapError, readDaemonResourceBootstrap } from "@ling-stack/core/daemon-resource-bootstrap";
 import { access, mkdir } from "node:fs/promises";
 import { connect } from "node:net";
 import { resolve as resolvePath } from "node:path";
@@ -99,7 +100,11 @@ export class DesktopDaemonLifecycle {
   private readonly cuaDriverFeatureFlags: CuaDriverFeatureFlags;
   private readonly bundledCuaDriverGateEnabled: boolean;
   private child: ChildProcess | undefined;
-  private engineAuthority: { readonly child: ChildProcess; readonly result: Promise<ExecutionEngineHostAuthority | undefined> } | undefined;
+  private engineAuthority: {
+    readonly child: ChildProcess;
+    readonly result: Promise<ExecutionEngineHostAuthority | undefined>;
+    readonly abort: AbortController;
+  } | undefined;
   private statusValue: DesktopDaemonStatus;
   private cuaDriverAuthorityTupleValue: DesktopDaemonCuaDriverAuthorityTuple | undefined;
   private cuaDriverAuthorityGeneration = 0;
@@ -247,6 +252,7 @@ export class DesktopDaemonLifecycle {
           LING_STACK_PORT: url.port || (url.protocol === "https:" ? "443" : "80"),
           LING_STACK_DEFAULT_WORKSPACE_CWD: this.defaultWorkspaceCwd,
           LING_STACK_ENGINE_AUTHORITY_FD: "3",
+          LING_STACK_RESOURCE_BOOTSTRAP_FD: this.options.packaged ? "4" : undefined,
           // Desktop is the trusted local host for command execution. The
           // daemon still applies its approval policy and persists validated
           // command evidence; this only makes the bash surface available to
@@ -274,11 +280,15 @@ export class DesktopDaemonLifecycle {
     this.options.onDiagnostic?.("daemon.spawned", { pid: child.pid ?? null, baseUrl: this.options.baseUrl });
     this.child = child;
     const channel = child.stdio?.[3];
+    const startupAbort = new AbortController();
+    const serviceStartupTimeoutMs = this.options.startupTimeoutMs ?? DEFAULT_DAEMON_STARTUP_TIMEOUT_MS;
     this.engineAuthority = {
       child,
+      abort: startupAbort,
       result: channel instanceof Readable && child.pid
         ? readExecutionEngineHostAuthority({ channel, baseUrl: this.options.baseUrl, pid: child.pid,
-            timeoutMs: this.options.startupTimeoutMs ?? DEFAULT_DAEMON_STARTUP_TIMEOUT_MS }).catch(() => undefined)
+            timeoutMs: serviceStartupTimeoutMs + (this.options.packaged ? DAEMON_RESOURCE_BOOTSTRAP_TIMEOUT_MS : 0),
+            signal: startupAbort.signal }).catch(() => undefined)
         : Promise.resolve(undefined),
     };
     let resolveChildExit: (exit: DesktopDaemonOwnedExit) => void = () => undefined;
@@ -291,6 +301,7 @@ export class DesktopDaemonLifecycle {
       resolveChildError = resolve;
     });
     child.once("error", (error) => {
+      startupAbort.abort();
       childSpawnError = error;
       if (this.child === child) {
         this.child = undefined;
@@ -310,6 +321,7 @@ export class DesktopDaemonLifecycle {
       resolveChildError(error);
     });
     child.once("exit", (code, signal) => {
+      startupAbort.abort();
       const exit = { code, signal } satisfies DesktopDaemonOwnedExit;
       if (this.child !== child) {
         resolveChildExit(exit);
@@ -341,10 +353,42 @@ export class DesktopDaemonLifecycle {
       resolveChildExit(exit);
     });
 
+    if (this.options.packaged) {
+      this.options.onDiagnostic?.("daemon.resources_preparing", { pid: child.pid ?? null });
+      const resourceChannel = child.stdio?.[4];
+      try {
+        if (!(resourceChannel instanceof Readable) || !child.pid) {
+          throw new DaemonResourceBootstrapError("daemon_resource_bootstrap_unavailable");
+        }
+        await readDaemonResourceBootstrap({ channel: resourceChannel, pid: child.pid, signal: startupAbort.signal });
+        this.assertStartupCurrent(startupGeneration);
+        if (childSpawnError || this.child !== child || child.exitCode !== null || child.signalCode !== null) {
+          throw new Error("daemon_resource_bootstrap_child_failed");
+        }
+      } catch (error) {
+        this.assertStartupCurrent(startupGeneration);
+        if (childSpawnError) throw new DesktopDaemonLifecycleError("spawn_failed", this.options.baseUrl);
+        if (this.child !== child || child.exitCode !== null || child.signalCode !== null) {
+          throw new DesktopDaemonLifecycleError("child_exited", this.options.baseUrl);
+        }
+        const timedOut = error instanceof DaemonResourceBootstrapError && error.code === "daemon_resource_bootstrap_timeout";
+        await this.stopOwnedDaemon();
+        this.options.onDiagnostic?.(timedOut ? "daemon.resources_timeout" : "daemon.resources_failed", {
+          pid: child.pid ?? null,
+        });
+        const code = timedOut ? "start_timeout" : "resource_missing";
+        this.update({ state: "disconnected", baseUrl: this.options.baseUrl, ownedByDesktop: false,
+          reason: code, message: timedOut ? "Packaged resource authentication exceeded its bootstrap deadline."
+            : "Packaged resources did not provide a valid bootstrap receipt." });
+        throw new DesktopDaemonLifecycleError(code, this.options.baseUrl);
+      }
+      this.options.onDiagnostic?.("daemon.resources_ready", { pid: child.pid });
+    }
+
     // Keep ordinary startup bounded. Callers that intentionally exercise a
     // translated cold-start path may supply a larger budget without relaxing
     // native product behavior.
-    const deadline = Date.now() + (this.options.startupTimeoutMs ?? DEFAULT_DAEMON_STARTUP_TIMEOUT_MS);
+    const deadline = Date.now() + serviceStartupTimeoutMs;
     while (Date.now() < deadline) {
       this.assertStartupCurrent(startupGeneration);
       const readiness = await Promise.race([
@@ -517,6 +561,7 @@ export class DesktopDaemonLifecycle {
     if (!pending) {
       const child = this.child;
       this.child = undefined;
+      this.engineAuthority?.abort.abort();
       this.engineAuthority = undefined;
       pending = child ? this.stopChild(child) : Promise.resolve();
       this.stopOwnedDaemonPromise = pending;
@@ -692,7 +737,7 @@ function defaultSpawnDaemon(input: {
   return spawn(input.executable, [...input.args], {
     cwd: input.cwd,
     env: input.env,
-    stdio: ["ignore", "ignore", "ignore", "pipe"],
+    stdio: ["ignore", "ignore", "ignore", "pipe", ...(input.env.LING_STACK_RESOURCE_BOOTSTRAP_FD === "4" ? ["pipe" as const] : [])],
     windowsHide: true,
   });
 }

@@ -4,6 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 
 const MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
 const MAX_MANIFEST_FILES = 100_000;
+const MAX_PREFLIGHT_FILES = 8;
 
 export interface BundledSkillFile {
   readonly path: string;
@@ -146,8 +147,25 @@ export async function verifyBundledSkillSource(input: {
       await handle.close();
     }
   };
-  // Native assets can be hundreds of MiB; preflight hashes them without retaining bytes.
-  for (const file of manifest.files) await verifyFile(file.path, false);
+  // Bound descriptors and streaming buffers while hashing the complete inventory.
+  // On failure, stop admitting files and drain every in-flight handle before
+  // rejecting; Promise.all over the entire manifest would be unbounded and
+  // fail-fast publication could leave sibling reads running after rejection.
+  let nextFile = 0;
+  let failed = false;
+  let failure: unknown;
+  const preflight = async (): Promise<void> => {
+    while (!failed) {
+      const file = manifest.files[nextFile++];
+      if (!file) return;
+      try { await verifyFile(file.path, false); }
+      catch (error) {
+        if (!failed) { failed = true; failure = error; }
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(MAX_PREFLIGHT_FILES, manifest.files.length) }, preflight));
+  if (failed) throw failure;
   const readVerifiedFile = async (path: string): Promise<Buffer> => (await verifyFile(path, true))!;
   // Validate once before publishing, then revalidate lazy reads against the frozen manifest.
   return Object.freeze({

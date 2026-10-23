@@ -6,6 +6,7 @@ import { readPackagedOfficeLocalNativeArtifact } from "./runtime/sandbox/package
 import { preparePackagedGstackStartup } from "./features/skills/packaged-startup.js";
 import { readPackagedQaHarnessSelection } from "./runtime/packaged-qa-harness-bootstrap.js";
 import { writeExecutionEngineHostAuthority } from "@ling-stack/core/execution-engine-host-authority";
+import { writeDaemonResourceBootstrap } from "@ling-stack/core/daemon-resource-bootstrap";
 
 const host = process.env.LING_STACK_HOST ?? "127.0.0.1";
 const port = Number.parseInt(process.env.LING_STACK_PORT ?? "17891", 10);
@@ -17,6 +18,12 @@ if (!Number.isFinite(port)) {
 
 const engineAuthorityChannel = process.env.LING_STACK_ENGINE_AUTHORITY_FD;
 delete process.env.LING_STACK_ENGINE_AUTHORITY_FD;
+const resourceBootstrapChannel = process.env.LING_STACK_RESOURCE_BOOTSTRAP_FD;
+delete process.env.LING_STACK_RESOURCE_BOOTSTRAP_FD;
+if (resourceBootstrapChannel !== undefined
+  && (resourceBootstrapChannel !== "4" || process.env.LING_STACK_PACKAGED_DESKTOP !== "1")) {
+  throw new Error("daemon_resource_bootstrap_invalid");
+}
 // Validate selection before native/bootstrap side effects. Normal installs have no selection.
 const qaHarness = readPackagedQaHarnessSelection(process.env);
 const restrictedCommands = process.platform === "darwin"
@@ -24,6 +31,7 @@ const restrictedCommands = process.platform === "darwin"
   : undefined;
 const officeLocalNativeArtifact = readPackagedOfficeLocalNativeArtifact();
 const initializeBundledSkills = await preparePackagedGstackStartup();
+if (resourceBootstrapChannel === "4") writeDaemonResourceBootstrap({ fd: 4 });
 const daemon = await startDaemon({
   host,
   port,
