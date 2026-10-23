@@ -63,6 +63,22 @@ test("each compaction has its own identity; replaced and unfinished cycles stay 
   assert.notEqual(rows[0].id, rows[1].id);
 });
 
+test("compaction selects the earliest assistant anchor in the linked turn", () => {
+  const earlierTurn = { ...anchor, id: "earlier-turn", turnId: "earlier-turn", sequence: 1 };
+  const laterMessage = { ...anchor, id: "later-message", sequence: 3 };
+  for (const events of [[start], [start, end("sdk_installed")]]) {
+    const expected = project(events);
+    for (const items of [[earlierTurn, anchor, laterMessage], [laterMessage, anchor, earlierTurn]]) {
+      const rows = project(events, { items });
+      assert.deepEqual(rows, expected);
+      assert.equal(rows[0].anchorItemId, anchor.id);
+      assert.equal(rows[0].turnId, anchor.turnId);
+      assert.equal(rows[0].sourceRefs.some(ref => ref.kind === "conversation_item" && ref.id === earlierTurn.id), false);
+    }
+    assert.deepEqual(project(events, { items: [earlierTurn] }), []);
+  }
+});
+
 test("projection respects thread, turn-link, anchor ownership and event pagination", () => {
   for (const overrides of [
     { items: [{ ...anchor, threadId: "other" }] },
