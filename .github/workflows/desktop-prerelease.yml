@@ -88,7 +88,7 @@ jobs:
       DESKTOP_MATERIAL_PLATFORM: ${{ matrix.material-platform }}
       DESKTOP_OPERATION: ${{ inputs.operation || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }}
       RUSTUP_TOOLCHAIN: 1.97.1
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      # The fixed macOS config selects ad-hoc signing and rejects CSC overrides.
       LING_CUA_SIGNING_TIER: unsigned_dev
       LING_CUA_DISTRIBUTION_CHANNEL: development
       LING_CUA_DRIVER_PACKAGE_PROVIDER: "0"
