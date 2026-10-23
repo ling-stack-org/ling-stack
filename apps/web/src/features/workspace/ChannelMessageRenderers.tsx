@@ -6,7 +6,6 @@ import {
   Copy,
   FileText,
   Image as ImageIcon,
-  Loader2,
   Pencil,
   Reply,
   ThumbsDown,
@@ -98,6 +97,7 @@ import { readChannelProposedPlanMessage } from "./channel-proposed-plan-message.
 import { conversationTimelineItemsForModel } from "../../lib/conversation-work-cell.js";
 import type { WorkflowProgressModel } from "../../lib/workflow-progress.js";
 import { requestTimelineWorkspaceFileOpen } from "../../shared/conversation/timeline/workspace-file-capability.js";
+import { orderChannelTurnTimelineItems } from "./channel-turn-timeline-order.js";
 
 function channelMessageTimelineItem(
   message: ChannelMessage,
@@ -109,6 +109,7 @@ function channelMessageTimelineItem(
     id: `message:${role}:${message.id}`,
     role,
     markdown: body,
+    waitingPlaceholder: streaming && !message.body.trim(),
     phase: role === "agent" && !streaming && message.status === "ready" ? "final" : "commentary",
     revision: message.revision,
     threadSequence: 0,
@@ -303,6 +304,7 @@ function channelTurnTimelineItems(
   surface: "channel_root" | "topic" | "branch",
   conversationItems: readonly ConversationItemV1[],
   reasoningSummaries: readonly ConversationReasoningSummaryRecord[],
+  contextCompactions: readonly import("../../types.js").ConversationContextCompactionRecord[],
   t: (key: string, values?: Record<string, string | number>) => string,
   terminalReportById: ReadonlyMap<string, TerminalReportDto>,
   workflowById: ReadonlyMap<string, ChannelWorkflow>,
@@ -340,6 +342,7 @@ function channelTurnTimelineItems(
         conversationItems.filter((item) => item.turnId === turnId),
         reasoningSummaries.filter((summary) => summary.turnId === turnId),
         surface,
+        contextCompactions.filter(record => record.turnId === turnId),
       )
     : [];
   const uncoveredConversationItems = projectUncoveredChannelConversationItems(
@@ -373,15 +376,12 @@ function channelTurnTimelineItems(
   const terminalReport = channelTurnTerminalReportTimelineItem(
     turn, terminalReportById.get(turn.operationCell?.terminalReportId ?? ""), conversationItems,
   );
-  const ordered = [...startNarration, ...uncoveredConversationItems, ...facts, ...reasoning, ...terminalNarration, ...(terminalReport ? [terminalReport] : [])]
-    .filter((item, index, all) => all.findIndex((candidate) => candidate.id === item.id) === index);
-  // The feed assigns a large base sequence per turn. Normalize the already
-  // projected turn-local order so equal legacy sequence values cannot reorder
-  // narration ahead of the source user message by string id.
-  return ordered.map((item, index) => ({
-    ...item,
-    threadSequence: index + 1,
-  }));
+  return orderChannelTurnTimelineItems({
+    startNarration,
+    facts: [...uncoveredConversationItems, ...facts],
+    eventRows: reasoning,
+    terminalNarration: [...terminalNarration, ...(terminalReport ? [terminalReport] : [])],
+  });
 }
 
 function channelTurnTerminalReportTimelineItem(
@@ -503,6 +503,7 @@ type FeedbackValue = "up" | "down";
 
 export interface ChannelMessageRenderersInput {
   readonly runLifecycles?: import("@ling-stack/conversation-ui-core").TimelineSnapshot["runLifecycles"];
+  readonly contextSegmentIdByItemId?: ReadonlyMap<string, string>;
   readonly allLocalTeammateById: ReadonlyMap<string, LocalTeammateDraft>;
   readonly allLocalTeammateByName: ReadonlyMap<string, LocalTeammateDraft>;
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
@@ -514,6 +515,7 @@ export interface ChannelMessageRenderersInput {
   readonly channelConversationItems: readonly ConversationItemV1[];
   readonly channelUserInputs: readonly UserInputTranscriptItemV1[];
   readonly channelReasoningSummaries: readonly ConversationReasoningSummaryRecord[];
+  readonly channelContextCompactions?: readonly import("../../types.js").ConversationContextCompactionRecord[];
   readonly channelWorkflows: readonly ChannelWorkflow[];
   readonly terminalReports: readonly TerminalReportDto[];
   readonly conversationWorkCellByThreadId: ReadonlyMap<string, ConversationWorkCellViewModel>;
@@ -785,8 +787,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
                 {input.editError ? <div className="inline-error compact-inline-error" role="alert">{input.editError}</div> : null}
               </div>
             ) : (
-              <div className={pendingAiReply ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
-                {pendingAiReply ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
+              <div className="message-body-shell">
                 {bodyOverride ?? (
                   <MessageBodyRenderer
                     text={messagePresentation.body}
@@ -930,6 +931,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             id: `message:agent:pending:${feedItem.preview.id}`,
             role: "agent",
             markdown: input.t("Thinking..."),
+            waitingPlaceholder: true,
             status: "running",
             threadSequence: 1,
             sourceRefs: [],
@@ -949,6 +951,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
               : "channel_root",
           input.channelConversationItems,
           input.channelReasoningSummaries,
+          input.channelContextCompactions ?? [],
           input.t,
           terminalReportById,
           workflowById,
@@ -973,6 +976,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             id: `message:agent:pending:${feedItem.pendingReplyPreview.id}`,
             role: "agent",
             markdown: input.t("Thinking..."),
+            waitingPlaceholder: true,
             status: "running",
             threadSequence: 999_999,
             sourceRefs: [],
@@ -1055,6 +1059,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       threadId: input.selectedChannelThreadId,
       items: projectedTimelineItems,
       runLifecycles: input.runLifecycles,
+      contextSegmentIdByItemId: input.contextSegmentIdByItemId,
       canonicalRevision: projectedTimelineItems.reduce((max, item) => Math.max(max, item.revision), 0),
     });
     if (snapshot.items.length === 0) return null;

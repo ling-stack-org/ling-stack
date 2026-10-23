@@ -168,14 +168,6 @@ button.conversation-timeline-activity-main:not(:disabled):focus-visible .convers
   color: var(--conversation-text-strong);
 }
 
-.conversation-timeline-activity.status-running .conversation-timeline-activity-main > svg {
-  animation: conversation-active-spin 1.2s linear infinite;
-}
-
-.conversation-work-cell.active[data-work-cell-activity="paused"] .conversation-timeline-activity.status-running .conversation-timeline-activity-main > svg {
-  animation: none;
-}
-
 .conversation-timeline-activity.status-failed .conversation-timeline-activity-main > svg,
 .conversation-timeline-activity.status-blocked .conversation-timeline-activity-main > svg {
   color: var(--danger);

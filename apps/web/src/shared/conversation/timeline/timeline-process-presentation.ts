@@ -1,15 +1,18 @@
 import { visibleTerminalReportTimelineItem, type ConversationTimelineItem, type TimelineRunLifecycle } from "@ling-stack/conversation-ui-core";
 import { terminalReportDisplayPolicy } from "./terminal-report-display-policy.js";
 import { timelineProcessDisclosureKey, timelineProcessScopeKey } from "./conversation-timeline-view-retain-keys.js";
+import { projectTimelineActivitySections } from "./timeline-activity-presentation.js";
 
 export interface TimelineProcessGroup {
   readonly id: string;
+  readonly presentation: "process" | "activity";
   readonly revisionKey: string;
   readonly items: readonly ConversationTimelineItem[];
   readonly status: "running" | "completed" | "attention" | "unknown";
   readonly mustExpand: boolean;
   readonly defaultExpanded: boolean;
   readonly durationMs?: number;
+  readonly wrappedItemIds?: readonly string[];
 }
 
 export type TimelineProcessSection =
@@ -23,8 +26,8 @@ const attention = new Set(["blocked", "failed", "cancelled", "partially_succeede
 const scopeKey = timelineProcessScopeKey;
 
 function isProcess(item: ConversationTimelineItem): boolean {
-  if (item.kind === "agentMessage") return item.phase === "commentary";
-  return !["userMessage", "terminalReport", "subAgentActivity"].includes(item.kind);
+  if (item.kind === "agentMessage") return item.phase === "commentary" && !item.waitingPlaceholder;
+  return !["userMessage", "terminalReport", "subAgentActivity", "contextCompaction"].includes(item.kind);
 }
 
 /** Pending human input and exceptions must not disappear behind a touched fold. */
@@ -43,7 +46,7 @@ export function timelineItemNeedsVisibleAttention(item: ConversationTimelineItem
 }
 
 /** No sorting, persistence, completion inference from text or batch-count evidence. */
-export function projectTimelineProcessSections(items: readonly ConversationTimelineItem[], parentId = "root", runLifecycles?: ReadonlyMap<string, TimelineRunLifecycle>): readonly TimelineProcessSection[] {
+export function projectTimelineProcessSections(items: readonly ConversationTimelineItem[], parentId = "root", runLifecycles?: ReadonlyMap<string, TimelineRunLifecycle>, contextSegments?: ReadonlyMap<string, string>): readonly TimelineProcessSection[] {
   const scopeItems = new Map<string, ConversationTimelineItem[]>();
   const scopesByRun = new Map<string, Set<string>>();
   const reportsByTurn = new Map<string | undefined, ConversationTimelineItem[]>();
@@ -91,8 +94,10 @@ export function projectTimelineProcessSections(items: readonly ConversationTimel
       state = { status, mustExpand, durationMs, defaultExpanded: status !== "completed", revisionKey: status };
       stateByScope.set(pendingKey, state);
     }
-    const id = timelineProcessDisclosureKey(pending[0]!, parentId)!;
-    sections.push({ kind: "process", group: { id, items: pending, ...state } });
+    if (state.status === "completed" || state.status === "attention") {
+      const id = timelineProcessDisclosureKey(pending[0]!, parentId)!;
+      sections.push({ kind: "process", group: { id, presentation: "process", items: pending, ...state } });
+    } else sections.push(...projectTimelineActivitySections(pending, parentId, contextSegments));
     pending = [];
     pendingKey = undefined;
   };

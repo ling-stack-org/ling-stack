@@ -241,6 +241,7 @@ export function projectTeammatePrivateTimelineItems(input: TeammatePrivateTimeli
       id: `message:${message.authorType === "local-user" ? "user" : "agent"}:${message.id}`,
       role: message.authorType === "local-user" ? "user" : "agent",
       markdown: body,
+      waitingPlaceholder: message.status === "pending" && !message.body.trim() && !message.narrationSegments?.length,
       phase: message.authorType === "ai-teammate" && message.status === "ready" ? "final" : "commentary",
       revision: message.revision,
       threadSequence,

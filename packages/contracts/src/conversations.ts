@@ -69,6 +69,29 @@ export interface ConversationReasoningSummaryRecord {
   readonly createdAt: string;
 }
 
+/** Read-only SDK compaction lifecycle; SDK installation is not a Host recovery receipt. */
+export interface ConversationContextCompactionRecord {
+  readonly id: string;
+  readonly revision: number;
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly turnId: string;
+  readonly runId: string;
+  readonly attemptId?: string;
+  readonly participantId?: string;
+  readonly workUnitId?: string;
+  readonly workflowStepId?: string;
+  readonly anchorItemId: string;
+  readonly eventId: string;
+  readonly eventSequence: number;
+  readonly status: "running" | "succeeded" | "failed" | "cancelled" | "blocked";
+  readonly reason: "manual" | "threshold" | "overflow";
+  readonly summary: string;
+  readonly tokensBefore?: number;
+  readonly estimatedTokensAfter?: number;
+  readonly sourceRefs: readonly ExecutionActionSourceRef[];
+}
+
 export interface ConversationTranscriptMessage {
   readonly id: string;
   /** Durable Item identity, independent of the stable streaming message id. */
@@ -200,6 +223,7 @@ export interface ConversationDetailResponse {
   readonly runs: readonly RunSession[];
   /** Provider-safe reasoning summaries reconstructed from durable RunEvents. */
   readonly reasoningSummaries: readonly ConversationReasoningSummaryRecord[];
+  readonly contextCompactions?: readonly ConversationContextCompactionRecord[];
   readonly executionActions: readonly ExecutionAction[];
   readonly approvals: readonly ApprovalRequest[];
   /** Durable approval ownership and Attempt lineage; projected separately from tool execution. */

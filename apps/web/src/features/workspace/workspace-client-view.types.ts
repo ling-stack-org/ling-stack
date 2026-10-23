@@ -87,6 +87,8 @@ export interface WorkspaceClientViewProps {
   readonly channelTurnContextAssignments: readonly TurnContextAssignment[];
   readonly channelUserInputs: readonly UserInputTranscriptItemV1[];
   readonly channelReasoningSummaries: readonly import("../../types.js").ConversationReasoningSummaryRecord[];
+  readonly channelConversationRefreshToken: number;
+  readonly channelContextCompactions: readonly import("../../types.js").ConversationContextCompactionRecord[];
   readonly channelGeneratedMedia: readonly ConversationGeneratedMedia[];
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];

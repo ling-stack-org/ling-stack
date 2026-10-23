@@ -3,18 +3,36 @@
   align-items: center;
   gap: 6px;
   width: fit-content;
+  max-width: 100%;
+  text-align: start;
   padding: 5px 0;
   border: 0;
   background: transparent;
   color: var(--conversation-text-muted, var(--ling-text-muted));
   font: inherit;
   font-size: 12px;
+  min-height: 32px;
   cursor: pointer;
+}
+
+.conversation-process-header > span { min-width: 0; overflow-wrap: anywhere; }
+.conversation-process-header > svg { flex-shrink: 0; }
+
+.conversation-process-header.presentation-process[data-conversation-process-status="completed"] {
+  width: 100%;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--conversation-border, var(--ling-border));
 }
 
 .conversation-process-header:hover,
 .conversation-process-header:focus-visible {
   color: var(--conversation-text-strong, var(--ling-text-strong));
+}
+
+.conversation-process-header:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+  border-radius: 3px;
 }
 
 .conversation-process-header svg:last-child { transform: rotate(-90deg); }

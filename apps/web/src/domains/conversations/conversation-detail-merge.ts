@@ -56,6 +56,7 @@ export function mergeConversationDetailSnapshots(
     runLinks: mergeUnique(current.runLinks, incoming.runLinks, (link) => `${link.runId}:${link.turnId}:${link.attemptNumber}:${link.role}`),
     runs: mergeVersioned(current.runs, incoming.runs, (run) => run.id, (run) => run.updatedAt, true),
     reasoningSummaries: mergeVersioned(current.reasoningSummaries ?? [], incoming.reasoningSummaries ?? [], (summary) => summary.id, (summary) => summary.revision, true),
+    contextCompactions: mergeVersioned(current.contextCompactions ?? [], incoming.contextCompactions ?? [], record => record.id, record => record.revision, true),
     executionActions: mergeVersioned(current.executionActions, incoming.executionActions, (action) => action.id, (action) => action.revision, true),
     approvals: mergeVersioned(current.approvals, incoming.approvals, (approval) => approval.id, approvalFreshness, true),
     approvalCheckpoints: mergeVersioned(current.approvalCheckpoints, incoming.approvalCheckpoints, (checkpoint) => checkpoint.id, (checkpoint) => checkpoint.revision, true),
@@ -137,6 +138,7 @@ function removeSupersededConversationLineage(
       !turnIds.has(summary.turnId)
       && !runIds.has(summary.runId)
       && !suppressedItemIds.has(summary.anchorItemId)),
+    contextCompactions: (detail.contextCompactions ?? []).filter(record => !turnIds.has(record.turnId) && !runIds.has(record.runId) && !suppressedItemIds.has(record.anchorItemId)),
     executionActions: detail.executionActions.filter((action) => !(
       action.runId && runIds.has(action.runId)
       || refsContainSupersededLineage(action.sourceRefs, turnIds, runIds, suppressedItemIds)

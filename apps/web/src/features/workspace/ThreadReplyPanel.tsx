@@ -16,6 +16,7 @@ export function ThreadReplyPanel({
   conversationItems,
   userInputs,
   reasoningSummaries,
+  contextCompactions,
   teammates,
   memoryById,
   usedMemoryEvents,
@@ -45,6 +46,7 @@ export function ThreadReplyPanel({
   readonly conversationItems: readonly ConversationItemV1[];
   readonly userInputs: readonly UserInputTranscriptItemV1[];
   readonly reasoningSummaries: readonly ConversationReasoningSummaryRecord[];
+  readonly contextCompactions?: readonly import("../../types.js").ConversationContextCompactionRecord[];
   readonly teammates: readonly ChannelMention[];
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
@@ -76,7 +78,7 @@ export function ThreadReplyPanel({
   }
   const timelineItems = projectTopicReplyTimeline({
     workspaceId: rootMessage.workspaceId, channelId: rootMessage.channelId, threadId,
-    rootMessage, replies, conversationItems, userInputs, reasoningSummaries,
+    rootMessage, replies, conversationItems, userInputs, reasoningSummaries, contextCompactions,
   });
   const reading = useConversationReadingViewport({
     scopeKey: JSON.stringify([cwd, rootMessage.id, threadId]),

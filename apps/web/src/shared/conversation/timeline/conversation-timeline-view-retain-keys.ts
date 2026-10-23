@@ -14,6 +14,10 @@ export function timelineProcessDisclosureKey(item: ConversationTimelineItem, par
   return `timeline-process:${JSON.stringify([parentId, scope, atomId ?? item.id])}`;
 }
 
+export function timelineActivityDisclosureKey(item: ConversationTimelineItem, parentId = "root"): string | undefined {
+  return timelineProcessDisclosureKey(item, parentId)?.replace("timeline-process:", "timeline-activity:");
+}
+
 /** Stable view-store identity for the single disclosure owned by an Agent span. */
 export function conversationTimelineSubAgentDisclosureKey(itemId: string): string {
   return `timeline-sub-agent:${itemId}`;
@@ -68,7 +72,12 @@ export function collectConversationTimelineViewRetainKeys(
   const collectProcess = (scoped: readonly ConversationTimelineItem[], parentId?: string): void => {
     // Retain all possible starting atoms, including unloaded group boundaries.
     // This requires no lifecycle projection and survives paging/batch changes.
-    for (const item of scoped) { const key = timelineProcessDisclosureKey(item, parentId); if (key) blockIds.add(key); }
+    for (const item of scoped) {
+      const key = timelineProcessDisclosureKey(item, parentId);
+      if (key) blockIds.add(key);
+      const activityKey = timelineActivityDisclosureKey(item, parentId);
+      if (activityKey) blockIds.add(activityKey);
+    }
     for (const item of scoped) if (item.kind === "subAgentActivity") collectProcess(item.childItems, item.id);
   };
   items.forEach(collect);

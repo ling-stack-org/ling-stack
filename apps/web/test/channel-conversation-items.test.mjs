@@ -9,6 +9,7 @@ import {
   projectUncoveredChannelConversationItems,
   projectChannelConversationItemPage,
   projectChannelConversationTurn,
+  projectChannelReasoningSummaryItems,
 } from "../src/lib/channel-conversation-items.ts";
 
 const thread = {
@@ -238,4 +239,32 @@ test("uncovered channel fact envelopes fail closed instead of becoming tool evid
   assert.equal(projected[0].status, "blocked");
   assert.equal(projected[0].description, "No verified execution evidence is attached.");
   assert.deepEqual(projected[0].sourceRefs, [{ kind: "conversation_item", id: toolCall.id }]);
+});
+
+
+test("channel compaction preserves lifecycle revisions across late page replay and respects ownership", () => {
+  const record = {
+    id: "compaction", revision: 4, workspaceId: thread.workspaceId, threadId: thread.id,
+    turnId: turn.id, runId: "run-1", anchorItemId: assistantItem.id, eventId: "event-start", eventSequence: 3,
+    status: "succeeded", reason: "threshold", summary: "", sourceRefs: [
+      { kind: "conversation_item", id: assistantItem.id }, { kind: "run", id: "run-1" },
+      { kind: "run_event", id: "event-start" },
+    ],
+  };
+  const page = projectChannelConversationItemPage({
+    cwd: "/repo", channelId: thread.channelId, thread, turns: [turn], items: [userItem, assistantItem],
+    turnContextAssignments: [], userInputs: [], decorations: [], generatedMedia: [], hasMore: false,
+    contextCompactions: [record],
+  });
+  const replay = { ...page, contextCompactions: [{ ...record, revision: 2, status: "running" }] };
+  const merged = mergeChannelUserInputPage(page, replay);
+  assert.equal(merged.contextCompactions[0].status, "succeeded");
+  const rows = projectChannelReasoningSummaryItems(merged.conversationItems, [], "channel_root", merged.contextCompactions);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].kind, "contextCompaction");
+  assert.equal(rows[0].status, "succeeded");
+  assert.equal(rows[0].runId, "run-1");
+  for (const fields of [{ workspaceId: "foreign" }, { threadId: "foreign" }, { turnId: "foreign" }, { runId: "foreign" }]) {
+    assert.deepEqual(projectChannelReasoningSummaryItems(page.conversationItems, [], "channel_root", [{ ...record, ...fields }]), []);
+  }
 });

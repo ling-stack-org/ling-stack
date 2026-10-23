@@ -735,6 +735,8 @@ export function useConversationDomain(input: {
 
 function conversationEventNeedsDetailRefresh(type: ConversationStreamRunEvent["event"]["type"]): boolean {
   return type === "assistant_reasoning_summary"
+    || type === "context_compaction_start"
+    || type === "context_compaction_end"
     || type === "tool_start"
     || type === "tool_update"
     || type === "tool_end"
@@ -793,6 +795,7 @@ function mergeConversationMessages(
     runLinks: current?.runLinks ?? [],
     runs: current?.runs ?? [],
     reasoningSummaries: current?.reasoningSummaries ?? [],
+    contextCompactions: current?.contextCompactions ?? [],
     executionActions: current?.executionActions ?? [],
     approvals: current?.approvals ?? [],
     approvalCheckpoints: current?.approvalCheckpoints ?? [],
