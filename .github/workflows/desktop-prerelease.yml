@@ -29,7 +29,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-prerelease-${{ inputs.release_tag || github.event.pull_request.number || github.run_id }}
+  # Unrelated label events must not replace a queued native package build.
+  group: desktop-prerelease-${{ inputs.release_tag || (contains(fromJSON('["desktop-package-inspect", "desktop-package-build"]'), github.event.label.name) && github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: false
 
 jobs:
