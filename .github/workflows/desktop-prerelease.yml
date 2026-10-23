@@ -129,7 +129,7 @@ jobs:
       - name: Install pinned Rust toolchain and locked workspace dependencies
         run: |
           set -euo pipefail
-          rustup toolchain install 1.97.1 --profile minimal
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
           corepack enable
           corepack pnpm install --frozen-lockfile
       - name: Observe tools and source prerequisites without granting approval
