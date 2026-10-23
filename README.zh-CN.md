@@ -143,6 +143,7 @@ corepack pnpm --filter @ling-stack/desktop dev
 - [贡献指南](CONTRIBUTING.md)：开发环境、检查与 PR 要求。
 - [README 翻译维护](CONTRIBUTING.md#readme-translations)：欢迎校对译文，并同步命令、功能范围与安全说明。
 - [架构](docs/architecture.md)与[设计索引](docs/design/README.md)：模块边界、契约与验收状态。
+- [工作摘要](docs/features/work-summary.md)：会话、净变更、最近提交与 PR 的统一摘要及右侧审查入口。
 - [供应商适配](docs/provider-adapters.md)与[Pi 集成](docs/pi-coding-agent-integration.md)：模型和运行时接入。
 - [更新日志](CHANGELOG.md)、[发布政策](docs/release/README.md)与[第三方声明](THIRD_PARTY_NOTICES.md)。
 

@@ -808,6 +808,7 @@ export function ConversationHome({
     return (
       <>
         <NormalConversationPage
+        onOpenSummaryChanges={(reviewCwd) => openConversationReview({ cwd: reviewCwd, baseline: "head" })}
         summaryOpen={conversationSummaryOpen}
         onCloseSummary={() => setConversationSummaryOpen(false)}
         summaryDockMotion={conversationSummaryDockMotion}

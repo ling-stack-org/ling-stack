@@ -1649,6 +1649,9 @@ export interface RunStore extends NativeExecutionStore, DelegationQueryStore, Ha
   recordHostMediaArtifactManifest(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket, artifactId: string): import("./host-media-operation-types.js").HostMediaExecutionRecord;
   finalizeHostMediaExecution(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket, artifactId: string): import("./host-media-operation-types.js").HostMediaExecutionRecord;
   recordHostMediaEffectNoStart(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket, effectId: string, artifactId: string): import("./host-media-operation-types.js").HostMediaExecutionRecord;
+  listWorkSummaryPullRequests(): import("@ling-stack/contracts").WorkSummaryPullRequestBinding[];
+  attachWorkSummaryPullRequest(url: string, now: string): void;
+  detachWorkSummaryPullRequest(url: string): void;
   readonly paths: LingStackRuntimePaths;
   commitRemoteConversationSend(input: CommitRemoteConversationSendInput, now: string): CommitRemoteConversationSendResult;
   getRemoteCommandReceipt(commandId: string): RemoteCommandReceipt | undefined;

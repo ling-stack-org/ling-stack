@@ -580,7 +580,7 @@ test("reports teammate-direct composer, summary, dock, and terminal obstacles", 
   await expect(dock).toHaveAttribute("data-computer-use-obstacle", "true");
   await expect(dock).toHaveAttribute("data-computer-use-obstacle-kind", "right-dock");
 
-  await header.getByRole("button", { name: "Summary" }).click();
+  await header.getByRole("button", { name: "Summary", exact: true }).click();
   const summary = page.locator(".teammate-private-summary-panel");
   await expect(summary).toHaveAttribute("data-computer-use-obstacle", "true");
   await expect(summary).toHaveAttribute("data-computer-use-obstacle-kind", "summary");
@@ -595,7 +595,7 @@ test("reports teammate-direct composer, summary, dock, and terminal obstacles", 
   await expect(terminal).toHaveAttribute("data-computer-use-obstacle", "true");
   await expect(terminal).toHaveAttribute("data-computer-use-obstacle-kind", "terminal");
   await expect(summary).toBeVisible();
-  await expect(header.getByRole("button", { name: "Summary" })).toHaveAttribute("aria-pressed", "true");
+  await expect(header.getByRole("button", { name: "Summary", exact: true })).toHaveAttribute("aria-pressed", "true");
 
   await expect.poll(async () => {
     const layout = (await desktopControlSnapshot(page)).latestHostLayout;

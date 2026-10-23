@@ -37,6 +37,7 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 - [Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md)
 - [Conversation Full Access Confirmation](conversation-session-full-access-confirmation.md)
 - [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
+- [Work Summary](../features/work-summary.md)
 - [Project Defect Remediation Contract 2026-09](project-defect-remediation-contract-2026-09.md)
 - [Project Defect Remediation Plan 2026-09](project-defect-remediation-plan-2026-09.md)
 - [Conversation Shared Capabilities](conversation-shared-capabilities.md)

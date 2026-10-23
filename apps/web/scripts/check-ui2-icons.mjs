@@ -64,6 +64,8 @@ const typedActionOwners = [
   "src/features/workspace/NormalConversationFeed.tsx",
   "src/features/workspace/ThreadReplyPanel.tsx",
   "src/features/workspace/WorkspaceClientView.tsx",
+  "src/features/workspace/work-summary/WorkSummaryPanel.tsx",
+  "src/features/workspace/work-summary/WorkSummaryPullRequestRow.tsx",
   "src/features/workspace/right-dock/ConversationTopToolbar.tsx",
   "src/features/workspace/right-dock/ConversationHeaderSearch.tsx",
   "src/features/workspace/right-dock/PlanHistoryPage.tsx",

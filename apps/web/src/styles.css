@@ -114,3 +114,5 @@
 @import "./styles/app/app-shell-overlay-size.css";
 @import "./styles/app/sidebar-ui2.css";
 @import "./styles/app/macos-titlebar.css";
+
+@import "./styles/shared/work-summary.css";

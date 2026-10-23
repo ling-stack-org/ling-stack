@@ -1,3 +1,5 @@
+import { SqliteWorkSummaryStore } from "./sqlite/work-summary-store.js";
+import { applyWorkSummaryMigration } from "./sqlite/work-summary-migration.js";
 import { existsSync } from "node:fs";
 import { publishNormalRunNarration } from "./sqlite/normal-run-narration-publication.js";
 import { isCurrentRunExecutionOwner } from "./sqlite/run-execution-admission.js";
@@ -846,6 +848,7 @@ export class SqliteRunStore implements RunStore {
   private readonly channelRouteDecisions: SqliteChannelRouteDecisionStore;
   private readonly channelIntentDecisions: SqliteChannelIntentDecisionStore;
   private readonly channelProposals: SqliteChannelProposalStore;
+  private readonly workSummary: SqliteWorkSummaryStore;
   private readonly channelAssets: SqliteChannelAssetStore;
   private readonly conversationAssets: SqliteConversationAssetStore;
   private readonly channelCollaborations: SqliteChannelCollaborationStore;
@@ -1289,6 +1292,7 @@ export class SqliteRunStore implements RunStore {
         getConversationItem: (id) => this.getConversationItem(id),
       },
     );
+    this.workSummary = new SqliteWorkSummaryStore({ database: this.database });
     this.channelAssets = new SqliteChannelAssetStore(
       { database: this.database },
       {
@@ -1544,6 +1548,11 @@ export class SqliteRunStore implements RunStore {
           applyChannelEvidencePublicationMigration({
             database: this.database,
             artifactsDir: this.paths.artifactsDir,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyWorkSummaryMigration({
+            database: this.database,
             hasMigration: (version) => this.hasMigration(version),
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
@@ -1964,6 +1973,18 @@ export class SqliteRunStore implements RunStore {
     readonly channelId?: string;
   }): LingThread | undefined {
     return this.lingThreads.findLingThreadByOwner(input);
+  }
+
+  listWorkSummaryPullRequests(): import("@ling-stack/contracts").WorkSummaryPullRequestBinding[] {
+    return this.workSummary.listPullRequests();
+  }
+
+  attachWorkSummaryPullRequest(url: string, now: string): void {
+    this.workSummary.attachPullRequest(url, now);
+  }
+
+  detachWorkSummaryPullRequest(url: string): void {
+    this.workSummary.detachPullRequest(url);
   }
 
   listLingThreads(options: ListLingThreadsOptions = {}): LingThread[] {

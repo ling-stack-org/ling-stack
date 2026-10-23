@@ -75,11 +75,11 @@ for (const fixture of [
     await page.getByLabel("Single agent settings").getByRole("button", { name: "Back to private chat" }).click();
     await expect(header).toBeVisible();
 
-    await toolbar.getByRole("button", { name: "Summary" }).click();
+    await toolbar.getByRole("button", { name: "Summary", exact: true }).click();
     const summary = page.locator(".teammate-chat-summary-popover");
     await expect(summary).toContainText("Memory");
     await expect(summary).toContainText(/Memory on|Memory preparing/u);
-    await toolbar.getByRole("button", { name: "Summary" }).click();
+    await toolbar.getByRole("button", { name: "Summary", exact: true }).click();
 
     const searchTrigger = toolbar.getByRole("button", { name: "Search" });
     await searchTrigger.click();
@@ -123,7 +123,7 @@ for (const fixture of [
     expect(Math.round((await header.boundingBox())?.height ?? 0)).toBe(48);
 
     await expect(toolbar.getByRole("button", { name: "Refresh" })).toHaveCount(0);
-    await expect(toolbar.getByRole("button", { name: "Summary" })).toBeEnabled();
+    await expect(toolbar.getByRole("button", { name: "Summary", exact: true })).toBeEnabled();
     await expect(feed).toBeVisible();
 
     await searchTrigger.click();

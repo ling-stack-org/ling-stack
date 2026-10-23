@@ -252,7 +252,7 @@ function WorkspaceChangeFileSection({
           </span>
           </span>
         </Button>
-        {!scoped && file.kind !== "deleted" ? <WorkspaceFileOpenMenu cwd={cwd} path={file.path} compact /> : null}
+        {!scoped && file.kind !== "deleted" ? <WorkspaceFileOpenMenu cwd={cwd} path={file.path} compact placement="auto" /> : null}
       </header>
       {!collapsed ? (
         change ? <DiffViewer change={change} maxCollapsedLines={220} showFoldMarkers={false} /> : (

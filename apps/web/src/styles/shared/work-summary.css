@@ -1,0 +1,41 @@
+.work-summary-panel { min-width: 0; color: var(--ling-text-default); }
+.channel-progress-popover:has(.work-summary-panel),
+.conversation-summary-layer.ling-ui-popover-content:has(.work-summary-panel) { width: min(280px, calc(100vw - 32px)); }
+.work-summary-context { padding: 8px 0 12px; border-bottom: 1px solid var(--ling-border-default); }
+.work-summary-head, .work-summary-change, .work-summary-session, .work-summary-commit, .work-summary-pr { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.work-summary-head { justify-content: space-between; }
+.work-summary-time, .work-summary-note { display: block; color: var(--ling-text-muted); font-size: 11px; line-height: 1.6; }
+.work-summary-time { margin-bottom: 8px; }
+.work-summary-group { padding: 12px 0; border-bottom: 1px solid var(--ling-border-default); }
+.work-summary-session, .work-summary-change { width: 100%; padding: 6px 4px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; border-radius: 5px; }
+.work-summary-session:hover, .work-summary-change:hover { background: var(--ling-surface-hover); }
+.work-summary-session strong, .work-summary-commit > span, .work-summary-path small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-summary-session strong { flex: 1; font-size: 12px; font-weight: 550; }
+.work-summary-status { font-size: 10px; color: var(--ling-text-muted); white-space: nowrap; }
+.work-summary-status.status-running { color: var(--ling-accent); }
+.work-summary-status.status-failed, .work-summary-stats .delete { color: var(--ling-danger, #d46868); }
+.work-summary-stats .add { color: var(--ling-success, #459b71); }
+.work-summary-workspace { margin: 4px 0 0 22px; }
+.work-summary-path { display: flex; align-items: baseline; gap: 8px; font-size: 11px; color: var(--ling-text-muted); }
+.work-summary-path > span { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-summary-path small { flex: 1; }
+.work-summary-change { font-size: 12px; }
+.work-summary-stats { display: flex; gap: 8px; margin-left: auto; font-variant-numeric: tabular-nums; }
+.work-summary-change:disabled { cursor: default; color: var(--ling-text-muted); }
+.work-summary-change small { margin-left: auto; font-size: 10px; }
+.work-summary-commit { margin: 7px 4px; font-size: 11px; color: var(--ling-text-muted); }
+.work-summary-commit > span { flex: 1; }
+.work-summary-commit code { font-size: 10px; }
+.work-summary-commit svg, .work-summary-pr > svg { flex-shrink: 0; }
+.work-summary-commit small { font-size: 9px; }
+.work-summary-pulls { padding-top: 12px; }
+.work-summary-pulls > strong { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.work-summary-pr { margin: 12px 0; }
+.work-summary-pr a { flex: 1; min-width: 0; text-decoration: none; color: inherit; }
+.work-summary-pr strong, .work-summary-pr small { display: block; overflow-wrap: anywhere; }
+.work-summary-pr strong { font-size: 12px; font-weight: 500; }
+.work-summary-pr small { color: var(--ling-text-muted); font-size: 10px; line-height: 1.6; }
+.work-summary-pr-form { display: flex; gap: 6px; margin-top: 12px; }
+.work-summary-pr-form input { min-width: 0; flex: 1; font-size: 11px; }
+
+.work-summary-pr-form button { flex-shrink: 0; }

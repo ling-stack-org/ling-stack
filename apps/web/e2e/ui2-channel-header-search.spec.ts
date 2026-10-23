@@ -124,7 +124,7 @@ test("channel header refresh and search keep local state and overlays independen
   const header = page.locator(".task-workbench-header");
   const toolbar = page.getByRole("toolbar", { name: "Workspace task toolbar" });
   const searchButton = toolbar.getByRole("button", { name: "Search" });
-  const summaryButton = toolbar.getByRole("button", { name: "Summary" });
+  const summaryButton = toolbar.getByRole("button", { name: "Summary", exact: true });
   const teammateButton = toolbar.getByRole("button", { name: "AI teammate management" });
 
   await summaryButton.click();
