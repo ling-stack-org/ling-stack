@@ -385,8 +385,13 @@ right tools: model/thinking controls when editable, read-only model status when 
 Toolbar rules:
 
 - icon buttons are 30-32px with transparent default background,
-- authorization uses the same compact trigger across channel, normal, and private
-  surfaces,
+- normal conversation offers Request approval, Help me approve, and Full access
+  shortcuts in its compact permission menu. Independent authorization and sandbox
+  defaults remain in Settings. Request approval and Help me approve preserve the
+  selected sandbox; Full access sets both always authorization and full access only
+  after confirmation. Returning from that shortcut restores the prior sandbox, or
+  the workspace default when restoring an existing conversation;
+  channel and private chat retain separate compact authorization triggers,
 - model picker is right aligned and appears only for normal conversation,
 - teammate private chat can show read-only effective model status, but not a model
   picker,

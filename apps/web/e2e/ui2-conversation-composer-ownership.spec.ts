@@ -270,7 +270,7 @@ test("T13-O.31-E Dark 1280 Normal keeps slash, permission, reduced motion, long 
   const permissionTrigger = composer.getByRole("button", { name: /Selected permission preset/u });
   await permissionTrigger.click();
   const permissionOverlay = page.locator('[data-ling-overlay="menu"]').filter({
-    has: page.getByRole("menuitemradio", { name: /Read only/u }),
+    has: page.getByRole("menuitemradio", { name: "Request approval", exact: true }),
   });
   await expect(permissionOverlay).toBeVisible();
   await expectRegionWithinViewport(page, permissionOverlay);

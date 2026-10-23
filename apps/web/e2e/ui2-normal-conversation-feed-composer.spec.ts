@@ -106,6 +106,7 @@ test("normal conversation composer uses Radix menus and preserves draft, upload,
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createBaseState({ approvalStatus: "expired" });
+  state.workspaceSettings.defaultReasoningSummary = "concise";
   installProviders(state);
   installStableConversationFixture(state);
   state.conversationStreamDelayMs = 650;
@@ -123,45 +124,62 @@ test("normal conversation composer uses Radix menus and preserves draft, upload,
 
   const permissionTrigger = composer.getByRole("button", { name: /Selected permission preset/ });
   await permissionTrigger.click();
-  const permissionMenu = page.locator('[data-ling-overlay="menu"]').filter({ has: page.getByRole("menuitemradio", { name: /Workspace write/ }) });
+  const permissionMenu = page.getByRole("menu").filter({ has: page.getByRole("menuitemradio", { name: "Request approval", exact: true }) });
   await expect(permissionMenu).toBeVisible();
-  await expect(permissionMenu.getByRole("menuitemradio")).toHaveCount(3);
+  await expect(permissionMenu.getByRole("group", { name: "Authorization mode" }).getByRole("menuitemradio")).toHaveCount(3);
+  await expect(permissionMenu.getByRole("menuitemradio")).toHaveText([
+    /Request approval/, /Help me approve/, /Full access/,
+  ]);
+  await expect(permissionMenu.getByRole("menuitemradio", { name: /Read only|Workspace write|Always authorize/ })).toHaveCount(0);
+  await captureEvidence(page, "1440x960-ling-light-normal-composer-approval-menu.png");
+  await permissionMenu.getByRole("menuitemradio", { name: "Request approval", exact: true }).click();
+  await permissionTrigger.click();
+  await expect(permissionMenu.getByRole("menuitemradio", { name: "Request approval", exact: true })).toBeChecked();
   await page.keyboard.press("Escape");
   await expect(permissionMenu).toHaveCount(0);
   await expect(permissionTrigger).toBeFocused();
 
-  const thinkingTrigger = composer.getByRole("button", { name: "Selected thinking mode Off" });
-  await thinkingTrigger.click();
-  const thinkingMenu = page.locator(".conversation-thinking-menu");
-  await expect(thinkingMenu).toHaveAttribute("data-ling-overlay", "menu");
-  await expect(thinkingMenu.getByRole("menuitemradio")).toHaveText(["Off", "Minimal", "Low", "Medium", "High", "XHigh"]);
-  await thinkingMenu.getByRole("menuitemradio", { name: "High", exact: true }).click();
-  const activeThinkingTrigger = composer.getByRole("button", { name: "Selected thinking mode High" });
-  await expect(activeThinkingTrigger).toBeFocused();
-  await expectCompactMutedComposerControl(permissionTrigger);
-  await expectCompactMutedComposerControl(activeThinkingTrigger);
-  const composerControlStyles = await Promise.all([permissionTrigger, activeThinkingTrigger].map((control) => control.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return {
-      color: style.color,
-      fontSize: style.fontSize,
-      fontWeight: style.fontWeight,
-    };
-  })));
-  expect(composerControlStyles[1]).toEqual(composerControlStyles[0]);
-
-  const modelTrigger = composer.getByRole("button", { name: /Selected model gpt-5\.5/ });
+  await expect(composer.getByRole("button", { name: /Selected thinking mode|Selected reasoning summary|Selected authorization mode/ })).toHaveCount(0);
+  const modelTrigger = composer.getByRole("button", { name: "Selected model gpt-5.5" });
+  await expect(modelTrigger).toContainText("Off");
   await modelTrigger.click();
-  const modelMenu = page.locator(".conversation-model-menu");
-  await expect(modelMenu).toHaveAttribute("data-ling-overlay", "menu");
+  const reasoningPanel = page.getByRole("dialog", { name: "Thinking mode" });
+  const slider = reasoningPanel.getByRole("slider", { name: "Thinking mode" });
+  await expect(reasoningPanel).toHaveAttribute("data-ling-overlay", "popover");
+  await slider.focus();
+  await slider.press("End");
+  await expect(slider).toHaveAttribute("aria-valuetext", "XHigh");
+  await slider.press("ArrowLeft");
+  await expect(slider).toHaveAttribute("aria-valuetext", "High");
+  await expect(modelTrigger).toContainText("High");
+  await expect(modelTrigger).toHaveAccessibleName("Selected model gpt-5.5 · High");
+  await expectCompactMutedComposerControl(permissionTrigger);
+  await expectCompactMutedComposerControl(modelTrigger);
+  await captureEvidence(page, "1440x960-ling-light-normal-composer-reasoning.png");
+  await reasoningPanel.getByRole("button", { name: "Model options" }).click();
+  const modelMenu = page.getByRole("dialog", { name: "Model options" });
   const modelSearch = modelMenu.getByRole("textbox", { name: "Search models" });
   await expect(modelSearch).toBeFocused();
   await expectInputContained(modelSearch, modelMenu.locator(".conversation-model-search"));
   await captureEvidence(page, "1440x960-ling-light-normal-composer-model-menu.png");
+  await modelSearch.fill("nothing matches this query");
+  await expect(modelMenu).toContainText("No matching models");
   await modelSearch.fill("sonnet");
-  await expect(modelMenu.getByRole("menuitemradio")).toHaveCount(1);
-  await modelMenu.getByRole("menuitemradio", { name: /claude-sonnet-4/ }).click();
-  await expect(composer.getByRole("button", { name: /Selected model claude-sonnet-4/ })).toBeFocused();
+  await expect(modelMenu.locator(".conversation-model-option")).toHaveCount(1);
+  await modelMenu.getByRole("button", { name: /claude-sonnet-4/ }).click();
+  const sonnetTrigger = composer.getByRole("button", { name: "Selected model claude-sonnet-4" });
+  await expect(sonnetTrigger).toBeFocused();
+  await expect(sonnetTrigger).toContainText("High");
+  await sonnetTrigger.click();
+  await expect(slider).toHaveAttribute("max", "2");
+  await reasoningPanel.getByRole("button", { name: "Reset", exact: true }).click();
+  await expect(slider).toHaveAttribute("aria-valuetext", "Off");
+  await expect(reasoningPanel.getByRole("button", { name: "Reset", exact: true })).toBeDisabled();
+  await slider.focus();
+  await slider.press("End");
+  await expect(slider).toHaveAttribute("aria-valuetext", "High");
+  await page.keyboard.press("Escape");
+  await expect(sonnetTrigger).toBeFocused();
 
   await composer.locator('input[type="file"]').setInputFiles({
     name: "composer-evidence.txt",
@@ -172,7 +190,15 @@ test("normal conversation composer uses Radix menus and preserves draft, upload,
   await expect(pendingAssets).toContainText("composer-evidence.txt");
   await expect(input).toHaveAttribute("data-value", "Keep this draft while menus open");
 
+  const submission = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname.endsWith("/conversations/stream"));
   await composer.getByRole("button", { name: "Send" }).click();
+  expect((await submission).postDataJSON()).toMatchObject({
+    providerPresetId: "provider_ui2_normal_sonnet",
+    thinkingLevel: "high",
+    reasoningSummary: "concise",
+    authorizationMode: "ask",
+    workspaceAccessMode: "workspace_write",
+  });
   const send = composer.getByRole("button", { name: "Send" });
   await expect(send).toBeDisabled();
   await expect(send.locator(".ling-ui-spinner")).toHaveCount(1);

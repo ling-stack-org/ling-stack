@@ -79,6 +79,7 @@ export function ConversationHome({
   initialReasoningSummary = "auto",
   initialAuthorizationMode,
   initialWorkspaceAccessMode,
+  defaultWorkspaceAccessMode = "workspace_write",
   initialPermissionMode,
   initialPermissionPreset,
   detailContext,
@@ -149,6 +150,8 @@ export function ConversationHome({
   const replacementRetryingMessageId = replacementRetryOperation.activeValue;
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
   const permissionSelectionBoundThreadRef = useRef("");
+  const permissionBeforeFullAccessRef = useRef<PermissionPreset | undefined>(undefined);
+  const permissionSelectionSequenceRef = useRef(0);
   const sendBusy = sending || localSending || guidanceOperation.busy;
   const composerBusy = sendBusy || !conversationIdentityController.ready;
   const activeReply = sendLifecycle.activeReplies[0] ?? (activeRun && activeReplyStatus(activeRun.status) ? {
@@ -409,6 +412,8 @@ export function ConversationHome({
       return;
     }
     permissionSelectionBoundThreadRef.current = "";
+    permissionBeforeFullAccessRef.current = undefined;
+    permissionSelectionSequenceRef.current += 1;
     setSelectedAuthorizationMode(resolveAuthorizationMode(
       initialAuthorizationMode,
       initialPermissionMode,
@@ -705,7 +710,10 @@ export function ConversationHome({
       return;
     }
     setSelectedProviderPresetId(option.id);
-    setSelectedThinkingLevel("off");
+    setSelectedThinkingLevel((current) => {
+      const supported = normalConversationThinkingOptions(option.thinkingModes ?? []);
+      return supported.includes(current) ? current : "off";
+    });
     actionFeedback.clear("validation");
   }
 
@@ -714,12 +722,6 @@ export function ConversationHome({
       return;
     }
     setSelectedThinkingLevel(level);
-    actionFeedback.clear("validation");
-  }
-
-  function selectReasoningSummary(mode: ReasoningSummaryMode): void {
-    if (composerBusy || activeReply) return;
-    setSelectedReasoningSummary(mode);
     actionFeedback.clear("validation");
   }
 
@@ -740,7 +742,6 @@ export function ConversationHome({
       defaultProviderPresetId={effectiveDefaultModelId}
       defaultProviderLabel={defaultProviderLabel}
       selectedThinkingLevel={selectedThinkingLevel}
-      selectedReasoningSummary={selectedReasoningSummary}
       sendBusy={sendBusy}
       scopeReady={conversationIdentityController.ready}
       recoveringSubmission={guidancePending}
@@ -767,27 +768,37 @@ export function ConversationHome({
       onRetryAttachment={attachmentController.retryAttachment}
       attachmentCleanupFailures={attachmentController.cleanupFailures}
       onRetryAttachmentCleanup={attachmentController.retryCleanup}
-      onAuthorizationModeChange={setSelectedAuthorizationMode}
-      onPermissionPresetChange={(preset) => {
-        if (preset !== "full_access") {
-          setSelectedPermissionPreset(preset);
+      onAuthorizationModeChange={(mode) => {
+        const selectionSequence = ++permissionSelectionSequenceRef.current;
+        if (mode !== "always") {
+          if (selectedAuthorizationMode === "always" && selectedPermissionPreset === "full_access") {
+            setSelectedPermissionPreset(permissionBeforeFullAccessRef.current ?? permissionPresetForWorkspaceAccessMode(defaultWorkspaceAccessMode));
+          }
+          permissionBeforeFullAccessRef.current = undefined;
+          setSelectedAuthorizationMode(mode);
           return;
         }
         if (!onConfirmFullAccessSelection) {
           actionFeedback.report("validation", t("Use full access for this conversation after explicit confirmation."));
           return;
         }
+        const selectionIdentity = conversationIdentityController.capture();
         void onConfirmFullAccessSelection()
           .then((confirmation) => {
-            if (confirmation) setSelectedPermissionPreset(preset);
+            if (!confirmation || selectionSequence !== permissionSelectionSequenceRef.current || !conversationIdentityController.isCurrent(selectionIdentity)) return;
+            if (selectedAuthorizationMode !== "always" || selectedPermissionPreset !== "full_access") {
+              permissionBeforeFullAccessRef.current = selectedPermissionPreset;
+            }
+            setSelectedAuthorizationMode("always");
+            setSelectedPermissionPreset("full_access");
           })
           .catch((error: unknown) => {
+            if (selectionSequence !== permissionSelectionSequenceRef.current || !conversationIdentityController.isCurrent(selectionIdentity)) return;
             actionFeedback.report("validation", error instanceof Error ? error.message : String(error));
           });
       }}
       onModelChange={selectModel}
       onThinkingLevelChange={selectThinkingLevel}
-      onReasoningSummaryChange={selectReasoningSummary}
       onSubmit={submitDraft}
       onStop={activeReply && onStopConversation ? () => onStopConversation(activeReply) : undefined}
     />
