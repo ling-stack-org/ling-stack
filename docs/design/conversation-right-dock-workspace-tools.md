@@ -531,6 +531,10 @@ First version can be a placeholder plus real file references that already exist:
 The page should not become a full file explorer in the first slice. A later slice can add
 tree navigation and diff preview if Web and Desktop both need it.
 
+Desktop local-path clicks also reuse the dock detail page for bounded text, image, and
+directory previews, with native file actions. Limits and platform acceptance are defined
+in [Desktop Local File Viewing](conversation-shared-capabilities.md#desktop-local-file-viewing).
+
 ### TerminalPage
 
 First version is a placeholder unless a real run/thread has shell snapshots.

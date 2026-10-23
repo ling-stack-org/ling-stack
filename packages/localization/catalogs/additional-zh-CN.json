@@ -377,5 +377,12 @@
   "Pull request URL": "PR 链接",
   "Untitled conversation": "未命名会话",
   "Workspace unavailable": "工作区不可用",
-  "Pull requests": "PR 列表"
+  "Pull requests": "PR 列表",
+  "Unable to preview this file": "无法预览此文件，请检查文件是否存在或是否有访问权限。",
+  "Open parent folder": "打开上级目录",
+  "Folder contents": "目录内容",
+  "This folder is empty": "此目录为空",
+  "Showing the first 500 entries. Open this folder in your file manager to see all items.": "仅显示前 500 项，请在文件管理器中打开此目录查看全部内容。",
+  "This file type cannot be previewed": "暂不支持预览此类文件",
+  "Open this file in another application to view it.": "请在其他应用中打开此文件查看。"
 }

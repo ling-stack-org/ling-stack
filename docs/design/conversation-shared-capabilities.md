@@ -98,6 +98,38 @@ there is no idle conversation polling.
 Structured workspace file references travel with normal stream and transcript messages.
 They remain references only and never expand tools, workspace access or approval policy.
 
+### Desktop Local File Viewing
+
+Desktop conversation prose links have a separate, user-activated viewing path shared
+by normal conversation, channel and teammate private chat. Clicking a local path opens
+the existing Right Dock. Markdown link labels are preserved, and the complete path
+remains available in the tooltip.
+
+- UTF-8 text/code uses the existing code viewer with line numbers and optional line focus.
+  The text preview is capped at 256 KiB; the dock displays a bounded window of 300 lines.
+- Raster images up to 10 MiB use the image viewer. Directories show up to 500 entries,
+  with explicit navigation to a child or the parent folder.
+- Archives, PDF/Office files and other unsupported/binary content show an explanatory
+  placeholder with an **Open with** action.
+- Right-clicking a link or directory entry opens the native menu: preview in Ling,
+  default application, Open with, Save as (files only), Copy path, Copy file contents
+  (complete text previews only), and reveal in the file manager. macOS lists actual
+  Launch Services associations; Windows uses the system application chooser, and
+  Linux provides an executable picker.
+
+The typed `lingDesktop.localFiles` bridge consumes a matching, one-use trusted click
+or context-menu gesture. Main validates the current packaged main frame before reads
+and actions. Local viewing rejects network shares and special files and does not add
+file contents to AI context, expand tool permissions, or issue daemon capabilities.
+Browser prose paths remain display-only; typed transcript file capabilities retain
+their existing scope and authority checks.
+
+Verification: `apps/desktop/tests/local-files.test.mjs` covers host reading and activation
+boundaries; `apps/desktop/tests/run-local-file-smoke.mjs` exercises the actual sandboxed
+preload and native menu without launching an external application. Web fixture coverage
+is in `apps/web/e2e/local-file-preview.spec.ts`. Windows/Linux chooser behavior requires
+platform acceptance; the native smoke is verified on macOS.
+
 ## Product Model
 
 The shared system has three independent contracts:

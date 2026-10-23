@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { createLocalFileCapabilities } from "../shared/local-file-activation.js";
 import type {
   ComputerUseHostLayout,
   ComputerUsePipDeckOwner,
@@ -223,7 +224,10 @@ const capabilities: LingDesktopCapabilities = {
   },
 };
 
-contextBridge.exposeInMainWorld("lingDesktop", capabilities);
+contextBridge.exposeInMainWorld("lingDesktop", {
+  ...capabilities,
+  localFiles: createLocalFileCapabilities((channel, request) => ipcRenderer.invoke(channel, request), globalThis.document),
+});
 
 function cloneArchiveRequest(
   request: DesktopThemePackageArchiveRequest,

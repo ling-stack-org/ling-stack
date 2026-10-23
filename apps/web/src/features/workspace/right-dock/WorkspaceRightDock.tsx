@@ -64,6 +64,7 @@ export interface WorkspaceRightDockPageRequest {
 }
 
 export interface WorkspaceRightDockFileTarget {
+  readonly localFile?: import("../../../../../desktop/shared/local-file-capabilities.js").DesktopLocalFilePreview;
   readonly cwd?: string;
   readonly path: string;
   readonly line?: number;
@@ -251,9 +252,14 @@ export function WorkspaceRightDock({
         />
       ));
     }
-    if (requestedWorkspaceFile && (requestedWorkspaceFile.target.cwd || cwd)) {
+    if (requestedWorkspaceFile && (requestedWorkspaceFile.target.localFile || requestedWorkspaceFile.target.cwd || cwd)) {
       map.set(workspaceFileDetailSourceId(requestedWorkspaceFile.nonce), (
-        <DockWorkspaceFilePreview cwd={requestedWorkspaceFile.target.cwd ?? cwd ?? ""} target={requestedWorkspaceFile.target} />
+        <DockWorkspaceFilePreview cwd={requestedWorkspaceFile.target.cwd ?? cwd ?? ""} target={requestedWorkspaceFile.target}
+          onNavigateLocalFile={(localFile) => {
+            const target = { ...requestedWorkspaceFile.target, path: localFile.path, line: localFile.line, localFile };
+            setRequestedWorkspaceFile({ ...requestedWorkspaceFile, target });
+            setStack([createDockPageEntry({ page: "detail", title: localFile.name, subtitle: localFile.path, sourceId: workspaceFileDetailSourceId(requestedWorkspaceFile.nonce) })]);
+          }} />
       ));
     }
     for (const plan of proposedPlans) {

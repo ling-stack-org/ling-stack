@@ -377,5 +377,12 @@
   "Pull request URL": "Pull request URL",
   "Untitled conversation": "Untitled conversation",
   "Workspace unavailable": "Workspace unavailable",
-  "Pull requests": "Pull requests"
+  "Pull requests": "Pull requests",
+  "Unable to preview this file": "Unable to preview this file",
+  "Open parent folder": "Open parent folder",
+  "Folder contents": "Folder contents",
+  "This folder is empty": "This folder is empty",
+  "Showing the first 500 entries. Open this folder in your file manager to see all items.": "Showing the first 500 entries. Open this folder in your file manager to see all items.",
+  "This file type cannot be previewed": "This file type cannot be previewed",
+  "Open this file in another application to view it.": "Open this file in another application to view it."
 }
