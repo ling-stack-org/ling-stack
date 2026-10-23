@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 
 const cliPath = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/index.js");
@@ -63,12 +63,42 @@ test("doctor exits non-zero and prints next step when provider preflight is miss
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-cli-doctor-"));
   try {
     await prepareDoctorWorkspace(cwd);
-    const result = await runCli(daemon.url, cwd, ["doctor"]);
-
-    assert.equal(result.code, 4);
-    assert.match(result.stdout, /Status: fail/);
-    assert.match(result.stdout, /providers\.preflight\s+no runnable provider has a successful preflight check/);
-    assert.match(result.stdout, /ling-stack provider check-all/);
+    // Control only the fixed Web health probe; daemon requests still use HTTP.
+    const webHealthFixture = resolve(cwd, "web-health.mjs");
+    await writeFile(webHealthFixture, `
+      const upstreamFetch = globalThis.fetch;
+      globalThis.fetch = (input, options) => {
+        if (String(input) === "http://127.0.0.1:5173") {
+          return Promise.resolve(new Response("<title>Ling Stack</title>", {
+            status: process.env.LING_TEST_WEB_REACHABLE === "1" ? 200 : 503,
+            headers: { "content-type": "text/html" },
+          }));
+        }
+        return upstreamFetch(input, options);
+      };
+    `);
+    for (const webReachable of ["1", "0"]) {
+      const env = {
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${pathToFileURL(webHealthFixture).href}`.trim(),
+        LING_TEST_WEB_REACHABLE: webReachable,
+        npm_lifecycle_event: "ling",
+      };
+      const result = await runCli(daemon.url, cwd, ["doctor"], { env });
+      assert.equal(result.code, 4, result.stderr);
+      assert.match(result.stdout, /Status: fail/);
+      assert.match(result.stdout, webReachable === "1" ? /ok\s+web\.health/ : /warning\s+web\.health/);
+      assert.match(result.stdout, /providers\.preflight\s+no runnable provider has a successful preflight check/);
+      assert.match(result.stdout, /corepack pnpm(?: --dir [^\n]+)? ling provider check-all/);
+      const installed = await runCli(daemon.url, cwd, ["doctor"], { env: { ...env, npm_lifecycle_event: "" } });
+      assert.equal(installed.code, 4, installed.stderr);
+      assert.match(installed.stdout, /^  ling-stack provider check-all$/m);
+      assert.doesNotMatch(installed.stdout, /corepack pnpm/);
+      const summary = await runCli(daemon.url, cwd, ["doctor", "--summary"], { env });
+      assert.equal(summary.code, 4, summary.stderr);
+      assert.match(summary.stdout, webReachable === "1"
+        ? /^Next: corepack pnpm ling provider check-all$/m
+        : /^Next: corepack pnpm ling ui --foreground$/m);
+    }
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await daemon.close();

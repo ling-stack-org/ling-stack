@@ -288,6 +288,8 @@ export function TeammatePrivateChatComposer({
               options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}
               disabled={permissionLocked}
               disabledReason={t("Permission is locked while the private reply is running.")}
+              selectedPermissionLabel={t("Selected permission preset {label}")}
+              menuLabel={t("Permission preset")}
               onPresetChange={controller.handlePermissionPresetChange}
             />
           </>

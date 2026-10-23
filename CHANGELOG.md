@@ -15,6 +15,11 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ### Fixed
 
+- Source setup now documents and checks Rust/Cargo requirements, and doctor suggests
+  the source CLI command when invoked through pnpm.
+- Built-in skills no longer show epoch placeholder dates. Chinese skill metadata,
+  permission menu labels, and the QA role now stay translated.
+- Run history retains its lazy-loaded Web chunk.
 - Desktop packaging now starts the installed Electron Builder CLI directly with Node,
   avoiding Windows `.cmd` shim execution failures while preserving governed arguments.
 

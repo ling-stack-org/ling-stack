@@ -257,6 +257,19 @@ test("partial health keeps returned blockers but never upgrades uncovered member
   expect(runtimeErrors).toEqual([]);
 });
 
+test("Chinese QA member keeps its role when the display name is QA", async ({ page }) => {
+  await prepareSurface(page, { locale: "zh-CN", theme: "light", width: 1440, height: 960 });
+  const state = createManagedMembersState();
+  const qa = state.aiTeammates.find((teammate) => isRecord(teammate) && teammate.roleKey === "qa");
+  if (!isRecord(qa)) throw new Error("Expected QA teammate fixture");
+  qa.displayName = "QA";
+  await mockDaemon(page, state);
+  await page.goto("/");
+  const panel = await openMembersPanel(await openCouncilWorkspace(page, /智囊团工作区|Council Workspace/));
+  await expect(memberRow(panel, "QA").locator(".council-members-role")).toHaveText("测试");
+  await captureEvidence(page, "1440x960-qa-role-zh-CN.png");
+});
+
 test("empty Chinese state owns internal bounds when every candidate is excluded", async ({ page }) => {
   await prepareSurface(page, { locale: "zh-CN", theme: "light", width: 1280, height: 800 });
   const runtimeErrors = collectRuntimeErrors(page);
