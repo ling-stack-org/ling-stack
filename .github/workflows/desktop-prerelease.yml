@@ -209,9 +209,6 @@ jobs:
       - name: Verify actual final archives, bundled resources and runtime structure
         if: env.DESKTOP_OPERATION == 'build'
         run: node scripts/release/verify-desktop-package.mjs
-      - name: Archive the exact embedded distribution materials
-        if: env.DESKTOP_OPERATION == 'build'
-        run: tar -czf .codex-artifacts/desktop-release/distribution.tar.gz -C apps/desktop/dist distribution
       - name: Collect fresh install archives and evidence
         if: env.DESKTOP_OPERATION == 'build'
         env:

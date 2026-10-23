@@ -115,11 +115,12 @@ async function prepareBoth(t) {
     const outputRoot = join(root, target);
     const evidenceRoot = join(root, `evidence-${target}`);
     await mkdir(evidenceRoot);
+    await writeFile(join(evidenceRoot, "distribution.tar.gz"), "synthetic test distribution archive");
     await writeFile(join(evidenceRoot, "package-verification.json"), JSON.stringify({ ...candidate, target,
       status: "passed", acceptance: "archive_contents_and_unsigned_structure_only",
+      distributionArchive: await fileRecord(join(evidenceRoot, "distribution.tar.gz")),
       archives: await Promise.all(suffixes.map(suffix => fileRecord(join(releases, `Ling-Stack-${candidate.version}-${suffix}`)))) }));
     await writeFile(join(evidenceRoot, "prerequisites.json"), JSON.stringify({ ...candidate, target, buildPrerequisitesPass: true }));
-    await writeFile(join(evidenceRoot, "distribution.tar.gz"), "synthetic test distribution archive");
     const manifest = await collectTarget({ candidate, target, releaseRoot: releases, evidenceRoot, outputRoot });
     for (const file of [`desktop-${target}.json`, ...manifest.artifacts.map(file => file.name), ...manifest.evidence.map(file => file.name)]) {
       await writeFile(join(combined, file), await readFile(join(outputRoot, file)));
@@ -154,6 +155,22 @@ test("assembly rejects archive replacement even when the asset manifest was reha
   manifest.artifacts[0] = await fileRecord(asset);
   await writeFile(path, JSON.stringify(manifest));
   await assert.rejects(assembleRelease(f.args), /verification archives/u);
+});
+
+test("collection rejects distribution materials replaced after package verification", async t => {
+  const f = await prepareBoth(t), target = "windows-x64";
+  await writeFile(join(f.root, `evidence-${target}`, "distribution.tar.gz"), "unrelated material bytes");
+  await assert.rejects(collectTarget({ candidate, target, releaseRoot: join(f.root, "releases"),
+    evidenceRoot: join(f.root, `evidence-${target}`), outputRoot: join(f.root, "recollect-materials") }), /Distribution archive/u);
+});
+
+test("assembly rejects changed materials even when the asset manifest was rehashed", async t => {
+  const f = await prepareBoth(t), path = join(f.combined, "desktop-windows-x64.json");
+  const manifest = JSON.parse(await readFile(path, "utf8")), material = join(f.combined, manifest.evidence[2].name);
+  await writeFile(material, "unrelated material bytes with a matching collection hash");
+  manifest.evidence[2] = await fileRecord(material);
+  await writeFile(path, JSON.stringify(manifest));
+  await assert.rejects(assembleRelease(f.args), /Distribution archive/u);
 });
 
 for (const mutation of ["different-source", "different-version", "changed-archive", "changed-evidence", "missing-evidence", "missing-target", "extra-file", "path-traversal"]) {

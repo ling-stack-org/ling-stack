@@ -87,6 +87,13 @@ function assertPrerequisites(prerequisites, candidate, target) {
     || prerequisites.buildPrerequisitesPass !== true) throw new Error("Missing matching successful build prerequisites");
 }
 
+function assertDistributionArchive(report, record) {
+  const verified = report.distributionArchive;
+  if (verified?.name !== "distribution.tar.gz" || verified.sizeBytes !== record.sizeBytes || verified.sha256 !== record.sha256) {
+    throw new Error("Distribution archive does not match the verified embedded materials");
+  }
+}
+
 export async function collectTarget({ candidate, target, releaseRoot, evidenceRoot, outputRoot }) {
   const names = targetAssets(candidate, target);
   const report = JSON.parse(await readFile(join(evidenceRoot, "package-verification.json"), "utf8"));
@@ -94,6 +101,7 @@ export async function collectTarget({ candidate, target, releaseRoot, evidenceRo
   assertPrerequisites(prerequisites, candidate, target);
   const originalArtifacts = await Promise.all(names.map(name => fileRecord(join(releaseRoot, name))));
   assertPackageReport(report, candidate, target, originalArtifacts);
+  assertDistributionArchive(report, await fileRecord(join(evidenceRoot, "distribution.tar.gz")));
   // A fresh output directory prevents stale candidates from joining a later run.
   await mkdir(outputRoot);
   const artifacts = [];
@@ -114,7 +122,9 @@ export async function collectTarget({ candidate, target, releaseRoot, evidenceRo
     if (copied.sha256 !== source.sha256 || copied.sizeBytes !== source.sizeBytes) throw new Error("Release evidence changed while collecting");
     evidence.push(copied);
   }
-  assertPackageReport(JSON.parse(await readFile(join(outputRoot, targetEvidence(target)[1]), "utf8")), candidate, target, artifacts);
+  const copiedReport = JSON.parse(await readFile(join(outputRoot, targetEvidence(target)[1]), "utf8"));
+  assertPackageReport(copiedReport, candidate, target, artifacts);
+  assertDistributionArchive(copiedReport, evidence[2]);
   assertPrerequisites(JSON.parse(await readFile(join(outputRoot, targetEvidence(target)[0]), "utf8")), candidate, target);
   const manifest = { ...candidate, target, artifacts, evidence };
   await writeFile(join(outputRoot, `desktop-${target}.json`), JSON.stringify(manifest, null, 2) + "\n", { flag: "wx" });
@@ -143,7 +153,9 @@ export async function verifyTargetInputs({ candidate, inputRoot }) {
       if (current.sizeBytes !== artifact.sizeBytes || current.sha256 !== artifact.sha256) throw new Error("Release asset checksum mismatch");
       expectedFiles.add(artifact.name);
     }
-    assertPackageReport(JSON.parse(await readFile(join(inputRoot, evidenceNames[1]), "utf8")), candidate, target, manifest.artifacts);
+    const report = JSON.parse(await readFile(join(inputRoot, evidenceNames[1]), "utf8"));
+    assertPackageReport(report, candidate, target, manifest.artifacts);
+    assertDistributionArchive(report, manifest.evidence[2]);
     assertPrerequisites(JSON.parse(await readFile(join(inputRoot, evidenceNames[0]), "utf8")), candidate, target);
     expectedFiles.add(name);
     manifests.push(manifest);

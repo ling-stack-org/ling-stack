@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -9,6 +9,8 @@ import { extractCuaDriverFinalArtifact } from "../../apps/desktop/scripts/cua-dr
 import { readExecutableBundle } from "../gstack/executable-bundle.mjs";
 import { inventoryApplicationTree } from "./desktop-payload.mjs";
 import { smokeWindowsInstaller } from "./windows-installer-smoke.mjs";
+import { createVerifiedDistributionArchive, inventoryDistribution } from "./distribution-archive.mjs";
+import { verifyNsisPlugins } from "./verify-nsis-plugins.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const desktopRoot = join(root, "apps/desktop");
@@ -26,19 +28,6 @@ export function assertNativeBinary(bytes, target, label) {
   } else throw new Error("Unsupported native target");
 }
 
-async function inventory(directory, prefix = "") {
-  const files = [];
-  for (const name of (await readdir(join(directory, prefix))).sort()) {
-    const relative = prefix ? `${prefix}/${name}` : name;
-    const path = join(directory, relative), stat = await lstat(path);
-    if (stat.isSymbolicLink()) throw new Error(`Unexpected link in distribution materials: ${relative}`);
-    if (stat.isDirectory()) files.push(...await inventory(directory, relative));
-    else if (stat.isFile()) files.push({ ...await fileRecord(path), name: relative });
-    else throw new Error(`Unexpected distribution entry: ${relative}`);
-  }
-  return files;
-}
-
 async function inspectApplication(app, candidate, target, expectedDistribution) {
   const mac = target === "macos-arm64";
   const resources = mac ? join(app, "Contents/Resources") : join(app, "resources");
@@ -48,7 +37,7 @@ async function inspectApplication(app, candidate, target, expectedDistribution) 
   if (metadata.version !== candidate.version || !metadata.lingPackagedGstack) throw new Error("Packaged version or bundled gstack identity is missing");
   const bundle = await readExecutableBundle(join(resources, "gstack"), metadata.lingPackagedGstack);
   if (bundle.identity.target.platform !== (mac ? "darwin" : "win32") || bundle.identity.target.arch !== (mac ? "arm64" : "x64")) throw new Error("Packaged gstack target mismatch");
-  const distribution = await inventory(join(resources, "distribution"));
+  const distribution = await inventoryDistribution(join(resources, "distribution"));
   if (distribution.length === 0 || !isDeepStrictEqual(distribution, expectedDistribution)) throw new Error("Packaged distribution materials differ from this build");
   execFileSync(process.execPath, [join(desktopRoot, "scripts/distribution/materials.mjs"), "verify", "--platform", mac ? "darwin-arm64" : "win32-x64",
     "--resources", resources], { cwd: root, encoding: "utf8", timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
@@ -86,11 +75,12 @@ export async function verifyDesktopPackage() {
   if ((mac ? "darwin:arm64" : "win32:x64") !== `${process.platform}:${process.arch}`) throw new Error("Use the native target host");
   const evidenceRoot = join(root, ".codex-artifacts/desktop-release");
   await mkdir(evidenceRoot, { recursive: true });
-  const distribution = await inventory(join(desktopRoot, "dist/distribution"));
+  const distribution = await inventoryDistribution(join(desktopRoot, "dist/distribution"));
   const releaseRoot = join(desktopRoot, "release");
   const unpacked = mac ? join(releaseRoot, "mac-arm64/Ling Stack.app") : join(releaseRoot, "win-unpacked");
   const baseline = await inspectApplication(unpacked, candidate, target, distribution);
   const archives = [];
+  let installerPlugins;
   for (const name of targetAssets(candidate, target)) {
     const path = join(releaseRoot, name), original = await fileRecord(path);
     if (!mac) {
@@ -98,6 +88,9 @@ export async function verifyDesktopPackage() {
         "(Get-AuthenticodeSignature -LiteralPath $env:LING_DESKTOP_VERIFY_FILE).Status.ToString()"],
       { env: { ...process.env, LING_DESKTOP_VERIFY_FILE: path }, timeout: 30_000, encoding: "utf8" }).trim();
       if (state !== "NotSigned") throw new Error("Expected an unsigned Windows development installer");
+      const builderRequire = createRequire(requireDesktop.resolve("electron-builder/package.json"));
+      installerPlugins = await verifyNsisPlugins({ installer: path,
+        sevenZipPath: await builderRequire("app-builder-lib/out/toolsets/7zip.js").getPath7za() });
     }
     const extracted = await extractCuaDriverFinalArtifact(path, {
       platform: mac ? "darwin" : "win32",
@@ -122,8 +115,11 @@ export async function verifyDesktopPackage() {
   for (const record of archives) {
     if (!isDeepStrictEqual(await fileRecord(join(releaseRoot, record.name)), record)) throw new Error("Final archive changed during installer smoke");
   }
+  const distributionArchive = await createVerifiedDistributionArchive({ directory: join(desktopRoot, "dist/distribution"),
+    archivePath: join(evidenceRoot, "distribution.tar.gz"), expected: distribution });
   const report = { ...candidate, target, status: "passed", acceptance: "archive_contents_and_unsigned_structure_only",
-    archives, ...baseline, electronRuntime: runtime, runnerInstallerSmoke, runtimeAcceptance: "not_run", installedUserAcceptance: "not_run" };
+    archives, distributionArchive, ...(installerPlugins ? { installerPlugins } : {}), ...baseline,
+    electronRuntime: runtime, runnerInstallerSmoke, runtimeAcceptance: "not_run", installedUserAcceptance: "not_run" };
   await writeFile(join(evidenceRoot, "package-verification.json"), JSON.stringify(report, null, 2) + "\n", { flag: "wx" });
   return report;
 }
