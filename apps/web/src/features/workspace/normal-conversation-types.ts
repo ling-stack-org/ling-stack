@@ -132,6 +132,7 @@ export interface ConversationHomeProps {
   readonly initialReasoningSummary?: ReasoningSummaryMode;
   readonly initialAuthorizationMode?: AuthorizationMode;
   readonly initialWorkspaceAccessMode?: WorkspaceAccessMode;
+  readonly defaultWorkspaceAccessMode?: WorkspaceAccessMode;
   readonly initialPermissionMode?: SessionPermissionMode;
   readonly initialPermissionPreset?: PermissionPreset;
   readonly detailContext?: ConversationHomeDetailContext;

@@ -124,10 +124,14 @@ test("normal conversation composer uses Radix menus and preserves draft, upload,
 
   const permissionTrigger = composer.getByRole("button", { name: /Selected permission preset/ });
   await permissionTrigger.click();
-  const permissionMenu = page.locator('[data-ling-overlay="menu"]').filter({ has: page.getByRole("menuitemradio", { name: /Workspace write/ }) });
+  const permissionMenu = page.getByRole("menu").filter({ has: page.getByRole("menuitemradio", { name: "Request approval", exact: true }) });
   await expect(permissionMenu).toBeVisible();
-  await expect(permissionMenu.getByRole("group", { name: "Sandbox settings" }).getByRole("menuitemradio")).toHaveCount(3);
   await expect(permissionMenu.getByRole("group", { name: "Authorization mode" }).getByRole("menuitemradio")).toHaveCount(3);
+  await expect(permissionMenu.getByRole("menuitemradio")).toHaveText([
+    /Request approval/, /Help me approve/, /Full access/,
+  ]);
+  await expect(permissionMenu.getByRole("menuitemradio", { name: /Read only|Workspace write|Always authorize/ })).toHaveCount(0);
+  await captureEvidence(page, "1440x960-ling-light-normal-composer-approval-menu.png");
   await permissionMenu.getByRole("menuitemradio", { name: "Request approval", exact: true }).click();
   await permissionTrigger.click();
   await expect(permissionMenu.getByRole("menuitemradio", { name: "Request approval", exact: true })).toBeChecked();

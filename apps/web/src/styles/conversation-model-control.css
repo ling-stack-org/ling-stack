@@ -225,18 +225,44 @@
 }
 
 .conversation-permission-menu {
-  width: min(272px, calc(100vw - 24px));
+  width: min(400px, calc(100vw - 24px));
 }
 
 .conversation-permission-menu .ling-ui-menu-radio-item {
   display: flex;
-  min-height: 36px;
+  min-height: 64px;
   align-items: center;
   gap: var(--ling-space-4);
 }
 
 .conversation-permission-menu .ling-ui-menu-radio-item > span {
   flex: 1;
+}
+
+.conversation-permission-menu .ling-ui-menu-radio-item > svg {
+  flex-shrink: 0;
+}
+
+.conversation-permission-option-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+  white-space: normal;
+}
+
+.conversation-permission-option-copy strong {
+  font-weight: 600;
+}
+
+.conversation-permission-option-copy small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-md);
+}
+
+.conversation-permission-trigger[data-full-access="true"],
+.conversation-permission-menu [data-full-access="true"] {
+  color: var(--ling-status-warning);
 }
 
 .conversation-permission-menu-heading {

@@ -60,7 +60,6 @@ export interface NormalConversationComposerProps {
   readonly attachmentCleanupFailures?: readonly import("../../shared/components/composer-pending-assets.js").AttachmentCleanupFailure[];
   readonly onRetryAttachmentCleanup?: (localId: string) => void | Promise<void>;
   readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
-  readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
   readonly onModelChange: (option: ConversationHomeModelOption) => void;
   readonly onThinkingLevelChange: (level: ProviderThinkingMode) => void;
   readonly onSubmit: () => void | Promise<void>;
@@ -90,7 +89,6 @@ export function NormalConversationComposer({
   onDraftChange,
   onModelChange,
   onOpenModelWorkbench,
-  onPermissionPresetChange,
   onRemoveAttachment,
   onRetryAttachment,
   attachmentCleanupFailures = [],
@@ -227,7 +225,6 @@ export function NormalConversationComposer({
             fullAccessConfirmed={fullAccessConfirmed}
             disabled={configurationLocked}
             onAuthorizationModeChange={onAuthorizationModeChange}
-            onPermissionPresetChange={onPermissionPresetChange}
           />
         </>
       )}
