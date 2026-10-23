@@ -26,7 +26,7 @@ function fixture(t, gaps = [], { limitations = [], material: additionalMaterials
   return { root, output, resources, manifest, material };
 }
 function rewriteChecksums(directory) {
-  const files = filesBelow(directory).filter(path => !path.endsWith("/SHA256SUMS.txt"));
+  const files = filesBelow(directory).filter(path => path !== join(directory, "SHA256SUMS.txt"));
   writeFileSync(join(directory, "SHA256SUMS.txt"), files.map(path => `${sha256(readFileSync(path))}  ${path.slice(directory.length + 1).replaceAll("\\", "/")}`).sort().join("\n") + "\n");
 }
 

@@ -43,3 +43,15 @@ actual Office compilation and the complete isolated Electron suite passed;
 the hosted compiler build and final archive verification remain separate
 required workflow steps. Developer ID, notarization, GUI acceptance, and new OS
 capability certification are outside this development review.
+
+After mainline PR #583 was incorporated, a separate deterministic generation
+comparison found changes in 55 existing locale inputs: the same seven file-preview
+messages were added to every locale, with no existing messages changed or removed.
+The fixed 1,500-input list and 41 roots are unchanged. The root reviewer checked
+every resulting digest and rebound those 55 entries plus the independently
+reviewed model-cache empty-lock recovery. That recovery only removes an empty
+owned lock with nonrecursive `rmdir`; competing live owner directories remain
+protected. Its regression first reproduced `cache_busy_timeout` under Windows
+directory-rename semantics and passed after the repair. The existing native,
+runtime, toolchain and Main-graph scope boundaries remain unchanged; the local-file
+IPC/preload/Web capability is outside this Office packaging review.

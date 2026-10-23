@@ -129,7 +129,12 @@ export function createTestsavantModelCache({ modelPin = pin, request = fetch, ti
       try {
         await directory(lock, false, true);
         const names = await readdir(lock);
-        if (!names.length) return; // Another recovery is between unique-owner unlink and rmdir.
+        if (!names.length) {
+          // A terminated writer/recovery may leave an empty lock. Nonrecursive
+          // removal cannot delete a competing writer's nonempty owner directory.
+          try { await rmdir(lock); } catch (error) { if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(error.code)) throw error; }
+          return;
+        }
         if (names.length !== 1 || !/^owner-[a-f0-9-]{36}\.json$/.test(names[0])) fail("cache_lock_invalid");
         const path = join(lock, names[0]), before = await lstat(path);
         if (!before.isFile() || before.isSymbolicLink() || before.size > 512 || await realpath(path) !== path) fail("cache_lock_invalid");

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import fsPromises, { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -100,4 +101,25 @@ test("a confirmed dead writer is recovered without deleting live or unrelated ow
   assert.deepEqual(await Promise.all([acquire(), acquire()]), [f.final, f.final]);
   assert.deepEqual((await readdir(f.models)).sort(), [unrelated, original.revision].sort());
   assert.equal(f.calls.length, 7);
+});
+
+test("an empty orphaned lock recovers when directory rename cannot replace an existing target", async t => {
+  const f = await fixture(t), lock = `${f.final}.lock`;
+  await mkdir(f.models, { recursive: true, mode: 0o700 });
+  await mkdir(lock, { mode: 0o700 });
+  const originalRename = fsPromises.rename;
+  // Exercise Windows directory-rename collisions on every native test host.
+  const rename = t.mock.method(fsPromises, "rename", async (from, to) => {
+    if (to === lock) {
+      const target = await lstat(to).catch(error => { if (error.code !== "ENOENT") throw error; });
+      if (target) throw Object.assign(new Error("Directory target already exists"), { code: "EPERM" });
+    }
+    return originalRename(from, to);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { rename.mock.restore(); syncBuiltinESMExports(); });
+  const acquire = () => createTestsavantModelCache({ ...f, pollMs: 1, timeoutMs: 1000 })(f.stateRoot);
+  assert.deepEqual(await Promise.all([acquire(), acquire()]), [f.final, f.final]);
+  assert.equal(f.calls.length, 7);
+  assert.deepEqual(await readdir(f.models), [original.revision]);
 });
