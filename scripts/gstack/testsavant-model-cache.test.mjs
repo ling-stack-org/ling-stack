@@ -97,8 +97,20 @@ test("a confirmed dead writer is recovered without deleting live or unrelated ow
   const abandoned = join(f.models, `.${original.revision}.${deadToken}.partial`);
   await mkdir(abandoned, { mode: 0o700 }); await writeFile(join(abandoned, "incomplete"), "do not publish");
   await mkdir(join(f.models, unrelated), { mode: 0o700 });
+  const realUnlink = fsPromises.unlink;
+  let sharingDenied = false;
+  const mocked = t.mock.method(fsPromises, "unlink", async path => {
+    if (path === join(lock, `owner-${deadToken}.json`) && !sharingDenied) {
+      sharingDenied = true;
+      throw Object.assign(new Error("Windows delete-pending sharing denial"), { code: "EPERM" });
+    }
+    return realUnlink(path);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { mocked.mock.restore(); syncBuiltinESMExports(); });
   const acquire = () => createTestsavantModelCache({ ...f, pollMs: 1 })(f.stateRoot);
   assert.deepEqual(await Promise.all([acquire(), acquire()]), [f.final, f.final]);
+  assert.equal(sharingDenied, true);
   assert.deepEqual((await readdir(f.models)).sort(), [unrelated, original.revision].sort());
   assert.equal(f.calls.length, 7);
 });
@@ -147,5 +159,104 @@ for (const replacement of ["removed", "new-owner"]) {
     assert.deepEqual((await readdir(f.models)).sort(), [original.revision,
       ...(replacement === "new-owner" ? [`${original.revision}.lock`] : [])].sort());
     if (replacement === "new-owner") assert.deepEqual(await readdir(lock), [`owner-${token}.json`]);
+  });
+}
+
+for (const operation of ["unlink", "rmdir"]) {
+  for (const persistent of [false, true]) {
+    test(`lock ${operation} handles ${persistent ? "persistent" : "transient"} Windows sharing denial`, async t => {
+      const f = await fixture(t), lock = `${f.final}.lock`, realOperation = fsPromises[operation];
+      let denials = 0;
+      const mocked = t.mock.method(fsPromises, operation, async path => {
+        if ((operation === "unlink" ? dirname(path) === lock : path === lock) && (persistent || denials === 0)) {
+          denials++;
+          throw Object.assign(new Error("Windows delete-pending sharing denial"), { code: "EPERM" });
+        }
+        return realOperation(path);
+      });
+      syncBuiltinESMExports();
+      t.after(() => { mocked.mock.restore(); syncBuiltinESMExports(); });
+      if (persistent) {
+        await assert.rejects(createTestsavantModelCache(f)(f.stateRoot), { code: "EPERM" });
+        assert.ok(denials > 1 && denials <= 8);
+      } else {
+        assert.equal(await createTestsavantModelCache(f)(f.stateRoot), f.final);
+        assert.equal(denials, 1);
+        assert.deepEqual(await readdir(f.models), [original.revision]);
+      }
+    });
+  }
+}
+
+test("dead-owner partial cleanup preserves persistent errors after releasing its lock", async t => {
+  const f = await fixture(t), token = randomUUID();
+  const child = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+  await new Promise(resolve => child.once("close", resolve));
+  assert.throws(() => process.kill(child.pid, 0), { code: "ESRCH" });
+  const lock = `${f.final}.lock`, abandoned = join(f.models, `.${original.revision}.${token}.partial`);
+  await mkdir(lock, { recursive: true, mode: 0o700 });
+  await writeFile(join(lock, `owner-${token}.json`), JSON.stringify({ pid: child.pid, token }));
+  await mkdir(abandoned, { mode: 0o700 });
+  const realRm = fsPromises.rm;
+  const mocked = t.mock.method(fsPromises, "rm", async (path, options) => {
+    if (path === abandoned) throw Object.assign(new Error("Persistent partial cleanup denial"), { code: "EPERM" });
+    return realRm(path, options);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { mocked.mock.restore(); syncBuiltinESMExports(); });
+  await assert.rejects(createTestsavantModelCache(f)(f.stateRoot), { code: "EPERM" });
+  assert.equal(f.calls.length, 0);
+  assert.deepEqual(await readdir(f.models), [`.${original.revision}.${token}.partial`]);
+});
+
+for (const persistent of [false, true]) {
+  test(`a vanished lock after rename collision ${persistent ? "preserves persistent denial" : "can be claimed on retry"}`, async t => {
+    const f = await fixture(t), lock = `${f.final}.lock`, realRename = fsPromises.rename;
+    let denials = 0;
+    const mocked = t.mock.method(fsPromises, "rename", async (from, to) => {
+      if (to === lock && (persistent || denials === 0)) {
+        denials++;
+        // Another recovery removed the collision target before exists(lock).
+        throw Object.assign(new Error("Collision target disappeared"), { code: "EPERM" });
+      }
+      return realRename(from, to);
+    });
+    syncBuiltinESMExports();
+    t.after(() => { mocked.mock.restore(); syncBuiltinESMExports(); });
+    if (persistent) {
+      await assert.rejects(createTestsavantModelCache(f)(f.stateRoot), { code: "EPERM" });
+      assert.ok(denials > 1 && denials <= 8);
+      assert.equal(f.calls.length, 0);
+    } else {
+      assert.equal(await createTestsavantModelCache(f)(f.stateRoot), f.final);
+      assert.equal(denials, 1);
+      assert.deepEqual(await readdir(f.models), [original.revision]);
+    }
+  });
+}
+
+for (const collision of ["lock-sharing-denial", "partial-disappeared"]) {
+  test(`dead-owner recovery handles ${collision} without losing cleanup`, async t => {
+    const f = await fixture(t), token = randomUUID();
+    const child = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+    await new Promise(resolve => child.once("close", resolve));
+    assert.throws(() => process.kill(child.pid, 0), { code: "ESRCH" });
+    const lock = `${f.final}.lock`, abandoned = join(f.models, `.${original.revision}.${token}.partial`);
+    await mkdir(lock, { recursive: true, mode: 0o700 });
+    await writeFile(join(lock, `owner-${token}.json`), JSON.stringify({ pid: child.pid, token }));
+    await mkdir(abandoned, { mode: 0o700 });
+    const operation = collision === "lock-sharing-denial" ? "rmdir" : "lstat", realOperation = fsPromises[operation], realRm = fsPromises.rm;
+    let calls = 0;
+    const mocked = t.mock.method(fsPromises, operation, async path => {
+      if (collision === "lock-sharing-denial" && path === lock && calls++ === 0) {
+        throw Object.assign(new Error("Windows delete-pending sharing denial"), { code: "EPERM" });
+      }
+      if (collision === "partial-disappeared" && path === abandoned && ++calls === 2) await realRm(abandoned, { recursive: true });
+      return realOperation(path);
+    });
+    syncBuiltinESMExports();
+    t.after(() => { mocked.mock.restore(); syncBuiltinESMExports(); });
+    assert.equal(await createTestsavantModelCache({ ...f, pollMs: 1 })(f.stateRoot), f.final);
+    assert.deepEqual(await readdir(f.models), [original.revision]);
   });
 }

@@ -1521,7 +1521,7 @@
     "packages/daemon/src/shared/html-text.ts": "7e1618867d99492f1fa3e4e2027215108581cad50ce88e4a6bdf39910703db4b",
     "apps/desktop/scripts/distribution/installer-builder.mjs": "5a57643811ead96ae8bf2ec27688eeaa85f6bf67075daf99c12fe85ba7dc9b4e",
     "apps/desktop/scripts/distribution/LingShell.nsh": "869fce8f300a4d3a752ea5dafec591cb15d9fc6bd996224b97f26e0bf751adf3",
-    "scripts/gstack/testsavant-model-cache.mjs": "2d0ad33958949acfa69816268b5328c2e25e1a818329b117ee5eec2c5c025896",
+    "scripts/gstack/testsavant-model-cache.mjs": "bef3800b4dc28cbb433cd8c73b05a9bac262d0ecce3097e540a2ba3ddc699fa3",
     "scripts/gstack/testsavant-model-pin.json": "811623586d295af6c9e378e414d31b755ae2247d8216818d9a24a9a33093e05b"
   },
   "headers": {

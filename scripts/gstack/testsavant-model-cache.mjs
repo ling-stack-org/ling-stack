@@ -11,6 +11,18 @@ const exists = path => lstat(path).then(() => true, error => { if (error.code ==
 const expectedPaths = ["config.json", "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "vocab.txt", "onnx/model.onnx", "README.md"];
 const hosts = new Set(["huggingface.co", "cas-bridge.xethub.hf.co", "cdn-lfs.hf.co", "cdn-lfs-us-1.hf.co", "us.aws.cdn.hf.co"]);
 
+// NTFS can briefly deny removal while another recovery holds a handle or its
+// deletion is pending. Retry only lock I/O, preserving persistent errors.
+async function retryLockIo(operation) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await operation(); }
+    catch (error) {
+      if (!["EPERM", "EACCES", "EBUSY"].includes(error.code) || attempt === 7) throw error;
+      await delay(25);
+    }
+  }
+}
+
 export function testsavantModelAcquisition(modelPin = pin) {
   if (modelPin.repository !== "testsavantai/prompt-injection-defender-small-v0-onnx" ||
     modelPin.revision !== "5bfc06f0b54950e6653f253eb7df1e3c9811b5cb" ||
@@ -124,35 +136,41 @@ export function createTestsavantModelCache({ modelPin = pin, request = fetch, ti
     const final = join(models, acquisition.revision), lock = join(models, `${acquisition.revision}.lock`);
     if (await exists(final)) return verifyTree(final, acquisition);
     const signal = AbortSignal.timeout(timeoutMs), token = randomUUID(), ownerName = `owner-${token}.json`;
-    let locked = false, temporary, lockIdentity, lockCandidate = join(models, `.${acquisition.revision}.${token}.lock-candidate`);
+    let locked = false, temporary, lockIdentity, vanishedLockRetries = 0, lockCandidate = join(models, `.${acquisition.revision}.${token}.lock-candidate`);
     const removeEmptyLock = async () => {
       try { await rmdir(lock); } catch (error) { if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(error.code)) throw error; }
     };
     const recoverDeadOwner = async () => {
-      try {
-        await directory(lock, false, true);
-        const names = await readdir(lock);
-        if (!names.length) {
-          // A terminated writer/recovery may leave an empty lock. Nonrecursive
-          // removal cannot delete a competing writer's nonempty owner directory.
+      const abandoned = new Set();
+      await retryLockIo(async () => {
+        try {
+          await directory(lock, false, true);
+          const names = await readdir(lock);
+          if (!names.length) {
+            // A terminated writer/recovery may leave an empty lock. Nonrecursive
+            // removal cannot delete a competing writer's nonempty owner directory.
+            await removeEmptyLock();
+            return;
+          }
+          if (names.length !== 1 || !/^owner-[a-f0-9-]{36}\.json$/.test(names[0])) fail("cache_lock_invalid");
+          const path = join(lock, names[0]), before = await lstat(path);
+          if (!before.isFile() || before.isSymbolicLink() || before.size > 512 || await realpath(path) !== path) fail("cache_lock_invalid");
+          const owner = JSON.parse(await readFile(path)), after = await lstat(path);
+          if (before.dev !== after.dev || before.ino !== after.ino || !Number.isSafeInteger(owner.pid) || owner.pid < 1 ||
+            names[0] !== `owner-${owner.token}.json` || !/^[a-f0-9-]{36}$/.test(owner.token)) fail("cache_lock_invalid");
+          try { process.kill(owner.pid, 0); return; }
+          catch (error) { if (error.code !== "ESRCH") return; }
+          abandoned.add(join(models, `.${acquisition.revision}.${owner.token}.partial`));
+          // Only the dead writer's unique owner filename is unlinked. A new
+          // writer's nonempty canonical directory cannot be removed by rmdir.
+          try { await unlink(path); } catch (error) { if (error.code !== "ENOENT") throw error; }
           await removeEmptyLock();
-          return;
-        }
-        if (names.length !== 1 || !/^owner-[a-f0-9-]{36}\.json$/.test(names[0])) fail("cache_lock_invalid");
-        const path = join(lock, names[0]), before = await lstat(path);
-        if (!before.isFile() || before.isSymbolicLink() || before.size > 512 || await realpath(path) !== path) fail("cache_lock_invalid");
-        const owner = JSON.parse(await readFile(path)), after = await lstat(path);
-        if (before.dev !== after.dev || before.ino !== after.ino || !Number.isSafeInteger(owner.pid) || owner.pid < 1 ||
-          names[0] !== `owner-${owner.token}.json` || !/^[a-f0-9-]{36}$/.test(owner.token)) fail("cache_lock_invalid");
-        try { process.kill(owner.pid, 0); return; }
-        catch (error) { if (error.code !== "ESRCH") return; }
-        // Only the dead writer's unique owner filename is unlinked. A new
-        // writer's nonempty canonical directory cannot be removed by rmdir.
-        try { await unlink(path); } catch (error) { if (error.code !== "ENOENT") throw error; }
-        await removeEmptyLock();
-        const abandoned = join(models, `.${acquisition.revision}.${owner.token}.partial`);
-        if (await exists(abandoned)) { await directory(abandoned, false, true); await rm(abandoned, { recursive: true }); }
-      } catch (error) { if (error.code !== "ENOENT") throw error; }
+        } catch (error) { if (error.code !== "ENOENT") throw error; }
+      });
+      for (const path of abandoned) {
+        try { if (await exists(path)) { await directory(path, false, true); await rm(path, { recursive: true }); } }
+        catch (error) { if (error.code !== "ENOENT") throw error; }
+      }
     };
     try {
       await mkdir(lockCandidate, { mode: 0o700 });
@@ -161,7 +179,12 @@ export function createTestsavantModelCache({ modelPin = pin, request = fetch, ti
       while (!locked) {
         try { await rename(lockCandidate, lock); lockCandidate = undefined; locked = true; lockIdentity = await directory(lock, false, true); }
         catch (error) {
-          if (!["EEXIST", "ENOTEMPTY", "EPERM", "EACCES"].includes(error.code) || !await exists(lock)) throw error;
+          if (!["EEXIST", "ENOTEMPTY", "EPERM", "EACCES"].includes(error.code)) throw error;
+          if (!await exists(lock)) {
+            if (++vanishedLockRetries === 8 || signal.aborted) throw error;
+            await delay(25); continue;
+          }
+          vanishedLockRetries = 0;
           await recoverDeadOwner();
           if (await exists(final)) return verifyTree(final, acquisition);
           if (signal.aborted) fail("cache_busy_timeout: another process is preparing the fixed model; retry after it completes");
@@ -194,7 +217,7 @@ export function createTestsavantModelCache({ modelPin = pin, request = fetch, ti
       if (locked) {
         const currentLock = await directory(lock, false, true);
         if (currentLock.dev !== lockIdentity?.dev || currentLock.ino !== lockIdentity?.ino) fail("cache_lock_changed");
-        await unlink(join(lock, ownerName)); await removeEmptyLock();
+        await retryLockIo(() => unlink(join(lock, ownerName))); await retryLockIo(removeEmptyLock);
       }
     }
   }

@@ -60,3 +60,20 @@ Forced owner-release interleavings also reproduced and then verified cleanup
 when another recovery removes the empty lock or replaces it with a live owner.
 All lock-removal sites share the same nonrecursive operation: an absent or
 nonempty directory is left alone, and unexpected filesystem failures still fail.
+
+Hosted Windows run 39954972186 then exposed NTFS delete-pending sharing denial
+while two recoveries released the same dead-owner lock. Recovery probes and
+owner release now retry only `EPERM`, `EACCES` and `EBUSY`, at most eight attempts
+with 25 ms between attempts. Each recovery repeats the original ownership
+checks; persistent denial retains its filesystem error. Forced transient and
+persistent denial regressions passed with the existing recovery/ownership
+suite (25 tests). The other 1,499 packaging inputs were independently checked
+unchanged before rebinding this cache implementation only. Abandoned partial
+directory cleanup stays outside the lock retry; a forced persistent cleanup
+denial failed before that separation and retains its original error afterward.
+
+Forced interleavings also cover the collision target disappearing before its
+lookup, another recovery deleting the same partial directory, and lock removal
+sharing denial after owner release. Confirmed dead-owner cleanup paths survive
+lock retries; only concurrent absence is tolerated during partial cleanup.
+Persistent claim/removal errors still fail after the bounded retry budget.
