@@ -51,7 +51,7 @@ for (const fixture of [
     await home.getByRole("button", { name: "Send" }).click();
     const conversationToolbar = page.getByRole("toolbar", { name: "Conversation workspace toolbar" });
     await expectToolbarContract(conversationToolbar, ["search", "summary", "terminal", "details"]);
-    const summary = conversationToolbar.getByRole("button", { name: "Summary" });
+    const summary = conversationToolbar.getByRole("button", { name: "Summary", exact: true });
     await summary.click();
     await expect(summary).toHaveAttribute("aria-pressed", "true");
     await expect(page.locator(".normal-conversation-summary-popover")).toBeVisible();

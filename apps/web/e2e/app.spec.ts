@@ -387,7 +387,7 @@ test("recent conversations only show records created from the conversation home"
   await expect(conversationToolbar.locator(".workspace-toolbar-action-label")).toHaveCount(0);
   await expect(conversationToolbar.getByRole("button", { name: "Search" })).toHaveClass(/workspace-toolbar-icon-button/);
   await expect(conversationToolbar.getByRole("button", { name: "Refresh" })).toHaveCount(0);
-  await expect(conversationToolbar.getByRole("button", { name: "Summary" })).toHaveClass(/workspace-toolbar-icon-button/);
+  await expect(conversationToolbar.getByRole("button", { name: "Summary", exact: true })).toHaveClass(/workspace-toolbar-icon-button/);
   await expect(conversationToolbar.getByRole("button", { name: "Terminal" })).toHaveClass(/workspace-toolbar-icon-button/);
   await expect(conversationToolbar.getByRole("button", { name: /^Review/ })).toHaveCount(0);
   await expect(conversationToolbar.getByRole("button", { name: /^Evidence/ })).toHaveCount(0);
@@ -395,7 +395,7 @@ test("recent conversations only show records created from the conversation home"
   const conversationDetailsButtonBox = await conversationToolbar.getByRole("button", { name: "Show details" }).boundingBox();
   expect(conversationDetailsButtonBox?.width ?? 0).toBeGreaterThanOrEqual(32);
   expect(conversationDetailsButtonBox?.height ?? 0).toBeGreaterThanOrEqual(32);
-  await conversationToolbar.getByRole("button", { name: "Summary" }).click();
+  await conversationToolbar.getByRole("button", { name: "Summary", exact: true }).click();
   await expect(page.locator(".normal-conversation-summary-popover")).toContainText("Workspace");
   await conversationToolbar.getByRole("button", { name: "Show details" }).click();
   const conversationDock = page.getByLabel("Conversation workspace dock");
@@ -415,11 +415,11 @@ test("recent conversations only show records created from the conversation home"
     const dockFrameBox = await page.locator(".normal-conversation-right-dock-frame").boundingBox();
     return summaryBox && dockFrameBox ? summaryBox.x + summaryBox.width <= dockFrameBox.x + 1 : false;
   }).toBe(true);
-  await conversationToolbar.getByRole("button", { name: "Summary" }).click();
+  await conversationToolbar.getByRole("button", { name: "Summary", exact: true }).click();
   await expect(conversationPage).toHaveClass(/summary-panel-collapsed/);
   await expect(conversationSummaryPanel).toHaveClass(/is-popover-collapsed/);
   await expect(conversationSummaryPanel).toHaveCount(0);
-  await conversationToolbar.getByRole("button", { name: "Summary" }).click();
+  await conversationToolbar.getByRole("button", { name: "Summary", exact: true }).click();
   await expect(conversationSummaryPanel).toBeVisible();
   await conversationToolbar.getByRole("button", { name: "Hide details" }).click();
   const conversationTopSummary = page.locator(".normal-conversation-summary-popover");
@@ -427,7 +427,7 @@ test("recent conversations only show records created from the conversation home"
   await expect(conversationTopSummary).toHaveAttribute("data-summary-placement-motion", "main->header");
   await expect(conversationDock).toHaveCount(0);
   await expect(conversationTopSummary).toContainText("Workspace");
-  await conversationToolbar.getByRole("button", { name: "Summary" }).click();
+  await conversationToolbar.getByRole("button", { name: "Summary", exact: true }).click();
   await conversationToolbar.getByRole("button", { name: "Terminal" }).click();
   await expect(page.getByLabel("Terminal session")).toBeVisible();
   await page.getByRole("button", { name: "Close terminal panel" }).click();
@@ -1997,50 +1997,35 @@ test("conversation home model picker uses the model workbench default without ch
   await navigation.getByRole("button", { name: "New conversation" }).click();
   const home = page.getByLabel("Conversation home");
   await expect(home.getByRole("button", { name: "Selected model gemini-2.5-pro" })).toBeVisible();
-  await expect(home.getByRole("button", { name: "Selected thinking mode Off" })).toBeVisible();
-  await home.getByRole("button", { name: "Selected thinking mode Off" }).click();
-  await expect(page.getByRole("menu", { name: "Thinking mode" }).getByRole("menuitemradio")).toHaveText(["Off", "Minimal", "Low", "Medium", "High", "XHigh"]);
-  await page.keyboard.press("Escape");
-
-  await home.getByRole("button", { name: "Selected model gemini-2.5-pro" }).click();
-  const modelMenu = page.locator(".conversation-model-menu");
-  await expect(modelMenu).toBeVisible();
-  await expect(modelMenu).toHaveAttribute("role", "menu");
+  const modelTrigger = home.getByRole("button", { name: "Selected model gemini-2.5-pro" });
+  await expect(modelTrigger).toContainText("Off");
+  await modelTrigger.click();
+  const reasoning = page.getByRole("dialog", { name: "Thinking mode" });
+  await expect(reasoning.getByRole("slider")).toHaveAttribute("max", "5");
+  await reasoning.getByRole("button", { name: "Model options" }).click();
+  const modelMenu = page.getByRole("dialog", { name: "Model options" });
   await expect(modelMenu.locator(".conversation-model-option")).toHaveCount(4);
   await expect(modelMenu.locator(".conversation-model-option").first()).toContainText("gemini-2.5-pro");
-  await expect(modelMenu.locator(".conversation-model-option").first()).toContainText("Default");
+  await expect(modelMenu.locator(".conversation-model-default-option")).toContainText("Default");
   await expect(modelMenu).not.toContainText("gpt-image-2");
-  await expect(modelMenu).not.toContainText("gemini/");
-  await expect(modelMenu).not.toContainText("anthropic/");
-
   const modelSearch = modelMenu.getByRole("textbox", { name: "Search models" });
-  await modelSearch.focus();
-  await expect.poll(() => modelMenu.locator(".conversation-model-search").evaluate((searchField) => {
-    const fieldRect = searchField.getBoundingClientRect();
-    const inputRect = searchField.querySelector("input")?.getBoundingClientRect();
-    if (!inputRect) {
-      return false;
-    }
-    return inputRect.left >= fieldRect.left &&
-      inputRect.right <= fieldRect.right &&
-      inputRect.top >= fieldRect.top &&
-      inputRect.bottom <= fieldRect.bottom;
-  })).toBe(true);
+  await expect(modelSearch).toBeFocused();
   await modelSearch.fill("gpt-4o");
   await expect(modelMenu.locator(".conversation-model-option")).toHaveCount(1);
-  await modelMenu.getByRole("menuitemradio", { name: /cliproxy-gpt-4o/ }).click();
+  await modelMenu.getByRole("button", { name: /cliproxy-gpt-4o/ }).click();
   await expect(home.getByRole("button", { name: "Selected model cliproxy-gpt-4o" })).toBeVisible();
-  await expect(home.getByRole("button", { name: /Selected thinking mode/ })).toHaveCount(0);
-
   await home.getByRole("button", { name: "Selected model cliproxy-gpt-4o" }).click();
+  await expect(modelMenu).toBeVisible();
+  await expect(modelMenu.getByRole("slider")).toHaveCount(0);
   await modelSearch.fill("sonnet");
-  await expect(modelMenu.locator(".conversation-model-option")).toHaveCount(1);
-  await expect(modelMenu.locator(".conversation-model-option")).toContainText("claude-sonnet-4");
-  await modelMenu.getByRole("menuitemradio", { name: /claude-sonnet-4/ }).click();
-  await expect(home.getByRole("button", { name: "Selected model claude-sonnet-4" })).toBeVisible();
-  await home.getByRole("button", { name: "Selected thinking mode Off" }).click();
-  await page.getByRole("menu", { name: "Thinking mode" }).getByRole("menuitemradio", { name: "High", exact: true }).click();
-  await expect(home.getByRole("button", { name: "Selected thinking mode High" })).toBeVisible();
+  await modelMenu.getByRole("button", { name: /claude-sonnet-4/ }).click();
+  const sonnet = home.getByRole("button", { name: "Selected model claude-sonnet-4" });
+  await sonnet.click();
+  await reasoning.getByRole("slider").focus();
+  await reasoning.getByRole("slider").press("End");
+  await reasoning.getByRole("slider").press("ArrowLeft");
+  await expect(sonnet).toContainText("High");
+  await page.keyboard.press("Escape");
 
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Use Sonnet for this conversation");
   await home.getByRole("button", { name: "Send" }).click();
@@ -2054,7 +2039,7 @@ test("conversation home model picker uses the model workbench default without ch
 
   await navigation.locator(".sidebar-recent-row").filter({ hasText: "Use Sonnet for this conversation" }).click();
   await expect(conversationPage.getByRole("button", { name: "Selected model claude-sonnet-4" })).toBeVisible();
-  await expect(conversationPage.getByRole("button", { name: "Selected thinking mode High" })).toBeVisible();
+  await expect(conversationPage.getByRole("button", { name: "Selected model claude-sonnet-4" })).toContainText("High");
 });
 
 test("settings keeps configuration tools embedded while Work Board stays hidden from global navigation", async ({ page }) => {

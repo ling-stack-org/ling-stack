@@ -109,12 +109,12 @@ test("new conversation metadata controls stay quiet and compact without a config
   await page.goto("/");
 
   const home = page.getByLabel("对话首页");
-  const permission = home.getByRole("button", { name: "已选择权限预设 工作区写入" });
+  const permission = home.getByRole("button", { name: "已选择权限预设 帮我审批" });
   const model = home.locator(".conversation-model-trigger");
   const shortcut = home.getByRole("button", { name: "创建 Team" });
   await expect(permission).toBeVisible();
   await expect(model).toBeVisible();
-  await expect(permission).toContainText("工作区写入");
+  await expect(permission).toContainText("帮我审批");
   await expect(model).toContainText("未选择聊天模型");
 
   const [permissionStyle, modelStyle, shortcutFontSize] = await Promise.all([

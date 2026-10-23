@@ -15,7 +15,9 @@ export function projectConversationContextCompactions(input: {
     if (item.kind !== "assistant_message" || item.workspaceId !== input.thread.workspaceId
       || item.threadId !== input.thread.id || !item.turnId) continue;
     const refs = item.domainRefs.filter(ref => ref.type === "run");
-    if (refs.length !== 1 || anchors.has(refs[0]!.id)) continue;
+    // Scope to the linked turn before retaining its earliest assistant message.
+    if (refs.length !== 1 || links.get(refs[0]!.id)?.turnId !== item.turnId
+      || anchors.has(refs[0]!.id)) continue;
     anchors.set(refs[0]!.id, item);
   }
   const output: ConversationContextCompactionRecord[] = [];

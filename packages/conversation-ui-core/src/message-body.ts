@@ -2,8 +2,10 @@ import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { trimBoundaryCharacters } from "./string-boundaries.js";
 
 export interface LocalFileReference {
+  readonly label?: string;
   readonly raw: string;
   readonly displayPath: string;
   readonly location?: string;
@@ -319,7 +321,7 @@ function convertInlineNodes(nodes: readonly MarkdownNode[], cwd?: string): Messa
         if (webLink?.href === destination) {
           tokens.push({ kind: "web_link", href: destination, label });
         } else if (isLikelyLocalPath(destination)) {
-          tokens.push({ kind: "local_file", reference: parseLocalFileReference(destination, cwd) });
+          tokens.push({ kind: "local_file", reference: { ...parseLocalFileReference(destination, cwd), label } });
         } else {
           tokens.push({ kind: "text", text: label });
         }
@@ -443,7 +445,7 @@ function readMarkdownLink(text: string, cwd?: string): { readonly token: Message
     return { token: { kind: "web_link", href: destination, label }, length: match[0].length };
   }
   if (isLikelyLocalPath(destination)) {
-    return { token: { kind: "local_file", reference: parseLocalFileReference(destination, cwd) }, length: match[0].length };
+    return { token: { kind: "local_file", reference: { ...parseLocalFileReference(destination, cwd), label } }, length: match[0].length };
   }
   return { token: { kind: "text", text: label }, length: match[0].length };
 }
@@ -521,11 +523,11 @@ function stripWrappingQuotes(value: string): string {
 }
 
 function trimTrailingUrlPunctuation(value: string): string {
-  return value.replace(/[),.;!?]+$/g, "");
+  return trimBoundaryCharacters(value, "),.;!?", "end");
 }
 
 function trimTrailingPathPunctuation(value: string): string {
-  return value.replace(/[),.;!?]+$/g, "");
+  return trimBoundaryCharacters(value, "),.;!?", "end");
 }
 
 function normalizePath(value: string): string {

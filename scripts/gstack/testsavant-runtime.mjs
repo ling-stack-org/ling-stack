@@ -22,12 +22,14 @@ export async function verifyTestsavantRuntimeFiles(modelRoot) {
   }
 }
 
-// Matches the frozen upstream preprocessing, including its entity order.
+// Matches the frozen upstream preprocessing while decoding each entity once.
 export function testsavantPlainText(input) {
   if (!input.includes("<")) return input;
   return input.replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"').replace(/\s+/g, " ").trim();
+    .replace(/&(?:nbsp|amp|lt|gt|quot);/g, entity => ({
+      "&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"',
+    })[entity] ?? entity)
+    .replace(/\s+/g, " ").trim();
 }
 
 export function planTestsavantWindows(ids) {

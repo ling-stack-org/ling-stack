@@ -6,6 +6,7 @@ import { parseDocument } from "yaml";
 import { buildSkillSourceContextFindings } from "./skill-source-health.js";
 import { parseSkillFrontMatter, previewSkillSourceDefinition, splitMarkdownFrontMatter } from "./skill-source-definition.js";
 import { selectActiveSkillSourceSnapshots } from "./skill-source-selection.js";
+import { asciiLowercase, collapseRepeatedCharacter, trimBoundaryCharacters } from "./string-boundaries.js";
 import type {
   CreateSkillSourceSnapshotInput,
   SkillAgentMetadata,
@@ -293,14 +294,10 @@ export async function previewGstackSkillSourceSync(input: PreviewGstackSkillSour
 }
 
 export function normalizeGstackSkillId(input: string): string {
-  return input
-    .trim()
-    .toLowerCase()
-    .replace(/^\/+|\/+$/g, "")
+  const normalized = trimBoundaryCharacters(input.trim().toLowerCase(), "/")
     .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
+    .replace(/[^a-z0-9._-]+/g, "-");
+  return trimBoundaryCharacters(collapseRepeatedCharacter(normalized, "-"), "-");
 }
 
 async function gstackRootFromRepoPath(repoPath: string, id?: string): Promise<SkillSourceScanRoot> {
@@ -513,10 +510,15 @@ function classifySkillSourceWarnings(markdown: string, sourceSizeBytes: number, 
     /\$GSTACK_BIN\b/,
     /\bgstack-/,
   ], "SKILL.md references host-specific gstack or Claude runtime behavior.");
-  addPatternWarning(warnings, markdown, "unsupported_tool", "warning", [
-    /\bmcp__[A-Za-z0-9_-]+__[A-Za-z0-9_-]+\b/,
-    /\bnative AUQ\b/i,
-  ], "SKILL.md references a tool surface that Ling may not expose directly.");
+  const unsupportedToolLine = findFirstMcpToolLine(markdown) ?? findFirstMatchingLine(markdown, /\bnative AUQ\b/i);
+  if (unsupportedToolLine !== undefined) {
+    warnings.push({
+      code: "unsupported_tool",
+      severity: "warning",
+      message: "SKILL.md references a tool surface that Ling may not expose directly.",
+      location: `SKILL.md:${unsupportedToolLine}`,
+    });
+  }
   addPatternWarning(warnings, markdown, "permission_like_instruction", "info", [
     /\b(approval bypass|bypass approval|ignore approval|grant .*tool|allowedTools|disallowedTools|permission gate)\b/i,
   ], "SKILL.md contains permission-like language that must not override Ling policy.");
@@ -609,7 +611,10 @@ export function buildSkillSourceSemanticProfile(input: {
     workflowVerbs: uniqueSortedClaims(extractClaims(input.markdown, workflowVerbPatterns)),
     stopGateCount: countPattern(input.markdown, /\b(STOP|approval gate|ask for approval|ask the user|confirm before|requires confirmation)\b/gi),
     approvalGateClaims: uniqueSortedClaims(extractClaims(input.markdown, approvalGatePatterns)),
-    toolClaims: uniqueSortedClaims(extractClaims(input.markdown, toolClaimPatterns)),
+    toolClaims: uniqueSortedClaims([
+      ...extractClaims(input.markdown, toolClaimPatterns),
+      ...extractMcpToolClaims(input.markdown),
+    ]),
     hostClaims: uniqueSortedClaims(extractClaims(input.markdown, hostClaimPatterns)),
     externalActionClaims: uniqueSortedClaims(extractClaims(input.markdown, externalActionPatterns)),
     destructiveClaims: uniqueSortedClaims(extractClaims(input.markdown, destructiveClaimPatterns)),
@@ -719,7 +724,7 @@ const approvalGatePatterns = [
 ] as const;
 
 const toolClaimPatterns = [
-  /\b(bash|shell|filesystem|computer-use|browser|playwright|apply_patch|mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_-]+|git|gh)\b/gi,
+  /\b(bash|shell|filesystem|computer-use|browser|playwright|apply_patch|git|gh)\b/gi,
 ] as const;
 
 const hostClaimPatterns = [
@@ -765,6 +770,46 @@ function extractClaims(markdown: string, patterns: readonly RegExp[]): string[] 
     }
   }
   return claims;
+}
+
+function extractMcpToolClaims(markdown: string): string[] {
+  const claims: string[] = [];
+  const lowerMarkdown = asciiLowercase(markdown);
+  for (let index = 0; index < markdown.length;) {
+    const start = lowerMarkdown.indexOf("mcp__", index);
+    if (start === -1) break;
+    if (isMcpToolCharacter(markdown[start - 1])) {
+      index = start + 1;
+      continue;
+    }
+    let end = start + "mcp__".length;
+    while (end < markdown.length && isMcpToolCharacter(markdown[end])) end += 1;
+    const candidate = markdown.slice(start, end);
+    const components = candidate.slice("mcp__".length);
+    const separator = components.indexOf("__", 1);
+    if (separator !== -1 && separator + 2 < components.length) claims.push(candidate.toLowerCase());
+    index = Math.max(end, start + 1);
+  }
+  return claims;
+}
+
+function findFirstMcpToolLine(markdown: string): number | undefined {
+  const claim = extractMcpToolClaims(markdown)[0];
+  if (!claim) return undefined;
+  const index = asciiLowercase(markdown).indexOf(claim);
+  if (index === -1) return undefined;
+  let line = 1;
+  for (let cursor = 0; cursor < index; cursor += 1) {
+    if (markdown[cursor] === "\n") line += 1;
+  }
+  return line;
+}
+
+function isMcpToolCharacter(value: string | undefined): boolean {
+  if (!value) return false;
+  const code = value.charCodeAt(0);
+  return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122) || value === "_" || value === "-";
 }
 
 function uniqueSortedClaims(values: readonly string[]): string[] {

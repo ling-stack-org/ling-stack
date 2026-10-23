@@ -1,3 +1,4 @@
+import { WorkSummaryPanel } from "../work-summary/WorkSummaryPanel.js";
 import type { CSSProperties, ReactNode } from "react";
 import { useI18n } from "../../../i18n.js";
 import { Popover, PopoverAnchor, PopoverContent } from "../../../shared/ui/index.js";
@@ -15,6 +16,7 @@ export interface ConversationSummaryRow {
 }
 
 export interface ConversationSummaryPopoverProps {
+  readonly onOpenChanges: (cwd: string) => void;
   readonly open: boolean;
   readonly title: string;
   readonly subtitle?: string;
@@ -36,6 +38,7 @@ export function ConversationSummaryPopover({
   dockMotion,
   motionState,
   onClose,
+  onOpenChanges,
 }: ConversationSummaryPopoverProps): React.JSX.Element {
   const { t } = useI18n();
   const resolvedClassName = [
@@ -67,6 +70,7 @@ export function ConversationSummaryPopover({
         onCloseAutoFocus={(event) => event.preventDefault()}
         onInteractOutside={(event) => event.preventDefault()}
       >
+        <WorkSummaryPanel visible={open} onClose={onClose} onOpenChanges={onOpenChanges}>
         <section className="attention-queue compact conversation-summary-popover" aria-label={title}>
           <div className="attention-section-head conversation-summary-head">
             <strong>{title}</strong>
@@ -102,6 +106,7 @@ export function ConversationSummaryPopover({
             )}
           </div>
         </section>
+        </WorkSummaryPanel>
       </PopoverContent>
     </Popover>
   );

@@ -11,6 +11,7 @@ import type {
 } from "./terminal-report-types.js";
 import { createTerminalReportId } from "./terminal-report-types.js";
 import { formatSynchronousCatalogMessage } from "@ling-stack/localization";
+import { extractWrappedSection, trimBoundaryCharacters } from "./string-boundaries.js";
 
 export interface BuildDeterministicTerminalReportInput {
   readonly id?: string;
@@ -113,10 +114,14 @@ export function buildDeterministicTerminalReportContent(snapshot: TerminalReport
  */
 function fallbackOutcomeTitle(snapshot: TerminalReportEvidenceSnapshot): string {
   const normalized = snapshot.objective.replace(/\s+/gu, " ").trim();
-  const wrapped = normalized.match(
-    /(?:原始请求|Original request):\s*(.+?)(?=\s+(?:Requested objective\b|No literal file content\b|已物化的执行操作\b|参与者操作归属\b|Permission boundary\b)|$)/iu,
-  )?.[1]?.trim();
-  const candidate = (wrapped || normalized).replace(/^\*+|\*+$/gu, "").trim();
+  const wrapped = extractWrappedSection(normalized, ["原始请求", "Original request"], [
+    "Requested objective",
+    "No literal file content",
+    "已物化的执行操作",
+    "参与者操作归属",
+    "Permission boundary",
+  ], ":", false);
+  const candidate = trimBoundaryCharacters(wrapped || normalized, "*").trim();
   const maxLength = 120;
   return candidate.length > maxLength ? `${candidate.slice(0, maxLength - 1).trimEnd()}…` : candidate;
 }

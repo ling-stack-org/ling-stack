@@ -8,6 +8,7 @@ export const conversationSummaryHysteresis = 12;
 
 export interface ConversationSummaryLayoutInput {
   readonly requestedOpen: boolean;
+  readonly allowOverlay?: boolean;
   readonly containerWidth: number;
   readonly dockVisible: boolean;
   readonly dockWidth: number;
@@ -27,6 +28,7 @@ export function resolveConversationSummaryLayout({
   dockVisible,
   dockWidth,
   wasVisible,
+  allowOverlay = false,
 }: ConversationSummaryLayoutInput): ConversationSummaryLayoutResolution {
   const dockReservation = dockVisible
     ? Math.max(0, dockWidth) + conversationSummaryDockHandleWidth
@@ -44,7 +46,11 @@ export function resolveConversationSummaryLayout({
   const threshold = wasVisible
     ? requiredWidth - conversationSummaryHysteresis
     : requiredWidth + conversationSummaryHysteresis;
-  const visible = containerWidth >= threshold;
+  const fits = containerWidth >= threshold;
+  if (!fits && allowOverlay && !dockVisible) {
+    return { visible: true, reserveWidth: 0, dockOffset: conversationSummaryGap, requiredWidth };
+  }
+  const visible = fits;
   return {
     visible,
     reserveWidth: visible ? conversationSummaryReserveWidth : 0,

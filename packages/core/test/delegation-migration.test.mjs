@@ -175,6 +175,8 @@ function removeDelegationOverlay(database) {
 
 /** Remove the row-free post-175 sidecars before their referenced 154/161 tables. */
 function removePost175HarnessOverlays(database) {
+  assert.equal(database.prepare("SELECT count(*) n FROM work_summary_pull_requests").get().n, 0);
+  database.exec("DROP TABLE work_summary_pull_requests; DELETE FROM schema_migrations WHERE version=188");
   assert.equal(database.prepare("SELECT count(*) n FROM run_final_settlements").get().n, 0);
   database.exec("DROP TABLE run_final_settlements; DELETE FROM schema_migrations WHERE version=187");
   assert.equal(database.prepare("SELECT count(*) n FROM run_suspension_delegated_starts").get().n, 0);
@@ -207,7 +209,7 @@ function removePost175HarnessOverlays(database) {
     DROP TABLE delegation_budget_charges;
     DROP TABLE delegation_budget_reservations;
     DROP TABLE delegation_root_budgets;
-    DELETE FROM schema_migrations WHERE version IN (176,177,178,179,180);`);
+    DELETE FROM schema_migrations WHERE version IN (176,177,178,179,180,189);`);
 }
 
 /** Removes only the row-free post-153 overlays so this fixture is a genuine schema153 database. */
@@ -252,7 +254,7 @@ test("delegation migration has the release schema 154 identity", () => {
   assert.equal(typeof applyDelegationMigration, "function");
 });
 
-test("real schema153 upgrades through187 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
+test("real schema153 upgrades through189 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
   const f = await fileFixture(t, "full-schema");
   const first = f.own(createSqliteRunStore(f.cwd));
   const channel = first.handle.createChannel({ name: "Legacy", boundPath: f.cwd }, now);
@@ -334,7 +336,8 @@ test("real schema153 upgrades through187 preserving historical SQL/markers/rows 
     "sqlite_autoindex_host_attempt_completions_1", "host_attempt_completion_immutable_identity",
     "host_attempt_completion_immutable_terminal"]);
   assert.deepEqual(schema(database).filter((row) => !row.tbl_name.startsWith("delegation_")
-    && !row.tbl_name.startsWith("native_") && !["run_terminal_intents", "run_suspensions", "run_suspension_stops", "run_suspension_root_activations", "run_suspension_root_starts",
+    && !row.tbl_name.startsWith("native_") && row.tbl_name !== "work_summary_pull_requests"
+    && !["run_terminal_intents", "run_suspensions", "run_suspension_stops", "run_suspension_root_activations", "run_suspension_root_starts",
       "run_suspension_delegated_activations", "run_suspension_delegated_starts", "run_final_settlements"].includes(row.tbl_name)
     && !isHarnessReliabilityOverlay(row)
     && !["mcp_authority_revisions", "ling_thread_proposed_plans", "teammate_direct_messages", "teammate_direct_reply_interventions"].includes(row.name)
@@ -357,7 +360,11 @@ test("real schema153 upgrades through187 preserving historical SQL/markers/rows 
   assert.deepEqual(directInterventionColumns.slice(0, oldDirectInterventionColumns.length), oldDirectInterventionColumns);
   assert.deepEqual(directInterventionColumns.slice(oldDirectInterventionColumns.length).map(column => column.name), ["source_attempt_id"]);
   assert.deepEqual(database.prepare("SELECT server_id, server_revision, tools_revision FROM mcp_authority_revisions ORDER BY server_id").all(), oldAuthorityRows);
-  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187) ORDER BY version").all(), oldMarkers);
+  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189) ORDER BY version").all(), oldMarkers);
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=188").get().name, "create_work_summary_pull_requests");
+  assert.deepEqual(database.prepare("PRAGMA table_info(work_summary_pull_requests)").all().map(column => column.name), ["url", "created_at"]);
+  assert.equal(database.prepare("SELECT count(*) n FROM work_summary_pull_requests").get().n, 0);
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=189").get().name, "durable_delegation_budget_authority_v1");
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=181").get().name, "create_host_run_terminal_intents_v1");
   assert.equal(database.prepare("SELECT count(*) n FROM run_terminal_intents").get().n, 0);
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=182").get().name, "create_host_run_suspensions_v1");

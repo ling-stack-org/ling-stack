@@ -98,6 +98,7 @@ import { readChannelProposedPlanMessage } from "./channel-proposed-plan-message.
 import { conversationTimelineItemsForModel } from "../../lib/conversation-work-cell.js";
 import type { WorkflowProgressModel } from "../../lib/workflow-progress.js";
 import { requestTimelineWorkspaceFileOpen } from "../../shared/conversation/timeline/workspace-file-capability.js";
+import { orderChannelTurnTimelineItems } from "./channel-turn-timeline-order.js";
 
 function channelMessageTimelineItem(
   message: ChannelMessage,
@@ -376,23 +377,11 @@ function channelTurnTimelineItems(
   const terminalReport = channelTurnTerminalReportTimelineItem(
     turn, terminalReportById.get(turn.operationCell?.terminalReportId ?? ""), conversationItems,
   );
-  const ordered = [...startNarration, ...uncoveredConversationItems, ...facts, ...reasoning, ...terminalNarration, ...(terminalReport ? [terminalReport] : [])]
-    .filter((item, index, all) => all.findIndex((candidate) => candidate.id === item.id) === index);
-  // The feed assigns a large base sequence per turn. Normalize the already
-  // projected turn-local order so equal legacy sequence values cannot reorder
-  // narration ahead of the source user message by string id.
-  return ordered.map((item, index) => {
-    // Part zero is the source message. Preserve contiguous fact positions in
-    // this explicit turn-local display order, including atoms inside batches,
-    // so shared disclosures can recognize adjacent operations after rebasing.
-    const position = { threadSequence: index + 1, partIndex: 1 };
-    if (item.kind === "commandBatch") return { ...item, ...position, batch: {
-      ...item.batch, commands: item.batch.commands.map((command, part) => ({ ...command, ...position, partIndex: part + 1 })),
-    } };
-    if (item.kind === "explorationBatch") return { ...item, ...position, batch: {
-      ...item.batch, children: item.batch.children.map((child, part) => ({ ...child, ...position, partIndex: part + 1 })),
-    } };
-    return { ...item, ...position };
+  return orderChannelTurnTimelineItems({
+    startNarration,
+    facts: [...uncoveredConversationItems, ...facts],
+    eventRows: reasoning,
+    terminalNarration: [...terminalNarration, ...(terminalReport ? [terminalReport] : [])],
   });
 }
 
@@ -1087,6 +1076,10 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         return teammate ? <TeammateAvatarView teammate={teammate} cwd={input.cwd} compact /> : <AvatarInitial label="A" tone="teal" />;
       },
       onOpenSourceRef: handleOpenTimelineSourceRef,
+      onOpenNativeFile: (localFile) => {
+        const target = { path: localFile.path, line: localFile.line, localFile };
+        input.onOpenTerminalReportFile(target);
+      },
       onOpenReview: input.onOpenReview,
       onInvokeProtocolAction: input.onInvokeProtocolAction,
       onDisclosureIntent: input.onTimelineDisclosureIntent,

@@ -33,6 +33,11 @@ test("default provider templates include Seedream live HTTP transport config", (
   assert.equal(seedream.enabled, false);
 });
 
+test("BFL edit capability inference handles long model identifiers", () => {
+  const model = `black-forest-labs/flux-${"flux-".repeat(20_000)}kontext-pro`;
+  assert.deepEqual(inferGenerationModelFamily(model)?.capabilities, ["image_generate", "image_edit"]);
+});
+
 test("official provider templates expose fixed default base URLs", () => {
   const templates = defaultProviderTemplates();
   const byId = new Map(templates.map((template) => [template.templateId, template]));

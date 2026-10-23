@@ -64,6 +64,7 @@ export interface WorkspaceRightDockPageRequest {
 }
 
 export interface WorkspaceRightDockFileTarget {
+  readonly localFile?: import("../../../../../desktop/shared/local-file-capabilities.js").DesktopLocalFilePreview;
   readonly cwd?: string;
   readonly path: string;
   readonly line?: number;
@@ -74,6 +75,7 @@ export interface WorkspaceRightDockFileTarget {
 }
 
 export interface WorkspaceRightDockReviewTarget {
+  readonly baseline?: "head";
   readonly cwd: string;
   readonly runId?: string;
   readonly path?: string;
@@ -250,9 +252,14 @@ export function WorkspaceRightDock({
         />
       ));
     }
-    if (requestedWorkspaceFile && (requestedWorkspaceFile.target.cwd || cwd)) {
+    if (requestedWorkspaceFile && (requestedWorkspaceFile.target.localFile || requestedWorkspaceFile.target.cwd || cwd)) {
       map.set(workspaceFileDetailSourceId(requestedWorkspaceFile.nonce), (
-        <DockWorkspaceFilePreview cwd={requestedWorkspaceFile.target.cwd ?? cwd ?? ""} target={requestedWorkspaceFile.target} />
+        <DockWorkspaceFilePreview cwd={requestedWorkspaceFile.target.cwd ?? cwd ?? ""} target={requestedWorkspaceFile.target}
+          onNavigateLocalFile={(localFile) => {
+            const target = { ...requestedWorkspaceFile.target, path: localFile.path, line: localFile.line, localFile };
+            setRequestedWorkspaceFile({ ...requestedWorkspaceFile, target });
+            setStack([createDockPageEntry({ page: "detail", title: localFile.name, subtitle: localFile.path, sourceId: workspaceFileDetailSourceId(requestedWorkspaceFile.nonce) })]);
+          }} />
       ));
     }
     for (const plan of proposedPlans) {
@@ -344,7 +351,7 @@ export function WorkspaceRightDock({
     setWorkspaceChanges((current) => current?.cwd === effectiveReviewCwd ? current : undefined);
     setWorkspaceChangesLoading(true);
     setWorkspaceChangesError("");
-    void getWorkspaceChanges(effectiveReviewCwd).then((response) => {
+    void getWorkspaceChanges(effectiveReviewCwd, requestedWorkspaceReview?.baseline).then((response) => {
       if (!cancelled) {
         setWorkspaceChanges(response);
       }
@@ -361,7 +368,7 @@ export function WorkspaceRightDock({
     return () => {
       cancelled = true;
     };
-  }, [effectiveReviewCwd, reviewPageActive, workspaceChangesRefreshKey, requestedWorkspaceReview?.scope?.kind, requestedWorkspaceReview?.scope?.id]);
+  }, [effectiveReviewCwd, reviewPageActive, workspaceChangesRefreshKey, requestedWorkspaceReview?.baseline, requestedWorkspaceReview?.scope?.kind, requestedWorkspaceReview?.scope?.id]);
 
   useEffect(() => {
     if (!cwd) {

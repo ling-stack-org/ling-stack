@@ -163,7 +163,7 @@ test("1280x800 Ling Dark keeps Normal and Teammate command menus and focus conta
 
   const normalPermission = normalComposer.getByRole("button", { name: /Selected permission preset/u });
   await normalPermission.click();
-  const normalMenu = permissionMenu(page);
+  const normalMenu = page.getByRole("menu").filter({ has: page.getByRole("menuitemradio", { name: "Request approval", exact: true }) });
   await expect(normalMenu).toBeVisible();
   await expectOverlayContained(page, normalMenu);
   await page.keyboard.press("Escape");

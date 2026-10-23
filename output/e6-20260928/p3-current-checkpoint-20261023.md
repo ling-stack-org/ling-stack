@@ -4,6 +4,29 @@ This is the concise current entry. Older append-only records are history, not a 
 
 ## Superseding checkpoint — 2026-10-24
 
+### Latest actual integration results (supersedes next older bullets)
+
+- The merge of remote main `7bd33739852cec139822b33e12b4f8189b3964de` is resolved
+  with both E6 and main changes retained. Historical migration176 is no longer
+  reassigned: canonical188/189 append verified work-summary/budget markers.
+  All original176 rows and ledger/PR binding facts are preserved. Invalid
+  historical CHECK, lineage or original cap data is rejected, not rewritten.
+- Final migration/writer/binding regression118/118, shared UI135/135,
+  post-HTML Daemon adjacency27/27 and Office authored-source guard1346/1346 all
+  returned actual exit0, no skips. Core/Daemon/Web builds pass. Independent
+  migration69/69 and custody9/9 pass; detailed report closes its3 findings.
+- New main introduced a malformed HTML quadratic scan; it was independently
+  reproduced, has a worker-budget RED and a cursor-progress fix with GREEN.
+  Final Daemon content re-review is pending. No new model/GUI result is claimed.
+- Fixed Office list explicitly adds9 new runtime imports (1603 total). New
+  hashes are NOT applied to the formal manifest yet; the source reader must
+  remain fail-closed until applicable content reviews and frozen packet exist.
+- DMG independent review and Core/Provider main-delta independent content review
+  are still pending. Next: collect them, save/push the merge checkpoint, freeze
+  only exact reviewed inputs, then run the original QA package lane once and
+  continue the remaining real-client private/channel/recovery cases. Do not
+  rebuild accepted P1 resources or repeat accepted N02/N03/timing/copy cases.
+
 - `2adfab1c3f68a1031026561035b3e46d2ec6a476` is pushed to the original branch;
   no E6 PR or main merge has occurred. Prior sections below retain historical facts.
 - Reviewed P3 manifest/application and packet were prepared against that checkpoint.

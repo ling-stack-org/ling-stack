@@ -144,3 +144,23 @@ test("message body collects unique file references from nested structured blocks
     "docs/design/conversation-shared-capabilities.md",
   ]);
 });
+
+test("local Markdown links retain the authored label and paths containing spaces and Chinese", () => {
+  const blocks = parseMessageBody("[下载工程包](</Users/test/光明乳业/delivery/新版 工程.zip>)", "/workspace");
+  const reference = collectLocalFileReferences(blocks)[0];
+  assert.equal(reference.label, "下载工程包");
+  assert.equal(reference.raw, "/Users/test/光明乳业/delivery/新版 工程.zip");
+  assert.equal(reference.insideWorkspace, false);
+  const inline = splitInlineTokens("[source](/workspace/src/main.py:12)", "/workspace").find((token) => token.kind === "local_file");
+  assert.equal(inline.reference.label, "source");
+  assert.equal(inline.reference.location, ":12");
+});
+
+test("message tokenization trims long punctuation runs in linear boundary helpers", () => {
+  const punctuation = "!".repeat(100_000);
+  const tokens = splitInlineTokens(`https://example.com/docs${punctuation} src/index.ts${punctuation}`, "/workspace/ling-stack");
+  const link = tokens.find((token) => token.kind === "web_link");
+  const file = tokens.find((token) => token.kind === "local_file");
+  assert.equal(link?.kind === "web_link" ? link.href : undefined, "https://example.com/docs");
+  assert.equal(file?.kind === "local_file" ? file.reference.displayPath : undefined, "src/index.ts");
+});

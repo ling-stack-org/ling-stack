@@ -203,6 +203,7 @@ runner integrations live under `packages/`.
 
 - [Contributing](CONTRIBUTING.md): setup, focused checks, and pull request expectations.
 - [Architecture](docs/architecture.md) and [Daemon API](docs/daemon-api.md): system boundaries.
+- [Work summary](docs/features/work-summary.md) (Chinese): shared session, change, commit, and pull request summaries.
 - [Design index](docs/design/README.md) and [Implementation Status](docs/design/implementation-status.md): maintained contracts and acceptance gates.
 - [Provider adapters](docs/provider-adapters.md) and [Pi integration](docs/pi-coding-agent-integration.md): model and runtime integration.
 - [Release policy](docs/release/README.md), [Changelog](CHANGELOG.md), and [Third-party notices](THIRD_PARTY_NOTICES.md): publication and licensing.

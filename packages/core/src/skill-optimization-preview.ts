@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { buildSkillSourceContextFindings } from "./skill-source-health.js";
+import { parseSkillFrontMatter } from "./skill-source-definition.js";
 import type {
   SkillCompiledRuntimeView,
   SkillCompiledSourceMapEntry,
@@ -264,20 +265,11 @@ function findRoutingDescription(snapshot: SkillSourceSnapshot): string | undefin
 }
 
 function parseFrontMatterName(markdown: string): string | undefined {
-  return parseFrontMatterField(markdown, "name");
+  return parseSkillFrontMatter(markdown).frontMatter.name;
 }
 
 function parseFrontMatterDescription(markdown: string): string | undefined {
-  return parseFrontMatterField(markdown, "description");
-}
-
-function parseFrontMatterField(markdown: string, field: string): string | undefined {
-  const frontMatter = /^---\n([\s\S]*?)\n---/u.exec(markdown)?.[1];
-  if (!frontMatter) {
-    return undefined;
-  }
-  const match = new RegExp(`^${field}:\\s*["']?(.+?)["']?\\s*$`, "imu").exec(frontMatter)?.[1];
-  return match && match !== "|" && match !== ">" ? match : undefined;
+  return parseSkillFrontMatter(markdown).frontMatter.description;
 }
 
 function estimateOriginalTokens(snapshot: SkillSourceSnapshot): number {

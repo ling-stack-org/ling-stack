@@ -5,6 +5,7 @@ import type {
   MemorySourceRef,
 } from "./memory-types.js";
 import { DEFAULT_WORKSPACE_ID } from "./workspace-types.js";
+import { trimBoundaryCharacters } from "./string-boundaries.js";
 
 export interface MemoryMarkdownImportOptions {
   readonly workspaceId?: string;
@@ -374,7 +375,7 @@ function importSourceRefId(sourceId: string, itemId: string): string {
 }
 
 function sanitizeSourceId(value: string): string {
-  const sanitized = value.trim().replace(/[^A-Za-z0-9._:-]+/g, "_").replace(/^_+|_+$/g, "");
+  const sanitized = trimBoundaryCharacters(value.trim().replace(/[^A-Za-z0-9._:-]+/g, "_"), "_");
   return sanitized || "memory-markdown-import";
 }
 

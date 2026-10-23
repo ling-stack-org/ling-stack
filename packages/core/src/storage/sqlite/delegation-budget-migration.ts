@@ -1,8 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
+import { mapDelegationRootBudget, mapDelegationBudgetReservation, mapDelegationBudgetCharge } from "./delegation-budget-rows.js";
 
-// Native execution occupies 169–175. Never change migration 154's contract.
-export const DELEGATION_BUDGET_MIGRATION_VERSION = 176;
+// Both main work-summary and the E6 ledger historically used176. Append a
+// canonical marker without deleting or rewriting either branch's old history.
+export const DELEGATION_BUDGET_MIGRATION_VERSION = 189;
 export const DELEGATION_BUDGET_MIGRATION_NAME = "durable_delegation_budget_authority_v1";
 
 interface Definition { readonly type: "table" | "index" | "trigger"; readonly name: string; readonly table: string; readonly sql: string }
@@ -160,27 +162,32 @@ export function applyDelegationBudgetMigration(input: {
 }): boolean {
   const db = input.database;
   const recorded = marker(db);
-  if (recorded !== input.hasMigration(DELEGATION_BUDGET_MIGRATION_VERSION)) throw new Error("delegation.budget_migration_marker_conflict");
-  const missing = inspect(db, recorded);
-  if (recorded && !missing.length) { assertData(db); return false; }
+  if (recorded.canonical !== input.hasMigration(DELEGATION_BUDGET_MIGRATION_VERSION)) throw new Error("delegation.budget_migration_marker_conflict");
+  const missing = inspect(db, recorded.canonical || recorded.legacy);
+  if (recorded.canonical && !missing.length) { assertData(db); return false; }
   // A rejected nested BEGIN never permits this migration to roll back its caller.
   db.exec("BEGIN IMMEDIATE");
   try {
     const current = marker(db);
-    for (const entry of inspect(db, current)) db.exec(entry.sql);
+    for (const entry of inspect(db, current.canonical || current.legacy)) db.exec(entry.sql);
     assertData(db);
-    if (!current) input.recordMigration(DELEGATION_BUDGET_MIGRATION_VERSION, DELEGATION_BUDGET_MIGRATION_NAME);
-    if (!marker(db) || !input.hasMigration(DELEGATION_BUDGET_MIGRATION_VERSION) || inspect(db, true).length) throw new Error("delegation.budget_migration_postcondition");
+    if (!current.canonical) input.recordMigration(DELEGATION_BUDGET_MIGRATION_VERSION, DELEGATION_BUDGET_MIGRATION_NAME);
+    if (!marker(db).canonical || !input.hasMigration(DELEGATION_BUDGET_MIGRATION_VERSION) || inspect(db, true).length) throw new Error("delegation.budget_migration_postcondition");
     db.exec("COMMIT");
     return true;
   } catch (error) { rollbackOwnedSqliteTransaction(db); throw error; }
 }
 
-function marker(db: DatabaseSync): boolean {
-  const rows = db.prepare("SELECT version,name FROM schema_migrations WHERE version=? OR name=?")
+function marker(db: DatabaseSync): { readonly canonical: boolean; readonly legacy: boolean } {
+  const rows = db.prepare("SELECT version,name FROM schema_migrations WHERE version=176 OR version=? OR name=?")
     .all(DELEGATION_BUDGET_MIGRATION_VERSION, DELEGATION_BUDGET_MIGRATION_NAME);
-  if (rows.length > 1 || rows.some(row => row.version !== DELEGATION_BUDGET_MIGRATION_VERSION || row.name !== DELEGATION_BUDGET_MIGRATION_NAME)) throw new Error("delegation.budget_migration_marker_conflict");
-  return rows.length === 1;
+  let canonical = false, legacy = false;
+  for (const row of rows) {
+    if (row.version === DELEGATION_BUDGET_MIGRATION_VERSION && row.name === DELEGATION_BUDGET_MIGRATION_NAME) canonical = true;
+    else if (row.version === 176 && row.name === DELEGATION_BUDGET_MIGRATION_NAME) legacy = true;
+    else if (row.version !== 176 || row.name !== "create_work_summary_pull_requests") throw new Error("delegation.budget_migration_marker_conflict");
+  }
+  return { canonical, legacy };
 }
 function normalize(sql: string): string {
   return sql.trim().replace(/;$/u, "").replace(/'[^']*(?:''[^']*)*'|\s+/gu, token => token.startsWith("'") ? token : " ");
@@ -200,7 +207,56 @@ function inspect(db: DatabaseSync, recorded: boolean): Definition[] {
   return missing;
 }
 function assertData(db: DatabaseSync): void {
-  for (const { name } of tables) {
+  const parsers = [mapDelegationRootBudget, mapDelegationBudgetReservation, mapDelegationBudgetCharge] as const;
+  for (const [index, { name }] of tables.entries()) {
     if (db.prepare(`PRAGMA foreign_key_check(${name})`).all().length) throw new Error(`delegation.budget_migration_foreign_key:${name}`);
+    const integrity = db.prepare(`PRAGMA integrity_check(${name})`).all();
+    if (integrity.length !== 1 || integrity[0]?.integrity_check !== "ok") throw new Error(`delegation.budget_migration_integrity:${name}`);
+    // Reuse the runtime readers, including stricter timestamp/settlement rules.
+    // Stream rows so opening a large historical ledger does not materialize it.
+    for (const row of db.prepare(`SELECT * FROM ${name}`).iterate()) {
+      try { parsers[index]!(row); }
+      catch (cause) { throw new Error(`delegation.budget_migration_integrity:${name}`, { cause }); }
+    }
+  }
+  const within = (value: string, limit: string): string => `(${limit} IS NULL OR (${value} IS NOT NULL AND ${value}<=${limit}))`;
+  const lineageChecks = [
+    ["root", `SELECT 1 FROM delegation_root_budgets b WHERE NOT EXISTS (
+      SELECT 1 FROM run_sessions r JOIN artifacts a ON a.id=b.authority_artifact_id
+      WHERE r.id=b.root_run_id AND r.parent_run_id IS NULL AND a.run_id=b.root_run_id
+        AND (b.price_artifact_id IS NULL OR EXISTS (
+          SELECT 1 FROM artifacts p WHERE p.id=b.price_artifact_id AND p.run_id=b.root_run_id))) LIMIT 1`],
+    ["reservation", `SELECT 1 FROM delegation_budget_reservations b WHERE NOT EXISTS (
+      SELECT 1 FROM delegation_steps s JOIN run_sessions child ON child.id=b.child_run_id
+      JOIN delegation_root_budgets root ON root.root_run_id=b.root_run_id
+      WHERE s.id=b.delegation_step_id AND s.root_run_id=b.root_run_id
+        AND child.parent_run_id=s.parent_run_id AND (s.child_run_id IS NULL OR s.child_run_id=b.child_run_id)
+        AND b.token_reserved IS s.token_budget AND b.cost_reserved_micros IS s.cost_budget_micros
+        AND b.created_at>=root.frozen_at AND b.deadline_at<=root.deadline_at
+        AND ${within("b.token_reserved", "root.token_budget")} AND ${within("b.cost_reserved_micros", "root.cost_budget_micros")}
+        AND (b.cost_reserved_micros IS NULL OR root.price_artifact_id IS NOT NULL)
+        AND ((b.parent_reservation_id IS NULL AND s.parent_delegation_step_id IS NULL AND s.parent_run_id=b.root_run_id AND s.depth=1)
+          OR EXISTS (SELECT 1 FROM delegation_budget_reservations p
+            JOIN delegation_steps ps ON ps.id=p.delegation_step_id
+            WHERE p.id=b.parent_reservation_id AND p.id<>b.id AND p.root_run_id=b.root_run_id
+              AND p.delegation_step_id=s.parent_delegation_step_id AND p.child_run_id=s.parent_run_id
+              AND s.depth=ps.depth+1 AND b.deadline_at<=p.deadline_at
+              AND ${within("b.token_reserved", "p.token_reserved")} AND ${within("b.cost_reserved_micros", "p.cost_reserved_micros")}))) LIMIT 1`],
+    ["charge", `SELECT 1 FROM delegation_budget_charges c WHERE NOT EXISTS (
+      SELECT 1 FROM run_sessions r JOIN work_unit_attempts a ON a.work_unit_id=r.work_unit_id
+      JOIN delegation_root_budgets root ON root.root_run_id=c.root_run_id
+      WHERE r.id=c.run_id AND a.id=c.attempt_id
+        AND c.created_at>=root.frozen_at AND c.created_at<root.deadline_at
+        AND (c.price_artifact_id IS NULL OR (c.price_artifact_id=root.price_artifact_id AND c.price_digest=root.price_digest))
+        AND ((c.reservation_id IS NULL AND c.run_id=c.root_run_id
+            AND ${within("c.reserved_tokens", "root.token_budget")} AND ${within("c.reserved_cost_micros", "root.cost_budget_micros")})
+          OR EXISTS (SELECT 1 FROM delegation_budget_reservations p WHERE p.id=c.reservation_id
+            AND p.root_run_id=c.root_run_id AND p.child_run_id=c.run_id AND c.created_at<p.deadline_at
+            AND ${within("c.reserved_tokens", "p.token_reserved")} AND ${within("c.reserved_cost_micros", "p.cost_reserved_micros")}))) LIMIT 1`],
+  ] as const;
+  // Only persistent relationships: a legitimate historical step/parent may now
+  // be terminal, and an unclaimed child still has a NULL step binding.
+  for (const [kind, sql] of lineageChecks) {
+    if (db.prepare(sql).get()) throw new Error(`delegation.budget_migration_lineage:${kind}`);
   }
 }

@@ -84,7 +84,7 @@ test("T13-O.25-C dark reduced-motion Summary yields to the Channel Dock without 
   await openEngineeringChannel(page);
 
   const toolbar = page.getByRole("toolbar", { name: "Workspace task toolbar" });
-  const summaryButton = toolbar.getByRole("button", { name: "Summary" });
+  const summaryButton = toolbar.getByRole("button", { name: "Summary", exact: true });
   const detailsButton = toolbar.getByRole("button", { name: "Show details" });
   await assertMinimumHitAreas(toolbar.locator("button:visible"));
   await assertFocusedControlContained(detailsButton, toolbar);

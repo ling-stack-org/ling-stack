@@ -12,9 +12,9 @@ import type { SqliteRunSuspensionStartStore } from "./storage/sqlite/run-suspens
 import type { SqliteRunSuspensionDelegatedStore } from "./storage/sqlite/run-suspension-delegated-store.js";
 import type { SqliteRunFinalSettlementStore } from "./storage/sqlite/run-final-settlement-store.js";
 import type { RunFinalSettlementObservationV1 } from "./run-final-settlement-types.js";
+import type { DelegationHostStoreBinding } from "./delegation-host-store-binding-types.js";
 
-declare const bindingBrand: unique symbol;
-export interface DelegationHostStoreBinding { readonly [bindingBrand]: true }
+export type { DelegationHostStoreBinding } from "./delegation-host-store-binding-types.js";
 
 /** Startup-only mutation custody. Not part of RunStore or a serialized route. */
 export type DelegationHostWriter = Pick<SqliteDelegationWriteStore,

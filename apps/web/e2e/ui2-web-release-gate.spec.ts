@@ -204,7 +204,7 @@ test("WEB-REL-02 Channel representative surface", async ({ page }) => {
   await page.goto("/");
   await openEngineeringChannel(page);
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
-  const summary = page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary" });
+  const summary = page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary", exact: true });
   await exerciseKeyboardFocus(summary);
   await finishScenario(page, scenarios.channel, runtime);
 });

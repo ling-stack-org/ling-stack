@@ -414,6 +414,23 @@ test("Office review closure pins the Broker command result trust boundary", () =
     "packages/daemon/src/features/harness/tool-execution/broker-command-result.ts"), true);
 });
 
+// Regression: P3-MAIN-CLOSURE — imported main leaves must be reviewed authored inputs.
+// Found by /qa independent AST audit on 2026-10-24
+// Report: output/e6-20260928/p3-main-office-closure-audit-20261024.md
+test("Office review closure pins main work-summary and text-boundary runtime leaves", () => {
+  for (const path of [
+    "packages/core/src/storage/sqlite/work-summary-migration.ts",
+    "packages/core/src/storage/sqlite/work-summary-store.ts",
+    "packages/core/src/string-boundaries.ts",
+    "packages/daemon/src/features/work-summary/cache.ts",
+    "packages/daemon/src/features/work-summary/git-summary.ts",
+    "packages/daemon/src/features/work-summary/pull-requests.ts",
+    "packages/daemon/src/features/work-summary/routes.ts",
+    "packages/daemon/src/features/work-summary/service.ts",
+    "packages/daemon/src/shared/html-text.ts",
+  ]) assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path), true, path);
+});
+
 test("Office fixed fresh daemon must not consume a stale compiled bridge with unchanged reviewed TS (real esbuild, synthetic native only)", {
   skip: process.platform !== "darwin" || process.arch !== "arm64",
 }, async t => {

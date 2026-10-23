@@ -112,6 +112,35 @@ test("normal conversation keeps safe thinking visible and compaction independent
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
     localStorage.setItem("ling-stack.themePreference", "light");
+    const subscribers = new Set<EventTarget>();
+    class TestEventSource extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      readonly CONNECTING = 0;
+      readonly OPEN = 1;
+      readonly CLOSED = 2;
+      readonly url: string;
+      readonly withCredentials = false;
+      readyState = 1;
+      onopen = null;
+      onmessage = null;
+      onerror = null;
+      constructor(url: string | URL) { super(); this.url = String(url); subscribers.add(this); }
+      close() { this.readyState = 2; subscribers.delete(this); }
+    }
+    const emit = (name: string, data: unknown) => subscribers.forEach(source =>
+      source.dispatchEvent(new MessageEvent(name, { data: JSON.stringify(data) })));
+    let seq = 0;
+    Object.defineProperty(globalThis, "EventSource", { configurable: true, value: TestEventSource });
+    Object.defineProperty(globalThis, "__activityStream", { value: {
+      count: () => subscribers.size,
+      ready: () => emit("control_plane_replay_ready", { disposition: "complete", requestedAfterSeq: 0,
+        replayFloorSeq: 0, upperBoundSeq: 0, nextAfterSeq: 0 }),
+      refresh: (runId: string) => emit("control_plane_event", { seq: ++seq, workspaceId: "workspace_default",
+        cwd: "/workspace", ts: "2026-07-24T02:00:06.000Z", domain: "runs", entityType: "context_compaction",
+        entityId: runId, action: "context_compaction.revised", data: { runId } }),
+    } });
   });
   const state = createBaseState({ approvalStatus: "expired" });
   const title = installNormalWorkCellFixture(state);
@@ -121,23 +150,30 @@ test("normal conversation keeps safe thinking visible and compaction independent
   const anchorItemId = `conversation-user:${turn.id}`;
   state.terminalReports = [];
   state.executionActions = operations({ ...state.executionActions[0]!, sourceRefs: [{ kind: "conversation_item", id: anchorItemId }] }, "search");
-  state.runs = state.runs.map(run => run.id === runId ? { ...run, status: "running", createdAt: "2026-07-24T02:00:01.000Z", endedAt: undefined } : run);
+  state.runs = state.runs.map(run => run.id === runId ? { ...run, status: "running", createdAt: "2026-07-24T02:00:01.000Z",
+    updatedAt: "2026-07-24T02:00:01.000Z", endedAt: undefined } : run);
   const assistantId = `conversation-assistant:${turn.id}`;
   const ownership = { workspaceId: "workspace_default", threadId: thread.id, turnId: turn.id, runId,
     attemptId: state.executionActions[0]!.attemptId!, participantId: "ling", anchorItemId: assistantId };
   const refs = [{ kind: "conversation_item", id: assistantId }, { kind: "run", id: runId },
     { kind: "attempt", id: ownership.attemptId }, { kind: "participant", id: ownership.participantId }];
   const thinking = "先核对实际操作的归属，再检查连续记录的分类。\n\n读取、编辑和命令分别保留原始详情；完成后统一整理过程，最终回复继续正常展示。";
-  let compacted = false;
+  let compactionStatus = "running";
+  let compactionRevision = 30;
   await mockDaemon(page, state);
-  await page.route(new RegExp(`/conversations/${thread.id}(?:\\?.*)?$`), route => route.fulfill({ json: {
-    ...buildMockConversationDetail(state, cwd, thread),
+  await page.route(new RegExp(`/conversations/${thread.id}(?:\\?.*)?$`), route => {
+    const detail = buildMockConversationDetail(state, cwd, thread);
+    return route.fulfill({ json: {
+    ...detail,
+    // The mock Host advances item revisions when pending delivery becomes committed.
+    conversationItems: (detail.conversationItems as Record<string, unknown>[]).map(item => ({ ...item, revision: compactionRevision })),
     reasoningSummaries: [{ ...ownership, id: "safe-thinking", revision: 15, eventId: "safe-summary-event", eventSequence: 15,
       text: thinking, parts: [thinking], semantic: "safe_summary", source: "openai_responses", truncated: false,
       sourceRefs: [...refs, { kind: "run_event", id: "safe-summary-event" }], createdAt: "2026-07-24T02:00:05.000Z" }],
-    contextCompactions: [{ ...ownership, id: "active-compaction", revision: compacted ? 32 : 30, eventId: "compaction-event", eventSequence: 30,
-      status: compacted ? "succeeded" : "running", reason: "threshold", summary: "", sourceRefs: [...refs, { kind: "run_event", id: "compaction-event" }] }],
-  } }));
+    contextCompactions: [{ ...ownership, id: "active-compaction", revision: compactionRevision, eventId: "compaction-event", eventSequence: 30,
+      status: compactionStatus, reason: "threshold", summary: "", sourceRefs: [...refs, { kind: "run_event", id: "compaction-event" }] }],
+  } });
+  });
   const open = async () => {
     await page.goto("/");
     await page.getByRole("button", { name: /打开最近对话 \d+/u }).filter({ hasText: title }).click();
@@ -150,11 +186,40 @@ test("normal conversation keeps safe thinking visible and compaction independent
   await expect(compaction).toContainText("正在压缩上下文…");
   await expect(compaction.locator("[data-conversation-process-header]")).toHaveCount(0);
   await page.screenshot({ path: `${evidence}/normal-thinking-compaction-light.png` });
+  const motion = compaction.locator(".conversation-activity-label");
+  await expect(motion).toHaveAttribute("data-activity-motion", "running");
+  await expect(compaction.locator(".conversation-timeline-activity-status")).toHaveCount(0);
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await expect(compaction.locator(".conversation-timeline-activity-main")).toBeVisible();
-  compacted = true;
-  state.runs = state.runs.map(run => run.id === runId ? { ...run, status: "succeeded", endedAt: "2026-07-24T02:01:36.000Z" } : run);
-  await open();
+  expect(await motion.evaluate(node => getComputedStyle(node).animationName)).toBe("none");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect.poll(() => motion.evaluate(node => getComputedStyle(node).animationName)).toBe("conversation-activity-light");
+  // IntersectionObserver must pause work when the label leaves the viewport.
+  await compaction.evaluate(node => { (node as HTMLElement).style.transform = "translateY(-10000px)"; });
+  await expect(motion).toHaveAttribute("data-activity-motion", "paused");
+  await compaction.evaluate(node => { (node as HTMLElement).style.transform = ""; });
+  await expect(motion).toHaveAttribute("data-activity-motion", "running");
+  const originalRow = await compaction.getAttribute("data-conversation-timeline-id");
+  const activity = page.locator('[data-conversation-activity-category="search"]');
+  await activity.click();
+  await expect(activity).toHaveAttribute("aria-expanded", "true");
+  await expect.poll(() => page.evaluate(() => (globalThis as any).__activityStream.count())).toBeGreaterThan(0);
+  await page.evaluate(() => (globalThis as any).__activityStream.ready());
+  const refresh = async () => {
+    compactionRevision += 1;
+    await page.evaluate(id => (globalThis as any).__activityStream.refresh(id), runId);
+  };
+  for (const [status, label] of [["failed", "上下文压缩失败"], ["blocked", "上下文压缩结果待确认"],
+    ["cancelled", "已取消上下文压缩"], ["running", "正在压缩上下文…"]]) {
+    compactionStatus = status!;
+    await refresh();
+    await expect(compaction).toContainText(label!);
+    await expect(compaction).toHaveAttribute("data-conversation-timeline-id", originalRow!);
+    await expect(activity).toHaveAttribute("aria-expanded", "true");
+  }
+  compactionStatus = "succeeded";
+  state.runs = state.runs.map(run => run.id === runId ? { ...run, status: "succeeded",
+    updatedAt: "2026-07-24T02:01:36.000Z", endedAt: "2026-07-24T02:01:36.000Z" } : run);
+  await refresh();
   await expect(compaction).toContainText("上下文已自动压缩");
   await expect(page.locator('[data-conversation-process-presentation="process"]').first()).toHaveAttribute("aria-expanded", "false");
   await expect(page.locator('[data-conversation-process-group] [data-conversation-timeline-kind="contextCompaction"]')).toHaveCount(0);

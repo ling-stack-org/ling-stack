@@ -80,6 +80,7 @@ test("normal conversation requires explicit confirmation and preserves the prese
   await prepareSurface(page, "dark", 1280, 800, true);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createFullAccessState();
+  state.workspaceSettings.defaultWorkspaceAccessMode = "read_only";
   await mockDaemon(page, state);
   await page.goto("/");
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation" }).click();
@@ -95,7 +96,8 @@ test("normal conversation requires explicit confirmation and preserves the prese
   expect(state.runs).toHaveLength(0);
   await selectFullAccess(page, permissionTrigger);
   await confirmFullAccessSelection(page);
-  await expect(permissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await expect(permissionTrigger).toHaveText("Full access");
+  await expect(permissionTrigger).toHaveAccessibleName(/Confirmed for this conversation/);
   await captureP6FeedbackEvidence(
     page,
     "shell/full-access-confirmation-parity",
@@ -116,7 +118,7 @@ test("normal conversation requires explicit confirmation and preserves the prese
 
   const activeConversation = page.getByLabel("Conversation page");
   const activePermissionTrigger = activeConversation.getByRole("button", { name: /Selected permission preset/ });
-  await expect(activePermissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await expect(activePermissionTrigger).toHaveText("Full access");
   await activeConversation.getByRole("textbox", { name: "Conversation message" }).fill("Continue in the same trusted conversation");
   await activeConversation.getByRole("button", { name: "Send" }).click();
   await expect(fullAccessDialog(page)).toHaveCount(0);
@@ -132,7 +134,7 @@ test("normal conversation requires explicit confirmation and preserves the prese
   const nextPermissionTrigger = nextHome.getByRole("button", { name: /Selected permission preset/ });
   await selectFullAccess(page, nextPermissionTrigger);
   await confirmFullAccessSelection(page);
-  await expect(nextPermissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await expect(nextPermissionTrigger).toHaveText("Full access");
   await nextHome.getByRole("textbox", { name: "Conversation message" }).fill("Start another trusted conversation");
   await nextHome.getByRole("button", { name: "Send" }).click();
   await expect(fullAccessDialog(page)).toHaveCount(0);
@@ -145,14 +147,14 @@ test("normal conversation requires explicit confirmation and preserves the prese
 
   await expectSubmissionAcknowledged(page, [cwd, "normal", "", ""]);
   await expect(page.getByLabel("Conversation page").getByRole("button", { name: /Selected permission preset/ }))
-    .toContainText("Full access · Confirmed for this conversation");
+    .toHaveText("Full access");
   await page.reload();
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /Open recent conversation/ }).first().click();
   const restoredConversation = page.getByLabel("Conversation page");
   const restoredPermissionTrigger = restoredConversation.getByRole("button", { name: /Selected permission preset/ });
   await selectFullAccess(page, restoredPermissionTrigger);
   await expect(fullAccessDialog(page)).toHaveCount(0);
-  await expect(restoredPermissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await expect(restoredPermissionTrigger).toHaveText("Full access");
   await restoredConversation.getByRole("textbox", { name: "Conversation message" }).fill("Continue after restarting the app");
   await restoredConversation.getByRole("button", { name: "Send" }).click();
   await expect(fullAccessDialog(page)).toHaveCount(0);
@@ -162,6 +164,12 @@ test("normal conversation requires explicit confirmation and preserves the prese
     mode: "full_access",
     reason: "user_confirmed_full_access",
   });
+  await restoredPermissionTrigger.click();
+  await page.getByRole("menuitemradio", { name: "Help me approve", exact: true }).click();
+  await restoredConversation.getByRole("textbox", { name: "Conversation message" }).fill("Restore the workspace sandbox after reopening");
+  const restoredRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname.endsWith("/conversations/stream"));
+  await restoredConversation.getByRole("button", { name: "Send", exact: true }).click();
+  expect((await restoredRequest).postDataJSON()).toMatchObject({ authorizationMode: "smart", workspaceAccessMode: "read_only" });
   await expectNoDocumentOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });
@@ -201,6 +209,81 @@ test("normal conversation confirms inherited full access on the first run", asyn
   });
   await expectNoDocumentOverflow(page);
   expect(runtimeErrors).toEqual([]);
+});
+
+for (const fixture of [
+  { access: "read_only" as const, theme: "light" as const },
+  { access: "workspace_write" as const, theme: "dark" as const },
+]) {
+  test(`normal conversation approval shortcuts preserve ${fixture.access} and restore it after full access`, async ({ page }) => {
+    await prepareSurface(page, fixture.theme, 1280, 800, true);
+    const runtimeErrors = collectRuntimeErrors(page);
+    const state = createFullAccessState();
+    state.workspaceSettings = {
+      ...state.workspaceSettings,
+      defaultAuthorizationMode: "ask",
+      defaultWorkspaceAccessMode: fixture.access,
+    };
+    await mockDaemon(page, state);
+    await page.goto("/");
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation" }).click();
+
+    const composer = page.getByLabel("New conversation composer");
+    const trigger = composer.getByRole("button", { name: /Selected permission preset/ });
+    await expect(trigger).toHaveText("Request approval");
+    await selectFullAccess(page, trigger);
+    await fullAccessDialog(page).getByRole("button", { name: "Cancel" }).last().click();
+    await expect(trigger).toHaveText("Request approval");
+    expect(await sendPrompt("After cancelling full access")).toMatchObject({ authorizationMode: "ask", workspaceAccessMode: fixture.access });
+
+    await trigger.click();
+    const menu = page.getByRole("menu").filter({ has: page.getByRole("menuitemradio", { name: "Request approval", exact: true }) });
+    await expect(menu.getByRole("menuitemradio")).toHaveCount(3);
+    await captureP6FeedbackEvidence(page, "shell/full-access-confirmation-parity", `1280x800-ling-${fixture.theme}-normal-approval-shortcuts.png`);
+    await menu.getByRole("menuitemradio", { name: "Help me approve", exact: true }).click();
+    expect(await sendPrompt("With approval review")).toMatchObject({ authorizationMode: "smart", workspaceAccessMode: fixture.access });
+
+    await selectFullAccess(page, trigger);
+    await confirmFullAccessSelection(page);
+    await expect(trigger).toHaveText("Full access");
+    expect(await sendPrompt("With confirmed full access")).toMatchObject({ authorizationMode: "always", workspaceAccessMode: "full_access" });
+
+    await trigger.click();
+    await menu.getByRole("menuitemradio", { name: "Help me approve", exact: true }).click();
+    expect(await sendPrompt("Back to approval review")).toMatchObject({ authorizationMode: "smart", workspaceAccessMode: fixture.access });
+    await expectNoDocumentOverflow(page);
+    expect(runtimeErrors).toEqual([]);
+
+    async function sendPrompt(message: string): Promise<Record<string, unknown>> {
+      await composer.getByRole("textbox", { name: "Conversation message" }).fill(message);
+      const request = page.waitForRequest((candidate) => candidate.method() === "POST" && new URL(candidate.url()).pathname.endsWith("/conversations/stream"));
+      await composer.getByRole("button", { name: "Send", exact: true }).click();
+      const body = (await request).postDataJSON() as Record<string, unknown>;
+      await expect(page.getByLabel("Conversation page")).toBeVisible();
+      await expect(trigger).toBeEnabled();
+      return body;
+    }
+  });
+}
+
+test("normal conversation distinguishes inherited always authorization from full access", async ({ page }) => {
+  await prepareSurface(page, "light", 1280, 800, true);
+  const state = createFullAccessState();
+  state.workspaceSettings = { ...state.workspaceSettings, defaultAuthorizationMode: "always", defaultWorkspaceAccessMode: "read_only" };
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation" }).click();
+  const composer = page.getByLabel("New conversation composer");
+  const trigger = composer.getByRole("button", { name: /Selected permission preset/ });
+  await expect(trigger).toHaveText("Always authorize");
+  await trigger.click();
+  const menu = page.getByRole("menu").filter({ has: page.getByRole("menuitemradio", { name: "Request approval", exact: true }) });
+  await expect(menu.getByRole("menuitemradio", { name: "Full access", exact: true })).not.toBeChecked();
+  await menu.getByRole("menuitemradio", { name: "Request approval", exact: true }).click();
+  await composer.getByRole("textbox", { name: "Conversation message" }).fill("Keep the configured read-only sandbox");
+  const request = page.waitForRequest((candidate) => candidate.method() === "POST" && new URL(candidate.url()).pathname.endsWith("/conversations/stream"));
+  await composer.getByRole("button", { name: "Send", exact: true }).click();
+  expect((await request).postDataJSON()).toMatchObject({ authorizationMode: "ask", workspaceAccessMode: "read_only" });
 });
 
 test("teammate private chat confirms explicit selection per conversation", async ({ page }) => {

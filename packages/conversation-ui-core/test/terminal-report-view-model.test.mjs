@@ -140,6 +140,20 @@ test("terminal report projection keeps Markdown summaries and bounds model title
   assert.match(participant?.description ?? "", /```ts\nconst ok = true;/u);
 });
 
+test("terminal report title extraction handles long protocol whitespace", () => {
+  const title = `Original request${" ".repeat(100_000)}: concise result Requested objective ignored wrapper`;
+  const report = terminalReportToViewModel({
+    id: "terminal_report_long_wrapper",
+    status: "committed",
+    language: "en-US",
+    outcome: { status: "succeeded", title, summary: "done", corrections: [], sourceRefs: [] },
+    changes: [], verification: [], participants: [], artifacts: [], risks: [], references: [],
+    evidenceFingerprint: "fingerprint_long_wrapper",
+    committedAt: "2026-10-21T00:00:00.000Z",
+  });
+  assert.equal(report.rows.find((row) => row.reportSection === "outcome")?.title, "concise result");
+});
+
 test("terminal report artifact workspace paths require one trusted changed-file source ref", () => {
   const report = terminalReportToViewModel({
     id: "terminal_report_workspace_files",

@@ -1,36 +1,23 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type UIEvent } from "react";
+import { useWorkSummaryContext } from "./work-summary/WorkSummaryProvider.js";
+import { useChannelPanelNavigation } from "./useChannelPanelNavigation.js";
+import { ChannelWorkspaceOverlays } from "./ChannelWorkspaceOverlays.js";
+import { ChannelWorkspaceHeader } from "./ChannelWorkspaceHeader.js";
+import { useChannelWorkspaceEnvironment } from "./useChannelWorkspaceEnvironment.js";
+import type { WorkspaceClientViewProps, ChannelSidePanelView } from "./workspace-client-view.types.js";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import {
-  ArrowLeft,
-  ChevronUp,
   CircleAlert,
-  Clock3,
-  Command,
   FileCheck2,
-  FileText,
-  FolderOpen,
   GitBranch,
-  Hash,
-  History,
-  Image as ImageIcon,
-  Info,
-  Loader2,
   MessageSquare,
-  MoreHorizontal,
-  PencilLine,
-  Play,
   Plus,
-  Reply,
   Search,
   ShieldCheck,
   SlidersHorizontal,
-  Square,
   SquareTerminal,
-  ThumbsDown,
-  ThumbsUp,
   Workflow,
 } from "lucide-react";
-import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
-import type { AiTeammateTemplate } from "@ling-stack/core/skill-types";
+
 import type {
   ConversationProtocolAction,
   ConversationTimelineApprovalItem,
@@ -52,12 +39,11 @@ import {
   saveProposedPlanArtifact,
 } from "../../api.js";
 import {
-  getChannelWorkspaceGitStatus,
   getChannelTeamMetricsProjection,
   listChannelCollaborationCards,
   listChannelTerminalReports,
 } from "../../api/channels.js";
-import { useI18n, type Translate } from "../../i18n.js";
+import { useI18n } from "../../i18n.js";
 import { DesktopTitlebarSurface } from "../../app/DesktopTitlebarSurface.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { isChannelNotificationLevel } from "../../lib/channel-notifications.js";
@@ -66,11 +52,12 @@ import type { ChannelActivityItem } from "../../lib/channel-activity.js";
 import {
   type ChannelActivityDrilldownTarget,
 } from "../../lib/channel-activity-drilldown.js";
+import { type ChannelActivityTriageResult } from "../../lib/channel-activity-triage.js";
 import {
-  type ChannelActivityTriageDraft,
-  type ChannelActivityTriageResult,
-} from "../../lib/channel-activity-triage.js";
-import { buildConversationWorkCellViewModel, groupRunsByThreadId, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+  buildConversationWorkCellViewModel,
+  groupRunsByThreadId,
+  type ConversationWorkCellViewModel,
+} from "../../lib/conversation-work-cell.js";
 import { deriveSilentChannelReplyRunIds } from "../../lib/conversation-runtime-visibility.js";
 import { buildConversationTurnProjection } from "../../lib/conversation-turn-projector.js";
 import {
@@ -83,28 +70,18 @@ import {
   type ConversationContextSourceGroup,
   type ConversationContextSourceSummary,
 } from "../../lib/conversation-context-sources.js";
-import { buildWorkflowProgressModel, workflowProgressToConversationWorkCell, type WorkflowProgressModel } from "../../lib/workflow-progress.js";
+import {
+  buildWorkflowProgressModel,
+  workflowProgressToConversationWorkCell,
+  type WorkflowProgressModel,
+} from "../../lib/workflow-progress.js";
 import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
-import { truncatePreview } from "../../lib/data.js";
-import { formatDateTime } from "../../lib/formatting.js";
-import { attachmentCanPreview, loadPreviewContent, type PreviewRequest } from "../../lib/previews.js";
-import {
-  buildRunRepairHint,
-  readRunWorkspaceCwd,
-} from "../../lib/run-evidence.js";
-import { defaultTools, riskyTools } from "../../lib/tools.js";
-import {
-  buildLocalEffectivePolicyPreview,
-  formatToolDecisionGroups,
-  inferPermissionPreset,
-  permissionModeForPreset,
-  permissionPresetDescription,
-  permissionPresetLabel,
-  permissionPresetOptions,
-  sessionPermissionModeDescription,
-  sessionPermissionModeLabel,
-  summarizeEffectivePolicySnapshot,
-} from "../../lib/session-permissions.js";
+
+
+import { loadPreviewContent, type PreviewRequest } from "../../lib/previews.js";
+
+
+import { inferPermissionPreset, permissionModeForPreset } from "../../lib/session-permissions.js";
 import {
   channelFormPersistenceKey,
   channelToForm,
@@ -115,7 +92,6 @@ import {
   resolveChannelWorkCellDemoPreview,
 } from "../../lib/work-cell-demo-fixture.js";
 import {
-  canUseProviderForRun,
   isMediaProvider,
   providerDisplaySourceLabel,
   providerPreflightReady,
@@ -142,13 +118,12 @@ import { ChannelActiveStatusIndicator } from "./ChannelActiveStatusIndicator.js"
 import {
   ChannelEnvironmentPage,
   useChannelEnvironmentSummary,
-  type ChannelGitStatusLoadState,
 } from "./ChannelEnvironmentSummary.js";
 import { ChannelRenameDialog } from "./ChannelRenameDialog.js";
 import { ChannelHeaderToolbar } from "./ChannelHeaderToolbar.js";
 import { revealConversationTarget } from "./conversation-locate-pulse.js";
 import { useChannelHeaderController } from "./useChannelHeaderController.js";
-import { WorkflowConversionPreviewDrawer, type WorkflowConversionDraft } from "./WorkflowConversionPreviewDialog.js";
+import { type WorkflowConversionDraft } from "./WorkflowConversionPreviewDialog.js";
 import { ChannelGovernanceNotificationsPopover } from "./ChannelGovernanceNotificationsPopover.js";
 import { useWorkspaceTerminalSession, WorkspaceTerminalPanel } from "./WorkspaceTerminalPanel.js";
 import { useConversationPanelPresence } from "./useConversationPanelPresence.js";
@@ -174,88 +149,35 @@ import {
 } from "./ChannelInspectorPanels.js";
 import type {
   ApprovalRequest,
-  ApprovalPolicy,
-  AuthorizationMode,
   AiCouncil,
-  AiCouncilHealthReport,
   Channel,
-  ChannelAttachment,
-  ChannelBrief,
-  ChannelCollaborationProtocolResponse,
   ChannelContextSummary,
-  ChannelCouncilPolicy,
-  ChannelDecision,
   ChannelFormState,
-  ChannelHandoff,
-  ChannelHandoffStatus,
-  ChannelIntentDecision,
-  ChannelLinkPreview,
   ChannelMention,
   ChannelMessage,
-  ConversationItemV1,
-  TurnContextAssignment,
-  UserInputTranscriptItemV1,
-  ConversationGeneratedMedia,
-  ChannelMessageFileRef,
-  ChannelReplyPendingEvent,
-  ChannelMessageRouteDecision,
-  ChannelReplyDispatch,
-  ChannelReplyDisposition,
-  ConversationActiveReplyTarget,
   ChannelTeamMetricsProjection,
   ChannelExecutionProposal,
-  ChannelWorkflow,
   ChannelWorkflowStep,
-  ChannelWorkflowStepStartMode,
-  ChannelWorkspaceBinding,
-  ExecutionAction,
-  GovernanceNotification,
-  ExternalWorkActionView,
-  ExternalWorkCiTriageView,
-  MemoryObject,
-  ProviderPreset,
   ProposedPlanArtifact,
-  ResourceLease,
-  RuntimeDiagnosticsResponse,
-  RunArtifact,
   RunSession,
-  LingThread,
   LingThreadGoal,
   LingTurn,
   LingTurnRun,
-  PermissionPreset,
-  SessionPermissionMode,
-  StateTransitionEvent,
   Task,
-  TaskFormState,
-  TaskRunActionState,
   TerminalReportDto,
   TeammateChannelMembership,
-  EffectiveChannelCouncilProjection,
-  UpdateChannelCollaborationProtocolRequest,
-  UpdateChannelBriefRequest,
-  UpdateChannelCouncilPolicyRequest,
-  UsedMemoryEvent,
-  WorkItemView,
-  WorkUnit,
-  WorkspaceSettings,
-  UpdateWorkspaceSettingsRequest,
-  ErrorPresentationOptions,
-  UserProfile,
 } from "../../types.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import { RuntimeApprovalComposerGate } from "../approvals/RuntimeApprovalComposerGate.js";
-import type { ApprovalResolution } from "../approvals/types.js";
+
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelTeamMetricsPanel } from "./ChannelTeamMetricsPanel.js";
 import { channelLingAgentModelLabel } from "./channel-model-view-models.js";
 import {
   ChannelTeammateManagerPanel,
   ChannelSettingsPanels,
-  channelWorkspaceModeIcon,
   isLingAgentTeammate,
   type ChannelNotificationLevel,
-  type ChannelTeammateRelationFeedback,
 } from "./ChannelSettingsPanels.js";
 import { ChannelComposer } from "./ChannelComposer.js";
 import { ChannelExecutionProposalComposerGate } from "./ChannelExecutionProposalComposerGate.js";
@@ -285,8 +207,6 @@ import { useChannelMessageFeedAssembly } from "./useChannelMessageFeedAssembly.j
 import { useChannelConversationBlockInteractions } from "./useChannelConversationBlockInteractions.js";
 import { useChannelWorkspaceFeedback } from "./useChannelWorkspaceFeedback.js";
 
-type ChannelSidePanelView = "context" | "settings" | "task";
-type ChannelDrawerRootView = Extract<ChannelSidePanelView, "context">;
 
 type ThreadTurnsLoadState =
   | { readonly status: "not_loaded" }
@@ -294,7 +214,6 @@ type ThreadTurnsLoadState =
   | { readonly status: "loaded"; readonly turns: readonly LingTurn[]; readonly runLinks: readonly LingTurnRun[] }
   | { readonly status: "error"; readonly errorMessage: string };
 
-const channelSidePanelRootViews: readonly ChannelDrawerRootView[] = ["context"];
 function channelSidePanelLabel(view: ChannelSidePanelView): string {
   if (view === "context") {
     return "Context";
@@ -305,15 +224,7 @@ function channelSidePanelLabel(view: ChannelSidePanelView): string {
   return "Task detail";
 }
 
-function channelSidePanelIcon(view: ChannelSidePanelView, size: number): React.JSX.Element {
-  if (view === "task") {
-    return <SquareTerminal size={size} />;
-  }
-  if (view === "settings") {
-    return <SlidersHorizontal size={size} />;
-  }
-  return <Workflow size={size} />;
-}
+
 
 function channelActivityVisibleInDefaultChat(item: ChannelActivityItem): boolean {
   return item.kind === "message" || item.kind === "summary";
@@ -569,209 +480,10 @@ export function WorkspaceClientView({
   onOpenProviders,
   workspaceSettings,
   onWorkspaceSettingsPatch,
-}: {
-  readonly cwd: string;
-  readonly daemonHealthy: boolean | undefined;
-  readonly channelAutoRouteEnabled: boolean;
-  readonly providerLabel: string;
-  readonly userProfile?: UserProfile;
-  readonly channels: readonly Channel[];
-  readonly selectedChannelId: string;
-  readonly selectedChannelBranchRootThreadId?: string;
-  readonly channelCreateOpen: boolean;
-  readonly channelEditForm: ChannelFormState;
-  readonly tasks: readonly Task[];
-  readonly taskForm: TaskFormState;
-  readonly channelMessages: readonly ChannelMessage[];
-  readonly channelConversationItems: readonly ConversationItemV1[];
-  readonly channelTurnContextAssignments: readonly TurnContextAssignment[];
-  readonly channelUserInputs: readonly UserInputTranscriptItemV1[];
-  readonly channelReasoningSummaries: readonly import("../../types.js").ConversationReasoningSummaryRecord[];
-  readonly channelConversationRefreshToken: number;
-  readonly channelContextCompactions: readonly import("../../types.js").ConversationContextCompactionRecord[];
-  readonly channelGeneratedMedia: readonly ConversationGeneratedMedia[];
-  readonly memoryById: ReadonlyMap<string, MemoryObject>;
-  readonly usedMemoryEvents: readonly UsedMemoryEvent[];
-  readonly channelExecutionProposals: readonly ChannelExecutionProposal[];
-  readonly channelAttachments: readonly ChannelAttachment[];
-  readonly channelLinkPreviews: readonly ChannelLinkPreview[];
-  readonly channelArtifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
-  readonly channelArtifactErrorsByRun: Readonly<Record<string, string>>;
-  readonly channelExecutionActions: readonly ExecutionAction[];
-  readonly channelExecutionActionError: string;
-  readonly channelBrief: ChannelBrief | undefined;
-  readonly channelCollaborationProtocol: ChannelCollaborationProtocolResponse | undefined;
-  readonly channelDecisions: readonly ChannelDecision[];
-  readonly channelIntentDecisions: readonly ChannelIntentDecision[];
-  readonly channelMessageRouteDecisions: readonly ChannelMessageRouteDecision[];
-  readonly channelHandoffs: readonly ChannelHandoff[];
-  readonly channelContextSummaries: readonly ChannelContextSummary[];
-  readonly channelWorkflows: readonly ChannelWorkflow[];
-  readonly channelWorkflowSteps: readonly ChannelWorkflowStep[];
-  readonly channelStateTransitions: readonly StateTransitionEvent[];
-  readonly channelActivityTransitionsLoading: boolean;
-  readonly channelActivityTransitionError: string;
-  readonly channelGovernanceNotifications: readonly GovernanceNotification[];
-  readonly channelGovernanceNotificationsLoading: boolean;
-  readonly channelGovernanceNotificationActionId: string;
-  readonly aiCouncils: readonly AiCouncil[];
-  readonly aiCouncilHealthReport: AiCouncilHealthReport | undefined;
-  readonly aiCouncilsLoading: boolean;
-  readonly channelCouncilPolicy: ChannelCouncilPolicy | undefined;
-  readonly channelEffectiveCouncil: EffectiveChannelCouncilProjection | undefined;
-  readonly channelCouncilLoading: boolean;
-  readonly channelCouncilSaving: boolean;
-  readonly externalWorkCiTriage: readonly ExternalWorkCiTriageView[];
-  readonly externalWorkCiTriageLoading: boolean;
-  readonly durableWorkItems: readonly WorkItemView[];
-  readonly durableWorkItemsLoading: boolean;
-  readonly selectedTaskId: string;
-  readonly providers: readonly ProviderPreset[];
-  readonly teammateTemplates: readonly AiTeammateTemplate[];
-  readonly slashCommands: readonly ComposerSlashCommandOption[];
-  readonly localTeammates: readonly LocalTeammateDraft[];
-  readonly channelTeammateMemberships: readonly TeammateChannelMembership[];
-  readonly channelTeammateMembershipsLoading: boolean;
-  readonly channelTeammateSavingId: string;
-  readonly channelTeammateError: ChannelTeammateRelationFeedback | undefined;
-  readonly taskRunProviderId: string;
-  readonly fallbackProviderId: string;
-  readonly channelsLoading: boolean;
-  readonly tasksLoading: boolean;
-  readonly channelMessagesLoading: boolean;
-  readonly channelMessagesHasOlder: boolean;
-  readonly channelMessagesLoadingOlder: boolean;
-  readonly channelFilesLoading: boolean;
-  readonly channelRunArtifactsLoading: boolean;
-  readonly channelProtocolLoading: boolean;
-  readonly providersLoading: boolean;
-  readonly approvals: readonly ApprovalRequest[];
-  readonly externalActionDetails: Readonly<Record<string, ExternalWorkActionView>>;
-  readonly approvalsLoading: boolean;
-  readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
-  readonly approvalErrors: Readonly<Record<string, string>>;
-  readonly resourceLeases: readonly ResourceLease[];
-  readonly runtimeDiagnostics: RuntimeDiagnosticsResponse | undefined;
-  readonly workUnits: readonly WorkUnit[];
-  readonly runtimeLoading: boolean;
-  readonly runtimeActionWorkUnitId: string;
-  readonly runs: readonly RunSession[];
-  readonly runById: ReadonlyMap<string, RunSession>;
-  readonly activeRunId: string;
-  readonly latestStatus: string;
-  readonly isRunning: boolean;
-  readonly cancellingRunIds: readonly string[];
-  readonly approvalPolicy: ApprovalPolicy | undefined;
-  readonly authorizationMode: AuthorizationMode;
-  readonly permissionMode: SessionPermissionMode;
-  readonly permissionPreset?: PermissionPreset;
-  readonly fullAccessConfirmed: boolean;
-  readonly activeTaskRunAction: TaskRunActionState | undefined;
-  readonly runningWorkflowStepId: string;
-  readonly orchestratingWorkflowId: string;
-  readonly channelFeedbackEntries: readonly ChannelFeedbackEntry[];
-  readonly onClearChannelFeedback: (surface: ChannelFeedbackEntry["surface"], identity: string) => void;
-  readonly onChannelCreateOpenChange: (open: boolean) => void;
-  readonly onChannelEditFormChange: (form: ChannelFormState) => void;
-  readonly onTaskFormChange: (form: TaskFormState) => void;
-  readonly onProviderSelect: (providerId: string) => void;
-  readonly onAddChannelTeammate: (teammateId: string) => Promise<void>;
-  readonly onRemoveChannelTeammate: (teammateId: string) => Promise<void>;
-  readonly onOpenTeammates: () => void;
-  readonly onRefreshChannels: () => void;
-  readonly onSaveChannel: (formOverride?: ChannelFormState) => void | Promise<void>;
-  readonly onCreateTask: () => Promise<boolean>;
-  readonly onCreateTaskFromSlashCommand: (input: {
-    readonly title: string;
-    readonly prompt: string;
-    readonly assigneeTeammateId?: string;
-    readonly requestedSkillId: string;
-    readonly attachmentIds?: readonly string[];
-  }) => Promise<void>;
-  readonly onSendMessage: (input: {
-    readonly threadId?: string;
-    readonly body: string;
-    readonly mentions: readonly ChannelMention[];
-    readonly attachmentIds: readonly string[];
-    readonly linkPreviewIds: readonly string[];
-    readonly fileRefs: readonly ChannelMessageFileRef[];
-    readonly requestAiReply: boolean;
-    readonly replyDisposition?: ChannelReplyDisposition;
-    readonly onMessageAccepted?: (message: ChannelMessage) => void;
-    readonly onReplyPending?: (pending: ChannelReplyPendingEvent) => void;
-    readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
-    readonly onReplyDispatch?: (dispatch: ChannelReplyDispatch) => void;
-  }) => Promise<{ readonly errorMessage?: string }>;
-  readonly onConfirmExecutionProposal: (proposal: ChannelExecutionProposal) => Promise<void>;
-  readonly onCancelExecutionProposal: (proposal: ChannelExecutionProposal) => Promise<void>;
-  readonly onUploadAttachments: (files: readonly File[]) => Promise<readonly ChannelAttachment[]>;
-  readonly onCreateLinkPreview: (url: string) => Promise<ChannelLinkPreview | undefined>;
-  readonly onDeleteAttachment: (attachmentId: string) => void;
-  readonly onSaveBrief: (input: UpdateChannelBriefRequest) => void;
-  readonly onSaveChannelProtocol: (input: UpdateChannelCollaborationProtocolRequest) => Promise<ChannelCollaborationProtocolResponse | undefined>;
-  readonly onRevertChannelProtocol: () => Promise<ChannelCollaborationProtocolResponse | undefined>;
-  readonly onSupersedeDecision: (decision: ChannelDecision) => Promise<void>;
-  readonly onRejectDecision: (decision: ChannelDecision) => Promise<void>;
-  readonly onCreateHandoffFromTask: (task: Task) => Promise<ChannelHandoff | undefined>;
-  readonly onUpdateHandoffStatus: (handoff: ChannelHandoff, status: ChannelHandoffStatus) => void;
-  readonly onStartWorkflowFromHandoff: (handoff: ChannelHandoff) => Promise<void>;
-  readonly onStartTemplateWorkflow: () => void;
-  readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow) => Promise<void>;
-  readonly onCancelWorkflow: (workflow: ChannelWorkflow) => Promise<void>;
-  readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
-  readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => Promise<void>;
-  readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
-  readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => Promise<void>;
-  readonly onRunActivityTriageAction: (draft: ChannelActivityTriageDraft) => Promise<ChannelActivityTriageResult>;
-  readonly onLoadOlderChannelMessages: () => void;
-  readonly onRefreshChannelMessages: () => void;
-  readonly onRefreshPendingChannelReply: () => void;
-  readonly onRefreshChannelActivity: () => Promise<void>;
-  readonly onRefreshExternalWorkCiTriage: () => void;
-  readonly onRefreshWorkItems: () => void;
-  readonly onRefreshChannelProtocol: () => void;
-  readonly onRefreshChannelFiles: () => void;
-  readonly onMarkChannelGovernanceNotificationSeen: (notificationId: string) => void;
-  readonly onDismissChannelGovernanceNotification: (notificationId: string) => void;
-  readonly onRefreshAiCouncils: () => void;
-  readonly onRefreshChannelCouncil: () => void;
-  readonly onUpdateChannelCouncilPolicy: (input: UpdateChannelCouncilPolicyRequest) => Promise<void>;
-  readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
-  readonly onRefreshTasks: () => void;
-  readonly onRefreshRunApprovals: () => void;
-  readonly onSelectTask: (taskId: string) => void;
-  readonly onCheckThenRunTask: (task: Task) => void;
-  readonly onRunTask: (task: Task) => void;
-  readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
-  readonly onPermissionModeChange: (mode: SessionPermissionMode) => void;
-  readonly onCancelActiveRun: (run?: RunSession) => void;
-  readonly onOpenRun: (runId: string) => void;
-  readonly onOpenApprovals: (runId?: string) => void;
-  readonly onRefreshRuntime: () => void;
-  readonly onCancelWorkUnit: (workUnitId: string) => void;
-  readonly onRetryWorkUnit: (workUnitId: string) => void;
-  readonly onReconcileWorkUnit: (workUnitId: string) => void;
-  readonly onResolveApproval: (
-    approvalId: string,
-    decision: ApprovalResolution,
-    reason?: string,
-    proposedRuleFingerprint?: string,
-  ) => void;
-  readonly onClaimWorkItem: (workItemId: string) => void;
-  readonly onHeartbeatWorkItem: (workItemId: string, claimToken: string) => void;
-  readonly onReleaseWorkItem: (workItemId: string, claimToken: string) => void;
-  readonly onCompleteWorkItem: (workItemId: string, claimToken: string) => void;
-  readonly onFailWorkItem: (workItemId: string, claimToken: string) => void;
-  readonly busyWorkItemId: string;
-  readonly onOpenProviders: (run?: RunSession) => void;
-  readonly workspaceSettings: WorkspaceSettings | undefined;
-  readonly onWorkspaceSettingsPatch: (
-    patch: UpdateWorkspaceSettingsRequest,
-    options?: ErrorPresentationOptions,
-  ) => void | Promise<WorkspaceSettings | undefined>;
-}): React.JSX.Element {
+}: WorkspaceClientViewProps): React.JSX.Element {
   const { t } = useI18n();
-  const [createTaskOpen, setCreateTaskOpen] = useState(false);
+  const panelNavigation = useChannelPanelNavigation(Boolean(selectedTaskId));
+  const { createTaskOpen, setCreateTaskOpen, sidePanelView, setSidePanelView, sidePanelOpen, setSidePanelOpen, channelSettingsPageOpen, setChannelSettingsPageOpen, channelEnvironmentPageOpen, setChannelEnvironmentPageOpen, channelMoreOpen, setChannelMoreOpen, progressPopoverOpen, setProgressPopoverOpen, workspaceSettingsOpen, setWorkspaceSettingsOpen, teammateManagerOpen, setTeammateManagerOpen } = panelNavigation;
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
   const channelFeedbackByKey = useMemo(
     () => new Map(channelFeedbackEntries.map((entry) => [`${entry.surface}:${entry.identity}`, entry.message] as const)),
@@ -792,33 +504,27 @@ export function WorkspaceClientView({
   const channelComposerOwnerRef = useRef({ key: channelComposerOwnerKey });
   if (channelComposerOwnerRef.current.key !== channelComposerOwnerKey) channelComposerOwnerRef.current = { key: channelComposerOwnerKey };
   const channelComposerOwner = channelComposerOwnerRef.current;
-  const selectedChannelWorkspace = selectedChannel ? resolveChannelWorkspaceBinding(selectedChannel, cwd) : undefined;
-  const selectedChannelExecutionPath = selectedChannel && selectedChannelWorkspace ? resolveChannelWorkspaceExecutionPath(selectedChannelWorkspace, selectedChannel, cwd) : "";
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
-  const [sidePanelView, setSidePanelView] = useState<ChannelSidePanelView>(() => selectedTaskId ? "task" : "context");
-  const [sidePanelOpen, setSidePanelOpen] = useState(() => Boolean(selectedTaskId));
-  const [channelSettingsPageOpen, setChannelSettingsPageOpen] = useState(false);
-  const [channelEnvironmentPageOpen, setChannelEnvironmentPageOpen] = useState(false);
   const [environmentCommitDialogOpen, setEnvironmentCommitDialogOpen] = useState(false);
   const [environmentCommitMessage, setEnvironmentCommitMessage] = useState("");
   const [environmentIncludeUnstaged, setEnvironmentIncludeUnstaged] = useState(true);
   const environmentCommitReturnFocusRef = useRef<HTMLElement | null>(null);
-  const [channelGitStatusState, setChannelGitStatusState] = useState<ChannelGitStatusLoadState>({ status: "idle" });
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [channelTerminalReports, setChannelTerminalReports] = useState<readonly TerminalReportDto[]>([]);
   const conversationTimelineItemLocatorRef = useRef<ConversationTimelineItemLocator | null>(null);
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
-  const [channelMoreOpen, setChannelMoreOpen] = useState(false);
   const [channelRenameOpen, setChannelRenameOpen] = useState(false);
   const [channelRenameName, setChannelRenameName] = useState("");
   const [channelRenameSaving, setChannelRenameSaving] = useState(false);
   const [channelRenameError, setChannelRenameError] = useState("");
-  const [progressPopoverOpen, setProgressPopoverOpen] = useState(false);
   const [governanceNotificationsOpen, setGovernanceNotificationsOpen] = useState(false);
   const [attentionProgressExpanded, setAttentionProgressExpanded] = useState(true);
   const [conversationDetailOverlay, setConversationDetailOverlay] = useState<ConversationDetailOverlayState | undefined>();
   const [selectedSourceDetail, setSelectedSourceDetail] = useState<SelectedSourceDetailState | undefined>();
   const [channelBottomPanelOpen, setChannelBottomPanelOpen] = useState(false);
+  const { selectedChannelWorkspace, selectedChannelExecutionPath, channelGitStatusState } = useChannelWorkspaceEnvironment({
+    cwd, selectedChannel, environmentOpen: channelEnvironmentPageOpen, summaryOpen: progressPopoverOpen,
+  });
   const channelUtilityPageOpen = channelSettingsPageOpen || channelEnvironmentPageOpen;
   const channelBottomPanelIntentOpen = channelBottomPanelOpen && !channelUtilityPageOpen;
   const channelBottomPanelPresence = useConversationPanelPresence(channelBottomPanelIntentOpen, false);
@@ -841,54 +547,8 @@ export function WorkspaceClientView({
     resizeObserverKey: selectedChannelId ?? "",
   });
 
-  useEffect(() => {
-    const channelId = selectedChannelId ?? "";
-    const executionPath = selectedChannelExecutionPath.trim();
-    if (!channelId || !executionPath || selectedChannelWorkspace?.status !== "ready") {
-      setChannelGitStatusState({ status: "idle" });
-      return;
-    }
 
-    let cancelled = false;
-    const requestKey = `${channelId}:${executionPath}`;
-    setChannelGitStatusState({ status: "loading", requestKey });
-    getChannelWorkspaceGitStatus(cwd, channelId)
-      .then((response) => {
-        if (cancelled) {
-          return;
-        }
-        setChannelGitStatusState({
-          status: "loaded",
-          requestKey,
-          statusValue: response.gitStatus,
-        });
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-        setChannelGitStatusState({
-          status: "error",
-          requestKey,
-          errorMessage: error instanceof Error ? error.message : String(error),
-        });
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    channelEnvironmentPageOpen,
-    cwd,
-    progressPopoverOpen,
-    selectedChannelExecutionPath,
-    selectedChannelId,
-    selectedChannelWorkspace?.status,
-    selectedChannelWorkspace?.updatedAt,
-  ]);
   const [inspectorMode, setInspectorMode] = useState<ChannelInspectorMode>("brief");
-  const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
-  const [teammateManagerOpen, setTeammateManagerOpen] = useState(false);
   const [briefDraft, setBriefDraft] = useState({
     objective: "",
     scope: "",
@@ -2132,8 +1792,7 @@ export function WorkspaceClientView({
     setActivityToolsOpen(false);
     setChannelMoreOpen(false);
     setInspectorMode(mode);
-    setSidePanelView("context");
-    setSidePanelOpen(true);
+    panelNavigation.prepareDock("context");
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
     setProgressPopoverOpen(false);
@@ -3515,16 +3174,9 @@ export function WorkspaceClientView({
 
   function openChannelSettingsPage(): void {
     channelHeader.closeSearch();
-    setChannelSettingsPageOpen(true);
-    setChannelEnvironmentPageOpen(false);
-    setSidePanelOpen(false);
-    setCreateTaskOpen(false);
+    panelNavigation.openUtilityPage("settings");
     setConversationDetailOverlay(undefined);
-    setProgressPopoverOpen(false);
-    setChannelMoreOpen(false);
     setActivityToolsOpen(false);
-    setWorkspaceSettingsOpen(false);
-    setTeammateManagerOpen(false);
     onChannelCreateOpenChange(false);
     refreshChannelSettingsPage();
   }
@@ -3535,16 +3187,9 @@ export function WorkspaceClientView({
 
   function openChannelEnvironmentPage(): void {
     channelHeader.closeSearch();
-    setChannelEnvironmentPageOpen(true);
-    setChannelSettingsPageOpen(false);
-    setSidePanelOpen(false);
-    setCreateTaskOpen(false);
+    panelNavigation.openUtilityPage("environment");
     setConversationDetailOverlay(undefined);
-    setProgressPopoverOpen(false);
-    setChannelMoreOpen(false);
     setActivityToolsOpen(false);
-    setWorkspaceSettingsOpen(false);
-    setTeammateManagerOpen(false);
     onChannelCreateOpenChange(false);
   }
 
@@ -3647,8 +3292,7 @@ export function WorkspaceClientView({
   }
 
   function openRightDockPage(page: DockPageKind, workspaceFile?: WorkspaceRightDockFileTarget, workspaceReview?: WorkspaceRightDockReviewTarget): void {
-    setSidePanelView("context");
-    setSidePanelOpen(true);
+    panelNavigation.prepareDock("context");
     setCreateTaskOpen(false);
     setConversationDetailOverlay(undefined);
     setChannelSettingsPageOpen(false);
@@ -3665,8 +3309,7 @@ export function WorkspaceClientView({
       openChannelSettingsPage();
       return;
     }
-    setSidePanelView(view);
-    setSidePanelOpen(true);
+    panelNavigation.prepareDock(view);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
     setConversationDetailOverlay(undefined);
@@ -3928,7 +3571,8 @@ export function WorkspaceClientView({
       )}
     </ConversationDetailOverlay>
   ) : null;
-  const channelHasProgressPopoverContent = attentionProgressRows.length > 0 || channelEnvironmentSummary.popoverRows.length > 0;
+  const workSummary = useWorkSummaryContext();
+  const channelHasProgressPopoverContent = Boolean(workSummary) || attentionProgressRows.length > 0 || channelEnvironmentSummary.popoverRows.length > 0;
   const progressPopoverVisible = progressPopoverOpen && !teammateManagerOpen && !channelUtilityPageOpen && channelHasProgressPopoverContent;
   const progressPopoverPlacementAvailable =
     !teammateManagerOpen &&
@@ -3936,6 +3580,7 @@ export function WorkspaceClientView({
     channelHasProgressPopoverContent;
   const progressSummaryLayout = useConversationSummaryLayout({
     requestedOpen: progressPopoverVisible,
+    allowOverlay: Boolean(workSummary),
     containerWidth: channelRightDock.containerWidth,
     dockVisible: channelRightDockVisible,
     dockWidth: channelRightDock.width,
@@ -3948,6 +3593,8 @@ export function WorkspaceClientView({
   const progressPopoverMotionClass = progressPopoverPresence.expanded ? "is-popover-expanded" : "is-popover-collapsed";
   const progressPopoverNode = (
     <ProgressPopover
+      onClose={() => setProgressPopoverOpen(false)}
+      onOpenChanges={(reviewCwd) => openRightDockPage("review", undefined, { cwd: reviewCwd, baseline: "head" })}
       expanded={attentionProgressExpanded}
       onExpandedChange={setAttentionProgressExpanded}
       progressRows={attentionProgressRows}
@@ -3999,132 +3646,22 @@ export function WorkspaceClientView({
       style={taskWorkbenchWindowStyle}
       aria-label={t("Workspace")}
     >
-      <DesktopTitlebarSurface>
-      <header
-        className={[
-          "channel-header task-workbench-header",
-          channelUtilityPageOpen ? "settings-page-header" : "",
-          channelHeader.searchOpen && !channelUtilityPageOpen ? "channel-header-searching" : "",
-        ].filter(Boolean).join(" ")}
-        style={taskWorkbenchTitlebarStyle}
-        data-desktop-window-drag-region="true"
-      >
-        <div className="channel-title-area">
-          {channelSettingsPageOpen ? (
-            <div className="channel-settings-header-line">
-              <button className="channel-settings-top-back" type="button" onClick={closeChannelSettingsPage}>
-                <ArrowLeft size={16} />
-                {t("Back to channel")}
-              </button>
-              <div className="channel-settings-header-title">
-                <span>
-                  <SlidersHorizontal size={17} />
-                  <strong>{t("Channel settings")}</strong>
-                </span>
-              </div>
-            </div>
-          ) : channelEnvironmentPageOpen ? (
-            <div className="channel-settings-header-line">
-              <button className="channel-settings-top-back" type="button" onClick={closeChannelEnvironmentPage}>
-                <ArrowLeft size={16} />
-                {t("Back to channel")}
-              </button>
-              <div className="channel-settings-header-title">
-                <span>
-                  <Command size={17} />
-                  <strong>{t("Environment")}</strong>
-                </span>
-              </div>
-            </div>
-          ) : (
-            <div className="channel-title-line">
-              <span className="channel-title-icon" aria-hidden="true">#</span>
-              <h1>{selectedChannel?.name ?? "Engineering"}</h1>
-              <div className="channel-more-wrap" ref={channelMoreRef}>
-                <button
-                  ref={channelMoreButtonRef}
-                  className={channelMoreOpen ? "icon-button channel-more-button active" : "icon-button channel-more-button"}
-                  type="button"
-                  aria-expanded={channelMoreOpen}
-                  aria-label={t("More channel views")}
-                  title={t("More channel views")}
-                  onClick={() => {
-                    const nextOpen = !channelMoreOpen;
-                    if (nextOpen) {
-                      channelHeader.closeSearch();
-                    }
-                    setChannelMoreOpen(nextOpen);
-                  }}
-                >
-                  <MoreHorizontal size={17} />
-                </button>
-                {channelMoreOpen ? (
-                  <div className="channel-more-menu" role="menu" aria-label={t("More channel views")}>
-                    <button
-                      className={channelSettingsPageOpen ? "channel-more-item active" : "channel-more-item"}
-                      type="button"
-                      role="menuitem"
-                      onClick={openChannelSettingsPage}
-                    >
-                      <SlidersHorizontal size={15} />
-                      <span>{t("Settings")}</span>
-                    </button>
-                    <button
-                      className="channel-more-item"
-                      type="button"
-                      role="menuitem"
-                      onClick={openChannelRenameDialog}
-                      disabled={!selectedChannelId}
-                    >
-                      <PencilLine size={15} />
-                      <span>{t("Rename channel")}</span>
-                    </button>
-                    <button
-                      className={channelEnvironmentPageOpen ? "channel-more-item active" : "channel-more-item"}
-                      type="button"
-                      role="menuitem"
-                      onClick={openChannelEnvironmentPage}
-                    >
-                      <Command size={15} />
-                      <span>{t("Environment")}</span>
-                    </button>
-                    {channelSidePanelRootViews.map((view) => (
-                      <button
-                        key={view}
-                        className={sidePanelOpen && sidePanelView === view ? "channel-more-item active" : "channel-more-item"}
-                        type="button"
-                        role="menuitem"
-                        onClick={() => openSidePanelView(view)}
-                      >
-                        {channelSidePanelIcon(view, 15)}
-                        <span>{t(channelSidePanelLabel(view))}</span>
-                      </button>
-                    ))}
-                    <button
-                      className={activityToolsOpen ? "channel-more-item active" : "channel-more-item"}
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setActivityToolsOpen(true);
-                        setActivityFiltersExpanded(false);
-                        setChannelMoreOpen(false);
-                        setSidePanelOpen(false);
-                        setProgressPopoverOpen(false);
-                        setChannelSettingsPageOpen(false);
-                        setChannelEnvironmentPageOpen(false);
-                        setTeammateManagerOpen(false);
-                      }}
-                    >
-                      <SlidersHorizontal size={15} />
-                      <span>{t("Filter channel events")}</span>
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          )}
-        </div>
-        {channelHeader.searchOpen && !channelUtilityPageOpen ? (
+      <ChannelWorkspaceHeader
+        channelName={selectedChannel?.name} channelSelected={Boolean(selectedChannelId)}
+        channelSettingsPageOpen={channelSettingsPageOpen} channelEnvironmentPageOpen={channelEnvironmentPageOpen}
+        searchOpen={channelHeader.searchOpen} channelMoreOpen={channelMoreOpen}
+        channelMoreRef={channelMoreRef} channelMoreButtonRef={channelMoreButtonRef}
+        sidePanelOpen={sidePanelOpen} sidePanelView={sidePanelView} activityToolsOpen={activityToolsOpen}
+        style={taskWorkbenchTitlebarStyle} onCloseSearch={channelHeader.closeSearch} setChannelMoreOpen={setChannelMoreOpen}
+        openChannelSettingsPage={openChannelSettingsPage} closeChannelSettingsPage={closeChannelSettingsPage}
+        openChannelEnvironmentPage={openChannelEnvironmentPage} closeChannelEnvironmentPage={closeChannelEnvironmentPage}
+        openChannelRenameDialog={openChannelRenameDialog} openSidePanelView={openSidePanelView}
+        onOpenActivityFilters={() => {
+          setActivityToolsOpen(true); setActivityFiltersExpanded(false); setChannelMoreOpen(false);
+          setSidePanelOpen(false); setProgressPopoverOpen(false); setChannelSettingsPageOpen(false);
+          setChannelEnvironmentPageOpen(false); setTeammateManagerOpen(false);
+        }}
+        searchNode={(<>        {channelHeader.searchOpen && !channelUtilityPageOpen ? (
           <ConversationHeaderSearch
             ariaLabel={t("Search channel activity")}
             className="channel-header-search"
@@ -4137,7 +3674,8 @@ export function WorkspaceClientView({
             onEscape={channelHeader.closeSearch}
           />
         ) : null}
-        <ChannelHeaderToolbar
+</>)}
+        toolbarNode={(<>        <ChannelHeaderToolbar
           ariaLabel={t("Workspace task toolbar")}
           settingsPageOpen={channelSettingsPageOpen}
           environmentPageOpen={channelEnvironmentPageOpen}
@@ -4248,13 +3786,14 @@ export function WorkspaceClientView({
             openSidePanelView(sidePanelView === "settings" ? "context" : sidePanelView);
           }}
         />
-        {progressPopoverShouldRender ? (
+</>)}
+        summaryNode={(<>        {progressPopoverShouldRender ? (
           <div className={`channel-progress-popover ${progressPopoverMotionClass}`} data-right-dock-motion={channelRightDock.motionState}>
             {progressPopoverNode}
           </div>
         ) : null}
-      </header>
-      </DesktopTitlebarSurface>
+</>)}
+      />
 
       {teammateManagerOpen ? (
         <section ref={teammateManagerPanelRef} className="workbench-settings-panel channel-teammate-dock" aria-label={t("AI teammate management")}>
@@ -4277,45 +3816,23 @@ export function WorkspaceClientView({
         </section>
       ) : null}
 
-      {channelRenameOpen ? (
-        <ChannelRenameDialog
-          value={channelRenameName}
-          currentName={selectedChannel?.name ?? ""}
-          saving={channelRenameSaving}
-          error={channelRenameError}
-          onValueChange={(value) => {
-            setChannelRenameName(value);
-            setChannelRenameError("");
-            onClearChannelFeedback("workspace", selectedChannelId);
-          }}
-          onSubmit={(event) => void submitChannelRename(event)}
-          onClose={closeChannelRenameDialog}
-          returnFocusRef={channelMoreButtonRef}
-        />
-      ) : null}
-
-      {environmentCommitDialogOpen ? (
-        <ChannelEnvironmentCommitDialog
-          message={environmentCommitMessage}
-          includeUnstaged={environmentIncludeUnstaged}
-          disabledReason={channelEnvironmentSummary.commitAction?.disabledReason ?? t("Commit and push require a daemon Git action and approval policy. This first version is read-only.")}
-          onMessageChange={setEnvironmentCommitMessage}
-          onIncludeUnstagedChange={setEnvironmentIncludeUnstaged}
-          onClose={closeEnvironmentCommitDialog}
-        />
-      ) : null}
-
-      {workflowConversionPreviewPlan ? (
-        <WorkflowConversionPreviewDrawer
-          plan={workflowConversionPreviewPlan}
-          cwd={cwd.trim()}
-          busy={proposedPlanActionBusyId === workflowConversionPreviewPlan.id}
-          teammates={workflowOwnerInferenceTeammates}
-          historicalWorkflowSteps={workflowOwnerInferenceHistorySteps}
-          onConfirm={confirmWorkflowConversionPreview}
-          onClose={closeWorkflowConversionPreview}
-        />
-      ) : null}
+      <ChannelWorkspaceOverlays
+        rename={channelRenameOpen ? {
+          value: channelRenameName, currentName: selectedChannel?.name ?? "", saving: channelRenameSaving,
+          error: channelRenameError, onValueChange: (value) => { setChannelRenameName(value); setChannelRenameError(""); onClearChannelFeedback("workspace", selectedChannelId); },
+          onSubmit: (event) => void submitChannelRename(event), onClose: closeChannelRenameDialog, returnFocusRef: channelMoreButtonRef,
+        } : undefined}
+        commit={environmentCommitDialogOpen ? {
+          message: environmentCommitMessage, includeUnstaged: environmentIncludeUnstaged,
+          disabledReason: channelEnvironmentSummary.commitAction?.disabledReason ?? t("Commit and push require a daemon Git action and approval policy. This first version is read-only."),
+          onMessageChange: setEnvironmentCommitMessage, onIncludeUnstagedChange: setEnvironmentIncludeUnstaged, onClose: closeEnvironmentCommitDialog,
+        } : undefined}
+        conversion={workflowConversionPreviewPlan ? {
+          plan: workflowConversionPreviewPlan, cwd: cwd.trim(), busy: proposedPlanActionBusyId === workflowConversionPreviewPlan.id,
+          teammates: workflowOwnerInferenceTeammates, historicalWorkflowSteps: workflowOwnerInferenceHistorySteps,
+          onConfirm: confirmWorkflowConversionPreview, onClose: closeWorkflowConversionPreview,
+        } : undefined}
+      />
 
       <div
         ref={taskWorkbenchMainRef}
@@ -4684,25 +4201,6 @@ function clearSavedChannelNotificationLevel(cwd: string, channelId: string): voi
 
 function channelNotificationStorageKey(cwd: string, channelId: string): string {
   return `ling-stack.channelNotifications.${encodeURIComponent(cwd)}.${encodeURIComponent(channelId)}`;
-}
-
-function resolveChannelWorkspaceBinding(channel: Channel, cwd: string): ChannelWorkspaceBinding {
-  return channel.workspaceBinding ?? {
-    mode: "local",
-    status: "ready",
-    executionPath: channel.boundPath || cwd,
-    updatedAt: channel.updatedAt,
-  };
-}
-
-function resolveChannelWorkspaceExecutionPath(binding: ChannelWorkspaceBinding, channel: Channel, cwd: string): string {
-  if (binding.mode === "managed_worktree" && binding.worktreePath) {
-    return binding.worktreePath;
-  }
-  if (binding.mode === "external_path" && binding.executionPath) {
-    return binding.executionPath;
-  }
-  return binding.executionPath || channel.boundPath || cwd;
 }
 
 function readRunTitle(run: RunSession): string {

@@ -128,8 +128,6 @@ const generationFamilyRules: readonly GenerationModelFamilyRule[] = [
   },
 ];
 
-const bflEditPattern = /(?:^|[/_-])flux(?:[/_.-].*)?(?:kontext|fill)(?=$|[/_.-])/i;
-
 export function inferGenerationModelFamily(
   modelId: string | undefined,
   _context: GenerationModelFamilyContext = {},
@@ -148,13 +146,48 @@ export function inferGenerationModelFamily(
     ownedBy: rule.ownedBy,
     api: "media-job",
     input: ["text", "image"],
-    capabilities: rule.familyId === "black-forest-labs" && bflEditPattern.test(normalized)
+    capabilities: rule.familyId === "black-forest-labs" && isBlackForestLabsEditModel(normalized)
       ? mergeCapabilities(rule.capabilities, ["image_edit"])
       : rule.capabilities,
     supportedParameters: rule.supportedParameters,
     capabilitySource: "model_catalog",
     capabilityConfidence: "known",
   };
+}
+
+function isBlackForestLabsEditModel(value: string): boolean {
+  const lower = value.toLowerCase();
+  let searchFrom = 0;
+  while (searchFrom < lower.length) {
+    const fluxIndex = lower.indexOf("flux", searchFrom);
+    if (fluxIndex === -1) return false;
+    const before = lower[fluxIndex - 1];
+    if (fluxIndex === 0 || isModelSeparator(before)) {
+      const afterFlux = fluxIndex + "flux".length;
+      if (hasEditMarkerAt(lower, afterFlux)) return true;
+      if (isModelSeparator(lower[afterFlux])) {
+        for (let index = afterFlux + 1; index < lower.length; index += 1) {
+          if (hasEditMarkerAt(lower, index)) return true;
+        }
+        return false;
+      }
+    }
+    searchFrom = fluxIndex + "flux".length;
+  }
+  return false;
+}
+
+function hasEditMarkerAt(value: string, index: number): boolean {
+  for (const marker of ["kontext", "fill"] as const) {
+    if (value.startsWith(marker, index) && (index + marker.length === value.length || isModelSeparator(value[index + marker.length]))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isModelSeparator(value: string | undefined): boolean {
+  return value !== undefined && "/_.-".includes(value);
 }
 
 export function isOpenAIImagesGenerationModel(modelId: string | undefined): boolean {

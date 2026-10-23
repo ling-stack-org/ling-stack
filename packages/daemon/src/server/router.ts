@@ -1,3 +1,4 @@
+import { handleWorkSummary } from "../features/work-summary/routes.js";
 import { handleConversationExecutionSelection } from "../runtime/conversation-execution-route.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defaultProviderTemplates, executeExternalWorkAction, toRuntimeAttemptFence } from "@ling-stack/core";
@@ -1642,6 +1643,10 @@ export async function routeRequest(
   }
   if (request.method === "POST" && url.pathname === "/workspace-files/preview") {
     await handlePostWorkspaceFileCapabilityPreview(request, response, config.maxBodyBytes, storeRegistry, workspaceFileCapabilities);
+    return;
+  }
+  if (url.pathname === "/workspace/work-summary" || url.pathname === "/workspace/work-summary/pull-requests") {
+    await handleWorkSummary(request, response, url, storeRegistry, secretResolver);
     return;
   }
   if (request.method === "GET" && url.pathname === "/workspace/changes") {

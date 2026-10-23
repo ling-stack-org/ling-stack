@@ -1,3 +1,4 @@
+import { useWorkSummaryContext } from "../workspace/work-summary/WorkSummaryProvider.js";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type UIEvent } from "react";
 import {
   Bot,
@@ -698,8 +699,10 @@ export function TeammateWorkspace({
     intentOpen: chatDockOpen,
     resizeObserverKey: `${teammate.id}:${cwd.trim()}`,
   });
+  const workSummary = useWorkSummaryContext();
   const chatSummaryLayout = useConversationSummaryLayout({
     requestedOpen: chatSummaryOpen,
+    allowOverlay: Boolean(workSummary),
     containerWidth: chatDockController.containerWidth,
     dockVisible: chatDockController.visible,
     dockWidth: chatDockController.width,
@@ -1624,6 +1627,7 @@ export function TeammateWorkspace({
           summaryDockMotion={chatSummaryDockMotion}
           summaryDockState={chatDockController.motionState}
           summaryRows={privateSummaryRows}
+          onOpenSummaryChanges={(reviewCwd) => openChatDockPage("review", undefined, { cwd: reviewCwd, baseline: "head" })}
           terminalOpen={chatTerminalOpen}
           terminalDisabled={!cwd.trim()}
           detailsOpen={chatDockController.expanded}

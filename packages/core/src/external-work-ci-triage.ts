@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { relative, resolve as resolvePath } from "node:path";
 import { normalizeGitHubExternalWorkItem } from "./external-work.js";
 import { redactSecrets } from "./redaction.js";
+import { trimBoundaryCharacters } from "./string-boundaries.js";
 import type {
   ExternalWorkCiTriageRecord,
   ExternalWorkCiTriageResponse,
@@ -85,7 +86,7 @@ export function createGitHubCiTriageAdapter(options: GitHubCiTriageAdapterOption
   if (!fetchImpl) {
     throw new Error("A fetch implementation is required for GitHub CI triage.");
   }
-  const apiBaseUrl = (options.apiBaseUrl ?? "https://api.github.com").replace(/\/+$/, "");
+  const apiBaseUrl = trimBoundaryCharacters(options.apiBaseUrl ?? "https://api.github.com", "/", "end");
 
   return {
     async getPullRequest(input): Promise<ExternalWorkItem> {

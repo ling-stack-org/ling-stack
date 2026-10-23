@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { relative, resolve as resolvePath } from "node:path";
 import type { ApprovalRequest } from "./approval-types.js";
 import { redactSecrets } from "./redaction.js";
+import { trimBoundaryCharacters } from "./string-boundaries.js";
 import { DEFAULT_WORKSPACE_ID } from "./workspace-types.js";
 import { normalizeGitHubExternalWorkItem } from "./external-work.js";
 import type {
@@ -145,7 +146,7 @@ export function createGitHubExternalActionAdapter(options: GitHubExternalActionA
   if (!fetchImpl) {
     throw new Error("A fetch implementation is required for GitHub external action execution.");
   }
-  const apiBaseUrl = (options.apiBaseUrl ?? "https://api.github.com").replace(/\/+$/, "");
+  const apiBaseUrl = trimBoundaryCharacters(options.apiBaseUrl ?? "https://api.github.com", "/", "end");
 
   return {
     async getPullRequest(input: GitHubSubjectInput): Promise<ExternalWorkItem | undefined> {

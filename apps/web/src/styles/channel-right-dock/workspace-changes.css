@@ -111,6 +111,13 @@
   scroll-margin-top: 52px;
 }
 
+/* content-visibility's paint containment otherwise clips the open menu. */
+.workspace-change-file-section:has(.workspace-file-open-trigger[aria-expanded="true"]) {
+  position: relative;
+  z-index: 7;
+  content-visibility: visible;
+}
+
 .workspace-change-file-section.selected {
   border-color: var(--ling-border-focus);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--ling-border-focus) 16%, transparent);

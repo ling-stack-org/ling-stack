@@ -158,10 +158,10 @@ maintain a private dock-offset rule.
 
 - `summaryRequested` records the user's open intent. `summaryVisible` records whether the
   current geometry can render it. Temporary concealment must not clear the intent.
-- Summary has a `280px` panel and a `16px` conversation-side gap. When visible it reserves
+- Summary has a `280px` panel and a `16px` conversation-side gap. When space permits it reserves
   a `296px` layout column between the conversation and the right-dock resize handle.
-- The conversation layout keeps at least `560px` for records and Composer plus the shared
-  `48px` horizontal gutter. Summary is visible only when the root can also hold the
+- The reserved layout keeps at least `560px` for records and Composer plus the shared
+  `48px` horizontal gutter. This layout is used only when the root can also hold the
   current right dock and its `8px` handle.
 - When space is available, feed and Composer occupy the same conversation column and move
   left together. Summary, feed, avatars, Composer, resize handle, and right dock must have
@@ -169,8 +169,10 @@ maintain a private dock-offset rule.
 - The reserved Summary column remains visually continuous with the conversation surface.
   It must not render as a contrasting full-height sidebar or dock; only the `280px` Summary
   card carries panel background, border, shadow, and elevated popover treatment.
-- When space is insufficient, Summary is not rendered and is not interactive. Widening the
-  window, collapsing Sidebar, narrowing or closing Details automatically restores it.
+- When space is insufficient and Details is visible, Summary is not rendered and is not
+  interactive. Widening the window, collapsing Sidebar, or narrowing Details restores it.
+  With the project work-summary context and no visible Details dock, Summary stays at the
+  right as an overlay and reserves no layout column; closing Details enables this fallback.
 - Availability is computed from the stable root width and target dock reservation, not
   from the already-reflowed conversation child. The threshold uses bounded hysteresis so
   a one-pixel resize cannot create repeated mount/unmount flashing.
@@ -528,6 +530,10 @@ First version can be a placeholder plus real file references that already exist:
 
 The page should not become a full file explorer in the first slice. A later slice can add
 tree navigation and diff preview if Web and Desktop both need it.
+
+Desktop local-path clicks also reuse the dock detail page for bounded text, image, and
+directory previews, with native file actions. Limits and platform acceptance are defined
+in [Desktop Local File Viewing](conversation-shared-capabilities.md#desktop-local-file-viewing).
 
 ### TerminalPage
 

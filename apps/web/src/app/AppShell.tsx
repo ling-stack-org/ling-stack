@@ -1,3 +1,4 @@
+import { WorkSummaryProvider } from "../features/workspace/work-summary/WorkSummaryProvider.js";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   PanelRightClose,
@@ -142,7 +143,7 @@ import {
 } from "../lib/providers.js";
 import { removeRecordKey } from "../lib/records.js";
 import { permissionPresetForWorkspaceAccessMode, workspaceAccessModeForPermissionPreset } from "../lib/session-permissions.js";
-import { authorizationAndAccessToLegacyPermission } from "../lib/conversation-authorization.js";
+import { authorizationAndAccessToLegacyPermission, resolveWorkspaceAccessMode } from "../lib/conversation-authorization.js";
 import { StatusBadge } from "../shared/components/index.js";
 import { CurrentSessionHeaderCapabilityProvider } from "../shared/current-session/CurrentSessionHeaderCapability.js";
 import { useFocusRevalidationToken } from "../shared/hooks/use-focus-revalidation-token.js";
@@ -2516,6 +2517,16 @@ export function AppShell(): React.JSX.Element {
         }
       >
         <CurrentSessionHeaderCapabilityProvider>
+          <WorkSummaryProvider key={form.cwd} cwd={form.cwd} onOpenSession={(session) => {
+            clearSettingsWorkspaceToolView();
+            if (session.surface === "conversation" && session.threadId) { void openConversationThread(session.threadId); }
+            else if (session.surface === "teammate" && session.teammateId) { selectAiTeammate(session.teammateId); }
+            else if (session.threadId) {
+              setThreadPageTargetId(session.threadId);
+              setActiveView("threads"); setActiveSidebarTarget("threads");
+            } else if (session.channelId) { selectWorkspaceChannel(session.channelId); }
+          }}>
+
           <DesktopComputerUseBridge
             selectedConversationId={desktopSelectedConversationId}
             surfaceKind={desktopComputerUseSurfaceKind}
@@ -2773,6 +2784,7 @@ export function AppShell(): React.JSX.Element {
                   initialReasoningSummary={selectedConversationDetail?.defaults.reasoningSummary ?? workspaceSettings?.defaultReasoningSummary ?? "auto"}
                   initialAuthorizationMode={selectedConversationDetail?.defaults.authorizationMode ?? workspaceSettings?.defaultAuthorizationMode}
                   initialWorkspaceAccessMode={selectedConversationDetail?.defaults.workspaceAccessMode ?? workspaceSettings?.defaultWorkspaceAccessMode}
+                  defaultWorkspaceAccessMode={resolveWorkspaceAccessMode(workspaceSettings?.defaultWorkspaceAccessMode, workspaceSettings?.defaultPermissionMode, workspaceSettings?.defaultPermissionPreset)}
                   initialPermissionMode={selectedConversationDetail?.defaults.permissionMode ?? workspaceSettings?.defaultPermissionMode}
                   initialPermissionPreset={selectedConversationDetail?.defaults.permissionPreset ?? workspaceSettings?.defaultPermissionPreset}
                   detailContext={selectedConversationDetail ? {
@@ -3355,6 +3367,7 @@ export function AppShell(): React.JSX.Element {
             )}
             </Suspense>
           </LazyPageErrorBoundary>
+          </WorkSummaryProvider>
         </CurrentSessionHeaderCapabilityProvider>
       </section>
       {showInspector ? (

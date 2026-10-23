@@ -8,8 +8,22 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ## [Unreleased]
 
+### Added
+
+- Unified workspace summaries show sessions, net Git changes, recent commits, and
+  linked pull requests in the existing Summary panel. Change details open in the
+  current conversation's right review drawer.
+
 ### Changed
 
+- Conversation activity keeps safe thinking summaries and active commands visible,
+  groups completed operations by category, and folds a finished turn behind its
+  elapsed time while keeping the final answer and files outside the fold.
+- Context compaction shows its running state and result as an independent row
+  across normal conversations, teammate private chats, and channels.
+- Normal conversations now combine model selection and reasoning strength in one
+  compact popover, with three approval shortcuts beside the input. Sandbox and
+  independent authorization defaults remain in Settings.
 - Simplified the public README and added source setup, troubleshooting, and platform
   development-package instructions with a fresh workspace screenshot.
 

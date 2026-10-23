@@ -80,6 +80,15 @@ export const PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS = Object.freeze([
 ]);
 
 export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
+  "packages/core/src/storage/sqlite/work-summary-migration.ts",
+  "packages/core/src/storage/sqlite/work-summary-store.ts",
+  "packages/core/src/string-boundaries.ts",
+  "packages/daemon/src/features/work-summary/cache.ts",
+  "packages/daemon/src/features/work-summary/git-summary.ts",
+  "packages/daemon/src/features/work-summary/pull-requests.ts",
+  "packages/daemon/src/features/work-summary/routes.ts",
+  "packages/daemon/src/features/work-summary/service.ts",
+  "packages/daemon/src/shared/html-text.ts",
   // Explicit P3 read-only context-compaction projection; listing is not approval.
   "packages/daemon/src/features/conversations/context-compaction-projection.ts",
   // Explicit cold resource-bootstrap delta; listing alone grants no approval.
