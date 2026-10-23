@@ -38,6 +38,7 @@ import { listEffectiveChannelAiTeammateEntries, listEffectiveChannelAiTeammates,
 import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-protocol.js";
 import { materializeCommandIntent, type MaterializedCommandIntent } from "./command-operation-match.js";
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
+import { ChannelModelBudgetError, requireChannelNoToolsBudget } from "./channel-reply-budget-admission.js";
 import { buildChannelIntentSelectorContextPack, renderContextPack } from "./context-packs.js";
 import { buildWorkflowProposalContextView, proposalSourceRefsFromContextView } from "./context-processing/proposals.js";
 import {
@@ -517,6 +518,8 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
   const runnerResolution = input.runnerRegistry.resolve({ tools: [], allowFallback: true });
   const textDeltas: string[] = [];
   const runIntentTask = async (taskPrompt: string) => {
+    requireChannelNoToolsBudget({ budget: contextPack.budget, contextPackOverBudget: contextPack.overBudget,
+      prompt: taskPrompt, systemPrompt: "You are Ling's channel intent selector. Return strict JSON only." });
     const provider = resolveProviderForRun(input.store, {
       cwd: input.store.paths.cwd,
       workspaceCwd: input.store.paths.cwd,
@@ -562,7 +565,7 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
   try {
     result = await runIntentTask(prompt);
   } catch (error) {
-    if (!isContextLengthError(error)) {
+    if (error instanceof ChannelModelBudgetError || !isContextLengthError(error)) {
       throw error;
     }
     const observedAt = new Date().toISOString();
@@ -687,7 +690,7 @@ function parseModelClarification(value: unknown): ChannelIntentClarificationV2 {
     || !Array.isArray(missingFields)
     || missingFields.length === 0
     || missingFields.some((field) => typeof field !== "string" || !field.trim())
-    || new Set(missingFields).size !== missingFields.length
+    || new Set(missingFields.map((field) => typeof field === "string" ? field.trim() : field)).size !== missingFields.length
     || typeof question !== "string"
     || !question.trim()
   ) {
@@ -2175,34 +2178,11 @@ function validateClarificationShape(clarification: ChannelIntentClarificationV2)
   if (clarification.missingFields.length === 0 || !clarification.question.trim()) {
     throw new Error("Channel clarification requires missingFields and a specific question.");
   }
-  const question = clarification.question.toLowerCase();
-  for (const field of clarification.missingFields) {
-    const pattern = clarificationQuestionPattern(field);
-    if (!pattern.test(question)) {
-      throw new Error(`Channel clarification question does not name missing field: ${field}`);
-    }
-  }
-}
-
-function clarificationQuestionPattern(field: string): RegExp {
-  // Host binding paths remain exact structured audit fields. Their user-facing
-  // question names the missing product concept, never the internal JSON path.
-  const bindingRoot = field.split(".")[0];
-  if (bindingRoot === "owner") return /(owner|participant|队友|负责|归属)/iu;
-  if (bindingRoot === "sourceQuote") return /(source|quote|来源|引用)/iu;
-  if (bindingRoot === "execution") return /(operation|step|graph|操作|步骤|计划)/iu;
-  if (bindingRoot === "contentSource") return /(content|source|内容|来源)/iu;
-  if (bindingRoot === "inputs") return /(input|dependency|输入|依赖)/iu;
-  if (bindingRoot === "outputRefs") return /(output|file|输出|文件)/iu;
-  if (bindingRoot === "commandGoal") return /(command|invocation|module|命令|调用|文件)/iu;
-  if (bindingRoot === "target" && field !== "target") return /(target|file|path|目标|文件|路径)/iu;
-  if (field === "target") return /(target|file|path|directory|branch|pr|对象|目标|文件|路径|目录|分支)/iu;
-  if (field === "content") return /(content|body|text|page|feature|内容|正文|文本|页面|功能)/iu;
-  if (field === "acceptance_criteria") return /(acceptance|criteria|check|done|verify|验收|检查|完成|通过|验证)/iu;
-  if (field === "approval_scope") return /(approval|permission|allow|remote|授权|审批|权限|允许|远端)/iu;
-  if (field === "materialized_input") return /(attachment|link|input|file|image|document|附件|链接|输入|文件|图片|文档)/iu;
-  if (field === "command") return /(command|check|test|命令|检查|测试)/iu;
-  return new RegExp(field.replace(/[_-]+/gu, "[ _-]+"), "iu");
+  // missingFields are structured audit data, not words the localized question
+  // must repeat (and never a regex program). Lexical matching turned valid
+  // Chinese camelCase clarifications and other languages into ordinary replies.
+  // A clarification admits no effect: source/owner/tool/permission binding still
+  // happens only when a later user turn supplies an executable operation graph.
 }
 
 function currentTurnMayRequireExecutionTarget(body: string): boolean {

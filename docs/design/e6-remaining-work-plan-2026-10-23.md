@@ -95,11 +95,11 @@ canonical 路径与目录身份检查、最多两代及中断残留阻断。监�
 此一项差量已独审并获用户具体批准。后继session36004真实打包exit0，身份与codesign
 均已读回匹配；完整产物指纹见`output/e6-20260928/p2-packaged-identity-readback-20261023.md`。
 
-当前新阻碍：正确隔离启动上述新包后，真实界面显示本地服务20秒启动超时；已保留截图并
+已修复的冷启动阻碍：正确隔离启动上述旧包后，真实界面显示本地服务20秒启动超时；已保留截图并
 正常退出，未进行会话或模型调用。完整固定资源认证/保留先于listen/FD3，实测原保留34.2s，
 8worker候选保留24.3s；不能只优化或扩大HTTP probe时限就宣布完成。
 
-冷启动补充契约（实现与本轮差量独审已完成，尚待新具体批准及新包GUI复测）：
+冷启动补充契约（实现、差量独审、具体批准及新包真实GUI冷启动复测已完成）：
 
 1. 普通/开发服务readiness仍为20s；packaged资源准备另有固定60s绝对预算，不由活动续期。
 2. Desktop只从自己spawn的child继承FD4读取单个有界记录，严格核schema/phase/pid并等待EOF。
@@ -121,7 +121,11 @@ canonical 路径与目录身份检查、最多两代及中断残留阻断。监�
 编译与diff-check通过。两独立差量审阅均已完成，选定输入未解决finding=0，报告位于
 `output/e6-20260928/p2-cold-preflight-independent-review-20261023.md`和
 `output/e6-20260928/p2-bootstrap-independent-review-20261023.md`。
-下一步只冻结并展示新pending packet，不重复既有长套、P1重建或旧CPA调查。
+用户已批准新具体packet5927e6e5。session92413新包actual exit0，严格codesign和ASAR
+身份校验通过；真实Main36013/Daemon36023隔离启动，资源28168ms、随后服务174ms后就绪，
+内置Cua已看到实际主窗口/初始化页。证据见
+`output/e6-20260928/p2-cold-bootstrap-packaged-readback-20261023.md`。
+P2完成，直接继续P3；不重复既有长套、P1重建或旧CPA调查。此处不代表P3/H09或总目标完成。
 
 - 冻结最终输入并检查是否改变既有批准的 closure；未变输入复用原审阅，新增变化单独审阅。
 - 如改变受审输入，展示新具体 packet 请求批准；不重新审阅全部已确认未变内容，

@@ -121,14 +121,13 @@ export function resolveProviderModelCapabilitySnapshot(
   const templateMaxOutputTokens = positiveInteger(template?.maxTokens);
   const familyEstimate = providerFamilyEstimate(providerPreset);
 
-  if (userContextWindowTokens || userMaxOutputTokens) {
+  // An output limit says nothing about the model's context capacity. Only an
+  // explicit context override may bypass observed context-window downgrades.
+  if (userContextWindowTokens) {
     return chatSnapshot(providerPreset, {
       source: "user_override",
       confidence: "known",
-      contextWindowTokens:
-        userContextWindowTokens ??
-        templateContextWindowTokens ??
-        familyEstimate.contextWindowTokens,
+      contextWindowTokens: userContextWindowTokens,
       maxOutputTokens:
         userMaxOutputTokens ??
         templateMaxOutputTokens ??
@@ -142,7 +141,7 @@ export function resolveProviderModelCapabilitySnapshot(
       source: "provider_template",
       confidence: "known",
       contextWindowTokens: templateContextWindowTokens ?? familyEstimate.contextWindowTokens,
-      maxOutputTokens: templateMaxOutputTokens ?? familyEstimate.maxOutputTokens,
+      maxOutputTokens: userMaxOutputTokens ?? templateMaxOutputTokens ?? familyEstimate.maxOutputTokens,
       reason: `Matched bundled provider template ${template?.templateId ?? "unknown"}.`,
     }), options.runtimeObservation);
   }
@@ -152,13 +151,16 @@ export function resolveProviderModelCapabilitySnapshot(
       source: "provider_metadata",
       confidence: "estimated",
       contextWindowTokens: familyEstimate.contextWindowTokens,
-      maxOutputTokens: familyEstimate.maxOutputTokens,
+      maxOutputTokens: userMaxOutputTokens ?? familyEstimate.maxOutputTokens,
       reason: "Known provider family without exact model capability metadata.",
     }), options.runtimeObservation);
   }
 
   return applyRuntimeObservation(
-    conservativeSnapshot(providerPreset, "Unknown compatible provider uses conservative defaults."),
+    {
+      ...conservativeSnapshot(providerPreset, "Unknown compatible provider uses conservative context defaults."),
+      maxOutputTokens: userMaxOutputTokens ?? familyEstimate.maxOutputTokens,
+    },
     options.runtimeObservation,
   );
 }
@@ -349,5 +351,5 @@ function matchingProviderTemplate(
 }
 
 function positiveInteger(value: number | undefined): number | undefined {
-  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }

@@ -196,7 +196,6 @@ const MODEL_ESTIMATED_CONTEXT_WINDOW_TOKENS = 32_768;
 const DEFAULT_OUTPUT_TOKENS = 1_024;
 const SELECTOR_OUTPUT_TOKENS = 512;
 const RUNTIME_OVERHEAD_TOKENS = 512;
-const MIN_INPUT_BUDGET_TOKENS = 1_024;
 
 interface ProviderContextObservationHost {
   readonly store: RunStore;
@@ -216,7 +215,11 @@ export function resolveProviderContextCapabilities(
   });
   return {
     contextWindowTokens: snapshot.chatEligible ? snapshot.contextWindowTokens : undefined,
-    maxOutputTokens: snapshot.chatEligible && snapshot.confidence === "known" ? snapshot.maxOutputTokens : undefined,
+    // A configured output ceiling remains authoritative even when the context
+    // window is only conservative/observed. Do not lose it with that confidence.
+    maxOutputTokens: snapshot.chatEligible && (snapshot.confidence === "known"
+      || (Number.isSafeInteger(providerPreset?.maxTokens) && (providerPreset?.maxTokens ?? 0) > 0))
+      ? snapshot.maxOutputTokens : undefined,
     tokenizer: snapshot.tokenizer,
     supportsStructuredOutput: snapshot.supportsStructuredOutput,
     capabilitySource: snapshot.source,
@@ -236,7 +239,7 @@ export function resolveProviderContextBudget(
     (mode === "model_estimated" ? MODEL_ESTIMATED_CONTEXT_WINDOW_TOKENS : MODEL_UNKNOWN_CONTEXT_WINDOW_TOKENS);
   const reservedOutputTokens = capabilities.maxOutputTokens ?? (kind.includes("selector") ? SELECTOR_OUTPUT_TOKENS : DEFAULT_OUTPUT_TOKENS);
   const inputBudgetTokens = Math.max(
-    MIN_INPUT_BUDGET_TOKENS,
+    0,
     contextWindowTokens - reservedOutputTokens - RUNTIME_OVERHEAD_TOKENS,
   );
   return {

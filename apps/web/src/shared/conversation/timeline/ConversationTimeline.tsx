@@ -122,7 +122,7 @@ export function ConversationTimeline({
   const responseIdForTarget = (target: EventTarget | null): string | undefined => target instanceof Element
     ? target.closest<HTMLElement>(".conversation-timeline-focus-block[data-conversation-response-id]")?.dataset.conversationResponseId
     : undefined;
-  const { model: displayModel, setSubAgentExpanded, setBlockExpanded, revealDisclosurePath } = useConversationTimelineDisplayModel(timelineItems, snapshot.runLifecycles);
+  const { model: displayModel, setSubAgentExpanded, setBlockExpanded, revealDisclosurePath } = useConversationTimelineDisplayModel(timelineItems, snapshot.runLifecycles, snapshot.contextSegmentIdByItemId);
   const displayModelRef = useRef(displayModel);
   displayModelRef.current = displayModel;
   const displayRows = displayModel.rows;

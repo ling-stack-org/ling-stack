@@ -38,6 +38,7 @@ import {
   parseProviderPresetUpdateRequest,
   providerUpdateWithSecretRef,
   validateProviderPresetUpdate,
+  validateProviderTokenBudget,
 } from "./schemas.js";
 import {
   createDraftProviderSecretResolver,
@@ -139,26 +140,33 @@ export async function handleProviderModelImport(
     let createdCount = 0;
     let updatedCount = 0;
 
-    for (const rawModel of dedupeProviderImportModels(input.models)) {
+    // Validate every effective pair before the first write/check: raw request
+    // validation cannot see catalog defaults or values inherited from a preset.
+    const modelImports = dedupeProviderImportModels(input.models).map((rawModel) => {
       const model = enrichProviderModelOption(rawModel, {
         kind: input.kind,
         providerId: input.providerId,
         api: input.api,
       });
+      const existing = existingProviders.find((provider) =>
+        provider.providerId === input.providerId &&
+        provider.api === (model.api ?? input.api) &&
+        normalizeProviderImportEndpoint(provider.baseUrl) === normalizeProviderImportEndpoint(input.baseUrl) &&
+        provider.model === model.id
+      );
+      const contextWindow = model.contextWindow ?? input.contextWindow ?? existing?.contextWindow;
+      const maxTokens = model.maxTokens ?? input.maxTokens ?? existing?.maxTokens;
+      validateProviderTokenBudget({ contextWindow, maxTokens });
+      return { model, existing, contextWindow, maxTokens };
+    });
+
+    for (const { model, existing, contextWindow: modelContextWindow, maxTokens: modelMaxTokens } of modelImports) {
       const modelApi = model.api ?? input.api;
       const modelInput = model.input ?? input.input ?? ["text"];
       const modelThinkingModes = model.thinkingModes ?? input.thinkingModes ?? [];
       const modelReasoning = providerThinkingModesIncludeReasoning(modelThinkingModes);
       const modelCapabilities = providerCapabilitiesWithReasoning(model.capabilities ?? input.capabilities, modelReasoning);
-      const modelContextWindow = model.contextWindow ?? input.contextWindow;
-      const modelMaxTokens = model.maxTokens ?? input.maxTokens;
       const displayName = providerImportDisplayName(input.providerId, input.displayName, model);
-      const existing = existingProviders.find((provider) =>
-        provider.providerId === input.providerId &&
-        provider.api === modelApi &&
-        normalizeProviderImportEndpoint(provider.baseUrl) === normalizeProviderImportEndpoint(input.baseUrl) &&
-        provider.model === model.id
-      );
 
       if (existing) {
         const updated = store.updateProviderPreset(existing.id, {

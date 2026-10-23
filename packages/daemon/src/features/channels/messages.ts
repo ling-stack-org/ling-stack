@@ -532,6 +532,10 @@ function prepareConversationSummaryAssessment(
   const budget = resolveProviderContextBudget(providerPreset, "channel_reply", {
     store: input.store, secretResolver: input.routeDependencies.secretResolver,
   });
+  // Summary generation needs at least 1024 input tokens. A smaller real budget
+  // makes this maintenance job inapplicable, not the reply admissible: the
+  // final fully rendered reply still passes its own strict capacity gate.
+  if (budget.inputBudgetTokens < 1_024) return { status: "not_needed" };
   return assessConversationContextSummary({
     store: input.store,
     sourceItemId: input.sourceMessage.id,

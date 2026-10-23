@@ -24,6 +24,7 @@ export interface ChannelThreadReplySnapshot {
 }
 
 interface ChannelThreadReplyControllerInput {
+  readonly refreshToken?: number;
   readonly cwd: string;
   readonly selectedChannelId: string;
   readonly channelMessages: readonly ChannelMessage[];
@@ -52,6 +53,7 @@ export interface ChannelThreadReplyController {
   readonly conversationItems: readonly ConversationItemV1[];
   readonly userInputs: readonly UserInputTranscriptItemV1[];
   readonly reasoningSummaries: readonly ConversationReasoningSummaryRecord[];
+  readonly contextCompactions: readonly import("../../types.js").ConversationContextCompactionRecord[];
   readonly draft: string;
   readonly pending: boolean;
   readonly error: string;
@@ -65,6 +67,7 @@ export interface ChannelThreadReplyController {
 }
 
 export function useChannelThreadReplyController({
+  refreshToken = 0,
   cwd,
   selectedChannelId,
   channelMessages,
@@ -160,6 +163,9 @@ export function useChannelThreadReplyController({
     setPending(false);
     topicPageRef.current = undefined;
     setTopicPage(undefined);
+  }, [topicOwner]);
+
+  useEffect(() => {
     if (!activeThreadId) {
       ++loadVersionRef.current;
       setResolvedThreadId("");
@@ -168,8 +174,8 @@ export function useChannelThreadReplyController({
       return;
     }
     void loadTopicMessages({ kind: "topic", anchorItemId: activeThreadId });
-    return () => { ++loadVersionRef.current; topicPageRef.current = undefined; };
-  }, [activeThreadId, loadTopicMessages]);
+    return () => { ++loadVersionRef.current; };
+  }, [activeThreadId, loadTopicMessages, refreshToken]);
 
   const activeReplyTarget = useMemo(
     () => resolvedThreadId
@@ -298,6 +304,7 @@ export function useChannelThreadReplyController({
     conversationItems: topicPageOwner === topicOwner && topicPage?.threadId === resolvedThreadId ? topicPage.conversationItems : [],
     userInputs: topicPageOwner === topicOwner && topicPage?.threadId === resolvedThreadId ? topicPage.userInputs ?? [] : [],
     reasoningSummaries: topicPageOwner === topicOwner && topicPage?.threadId === resolvedThreadId ? topicPage.reasoningSummaries : [],
+    contextCompactions: topicPageOwner === topicOwner && topicPage?.threadId === resolvedThreadId ? topicPage.contextCompactions ?? [] : [],
     draft,
     pending: pending || loading,
     error,

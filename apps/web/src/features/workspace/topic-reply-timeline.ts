@@ -21,6 +21,7 @@ export function projectTopicReplyTimeline(input: {
   readonly conversationItems: readonly ConversationItemV1[];
   readonly userInputs: readonly UserInputTranscriptItemV1[];
   readonly reasoningSummaries: readonly ConversationReasoningSummaryRecord[];
+  readonly contextCompactions?: readonly import("../../types.js").ConversationContextCompactionRecord[];
 }): readonly ConversationTimelineItem[] {
   const root = messageItem(input.rootMessage, -1);
   if (!input.threadId?.trim()) return [root];
@@ -48,7 +49,7 @@ export function projectTopicReplyTimeline(input: {
   });
   const history = [...messages, ...questions].sort((a, b) => a.threadSequence - b.threadSequence
     || a.partIndex - b.partIndex || a.id.localeCompare(b.id));
-  const reasoning = projectTopicReasoningItems(anchors, input.reasoningSummaries);
+  const reasoning = projectTopicReasoningItems(anchors, input.reasoningSummaries, input.contextCompactions ?? []);
   const historyWithReasoning = mergeConversationRunNarration(history, reasoning);
   const tail = anchors.reduce((max, item) => Math.max(max, item.sequence), 0);
   return [root, ...historyWithReasoning, ...pending.map((message, index) => messageItem(message, tail + index + 1))];
@@ -57,9 +58,10 @@ export function projectTopicReplyTimeline(input: {
 function projectTopicReasoningItems(
   items: readonly ConversationItemV1[],
   summaries: readonly ConversationReasoningSummaryRecord[],
+  compactions: readonly import("../../types.js").ConversationContextCompactionRecord[],
 ): readonly ConversationTimelineItem[] {
   const first = items[0];
-  if (!first || summaries.length === 0) return [];
+  if (!first || summaries.length === 0 && compactions.length === 0) return [];
   const canonicalItems: CanonicalConversationItem[] = items.map((item) => ({
     id: item.id,
     workspaceId: item.workspaceId,
@@ -77,16 +79,18 @@ function projectTopicReasoningItems(
   const canonicalSummaries: CanonicalReasoningSummaryRecord[] = summaries
     .filter((summary) => summary.workspaceId === first.workspaceId && summary.threadId === first.threadId)
     .map((summary) => ({ ...summary, sourceRefs: summary.sourceRefs.map((ref) => ({ ...ref })) }));
-  if (canonicalSummaries.length === 0) return [];
+  const scopedCompactions = compactions.filter(record => record.workspaceId === first.workspaceId && record.threadId === first.threadId);
+  if (canonicalSummaries.length === 0 && scopedCompactions.length === 0) return [];
   return projectCanonicalConversationTimeline({
     scope: { surface: "topic", workspaceId: first.workspaceId, threadId: first.threadId, depth: 0 },
     items: canonicalItems,
     actions: [],
     reasoningSummaries: canonicalSummaries,
+    compactions: scopedCompactions,
     turnRuns: [],
     sourceSequence: canonicalItems.reduce((max, item) => Math.max(max, item.sequence), 0),
-    sourceRevision: canonicalSummaries.map((summary) => `${summary.id}:${summary.revision}`).sort().join("|"),
-  }).items.filter((item) => item.kind === "reasoning");
+    sourceRevision: [...canonicalSummaries, ...scopedCompactions].map((summary) => `${summary.id}:${summary.revision}`).sort().join("|"),
+  }).items.filter((item) => item.kind === "reasoning" || item.kind === "contextCompaction");
 }
 
 function messageItem(message: ChannelMessage, sequence: number): ConversationTimelineItem {

@@ -15,6 +15,35 @@ const scope = {
   depth: 0,
 };
 
+test("compaction lifecycle keeps event identity and causal order without becoming terminal action evidence", () => {
+  const assistant = { ...item("assistant", 3, "assistant_message", { body: "Done", deliveryStatus: "ready" }), turnId: "turn-1", domainRefs: [{ type: "run", id: "run-1" }] };
+  const record = { id: "compaction-1", revision: 10, workspaceId: scope.workspaceId, threadId: scope.threadId,
+    turnId: "turn-1", runId: "run-1", attemptId: "attempt-1", participantId: "ling", anchorItemId: assistant.id,
+    eventSequence: 5, eventId: "event-5", status: "running", reason: "threshold", summary: "",
+    sourceRefs: [{ kind: "conversation_item", id: assistant.id }, { kind: "run", id: "run-1" },
+      { kind: "attempt", id: "attempt-1" }, { kind: "run_event", id: "event-5" }] };
+  const input = { scope, sourceSequence: 3, sourceRevision: "compaction", items: [
+    item("user", 1, "user_message", { body: "Inspect" }),
+    item("tool", 2, "tool_call", { toolCallId: "call", toolName: "read" }), assistant,
+  ], actions: [action("read", 2, { actionType: "read", status: "succeeded", toolCallId: "call", sourceEventSequence: 8,
+    sourceRefs: [conversationRef("tool")] })], turnRuns: [], compactions: [record] };
+  for (const status of ["running", "succeeded", "failed", "cancelled", "blocked"]) {
+    const projected = projectCanonicalConversationTimeline({ ...input, compactions: [{ ...record, status }] });
+    const compaction = projected.items.find(row => row.kind === "contextCompaction");
+    assert.ok(compaction);
+    assert.equal(compaction.status, status);
+    assert.equal(compaction.runId, record.runId);
+    assert.equal(compaction.attemptId, record.attemptId);
+    assert.ok(projected.items.indexOf(compaction) < projected.items.findIndex(row => row.actionId === "read"));
+    assert.equal(projected.terminalEvidence.some(row => row.actionId === compaction.id), false);
+    if (status === "running") assert.equal(projected.activeItemId, compaction.id);
+  }
+  for (const mutation of [{ runId: "other" }, { sourceRefs: [] }, { eventSequence: 0 }]) {
+    const projected = projectCanonicalConversationTimeline({ ...input, compactions: [{ ...record, ...mutation }] });
+    assert.equal(projected.items.some(row => row.kind === "contextCompaction"), false);
+  }
+});
+
 test("unhydrated user-input references never become messages, commands or terminal evidence", () => {
   const result = projectCanonicalConversationTimeline({ scope, sourceSequence: 2, sourceRevision: "user-input-1",
     items: [item("question", 1, "user_input_request", { requestId: "request-1", requestVersion: 1 }),

@@ -381,10 +381,19 @@ function channelTurnTimelineItems(
   // The feed assigns a large base sequence per turn. Normalize the already
   // projected turn-local order so equal legacy sequence values cannot reorder
   // narration ahead of the source user message by string id.
-  return ordered.map((item, index) => ({
-    ...item,
-    threadSequence: index + 1,
-  }));
+  return ordered.map((item, index) => {
+    // Part zero is the source message. Preserve contiguous fact positions in
+    // this explicit turn-local display order, including atoms inside batches,
+    // so shared disclosures can recognize adjacent operations after rebasing.
+    const position = { threadSequence: index + 1, partIndex: 1 };
+    if (item.kind === "commandBatch") return { ...item, ...position, batch: {
+      ...item.batch, commands: item.batch.commands.map((command, part) => ({ ...command, ...position, partIndex: part + 1 })),
+    } };
+    if (item.kind === "explorationBatch") return { ...item, ...position, batch: {
+      ...item.batch, children: item.batch.children.map((child, part) => ({ ...child, ...position, partIndex: part + 1 })),
+    } };
+    return { ...item, ...position };
+  });
 }
 
 function channelTurnTerminalReportTimelineItem(
@@ -506,6 +515,7 @@ type FeedbackValue = "up" | "down";
 
 export interface ChannelMessageRenderersInput {
   readonly runLifecycles?: import("@ling-stack/conversation-ui-core").TimelineSnapshot["runLifecycles"];
+  readonly contextSegmentIdByItemId?: ReadonlyMap<string, string>;
   readonly allLocalTeammateById: ReadonlyMap<string, LocalTeammateDraft>;
   readonly allLocalTeammateByName: ReadonlyMap<string, LocalTeammateDraft>;
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
@@ -1061,6 +1071,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       threadId: input.selectedChannelThreadId,
       items: projectedTimelineItems,
       runLifecycles: input.runLifecycles,
+      contextSegmentIdByItemId: input.contextSegmentIdByItemId,
       canonicalRevision: projectedTimelineItems.reduce((max, item) => Math.max(max, item.revision), 0),
     });
     if (snapshot.items.length === 0) return null;

@@ -147,7 +147,7 @@ import {
   createConversationMediaGenerationToolHandler,
   isConversationMediaGenerationEligible,
 } from "../media/conversation-tool-handler.js";
-import { appendExecutionActionInvalidation } from "./execution-action-invalidation.js";
+import { appendContextCompactionInvalidation, appendExecutionActionInvalidation } from "./execution-action-invalidation.js";
 import { listConversationMediaGenerationTargets } from "../media/conversation-targets.js";
 import { auditIgnoredRunnerCompletion } from "./stale-completion.js";
 import { reviewPendingApprovalAutomatically } from "./approval-auto-review-host.js";
@@ -2648,6 +2648,7 @@ async function executeAdmittedRunRequest(
           cwd: workspaceCwd,
           event: envelope,
         });
+        appendContextCompactionInvalidation({ store, hub: options.controlPlaneEvents, cwd: workspaceCwd, event: envelope });
       } catch {
         // Projection invalidation is rebuildable and cannot invalidate the
         // authoritative Run event that was already committed above.

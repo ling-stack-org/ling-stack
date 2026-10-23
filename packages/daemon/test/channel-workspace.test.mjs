@@ -529,7 +529,8 @@ test("context budget manager resolves provider modes and trims lower priority se
   });
   assert.deepEqual(trimmed.sections.map((section) => section.id), ["must"]);
   assert.deepEqual(trimmed.droppedSectionIds, ["low", "high"]);
-  assert.equal(trimmed.overBudget, false);
+  assert.equal(trimmed.budget.inputBudgetTokens, 776);
+  assert.equal(trimmed.overBudget, true, "protected 900-token input cannot fit a real 776-token budget");
 
   const protectedOnly = buildContextPack({
     kind: "channel_reply",
@@ -4264,7 +4265,7 @@ test("channel hard summary with no completed prefix records the limitation and b
   try {
     const channel = await createChannel(daemon.url, cwd);
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
-      contextWindow: 1_800, maxTokens: 512,
+      contextWindow: 2_200, maxTokens: 512,
     })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
     await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
@@ -4295,6 +4296,39 @@ test("channel hard summary with no completed prefix records the limitation and b
     assert.equal(events[0].data.fallback, "prepared_input_budget_gate");
     assert.equal(runner.runs.length, 0);
     assert.equal(store.listRuns({ limit: 10 }).length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+for (const capacity of [
+  { label: "exhausted-output", maxTokens: 32768 },
+  { label: "one-input-token", contextWindow: 1537, maxTokens: 1024 },
+  { label: "small-input", contextWindow: 2047, maxTokens: 512 },
+]) test(`channel ${capacity.label} reaches explicit admission without a summary RangeError or model call`, async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-small-input-"));
+  const runner = new SummaryAwareRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const { label, ...tokens } = capacity;
+    const provider = (await createStaticChatProvider(daemon.url, cwd, tokens)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_engineer")}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: `@Engineer analyze this protected input: ${"x".repeat(12_000)}`,
+      mentions: [{ id: "teammate_builtin_engineer", label: "Engineer", kind: "ai-teammate" }],
+      teammateId: "teammate_builtin_engineer", providerPresetId: provider.id, requestAiReply: true,
+    });
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "blocked", created.message.threadId);
+    const reply = listed.messages.find(message => message.id === created.aiReply.id);
+    assert.match(reply.body, label === "exhausted-output" ? /configured output limit leaves no room/u : /context budget/u);
+    assert.doesNotMatch(reply.body, /RangeError|Invalid conversation summary input budget/u);
+    assert.equal(runner.runs.length, 0);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -10092,7 +10126,7 @@ test("workflow graph compiles into durable steps and emits standardized packets"
   }
 });
 
-for (const contextWindowTokens of [1800, 4096]) {
+for (const contextWindowTokens of [1800, 2048, 4096]) {
 test(`workflow dependency compaction preserves the SDK budget gate at ${contextWindowTokens} tokens`, async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-context-compaction-"));
   const runner = new class extends RecordingRunner {
@@ -10150,7 +10184,7 @@ test(`workflow dependency compaction preserves the SDK budget gate at ${contextW
     const fullInputBudget = contextWindowTokens - 512 - 512;
     // Measured with the production packer: 20 capped dependencies exceed the
     // 4K model's 3072-token packet budget; the compacted summary still fits.
-    const dependencyCount = contextWindowTokens === 1800 ? 7 : 20;
+    const dependencyCount = contextWindowTokens <= 2048 ? 7 : 20;
     const upstreamSteps = Array.from({ length: dependencyCount }, (_, index) => {
       const step = createParallelWorkflowStep(store, workflow.id, `Research Findings ${index + 1}`, {
         branchGroupId: `research-${index + 1}`,
@@ -10172,6 +10206,16 @@ test(`workflow dependency compaction preserves the SDK budget gate at ${contextW
     });
 
     const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    if (contextWindowTokens === 1800) {
+      assert.equal(tick.status, "blocked");
+      const blockedStep = store.getChannelWorkflowStep(downstream.id);
+      assert.equal(blockedStep.status, "blocked");
+      assert.match(blockedStep.blocker, /Workflow step context exceeds provider budget/u);
+      assert.equal(blockedStep.runId, undefined);
+      assert.equal(runner.runs.length, 0, "required dependency summary cannot be dropped to fit a small window");
+      assert.equal(runner.providerRequests, 0);
+      return;
+    }
     assert.equal(tick.status, "started");
     assert.equal(tick.workflowStep.id, downstream.id);
     assert.equal(runner.runs.length, 1);
@@ -10182,7 +10226,7 @@ test(`workflow dependency compaction preserves the SDK budget gate at ${contextW
     let startedStep;
     try {
       startedStep = await waitForWorkflowStepStatus(daemon.url, cwd, workflow.id, downstream.id,
-        contextWindowTokens === 1800 ? "blocked" : "succeeded");
+        contextWindowTokens === 2048 ? "blocked" : "succeeded");
     } catch {
       const step = store.getChannelWorkflowStep(downstream.id);
       const run = step?.runId ? store.getRun(step.runId) : undefined;
@@ -10191,7 +10235,7 @@ test(`workflow dependency compaction preserves the SDK budget gate at ${contextW
         errors: run ? store.listEvents(run.id).filter(event => event.type === "run_error").map(event => event.data) : [] })}`);
     }
     const run = store.getRun(startedStep.runId);
-    if (contextWindowTokens === 1800) {
+    if (contextWindowTokens === 2048) {
       assert.equal(run?.status, "failed");
       assert.match(run.errorMessage, /Pi model context exceeds selected model budget/);
       assert.equal(runner.providerRequests, 0, "packet compaction cannot bypass the SDK's complete-input capacity check");
@@ -10206,7 +10250,7 @@ test(`workflow dependency compaction preserves the SDK budget gate at ${contextW
     assert.equal(contextPacket.contextPack.budget.contextWindowTokens, contextWindowTokens);
     assert.equal(contextPacket.contextPack.budget.reservedOutputTokens, 512);
     assert.equal(contextPacket.contextPack.budget.reservedRuntimeOverheadTokens, 512);
-    assert.equal(contextPacket.contextPack.budget.inputBudgetTokens, Math.max(1024, fullInputBudget));
+    assert.equal(contextPacket.contextPack.budget.inputBudgetTokens, Math.max(0, fullInputBudget));
     assert.equal(contextPacket.contextPack.budget.tokenizer, "openai-compatible");
     assert.equal(contextPacket.contextPack.budget.capabilitySource, "user_override");
     assert.equal(contextPacket.contextPack.budget.capabilityConfidence, "known");

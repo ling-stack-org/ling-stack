@@ -23,6 +23,7 @@ import { buildConversationGeneratedMediaProjection } from "../media/conversation
 import { terminalReportIsEligibleForDisplay } from "./terminal-report-eligibility.js";
 import { projectConversationUserInputs } from "../conversations/user-input-transcript.js";
 import { projectConversationReasoningSummaries } from "../conversations/reasoning-summary-projection.js";
+import { projectConversationContextCompactions } from "../conversations/context-compaction-projection.js";
 
 export function listChannelConversationItems(input: {
   readonly store: RunStore;
@@ -65,6 +66,13 @@ export function listChannelConversationItems(input: {
     }),
     userInputs,
     reasoningSummaries: projectConversationReasoningSummaries({
+      store: input.store,
+      thread: input.thread,
+      runLinks,
+      runs,
+      items: visibleItems,
+    }),
+    contextCompactions: projectConversationContextCompactions({
       store: input.store,
       thread: input.thread,
       runLinks,

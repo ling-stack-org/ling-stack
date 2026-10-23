@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createCompositeSecretResolver } from "../../core/dist/index.js";
+import { buildWebEvidenceContext } from "../dist/features/web/web-evidence-service.js";
 import {
   buildChannelWebContext,
   extractPublicUrls,
@@ -17,6 +18,34 @@ test("web search trigger detects explicit and freshness search intent", () => {
   assert.equal(shouldRunWebSearchForText("搜索一下 OpenAI 今天的新闻"), true);
   assert.equal(shouldRunWebSearchForText("What is the latest Node LTS news?"), true);
   assert.equal(shouldRunWebSearchForText("现在实现这个按钮"), false);
+});
+
+test("explicit offline instructions suppress speculative web prefetch before credentials, progress or network", async () => {
+  const prompts = [
+    "仅用本地文件，不联网，编写并运行测试。",
+    "不要联网，也不要打开 https://example.com，直接读取本地代码。",
+    "无需联网，验证当前版本的本地实现。",
+    "禁止上网，搜索一下本地项目的 README。",
+    "Do not search the web. Read https://example.com only as a literal example in this offline task.",
+    "Without network access, verify the current version using local files.",
+    "Don't browse the web or open URLs; read the local README.",
+    "不要打开 https://example.com，只把它作为字面字符串。",
+    "Do not open https://example.com; treat it as a literal example.",
+    "不要访问网络，查一下今天的版本。",
+    "禁止读取 https://example.com，仅分析本地代码。",
+    "不要使用 web_search，验证本地版本。",
+  ];
+  for (const sourceText of prompts) {
+    assert.equal(shouldRunWebSearchForText(sourceText), false, sourceText);
+    assert.equal(shouldReadPublicUrlsForText(sourceText), false, sourceText);
+    const unexpected = () => { assert.fail(`Unexpected external preparation for ${sourceText}`); };
+    const context = await buildWebEvidenceContext({ sourceText,
+      secretResolver: { resolve: unexpected }, fetch: unexpected,
+      resolveHostAddresses: unexpected, onProgress: unexpected });
+    assert.deepEqual(context, { status: "not_applicable" });
+  }
+  assert.equal(shouldRunWebSearchForText("不要修改文件，联网搜索一下今天的新闻。"), true);
+  assert.equal(shouldReadPublicUrlsForText("不要修改文件，打开 https://example.com 并总结。"), true);
 });
 
 test("web search query planner expands freshness intent", () => {

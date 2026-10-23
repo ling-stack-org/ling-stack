@@ -569,6 +569,8 @@ function blockChannelReplyIfOverBudget(
   if (admission.status === "admitted") return undefined;
   const message = admission.reason === "capacity_unknown"
     ? "The selected model's context capacity is unknown; choose a provider with a known context window."
+    : admission.reason === "output_reservation_exhausted"
+    ? "The configured output limit leaves no room for input in this model's context budget. Lower Max tokens in model settings, or configure a verified context window."
     : "The prepared reply exceeds the selected model's context budget. Shorten the request or use a larger-context model.";
   const blocked = finishChannelMessage(input.store, input.pending.id, {
     body: message,

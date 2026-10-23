@@ -119,6 +119,7 @@ import { useWorkspaceRightDockController } from "../workspace/useWorkspaceRightD
 import { useConversationSummaryLayout } from "../workspace/conversation-summary-layout.js";
 import { useConversationHeaderController } from "../workspace/useConversationHeaderController.js";
 import { buildTeammatePrivateModelNotice, teammatePrivateMessageSearchText } from "./teammate-private-chat-view-models.js";
+import { privateTimelineResponseIsOwned } from "./teammate-private-timeline-items.js";
 import {
   directComposerFileRefs,
   directWorkspacePathLabel,
@@ -278,11 +279,13 @@ export function TeammateWorkspace({
   const [terminalReports, setTerminalReports] = useState<readonly TerminalReportDto[]>([]);
   const [directExecutionActions, setDirectExecutionActions] = useState<readonly ExecutionAction[]>([]);
   const [directRuntime, setDirectRuntime] = useState<TeammateDirectRuntimeResponse | undefined>();
+  const [directTimelineRuns, setDirectTimelineRuns] = useState<readonly RunSession[]>([]);
   const [directWorkspace, setDirectWorkspace] = useState<DirectWorkspaceResponse | undefined>();
   const workspaceSnapshotCurrent = messageSnapshotIdentity === workspaceMessageIdentity;
   const currentMessages = workspaceSnapshotCurrent ? messages : emptyTeammateDirectMessages;
   const currentGeneratedMedia = workspaceSnapshotCurrent ? generatedMedia : emptyConversationGeneratedMedia;
   const currentDirectRuntime = workspaceSnapshotCurrent ? directRuntime : undefined;
+  const currentDirectTimelineRuns = workspaceSnapshotCurrent ? directTimelineRuns : [];
   const currentDirectWorkspace = workspaceSnapshotCurrent ? directWorkspace : undefined;
 
   useEffect(() => {
@@ -517,19 +520,25 @@ export function TeammateWorkspace({
       .filter((runId): runId is string => Boolean(runId && teammateRunIds.has(runId))))];
   }, [runs, teammate.id, visibleMessages]);
   const visibleDirectRunKey = visibleDirectRunIds.join("|");
-  const directApprovalViews = useMemo(
-    () => currentDirectRuntime ? buildInlineApprovalViews(currentDirectRuntime.approvals, {
+  const directApprovalViews = useMemo(() => {
+    if (!currentDirectRuntime) return [];
+    const activeWorkUnit = currentDirectRuntime.activeReply?.workUnit;
+    // Private runtime snapshots already carry the current Host-owned WorkUnit.
+    // Global runtime lists load independently and may predate this submission.
+    const activeWorkUnits = activeWorkUnit?.id === currentDirectRuntime.activeReply?.workUnitId
+      && activeWorkUnit?.kind === "teammate_direct_reply" && activeWorkUnit.teammateId === teammate.id
+      ? [activeWorkUnit] : [];
+    return buildInlineApprovalViews(currentDirectRuntime.approvals, {
       owner: {
         kind: "teammate_direct",
         teammateId: teammate.id,
         threadId: currentDirectRuntime.thread.id,
       },
-      runs,
+      runs: [...runs, ...currentDirectTimelineRuns],
       teammateDirectMessages: currentMessages,
-      workUnits,
-    }) : [],
-    [currentDirectRuntime, currentMessages, runs, teammate.id, workUnits],
-  );
+      workUnits: [...workUnits, ...activeWorkUnits],
+    });
+  }, [currentDirectRuntime, currentDirectTimelineRuns, currentMessages, runs, teammate.id, workUnits]);
   const hasActiveVisibleDirectRun = useMemo(() => {
     const visibleRunIds = new Set(visibleDirectRunIds);
     return runs.some((run) => visibleRunIds.has(run.id) && (
@@ -905,6 +914,9 @@ export function TeammateWorkspace({
         setHasMoreDirectMessages(Boolean(directResponse.hasMore));
         setNextDirectBeforeMessageId(directResponse.nextBeforeMessageId);
         setDirectRuntime(directRuntimeResponse);
+        setDirectTimelineRuns(directResponse.cwd === workspaceCwd && privateTimelineResponseIsOwned(directResponse, {
+          teammateId: request.teammateId, directThreadId: directRuntimeResponse.thread.id,
+        }) ? directResponse.timeline?.runs ?? [] : []);
         setDirectWorkspace(directWorkspaceResponse);
         setDirectLinkPreviews(directLinkPreviewsResponse.linkPreviews);
         setPrivateAttachments(privateAttachmentsResponse.attachments);
@@ -944,6 +956,9 @@ export function TeammateWorkspace({
           : response.messages);
         setGeneratedMedia((current) => mergeConversationGeneratedMedia(current, response.generatedMedia));
         setMessageSnapshotIdentity(JSON.stringify([workspaceCwd, request.teammateId]));
+        setDirectTimelineRuns(response.cwd === workspaceCwd && privateTimelineResponseIsOwned(response, {
+          teammateId: request.teammateId,
+        }) ? response.timeline?.runs ?? [] : []);
       });
       workspaceRequestOwner.clearError(request);
     } catch (error) {
@@ -975,6 +990,9 @@ export function TeammateWorkspace({
         setHasMoreDirectMessages(Boolean(directResponse.hasMore));
         setNextDirectBeforeMessageId(directResponse.nextBeforeMessageId);
         setDirectRuntime(runtimeResponse);
+        setDirectTimelineRuns(directResponse.cwd === workspaceCwd && privateTimelineResponseIsOwned(directResponse, {
+          teammateId: request.teammateId, directThreadId: runtimeResponse.thread.id,
+        }) ? directResponse.timeline?.runs ?? [] : []);
         setDirectWorkspace(directWorkspaceResponse);
         setDirectLinkPreviews(linkPreviewsResponse.linkPreviews);
         setPrivateAttachments(privateAttachmentsResponse.attachments);

@@ -18,6 +18,10 @@ const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.me
 const workspaceNames = ["browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"];
 const reviewedLeaf = "packages/core/src/original-office-host-bridge.ts";
 const compiledLeaf = "packages/core/dist/original-office-host-bridge.js";
+test("Office fixed closure pins the shared read-only P3 compaction projection", () => {
+  assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(
+    "packages/daemon/src/features/conversations/context-compaction-projection.ts"));
+});
 test("Office fixed closure pins the cold-start protocol and Desktop stage controller", () => {
   for (const path of ["apps/desktop/main/daemon-lifecycle.ts", "packages/core/src/daemon-resource-bootstrap.ts",
     "packages/core/src/execution-engine-host-authority.ts", "packages/core/src/bundled-skill-source.ts",

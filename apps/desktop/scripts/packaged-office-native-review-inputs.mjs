@@ -80,6 +80,8 @@ export const PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS = Object.freeze([
 ]);
 
 export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
+  // Explicit P3 read-only context-compaction projection; listing is not approval.
+  "packages/daemon/src/features/conversations/context-compaction-projection.ts",
   // Explicit cold resource-bootstrap delta; listing alone grants no approval.
   "apps/desktop/main/daemon-lifecycle.ts",
   "packages/core/src/daemon-resource-bootstrap.ts",

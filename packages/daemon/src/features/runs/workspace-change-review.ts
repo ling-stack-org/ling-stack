@@ -43,7 +43,7 @@ export function buildWorkspaceChangeReview(store: RunStore, input: {
   const ordered = [...records].sort((a, b) => a.provenanceSeq - b.provenanceSeq);
   const byPath = new Map<string, WorkspaceMutationRecord[]>();
   for (const record of ordered) {
-    const path = reviewPathWithinCapturedCwd(record.cwd, record.path);
+    const path = reviewPathWithinCapturedCwd(record.cwd, record.path, hasCapturedPrivateWorktreeRoot(runById.get(record.runId)!));
     if (!path) {
       return unavailable("File-change provenance includes a non-reviewable path.");
     }
@@ -126,7 +126,7 @@ export function buildWorkspaceChangeReview(store: RunStore, input: {
  * path semantics. No disk, symlink or Git lookup is needed. Raw record paths
  * remain authoritative for snapshot identity and fingerprint validation.
  */
-function reviewPathWithinCapturedCwd(cwd: string, path: string): string | undefined {
+function reviewPathWithinCapturedCwd(cwd: string, path: string, capturedPrivateRoot = false): string | undefined {
   if (!cwd || !path || /[\0\r\n]/u.test(cwd) || /[\0\r\n]/u.test(path)) return undefined;
   const driveAbsolute = /^[A-Za-z]:[\\/]/u;
   const uncAbsolute = /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+(?:[\\/]|$)/u;
@@ -145,13 +145,26 @@ function reviewPathWithinCapturedCwd(cwd: string, path: string): string | undefi
     // rather than aliasing it to a different path in the slash-based review UI.
     return undefined;
   }
-  const unsafeSegments = (value: string): boolean => value.split(windows ? /[\\/]/u : /\//u).some((part, index) =>
-    part === ".." || part.toLowerCase() === ".ling-stack" || windows && part !== "." &&
+  const unsafeSegments = (value: string, internal = true): boolean => value.split(windows ? /[\\/]/u : /\//u).some((part, index) =>
+    part === ".." || internal && part.toLowerCase() === ".ling-stack" || windows && part !== "." &&
       (/[. ]$/u.test(part) || part.includes(":") && !(index === 0 && /^[A-Za-z]:$/u.test(part))));
   // macOS commonly ignores case. Windows additionally aliases trailing dots /
   // spaces and uses colons for streams. These are not safe display identities.
-  if (unsafeSegments(cwd) || unsafeSegments(path)) return undefined;
+  if (unsafeSegments(cwd, !capturedPrivateRoot) || unsafeSegments(path, !capturedPrivateRoot)) return undefined;
   const relativePath = paths.relative(paths.resolve(cwd), paths.resolve(cwd, path));
-  if (!relativePath || paths.isAbsolute(relativePath) || relativePath === ".." || relativePath.startsWith(`..${paths.sep}`)) return undefined;
+  if (!relativePath || paths.isAbsolute(relativePath) || unsafeSegments(relativePath)) return undefined;
   return windows ? relativePath.replace(/\\/gu, "/") : relativePath;
+}
+
+/** Only the immutable Host snapshot can exempt a managed root's ancestors.
+ * Internal paths below that root remain forbidden; no current binding or disk
+ * state can grant a historical review access to another execution directory.
+ */
+function hasCapturedPrivateWorktreeRoot(run: RunSession): boolean {
+  const request = run.requestSnapshot;
+  const snapshot = isRecord(request) ? request.directWorkspaceSnapshot : undefined;
+  return Boolean(run.teammateId && isRecord(request) && request.teammateId === run.teammateId
+    && isRecord(snapshot) && snapshot.mode === "managed_worktree" && snapshot.status === "ready"
+    && typeof snapshot.executionCwd === "string" && typeof snapshot.worktreePath === "string"
+    && resolve(snapshot.executionCwd) === resolve(run.cwd) && resolve(snapshot.worktreePath) === resolve(run.cwd));
 }

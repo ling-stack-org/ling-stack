@@ -212,7 +212,9 @@ function buildCompactedWorkflowDependencySection(summary: WorkflowStepCompactedD
   return {
     id: "workflow_dependency_summary",
     role: "evidence",
-    priority: "high",
+    // This replaces required dependency outputs. Dropping the replacement
+    // would dispatch a different task with no upstream context at all.
+    priority: "must_keep",
     compactionSurvival: "summarize",
     title: "workflow_dependency_summary",
     text: summary.text,

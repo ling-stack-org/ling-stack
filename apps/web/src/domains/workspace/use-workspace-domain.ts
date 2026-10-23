@@ -115,6 +115,8 @@ export interface WorkspaceState {
   readonly channelTurnContextAssignments: readonly TurnContextAssignment[];
   readonly channelUserInputs: readonly UserInputTranscriptItemV1[];
   readonly channelReasoningSummaries: readonly ConversationReasoningSummaryRecord[];
+  readonly channelConversationRefreshToken: number;
+  readonly channelContextCompactions: readonly import("../../types.js").ConversationContextCompactionRecord[];
   readonly channelGeneratedMedia: readonly ConversationGeneratedMedia[];
   readonly memoryObjects: readonly MemoryObject[];
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
@@ -262,6 +264,8 @@ export function useWorkspaceDomain(input: {
     owner: string;
     items: readonly ConversationReasoningSummaryRecord[];
   }>({ owner: "", items: [] });
+  const [channelConversationRefreshToken, setChannelConversationRefreshToken] = useState(0);
+  const [channelContextCompactionState, setChannelContextCompactionState] = useState<{ owner: string; items: readonly import("../../types.js").ConversationContextCompactionRecord[] }>({ owner: "", items: [] });
   const channelInputPageRef = useRef<ChannelConversationMessagePage | undefined>(undefined);
   const channelReadEpochRef = useRef(createConversationReadEpoch());
   const channelReadOwnerRef = useRef("");
@@ -520,6 +524,7 @@ export function useWorkspaceDomain(input: {
       channelInputPageRef.current = undefined;
       setChannelUserInputState({ owner: channelReadOwnerRef.current, items: [] });
       setChannelReasoningSummaryState({ owner: channelReadOwnerRef.current, items: [] });
+      setChannelContextCompactionState({ owner: channelReadOwnerRef.current, items: [] });
       setChannelMessagesHasOlder(false);
       setChannelItemsBeforeSequence(undefined);
       return;
@@ -557,6 +562,8 @@ export function useWorkspaceDomain(input: {
       setChannelTurnContextAssignmentState({ owner: readOwner, assignments: hydrated.turnContextAssignments });
       setChannelUserInputState({ owner: readOwner, items: hydrated.userInputs ?? [] });
       setChannelReasoningSummaryState({ owner: readOwner, items: hydrated.reasoningSummaries });
+      setChannelContextCompactionState({ owner: readOwner, items: hydrated.contextCompactions ?? [] });
+      setChannelConversationRefreshToken(current => current + 1);
       const messagesChanged = !channelMessagesEqual(channelMessages, page.messages);
       setChannelMessages((current) => channelMessagesEqual(current, page.messages) ? current : page.messages);
       const visibleIds = new Set(page.conversationItems.map(item => item.id));
@@ -614,6 +621,7 @@ export function useWorkspaceDomain(input: {
       setChannelTurnContextAssignmentState({ owner: readOwner, assignments: hydrated.turnContextAssignments });
       setChannelUserInputState({ owner: readOwner, items: hydrated.userInputs ?? [] });
       setChannelReasoningSummaryState({ owner: readOwner, items: hydrated.reasoningSummaries });
+      setChannelContextCompactionState({ owner: readOwner, items: hydrated.contextCompactions ?? [] });
       setChannelMessages((current) => mergeChannelMessages(page.messages, current));
       setChannelConversationItems((current) => {
         const visibleIds = new Set([...current, ...page.conversationItems].map(item => item.id));
@@ -1072,6 +1080,7 @@ export function useWorkspaceDomain(input: {
     channelInputPageRef.current = undefined;
     setChannelUserInputState({ owner: channelReadOwnerRef.current, items: [] });
     setChannelReasoningSummaryState({ owner: channelReadOwnerRef.current, items: [] });
+    setChannelContextCompactionState({ owner: channelReadOwnerRef.current, items: [] });
     setTasks([]);
     setChannelMessages([]);
     setChannelConversationItems([]);
@@ -1105,6 +1114,7 @@ export function useWorkspaceDomain(input: {
     channelInputPageRef.current = undefined;
     setChannelUserInputState({ owner: "", items: [] });
     setChannelReasoningSummaryState({ owner: "", items: [] });
+    setChannelContextCompactionState({ owner: "", items: [] });
     loadGuard.reset();
     channelActivityTransitionsLoadedScopeRef.current = "";
     setChannels([]);
@@ -1188,6 +1198,8 @@ export function useWorkspaceDomain(input: {
       channelReasoningSummaries: channelReasoningSummaryState.owner === channelReadOwner
         ? channelReasoningSummaryState.items
         : [],
+      channelConversationRefreshToken,
+      channelContextCompactions: channelContextCompactionState.owner === channelReadOwner ? channelContextCompactionState.items : [],
       channelGeneratedMedia,
       memoryObjects,
       usedMemoryEvents,
