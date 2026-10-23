@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, copyFile, cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyBundledSkillSource } from "../../packages/core/dist/bundled-skill-source.js";
@@ -8,6 +8,7 @@ import { applyGstackRuntimeSecurityPatches } from "./apply-runtime-security-patc
 import { managedResourceWrite, resourceCheckpoint } from "./resource-workspace.mjs";
 import { verifyGstackSecuritySidecarRuntime } from "./verify-security-sidecar-runtime.mjs";
 import { buildWindowsCsoResource } from "./build-windows-cso-resource.mjs";
+import { publishStagedDirectory } from "./publish-staged-directory.mjs";
 
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
 const lock = JSON.parse(await readFile(join(scriptRoot, "upstream-lock.json"), "utf8"));
@@ -18,6 +19,7 @@ adaptationFiles.push("build-managed-node-server.mjs", "build-testsavant-componen
   "testsavant-worker.mjs", "testsavant-runtime.mjs", "testsavant-model-pin.json", "testsavant-offline-guard.mjs");
 adaptationFiles.push("testsavant-model-cache.mjs");
 adaptationFiles.push("build-windows-cso-resource.mjs");
+adaptationFiles.push("publish-staged-directory.mjs");
 const digest = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const nativeEntries = [
   ["find-browse", "browse/dist/find-browse"],
@@ -57,7 +59,6 @@ export async function buildGstackNativeRuntime({
   assertNativeTarget(await readFile(nodePath), target);
   await mkdir(dirname(output), { recursive: true });
   const stage = await mkdtemp(join(dirname(output), ".gstack-native-stage-"));
-  let reserved = false;
   try {
     const candidate = join(stage, "candidate");
     await cp(source, candidate, { recursive: true, errorOnExist: true, force: false });
@@ -179,14 +180,10 @@ export async function buildGstackNativeRuntime({
     await rename(join(candidate, "manifest.json"), join(candidate, "source-manifest.json"));
     await writeFile(join(candidate, "native-build.json"), `${JSON.stringify(record, null, 2)}\n`);
     await resourceCheckpoint(lease.root);
-    await mkdir(output);
-    reserved = true;
-    await rename(candidate, output);
-    reserved = false;
+    await publishStagedDirectory(candidate, output);
     return record;
   } finally {
-    try { if (reserved) await rmdir(output); }
-    finally { await rm(stage, { recursive: true, force: true }); }
+    await rm(stage, { recursive: true, force: true });
   }
 }
 

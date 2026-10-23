@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants, createReadStream } from "node:fs";
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { filterGstackNativePlatformResources } from "./filter-native-platform-resources.mjs";
@@ -16,11 +16,12 @@ import { verifyReviewedGstackShellDependencies } from "./verify-reviewed-shell-d
 import { verifyReviewedGstackShellCommands } from "./verify-reviewed-shell-commands.mjs";
 import { inspectGstackShellInvocations } from "./inspect-shell-invocations.mjs";
 import { managedResourceWrite, resourceCheckpoint, resourceTreeBytes } from "./resource-workspace.mjs";
+import { publishStagedDirectory } from "./publish-staged-directory.mjs";
 
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
 const lock = JSON.parse(await readFile(join(scriptRoot, "upstream-lock.json"), "utf8"));
 const reviewed = JSON.parse(await readFile(join(scriptRoot, "reviewed-source-bundle.json"), "utf8"));
-const adaptationPaths = ["prepare-platform-resource-stage.mjs", "filter-native-platform-resources.mjs",
+const adaptationPaths = ["prepare-platform-resource-stage.mjs", "publish-staged-directory.mjs", "filter-native-platform-resources.mjs",
   "filter-upstream-self-test-packages.mjs", "reviewed-upstream-self-test-packages.json",
   "filter-reviewed-build-packages.mjs", "filter-build-only-type-packages.mjs", "reviewed-build-only-type-packages.json",
   "materialize-command-links.mjs", "runtime-dependency-audit.mjs", "install-reviewed-notices.mjs",
@@ -139,7 +140,6 @@ export async function prepareGstackPlatformResourceStage({ nativeCandidatePath, 
   const lease = await managedResourceWrite(output, { kind: "resource", additionalBytes: (await resourceTreeBytes(source)) * 2 + 512 * 1024 ** 2 });
   await mkdir(dirname(output), { recursive: true });
   const temporary = await realpath(await mkdtemp(join(dirname(output), ".gstack-resource-stage-")));
-  let reserved = false;
   try {
     const candidate = join(temporary, "candidate");
     onProgress("clone native prerequisites into exclusively owned staging");
@@ -289,14 +289,10 @@ export async function prepareGstackPlatformResourceStage({ nativeCandidatePath, 
       auditBlockerCounts: Object.fromEntries([...new Set(audit.blockers.map(b => b.code))].sort().map(code => [code, audit.blockers.filter(b => b.code === code).length])) };
     await writeFile(join(candidate, "resource-stage.json"), `${JSON.stringify(record, null, 2)}\n`);
     await resourceCheckpoint(lease.root);
-    await mkdir(output);
-    reserved = true;
-    await rename(candidate, output);
-    reserved = false;
+    await publishStagedDirectory(candidate, output);
     return record;
   } finally {
-    try { if (reserved) await rmdir(output); }
-    finally { await rm(temporary, { recursive: true, force: true }); }
+    await rm(temporary, { recursive: true, force: true });
   }
 }
 

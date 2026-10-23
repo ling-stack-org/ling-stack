@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { constants } from "node:fs";
-import { cp, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { cp, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { bundleFile, bundleInventory, digest, readExecutableBundle } from "./executable-bundle.mjs";
@@ -9,11 +9,12 @@ import { materializePlaywrightBrowser } from "./materialize-playwright-browser.m
 import { managedResourceWrite, resourceCheckpoint } from "./resource-workspace.mjs";
 import { testsavantArtifactName, verifyTestsavantModel } from "./collect-testsavant-model.mjs";
 import { testsavantModelAcquisition } from "./testsavant-model-cache.mjs";
+import { publishStagedDirectory } from "./publish-staged-directory.mjs";
 
 const scripts = dirname(fileURLToPath(import.meta.url));
 const retainedStageChecksum = "sha256:ab63d645623de138a7bec3b0cf4a58271fadf6f25b907b1c313ae314e38d818b";
 const exists = path => lstat(path).then(() => true, error => { if (error.code !== "ENOENT") throw error; return false; });
-const toolNames = ["assemble-executable-bundle.mjs", "executable-bundle.mjs", "materialize-local-browser.mjs",
+const toolNames = ["assemble-executable-bundle.mjs", "publish-staged-directory.mjs", "executable-bundle.mjs", "materialize-local-browser.mjs",
   "build-managed-node-server.mjs", "build-node-server-resource.mjs", "build-testsavant-component.mjs", "build-portable-resources.ts",
   "build-bun-native-resource.mjs", "packaged-browse-build.mjs", "packaged-browse-launch.mjs", "testsavant-packaged-client.mjs",
   "testsavant-gs-client.mjs", "testsavant-client.mjs", "testsavant-runtime.mjs", "testsavant-worker.mjs", "testsavant-offline-guard.mjs",
@@ -107,11 +108,7 @@ export async function assembleExecutableBundle({ stageRoot, browserInspectionRoo
     await writeFile(join(mainRoot, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
     const verified = await readExecutableBundle(mainRoot);
     await resourceCheckpoint(lease.root);
-    // The managed lease serializes writers. Reserve the destination exclusively
-    // as well, so a late unrelated writer can never be overwritten by rename.
-    await mkdir(outputRoot);
-    try { await rename(candidate, outputRoot); }
-    catch (error) { await rm(outputRoot, { recursive: false }).catch(() => {}); throw error; }
+    await publishStagedDirectory(candidate, outputRoot);
     return { identity: verified.identity, fileCount: manifest.files.length, sizeBytes: manifest.files.reduce((sum, row) => sum + row.sizeBytes, 0) };
   } finally { await rm(work, { recursive: true, force: true }); }
 }
