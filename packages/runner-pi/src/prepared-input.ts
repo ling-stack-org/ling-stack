@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual, types } from "node:util";
 import { getCurrentSystemPrompt, getCurrentTools, type Api, type Context, type Model, type Tool, type TranscriptContext } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { PiRunnerProviderInvocationContextBudget, PiRunnerRunOptions, PiRunnerTask } from "./types.js";
@@ -25,6 +26,11 @@ export interface PiRunnerPreparedInput {
 /** Capture the SDK's actual assembly, not a second approximation of its prompt builder. */
 export function capturePreparedPiInput(session: AgentSession, options: PiRunnerRunOptions): PiRunnerPreparedInput {
   if (!session.model || !session.isIdle || session.messages.length !== 0) throw new Error("Pi prepared input requires an idle empty session");
+  return capturePreparedPiAssembly(session, options);
+}
+
+function capturePreparedPiAssembly(session: AgentSession, options: PiRunnerRunOptions): PiRunnerPreparedInput {
+  if (!session.model || !session.isIdle) throw new Error("Pi prepared input requires an idle session");
   const body = json({ schemaVersion: 1, boundary: "pi-model-context", taskId: options.task.id,
     systemPrompt: session.systemPrompt, userPrompt: formatTaskPrompt(options.task), model: modelDescriptor(session.model),
     thinkingLevel: session.thinkingLevel, tools: toolDescriptors(session.state.tools) });
@@ -154,11 +160,77 @@ export function assertPreparedPiTaskInput(prepared: PiRunnerPreparedInput, task:
 }
 
 /** Fail before prompting if initialization cannot reproduce the persisted input. */
-export function assertPreparedPiSession(session: AgentSession, options: PiRunnerRunOptions): void {
-  const actual = capturePreparedPiInput(session, options);
+export function assertPreparedPiSession(session: AgentSession, options: PiRunnerRunOptions, assertRestoredView?: () => void): void {
+  assertRestoredView?.();
+  const actual = assertRestoredView === undefined ? capturePreparedPiInput(session, options) : capturePreparedPiAssembly(session, options);
   if (!options.preparedInput) return;
   const expected = readPreparedPiInput(options.preparedInput);
   if (actual.fingerprint !== expected.fingerprint) throw new Error("Pi prepared input changed during session initialization");
+}
+
+/** Pin the SDK source and exact data-only view before Host awaits. */
+export function createRestoredPiSessionViewGuard(session: AgentSession): () => void {
+  const state = session.state;
+  if (types.isProxy(state)) throw new Error("Pi restored recovery view is not data-only");
+  const source = Object.getOwnPropertyDescriptor(state, "messages");
+  if (!source || !source.enumerable || (!("value" in source) && typeof source.get !== "function")) {
+    throw new Error("Pi restored recovery view is not data-only");
+  }
+  const capture = (): readonly unknown[] => {
+    if (session.state !== state) throw new Error("Pi restored recovery view is not data-only");
+    const current = Object.getOwnPropertyDescriptor(state, "messages");
+    // Pi 1.1.0 owns a messages getter. Pin that trusted accessor so a Host
+    // callback cannot replace it with executable data or a changing projection.
+    if (!current || current.get !== source.get || current.set !== source.set
+      || current.enumerable !== source.enumerable || current.configurable !== source.configurable
+      || current.writable !== source.writable || ("value" in current) !== ("value" in source)) {
+      throw new Error("Pi restored recovery view is not data-only");
+    }
+    return captureRestoredMessages("value" in current ? current.value : Reflect.apply(source.get!, state, []));
+  };
+  const baseline = capture();
+  return () => {
+    if (!isDeepStrictEqual(capture(), baseline)) {
+      throw new Error("Pi restored recovery view changed during prepared input acceptance");
+    }
+  };
+}
+
+/** Never invoke message accessors, proxies or serializers while taking a snapshot. */
+function captureRestoredMessages(messages: unknown): readonly unknown[] {
+  if (!Array.isArray(messages)) throw new Error("Pi restored recovery view is not data-only");
+  const ancestors = new Set<object>();
+  let nodes = 0;
+  const capture = (value: unknown, depth: number): unknown => {
+    if (++nodes > 100_000 || depth > 64) throw new Error("Pi restored recovery view is not data-only");
+    if (value === null || value === undefined || typeof value === "string" || typeof value === "boolean") return value;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value !== "object" || types.isProxy(value) || ancestors.has(value)) throw new Error("Pi restored recovery view is not data-only");
+    const array = Array.isArray(value), prototype = Object.getPrototypeOf(value);
+    if (prototype !== (array ? Array.prototype : Object.prototype) && prototype !== null) throw new Error("Pi restored recovery view is not data-only");
+    const descriptors = Object.getOwnPropertyDescriptors(value), keys = Reflect.ownKeys(descriptors);
+    if (keys.some(key => typeof key !== "string")) throw new Error("Pi restored recovery view is not data-only");
+    ancestors.add(value);
+    try {
+      if (array) {
+        const length = descriptors.length?.value;
+        if (!Number.isSafeInteger(length) || length > 100_000 || keys.length !== length + 1) throw new Error("Pi restored recovery view is not data-only");
+        return Array.from({ length }, (_, index) => {
+          const entry = descriptors[String(index)];
+          if (!entry || !("value" in entry) || !entry.enumerable) throw new Error("Pi restored recovery view is not data-only");
+          return capture(entry.value, depth + 1);
+        });
+      }
+      const result: Record<string, unknown> = {};
+      for (const key of keys as string[]) {
+        const entry = descriptors[key]!;
+        if (!("value" in entry) || !entry.enumerable || key === "toJSON") throw new Error("Pi restored recovery view is not data-only");
+        Object.defineProperty(result, key, { value: capture(entry.value, depth + 1), enumerable: true });
+      }
+      return result;
+    } finally { ancestors.delete(value); }
+  };
+  return capture(messages, 0) as readonly unknown[];
 }
 
 /** The first converted model Context must still match after SDK/extension assembly. */

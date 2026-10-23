@@ -117,13 +117,59 @@ test("raw succeeded state without original Host completion cannot certify a requ
 
 test("required grandchildren under an optional parent remain in the canonical pending basis", async t => {
   const f = await fixture(t), parent = f.spawn({ required: false }), parentOwner = f.start(parent);
-  assert.equal(f.read().status, "satisfied", "optional work is observed, not certified as physically drained");
+  assert.equal(f.read().status, "pending", "optional work must physically finish before the parent can finish");
   const before = f.read();
   const child = f.spawn({ parentRunId: parent.childRun.id, sourceFence: parentOwner.sourceFence,
     capture: f.captureToken(parentOwner.capture), spawnCallId: "required-grandchild", requestedBudget: { tokenBudget: 10 } });
   const after = f.read(); assert.equal(after.status, "pending"); assert.equal(after.steps.length, 2);
   assert.notEqual(after.fingerprint, before.fingerprint);
   assert.equal(after.steps.find(node => node.step.id === child.stepId).step.parentDelegationStepId, parent.stepId);
+});
+
+test("queued optional work is outstanding even before step.childRunId and Attempt exist", async t => {
+  const f = await fixture(t), child = f.spawn({ required: false }), read = f.read();
+  assert.equal(read.status, "pending"); assert.deepEqual(read.issues, []);
+  assert.equal(read.steps[0].step.childRunId, undefined);
+  assert.equal(read.steps[0].reservation.childRunId, child.childRun.id);
+  assert.equal(f.store.listWorkUnitAttempts(child.childWorkUnit.id).length, 0);
+  assert.equal(read.steps[0].reservation.state, "reserved");
+});
+
+for (const outcome of ["succeeded", "failed", "cancelled"]) test(`verified optional ${outcome} permits parent success only after sealed result`, async t => {
+  const f = await fixture(t), child = f.spawn({ required: false }), started = f.start(child);
+  assert.equal(f.read().status, "pending");
+  await f.terminal(child, started, outcome);
+  const read = f.read();
+  assert.equal(read.status, "satisfied"); assert.deepEqual(read.issues, []);
+  assert.equal(read.steps[0].hostCompletion.effectCoverage, "pi_no_tools_v1");
+  assert.equal(read.steps[0].reservation.state, "settled");
+  assert.equal(read.steps[0].results[0].payload.outcome, outcome);
+  const endedAt = now();
+  assert.equal(f.store.transitionRunExecutionStatus({ runId: "root", sourceFence: f.fence,
+    expectedStatus: "running", event: "runner_succeeded", actor: "runner", now: endedAt, endedAt }).ok, true,
+  "a physically settled optional failure/cancellation is not a required business failure");
+  assert.equal(f.store.getRun("root").status, "succeeded");
+});
+
+test("optional lost is blocked, not a stopped receipt or successful fan-in", async t => {
+  const f = await fixture(t), child = f.spawn({ required: false }); f.start(child);
+  const endedAt = now();
+  f.db.prepare("UPDATE delegation_steps SET state='lost',revision=revision+1,completed_at=?,updated_at=? WHERE id=?")
+    .run(endedAt, endedAt, child.stepId);
+  assert.equal(f.read().status, "blocked");
+  assert.equal(f.read().steps[0].reservation.state, "reserved");
+});
+
+for (const outcome of ["succeeded", "failed", "cancelled"]) test(`required grandchild ${outcome} retains required semantics below a verified optional cancellation`, async t => {
+  const f = await fixture(t), parent = f.spawn({ required: false }), parentOwner = f.start(parent);
+  const child = f.spawn({ parentRunId: parent.childRun.id, sourceFence: parentOwner.sourceFence,
+    capture: f.captureToken(parentOwner.capture), spawnCallId: "required-grandchild", requestedBudget: { tokenBudget: 10 } });
+  const childOwner = f.start(child);
+  await f.terminal(child, childOwner, outcome);
+  await f.terminal(parent, parentOwner, "cancelled");
+  const read = f.read();
+  assert.deepEqual(read.issues, []);
+  assert.equal(read.status, outcome === "succeeded" ? "satisfied" : outcome);
 });
 
 test("a child completion check does not depend on its own incoming required step", async t => {

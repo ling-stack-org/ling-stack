@@ -7,6 +7,8 @@ import { readHostOperationBlockers } from "./host-operation-journal-store.js";
 import { isNativeCompletionSource, readNativeAttemptEffectStatus } from "./host-attempt-native-coverage.js";
 import { hostAttemptReadScopeForSource } from "./host-attempt-read-scope.js";
 import { hasDelegationStoppedHandoff } from "./delegation-stopped-handoff.js";
+import { hasPendingRunSuspension } from "./run-suspension-store.js";
+import { hasRunSuspensionStoppedHandoff } from "./run-suspension-stopped-handoff.js";
 
 /** A durable veto, not evidence of local callback drain or permission to resume. */
 export function withCancelledAttemptResourceVeto(database: DatabaseSync, fence: RuntimeAttemptFenceV1,
@@ -57,6 +59,11 @@ function mayReleaseCancelledAttemptResources(database: DatabaseSync, fence: Runt
     WHERE attempt.id=? AND attempt.work_unit_id=? AND attempt.runtime_instance_id=? AND attempt.fencing_token=?`)
     .get(fence.attemptId, fence.workUnitId, fence.runtimeInstanceId, fence.fencingToken);
   if (!owner) return false;
+  const suspensionStopped = hasRunSuspensionStoppedHandoff(database, fence, releasedAt);
+  // A graceful request is an admission latch, never a legacy no-lifetime
+  // exception. Expiry/restart cannot release it before exact stopped provenance.
+  if (typeof owner.run_id === "string" && hasPendingRunSuspension({ database }, { runId: owner.run_id, ...fence })
+    && !suspensionStopped) return false;
   const scope = typeof owner.run_id === "string"
     ? hostAttemptReadScopeForSource(database, { runId: owner.run_id, ...fence }) : "whole_run";
   // A registered original lifetime is an independent veto, including terminal
@@ -95,7 +102,7 @@ function mayReleaseCancelledAttemptResources(database: DatabaseSync, fence: Runt
     const handoffFence = Object.freeze({ workUnitId: fence.workUnitId, attemptId: fence.attemptId,
       runtimeInstanceId: fence.runtimeInstanceId, fencingToken: fence.fencingToken });
     const delegationStopped = scope === "exact_attempt" && hasDelegationStoppedHandoff(database, handoffFence, releasedAt);
-    if (!approvedApprovalHandoff && !suspendedApproval && !delegationStopped
+    if (!approvedApprovalHandoff && !suspendedApproval && !delegationStopped && !suspensionStopped
       && !["succeeded", "failed", "cancelled"].includes(String(owner.run_status))) return false;
     // Ordinary completion keeps the existing execution-policy semantics, but a
     // positively recorded unknown/pending Host effect vetoes every release path.

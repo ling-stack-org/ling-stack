@@ -9,6 +9,7 @@ import { RunProgressCheckpointError } from "../../run-progress-checkpoint-types.
 import { toRuntimeAttemptFence, type RuntimeAttemptFenceV1 } from "../../runtime-supervisor-types.js";
 import { readHostOperation, verifyHostOperationSafe, verifyHarnessFileExecutionReceipt } from "./host-operation-journal-evidence.js";
 import { mapUserInputRequest, type UserInputRow } from "./user-input-records.js";
+import { verifiedDelegationToolCall } from "./host-attempt-tracked-coverage.js";
 
 export type RunProgressEffectStore = Pick<RunStore, "listEvents" | "listHarnessToolExecutions" | "getWorkUnitAttempt"
   | "listHostCommandWriteBlockers" | "listApprovalRequests">;
@@ -128,6 +129,12 @@ export function validateRunProgressEffects(store: RunProgressEffectStore, run: R
     if (end.data.isError && end.data.toolName !== "read") throw blocked();
     if (end.data.toolName === "bash") {
       if (!commandPairs.has(id)) throw blocked();
+    } else if (["spawn_agent", "send_message", "wait_agent", "interrupt_agent", "resume_agent"].includes(end.data.toolName)) {
+      // Narrative or a matching name is insufficient: mutations require their
+      // source-bound durable delegation facts. A wait is observation only and
+      // never certifies child success, stop, fan-in or budget settlement.
+      if (!verifiedDelegationToolCall(database, { runId: run.id, ...toRuntimeAttemptFence(attempt) },
+        id, end.data.toolName, call.arguments as Record<string, unknown>)) throw blocked();
     } else if (!["read", "grep", "find", "ls"].includes(end.data.toolName)) {
       const execution = executions.filter(item => item.toolCallId === id && item.attemptId === attempt.id);
       if (!execution.length && ["write", "edit"].includes(end.data.toolName)

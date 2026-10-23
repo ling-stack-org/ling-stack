@@ -12,6 +12,7 @@ const scope = initializeDesktopQaLaunchProfile({
   getUserDataPath: () => app.getPath("userData"),
   setUserDataPath: path => app.setPath("userData", path),
 });
-if (scope) console.info(JSON.stringify({ event: "desktop.owned_synthetic_qa_profile", ...scope }));
+if (scope) console.info(JSON.stringify({ event: scope.synthetic
+  ? "desktop.owned_synthetic_qa_profile" : "desktop.owned_budgeted_qa_profile", ...scope }));
 
 await import("./main.js");

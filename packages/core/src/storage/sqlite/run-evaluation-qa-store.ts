@@ -18,6 +18,7 @@ import { EvidenceError, type SqliteRunEvaluationTaskStore } from "./run-evaluati
 import { mapRunEvaluationTask } from "./run-evaluation-task-mappers.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import type { RunArtifact } from "../../run-types.js";
+import { harnessArtifactOwnerHolder, syncHarnessArtifactOwnerPins } from "./harness-artifact-recovery-pins.js";
 type Row = Record<string, SQLOutputValue>;
 // Process lifetime only. Reopening in another boot cannot prove an old request drained.
 const PROCESS_BOOT_EPOCH = randomUUID();
@@ -114,12 +115,14 @@ export class SqliteRunEvaluationQaStore implements RunEvaluationQaStore {
       const existing = this.getRunEvaluationQaEnrollment(task.id);
       if (existing) {
         if (existing.batchId !== batch.id || existing.reviewRef !== input.reviewRef || digestRunEvaluationValue(existing.artifactPins) !== digestRunEvaluationValue(input.artifactPins)) throw new QaAbort("identity_conflict");
+        this.syncEnrollmentAuditPins(existing, batch, input.now);
         return ok(existing, true);
       }
       // An already-used foundation task cannot be retroactively designated QA.
       if (task.state !== "queued" || task.revision !== 0) throw new QaAbort("invalid_transition");
       const id = `evaluation_qa_enrollment_${randomUUID()}`;
       this.context.database.prepare("INSERT INTO run_evaluation_qa_enrollments(id,schema_version,task_id,batch_id,evaluation_id,evaluation_key,pins_json,frozen_digest,review_ref,created_at) VALUES(?,1,?,?,?,?,?,?,?,?)").run(id, task.id, batch.id, task.evaluationId, task.evaluationKey, JSON.stringify(input.artifactPins), task.frozenGraderDigest, input.reviewRef, input.now);
+      this.syncEnrollmentAuditPins(this.getRunEvaluationQaEnrollment(task.id)!, batch, input.now);
       return ok(this.getRunEvaluationQaEnrollment(task.id)!);
     });
   }
@@ -143,6 +146,7 @@ export class SqliteRunEvaluationQaStore implements RunEvaluationQaStore {
         if (request.state !== "admitted" || scope.laneState !== "held" || scope.laneRequestId !== request.id) return fail(scope.laneState === "quarantined" ? "qa_lane_quarantined" : "invalid_transition");
         if (request.batchId !== batch.id || request.taskId !== input.taskId || request.payloadSha256 !== payloadSha || request.payloadBytes !== bytes || request.estimatedInputTokens !== input.estimatedInputTokens || request.requestDigest !== input.requestDigest || request.executionScopeDigest !== input.executionScopeDigest) return fail("identity_conflict");
         const admission = this.tasks.admitWithinTransaction(qaAdmit(input));
+        if (admission.ok) this.syncRequestRecoveryPins(request, true, input.now);
         return admission.ok ? ok({ ...admission.value, request, mayDispatch: false }, true) : admission;
       }
       if (scope.laneState !== "available") return fail(scope.laneState === "quarantined" ? "qa_lane_quarantined" : "qa_lane_busy");
@@ -158,6 +162,7 @@ export class SqliteRunEvaluationQaStore implements RunEvaluationQaStore {
       const id = `evaluation_qa_request_${randomUUID()}`;
       this.context.database.prepare("INSERT INTO run_evaluation_qa_requests(id,schema_version,namespace_id,batch_id,enrollment_id,task_id,attempt_id,invocation_id,request_digest,scope_digest,payload_sha,payload_bytes,estimated_input_tokens,output_token_limit,state,usage_json,charged_at,boot_epoch,revision) VALUES(?,1,?,?,?,?,?,?,?,?,?,?,?,1024,'admitted','{\"state\":\"unknown\"}',?,?,0)").run(id, scope.namespaceId, batch.id, enrollment.id, input.taskId, input.attemptId, admission.value.attempt.invocationId, input.requestDigest, input.executionScopeDigest, payloadSha, bytes, input.estimatedInputTokens, effectiveNow, PROCESS_BOOT_EPOCH);
       this.changed(this.context.database.prepare("UPDATE run_evaluation_qa_namespace SET lane_state='held',lane_request_id=?,clock_high_water_at=?,revision=revision+1 WHERE id=? AND revision=? AND lane_state='available'").run(id, effectiveNow, scope.namespaceId, scope.revision).changes);
+      this.syncRequestRecoveryPins(this.getRunEvaluationQaRequest(id)!, true, input.now);
       return ok({ ...admission.value, request: this.getRunEvaluationQaRequest(id)! });
     });
   }
@@ -204,6 +209,7 @@ export class SqliteRunEvaluationQaStore implements RunEvaluationQaStore {
     const row = this.context.database.prepare("SELECT * FROM run_evaluation_qa_requests WHERE attempt_id=? AND released_at IS NULL").get(attemptId);
     if (!row) return;
     const request = mapQaRequest(row as Row);
+    this.syncRequestRecoveryPins(request, true, now);
     if (request.state === "admitted") this.changed(this.context.database.prepare("UPDATE run_evaluation_qa_requests SET state='unknown',completed_at=?,revision=revision+1 WHERE id=? AND state='admitted' AND revision=?").run(now, request.id, request.revision).changes);
     const scope = this.getRunEvaluationQaScope();
     if (!scope || (scope.laneRequestId !== undefined && scope.laneRequestId !== request.id)) throw new QaAbort("qa_lane_quarantined");
@@ -230,6 +236,7 @@ export class SqliteRunEvaluationQaStore implements RunEvaluationQaStore {
       if (input.release.kind === "host_callback_drained" && (request.state !== "completed" || !request.receipt || request.processBootEpoch !== PROCESS_BOOT_EPOCH || scope.laneState !== "held")) return fail("qa_lane_quarantined");
       this.changed(this.context.database.prepare("UPDATE run_evaluation_qa_requests SET released_at=?,release_kind=?,reconciliation_audit_ref=?,revision=revision+1 WHERE id=? AND revision=? AND released_at IS NULL").run(input.now, input.release.kind, input.release.kind === "host_explicit_reconciliation" ? input.release.auditRef : null, request.id, request.revision).changes);
       this.changed(this.context.database.prepare("UPDATE run_evaluation_qa_namespace SET lane_state='available',lane_request_id=NULL,revision=revision+1 WHERE id=? AND revision=? AND lane_request_id=?").run(scope.namespaceId, scope.revision, request.id).changes);
+      this.syncRequestRecoveryPins(request, false, input.now);
       // Deliberately retain the charged row forever; no quota refund.
       return ok(this.getRunEvaluationQaRequest(request.id)!);
     });
@@ -244,6 +251,7 @@ export class SqliteRunEvaluationQaStore implements RunEvaluationQaStore {
       return;
     }
     const request = mapQaRequest(rows[0] as Row);
+    this.syncRequestRecoveryPins(request, true, now);
     const task = this.tasks.getRunEvaluationTask(request.taskId), attempt = this.tasks.getRunEvaluationTaskAttempt(request.attemptId);
     if (!task || !attempt || task.activeAttemptId !== request.attemptId || attempt.invocationId !== request.invocationId || attempt.taskId !== request.taskId) throw new QaAbort("qa_lane_quarantined");
     const orphan = request.processBootEpoch !== PROCESS_BOOT_EPOCH;
@@ -251,6 +259,22 @@ export class SqliteRunEvaluationQaStore implements RunEvaluationQaStore {
       if (request.state === "admitted") this.tasks.reconcileQaOrphanWithinTransaction(request.taskId, request.attemptId, now);
       this.quarantineWithinTransaction(request.attemptId, now);
     } else if (scope.laneState !== "held" || scope.laneRequestId !== request.id || (request.state === "admitted" && (task.state !== "active" || attempt.state !== "dispatch_admitted")) || (request.state === "completed" && (task.state !== "completed" || attempt.state !== "completed"))) throw new QaAbort("qa_lane_quarantined");
+  }
+  private enrollmentArtifactIds(enrollment: RunEvaluationQaEnrollmentV1, batch: RunEvaluationQaBatchV1): readonly string[] {
+    return [enrollment.artifactPins.suite.artifactId, enrollment.artifactPins.case.artifactId,
+      enrollment.artifactPins.baseline.artifactId, enrollment.artifactPins.candidate.artifactId,
+      enrollment.artifactPins.frozen.artifactId, batch.configSnapshotRef];
+  }
+  private syncEnrollmentAuditPins(enrollment: RunEvaluationQaEnrollmentV1, batch: RunEvaluationQaBatchV1, now: string): void {
+    // Real explicit QA enrollment is a distinct durable audit authority, not a lease.
+    syncHarnessArtifactOwnerPins(this.context.database, { holder: harnessArtifactOwnerHolder("qa_audit", enrollment.id),
+      artifactIds: this.enrollmentArtifactIds(enrollment, batch), reason: "audit_hold", keep: true, now });
+  }
+  private syncRequestRecoveryPins(request: RunEvaluationQaRequestV1, keep: boolean, now: string): void {
+    const enrollment = this.getRunEvaluationQaEnrollment(request.taskId), batch = this.getRunEvaluationQaBatch(request.batchId);
+    if (!enrollment || !batch || enrollment.id !== request.enrollmentId || enrollment.batchId !== batch.id) throw new QaAbort("identity_conflict");
+    syncHarnessArtifactOwnerPins(this.context.database, { holder: harnessArtifactOwnerHolder("qa_request", request.id),
+      artifactIds: this.enrollmentArtifactIds(enrollment, batch), keep, now });
   }
   private matches(request: RunEvaluationQaRequestV1, input: { readonly taskId: string; readonly attemptId: string }): boolean { return request.taskId === input.taskId && request.attemptId === input.attemptId; }
   private validateBatch(batch: RunEvaluationQaBatchV1): void {

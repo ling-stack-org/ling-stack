@@ -109,7 +109,10 @@ async function seedRestart() {
   const request = { cwd, workspaceCwd: cwd, providerPresetId: preset.id, task: taskSnapshot,
     threadId: thread.id, turnId: turn.id, workflowStepId: step.id, runnerId: "pi", tools: ["read"],
     authorizationMode: "smart", workspaceAccessMode: "workspace_write",
-    harnessFeatureSnapshot: createHarnessFeatureSnapshot({ harness: supervisor.getHarnessFeatures() }) };
+    harnessFeatureSnapshot: createHarnessFeatureSnapshot({ harness: {
+      ...supervisor.getHarnessFeatures(),
+      delegations: { ...supervisor.getHarnessFeatures().delegations, selectedWorkflowIds: [workflow.id] },
+    } }) };
   const unit = store.createWorkUnit({ id: "process-root-unit", workspaceId: DEFAULT_WORKSPACE_ID,
     kind: "conversation_run", ownerType: "run", ownerId: "process-root", status: "claimed",
     channelId: channel.id, taskId: task.id, runnerId: "pi", effectiveRunnerId: "pi",
@@ -215,7 +218,7 @@ async function recoverRestart() {
       childAttemptCount: child.runtime.workUnit.attemptCount };
   } finally {
     registry.stopAdmission();
-    registry.abortOwned();
+    await registry.abortOwned();
     await registry.settle().catch(() => undefined);
   }
 }

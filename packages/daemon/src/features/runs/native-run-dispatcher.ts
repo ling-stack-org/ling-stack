@@ -192,6 +192,9 @@ async function executeNativeRunRequest(
     store = dependencies.storeRegistry.getStore(workspaceCwd);
     assertFullAccessPermissionConfirmed(runRequest);
     validateWorkflowStepOwner(store, runRequest);
+    // Reject missing workflow authority before native preflight or canonical
+    // Thread/Turn creation can obscure its structured admission failure.
+    workflowStartOwner = captureWorkflowStartOwner(store, runRequest);
     const runtime = dependencies.runtimeSupervisor.getRuntime(workspaceCwd, store);
     runtimeSettings = loadWorkspaceRuntimeSettings(store, dependencies.runnerRegistry);
     runnerResolution = resolveNativeRunnerSelection(dependencies.runnerRegistry, runRequest,
@@ -232,6 +235,9 @@ async function executeNativeRunRequest(
     const raced = findExistingIdempotentRunRequest(store, runRequest);
     if (raced?.linkedRunId) throw new DuplicateRunRequestError(raced.linkedRunId);
     if (raced) throw new HttpError(409, "duplicate_work_unit", `Duplicate work unit request: ${raced.id}`);
+    // Native availability can await; revalidate the original captured owner
+    // before creating any source item or durable execution authority.
+    workflowStartOwner = captureWorkflowStartOwner(store, runRequest);
     turn = ensureLingTurnForRun(store, thread, runRequest, createdAt);
     const durableTaskSnapshot = store.getTask(runRequest.task.id) ?? runRequest.task;
     const durableRunRequest = { ...runRequest, task: durableTaskSnapshot, preselectedMemoryUse: undefined };
@@ -243,7 +249,6 @@ async function executeNativeRunRequest(
       : undefined;
     if (existing?.linkedRunId) throw new DuplicateRunRequestError(existing.linkedRunId);
     if (existing) throw new HttpError(409, "duplicate_work_unit", `Duplicate work unit request: ${existing.id}`);
-    workflowStartOwner = captureWorkflowStartOwner(store, runRequest);
     workUnit = store.createWorkUnit({
       workspaceId: DEFAULT_WORKSPACE_ID,
       kind: owner.kind,
@@ -359,6 +364,7 @@ async function executeNativeRunRequest(
   sink.onClose(() => { sinkClosed = true; });
   const streamEnvelope = (event: RunEventEnvelope): void => { if (!sinkClosed) sink.writeEvent(event.type, event); };
   dependencies.activeRuns.add(run.id, { abortController, streamEnvelope, completion,
+    runtimeShutdownPolicy: "stop_without_resume",
     runtimeInstanceId: attempt.runtimeInstanceId, workUnitId: workUnit.id, attemptId: attempt.id,
     fencingToken: attempt.fencingToken });
   const supervision = createRunExecutionSupervision({ store, runId: run.id, workUnit, attempt,

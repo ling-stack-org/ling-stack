@@ -130,9 +130,12 @@ for (const sender of ["non-cooperative", "cooperative"]) test(
   await waitUntil(() => wire.record?.response, "the original native response enters body consumption");
   assert.ok(mediaJobId, "the real conversation handler must create and dispatch a Media job");
   assert.equal(store.getMediaJob(mediaJobId).status, "running");
+  const abortObserved = new Promise(resolve => wire.record.signal.addEventListener("abort", () => resolve({ closed }), { once: true }));
   stopPromise = daemon.stop().then(() => { stopped = true; });
   assert.equal(stopped, false, "same-stack stop request is not actual native body settlement");
-  assert.equal(closed, false); assert.equal(wire.record.signal.aborted, true);
+  assert.equal(closed, false);
+  assert.equal((await abortObserved).closed, false, "the actual abort phase must precede SQLite close");
+  assert.equal(wire.record.signal.aborted, true);
   if (sender === "non-cooperative") {
     await delay(75);
     assert.equal(stopped, false, "a returned tool result or completed parent Run cannot retire an actual non-cooperative HTTP writer");

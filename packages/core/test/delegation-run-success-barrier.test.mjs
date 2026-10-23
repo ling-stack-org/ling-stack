@@ -38,10 +38,15 @@ test("successful no-child Run still uses existing execution and idempotency sema
     now: budgetLater, idempotencyKey: "root-success" }).duplicate, true);
 });
 
-test("optional work does not masquerade as required fan-in", async t => {
-  const f = await fixture(t); f.spawn({ required: false });
-  assert.equal(succeed(f).ok, true);
-  assert.equal(f.store.getRun("root").status, "succeeded");
+test("optional work retains its optional disposition but must actually stop before root success", async t => {
+  const f = await fixture(t); const child = f.spawn({ required: false });
+  assert.throws(() => succeed(f), unsettled);
+  assert.equal(f.store.getRun("root").status, "running");
+  const evidence = f.store.getDelegationCompletionEvidence({ rootRunIds: ["root"] });
+  assert.equal(evidence.status, "pending");
+  assert.equal(evidence.steps[0].step.required, false);
+  assert.equal(evidence.steps[0].reservation.state, "reserved");
+  assert.equal(f.store.listWorkUnitAttempts(child.childWorkUnit.id).length, 0);
 });
 
 test("failed success barrier joins an outer transaction without rolling back its owner", async t => {

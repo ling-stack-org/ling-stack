@@ -1,7 +1,17 @@
-import { DelegationWriteError, type DelegationWriteAuthorityPorts } from "./harness/delegation-write-types.js";
+import { DelegationWriteError, type DelegationWriteAuthorityPorts, type DelegationExecutionAuthority } from "./harness/delegation-write-types.js";
+import type { RuntimeAttemptFenceV1 } from "./runtime-supervisor-types.js";
 import type { SqliteDelegationWriteStore } from "./storage/sqlite/delegation-write-store.js";
 import type { SqliteDelegationLifecycleStore } from "./storage/sqlite/delegation-lifecycle-store.js";
 import type { DelegationLifecycleStorePorts } from "./harness/delegation-lifecycle-types.js";
+import type { SqliteRunTerminalIntentStore } from "./storage/sqlite/run-terminal-intent-store.js";
+import type { SqliteRunSuspensionStore } from "./storage/sqlite/run-suspension-store.js";
+import type { SqliteRunSuspensionStopStore } from "./storage/sqlite/run-suspension-stop-store.js";
+import type { SqliteRunSuspensionActivationStore } from "./storage/sqlite/run-suspension-activation-store.js";
+import type { RootRunSuspensionStartObservationV1 } from "./run-suspension-start-types.js";
+import type { SqliteRunSuspensionStartStore } from "./storage/sqlite/run-suspension-start-store.js";
+import type { SqliteRunSuspensionDelegatedStore } from "./storage/sqlite/run-suspension-delegated-store.js";
+import type { SqliteRunFinalSettlementStore } from "./storage/sqlite/run-final-settlement-store.js";
+import type { RunFinalSettlementObservationV1 } from "./run-final-settlement-types.js";
 
 declare const bindingBrand: unique symbol;
 export interface DelegationHostStoreBinding { readonly [bindingBrand]: true }
@@ -15,11 +25,26 @@ export type DelegationHostWriter = Pick<SqliteDelegationWriteStore,
     | "appendDelegationInstruction" | "classifyDelegatedChildRecovery"
     | "requestDelegatedChildInterrupt" | "commitDelegatedChildInterrupted"
     | "resumeDelegatedChild" | "commitDelegatedChildTerminal"
-    | "commitDelegatedChildPreparation" | "getDelegatedChildPreparation" | "listDelegatedRecoveryCandidates">;
+    | "commitDelegatedChildPreparation" | "getDelegatedChildPreparation" | "listDelegatedRecoveryCandidates">
+  & Pick<SqliteRunTerminalIntentStore, "prepareRunTerminalIntent" | "getRunTerminalIntent" | "listUnfinishedRunTerminalIntents"
+    | "reconcileRunTerminalIntent" | "acknowledgeRunTerminalIntent">
+  & Pick<SqliteRunSuspensionStore, "requestRunSuspension" | "sealRunSuspension" | "getRunSuspensionForAttempt" | "getRunSuspension">
+  & Pick<SqliteRunSuspensionStopStore, "beginRunSuspensionStop" | "commitRunSuspensionStopped" | "getRunSuspensionStop"
+    | "readStoppedCompactionSuspensionRecovery" | "readStoppedFinalSettlementRecovery">
+  & Pick<SqliteRunFinalSettlementStore, "commitRunFinalSettlement">
+  & Pick<SqliteRunSuspensionActivationStore, "activateRootRunSuspension" | "getRootRunSuspensionActivation">
+  & Pick<SqliteRunSuspensionStartStore, "acknowledgeRootRunSuspensionStart" | "getRootRunSuspensionStart">
+  & Pick<SqliteRunSuspensionDelegatedStore, "activateDelegatedRunSuspension" | "getDelegatedRunSuspensionActivation" | "getDelegatedRunSuspensionStart">;
 
 export interface DelegationHostStoreReaders extends DelegationWriteAuthorityPorts {
   readonly readRunnerStartObservation?: DelegationLifecycleStorePorts["readRunnerStartObservation"];
   readonly readExecutionPreparation?: DelegationLifecycleStorePorts["readExecutionPreparation"];
+  /** Separate restart receiver. It never borrows or populates the live runtime registry's facts. */
+  readonly readRootSuspensionRecoveryAuthority?: (runId: string, sourceFence: RuntimeAttemptFenceV1) => DelegationExecutionAuthority;
+  readonly readRootSuspensionStartObservation?: (ref: unknown) => RootRunSuspensionStartObservationV1;
+  readonly readRootSuspensionStartAuthority?: (runId: string, targetFence: RuntimeAttemptFenceV1) => DelegationExecutionAuthority;
+  readonly readDelegatedSuspensionRecoveryAuthority?: (runId: string, sourceFence: RuntimeAttemptFenceV1) => DelegationExecutionAuthority;
+  readonly readFinalSettlementObservation?: (ref: unknown) => RunFinalSettlementObservationV1;
 }
 
 interface BindingState {
@@ -52,6 +77,11 @@ export function createDelegationHostStoreBinding(readers: DelegationHostStoreRea
     readChildReceipt: readers.readChildReceipt.bind(readers),
     readRunnerStartObservation: readers.readRunnerStartObservation?.bind(readers) ?? fail,
     readExecutionPreparation: readers.readExecutionPreparation?.bind(readers) ?? fail,
+    readRootSuspensionRecoveryAuthority: readers.readRootSuspensionRecoveryAuthority?.bind(readers) ?? fail,
+    readRootSuspensionStartObservation: readers.readRootSuspensionStartObservation?.bind(readers) ?? fail,
+    readRootSuspensionStartAuthority: readers.readRootSuspensionStartAuthority?.bind(readers) ?? fail,
+    readDelegatedSuspensionRecoveryAuthority: readers.readDelegatedSuspensionRecoveryAuthority?.bind(readers) ?? fail,
+    readFinalSettlementObservation: readers.readFinalSettlementObservation?.bind(readers) ?? fail,
   });
   const state: BindingState = { readers: capturedReaders, retired: false };
   bindings.set(binding, state);
@@ -100,6 +130,28 @@ export function captureDelegationHostStoreBinding(binding: DelegationHostStoreBi
         commitDelegatedChildPreparation: invoke("commitDelegatedChildPreparation"),
         getDelegatedChildPreparation: invoke("getDelegatedChildPreparation"),
         listDelegatedRecoveryCandidates: invoke("listDelegatedRecoveryCandidates"),
+        prepareRunTerminalIntent: invoke("prepareRunTerminalIntent"),
+        getRunTerminalIntent: invoke("getRunTerminalIntent"),
+        listUnfinishedRunTerminalIntents: invoke("listUnfinishedRunTerminalIntents"),
+        reconcileRunTerminalIntent: invoke("reconcileRunTerminalIntent"),
+        acknowledgeRunTerminalIntent: invoke("acknowledgeRunTerminalIntent"),
+        requestRunSuspension: invoke("requestRunSuspension"),
+        sealRunSuspension: invoke("sealRunSuspension"),
+        getRunSuspensionForAttempt: invoke("getRunSuspensionForAttempt"),
+        getRunSuspension: invoke("getRunSuspension"),
+        beginRunSuspensionStop: invoke("beginRunSuspensionStop"),
+        commitRunSuspensionStopped: invoke("commitRunSuspensionStopped"),
+        getRunSuspensionStop: invoke("getRunSuspensionStop"),
+        readStoppedCompactionSuspensionRecovery: invoke("readStoppedCompactionSuspensionRecovery"),
+        readStoppedFinalSettlementRecovery: invoke("readStoppedFinalSettlementRecovery"),
+        commitRunFinalSettlement: invoke("commitRunFinalSettlement"),
+        activateRootRunSuspension: invoke("activateRootRunSuspension"),
+        getRootRunSuspensionActivation: invoke("getRootRunSuspensionActivation"),
+        acknowledgeRootRunSuspensionStart: invoke("acknowledgeRootRunSuspensionStart"),
+        getRootRunSuspensionStart: invoke("getRootRunSuspensionStart"),
+        activateDelegatedRunSuspension: invoke("activateDelegatedRunSuspension"),
+        getDelegatedRunSuspensionActivation: invoke("getDelegatedRunSuspensionActivation"),
+        getDelegatedRunSuspensionStart: invoke("getDelegatedRunSuspensionStart"),
       });
     },
     retire(): void { state.retired = true; state.writer = undefined; },

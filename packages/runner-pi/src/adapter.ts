@@ -1,7 +1,7 @@
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { translatePiEvents } from "./events.js";
 import { createInitializedPiSession } from "./session-factory.js";
-import { assertPreparedPiSession, capturePreparedPiInput, type PiRunnerPreparedInput } from "./prepared-input.js";
+import { assertPreparedPiSession, capturePreparedPiInput, createRestoredPiSessionViewGuard, type PiRunnerPreparedInput } from "./prepared-input.js";
 import { installApprovedToolContinuation, readApprovedToolContinuation } from "./approved-tool-continuation.js";
 import { createCompactionRecoveryCheckpointProjector, installCompactionRecoveryView } from "./compaction-recovery.js";
 import { installOrdinaryProgressRecoveryView, readOrdinaryProgressRecoveryView } from "./ordinary-progress-recovery.js";
@@ -12,6 +12,7 @@ import { createPiSessionStopper, createPiTaskBoundary } from "./task-boundary.js
 import { assertUserInputExecutionHandler } from "./extensions/user-input.js";
 import { assertDelegationExecutionHandler } from "./extensions/delegation.js";
 import { PiRunnerYielded } from "./task-yield.js";
+import { PiRunnerSuspended } from "./runtime-suspension.js";
 import { createPiToolBoundaryObservation } from "./tool-boundary-observation.js";
 import { DEFAULT_TOOLS } from "./constants.js";
 import type { PiProviderErrorDiagnostic } from "./provider-error-diagnostic.js";
@@ -38,7 +39,7 @@ export class PiRunnerAdapter {
     }
   }
 
-  /** Resolves only on completion; required input rejects with PiRunnerYielded after SDK idle. */
+  /** Resolves only on completion; typed yield/suspension outcomes require SDK stop and idle. */
   async runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult> {
     assertUserInputExecutionHandler(options);
     assertDelegationExecutionHandler(options);
@@ -86,24 +87,31 @@ export class PiRunnerAdapter {
     };
     const hostBoundary = options.onTaskContinuationBoundary;
     const boundary = createPiTaskBoundary((options.hostCompactionEnabled || options.ordinaryProgressRecovery) && hostBoundary
-      ? { ...options, onTaskContinuationBoundary: async (point) => {
+      ? { ...options, onTaskContinuationBoundary: async (point, modelView) => {
           if (point !== "before_provider_request") return hostBoundary(point);
           toolObservation?.enterProviderBoundary();
           try {
-            return await hostBoundary(point, session ? captureTaskModelView() : undefined);
+            return await hostBoundary(point, modelView);
           } finally {
             toolObservation?.leaveProviderBoundary();
           }
         } }
       : options, () => session && frozenAuthority ? { systemPrompt: frozenAuthority.systemPrompt, messages: session.state.messages,
-          acceptedTaskPrompt, sessionId: session.sessionId, preparedInput: frozenAuthority } : undefined);
+          acceptedTaskPrompt, sessionId: session.sessionId, preparedInput: frozenAuthority } : undefined,
+        (options.hostCompactionEnabled || options.ordinaryProgressRecovery) && hostBoundary ? captureTaskModelView : undefined);
     options = boundary.options;
     const events: PiRunnerEvent[] = [];
     let sdkSettlement: { readonly aborted: boolean } | undefined;
+    let suspensionControl: { message: unknown; events: PiRunnerEvent[]; paired: boolean } | undefined;
     const emit = (event: PiRunnerEvent): void => {
       if (event.type === "tool_start") toolObservation?.enter(event.toolCallId, event.toolName);
       events.push(event);
       options.onEvent?.(event);
+    };
+    const flushSuspensionControl = (): void => {
+      const pending = suspensionControl;
+      suspensionControl = undefined;
+      for (const event of pending?.events ?? []) emit(event);
     };
 
     throwIfAborted(options.signal);
@@ -137,7 +145,24 @@ export class PiRunnerAdapter {
       if (event.type === "agent_settled") sdkSettlement = { aborted: event.aborted };
       if ((event.type === "message_start" || event.type === "message_end" || event.type === "message_update")
         && isPiHostResumeControl(event.message)) return;
-      for (const translated of translatePiEvents(event)) {
+      const translatedEvents = translatePiEvents(event);
+      // Buffer only Pi's exact reflection of this boundary's private control
+      // error and its identity-paired empty turn_end. Nothing is discarded until
+      // real SDK stop+idle succeeds; failure/cancellation replays both events.
+      if (!suspensionControl && event.type === "message_end" && boundary.isRuntimeSuspensionControlMessage(event.message)) {
+        suspensionControl = { message: event.message, events: [...translatedEvents], paired: false };
+        return;
+      }
+      if (suspensionControl && !suspensionControl.paired && event.type === "turn_end"
+        && event.message === suspensionControl.message && event.toolResults.length === 0) {
+        suspensionControl.events.push(...translatedEvents);
+        suspensionControl.paired = true;
+        return;
+      }
+      // Any real task event after the candidate invalidates this control pair.
+      // In particular, tool evidence is always emitted, never hidden by a latch.
+      if (translatedEvents.length) flushSuspensionControl();
+      for (const translated of translatedEvents) {
         if (translated.type === "tool_end") {
           if (builtinReads.has(translated.toolName) && (!translated.isError || translated.toolName === "read")) {
             toolObservation?.completeBuiltinRead(translated.toolCallId, translated.toolName);
@@ -176,12 +201,6 @@ export class PiRunnerAdapter {
       if (!options.compactionRecovery) {
         assertPreparedPiSession(session, options);
       }
-      if (inputReceiver) {
-        // Host persistence is outside SDK extension hooks, whose failures can be swallowed.
-        await inputReceiver.accept(options.signal!);
-        boundary.assertOpen();
-        assertPreparedPiSession(session, options);
-      }
       if (options.compactionRecovery) {
         compactionRecoveryMode = installCompactionRecoveryView(session, options.compactionRecovery, acceptedTaskPrompt);
         recoveryCheckpointProjector = createCompactionRecoveryCheckpointProjector(session, options.compactionRecovery);
@@ -190,11 +209,30 @@ export class PiRunnerAdapter {
         ordinaryProgressRecoveryMode = installOrdinaryProgressRecoveryView(session, options.ordinaryProgressRecovery, acceptedTaskPrompt);
       }
       const recoveryMode = ordinaryProgressRecoveryMode ?? compactionRecoveryMode;
+      if (inputReceiver) {
+        // A restart ACK proves the actual SDK view was installed, not merely
+        // that an empty Session matched the original prepared assembly.
+        const assertRestoredView = recoveryMode === undefined ? undefined : createRestoredPiSessionViewGuard(session);
+        // Host persistence is outside SDK extension hooks, whose failures can be swallowed.
+        await inputReceiver.accept(options.signal!);
+        boundary.assertOpen();
+        assertPreparedPiSession(session, options, assertRestoredView);
+      }
       if (recoveryMode === "complete") {
-        if (ordinaryProgressRecoveryMode) {
-          // Recheck original Host authority after backend/setup awaits even without a provider request.
-          await options.onTaskContinuationBoundary?.("before_agent_start");
+        // Complete ordinary and compacted views both require current Host
+        // authority after the actual receiver ACK, even with zero new I/O.
+        await options.onTaskContinuationBoundary?.("before_agent_start");
+        boundary.assertOpen();
+        if (options.onTaskRestoredCompleteBoundary) {
+          if (!inputReceiver) throw new Error("Restored completion requires the original prepared-input receiver ACK");
+          const modelView = captureTaskModelView();
+          if (!modelView || !isCompletePairedTaskView(modelView)) throw new Error("Restored completion lost its complete SDK view");
+          const assertRestoredView = createRestoredPiSessionViewGuard(session);
+          toolObservation?.enterRestoredCompleteBoundary(options.signal, modelView);
+          try { await options.onTaskRestoredCompleteBoundary(modelView); }
+          finally { toolObservation?.leaveSettledBoundary(); }
           boundary.assertOpen();
+          assertPreparedPiSession(session, options, assertRestoredView);
         }
         // Pi's compacted view may end with a complete assistant turn. Calling
         // continue() here is invalid and would risk replaying a side effect.
@@ -223,6 +261,18 @@ export class PiRunnerAdapter {
       if (terminalFailure) {
         throw terminalFailure;
       }
+      if (options.onTaskSettledBoundary && recoveryMode !== "complete" && sdkSettlement && !sdkSettlement.aborted) {
+        const settledModelView = captureTaskModelView();
+        if (settledModelView && isCompletePairedTaskView(settledModelView)) {
+          toolObservation?.enterSettledBoundary(options.signal, settledModelView);
+          try {
+            await options.onTaskSettledBoundary(settledModelView);
+          } finally {
+            toolObservation?.leaveSettledBoundary();
+          }
+          boundary.assertOpen();
+        }
+      }
       emit({
         type: "run_end",
         taskId: options.task.id,
@@ -248,6 +298,12 @@ export class PiRunnerAdapter {
         // its executor jobs and captured fence before persisting a checkpoint.
         throw new PiRunnerYielded(boundary.yieldRequest, new Date().toISOString());
       }
+      if (!stopFailure && !boundary.failure && !sourceSignal?.aborted && boundary.suspensionRequest) {
+        if (!suspensionControl?.paired) flushSuspensionControl();
+        suspensionControl = undefined;
+        throw new PiRunnerSuspended(boundary.suspensionRequest, new Date().toISOString());
+      }
+      flushSuspensionControl();
       let failure = boundary.failure ?? stopFailure ?? error;
       if (!boundary.failure && !stopFailure && sourceSignal?.aborted) {
         try { throwIfAborted(sourceSignal); } catch (cancelled) { failure = cancelled; }
@@ -322,6 +378,32 @@ export class PiRunnerAdapter {
 }
 
 const MAX_COMPACTION_CONTEXT_SNAPSHOT_BYTES = 512 * 1024;
+
+/** A settled event alone also permits length/error tails; never present those as complete checkpoints. */
+function isCompletePairedTaskView(messages: readonly unknown[]): boolean {
+  const final = messages.at(-1) as Record<string, unknown> | undefined;
+  if (final?.role !== "assistant" || final.stopReason !== "stop") return false;
+  const pending = new Map<string, string>();
+  const seen = new Set<string>();
+  for (const value of messages) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const message = value as Record<string, unknown>;
+    if (message.role === "toolResult") {
+      if (typeof message.toolCallId !== "string" || pending.get(message.toolCallId) !== message.toolName) return false;
+      pending.delete(message.toolCallId);
+      continue;
+    }
+    if (pending.size) return false;
+    if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+    for (const value of message.content) {
+      if (!value || typeof value !== "object" || value.type !== "toolCall") continue;
+      if (typeof value.id !== "string" || typeof value.name !== "string" || seen.has(value.id)) return false;
+      seen.add(value.id);
+      pending.set(value.id, value.name);
+    }
+  }
+  return pending.size === 0;
+}
 
 function captureCompactionContext(messages: readonly unknown[]): readonly unknown[] | undefined {
   try {

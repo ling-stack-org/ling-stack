@@ -653,6 +653,20 @@ import { SqliteHostCommandJournalStore } from "./sqlite/host-command-journal-sto
 import { SqliteHostOperationJournalStore } from "./sqlite/host-operation-journal-store.js";
 import { SqliteHostAttemptCompletionStore } from "./sqlite/host-attempt-completion-store.js";
 import { SqliteDelegationCompletionEvidenceStore } from "./sqlite/delegation-completion-evidence.js";
+import { SqliteRunTerminalIntentStore, hasPendingRunTerminalIntent } from "./sqlite/run-terminal-intent-store.js";
+import { applyRunTerminalIntentMigration } from "./sqlite/run-terminal-intent-migration.js";
+import { SqliteRunSuspensionStore, hasPendingRunSuspension } from "./sqlite/run-suspension-store.js";
+import { applyRunSuspensionMigration } from "./sqlite/run-suspension-migration.js";
+import { SqliteRunSuspensionStopStore } from "./sqlite/run-suspension-stop-store.js";
+import { applyRunSuspensionStopMigration } from "./sqlite/run-suspension-stop-migration.js";
+import { SqliteRunSuspensionActivationStore } from "./sqlite/run-suspension-activation-store.js";
+import { applyRunSuspensionActivationMigration } from "./sqlite/run-suspension-activation-migration.js";
+import { SqliteRunSuspensionStartStore } from "./sqlite/run-suspension-start-store.js";
+import { applyRunSuspensionStartMigration } from "./sqlite/run-suspension-start-migration.js";
+import { applyRunSuspensionDelegatedMigration } from "./sqlite/run-suspension-delegated-migration.js";
+import { SqliteRunSuspensionDelegatedStore } from "./sqlite/run-suspension-delegated-store.js";
+import { SqliteRunFinalSettlementStore } from "./sqlite/run-final-settlement-store.js";
+import { applyRunFinalSettlementMigration } from "./sqlite/run-final-settlement-migration.js";
 import { sealHostCompactionResourceBoundary } from "./sqlite/host-compaction-resource-boundary.js";
 import { assertHostLaunchPreflight } from "./sqlite/host-launch-preflight.js";
 import { SqliteHostMediaOperationStore } from "./sqlite/host-media-operation-store.js";
@@ -693,6 +707,8 @@ import { applyHarnessToolExecutionMigration } from "./sqlite/harness-tool-execut
 import { applyRunEvaluationMigration } from "./sqlite/run-evaluation-migration.js";
 import { applyDelegationMigration } from "./sqlite/delegation-migration.js";
 import { applyHarnessReliabilityMigration } from "./sqlite/harness-reliability-migration.js";
+import { applyHarnessRetentionIndexMigration } from "./sqlite/harness-retention-index-migration.js";
+import { applyHarnessRecoveryIndexMigration } from "./sqlite/harness-recovery-index-migration.js";
 import { applyDelegationBudgetMigration } from "./sqlite/delegation-budget-migration.js";
 import { applyDelegationInstructionMigration } from "./sqlite/delegation-instruction-migration.js";
 import { SqliteDelegationWriteStore } from "./sqlite/delegation-write-store.js";
@@ -751,6 +767,7 @@ import { SqlitePostCompactionUndoStore } from "./sqlite/post-compaction-undo-sto
 import { SqliteWorkspaceSnapshotStore } from "./sqlite/workspace-snapshot-store.js";
 import { SqliteRunCompactionCheckpointStore } from "./sqlite/run-compaction-checkpoint-store.js";
 import { SqliteRunProgressCheckpointStore } from "./sqlite/run-progress-checkpoint-store.js";
+import { readRunCompactionSuspensionWitness } from "./sqlite/run-compaction-suspension-witness.js";
 import { applyRunProgressCheckpointMigration } from "./sqlite/run-progress-checkpoint-migration.js";
 import { captureOriginalOfficeHostBridgeReader, type OriginalOfficeHostBridgeReader } from "../original-office-host-bridge.js";
 
@@ -1013,10 +1030,12 @@ export class SqliteRunStore implements RunStore {
           this.runtimeSemaphores.releaseRuntimeSemaphoreSlotsForAttempt(fence, releasedAt, releaseReason),
       },
     );
+    const rootSuspensionStartScope = Object.freeze({});
     this.runnerContinuations = new SqliteRunnerContinuationStore(
       { database: this.database },
       this.runtimeWorkUnits,
       { getArtifact: (id) => this.getArtifact(id) },
+      rootSuspensionStartScope,
     );
     this.harnessToolExecutions = new SqliteHarnessToolExecutionStore(
       { database: this.database },
@@ -1053,6 +1072,7 @@ export class SqliteRunStore implements RunStore {
     this.harnessProjections = new SqliteHarnessProjectionCheckpointStore({ database: this.database });
     this.harnessArtifactRetention = new SqliteHarnessArtifactRetentionStore({ database: this.database });
     this.runProgressCheckpoints = new SqliteRunProgressCheckpointStore({ database: this.database }, this, this.artifacts);
+    const suspensionPreparationScope = Object.freeze({});
     this.harnessCommits = new SqliteHarnessCommitCoordinator(
       { database: this.database },
       this.runnerContinuations,
@@ -1074,6 +1094,7 @@ export class SqliteRunStore implements RunStore {
           this.releaseRuntimeSemaphoreSlotsForAttempt(fence, releasedAt, releaseReason),
       },
       this.runProgressCheckpoints,
+      suspensionPreparationScope,
     );
     this.lingThreads = new SqliteLingThreadStore(
       { database: this.database },
@@ -1198,6 +1219,8 @@ export class SqliteRunStore implements RunStore {
       getRun: (runId) => this.getRun(runId),
       getWorkUnit: (workUnitId) => this.getWorkUnit(workUnitId),
       getWorkUnitAttempt: (attemptId) => this.getWorkUnitAttempt(attemptId),
+      hasPendingRunTerminalIntent: (source) => this.hasPendingRunTerminalIntent(source),
+      hasPendingRunSuspension: (source) => this.hasPendingRunSuspension(source),
       getUserInputContinuationBinding: (threadId, deliveryId) =>
         this.getUserInputContinuationBinding(threadId, deliveryId),
       getUserInputContinuationReceipt: (threadId, deliveryId) =>
@@ -1722,10 +1745,24 @@ export class SqliteRunStore implements RunStore {
             applyDelegationBudgetMigration,
             applyHarnessReliabilityMigration,
             applyDelegationInstructionMigration,
+            applyHarnessRetentionIndexMigration,
+            applyHarnessRecoveryIndexMigration,
+            applyRunTerminalIntentMigration,
+            applyRunSuspensionMigration,
+            applyRunSuspensionStopMigration,
+            applyRunSuspensionActivationMigration,
+            applyRunSuspensionStartMigration,
+            applyRunSuspensionDelegatedMigration,
+            applyRunFinalSettlementMigration,
           ]) {
             // Historical Continuity fixtures have no sealed artifact columns yet.
             // Normal startup installs retention after the authority cutover above.
-            if (options.deferContinuityV2MigrationForTest && applyMigration === applyHarnessReliabilityMigration) continue;
+            if (options.deferContinuityV2MigrationForTest
+              && (applyMigration === applyHarnessReliabilityMigration || applyMigration === applyHarnessRetentionIndexMigration
+                || applyMigration === applyHarnessRecoveryIndexMigration || applyMigration === applyRunTerminalIntentMigration
+                || applyMigration === applyRunSuspensionMigration || applyMigration === applyRunSuspensionStopMigration
+                || applyMigration === applyRunSuspensionActivationMigration || applyMigration === applyRunSuspensionStartMigration
+                || applyMigration === applyRunSuspensionDelegatedMigration || applyMigration === applyRunFinalSettlementMigration)) continue;
             applyMigration({
               database: this.database,
               hasMigration: (version) => this.hasMigration(version),
@@ -1756,6 +1793,8 @@ export class SqliteRunStore implements RunStore {
       createArtifactWithinTransaction: (input) => this.artifacts.createArtifactWithinTransaction(input),
       getArtifact: (id) => this.getArtifact(id),
       });
+      const delegatedSuspensionScope = Object.freeze({});
+      let delegatedSuspensions: SqliteRunSuspensionDelegatedStore;
       const lifecycle = new SqliteDelegationLifecycleStore({ database: this.database }, {
         getRun: (id) => this.getRun(id), getWorkUnit: (id) => this.getWorkUnit(id),
         getWorkUnitAttempt: (id) => this.getWorkUnitAttempt(id),
@@ -1775,6 +1814,107 @@ export class SqliteRunStore implements RunStore {
         assertDispatchAuthorityWithinTransaction: (input) => writer.assertDelegatedChildDispatchAuthorityWithinTransaction(input),
         readRunnerStartObservation: delegationHost.readers.readRunnerStartObservation,
         readExecutionPreparation: delegationHost.readers.readExecutionPreparation,
+        commitSuspensionStartWithinTransaction: input => delegatedSuspensions.commitStartWithinTransaction(input),
+      }, delegatedSuspensionScope);
+      const terminalIntents = new SqliteRunTerminalIntentStore({ database: this.database }, {
+        getRun: id => this.getRun(id), getWorkUnit: id => this.getWorkUnit(id), getWorkUnitAttempt: id => this.getWorkUnitAttempt(id),
+        getHostAttemptCompletion: source => this.getHostAttemptCompletion(source),
+        getDelegationCompletionEvidence: input => this.getDelegationCompletionEvidence(input),
+        transitionRunExecutionStatus: input => this.transitionRunExecutionStatus(input),
+        transitionWorkUnitStatus: input => this.transitionWorkUnitStatus(input), updateWorkUnitAttemptStatus: input => this.updateWorkUnitAttemptStatus(input),
+        appendTerminalRuntimeAudit: input => this.appendTerminalRuntimeAudit(input), getTask: id => this.getTask(id),
+        transitionTaskStatus: input => this.transitionTaskStatus(input), appendEvent: (...args) => this.appendEvent(...args),
+        getArtifact: id => this.getArtifact(id), createArtifactWithinTransaction: input => this.artifacts.createArtifactWithinTransaction(input),
+        appendControlPlaneEventWithinTransaction: (input, now) => this.controlPlane.appendControlPlaneEventWithinTransaction(input, now),
+        getControlPlaneEventByIdempotency: (...args) => this.getControlPlaneEventByIdempotency(...args),
+        releaseResourceLeasesForAttempt: (...args) => this.releaseResourceLeasesForAttempt(...args),
+        releaseRuntimeSemaphoreSlotsForAttempt: (...args) => this.releaseRuntimeSemaphoreSlotsForAttempt(...args),
+        sealDelegatedTerminalWithinTransaction: input => {
+          const rows = this.database.prepare("SELECT id FROM delegation_budget_reservations WHERE child_run_id=? LIMIT 2").all(input.runId);
+          if (rows.length !== 1) throw new Error("run_terminal_intent_delegation_lineage_invalid");
+          const reservationId = String(rows[0]!.id);
+          writer.settleDelegatedChildWithinTransaction({ reservationId, receipt: input.receipt, now: input.now });
+          lifecycle.commitDelegatedChildTerminalWithinTransaction({ reservationId, sourceFence: input.sourceFence, now: input.now });
+        },
+      });
+      const finalSettlements = new SqliteRunFinalSettlementStore({ database: this.database }, {
+        getRun: id => this.getRun(id), getWorkUnit: id => this.getWorkUnit(id), getWorkUnitAttempt: id => this.getWorkUnitAttempt(id),
+        getApprovalPolicy: () => this.getApprovalPolicy(), getLingThread: id => this.getLingThread(id), getChannel: id => this.getChannel(id),
+        getProviderPreset: id => this.getProviderPreset(id), getAiTeammate: id => this.getAiTeammate(id),
+        listTeammateSkillBindings: id => this.listTeammateSkillBindings(id), getSkillRegistryEntry: id => this.getSkillRegistryEntry(id),
+        getLatestWorkspaceProvenanceWatermark: id => this.getLatestWorkspaceProvenanceWatermark(id),
+        listEvents: (...args) => this.listEvents(...args), listHarnessToolExecutions: id => this.listHarnessToolExecutions(id),
+        listHostCommandWriteBlockers: cwd => this.listHostCommandWriteBlockers(cwd), listApprovalRequests: options => this.listApprovalRequests(options),
+        createArtifactWithinTransaction: input => this.artifacts.createArtifactWithinTransaction(input),
+        readFinalSettlementObservation: delegationHost.readers.readFinalSettlementObservation,
+      });
+      const suspensions = new SqliteRunSuspensionStore({ database: this.database }, {
+        getRun: id => this.getRun(id), getWorkUnit: id => this.getWorkUnit(id), getWorkUnitAttempt: id => this.getWorkUnitAttempt(id),
+        getApprovalPolicy: () => this.getApprovalPolicy(), getLingThread: id => this.getLingThread(id), getChannel: id => this.getChannel(id),
+        getProviderPreset: id => this.getProviderPreset(id), getAiTeammate: id => this.getAiTeammate(id),
+        listTeammateSkillBindings: id => this.listTeammateSkillBindings(id), getSkillRegistryEntry: id => this.getSkillRegistryEntry(id),
+        getLatestWorkspaceProvenanceWatermark: id => this.getLatestWorkspaceProvenanceWatermark(id),
+        getArtifact: id => this.getArtifact(id), createArtifactWithinTransaction: input => this.artifacts.createArtifactWithinTransaction(input),
+        readRunProgressCheckpointForRecovery: input => this.readRunProgressCheckpointForRecovery(input),
+        listEvents: (...args) => this.listEvents(...args), listHarnessToolExecutions: id => this.listHarnessToolExecutions(id),
+        listHostCommandWriteBlockers: cwd => this.listHostCommandWriteBlockers(cwd), listApprovalRequests: options => this.listApprovalRequests(options),
+        getChannelWorkflowStep: id => this.getChannelWorkflowStep(id), getChannelWorkflow: id => this.getChannelWorkflow(id),
+      });
+      const suspensionStops = new SqliteRunSuspensionStopStore({ database: this.database }, {
+        getRun: id => this.getRun(id), getWorkUnit: id => this.getWorkUnit(id), getWorkUnitAttempt: id => this.getWorkUnitAttempt(id),
+        getApprovalPolicy: () => this.getApprovalPolicy(), getLingThread: id => this.getLingThread(id), getChannel: id => this.getChannel(id),
+        getProviderPreset: id => this.getProviderPreset(id), getAiTeammate: id => this.getAiTeammate(id),
+        listTeammateSkillBindings: id => this.listTeammateSkillBindings(id), getSkillRegistryEntry: id => this.getSkillRegistryEntry(id),
+        getLatestWorkspaceProvenanceWatermark: id => this.getLatestWorkspaceProvenanceWatermark(id),
+        createArtifactWithinTransaction: input => this.artifacts.createArtifactWithinTransaction(input),
+        getRunSuspension: id => suspensions.getRunSuspension(id),
+        readRunProgressCheckpointForRecovery: input => this.readRunProgressCheckpointForRecovery(input),
+        listEvents: (...args) => this.listEvents(...args), listHarnessToolExecutions: id => this.listHarnessToolExecutions(id),
+        listHostCommandWriteBlockers: cwd => this.listHostCommandWriteBlockers(cwd), listApprovalRequests: options => this.listApprovalRequests(options),
+        getChannelWorkflowStep: id => this.getChannelWorkflowStep(id), getChannelWorkflow: id => this.getChannelWorkflow(id),
+        getHostAttemptCompletion: source => this.getHostAttemptCompletion(source), getDelegationCompletionEvidence: input => this.getDelegationCompletionEvidence(input),
+        transitionWorkUnitStatus: input => this.transitionWorkUnitStatus(input), updateWorkUnitAttemptStatus: input => this.updateWorkUnitAttemptStatus(input),
+        appendTerminalRuntimeAudit: input => this.appendTerminalRuntimeAudit(input), findWorkUnitAttemptTerminalAudit: attempt => this.runtimeWorkUnits.findWorkUnitAttemptTerminalAudit(attempt),
+        releaseResourceLeasesForAttempt: (...args) => this.releaseResourceLeasesForAttempt(...args),
+        releaseRuntimeSemaphoreSlotsForAttempt: (...args) => this.releaseRuntimeSemaphoreSlotsForAttempt(...args),
+        requestDelegatedChildInterruptWithinTransaction: input => lifecycle.requestDelegatedChildInterruptWithinTransaction(input),
+        commitDelegatedChildInterruptedWithinTransaction: (...args) => lifecycle.commitDelegatedChildInterruptedWithinTransaction(...args),
+      });
+      const suspensionActivations = new SqliteRunSuspensionActivationStore({ database: this.database }, {
+        getRun: id => this.getRun(id), getWorkUnit: id => this.getWorkUnit(id), getWorkUnitAttempt: id => this.getWorkUnitAttempt(id),
+        getArtifact: id => this.getArtifact(id), transitionWorkUnitStatus: input => this.transitionWorkUnitStatus(input),
+        appendRuntimeEvent: input => this.appendRuntimeEvent(input),
+        assertStoppedWithinTransaction: input => suspensionStops.assertStoppedWithinTransaction(input),
+        getRunSuspension: id => suspensions.getRunSuspension(id),
+        assertAuthorityWithinTransaction: input => writer.assertRootSuspensionAuthorityWithinTransaction(input,
+          delegationHost.readers.readRootSuspensionRecoveryAuthority),
+        prepareWithinTransaction: input => this.harnessCommits.prepareContinuationAndAttemptWithinTransaction(input, suspensionPreparationScope),
+        claimWithinTransaction: input => this.runnerContinuations.claimRunnerContinuationWithinTransaction(input),
+        createArtifactWithinTransaction: input => this.artifacts.createArtifactWithinTransaction(input),
+        assertRootStartProofWithinTransaction: (...args) => suspensions.assertRootStartProofWithinTransaction(...args),
+      });
+      const suspensionStarts = new SqliteRunSuspensionStartStore({ database: this.database }, {
+        getRun: id => this.getRun(id), getWorkUnit: id => this.getWorkUnit(id), getWorkUnitAttempt: id => this.getWorkUnitAttempt(id),
+        getRunnerContinuation: id => this.getRunnerContinuation(id), getTask: id => this.getTask(id),
+        transitionTaskStatus: input => this.transitionTaskStatus(input), transitionWorkUnitStatus: input => this.transitionWorkUnitStatus(input),
+        appendRuntimeEvent: input => this.appendRuntimeEvent(input), readObservation: delegationHost.readers.readRootSuspensionStartObservation,
+        assertActivationWithinTransaction: (...args) => suspensionActivations.assertRootStartWithinTransaction(...args),
+        assertAuthorityWithinTransaction: input => writer.assertRootSuspensionAuthorityWithinTransaction(input,
+          delegationHost.readers.readRootSuspensionStartAuthority),
+        startWithinTransaction: input => this.runnerContinuations.startRunnerContinuationWithinTransaction(input, rootSuspensionStartScope),
+        createArtifactWithinTransaction: input => this.artifacts.createArtifactWithinTransaction(input),
+      });
+      delegatedSuspensions = new SqliteRunSuspensionDelegatedStore({ database: this.database }, {
+        getRun: id => this.getRun(id), getWorkUnit: id => this.getWorkUnit(id), getWorkUnitAttempt: id => this.getWorkUnitAttempt(id),
+        appendRuntimeEvent: input => this.appendRuntimeEvent(input), getRunSuspension: id => suspensions.getRunSuspension(id),
+        assertStoppedWithinTransaction: input => suspensionStops.assertStoppedWithinTransaction(input),
+        readRuntimeWithinTransaction: id => lifecycle.readSuspendedChildWithinTransaction(id, delegatedSuspensionScope),
+        getPreparation: id => lifecycle.getDelegatedChildPreparation(id),
+        assertRecoveryAuthority: input => writer.assertDelegatedSuspensionAuthorityWithinTransaction(input, delegationHost.readers.readDelegatedSuspensionRecoveryAuthority),
+        assertStartAuthority: input => writer.assertDelegatedSuspensionAuthorityWithinTransaction(input, delegationHost.readers.readCurrentAuthority),
+        resumeWithinTransaction: (input, onTarget) => lifecycle.resumeDelegatedChildWithinTransaction(input, delegatedSuspensionScope, onTarget),
+        assertStartProof: (...args) => suspensions.assertDelegatedStartProofWithinTransaction(...args),
+        getReservation: id => writer.getDelegationBudgetReservation(id), createArtifactWithinTransaction: input => this.artifacts.createArtifactWithinTransaction(input),
       });
       delegationHost.install({
         getRootDelegationBudget: writer.getRootDelegationBudget.bind(writer),
@@ -1796,6 +1936,28 @@ export class SqliteRunStore implements RunStore {
         commitDelegatedChildPreparation: lifecycle.commitDelegatedChildPreparation.bind(lifecycle),
         getDelegatedChildPreparation: lifecycle.getDelegatedChildPreparation.bind(lifecycle),
         listDelegatedRecoveryCandidates: lifecycle.listDelegatedRecoveryCandidates.bind(lifecycle),
+        prepareRunTerminalIntent: terminalIntents.prepareRunTerminalIntent.bind(terminalIntents),
+        getRunTerminalIntent: terminalIntents.getRunTerminalIntent.bind(terminalIntents),
+        listUnfinishedRunTerminalIntents: terminalIntents.listUnfinishedRunTerminalIntents.bind(terminalIntents),
+        reconcileRunTerminalIntent: terminalIntents.reconcileRunTerminalIntent.bind(terminalIntents),
+        acknowledgeRunTerminalIntent: terminalIntents.acknowledgeRunTerminalIntent.bind(terminalIntents),
+        requestRunSuspension: suspensions.requestRunSuspension.bind(suspensions),
+        sealRunSuspension: suspensions.sealRunSuspension.bind(suspensions),
+        getRunSuspensionForAttempt: suspensions.getRunSuspensionForAttempt.bind(suspensions),
+        getRunSuspension: suspensions.getRunSuspension.bind(suspensions),
+        beginRunSuspensionStop: suspensionStops.beginRunSuspensionStop.bind(suspensionStops),
+        commitRunSuspensionStopped: suspensionStops.commitRunSuspensionStopped.bind(suspensionStops),
+        getRunSuspensionStop: suspensionStops.getRunSuspensionStop.bind(suspensionStops),
+        readStoppedCompactionSuspensionRecovery: suspensionStops.readStoppedCompactionSuspensionRecovery.bind(suspensionStops),
+        readStoppedFinalSettlementRecovery: suspensionStops.readStoppedFinalSettlementRecovery.bind(suspensionStops),
+        commitRunFinalSettlement: finalSettlements.commitRunFinalSettlement.bind(finalSettlements),
+        activateRootRunSuspension: suspensionActivations.activateRootRunSuspension.bind(suspensionActivations),
+        getRootRunSuspensionActivation: suspensionActivations.getRootRunSuspensionActivation.bind(suspensionActivations),
+        acknowledgeRootRunSuspensionStart: suspensionStarts.acknowledgeRootRunSuspensionStart.bind(suspensionStarts),
+        getRootRunSuspensionStart: suspensionStarts.getRootRunSuspensionStart.bind(suspensionStarts),
+        activateDelegatedRunSuspension: delegatedSuspensions.activateDelegatedRunSuspension.bind(delegatedSuspensions),
+        getDelegatedRunSuspensionActivation: delegatedSuspensions.getDelegatedRunSuspensionActivation.bind(delegatedSuspensions),
+        getDelegatedRunSuspensionStart: delegatedSuspensions.getDelegatedRunSuspensionStart.bind(delegatedSuspensions),
       });
     }
   }
@@ -2560,6 +2722,10 @@ export class SqliteRunStore implements RunStore {
     return this.runProgressCheckpoints.readRunProgressCheckpointForRecovery(input);
   }
 
+  readRunCompactionSuspensionWitness(input: Parameters<RunStore["readRunCompactionSuspensionWitness"]>[0]) {
+    return readRunCompactionSuspensionWitness({ database: this.database }, this, input);
+  }
+
   createCompactionCheckpoint(input: CreateCompactionCheckpointInput): CompactionCheckpoint {
     return this.workspaceProvenance.createCompactionCheckpoint(input);
   }
@@ -3285,6 +3451,14 @@ export class SqliteRunStore implements RunStore {
 
   recoverStaleRuns(now: string): number {
     return this.runtimeRecovery.recoverStaleRuns(now);
+  }
+
+  hasPendingRunTerminalIntent(source: import("../host-operation-journal-types.js").HostOperationSource): boolean {
+    return hasPendingRunTerminalIntent({ database: this.database }, source);
+  }
+
+  hasPendingRunSuspension(source: { readonly runId: string } & import("../runtime-supervisor-types.js").RuntimeAttemptFenceV1): boolean {
+    return hasPendingRunSuspension({ database: this.database }, source);
   }
 
   recoverStaleChannelWorkflows(now: string): number {

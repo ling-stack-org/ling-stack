@@ -64,6 +64,23 @@ test("actual tool metadata renders command identity but never command inputs, bo
   assert.ok(!markup.includes("PRIVATE_SENTINEL"));
 });
 
+test("evaluation and delegation render as distinct authority records without private inputs", () => {
+  const evaluation = { record: { id: "evaluation-record", runId: "run", workUnitId: "unit", kind: "evaluation", rootRunId: "root",
+    state: "grading", revision: 1, createdAt: time, updatedAt: time, suiteArtifactId: "PRIVATE_SENTINEL", candidateArtifactId: "PRIVATE_SENTINEL" },
+    leaseStatus: "held", attempts: [] };
+  const delegation = { record: { id: "delegation-record", runId: "run", workUnitId: "unit", kind: "delegation", rootRunId: "root",
+    state: "running", revision: 2, createdAt: time, updatedAt: time, parentAttemptId: "parent", workflowId: "workflow",
+    workflowStepId: "workflow-step", parentDelegationStepId: "parent-step", childRunId: "child", required: true, depth: 2,
+    objectiveArtifactId: "PRIVATE_SENTINEL", permissionSnapshotArtifactId: "PRIVATE_SENTINEL" }, leaseStatus: "unclaimed",
+    attempts: [{ id: "parent", status: "missing" }] };
+  const markup = render({ phase: "ready", items: [evaluation, delegation] });
+  for (const value of ["Run evaluation", "Delegation", "root", "grading", "parent", "workflow-step", "parent-step", "child", "running"]) {
+    assert.ok(markup.includes(value), `rendered ${value}`);
+  }
+  assert.ok(!markup.includes("Controlled tool execution · undefined"));
+  assert.ok(!markup.includes("PRIVATE_SENTINEL"));
+});
+
 test("collapsed records expose distinct identities and visible state without expanding private details", () => {
   const tools = ["browser-tool-100", "browser-tool-099"].map(id => ({
     record: { ...row.record, id, kind: "tool_execution", state: "approved", attemptId: "source", toolCallId: id + "-call", toolName: "bash", executorKind: "bash" },

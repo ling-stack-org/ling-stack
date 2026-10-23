@@ -91,7 +91,15 @@ export class SqliteDelegationCompletionEvidenceStore {
     const resultMessages = mapped(bounded(db.prepare(delegationMessageSelectSql(`WHERE delegation_step_id ${member}
       AND kind='result' ORDER BY id LIMIT ${MAX_STEPS + 1}`)).all(stepJson), MAX_STEPS), mapDelegationMessage);
     const reservationByStep = new Map(reservations.map(reservation => [reservation.delegationStepId, reservation]));
+    const reservationById = new Map(reservations.map(reservation => [reservation.id, reservation]));
     const stepById = new Map(steps.map(step => [step.id, step]));
+    const budgetByRoot = new Map(budgets.map(budget => [budget.rootRunId, budget]));
+    const rootsWithSteps = new Set(steps.map(step => step.rootRunId));
+    const chargesByRun = groupBy(charges, charge => charge.runId);
+    const chargesByReservation = groupBy(charges, charge => charge.reservationId);
+    const rootChargesByRun = groupBy(charges, charge => charge.reservationId === undefined ? charge.runId : undefined);
+    const chargeOrder = new Map(charges.map((charge, index) => [charge, index]));
+    const resultsByStep = groupBy(resultMessages, message => message.delegationStepId);
     const runById = new Map<string, RunSession | undefined>();
     const run = (id: string): RunSession | undefined => {
       if (!runById.has(id)) runById.set(id, this.ports.getRun(id));
@@ -105,30 +113,35 @@ export class SqliteDelegationCompletionEvidenceStore {
       if (typeof row.owner_id !== "string" || !stepIds.has(row.owner_id)) issue("delegation.completion_lineage_invalid", undefined, String(row.id), row);
     }
     const roots: DelegationCompletionRootReadV1[] = budgetRootIds.map(runId => {
-      const root = run(runId), budget = budgets.find(value => value.rootRunId === runId);
-      const ownCharges = charges.filter(charge => charge.runId === runId && charge.reservationId === undefined);
+      const root = run(runId), budget = budgetByRoot.get(runId);
+      const ownCharges = rootChargesByRun.get(runId) ?? [];
       if (!root || budget && root.parentRunId !== undefined) issue("delegation.completion_lineage_invalid", undefined, runId);
-      if (steps.some(step => step.rootRunId === runId) && !budget) issue("delegation.completion_budget_missing", undefined, runId);
+      if (rootsWithSteps.has(runId) && !budget) issue("delegation.completion_budget_missing", undefined, runId);
       if (budget) {
         this.checkSealedArtifact(budget.authorityArtifactId, runId, budget.authorityDigest, issue);
         if (budget.priceArtifactId) this.checkSealedArtifact(budget.priceArtifactId, runId, budget.priceDigest!, issue);
       }
       return { runId, ...(root ? { run: runRead(root) } : {}), ...(budget ? { budget } : {}), charges: ownCharges };
     });
+    const rootByRun = new Map(roots.map(root => [root.runId, root]));
     const reads: DelegationCompletionStepReadV1[] = steps.map(step => {
       const reservation = reservationByStep.get(step.id), parent = run(step.parentRunId);
       const child = reservation ? run(reservation.childRunId) : step.childRunId ? run(step.childRunId) : undefined;
       const unit = child?.workUnitId ? this.ports.getWorkUnit(child.workUnitId) : undefined;
       const attempt = unit?.activeAttemptId ? this.ports.getWorkUnitAttempt(unit.activeAttemptId) : undefined;
       const parentAttempt = this.ports.getWorkUnitAttempt(step.parentAttemptId);
-      const ownCharges = charges.filter(charge => charge.runId === child?.id || charge.reservationId === reservation?.id && reservation !== undefined);
+      // Keep the original OR attribution, including corrupt run/reservation
+      // disagreements. Merge by original SQL position so each fact appears once
+      // in exactly the same canonical order, without rescanning all charges.
+      const ownCharges = mergeCharges(child ? chargesByRun.get(child.id) ?? [] : [],
+        reservation ? chargesByReservation.get(reservation.id) ?? [] : [], chargeOrder);
       const completion = child && attempt ? this.ports.getHostAttemptCompletion({ runId: child.id, ...toRuntimeAttemptFence(attempt) }) : undefined;
       let quiescence: DelegationCompletionStepReadV1["quiescence"] = "not_evaluated";
       if (child && attempt && ["succeeded", "failed", "cancelled"].includes(child.status)) {
         try { assertUserInputDurableQuiescence(db, child.id, toRuntimeAttemptFence(attempt), Date.parse(at), "exact_attempt"); quiescence = "verified"; }
         catch { quiescence = "blocked"; }
       }
-      const results = resultMessages.filter(message => message.delegationStepId === step.id).map(message => this.resultRead(message, issue));
+      const results = (resultsByStep.get(step.id) ?? []).map(message => this.resultRead(message, issue));
       const parentStepRow = step.parentDelegationStepId && !stepById.has(step.parentDelegationStepId)
         ? db.prepare(delegationStepSelectSql("WHERE id=?")).get(step.parentDelegationStepId) : undefined;
       const parentStep = step.parentDelegationStepId ? stepById.get(step.parentDelegationStepId)
@@ -143,7 +156,7 @@ export class SqliteDelegationCompletionEvidenceStore {
         ...(child ? { childRun: runRead(child) } : {}), ...(unit ? { workUnit: unitRead(unit) } : {}),
         ...(attempt ? { attempt: attemptRead(attempt) } : {}), ...(completion ? { hostCompletion: completion } : {}), quiescence,
         charges: ownCharges, results };
-      const root = roots.find(value => value.runId === step.rootRunId);
+      const root = rootByRun.get(step.rootRunId);
       const parentUnit = parent?.workUnitId ? this.ports.getWorkUnit(parent.workUnitId) : undefined;
       const invalidLineage = !reservation || !parent || !child || !unit || !parentUnit || !parentAttempt || !root?.run || !root.budget
         || reservation.rootRunId !== step.rootRunId || step.childRunId !== undefined && step.childRunId !== child.id
@@ -173,7 +186,7 @@ export class SqliteDelegationCompletionEvidenceStore {
     });
     // Detect unowned charges, including a child charge falsely attributed to the root.
     for (const charge of charges) {
-      const reservation = charge.reservationId ? reservations.find(value => value.id === charge.reservationId) : undefined;
+      const reservation = charge.reservationId ? reservationById.get(charge.reservationId) : undefined;
       const chargedRun = run(charge.runId), chargedAttempt = this.ports.getWorkUnitAttempt(charge.attemptId);
       if (charge.reservationId === undefined ? charge.runId !== charge.rootRunId
         : !reservation || reservation.rootRunId !== charge.rootRunId || reservation.childRunId !== charge.runId) {
@@ -222,6 +235,7 @@ export class SqliteDelegationCompletionEvidenceStore {
 
   private checkSettledUsage(reads: readonly DelegationCompletionStepReadV1[],
     issue: (code: DelegationCompletionIssueCodeV1, stepId?: string, runId?: string, fact?: unknown) => void): void {
+    const childrenByReservation = groupBy(reads, read => read.reservation?.parentReservationId);
     for (const read of reads) {
       const reservation = read.reservation;
       if (reservation?.state !== "settled") continue;
@@ -232,7 +246,7 @@ export class SqliteDelegationCompletionEvidenceStore {
         tokens += BigInt(charge.inputTokens!) + BigInt(charge.outputTokens!);
         cost += BigInt(charge.actualCostMicros ?? 0); costKnown &&= charge.actualCostMicros !== undefined;
       }
-      for (const child of reads.filter(value => value.reservation?.parentReservationId === reservation.id)) {
+      for (const child of childrenByReservation.get(reservation.id) ?? []) {
         if (child.reservation!.state === "released") continue;
         if (child.reservation!.state !== "settled") { closed = false; continue; }
         tokens += BigInt(child.reservation!.settledTokenUsage!); cost += BigInt(child.reservation!.settledCostMicros ?? 0);
@@ -280,6 +294,33 @@ export class SqliteDelegationCompletionEvidenceStore {
       issue("delegation.completion_fact_invalid", undefined, owner, artifact ? artifactFingerprint(artifact) : { id });
     }
   }
+}
+
+/** Preserve source order and retain every fact, including invalid lineage edges. */
+function groupBy<T>(rows: readonly T[], keyFor: (row: T) => string | undefined): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const row of rows) {
+    const key = keyFor(row);
+    if (key === undefined) continue;
+    const group = groups.get(key);
+    if (group) group.push(row); else groups.set(key, [row]);
+  }
+  return groups;
+}
+
+function mergeCharges(left: readonly DelegationBudgetCharge[], right: readonly DelegationBudgetCharge[],
+  order: ReadonlyMap<DelegationBudgetCharge, number>): DelegationBudgetCharge[] {
+  const merged: DelegationBudgetCharge[] = [];
+  let leftIndex = 0, rightIndex = 0;
+  while (leftIndex < left.length && rightIndex < right.length) {
+    const leftCharge = left[leftIndex]!, rightCharge = right[rightIndex]!;
+    if (leftCharge === rightCharge) { merged.push(leftCharge); leftIndex += 1; rightIndex += 1; }
+    else if (order.get(leftCharge)! < order.get(rightCharge)!) { merged.push(leftCharge); leftIndex += 1; }
+    else { merged.push(rightCharge); rightIndex += 1; }
+  }
+  while (leftIndex < left.length) merged.push(left[leftIndex++]!);
+  while (rightIndex < right.length) merged.push(right[rightIndex++]!);
+  return merged;
 }
 
 function runRead(run: RunSession): DelegationCompletionRunReadV1 {

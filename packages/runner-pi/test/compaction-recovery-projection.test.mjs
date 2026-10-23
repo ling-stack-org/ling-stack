@@ -6,12 +6,30 @@ import test from "node:test";
 import { PiRunnerAdapter } from "../dist/adapter.js";
 import { createInitializedPiSession } from "../dist/session-factory.js";
 import { capturePreparedPiInput } from "../dist/prepared-input.js";
-import { createCompactionRecoveryCheckpointProjector, installCompactionRecoveryView } from "../dist/compaction-recovery.js";
+import { createCompactionRecoveryCheckpointProjector, installCompactionRecoveryView, readCompactionRecoveryView } from "../dist/compaction-recovery.js";
 
 const testOptions = { timeout: 15_000 };
 const conversation = session => session.state.messages.filter(message => message.role !== "system");
 const activeCompaction = session => session.sessionManager.buildSessionProjection().entries.find(entry =>
   entry.sourceEntry.type === "compaction" && entry.messages.some(message => message.role === "compactionSummary"));
+
+for (const reason of ["aborted", "error", "length", "toolUse", "unknown", undefined]) {
+  test(`Runner rejects ${String(reason)} final assistant before installing a recovery view`, () => {
+    const final = { role: "assistant", content: [{ type: "text", text: "Not proof of completion." }] };
+    if (reason !== undefined) final.stopReason = reason;
+    assert.throws(() => readCompactionRecoveryView({ schemaVersion: 1, modelView: [
+      { role: "compactionSummary", summary: "Task progress." }, final,
+    ] }), /Invalid Pi compaction recovery model view/u);
+  });
+}
+
+for (const content of [undefined, "not SDK content", [{ type: "toolCall", id: "unfinished", name: "read", arguments: {} }]]) {
+  test(`Runner rejects malformed or unfinished final content: ${JSON.stringify(content)}`, () => {
+    assert.throws(() => readCompactionRecoveryView({ schemaVersion: 1, modelView: [
+      { role: "compactionSummary", summary: "Task progress." }, { role: "assistant", stopReason: "stop", content },
+    ] }), /Invalid Pi compaction recovery model view/u);
+  });
+}
 
 /** Actual SDK Session and canonical projection; provider execution is forbidden. */
 async function fixture(t, summaryMetadata = {}) {

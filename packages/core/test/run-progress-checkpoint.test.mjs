@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import * as core from "../dist/index.js";
+import { createBudgetHarness } from "./support/delegation-budget-fixture.mjs";
+import { SqliteDelegationLifecycleStore } from "../dist/storage/sqlite/delegation-lifecycle-store.js";
 
 const now = "2026-10-13T03:00:00.000Z";
 const digest = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -12,7 +14,7 @@ const normalClose = { scope: "process_group", leaderExited: true, stdioClosed: t
   descendants: "unverified", settledBy: "close", signalFailures: [] };
 
 /** Core transaction fixture; not real SDK, OS execution, or packaged GUI evidence. */
-async function fixture(t) {
+async function fixture(t, extraTools = []) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-a21-progress-core-"));
   const f = { cwd, store: core.createSqliteRunStore(cwd) };
   t.after(async () => { f.other?.close(); f.store.close(); await rm(cwd, { recursive: true, force: true }); });
@@ -29,22 +31,28 @@ async function fixture(t) {
   const preparedBody = { schemaVersion: 1, boundary: "pi-model-context", taskId: task.id, systemPrompt: "Fixture system",
     userPrompt: acceptedPrompt, model: { id: "fixture-model", provider: "fixture", api: "openai-completions",
       baseUrl: "https://fixture.invalid/v1", reasoning: false, input: ["text"], contextWindow: 100_000, maxTokens: 8192 },
-    thinkingLevel: "off", tools: ["bash", "write", "edit"].map(name => ({ name, description: `Fixture ${name}`, parameters: { type: "object" } })) };
+    thinkingLevel: "off", tools: ["bash", "write", "edit", ...extraTools].map(name => ({ name, description: `Fixture ${name}`, parameters: { type: "object" } })) };
   f.execution = { schemaVersion: 1, runnerId: "pi", input: { cwd, task, provider: { provider: "fixture", model: "fixture-model",
-    api: "openai-completions", baseUrl: "https://fixture.invalid/v1" }, tools: ["bash", "write", "edit"], systemPrompt: "Fixture system" },
+    api: "openai-completions", baseUrl: "https://fixture.invalid/v1" }, tools: ["bash", "write", "edit", ...extraTools], systemPrompt: "Fixture system" },
     toolHydrationEnabled: false, preparedInput: { ...preparedBody, fingerprint: digest(preparedBody) } };
   const policy = core.resolveSessionRunPolicy({ workspacePolicy: f.store.getApprovalPolicy(),
     authorizationMode: "always", workspaceAccessMode: "full_access", channelBoundPath: cwd });
   f.policy = core.applyConversationModeToEffectiveRunPolicySnapshot(policy.snapshot, "default");
   f.unit = f.store.createWorkUnit({ workspaceId: core.DEFAULT_WORKSPACE_ID, kind: "task_run", ownerType: "task", ownerId: f.task.id,
-    taskId: f.task.id, channelId: f.channel.id, runnerId: "pi", status: "running", idempotencyKey: "unit", createdByActor: "system", request: {}, now });
+    taskId: f.task.id, channelId: f.channel.id, runnerId: "pi", status: extraTools.length ? "claimed" : "running", idempotencyKey: "unit", createdByActor: "system", request: {}, now });
   f.attempt = f.store.createWorkUnitAttempt({ workUnitId: f.unit.id, attemptNumber: 1, runtimeInstanceId: "source-A",
-    runnerId: "pi", effectiveRunnerId: "pi", providerPresetId: f.preset.id, status: "started", now });
+    runnerId: "pi", effectiveRunnerId: "pi", providerPresetId: f.preset.id, status: extraTools.length ? "created" : "started", now });
   f.run = f.store.createRun({ id: "progress-run", cwd, taskId: f.task.id, channelId: f.channel.id, threadId: f.thread.id, turnId: f.turn.turnId,
     workUnitId: f.unit.id, providerPresetId: f.preset.id, providerName: "fixture", providerModel: "fixture-model", taskSnapshot: task,
     providerSnapshot: {}, requestSnapshot: { authorizationMode: "always", workspaceAccessMode: "full_access",
       effectivePolicySnapshot: f.policy, runnerExecutionInput: f.execution }, contextViewId: "owned-context", contextViewCreatedAt: now, createdAt: now });
-  f.store.linkRunToWorkUnit(f.run.id, f.unit.id, now); f.store.markRunStarted(f.run.id, now);
+  f.store.linkRunToWorkUnit(f.run.id, f.unit.id, now);
+  if (extraTools.length) {
+    f.delegationBudget = createBudgetHarness(cwd, { store: f.store, rootRunId: f.run.id, now,
+      later: new Date(Date.parse(now) + 1).toISOString() });
+    f.delegationBudget.freeze();
+    f.delegationBudget.start();
+  } else f.store.markRunStarted(f.run.id, now);
   assert.equal(f.store.transitionTaskStatus({ taskId: f.task.id, expectedStatus: "todo", event: "claim", actor: "system", now }).ok, true);
   f.fence = core.toRuntimeAttemptFence(f.attempt);
   f.view = [{ role: "user", content: acceptedPrompt, timestamp: 1 }];
@@ -147,6 +155,88 @@ const assertCommitted = result => assert.equal(result.kind, "committed", JSON.st
 const assertBlocked = (result, code) => { assert.equal(result.kind, "blocked", JSON.stringify(result)); if (code) assert.equal(result.code, code); };
 const counts = f => ["artifacts", "run_progress_checkpoints", "run_progress_checkpoint_heads"].map(table =>
   Number(f.store.database.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n));
+
+function delegationFixture(f) {
+  const d = f.delegationBudget;
+  const lifecycle = new SqliteDelegationLifecycleStore({ database: d.db }, {
+    getRun: id => f.store.getRun(id), getWorkUnit: id => f.store.getWorkUnit(id),
+    getWorkUnitAttempt: id => f.store.getWorkUnitAttempt(id), getDelegationStep: id => f.store.getDelegationStep(id),
+    getDelegationBudgetReservation: id => d.writer.getDelegationBudgetReservation(id),
+    getArtifact: id => f.store.getArtifact(id), createArtifactWithinTransaction: d.ports.createArtifactWithinTransaction,
+  });
+  const round = (name, id, args, result) => {
+    const content = [{ type: "text", text: JSON.stringify(result) }];
+    f.view.push({ role: "assistant", content: [{ type: "toolCall", id, name, arguments: args }], stopReason: "toolUse", timestamp: 2 });
+    f.store.appendExecutionEvent(f.run.id, f.fence, "tool_start", { toolCallId: id, toolName: name, args });
+    f.store.appendExecutionEvent(f.run.id, f.fence, "tool_end", { toolCallId: id, toolName: name, result: { content }, isError: false });
+    f.view.push({ role: "toolResult", toolCallId: id, toolName: name, content, isError: false, timestamp: 3 });
+  };
+  const args = { objective: "Inspect only this QA fixture", requestedBudget: { tokenBudget: 40 }, required: true };
+  const child = d.spawn({ spawnCallId: "spawn-1", ...args });
+  const spawnResult = { status: "accepted", reservationId: child.reservation.id, childRunId: child.childRun.id,
+    stepId: child.stepId, state: "spawning", stepRevision: 0 };
+  return { d, child, lifecycle, round, args, spawnResult };
+}
+
+test("A21 Core real delegation spawn and queued instruction facts authorize an exact progress checkpoint", async t => {
+  const f = await fixture(t, ["spawn_agent", "send_message"]), d = delegationFixture(f);
+  d.round("spawn_agent", "spawn-1", d.args, d.spawnResult);
+  const message = d.lifecycle.appendDelegationInstruction({ reservationId: d.child.reservation.id,
+    parentFence: f.fence, messageCallId: "message-1", text: "Keep the original objective", now: new Date(Date.parse(now) + 2).toISOString() });
+  d.round("send_message", "message-1", { reservationId: d.child.reservation.id, text: "Keep the original objective" },
+    { status: "durable_queued", messageId: message.message.id });
+  const committed = f.store.commitRunProgressCheckpoint(f.input());
+  assertCommitted(committed);
+  const recovered = f.read(f.openOther());
+  assert.equal(recovered.kind, "verified", JSON.stringify(recovered));
+  assert.deepEqual(recovered.modelView, f.view);
+  assert.equal(f.store.listWorkUnitAttempts(d.child.childWorkUnit.id).length, 0);
+  assert.equal(d.d.writer.getDelegationBudgetReservation(d.child.reservation.id).state, "reserved");
+});
+
+for (const mutation of ["missing spawn", "wrong canonical arguments", "wrong SDK result", "changed durable objective",
+  "changed durable budget", "corrupt objective", "missing instruction", "changed durable instruction", "corrupt instruction"]) {
+  test(`A21 Core delegation checkpoint rejects ${mutation} without advancing its head`, async t => {
+    const f = await fixture(t, ["spawn_agent", "send_message"]), d = delegationFixture(f);
+    const spawnArgs = mutation === "changed durable objective" ? { ...d.args, objective: "Different task" }
+      : mutation === "changed durable budget" ? { ...d.args, requestedBudget: { tokenBudget: 39 } } : d.args;
+    d.round("spawn_agent", mutation === "missing spawn" ? "unrecorded-spawn" : "spawn-1", spawnArgs, d.spawnResult);
+    if (mutation === "wrong canonical arguments") f.view[1].content[0].arguments = { ...d.args, objective: "Different task" };
+    if (mutation === "wrong SDK result") f.view[2].content[0].text = "Different result";
+    if (mutation === "corrupt objective") {
+      const step = f.store.getDelegationStep(d.child.stepId);
+      f.store.database.prepare("UPDATE artifacts SET sealed_payload_json=? WHERE id=?")
+        .run(JSON.stringify({ schemaVersion: 1, objective: "Corrupted task" }), step.objectiveArtifactId);
+    }
+    if (mutation === "missing instruction") {
+      d.round("send_message", "message-missing", { reservationId: d.child.reservation.id, text: "Unrecorded instruction" },
+        { status: "durable_queued", messageId: "not-a-durable-message" });
+    }
+    if (mutation === "corrupt instruction" || mutation === "changed durable instruction") {
+      const message = d.lifecycle.appendDelegationInstruction({ reservationId: d.child.reservation.id,
+        parentFence: f.fence, messageCallId: "message-1", text: "Keep the original objective", now: new Date(Date.parse(now) + 2).toISOString() });
+      d.round("send_message", "message-1", { reservationId: d.child.reservation.id,
+        text: mutation === "changed durable instruction" ? "Different instruction" : "Keep the original objective" },
+        { status: "durable_queued", messageId: message.message.id });
+      if (mutation === "corrupt instruction") {
+        f.store.database.prepare("UPDATE artifacts SET sealed_payload_json=? WHERE id=?").run(JSON.stringify({ schemaVersion: 1,
+          kind: "delegation.instruction.v1", parentFence: f.fence, text: "Corrupted instruction" }), message.message.bodyArtifactId);
+      }
+    }
+    const before = counts(f);
+    assertBlocked(f.store.commitRunProgressCheckpoint(f.input()), "checkpoint.effect_unknown");
+    assert.deepEqual(counts(f), before);
+  });
+}
+
+test("A21 Core wait_agent checkpoint requires this parent's actual reservation, not merely the tool name", async t => {
+  const f = await fixture(t, ["wait_agent"]), d = delegationFixture(f);
+  d.round("wait_agent", "wait-1", { reservationId: d.child.reservation.id, timeoutMs: 0 }, { status: "timed_out", timedOut: true });
+  assertCommitted(f.store.commitRunProgressCheckpoint(f.input()));
+  const g = await fixture(t, ["wait_agent"]), e = delegationFixture(g);
+  e.round("wait_agent", "wait-1", { reservationId: "not-an-owned-reservation", timeoutMs: 0 }, { status: "timed_out", timedOut: true });
+  assertBlocked(g.store.commitRunProgressCheckpoint(g.input()), "checkpoint.effect_unknown");
+});
 
 test("A21 Core atomically seals artifact/checkpoint/head; second connection and reopen verify exact view", async t => {
   const f = await fixture(t); f.addRound(); const input = f.input();

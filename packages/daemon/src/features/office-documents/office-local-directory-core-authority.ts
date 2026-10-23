@@ -41,8 +41,11 @@ export function createOriginalOfficeDirectoryStoreFactory(supervisor: RuntimeSup
   return (cwd: string): RunStore => {
     requireOriginal(isOriginalRuntimeSupervisorOfficeRoot(supervisor));
     const { reader, setup } = createOriginalOfficeHostBridgeForComposition();
-    const delegation = supervisor.getHarnessFeatures().delegations.mode === "off" ? undefined
-      : delegationDependencies ? createOriginalDelegationStoreComposition({ supervisor,
+    const features = supervisor.getHarnessFeatures();
+    // Ordinary Pi suspension uses the same constructor-private writer even
+    // when dynamic creation is disabled. This does not enable that producer.
+    const needsRunLifecycle = features.delegations.mode !== "off" || features.continuations.mode === "enforce";
+    const delegation = needsRunLifecycle && delegationDependencies ? createOriginalDelegationStoreComposition({ supervisor,
         runnerRegistry: delegationDependencies.runnerRegistry, secretResolver: delegationDependencies.secretResolver,
         delegatedDispatchAuthority: createDelegatedRunDispatchAuthority() }) : undefined;
     if (supervisor.getHarnessFeatures().delegations.mode !== "off" && !delegation) throw new Error("delegation.host_composition_unavailable");

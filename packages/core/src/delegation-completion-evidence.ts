@@ -117,7 +117,8 @@ export type DelegationCompletionStatusV1 = "satisfied" | "pending" | "blocked" |
  * Internal canonical read set. No checkedAt/observedAt is included: elapsed wall
  * time alone must not invalidate every compare-and-swap. The reader instead
  * records the current, expiry-sensitive effect/quiescence verdicts themselves.
- * Optional work is retained in the snapshot, not certified as physically stopped.
+ * Optional work must also have verified terminal facts before the parent ends;
+ * its failed/cancelled outcome does not itself fail required fan-in.
  */
 export interface DelegationCompletionEvidenceV1 {
   readonly schemaVersion: 1;
@@ -158,9 +159,11 @@ export function delegationCompletionRequiredStatusV1(input: {
   readonly issues: readonly DelegationCompletionIssueV1[];
 }): DelegationCompletionStatusV1 {
   if (input.issues.length) return "blocked";
+  if (input.steps.some(({ step }) => !step.required && step.state === "lost")) return "blocked";
   const required = input.steps.filter(({ step }) => step.required);
   if (required.some(({ step }) => step.state === "failed" || step.state === "lost")) return "failed";
   if (required.some(({ step }) => step.state === "cancelled")) return "cancelled";
   if (required.some(({ step }) => step.state !== "succeeded")) return "pending";
+  if (input.steps.some(({ step }) => !["succeeded", "failed", "cancelled"].includes(step.state))) return "pending";
   return "satisfied";
 }

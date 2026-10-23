@@ -164,7 +164,8 @@ function readHarnessFeatureSnapshot(value: unknown): HarnessFeatureSnapshotV1 | 
     return undefined;
   }
   const snapshot = value as Record<string, unknown>;
-  const { schemaVersion, continuations, toolBroker, evaluations, evaluationModelGate, delegations, delegationMaxDepth } = snapshot;
+  const { schemaVersion, continuations, toolBroker, evaluations, evaluationModelGate, delegations, delegationMaxDepth,
+    delegationSelectedWorkflowIds } = snapshot;
   if (
     schemaVersion !== 1
     || !isHarnessMode(continuations)
@@ -176,10 +177,20 @@ function readHarnessFeatureSnapshot(value: unknown): HarnessFeatureSnapshotV1 | 
     || !Number.isInteger(delegationMaxDepth)
     || delegationMaxDepth < 1
     || delegationMaxDepth > 16
+    || !isDelegationWorkflowSelection(delegationSelectedWorkflowIds)
   ) {
     return undefined;
   }
-  return { schemaVersion, continuations, toolBroker, evaluations, evaluationModelGate, delegations, delegationMaxDepth };
+  return { schemaVersion, continuations, toolBroker, evaluations, evaluationModelGate, delegations, delegationMaxDepth,
+    ...(delegationSelectedWorkflowIds === undefined ? {} : {
+      delegationSelectedWorkflowIds: [...delegationSelectedWorkflowIds],
+    }) };
+}
+
+function isDelegationWorkflowSelection(value: unknown): value is readonly string[] | undefined {
+  return value === undefined || Array.isArray(value) && value.length <= 100
+    && value.every(id => typeof id === "string" && /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,255}$/u.test(id))
+    && new Set(value).size === value.length;
 }
 
 function isHarnessMode(value: unknown): value is HarnessFeatureSnapshotV1["continuations"] {

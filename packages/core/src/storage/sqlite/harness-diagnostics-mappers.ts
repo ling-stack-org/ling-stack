@@ -1,7 +1,11 @@
 import type { SQLOutputValue } from "node:sqlite";
 import {
+  DELEGATION_FAILURE_CODES,
+  DELEGATION_STEP_STATES,
   HARNESS_TOOL_EXECUTION_FAILURE_CODES,
   HARNESS_TOOL_EXECUTION_STATES,
+  RUN_EVALUATION_FAILURE_CODES,
+  RUN_EVALUATION_STATES,
   RUNNER_CONTINUATION_FAILURE_CODES,
   RUNNER_CONTINUATION_ORIGINS,
   RUNNER_CONTINUATION_STATES,
@@ -103,6 +107,36 @@ export function mapHarnessDiagnostic(row: Row): HarnessDiagnosticRecordV1 {
       executionFinishedAt: optionalTimestamp(row, "execution_finished_at"),
     };
   }
+  if (row.kind === "evaluation") {
+    return {
+      ...common,
+      kind: "evaluation",
+      rootRunId: identity(row, "root_run_id"),
+      state: enumeration(row, "state", RUN_EVALUATION_STATES),
+      failureCode: optionalEnumeration(row, "failure_code", RUN_EVALUATION_FAILURE_CODES),
+      completedAt: optionalTimestamp(row, "completed_at"),
+    };
+  }
+  if (row.kind === "delegation") {
+    const workflowId = optionalIdentity(row, "workflow_id");
+    const workflowStepId = optionalIdentity(row, "workflow_step_id");
+    if (workflowStepId !== undefined && workflowId === undefined) invalidRecord("workflow lineage");
+    return {
+      ...common,
+      kind: "delegation",
+      rootRunId: identity(row, "root_run_id"),
+      state: enumeration(row, "state", DELEGATION_STEP_STATES),
+      parentAttemptId: identity(row, "parent_attempt_id"),
+      workflowId,
+      workflowStepId,
+      parentDelegationStepId: optionalIdentity(row, "parent_delegation_step_id"),
+      childRunId: optionalIdentity(row, "child_run_id"),
+      required: booleanInteger(row, "required"),
+      depth: positiveInteger(row, "depth"),
+      failureCode: optionalEnumeration(row, "failure_code", DELEGATION_FAILURE_CODES),
+      completedAt: optionalTimestamp(row, "completed_at"),
+    };
+  }
   return invalidRecord("kind");
 }
 
@@ -132,6 +166,18 @@ function integer(row: Row, key: string): number {
   }
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) invalidRecord(key);
   return value;
+}
+
+function positiveInteger(row: Row, key: string): number {
+  const value = integer(row, key);
+  if (value < 1) invalidRecord(key);
+  return value;
+}
+
+function booleanInteger(row: Row, key: string): boolean {
+  const value = integer(row, key);
+  if (value !== 0 && value !== 1) invalidRecord(key);
+  return value === 1;
 }
 
 function enumeration<const T extends readonly string[]>(row: Row, key: string, values: T): T[number] {

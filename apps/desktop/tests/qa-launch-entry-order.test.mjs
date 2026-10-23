@@ -9,7 +9,7 @@ const entry = new URL("../dist/main/entry.js", import.meta.url);
 let sequence = 0;
 
 /** Real emitted entry/QA leaf; synthetic Electron/Main. No GUI, Store or human confirmation. */
-async function fixture(t, { qa = true, profileArgument = true } = {}) {
+async function fixture(t, { qa = true, profileArgument = true, selected = false } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-human-qa-entry-order-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const profile = join(root, "profile"), appPath = join(root, "app");
@@ -19,6 +19,10 @@ async function fixture(t, { qa = true, profileArgument = true } = {}) {
     modelExecution: false, humanConfirmation: false, workspaceCwd: join(profile, "workspace"),
     userDataDir: join(profile, "user-data"), lingHome: join(profile, "ling-home") };
   writeFileSync(join(profile, "qa-profile.json"), JSON.stringify(marker), { mode: 0o600 });
+  if (selected) writeFileSync(join(profile, "qa-harness.json"), JSON.stringify({ schemaVersion: 1,
+    kind: "isolated-qa-delegation-selection", modelExecution: "host-authorized-budgeted",
+    workspaceCwd: marker.workspaceCwd, selectedWorkflowIds: ["qa-entry-workflow"], maxDepth: 2,
+    rootBudget: { tokenBudget: 4096, wallTimeBudgetMs: 60000 } }), { mode: 0o600 });
   writeFileSync(join(appPath, "package.json"), JSON.stringify({ name: "synthetic-entry-test-only",
     ...(qa ? { lingHumanQaPackage: { schemaVersion: 1, purpose: "synthetic-human-evaluation", release: false } } : {}) }), { mode: 0o600 });
   const originalArgv = process.argv, originalEnvironment = { ...process.env }, originalInfo = console.info;
@@ -58,8 +62,9 @@ async function fixture(t, { qa = true, profileArgument = true } = {}) {
   };
   console.info = value => {
     const record = JSON.parse(value);
-    assert.equal(record.event, "desktop.owned_synthetic_qa_profile");
-    assert.equal(record.synthetic, true);
+    assert.equal(record.event, selected ? "desktop.owned_budgeted_qa_profile" : "desktop.owned_synthetic_qa_profile");
+    assert.equal(record.synthetic, !selected);
+    assert.equal(record.modelExecution, selected ? "host-authorized-budgeted" : undefined);
     assert.equal(Object.hasOwn(record, "humanConfirmation"), false);
     assert.equal(Object.hasOwn(record, "secret"), false);
     state.scopeLogs++;
@@ -82,6 +87,13 @@ test("real emitted entry scopes actual process before dynamic Main evaluation", 
   const f = await fixture(t);
   await f.load();
   assert.equal(f.state.mainImports, 1);
+});
+
+test("explicit budgeted QA entry log never claims its combined scope is synthetic-only", async t => {
+  const f = await fixture(t, { selected: true });
+  await f.load();
+  assert.equal(f.state.mainImports, 1);
+  assert.equal(f.state.scopeLogs, 1);
 });
 
 test("real emitted normal entry preserves inherited configuration and userData", async t => {

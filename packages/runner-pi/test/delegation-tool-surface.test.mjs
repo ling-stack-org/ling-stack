@@ -47,6 +47,45 @@ test("delegation forwards untrusted arguments and SDK call identity, not a secon
   assert.doesNotMatch(result.content[0].text, /completed|succeeded|delivered/);
 });
 
+test("a newly spawning child exposes its production zero-based step revision", async () => {
+  const receipt = { status: "accepted", reservationId: "reservation-1", childRunId: "child-1",
+    stepId: "step-1", state: "spawning", stepRevision: 0 };
+  const [spawn] = toolsFor(base({ initialToolSurface: surface, onDelegationToolCall: () => receipt }));
+  const result = await spawn.execute("sdk-spawn-1", {
+    objective: "Read the dedicated QA file", required: true, requestedBudget: { tokenBudget: 5000 },
+  });
+  assert.deepEqual(result.details, receipt);
+  assert.deepEqual(JSON.parse(result.content[0].text), receipt);
+  assert.equal(Object.isFrozen(result.details), true);
+});
+
+test("observation revisions retain positive safe-integer support", async () => {
+  for (const stepRevision of [1, Number.MAX_SAFE_INTEGER]) {
+    const [spawn] = toolsFor(base({ initialToolSurface: surface,
+      onDelegationToolCall: () => ({ status: "accepted", stepRevision }) }));
+    const result = await spawn.execute("call", {});
+    assert.equal(result.details.stepRevision, stepRevision);
+    assert.equal(JSON.parse(result.content[0].text).stepRevision, stepRevision);
+  }
+});
+
+for (const [label, stepRevision] of [
+  ["negative", -1], ["fraction", 0.5], ["positive fraction", 1.5], ["NaN", Number.NaN],
+  ["infinity", Number.POSITIVE_INFINITY], ["negative infinity", Number.NEGATIVE_INFINITY],
+  ["unsafe integer", Number.MAX_SAFE_INTEGER + 1], ["string", "0"], ["null", null], ["boolean", false],
+]) test(`observation rejects an invalid step revision: ${label}`, async () => {
+  const [spawn] = toolsFor(base({ initialToolSurface: surface,
+    onDelegationToolCall: () => ({ status: "accepted", stepRevision }) }));
+  await assert.rejects(spawn.execute("call", {}), /delegation_host_result_invalid/);
+});
+
+test("resume still requires a positive expected step revision rather than an observation's zero-based bound", () => {
+  const resume = toolsFor(base({ initialToolSurface: surface })).find(tool => tool.name === "resume_agent");
+  assert.deepEqual(resume.parameters.properties.expectedStepRevision,
+    { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
+  assert.ok(resume.parameters.required.includes("expectedStepRevision"));
+});
+
 test("cancellation and a required question close delegation dispatch before any Host callback", async () => {
   let calls = 0;
   const stop = new AbortController();

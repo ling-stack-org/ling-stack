@@ -30,7 +30,7 @@ for (const mode of ["off", "shadow", "enforce"]) {
       assert.deepEqual(health.features.harness, {
         schemaVersion: 1, continuations: mode, toolBroker: "off",
         evaluations: "shadow", evaluationModelGate: "shadow",
-        delegations: "off", delegationMaxDepth: 3,
+        delegations: "off", delegationMaxDepth: 3, delegationSelectedWorkflowIds: [],
       });
       assert.equal(JSON.stringify(health).includes("must-not-be-published"), false);
       assert.equal(health.features.channels.autoRoute, daemon.config.channels.autoRoute);

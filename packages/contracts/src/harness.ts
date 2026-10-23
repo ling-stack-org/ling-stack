@@ -383,4 +383,6 @@ export interface HarnessFeatureSnapshotV1 {
   readonly evaluationModelGate: Exclude<HarnessMode, "off">;
   readonly delegations: HarnessMode;
   readonly delegationMaxDepth: number;
+  /** Exact Host selection at Run admission. Absence never grants dynamic delegation. */
+  readonly delegationSelectedWorkflowIds?: readonly string[];
 }

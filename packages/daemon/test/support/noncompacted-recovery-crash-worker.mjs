@@ -24,11 +24,12 @@ export async function createA21LoopbackTransport(responseForRequest) {
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       const recorded = { body, path: request.url };
       requests.push(recorded);
-      const delta = responseForRequest(requests.length, recorded);
+      const { usage, ...delta } = await responseForRequest(requests.length, recorded);
       const finish = delta.tool_calls ? "tool_calls" : "stop";
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`
         + `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: finish }] })}\n\n`
+        + (usage ? `data: ${JSON.stringify({ choices: [], usage })}\n\n` : "")
         + "data: [DONE]\n\n");
     } catch (error) {
       response.writeHead(500, { "content-type": "application/json" });

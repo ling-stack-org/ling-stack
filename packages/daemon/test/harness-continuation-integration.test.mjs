@@ -110,7 +110,7 @@ for (const [continuationReason, origin] of cases) {
           outcome: "sdk_installed", willRetry: false, tokensBefore: 1800, estimatedTokensAfter: 400,
           compactedSummary: "Fixture compacted view",
           compactedModelView: [{ role: "compactionSummary", summary: "Fixture compacted view" },
-            { role: "assistant", content: [{ type: "text", text: "done" }] }] });
+            { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop" }] });
         await options.onTaskContinuationBoundary?.("before_provider_request");
         return { taskId: options.task.id, events: [], messages: [{ role: "assistant", content: "done" }] };
       }
@@ -388,15 +388,17 @@ test("a queueable continuation conflict reuses the already-persisted Run", async
 
 test("the task WorkUnit retry API dispatches one fenced runner_retry continuation", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-harness-runner-retry-"));
-  const calls = [];
-  class RetryFixtureRunner extends PiRunnerAdapter {
-    async runTask(options) {
-      assert.ok(options.preparedInput, "task retry requires a durable prepared Runner input");
-      calls.push({ runId: options.runId, attemptId: options.runnerAttemptId });
-      if (calls.length === 1) throw new Error("synthetic first attempt failure");
-      return { taskId: options.task.id, events: [], messages: [{ role: "assistant", content: "retry finished" }] };
+  const transport = await createA21LoopbackTransport(() => ({ content: "retry finished" }));
+  t.after(() => transport.close());
+  const runner = createA21RealPiRunner(transport, { afterHostBoundary: async ({ boundary, options }) => {
+    assert.ok(options.preparedInput, "task retry requires a durable prepared Runner input");
+    // Fail inside the real SDK lifetime, not a fabricated adapter return. The
+    // original SDK cleanup must prove that this source executed no tools.
+    if (runner.dispatches.length === 1 && boundary === "before_provider_request") {
+      throw new Error("synthetic first attempt failure");
     }
-  }
+  } });
+  const calls = runner.dispatches;
 
   const seeded = createSqliteRunStore(cwd);
   const now = new Date().toISOString();
@@ -427,7 +429,11 @@ test("the task WorkUnit retry API dispatches one fenced runner_retry continuatio
     port: 0,
     defaultWorkspaceCwd: cwd,
     harness: { continuations: { mode: "enforce" } },
-  }, { runner: new RetryFixtureRunner() });
+    // This fixture counts exact task Attempts/provider dispatches. Terminal
+    // report synthesis has its own tests and otherwise adds a valid tool-free
+    // model call without runId after this task completes.
+    channels: { terminalReports: false },
+  }, { runner });
   await daemon.start();
   const address = daemon.server.address();
   assert.ok(address && typeof address === "object");
@@ -490,6 +496,7 @@ test("the task WorkUnit retry API dispatches one fenced runner_retry continuatio
   assert.equal(completedUnit.workUnit.status, "succeeded");
   assert.deepEqual(calls.map((call) => call.runId), [runId, runId]);
   assert.notEqual(calls[0].attemptId, calls[1].attemptId);
+  assert.equal(transport.requests.length, 1, "only the successful retry reaches the offline provider");
   const continuations = completedUnit.events.filter((event) => event.type === "work_unit_queued"
     && event.data?.origin === "runner_retry");
   assert.equal(continuations.length, 1);
@@ -797,24 +804,16 @@ test("daemon recovery refuses dispatch after shutdown begins", async (t) => {
 test("daemon startup recovers one enforced Harness task Run through a fresh fenced Attempt", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-harness-daemon-recovery-"));
   const seeded = await seedRecoverableHarnessRun(cwd, "restart");
-  const calls = [];
-  class RecoveryFixtureRunner extends PiRunnerAdapter {
-    async runTask(options) {
-      assert.ok(options.preparedInput, "daemon recovery must reuse frozen Runner input");
-      calls.push({ runId: options.runId, attemptId: options.runnerAttemptId });
-      return {
-        taskId: options.task.id,
-        events: [],
-        messages: [{ role: "assistant", content: "daemon recovery finished" }],
-      };
-    }
-  }
+  const transport = await createA21LoopbackTransport(() => ({ content: "daemon recovery finished" }));
+  t.after(() => transport.close());
+  const runner = createA21RealPiRunner(transport);
+  const calls = runner.dispatches;
   const daemon = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
     defaultWorkspaceCwd: cwd,
     harness: { continuations: { mode: "enforce" } },
-  }, { runner: new RecoveryFixtureRunner() });
+  }, { runner });
   await daemon.start();
   const observed = createSqliteRunStore(cwd);
   t.after(async () => {
@@ -848,6 +847,7 @@ test("daemon startup recovers one enforced Harness task Run through a fresh fenc
   assert.equal(workUnit.status, "succeeded");
   assert.deepEqual(attempts.map((attempt) => attempt.status), ["lost", "succeeded"]);
   assert.deepEqual(calls.map((call) => call.runId), [seeded.runId]);
+  assert.equal(transport.requests.length, 1);
   assert.notEqual(calls[0].attemptId, seeded.attemptId);
   const continuation = observed.findRunnerContinuationByIdempotencyKey(`${runnerContinuationIdempotencyKey({
     runId: seeded.runId,
@@ -1177,6 +1177,7 @@ test("daemon restart restores a completed compacted Run without replaying the pr
       runnerCalls.push(options);
       assert.deepEqual(options.compactionRecovery?.modelView.at(-1), {
         role: "assistant", content: [{ type: "text", text: "The task was already completed before restart." }],
+        stopReason: "stop",
       });
       options.onEvent?.({ type: "run_start", taskId: options.task.id, cwd: options.cwd,
         provider: options.provider.provider, model: options.provider.model });
@@ -1899,7 +1900,7 @@ async function seedRecoverableHarnessRun(cwd, suffix, withCompaction = false, su
           ] : [
             { role: "compactionSummary", summary: "Host-approved compacted view" },
             { role: "user", content: [{ type: "text", text: preparedInput.userPrompt }], timestamp: 0 },
-            { role: "assistant", content: [{ type: "text", text: "The task was already completed before restart." }] },
+            { role: "assistant", content: [{ type: "text", text: "The task was already completed before restart." }], stopReason: "stop" },
           ] }, createdAt: now });
       const checkpoint = store.createRunCompactionCheckpoint({
         runId: run.id, attemptId: attempt.id, sourceEventSeq: start.seq,

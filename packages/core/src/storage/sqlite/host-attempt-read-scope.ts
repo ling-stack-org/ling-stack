@@ -1,5 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { HostOperationSource } from "../../host-operation-journal-types.js";
+import { hasRootSuspensionTargetLineage } from "./run-suspension-activation-records.js";
+import { hasDelegatedSuspensionTargetLineage } from "./run-suspension-delegated-records.js";
 
 /** Opt-in only. Existing whole-Run readers keep their fail-closed contract. */
 export type HostAttemptReadScope = "whole_run" | "exact_attempt";
@@ -11,7 +13,8 @@ export function hostAttemptReadScopeForSource(database: DatabaseSync, source: Ho
     JOIN delegation_budget_reservations b ON b.delegation_step_id=s.id AND b.child_run_id=r.id AND b.root_run_id=s.root_run_id
     JOIN work_unit_attempts a ON a.work_unit_id=u.id
     WHERE r.id=? AND u.id=? AND u.owner_type='delegation_step' AND a.id=? AND a.runtime_instance_id=? AND a.fencing_token=?`)
-    .get(source.runId, source.workUnitId, source.attemptId, source.runtimeInstanceId, source.fencingToken) ? "exact_attempt" : "whole_run";
+    .get(source.runId, source.workUnitId, source.attemptId, source.runtimeInstanceId, source.fencingToken)
+    || hasRootSuspensionTargetLineage(database, source) || hasDelegatedSuspensionTargetLineage(database, source) ? "exact_attempt" : "whole_run";
 }
 
 /**

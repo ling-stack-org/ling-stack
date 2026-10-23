@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
 import fs from "node:fs";
 import { link, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { renameSync, symlinkSync, writeFileSync } from "node:fs";
@@ -19,6 +20,64 @@ async function until(get) {
   for (let n = 0; n < 300; n++) { const value = get(); if (value) return value; await delay(5); }
   assert.fail("Expected lifecycle observation did not arrive");
 }
+
+test("host Write waits for its actual worker reply within the unchanged execution deadline", async t => {
+  const originalSpawn = childProcess.spawn;
+  let worker, resumeTimer;
+  const observations = [];
+  childProcess.spawn = (...args) => {
+    const child = originalSpawn(...args);
+    if (args[0] === "/usr/bin/sandbox-exec" && args[1].some(value => value.endsWith("/host-text-write-worker.js"))) {
+      assert.equal(worker, undefined);
+      worker = child;
+      observations.push({ phase: "worker_paused", at: performance.now() });
+      assert.equal(child.kill("SIGSTOP"), true);
+      resumeTimer = setTimeout(() => {
+        observations.push({ phase: "worker_resumed", at: performance.now() });
+        child.kill("SIGCONT");
+      }, 2000);
+    }
+    return child;
+  };
+  syncBuiltinESMExports();
+  t.after(() => {
+    childProcess.spawn = originalSpawn;
+    syncBuiltinESMExports();
+    clearTimeout(resumeTimer);
+    worker?.kill("SIGCONT");
+  });
+  const f = await setup(t, { fileTool: "Write", policy: "allow" });
+  f.tool({ path: f.path, content: "Controlled worker delay\n" });
+  f.writeRequest("Controlled worker delay\n");
+  try { await f.waitForReply("write"); }
+  finally { t.diagnostic(JSON.stringify(observations)); }
+  assert.ok(worker, "the real sandbox worker must have entered the forced interleaving");
+  assert.deepEqual(observations.map(value => value.phase), ["worker_paused", "worker_resumed"]);
+  assert.ok(observations[1].at - observations[0].at >= 1950,
+    "the actual worker was held beyond the old polling budget");
+  assert.deepEqual(f.reply("write").result, {});
+  assert.equal(await readFile(f.path, "utf8"), "Controlled worker delay\n");
+  f.finish(); await f.handle.completed;
+});
+
+test("host reply observation fails immediately when its prompt loses ownership", async t => {
+  const f = await setup(t, { fileTool: "Write", policy: "allow" });
+  const received = f.waitForReply("write");
+  f.abort.abort();
+  await assert.rejects(received, { code: "cancelled" });
+  assert.equal(f.reply("write"), undefined);
+  assert.equal(await readFile(f.path, "utf8"), "First\nSecond\nThird\n");
+});
+
+test("host reply observation rejects a terminal prompt without the requested reply", async t => {
+  const f = await setup(t, { fileTool: "Write", policy: "allow" });
+  const received = f.waitForReply("write");
+  f.send({ jsonrpc: "2.0", id: f.wire.find(value => value.method === "session/prompt").id,
+    result: { stopReason: "end_turn" } });
+  await assert.rejects(received, /Prompt completed without reply write/);
+  assert.equal(f.reply("write"), undefined);
+  assert.equal(await readFile(f.path, "utf8"), "First\nSecond\nThird\n");
+});
 
 async function setup(t, options = {}) {
   const cwd = await realpath(await mkdtemp(join(tmpdir(), "ling-kimi-host-read-")));
@@ -58,6 +117,7 @@ async function setup(t, options = {}) {
     return operation;
   };
   const abort = new AbortController(), output = new PassThrough(), wire = [], events = [], waits = [];
+  const replyWaiters = new Map(), replyObservations = new Map();
   const send = (...messages) => output.write(messages.map(value => JSON.stringify(value)).join("\n") + "\n");
   const result = (id, value) => send({ jsonrpc: "2.0", id, result: value });
   const update = value => send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "read-session", update: value } });
@@ -87,7 +147,16 @@ async function setup(t, options = {}) {
     createActions: binding => new KimiActionPreparer({ cwd, sessionId: binding.sessionId,
       policy: { toolDecisions: { read: options.policy ?? "ask", write: options.policy ?? "ask", edit: options.policy ?? "ask" }, allowedWritePaths: [cwd] },
       ...options.actionOptions }, options.secretRegistry),
-    createHostFiles: { readTextFile: context => (files = new KimiHostFiles(context)),
+    createHostFiles: { readTextFile: context => {
+      files = new KimiHostFiles(context);
+      const observe = files.onReplyOutcome.bind(files);
+      files.onReplyOutcome = observation => {
+        observe(observation);
+        replyObservations.set(observation.requestId, observation);
+        replyWaiters.get(observation.requestId)?.(observation);
+      };
+      return files;
+    },
       ...(options.fileTool ? { writeTextFile: () => files.writeTextFile } : {}) },
     client: { input, output, signal: abort.signal, requestTimeoutMs: 2000, turnTimeoutMs: 10000 } });
   t.after(async () => {
@@ -104,10 +173,28 @@ async function setup(t, options = {}) {
   void handle.completed.catch(() => {});
   await until(() => wire.find(value => value.method === "session/prompt"));
   const approvals = () => store.synchronizeNativeApprovalWait(key, now).approvals;
+  const waitForReply = async id => {
+    const observed = replyObservations.get(id);
+    if (observed) {
+      assert.equal(observed.outcome, "written");
+      return wire.find(value => value.id === id && !value.method);
+    }
+    assert.equal(replyWaiters.has(id), false);
+    const received = new Promise(resolve => replyWaiters.set(id, resolve));
+    try {
+      // Observe the actual Host reply commit, not stdin bytes or a 300x5ms poll.
+      // The real worker (5s) and prompt (10s) still own failure/cancellation.
+      const observation = await Promise.race([received, handle.completed.then(() => {
+        assert.fail(`Prompt completed without reply ${id}`);
+      })]);
+      assert.equal(observation.outcome, "written");
+      return wire.find(value => value.id === id && !value.method);
+    } finally { replyWaiters.delete(id); }
+  };
   return { cwd, path, store, key, abort, lifecycle, handle, wire, events, waits, tool, request, permission, update, send,
     writeRequest: (content, id = "write", params = {}) => send({ jsonrpc: "2.0", id, method: "fs/write_text_file",
       params: { sessionId: "read-session", path, content, ...params } }),
-    approvals, reply: id => wire.find(value => value.id === id && !value.method),
+    approvals, waitForReply, reply: id => wire.find(value => value.id === id && !value.method),
     finish: (status = "completed") => {
       update({ sessionUpdate: "tool_call_update", toolCallId: "1:read", status });
       result(wire.find(value => value.method === "session/prompt").id, { stopReason: "end_turn" });
@@ -123,7 +210,7 @@ test("Kimi host Write approves once before replacing a real file and records the
   assert.equal(saved.approval.payload.type, "file_write");
   assert.equal(await readFile(f.path, "utf8"), "First\nSecond\nThird\n");
   f.store.approveApprovalRequest(saved.approval.id, {}, now);
-  assert.deepEqual((await until(() => f.reply("write"))).result, {});
+  assert.deepEqual((await f.waitForReply("write")).result, {});
   assert.equal(await readFile(f.path, "utf8"), "Approved text\n");
   assert.equal(f.approvals().length, 1);
   assert.deepEqual(f.waits, [true, false]);
@@ -140,7 +227,7 @@ test("Kimi append shares one approval across its read and exact writeback", asyn
   const original = (await until(() => f.reply("read"))).result.content;
   assert.equal(original, "First\nSecond\nThird\n");
   f.writeRequest(original + "Appended\n");
-  assert.deepEqual((await until(() => f.reply("write"))).result, {});
+  assert.deepEqual((await f.waitForReply("write")).result, {});
   assert.equal(await readFile(f.path, "utf8"), "First\nSecond\nThird\nAppended\n");
   assert.equal(f.approvals().length, 1);
   assert.deepEqual(f.waits, [true, false]);
@@ -165,7 +252,7 @@ for (const nativePermission of [false, true]) test(`Kimi append preserves one ex
   const original = read.result.content;
   secretRegistry.register(["another-synthetic-refresh-token"]);
   f.writeRequest(original + suffix);
-  const written = await until(() => f.reply("write"));
+  const written = await f.waitForReply("write");
   assert.deepEqual(written.result, {});
   assert.equal(await readFile(f.path, "utf8"), original + suffix);
   assert.equal(f.approvals().length, 1);
@@ -194,7 +281,7 @@ test("Kimi Edit preserves exact replacement bytes across live secret registratio
   secretRegistry.register(["synthetic-edit-final-token"]);
   const content = `First\n${initial}\nThird\n`;
   f.writeRequest(content);
-  assert.deepEqual((await until(() => f.reply("write"))).result, {});
+  assert.deepEqual((await f.waitForReply("write")).result, {});
   assert.equal(await readFile(f.path, "utf8"), content);
   assert.equal(f.approvals().length, 1);
   f.finish(); await f.handle.completed;
@@ -214,7 +301,7 @@ for (const outcome of ["written", "not_written", "unknown"]) test(`Kimi append r
   const original = (await until(() => f.reply("read"))).result.content;
   f.writeRequest(original + "Appended\n");
   if (outcome === "written") {
-    await until(() => f.reply("write"));
+    await f.waitForReply("write");
     f.finish(); await f.handle.completed;
   } else {
     await assert.rejects(f.handle.completed);
@@ -237,7 +324,7 @@ test("Kimi Edit writes the approved literal replacement with native CRLF semanti
   f.store.approveApprovalRequest(saved.approval.id, {}, now);
   assert.equal((await until(() => f.reply("read"))).result.content, "first\r\nold\r\nlast\r\n");
   f.writeRequest("first\r\nnew\r\nline\r\nlast\r\n");
-  assert.deepEqual((await until(() => f.reply("write"))).result, {});
+  assert.deepEqual((await f.waitForReply("write")).result, {});
   assert.equal(await readFile(f.path, "utf8"), "first\r\nnew\r\nline\r\nlast\r\n");
   assert.equal(f.approvals().length, 1);
   assert.deepEqual(f.waits, [true, false]);
@@ -252,7 +339,7 @@ test("Kimi append creates a missing file after an authorized not-found baseline 
   f.store.approveApprovalRequest(saved.approval.id, {}, now);
   assert.equal((await until(() => f.reply("read"))).error?.code, -32002);
   f.writeRequest("New text\n");
-  assert.deepEqual((await until(() => f.reply("write"))).result, {});
+  assert.deepEqual((await f.waitForReply("write")).result, {});
   assert.equal(await readFile(f.path, "utf8"), "New text\n");
   assert.equal(f.approvals().length, 1);
   assert.deepEqual(f.waits, [true, false]);
@@ -266,7 +353,7 @@ for (const scenario of ["overwrite", "append", "edit"]) test(`${scenario} refuse
   f.tool({ path: f.path, ...input });
   if (scenario !== "overwrite") { f.request(); await until(() => f.reply("read")); }
   f.writeRequest("Unauthorized replacement");
-  assert.ok((await until(() => f.reply("write"))).error);
+  assert.ok((await f.waitForReply("write")).error);
   assert.equal(await readFile(f.path, "utf8"), "First\nSecond\nThird\n");
   assert.equal(f.approvals().length, 0);
 });
@@ -275,7 +362,7 @@ for (const content of ["", "\ufeffExact\r\nUnicode 中文\n"]) test(`overwrite c
   const f = await setup(t, { fileTool: "Write", policy: "allow" });
   await rm(f.path);
   f.tool({ path: f.path, content }); f.writeRequest(content);
-  assert.deepEqual((await until(() => f.reply("write"))).result, {});
+  assert.deepEqual((await f.waitForReply("write")).result, {});
   assert.equal(await readFile(f.path, "utf8"), content);
   f.finish(); await f.handle.completed;
 });
@@ -288,7 +375,7 @@ for (const denial of ["policy", "user", "plan"]) test(`${denial} denial never ch
     const saved = await until(() => f.approvals()[0]);
     f.store.denyApprovalRequest(saved.approval.id, {}, now);
   }
-  assert.ok((await until(() => f.reply("write"))).error);
+  assert.ok((await f.waitForReply("write")).error);
   assert.equal(await readFile(f.path, "utf8"), "First\nSecond\nThird\n");
   assert.equal(f.approvals().length, denial === "user" ? 1 : 0);
 });
@@ -301,7 +388,7 @@ test("append reuses a written native permission decision through both host reque
   await until(() => f.reply("permission"));
   f.request(); await until(() => f.reply("read"));
   f.writeRequest("First\nSecond\nThird\nSuffix");
-  assert.deepEqual((await until(() => f.reply("write"))).result, {});
+  assert.deepEqual((await f.waitForReply("write")).result, {});
   assert.equal(await readFile(f.path, "utf8"), "First\nSecond\nThird\nSuffix");
   assert.equal(f.approvals().length, 1);
   assert.deepEqual(f.waits, [true, false]);
@@ -317,7 +404,7 @@ for (const mixed of [false, true]) test(`host Write reuses its exact native appr
   f.store.approveApprovalRequest(saved.approval.id, {}, now);
   await until(() => f.reply("permission"));
   f.writeRequest(content);
-  assert.deepEqual((await until(() => f.reply("write"))).result, {});
+  assert.deepEqual((await f.waitForReply("write")).result, {});
   assert.equal(await readFile(f.path, "utf8"), content);
   assert.equal(f.approvals().length, 1);
   assert.equal(JSON.stringify(f.approvals()[0].approval.payload).includes("DEMO_TOKEN"), false);
@@ -334,7 +421,7 @@ for (const change of ["content", "absent", "input"]) test(`append rejects a chan
     f.tool({ path: f.path, content: "Suffix", mode: "append" }, { sessionUpdate: "tool_call_update" });
   } else await writeFile(f.path, "Changed by the user");
   f.writeRequest((baseline.result?.content ?? "") + "Suffix");
-  assert.ok((await until(() => f.reply("write"))).error);
+  assert.ok((await f.waitForReply("write")).error);
   assert.equal(await readFile(f.path, "utf8"), change === "input" ? "First\nSecond\nThird\n" : "Changed by the user");
 });
 
@@ -357,7 +444,7 @@ for (const fileTool of ["Write", "Edit"]) test(`${fileTool} preserves a concurre
   syncBuiltinESMExports();
   try {
     f.writeRequest(fileTool === "Write" ? "First\nSecond\nThird\nSuffix" : "Changed\nSecond\nThird\n");
-    const reply = await until(() => f.reply("write"));
+    const reply = await f.waitForReply("write");
     assert.equal(replaced, true);
     assert.ok(reply.error, "A stale read must not authorize replacement of the concurrent edit");
     assert.equal(await readFile(f.path, "utf8"), "Concurrent user edit");
@@ -368,7 +455,7 @@ test("a replay cannot append twice after the original write succeeded", async t 
   const f = await setup(t, { fileTool: "Write", policy: "allow" });
   f.tool({ path: f.path, content: "Suffix", mode: "append" }); f.request();
   await until(() => f.reply("read"));
-  f.writeRequest("First\nSecond\nThird\nSuffix"); await until(() => f.reply("write"));
+  f.writeRequest("First\nSecond\nThird\nSuffix"); await f.waitForReply("write");
   f.writeRequest("First\nSecond\nThird\nSuffixSuffix", "replay");
   assert.ok((await until(() => f.reply("replay"))).error);
   assert.equal(await readFile(f.path, "utf8"), "First\nSecond\nThird\nSuffix");
@@ -379,7 +466,7 @@ test("a target swapped after the write claim is not overwritten", async t => {
     if (operation.method === "fs/write_text_file") writeFileSync(f.path, "Replacement content");
   } });
   f.tool({ path: f.path, content: "Approved" }); f.writeRequest("Approved");
-  assert.ok((await until(() => f.reply("write"))).error);
+  assert.ok((await f.waitForReply("write")).error);
   assert.equal(await readFile(f.path, "utf8"), "Replacement content");
 });
 
@@ -395,7 +482,7 @@ test("a pending write worker does not block cancellation or publish a late succe
 test("native disabled tools cannot use a shared callback even when the broad host policy allows them", async t => {
   const f = await setup(t, { fileTool: "Write", policy: "allow", actionOptions: { nativeTools: ["Read"] } });
   f.tool({ path: f.path, content: "Changed" }); f.writeRequest("Changed");
-  assert.ok((await until(() => f.reply("write"))).error);
+  assert.ok((await f.waitForReply("write")).error);
   assert.equal(await readFile(f.path, "utf8"), "First\nSecond\nThird\n");
   assert.equal(f.approvals().length, 0);
 });
@@ -410,7 +497,7 @@ for (const kind of ["replacement", "cancelling"]) test(`completed Write remains 
       else store.updateWorkUnitAttemptStatus({ ...key.fence, status: "cancelling", now });
     } });
   f.tool({ path: f.path, content: "Completed write" }); f.writeRequest("Completed write");
-  const outcome = await Promise.race([until(() => f.reply("write")), f.handle.completed.catch(error => ({ error }))]);
+  const outcome = await f.waitForReply("write").catch(error => ({ error }));
   assert.ok(outcome.error);
   assert.equal(f.reply("write")?.result, undefined);
   assert.equal(await readFile(f.path, "utf8"), "Completed write");
@@ -438,7 +525,7 @@ for (const replacement of ["directory", "symlink"]) test(`a new file cannot esca
     else renameSync(join(f.cwd, "replacement"), parent);
   };
   f.tool({ path, content: "Approved" }); f.writeRequest("Approved", "write", { path });
-  const outcome = await Promise.race([until(() => f.reply("write")), f.handle.completed.catch(error => ({ error }))]);
+  const outcome = await f.waitForReply("write").catch(error => ({ error }));
   assert.ok(outcome.error);
   for (const target of [path, join(outside, "new.txt"), join(f.cwd, "original-parent", "new.txt")]) {
     await assert.rejects(readFile(target), { code: "ENOENT" });
@@ -452,7 +539,7 @@ for (const input of [{ old_string: "First", new_string: "$&$1", replace_all: tru
   const f = await setup(t, { fileTool: "Edit", policy: "allow", content });
   f.tool({ path: f.path, ...input }); f.request(); await until(() => f.reply("read"));
   f.writeRequest(expected);
-  assert.deepEqual((await until(() => f.reply("write"))).result, {});
+  assert.deepEqual((await f.waitForReply("write")).result, {});
   assert.equal(await readFile(f.path, "utf8"), expected);
   f.finish(); await f.handle.completed;
 });
@@ -463,7 +550,7 @@ test("Edit rejects an oversized replacement before allocating it without losing 
   f.tool({ path: f.path, old_string: "a", new_string: "z".repeat(1024), replace_all: true });
   f.request(); await until(() => f.reply("read"));
   f.writeRequest("not the permitted transformation");
-  const reply = await Promise.race([until(() => f.reply("write")), f.handle.completed.catch(error => ({ error }))]);
+  const reply = await Promise.race([f.waitForReply("write"), f.handle.completed.catch(error => ({ error }))]);
   assert.equal(reply.id, "write", "Oversized text is a denied operation, not a failed protocol session");
   assert.ok(reply.error);
   assert.equal(await readFile(f.path, "utf8"), content);
@@ -474,7 +561,7 @@ for (const old_string of ["First", "Absent"]) test(`Edit rejects ${old_string ==
   const f = await setup(t, { fileTool: "Edit", policy: "allow", content: "First\nFirst" });
   f.tool({ path: f.path, old_string, new_string: "Changed" }); f.request(); await until(() => f.reply("read"));
   f.writeRequest("Changed\nFirst");
-  assert.ok((await until(() => f.reply("write"))).error);
+  assert.ok((await f.waitForReply("write")).error);
   assert.equal(await readFile(f.path, "utf8"), "First\nFirst");
 });
 

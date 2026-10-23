@@ -43,7 +43,7 @@ function readResult(value: PiRunnerDelegationToolResult): PiRunnerDelegationTool
     Object.keys(value).some(key => !textKeys.includes(key) && key !== "timedOut" && key !== "stepRevision") ||
     textKeys.some(key => value[key] !== undefined && (typeof value[key] !== "string" || !(value[key] as string).length || (value[key] as string).length > 1024)) ||
     value.timedOut !== undefined && typeof value.timedOut !== "boolean" ||
-    value.stepRevision !== undefined && (!Number.isSafeInteger(value.stepRevision) || value.stepRevision < 1)) {
+    value.stepRevision !== undefined && (!Number.isSafeInteger(value.stepRevision) || value.stepRevision < 0)) {
     throw new Error("delegation_host_result_invalid");
   }
   return Object.freeze({ ...value });

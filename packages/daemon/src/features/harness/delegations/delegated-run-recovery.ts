@@ -5,6 +5,7 @@ import {
   type ClaimedDelegatedChild, type DelegationPreparedExecution, type DelegationPreparedExecutionV1,
   type EffectiveRunPolicySnapshot, type RunProgressCheckpointBlockerCode, type RunProgressCheckpointWitness,
   type RunStore, type RuntimeAttemptFenceV1, type WorkUnitAttempt,
+  type ReadRunFinalSettlementResult,
 } from "@ling-stack/core";
 import type { RunCompactionCheckpointBlockerCode } from "@ling-stack/contracts";
 import { readCompactionRecoveryView, type PiRunnerCompactionRecovery, type PiRunnerOrdinaryProgressRecovery } from "@ling-stack/runner-pi";
@@ -33,7 +34,11 @@ export type DelegatedRunRecoveryAssessment =
   | { readonly kind: "verified"; readonly sourceAttempt: WorkUnitAttempt;
       readonly execution: PreparedRunnerInput; readonly prepared: DelegationPreparedExecution;
       readonly delegationBinding: DelegatedProgressRecoveryBinding;
-      readonly compactionRecovery: PiRunnerCompactionRecovery; readonly compactionCheckpointId: string };
+      readonly compactionRecovery: PiRunnerCompactionRecovery; readonly compactionCheckpointId: string }
+  | { readonly kind: "verified"; readonly sourceAttempt: WorkUnitAttempt;
+      readonly execution: PreparedRunnerInput; readonly prepared: DelegationPreparedExecution;
+      readonly delegationBinding: DelegatedProgressRecoveryBinding;
+      readonly finalSettlementRecovery: Extract<ReadRunFinalSettlementResult, { kind: "verified" }> };
 
 /**
  * Reconstruct only the exact Host-committed SDK view of this existing child.
@@ -47,6 +52,8 @@ export function assessDelegatedRunRecovery(input: {
   readonly prepared: DelegationPreparedExecution | undefined;
   readonly policySnapshot: EffectiveRunPolicySnapshot;
   readonly now: string;
+  /** Constructor-private stopped observation, not an HTTP or model capability. */
+  readonly readFinalSettlementRecovery?: (sourceFence: RuntimeAttemptFenceV1, now: string) => ReadRunFinalSettlementResult;
 }): DelegatedRunRecoveryAssessment {
   try {
     return input.store.readSnapshot(() => assessWithinSnapshot(input));
@@ -115,6 +122,16 @@ function assessWithinSnapshot(input: Parameters<typeof assessDelegatedRunRecover
     return blocked("delegation.preparation_changed");
   }
   const delegationBinding = { reservationId: child.reservation.id, targetFence: toRuntimeAttemptFence(target) };
+  const settlement = input.readFinalSettlementRecovery?.(sourceFence, input.now);
+  if (settlement?.kind === "blocked") return settlement;
+  if (settlement?.kind === "verified") {
+    const { lineage } = captureRunProgressCheckpointLineage(store, run, input.policySnapshot);
+    if (!isDeepStrictEqual(settlement.witness.settlement.sourceFence, sourceFence)
+      || !isDeepStrictEqual(settlement.witness.settlement.lineage, lineage)
+      || !hasAcceptedTaskAnchor(settlement.modelView, execution.preparedInput.userPrompt)) return blocked("checkpoint.lineage_mismatch");
+    return { kind: "verified", sourceAttempt, execution, prepared, delegationBinding,
+      finalSettlementRecovery: structuredClone(settlement) };
+  }
   const compaction = assessRunCompactionRecovery({ store, run, sourceAttempt, policySnapshot: input.policySnapshot,
     recoveryBookkeepingAttemptId: target.id });
   if (compaction.kind === "blocked") return compaction;

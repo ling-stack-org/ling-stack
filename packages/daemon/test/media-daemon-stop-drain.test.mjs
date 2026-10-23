@@ -61,7 +61,7 @@ async function exerciseCase(t, scenario) {
   let response, trickle, ended = false, closed = false, daemon, registry, store, ownerProbe;
   let execution, tick, firstStop, firstStopFinished = false, stopSucceeded = false;
   let wireSignal, providerSignal;
-  const closeObservations = [], releaseObservations = [];
+  const closeObservations = [], releaseObservations = [], admissionClosures = [];
   const admissionCodes = [];
   const server = createServer((request, outgoing) => {
     assert.equal(request.method, "GET");
@@ -125,6 +125,8 @@ async function exerciseCase(t, scenario) {
     const core = await import("../../core/dist/index.js");
     const { RunStoreRegistry } = await import("../dist/runtime/store-registry.js");
     const { RuntimeSupervisor } = await import("../dist/runtime/supervisor.js");
+    const { ActiveRunRegistry } = await import("../dist/runtime/active-runs.js");
+    observe(ActiveRunRegistry.prototype, "stopAdmission", function () { admissionClosures.push(this); });
     const originalGet = RunStoreRegistry.prototype.getStore;
     observers.push(t.mock.method(RunStoreRegistry.prototype, "getStore", function (...args) {
       const value = Reflect.apply(originalGet, this, args);
@@ -180,16 +182,32 @@ async function exerciseCase(t, scenario) {
     });
     await entered.promise;
     assert.equal(snapshot().pendingReservations, 1); assert.equal(local().active, 1);
+    const abortObserved = deferred();
+    registry.mediaLocalExecutions.getAbortSignal(execution).addEventListener("abort", () => {
+      abortObserved.resolve({ ...readStopFacts(), closeCalls: closeObservations.length, releaseCalls: releaseObservations.length,
+        mediaAdmissionClosed: snapshot().shutdown, activeRunAdmissionClosures: admissionClosures.length,
+        activeRunAdmissionClosed: admissionClosures[0]?.isShuttingDown() });
+    }, { once: true });
     const startedAt = performance.now();
     firstStop = daemon.stop();
     firstStop.then(() => { firstStopFinished = true; stopSucceeded = true; }, () => { firstStopFinished = true; });
     assert.equal(snapshot().shutdown, true);
-    assert.equal(registry.mediaLocalExecutions.getAbortSignal(execution).aborted, true);
+    assert.equal(admissionClosures.length, 1, "the real Daemon must synchronously close its original ActiveRuns admission");
+    assert.equal(admissionClosures[0].isShuttingDown(), true);
     assert.equal(local().active, 1, "same-stack stop request is not physical sender/body settlement");
     assert.equal(calls.nativeSettled, 0); assert.equal(calls.bodySettled, 0);
     assert.equal(closeObservations.length, 0); assert.equal(releaseObservations.length, 0);
     assert.throws(() => registry.mediaLocalExecutions.getOrStart({ cwd, mediaJobId: "new-after-stop" }),
       error => error.code === "shutdown");
+    const abort = await observeWithin(abortObserved.promise, 500);
+    assert.equal(abort.kind, "fulfilled", "the real abort phase must signal the original sender after admission closes");
+    assert.equal(abort.value.aborted, true);
+    assert.equal(abort.value.mediaAdmissionClosed, true, "media admission must already be closed at the actual abort event");
+    assert.equal(abort.value.activeRunAdmissionClosures, 1);
+    assert.equal(abort.value.activeRunAdmissionClosed, true, "original Run admission must already be closed at the actual abort event");
+    assert.equal(abort.value.active, 1, "abort notification is not physical sender/body settlement");
+    assert.equal(abort.value.nativeSettled, 0); assert.equal(abort.value.bodySettled, 0);
+    assert.equal(abort.value.closeCalls, 0); assert.equal(abort.value.releaseCalls, 0);
     if (scenario === "cooperative") {
       const outcome = await observeWithin(firstStop, 2_000); mark("cooperative-stop", outcome);
       assert.equal(outcome.kind, "fulfilled", "real local abort must permit full daemon stop before the Provider deadline");

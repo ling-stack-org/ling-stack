@@ -1196,6 +1196,48 @@ for (const [label, attemptId] of [["missing", undefined], ["null", null], ["numb
   });
 }
 
+for (const phase of ["approved", "resume_pending", "denied"]) {
+  test(`delegation ownership blocks general approval recovery before writes: ${phase}`, async (t) => {
+    const fixture = await createResumeFixture(`delegation-owner-${phase}`, "printf must-not-execute",
+      false, true, true, phase === "denied" ? "pending" : "approve");
+    t.after(() => fixture.close());
+    if (phase === "resume_pending") claimResume(fixture, "delegated-resume-pending-attempt");
+    if (phase === "denied") {
+      fixture.store.updateWorkUnitAttemptStatus({ ...toRuntimeAttemptFence(fixture.priorAttempt),
+        status: "lost", endedAt: "2026-08-16T02:01:00.000Z", errorCode: "runtime_suspend",
+        now: "2026-08-16T02:01:00.000Z" });
+      fixture.approval = fixture.store.denyApprovalRequest(fixture.approval.id,
+        { resolvedBy: "local-user", reason: "deny isolated fixture" }, "2026-08-16T02:01:00.000Z");
+    }
+    // Admission-only ownership fixture: it is not a real delegation ledger.
+    fixture.store.database.prepare("UPDATE work_units SET owner_type='delegation_step',owner_id=? WHERE id=?")
+      .run("private-delegation-owner", fixture.workUnit.id);
+    const snapshot = () => Object.fromEntries([
+      "run_sessions", "work_units", "work_unit_attempts", "approval_requests", "approval_checkpoints",
+      "runner_continuations", "run_events", "runtime_events", "control_plane_events", "artifacts",
+      "resource_leases", "runtime_semaphore_slots",
+    ].map((table) => [table, fixture.store.database.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));
+    const before = snapshot();
+    const callbacks = [];
+    const coordinator = new ApprovalResumeCoordinator({
+      runtimeSupervisor: fixture.runtimeSupervisor,
+      activeRuns: new ActiveRunRegistry(),
+      runnerRegistry: fixture.runnerRegistry,
+      executeExistingRunContinuation: async (input) => { callbacks.push(input); return undefined; },
+    });
+    const result = phase === "denied"
+      ? coordinator.finalizeSuspendedApprovalDenial({ store: fixture.store, approval: fixture.approval })
+      : coordinator.resumeAfterApproval({ store: fixture.store, approval: fixture.approval });
+    assert.deepEqual(result, { status: "blocked", runId: fixture.run.id, reason: "delegation.authority_invalid" });
+    assert.deepEqual(snapshot(), before, "ownership refusal must precede decision events, claims and checkpoint writes");
+    coordinator.registerStore(fixture.store);
+    coordinator.registerStore(fixture.store);
+    assert.deepEqual(snapshot(), before, "startup scans must not claim or finalize another recovery owner's rows");
+    assert.equal(callbacks.length, 0);
+    assert.equal(fixture.runnerCalls.length, 0);
+  });
+}
+
 function claimResume(fixture, attemptId) {
   const result = fixture.store.commitApprovalResumeClaim({
     checkpointId: fixture.checkpoint.id,

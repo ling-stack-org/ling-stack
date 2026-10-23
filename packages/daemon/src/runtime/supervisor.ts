@@ -368,6 +368,18 @@ export class RuntimeSupervisor {
       ...store.listWorkUnits({ status: "cancelling", limit: 500 }),
     ];
     for (const workUnit of candidates) {
+      // Dynamic children belong to the private delegation lifecycle. Startup
+      // ownership alone is not a stop/drain receipt: do not turn an unknown
+      // child into a lost Attempt or release its resources through legacy
+      // reconciliation. This preserves custody; it never authorizes resume.
+      if (workUnit.ownerType === "delegation_step") continue;
+      const pendingAttempt = workUnit.activeAttemptId ? store.getWorkUnitAttempt(workUnit.activeAttemptId) : undefined;
+      if (workUnit.linkedRunId && pendingAttempt && store.hasPendingRunTerminalIntent({ runId: workUnit.linkedRunId,
+        workUnitId: pendingAttempt.workUnitId, attemptId: pendingAttempt.id,
+        runtimeInstanceId: pendingAttempt.runtimeInstanceId, fencingToken: pendingAttempt.fencingToken })) continue;
+      if (workUnit.linkedRunId && pendingAttempt && store.hasPendingRunSuspension({ runId: workUnit.linkedRunId,
+        workUnitId: pendingAttempt.workUnitId, attemptId: pendingAttempt.id,
+        runtimeInstanceId: pendingAttempt.runtimeInstanceId, fencingToken: pendingAttempt.fencingToken })) continue;
       const reason = "runtime-startup-reconcile";
       const reconciled = preserveRecoverableUserInputReceiver(store, workUnit) ??
         preserveRecoverableApprovalWorkUnit(store, workUnit, now) ??

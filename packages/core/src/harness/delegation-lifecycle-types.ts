@@ -79,6 +79,9 @@ export interface DelegationLifecycleStorePorts extends Pick<RunStore,
   readonly readRunnerStartObservation: (reference: unknown) => DelegationRunnerStartObservation;
   /** Constructor custody; neither model JSON nor a route-supplied boolean authenticates preparation. */
   readonly readExecutionPreparation?: (reference: unknown) => DelegationPreparedExecutionV1;
+  /** Joined original SDK ACK for a private186 target; absent for ordinary children. */
+  readonly commitSuspensionStartWithinTransaction?: (input: { readonly runtime: ClaimedDelegatedChild;
+    readonly preparation: DelegationPreparedExecution; readonly observation: DelegationRunnerStartObservation; readonly now: string }) => void;
 }
 
 export interface ClaimDelegatedChildInput {

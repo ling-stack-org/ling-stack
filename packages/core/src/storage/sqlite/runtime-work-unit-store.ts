@@ -49,6 +49,8 @@ import {
 } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import { ownsCancellationTransaction } from "./cancellation-transaction.js";
+import { rootSuspensionStartAllowsAttempt } from "./run-suspension-start-records.js";
+import { delegatedSuspensionStartAllowsAttempt } from "./run-suspension-delegated-records.js";
 
 export interface SqliteRuntimeWorkUnitStorePorts {
   readonly findStateTransitionByIdempotency: (
@@ -266,6 +268,19 @@ export class SqliteRuntimeWorkUnitStore {
     if (!workUnit) {
       return { ok: false, code: "stale_transition", currentStatus: input.expectedStatus ?? "cancelled" };
     }
+    // An unacknowledged184 claim must retain its exact target. Clearing or
+    // replacing the pointer would otherwise bypass the replacement guard below.
+    const changesActiveAttempt = input.activeAttemptId !== undefined && input.activeAttemptId !== workUnit.activeAttemptId;
+    if (workUnit.activeAttemptId && (input.event === "runner_started" || changesActiveAttempt)
+      && !rootSuspensionStartAllowsAttempt(this.context.database, workUnit.activeAttemptId)) {
+      return { ok: false, code: "stale_transition", currentStatus: workUnit.status };
+    }
+    // Non186 targets retain the ordinary path; an exact186 target instead
+    // keeps its claimed owner until the original physical SDK ACK commits.
+    if (workUnit.activeAttemptId && (input.event === "runner_started" || changesActiveAttempt)
+      && !delegatedSuspensionStartAllowsAttempt(this.context.database, workUnit.activeAttemptId)) {
+      return { ok: false, code: "stale_transition", currentStatus: workUnit.status };
+    }
     if (input.attemptId) {
       const attempt = this.getWorkUnitAttempt(input.attemptId);
       const mayReconcileLostAttempt = input.terminalAttemptOwnership?.kind === "lost_attempt_reconciliation"
@@ -373,6 +388,12 @@ export class SqliteRuntimeWorkUnitStore {
     const workUnit = this.getWorkUnit(input.workUnitId);
     if (!workUnit) {
       throw new Error(`Work unit not found: ${input.workUnitId}`);
+    }
+    if (workUnit.activeAttemptId && !rootSuspensionStartAllowsAttempt(this.context.database, workUnit.activeAttemptId)) {
+      throw new Error("root_suspension_start_required");
+    }
+    if (workUnit.activeAttemptId && !delegatedSuspensionStartAllowsAttempt(this.context.database, workUnit.activeAttemptId)) {
+      throw new Error("delegated_suspension_start_required");
     }
     const fencingToken = this.nextAttemptFencingToken(input.workUnitId, input.fencingToken);
 
@@ -514,6 +535,8 @@ export class SqliteRuntimeWorkUnitStore {
     if (!attempt || !this.matchesCurrentAttemptFence(attempt, input)) {
       return undefined;
     }
+    if (input.status === "started" && !rootSuspensionStartAllowsAttempt(this.context.database, attempt.id)) return undefined;
+    if (input.status === "started" && !delegatedSuspensionStartAllowsAttempt(this.context.database, attempt.id)) return undefined;
     const updated = this.context.database
       .prepare(`
         UPDATE work_unit_attempts

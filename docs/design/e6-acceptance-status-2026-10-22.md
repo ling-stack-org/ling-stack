@@ -15,6 +15,235 @@ the continuation order in the historical 2026-10-19 backup note.
   gstack upgrade, CI activation or release is included.
 - The existing untracked Daemon crash report is retained and excluded from Git.
 
+## Latest verification delta — 2026-10-23
+
+This replaces the in-progress verification statements below, not their retained
+failure records. No package approval, real model call or final E6 verdict follows.
+
+### Later suspension delta — 2026-10-23
+
+The latest S9/S10 delta supersedes the historical implementation gaps below.
+Original and restored final-assistant settlement authority is implemented via
+the independent187 ledger. Optional terminal/shutdown handoff is implemented
+without treating an aborted source as resumable: exact intents precede abort,
+and original terminal evidence is verified after physical/durable finalization.
+S10 final groups passed163/163 and58/58; the original-observer fault scenario
+passed1/1. All exited0 with zero skips. Scoped static review found no confirmed
+actionable issue; it is not an independent execution or Office approval.
+
+Runner full passed567/567. Office source-closure full passed1343/1343 after
+correctly classifying the39 new inputs as38 runtime and1 type-only; five
+`*types.ts` files export runtime Error classes. Hash/mutation/missing-source,
+real esbuild metafile and no-dist-consumption gates remain intact.
+
+The first Core full run ended4395/4401, exit1. Its six legacy migration/optional
+lifecycle fixtures were corrected without changing production Core guards;
+focused groups passed85/85 and5/5, exit0. The final Core full run then passed
+4401/4401, actual exit0, zero failed/cancelled/skipped.
+
+An actual approval-cancel/shutdown defect was fixed in ActiveRuns: an explicitly
+non-resumable executor can finish its original cancelled lifetime, while supplied
+terminal handoffs still require exact verification. Missing checkpoint/handoff
+authority remains blocked. Fresh Daemon emission exited0. Scoped static review
+reported no confirmed actionable finding; it is not Office approval.
+
+The following six-file Daemon group ended213 tests,205 passed,8 cancelled by
+their unchanged15-second timeout, actual exit1. The complete approval-policy
+file and the real tree/shutdown neighbors passed. The eight production optional
+tests used an obsolete post-adapter-return hold/failure hook, after the new Host
+settlement callback had already observed an unstarted child and safely blocked.
+Moving that test-only control into the actual SDK final window preserved all
+drain/usage/result/late-spawn assertions. The complete production-tool-surface
+file then passed13/13, exit0, zero skips. No production guard or timeout changed.
+
+The first Daemon full run was stopped after the known cancellation defect and did
+not finish. The later diagnostic full run has now exited1:7401 tests,7319 passed,
+70 failed,zero cancelled,12 skipped. It consumed the prior production dist and
+does not verify the subsequent repairs. The original media fetch
+failure has passed in isolated and complete-file runs, but its root cause is
+not yet confirmed; those passes do not erase the failed full-run record.
+The Daemon full suite must finish and its new failures must be resolved before
+a new frozen Office review packet. Its two ACP/Kimi failures occurred waiting
+for sandbox write replies, not reads. A forced live-worker pause proved that the
+old fixture polling could expire before the unchanged worker deadline. Host
+reply-commit observation, with cancellation and missing-reply rejection, passed
+the complete68-test file, exit0. This does not identify the exact historical OS
+scheduling of the original failures or turn that full run green. A01 launchers
+now validate their actual isolated child environment and passed11/11, exit0.
+The two A11 API/deadline files passed20/20 after the same isolation correction;
+the IPv6 launcher file separately passed4/4,exit0 after its matching isolation
+repair, with real HTTP/TLS launch/completion and private-address refusal. No assertion or deadline was
+relaxed, and product guards still run before the child imports production code.
+
+Channel file-create failures were traced to required-input tracking enabled
+under a frozen off Broker. Initial/reprepared/runtime selection now share one
+Host opt-in, canonical source, nondelegated, frozen-enforce gate. Off/shadow are
+not promoted, receipt validation remains intact, and frozen capability removal
+still rejects recovery. Fresh execution passed all four original channel write
+cases and the original1800/4096-token budget pair:6/6,exit0,zero skips,without
+raising budgets. The complete U/prepared/native group passed112/112,exit0 after
+two legitimate-pause fixtures explicitly enabled their required enforce Broker.
+The new native fixture's incomplete owner lookup was then found to give a false
+negative. Its final complete63-test file now passed, actual exit0, zero skips,
+using the actual failed preparation Thread and zero Turn/WorkUnit/Run assertions,
+not accepted from that112-test result alone.
+
+Media shutdown tests incorrectly expected abort in the stop call's own stack,
+despite all-domain admission closure preceding the real abort phase. Observing
+the actual event exposed a production liveness failure: waiting for physical
+drain during abort hid the later finite media observer. Public stop now observes
+that five-second deadline alongside the original lifecycle, whose internal
+barrier still holds Stores/leases until physical drain. Retry joins original
+work; observer timeout does not poison its eventual completion. ActiveRuns also
+has a pure synchronous admission latch, without early callbacks or abort, to
+reject queued ordinary/native execution. Tests freeze both admissions at the
+actual abort event. Fresh emission exited0; the original four media cases passed
+within a115/116 group whose sole failure was the corrected native fixture above.
+That group is not reported as a complete passing suite.
+
+Missing native workflow authority now rejects before target availability and
+canonical Thread creation; the captured owner is then revalidated after awaited
+preflight, before Turn/WorkUnit/Attempt/Run creation. The preflight's existing
+preparation Thread may remain failed, without deleting its history.
+The existing commit admission remains in place. Evaluation admission now turns
+only typed permanent retained-body failures into a transactionally failed job,
+so a corrupt queue head cannot starve later valid jobs. Storage/COMMIT/lease/pin
+conflicts remain errors. Independent review exposed a combined corrupt-body and
+same-owner audit-pin conflict. After its12 forced RED subcases, the repair now
+validates every canonical owner recovery-pin reason before releasing any pin.
+Final focused Core passed55/55; the latest full Core passed4431/4431, actual
+exit0, zero failed/cancelled/skipped. Final source hashes match the independent
+review. The older4401 result is retained only as historical evidence.
+
+Six private approval-recovery cases exposed a separate shutdown deadlock:
+ordinary SDK suspension admits running sources, but durable approval waits are
+waiting_for_approval. The source request fails while its approval polling remains
+live. The scoped repair preserves the exact approval checkpoint, drain/owner
+checks and rejection of dynamic descendant shortcuts, including shutdown requested
+immediately before approval commit. Its first11-case run ended6 passed/5 failed;
+the original six passed, while a bare-Store fixture bypassed default custody and
+duplicate server-close cleanup obscured other cases. A128-case adjacent run also
+exposed two real late-reviewer drains: after a finite local observation timed out,
+the original writer's eventual drain did not retry the captured approval CAS.
+The repair now revalidates that same source/checkpoint/revision after real drain;
+it does not loosen the Core resource veto or any original resource assertion.
+
+The intermediate13-case and224-case runs passed. A further real Hub active-listener
+fault then proved that post-CAS notification failure could incorrectly block Host
+shutdown. Final source isolates only each notification after a successful Core CAS;
+it does not swallow SQLite failures or claim live notification delivery. The final
+orchestrator SHA is `cf8e7fbe180ed15d1308bb42a8b487ce865726cb8d049947e3a8630cf970be5f`.
+After fresh emission exited0, the final14-case A28 run and93-case shutdown/U/tree
+adjacency both passed, actual exit0, zero failed/cancelled/skipped. R1/R2/R3 are
+closed by scoped independent review, not a full SDK/remote-effect attestation.
+The final complete Daemon suite is now running against this frozen dist, in a
+new temporary home/workspace with test:ci's concurrency1; its actual exit is pending.
+
+The current165-item WIP packaging delta has completed independent review with
+inherited coverage limits:90 newly read full files,20 exact prior full-file
+reuses,55 generated catalogs with exact baseline reuse and all current changed
+content reviewed. The1591 packaging/15 native hashes match, with no new confirmed
+finding. The later production source changes above are not covered by
+that old frozen delta. Their final six-input supplement and166-item hash inventory
+have now been independently checked, including a complete intermediate orchestrator
+read and the exact final two-block R3 delta. No new confirmed source finding remains
+in that scope; inherited generated-catalog coverage limits still apply. The final
+WIP inventory SHA is `a637c116afa70a07dbcd82b0ea95ede4eb5fe644f244d819d4fccc72a7926de6`.
+This is not a clean frozen packet or approval. Budgeted H09 real-model,
+explicit packet approval and20 packaged macOS cases remain open.
+
+The following paragraphs are retained historical checkpoints, not current gaps.
+
+This supersedes the older statement that graceful suspension is unimplemented.
+Ordinary root/child/queued suspension, actual SDK acknowledgement, cross-PID
+recovery after the original Host exits, and default Daemon startup discovery
+are implemented and have isolated SQLite/SDK evidence. Compacted suspension now
+also has independent witness authority through seal/stop/activation/ACK, complete
+predecessor custody, and repeated suspension with or without new tools.
+
+Final fresh groups exited 0: Core 334/334, Daemon suspension 125/125, Daemon
+compaction neighbors 63/63, Runner full 558/558; all had zero skipped tests.
+Independent read-only review reported no remaining confirmed finding in the
+frozen S8 delta and checked the 16-file source manifest. This is not an
+independent test rerun, Office approval, full Daemon run or packaged acceptance.
+Logs and hashes are indexed in the ignored S8 evidence/continuation records.
+
+At that historical S8 checkpoint, final-assistant settlement was still pending. Office's
+current incremental review and explicit packet approval, budgeted H09 live
+evaluation, and the macOS packaged acceptance matrix remain open.
+
+- Fresh contracts/Core/Daemon/Desktop TypeScript builds exited 0; Web noEmit
+  exited 0. Current fresh Core neighbors passed 158/158; Desktop entry/profile
+  plus Daemon bootstrap passed 94/94. These separate sets are not one full suite.
+- The fresh Daemon 14-file group finished 161/162 (exit 1). The only failure was
+  the process-restart fixture creating a new Run without frozen workflow
+  selection. Supplying the exact real fixture workflow at initial Host admission
+  fixed the fixture without weakening the production guard. Its complete file
+  plus snapshot/config neighbors passed 12/12 (exit 0); retain the original red.
+- The historical runtime self-heal fixture now distinguishes pre180 migration
+  from a damaged schema with a committed180 marker. Legacy repair succeeds;
+  committed corruption is still rejected and preserves the marker/legacy Run.
+  The complete channel-runtime-store file passed 52/52 (exit 0).
+- After fresh bootstrap emission, the fixed Office daemon-source input matrix
+  passed 1171/1171 (exit 0). This is source-closure testing, not content-review
+  approval, package execution or GUI acceptance.
+- The unchanged local synthetic benchmark ran once with 250 measured samples
+  and 50 warmups; all five gates passed (exit 0). Dispatch/claim p95 were
+  0.540417/0.191916 ms, baseline/enabled queue p95 13.222708/12.485834 ms,
+  and maximum event payload 56 bytes. Raw samples and source hashes are retained
+  in `harness-reliability-benchmark-fresh-20261023.json`; no latency threshold
+  was relaxed, and this does not measure dynamic execution or packaged GUI.
+- Optional stop-with-parent and frozen selection are implemented. Startup
+  preservation is implemented but is not running-child recovery. Graceful
+  suspend/resume and durable parent settlement after bounded stop timeout still
+  require implementation; missing original stop/drain proof remains blocked.
+
+Logs are under `output/e6-20260928/`: `delegation-selection-process-fixture-green-20261023.tap`,
+`recovery180-runtime-fixture-final-20261023.tap`,
+`office-pins180-qa-source-closure-fresh-20261023.tap` and the benchmark JSON above.
+
+## Current implementation delta: recovery ownership and explicit selection
+
+This section supersedes the historical list of missing foundations below. It is
+not a final acceptance verdict or package approval.
+
+- Recovery/audit artifact pins now participate in the original continuation,
+  tool, rule evaluation, model-task, QA and delegation writer transactions.
+  Unknown effects, undrained QA, independent audit holds and unconsumed required
+  child results remain pinned. Default GC enrollment is off; only explicit Host
+  deadlines permit cleanup. No ordinary history is automatically deleted.
+- The user selected `stop_with_parent` for optional children, including parent
+  success, failure and cancellation. Runtime integration and deep-child stop
+  timing verification are still in progress; an abort request is not proof.
+- Four-domain, metadata-only diagnostics are connected through Core/API/shared
+  Web rendering. The current Web validator/renderer group passed 29/29; this is
+  component evidence, not packaged GUI acceptance.
+- Additive migration180 installs five recovery/discovery indexes. Fresh Core
+  production SQL/bindings/EXPLAIN evidence passed all six structural gates at
+  scales 16/128/1024. Completion predicate work is 50/386/3074 invocations for
+  those populations, not a wall-clock performance claim. The unchanged five
+  latency/sample gates still require a separate run after fresh Daemon build.
+- Fresh Core nearby tests ran 211 cases: 210 passed, one strict historical
+  schema153 fixture comparison failed because three additive migration180
+  indexes were missing from its exact overlay exclusion. The corrected fixture
+  plus complete migration/boundary group passed 49/49. Preserve both outputs;
+  neither this nor the prior full failure is a passing fresh full-suite result.
+- A private, exact-workflow, token/wall-budgeted packaged QA startup selection
+  now explicitly declares `modelExecution: host-authorized-budgeted`. Its source
+  composition tests passed 93/93. No real model call or package was started.
+- Independent review found a real restart authorization-drift gap. Run feature
+  snapshots now freeze an independent `delegationSelectedWorkflowIds` list;
+  current selection must not retroactively enroll an old Run. Factory/config
+  source tests passed 11/11; the runtime consumption seam is being verified.
+- Running-child recovery is still implementation work. General startup stale
+  recovery must not mutate private `delegation_step` authority. Preservation
+  alone does not implement graceful suspend, resume, or crash containment.
+
+The newer pending-packet preparer describes the combined dedicated-QA plus
+Host-selected budgeted-model scope, not the older synthetic-only scope. It has
+not run against a new clean/frozen revision and has no user approval. Do not
+reuse an old packet to authorize these bytes or create a fresh package.
+
 ## Current repair
 
 The historical 20 Core failures comprised four legacy migration-fixture
@@ -86,6 +315,65 @@ calibrated promotion corpus; enforcement remains off.
 
 ## Next gate and execution order
 
+### Later same-day delta: original packet is stale
+
+Do not execute the historical freeze/approval step below unchanged. Pending
+`core-repair` captured 58 changed packaging inputs versus `post578-final`: three
+Core sources plus 55 generated locale catalogs. The catalogs match current
+authored JSON; subsequent projection/retention WIP invalidated that packet.
+No current packet has user approval.
+
+The local pending-packet preparer now checks authored JSON against all 57
+generated localization files, verifies the fixed inventory, rejects symlinks and
+read-time mutations, and rechecks the snapshot before writing. Its isolated
+compiler-parity/tamper suite passed 15/15. It never regenerates the shared tree.
+This ignored output helper is not a production release approval mechanism.
+
+A separately reproduced recovery admission defect is repaired in source:
+general stale/scheduled discovery and direct ordinary continuations now refuse
+`delegation_step` ownership. Before the repair, discovery dispatched both
+fixtures (0/2), and the direct-entry fixture entered its offline Runner (0/1).
+The coordinator-only neighbors passed 45/45; the final two-source-leaf group
+passed 50/50; these groups overlap and must not be summed. Daemon noEmit passed.
+Verification used an in-memory source loader with unchanged compiled dependencies,
+not a fresh Daemon/package. Private delegated execution is unchanged. This does
+not prove running-child crash recovery, real model usage, or packaged GUI.
+
+Independent review identified an additional pre-dispatch write in general
+approval recovery. Its approved/resume-pending/denied admission fixtures failed
+0/3 before the repair. Both resume and denial now check the actual Run's owning
+WorkUnit before decision/claim/finalization writes. The full approval-recovery
+file plus ownership file passed 48/48, including unchanged snapshots of 12
+relevant tables after refusal and repeated startup scans. This group loaded
+three current source leaves in memory, not shared rebuilt dist. Final noEmit
+passed; all nine frozen repair/verification inputs matched after testing.
+
+The user confirmed that all other writers have stopped. Root now owns the six
+preserved retention/projection WIP inputs; their original bytes are backed up.
+The migration fixture's `177 || 179` short circuit and missing Office fixed
+inventory entry are repaired. Retention tokens now support the full valid
+artifact-ID bound without relaxing decoded identity validation. Later pages use
+the actual composite `(retain_until, artifact_id)` lower bound, not an OR filter
+that rescans pinned prefixes. Projection domains preserve failure isolation.
+
+Fresh Core/Daemon builds exited 0. Complete nearby groups passed 29/29 Core,
+63/63 Daemon, 1159/1159 Office source inputs, and 41/41 question/private delegation
+recovery. The newer Core full exited 1: 4001 passed of 4002, with one schema153
+fixture leaving the new 179 marker installed. All 1777 frozen inputs matched
+after exit. The fixture alone was corrected after full ended, keeping strict
+historical SQL/row/marker assertions; its complete migration/legacy/retention
+group then passed 50/50. Preserve and report the failed full; do not call these
+results a fresh passing full. Logs are named `retention179-*`,
+`office-retention179-source-matrix-fresh-20261022.tap`, and
+`recovery179-question-private-delegation-20261022.tap` under the output directory.
+
+The independent retention/index/projection scoped review found no confirmed
+remaining defect. It is not package approval or real-model/GUI evidence.
+Current exact continuation and local evidence paths are in the ignored
+`output/e6-20260928/CONTINUE-HERE.md`.
+
+### Historical order, subject to the delta above
+
 1. The seven reviewed code/test inputs are committed at `5ccb95a4`; commit this
    status note, then freeze a new Office packet against that clean tracked HEAD.
    Preserve the earlier packet.
@@ -105,7 +393,13 @@ calibrated promotion corpus; enforcement remains off.
    and truthful `simulation=false` receipts. Repair observed failures, review
    only new affected bytes, then update the PR and final acceptance verdict.
 
-H10–H12 and T13B implementation already exists in this branch; do not restart
-those implementations from the historical backup note. Their combined real
-packaged acceptance remains open. No model narration, child exit code, UI batch
+H10–H12 and T13B foundations already exist in this branch; do not restart those
+implementations from the historical backup note. Production diagnostics still
+need evaluation/delegation and reconciliation metadata. Retention needs real
+producer pin/policy wiring, not just conservative foreign-key protection. The
+performance matrix still needs active-subtree and indexed paged-startup evidence.
+Running-child recovery, optional-child quiescence policy, and bounded QA workflow
+selection remain implementation work. H09 still needs genuine current source and
+capability evidence. Their combined real packaged acceptance remains open.
+No model narration, child exit code, UI batch
 count, static review or local test may substitute for Host terminal evidence.

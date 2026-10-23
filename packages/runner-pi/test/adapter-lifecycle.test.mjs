@@ -387,7 +387,7 @@ test("completed compaction recovery installs the sealed assistant view without a
       modelView: [
         { role: "compactionSummary", summary: "Already complete." },
         acceptedTaskAnchor(f.options),
-        { role: "assistant", content: [{ type: "text", text: "Already complete." }] },
+        { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Already complete." }] },
       ],
     },
   });

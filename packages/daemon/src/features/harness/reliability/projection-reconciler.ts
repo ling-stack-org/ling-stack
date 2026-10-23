@@ -49,9 +49,17 @@ export class HarnessProjectionReconciler {
 
   private async rebuild(store: HarnessProjectionStore, signal: AbortSignal): Promise<readonly HarnessProjectionCheckpoint[]> {
     const completed: HarnessProjectionCheckpoint[] = [];
+    const failures: Error[] = [];
     for (const domain of HARNESS_PROJECTION_DOMAINS) {
-      completed.push(await this.rebuildDomain(store, domain, signal));
+      signal.throwIfAborted();
+      try {
+        completed.push(await this.rebuildDomain(store, domain, signal));
+      } catch (error) {
+        if (signal.aborted) throw error;
+        failures.push(error instanceof Error ? error : new Error("projection_reconciler_domain_failed", { cause: error }));
+      }
     }
+    if (failures.length > 0) throw new AggregateError(failures, "projection_reconciler_domain_failures");
     return completed;
   }
 
@@ -67,6 +75,6 @@ export class HarnessProjectionReconciler {
       // Recovery is cooperative, not a single unbounded synchronous startup scan.
       await yieldToEventLoop(undefined, { signal });
     }
-    throw new Error("projection_reconciler_page_budget_exhausted");
+    throw new Error(`projection_reconciler_page_budget_exhausted:${domain}`);
   }
 }

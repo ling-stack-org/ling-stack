@@ -35,11 +35,14 @@ const closed = error => error?.code === "delegation.parent_not_running";
 const rootSuccess = f => f.store.transitionRunExecutionStatus({ runId: "root", sourceFence: f.fence,
   expectedStatus: "running", event: "runner_succeeded", actor: "runner", now: budgetLater, endedAt: budgetLater });
 
-test("root success permanently closes new nested spawns without stopping existing optional work", async t => {
+test("root success cannot outlive optional work, and historical terminal state still closes nested admission", async t => {
   const f = await fixture(t);
-  assert.equal(rootSuccess(f).ok, true);
+  assert.throws(() => rootSuccess(f), error => error?.code === "delegation.required_children_unsettled");
+  assert.equal(f.store.getRun("root").status, "running");
+  // Fault injection models a historical terminal row, not accepted completion.
+  f.db.prepare("UPDATE run_sessions SET status='succeeded',ended_at=? WHERE id='root'").run(budgetLater);
   const basis = f.store.getDelegationCompletionEvidence({ rootRunIds: ["root"] });
-  assert.equal(basis.status, "satisfied");
+  assert.equal(basis.status, "pending");
   const before = rowCounts(f);
   assert.throws(() => f.spawn(), closed);
   assert.throws(() => f.spawn({ required: false }), closed);
@@ -50,11 +53,14 @@ test("root success permanently closes new nested spawns without stopping existin
 });
 
 for (const status of ["succeeded", "failed", "cancelled", "yielded"]) {
-  test(`a ${status} root closes nested admission even if its optional child still owns a running fence`, async t => {
+  test(`a historical ${status} root closes nested admission even if its optional child still owns a running fence`, async t => {
     const f = await fixture(t);
     if (status === "failed") f.store.markRunFailed("root", budgetLater, "fixture root failure");
     else if (status === "cancelled") f.store.markRunCancelled("root", budgetLater);
-    else if (status === "succeeded") f.store.markRunSucceeded("root", budgetLater);
+    else if (status === "succeeded") {
+      assert.throws(() => f.store.markRunSucceeded("root", budgetLater), error => error?.code === "delegation.required_children_unsettled");
+      f.db.prepare("UPDATE run_sessions SET status='succeeded',ended_at=? WHERE id='root'").run(budgetLater);
+    }
     else f.db.prepare("UPDATE run_sessions SET status='yielded' WHERE id='root'").run();
     const before = rowCounts(f);
     assert.throws(() => f.spawn(), closed);
@@ -92,10 +98,12 @@ test("root approval wait retains nested admission before terminalization", async
   assert.equal(f.spawn().replayed, false);
 });
 
-test("response-loss replay after root success returns the original optional allocation without admitting work", async t => {
+test("response-loss replay under a historical terminal root returns the original optional allocation without admitting work", async t => {
   const f = await fixture(t);
   const original = f.spawn({ required: false });
-  assert.equal(rootSuccess(f).ok, true);
+  assert.throws(() => rootSuccess(f), error => error?.code === "delegation.required_children_unsettled");
+  // Historical/corrupt terminal state cannot authorize a fresh allocation.
+  f.db.prepare("UPDATE run_sessions SET status='succeeded',ended_at=? WHERE id='root'").run(budgetLater);
   const before = rowCounts(f), replay = f.spawn({ required: false });
   assert.equal(replay.replayed, true);
   assert.equal(replay.childRun.id, original.childRun.id);

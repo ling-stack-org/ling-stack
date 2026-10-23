@@ -17,6 +17,11 @@ import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { mapDelegationBudgetCharge, mapDelegationBudgetReservation, mapDelegationRootBudget, type DelegationBudgetRow } from "./delegation-budget-rows.js";
 import { resolveRunAncestry, RunAncestryError } from "./run-ancestry.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { harnessArtifactOwnerHolder, syncHarnessArtifactOwnerPins } from "./harness-artifact-recovery-pins.js";
+import { assertNoPendingRunTerminalIntent } from "./run-terminal-intent-store.js";
+import { assertNoRunSuspensionAdmission } from "./run-suspension-store.js";
+import { assertRootSuspensionStartAdmission } from "./run-suspension-start-records.js";
+import { assertDelegatedSuspensionParentStartAdmission, assertDelegatedSuspensionStartAdmission } from "./run-suspension-delegated-records.js";
 
 interface Allocation { readonly root: DelegationRootBudgetRecord; readonly reservation?: DelegationBudgetReservation; readonly authority: DelegationExecutionAuthority; readonly run: RunSession; readonly unit: WorkUnit }
 interface Usage { readonly tokens: bigint; readonly cost: bigint; readonly costKnown: boolean; readonly closed: boolean }
@@ -42,6 +47,76 @@ export class SqliteDelegationWriteStore {
     return row ? mapDelegationBudgetCharge(row) : undefined;
   }
 
+  /** Original Host activation composition only. A stopped source is not a generic admission phase. */
+  assertRootSuspensionAuthorityWithinTransaction(input: {
+    readonly runId: string; readonly sourceFence: RuntimeAttemptFenceV1; readonly runnerId: string; readonly now: string;
+  }, readRecoveryAuthority: (runId: string, sourceFence: RuntimeAttemptFenceV1) => DelegationExecutionAuthority): DelegationRootBudgetRecord | undefined {
+    this.assertTransaction();
+    const root = this.getRootDelegationBudget(input.runId), run = this.ports.getRun(input.runId);
+    const unit = run?.workUnitId ? this.ports.getWorkUnit(run.workUnitId) : undefined;
+    if (!run || !unit || run.parentRunId) fail("delegation.lineage_invalid");
+    const current = delegationAuthority(readRecoveryAuthority(run.id, input.sourceFence));
+    if (!current.runnerIds.includes(input.runnerId) || !current.providers.some(provider =>
+      provider.providerId === run.providerName && provider.model === run.providerModel)) fail("delegation.authority_invalid");
+    this.assertScope(run, unit, current);
+    if (!root) { this.assertTransaction(); return undefined; }
+    if (root.rootRunId !== run.id) fail("delegation.lineage_invalid");
+    if (input.now < root.frozenAt || input.now >= root.deadlineAt) fail("delegation.deadline_exceeded");
+    const frozen = this.readAuthorityArtifact(root.authorityArtifactId, root.rootRunId, root.authorityDigest);
+    if (delegationJson(current) !== delegationJson(frozen)) fail("delegation.authority_invalid");
+    this.readRootPrice(root);
+    if (this.context.database.prepare(`SELECT 1 FROM delegation_budget_charges WHERE root_run_id=?
+      AND state NOT IN ('measured','cancelled_before_dispatch') LIMIT 1`).get(run.id)
+      || this.context.database.prepare("SELECT 1 FROM delegation_budget_reservations WHERE root_run_id=? AND state='unresolved' LIMIT 1").get(run.id)) fail("delegation.settlement_incomplete");
+    this.assertCapacity({ root, authority: current, run, unit }, 0, 0);
+    this.assertTransaction();
+    return root;
+  }
+
+  /** Original186 receiver: source authority is rebuilt independently, never borrowed from a stopped live owner. */
+  assertDelegatedSuspensionAuthorityWithinTransaction(input: {
+    readonly runId: string; readonly sourceFence: RuntimeAttemptFenceV1; readonly now: string;
+  }, readAuthority: (runId: string, fence: RuntimeAttemptFenceV1) => DelegationExecutionAuthority): DelegationRootBudgetRecord {
+    this.assertTransaction();
+    const run = this.ports.getRun(input.runId), unit = run?.workUnitId ? this.ports.getWorkUnit(run.workUnitId) : undefined;
+    const row = this.row("delegation_budget_reservations", "child_run_id=?", [input.runId]);
+    const reservation = row ? mapDelegationBudgetReservation(row) : undefined;
+    const step = reservation ? this.row("delegation_steps", "id=?", [reservation.delegationStepId]) : undefined;
+    const root = reservation ? this.getRootDelegationBudget(reservation.rootRunId) : undefined;
+    if (!run?.parentRunId || !unit || !reservation || !step || !root || reservation.state !== "reserved"
+      || step.parent_run_id !== run.parentRunId || step.child_run_id !== run.id || step.root_run_id !== root.rootRunId
+      || unit.ownerType !== "delegation_step" || unit.ownerId !== step.id) fail("delegation.lineage_invalid");
+    if (input.now < root.frozenAt || input.now >= root.deadlineAt || input.now >= reservation.deadlineAt) fail("delegation.deadline_exceeded");
+    this.assertRootOpenForSpawn(root.rootRunId);
+    const authority = this.readStepAuthority(step), current = delegationAuthority(readAuthority(run.id, input.sourceFence));
+    assertDelegationAuthoritySubset(current, authority); assertDelegationAuthoritySubset(authority, current);
+    if (current.authoritySetId !== authority.authoritySetId || !current.runnerIds.includes(unit.effectiveRunnerId ?? unit.runnerId ?? "")
+      || !current.providers.some(provider => provider.providerId === run.providerName && provider.model === run.providerModel)) fail("delegation.authority_invalid");
+    const ancestry = resolveRunAncestry({ getRun: this.ports.getRun,
+      getWorkspaceId: value => value.workUnitId ? this.ports.getWorkUnit(value.workUnitId)?.workspaceId : undefined },
+      { leafRunId: run.id, expectedRootRunId: root.rootRunId, expectedWorkspaceId: authority.workspaceId });
+    this.assertScope(run, unit, current, ancestry.entries.map(value => value.id));
+    assertDelegationAuthoritySubset(this.readAuthorityArtifact(root.authorityArtifactId, root.rootRunId, root.authorityDigest), authority);
+    this.readRootPrice(root);
+    // Parent/sibling model requests can already be in flight after their real
+    // SDK ACK. Their current-owner reservations still count at full capacity;
+    // unlike unknown or retired-source usage they do not need to settle before
+    // another child ACK. Never waive a charge on the child being activated.
+    if (this.context.database.prepare(`SELECT 1 FROM delegation_budget_charges c
+      WHERE c.root_run_id=? AND c.state NOT IN ('measured','cancelled_before_dispatch')
+        AND (c.state<>'reserved' OR c.run_id=? OR NOT EXISTS (
+          SELECT 1 FROM run_sessions r
+          JOIN work_units u ON u.id=r.work_unit_id AND u.linked_run_id=r.id
+          JOIN work_unit_attempts a ON a.id=u.active_attempt_id AND a.work_unit_id=u.id
+          WHERE r.id=c.run_id AND a.id=c.attempt_id AND r.status='running'
+            AND u.status='running' AND a.status='started'
+            AND r.ended_at IS NULL AND u.ended_at IS NULL AND a.ended_at IS NULL
+            AND a.abort_requested_at IS NULL)) LIMIT 1`).get(root.rootRunId, run.id)
+      || this.context.database.prepare("SELECT 1 FROM delegation_budget_reservations WHERE root_run_id=? AND state='unresolved' LIMIT 1").get(root.rootRunId)) fail("delegation.settlement_incomplete");
+    this.assertCapacity({ root, reservation, authority, run, unit }, 0, 0);
+    return root;
+  }
+
   /** Internal lifecycle joined capability. It cannot create a transaction or dispatch. */
   assertDelegatedChildDispatchAuthorityWithinTransaction(input: {
     readonly childRunId: string; readonly stepId: string; readonly sourceFence: RuntimeAttemptFenceV1; readonly now: string;
@@ -49,6 +124,12 @@ export class SqliteDelegationWriteStore {
     this.assertTransaction();
     const request = delegationRecord(input, ["childRunId", "stepId", "sourceFence", "now"]);
     const childRunId = delegationId(request.childRunId), stepId = delegationId(request.stepId);
+    assertNoPendingRunTerminalIntent(this.context, childRunId);
+    assertNoRunSuspensionAdmission(this.context, childRunId);
+    assertRootSuspensionStartAdmission(this.context.database, childRunId);
+    // A created child's physical dispatch precedes its own ACK; ancestors must
+    // already have their actual ACK. Model/spawn effects use the full gate.
+    assertDelegatedSuspensionParentStartAdmission(this.context.database, childRunId);
     const sourceFence = delegationFence(request.sourceFence), now = delegationTimestamp(request.now);
     const row = this.row("delegation_budget_reservations", "child_run_id=? AND delegation_step_id=?", [childRunId, stepId]);
     if (!row) fail("delegation.lineage_invalid");
@@ -99,6 +180,7 @@ export class SqliteDelegationWriteStore {
         return existing;
       }
       this.assertOwner(runId, fence, "admission");
+      assertNoRunSuspensionAdmission(this.context, runId);
       const run = this.ports.getRun(runId);
       const unit = run?.workUnitId ? this.ports.getWorkUnit(run.workUnitId) : undefined;
       if (!run || !unit || run.parentRunId !== undefined) fail("delegation.lineage_invalid");
@@ -119,6 +201,8 @@ export class SqliteDelegationWriteStore {
       });
       const created = this.getRootDelegationBudget(runId);
       if (!created) fail("delegation.persisted_fact_invalid");
+      syncHarnessArtifactOwnerPins(this.context.database, { holder: harnessArtifactOwnerHolder("delegation_root", runId),
+        artifactIds: [created.authorityArtifactId, ...(created.priceArtifactId ? [created.priceArtifactId] : [])], keep: true, now });
       return created;
     });
   }
@@ -149,11 +233,14 @@ export class SqliteDelegationWriteStore {
         const childRun = this.ports.getRun(reservation.childRunId);
         const childWorkUnit = childRun?.workUnitId ? this.ports.getWorkUnit(childRun.workUnitId) : undefined;
         if (!childRun || !childWorkUnit || childRun.parentRunId !== parentRunId || childWorkUnit.linkedRunId !== childRun.id) fail("delegation.persisted_fact_invalid");
+        this.pinStepArtifacts(step, now);
         return { stepId: String(step.id), reservation, childRun, childWorkUnit, replayed: true };
       }
       this.assertOwner(parentRunId, sourceFence, "running");
       const allocation = this.allocation(parentRunId, capture);
       this.assertRootOpenForSpawn(allocation.root.rootRunId);
+      assertNoPendingRunTerminalIntent(this.context, parentRunId);
+      assertNoRunSuspensionAdmission(this.context, parentRunId);
       this.currentSubset(capture, parentRunId, sourceFence);
       assertDelegationAuthoritySubset(allocation.authority, capture.authority);
       const parentBudget = this.effectiveParentBudget(allocation);
@@ -210,6 +297,7 @@ export class SqliteDelegationWriteStore {
       const reservation = this.getDelegationBudgetReservation(reservationId);
       const linked = this.ports.getWorkUnit(childWorkUnit.id);
       if (!reservation || !linked || linked.linkedRunId !== childRun.id) fail("delegation.persisted_fact_invalid");
+      this.pinStepArtifacts(this.row("delegation_steps", "id=?", [stepId])!, now);
       return { stepId, reservation, childRun, childWorkUnit: linked, replayed: false };
     });
   }
@@ -232,6 +320,7 @@ export class SqliteDelegationWriteStore {
         return charge;
       }
       this.assertOwner(runId, fence, "running");
+      assertNoRunSuspensionAdmission(this.context, runId);
       const allocation = this.allocation(runId, capture);
       this.currentSubset(capture, runId, fence);
       assertDelegationAuthoritySubset(allocation.authority, capture.authority);
@@ -294,6 +383,12 @@ export class SqliteDelegationWriteStore {
   }
 
   settleDelegatedChild(input: { readonly reservationId: string; readonly receipt: unknown; readonly now: string }): DelegationBudgetReservation {
+    return this.transaction(() => this.settleDelegatedChildWithinTransaction(input));
+  }
+
+  /** Private composition joins the terminal-intent transaction; never commits its caller. */
+  settleDelegatedChildWithinTransaction(input: Parameters<SqliteDelegationWriteStore["settleDelegatedChild"]>[0]): DelegationBudgetReservation {
+    this.assertTransaction();
     const request = delegationRecord(input, ["reservationId", "receipt", "now"]);
     const id = delegationId(request.reservationId);
     const now = delegationTimestamp(request.now);
@@ -303,7 +398,7 @@ export class SqliteDelegationWriteStore {
     const sourceFence = receipt.sourceFence === undefined ? undefined : delegationFence(receipt.sourceFence);
     if (receipt.kind === "verified_usage" && sourceFence === undefined || receipt.kind === "no_dispatch" && sourceFence !== undefined) fail("delegation.authority_invalid");
     const settlementDigest = delegationDigest({ kind: receipt.kind, childRunId, sourceFence });
-    return this.transaction(() => {
+    return (() => {
       const reservation = this.getDelegationBudgetReservation(id);
       if (!reservation) fail("delegation.invalid_input");
       if (reservation.childRunId !== childRunId) fail("delegation.lineage_invalid");
@@ -338,9 +433,16 @@ export class SqliteDelegationWriteStore {
           state === "unresolved" ? null : settlementDigest, state === "unresolved" ? "delegation.usage_unknown" : null,
           now, state === "unresolved" ? null : now, id, reservation.revision);
       return this.getDelegationBudgetReservation(id)!;
-    });
+    })();
   }
 
+  private pinStepArtifacts(step: DelegationBudgetRow, now: string): void {
+    // Child settlement alone is not parent consumption. Keep required-child recovery
+    // through terminal receipt until an explicit parent-consumed authority seam exists.
+    syncHarnessArtifactOwnerPins(this.context.database, { holder: harnessArtifactOwnerHolder("delegation_step", String(step.id)),
+      artifactIds: ["objective_artifact_id", "permission_snapshot_artifact_id", "tool_allowlist_artifact_id",
+        "workspace_scope_artifact_id", "provider_policy_artifact_id"].map(key => delegationId(step[key], "delegation.persisted_fact_invalid")), keep: true, now });
+  }
   private capture(value: unknown, runId: string, fence: RuntimeAttemptFenceV1): DelegationAuthorityCapture {
     const capture = delegationCapture(this.ports.readCapture(value));
     if (capture.runId !== runId || delegationJson(capture.sourceFence) !== delegationJson(fence)) fail("delegation.authority_invalid");
@@ -372,6 +474,10 @@ export class SqliteDelegationWriteStore {
       if (error instanceof RunAncestryError) fail(error.code === "run_ancestry.cycle" ? "delegation.cycle_detected" : error.code === "run_ancestry.depth_exceeded" ? "delegation.depth_exceeded" : "delegation.lineage_invalid");
       throw error;
     }
+    // Preserve the domain's lineage diagnosis before checking additional
+    // suspension latches. Both checks still precede any allocation/write.
+    assertRootSuspensionStartAdmission(this.context.database, runId);
+    assertDelegatedSuspensionStartAdmission(this.context.database, runId);
     const root = this.getRootDelegationBudget(ancestry.rootRunId);
     if (!root) fail("delegation.root_budget_missing");
     const rootAuthority = this.readAuthorityArtifact(root.authorityArtifactId, root.rootRunId, root.authorityDigest);
@@ -403,6 +509,9 @@ export class SqliteDelegationWriteStore {
     } else if (authority.workflowId) fail("delegation.workflow_lineage_invalid");
   }
   private assertRootOpenForSpawn(rootRunId: string): void {
+    assertRootSuspensionStartAdmission(this.context.database, rootRunId);
+    assertDelegatedSuspensionStartAdmission(this.context.database, rootRunId);
+    assertNoPendingRunTerminalIntent(this.context, rootRunId);
     // Existing optional children may outlive the root. They must not add new
     // required work after its success/read-set was committed. BEGIN IMMEDIATE
     // serializes this admission with root terminalization, not a stale port read.

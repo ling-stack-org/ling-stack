@@ -13,6 +13,7 @@ import {
   defaultChannelRuntimePolicy,
 } from "../dist/index.js";
 import { RUNTIME_ATTEMPT_FENCE_MIGRATION_VERSION } from "../dist/storage/sqlite/runtime-attempt-fence-migration.js";
+import { HARNESS_RECOVERY_INDEX_MIGRATION_VERSION } from "../dist/storage/sqlite/harness-recovery-index-migration.js";
 import { createRequiredParticipantManifestV1 } from "../../contracts/dist/index.js";
 import { SUPPORTED_LOCALES } from "../../localization/dist/index.js";
 
@@ -2226,7 +2227,10 @@ test("runtime attempt fence migration discards an orphan development heartbeat",
   }
 });
 
-test("sqlite runtime supervisor migration self-heals missing runtime tables while preserving legacy runs", async () => {
+for (const recoveryIndexesCommitted of [false, true]) {
+test(recoveryIndexesCommitted
+  ? "sqlite runtime supervisor refuses missing runtime tables after recovery indexes were committed"
+  : "sqlite runtime supervisor migration self-heals pre-recovery-index runtime tables while preserving legacy runs", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runtime-supervisor-heal-"));
   let store = createSqliteRunStore(cwd);
   try {
@@ -2256,10 +2260,26 @@ test("sqlite runtime supervisor migration self-heals missing runtime tables whil
         DROP TABLE IF EXISTS work_units;
       `);
       assert.equal(Boolean(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'work_units'").get()), false);
+      if (!recoveryIndexesCommitted) {
+        // This fixture represents the historical schema before strict recovery
+        // indexes existed, not corruption of an already-committed migration.
+        database.prepare("DELETE FROM schema_migrations WHERE version = ?").run(HARNESS_RECOVERY_INDEX_MIGRATION_VERSION);
+      }
     } finally {
       database.close();
     }
 
+    if (recoveryIndexesCommitted) {
+      assert.throws(() => createSqliteRunStore(cwd), /harness_recovery_index_migration_schema_missing/);
+      const rejectedDatabase = new DatabaseSync(databasePath, { readOnly: true });
+      try {
+        assert.ok(rejectedDatabase.prepare("SELECT 1 FROM schema_migrations WHERE version = ?").get(HARNESS_RECOVERY_INDEX_MIGRATION_VERSION));
+        assert.ok(rejectedDatabase.prepare("SELECT 1 FROM run_sessions WHERE id = ?").get("run_legacy_no_work_unit"));
+      } finally {
+        rejectedDatabase.close();
+      }
+      return;
+    }
     store = createSqliteRunStore(cwd);
     assert.equal(store.getRun("run_legacy_no_work_unit")?.workUnitId, undefined);
     const workUnit = store.createWorkUnit({
@@ -2278,6 +2298,7 @@ test("sqlite runtime supervisor migration self-heals missing runtime tables whil
     await rm(cwd, { recursive: true, force: true });
   }
 });
+}
 
 test("sqlite channel runtime migration self-heals missing lease tables", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-runtime-heal-"));

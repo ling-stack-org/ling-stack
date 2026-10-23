@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { applyHarnessReliabilityMigration } from "../dist/storage/sqlite/harness-reliability-migration.js";
+import { applyHarnessRetentionIndexMigration, HARNESS_RETENTION_INDEX_MIGRATION_VERSION } from "../dist/storage/sqlite/harness-retention-index-migration.js";
 import { SqliteHarnessProjectionCheckpointStore } from "../dist/storage/sqlite/harness-projection-checkpoint-store.js";
 import { SqliteHarnessArtifactRetentionStore } from "../dist/storage/sqlite/harness-artifact-retention-store.js";
 
@@ -40,10 +41,15 @@ async function fixture(t) {
     CREATE TABLE run_evaluation_human_heads(id TEXT);
     CREATE TABLE delegation_messages(id TEXT);
   `);
-  f.apply = () => applyHarnessReliabilityMigration({ database: f.database,
-    hasMigration: version => Boolean(f.database.prepare("SELECT 1 FROM schema_migrations WHERE version=?").get(version)),
-    recordMigration: (version, name) => f.database.prepare("INSERT OR IGNORE INTO schema_migrations VALUES (?,?,?)").run(version, name, now),
-  });
+  f.apply = () => {
+    const input = { database: f.database,
+      hasMigration: version => Boolean(f.database.prepare("SELECT 1 FROM schema_migrations WHERE version=?").get(version)),
+      recordMigration: (version, name) => f.database.prepare("INSERT OR IGNORE INTO schema_migrations VALUES (?,?,?)").run(version, name, now),
+    };
+    const reliabilityApplied = applyHarnessReliabilityMigration(input);
+    const retentionApplied = applyHarnessRetentionIndexMigration(input);
+    return reliabilityApplied || retentionApplied;
+  };
   f.apply();
   f.reopen = () => {
     f.database.close(); f.database = new DatabaseSync(path); f.database.exec("PRAGMA foreign_keys=ON");
@@ -183,6 +189,24 @@ test("GC is opt-in and conservatively protects even newly added authority foreig
   assert.deepEqual(f.retention.collectHarnessArtifactBodies({ now: later }).prunedArtifactIds, ["cold"]);
   assert.notEqual(f.database.prepare("SELECT sealed_payload_json FROM artifacts WHERE id='authority'").get().sealed_payload_json, null);
   assert.notEqual(f.database.prepare("SELECT sealed_payload_json FROM artifacts WHERE id='not-enrolled'").get().sealed_payload_json, null);
+});
+
+test("deadline-first retention cursor uses migration 179 and never scans future rows into a due page", async t => {
+  const f = await fixture(t);
+  assert.ok(f.database.prepare("SELECT 1 FROM schema_migrations WHERE version=?").get(HARNESS_RETENTION_INDEX_MIGRATION_VERSION));
+  for (const [artifactId, retainUntil] of [["due-b", now], ["future-a", "2026-10-20T00:00:00.000Z"], ["due-a", now],
+    ["future-b", "2026-10-21T00:00:00.000Z"], ["due-c", later]]) {
+    f.body(artifactId); f.retention.enrollHarnessArtifactRetention({ artifactId, retainUntil, now });
+  }
+  const plan = f.database.prepare(`EXPLAIN QUERY PLAN SELECT artifact_id,retain_until FROM harness_artifact_retention
+    WHERE pruned_at IS NULL AND retain_until<=? ORDER BY retain_until,artifact_id LIMIT ?`).all(later, 2);
+  assert.match(plan.map(row => row.detail).join("\n"), /idx_harness_retention_due_v2/);
+  const first = f.retention.collectHarnessArtifactBodies({ now: later, limit: 2 });
+  assert.deepEqual(first.prunedArtifactIds, ["due-a", "due-b"]); assert.equal(first.examined, 2); assert.ok(first.nextCursor);
+  const second = f.retention.collectHarnessArtifactBodies({ now: later, limit: 2, after: first.nextCursor });
+  assert.deepEqual(second.prunedArtifactIds, ["due-c"]); assert.equal(second.nextCursor, undefined);
+  assert.notEqual(f.database.prepare("SELECT sealed_payload_json FROM artifacts WHERE id='future-a'").get().sealed_payload_json, null);
+  assert.throws(() => f.retention.collectHarnessArtifactBodies({ now: later, after: "not-a-cursor" }), /artifact_retention_cursor_invalid/);
 });
 
 test("GC failure rolls body, retention state and receipt back together", async t => {

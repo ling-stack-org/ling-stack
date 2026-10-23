@@ -113,10 +113,33 @@ test("reconciler shutdown aborts between pages, drains its actual promise, and r
   await assert.rejects(reconciler.reconcileStore(store), /stopped/);
 });
 
-test("reconciler keeps incomplete checkpoints non-ready when its page budget is exhausted", async () => {
+test("reconciler gives every domain its own page budget before reporting incomplete checkpoints", async () => {
   const store = projectionStore(); const reconciler = new HarnessProjectionReconciler({ maxPagesPerDomain: 1 });
-  await assert.rejects(reconciler.reconcileStore(store), /page_budget_exhausted/);
-  assert.equal(store.counts.get("continuation"), 1); assert.equal(store.counts.has("evaluation"), false);
+  await assert.rejects(reconciler.reconcileStore(store), error => {
+    assert.equal(error instanceof AggregateError, true);
+    assert.equal(error.errors.length, HARNESS_LIFECYCLE_DOMAINS.length);
+    for (const domain of HARNESS_LIFECYCLE_DOMAINS) {
+      assert.ok(error.errors.some(failure => String(failure).includes(`page_budget_exhausted:${domain}`)));
+    }
+    return true;
+  });
+  for (const domain of HARNESS_LIFECYCLE_DOMAINS) assert.equal(store.counts.get(domain), 1);
+});
+
+test("one projection domain failure does not starve the remaining domains in the same wake", async () => {
+  const store = projectionStore(); const original = store.reconcileHarnessProjectionPage;
+  store.reconcileHarnessProjectionPage = input => {
+    if (input.domain === "tool_execution") throw new Error("tool_projection_fault");
+    return original(input);
+  };
+  const reconciler = new HarnessProjectionReconciler();
+  await assert.rejects(reconciler.reconcileStore(store), error => {
+    assert.equal(error instanceof AggregateError, true);
+    assert.match(String(error.errors[0]), /tool_projection_fault/);
+    return true;
+  });
+  assert.equal(store.counts.has("tool_execution"), false);
+  for (const domain of ["continuation", "evaluation", "delegation"]) assert.equal(store.counts.get(domain), 3);
 });
 
 test("retention service resumes bounded sweeps without enrolling or touching an unrequested artifact", async () => {

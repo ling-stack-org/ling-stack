@@ -1,7 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import {
-  delegationBudget, delegationFence, delegationId, delegationInteger, delegationRecord, delegationTimestamp,
+  DelegationCompletionBarrierError, delegationBudget, delegationFence, delegationId, delegationInteger, delegationRecord, delegationTimestamp,
   toRuntimeAttemptFence,
   type ClaimedDelegatedChild, type DelegationChildRuntime, type DelegationRecoveryClassification,
   type RunSession, type RunStore, type RuntimeAttemptFenceV1,
@@ -72,6 +72,9 @@ export interface DelegationRuntimeRegistryOptions {
   /** Current Host authority for a resumed parent during startup discovery. Missing means observe only. */
   readonly assertRecoveryParentCurrent?: (input: Omit<DelegationRuntimeParentBinding, "assertCurrent">) => void;
   readonly now?: () => string;
+  /** Idempotent durable projection hook. Notification ACK follows its success. */
+  readonly onRunTerminal?: (input: { readonly store: RunStore; readonly run: RunSession;
+    readonly controlPlaneEvents: readonly import("@ling-stack/core").ControlPlaneEvent[] }) => Promise<void> | void;
 }
 export interface DelegationRuntimeRegistry {
   registerStore(store: RunStore, lifecycle: OriginalDelegationLifecycle): void;
@@ -79,8 +82,15 @@ export interface DelegationRuntimeRegistry {
   isSelectedWorkflow(input: { readonly store: RunStore; readonly workflowStepId?: string; readonly channelId?: string }): boolean;
   bindParent(input: DelegationRuntimeParentBinding): DelegationRuntimeParentTools;
   recoverStore(store: RunStore): DelegationRuntimeRecoveryResult;
+  prepareParentTerminalIntent(input: { readonly store: RunStore; readonly runId: string; readonly sourceFence: RuntimeAttemptFenceV1;
+    readonly desiredOutcome: "failed" | "cancelled"; readonly errorCode: string; readonly errorMessage: string }): void;
+  reconcileTerminalIntents(store: RunStore): Promise<void>;
+  /** Private Host finishing path. Abort is a request; canonical results are still required afterwards. */
+  closeParent(input: { readonly store: RunStore; readonly runId: string; readonly sourceFence: RuntimeAttemptFenceV1;
+    readonly outcome: "succeeded" | "failed" | "cancelled"; readonly signal: AbortSignal }): Promise<void>;
   stopAdmission(): void;
-  abortOwned(): void;
+  /** Persist every resumable child interruption before delivering any physical stop. */
+  abortOwned(): Promise<void>;
   settle(): Promise<void>;
   /** Effective producer selection, not proof that packaged acceptance has passed. */
   isEnabled(): boolean;
@@ -90,8 +100,19 @@ interface StoreState {
   readonly store: RunStore;
   readonly lifecycle: OriginalDelegationLifecycle;
   readonly pending: Map<string, Promise<void>>;
-  readonly owned: Map<string, RuntimeAttemptFenceV1>;
+  readonly owned: Map<string, {
+    readonly reservationId: string;
+    readonly fence: RuntimeAttemptFenceV1;
+    readonly parentFence: RuntimeAttemptFenceV1;
+  }>;
   readonly dispatchBlocks: Map<string, string>;
+  readonly closedParents: Set<string>;
+  /** Only original completions captured while requesting an exact live stop. */
+  readonly stopping: Map<string, Promise<unknown>>;
+  terminalReconcile?: Promise<void>;
+  terminalAgain?: boolean;
+  terminalSweep?: { readonly cutoff: string; readonly after?: { readonly createdAt: string; readonly id: string } };
+  readonly terminalBlocks: Map<string, string>;
   sweep?: { readonly cutoff: string; readonly after?: DelegationRuntimeDiscoveryCursor };
 }
 const registries = new WeakMap<RuntimeSupervisor, DelegationRuntimeRegistry>();
@@ -153,6 +174,8 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
   const states = new Map<RunStore, StoreState>();
   const work = new Set<Promise<unknown>>(), failures: unknown[] = [];
   const shutdown = new AbortController();
+  let shutdownWork: Promise<void> | undefined;
+  let shutdownFailure: unknown;
   let accepting = true;
   let recoveryTimer: ReturnType<typeof setInterval> | undefined;
   const now = (): string => delegationTimestamp(options.now?.() ?? new Date().toISOString());
@@ -179,10 +202,50 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
     });
     return promise;
   };
-  const assertParent = (binding: DelegationRuntimeParentBinding): { readonly state: StoreState; readonly run: RunSession } => {
-    if (!accepting || options.activeRuns.isShuttingDown()) return blocked("delegation.admission_closed");
+  const reconcileIntents = (state: StoreState): Promise<void> => {
+    if (state.terminalReconcile) { state.terminalAgain = true; return state.terminalReconcile; }
+    const task = Promise.resolve().then(async () => {
+      do {
+        state.terminalAgain = false;
+        const sweep = state.terminalSweep ?? { cutoff: now() };
+        const page = state.lifecycle.listUnfinishedRunTerminalIntents({ cutoffAt: sweep.cutoff, after: sweep.after, limit: 100 });
+        state.terminalSweep = page.nextCursor ? { cutoff: sweep.cutoff, after: page.nextCursor } : undefined;
+        for (const attemptId of page.attemptIds) {
+          try {
+            const result = state.lifecycle.reconcileRunTerminalIntent({ attemptId, now: now() });
+            if (result.status !== "committed") { state.terminalBlocks.set(attemptId, result.code); continue; }
+            const run = state.store.getRun(result.runId);
+            if (!run) return blocked("delegation.lineage_invalid");
+            if (!options.onRunTerminal) continue; // Missing projection authority cannot acknowledge delivery.
+            await options.onRunTerminal({ store: state.store, run, controlPlaneEvents: result.controlPlaneEvents });
+            state.lifecycle.acknowledgeRunTerminalIntent({ attemptId, now: now() });
+            state.terminalBlocks.delete(attemptId);
+          } catch (error) {
+            // Keep the durable row retryable. Unknown/corrupt facts never
+            // authorize cleanup, a refund or dispatch.
+            state.terminalBlocks.set(attemptId, publicBlockCode(error));
+          }
+        }
+      } while (state.terminalAgain || state.terminalSweep);
+    }).finally(() => {
+      if (state.terminalReconcile === task) state.terminalReconcile = undefined;
+      // A caller may arrive after the last loop test but before this finally.
+      // Keep that request in the same awaited single-flight lifetime instead
+      // of leaving a newly committed intent for the next periodic sweep.
+      if (state.terminalAgain) return reconcileIntents(state);
+    });
+    state.terminalReconcile = task;
+    return track(task, true);
+  };
+  const assertParent = (binding: DelegationRuntimeParentBinding, capturedObservation = false): { readonly state: StoreState; readonly run: RunSession } => {
+    // An already admitted read-only wait must be able to observe the original
+    // child's stop while new work is closed. This bypasses only the admission
+    // latch, never current source, policy, ownership or terminal-intent checks.
+    if (!capturedObservation && (!accepting || options.activeRuns.isShuttingDown())) return blocked("delegation.admission_closed");
     if (!enabled()) return blocked("delegation.dynamic_gate_unavailable");
     const state = requireState(binding.store);
+    if (state.closedParents.has(parentKey(binding.runId, binding.sourceFence))) return blocked("delegation.admission_closed");
+    if (binding.store.hasPendingRunTerminalIntent({ runId: binding.runId, ...binding.sourceFence })) return blocked("delegation.admission_closed");
     binding.assertCurrent();
     const run = binding.store.getRun(binding.runId), unit = binding.store.getWorkUnit(binding.sourceFence.workUnitId);
     const attempt = binding.store.getWorkUnitAttempt(binding.sourceFence.attemptId);
@@ -201,11 +264,12 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
     const workflow = step ? binding.store.getChannelWorkflow(step.workflowId) : undefined;
     if (!step || !workflow || step.channelId !== run.channelId || workflow.channelId !== run.channelId
       || step.workspaceId !== unit.workspaceId || workflow.workspaceId !== unit.workspaceId
+      || !hasFrozenWorkflowSelection(features.delegationSelectedWorkflowIds, workflow.id)
       || options.isWorkflowSelected?.({ store: binding.store, run }) !== true) return blocked("delegation.workflow_not_selected");
     return { state, run };
   };
-  const childFor = (binding: DelegationRuntimeParentBinding, reservationId: string): DelegationRecoveryClassification => {
-    const { state, run } = assertParent(binding), child = state.lifecycle.recover(reservationId), value = child.runtime;
+  const childFor = (binding: DelegationRuntimeParentBinding, reservationId: string, capturedObservation = false): DelegationRecoveryClassification => {
+    const { state, run } = assertParent(binding, capturedObservation), child = state.lifecycle.recover(reservationId), value = child.runtime;
     const parentUnit = binding.store.getWorkUnit(binding.sourceFence.workUnitId)!;
     if (value.step.parentRunId !== run.id || value.run.parentRunId !== run.id
       || value.reservation.childRunId !== value.run.id || value.reservation.delegationStepId !== value.step.id
@@ -231,7 +295,8 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
     const { state } = assertParent(binding);
     if (state.pending.has(child.reservation.id)) return;
     const fence = Object.freeze(toRuntimeAttemptFence(child.attempt));
-    state.owned.set(child.run.id, fence);
+    state.owned.set(child.run.id, Object.freeze({ reservationId: child.reservation.id, fence,
+      parentFence: Object.freeze({ ...binding.sourceFence }) }));
     let executionEntered = false;
     const task = Promise.resolve().then(async () => {
       assertParent(binding);
@@ -253,7 +318,12 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
       state.dispatchBlocks.set(child.reservation.id, publicBlockCode(error));
     }).finally(() => {
       if (state.pending.get(child.reservation.id) === task) state.pending.delete(child.reservation.id);
-      if (state.owned.get(child.run.id) === fence) state.owned.delete(child.run.id);
+      const owned = state.owned.get(child.run.id);
+      if (owned?.reservationId === child.reservation.id && sameFenceIdentity(owned.fence, fence)) state.owned.delete(child.run.id);
+      // The full original executor includes its sealed-result finally, unlike
+      // ActiveRun.completion, which resolves just before that final commit.
+      state.stopping.delete(parentKey(child.run.id, fence));
+      void reconcileIntents(state);
     });
     state.pending.set(child.reservation.id, task);
     track(task, true);
@@ -266,6 +336,23 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
       runtimeInstanceId: options.supervisor.getRuntime(state.store.paths.cwd, state.store).runtimeInstanceId, now: now() });
     dispatch(binding, child);
   };
+  const startSuspended = (binding: DelegationRuntimeParentBinding, classification: DelegationRecoveryClassification): boolean => {
+    if (classification.kind !== "interrupted" || !classification.runtime.attempt) return false;
+    const { state } = assertParent(binding), sourceFence = toRuntimeAttemptFence(classification.runtime.attempt);
+    const suspension = state.lifecycle.getRunSuspensionForAttempt(sourceFence.attemptId);
+    const stopped = suspension && state.lifecycle.getRunSuspensionStop(suspension.id);
+    // Manual interruption is not graceful recovery authority. The Core
+    // transaction additionally checks the exact source and direct-parent ACK.
+    if (!suspension?.seal || suspension.state !== "sealed" || stopped?.state !== "stopped"
+      || stopped.begin.source.kind !== "delegated" || !stopped.receiptDigest) return false;
+    const activated = state.lifecycle.activateSuspension({ suspensionId: suspension.id, sourceFence,
+      expectedReceiptDigest: stopped.receiptDigest, parentFence: binding.sourceFence,
+      expectedStepRevision: classification.runtime.step.revision,
+      runtimeInstanceId: options.supervisor.getRuntime(state.store.paths.cwd, state.store).runtimeInstanceId, now: now() });
+    if (activated.kind !== "activated") return false; // A stored activation is observation only.
+    dispatch(binding, activated.child);
+    return true;
+  };
 
   const registry: DelegationRuntimeRegistry = Object.freeze({
     registerStore(store, lifecycle) {
@@ -274,7 +361,9 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
       options.supervisor.getRuntime(store.paths.cwd, store);
       const existing = states.get(store);
       if (existing && existing.lifecycle !== lifecycle) return blocked("delegation.authority_invalid");
-      if (!existing) states.set(store, { store, lifecycle, pending: new Map(), owned: new Map(), dispatchBlocks: new Map() });
+      if (!existing) states.set(store, { store, lifecycle, pending: new Map(), owned: new Map(), dispatchBlocks: new Map(),
+        closedParents: new Set(), stopping: new Map(), terminalBlocks: new Map() });
+      void reconcileIntents(requireState(store));
     },
     isSelectedWorkflow(input) {
       if (!accepting || !enabled() || !states.has(input.store)) return false;
@@ -322,7 +411,7 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
             while (current.kind !== "terminal" && !state.dispatchBlocks.has(reservationId) && Date.now() < deadline) {
               signal.throwIfAborted();
               await delay(Math.min(100, deadline - Date.now()), undefined, { signal });
-              current = childFor(binding, reservationId);
+              current = childFor(binding, reservationId, true);
             }
             signal.throwIfAborted();
             return { timedOut: current.kind !== "terminal" && !state.dispatchBlocks.has(reservationId), observation: observe(state, current) };
@@ -333,7 +422,11 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
           childFor(binding, reservationId);
           const state = requireState(binding.store), result = state.lifecycle.interrupt({ reservationId,
             parentFence: binding.sourceFence, callId: delegationId(input.callId), now: now() });
-          state.owned.set(result.run.id, Object.freeze({ ...result.sourceFence }));
+          const owned = state.owned.get(result.run.id);
+          if (!owned || !sameFenceIdentity(owned.fence, result.sourceFence)) {
+            state.owned.set(result.run.id, Object.freeze({ reservationId, fence: Object.freeze({ ...result.sourceFence }),
+              parentFence: Object.freeze({ ...binding.sourceFence }) }));
+          }
           stopExact(state, result.run.id, result.sourceFence, false);
           return { ...observe(state, childFor(binding, reservationId)), replayed: result.replayed };
         },
@@ -351,6 +444,10 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
     },
     recoverStore(store) {
       const empty = { scanned: 0, dispatched: 0, retained: 0 };
+      // Disabled ordinary Stores are deliberately not dynamically enrolled.
+      // Registered Stores must still clean up existing durable intents when
+      // producers are off; that does not authorize inventing a composition.
+      if (states.has(store)) void reconcileIntents(requireState(store));
       if (!accepting || !enabled()) return { status: "disabled", ...empty };
       const state = requireState(store);
       const sweep = state.sweep ?? { cutoff: now() };
@@ -363,14 +460,20 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
       let dispatched = 0, retained = 0;
       for (const reservationId of page.reservationIds) {
         const classification = state.lifecycle.recover(delegationId(reservationId)), child = classification.runtime;
-        // A created/unknown, stopped or terminal child never becomes permission to re-dispatch.
-        if (classification.kind !== "queued_unclaimed" || !options.assertRecoveryParentCurrent) { retained++; continue; }
+        // Unknown dispatches and manual interrupts stay retained. A graceful
+        // interrupted source has its own one-shot activation, never public resume.
+        if (!["queued_unclaimed", "interrupted"].includes(classification.kind) || !options.assertRecoveryParentCurrent) { retained++; continue; }
         const run = store.getRun(child.step.parentRunId), unit = run?.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;
         const attempt = unit?.activeAttemptId ? store.getWorkUnitAttempt(unit.activeAttemptId) : undefined;
         if (!run || !attempt) { retained++; continue; }
         const binding: DelegationRuntimeParentBinding = { store, runId: run.id, sourceFence: toRuntimeAttemptFence(attempt),
           assertCurrent: () => options.assertRecoveryParentCurrent!({ store, runId: run.id, sourceFence: toRuntimeAttemptFence(attempt) }) };
-        try { childFor(binding, reservationId); startQueued(binding, classification); dispatched++; }
+        try {
+          childFor(binding, reservationId);
+          if (classification.kind === "queued_unclaimed") { startQueued(binding, classification); dispatched++; }
+          else if (startSuspended(binding, classification)) dispatched++;
+          else retained++;
+        }
         catch (error) {
           if (process.env.LING_DEBUG_DELEGATION_STACK === "1") console.error("delegation.recovery", error);
           retained++;
@@ -379,17 +482,149 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
       state.sweep = page.nextCursor ? { cutoff: sweep.cutoff, after: page.nextCursor } : undefined;
       return { status: "scanned", scanned: page.reservationIds.length, dispatched, retained };
     },
+    prepareParentTerminalIntent(input) {
+      const state = requireState(input.store);
+      const original = state.lifecycle.getRunTerminalIntent(input.sourceFence.attemptId);
+      if (original && (original.payload.runId !== input.runId
+        || !sameFenceIdentity(original.payload.sourceFence, input.sourceFence))) return blocked("delegation.source_attempt_stale");
+      state.lifecycle.prepareRunTerminalIntent({ runId: input.runId, sourceFence: input.sourceFence,
+        // The first durable disposition owns cleanup. Parent stop must not
+        // reclassify an original failure as cancellation (or vice versa).
+        desiredOutcome: original?.payload.desiredOutcome ?? input.desiredOutcome,
+        errorCode: original?.payload.errorCode ?? input.errorCode,
+        errorMessage: original?.payload.errorMessage ?? input.errorMessage, now: now() });
+      state.closedParents.add(parentKey(input.runId, input.sourceFence));
+    },
+    reconcileTerminalIntents(store) { return reconcileIntents(requireState(store)); },
+    async closeParent(input) {
+      const state = requireState(input.store), sourceFence = delegationFence(input.sourceFence);
+      const runId = delegationId(input.runId), parent = options.activeRuns.get(runId);
+      // Cleanup is independent of the producer feature gate and the parent's
+      // aborted signal, but never independent of its exact original authority.
+      if (!sameActiveFence(parent, sourceFence)
+        || !state.store.isCurrentRunExecutionOwner(runId, sourceFence, true)) return blocked("delegation.source_attempt_stale");
+      state.closedParents.add(parentKey(runId, sourceFence));
+      const evidence = state.store.getDelegationCompletionEvidence({ rootRunIds: [runId] });
+      const barrier = () => new DelegationCompletionBarrierError("blocked", evidence.fingerprint);
+      if (evidence.issues.length) throw barrier(); // Corrupt lineage cannot authorize stopping a foreign Host.
+      const byParent = new Map<string, typeof evidence.steps[number][]>();
+      for (const read of evidence.steps) {
+        const children = byParent.get(read.step.parentRunId) ?? [];
+        children.push(read); byParent.set(read.step.parentRunId, children);
+      }
+      const selected: typeof evidence.steps[number][] = [], queue = [runId], seen = new Set<string>();
+      for (let index = 0; index < queue.length; index++) {
+        const parentId = queue[index]!;
+        if (seen.has(parentId)) continue;
+        seen.add(parentId);
+        for (const read of byParent.get(parentId) ?? []) {
+          if (parentId === runId && input.outcome === "succeeded" && read.step.required) continue;
+          selected.push(read);
+          const childId = read.reservation?.childRunId;
+          if (childId) queue.push(childId);
+        }
+      }
+      // Freeze the whole selected subtree before delivering any stop request:
+      // abort callbacks must not race a nested spawn/resume/recovery launch.
+      for (const read of selected) if (read.childRun && read.attempt) {
+        state.closedParents.add(parentKey(read.childRun.id, read.attempt.sourceFence));
+      }
+      const completions: Promise<unknown>[] = [];
+      const stops: { readonly read: typeof selected[number]; readonly active: NonNullable<typeof parent>;
+        readonly key: string }[] = [];
+      // Persist exact dispositions leaf-first, before *any* abort callback can
+      // race a shutdown admission latch. On partial persistence failure keep
+      // every existing intent and deliver no physical stop from this batch.
+      for (const read of [...selected].sort((a, b) => b.step.depth - a.step.depth)) {
+        const fence = read.attempt?.sourceFence, childId = read.reservation?.childRunId;
+        if (["succeeded", "failed", "cancelled"].includes(read.step.state)) {
+          if (fence && childId) state.stopping.delete(parentKey(childId, fence));
+          continue;
+        }
+        const active = childId ? options.activeRuns.get(childId) : undefined;
+        if (!fence || !childId || active && !sameActiveFence(active, fence)) throw barrier();
+        const key = parentKey(childId, fence), captured = state.stopping.get(key);
+        // Observing a previously captured lifetime needs no new execution
+        // admission: the same Attempt may already be terminal while its sealed
+        // result is still being committed. Never use this branch to stop a new
+        // Host or to treat an uncaptured/crashed child as drained.
+        if (captured) { completions.push(captured); continue; }
+        if (!active?.completion || !state.store.isCurrentRunExecutionOwner(childId, fence, true)) throw barrier();
+        const original = state.lifecycle.getRunTerminalIntent(fence.attemptId);
+        if (original && (original.payload.runId !== childId || !sameFenceIdentity(original.payload.sourceFence, fence))) throw barrier();
+        // A prior in-memory abort without durable provenance remains unknown;
+        // it cannot acquire a new disposition on behalf of stop_with_parent.
+        if (!original && (active.stopIntent || active.abortController.signal.aborted)) throw barrier();
+        state.lifecycle.prepareRunTerminalIntent({ runId: childId, sourceFence: fence,
+          desiredOutcome: original?.payload.desiredOutcome ?? "cancelled", errorCode: original?.payload.errorCode ?? "cancelled",
+          errorMessage: original?.payload.errorMessage ?? "cancelled", now: now() });
+        stops.push({ read, active, key });
+      }
+      for (const { read, active, key } of stops) {
+        const childId = read.childRun!.id;
+        if (options.activeRuns.get(childId) !== active) throw barrier();
+        const workflow = read.step.workflowId ?? "delegation";
+        options.activeRuns.requestStop(childId, { kind: "workflow_cancel", workflowId: workflow,
+          reason: "Host stop_with_parent" });
+        // Capture the original Promise before live-entry deletion/replacement.
+        // Its resolution is still not a durable stop/settlement/result receipt.
+        const completion = track(Promise.resolve(active.completion!), true);
+        state.stopping.set(key, completion); completions.push(completion);
+      }
+      try { await waitForOriginalCompletions(completions, input.signal); }
+      catch { input.signal.throwIfAborted(); throw barrier(); }
+      if (!state.store.isCurrentRunExecutionOwner(runId, sourceFence, true)) return blocked("delegation.source_attempt_stale");
+    },
     stopAdmission() {
       accepting = false;
-      shutdown.abort();
       if (recoveryTimer) clearInterval(recoveryTimer);
       recoveryTimer = undefined;
     },
     abortOwned() {
-      for (const state of states.values()) for (const [runId, fence] of state.owned) stopExact(state, runId, fence, true);
+      if (!shutdownWork) {
+        shutdownWork = Promise.resolve().then(() => {
+          const shutdownAt = now();
+          const candidates = [...states.values()].flatMap(state => [...state.owned.entries()].map(([runId, owned]) => {
+            const classification = state.lifecycle.recover(owned.reservationId);
+            if (classification.runtime.run.id !== runId
+              || !classification.runtime.attempt
+              || !sameFenceIdentity(toRuntimeAttemptFence(classification.runtime.attempt), owned.fence)) {
+              return blocked("delegation.source_attempt_stale");
+            }
+            return { state, runId, owned, classification };
+          })).sort((left, right) => right.classification.runtime.step.depth - left.classification.runtime.step.depth);
+          const stops: { readonly state: StoreState; readonly runId: string; readonly fence: RuntimeAttemptFenceV1 }[] = [];
+          // Persist the whole tree leaf-first. A parent interruption must not
+          // invalidate authority needed to record a descendant's control fact.
+          for (const candidate of candidates) {
+            const { classification, owned } = candidate;
+            if (classification.kind === "interrupting") {
+              stops.push({ state: candidate.state, runId: candidate.runId, fence: owned.fence });
+              continue;
+            }
+            if (classification.kind !== "running" && classification.kind !== "waiting") continue;
+            const interrupted = candidate.state.lifecycle.interrupt({ reservationId: owned.reservationId,
+              parentFence: owned.parentFence, callId: delegationId(`daemon-shutdown-${owned.fence.attemptId}`), now: shutdownAt });
+            if (!sameFenceIdentity(interrupted.sourceFence, owned.fence)) return blocked("delegation.source_attempt_stale");
+            stops.push({ state: candidate.state, runId: candidate.runId, fence: interrupted.sourceFence });
+          }
+          // Only after every resumable child owns a durable interrupt fact may
+          // the Host signal the original physical executions.
+          for (const stop of stops) stopExact(stop.state, stop.runId, stop.fence, true);
+          // Stopping new work alone must not turn an in-flight observation
+          // into a failed tool before its source can seal a safe boundary.
+          shutdown.abort();
+        }).catch(error => {
+          shutdownFailure = error;
+          throw error;
+        });
+      }
+      return shutdownWork;
     },
     async settle() {
+      if (shutdownFailure) throw shutdownFailure;
       while (work.size) await Promise.allSettled([...work]);
+      if (shutdownFailure) throw shutdownFailure;
       if (failures.length) throw new AggregateError([...failures], "delegation_runtime_settlement_failed");
     },
     isEnabled: enabled,
@@ -422,4 +657,31 @@ function compareCursor(left: DelegationRuntimeDiscoveryCursor, right: Delegation
 function publicBlockCode(error: unknown): string {
   const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
   return typeof code === "string" && /^delegation\.[a-z_]+$/.test(code) ? code : "delegation.dispatch_blocked";
+}
+
+function parentKey(runId: string, fence: RuntimeAttemptFenceV1): string {
+  return JSON.stringify([runId, fence.workUnitId, fence.attemptId, fence.runtimeInstanceId, fence.fencingToken]);
+}
+function hasFrozenWorkflowSelection(value: unknown, workflowId: string): boolean {
+  if (!Array.isArray(value) || value.length > 100 || new Set(value).size !== value.length) return false;
+  return value.every(id => typeof id === "string" && /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,255}$/u.test(id))
+    && value.includes(workflowId);
+}
+function sameActiveFence(active: ReturnType<ActiveRunRegistry["get"]>, fence: RuntimeAttemptFenceV1): boolean {
+  return Boolean(active && active.workUnitId === fence.workUnitId && active.attemptId === fence.attemptId
+    && active.runtimeInstanceId === fence.runtimeInstanceId && active.fencingToken === fence.fencingToken);
+}
+function sameFenceIdentity(left: RuntimeAttemptFenceV1, right: RuntimeAttemptFenceV1): boolean {
+  return left.workUnitId === right.workUnitId && left.attemptId === right.attemptId
+    && left.runtimeInstanceId === right.runtimeInstanceId && left.fencingToken === right.fencingToken;
+}
+async function waitForOriginalCompletions(completions: readonly Promise<unknown>[], signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  let abort: (() => void) | undefined;
+  try {
+    await Promise.race([Promise.all(completions), new Promise<never>((_resolve, reject) => {
+      abort = () => reject(signal.reason);
+      signal.addEventListener("abort", abort, { once: true });
+    })]);
+  } finally { if (abort) signal.removeEventListener("abort", abort); }
 }

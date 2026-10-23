@@ -13,13 +13,23 @@ import {
 
 const appliedAt = "2026-09-13T00:00:00.000Z";
 
-test("schema 134 upgrades to runner continuation schema 135 and reruns idempotently", async (t) => {
+test("runner continuation 135 reinstalls with its newer recovery indexes and reruns idempotently", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-runner-continuation-upgrade-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   let store = createSqliteRunStore(cwd);
   store.close();
   const path = resolveRuntimePaths(cwd).databasePath;
   let database = new DatabaseSync(path);
+  // This is a row-free overlay reconstruction, not a full historical134 image.
+  // Dropping135 also drops two180 indexes: remove the entire exact180 overlay
+  // and marker, rather than asking production to silently repair marked damage.
+  const recoveryIndexes = ["idx_harness_delegation_charge_reservation", "idx_harness_delegation_reservation_created",
+    "idx_harness_work_units_discovery", "idx_harness_continuations_due", "idx_harness_continuations_scheduled_due"];
+  for (const name of recoveryIndexes) {
+    assert.ok(database.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?").get(name));
+    database.exec(`DROP INDEX ${name}`);
+  }
+  database.exec("DELETE FROM schema_migrations WHERE version=180");
   database.exec(`
     DROP TABLE run_compaction_checkpoints;
     DELETE FROM schema_migrations WHERE version = 140;
@@ -50,6 +60,9 @@ test("schema 134 upgrades to runner continuation schema 135 and reruns idempoten
   assert.ok(columns.has("claim_token"));
   assert.ok(columns.has("target_attempt_id"));
   assert.equal(database.prepare("PRAGMA foreign_key_check(runner_continuations)").all().length, 0);
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=180").get().name,
+    "create_harness_recovery_discovery_indexes_v1");
+  for (const name of recoveryIndexes) assert.ok(database.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?").get(name));
   assert.equal(applyRunnerContinuationMigration(migrationInput(database)), false);
 });
 

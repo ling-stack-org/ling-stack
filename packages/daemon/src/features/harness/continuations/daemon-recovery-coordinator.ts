@@ -46,7 +46,8 @@ export interface DaemonRunnerRecoveryResult {
  * Re-dispatches only fenced, daemon-owned Run continuations after startup.
  * SQLite remains the authority for activation; this class only discovers
  * eligible stale WorkUnits and prevents duplicate in-process dispatch. Channel
- * reply children belong to the channel dispatch recovery path instead.
+ * reply children belong to channel dispatch recovery; dynamic delegated children
+ * belong to their private registry, which preserves custody and budget binding.
  */
 export class DaemonRunnerRecoveryCoordinator {
   private readonly stores = new Set<RunStore>();
@@ -298,6 +299,9 @@ export class DaemonRunnerRecoveryCoordinator {
 
 /** Scheduled and stale discovery share ownership, not their distinct Attempt eligibility. */
 function isDaemonOwnedRecoveryRun(store: RunStore, workUnit: WorkUnit, run: RunSession): boolean {
+  // A task_run shape is not recovery authority for a delegated child. Ordinary
+  // continuations have no OriginalDelegatedExecutionEntry or child budget port.
+  if (workUnit.ownerType === "delegation_step") return false;
   if (workUnit.kind !== "task_run" && workUnit.kind !== "conversation_run"
     && workUnit.kind !== "teammate_direct_reply") return false;
   if (workUnit.kind === "task_run") return true;

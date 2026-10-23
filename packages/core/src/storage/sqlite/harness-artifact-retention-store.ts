@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { SQLOutputValue } from "node:sqlite";
 import {
   HarnessReliabilityError,
@@ -8,9 +7,13 @@ import {
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { harnessReliabilityIdentity, harnessReliabilityLimit, harnessReliabilityTime } from "./harness-reliability-schema.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { pinHarnessArtifactWithinTransaction, readHarnessRetainedBody, releaseHarnessArtifactWithinTransaction } from "./harness-artifact-recovery-pins.js";
 
-const MAX_BODY_BYTES = 16 * 1024 * 1024;
+// JSON escaping and base64url encoding can expand a valid 1024-code-unit ID.
+// The transport token has its own bound; the decoded artifact ID keeps its limit.
+const MAX_CURSOR_LENGTH = 16 * 1024;
 const ownTables = new Set(["harness_artifact_retention", "harness_artifact_pins", "harness_artifact_pin_events", "harness_artifact_gc_receipts"]);
+interface RetentionCursor { readonly retainUntil: string; readonly artifactId: string }
 
 /** Explicit Host policy, never a default age-based deletion of all artifacts. */
 export class SqliteHarnessArtifactRetentionStore implements HarnessArtifactRetentionStore {
@@ -39,15 +42,7 @@ export class SqliteHarnessArtifactRetentionStore implements HarnessArtifactReten
     const now = harnessReliabilityTime(input.now);
     if (input.reason !== "recovery" && input.reason !== "audit_hold") throw new TypeError("artifact_pin_reason_invalid");
     this.transaction(() => {
-      this.readRetainedBody(artifactId);
-      const existing = this.context.database.prepare("SELECT reason,released_at FROM harness_artifact_pins WHERE artifact_id=? AND holder=?").get(artifactId, holder);
-      if (existing && existing.reason !== input.reason) throw new HarnessReliabilityError("artifact.pin_holder_conflict");
-      if (existing && existing.released_at === null) return;
-      this.context.database.prepare(`INSERT INTO harness_artifact_pins(artifact_id,holder,reason,created_at)
-        VALUES (?,?,?,?) ON CONFLICT(artifact_id,holder) DO UPDATE SET created_at=excluded.created_at,released_at=NULL`)
-        .run(artifactId, holder, input.reason, now);
-      this.context.database.prepare("INSERT INTO harness_artifact_pin_events(artifact_id,holder,event,reason,created_at) VALUES (?,?,'pin',?,?)")
-        .run(artifactId, holder, input.reason, now);
+      pinHarnessArtifactWithinTransaction(this.context.database, { artifactId, holder, reason: input.reason, now });
     });
   }
 
@@ -56,12 +51,7 @@ export class SqliteHarnessArtifactRetentionStore implements HarnessArtifactReten
     const holder = harnessReliabilityIdentity(input.holder);
     const now = harnessReliabilityTime(input.now);
     this.transaction(() => {
-      const existing = this.context.database.prepare("SELECT reason,released_at FROM harness_artifact_pins WHERE artifact_id=? AND holder=?").get(artifactId, holder);
-      if (!existing) throw new HarnessReliabilityError("artifact.pin_missing");
-      if (existing.released_at !== null) return;
-      this.context.database.prepare("UPDATE harness_artifact_pins SET released_at=? WHERE artifact_id=? AND holder=?").run(now, artifactId, holder);
-      this.context.database.prepare("INSERT INTO harness_artifact_pin_events(artifact_id,holder,event,reason,created_at) VALUES (?,?,'release',?,?)")
-        .run(artifactId, holder, existing.reason!, now);
+      releaseHarnessArtifactWithinTransaction(this.context.database, { artifactId, holder, now }, true);
     });
   }
 
@@ -76,12 +66,14 @@ export class SqliteHarnessArtifactRetentionStore implements HarnessArtifactReten
   } {
     const now = harnessReliabilityTime(input.now);
     const limit = harnessReliabilityLimit(input.limit);
-    const after = input.after === undefined ? undefined : harnessReliabilityIdentity(input.after);
+    const after = input.after === undefined ? undefined : decodeRetentionCursor(input.after);
     return this.transaction(() => {
-      const statement = this.context.database.prepare(`SELECT artifact_id FROM harness_artifact_retention
-        WHERE pruned_at IS NULL AND retain_until<=? ${after === undefined ? "" : "AND artifact_id COLLATE BINARY>?"}
-        ORDER BY artifact_id COLLATE BINARY LIMIT ?`);
-      const rows = after === undefined ? statement.all(now, limit + 1) : statement.all(now, after, limit + 1);
+      const statement = this.context.database.prepare(`SELECT artifact_id,retain_until FROM harness_artifact_retention
+        WHERE pruned_at IS NULL AND retain_until<=? ${after === undefined ? "" : "AND (retain_until,artifact_id)>(?,?)"}
+        ORDER BY retain_until,artifact_id LIMIT ?`);
+      const rows = after === undefined
+        ? statement.all(now, limit + 1)
+        : statement.all(now, after.retainUntil, after.artifactId, limit + 1);
       const examined = rows.slice(0, limit);
       const references = this.foreignArtifactReferences();
       const prunedArtifactIds: string[] = [];
@@ -105,7 +97,9 @@ export class SqliteHarnessArtifactRetentionStore implements HarnessArtifactReten
       }
       const last = examined.at(-1);
       return { examined: examined.length, prunedArtifactIds,
-        ...(rows.length > limit && last ? { nextCursor: harnessReliabilityIdentity(last.artifact_id) } : {}) };
+        ...(rows.length > limit && last ? { nextCursor: encodeRetentionCursor({
+          retainUntil: harnessReliabilityTime(last.retain_until), artifactId: harnessReliabilityIdentity(last.artifact_id),
+        }) } : {}) };
     });
   }
 
@@ -122,18 +116,7 @@ export class SqliteHarnessArtifactRetentionStore implements HarnessArtifactReten
   }
 
   private readRetainedBody(artifactId: string): { readonly contentSha256: string; readonly bytes: number } {
-    const metadata = this.context.database.prepare(`SELECT content_sha256,length(CAST(sealed_payload_json AS BLOB)) AS bytes
-      FROM artifacts WHERE id=?`).get(artifactId);
-    if (!metadata || metadata.bytes === null) throw new HarnessReliabilityError("artifact.body_unavailable");
-    if (typeof metadata.bytes !== "number" || metadata.bytes < 0 || metadata.bytes > MAX_BODY_BYTES) {
-      throw new HarnessReliabilityError("artifact.body_budget_exceeded");
-    }
-    const body = this.context.database.prepare("SELECT sealed_payload_json FROM artifacts WHERE id=?").get(artifactId)?.sealed_payload_json;
-    if (typeof body !== "string" || typeof metadata.content_sha256 !== "string"
-      || createHash("sha256").update(body, "utf8").digest("hex") !== metadata.content_sha256) {
-      throw new HarnessReliabilityError("artifact.body_digest_mismatch");
-    }
-    return { contentSha256: metadata.content_sha256, bytes: metadata.bytes };
+    return readHarnessRetainedBody(this.context.database, artifactId);
   }
 
   private transaction<T>(write: () => T): T {
@@ -160,3 +143,21 @@ function mapRetention(row: Record<string, SQLOutputValue>): HarnessArtifactReten
   };
 }
 function quote(value: string): string { return `"${value.replace(/"/g, '""')}"`; }
+
+function encodeRetentionCursor(cursor: RetentionCursor): string {
+  return Buffer.from(JSON.stringify([cursor.retainUntil, cursor.artifactId]), "utf8").toString("base64url");
+}
+
+function decodeRetentionCursor(value: string): RetentionCursor {
+  try {
+    if (typeof value !== "string" || value.length === 0 || value.length > MAX_CURSOR_LENGTH
+      || !/^[A-Za-z0-9_-]+$/u.test(value)) throw new TypeError();
+    const decoded = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+    if (!Array.isArray(decoded) || decoded.length !== 2) throw new TypeError();
+    const cursor = { retainUntil: harnessReliabilityTime(decoded[0]), artifactId: harnessReliabilityIdentity(decoded[1]) };
+    if (encodeRetentionCursor(cursor) !== value) throw new TypeError();
+    return cursor;
+  } catch (error) {
+    throw new TypeError("artifact_retention_cursor_invalid", { cause: error });
+  }
+}

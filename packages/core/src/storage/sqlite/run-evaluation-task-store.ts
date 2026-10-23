@@ -38,6 +38,7 @@ import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { mapRunEvaluationTask, mapRunEvaluationTaskAttempt, mapRunEvaluationTaskResult } from "./run-evaluation-task-mappers.js";
 import { taskIdentity, taskLimit, validateTaskInput, validateTaskFrozen, validateTaskArtifactJson, TASK_RESULT_FIELDS } from "./run-evaluation-task-validation.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { harnessArtifactOwnerHolder, syncHarnessArtifactOwnerPins } from "./harness-artifact-recovery-pins.js";
 type Row = Record<string, SQLOutputValue>;
 interface Ports {
   readonly getRun: (id: string) => RunSession | undefined;
@@ -90,10 +91,13 @@ export class SqliteRunEvaluationTaskStore implements RunEvaluationTaskStore {
       const row = this.context.database.prepare("SELECT * FROM run_evaluation_tasks WHERE evaluation_id=? AND frozen_digest=? AND repeat_ordinal=?").get(input.evaluationId, input.frozenGraderDigest, input.repeatOrdinal);
       if (row) {
         const task = mapRunEvaluationTask(row as Row);
-        return task.idempotencyKey === key ? ok(task, true) : fail("identity_conflict");
+        if (task.idempotencyKey !== key) return fail("identity_conflict");
+        this.syncRecoveryPins(task, input.now);
+        return ok(task, true);
       }
       const id = createRunEvaluationTaskId();
       this.context.database.prepare("INSERT INTO run_evaluation_tasks(id,schema_version,evaluation_id,evaluation_key,grader_type,frozen_json,frozen_artifact_id,frozen_artifact_sha,frozen_digest,repeat_ordinal,idempotency_key,state,revision,created_at,updated_at) VALUES(?,1,?,?,'model',?,?,?,?,?,?,'queued',0,?,?)").run(id, evaluation.id, evaluation.idempotencyKey, JSON.stringify(frozen), input.frozenGraderArtifact.artifactId, input.frozenGraderArtifact.contentSha256, input.frozenGraderDigest, input.repeatOrdinal, key, input.now, input.now);
+      this.syncRecoveryPins(this.getRunEvaluationTask(id)!, input.now);
       return ok(this.getRunEvaluationTask(id)!);
   }
   listClaimableRunEvaluationTasks(input: ListClaimableRunEvaluationTasksInput) {
@@ -117,6 +121,7 @@ export class SqliteRunEvaluationTaskStore implements RunEvaluationTaskStore {
       if (task.state !== "queued") return fail("invalid_transition");
       if (task.nextAttemptAt && task.nextAttemptAt > input.now) return fail("lease_not_claimable");
       this.validateTask(task);
+      this.syncRecoveryPins(task, input.now);
       const count = this.context.database.prepare("SELECT COALESCE(MAX(attempt_number),0) AS n FROM run_evaluation_task_attempts WHERE task_id=?").get(task.id)!.n as number;
       const id = createRunEvaluationTaskAttemptId();
       this.context.database.prepare("INSERT INTO run_evaluation_task_attempts(id,schema_version,task_id,attempt_number,state,claim_owner,claim_token,claim_expires_at,revision,claimed_at,updated_at) VALUES(?,1,?,?,'claimed',?,?,?,0,?,?)").run(id, task.id, count + 1, input.claimOwner, input.claimToken, input.claimExpiresAt, input.now, input.now);
@@ -145,6 +150,7 @@ export class SqliteRunEvaluationTaskStore implements RunEvaluationTaskStore {
       const pair = this.fence(input, true);
       if (!pair.ok) return pair;
       this.validateTask(pair.value.task);
+      this.syncRecoveryPins(pair.value.task, input.now);
       if (pair.value.attempt.state === "dispatch_admitted") return pair.value.attempt.requestDigest === input.requestDigest && pair.value.attempt.executionScopeDigest === input.executionScopeDigest ? ok({
         ...pair.value,
         mayDispatch: false
@@ -198,6 +204,7 @@ export class SqliteRunEvaluationTaskStore implements RunEvaluationTaskStore {
       this.context.database.prepare(`INSERT INTO run_evaluation_task_results(${columns.join(",")}) SELECT ${columns.map(() => "?").join(",")} WHERE EXISTS(SELECT 1 FROM run_evaluation_tasks t JOIN run_evaluation_task_attempts a ON a.id=t.active_attempt_id WHERE t.id=? AND a.id=? AND t.revision=? AND a.revision=? AND a.claim_owner=? AND a.claim_token=? AND a.claim_expires_at>? AND t.state='active' AND a.state='dispatch_admitted')`).run(...values, task.id, attempt.id, task.revision, attempt.revision, input.claimOwner, input.claimToken, input.now);
       if (!this.getRunEvaluationTaskResult(task.id)) throw new RunEvaluationInputError("evaluation.task_invalid");
       this.updatePair(pair.value, input, "state='completed',completed_at=?,updated_at=?", [input.now, input.now], "state='completed',completed_at=?,failure_code=NULL,updated_at=?", [input.now, input.now]);
+      this.syncRecoveryPins(this.getRunEvaluationTask(task.id)!, input.now);
       return ok({
         ...this.pair(task.id, attempt.id),
         result: this.getRunEvaluationTaskResult(task.id)!
@@ -333,10 +340,22 @@ export class SqliteRunEvaluationTaskStore implements RunEvaluationTaskStore {
   }
   private finishBefore(pair: RunEvaluationTaskClaim, input: RunEvaluationTaskFence, next: "queued" | "failed" | "cancelled", code: string, nextAt?: string, expired = false): void {
     this.updatePair(pair, input, "state=?,failure_code=?,completed_at=?,updated_at=?", [next === "queued" ? "abandoned_before_dispatch" : next, code, input.now, input.now], "state=?,active_attempt_id=?,next_attempt_at=?,failure_code=?,completed_at=?,updated_at=?", [next, next === "queued" ? null : pair.attempt.id, nextAt ?? null, code, next === "queued" ? null : input.now, input.now], expired);
+    this.syncRecoveryPins(this.getRunEvaluationTask(pair.task.id)!, input.now);
   }
   private unknown(pair: RunEvaluationTaskClaim, input: RunEvaluationTaskFence, expired = false): void {
     this.updatePair(pair, input, "state='unknown_outcome',failure_code='evaluation.dispatch_outcome_unknown',completed_at=?,updated_at=?", [input.now, input.now], "state='unknown_outcome',failure_code='evaluation.dispatch_outcome_unknown',completed_at=?,updated_at=?", [input.now, input.now], expired);
+    this.syncRecoveryPins(this.getRunEvaluationTask(pair.task.id)!, input.now);
     this.ports.onDispatchUnknownWithinTransaction?.(pair.attempt.id, input.now);
+  }
+  private syncRecoveryPins(task: RunEvaluationTaskV1, now: string): void {
+    const evaluation = this.ports.getRunEvaluation(task.evaluationId);
+    if (!evaluation) throw new EvidenceError("evaluation.lineage_invalid");
+    syncHarnessArtifactOwnerPins(this.context.database, {
+      holder: harnessArtifactOwnerHolder("evaluation_task", task.id), now,
+      keep: ["queued", "active", "unknown_outcome"].includes(task.state),
+      artifactIds: [evaluation.suiteArtifactId, evaluation.caseArtifactId, evaluation.baselineArtifactId,
+        evaluation.candidateArtifactId, task.frozenGraderArtifact.artifactId],
+    });
   }
   private changed(count: number | bigint): void {
     if (count !== 1 && count !== 1n) throw new RunEvaluationInputError("evaluation.task_invalid");

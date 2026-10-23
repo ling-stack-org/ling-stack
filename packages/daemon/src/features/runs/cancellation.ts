@@ -71,6 +71,15 @@ export function ensureRunCancelled(input: {
 function cancelCurrentRun(input: Parameters<typeof ensureRunCancelled>[0], current: NonNullable<ReturnType<RunStore["getRun"]>>)
   : { readonly event: RunEventEnvelope } {
 
+  // The original terminal writer owns cleanup until its real Host drain is
+  // verified. This runs inside the cancellation fence, before any projection,
+  // approval, status or resource write can steal that pending disposition.
+  const unit = current.workUnitId ? input.store.getWorkUnit(current.workUnitId) : undefined;
+  const attempt = unit?.activeAttemptId ? input.store.getWorkUnitAttempt(unit.activeAttemptId) : undefined;
+  if (attempt && input.store.hasPendingRunTerminalIntent({ runId: current.id, ...toRuntimeAttemptFence(attempt) })) {
+    throw new HttpError(409, "run_terminal_cleanup_pending", "The original execution is still being drained before its terminal state can be committed.");
+  }
+
   // A pending required pause has not yet established physical safety. A
   // generic cancellation would otherwise release its retained attempt leases
   // and publish a terminal summary while the Host still has unknown effects.

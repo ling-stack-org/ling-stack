@@ -128,8 +128,10 @@ function recoveryMode(value: readonly unknown[]): PiRunnerCompactionRecoveryMode
   const last = value.at(-1);
   if (!isRecord(last)) return undefined;
   if (last.role === "toolResult") return "continue";
-  if (last.role !== "assistant") return undefined;
-  if (Array.isArray(last.content) && last.content.some((block) => isRecord(block) && block.type === "toolCall")) {
+  // Match the Host's completion boundary before mutating SDK state or sending
+  // its prepared ACK. Assistant text alone is not provider settlement evidence.
+  if (last.role !== "assistant" || last.stopReason !== "stop" || !Array.isArray(last.content)) return undefined;
+  if (last.content.some((block) => isRecord(block) && block.type === "toolCall")) {
     return undefined;
   }
   return "complete";

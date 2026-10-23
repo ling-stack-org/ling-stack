@@ -1,4 +1,4 @@
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual, types } from "node:util";
 import {
   captureRunProgressCheckpointLineage,
   RunProgressCheckpointError,
@@ -21,6 +21,10 @@ export type OrdinaryRunProgressResult =
       readonly messages: readonly DelegationInstructionModelMessage[];
     } }
   | { readonly kind: "unsupported"; readonly code: "checkpoint.effect_unjournaled" }
+  | { readonly kind: "blocked"; readonly code: RunProgressCheckpointBlockerCode };
+
+export type RunSuspensionProgressResult =
+  | { readonly kind: "sealed"; readonly witness: RunProgressCheckpointWitness }
   | { readonly kind: "blocked"; readonly code: RunProgressCheckpointBlockerCode };
 
 /** Read only the Core head authority, never a best-effort artifact or chat window. */
@@ -96,6 +100,45 @@ export class OrdinaryRunProgressController {
     readonly modelView: readonly unknown[] | undefined;
     readonly activeToolCallIds: readonly string[];
   }): OrdinaryRunProgressResult {
+    return this.checkpointAtBoundary(input, false);
+  }
+
+  /**
+   * A suspension must have an exact durable SDK view even without a new tool
+   * round. This only seals progress: it grants neither stop nor resume authority.
+   * Pending instructions stay queued because the Runner will not install them
+   * after this boundary. Final/aborted assistant views remain Core-rejected.
+   */
+  sealSuspensionBoundary(input: {
+    readonly modelView: readonly unknown[] | undefined;
+    readonly activeToolCallIds: readonly string[];
+  }): RunSuspensionProgressResult {
+    if (!Array.isArray(input.modelView)) return blocked("checkpoint.snapshot_unavailable");
+    const result = this.checkpointAtBoundary(input, true);
+    if (result.kind === "blocked" || result.kind === "unsupported") return blocked(result.code);
+    const expected = this.witness;
+    if (!expected || !isDeepStrictEqual(expected.sourceFence, this.input.sourceFence)) {
+      return blocked("checkpoint.lineage_mismatch");
+    }
+    // Reusing an unchanged head still revalidates the full Core payload,
+    // permissions, owner, event watermark and effects. No in-memory safe latch.
+    // This is the current live source, not a stopped source -> target handoff.
+    // A delegation/continuation binding would require the previous Attempt to
+    // be cancelled and would reject the very child whose boundary we sealed.
+    const verified = assessRunOrdinaryProgressRecovery({ store: this.input.store, run: this.input.run,
+      sourceFence: this.input.sourceFence, policySnapshot: this.input.policySnapshot });
+    if (verified.kind === "blocked") return verified;
+    if (verified.kind !== "verified" || !isDeepStrictEqual(verified.witness, expected)
+      || !samePersistedSdkView(verified.modelView, this.projectCommittedView(input.modelView))) {
+      return blocked("checkpoint.lineage_mismatch");
+    }
+    return { kind: "sealed", witness: structuredClone(verified.witness) };
+  }
+
+  private checkpointAtBoundary(input: {
+    readonly modelView: readonly unknown[] | undefined;
+    readonly activeToolCallIds: readonly string[];
+  }, suspension: boolean): OrdinaryRunProgressResult {
     const { store, sourceFence } = this.input;
     if (input.activeToolCallIds.length > 0) return blocked("checkpoint.effect_unknown");
     const current = store.getRun(this.input.run.id);
@@ -107,7 +150,7 @@ export class OrdinaryRunProgressController {
     const newToolEnds = events.filter((event) => event.type === "tool_end");
     let instructionIds: readonly string[] = [];
     try {
-      if (this.delegationBinding) {
+      if (this.delegationBinding && !suspension) {
         instructionIds = store.listPendingDelegationInstructionIds({ runId: current.id, sourceFence,
           delegationBinding: this.delegationBinding, limit: 32 });
       }
@@ -115,7 +158,7 @@ export class OrdinaryRunProgressController {
       if (error instanceof RunProgressCheckpointError) return producerDecision(blocked(error.code));
       throw error;
     }
-    if (newToolEnds.length === 0 && instructionIds.length === 0) {
+    if (!suspension && newToolEnds.length === 0 && instructionIds.length === 0) {
       const recovery = this.verifyRecoveryBoundary();
       if (recovery.kind === "blocked") return recovery;
       // This marks the live Host gate only. The Runner independently checks the
@@ -124,6 +167,12 @@ export class OrdinaryRunProgressController {
       return { kind: "not_needed" };
     }
     if (!Array.isArray(input.modelView)) return blocked("checkpoint.snapshot_unavailable");
+    if (suspension && events.length === 0 && this.witness
+      && isDeepStrictEqual(this.witness.sourceFence, sourceFence)) {
+      // No new canonical watermark means no second checkpoint identity can be
+      // inserted. The suspension caller must verify this head and exact view.
+      return { kind: "committed" };
+    }
     try {
       const projected = this.projectCommittedView(input.modelView);
       if (!projected) return blocked("checkpoint.lineage_mismatch");
@@ -179,6 +228,38 @@ export class OrdinaryRunProgressController {
 
 function blocked(code: RunProgressCheckpointBlockerCode): { readonly kind: "blocked"; readonly code: RunProgressCheckpointBlockerCode } {
   return { kind: "blocked", code };
+}
+
+/** JSON storage omits optional object fields whose SDK value is undefined.
+ * Compare that exact representation only; do not coerce arrays, numbers,
+ * executable properties, custom objects or real non-undefined payload changes.
+ */
+export function samePersistedSdkView(saved: readonly unknown[], current: readonly unknown[] | undefined): boolean {
+  const snapshot = (value: unknown): unknown => {
+    if (!value || typeof value !== "object") return value;
+    if (types.isProxy(value)) throw new Error("non-data SDK view");
+    if (Array.isArray(value)) {
+      if (Reflect.ownKeys(value).length !== value.length + 1) throw new Error("non-data SDK array");
+      const result: unknown[] = [];
+      for (let index = 0; index < value.length; index++) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+        if (!descriptor?.enumerable || !("value" in descriptor)) throw new Error("non-data SDK array");
+        result.push(snapshot(descriptor.value));
+      }
+      return result;
+    }
+    if (Object.getPrototypeOf(value) !== Object.prototype) throw new Error("non-data SDK view");
+    const result: Record<string, unknown> = {};
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+      if (typeof key !== "string" || !descriptor.enumerable || !("value" in descriptor)) throw new Error("non-data SDK view");
+      if (descriptor.value !== undefined) Object.defineProperty(result, key, {
+        value: snapshot(descriptor.value), enumerable: true, writable: true, configurable: true });
+    }
+    return result;
+  };
+  try { return current !== undefined && isDeepStrictEqual(saved, snapshot(current)); }
+  catch { return false; }
 }
 
 /** A known SDK passthrough is live-capable, not restart-capable. Never swallow unknown effects or commit failure. */

@@ -25,6 +25,7 @@ import type { SqliteStoreContext } from "./store-context.js";
 import { RunProgressCheckpointError } from "../../run-progress-checkpoint-types.js";
 import type { SqliteRunProgressCheckpointStore } from "./run-progress-checkpoint-store.js";
 import { releaseCompactionSourceResourcesWithinTransaction } from "./host-compaction-resource-boundary.js";
+import { hasPendingRunSuspension } from "./run-suspension-store.js";
 
 type Ports = Pick<
   RunStore,
@@ -48,6 +49,7 @@ export class SqliteHarnessCommitCoordinator {
     private readonly runtimeWorkUnits: SqliteRuntimeWorkUnitStore,
     private readonly ports: Ports,
     private readonly progressCheckpoints: SqliteRunProgressCheckpointStore,
+    private readonly suspensionPreparationScope?: object,
   ) {}
 
   prepareContinuationAndAttempt(input: PrepareContinuationInput): PreparedContinuation {
@@ -73,6 +75,7 @@ export class SqliteHarnessCommitCoordinator {
   ): CommitExistingRunContinuationResult {
     this.context.database.exec("BEGIN IMMEDIATE;");
     try {
+      this.assertSuspensionPreparation(input.preparation);
       const existing = this.continuations.findRunnerContinuationByIdempotencyKey(input.preparation.idempotencyKey);
       if (existing) {
         const replay = this.replayExisting(input.preparation, existing);
@@ -390,8 +393,9 @@ export class SqliteHarnessCommitCoordinator {
   }
 
   /** Caller owns BEGIN/COMMIT. Used only by another SQLite commit coordinator. */
-  prepareContinuationAndAttemptWithinTransaction(input: PrepareContinuationInput): PreparedContinuation {
+  prepareContinuationAndAttemptWithinTransaction(input: PrepareContinuationInput, privateSuspensionScope?: object): PreparedContinuation {
     validatePrepareInput(input);
+    this.assertSuspensionPreparation(input, privateSuspensionScope);
     const existing = this.continuations.findRunnerContinuationByIdempotencyKey(input.idempotencyKey);
     if (existing) return this.replayExisting(input, existing);
 
@@ -472,6 +476,13 @@ export class SqliteHarnessCommitCoordinator {
     return { continuation, attempt, replayed: false };
   }
 
+  private assertSuspensionPreparation(input: PrepareContinuationInput, scope?: object): void {
+    if (hasPendingRunSuspension(this.context, { runId: input.runId, ...input.sourceFence })
+      && (!this.suspensionPreparationScope || scope !== this.suspensionPreparationScope)) {
+      throw new RunnerContinuationStoreError("continuation.source_attempt_stale");
+    }
+  }
+
   /**
    * Replaces one rejected native-resume Attempt with exactly one deterministic
    * replay Attempt. The abandoned fence, continuation generation, and lease are
@@ -550,6 +561,7 @@ export class SqliteHarnessCommitCoordinator {
       }
       const continuation = this.continuations.getRunnerContinuation(current.id);
       if (!continuation) throw new RunnerContinuationStoreError("continuation.lineage_mismatch");
+      this.continuations.syncRecoveryPinsWithinTransaction(current, continuation, input.now);
       this.context.database.exec("COMMIT;");
       return { continuation, attempt, replayed: false };
     } catch (error) {

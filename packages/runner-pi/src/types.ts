@@ -376,6 +376,17 @@ export interface PiRunnerUserInputYieldDirective {
   readonly requestVersion: number;
 }
 
+/** Host-private receipt for an already sealed checkpoint; never model/tool-authored authority. */
+export interface PiRunnerRuntimeSuspensionDirective {
+  readonly schemaVersion: 1;
+  readonly kind: "runtime_suspension";
+  readonly runId: string;
+  readonly attemptId: string;
+  readonly suspensionId: string;
+  readonly checkpointId: string;
+  readonly checkpointSha256: string;
+}
+
 /** Core-sealed parent instruction. Extra identity fields are private Runner metadata, not model-authored authority. */
 export interface PiRunnerDelegationInstructionMessage {
   readonly role: "user";
@@ -397,6 +408,7 @@ export interface PiRunnerDelegationInstructionDirective {
 
 export type PiRunnerTaskContinuationDirective =
   | PiRunnerUserInputYieldDirective
+  | PiRunnerRuntimeSuspensionDirective
   | PiRunnerDelegationInstructionDirective;
 
 /** Host persistence receipt only; optional questions do not stop execution. */
@@ -536,6 +548,21 @@ export interface PiRunnerRunOptions {
     /** Host-only SDK view at provider admission; never serialized as a RunEvent. */
     modelView?: readonly unknown[],
   ) => Promise<void | PiRunnerTaskContinuationDirective>;
+  /**
+   * Host-only complete paired view after a real non-aborted SDK settlement,
+   * before run_end. Host must seal the checkpoint before returning a directive.
+   * Not called for a restored already-complete view or an incomplete assistant.
+   * The callback must not wait for this Run's completion; no effects-stop proof is implied.
+   */
+  readonly onTaskSettledBoundary?: (
+    modelView: readonly unknown[],
+  ) => void | PiRunnerRuntimeSuspensionDirective | Promise<void | PiRunnerRuntimeSuspensionDirective>;
+  /** Installed complete view after the real prepared receiver ACK and Host
+   * freshness check. This is not a new SDK/model settlement. Host must verify
+   * the immutable predecessor and its exact ACK before using it for suspension. */
+  readonly onTaskRestoredCompleteBoundary?: (
+    modelView: readonly unknown[],
+  ) => void | PiRunnerRuntimeSuspensionDirective | Promise<void | PiRunnerRuntimeSuspensionDirective>;
   /** Internal failure latch because Pi reports some context-hook failures and continues. */
   readonly onTaskContinuationDirectiveFailure?: (error: unknown) => never;
   /** Internal opt-in. Production must install the complete Host pause/answer chain first. */

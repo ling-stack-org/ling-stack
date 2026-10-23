@@ -54,6 +54,25 @@ test("outer Host callback owns its final writes beyond the nested tool result", 
   assert.equal(idle, true);
 });
 
+for (const [callback, label] of [["onTaskSettledBoundary", "settled_boundary"],
+  ["onTaskRestoredCompleteBoundary", "restored_complete_boundary"]]) {
+  test(`${callback} remains a tracked Host writer through its entire awaited fan-in`, async () => {
+    const group = new AttemptLocalWriterGroup(source), work = deferred();
+    const request = scopeUserInputLocalWriters({ [callback]: async modelView => {
+      await work.promise; return modelView;
+    } }, group);
+    const view = [{ role: "assistant", stopReason: "stop" }];
+    const pending = request[callback](view);
+    assert.deepEqual(group.getSnapshot().writers, [label]);
+    group.close();
+    await assert.rejects(group.waitForIdle(0), /have not drained/u);
+    work.resolve();
+    assert.equal(await pending, view);
+    await group.waitForIdle();
+    assert.throws(() => request[callback](view), /admission is closed/u);
+  });
+}
+
 test("rejection and synchronous errors finish local callbacks, not durable safety", async () => {
   const group = new AttemptLocalWriterGroup(source);
   await assert.rejects(group.wrapAsync("reject", async () => { throw new Error("business failed"); })(), /business failed/);

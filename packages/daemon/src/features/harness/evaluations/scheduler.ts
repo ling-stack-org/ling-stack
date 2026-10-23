@@ -64,7 +64,10 @@ export async function processNextRunEvaluation(
     claimExpiresAt,
     now,
   });
-  if (!claimed.ok) return { disposition: "claim_lost", evaluationId: candidate.id };
+  if (!claimed.ok) return {
+    disposition: claimed.code === "evaluation.artifact_invalid" ? "failed" : "claim_lost",
+    evaluationId: candidate.id,
+  };
   const grading = options.store.startRunEvaluation({
     evaluationId: candidate.id,
     expectedRevision: claimed.value.revision,
@@ -72,7 +75,10 @@ export async function processNextRunEvaluation(
     claimToken,
     now,
   });
-  if (!grading.ok) return { disposition: "claim_lost", evaluationId: candidate.id };
+  if (!grading.ok) return {
+    disposition: grading.code === "evaluation.artifact_invalid" ? "failed" : "claim_lost",
+    evaluationId: candidate.id,
+  };
   try {
     options.signal?.throwIfAborted();
     const grade = await (options.grade ?? ((input) => executeDeterministicRuleEvaluation(input)))({
@@ -116,7 +122,10 @@ export async function processNextRunEvaluation(
       failureCode: "evaluation.grader_unavailable",
       now: settledAt,
     });
-    return { disposition: requeued.ok ? "requeued" : "claim_lost", evaluationId: candidate.id };
+    return {
+      disposition: requeued.ok ? "requeued" : requeued.code === "evaluation.artifact_invalid" ? "failed" : "claim_lost",
+      evaluationId: candidate.id,
+    };
   }
 }
 

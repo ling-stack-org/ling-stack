@@ -4,19 +4,23 @@ import { isAbsolute, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   applyConversationModeToEffectiveRunPolicySnapshot, assertDelegationAuthoritySubset,
-  authorizationAndAccessFromLegacyPermission, delegationCapture, delegationDigest,
+  authorizationAndAccessFromLegacyPermission, captureRunProgressCheckpointLineage, delegationCapture, delegationDigest,
   delegationFence, delegationTimestamp, resolveRunAncestry, resolveSessionRunPolicy, toRuntimeAttemptFence,
   type ClaimedDelegatedChild, type DelegationAuthorityCapture, type DelegationBudgetReservation,
   type DelegationChildReceipt, type DelegationChildRuntime, type DelegationExecutionAuthority, type DelegationRootBudgetRecord,
   type DelegationPreparedExecution, type PrepareDelegatedChildInput, type PreparedDelegatedChild,
   type DelegationTokenPriceSnapshot, type DelegationUsageReceipt, type EffectiveRunPolicySnapshot,
   type RunSession, type RunStore, type RuntimeAttemptFenceV1, type SecretResolver,
-  type SkillApprovalProfile, type WorkUnitAttempt,
+  type SkillApprovalProfile, type WorkUnitAttempt, type ActivateRootRunSuspensionInput, type ActivateRootRunSuspensionResult,
 } from "@ling-stack/core";
 import { assertDelegationHostStoreOwner, createDelegationHostStoreBinding,
   type DelegationHostStoreBinding, type DelegationHostWriter } from "@ling-stack/core/delegation-host-store-bridge";
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
+import { HttpError } from "../../../errors.js";
+import { createRootSuspensionDispatchAuthority } from "../continuations/root-suspension-dispatch.js";
+import { createFinalSettlementObservationAuthority } from "../continuations/final-settlement-observation.js";
 import { isOriginalRuntimeSupervisorOfficeRoot, type RuntimeSupervisor } from "../../../runtime/supervisor.js";
+import { createDelegatedTerminalHandoff, type DelegatedTerminalHandoff } from "../../../runtime/delegated-terminal-handoff.js";
 import { loadWorkspaceRuntimeSettings } from "../../../runtime/runner-settings.js";
 import type { RunnerRegistry } from "../../../runtime/runners.js";
 import { compareProviderRuntimeObservationScope, providerPresetForRuntimeObservationScope,
@@ -24,6 +28,9 @@ import { compareProviderRuntimeObservationScope, providerPresetForRuntimeObserva
   type ProviderRuntimeObservationScope } from "../../providers/runtime-observation-scope.js";
 import { teammateCanWorkInEffectiveChannel } from "../../channels/channel-teammate-availability.js";
 import type { RunRequest } from "../../runs/schemas.js";
+import { rebuildExistingRunRequest, readStoredRunnerExecution } from "../../runs/existing-run-request.js";
+import { resolveProviderForRun } from "../../runs/providers.js";
+import { inlineProviderDescriptor } from "../../conversations/normal-conversation-prepared-provider.js";
 import { resolveCurrentRunSkill } from "../../runs/skill-selection.js";
 import { mergeApprovalProfiles } from "../../runs/run-approval-profile.js";
 import { createDelegationHostAuthority } from "./host-authority.js";
@@ -62,6 +69,12 @@ interface Composition {
   readonly host: ReturnType<typeof createDelegationHostAuthority>;
   readonly writer: ReturnType<typeof createDelegationHostStoreBinding>["writer"];
   readonly facts: Map<string, AdmissionFact>;
+  /** Synchronous activation-only receivers. Never a live admission fact. */
+  readonly recoveryAuthorities: Map<string, { readonly fence: RuntimeAttemptFenceV1; readonly read: () => DelegationExecutionAuthority }>;
+  readonly delegatedRecoveryAuthorities: Map<string, { readonly fence: RuntimeAttemptFenceV1; readonly read: () => DelegationExecutionAuthority }>;
+  readonly startAuthorities: Map<string, { readonly fence: RuntimeAttemptFenceV1; readonly read: () => DelegationExecutionAuthority }>;
+  readonly rootDispatch: ReturnType<typeof createRootSuspensionDispatchAuthority>;
+  readonly finalSettlements: ReturnType<typeof createFinalSettlementObservationAuthority>;
   readonly usages: WeakMap<object, DelegationUsageReceipt>;
   readonly completions: WeakMap<object, DelegationChildReceipt>;
   readonly dispatch?: DelegatedRunDispatchAuthority;
@@ -99,8 +112,23 @@ export interface OriginalDelegationLifecycle {
   readonly interrupt: DelegationHostWriter["requestDelegatedChildInterrupt"];
   readonly commitInterrupted: DelegationHostWriter["commitDelegatedChildInterrupted"];
   readonly resume: DelegationHostWriter["resumeDelegatedChild"];
+  readonly activateSuspension: DelegationHostWriter["activateDelegatedRunSuspension"];
+  readonly getSuspensionActivation: DelegationHostWriter["getDelegatedRunSuspensionActivation"];
+  readonly getSuspensionStart: DelegationHostWriter["getDelegatedRunSuspensionStart"];
   /** Actual drained Host completion, measured usage settlement, then terminal step/result. */
   readonly terminal: DelegationHostWriter["commitDelegatedChildTerminal"];
+  readonly prepareRunTerminalIntent: DelegationHostWriter["prepareRunTerminalIntent"];
+  readonly getRunTerminalIntent: DelegationHostWriter["getRunTerminalIntent"];
+  readonly listUnfinishedRunTerminalIntents: DelegationHostWriter["listUnfinishedRunTerminalIntents"];
+  readonly reconcileRunTerminalIntent: DelegationHostWriter["reconcileRunTerminalIntent"];
+  readonly acknowledgeRunTerminalIntent: DelegationHostWriter["acknowledgeRunTerminalIntent"];
+  readonly requestRunSuspension: DelegationHostWriter["requestRunSuspension"];
+  readonly sealRunSuspension: DelegationHostWriter["sealRunSuspension"];
+  readonly getRunSuspensionForAttempt: DelegationHostWriter["getRunSuspensionForAttempt"];
+  readonly getRunSuspension: DelegationHostWriter["getRunSuspension"];
+  readonly beginRunSuspensionStop: DelegationHostWriter["beginRunSuspensionStop"];
+  readonly commitRunSuspensionStopped: DelegationHostWriter["commitRunSuspensionStopped"];
+  readonly getRunSuspensionStop: DelegationHostWriter["getRunSuspensionStop"];
   readonly createExecutionEntry: (claimed: ClaimedDelegatedChild) => OriginalDelegatedExecutionEntry;
 }
 declare const executionEntryBrand: unique symbol;
@@ -112,17 +140,61 @@ export interface OriginalDelegatedExecution {
   readonly dispatchAuthority: DelegatedRunDispatchAuthority;
   readonly buildRequest: () => RunRequest;
   readonly assertCurrent: () => void;
+  /** Cleanup only: requires this source's durable graceful-stop provenance. */
+  readonly assertSuspensionCleanupCurrent: () => void;
   readonly commitPreparation: (reference: unknown, now: string) => DelegationPreparedExecution;
   readonly commitStart: (reference: unknown, now: string) => ClaimedDelegatedChild;
   readonly isInterrupting: () => boolean;
   readonly commitInterrupted: (now: string) => ReturnType<DelegationHostWriter["commitDelegatedChildInterrupted"]>;
   readonly terminal: (now: string) => ReturnType<DelegationHostWriter["commitDelegatedChildTerminal"]>;
+  /** Distinct from resumable suspension: verifies this exact original terminal chain. */
+  readonly terminalHandoff: DelegatedTerminalHandoff;
 }
 
 export function readOriginalDelegationLifecycle(reference: unknown, store: RunStore): OriginalDelegationLifecycle {
   const state = reference && typeof reference === "object" ? lifecycleOwners.get(reference as OriginalDelegationLifecycle) : undefined;
   if (!state || requiredStore(state) !== store) fail("delegation.authority_invalid");
   return reference as OriginalDelegationLifecycle;
+}
+
+export type OriginalRunSuspensionLifecycle = Pick<OriginalDelegationLifecycle,
+  "requestRunSuspension" | "sealRunSuspension" | "getRunSuspensionForAttempt" | "getRunSuspension"
+  | "beginRunSuspensionStop" | "commitRunSuspensionStopped" | "getRunSuspensionStop">
+  & Pick<DelegationHostWriter, "readStoppedCompactionSuspensionRecovery" | "readStoppedFinalSettlementRecovery">;
+
+/** Original constructor custody, including ordinary Pi Runs when dynamic delegation is off. */
+export function readOriginalRunSuspensionLifecycle(store: RunStore, supervisor: RuntimeSupervisor): OriginalRunSuspensionLifecycle {
+  const state = compositions.get(store);
+  if (!state || state.supervisor !== supervisor || requiredStore(state) !== store) fail("delegation.authority_invalid");
+  assertOriginal(state);
+  const writer = () => { requiredStore(state); return state.writer(); };
+  return Object.freeze({
+    requestRunSuspension: input => writer().requestRunSuspension(input),
+    sealRunSuspension: input => writer().sealRunSuspension(input),
+    getRunSuspensionForAttempt: id => writer().getRunSuspensionForAttempt(id),
+    getRunSuspension: id => writer().getRunSuspension(id),
+    beginRunSuspensionStop: input => writer().beginRunSuspensionStop(input),
+    commitRunSuspensionStopped: input => writer().commitRunSuspensionStopped(input),
+    getRunSuspensionStop: id => writer().getRunSuspensionStop(id),
+    readStoppedCompactionSuspensionRecovery: input => writer().readStoppedCompactionSuspensionRecovery(input),
+    readStoppedFinalSettlementRecovery: input => writer().readStoppedFinalSettlementRecovery(input),
+  });
+}
+
+/** Original SDK observation scope encloses only the synchronous Core transaction. */
+export function commitOriginalRunFinalSettlement(input: {
+  readonly store: RunStore;
+  readonly supervisor: RuntimeSupervisor;
+  readonly observation: Parameters<ReturnType<typeof createFinalSettlementObservationAuthority>["withObservation"]>[0];
+  readonly settlement: Omit<Parameters<DelegationHostWriter["commitRunFinalSettlement"]>[0], "observation">;
+}): ReturnType<DelegationHostWriter["commitRunFinalSettlement"]> {
+  const state = compositions.get(input.store);
+  if (!state || state.supervisor !== input.supervisor || requiredStore(state) !== input.store) fail("delegation.authority_invalid");
+  assertOriginal(state);
+  if (input.settlement.runId !== input.observation.runId
+    || !isDeepStrictEqual(input.settlement.sourceFence, input.observation.sourceFence)) fail("delegation.authority_invalid");
+  return state.finalSettlements.withObservation(input.observation,
+    reference => state.writer().commitRunFinalSettlement({ ...input.settlement, observation: reference }));
 }
 /** Called only after the orchestrator has resolved the exact existing child Store. */
 export function readOriginalDelegatedExecutionEntry(reference: unknown, store: RunStore): OriginalDelegatedExecution {
@@ -176,10 +248,31 @@ export function createOriginalDelegationStoreComposition(input: {
       return receipt;
     },
   });
+  const rootDispatch = createRootSuspensionDispatchAuthority();
+  const finalSettlements = createFinalSettlementObservationAuthority();
   const custody = createDelegationHostStoreBinding({ ...host.readers,
+    readFinalSettlementObservation: finalSettlements.readObservation,
+    readRootSuspensionRecoveryAuthority: (runId, fence) => {
+      const receiver = state.recoveryAuthorities.get(runId);
+      if (!receiver || !isDeepStrictEqual(receiver.fence, fence)) fail("delegation.run_admission_missing");
+      return receiver.read();
+    },
+    readRootSuspensionStartObservation: rootDispatch.readStartObservation,
+    readDelegatedSuspensionRecoveryAuthority: (runId, fence) => {
+      const receiver = state.delegatedRecoveryAuthorities.get(runId);
+      if (!receiver || !isDeepStrictEqual(receiver.fence, fence)) fail("delegation.run_admission_missing");
+      return receiver.read();
+    },
+    readRootSuspensionStartAuthority: (runId, fence) => {
+      const receiver = state.startAuthorities.get(runId);
+      if (!receiver || !isDeepStrictEqual(receiver.fence, fence)) fail("delegation.run_admission_missing");
+      return receiver.read();
+    },
     ...(dispatch ? { readExecutionPreparation: dispatch.readExecutionPreparation,
       readRunnerStartObservation: dispatch.readRunnerStartObservation } : {}) });
-  state = { ...input, dispatch, features, host, writer: custody.writer, facts: new Map(), usages: new WeakMap(), completions: new WeakMap(), entries: new Map() };
+  state = { ...input, dispatch, rootDispatch, finalSettlements, features, host, writer: custody.writer, facts: new Map(), recoveryAuthorities: new Map(),
+    delegatedRecoveryAuthorities: new Map(), startAuthorities: new Map(),
+    usages: new WeakMap(), completions: new WeakMap(), entries: new Map() };
   const lifecycle = createLifecycle(state);
   lifecycleOwners.set(lifecycle, state);
   return Object.freeze({ binding: custody.binding, lifecycle, bindExactStore(store: RunStore) {
@@ -268,6 +361,9 @@ function createLifecycle(state: Composition): OriginalDelegationLifecycle {
     interrupt: input => writer().requestDelegatedChildInterrupt(input),
     commitInterrupted: input => writer().commitDelegatedChildInterrupted(input),
     resume: input => writer().resumeDelegatedChild(input),
+    activateSuspension: activation => activateOriginalDelegatedRunSuspension({ store: requiredStore(state), supervisor: state.supervisor, activation }),
+    getSuspensionActivation: query => writer().getDelegatedRunSuspensionActivation(query),
+    getSuspensionStart: query => writer().getDelegatedRunSuspensionStart(query),
     terminal(input) {
       const store = requiredStore(state), runtime = writer().classifyDelegatedChildRecovery(input.reservationId).runtime;
       const completion = store.getHostAttemptCompletion({ runId: runtime.run.id, ...input.sourceFence });
@@ -278,6 +374,29 @@ function createLifecycle(state: Composition): OriginalDelegationLifecycle {
         receipt: state.host.captureChildReceipt(reference), now: input.now });
       return writer().commitDelegatedChildTerminal(input);
     },
+    prepareRunTerminalIntent: input => writer().prepareRunTerminalIntent(input),
+    getRunTerminalIntent: id => writer().getRunTerminalIntent(id),
+    listUnfinishedRunTerminalIntents: input => writer().listUnfinishedRunTerminalIntents(input),
+    acknowledgeRunTerminalIntent: input => writer().acknowledgeRunTerminalIntent(input),
+    requestRunSuspension: input => writer().requestRunSuspension(input),
+    sealRunSuspension: input => writer().sealRunSuspension(input),
+    getRunSuspensionForAttempt: id => writer().getRunSuspensionForAttempt(id),
+    getRunSuspension: id => writer().getRunSuspension(id),
+    beginRunSuspensionStop: input => writer().beginRunSuspensionStop(input),
+    commitRunSuspensionStopped: input => writer().commitRunSuspensionStopped(input),
+    getRunSuspensionStop: id => writer().getRunSuspensionStop(id),
+    reconcileRunTerminalIntent(input) {
+      const store = requiredStore(state), intent = writer().getRunTerminalIntent(input.attemptId);
+      const run = intent ? store.getRun(intent.payload.runId) : undefined;
+      const unit = run?.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;
+      const completion = intent ? store.getHostAttemptCompletion({ runId: intent.payload.runId, ...intent.payload.sourceFence }) : undefined;
+      if (intent && unit?.ownerType === "delegation_step" && completion?.drainedAt && completion.effectCoverage) {
+        const reference = Object.freeze({});
+        state.completions.set(reference, { kind: "verified_usage", childRunId: intent.payload.runId, sourceFence: intent.payload.sourceFence });
+        return writer().reconcileRunTerminalIntent({ ...input, receipt: state.host.captureChildReceipt(reference) });
+      }
+      return writer().reconcileRunTerminalIntent(input);
+    },
     createExecutionEntry(input) {
       if (state.features.mode === "off" || !state.dispatch) fail("delegation.dynamic_gate_unavailable");
       const child = freezeData(verifyClaim(state, input));
@@ -287,11 +406,48 @@ function createLifecycle(state: Composition): OriginalDelegationLifecycle {
       const parentPrepared = child.reservation.parentReservationId
         ? writer().getDelegatedChildPreparation(child.reservation.parentReservationId) : undefined;
       const sourceFence = toRuntimeAttemptFence(child.attempt);
+      let capturedIntent: { readonly id: string; readonly digest: string } | undefined;
+      const terminalHandoff = createDelegatedTerminalHandoff({ runId: child.run.id, ...sourceFence }, phase => {
+        const store = requiredStore(state), intent = writer().getRunTerminalIntent(sourceFence.attemptId);
+        const run = store.getRun(child.run.id), unit = store.getWorkUnit(sourceFence.workUnitId);
+        const attempt = store.getWorkUnitAttempt(sourceFence.attemptId);
+        if (!intent || intent.payload.runId !== child.run.id || !isDeepStrictEqual(intent.payload.sourceFence, sourceFence)
+          || !run || !unit || run.workUnitId !== unit.id || unit.linkedRunId !== run.id || unit.activeAttemptId !== attempt?.id
+          || !attempt || !isDeepStrictEqual(toRuntimeAttemptFence(attempt), sourceFence)
+          || capturedIntent && (capturedIntent.id !== intent.id || capturedIntent.digest !== intent.digest)) {
+          fail("delegation.terminal_handoff_unverified");
+        }
+        if (phase === "capture") {
+          if (!store.isCurrentRunExecutionOwner(child.run.id, sourceFence, true)) fail("delegation.source_attempt_stale");
+          capturedIntent ??= { id: intent.id, digest: intent.digest };
+          return;
+        }
+        if (!capturedIntent || intent.state !== "committed") fail("delegation.terminal_handoff_unverified");
+        // Include the original incoming edge, not just this Run's descendants.
+        // Core validates atomic results, exact Host drain/effects/quiescence,
+        // reservations and measured usage. Sibling corruption also vetoes.
+        const evidence = store.getDelegationCompletionEvidence({ rootRunIds: [child.step.parentRunId] });
+        const own = evidence.steps.find(read => read.step.id === child.step.id);
+        if (evidence.issues.length || !own || own.childRun?.id !== child.run.id
+          || own.reservation?.id !== child.reservation.id || !isDeepStrictEqual(own.attempt?.sourceFence, sourceFence)
+          || own.step.state !== intent.payload.desiredOutcome) fail("delegation.terminal_handoff_unverified");
+        const selected = new Set([child.run.id]);
+        for (let changed = true; changed;) {
+          changed = false;
+          for (const read of evidence.steps) if (selected.has(read.step.parentRunId) && read.childRun && !selected.has(read.childRun.id)) {
+            selected.add(read.childRun.id); changed = true;
+          }
+        }
+        if (evidence.steps.some(read => read.step.id === child.step.id || selected.has(read.step.parentRunId)
+          ? !["succeeded", "failed", "cancelled"].includes(read.step.state) : false)) fail("delegation.terminal_handoff_unverified");
+      });
       const execution: OriginalDelegatedExecution = Object.freeze({ claimed: child,
+        terminalHandoff,
         ...(prepared ? { prepared: freezeData(prepared) } : {}), dispatchAuthority: state.dispatch,
         ...(parentPrepared ? { parentPrepared: freezeData(parentPrepared) } : {}),
         buildRequest: () => rebuildDelegatedRunRequest({ store: requiredStore(state), child, prepared, parentPrepared }),
         assertCurrent: () => assertExecutionCurrent(state, child),
+        assertSuspensionCleanupCurrent: () => assertSuspensionCleanupCurrent(state, child),
         commitPreparation: (preparation: unknown, now: string) => writer().commitDelegatedChildPreparation({
           reservationId: child.reservation.id, sourceFence, preparation, now }),
         commitStart: (observation: unknown, now: string) => writer().commitDelegatedChildStart({
@@ -365,6 +521,31 @@ function assertExecutionCurrent(state: Composition, child: ClaimedDelegatedChild
   assertDelegationAuthoritySubset(currentAuthority(state, child.run.id, fence), pinned.authority);
 }
 
+function assertSuspensionCleanupCurrent(state: Composition, child: ClaimedDelegatedChild): void {
+  const store = requiredStore(state), writer = state.writer(), fence = toRuntimeAttemptFence(child.attempt);
+  const suspension = writer.getRunSuspensionForAttempt(fence.attemptId);
+  const stopped = suspension ? writer.getRunSuspensionStop(suspension.id) : undefined;
+  const source = stopped?.begin.source;
+  const current = writer.classifyDelegatedChildRecovery(child.reservation.id);
+  // Core begin-stop deliberately requests the original child's interruption.
+  // This is not live execution admission: only the exact private stopped chain
+  // may pass while cancelling, never a generic interrupt or replacement fence.
+  if (!suspension || suspension.state !== "sealed" || !stopped || stopped.state !== "stopping"
+    || stopped.begin.runId !== child.run.id || !isDeepStrictEqual(stopped.begin.sourceFence, fence)
+    || source?.kind !== "delegated" || source.reservationId !== child.reservation.id
+    || source.stepId !== child.step.id || source.parentRunId !== child.step.parentRunId
+    || current.kind !== "interrupting" || current.runtime.run.id !== child.run.id
+    || !current.runtime.attempt || !isDeepStrictEqual(toRuntimeAttemptFence(current.runtime.attempt), fence)
+    || !store.isCurrentRunExecutionOwner(child.run.id, fence, true)) fail("delegation.source_attempt_stale");
+  const run = current.runtime.run, fact = state.facts.get(run.id);
+  if (!fact || !isDeepStrictEqual(fact.capture.sourceFence, fence)) fail("delegation.run_admission_missing");
+  const pinned = readChildPinnedCapture(store, run);
+  // Keep current permission/provider revocation checks, but not the live
+  // assertOwner guard which must reject begin-stop's abortRequestedAt.
+  assertDelegationAuthoritySubset(buildAuthority(state, run, fence, fact,
+    currentPolicy(state, run, fact), fact.authority.authoritySetId), pinned.authority);
+}
+
 /** Called with original execution inputs, after durable admission and before actual Runner start. */
 export function admitOriginalDelegationRoot(input: OriginalDelegationRootAdmission): DelegationRootBudgetRecord | undefined {
   const state = compositions.get(input.store);
@@ -424,6 +605,221 @@ export function admitOriginalDelegationRoot(input: OriginalDelegationRootAdmissi
     if (old) state.facts.set(run.id, old); else state.facts.delete(run.id);
     throw error;
   }
+}
+
+/**
+ * Rebind a stopped root from durable Host input and today's actual resolver.
+ * Nothing supplied by a route/model can stand in for the current Provider or
+ * policy; the receiver exists only during Core's synchronous activation lock.
+ */
+export function activateOriginalRootRunSuspension(input: {
+  readonly store: RunStore;
+  readonly supervisor: RuntimeSupervisor;
+  readonly activation: ActivateRootRunSuspensionInput;
+}): ActivateRootRunSuspensionResult {
+  const state = compositions.get(input.store);
+  if (!state || state.supervisor !== input.supervisor) fail("delegation.authority_invalid");
+  assertOriginal(state);
+  const writer = state.writer(), sourceFence = delegationFence(input.activation.sourceFence);
+  const suspension = writer.getRunSuspension(input.activation.suspensionId);
+  if (!suspension) fail("delegation.source_attempt_stale");
+  const runId = suspension.request.runId;
+  // A consumed record is audit-only. Core must never return dispatch custody
+  // again, including after a crash between activation and the actual SDK ACK.
+  if (writer.getRootRunSuspensionActivation(input.activation.suspensionId)) {
+    return writer.activateRootRunSuspension(input.activation);
+  }
+  const assertStoppedSource = (): RunSession => {
+    requiredStore(state);
+    const run = input.store.getRun(runId), unit = input.store.getWorkUnit(sourceFence.workUnitId);
+    const attempt = input.store.getWorkUnitAttempt(sourceFence.attemptId);
+    const stop = writer.getRunSuspensionStop(input.activation.suspensionId);
+    if (!run || run.parentRunId || run.endedAt || run.status !== "running"
+      || !unit || unit.linkedRunId !== run.id || run.workUnitId !== unit.id || unit.status !== "stale"
+      || unit.activeAttemptId !== sourceFence.attemptId || !attempt || attempt.status !== "lost"
+      || attempt.errorCode !== "runtime_graceful_suspend" || !isDeepStrictEqual(toRuntimeAttemptFence(attempt), sourceFence)
+      || suspension.state !== "sealed" || !isDeepStrictEqual(suspension.request.sourceFence, sourceFence)
+      || stop?.state !== "stopped" || stop.begin.source.kind !== "root"
+      || !isDeepStrictEqual(stop.begin.sourceFence, sourceFence) || stop.receiptDigest !== input.activation.expectedReceiptDigest) {
+      fail("delegation.source_attempt_stale");
+    }
+    return run;
+  };
+  const run = assertStoppedSource(), request = rebuildExistingRunRequest(run, "daemon_recovery");
+  const execution = readStoredRunnerExecution(run);
+  if (!execution || execution.runnerId !== "pi") fail("delegation.preparation_unavailable");
+  const provider = resolveProviderForRun(input.store, request, state.secretResolver, {
+    providerWebSocketFallbackEnabled: state.supervisor.getTransportFeatures().providerWebSocketFallback,
+  });
+  const descriptor = JSON.parse(JSON.stringify(inlineProviderDescriptor(provider))) as unknown;
+  if (!isDeepStrictEqual(execution.input.provider, descriptor)) fail("delegation.provider_revoked");
+  const providerScope = runtimeObservationScopeForProvider(input.store, provider);
+  if (run.providerPresetId && !providerScope) fail("delegation.provider_authority_unavailable");
+  const root = writer.getRootDelegationBudget(run.id);
+  if (root && state.features.mode === "off") fail("delegation.dynamic_gate_unavailable");
+  const historical = root ? readHistoricalCapture(input.store, root) : undefined;
+  // An inline source cannot invent the persistent Provider scope required by
+  // an existing delegated tree. Anonymous ordinary Runs have no such budget.
+  if (historical && !providerScope) fail("delegation.provider_authority_unavailable");
+  const tools = Object.freeze([...(execution.input.tools ?? builtinTools)]);
+  const authoritySetId = historical?.authority.authoritySetId ?? `suspension_authority_${randomUUID()}`;
+  const read = (): DelegationExecutionAuthority => {
+    const currentRun = assertStoppedSource();
+    if (!isDeepStrictEqual(currentRun.requestSnapshot, run.requestSnapshot)) fail("delegation.source_attempt_stale");
+    const { policySnapshot } = captureRunProgressCheckpointLineage(input.store, currentRun);
+    if (providerScope) {
+      const fact: AdmissionFact = { rootRunId: run.id, runId: run.id, provider, providerScope, tools,
+        policyIntent: request, requestedSkillId: request.requestedSkillId,
+        teammateRevision: teammateAuthorityRevision(input.store, run.teammateId), dynamicSurfaceVerified: false,
+        authority: historical?.authority ?? {} as DelegationExecutionAuthority,
+        capture: historical ?? {} as DelegationAuthorityCapture };
+      return requireFrozenSuspensionTools(buildAuthority(state, currentRun, sourceFence, fact, policySnapshot, authoritySetId), tools);
+    }
+    return requireFrozenSuspensionTools(buildScopeAuthority(state, currentRun, sourceFence, { provider, tools }, policySnapshot,
+      authoritySetId, { inline: descriptor }, []), tools);
+  };
+  if (state.recoveryAuthorities.has(run.id)) fail("delegation.recovery_required");
+  state.recoveryAuthorities.set(run.id, { fence: sourceFence, read });
+  try { return writer.activateRootRunSuspension(input.activation); }
+  finally { state.recoveryAuthorities.delete(run.id); }
+}
+
+/** Child source authority is reconstructed separately; it never becomes a live admission fact. */
+export function activateOriginalDelegatedRunSuspension(input: {
+  readonly store: RunStore;
+  readonly supervisor: RuntimeSupervisor;
+  readonly activation: Parameters<DelegationHostWriter["activateDelegatedRunSuspension"]>[0];
+}): ReturnType<DelegationHostWriter["activateDelegatedRunSuspension"]> {
+  const state = compositions.get(input.store);
+  if (!state || state.supervisor !== input.supervisor || !state.dispatch || state.features.mode === "off") fail("delegation.authority_invalid");
+  assertOriginal(state); requiredStore(state);
+  const writer = state.writer(), sourceFence = delegationFence(input.activation.sourceFence);
+  if (writer.getDelegatedRunSuspensionActivation(input.activation.suspensionId)) {
+    return writer.activateDelegatedRunSuspension(input.activation); // Audit only; no receiver or dispatch grant.
+  }
+  const suspension = writer.getRunSuspension(input.activation.suspensionId);
+  if (!suspension?.seal) fail("delegation.recovery_required");
+  const assertStoppedSource = (): RunSession => {
+    requiredStore(state);
+    const run = input.store.getRun(suspension.request.runId), unit = input.store.getWorkUnit(sourceFence.workUnitId);
+    const attempt = input.store.getWorkUnitAttempt(sourceFence.attemptId), stop = writer.getRunSuspensionStop(suspension.id);
+    if (!run || !run.parentRunId || run.status !== "running" || run.endedAt || run.workUnitId !== sourceFence.workUnitId
+      || !unit || unit.ownerType !== "delegation_step" || unit.linkedRunId !== run.id || unit.status !== "cancelled"
+      || unit.activeAttemptId !== sourceFence.attemptId || !attempt || attempt.status !== "cancelled"
+      || attempt.errorCode !== "delegation_interrupted" || !attempt.endedAt || !attempt.abortRequestedAt
+      || !isDeepStrictEqual(toRuntimeAttemptFence(attempt), sourceFence) || suspension.state !== "sealed"
+      || !isDeepStrictEqual(suspension.request.sourceFence, sourceFence) || stop?.state !== "stopped"
+      || stop.begin.source.kind !== "delegated" || stop.begin.source.parentRunId !== run.parentRunId
+      || stop.begin.source.stepId !== unit.ownerId || stop.receiptDigest !== input.activation.expectedReceiptDigest
+      || !isDeepStrictEqual(stop.begin.sourceFence, sourceFence)) fail("delegation.source_attempt_stale");
+    return run;
+  };
+  const run = assertStoppedSource(), request = rebuildExistingRunRequest(run, "daemon_recovery");
+  const execution = readStoredRunnerExecution(run), pinned = readChildPinnedCapture(input.store, run);
+  if (!execution || execution.runnerId !== "pi") fail("delegation.preparation_unavailable");
+  const provider = resolveProviderForRun(input.store, request, state.secretResolver, {
+    providerWebSocketFallbackEnabled: state.supervisor.getTransportFeatures().providerWebSocketFallback,
+  });
+  if (!isDeepStrictEqual(JSON.parse(JSON.stringify(inlineProviderDescriptor(provider))), execution.input.provider)) fail("delegation.provider_revoked");
+  const providerScope = runtimeObservationScopeForProvider(input.store, provider);
+  if (!providerScope) fail("delegation.provider_authority_unavailable");
+  const tools = Object.freeze([...(execution.input.tools ?? builtinTools)]);
+  const read = (): DelegationExecutionAuthority => {
+    const currentRun = assertStoppedSource();
+    if (!isDeepStrictEqual(currentRun.requestSnapshot, run.requestSnapshot)) fail("delegation.source_attempt_stale");
+    const parent = currentAuthority(state, run.parentRunId!, input.activation.parentFence);
+    assertDelegationAuthoritySubset(parent, pinned.authority);
+    const { policySnapshot } = captureRunProgressCheckpointLineage(input.store, currentRun);
+    const fact: AdmissionFact = { rootRunId: pinned.rootRunId, runId: run.id, provider, providerScope, tools,
+      policyIntent: request, requestedSkillId: request.requestedSkillId,
+      teammateRevision: teammateAuthorityRevision(input.store, run.teammateId), dynamicSurfaceVerified: false,
+      authority: pinned.authority, capture: pinned };
+    const authority = requireFrozenSuspensionTools(buildAuthority(state, currentRun, sourceFence, fact, policySnapshot,
+      pinned.authority.authoritySetId), tools);
+    assertDelegationAuthoritySubset(authority, pinned.authority);
+    assertDelegationAuthoritySubset(pinned.authority, authority);
+    return authority;
+  };
+  if (state.delegatedRecoveryAuthorities.has(run.id)) fail("delegation.recovery_required");
+  state.delegatedRecoveryAuthorities.set(run.id, { fence: sourceFence, read });
+  try { return writer.activateDelegatedRunSuspension(input.activation); }
+  finally { state.delegatedRecoveryAuthorities.delete(run.id); }
+}
+
+/** Internal audit lookup. An existing activation never regrants a dispatch claim. */
+export function readOriginalRootRunSuspensionActivation(store: RunStore, supervisor: RuntimeSupervisor,
+  query: Parameters<DelegationHostWriter["getRootRunSuspensionActivation"]>[0]) {
+  const state = compositions.get(store);
+  if (!state || state.supervisor !== supervisor) fail("delegation.authority_invalid");
+  assertOriginal(state); requiredStore(state);
+  return state.writer().getRootRunSuspensionActivation(query);
+}
+
+/** SDK callback-only start authority, separate from the old stopped-source receiver and live admission. */
+export function withOriginalRootRunSuspensionReceiver(input: Omit<
+  Parameters<ReturnType<typeof createRootSuspensionDispatchAuthority>["withReceiver"]>[0], "onAccepted"> & {
+    readonly supervisor: RuntimeSupervisor;
+    readonly beforeAccepted?: () => void;
+    readonly onAccepted: (result: Extract<ReturnType<DelegationHostWriter["acknowledgeRootRunSuspensionStart"]>,
+      { kind: "started" }>, at: string) => void | Promise<void>;
+  }) {
+  const state = compositions.get(input.store);
+  if (!state || state.supervisor !== input.supervisor) fail("delegation.authority_invalid");
+  assertOriginal(state); requiredStore(state);
+  const writer = state.writer(), saved = writer.getRootRunSuspensionActivation(input.record.activation.suspensionId);
+  if (!saved || !isDeepStrictEqual(saved, input.record)) fail("delegation.persisted_fact_invalid");
+  const { activation } = saved, fence = activation.targetFence;
+  const run = input.store.getRun(activation.runId);
+  if (!run) fail("delegation.source_attempt_stale");
+  const request = rebuildExistingRunRequest(run, "daemon_recovery"), execution = readStoredRunnerExecution(run);
+  if (!execution || execution.runnerId !== "pi") fail("delegation.preparation_unavailable");
+  const originalScope = runtimeObservationScopeForProvider(input.store, input.options.provider);
+  if (run.providerPresetId && !originalScope) fail("delegation.provider_authority_unavailable");
+  const root = writer.getRootDelegationBudget(run.id), historical = root ? readHistoricalCapture(input.store, root) : undefined;
+  if (root && state.features.mode === "off") fail("delegation.dynamic_gate_unavailable");
+  if (historical && !originalScope) fail("delegation.provider_authority_unavailable");
+  const authoritySetId = historical?.authority.authoritySetId ?? `suspension_start_authority_${randomUUID()}`;
+  const tools = Object.freeze([...(execution.input.tools ?? builtinTools)]);
+  const read = (): DelegationExecutionAuthority => {
+    requiredStore(state);
+    const currentRun = input.store.getRun(run.id), unit = input.store.getWorkUnit(fence.workUnitId);
+    const attempt = input.store.getWorkUnitAttempt(fence.attemptId);
+    if (!currentRun || currentRun.parentRunId || currentRun.status !== "running" || currentRun.endedAt
+      || !isDeepStrictEqual(currentRun.requestSnapshot, run.requestSnapshot)
+      || !unit || unit.linkedRunId !== run.id || unit.status !== "claimed" || unit.activeAttemptId !== fence.attemptId
+      || !attempt || attempt.status !== "created" || attempt.endedAt || attempt.abortRequestedAt
+      || !isDeepStrictEqual(toRuntimeAttemptFence(attempt), fence)) fail("delegation.source_attempt_stale");
+    const provider = resolveProviderForRun(input.store, request, state.secretResolver, {
+      providerWebSocketFallbackEnabled: state.supervisor.getTransportFeatures().providerWebSocketFallback,
+    });
+    const descriptor = JSON.parse(JSON.stringify(inlineProviderDescriptor(provider))) as unknown;
+    if (!isDeepStrictEqual(descriptor, execution.input.provider)
+      || !isDeepStrictEqual(descriptor, JSON.parse(JSON.stringify(inlineProviderDescriptor(input.options.provider))))) fail("delegation.provider_revoked");
+    const { policySnapshot } = captureRunProgressCheckpointLineage(input.store, currentRun);
+    if (originalScope) {
+      const fact: AdmissionFact = { rootRunId: run.id, runId: run.id, provider, providerScope: originalScope, tools,
+        policyIntent: request, requestedSkillId: request.requestedSkillId,
+        teammateRevision: teammateAuthorityRevision(input.store, run.teammateId), dynamicSurfaceVerified: false,
+        authority: historical?.authority ?? {} as DelegationExecutionAuthority,
+        capture: historical ?? {} as DelegationAuthorityCapture };
+      return requireFrozenSuspensionTools(buildAuthority(state, currentRun, fence, fact, policySnapshot, authoritySetId), tools);
+    }
+    return requireFrozenSuspensionTools(buildScopeAuthority(state, currentRun, fence, { provider, tools }, policySnapshot, authoritySetId, { inline: descriptor }, []), tools);
+  };
+  return state.rootDispatch.withReceiver({ ...input, onAccepted: async (reference, at) => {
+    input.options.signal?.throwIfAborted();
+    input.beforeAccepted?.();
+    if (state.startAuthorities.has(run.id)) fail("delegation.recovery_required");
+    state.startAuthorities.set(run.id, { fence, read });
+    let result: ReturnType<DelegationHostWriter["acknowledgeRootRunSuspensionStart"]>;
+    try {
+      result = writer.acknowledgeRootRunSuspensionStart({ suspensionId: activation.suspensionId, targetFence: fence,
+        claimOwner: input.execution.claimOwner, claimToken: input.execution.claimToken,
+        expectedRevision: input.execution.continuation.revision, observationRef: reference, now: at });
+    } finally { state.startAuthorities.delete(run.id); }
+    if (result.kind !== "started") fail("suspension_start.already_received");
+    await input.onAccepted(result, at);
+  } });
 }
 
 /** Narrow internal port, not an accessor for the underlying writer or receipt issuer. */
@@ -575,6 +971,15 @@ function buildAuthority(state: Composition, run: RunSession, fence: RuntimeAttem
   const preset = providerPresetForRuntimeObservationScope(fact.providerScope)!;
   const identity = providerRuntimeScopeIdentity(fact.providerScope)!;
   if (!preset.enabled || run.providerName !== fact.provider.provider || run.providerModel !== fact.provider.model) fail("delegation.provider_revoked");
+  return buildScopeAuthority(state, run, fence, fact, policy, authoritySetId, identity,
+    [...new Set([...(preset.apiKeyRef ? [preset.apiKeyRef] : []), ...Object.values(preset.secretHeaderRefs)]
+      .map(ref => ref.startsWith("local:") ? `managed:provider/${ref.slice("local:".length)}` : ref))]);
+}
+/** Common scope projection; Provider provenance is checked by its owning caller. */
+function buildScopeAuthority(state: Composition, run: RunSession, fence: RuntimeAttemptFenceV1,
+  fact: Pick<AdmissionFact, "provider" | "tools">, policy: EffectiveRunPolicySnapshot,
+  authoritySetId: string, providerIdentity: unknown, secretRefs: readonly string[]): DelegationExecutionAuthority {
+  const store = requiredStore(state), unit = store.getWorkUnit(fence.workUnitId)!;
   const runtime = loadWorkspaceRuntimeSettings(store, state.runnerRegistry);
   const runnerId = unit.effectiveRunnerId ?? unit.runnerId!;
   state.runnerRegistry.resolve({ requestedRunnerId: runnerId, allowFallback: false, allowedRunnerIds: runtime.allowedRunnerIds,
@@ -604,7 +1009,7 @@ function buildAuthority(state: Composition, run: RunSession, fence: RuntimeAttem
     roots.set(realpathSync.native(isAbsolute(path) ? path : resolve(store.paths.cwd, path)), "write");
   }
   return { schemaVersion: 1, authoritySetId,
-    sourceRevision: delegationDigest({ policy, runtime, providerIdentity: identity, participants: participantIds,
+    sourceRevision: delegationDigest({ policy, runtime, providerIdentity, participants: participantIds,
       tools, roots: [...roots], channelRevision: channel?.updatedAt, teammateRevision: teammate?.updatedAt }),
     workspaceId: unit.workspaceId, channelId: run.channelId, workflowId: step?.workflowId, workflowStepId: run.workflowStepId,
     ...(run.teammateId ? { participantId: run.teammateId } : {}), participantIds, runnerIds: [runnerId], maxDepth: state.features.maxDepth,
@@ -612,9 +1017,15 @@ function buildAuthority(state: Composition, run: RunSession, fence: RuntimeAttem
     toolDecisions: Object.fromEntries(tools.map(tool => [tool, planMode && ["bash", "edit", "write"].includes(tool) ? "deny" : policy.toolDecisions[tool]])),
     workspaceRoots: [...roots].map(([path, rootAccess]) => ({ path, access: rootAccess })),
     providers: [{ providerId: fact.provider.provider, model: fact.provider.model, api: fact.provider.api!, baseUrl: fact.provider.baseUrl! }],
-    networkScopes: [], secretRefs: [...new Set([...(preset.apiKeyRef ? [preset.apiKeyRef] : []), ...Object.values(preset.secretHeaderRefs)]
-      .map(ref => ref.startsWith("local:") ? `managed:provider/${ref.slice("local:".length)}` : ref))],
+    networkScopes: [], secretRefs,
   };
+}
+/** The SDK resumes its frozen tools; a narrowed projection cannot authorize that old surface. */
+function requireFrozenSuspensionTools(authority: DelegationExecutionAuthority, tools: readonly string[]): DelegationExecutionAuthority {
+  if (tools.some(tool => !authority.tools.includes(tool))) {
+    throw new HttpError(409, "delegation.tool_revoked", "The frozen recovery tool surface is no longer authorized.");
+  }
+  return authority;
 }
 function readHistoricalCapture(store: RunStore, root: DelegationRootBudgetRecord): DelegationAuthorityCapture {
   const artifact = store.getArtifact(root.authorityArtifactId), payload = artifact?.sealedPayload as { readonly kind?: unknown; readonly capture?: unknown } | undefined;

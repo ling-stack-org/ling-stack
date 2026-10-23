@@ -6,6 +6,8 @@ import test from "node:test";
 import { SqliteDelegationLifecycleStore } from "../dist/storage/sqlite/delegation-lifecycle-store.js";
 import { DEFAULT_WORKSPACE_ID, toRuntimeAttemptFence } from "../dist/index.js";
 import { createBudgetHarness, budgetNow, budgetLater } from "./support/delegation-budget-fixture.mjs";
+import { requestSuspensionForFixture } from "./support/run-suspension-integration-fixture.mjs";
+import { hasDelegationRunnerStart, readDelegationResumePredecessor } from "../dist/storage/sqlite/delegation-resume-lineage.js";
 
 const later = "2026-10-19T00:00:02.000Z";
 async function fixture(t, live = false) {
@@ -76,6 +78,56 @@ test("initial claim creates only a fenced Attempt and replays without another cl
   assert.equal(f.authorizations(), 1);
 });
 
+// Exercise only the186 budget/authority gate here. Immutable source→target and
+// real prepared ACK custody are covered by the SDK tree integration, not forged.
+function checkSuspensionBudget(f, child) {
+  f.db.exec("BEGIN IMMEDIATE");
+  try {
+    return f.writer.assertDelegatedSuspensionAuthorityWithinTransaction({ runId: child.run.id,
+      sourceFence: toRuntimeAttemptFence(child.attempt), now: later }, () => f.authority);
+  } finally { f.db.exec("ROLLBACK"); }
+}
+
+test("delegated suspension budget gate counts a live parent's reservation without settling or refunding it", async t => {
+  const f = await fixture(t), child = f.claim(); f.start(child);
+  const charge = f.charge({ reservedTokens: 60 });
+  assert.equal(checkSuspensionBudget(f, child).rootRunId, f.root.id);
+  assert.deepEqual(f.writer.getDelegationBudgetCharge(charge.id), charge);
+  assert.throws(() => f.charge({ invocationId: "cannot-spend-reserved-capacity", reservedTokens: 1 }),
+    { code: "delegation.budget_exhausted" });
+});
+
+test("delegated suspension budget gate rejects unknown usage even on the current live parent", async t => {
+  const f = await fixture(t), child = f.claim(); f.start(child);
+  const charge = f.charge();
+  f.writer.settleModelInvocation({ chargeId: charge.id, receipt: f.receipt(charge, { kind: "unknown",
+    inputTokens: undefined, cachedInputTokens: undefined, outputTokens: undefined }), now: later });
+  assert.throws(() => checkSuspensionBudget(f, child), { code: "delegation.settlement_incomplete" });
+  assert.equal(f.writer.getDelegationBudgetCharge(charge.id).state, "unresolved");
+});
+
+test("delegated suspension budget gate rejects a retired parent's reserved charge despite a new live owner", async t => {
+  const f = await fixture(t), child = f.claim(); f.start(child);
+  const charge = f.charge();
+  const next = f.store.createWorkUnitAttempt({ workUnitId: f.unit.id, attemptNumber: 2,
+    runtimeInstanceId: "new-root-runtime", runnerId: "pi", status: "created", now: later });
+  f.db.prepare("UPDATE work_units SET status='running' WHERE id=?").run(f.unit.id);
+  f.db.prepare("UPDATE work_unit_attempts SET status='started',started_at=? WHERE id=?").run(later, next.id);
+  assert.equal(f.store.getWorkUnit(f.unit.id).activeAttemptId, next.id);
+  assert.throws(() => checkSuspensionBudget(f, child), { code: "delegation.settlement_incomplete" });
+  assert.deepEqual(f.writer.getDelegationBudgetCharge(charge.id), charge);
+});
+
+test("delegated suspension budget gate cannot waive the recovering child's own pending charge", async t => {
+  const f = await fixture(t), child = f.claim(); f.start(child);
+  const fence = toRuntimeAttemptFence(child.attempt);
+  const capture = f.captureToken({ ...f.capture, runId: child.run.id, sourceFence: fence, budget: { tokenBudget: 40 } });
+  const charge = f.writer.reserveModelInvocation({ runId: child.run.id, sourceFence: fence, invocationId: "child-in-flight",
+    reservedTokens: 5, capture, now: later });
+  assert.throws(() => checkSuspensionBudget(f, child), { code: "delegation.settlement_incomplete" });
+  assert.deepEqual(f.writer.getDelegationBudgetCharge(charge.id), charge);
+});
+
 test("restart discovery is bounded, stable across tied timestamps, and is not dispatch authority", async t => {
   const f = await fixture(t);
   const second = f.spawn({ spawnCallId: "second-child" });
@@ -130,10 +182,25 @@ test("accepted Runner start cannot bypass the original durable preparation", asy
   assert.equal(f.store.getRun(claimed.run.id).status, "queued");
 });
 
+test("recovered claim and accepted start lazily protect the exact existing preparation without a history scan", async t => {
+  const f = await fixture(t), claimed = f.claim(), preparation = f.prepare(claimed);
+  const row = () => f.db.prepare("SELECT holder,released_at FROM harness_artifact_pins WHERE artifact_id=?").get(preparation.artifactId);
+  const release = () => f.store.releaseHarnessArtifactPin({ artifactId: preparation.artifactId, holder: row().holder, now: f.startAt });
+  release();
+  assert.notEqual(row().released_at, null);
+  const replay = f.claim({ now: f.startAt });
+  assert.equal(replay.replayed, true);
+  assert.equal(row().released_at, null);
+  release();
+  assert.equal(f.start(claimed).step.state, "running");
+  assert.equal(row().released_at, null);
+});
+
 test("only Host preparation custody seals one immutable input and rejects changed replay", async t => {
   const f = await fixture(t), claimed = f.claim(), payload = f.preparationPayload(claimed);
   assert.throws(() => f.prepare(claimed, { preparation: payload }), { code: "delegation.authority_invalid" });
   const token = f.preparationToken(payload), first = f.prepare(claimed, { preparation: token });
+  assert.equal(f.db.prepare("SELECT COUNT(*) n FROM harness_artifact_pins WHERE artifact_id=? AND reason='recovery' AND released_at IS NULL").get(first.artifactId).n, 1);
   payload.requestSnapshot.task.title = "Mutated after capture";
   assert.notEqual(f.lifecycle.getDelegatedChildPreparation(f.child.reservation.id).payload.requestSnapshot.task.title, payload.requestSnapshot.task.title);
   assert.deepEqual(f.prepare(claimed, { preparation: token }), first);
@@ -246,6 +313,43 @@ async function stopped(f) {
   return { started, fence, runtime };
 }
 
+const suspensionAdmissionSnapshot = f => ["run_sessions", "work_units", "work_unit_attempts", "delegation_steps", "delegation_budget_reservations", "artifacts"]
+  .map(table => f.db.prepare(`SELECT * FROM ${table} ORDER BY 1`).all());
+
+test("ancestor suspension closes prepared child start without altering its SDK acceptance or claimed owner", async t => {
+  const f = await fixture(t, true), claimed = f.claim(); f.prepare(claimed);
+  requestSuspensionForFixture(f, clock(f)); const before = suspensionAdmissionSnapshot(f);
+  assert.throws(() => f.start(claimed), /suspension.admission_closed/); assert.deepEqual(suspensionAdmissionSnapshot(f), before);
+  assert.equal(f.store.getWorkUnitAttempt(claimed.attempt.id).status, "created");
+  assert.equal(f.store.listWorkUnitAttempts(claimed.workUnit.id).length, 1);
+});
+
+test("ancestor suspension closes explicit resume without creating a successor Attempt or changing the original deadline", async t => {
+  const f = await fixture(t, true), previous = await stopped(f);
+  requestSuspensionForFixture(f, clock(f)); const before = suspensionAdmissionSnapshot(f);
+  assert.throws(() => f.lifecycle.resumeDelegatedChild({ reservationId: f.child.reservation.id,
+    expectedStepRevision: previous.runtime.step.revision, runtimeInstanceId: "runtime-2", parentFence: f.fence,
+    callId: "must-not-resume-suspending-tree", now: clock(f) }), /suspension.admission_closed/);
+  assert.deepEqual(suspensionAdmissionSnapshot(f), before);
+  assert.equal(f.writer.getDelegationBudgetReservation(f.child.reservation.id).deadlineAt, f.child.reservation.deadlineAt);
+  assert.equal(f.store.listWorkUnitAttempts(previous.runtime.workUnit.id).length, 1);
+});
+
+test("ancestor suspension leaves exact in-flight interrupt and physical Host drain settlement available", async t => {
+  const f = await fixture(t, true), started = f.start(f.claim()), sourceFence = toRuntimeAttemptFence(started.attempt);
+  let release;
+  const completion = f.store.trackHostAttemptCompletion({ runId: started.run.id, ...sourceFence }, new Promise(resolve => { release = resolve; }), () => true);
+  requestSuspensionForFixture(f, clock(f));
+  const interrupt = requestInterrupt(f);
+  assert.equal(interrupt.replayed, false); assert.equal(interrupt.step.state, "interrupting");
+  assert.throws(() => f.lifecycle.commitDelegatedChildInterrupted({ reservationId: f.child.reservation.id, sourceFence, now: clock(f) }),
+    { code: "delegation.recovery_required" });
+  release(); await completion;
+  const settled = f.lifecycle.commitDelegatedChildInterrupted({ reservationId: f.child.reservation.id, sourceFence, now: clock(f) });
+  assert.equal(settled.step.state, "interrupted"); assert.equal(settled.attempt.status, "cancelled");
+  assert.equal(f.store.getRun(f.root.id).status, "running");
+});
+
 test("an interrupt request cannot pretend a pending original Host lifetime has physically stopped", async t => {
   const f = await fixture(t, true), started = f.start(f.claim()), fence = toRuntimeAttemptFence(started.attempt);
   let resolve;
@@ -312,6 +416,48 @@ test("resume retains child Run and deadline, creates a monotonic Attempt, and ne
   assert.equal(resumed.step.childRunId, previous.runtime.run.id);
   assert.equal(resumed.attempt.status, "started");
   assert.equal(f.store.getWorkUnitAttempt(previous.started.attempt.id).status, "cancelled");
+});
+
+test("ordinary resume lineage derives only from sealed control, physical stop and the original Host ACK", async t => {
+  const f = await fixture(t, true), previous = await stopped(f), source = toRuntimeAttemptFence(previous.started.attempt);
+  const claimed = f.lifecycle.resumeDelegatedChild({ reservationId: f.child.reservation.id,
+    expectedStepRevision: previous.runtime.step.revision, runtimeInstanceId: "runtime-2", parentFence: f.fence,
+    callId: "read-immutable-resume-lineage", now: clock(f) });
+  const target = toRuntimeAttemptFence(claimed.attempt), runId = claimed.run.id;
+  const qualifies = () => {
+    try { return readDelegationResumePredecessor(f.db, runId, target) !== undefined; }
+    catch { return false; }
+  };
+  assert.deepEqual(readDelegationResumePredecessor(f.db, runId, target), source);
+  assert.equal(hasDelegationRunnerStart(f.db, runId, target), false, "a durable resume is not an SDK ACK");
+  assert.equal(readDelegationResumePredecessor(f.db, "foreign-run", target), undefined);
+  assert.equal(readDelegationResumePredecessor(f.db, runId, { ...target, fencingToken: "foreign" }), undefined);
+  const changes = [
+    ["original Host completion", () => f.db.prepare("DELETE FROM host_attempt_completions WHERE attempt_id=?").run(source.attemptId)],
+    ["original SDK ACK", () => f.db.prepare("DELETE FROM runtime_events WHERE attempt_id=? AND type='work_unit_started'").run(source.attemptId)],
+    ["original stopped audit", () => f.db.prepare("DELETE FROM runtime_events WHERE attempt_id=? AND type='work_unit_cancelled'").run(source.attemptId)],
+    ["effect coverage", () => {
+      // Corrupted-storage fixture only. The SAVEPOINT restores both the
+      // original immutable trigger and the row; production never drops it.
+      f.db.exec("DROP TRIGGER host_attempt_completion_immutable_terminal");
+      f.db.prepare("UPDATE host_attempt_completions SET effect_coverage='unverified' WHERE attempt_id=?").run(source.attemptId);
+    }],
+    ["source terminal status", () => f.db.prepare("UPDATE work_unit_attempts SET status='lost' WHERE id=?").run(source.attemptId)],
+    ["source chronology", () => f.db.prepare("UPDATE work_unit_attempts SET ended_at='2099-01-01T00:00:00.000Z' WHERE id=?").run(source.attemptId)],
+    ["resume recovery pin", () => f.db.prepare(`UPDATE harness_artifact_pins SET released_at=? WHERE artifact_id IN
+      (SELECT body_artifact_id FROM delegation_messages WHERE idempotency_key=?)`).run(clock(f), `delegation-resume:${f.fence.attemptId}:read-immutable-resume-lineage`)],
+  ];
+  for (const [label, corrupt] of changes) {
+    f.db.exec("SAVEPOINT resume_lineage_probe");
+    try { corrupt(); assert.equal(qualifies(), false, `${label} must fail closed`); }
+    finally { f.db.exec("ROLLBACK TO resume_lineage_probe; RELEASE resume_lineage_probe"); }
+    assert.equal(qualifies(), true, `${label} probe must not persist`);
+  }
+  const at = clock(f);
+  f.start(claimed, { observation: f.observe(claimed, { observedAt: at, observationId: "actual-successor-ack" }), now: at });
+  assert.equal(hasDelegationRunnerStart(f.db, runId, target), true);
+  assert.deepEqual(readDelegationResumePredecessor(f.db, runId, target), source,
+    "actual acceptance preserves, not replaces, the historical resume control");
 });
 
 // Regression: response-loss retries of an accepted resume are observations,
@@ -471,6 +617,10 @@ test("terminal commits a sealed Host result and step together, with exact respon
   assert.equal(messages[0].direction, "child_to_parent");
   const artifact = f.store.getArtifact(messages[0].bodyArtifactId);
   assert.equal(artifact.runId, ended.started.run.id);
+  assert.equal(f.db.prepare("SELECT COUNT(*) n FROM harness_artifact_pins WHERE artifact_id=? AND reason='recovery' AND released_at IS NULL").get(artifact.id).n, 1);
+  const preparationId = f.store.getRun(ended.started.run.id).contextViewId;
+  assert.equal(f.db.prepare("SELECT COUNT(*) n FROM harness_artifact_pins WHERE artifact_id=? AND released_at IS NULL").get(preparationId).n, 1,
+    "child terminal is not parent consumption; keep the untyped preparation reference protected");
   assert.equal(artifact.sealedPayload.kind, "delegation.result.v1");
   assert.deepEqual(artifact.sealedPayload.sourceFence, ended.fence);
   assert.equal(artifact.sealedPayload.settlementDigest, result.reservation.settlementDigest);

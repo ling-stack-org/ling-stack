@@ -41,6 +41,8 @@ export interface SqliteRuntimeRecoveryCoordinatorPorts extends Pick<RunStore,
   readonly getRun: (runId: string) => RunSession | undefined;
   readonly getWorkUnit: (workUnitId: string) => WorkUnit | undefined;
   readonly getWorkUnitAttempt: (attemptId: string) => WorkUnitAttempt | undefined;
+  readonly hasPendingRunTerminalIntent: RunStore["hasPendingRunTerminalIntent"];
+  readonly hasPendingRunSuspension: RunStore["hasPendingRunSuspension"];
   readonly findWorkUnitAttemptTerminalAudit: (attempt: WorkUnitAttempt) => RuntimeEvent | undefined;
   readonly getLingThread: (threadId: string) => LingThread | undefined;
   readonly updateLingThread: (threadId: string, input: UpdateLingThreadInput, now: string) => LingThread | undefined;
@@ -84,6 +86,23 @@ export class SqliteRuntimeRecoveryCoordinator {
 
     for (const runId of staleRuns) {
       const runBeforeRecovery = this.ports.getRun(runId);
+      // Queued/pre-ACK delegated children may not have a context view or Runner
+      // snapshot yet. Their private lifecycle, not the ordinary recovery shape,
+      // owns reconciliation. Preserve unknown effects and reserved capacity;
+      // neither this exclusion nor an expired lease is authority to replay.
+      const workUnit = runBeforeRecovery?.workUnitId ? this.ports.getWorkUnit(runBeforeRecovery.workUnitId) : undefined;
+      if (workUnit?.ownerType === "delegation_step") continue;
+      const pendingAttempt = workUnit?.activeAttemptId ? this.ports.getWorkUnitAttempt(workUnit.activeAttemptId) : undefined;
+      if (pendingAttempt && this.ports.hasPendingRunTerminalIntent({ runId,
+        workUnitId: pendingAttempt.workUnitId, attemptId: pendingAttempt.id,
+        runtimeInstanceId: pendingAttempt.runtimeInstanceId, fencingToken: pendingAttempt.fencingToken })) continue;
+      // A graceful request can survive a crash before SDK/Host drain. Neither
+      // generic startup loss nor an expired lease may manufacture that proof.
+      // This preserves custody only; the dedicated recovery path must verify
+      // a source-bound stopped receipt before admitting any successor.
+      if (pendingAttempt && this.ports.hasPendingRunSuspension({ runId,
+        workUnitId: pendingAttempt.workUnitId, attemptId: pendingAttempt.id,
+        runtimeInstanceId: pendingAttempt.runtimeInstanceId, fencingToken: pendingAttempt.fencingToken })) continue;
       let resumableApproval: ApprovalRequest | undefined;
       if (runBeforeRecovery?.status === "waiting_for_approval" || runBeforeRecovery?.status === "running") {
         resumableApproval = this.ports.listApprovalRequests({ runId, limit: 20 })

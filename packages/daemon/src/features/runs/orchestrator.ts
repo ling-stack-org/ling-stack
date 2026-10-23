@@ -2,15 +2,19 @@ import type { ServerResponse } from "node:http";
 import { isDeepStrictEqual } from "node:util";
 import {
   type ApprovalPolicy,
+  approvalSideEffectFingerprintV1,
   buildSkillSourceRuntimeFallbackPlan,
   createChannelWorkspaceSnapshot,
   createRunId,
+  captureRunProgressCheckpointLineage,
   delegationDigest,
   DelegationCompletionBarrierError,
   type DelegationPreparedExecution,
+  type RootRunSuspensionActivationRecord,
   createRuntimeResourceRenewal,
   DEFAULT_WORKSPACE_ID,
   isExternalExecutionEngineId,
+  isApprovalResumeBasisV1,
   applyConversationModeToEffectiveRunPolicySnapshot,
   resolveSessionRunPolicy,
   hostCompactionResourceBoundaryArtifactId,
@@ -27,6 +31,8 @@ import {
   type RunArtifact,
   type RunSession,
   type RunProgressCheckpointWitness,
+  type ReadRunFinalSettlementResult,
+  RunProgressCheckpointError,
   type CommitUserInputYieldResult,
   type UserInputContinuationBinding,
   type UserInputContinuationClaim,
@@ -56,7 +62,7 @@ import type {
   PiRunnerTaskContinuationDirective,
 } from "@ling-stack/runner-pi";
 import type { RunCompactionCheckpointBlockerCode } from "@ling-stack/contracts";
-import { DELEGATION_TOOL_NAMES, PiRunnerAdapter, PiRunnerYielded, isPiToolFreeCompletion, readPiCompletedTools, readPiCompletedBuiltinReads,
+import { DELEGATION_TOOL_NAMES, PiRunnerAdapter, PiRunnerYielded, PiRunnerSuspended, isPiToolFreeCompletion, readPiCompletedTools, readPiCompletedBuiltinReads,
   type PiToolBoundaryObservation } from "@ling-stack/runner-pi";
 import {
   hostCapabilityToolsV1,
@@ -71,6 +77,7 @@ import type { McpBroker } from "../../context.js";
 import { HttpError } from "../../errors.js";
 import { appendConversationResponseStyle } from "../../shared/conversation-response-style.js";
 import { ActiveRunRegistry } from "../../runtime/active-runs.js";
+import { runSuspensionOrderFor } from "../../runtime/run-suspension-order.js";
 import { AttemptLocalWriterGroup } from "../../runtime/attempt-local-writers.js";
 import { observeHostAttemptCompletion } from "../../runtime/host-attempt-completion.js";
 import { createRunExecutionSupervision } from "../../runtime/run-execution-supervision.js";
@@ -128,7 +135,7 @@ import {
   resolveMcpToolAccessForRun,
 } from "./mcp.js";
 import { hydrateRunnerToolSurface } from "./tool-surfaces.js";
-import { runtimeObservationScopeForProvider } from "../providers/runtime-observation-scope.js";
+import { compareProviderRuntimeObservationScope, runtimeObservationScopeForProvider } from "../providers/runtime-observation-scope.js";
 import { createQueuedRunForConflict } from "./queue.js";
 import { resolveProviderForRun, resolveProviderRunThinkingLevel } from "./providers.js";
 import { findExistingIdempotentRunRequest } from "./existing-idempotent-run.js";
@@ -191,9 +198,11 @@ import { isRecord } from "../../shared/validation.js";
 import { prepareApprovedToolContinuation } from "./approval-continuation-tool.js";
 import { suspendClaimedApprovalResumePreparation } from "./approval-resume-preparation.js";
 import { assessRunCompactionRecovery } from "../harness/continuations/run-compaction-recovery.js";
+import { sealRunCompactionSuspensionBoundary } from "../harness/continuations/run-compaction-suspension.js";
 import { commitInstalledRunCompaction } from "../harness/continuations/run-compaction-commit.js";
 import { commitRunCompactionProgress } from "../harness/continuations/run-compaction-progress.js";
 import { assessRunOrdinaryProgressRecovery, OrdinaryRunProgressController } from "../harness/continuations/run-ordinary-progress.js";
+import { RunGracefulSuspensionController, RunGracefulSuspensionBlocked } from "../harness/continuations/run-graceful-suspension.js";
 import { assessDelegatedRunRecovery, type DelegatedRunRecoveryAssessment } from "../harness/delegations/delegated-run-recovery.js";
 import { projectPublicRunEventEnvelope } from "./public-artifacts.js";
 import { AttemptHostOperationTracker } from "../../runtime/attempt-host-operation-tracker.js";
@@ -210,10 +219,12 @@ import {
 } from "../providers/runtime-invocations.js";
 import { recordProviderInvocationFailureObservations } from "../providers/runtime-failure-observations.js";
 import type { ProviderInvocationOrigin } from "../providers/runtime-invocations.js";
-import { admitOriginalDelegationRoot, admitOriginalDelegatedChild, readOriginalDelegatedExecutionEntry,
+import { admitOriginalDelegationRoot, admitOriginalDelegatedChild, readOriginalDelegatedExecutionEntry, readOriginalRunSuspensionLifecycle,
+  commitOriginalRunFinalSettlement,
+  activateOriginalRootRunSuspension, readOriginalRootRunSuspensionActivation, withOriginalRootRunSuspensionReceiver,
   type OriginalDelegatedExecution, type OriginalDelegatedExecutionEntry } from "../harness/delegations/store-composition.js";
 import { bindOriginalDelegationProviderBudget } from "../harness/delegations/provider-budget-host.js";
-import { waitForRequiredDelegationCompletion } from "../harness/delegations/completion-wait.js";
+import { settleDelegationsForParentOutcome } from "../harness/delegations/completion-wait.js";
 import { readOriginalDelegationRuntimeRegistry,
   type DelegationRuntimeRegistry } from "../harness/delegations/runtime-registry.js";
 import { createDelegationRunnerToolHandler } from "../harness/delegations/runner-tools.js";
@@ -436,6 +447,14 @@ export function executeExistingRunContinuation(
     writeRunPreparationFailure(sink, 404, { error: "run_not_found", message: `Run not found: ${input.runId}` });
     return Promise.resolve(undefined);
   }
+  const owningWorkUnit = run.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;
+  if (owningWorkUnit?.ownerType === "delegation_step") {
+    writeRunPreparationFailure(sink, 409, {
+      error: "delegation.authority_invalid",
+      message: "Delegated recovery requires its original private execution entry, not an ordinary continuation.",
+    });
+    return Promise.resolve(undefined);
+  }
   let request: RunRequest;
   try {
     request = rebuildExistingRunRequest(run, input.origin);
@@ -546,12 +565,23 @@ async function executeAdmittedRunRequest(
   let workspaceCwd = "";
   let computerUseProducer: CuaDriverComputerUseProjectionProducer | undefined;
   let continuationExecution: PreparedRunnerContinuationExecution | undefined;
+  let rootSuspensionActivation: RootRunSuspensionActivationRecord | undefined;
   let continuationContext: RunnerContinuationContextIdentity | undefined;
   let sourceAttempt: WorkUnitAttempt | undefined;
   let compactionRecoveryModelView: readonly unknown[] | undefined;
   let ordinaryProgressRecoveryModelView: readonly unknown[] | undefined;
   let ordinaryProgressRecoveryWitness: RunProgressCheckpointWitness | undefined;
   let compactionRecoveryCheckpointId: string | undefined;
+  let finalSettlementRecovery: { readonly suspensionId: string;
+    readonly result: Extract<ReadRunFinalSettlementResult, { kind: "verified" }> } | undefined;
+  const readStoppedFinalSettlement = (sourceFence: ReturnType<typeof toRuntimeAttemptFence>, now: string): ReadRunFinalSettlementResult => {
+    if (!store) return { kind: "blocked", code: "checkpoint.lineage_mismatch" };
+    const lifecycle = readOriginalRunSuspensionLifecycle(store, runtimeSupervisor);
+    const suspension = lifecycle.getRunSuspensionForAttempt(sourceFence.attemptId);
+    if (suspension?.seal?.witness.kind !== "settlement") return { kind: "not_settled" };
+    const result = lifecycle.readStoppedFinalSettlementRecovery({ suspensionId: suspension.id, sourceFence, now });
+    return result.kind === "not_settled" ? { kind: "blocked", code: "checkpoint.missing" } : result;
+  };
   const existingContinuation = options.existingRunContinuation;
   const userInputContinuation = options.userInputContinuation;
   let userInputClaim = userInputContinuation?.claim;
@@ -569,6 +599,10 @@ async function executeAdmittedRunRequest(
     return new Date(lifecycleTimeMs).toISOString();
   };
   const executionNow = (): string => userInputContinuation ? lifecycleNow() : new Date().toISOString();
+  // Required-input checkpoints need durable effect receipts. An internal opt-in
+  // cannot turn an off/shadow Broker into an enforced execution path.
+  const userInputAvailable = (): boolean => !delegatedExecution && options.enableUserInputPause === true
+    && Boolean(turn?.sourceItemId) && durableRunRequest.harnessFeatureSnapshot?.toolBroker === "enforce";
   try {
     if ([existingContinuation, userInputContinuation, options.delegatedExecution].filter(Boolean).length > 1) {
       throw new HttpError(409, "continuation_identity_conflict", "A Run cannot use two continuation owners.");
@@ -672,6 +706,15 @@ async function executeAdmittedRunRequest(
         throw new HttpError(409, "continuation_source_incomplete", "Existing Run continuation lineage is incomplete.");
       }
       if (existingContinuation.preparedExecution && activeAttempt) {
+        if (sourceAttempt.errorCode === "runtime_graceful_suspend"
+          && readOriginalRootRunSuspensionActivation(store, runtimeSupervisor, { runId: run.id, targetAttemptId: activeAttempt.id })) {
+          // This caller has no dispatch custody. Do not enter preparation-failure
+          // cleanup, which belongs to the original executor and its retained claim.
+          writeRunPreparationFailure(sink, 409, { error: "suspension_start.dispatch_not_regranted",
+            message: "A consumed root suspension is audit-only; a saved continuation does not regrant dispatch.",
+            status: "blocked", runId: run.id });
+          return undefined;
+        }
         // This target was claimed by the coordinator before asynchronous Runner preflight.
         // Early failure/shutdown cleanup must retain its real fence, not fall through as unowned.
         continuationExecution = existingContinuation.preparedExecution;
@@ -845,7 +888,7 @@ async function executeAdmittedRunRequest(
         channelId: runRequest.task.channelId }) === true;
     runnerRequest = { ...runnerRequest, mediaGenerationTools: currentMediaTools,
       initialToolSurface: { mediaGeneration: currentMediaTools.length > 0, toolHydration: toolHydrationEnabled,
-        userInput: !delegatedExecution && options.enableUserInputPause === true && Boolean(turn.sourceItemId),
+        userInput: userInputAvailable(),
         delegation: delegationToolSurfaceEnabled } };
     if (!frozenExecution && runnerResolution.runner.adapter instanceof PiRunnerAdapter) {
       runnerRequest = withGstackHostContext(runnerRequest, selectedSkillSourceContext);
@@ -907,7 +950,7 @@ async function executeAdmittedRunRequest(
       runnerRequest = restoreNormalConversationExecutionOptions(executionInput, { ...runnerRequest,
         initialToolSurface: { mediaGeneration: mediaGenerationEligible,
           toolHydration: runnerResolution.runner.toolHydration?.mode === "daemon_hydrated" && runnerResolution.runner.toolHydration.conformance === "verified",
-          userInput: !delegatedExecution && options.enableUserInputPause === true && Boolean(turn?.sourceItemId),
+          userInput: userInputAvailable(),
           delegation: currentDelegationToolSurfaceEnabled },
         provider: resolvedProvider, mcpTools: currentMcp, mediaGenerationTools: mediaGenerationEligible
           ? createConversationMediaGenerationToolDefinitions(listConversationMediaGenerationTargets(runStore, secretResolver)) : [] });
@@ -971,13 +1014,18 @@ async function executeAdmittedRunRequest(
       delegatedExecution.assertCurrent();
       if (delegatedExecution.prepared) {
         const recovery = assessDelegatedRunRecovery({ store, child: delegatedExecution.claimed,
-          prepared: delegatedExecution.prepared, policySnapshot: effectivePolicySnapshot, now: executionNow() });
+          prepared: delegatedExecution.prepared, policySnapshot: effectivePolicySnapshot, now: executionNow(),
+          readFinalSettlementRecovery: readStoppedFinalSettlement });
         if (recovery.kind === "blocked") throw new HttpError(409, recovery.code,
           `Delegated recovery requires a verified original checkpoint (${recovery.code}).`);
         delegatedRecovery = recovery;
         delegatedPreparation = recovery.prepared;
         sourceAttempt = recovery.sourceAttempt;
-        if ("ordinaryProgressRecovery" in recovery) {
+        if ("finalSettlementRecovery" in recovery) {
+          const view = recovery.finalSettlementRecovery.modelView;
+          if (isCompactedModelView(view)) compactionRecoveryModelView = view;
+          else ordinaryProgressRecoveryModelView = view;
+        } else if ("ordinaryProgressRecovery" in recovery) {
           ordinaryProgressRecoveryModelView = recovery.ordinaryProgressRecovery.modelView;
           ordinaryProgressRecoveryWitness = recovery.ordinaryProgressWitness;
         } else {
@@ -988,7 +1036,35 @@ async function executeAdmittedRunRequest(
     } else if (existingContinuation) {
       let needsOrdinaryRecovery = false;
       if (existingContinuation.origin === "daemon_recovery" && run && sourceAttempt) {
-        const compaction = assessRunCompactionRecovery({ store, run, sourceAttempt, policySnapshot: effectivePolicySnapshot });
+        // A stopped successor may retain A's exact compacted view without any
+        // new tool round. Only original constructor custody can verify its
+        // stopped source and every real activation/ACK edge; a boolean handoff
+        // or the public live reader must not substitute for that observation.
+        const stoppedLifecycle = sourceAttempt.errorCode === "runtime_graceful_suspend"
+          ? readOriginalRunSuspensionLifecycle(store, runtimeSupervisor) : undefined;
+        const stopped = stoppedLifecycle?.getRunSuspensionForAttempt(sourceAttempt.id);
+        const final = stopped?.seal?.witness.kind === "settlement"
+          ? stoppedLifecycle!.readStoppedFinalSettlementRecovery({ suspensionId: stopped.id,
+              sourceFence: toRuntimeAttemptFence(sourceAttempt), now: executionNow() }) : undefined;
+        if (final?.kind === "blocked") throw new HttpError(409, final.code,
+          `Daemon final settlement recovery is blocked (${final.code}).`);
+        if (final?.kind === "not_settled") throw new HttpError(409, "checkpoint.missing",
+          "The stopped final settlement is missing; an older progress view cannot replace it.");
+        if (final?.kind === "verified") {
+          if (!(runnerResolution.runner.adapter instanceof PiRunnerAdapter)) throw new HttpError(409,
+            "checkpoint.reconstruction_unavailable", "Final settlement recovery requires the original Pi SDK.");
+          finalSettlementRecovery = { suspensionId: stopped!.id, result: final };
+          if (isCompactedModelView(final.modelView)) compactionRecoveryModelView = final.modelView;
+          else ordinaryProgressRecoveryModelView = final.modelView;
+        }
+        const observation = stopped?.seal?.witness.kind === "compaction"
+          ? stoppedLifecycle!.readStoppedCompactionSuspensionRecovery({ suspensionId: stopped.id,
+              sourceFence: toRuntimeAttemptFence(sourceAttempt), now: executionNow() }) : undefined;
+        const compaction = finalSettlementRecovery ? { kind: "not_compacted" as const }
+          : observation?.kind === "verified"
+          ? { kind: "verified" as const, checkpoint: { id: observation.witness.checkpoint.checkpointId }, modelView: observation.modelView }
+          : observation?.kind === "blocked" ? observation
+          : assessRunCompactionRecovery({ store, run, sourceAttempt, policySnapshot: effectivePolicySnapshot });
         if (compaction.kind !== "not_compacted") {
           if (compaction.kind === "blocked") {
             throw new HttpError(409, compaction.code,
@@ -1001,7 +1077,7 @@ async function executeAdmittedRunRequest(
           compactionRecoveryModelView = compaction.modelView;
           compactionRecoveryCheckpointId = compaction.checkpoint.id;
         } else {
-          needsOrdinaryRecovery = true;
+          needsOrdinaryRecovery = finalSettlementRecovery === undefined;
         }
       }
       const frozenPolicy = readStoredEffectivePolicySnapshot(run?.requestSnapshot);
@@ -1229,36 +1305,60 @@ async function executeAdmittedRunRequest(
           workspaceCwd,
           now: createdAt,
           idempotencyDiscriminator: existingContinuation.idempotencyDiscriminator,
+          suspensionArtifactIds: finalSettlementRecovery?.result.artifactIds,
         });
-        const activation = store.commitExistingRunContinuation({
-          ...(compactionRecoveryCheckpointId ? { compactionResourceBoundary: {
-            checkpointId: compactionRecoveryCheckpointId,
-            artifactId: hostCompactionResourceBoundaryArtifactId({ runId: run.id, ...toRuntimeAttemptFence(sourceAttempt) },
-              compactionRecoveryCheckpointId),
-          } } : {}),
-          preparation: plan.preparation,
-          ...(ordinaryProgressRecoveryWitness
-            ? { recoveryProgressCheckpointGuard: ordinaryProgressRecoveryWitness } : {}),
-          expectedRunStatus: existingContinuation.origin === "runner_retry"
-            ? "failed"
-            : run.status === "queued" ? "queued" : "running",
-          expectedWorkUnitStatus: existingContinuation.origin === "runner_retry" ? "failed" : "stale",
-          expectedTaskStatus,
-          actor: existingContinuation.origin === "runner_retry" ? "local-user" : "system",
-          reason: existingContinuation.origin === "runner_retry" ? "manual_retry" : "daemon_recovery",
-          now: createdAt,
-        });
-        if (!activation.ok) {
-          throw new HttpError(409, activation.code, `Existing Run continuation activation failed: ${activation.code}`);
+        const stoppedSuspension = existingContinuation.origin === "daemon_recovery"
+          && sourceAttempt.errorCode === "runtime_graceful_suspend"
+          ? readOriginalRunSuspensionLifecycle(store, runtimeSupervisor).getRunSuspensionForAttempt(sourceAttempt.id) : undefined;
+        if (sourceAttempt.errorCode === "runtime_graceful_suspend") {
+          const stopped = stoppedSuspension && readOriginalRunSuspensionLifecycle(store, runtimeSupervisor).getRunSuspensionStop(stoppedSuspension.id);
+          if (!stoppedSuspension || stopped?.state !== "stopped" || !stopped.receiptDigest) {
+            throw new HttpError(409, "suspension_activation.stopped_proof_missing", "Graceful root recovery requires its exact stopped receipt.");
+          }
+          const activated = activateOriginalRootRunSuspension({ store, supervisor: runtimeSupervisor, activation: {
+            suspensionId: stoppedSuspension.id, sourceFence: toRuntimeAttemptFence(sourceAttempt),
+            expectedReceiptDigest: stopped.receiptDigest, replayArtifactId: plan.preparation.contextSnapshotArtifactId,
+            target: { runtimeInstanceId: runtime.runtimeInstanceId, runnerId: runnerResolution.runner.id,
+              runnerCapabilityRevision: runnerResolution.runner.nativeResumeConformance.revision },
+            claim: { owner: plan.claimOwner, token: plan.claimToken, expiresAt: plan.claimExpiresAt }, now: createdAt,
+          } });
+          if (activated.kind !== "activated") throw new HttpError(409, "suspension_start.dispatch_not_regranted",
+            "This root suspension has already been consumed; no dispatch claim is reissued.");
+          rootSuspensionActivation = activated.record;
+          run = activated.run; workUnit = activated.workUnit; attempt = activated.attempt;
+          continuationExecution = { continuation: activated.continuation, attempt: activated.attempt,
+            claimOwner: plan.claimOwner, claimToken: plan.claimToken, claimExpiresAt: plan.claimExpiresAt };
+        } else {
+          const activation = store.commitExistingRunContinuation({
+            ...(compactionRecoveryCheckpointId ? { compactionResourceBoundary: {
+              checkpointId: compactionRecoveryCheckpointId,
+              artifactId: hostCompactionResourceBoundaryArtifactId({ runId: run.id, ...toRuntimeAttemptFence(sourceAttempt) },
+                compactionRecoveryCheckpointId),
+            } } : {}),
+            preparation: plan.preparation,
+            ...(ordinaryProgressRecoveryWitness
+              ? { recoveryProgressCheckpointGuard: ordinaryProgressRecoveryWitness } : {}),
+            expectedRunStatus: existingContinuation.origin === "runner_retry"
+              ? "failed"
+              : run.status === "queued" ? "queued" : "running",
+            expectedWorkUnitStatus: existingContinuation.origin === "runner_retry" ? "failed" : "stale",
+            expectedTaskStatus,
+            actor: existingContinuation.origin === "runner_retry" ? "local-user" : "system",
+            reason: existingContinuation.origin === "runner_retry" ? "manual_retry" : "daemon_recovery",
+            now: createdAt,
+          });
+          if (!activation.ok) {
+            throw new HttpError(409, activation.code, `Existing Run continuation activation failed: ${activation.code}`);
+          }
+          run = activation.run;
+          workUnit = activation.workUnit;
+          continuationExecution = materializeExistingRunContinuation(plan, {
+            continuation: activation.continuation,
+            attempt: activation.attempt,
+            replayed: activation.replayed,
+          });
+          attempt = activation.attempt;
         }
-        run = activation.run;
-        workUnit = activation.workUnit;
-        continuationExecution = materializeExistingRunContinuation(plan, {
-          continuation: activation.continuation,
-          attempt: activation.attempt,
-          replayed: activation.replayed,
-        });
-        attempt = activation.attempt;
       }
     } else if (userInputContinuation) {
       if (!executionInput || !(runnerResolution.runner.adapter instanceof PiRunnerAdapter) || !userInputSeed || !workUnit) {
@@ -1445,7 +1545,7 @@ async function executeAdmittedRunRequest(
       throw new HttpError(409, "continuation_activation_state_invalid",
         `Existing Run WorkUnit is ${currentWorkUnitBeforeClaim.status}; expected queued or running.`);
     }
-    if (continuationExecution) {
+    if (continuationExecution && !rootSuspensionActivation) {
       continuationExecution = claimPreparedRunnerContinuation(store, continuationExecution, createdAt);
     }
     if (!delegatedExecution) {
@@ -1537,7 +1637,6 @@ async function executeAdmittedRunRequest(
             linkedMessageId: runRequest.linkedMessageId,
             controlPlaneEvents: options.controlPlaneEvents,
             getExecutionContext: durableRunRequest.harnessFeatureSnapshot?.toolBroker === "enforce"
-              || (options.enableUserInputPause === true && turn.sourceItemId && runnerRequest.initialToolSurface?.userInput === true)
               ? () => localWriters && hostOperationTracker ? { localWriters, hostOperationTracker } : undefined
               : undefined,
           }),
@@ -1628,6 +1727,13 @@ async function executeAdmittedRunRequest(
       workflowDelegationRootAdmissionPending = false;
     }
   } catch (error) {
+    if (rootSuspensionActivation) {
+      // Activation consumed the old receipt exactly once. A failed preflight
+      // neither proves execution/drain nor creates a schedulable dispatch grant.
+      writeRunPreparationFailure(sink, 409, { error: error instanceof HttpError ? error.code : "suspension_start.preparation_blocked",
+        message: "Stopped-root preparation remains blocked; its consumed claim is retained.", status: "blocked", runId: run?.id });
+      return run?.id;
+    }
     if (options.delegatedExecution) {
       // Preparation did not cross the Pi ACK. Retain the committed child,
       // first input (if any) and reservation; do not fall into ordinary Task
@@ -1951,6 +2057,16 @@ async function executeAdmittedRunRequest(
   notifyRunReady(options.onRunReady, run.id);
 
   const abortController = new AbortController();
+  const runnerCallbackFence = Object.freeze(toRuntimeAttemptFence(attempt));
+  let runtimeStarted = false;
+  let gracefulSuspensionController: RunGracefulSuspensionController | undefined;
+  const hostCompactionEnabled = durableRunRequest.harnessFeatureSnapshot?.continuations === "enforce"
+    && Boolean(run.contextViewId) && runnerResolution.runner.adapter instanceof PiRunnerAdapter;
+  let gracefullySuspended = false;
+  let shutdownSuspensionCause: "daemon_restart" | "desktop_quit" | "process_signal" | undefined;
+  let approvalSuspensionBlocked: unknown;
+  const suspensionOrder = runSuspensionOrderFor(activeRuns);
+  const suspensionSource = suspensionOrder.capture(store, { runId: run.id, ...runnerCallbackFence });
   const assertCurrentRunAdmission = (): void => {
     abortController.signal.throwIfAborted();
     if (delegatedExecution) delegatedExecution.assertCurrent();
@@ -1976,9 +2092,101 @@ async function executeAdmittedRunRequest(
   let pauseCoordinator: UserInputPauseCoordinator | undefined;
   let yieldedWait: CommitUserInputYieldResult["wait"] | undefined;
   let retainExecutionAuthority = false;
+  let deferredApprovalSuspension: (() => void) | undefined;
   let delegatedInterrupted = false;
   let delegatedAckCommitted = false;
   let waitingForDelegationCompletion = false;
+  const isCapturedActiveAttempt = (): boolean => {
+    const active = activeRuns.get(run.id);
+    return active?.workUnitId === runnerCallbackFence.workUnitId
+      && active.attemptId === runnerCallbackFence.attemptId
+      && active.runtimeInstanceId === runnerCallbackFence.runtimeInstanceId
+      && active.fencingToken === runnerCallbackFence.fencingToken;
+  };
+  const readApprovalWaitSuspension = () => {
+    const currentRun = store.getRun(run.id);
+    const currentUnit = store.getWorkUnit(workUnit.id);
+    const currentAttempt = store.getWorkUnitAttempt(attempt.id);
+    if (!isCapturedActiveAttempt() || !store.isCurrentRunExecutionOwner(run.id, runnerCallbackFence)
+      || !currentRun || currentRun.status !== "waiting_for_approval" || currentRun.endedAt
+      || currentRun.workUnitId !== workUnit.id
+      || !currentUnit || currentUnit.status !== "waiting_for_approval" || currentUnit.linkedRunId !== run.id
+      || currentUnit.activeAttemptId !== attempt.id || currentUnit.ownerType === "delegation_step"
+      || !currentAttempt || currentAttempt.workUnitId !== workUnit.id
+      || currentAttempt.runtimeInstanceId !== runnerCallbackFence.runtimeInstanceId
+      || currentAttempt.fencingToken !== runnerCallbackFence.fencingToken
+      || !["started", "waiting_for_approval"].includes(currentAttempt.status)
+      || currentAttempt.endedAt || currentAttempt.abortRequestedAt || delegatedExecution
+      || store.hasPendingRunTerminalIntent({ runId: run.id, ...runnerCallbackFence })) {
+      throw new RunGracefulSuspensionBlocked("suspension.source_stale");
+    }
+    // Approval resume owns its existing checkpoint, not the ordinary SDK
+    // suspension ledger. Dynamic trees must retain their private lifecycle.
+    const descendants = store.getDelegationCompletionEvidence({ rootRunIds: [run.id] });
+    if (descendants.steps.length || descendants.issues.length || gracefulSuspensionController?.hasPendingRequest()) {
+      throw new RunGracefulSuspensionBlocked("suspension.boundary_unavailable");
+    }
+    const approval = store.listApprovalRequests({ runId: run.id, status: "pending", limit: 1 })[0]
+      ?? store.listApprovalRequests({ runId: run.id, status: "approved", limit: 1 })[0];
+    const checkpoint = approval && store.getApprovalCheckpointForApproval(approval.id);
+    const basis = checkpoint?.resumeBasis;
+    if (!approval || !checkpoint || !isApprovalResumeBasisV1(basis)
+      || (checkpoint.status !== "pending" && checkpoint.status !== "approved")
+      || checkpoint.status !== approval.status || checkpoint.runId !== run.id || approval.runId !== run.id
+      || basis.runId !== run.id || basis.workUnitId !== workUnit.id || basis.priorAttemptId !== attempt.id
+      || basis.workflowStepId !== currentRun.workflowStepId || checkpoint.workflowStepId !== currentRun.workflowStepId
+      || approval.workflowStepId !== currentRun.workflowStepId
+      || basis.approvalId !== approval.id || checkpoint.approvalId !== approval.id
+      || basis.toolCallId !== approval.toolCallId || checkpoint.toolCallId !== basis.toolCallId
+      || basis.actionType !== approval.actionType || checkpoint.actionType !== basis.actionType
+      || basis.sideEffectFingerprint !== approvalSideEffectFingerprintV1({ actionType: approval.actionType,
+        toolCallId: basis.toolCallId, sideEffect: approval.payload })
+      || basis.sideEffectFingerprint !== approvalSideEffectFingerprintV1({ actionType: checkpoint.actionType,
+        toolCallId: basis.toolCallId, sideEffect: checkpoint.sideEffect })) {
+      throw new RunGracefulSuspensionBlocked("suspension.witness_mismatch");
+    }
+    if (basis.workflowStepId) {
+      const step = store.getChannelWorkflowStep(basis.workflowStepId);
+      if (step?.runId !== run.id
+        || step.metadata?.delegatedRequirement?.fingerprint !== basis.delegatedRequirementFingerprint) {
+        throw new RunGracefulSuspensionBlocked("suspension.witness_mismatch");
+      }
+    }
+    return { approval, checkpoint, checkpointStatus: checkpoint.status, workUnit: currentUnit };
+  };
+  const settleDelegationsBeforeTerminal = async (outcome: "failed" | "cancelled", failure?: { readonly code: string; readonly message: string }): Promise<boolean> => {
+    try {
+      if (dynamicDelegationRegistry && store.getDelegationCompletionEvidence({ rootRunIds: [run.id] }).steps.length) {
+        // Persist the original disposition before bounded observation can time
+        // out. It is a cleanup intent, never a drain/effect/usage receipt.
+        dynamicDelegationRegistry.prepareParentTerminalIntent({ store, runId: run.id, sourceFence: runnerCallbackFence,
+          desiredOutcome: outcome, errorCode: failure?.code ?? "cancelled", errorMessage: failure?.message ?? "cancelled" });
+      }
+      // Parent cancellation has already aborted its Runner signal. Own a
+      // separate bounded cleanup observation; timeout retains authority rather
+      // than certifying any still-live/unknown descendant as stopped.
+      await settleDelegationsForParentOutcome({ store, registry: dynamicDelegationRegistry, runId: run.id,
+        sourceFence: runnerCallbackFence, outcome, signal: AbortSignal.timeout(1000) });
+      if (store.hasPendingRunTerminalIntent({ runId: run.id, ...runnerCallbackFence })) {
+        // The sealed intent owns this terminal transition even on the fast
+        // stop path. Ordinary cleanup must not publish a second terminal or
+        // run channel/goal follow-ups before the original Host drain.
+        if (!sinkClosed) sink.end();
+        return false;
+      }
+      return true;
+    } catch (cleanupError) {
+      retainExecutionAuthority = store.isCurrentRunExecutionOwner(run.id, runnerCallbackFence, true);
+      if (!sinkClosed) {
+        const evidence = store.getDelegationCompletionEvidence({ rootRunIds: [run.id] });
+        sink.writeEvent("delegation_blocked", { runId: run.id, status: "blocked",
+          code: cleanupError instanceof DelegationCompletionBarrierError ? cleanupError.code : "delegation.stop_with_parent_unverified",
+          completionStatus: evidence.status, evidenceFingerprint: evidence.fingerprint });
+        sink.end();
+      }
+      return false;
+    }
+  };
   sink.onClose(() => {
     sinkClosed = true;
   });
@@ -1997,6 +2205,46 @@ async function executeAdmittedRunRequest(
     workUnitId: workUnit.id,
     attemptId: attempt.id,
     fencingToken: attempt.fencingToken,
+    runtimeShutdownPolicy: hostCompactionEnabled ? "checkpoint" : "stop_without_resume",
+    ...(delegatedExecution ? { terminalHandoff: delegatedExecution.terminalHandoff } : {}),
+    requestGracefulSuspension: request => {
+      try {
+        if (!isDeepStrictEqual(request.source, { runId: run.id, ...runnerCallbackFence })) {
+          throw new RunGracefulSuspensionBlocked("suspension.source_stale");
+        }
+        abortController.signal.throwIfAborted();
+        shutdownSuspensionCause = request.cause;
+        if (!runtimeStarted) {
+          // No Runner has been dispatched. The original preflight may finish
+          // its no-execution failure path, but must not start after shutdown.
+          activeRuns.requestStop(run.id, { kind: "runtime_suspend", cause: request.cause,
+            runtimeInstanceId: runnerCallbackFence.runtimeInstanceId });
+          return;
+        }
+        if (store.getRun(run.id)?.status === "waiting_for_approval"
+          || store.getWorkUnit(workUnit.id)?.status === "waiting_for_approval") {
+          try { readApprovalWaitSuspension(); }
+          catch (error) {
+            approvalSuspensionBlocked = error;
+            // End only the exact original polling callback. The blocked
+            // source keeps its authority and cannot become a normal resume.
+            if (isCapturedActiveAttempt()) activeRuns.requestStop(run.id, { kind: "runtime_suspend",
+              cause: request.cause, runtimeInstanceId: runnerCallbackFence.runtimeInstanceId });
+            throw error;
+          }
+          activeRuns.requestStop(run.id, { kind: "runtime_suspend", cause: request.cause,
+            runtimeInstanceId: runnerCallbackFence.runtimeInstanceId });
+          return;
+        }
+        if (!gracefulSuspensionController) {
+          throw new RunGracefulSuspensionBlocked("suspension.source_not_started");
+        }
+        gracefulSuspensionController.request(request.cause);
+      } catch (error) {
+        suspensionOrder.block(suspensionSource, error);
+        throw error;
+      }
+    },
   });
   // Startup discovery may have observed a durable child before its parent Run
   // re-entered this process. Re-scan only after the exact parent fence is live;
@@ -2039,18 +2287,34 @@ async function executeAdmittedRunRequest(
   // successful or failed summary. Until Host has committed a reconstructable
   // checkpoint, no subsequent task provider request may use that SDK view.
   let uncommittedCompactionCode: RunCompactionCheckpointBlockerCode | undefined;
-  const hostCompactionEnabled = durableRunRequest.harnessFeatureSnapshot?.continuations === "enforce"
-    && Boolean(run.contextViewId) && runnerResolution.runner.adapter instanceof PiRunnerAdapter;
   let ordinaryProgressController: OrdinaryRunProgressController | undefined;
   let delegatedRecoveryProviderAdmitted = false;
   const verifyDelegatedRecovery = (): void => {
     if (!delegatedRecovery || delegatedRecoveryProviderAdmitted) return;
     const fresh = assessDelegatedRunRecovery({ store, child: delegatedExecution!.claimed,
-      prepared: delegatedPreparation, policySnapshot: effectivePolicySnapshot, now: executionNow() });
+      prepared: delegatedPreparation, policySnapshot: effectivePolicySnapshot, now: executionNow(),
+      readFinalSettlementRecovery: readStoppedFinalSettlement });
     if (fresh.kind === "blocked") throw new HttpError(409, fresh.code,
       `Delegated checkpoint is no longer current (${fresh.code}).`);
     if (!isDeepStrictEqual(fresh, delegatedRecovery)) throw new HttpError(409,
       "checkpoint.lineage_mismatch", "Delegated recovery changed before its receiver/model boundary.");
+  };
+  const verifyFinalSettlementRecovery = (): void => {
+    if (!finalSettlementRecovery || !sourceAttempt) return;
+    // A complete restored view sends no provider request, so the normal
+    // invocation gate cannot catch credentials revoked after the actual ACK.
+    if (run.providerPresetId) {
+      const current = activeProviderObservationScope && compareProviderRuntimeObservationScope({
+        store, scope: activeProviderObservationScope, secretResolver });
+      if (!current || current.state !== "managed_generation_match" && current.state !== "sampled_value_match") {
+        throw new HttpError(409, "delegation.provider_revoked", "Final completion lost its original Provider authority.");
+      }
+    }
+    const fresh = readOriginalRunSuspensionLifecycle(store, runtimeSupervisor).readStoppedFinalSettlementRecovery({
+      suspensionId: finalSettlementRecovery.suspensionId, sourceFence: toRuntimeAttemptFence(sourceAttempt), now: executionNow() });
+    if (fresh.kind === "blocked") throw new HttpError(409, fresh.code, "Final SDK settlement is no longer recoverable.");
+    if (!isDeepStrictEqual(fresh, finalSettlementRecovery.result)) throw new HttpError(409,
+      "checkpoint.lineage_mismatch", "Final SDK settlement changed before its receiver/completion boundary.");
   };
   const beforeTaskContinuationBoundary = async (
     boundary: "before_agent_start" | "before_provider_request" | "tool_call",
@@ -2062,13 +2326,31 @@ async function executeAdmittedRunRequest(
     // captured source attempt, otherwise it can be misclassified as failure.
     const requiredInput = pauseCoordinator?.beforeBoundary();
     if (requiredInput) return requiredInput;
+    const suspension = await gracefulSuspensionController?.beforeBoundary({ boundary,
+      modelView: redactCompactionModelView(modelView, resolvedSecretValues),
+      activeToolCallIds: [...new Set([...activeToolCallCounts.keys(), ...unpairedToolCallIds])] });
+    if (suspension) {
+      suspensionOrder.ready(suspensionSource);
+      return suspension;
+    }
     await waitForTaskContinuation(boundary);
     assertCurrentRunAdmission();
     // The lock-screen gate may await while another SDK tool creates a required
     // question. Its pre-await check cannot authorize the next provider/effect.
     const requiredAfterWait = pauseCoordinator?.beforeBoundary();
     if (requiredAfterWait) return requiredAfterWait;
+    // A graceful request deliberately does not abort an in-flight executor.
+    // Recheck after the real lock-screen wait so a request arriving there cannot
+    // escape this safe boundary and send another provider request on unlock.
+    const suspensionAfterWait = await gracefulSuspensionController?.beforeBoundary({ boundary,
+      modelView: redactCompactionModelView(modelView, resolvedSecretValues),
+      activeToolCallIds: [...new Set([...activeToolCallCounts.keys(), ...unpairedToolCallIds])] });
+    if (suspensionAfterWait) {
+      suspensionOrder.ready(suspensionSource);
+      return suspensionAfterWait;
+    }
     if (boundary === "before_agent_start") {
+      verifyFinalSettlementRecovery();
       verifyDelegatedRecovery();
       const progress = ordinaryProgressController?.verifyRecoveryBoundary();
       if (progress?.kind === "blocked") throw new HttpError(409, progress.code,
@@ -2114,15 +2396,62 @@ async function executeAdmittedRunRequest(
   const requestRuntimeAbort = supervision.requestAbort;
   const beginApprovalHardTimeoutPause = (): void => supervision.approvalWaitChanged(true);
   const endApprovalHardTimeoutPause = (): void => supervision.approvalWaitChanged(false);
-  let runtimeStarted = false;
-  let userInputReceiverAccepted = userInputBinding === undefined && delegatedExecution === undefined;
+  let userInputReceiverAccepted = userInputBinding === undefined && delegatedExecution === undefined && rootSuspensionActivation === undefined;
   const pendingUserInputRunnerEvents: PiRunnerEvent[] = [];
   let flushPendingUserInputRunnerEvents = (): void => undefined;
   let toolBoundaryObservation: PiToolBoundaryObservation | undefined;
+  let finalSettlementBoundary: "original" | "restored" = "original";
+  let delegationCompletionObservedAtSdkBoundary = false;
+  const observeSuccessfulDelegations = async (signal: AbortSignal): Promise<void> => {
+    waitingForDelegationCompletion = true;
+    try {
+      await settleDelegationsForParentOutcome({ store, registry: dynamicDelegationRegistry,
+        runId: run.id, sourceFence: runnerCallbackFence, outcome: "succeeded", signal,
+        onChanged(evidence) {
+          if (!evidence.steps.length && !evidence.issues.length) return;
+          store.appendRuntimeEvent({ ...runnerCallbackFence, type: "work_unit_progress", actor: "system", ts: executionNow(),
+            data: { kind: "delegation_fan_in", runId: run.id, status: evidence.status,
+              evidenceFingerprint: evidence.fingerprint, requiredCount: evidence.steps.filter(node => node.step.required).length } });
+          if (!sinkClosed) sink.writeEvent("delegation_fan_in", { runId: run.id, status: evidence.status,
+            evidenceFingerprint: evidence.fingerprint });
+        } });
+    } finally { waitingForDelegationCompletion = false; }
+  };
+  const beforeFinalCompletionBoundary = async (modelView: readonly unknown[], boundary: "original" | "restored") => {
+    assertCurrentRunAdmission();
+    verifyFinalSettlementRecovery();
+    verifyDelegatedRecovery();
+    // Required questions are not final success, and an uncommitted compacted
+    // view cannot acquire settlement authority through either callback.
+    if (pauseCoordinator?.beforeBoundary()) throw new RunGracefulSuspensionBlocked("checkpoint.effect_unknown");
+    if (uncommittedCompactionCode) throw new HttpError(409, uncommittedCompactionCode,
+      "Final SDK settlement cannot bypass an uncommitted compaction.");
+    if (gracefulSuspensionController && !gracefulSuspensionController.hasPendingRequest()) {
+      // Preserve this exact SDK window while waiting for real optional drain
+      // and required fan-in. Shutdown aborts observation, not the executors.
+      try {
+        await observeSuccessfulDelegations(AbortSignal.any([abortController.signal, gracefulSuspensionController.requestSignal]));
+        delegationCompletionObservedAtSdkBoundary = true;
+      } catch (error) {
+        abortController.signal.throwIfAborted();
+        if (!gracefulSuspensionController.hasPendingRequest()) throw error;
+      }
+      assertCurrentRunAdmission();
+      verifyFinalSettlementRecovery();
+      verifyDelegatedRecovery();
+    }
+    finalSettlementBoundary = boundary;
+    try {
+      const directive = await gracefulSuspensionController?.beforeSettledBoundary({
+        modelView: redactCompactionModelView(modelView, resolvedSecretValues),
+        activeToolCallIds: [...new Set([...activeToolCallCounts.keys(), ...unpairedToolCallIds])] });
+      if (directive) suspensionOrder.ready(suspensionSource);
+      return directive;
+    } finally { finalSettlementBoundary = "original"; }
+  };
   let hostToolBoundaryEntered = existingContinuation?.origin === "approval_resume";
   let hostBoundaryUnverified = hostToolBoundaryEntered;
   const hostToolCalls = new Set<string>();
-  const runnerCallbackFence = Object.freeze(toRuntimeAttemptFence(attempt));
   const delegationToolSurfaceEnabled = runnerRequest.initialToolSurface?.delegation === true;
   if (delegationToolSurfaceEnabled && !dynamicDelegationRegistry) {
     throw new HttpError(409, "delegation.dynamic_gate_unavailable", "Dynamic delegation Host binding is unavailable.");
@@ -2157,16 +2486,73 @@ async function executeAdmittedRunRequest(
         witness: ordinaryProgressRecoveryWitness, modelView: ordinaryProgressRecoveryModelView!,
         continuationBinding: { continuationId: continuationExecution.continuation.id, targetFence: runnerCallbackFence },
       } } : {}) });
+    gracefulSuspensionController = new RunGracefulSuspensionController({ store, run,
+      sourceFence: runnerCallbackFence, policySnapshot: activeEffectivePolicySnapshot,
+      progress: ordinaryProgressController,
+      compactionProgress: input => sealRunCompactionSuspensionBoundary({ store, run, attempt,
+        sourceFence: runnerCallbackFence, policySnapshot: activeEffectivePolicySnapshot,
+        modelView: input.modelView, activeToolCallIds: input.activeToolCallIds,
+        allowRecoveredAttemptHandoff: Boolean(compactionRecoveryModelView) }),
+      settlementProgress: input => {
+        if (!Array.isArray(input.modelView)) return { kind: "blocked", code: "checkpoint.snapshot_unavailable" };
+        try {
+          const current = store.getRun(run.id);
+          if (!current) return { kind: "blocked", code: "checkpoint.lineage_mismatch" };
+          const { lineage } = captureRunProgressCheckpointLineage(store, current, activeEffectivePolicySnapshot);
+          const committed = commitOriginalRunFinalSettlement({ store, supervisor: runtimeSupervisor,
+            observation: { runId: run.id, sourceFence: runnerCallbackFence, boundary: finalSettlementBoundary, observation: toolBoundaryObservation,
+              hostToolCallIds: [...hostToolCalls], activeToolCallIds: input.activeToolCallIds,
+              hostBoundaryUnverified, assertCurrent: assertCurrentRunAdmission,
+              redact: view => redactCompactionModelView(view, resolvedSecretValues) },
+            settlement: { runId: run.id, sourceFence: runnerCallbackFence, expectedLineage: lineage,
+              modelView: input.modelView, now: executionNow() } });
+          if (committed.kind === "verified") return { kind: "sealed", witness: committed.witness };
+          return { kind: "blocked", code: committed.kind === "blocked" ? committed.code : "checkpoint.missing" };
+        } catch (error) {
+          if (error instanceof RunProgressCheckpointError) return { kind: "blocked", code: error.code };
+          throw error;
+        }
+      },
+      // Resolve constructor custody only when a real shutdown requests it.
+      // Ordinary direct fixtures/disabled installations do not gain a writer.
+      lifecycle: {
+        requestRunSuspension: input => readOriginalRunSuspensionLifecycle(store, runtimeSupervisor).requestRunSuspension(input),
+        sealRunSuspension: input => readOriginalRunSuspensionLifecycle(store, runtimeSupervisor).sealRunSuspension(input),
+        beginRunSuspensionStop: input => readOriginalRunSuspensionLifecycle(store, runtimeSupervisor).beginRunSuspensionStop(input),
+        commitRunSuspensionStopped: input => readOriginalRunSuspensionLifecycle(store, runtimeSupervisor).commitRunSuspensionStopped(input),
+        getRunSuspensionStop: id => readOriginalRunSuspensionLifecycle(store, runtimeSupervisor).getRunSuspensionStop(id),
+      },
+      assertCurrent: assertCurrentRunAdmission,
+      assertCleanupCurrent: () => {
+        // Core's own begin-stop may have changed a child to cancelling. Do not
+        // reuse its live dispatch gate, or remove the abort guard to bypass it.
+        abortController.signal.throwIfAborted();
+        if (runtimeSupervisor.getRuntime(workspaceCwd, store).runtimeInstanceId !== attempt.runtimeInstanceId
+          || !store.isCurrentRunExecutionOwner(run.id, runnerCallbackFence, true)) {
+          throw new RunGracefulSuspensionBlocked("suspension.source_stale");
+        }
+        const current = store.getRun(run.id)!;
+        if (delegatedExecution) delegatedExecution.assertSuspensionCleanupCurrent();
+        else assertWorkflowRunAdmission(store, current, workflowStartOwner, abortController.signal);
+        const teammate = current.teammateId ? store.getAiTeammate(current.teammateId) : undefined;
+        const channel = current.channelId ? store.getChannel(current.channelId) : undefined;
+        if (current.teammateId && (!teammate || teammate.status !== "active" || teammate.hidden)
+          || current.channelId && (!channel || channel.status !== "active")) {
+          throw new RunGracefulSuspensionBlocked("checkpoint.permission_drift");
+        }
+        captureRunProgressCheckpointLineage(store, current, activeEffectivePolicySnapshot);
+      }, now: executionNow,
+      awaitDescendantsReady: () => suspensionOrder.waitForDescendants(suspensionSource, "ready") });
   }
   localWriters = new AttemptLocalWriterGroup({ runId: run.id, ...runnerCallbackFence });
   // The turn's persisted source item is the only valid question anchor. If a
   // legacy/internal run has no canonical item, do not expose request_user_input
   // rather than guessing from the latest message or task id.
-  const userInputSelected = options.enableUserInputPause === true && Boolean(turn.sourceItemId)
+  const userInputSelected = userInputAvailable()
     && runnerRequest.initialToolSurface?.userInput === true;
   // Observe already journaled execution independently of the internal question tool.
   // Off/shadow keep their existing fallback behavior and cannot supply this proof.
-  if (durableRunRequest.harnessFeatureSnapshot?.toolBroker === "enforce" || userInputSelected) {
+  if (durableRunRequest.harnessFeatureSnapshot?.toolBroker === "enforce") {
     hostOperationTracker = new AttemptHostOperationTracker({
       store,
       source: { runId: run.id, ...runnerCallbackFence },
@@ -2213,6 +2599,7 @@ async function executeAdmittedRunRequest(
     try {
       const attributedData = type === "assistant_reasoning_summary"
         || type === "run_start" || type === "turn_start"
+        || type === "message_end" || type === "turn_end"
         || type === "provider_retry"
         || type === "context_compaction_start"
         || type === "context_compaction_end"
@@ -2239,6 +2626,19 @@ async function executeAdmittedRunRequest(
         persistedRunError = true;
       }
       syncWorkUnitForRunEvent(store, workUnit.id, attempt.id, type, envelope);
+      if (type === "approval_requested" && shutdownSuspensionCause
+        && gracefulSuspensionController?.hasPendingRequest()
+        && store.getRun(run.id)?.status === "waiting_for_approval"
+        && store.getWorkUnit(workUnit.id)?.status === "waiting_for_approval") {
+        // Shutdown can persist an ordinary request immediately before a tool
+        // commits its approval. There is no subsequent provider boundary to
+        // seal. Stop the actual wait, but do not manufacture a checkpoint or
+        // downgrade that ordinary request to approval-resume authority.
+        approvalSuspensionBlocked = new RunGracefulSuspensionBlocked("suspension.boundary_unavailable");
+        suspensionOrder.block(suspensionSource, approvalSuspensionBlocked);
+        if (isCapturedActiveAttempt()) activeRuns.requestStop(run.id, { kind: "runtime_suspend",
+          cause: shutdownSuspensionCause, runtimeInstanceId: runnerCallbackFence.runtimeInstanceId });
+      }
       appendRuntimeProgressForRunEvent(store, workUnit.id, attempt.id, type, envelope);
       if (!delegatedExecution) syncLingThreadForRunEvent(store, run, type, envelope);
       try {
@@ -2284,6 +2684,21 @@ async function executeAdmittedRunRequest(
     type: K,
     data: RunEventDataByType[K],
   ): RunEventEnvelope | undefined => appendRunEvent(type, data, true);
+
+  const scheduleDelegationRecoveryAfterAck = (): void => {
+    const registry = dynamicDelegationRegistry;
+    if (!registry) return;
+    queueMicrotask(() => {
+      try { registry.recoverStore(store); }
+      catch {
+        // Discovery is a retryable observer, not ownership of the committed
+        // ACK. The bounded registry sweep can revisit it without redispatching
+        // a consumed activation; surface the unavailable scan, not a false failure.
+        if (!sinkClosed) sink.writeEvent("delegation_blocked", { runId: run.id, status: "blocked",
+          code: "delegation.recovery_discovery_unavailable" });
+      }
+    });
+  };
 
   const startObservedRuntime = (startedAt: string, alreadyStartedByCore: boolean): void => {
     if (runtimeStarted) throw new Error("Runner start was accepted more than once.");
@@ -2383,6 +2798,11 @@ async function executeAdmittedRunRequest(
             ...(settledDelegationCalls.length ? { settledDelegationCalls } : {}) };
         }, () => activeRuns.retireDurablyDrainedAttempt(capturedWriters.source));
       activeRuns.trackAttemptCompletion(capturedWriters.source, durableAttemptCompletion);
+      if (dynamicDelegationRegistry) {
+        const originalRegistry = dynamicDelegationRegistry;
+        activeRuns.trackAttemptCompletion(capturedWriters.source,
+          durableAttemptCompletion.then(() => originalRegistry.reconcileTerminalIntents(store)));
+      }
     }
     runtimeStarted = true;
     supervision.start();
@@ -2410,7 +2830,7 @@ async function executeAdmittedRunRequest(
     if (!approvalPolicy) {
       throw new Error("Run approval policy was not initialized.");
     }
-    if (!delegatedExecution && !userInputBinding) startObservedRuntime(executionNow(), false);
+    if (!delegatedExecution && !userInputBinding && !rootSuspensionActivation) startObservedRuntime(executionNow(), false);
     // Complete Host start bookkeeping so shutdown has a legal fenced failure
     // transition, then reject before any Runner or approval tool is invoked.
     await waitForTaskContinuation("run_start");
@@ -2580,6 +3000,8 @@ async function executeAdmittedRunRequest(
         mcpToolRefs: mcpTools.map((tool) => `${tool.serverId}:${tool.rawName}`),
       }),
       onTaskContinuationBoundary: beforeTaskContinuationBoundary,
+      onTaskSettledBoundary: modelView => beforeFinalCompletionBoundary(modelView, "original"),
+      onTaskRestoredCompleteBoundary: modelView => beforeFinalCompletionBoundary(modelView, "restored"),
       ...(pauseCoordinator ? {
         onUserInputRequest: (request: Parameters<NonNullable<PiRunnerRunOptions["onUserInputRequest"]>>[0]) =>
           pauseCoordinator!.request(request.toolCallId, request.input),
@@ -2766,6 +3188,24 @@ async function executeAdmittedRunRequest(
             delegatedAckCommitted = true;
             startObservedRuntime(acceptedAt, true);
             flushPendingUserInputRunnerEvents();
+            scheduleDelegationRecoveryAfterAck();
+          } })
+      : rootSuspensionActivation
+      ? withOriginalRootRunSuspensionReceiver({ store, supervisor: runtimeSupervisor, record: rootSuspensionActivation,
+          execution: continuationExecution!, adapter: runnerResolution.runner.adapter, options: continuationRunnerRequest,
+          beforeAccepted: () => {
+            assertCurrentRunAdmission();
+            verifyFinalSettlementRecovery();
+            const progress = ordinaryProgressController?.verifyRecoveryBoundary();
+            if (progress?.kind === "blocked") throw new HttpError(409, progress.code,
+              "The restored root checkpoint changed before its SDK acknowledgement.");
+          },
+          now: executionNow, onAccepted: (started, acceptedAt) => {
+            assertCurrentRunAdmission();
+            continuationExecution = { ...continuationExecution!, continuation: started.continuation, attempt: started.attempt };
+            startObservedRuntime(acceptedAt, true);
+            flushPendingUserInputRunnerEvents();
+            scheduleDelegationRecoveryAfterAck();
           } })
       : userInputBinding
       ? withUserInputContinuationReceiver({
@@ -2807,7 +3247,8 @@ async function executeAdmittedRunRequest(
     assertCurrentRunAdmission();
     const result = reconstruction?.result
       ?? await runnerResolution.runner.adapter.runTask(executableRunnerRequest);
-    if (delegatedExecution && !runtimeStarted) {
+    gracefulSuspensionController?.assertSuspensionHandled();
+    if ((delegatedExecution || rootSuspensionActivation) && !runtimeStarted) {
       throw new HttpError(409, "delegation.receiver_unacknowledged", "Runner returned without its real prepared-input ACK.");
     }
     if (delegatedExecution?.isInterrupting()) {
@@ -2860,19 +3301,8 @@ async function executeAdmittedRunRequest(
       throw persistenceError;
     }
 
-    waitingForDelegationCompletion = true;
-    try {
-      await waitForRequiredDelegationCompletion({ store, runId: run.id, sourceFence: runnerCallbackFence,
-        signal: abortController.signal,
-        onChanged(evidence) {
-          if (!evidence.steps.length && !evidence.issues.length) return;
-          store.appendRuntimeEvent({ ...runnerCallbackFence, type: "work_unit_progress", actor: "system", ts: executionNow(),
-            data: { kind: "delegation_fan_in", runId: run.id, status: evidence.status,
-              evidenceFingerprint: evidence.fingerprint, requiredCount: evidence.steps.filter(node => node.step.required).length } });
-          if (!sinkClosed) sink.writeEvent("delegation_fan_in", { runId: run.id, status: evidence.status,
-            evidenceFingerprint: evidence.fingerprint });
-        } });
-    } finally { waitingForDelegationCompletion = false; }
+    if (!delegationCompletionObservedAtSdkBoundary) await observeSuccessfulDelegations(abortController.signal);
+    gracefulSuspensionController?.assertSuspensionHandled();
     // Keep the transaction's completion barrier too: a concurrent descendant
     // admission can change the read set after the asynchronous observation.
     assertCurrentRunAdmission();
@@ -2977,6 +3407,40 @@ async function executeAdmittedRunRequest(
       sink.end();
     }
   } catch (error) {
+    if (approvalSuspensionBlocked && store.isCurrentRunExecutionOwner(run.id, runnerCallbackFence, true)) {
+      retainExecutionAuthority = true;
+      suspensionOrder.block(suspensionSource, approvalSuspensionBlocked);
+      if (!sinkClosed) {
+        sink.writeError(409, { error: approvalSuspensionBlocked instanceof RunGracefulSuspensionBlocked
+          ? approvalSuspensionBlocked.code : "suspension.stop_unverified", message: "Approval suspension remains unverified." });
+        sink.end();
+      }
+      return run.id;
+    }
+    if (gracefulSuspensionController?.hasPendingRequest()) {
+      try {
+        if (!(error instanceof PiRunnerSuspended)) {
+          // Keep a verified boundary's real blocker. The fallback guard is for
+          // an ordinary result/error with no handled suspension, not a reason
+          // to replace effect/permission/lineage failures with "no boundary".
+          if (error instanceof RunGracefulSuspensionBlocked) throw error;
+          gracefulSuspensionController.assertSuspensionHandled();
+          throw error;
+        }
+        gracefulSuspensionController.observeSuspended(error);
+        gracefullySuspended = true;
+        if (!sinkClosed) sink.end();
+      } catch (suspensionError) {
+        retainExecutionAuthority = true;
+        suspensionOrder.block(suspensionSource, suspensionError);
+        if (!sinkClosed) {
+          sink.writeError(409, { error: suspensionError instanceof RunGracefulSuspensionBlocked
+            ? suspensionError.code : "suspension.stop_unverified", message: "Graceful suspension remains unverified." });
+          sink.end();
+        }
+      }
+      return run.id;
+    }
     const stopIntent = activeRuns.getStopIntent(run.id) ?? readActiveRunStopIntent(abortController.signal.reason);
     const observedRun = store.getRun(run.id);
     const observedWorkUnit = store.getWorkUnit(workUnit.id);
@@ -2993,13 +3457,14 @@ async function executeAdmittedRunRequest(
       }
       return run.id;
     }
-    if (delegatedExecution && !runtimeStarted) {
+    if ((delegatedExecution || rootSuspensionActivation) && !runtimeStarted) {
       // No ACK is not a terminal proof. In particular an adapter resolving or
       // rejecting cannot turn a claimed child into success/zero-cost failure.
       retainExecutionAuthority = true;
       if (!sinkClosed) {
         sink.writeEvent("delegation_blocked", { runId: run.id, status: "blocked",
-          code: error instanceof HttpError ? error.code : delegatedAckCommitted
+          code: error instanceof HttpError ? error.code : rootSuspensionActivation
+            ? "suspension_start.receiver_unacknowledged" : delegatedAckCommitted
             ? "delegation.start_bookkeeping_unverified" : "delegation.receiver_unacknowledged" });
         sink.end();
       }
@@ -3132,6 +3597,7 @@ async function executeAdmittedRunRequest(
       return run.id;
     }
     if (observedRun?.status === "cancelled" || isCancellationStopIntent(stopIntent)) {
+      if (!await settleDelegationsBeforeTerminal("cancelled")) return run.id;
       const cancelledAt = executionNow();
       if (continuationExecution && continuationExecution.continuation.state === "running") {
         continuationExecution = finishPreparedRunnerContinuation({
@@ -3182,34 +3648,75 @@ async function executeAdmittedRunRequest(
       return run.id;
     }
     if (stopIntent?.kind === "runtime_suspend") {
-      const suspendedAt = executionNow();
-      const recoverableApproval = store.listApprovalRequests({ runId: run.id, status: "pending", limit: 1 })[0]
-        ?? store.listApprovalRequests({ runId: run.id, status: "approved", limit: 1 })[0];
-      const checkpoint = recoverableApproval ? store.getApprovalCheckpointForApproval(recoverableApproval.id) : undefined;
-      const observedWorkUnit = store.getWorkUnit(workUnit.id);
       if (observedRun?.status === "waiting_for_approval"
-        && observedWorkUnit?.status === "waiting_for_approval"
-        && recoverableApproval
-        && checkpoint
-        && (checkpoint.status === "pending" || checkpoint.status === "approved")
-        && checkpoint.status === recoverableApproval.status) {
-        const suspension = store.commitApprovalResumeSuspension({
-          kind: "approval_wait",
-          checkpointId: checkpoint.id,
-          expectedCheckpointStatus: checkpoint.status,
-          expectedCheckpointRevision: checkpoint.revision,
-          approvalId: recoverableApproval.id,
-          runId: run.id,
-          expectedRunStatus: "waiting_for_approval",
-          workUnitId: observedWorkUnit.id,
-          expectedWorkUnitStatus: "waiting_for_approval",
-          attemptId: attempt.id,
-          cause: stopIntent.cause,
-          now: suspendedAt,
-        });
-        if (suspension.ok) {
-          for (const event of suspension.controlPlaneEvents) options.controlPlaneEvents?.publish(event);
+        || observedWorkUnit?.status === "waiting_for_approval") {
+        try {
+          const capturedApproval = readApprovalWaitSuspension();
+          if (!localWriters) throw new RunGracefulSuspensionBlocked("suspension.stop_unverified");
+          const capturedWriters = localWriters;
+          const cause = stopIntent.cause;
+          const commitCapturedApprovalSuspension = (): void => {
+            const writerSnapshot = capturedWriters.getSnapshot();
+            if (!writerSnapshot.closed || writerSnapshot.writers.length
+              || store.listHostOperationBlockers({ runId: run.id, ...runnerCallbackFence }).length) {
+              throw new RunGracefulSuspensionBlocked("suspension.stop_unverified");
+            }
+            // A drain is not fresh authorization. Revalidate the same original
+            // checkpoint, including its revision, before the atomic Core CAS.
+            const { approval, checkpoint, checkpointStatus, workUnit: approvalUnit } = readApprovalWaitSuspension();
+            if (approval.id !== capturedApproval.approval.id || checkpoint.id !== capturedApproval.checkpoint.id
+              || checkpoint.revision !== capturedApproval.checkpoint.revision
+              || checkpointStatus !== capturedApproval.checkpointStatus
+              || checkpoint.resumeBasis?.fingerprint !== capturedApproval.checkpoint.resumeBasis?.fingerprint) {
+              throw new RunGracefulSuspensionBlocked("suspension.witness_mismatch");
+            }
+            const suspension = store.commitApprovalResumeSuspension({
+              kind: "approval_wait",
+              checkpointId: checkpoint.id,
+              expectedCheckpointStatus: checkpointStatus,
+              expectedCheckpointRevision: checkpoint.revision,
+              approvalId: approval.id,
+              runId: run.id,
+              expectedRunStatus: "waiting_for_approval",
+              workUnitId: approvalUnit.id,
+              expectedWorkUnitStatus: "waiting_for_approval",
+              attemptId: attempt.id,
+              cause,
+              now: executionNow(),
+            });
+            if (!suspension.ok) throw new RunGracefulSuspensionBlocked("suspension.witness_mismatch");
+            for (const event of suspension.controlPlaneEvents) {
+              try { options.controlPlaneEvents?.publish(event); }
+              catch {
+                // The Core CAS is already committed. A consumer failure must
+                // not turn notification delivery into a second stop decision;
+                // these durable invalidations remain available for replay.
+                console.warn("approval_suspension_notification_failed: committed invalidation remains replayable");
+              }
+            }
+          };
+          capturedWriters.close();
+          try { await capturedWriters.waitForIdle(1000); }
+          catch (drainError) {
+            const snapshot = capturedWriters.getSnapshot();
+            if (!snapshot.closed || !snapshot.writers.length) throw drainError;
+            // Only the observation expired. Preserve this already-validated
+            // source's continuation until its original callbacks really drain.
+            // The registry's drain callback still has the exact active fence.
+            deferredApprovalSuspension = commitCapturedApprovalSuspension;
+            retainExecutionAuthority = true;
+            if (!sinkClosed) sink.end();
+            return run.id;
+          }
+          commitCapturedApprovalSuspension();
+          if (!sinkClosed) sink.end();
+          return run.id;
+        } catch (suspensionError) {
+          retainExecutionAuthority = store.isCurrentRunExecutionOwner(run.id, runnerCallbackFence, true);
+          suspensionOrder.block(suspensionSource, suspensionError);
           if (!sinkClosed) {
+            sink.writeError(409, { error: suspensionError instanceof RunGracefulSuspensionBlocked
+              ? suspensionError.code : "suspension.stop_unverified", message: "Approval suspension remains unverified." });
             sink.end();
           }
           return run.id;
@@ -3229,6 +3736,7 @@ async function executeAdmittedRunRequest(
       runtimeFailure?.reason ?? (error instanceof Error ? error.message : String(error)),
       resolvedSecretValues,
     );
+    if (!await settleDelegationsBeforeTerminal("failed", { code: runtimeFailure?.code ?? "runner_failed", message })) return run.id;
     const endedAt = executionNow();
     const skillContextFallback = buildSkillSourceRuntimeFallbackPlan(selectedSkillSourceContext, message);
     const failureEvent = persistedRunError
@@ -3354,12 +3862,36 @@ async function executeAdmittedRunRequest(
     }
   } finally {
     if (retainExecutionAuthority && localWriters) {
+      if (!deferredApprovalSuspension) {
+        suspensionOrder.block(suspensionSource, new Error("runtime_suspension_source_retained"));
+      }
       // The execution function is returning. Transfer remaining local callback
       // ownership to the registry; never release the SQLite attempt/resources.
       supervision.stopWatchdogs();
       activeRuns.retainBlockedAttempt(run.id, localWriters, () => {
-        supervision.dispose();
-        resolveRunCompletion?.();
+        let approvalSuspended = false;
+        try {
+          if (deferredApprovalSuspension) {
+            deferredApprovalSuspension();
+            approvalSuspended = true;
+            retainExecutionAuthority = false;
+          }
+        } catch (suspensionError) {
+          suspensionOrder.block(suspensionSource, suspensionError);
+        } finally {
+          supervision.dispose();
+          resolveRunCompletion?.();
+        }
+        if (approvalSuspended) {
+          // Let the original completion observer finish after the main lifetime
+          // resolves; never await our own callback. Observer fulfillment itself
+          // is not a durable receipt: Core's resource veto remains authoritative.
+          activeRuns.trackCompletion(Promise.resolve(durableAttemptCompletion).then(() => {
+            suspensionOrder.finish(suspensionSource);
+          }, completionError => {
+            suspensionOrder.block(suspensionSource, completionError);
+          }));
+        }
       });
     } else if (!retainExecutionAuthority) {
       localWriters?.close();
@@ -3376,12 +3908,26 @@ async function executeAdmittedRunRequest(
       if (activeRuns.get(run.id)?.attemptId === attempt.id) activeRuns.delete(run.id);
       try {
         const terminalRun = store.getRun(run.id);
-        if (delegatedInterrupted && delegatedExecution) {
+        if (gracefullySuspended && gracefulSuspensionController) {
+          // Resolve the original callback lifetime first. Waiting on this at
+          // the SDK boundary would deadlock the very source being suspended.
+          resolveRunCompletion?.();
+          await durableAttemptCompletion;
+          await suspensionOrder.waitForDescendants(suspensionSource, "finished");
+          gracefulSuspensionController.commitStopped();
+        } else if (delegatedInterrupted && delegatedExecution) {
           resolveRunCompletion?.();
           await durableAttemptCompletion;
           delegatedExecution.commitInterrupted(executionNow());
         } else if (yieldedWait) {
           await options.afterRunYielded?.(terminalRun ?? run, yieldedWait);
+        } else if (dynamicDelegationRegistry && store.hasPendingRunTerminalIntent({ runId: run.id, ...runnerCallbackFence })) {
+          // A fast stop still uses the same durable finalizer as a delayed
+          // drain. Keep this completion inside the original caller's awaited
+          // lifetime, rather than racing its return against a later microtask.
+          resolveRunCompletion?.();
+          await durableAttemptCompletion;
+          await dynamicDelegationRegistry.reconcileTerminalIntents(store);
         } else if (terminalRun && isTerminalRunStatus(terminalRun.status) && hasCurrentRunCallbackIdentity(store, run, runnerCallbackFence)) {
           try {
             computerUseProducer?.finish(terminalRun.status, terminalRun.errorMessage ?? undefined);
@@ -3401,6 +3947,10 @@ async function executeAdmittedRunRequest(
           }
           await options.afterRunTerminal?.(terminalRun);
         }
+        suspensionOrder.finish(suspensionSource);
+      } catch (finalizationError) {
+        suspensionOrder.block(suspensionSource, finalizationError);
+        throw finalizationError;
       } finally {
         resolveRunCompletion?.();
       }
@@ -3919,4 +4469,10 @@ function redactCompactionModelView(value: readonly unknown[] | undefined, secret
   if (!value) return undefined;
   const redacted = redactSecrets(value, secrets);
   return Array.isArray(redacted) ? redacted : value;
+}
+
+/** Selects the SDK installer only; the original Core ledger owns verification. */
+function isCompactedModelView(view: readonly unknown[]): boolean {
+  const first = view[0];
+  return first !== null && typeof first === "object" && "role" in first && first.role === "compactionSummary";
 }

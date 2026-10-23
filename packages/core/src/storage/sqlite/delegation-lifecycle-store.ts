@@ -21,6 +21,11 @@ import { delegationResultEvidenceRefsV1, type DelegationResultV1 } from "../../d
 import { mapDelegationBudgetCharge } from "./delegation-budget-rows.js";
 import { redactSecrets } from "../../redaction.js";
 import { readSqliteSnapshot } from "./read-snapshot.js";
+import { harnessArtifactOwnerHolder, syncHarnessArtifactOwnerPins } from "./harness-artifact-recovery-pins.js";
+import { assertNoPendingRunTerminalIntent } from "./run-terminal-intent-store.js";
+import { assertRunSuspensionResumeAdmission } from "./run-suspension-store.js";
+import { assertRootSuspensionStartAdmission } from "./run-suspension-start-records.js";
+import { assertDelegatedSuspensionStartAdmission } from "./run-suspension-delegated-records.js";
 
 /**
  * Initial delegated execution lifecycle. No Task or accepted workflow mutation
@@ -28,11 +33,20 @@ import { readSqliteSnapshot } from "./read-snapshot.js";
  * can bind migration 154's child edge. A replayed claim is never redispatched.
  */
 export class SqliteDelegationLifecycleStore {
-  constructor(private readonly context: SqliteStoreContext, private readonly ports: DelegationLifecycleStorePorts) {}
+  readonly #suspensionResumeScope?: object;
+  constructor(private readonly context: SqliteStoreContext, private readonly ports: DelegationLifecycleStorePorts,
+    suspensionResumeScope?: object) { this.#suspensionResumeScope = suspensionResumeScope; }
 
   getDelegatedChildPreparation(reservationId: string): DelegationPreparedExecution | undefined {
     const id = delegationId(reservationId);
     return readSqliteSnapshot(this.context.database, () => this.readPreparation(this.read(id)));
+  }
+
+  /** Original186 composition read; unlike the public classifier it owns no transaction. */
+  readSuspendedChildWithinTransaction(reservationId: string, scope: object): DelegationChildRuntime {
+    if (scope !== this.#suspensionResumeScope) fail("delegation.authority_invalid");
+    this.assertTransaction();
+    return this.read(delegationId(reservationId));
   }
 
   commitDelegatedChildPreparation(input: { readonly reservationId: string; readonly sourceFence: RuntimeAttemptFenceV1;
@@ -54,6 +68,7 @@ export class SqliteDelegationLifecycleStore {
       const existing = this.readPreparation(runtime);
       if (existing) {
         if (existing.digest !== delegationPreparedExecutionDigest(payload)) fail("delegation.idempotency_conflict");
+        this.pinStepBody(runtime.step.id, existing.artifactId, now);
         return existing;
       }
       if (runtime.step.state !== "spawning" || runtime.attempt.attemptNumber !== 1 || !sameFence(payload.sourceFence, fence)
@@ -74,6 +89,7 @@ export class SqliteDelegationLifecycleStore {
         AND work_unit_id=? AND context_view_id IS NULL`)
         .run(JSON.stringify(snapshot), artifact.id, now, now, runtime.run.id, runtime.workUnit.id);
       if (Number(updated.changes) !== 1) fail("delegation.lifecycle_conflict");
+      this.pinStepBody(runtime.step.id, artifact.id, now);
       return { artifactId: artifact.id, digest, payload };
     });
   }
@@ -92,6 +108,8 @@ export class SqliteDelegationLifecycleStore {
       if (runtime.attempt) {
         if (runtime.workUnit.status !== "claimed" || runtime.attempt.status !== "created" || runtime.attempt.endedAt
           || runtime.attempt.abortRequestedAt || runtime.attempt.runtimeInstanceId !== runtimeInstanceId) fail("delegation.recovery_required");
+        const preparation = this.readPreparation(runtime);
+        if (preparation) this.pinStepBody(runtime.step.id, preparation.artifactId, now);
         return { ...runtime, attempt: runtime.attempt, replayed: true };
       }
       if (runtime.workUnit.status !== "queued" || runtime.workUnit.attemptCount !== 0) fail("delegation.lifecycle_conflict");
@@ -126,7 +144,8 @@ export class SqliteDelegationLifecycleStore {
       if (!attempt || !sameFence(fence, toRuntimeAttemptFence(attempt))) fail("delegation.source_attempt_stale");
       // Acceptance cannot bypass durable preparation. A claimed row without
       // the original sealed input is uncertain, not permission to dispatch.
-      if (!this.readPreparation(runtime)) fail("delegation.recovery_required");
+      const preparation = this.readPreparation(runtime);
+      if (!preparation) fail("delegation.recovery_required");
       if (observation.childRunId !== runtime.run.id || observation.runnerId !== attempt.effectiveRunnerId
         || observation.observedAt < attempt.createdAt || observation.observedAt > now) fail("delegation.authority_invalid");
       const digest = delegationDigest(observation);
@@ -140,6 +159,7 @@ export class SqliteDelegationLifecycleStore {
         if (data.reservationId !== reservationId || data.stepId !== runtime.step.id || data.observationDigest !== digest) fail("delegation.idempotency_conflict");
         if (runtime.step.childRunId !== runtime.run.id || runtime.step.state !== "running" || runtime.run.status !== "running"
           || runtime.workUnit.status !== "running" || attempt.status !== "started" || attempt.abortRequestedAt || attempt.endedAt) fail("delegation.lifecycle_conflict");
+        this.pinStepBody(runtime.step.id, preparation.artifactId, now);
         return { ...runtime, attempt, replayed: true };
       }
       this.liveReservation(runtime, now);
@@ -148,6 +168,7 @@ export class SqliteDelegationLifecycleStore {
         || resuming && (runtime.step.childRunId !== runtime.run.id || runtime.run.status !== "running")
         || runtime.run.endedAt || runtime.workUnit.status !== "claimed" || runtime.workUnit.endedAt
         || attempt.status !== "created" || attempt.endedAt || attempt.abortRequestedAt) fail("delegation.lifecycle_conflict");
+      this.ports.commitSuspensionStartWithinTransaction?.({ runtime: { ...runtime, attempt, replayed: false }, preparation, observation, now });
       this.ports.assertDispatchAuthorityWithinTransaction({ childRunId: runtime.run.id, stepId: runtime.step.id, sourceFence: fence, now });
       this.assertTransaction();
       const runTransition = resuming ? { ok: true } : this.ports.transitionRunStatus({ runId: runtime.run.id, expectedStatus: "queued", event: "runner_started",
@@ -166,15 +187,22 @@ export class SqliteDelegationLifecycleStore {
       this.assertTransaction();
       const after = this.read(reservationId);
       if (!after.attempt) fail("delegation.lifecycle_conflict");
+      this.pinStepBody(runtime.step.id, preparation.artifactId, now);
       return { ...after, attempt: after.attempt, replayed: false };
     });
   }
 
   requestDelegatedChildInterrupt(input: InterruptDelegatedChildInput): InterruptedDelegatedChildRequest {
+    return this.transaction(() => this.requestDelegatedChildInterruptWithinTransaction(input));
+  }
+
+  /** Constructor-private composition only; the owning writer supplies BEGIN/rollback. */
+  requestDelegatedChildInterruptWithinTransaction(input: InterruptDelegatedChildInput): InterruptedDelegatedChildRequest {
+    this.assertTransaction();
     const request = delegationRecord(input, ["reservationId", "parentFence", "callId", "now"]);
     const id = delegationId(request.reservationId), parentFence = delegationFence(request.parentFence);
     const callId = delegationId(request.callId), now = delegationTimestamp(request.now);
-    return this.transaction(() => {
+    return (() => {
       const runtime = this.read(id), key = `delegation-interrupt:${parentFence.attemptId}:${callId}`;
       const prior = this.context.database.prepare("SELECT * FROM delegation_messages WHERE idempotency_key=?").get(key);
       if (prior) {
@@ -197,13 +225,20 @@ export class SqliteDelegationLifecycleStore {
       if (!transition.ok || !this.ports.updateWorkUnitAttemptStatus({ ...sourceFence, status: "cancelling", abortRequestedAt: now, now })) fail("delegation.lifecycle_conflict");
       this.transitionStep(runtime, "interrupting", now);
       return { ...this.read(id), sourceFence, replayed: false };
-    });
+    })();
   }
 
   commitDelegatedChildInterrupted(input: { readonly reservationId: string; readonly sourceFence: RuntimeAttemptFenceV1; readonly now: string }): DelegationChildRuntime {
+    return this.transaction(() => this.commitDelegatedChildInterruptedWithinTransaction(input));
+  }
+
+  /** Same exact original algorithm; never opens or commits its caller's transaction. */
+  commitDelegatedChildInterruptedWithinTransaction(input: { readonly reservationId: string; readonly sourceFence: RuntimeAttemptFenceV1; readonly now: string },
+    beforeRelease?: () => void): DelegationChildRuntime {
+    this.assertTransaction();
     const request = delegationRecord(input, ["reservationId", "sourceFence", "now"]);
     const id = delegationId(request.reservationId), fence = delegationFence(request.sourceFence), now = delegationTimestamp(request.now);
-    return this.transaction(() => {
+    return (() => {
       const runtime = this.read(id);
       if (!runtime.attempt || !sameFence(fence, toRuntimeAttemptFence(runtime.attempt))) fail("delegation.source_attempt_stale");
       if (runtime.step.state === "interrupted" && runtime.attempt.status === "cancelled" && runtime.workUnit.status === "cancelled") return runtime;
@@ -217,19 +252,30 @@ export class SqliteDelegationLifecycleStore {
       this.transitionStep(runtime, "interrupted", now);
       this.ports.appendTerminalRuntimeAudit({ capability: { ...fence, attemptStatus: "cancelled", transitionedAt: now },
         type: "work_unit_cancelled", actor: "system", data: { kind: "delegation_interrupted", stepId: runtime.step.id } });
+      beforeRelease?.(); // Private owner may append exact provenance in this same transaction.
+      this.assertTransaction();
       this.ports.releaseResourceLeasesForAttempt(fence, now, "delegation-interrupted");
       this.ports.releaseRuntimeSemaphoreSlotsForAttempt(fence, now, "delegation-interrupted");
       this.assertNoActiveResources(fence);
       return this.read(id);
-    });
+    })();
   }
 
   resumeDelegatedChild(input: ResumeDelegatedChildInput): ClaimedDelegatedChild {
+    return this.transaction(() => this.resumeDelegatedChildWithinTransaction(input));
+  }
+
+  /** Original constructor-only186 transaction. The scope cannot be supplied by model/route JSON. */
+  resumeDelegatedChildWithinTransaction(input: ResumeDelegatedChildInput, scope?: object,
+    onTargetPrepared?: (child: ClaimedDelegatedChild) => void): ClaimedDelegatedChild {
+    this.assertTransaction();
+    const suspension = scope !== undefined && scope === this.#suspensionResumeScope;
+    if (scope !== undefined && !suspension || onTargetPrepared && !suspension) fail("delegation.authority_invalid");
     const request = delegationRecord(input, ["reservationId", "expectedStepRevision", "runtimeInstanceId", "parentFence", "callId", "now"]);
     const id = delegationId(request.reservationId), revision = delegationInteger(request.expectedStepRevision);
     const runtimeInstanceId = delegationId(request.runtimeInstanceId), parentFence = delegationFence(request.parentFence);
     const callId = delegationId(request.callId), now = delegationTimestamp(request.now);
-    return this.transaction(() => {
+    return (() => {
       const runtime = this.read(id);
       const key = `delegation-resume:${parentFence.attemptId}:${callId}`;
       // A response-loss retry is an observation of the immutable control fact,
@@ -269,12 +315,14 @@ export class SqliteDelegationLifecycleStore {
           || runtime.workUnit.attemptCount < targetAttempt.attemptNumber) fail("delegation.idempotency_conflict");
         return { ...runtime, attempt: targetAttempt, replayed: true };
       }
+      assertNoPendingRunTerminalIntent(this.context, runtime.run.id);
       this.liveReservation(runtime, now);
       this.assertParentOwner(runtime, parentFence);
       if (runtime.step.state !== "interrupted" || runtime.step.revision !== revision || runtime.run.status !== "running"
         || runtime.run.endedAt || runtime.workUnit.status !== "cancelled" || runtime.attempt?.status !== "cancelled") fail("delegation.lifecycle_conflict");
       const previousFence = toRuntimeAttemptFence(runtime.attempt);
       if (!hasDelegationStoppedHandoff(this.context.database, previousFence, now)) fail("delegation.recovery_required");
+      if (!suspension) assertRunSuspensionResumeAdmission(this.context, { runId: runtime.run.id, ...previousFence }, now);
       this.assertNoActiveResources(previousFence);
       this.transitionStep(runtime, "resuming", now);
       const queued = this.ports.transitionWorkUnitStatus({ workUnitId: runtime.workUnit.id, expectedStatus: "cancelled", event: "retry",
@@ -286,24 +334,33 @@ export class SqliteDelegationLifecycleStore {
       const attempt = this.ports.createWorkUnitAttemptWithinTransaction({ workUnitId: runtime.workUnit.id,
         attemptNumber: runtime.workUnit.attemptCount + 1, runtimeInstanceId, runnerId,
         requestedRunnerId: runtime.workUnit.requestedRunnerId, effectiveRunnerId: runnerId, status: "created", now });
-      this.ports.assertDispatchAuthorityWithinTransaction({ childRunId: runtime.run.id, stepId: runtime.step.id,
-        sourceFence: toRuntimeAttemptFence(attempt), now });
       const targetFence = toRuntimeAttemptFence(attempt);
       const payload = { schemaVersion: 1, kind: "delegation.resume.v1", parentFence, expectedStepRevision: revision,
         callId, sourceFence: previousFence, targetFence, requestedAt: now };
+      // Publish the immutable edge before dispatch validation in this same
+      // transaction. Any rejection rolls it and the new Attempt back together.
       this.insertControl(runtime, key, payload, now);
+      onTargetPrepared?.({ ...this.read(id), attempt, replayed: false });
+      this.ports.assertDispatchAuthorityWithinTransaction({ childRunId: runtime.run.id, stepId: runtime.step.id,
+        sourceFence: toRuntimeAttemptFence(attempt), now });
       const claimed = this.ports.transitionWorkUnitStatus({ workUnitId: runtime.workUnit.id, expectedStatus: "queued", event: "claim", actor: "system",
         idempotencyKey: `delegation:${attempt.id}:resume-claim`, activeAttemptId: attempt.id, now, endedAt: null });
       if (!claimed.ok) fail("delegation.lifecycle_conflict");
       this.assertTransaction();
       return { ...this.read(id), attempt, replayed: false };
-    });
+    })();
   }
 
   commitDelegatedChildTerminal(input: { readonly reservationId: string; readonly sourceFence: RuntimeAttemptFenceV1; readonly now: string }): DelegationChildRuntime {
+    return this.transaction(() => this.commitDelegatedChildTerminalWithinTransaction(input));
+  }
+
+  /** Same Host validation, joined to a caller's status/usage transaction. */
+  commitDelegatedChildTerminalWithinTransaction(input: Parameters<SqliteDelegationLifecycleStore["commitDelegatedChildTerminal"]>[0]): DelegationChildRuntime {
+    this.assertTransaction();
     const request = delegationRecord(input, ["reservationId", "sourceFence", "now"]);
     const id = delegationId(request.reservationId), fence = delegationFence(request.sourceFence), now = delegationTimestamp(request.now);
-    return this.transaction(() => {
+    return (() => {
       const runtime = this.read(id), attempt = runtime.attempt;
       if (!attempt || !sameFence(fence, toRuntimeAttemptFence(attempt))) fail("delegation.source_attempt_stale");
       const outcome = runtime.run.status;
@@ -330,7 +387,7 @@ export class SqliteDelegationLifecycleStore {
       if (replayed) return runtime;
       this.transitionStep(runtime, outcome as "succeeded" | "failed" | "cancelled", now);
       return this.read(id);
-    });
+    })();
   }
 
   appendDelegationInstruction(input: AppendDelegationInstructionInput): AppendedDelegationInstruction {
@@ -347,8 +404,11 @@ export class SqliteDelegationLifecycleStore {
         const message = mapDelegationMessage(prior as Record<string, SQLOutputValue>);
         if (message.delegationStepId !== runtime.step.id || message.digest !== digest || message.direction !== "parent_to_child" || message.kind !== "instruction") fail("delegation.idempotency_conflict");
         this.assertMessageArtifact(message.bodyArtifactId, runtime.step.parentRunId, digest);
+        this.pinStepBody(runtime.step.id, message.bodyArtifactId, now);
         return { message, replayed: true };
       }
+      assertRootSuspensionStartAdmission(this.context.database, runtime.step.parentRunId);
+      assertDelegatedSuspensionStartAdmission(this.context.database, runtime.step.parentRunId);
       this.liveReservation(runtime, now);
       if (!["spawning", "running", "waiting", "interrupted", "resuming"].includes(runtime.step.state)) fail("delegation.lifecycle_conflict");
       const owner = this.context.database.prepare(`SELECT 1 FROM run_sessions r JOIN work_units u ON u.id=r.work_unit_id
@@ -369,6 +429,7 @@ export class SqliteDelegationLifecycleStore {
         VALUES(?,1,?,'parent_to_child','instruction',?,?,?,?)`).run(messageId, runtime.step.id, artifact.id, digest, key, now);
       const row = this.context.database.prepare("SELECT * FROM delegation_messages WHERE id=?").get(messageId);
       if (!row) fail("delegation.lifecycle_conflict");
+      this.pinStepBody(runtime.step.id, artifact.id, now);
       return { message: mapDelegationMessage(row as Record<string, SQLOutputValue>), replayed: false };
     });
   }
@@ -385,9 +446,9 @@ export class SqliteDelegationLifecycleStore {
     if (createdAt > cutoffAt) fail("delegation.invalid_input");
     const rows = this.context.database.prepare(`SELECT r.id, r.created_at FROM delegation_budget_reservations r
       JOIN delegation_steps s ON s.id=r.delegation_step_id AND s.root_run_id=r.root_run_id
-      WHERE r.created_at<=? AND (r.created_at>? OR (r.created_at=? AND r.id>?))
+      WHERE r.created_at<=? AND (r.created_at,r.id)>(?,?)
         AND s.state NOT IN ('succeeded','failed','cancelled','lost')
-      ORDER BY r.created_at,r.id LIMIT ?`).all(cutoffAt, createdAt, createdAt, reservationId, limit + 1);
+      ORDER BY r.created_at,r.id LIMIT ?`).all(cutoffAt, createdAt, reservationId, limit + 1);
     const page = rows.slice(0, limit), last = page.at(-1);
     return { reservationIds: page.map(row => delegationId(row.id)),
       ...(rows.length > limit && last ? { nextCursor: { createdAt: delegationTimestamp(last.created_at), reservationId: delegationId(last.id) } } : {}) };
@@ -467,6 +528,8 @@ export class SqliteDelegationLifecycleStore {
     if (now < runtime.reservation.createdAt || now < runtime.step.updatedAt) fail("delegation.invalid_input");
   }
   private assertParentOwner(runtime: DelegationChildRuntime, fence: RuntimeAttemptFenceV1): void {
+    assertRootSuspensionStartAdmission(this.context.database, runtime.step.parentRunId);
+    assertDelegatedSuspensionStartAdmission(this.context.database, runtime.step.parentRunId);
     if (!this.context.database.prepare(`SELECT 1 FROM run_sessions r JOIN work_units u ON u.id=r.work_unit_id AND u.linked_run_id=r.id
       JOIN work_unit_attempts a ON a.id=u.active_attempt_id WHERE r.id=? AND r.status='running' AND r.ended_at IS NULL
         AND u.status='running' AND u.ended_at IS NULL AND u.id=? AND a.id=? AND a.work_unit_id=u.id
@@ -482,6 +545,7 @@ export class SqliteDelegationLifecycleStore {
     this.assertMessageArtifact(artifact.id, runtime.step.parentRunId, digest);
     this.context.database.prepare(`INSERT INTO delegation_messages(id,schema_version,delegation_step_id,direction,kind,body_artifact_id,digest,idempotency_key,created_at)
       VALUES(?,1,?,'parent_to_child','control',?,?,?,?)`).run(`delegation_message_${randomUUID()}`, runtime.step.id, artifact.id, digest, key, now);
+    this.pinStepBody(runtime.step.id, artifact.id, now);
   }
   private transitionStep(runtime: DelegationChildRuntime, state: import("@ling-stack/contracts").DelegationStepState, now: string): void {
     if (now < runtime.step.updatedAt) fail("delegation.invalid_input");
@@ -501,6 +565,7 @@ export class SqliteDelegationLifecycleStore {
       if (message.direction !== "child_to_parent" || message.kind !== "result" || message.idempotencyKey !== key
         || message.digest !== digest) fail("delegation.idempotency_conflict");
       this.assertMessageArtifact(message.bodyArtifactId, runtime.run.id, digest);
+      this.pinStepBody(runtime.step.id, message.bodyArtifactId, now);
       return;
     }
     // A terminal step without its same-transaction receipt is corruption, not a
@@ -514,6 +579,13 @@ export class SqliteDelegationLifecycleStore {
     this.assertMessageArtifact(artifact.id, runtime.run.id, digest);
     this.context.database.prepare(`INSERT INTO delegation_messages(id,schema_version,delegation_step_id,direction,kind,body_artifact_id,digest,idempotency_key,created_at)
       VALUES(?,1,?,'child_to_parent','result',?,?,?,?)`).run(`delegation_message_${randomUUID()}`, runtime.step.id, artifact.id, digest, key, now);
+    this.pinStepBody(runtime.step.id, artifact.id, now);
+  }
+  private pinStepBody(stepId: string, artifactId: string, now: string): void {
+    // Includes the untyped run.context_view_id preparation reference. Do not release
+    // on child terminal: the parent must still consume its result after callback drain.
+    syncHarnessArtifactOwnerPins(this.context.database, { holder: harnessArtifactOwnerHolder("delegation_step", stepId),
+      artifactIds: [artifactId], keep: true, now });
   }
   private assertNoActiveResources(fence: RuntimeAttemptFenceV1): void {
     for (const table of ["resource_leases", "runtime_semaphore_slots"] as const) {

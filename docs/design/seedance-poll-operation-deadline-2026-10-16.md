@@ -38,8 +38,11 @@ deadline/shutdown/cancel 三个慢 body 例均未 settle，native settlement=0 �
 - 实际 native loopback HTTP 低速 whitespace body，不 EOF、累计远小于 byte cap。
 - 验证实际 signal abort、原 native Promise reject/settle、真实 upstream body close
   均发生在 fixture cleanup 前；无 completed response/exchange 或 remote terminal 伪证。
-- shutdown/cancel 同栈仍 active=1，后继 poll/forward 拒绝；绑定的 Host signal 应立即
-  abort 原 native sender，只有原 operation/body 真正 settle 后才能 idle。
+- cancel/Registry局部shutdown仍同步发出local abort；完整Daemon shutdown按统一阶段执行：
+  所有domain及ActiveRuns准入同栈关闭（此时active=1、后继poll/forward拒绝），随后真实
+  abort阶段向原native sender发信号。信号必须先于物理settle/Store close，但不要求它在
+  `daemon.stop()`返回Promise前发生；不能为了旧同栈断言跳过全域准入关闭阶段。
+  只有原 operation/body 真正 settle 后才能 idle。
   忽略 signal 的真实 sender 另测有限 drain 拒绝，不能用调用 abort 代替 settlement。
 - 正常完整 pending/terminal 不退化；后继跑现有 Seedance/transport/registry 邻近回归与类型构建。
 - 测试观察使用有限 race 只用来报告未 settle，不能以观察 timer 获胜作为产品通过。
@@ -55,6 +58,10 @@ deadline/shutdown/cancel 三个慢 body 例均未 settle，native settlement=0 �
 - 真实 Daemon.stop 使用固定五秒 media drain；超时为 `media_local_drain_timeout`，details
   只含 activeExecutions、activeCallbacks、pendingReservations 整数计数，不含路径/原始异常。
   超时分支在 releaseAll/closeAll 前退出，准入保持关闭；原尾部真正结束后同 daemon 可以重试 stop。
+  五秒仅限公开调用对media的观察，不是全部domain总关机期限；它与同一内部真实drain并行，
+  不在晚于父执行器等待的settle阶段才启动。超时不写入内部永久failure、不取消/替换drain，
+  EOF后原drain可以自然完成；retry复用原work。其他domain真实失败继续保留，先观察到的
+  media超时不代表它是唯一故障。内部media barrier无timer，始终要求真实completion。
 - Adapter 可能把原生 abort 翻译成 network_error/failed，这不是远端失败。guarded native
   仅在原 fetch/body 失败且 Host signal 已 abort 时，独立捕获 `media_local_aborted`。
   两执行器现有 captured-failure 检查必须拒绝 business terminalization，保原 durable handle、

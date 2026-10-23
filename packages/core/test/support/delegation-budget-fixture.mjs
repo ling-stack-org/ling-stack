@@ -18,14 +18,15 @@ export function createBudgetHarness(cwd, options = {}) {
   applyDelegationBudgetMigration({ database: db,
     hasMigration: version => Boolean(db.prepare("SELECT 1 FROM schema_migrations WHERE version=?").get(version)),
     recordMigration: (version, name) => db.prepare("INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)").run(version, name, createdAt) });
-  let root = store.getRun("root");
+  const rootRunId = options.rootRunId ?? "root";
+  let root = store.getRun(rootRunId);
   let unit; let attempt;
   if (!root) {
     unit = store.createWorkUnit({ id: "root-unit", workspaceId: DEFAULT_WORKSPACE_ID, kind: "task_run", ownerType: "run", ownerId: "root",
       status: "claimed", idempotencyKey: "root-unit", createdByActor: "system", request: {}, now: createdAt });
     attempt = store.createWorkUnitAttempt({ id: "root-attempt", workUnitId: unit.id, attemptNumber: 1,
       runtimeInstanceId: "runtime", runnerId: "pi", status: "created", now: createdAt });
-    root = store.createRun({ id: "root", cwd, workUnitId: unit.id, taskId: "inline-task", providerName: budgetProvider.providerId,
+    root = store.createRun({ id: rootRunId, cwd, workUnitId: unit.id, taskId: "inline-task", providerName: budgetProvider.providerId,
       providerModel: budgetProvider.model, taskSnapshot: {}, providerSnapshot: {}, requestSnapshot: {}, createdAt });
     store.linkRunToWorkUnit(root.id, unit.id, createdAt);
   } else {
@@ -34,6 +35,7 @@ export function createBudgetHarness(cwd, options = {}) {
   }
   const fence = toRuntimeAttemptFence(attempt);
   const authority = { schemaVersion: 1, authoritySetId: "authority-set", sourceRevision: "policy-1", workspaceId: DEFAULT_WORKSPACE_ID,
+    ...(root.channelId ? { channelId: root.channelId } : {}),
     participantIds: ["engineer", "qa"], runnerIds: ["pi"], maxDepth: options.maxDepth ?? 3, sandbox: "workspace_write", mayEscalate: false,
     tools: ["read", "write"], toolDecisions: { read: "allow", write: "ask" },
     workspaceRoots: [{ path: cwd, access: "write" }], providers: [budgetProvider], networkScopes: ["provider.invalid"], secretRefs: ["env:QA_KEY"] };

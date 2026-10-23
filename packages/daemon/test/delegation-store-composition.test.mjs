@@ -12,7 +12,7 @@ import { createRunnerRegistry } from "../dist/runtime/runners.js";
 import { patchWorkspaceRuntimeSettings } from "../dist/runtime/runner-settings.js";
 import { resolveProviderForRun } from "../dist/features/runs/providers.js";
 import { createOriginalDelegationStoreComposition, admitOriginalDelegationRoot, admitOriginalDelegatedChild,
-  readOriginalDelegatedExecutionEntry, readOriginalDelegationLifecycle } from "../dist/features/harness/delegations/store-composition.js";
+  readOriginalDelegatedExecutionEntry, readOriginalDelegationLifecycle, readOriginalRunSuspensionLifecycle } from "../dist/features/harness/delegations/store-composition.js";
 import { createDelegatedRunDispatchAuthority } from "../dist/features/harness/delegations/delegated-run-dispatch.js";
 import { bindOriginalDelegationProviderBudget } from "../dist/features/harness/delegations/provider-budget-host.js";
 
@@ -79,6 +79,35 @@ test("Host composition rejects lookalike Supervisor and duplicate binding", asyn
   assert.throws(() => createOriginalDelegationStoreComposition({ supervisor: f.supervisor, runnerRegistry: f.runners,
     secretResolver: {}, delegatedDispatchAuthority: { readExecutionPreparation() {}, readRunnerStartObservation() {} } }),
   { code: "delegation.authority_invalid" });
+});
+
+test("private lifecycle carries suspension authority even with dispatch off, never on ordinary Store", async t => {
+  const f = await createCompositionFixture(t, { mode: "off" }), lifecycle = readOriginalDelegationLifecycle(f.composition.lifecycle, f.store);
+  for (const name of ["requestRunSuspension", "sealRunSuspension", "getRunSuspensionForAttempt", "getRunSuspension",
+    "beginRunSuspensionStop", "commitRunSuspensionStopped", "getRunSuspensionStop"]) {
+    assert.equal(typeof lifecycle[name], "function"); assert.equal(name in f.store, false);
+  }
+  assert.equal(lifecycle.getRunSuspensionForAttempt("missing"), undefined);
+  assert.equal(lifecycle.getRunSuspension("missing"), undefined);
+  assert.throws(() => lifecycle.requestRunSuspension({}));
+  assert.throws(() => lifecycle.sealRunSuspension({}));
+  assert.throws(() => readOriginalDelegationLifecycle({ ...lifecycle }, f.store), { code: "delegation.authority_invalid" });
+  f.store.close();
+  assert.throws(() => lifecycle.getRunSuspensionForAttempt("missing"), { code: "delegation.authority_invalid" });
+});
+
+test("ordinary/off-delegation suspension lookup retains only the exact original suspension and stopped-recovery capabilities", async t => {
+  const f = await createCompositionFixture(t, { mode: "off" });
+  const lifecycle = readOriginalRunSuspensionLifecycle(f.store, f.supervisor);
+  assert.equal(Object.isFrozen(lifecycle), true);
+  assert.deepEqual(Object.keys(lifecycle).sort(), ["beginRunSuspensionStop", "commitRunSuspensionStopped", "getRunSuspension",
+    "getRunSuspensionForAttempt", "getRunSuspensionStop", "readStoppedCompactionSuspensionRecovery",
+    "readStoppedFinalSettlementRecovery", "requestRunSuspension", "sealRunSuspension"].sort());
+  assert.equal(lifecycle.getRunSuspensionStop("missing"), undefined);
+  assert.throws(() => readOriginalRunSuspensionLifecycle({ ...f.store }, f.supervisor), { code: "delegation.authority_invalid" });
+  assert.throws(() => readOriginalRunSuspensionLifecycle(f.store, { ...f.supervisor }), { code: "delegation.authority_invalid" });
+  f.store.close();
+  assert.throws(() => lifecycle.getRunSuspensionStop("missing"), { code: "delegation.authority_invalid" });
 });
 
 test("admission and Provider budget binding fail closed without original Store composition", async t => {
@@ -166,6 +195,9 @@ test("private lifecycle and single-use execution entry reject shape copies and w
   const execution = readOriginalDelegatedExecutionEntry(entry, f.store);
   assert.equal(execution.claimed.run.id, claimed.run.id);
   assert.equal(typeof execution.assertCurrent, "function"); assert.equal(typeof execution.buildRequest, "function");
+  assert.equal(typeof execution.assertSuspensionCleanupCurrent, "function");
+  assert.throws(() => execution.assertSuspensionCleanupCurrent(), { code: "delegation.source_attempt_stale" },
+    "ordinary execution custody alone cannot authorize graceful cleanup without the exact private stop chain");
   assert.equal(Object.isFrozen(execution.claimed.run), true);
   assert.throws(() => readOriginalDelegatedExecutionEntry(entry, f.store), { code: "delegation.recovery_required" });
   assert.equal("writer" in execution, false);

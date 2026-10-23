@@ -1,6 +1,8 @@
 import type { HarnessDiagnosticCursorV1, HarnessDiagnosticQueryV1 } from "@ling-stack/contracts";
 import { assertRecoveryDiscoveryId, assertRecoveryDiscoveryTimestamp } from "./recovery-discovery-validation.js";
 
+const diagnosticKinds = new Set(["continuation", "tool_execution", "evaluation", "delegation"]);
+
 export type HarnessDiagnosticsStoreErrorCode =
   | "diagnostics.invalid_query"
   | "diagnostics.lineage_mismatch"
@@ -59,10 +61,12 @@ export function validateHarnessDiagnosticQuery(
   if (query.cursor === undefined) return { limit };
   const cursor = fields(query.cursor, ["runId", "workUnitId", "createdAt", "kind", "id"]);
   if (cursor.runId !== runId || cursor.workUnitId !== workUnitId
-    || (cursor.kind !== "continuation" && cursor.kind !== "tool_execution")) invalidQuery();
+    || typeof cursor.kind !== "string" || !diagnosticKinds.has(cursor.kind)) invalidQuery();
   const id = harnessDiagnosticIdentity(cursor.id);
   try { assertRecoveryDiscoveryTimestamp(cursor.createdAt, "cursor creation time"); } catch { invalidQuery(); }
-  return { limit, cursor: { runId, workUnitId, createdAt: cursor.createdAt, kind: cursor.kind, id } };
+  return { limit, cursor: {
+    runId, workUnitId, createdAt: cursor.createdAt, kind: cursor.kind as HarnessDiagnosticCursorV1["kind"], id,
+  } };
 }
 
 function invalidQuery(): never {

@@ -528,7 +528,18 @@ H12 读取原子 delegation facts，不读取 UI batch 数量或模型总结：
 
 - required child 及其所有 required descendants 都 terminal-success 才允许 parent step success；
 - required child failed/cancelled/lost/unresolved 会阻塞或失败；
-- optional child 遵循明确 cancellation policy；
+- optional child 采用用户于 2026-10-22 批准的 `stop_with_parent`：不允许在父 Run/step
+  收尾后继续后台执行。父模型返回不是整树完成，Host 必须先关闭父执行的子任务准入，
+  按精确 Run/Attempt fence 请求停止仍活动的 optional 子树，并等待原执行的真实
+  stop/drain、effect quiescence、预算结算及 sealed result。abort/requestStop 返回值、
+  进程消失或 lease 到期均不是停止回执；未知结果保留 owner/预留，阻塞父终态；
+- optional 的已验证业务失败/取消不转成 required 失败；但 optional 的 `lost`、未结算、
+  缺原始 completion/结果、遗留问题或审批仍属于整树未确认，不得称 succeeded。
+  required 后代维持原 fan-in 规则，不因祖先标记 optional 而静默改写 required；
+- stop_with_parent 覆盖成功、失败和取消收尾。冻结输入/私有 Host registry 执行停止，
+  不新增模型可调用的 finish/权限接口。重复收尾只重读同一证据，不重跑工具/模型，
+  也不制造 no-dispatch 退款。已中断、等待问答/审批、启动结果未知或跨进程 child
+  必须走其现有私有恢复/停止链；没有足够停止证据时明确 blocked，不借通用入口旁路；
 - `spawning` 即使 `delegation_steps.child_run_id` 仍为空，只要 reservation 已绑定 queued child，
   仍是 outstanding child，不能被 fan-in 漏掉；
 - accepted workflow graph 保持不变，delegation tree 作为 completion overlay；

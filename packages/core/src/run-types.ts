@@ -1767,6 +1767,10 @@ export interface RunStore extends NativeExecutionStore, HarnessProjectionStore, 
   appendExecutionEvent<K extends RunEventType>(runId: string, sourceFence: RuntimeAttemptFenceV1, type: K,
     data: RunEventDataByType[K], now?: string): Extract<RunEventEnvelope, { readonly type: K }>;
   isCurrentRunExecutionOwner(runId: string, sourceFence: RuntimeAttemptFenceV1, allowCleanup?: boolean): boolean;
+  /** Read-only veto for ordinary startup recovery. Not authority to resume or terminalize. */
+  hasPendingRunTerminalIntent(source: import("./host-operation-journal-types.js").HostOperationSource): boolean;
+  /** Read-only startup veto. Requested/sealed is not evidence of physical stop or permission to resume. */
+  hasPendingRunSuspension(source: import("./host-operation-journal-types.js").HostOperationSource): boolean;
   transitionRunExecutionStatus(input: Parameters<RunStore["transitionRunStatus"]>[0] & { readonly sourceFence: RuntimeAttemptFenceV1 }): TransitionResult<RunStatus>;
   appendIgnoredRunnerCompletionEvent(runId: string, data: RunEventDataByType["stale_runner_completion_ignored"], now?: string): Extract<RunEventEnvelope, { readonly type: "stale_runner_completion_ignored" }>;
   appendControlPlaneEvent(input: AppendControlPlaneEventInput, now: string): ControlPlaneEvent;
@@ -1822,6 +1826,7 @@ export interface RunStore extends NativeExecutionStore, HarnessProjectionStore, 
   commitRunProgressCheckpoint(input: import("./run-progress-checkpoint-types.js").CommitRunProgressCheckpointInput): import("./run-progress-checkpoint-types.js").CommitRunProgressCheckpointResult;
   listPendingDelegationInstructionIds(input: import("./run-progress-checkpoint-types.js").ListPendingDelegationInstructionsInput): readonly string[];
   readRunProgressCheckpointForRecovery(input: import("./run-progress-checkpoint-types.js").ReadRunProgressCheckpointForRecoveryInput): import("./run-progress-checkpoint-types.js").ReadRunProgressCheckpointForRecoveryResult;
+  readRunCompactionSuspensionWitness(input: import("./run-suspension-types.js").ReadRunCompactionSuspensionWitnessInput): import("./run-suspension-types.js").ReadRunCompactionSuspensionWitnessResult;
   createCompactionCheckpoint(input: CreateCompactionCheckpointInput): CompactionCheckpoint;
   getCompactionCheckpoint(id: string): CompactionCheckpoint | undefined;
   listCompactionCheckpoints(options?: ListCompactionCheckpointsOptions): CompactionCheckpoint[];
@@ -2799,6 +2804,8 @@ export type RunExecutionStoreFacet = RunStoreFacet<
 >;
 
 export type RuntimeSupervisorStoreFacet = RunStoreFacet<
+  | "hasPendingRunTerminalIntent"
+  | "hasPendingRunSuspension"
   | "createWorkUnit"
   | "getWorkUnit"
   | "listWorkUnits"

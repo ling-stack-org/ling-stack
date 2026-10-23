@@ -4,6 +4,7 @@ import {
   listBuiltinSkillPackExtensions,
   listBuiltinToolExtensions,
   createCompositeSecretResolver,
+  getRunSummaryPath,
   resolveStoragePaths,
   type RunStore,
 } from "@ling-stack/core";
@@ -48,6 +49,8 @@ import { ProviderImportPreflightService } from "./features/providers/import-pref
 import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import { reconcileTeammateDirectRun, recoverPendingTeammateDirectMessages } from "./features/teammates/direct-message-lifecycle.js";
 import { ApprovalResumeCoordinator } from "./features/runs/approval-resume-coordinator.js";
+import { syncLingThreadForTerminalRun } from "./features/runs/threads.js";
+import { writeTerminalSummary } from "./features/runs/terminal.js";
 import { UserInputDeliveryWorker } from "./features/runs/user-input-delivery-worker.js";
 import { createUserInputWorkflowTerminalHook } from "./features/runs/user-input-workflow-terminal.js";
 import { ApprovalAutoReviewRecoveryCoordinator } from "./features/runs/approval-auto-review-recovery.js";
@@ -74,6 +77,7 @@ import { resumePendingMediaJobExecutions, syncMediaJobForApprovalDecision } from
 import { createNativeRunDispatcher } from "./features/runs/native-run-dispatcher.js";
 import { publishConversationMediaProjectionChange } from "./features/media/conversation-events.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
+import { createRunShutdownCoordinator } from "./runtime/run-shutdown-coordinator.js";
 import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type RunnerRegistry } from "./runtime/runners.js";
 import { listNativeRunnerRegistrations } from "./runtime/native-runners.js";
 import { RunStoreRegistry, type RunStoreFactory } from "./runtime/store-registry.js";
@@ -621,6 +625,26 @@ export function createDaemonServer(
   const selectedDelegationWorkflowIds = resolvedConfig.harness.delegations.selectedWorkflowIds;
   delegationRuntimeRegistry = createDelegationRuntimeRegistry({
     supervisor: runtimeSupervisor, activeRuns,
+    onRunTerminal: async ({ store, run, controlPlaneEvents: terminalEvents }) => {
+      for (const event of terminalEvents) controlPlaneEvents.publish(event);
+      // Dynamic children's incoming result is their completion contract. Only
+      // the external root receives ordinary channel/goal follow-up handling.
+      if (run.workUnitId && store.getWorkUnit(run.workUnitId)?.ownerType === "delegation_step") return;
+      if ((run.status !== "failed" && run.status !== "cancelled") || !run.endedAt) {
+        throw new Error("run_terminal_intent_projection_invalid");
+      }
+      writeTerminalSummary(getRunSummaryPath(store.paths, run.id), {
+        runId: run.id, status: run.status, taskId: run.taskId,
+        eventCount: store.countEvents(run.id), startedAt: run.startedAt,
+        endedAt: run.endedAt, errorMessage: run.errorMessage ?? null,
+      });
+      // A retrying outbox must not account for the same root twice or replace
+      // a successor's active thread. The first sync clears this exact owner.
+      if (run.threadId && store.getLingThread(run.threadId)?.activeRunId === run.id) {
+        syncLingThreadForTerminalRun(store, run.id, run.endedAt);
+      }
+      await afterChannelRunTerminal(run);
+    },
     ...(selectedDelegationWorkflowIds.length ? { isWorkflowSelected: createDelegationWorkflowSelector(selectedDelegationWorkflowIds) } : {}),
     assertRecoveryParentCurrent: input => assertDelegationRecoveryParentCurrent({ ...input, activeRuns }),
     executeDelegatedRunRequest: input => executeDelegatedRunRequest(input, createDetachedRunExecutionSink(),
@@ -866,6 +890,8 @@ export function createDaemonServer(
   let networkShutdown: Promise<void> | undefined;
   let remoteAccessShutdown: Promise<void> | undefined;
   let providerImportShutdown: Promise<void> | undefined;
+  const runShutdown = createRunShutdownCoordinator({ activeRuns, delegations: delegationRuntimeRegistry,
+    mediaExecutions: storeRegistry.mediaLocalExecutions });
   const harnessLifecycle = new HarnessLifecycleCoordinator({
     stopExternalAdmission: () => {
       harnessShuttingDown = true;
@@ -924,16 +950,19 @@ export function createDaemonServer(
   harnessLifecycle.register({
     domain: "tool_execution", enabled: true,
     stopAdmission: () => {
+      activeRuns.stopAdmission();
       storeRegistry.mediaLocalExecutions.stopAdmission();
       cuaDriverActivationCoordinator.beginShutdown();
     },
     abortOwned: async () => {
-      activeRuns.suspendAll("daemon_restart");
       activeDirectReplies.cancelAll();
       channelReplyDispatchCoordinator.close();
-      storeRegistry.mediaLocalExecutions.abortOwned();
       providerImportShutdown = providerImportPreflight.shutdown();
       void providerImportShutdown.catch(() => undefined);
+      // Shared with the delegation domain. Persist/seal first, then wait for
+      // actual SDK/tool/executor finalization; never race the old abort tree
+      // against a source that is still producing its suspension checkpoint.
+      await runShutdown.shutdown("daemon_restart");
       // Keep the established broker-before-controller shutdown order, even if the broker fails.
       await shutdownAfterNativeBroker(async () => { await chromeBrowserNativeBroker?.close(); }, async () => {
         controlPlaneEvents.closeAll();
@@ -949,9 +978,11 @@ export function createDaemonServer(
       });
     },
     settle: () => settleHarnessLifetimes([
-      activeRuns.waitForIdle(), cuaDriverActivationCoordinator.shutdown(), providerImportShutdown ?? Promise.resolve(),
-      // A timeout rejects this domain and keeps Stores/leases alive. It is never an idle receipt.
-      storeRegistry.mediaLocalExecutions.waitForIdle(5_000),
+      runShutdown.shutdown("daemon_restart"),
+      cuaDriverActivationCoordinator.shutdown(), providerImportShutdown ?? Promise.resolve(),
+      // The public stop observer owns the finite deadline; this barrier proves
+      // actual completion, so a timed-out observer cannot poison later drain.
+      storeRegistry.mediaLocalExecutions.waitForIdle(),
     ]),
   });
   harnessLifecycle.register({
@@ -965,7 +996,7 @@ export function createDaemonServer(
     // production executor and keep actual child completion in this barrier.
     domain: "delegation", enabled: delegationRuntimeRegistry.isEnabled(),
     stopAdmission: () => delegationRuntimeRegistry!.stopAdmission(),
-    abortOwned: () => delegationRuntimeRegistry!.abortOwned(),
+    abortOwned: () => runShutdown.shutdown("daemon_restart"),
     settle: () => delegationRuntimeRegistry!.settle(),
   });
 
@@ -1114,7 +1145,15 @@ export function createDaemonServer(
       }, () => daemon.stop());
     },
     stop: async () => {
-      const receipt = await harnessLifecycle.shutdown();
+      // Observe the existing finite media deadline alongside the whole Host
+      // drain. A parent may itself be waiting for this media writer, so a
+      // deadline hidden in the later settle phase would never be reached.
+      // Rejection ends only this caller's wait: the original single-flight
+      // drain retains Stores/leases until real completion, including on retry.
+      const [receipt] = await Promise.all([
+        harnessLifecycle.shutdown(),
+        storeRegistry.mediaLocalExecutions.waitForIdle(5_000),
+      ]);
       if (receipt.status !== "closed") {
         throw new AggregateError(harnessLifecycle.getFailureCauses().map(failure => failure.error), "harness_shutdown_incomplete_stores_retained");
       }

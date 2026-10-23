@@ -192,10 +192,18 @@ async function exerciseCase(t, scenario) {
     assert.ok(activeOwner, "observe an actual production runTick owner, not its scheduled timer");
     const heldWire = wire.findLast(item => source === "workflow" ? item.url.includes("/api/view?") : item.url.endsWith("/a32-owned-operation"));
     assert.ok(heldWire); assert.equal(heldWire.signal.aborted, false);
-    stores.mediaLocalExecutions.beginShutdown();
+    const { ActiveRunRegistry } = await import("../dist/runtime/active-runs.js");
+    const { createRunShutdownCoordinator } = await import("../dist/runtime/run-shutdown-coordinator.js");
+    const parentRuns = new ActiveRunRegistry();
+    // Captured media holds the parent's real writer. Waiting on parent idle
+    // before issuing media-local abort would deadlock this held HTTP body.
+    if (writers) parentRuns.trackCompletion(writers.waitForIdle());
+    const shutdown = createRunShutdownCoordinator({ activeRuns: parentRuns,
+      delegations: { stopAdmission() {}, async settle() {} }, mediaExecutions: stores.mediaLocalExecutions });
+    const shutdownWork = shutdown.shutdown("daemon_restart");
     assert.equal(activeOwner.settled, false, "same-stack abort cannot fake physical callback settlement");
     assert.equal(localSnapshot().executions.some(item => item.active > 0), true);
-    await stores.mediaLocalExecutions.waitForIdle(1_500);
+    await bounded(shutdownWork, 1_500, "coordinated parent/media physical drain");
     await bounded(remote.closed.promise, 700, "real aborted upstream body close");
     mark("local-abort-drained-before-business-recovery");
     assert.equal(activeOwner.settled, true);

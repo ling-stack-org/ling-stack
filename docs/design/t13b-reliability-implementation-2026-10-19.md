@@ -35,6 +35,16 @@ or audit pin, and without any external SQLite foreign-key reference to its
 artifact row. Foreign-key discovery includes future authority tables, rather
 than maintaining an incomplete active-state allowlist.
 
+User decision (2026-10-22): automatic cleanup remains disabled by default.
+Production producers synchronize real recovery/audit pins independently of
+retention enrollment. Only a trusted Host policy explicitly supplying an exact
+artifact retention deadline may enroll a body; no default TTL is derived from
+workspace snapshots, task completion, model text, or ordinary conversation age.
+Releasing a pin does not itself enroll, delete, or authorize collection. An
+unknown completion or undrained QA callback retains its recovery pin. Required
+child results remain pinned until their real parent-consumption transaction is
+known, not merely until the child reports terminal status.
+
 GC retains the artifact row, original SHA, retention record, append-only pin
 events, and immutable GC receipt. It only clears `sealed_payload_json`, checks the
 body SHA in the same write transaction, and returns `sealedPayloadState: "pruned"`

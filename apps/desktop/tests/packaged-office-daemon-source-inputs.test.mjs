@@ -56,6 +56,7 @@ const requiredNativeExecutionAndDelegationClosureInputs = [
   "packages/core/src/native-artifacts.ts",
   "packages/core/src/native-execution-types.ts",
   "packages/core/src/native-openclaw-session.ts",
+  "packages/core/src/run-terminal-intent-types.ts",
   "packages/core/src/storage/execution-engine-profile-store.ts",
   "packages/core/src/storage/sqlite/delegation-budget-migration.ts",
   "packages/core/src/storage/sqlite/delegation-budget-rows.ts",
@@ -65,8 +66,11 @@ const requiredNativeExecutionAndDelegationClosureInputs = [
   "packages/core/src/storage/sqlite/delegation-stopped-handoff.ts",
   "packages/core/src/storage/sqlite/delegation-write-store.ts",
   "packages/core/src/storage/sqlite/harness-artifact-retention-store.ts",
+  "packages/core/src/storage/sqlite/harness-artifact-recovery-pins.ts",
   "packages/core/src/storage/sqlite/harness-projection-checkpoint-store.ts",
   "packages/core/src/storage/sqlite/harness-reliability-migration.ts",
+  "packages/core/src/storage/sqlite/harness-retention-index-migration.ts",
+  "packages/core/src/storage/sqlite/harness-recovery-index-migration.ts",
   "packages/core/src/storage/sqlite/harness-reliability-schema.ts",
   "packages/core/src/storage/sqlite/host-attempt-native-coverage.ts",
   "packages/core/src/storage/sqlite/host-attempt-read-scope.ts",
@@ -75,6 +79,8 @@ const requiredNativeExecutionAndDelegationClosureInputs = [
   "packages/core/src/storage/sqlite/native-approval-wait.ts",
   "packages/core/src/storage/sqlite/native-run-artifacts.ts",
   "packages/core/src/storage/sqlite/native-run-output.ts",
+  "packages/core/src/storage/sqlite/run-terminal-intent-migration.ts",
+  "packages/core/src/storage/sqlite/run-terminal-intent-store.ts",
   "packages/core/src/storage/sqlite/run-ancestry.ts",
   "packages/daemon/src/features/channels/terminal-report-delegation-evidence.ts",
   "packages/daemon/src/features/conversations/conversation-execution-selection.ts",
@@ -188,8 +194,55 @@ const requiredNativeExecutionAndDelegationClosureInputs = [
   "packages/runner-pi/src/delegation-instruction.ts",
   "packages/runner-pi/src/extensions/delegation.ts",
   "packages/runner-pi/src/provider-budget.ts",
+  "packages/runner-pi/src/runtime-suspension.ts",
+];
+const gracefulTreeTypeOnlyInputs = [
+  "packages/core/src/run-final-settlement-types.ts",
+];
+// These contracts also export Error classes consumed by the SQLite writers.
+const gracefulTreeRuntimeInputs = [
+  "packages/core/src/run-suspension-activation-types.ts",
+  "packages/core/src/run-suspension-delegated-types.ts",
+  "packages/core/src/run-suspension-start-types.ts",
+  "packages/core/src/run-suspension-stop-types.ts",
+  "packages/core/src/run-suspension-types.ts",
+  "packages/core/src/storage/sqlite/delegation-resume-lineage.ts",
+  "packages/core/src/storage/sqlite/run-compaction-suspension-effects.ts",
+  "packages/core/src/storage/sqlite/run-compaction-suspension-lineage.ts",
+  "packages/core/src/storage/sqlite/run-compaction-suspension-witness.ts",
+  "packages/core/src/storage/sqlite/run-final-settlement-handoff.ts",
+  "packages/core/src/storage/sqlite/run-final-settlement-migration.ts",
+  "packages/core/src/storage/sqlite/run-final-settlement-records.ts",
+  "packages/core/src/storage/sqlite/run-final-settlement-store.ts",
+  "packages/core/src/storage/sqlite/run-suspension-activation-migration.ts",
+  "packages/core/src/storage/sqlite/run-suspension-activation-records.ts",
+  "packages/core/src/storage/sqlite/run-suspension-activation-store.ts",
+  "packages/core/src/storage/sqlite/run-suspension-delegated-migration.ts",
+  "packages/core/src/storage/sqlite/run-suspension-delegated-records.ts",
+  "packages/core/src/storage/sqlite/run-suspension-delegated-store.ts",
+  "packages/core/src/storage/sqlite/run-suspension-dependencies.ts",
+  "packages/core/src/storage/sqlite/run-suspension-migration.ts",
+  "packages/core/src/storage/sqlite/run-suspension-queued-proof.ts",
+  "packages/core/src/storage/sqlite/run-suspension-start-migration.ts",
+  "packages/core/src/storage/sqlite/run-suspension-start-records.ts",
+  "packages/core/src/storage/sqlite/run-suspension-start-store.ts",
+  "packages/core/src/storage/sqlite/run-suspension-stop-migration.ts",
+  "packages/core/src/storage/sqlite/run-suspension-stop-records.ts",
+  "packages/core/src/storage/sqlite/run-suspension-stop-store.ts",
+  "packages/core/src/storage/sqlite/run-suspension-stopped-handoff.ts",
+  "packages/core/src/storage/sqlite/run-suspension-store.ts",
+  "packages/core/src/storage/sqlite/run-suspension-witness.ts",
+  "packages/daemon/src/features/harness/continuations/final-settlement-observation.ts",
+  "packages/daemon/src/features/harness/continuations/root-suspension-dispatch.ts",
+  "packages/daemon/src/features/harness/continuations/run-compaction-suspension.ts",
+  "packages/daemon/src/features/harness/continuations/run-graceful-suspension.ts",
+  "packages/daemon/src/runtime/delegated-terminal-handoff.ts",
+  "packages/daemon/src/runtime/run-shutdown-coordinator.ts",
+  "packages/daemon/src/runtime/run-suspension-order.ts",
 ];
 const newAuthoredRuntimeLeaves = [
+  ...gracefulTreeRuntimeInputs,
+  "packages/daemon/src/runtime/packaged-qa-harness-bootstrap.ts",
   "packages/daemon/src/runtime/workspace-runtime-owner.ts",
   "packages/daemon/src/features/runs/approval-event-state.ts",
   "packages/daemon/src/features/runs/approval-resume-preparation.ts",
@@ -305,12 +358,13 @@ const newAuthoredRuntimeLeaves = [
   "packages/daemon/src/features/harness/evaluations/human-evaluation-service.ts",
   "packages/daemon/src/features/harness/evaluations/human-evaluation-report.ts",
   ...requiredQuestionAndApprovalClosureInputs,
-  ...requiredNativeExecutionAndDelegationClosureInputs,
+  ...requiredNativeExecutionAndDelegationClosureInputs.filter(name => name !== "packages/core/src/run-terminal-intent-types.ts"),
 ];
 // This contract is exported with `export type *`; esbuild correctly erases it.
 // It remains an explicit reviewed source and gets every fail-closed check below.
 const newAuthoredTypeOnlyInputs = ["packages/contracts/src/harness-evaluation-qa.ts", "packages/contracts/src/harness-human-evaluation.ts",
-  "packages/contracts/src/harness-human-evaluation-read.ts", "packages/core/src/harness/human-evaluation-read.ts"];
+  "packages/contracts/src/harness-human-evaluation-read.ts", "packages/core/src/harness/human-evaluation-read.ts",
+  "packages/core/src/run-terminal-intent-types.ts", ...gracefulTreeTypeOnlyInputs];
 const reviewedNativeInputs = ["apps/desktop/scripts/build-human-evaluation-helper.mjs", "apps/desktop/scripts/native/human-evaluation-darwin.swift"];
 const newAuthoredRequiredInputs = [...newAuthoredRuntimeLeaves, ...newAuthoredTypeOnlyInputs, ...reviewedNativeInputs];
 const staleSentinel = "__LING_EXPLICIT_STALE_DIST_RED__";
@@ -337,7 +391,7 @@ test("Office fixed review closure explicitly pins required-question and approval
 });
 
 test("Office fixed review closure explicitly pins native execution and dynamic delegation authored sources", () => {
-  assert.equal(requiredNativeExecutionAndDelegationClosureInputs.length, 147);
+  assert.equal(requiredNativeExecutionAndDelegationClosureInputs.length, 154);
   for (const name of requiredNativeExecutionAndDelegationClosureInputs) {
     assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(name), true,
       `Native execution or delegation source must be an explicit fixed review input: ${name}`);

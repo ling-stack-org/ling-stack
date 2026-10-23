@@ -528,8 +528,8 @@ function beginNativeWorkflow(fixture) {
 }
 
 test("native workflow without its captured start owner cannot invoke the target", async (t) => {
-  let calls = 0;
-  const fixture = createNativeWorkflowFixture(t, { async dispatch() {
+  let calls = 0, admissions = 0;
+  const fixture = createNativeWorkflowFixture(t, { async assertAvailable() { admissions++; }, async dispatch() {
     calls++;
     return { status: "completed", events: [] };
   } });
@@ -540,9 +540,52 @@ test("native workflow without its captured start owner cannot invoke the target"
     sink: recording.sink, executionOptions: {},
   });
   assert.equal(calls, 0);
+  assert.equal(admissions, 0, "missing workflow authority must reject before any native preflight");
   assert.equal(runId, undefined);
   assert.equal(recording.state.errors[0]?.statusCode, 409);
-  assert.equal(recording.state.errors[0]?.body.error, "workflow_start_owner_stale");
+  assert.equal(recording.state.errors[0]?.body.error, "workflow_start_owner_stale", JSON.stringify(recording.state.errors));
+  assert.equal(fixture.store.getChannelWorkflowStep(step.id).runId, undefined);
+  assert.deepEqual(fixture.store.listLingThreads({ workflowStepId: step.id, channelId: start.task.channelId }), [],
+    "missing authority must reject before creating any canonical source Thread");
+});
+
+test("native workflow revalidates its original owner after awaited availability before creating a Turn", async t => {
+  let calls = 0, admissions = 0;
+  let fixture, owner, stepId;
+  fixture = createNativeWorkflowFixture(t, {
+    async assertAvailable() {
+      admissions++;
+      await Promise.resolve();
+      fixture.store.releaseResourceLease(owner.leaseId, "workflow_step", stepId, new Date().toISOString());
+    },
+    async dispatch() { calls++; return { status: "completed", events: [] }; },
+  });
+  const { step, start } = beginNativeWorkflow(fixture);
+  owner = start.owner;
+  stepId = step.id;
+  const recording = createRecordingSink();
+  const runId = await fixture.dispatcher.dispatch({
+    runRequest: nativeWorkflowRequest(fixture.cwd, start.task, {
+      workflowStepId: step.id, workflowStartOwner: start.owner, teammateId: "teammate_builtin_engineer",
+    }), sink: recording.sink, executionOptions: {},
+  });
+  assert.equal(admissions, 1);
+  assert.equal(calls, 0);
+  assert.equal(runId, undefined);
+  assert.deepEqual(recording.state.errors.map(({ statusCode, body }) => ({ statusCode, error: body.error })),
+    [{ statusCode: 409, error: "workflow_start_owner_stale" }]);
+  assert.deepEqual(recording.state.ready, []);
+  const threads = fixture.store.listLingThreads({ workflowStepId: step.id, channelId: start.task.channelId });
+  assert.equal(threads.length, 1, "native availability uses its real preparation Thread");
+  const [thread] = threads;
+  assert.equal(thread.kind, "workflow_step");
+  assert.equal(thread.taskId, start.task.id);
+  assert.equal(thread.teammateId, "teammate_builtin_engineer");
+  assert.equal(thread.status, "failed");
+  assert.equal(thread.activeRunId, undefined);
+  assert.deepEqual(fixture.store.listLingTurns({ threadId: thread.id, limit: 100 }), []);
+  assert.deepEqual(fixture.store.listWorkUnits(), [], "the isolated Store has no admitted WorkUnit");
+  assert.deepEqual(fixture.store.listRuns(), [], "the isolated Store has no admitted Run");
   assert.equal(fixture.store.getChannelWorkflowStep(step.id).runId, undefined);
 });
 

@@ -40,9 +40,15 @@ export async function runtimeTraceFixture(t) {
     title: task.title, userInstruction: task.prompt, idempotencyKey: "b012-source",
     payload: { body: task.prompt, format: "markdown", mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [] } }, now);
 
-  // These unrelated ports are never called by the selected production trace route.
+  // Namespace pre-dispatch ports do not own these GET trace requests. Keep
+  // their scope explicit without replacing the selected production trace route.
   // The actual router, Registry, event ingress, Store and action projection are not substituted.
   const context = { config: { host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, maxBodyBytes: 32_768 },
+    engineManagement: { async handle(request) {
+      assert.equal(request.method, "GET");
+      assert.match(request.url ?? "", /^\/traces(?:\/|\?|$)/u);
+      return false;
+    } },
     storeRegistry: registry, remoteAccess: { async handleManagementRequest() { return false; } } };
   server = createServer((request, response) => {
     if (request.method !== "GET" || !/^\/traces(?:\/|\?|$)/u.test(request.url ?? "")) {
