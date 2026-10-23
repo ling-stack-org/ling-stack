@@ -4,6 +4,29 @@ This is the concise current entry. Older append-only records are history, not a 
 
 ## Superseding checkpoint — 2026-10-24
 
+### Current execution — saved merge and completed delta reviews
+
+- Merge checkpoint `4b2147a5c2e5dce44f0d3c99a25b150ff775332b` has both
+  original parents and is pushed. Actual push exit0 and independent ls-remote
+  readback match. This is not an E6 PR/main merge or a release.
+- DMG, migration/pure binding, Core/Provider and final Daemon/HTML independent
+  reviews are complete, with zero remaining confirmed findings in their scopes.
+  The HTML report's superseding follow-up closes its older historical finding.
+  MCP Unicode offset repair has real RED exit1, GREEN14/14 exit0 and exact final
+  content review; do not reopen that investigation or rerun passing suites.
+- Final closure inventory contains1603 fixed inputs and zero missing/unresolved
+  literal runtime edges. Rehash found exactly two subsequent source changes:
+  `string-boundaries.ts` and `skill-source-sync.ts`; final Core review covers both.
+  All other inventory rows remain byte-identical. Generated55 catalog coverage
+  is reproducible provenance, not new human translation review.
+- Next: freeze current inputs, bind all completed reviews/test receipts, apply
+  standing internal QA authorization to only90 changed and9 added packaging
+  hashes, verify the original reader, package once and continue affected GUI
+  cases. Native15 and actual toolchain/runtime/signing tuple must stay unchanged.
+  No publication or human authentication by the agent is authorized.
+
+Older checkpoint bullets below are historical and superseded by this entry.
+
 ### Latest actual integration results (supersedes next older bullets)
 
 - The merge of remote main `7bd33739852cec139822b33e12b4f8189b3964de` is resolved

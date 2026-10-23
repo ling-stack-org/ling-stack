@@ -144,4 +144,3 @@ All digests are SHA256 of file bytes. Row-array digests use UTF-8 `JSON.stringif
 ## Gate and next action
 
 Keep packaging fail-closed until the primary agent explicitly adds the nine entries, completes applicable independent content review, freezes final bytes and creates the traceable QA-only review packet under standing authorization. Rehash the moving migration/binding sources after final fixes. Do not promote this inventory to `approved`, do not re-run unrelated GUI/history cases merely because this list changed, and do not claim package success from this audit.
-
