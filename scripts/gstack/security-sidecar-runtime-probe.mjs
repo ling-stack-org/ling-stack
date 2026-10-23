@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { createRequire, registerHooks, syncBuiltinESMExports } from "node:module";
-import { isAbsolute, join, relative } from "node:path";
+import { isAbsolute, join, relative, toNamespacedPath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = process.argv[2];
@@ -55,9 +55,15 @@ registerHooks({ load(url, context, nextLoad) {
 } });
 const originalDlopen = process.dlopen;
 process.dlopen = function(module, filename, ...args) {
-  record(filename);
+  const canonical = realpathSync(filename);
+  // Node's Windows .node loader passes exactly toNamespacedPath(filename).
+  // Admit that spelling only; aliases and links must still fail closed.
+  if (filename !== canonical && (process.platform !== "win32" || filename !== toNamespacedPath(canonical))) {
+    throw new Error("security_runtime_external_or_linked_input");
+  }
+  record(canonical);
   const result = originalDlopen.call(this, module, filename, ...args);
-  addons.add(localPath(filename));
+  addons.add(localPath(canonical));
   return result;
 };
 

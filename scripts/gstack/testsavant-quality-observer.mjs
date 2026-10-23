@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { registerHooks } from "node:module";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, toNamespacedPath } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Observation binds this measurement to its actual JS/native inputs, not to
@@ -10,7 +10,7 @@ export function observeTestsavantQualityRuntime(root) {
   if (!isAbsolute(root) || realpathSync(root) !== root) throw new Error("testsavant_quality_runtime_invalid");
   const inputs = new Map(), addons = new Set();
   const local = absolute => {
-    const path = relative(root, absolute);
+    const path = relative(root, absolute).split("\\").join("/");
     return path && !isAbsolute(path) && path !== ".." && !path.startsWith("../") ? path : undefined;
   };
   function record(absolute) {
@@ -30,8 +30,12 @@ export function observeTestsavantQualityRuntime(root) {
   } });
   const original = process.dlopen;
   process.dlopen = function(module, filename, ...args) {
-    record(filename); const value = original.call(this, module, filename, ...args);
-    addons.add(local(filename)); return value;
+    const canonical = realpathSync(filename);
+    if (filename !== canonical && (process.platform !== "win32" || filename !== toNamespacedPath(canonical))) {
+      throw new Error("testsavant_quality_dependency_invalid");
+    }
+    record(canonical); const value = original.call(this, module, filename, ...args);
+    addons.add(local(canonical)); return value;
   };
   return {
     finish() {

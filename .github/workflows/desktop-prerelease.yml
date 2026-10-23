@@ -139,6 +139,7 @@ jobs:
         run: |
           node --test scripts/ci/desktop-release.test.mjs scripts/ci/desktop-package.test.mjs \
             scripts/gstack/source-checkout.test.mjs \
+            scripts/gstack/native-runtime-observer-path.test.mjs \
             scripts/gstack/testsavant-model-cache.test.mjs scripts/gstack/testsavant-model-state.test.mjs \
             apps/desktop/tests/distribution*.test.mjs
       - name: Inspect current distribution inputs without approving redistribution
