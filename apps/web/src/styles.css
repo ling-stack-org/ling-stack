@@ -66,6 +66,7 @@
 @import "./styles/conversation-toolbar.css";
 @import "./styles/normal-conversation.css";
 @import "./styles/normal-conversation-feed-composer.css";
+@import "./styles/conversation-model-control.css";
 @import "./styles/normal-conversation-dock.css";
 @import "./styles/channel-header.css";
 @import "./styles/channel-settings.css";

@@ -77,3 +77,17 @@ de71ccccd55f21e909cb597347bcc6e1f81103e3:packages/daemon/test/media-native-trans
 8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1251
 8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1252
 8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1253
+
+# Exact source-file SHA-256 values in the reviewed release manifest.
+# Verified against each referenced file at commit 32834956; not credentials.
+32834956f98c5b379f9c572257fe4f1069813932:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1367
+32834956f98c5b379f9c572257fe4f1069813932:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1420
+32834956f98c5b379f9c572257fe4f1069813932:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1425
+32834956f98c5b379f9c572257fe4f1069813932:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1428
+32834956f98c5b379f9c572257fe4f1069813932:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1435
+32834956f98c5b379f9c572257fe4f1069813932:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1436
+32834956f98c5b379f9c572257fe4f1069813932:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1438
+32834956f98c5b379f9c572257fe4f1069813932:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1442
+32834956f98c5b379f9c572257fe4f1069813932:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1484
+32834956f98c5b379f9c572257fe4f1069813932:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:861
+32834956f98c5b379f9c572257fe4f1069813932:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:972
