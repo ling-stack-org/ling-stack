@@ -17,10 +17,14 @@ test("a Windows-style Git checkout retains the exact reviewed producer bytes and
   const inputDirectory = join(repository, "scripts/gstack");
   await mkdir(inputDirectory, { recursive: true }); await mkdir(output);
   for (const name of [".gitattributes", ...adaptationInputs]) await copyFile(join(scripts, name), join(inputDirectory, name));
+  await copyFile(join(scripts, "../../.gitattributes"), join(repository, ".gitattributes"));
+  await mkdir(join(repository, "patches"));
+  const patchPath = "patches/sprintf-js@1.1.3.patch";
+  await copyFile(join(scripts, "../..", patchPath), join(repository, patchPath));
   const git = args => execFileSync("git", ["-c", "core.autocrlf=true", "-c", "core.safecrlf=false", ...args], {
     cwd: repository, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
   });
-  git(["init", "--quiet"]); git(["add", "scripts/gstack"]);
+  git(["init", "--quiet"]); git(["add", "."]);
   // checkout-index performs Git's real checkout conversion without commits,
   // network access, or mutating the caller's Git/global configuration.
   git(["checkout-index", "--all", `--prefix=${output.replaceAll("\\", "/")}/`]);
@@ -33,4 +37,6 @@ test("a Windows-style Git checkout retains the exact reviewed producer bytes and
   }
   const reviewed = JSON.parse(await readFile(join(scripts, "reviewed-source-bundle.json")));
   assert.equal(`ling-${createHash("sha256").update(Buffer.concat(checkedOut)).digest("hex")}`, reviewed.adaptationRevision);
+  assert.deepEqual(await readFile(join(output, patchPath)), await readFile(join(scripts, "../..", patchPath)),
+    "the security patch must retain LF bytes so git apply can match the SHA-verified npm source");
 });
