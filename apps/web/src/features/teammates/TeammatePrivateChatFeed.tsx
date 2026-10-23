@@ -458,6 +458,7 @@ export function TeammatePrivateChatFeed({
             itemLocatorRef: timelineItemLocatorRef,
             onDisclosureIntent: onCancelPrivateFeedAutoFollow,
             onOpenSourceRef: handleOpenTimelineSourceRef,
+            onOpenNativeFile: (localFile) => onOpenFiles({ path: localFile.path, line: localFile.line, localFile }),
             onOpenReview,
             renderResponseActions: (response, copyText) => {
               const itemId = response.message?.itemId;
