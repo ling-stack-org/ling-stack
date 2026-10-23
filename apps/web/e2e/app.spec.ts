@@ -387,7 +387,7 @@ test("recent conversations only show records created from the conversation home"
   await expect(conversationToolbar.locator(".workspace-toolbar-action-label")).toHaveCount(0);
   await expect(conversationToolbar.getByRole("button", { name: "Search" })).toHaveClass(/workspace-toolbar-icon-button/);
   await expect(conversationToolbar.getByRole("button", { name: "Refresh" })).toHaveCount(0);
-  await expect(conversationToolbar.getByRole("button", { name: "Summary" })).toHaveClass(/workspace-toolbar-icon-button/);
+  await expect(conversationToolbar.getByRole("button", { name: "Summary", exact: true })).toHaveClass(/workspace-toolbar-icon-button/);
   await expect(conversationToolbar.getByRole("button", { name: "Terminal" })).toHaveClass(/workspace-toolbar-icon-button/);
   await expect(conversationToolbar.getByRole("button", { name: /^Review/ })).toHaveCount(0);
   await expect(conversationToolbar.getByRole("button", { name: /^Evidence/ })).toHaveCount(0);
@@ -395,7 +395,7 @@ test("recent conversations only show records created from the conversation home"
   const conversationDetailsButtonBox = await conversationToolbar.getByRole("button", { name: "Show details" }).boundingBox();
   expect(conversationDetailsButtonBox?.width ?? 0).toBeGreaterThanOrEqual(32);
   expect(conversationDetailsButtonBox?.height ?? 0).toBeGreaterThanOrEqual(32);
-  await conversationToolbar.getByRole("button", { name: "Summary" }).click();
+  await conversationToolbar.getByRole("button", { name: "Summary", exact: true }).click();
   await expect(page.locator(".normal-conversation-summary-popover")).toContainText("Workspace");
   await conversationToolbar.getByRole("button", { name: "Show details" }).click();
   const conversationDock = page.getByLabel("Conversation workspace dock");
@@ -415,11 +415,11 @@ test("recent conversations only show records created from the conversation home"
     const dockFrameBox = await page.locator(".normal-conversation-right-dock-frame").boundingBox();
     return summaryBox && dockFrameBox ? summaryBox.x + summaryBox.width <= dockFrameBox.x + 1 : false;
   }).toBe(true);
-  await conversationToolbar.getByRole("button", { name: "Summary" }).click();
+  await conversationToolbar.getByRole("button", { name: "Summary", exact: true }).click();
   await expect(conversationPage).toHaveClass(/summary-panel-collapsed/);
   await expect(conversationSummaryPanel).toHaveClass(/is-popover-collapsed/);
   await expect(conversationSummaryPanel).toHaveCount(0);
-  await conversationToolbar.getByRole("button", { name: "Summary" }).click();
+  await conversationToolbar.getByRole("button", { name: "Summary", exact: true }).click();
   await expect(conversationSummaryPanel).toBeVisible();
   await conversationToolbar.getByRole("button", { name: "Hide details" }).click();
   const conversationTopSummary = page.locator(".normal-conversation-summary-popover");
@@ -427,7 +427,7 @@ test("recent conversations only show records created from the conversation home"
   await expect(conversationTopSummary).toHaveAttribute("data-summary-placement-motion", "main->header");
   await expect(conversationDock).toHaveCount(0);
   await expect(conversationTopSummary).toContainText("Workspace");
-  await conversationToolbar.getByRole("button", { name: "Summary" }).click();
+  await conversationToolbar.getByRole("button", { name: "Summary", exact: true }).click();
   await conversationToolbar.getByRole("button", { name: "Terminal" }).click();
   await expect(page.getByLabel("Terminal session")).toBeVisible();
   await page.getByRole("button", { name: "Close terminal panel" }).click();

@@ -59,6 +59,10 @@ export function useControlPlaneInvalidation(input: {
       return;
     }
     const changed = new Set(domains);
+    if (domains.some((domain) => ["runs", "work_units", "approvals", "artifacts", "channels", "teammates"].includes(domain))) {
+      window.dispatchEvent(new CustomEvent("ling:work-summary-invalidated", { detail: { cwd: workspaceCwd } }));
+    }
+
     const refreshes: Promise<unknown>[] = [];
     const trackRefresh = (domain: ControlPlaneDomain, action: string, refresh: Promise<unknown>): void => {
       const request = errorOwner.begin("control-plane", workspaceCwd, `${domain}:${action}`);

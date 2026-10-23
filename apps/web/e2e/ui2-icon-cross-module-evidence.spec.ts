@@ -104,7 +104,7 @@ for (const theme of themes) {
     const channelToolbar = await openChannelToolbar(page);
     const channelActions = [
       ["Search", channelToolbar.getByRole("button", { name: "Search" })],
-      ["Summary", channelToolbar.getByRole("button", { name: "Summary" })],
+      ["Summary", channelToolbar.getByRole("button", { name: "Summary", exact: true })],
       ["Toggle bottom panel", channelToolbar.getByRole("button", { name: "Toggle bottom panel" })],
       ["Show details", channelToolbar.getByRole("button", { name: "Show details" })],
     ] as const;

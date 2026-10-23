@@ -1,3 +1,4 @@
+import { useWorkSummaryContext } from "./work-summary/WorkSummaryProvider.js";
 import type { ComponentProps, ReactNode } from "react";
 import { ConversationShell } from "../../shared/conversation/index.js";
 import { useI18n } from "../../i18n.js";
@@ -12,6 +13,7 @@ import {
 } from "../../app/DesktopTitlebarSurface.js";
 
 export interface NormalConversationPageProps {
+  readonly onOpenSummaryChanges: (cwd: string) => void;
   readonly summaryOpen: boolean;
   readonly onCloseSummary: () => void;
   readonly summaryDockMotion?: string;
@@ -24,6 +26,7 @@ export interface NormalConversationPageProps {
 
 export function NormalConversationPage({
   summaryOpen,
+  onOpenSummaryChanges,
   onCloseSummary,
   summaryDockMotion,
   summaryRows,
@@ -35,8 +38,10 @@ export function NormalConversationPage({
   const { t } = useI18n();
   const titlebarPlacement = useDesktopTitlebarPlacement();
   const { dockController, dockViewModel, terminalPresence, terminalResize } = panelsProps;
+  const workSummary = useWorkSummaryContext();
   const summaryLayout = useConversationSummaryLayout({
     requestedOpen: summaryOpen,
+    allowOverlay: Boolean(workSummary),
     containerWidth: dockController.containerWidth,
     dockVisible: dockController.visible,
     dockWidth: dockController.width,
@@ -81,6 +86,7 @@ export function NormalConversationPage({
                 dockMotion={summaryDockMotion}
                 motionState={dockController.motionState}
                 onClose={onCloseSummary}
+                onOpenChanges={onOpenSummaryChanges}
               />
             )}
           />

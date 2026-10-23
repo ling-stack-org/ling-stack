@@ -18,6 +18,7 @@ import type {
   WorkItemReleaseRequest,
   WorkItemRouteRequest,
   WorkspaceChangesResponse,
+  WorkSummaryResponse,
   WorkspaceSnapshotManifest,
   WorkspaceSnapshotEntry,
   WorkspaceSnapshotPreview,
@@ -34,6 +35,22 @@ import type {
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
 export const operationEndpoints = {
+  async getWorkSummaryChanges(this: LingDaemonEndpointContext, cwd: string): Promise<WorkspaceChangesResponse> {
+    return this._get("/workspace/changes", { cwd, baseline: "head" });
+  },
+
+  async getWorkSummary(this: LingDaemonEndpointContext, cwd: string): Promise<WorkSummaryResponse> {
+    return this._get("/workspace/work-summary", { cwd });
+  },
+
+  async attachWorkSummaryPullRequest(this: LingDaemonEndpointContext, cwd: string, url: string): Promise<void> {
+    return this._post("/workspace/work-summary/pull-requests", { cwd }, { url });
+  },
+
+  async detachWorkSummaryPullRequest(this: LingDaemonEndpointContext, cwd: string, url: string): Promise<void> {
+    return this._delete("/workspace/work-summary/pull-requests", { cwd, url });
+  },
+
   async listWorkItems(this: LingDaemonEndpointContext, cwd: string, options: ListWorkItemsRequest = {}): Promise<WorkItemListResponse> {
       return this._get("/work-items", {
         cwd,

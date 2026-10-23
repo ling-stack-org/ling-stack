@@ -87,7 +87,7 @@ for (const fixture of [
     await page.keyboard.press("Escape");
 
     await expect(toolbar.getByRole("button", { name: "Refresh" })).toHaveCount(0);
-    await expect(toolbar.getByRole("button", { name: "Summary" })).toBeEnabled();
+    await expect(toolbar.getByRole("button", { name: "Summary", exact: true })).toBeEnabled();
 
     await searchTrigger.click();
     const evidenceSearch = header.getByRole("search", { name: "Search conversation messages" });

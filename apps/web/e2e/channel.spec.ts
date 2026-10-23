@@ -1081,7 +1081,7 @@ test("progress popover shows active context source groups and opens source detai
   await expect(page.locator('[data-conversation-timeline-kind="subAgentActivity"]')).toHaveCount(0);
   await expect(workflowEvent).toContainText("Engineer is working on Render source summary. 0 of 1 steps complete.");
 
-  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary" }).click();
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary", exact: true }).click();
 
   const popover = page.locator(".channel-progress-popover");
   await expect(popover).toBeVisible();
@@ -1355,6 +1355,15 @@ test("channel environment surface shows read-only context and opens review", asy
   };
 
   await mockDaemon(page, state);
+  await page.route(/\/workspace\/work-summary(?:\?.*)?$/, async (route) => {
+    const worktreeCwd = `${cwd}/.ling-stack/worktrees/channels/channel_engineering`;
+    await route.fulfill({ json: {
+      cwd,
+      sessions: [{ id: "channel:channel_engineering", channelId: "channel_engineering", title: "Engineering", status: "open", surface: "channel", workspaceKey: worktreeCwd }],
+      workspaces: [{ key: worktreeCwd, cwd: worktreeCwd, state: "ready", branch: "ling/channel-environment", changedFiles: 1, additions: 12, deletions: 3, binaryFiles: 0, commits: [], partial: false, checkedAt: "2026-06-29T00:01:00.000Z" }],
+      pullRequests: [], truncated: false, checkedAt: "2026-06-29T00:01:00.000Z",
+    } });
+  });
   await page.route(/\/workspace\/changes(?:\?.*)?$/, async (route) => {
     const worktreeCwd = `${cwd}/.ling-stack/worktrees/channels/channel_engineering`;
     await route.fulfill({
@@ -1414,7 +1423,7 @@ test("channel environment surface shows read-only context and opens review", asy
     };
   });
 
-  const summaryButton = page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary" });
+  const summaryButton = page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary", exact: true });
   await summaryButton.click();
   const popover = page.locator(".channel-progress-popover");
   await expect(popover).toBeVisible();
@@ -1426,9 +1435,11 @@ test("channel environment surface shows read-only context and opens review", asy
   await expect(popover).toContainText("Local environment");
   await expect(popover).toContainText("Working branch");
   await expect(popover).toContainText("Commit or push");
-  await expect(popover).toContainText("1 changed file");
-  await expect(popover).toContainText("+12");
-  await expect(popover).toContainText("-3");
+  const summaryChanges = popover.getByRole("button", { name: /Changes · 1/u });
+  await expect(summaryChanges).toHaveCount(1);
+  await expect(summaryChanges).toContainText("+12");
+  await expect(summaryChanges).toContainText("−3");
+  await expect(popover.locator(".attention-environment-section")).not.toContainText("Changes");
   await popover.getByRole("button", { name: "Local environment" }).click();
   const quickEnvironmentPage = page.locator(".channel-environment-page");
   await expect(quickEnvironmentPage).toBeVisible();
@@ -1728,7 +1739,7 @@ test("channel environment labels review-only items as review instead of changes"
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary" }).click();
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary", exact: true }).click();
   const environmentSection = page.locator(".channel-progress-popover .attention-environment-section");
   await expect(environmentSection).toBeVisible();
   await expect(environmentSection).toContainText("Review");
@@ -1750,7 +1761,7 @@ test("channel environment shows clean git state without review rows", async ({ p
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary" }).click();
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary", exact: true }).click();
   const environmentSection = page.locator(".channel-progress-popover .attention-environment-section");
   await expect(environmentSection).toBeVisible();
   await expect(environmentSection).not.toContainText("Changes");

@@ -8,6 +8,12 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ## [Unreleased]
 
+### Added
+
+- Unified workspace summaries show sessions, net Git changes, recent commits, and
+  linked pull requests in the existing Summary panel. Change details open in the
+  current conversation's right review drawer.
+
 ### Changed
 
 - Simplified the public README and added source setup, troubleshooting, and platform

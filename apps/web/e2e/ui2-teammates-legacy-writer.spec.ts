@@ -94,7 +94,7 @@ test.describe("T13-O.21 Teammates legacy writer release", () => {
     await page.keyboard.press("Escape");
     await expect(search).toHaveCount(0);
 
-    await toolbar.getByRole("button", { name: "Summary" }).click();
+    await toolbar.getByRole("button", { name: "Summary", exact: true }).click();
     const summary = page.locator(".teammate-chat-summary-popover");
     await expect(summary).toBeVisible();
     await expectReducedMotion(summary);

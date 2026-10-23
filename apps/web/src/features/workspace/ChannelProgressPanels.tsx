@@ -1,3 +1,5 @@
+import { WorkSummaryPanel } from "./work-summary/WorkSummaryPanel.js";
+import { useWorkSummaryContext } from "./work-summary/WorkSummaryProvider.js";
 import type { ReactNode } from "react";
 import {
   Archive,
@@ -128,7 +130,11 @@ export function ProgressPopover({
   environmentSummary,
   sourceSummary,
   onOpenSourceGroup,
+  onClose = () => {},
+  onOpenChanges = () => {},
 }: {
+  readonly onClose?: () => void;
+  readonly onOpenChanges?: (cwd: string) => void;
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
   readonly progressRows: readonly AttentionProgressRow[];
@@ -137,15 +143,17 @@ export function ProgressPopover({
   readonly onOpenSourceGroup?: (group: ConversationContextSourceGroup, summary: ConversationContextSourceSummary) => void;
 }): React.JSX.Element | null {
   const { t } = useI18n();
+  const workSummary = useWorkSummaryContext();
   const environmentRows = environmentSummary?.popoverRows ?? [];
-  if (progressRows.length === 0 && environmentRows.length === 0 && (!sourceSummary || sourceSummary.sourceCount === 0)) {
+  if (!workSummary && progressRows.length === 0 && environmentRows.length === 0 && (!sourceSummary || sourceSummary.sourceCount === 0)) {
     return null;
   }
   const sourceGroups = sourceSummary?.groups ?? [];
   return (
+    <WorkSummaryPanel visible onClose={onClose} onOpenChanges={onOpenChanges}>
     <section className="attention-queue compact" aria-label={t("Summary")}>
       {environmentRows.length > 0 ? (
-        <ChannelEnvironmentPopoverSection summary={environmentSummary!} />
+        <ChannelEnvironmentPopoverSection summary={environmentSummary!} hideChanges={Boolean(workSummary)} />
       ) : null}
       {sourceSummary && sourceSummary.sourceCount > 0 ? (
         <div className="attention-context-section" aria-label={t("Context source summary")}>
@@ -223,23 +231,26 @@ export function ProgressPopover({
         </div>
       ) : null}
     </section>
+    </WorkSummaryPanel>
   );
 }
 
 export function ChannelEnvironmentPopoverSection({
   summary,
+  hideChanges = false,
 }: {
   readonly summary: ChannelEnvironmentSummary;
+  readonly hideChanges?: boolean;
 }): React.JSX.Element {
   const { t } = useI18n();
   return (
     <div className="attention-environment-section" aria-label={t("Environment")}>
       <div className="attention-section-head">
         <strong>{t("Environment")}</strong>
-        <small>{summary.changes?.label ?? summary.review?.label ?? summary.workspace?.modeLabel}</small>
+        {!hideChanges ? <small>{summary.changes?.label ?? summary.review?.label ?? summary.workspace?.modeLabel}</small> : null}
       </div>
       <div className="attention-environment-list">
-        {summary.popoverRows.map((row) => {
+        {summary.popoverRows.filter((row) => !hideChanges || row.id !== "changes").map((row) => {
           const content = (
             <>
               <span className={`attention-row-icon ${row.tone}`}>{row.icon}</span>

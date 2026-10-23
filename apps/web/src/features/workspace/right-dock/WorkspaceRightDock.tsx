@@ -74,6 +74,7 @@ export interface WorkspaceRightDockFileTarget {
 }
 
 export interface WorkspaceRightDockReviewTarget {
+  readonly baseline?: "head";
   readonly cwd: string;
   readonly runId?: string;
   readonly path?: string;
@@ -344,7 +345,7 @@ export function WorkspaceRightDock({
     setWorkspaceChanges((current) => current?.cwd === effectiveReviewCwd ? current : undefined);
     setWorkspaceChangesLoading(true);
     setWorkspaceChangesError("");
-    void getWorkspaceChanges(effectiveReviewCwd).then((response) => {
+    void getWorkspaceChanges(effectiveReviewCwd, requestedWorkspaceReview?.baseline).then((response) => {
       if (!cancelled) {
         setWorkspaceChanges(response);
       }
@@ -361,7 +362,7 @@ export function WorkspaceRightDock({
     return () => {
       cancelled = true;
     };
-  }, [effectiveReviewCwd, reviewPageActive, workspaceChangesRefreshKey, requestedWorkspaceReview?.scope?.kind, requestedWorkspaceReview?.scope?.id]);
+  }, [effectiveReviewCwd, reviewPageActive, workspaceChangesRefreshKey, requestedWorkspaceReview?.baseline, requestedWorkspaceReview?.scope?.kind, requestedWorkspaceReview?.scope?.id]);
 
   useEffect(() => {
     if (!cwd) {

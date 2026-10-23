@@ -20,8 +20,17 @@ import type {
 import { daemonClient } from "./client.js";
 import { channelWorkCellDemoWorkflowRecovery } from "../lib/work-cell-demo-fixture.js";
 
-export function getWorkspaceChanges(cwd: string): Promise<WorkspaceChangesResponse> {
-  return daemonClient.getWorkspaceChanges(cwd);
+const pendingNetChanges = new Map<string, Promise<WorkspaceChangesResponse>>();
+
+export function getWorkspaceChanges(cwd: string, baseline?: "head"): Promise<WorkspaceChangesResponse> {
+  if (baseline !== "head") return daemonClient.getWorkspaceChanges(cwd);
+  const existing = pendingNetChanges.get(cwd);
+  if (existing) return existing;
+  const request = daemonClient.getWorkSummaryChanges(cwd).finally(() => {
+    if (pendingNetChanges.get(cwd) === request) pendingNetChanges.delete(cwd);
+  });
+  pendingNetChanges.set(cwd, request);
+  return request;
 }
 
 export function listWorkspaceSnapshots(cwd: string): Promise<{ readonly cwd: string; readonly snapshots: readonly WorkspaceSnapshotManifest[]; readonly restoreUiEnabled?: boolean }> {
