@@ -37,7 +37,10 @@ afterPack: Builder's directory walker dropped the single authenticated
 `runtime/node_modules/tr46/lib/.gitkeep` file. No extra file was present.
 Manifest-derived exact file mappings fix the copy, retaining full verification.
 The real Builder copy regression went RED→GREEN; the three-file adjacency
-passed72/72,zero skips. Only one approved packaging input changed, with all15
+passed72/72,zero skips. Review then exposed Builder macro expansion in exact
+literal paths. All generated from/to fields now reject macro syntax before
+copying; five regression scenarios failed before this guard and the repaired
+three-file adjacency passed78/78,zero skips,using the real expandMacro. Only one approved packaging input changed, with all15
 native and other1590 packaging inputs unchanged. Independent delta review and a
 new concrete user approval are required before packaging again; approved data
 has not been updated and the failed App was not launched.
@@ -48,10 +51,13 @@ correctly and targeted regressions pass. Browser's first live acquisition
 exited1 because isolated HOME hides gh login configuration; public fixed-upstream
 metadata now has a bounded credential-free reader. Incremental independent
 review is complete with zero unresolved findings; the final related9-file
-regression passed34/34 with no skips. The formal Office source reader still exits0: all15/1591 approved
-inputs are unchanged. These helper changes do not silently grant new approval.
+regression passed34/34 with no skips. Before the P2 copy repair, the formal Office
+source reader exited0 with all15/1591 approved inputs unchanged. The P2 one-file
+delta now needs its own concrete approval; that earlier reader result does not
+certify the new bytes. These helper changes do not silently grant new approval.
 
-No new package, GUI acceptance, model evaluation, commit, push or merge has
+Local checkpoint69a7a32a preserves the resource rebuild and first copy repair.
+No successful new package, GUI acceptance, model evaluation, push or merge has
 occurred. The accepted Core/Daemon/Runner baselines below are not being rerun.
 
 ### Current authoritative overlay: validation passed; package input missing

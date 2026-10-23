@@ -31,8 +31,14 @@ export function packagedGstackBuilderConfig() {
   const exactFiles = active.source.manifest.files
     .filter(file => [".gitkeep", ".DS_Store"].includes(basename(file.path)))
     .map(file => ({ from: join(active.root, file.path), to: `gstack/${file.path}` }));
-  return { extraResources: [{ from: active.root, to: "gstack", filter: ["**/*"] },
-      { from: active.browser.root, to: "gstack-browser", filter: ["**/*"] }, ...exactFiles],
+  const extraResources = [{ from: active.root, to: "gstack", filter: ["**/*"] },
+    { from: active.browser.root, to: "gstack-browser", filter: ["**/*"] }, ...exactFiles];
+  // Builder interprets macros in both fields, even for authenticated literal
+  // paths. Refuse before copying, not after a rewritten path has caused effects.
+  if (extraResources.some(file => file.from.includes("${") || file.to.includes("${"))) {
+    throw new Error("packaged_gstack_builder_path_macro_unsupported");
+  }
+  return { extraResources,
     extraMetadata: { lingPackagedGstack: active.identity },
     mac: { signIgnore: ["/[Rr]esources/gstack(?:-browser)?/"] } };
 }

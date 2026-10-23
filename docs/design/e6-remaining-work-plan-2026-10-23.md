@@ -8,11 +8,12 @@
 ## 1. 唯一基线与已有成果
 
 - 唯一实施树：`ling-e6-continuation/ling-stack`；分支 `codex/e6-safe-continuation`。
-- 当前 HEAD：`7b648dfd541bde9e8a94bba566ff65b972fe5aa5`。
+- 资源重建/首次打包基线：`7b648dfd541bde9e8a94bba566ff65b972fe5aa5`；
+  P1 与首轮复制修复已保存为本地 checkpoint `69a7a32a`，不是 push/PR/merge。
 - 此次只读核查未刷新远端；本地记录显示已整合 `main@9014741d`（#578），
   不能据此宣称当前远端没有更新。最终提交/合并前再核对一次，不在验收中途无条件滚动基线。
-- 当前 tracked WIP：验收状态文档、具体批准后的 Office manifest、四个测试夹具；
-  原 untracked crash report 保留且不纳入提交。
+- 前述验收文档、已批准 Office manifest、四个测试夹具已随 checkpoint 保存；
+  当前追加差量为 P2 宏路径边界修复与对应记录。原 untracked crash report 保留且不纳入提交。
 - 最新 Core 完整回归 4431/4431、Runner 567/567、Office source closure 1343/1343
   已有 exit0 证据；Daemon 完整回归 7419 项中 7407 通过、12 既有 skip、零失败/取消，
   actual exit0，`sourceUnchanged=true`。不要因编写新计划而重跑。
@@ -75,7 +76,7 @@ canonical 路径与目录身份检查、最多两代及中断残留阻断。监�
   manifest SHA`42e8edca5d7f7ba275d462756fc8ab85e1c9638b69f9811994bafb895b034d00`。
   select-executable session37198真实exit0（9612ms），正式首次selection已发布且reused=false；
   root使用6425116095 bytes，未超12GiB预算。P1真实闭环，不是fixture或全局安装替代。
-- 本轮没有新 macOS QA 包、GUI 验收、模型评估、提交、推送或合并。
+- P1 产物和实现已本地提交保存；没有成功的新 macOS QA 包、GUI 验收、模型评估、推送或合并。
 
 完成标准：从明确的固定输入重建出真实 bundle；模型/浏览器/manifest/identity 全部匹配；
 选择清单可被正式 Desktop reader 接受，不再依赖那一份已丢失的本机旧 stage。
@@ -87,8 +88,11 @@ canonical 路径与目录身份检查、最多两代及中断残留阻断。监�
 当前状态：P1已通过，原命令的真实打包session55530已exit1；当前日志为
 `output/e6-20260928/human-qa-package-resource-restored-20261023.log`。
 完整校验在afterPack拒绝：Builder walker漏复制清单内一项`.gitkeep`。根因已复现，
-已从已验证manifest增加精确单文件映射，真实Builder复制回归RED→GREEN；邻接72/72。
-此改动改变一项Office打包审核输入，正在补独审和新具体pending记录；批准后再打新包。
+已从已验证manifest增加精确单文件映射，真实Builder复制回归RED→GREEN；原邻接72/72。
+独审随后发现 Builder 会把字面路径中的 `${…}` 当宏展开。现对所有输出映射的 from/to
+在返回配置前拒绝宏语法；真实 expandMacro 回归在修前五场景全失败，修后邻接78/78、无skip。
+此改动仍只改变一项Office打包审核输入；补最终差量独审及新具体pending记录后，
+须用户本人批准该新记录，才能再打新包。旧批准不自动覆盖新字节。
 没有启动失败产物，也没有GUI验收，不把局部复制回归计为打包通过。
 
 - 冻结最终输入并检查是否改变既有批准的 closure；未变输入复用原审阅，新增变化单独审阅。

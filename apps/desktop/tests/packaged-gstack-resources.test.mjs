@@ -8,10 +8,10 @@ import test from "node:test";
 import { build } from "esbuild";
 import { bundleInventory, digest, readExecutableBundle } from "../../../scripts/gstack/executable-bundle.mjs";
 
-async function fixture(t, { builderSkippedFiles = false } = {}) {
+async function fixture(t, { builderSkippedFiles = false, additionalSkippedPaths = [], rootName = "bundle" } = {}) {
   const work = await realpath(await mkdtemp(join(tmpdir(), "ling-desktop-gs-")));
   t.after(() => rm(work, { recursive: true, force: true }));
-  const root = join(work, "bundle"); await mkdir(root);
+  const root = join(work, rootName); await mkdir(root);
   const lock = JSON.parse(await readFile(new URL("../../../scripts/gstack/upstream-lock.json", import.meta.url)));
   const skills = lock.skillIds.map(id => ({ id, entryPath: `skills/${id}/SKILL.md`, resourcePaths: [] }));
   for (const skill of skills) {
@@ -23,6 +23,10 @@ async function fixture(t, { builderSkippedFiles = false } = {}) {
     await mkdir(join(root, "runtime/node_modules/tr46/lib"), { recursive: true });
     await writeFile(join(root, "runtime/node_modules/tr46/lib/.gitkeep"), "authenticated placeholder\n");
     await writeFile(join(root, "runtime/.DS_Store"), "authenticated inert fixture\n");
+  }
+  for (const path of additionalSkippedPaths) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), "authenticated literal path fixture\n");
   }
   const browserRoot = join(work, "gstack-browser"), framework = "Chromium.app/Contents/Frameworks/Chromium Framework.framework";
   const browserEntry = "Chromium.app/Contents/MacOS/Chromium";
@@ -83,17 +87,56 @@ test("actual Builder copy preserves manifest-authenticated files omitted by its 
   const require = createRequire(import.meta.url);
   const builderRequire = createRequire(require.resolve("electron-builder/package.json"));
   const { FileMatcher, copyFiles } = builderRequire("app-builder-lib/out/fileMatcher.js");
+  const { expandMacro } = builderRequire("app-builder-lib/out/util/macroExpander.js");
   const context = { electronPlatformName: "darwin", appOutDir: join(f.work, "actual-builder"),
     packager: { appInfo: { productFilename: "Ling" }, config } };
   const resources = join(context.appOutDir, "Ling.app/Contents/Resources");
   await copyFiles(config.extraResources.map(item => new FileMatcher(item.from,
-    join(resources, item.to), value => value, item.filter)), undefined, false);
+    join(resources, item.to), value => expandMacro(value, process.arch, context.packager.appInfo), item.filter)), undefined, false);
   for (const path of ["runtime/node_modules/tr46/lib/.gitkeep", "runtime/.DS_Store"]) {
     assert.deepEqual(await readFile(join(resources, "gstack", path)), await readFile(join(f.root, path)));
   }
   await f.module.verifyPackagedGstack(context);
   await writeFile(join(resources, "gstack/runtime/node_modules/tr46/lib/.gitkeep"), "changed");
   await assert.rejects(f.module.verifyPackagedGstack(context), /bundle_resource_checksum_mismatch/);
+});
+test("Builder paths reject macro syntax before copying authenticated literal files", async t => {
+  const require = createRequire(import.meta.url);
+  const builderRequire = createRequire(require.resolve("electron-builder/package.json"));
+  const { FileMatcher } = builderRequire("app-builder-lib/out/fileMatcher.js");
+  const { expandMacro } = builderRequire("app-builder-lib/out/util/macroExpander.js");
+  const prior = process.env.GSTACK_BUILDER_ROUTE;
+  process.env.GSTACK_BUILDER_ROUTE = "../../../outside";
+  t.after(() => {
+    if (prior === undefined) delete process.env.GSTACK_BUILDER_ROUTE;
+    else process.env.GSTACK_BUILDER_ROUTE = prior;
+  });
+  for (const path of ["runtime/${platform}/.gitkeep", "runtime/${arch}/.DS_Store",
+    "runtime/${env.GSTACK_BUILDER_ROUTE}/.gitkeep", "runtime/${missing}/.gitkeep"]) {
+    await t.test(path, async t => {
+      const f = await fixture(t, { additionalSkippedPaths: [path] });
+      await f.module.preparePackagedGstackBuild({ required: true, selectionPath: f.selectionPath });
+      const resources = join(f.work, "package/Resources");
+      const literalFrom = join(f.root, path), literalTo = join(resources, "gstack", path);
+      const matcher = () => new FileMatcher(literalFrom, literalTo,
+        value => expandMacro(value, process.arch, {}));
+      if (path.includes("${missing}")) assert.throws(matcher, /macro missing is not defined/);
+      else {
+        const expanded = matcher();
+        assert.notEqual(expanded.from, literalFrom);
+        assert.notEqual(expanded.to, literalTo);
+      }
+      // A valid authenticated manifest must not turn literal bytes into Builder
+      // instructions. Reject before handing any mapping to the copy boundary.
+      assert.throws(() => f.module.packagedGstackBuilderConfig(), /packaged_gstack_builder_path_macro_unsupported/);
+      await assert.rejects(readFile(join(f.work, "outside/.gitkeep")), { code: "ENOENT" });
+    });
+  }
+  await t.test("selected root is also a Builder path field", async t => {
+    const f = await fixture(t, { rootName: "bundle-${platform}" });
+    await f.module.preparePackagedGstackBuild({ required: true, selectionPath: f.selectionPath });
+    assert.throws(() => f.module.packagedGstackBuilderConfig(), /packaged_gstack_builder_path_macro_unsupported/);
+  });
 });
 test("actual esbuild embeds exactly the authenticated identity module", async t => {
   const f = await fixture(t);
