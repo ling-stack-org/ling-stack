@@ -4,7 +4,7 @@ import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { requireResourceLease, resourceCheckpoint, within } from "./resource-workspace.mjs";
 import { packagedBrowserSource } from "./packaged-browser-source.mjs";
-import { readGstackClosureFileRecord } from "./verify-shared-command-closure.mjs";
+import { compilerInputPath, readGstackClosureFileRecord } from "./verify-shared-command-closure.mjs";
 import { testsavantModelAcquisition } from "./testsavant-model-cache.mjs";
 
 const scripts = dirname(fileURLToPath(import.meta.url));
@@ -105,11 +105,11 @@ export async function buildTestsavantComponent({ runtimeRoot, outputRoot, source
         const actual = await readGstackClosureFileRecord(path);
         let relative;
         if (within(runtimeRoot, path)) {
-          relative = path.slice(runtimeRoot.length + 1);
+          relative = compilerInputPath({ rootPath: runtimeRoot, inputPath: path });
           const expected = sources.get(relative);
           if (!expected || actual.checksum !== expected.checksum || actual.sizeBytes !== expected.sizeBytes) throw new Error(`testsavant_build_source_mismatch:${relative}`);
           relative = `runtime/${relative}`;
-        } else if (within(scripts, path)) relative = `scripts/gstack/${path.slice(scripts.length + 1)}`;
+        } else if (within(scripts, path)) relative = `scripts/gstack/${compilerInputPath({ rootPath: scripts, inputPath: path })}`;
         else throw new Error("testsavant_unlisted_build_input");
         inputs.push({ path: relative, ...actual });
         bound.set(relative, { actualPath: path, ...actual });
