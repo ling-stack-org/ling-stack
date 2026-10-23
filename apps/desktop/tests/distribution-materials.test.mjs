@@ -3,19 +3,21 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writ
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createSpdx, declaredLicenseMaterials, filesBelow, hasCompleteReadmeGrant, lockedPackageKeys, noticePattern, parseArguments, sha256, validateBunSourceRevision, verifyMaterials, writeMaterials } from "../scripts/distribution/materials.mjs";
+import { collectDotnetRuntimeMaterials, createSpdx, createThirdPartyNotices, declaredLicenseMaterials, filesBelow, hasCompleteReadmeGrant, lockedPackageKeys, noticePattern, parseArguments, sha256, validateBunSourceRevision, verifyMaterials, writeMaterials } from "../scripts/distribution/materials.mjs";
 import { createHash } from "node:crypto";
 import { packageIntegrity, validateNoticeRestoration } from "../scripts/distribution/restored-notices.mjs";
+import { collectCanvasMaterials } from "../scripts/distribution/canvas-materials.mjs";
 
 const sourceSha = "d".repeat(40);
 const encode = value => `${JSON.stringify(value, null, 2)}\n`;
-function fixture(t, gaps = []) {
+function fixture(t, gaps = [], { limitations = [], material: additionalMaterials = [], components = [] } = {}) {
   const root = mkdtempSync(join(tmpdir(), "ling-distribution-test-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const output = join(root, "prepared"), resources = join(root, "resources");
-  const material = new Map([["licenses/example/LICENSE", Buffer.from("An exact supplier license\n")], ["THIRD_PARTY_NOTICES.md", Buffer.from("Fixture notices\n")]]);
-  const files = [...material].map(([path, bytes]) => ({ path, sizeBytes: bytes.length, sha256: sha256(bytes) }));
-  const manifest = { schemaVersion: 1, kind: "desktop-distribution-materials", platform: "darwin-arm64", sourceSha, status: gaps.length ? "blocked" : "collected", gaps, files };
+  const manifest = { schemaVersion: 1, kind: "desktop-distribution-materials", platform: "darwin-arm64", sourceSha, lockfileSha256: "f".repeat(64), scope: "Fixture collected supplier evidence", status: gaps.length ? "blocked" : "collected", gaps, limitations, components };
+  const material = new Map([["licenses/example/LICENSE", Buffer.from("An exact supplier license\n")], ...additionalMaterials]);
+  material.set("THIRD_PARTY_NOTICES.md", Buffer.from(createThirdPartyNotices(manifest)));
+  manifest.files = [...material].map(([path, bytes]) => ({ path, sizeBytes: bytes.length, sha256: sha256(bytes) }));
   material.set("distribution-manifest.json", Buffer.from(encode(manifest)));
   material.set("SHA256SUMS.txt", Buffer.from([...material].map(([path, bytes]) => `${sha256(bytes)}  ${path}`).sort().join("\n") + "\n"));
   writeMaterials({ manifest, material }, output);
@@ -57,6 +59,33 @@ test("Bun's actual nine-character version output binds the fixed full source rev
   assert.equal(validateBunSourceRevision("1.4.4", revision, "1.4.4+38afee6c8"), undefined);
   for (const reported of ["1.4.4+38afee6c", "1.4.4+38afee6c9", "1.4.5+38afee6c8", "1.4.4", `1.4.4+${revision}`]) assert.throws(() => validateBunSourceRevision("1.4.4", revision, reported), /source_revision_mismatch/u);
   assert.throws(() => validateBunSourceRevision("1.4.4", "38afee6c8", "1.4.4+38afee6c8"), /source_revision_mismatch/u);
+});
+
+test("self-contained .NET notices come from the exact runtime pack in publish restore assets", t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-dotnet-notices-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const objectRoot = join(root, "apps/desktop/scripts/native/office-driver/windows/obj"), packages = join(root, "machine-local-restore");
+  const runtime = join(packages, "microsoft.netcore.app.runtime.win-x64/9.0.11");
+  mkdirSync(objectRoot, { recursive: true }); mkdirSync(runtime, { recursive: true });
+  writeFileSync(join(runtime, "LICENSE.TXT"), "Original runtime grant\r\n");
+  writeFileSync(join(runtime, "THIRD-PARTY-NOTICES.TXT"), "Original component notices\r\n");
+  const identity = { name: "Microsoft.NETCore.App.Runtime.win-x64", version: "[9.0.11, 9.0.11]" };
+  const assets = { packageFolders: { [packages]: {} }, project: { frameworks: { net9_0: { downloadDependencies: [identity] } } } };
+  writeFileSync(join(objectRoot, "project.assets.json"), encode(assets));
+  const material = new Map(), components = [], gaps = [];
+  collectDotnetRuntimeMaterials(root, (path, bytes) => { material.set(path, bytes); return path; }, components, gaps);
+  assert.deepEqual(gaps, []);
+  assert.equal(components[0].version, "9.0.11");
+  assert.equal(components[0].licenseFiles.length, 2);
+  assert.equal(JSON.stringify(components).includes(packages), false, "do not publish machine-local restore paths");
+  assert.ok([...material.values()].some(bytes => bytes.toString() === "Original component notices\r\n"));
+  identity.version = "[9.0.11,)";
+  writeFileSync(join(objectRoot, "project.assets.json"), encode(assets));
+  assert.throws(() => collectDotnetRuntimeMaterials(root, () => {}, [], []), /runtime_version_not_exact/u);
+  rmSync(join(objectRoot, "project.assets.json"));
+  const missing = [];
+  collectDotnetRuntimeMaterials(root, () => {}, [], missing);
+  assert.equal(missing[0].reason, "published_dotnet_restore_assets_missing");
 });
 
 test("explicit published SPDX terms retain original metadata and identify generic standard texts", () => {
@@ -113,6 +142,30 @@ test("embedded material verification binds prepared bytes and lists final native
   assert.equal(result.materialFiles, 4);
   assert.equal(result.nativeAndFontInventory[0].sha256, sha256("native fixture"));
   assert.equal(result.nativeAndFontInventory[0].path, "browser-host/ling-browser-host");
+});
+
+test("old Canvas source evidence and limitations survive preparation, embedding and final reports without clearing other gaps", t => {
+  const nativeDirectory = mkdtempSync(join(tmpdir(), "ling-old-canvas-report-test-"));
+  t.after(() => rmSync(nativeDirectory, { recursive: true, force: true }));
+  const record = JSON.parse(readFileSync(new URL("../scripts/distribution/vendor-notices/canvas-native-sources.json", import.meta.url))).entries.find(entry => entry.version === "0.1.80");
+  const metadata = { name: "@napi-rs/canvas-darwin-arm64", version: record.version };
+  writeFileSync(join(nativeDirectory, "package.json"), encode(metadata));
+  const material = new Map(), components = [];
+  const collected = collectCanvasMaterials({ metadata: { name: "@napi-rs/canvas", version: record.version }, nativeDirectory, sourceBinding: { ...metadata, repository: record.repository, revision: record.revision } }, (path, bytes) => { material.set(path, Buffer.from(bytes)); return path; }, components);
+  const options = { ...collected, material, components };
+  const input = fixture(t, [], options);
+  const result = verifyMaterials({ ...input, platform: "darwin-arm64", sourceSha });
+  assert.equal(result.status, "verified");
+  assert.equal(result.limitations.length, 1);
+  assert.deepEqual(result.limitations, collected.limitations);
+  for (const directory of [input.output, join(input.resources, "distribution")]) {
+    assert.deepEqual(JSON.parse(readFileSync(join(directory, "distribution-manifest.json"))).limitations, collected.limitations);
+    assert.match(readFileSync(join(directory, "THIRD_PARTY_NOTICES.md"), "utf8"), /does not claim a complete historical Rust dependency graph or a reproducible native build/u);
+    const source = record.files.find(file => file.path === "Cargo.toml");
+    assert.deepEqual(readFileSync(join(directory, "sources/native/canvas-0.1.80/Cargo.toml")), Buffer.from(source.contentBase64, "base64"));
+  }
+  const blocked = fixture(t, [{ component: "@anthropic-ai/claude-agent-sdk@0.2.117", reason: "dependency_license_review" }], options);
+  assert.throws(() => verifyMaterials({ ...blocked, platform: "darwin-arm64", sourceSha }), /materials_blocked/u);
 });
 
 test("missing, added or changed final notices cannot pass verification", t => {

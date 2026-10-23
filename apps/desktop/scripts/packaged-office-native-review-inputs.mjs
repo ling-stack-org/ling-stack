@@ -1580,4 +1580,9 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/runtime/runner-acceptance.ts",
   "packages/daemon/src/runtime/sandbox/native-process-launch.ts",
   "packages/daemon/src/shared/html-text.ts",
+  // Reviewed private installer tooling and fixed first-use model acquisition inputs.
+  "apps/desktop/scripts/distribution/installer-builder.mjs",
+  "apps/desktop/scripts/distribution/LingShell.nsh",
+  "scripts/gstack/testsavant-model-cache.mjs",
+  "scripts/gstack/testsavant-model-pin.json",
 ]);

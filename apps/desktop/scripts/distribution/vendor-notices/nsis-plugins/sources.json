@@ -19,6 +19,15 @@
       "sha256": "6f2f3730049926f40442ee0c8b7d3e3dee7ace544d82467ff8059ea3f4201c58",
       "binarySha256": "b393f05e8ff919ef071181050e1873c9a776e1a0ae8329aefff7007d0cadf592",
       "sizeBytes": 461078
+    },
+    {
+      "name": "LZMA SDK",
+      "version": "19.00",
+      "file": "lzma1900.7z",
+      "url": "https://www.7-zip.org/a/lzma1900.7z",
+      "sha256": "00f569e624b3d9ed89cf8d40136662c4c5207eaceb92a70b1044c77f84234bad",
+      "sizeBytes": 1082692,
+      "scope": "Exact SDK version required by the paired nsis7z 19.00 README build instructions."
     }
   ]
 }

@@ -7,6 +7,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { validateNoticeRestoration } from "./restored-notices.mjs";
 import { builderVersion, originalTemplates, patchInstallerTemplate } from "./installer-builder.mjs";
+import { collectSharpLibvipsMaterials } from "./native-vendor-materials.mjs";
+import { collectCanvasMaterials } from "./canvas-materials.mjs";
 
 export const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 export const platformTargets = Object.freeze({ "darwin-arm64": "aarch64-apple-darwin", "win32-x64": "x86_64-pc-windows-msvc" });
@@ -137,7 +139,7 @@ export function collectMaterials(options) {
   const keys = lockedPackageKeys(lockBytes.toString("utf8"));
   const epoch = Number(run("git", ["show", "-s", "--format=%ct", sourceSha], root));
   const created = new Date(epoch * 1000).toISOString().replace(/\.\d{3}Z$/u, "Z");
-  const material = new Map(), components = [], gaps = [], identities = new Map();
+  const material = new Map(), components = [], gaps = [], limitations = [], identities = new Map();
   function add(path, bytes) {
     if (isAbsolute(path) || path.includes("\\") || path.split("/").some(part => ["..", "", "."].includes(part))) throw new Error("distribution_material_path_invalid");
     const content = Buffer.from(bytes);
@@ -209,8 +211,13 @@ export function collectMaterials(options) {
     if (identities.has(identifier)) {
       if (JSON.stringify(current) !== JSON.stringify(identities.get(identifier))) gaps.push({ component: identity, reason: "same_version_notice_metadata_differs_between_installed_variants" });
     } else { identities.set(identifier, current); components.push(current); }
-    if (metadata.name.startsWith("@napi-rs/canvas") && !metadata.name.includes("darwin") && !metadata.name.includes("win32")) {
-      gaps.push({ component: identity, reason: "native_vendor_source_and_notice_coverage_unreviewed", details: "Wrapper MIT text does not establish coverage of statically linked Skia and its dependencies." });
+    if (metadata.name === "@napi-rs/canvas") {
+      const nativeName = `@napi-rs/canvas-${options.platform === "darwin-arm64" ? "darwin-arm64" : "win32-x64-msvc"}`;
+      const nativeDirectory = resolveInstalledPackage(path, nativeName);
+      const sourceBinding = restorations.entries.find(entry => entry.name === nativeName && entry.version === metadata.version);
+      const collected = collectCanvasMaterials({ metadata, nativeDirectory, sourceBinding }, add, components);
+      if (!collected) gaps.push({ component: identity, reason: "native_vendor_source_and_notice_materials_missing" });
+      else limitations.push(...collected.limitations);
     }
   }
   // Keep current copied vendor/protocol attribution independently from npm pruning.
@@ -262,11 +269,13 @@ export function collectMaterials(options) {
   }
   collectGstack(options.gstackWorkspace, add, components, gaps, root, options.platform);
   components.sort((a, b) => a.identifier.localeCompare(b.identifier, "en"));
-  gaps.splice(0, gaps.length, ...new Map(gaps.map(gap => [JSON.stringify(gap), gap])).values());
-  gaps.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b), "en"));
+  for (const entries of [gaps, limitations]) {
+    entries.splice(0, entries.length, ...new Map(entries.map(entry => [JSON.stringify(entry), entry])).values());
+    entries.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b), "en"));
+  }
   const base = { schemaVersion: 1, kind: "desktop-distribution-materials", platform: options.platform, sourceSha, lockfileSha256: sha256(lockBytes), created, status: gaps.length ? "blocked" : "collected", releaseEligible: false,
-    scope: "Technical collection from current installed production/peer inputs, native source graph and supplied gstack resources. No exhaustive legal approval or application acceptance claim.", components, gaps };
-  add("THIRD_PARTY_NOTICES.md", `# Third-party materials for Ling Stack ${options.platform}\n\nSource: ${sourceSha}\nLockfile SHA-256: ${base.lockfileSha256}\n\n${base.scope}\n\nStatus: ${base.status}. See distribution-manifest.json for unresolved items.\n\n${components.map(component => `- ${component.name} ${component.version ?? ""}: ${component.license ?? "NOASSERTION"}; ${(component.licenseFiles ?? []).join(", ") || "see component evidence"}`).join("\n")}\n`);
+    scope: "Technical collection from current installed production/peer inputs, native source graph and supplied gstack resources. No exhaustive legal approval or application acceptance claim.", components, gaps, limitations };
+  add("THIRD_PARTY_NOTICES.md", createThirdPartyNotices(base));
   add("distribution.spdx.json", json(createSpdx(base, material)));
   const entries = [...material].map(([path, bytes]) => ({ path, sizeBytes: bytes.length, sha256: sha256(bytes) })).sort((a, b) => a.path.localeCompare(b.path, "en"));
   const manifest = { ...base, files: entries };
@@ -308,7 +317,10 @@ export function collectGstack(workspace, add, components, gaps, repository = rep
         return add(`licenses/gstack/packages/${path}`, bytes);
       });
       if (!licenseFiles.length) licenseFiles.push(...declaredLicenseMaterials(metadata, bytes, `licenses/gstack/packages/${pkg.path}`, add));
+      const nativeMaterials = collectSharpLibvipsMaterials(metadata, dirname(safeRuntimeFile(`${pkg.path}/package.json`)), add, components);
+      if (nativeMaterials) licenseFiles.push(...nativeMaterials.licenseFiles);
       components.push({ identifier: `gstack:npm:${pkg.name}@${pkg.version}:${sha256(pkg.path).slice(0, 12)}`, name: pkg.name, version: pkg.version, kind: "gstack-npm", license: pkg.license ?? "NOASSERTION", licenseFiles, runtimePath: pkg.path,
+        nativeSourceMaterialsCollected: Boolean(nativeMaterials?.sourceMaterialsCollected),
         scope: "Exact metadata and notice digests from retained candidate dependency audit; restrictive/native terms remain explicit unresolved items." });
     }
     for (const blocker of audit.blockers) {
@@ -316,6 +328,8 @@ export function collectGstack(workspace, add, components, gaps, repository = rep
       // A missing standalone file can be satisfied by the package's explicit
       // standard-SPDX declaration and the corresponding original standard text.
       if (blocker.code === "dependency_notice_missing" && pkg && components.some(component => component.runtimePath === pkg.path && component.licenseFiles.length)) continue;
+      if (blocker.code === "dependency_license_review" && ["@img/sharp-libvips-darwin-arm64", "@img/sharp-win32-x64"].includes(pkg?.name)
+        && components.some(component => component.runtimePath === pkg.path && component.nativeSourceMaterialsCollected)) continue;
       gaps.push({ component: pkg ? `gstack/${pkg.name}@${pkg.version}` : `gstack/${blocker.path}`, reason: blocker.code, path: blocker.path,
         ...(pkg ? { declaredLicense: pkg.license } : {}) });
     }
@@ -467,20 +481,37 @@ export function collectInstallerMaterials(root, add, components, gaps) {
   for (const file of ["installer-builder.mjs", "LingShell.nsh"]) add(`sources/repository/apps/desktop/scripts/distribution/${file}`, readFileSync(new URL(`./${file}`, import.meta.url)));
   for (const [name, directory] of [["electron-builder", builder], ["app-builder-lib", library]]) {
     const licenseFiles = noticeFiles(directory).map(file => add(`licenses/nsis/${name}/${posix(relative(directory, file))}`, readFileSync(file)));
+    if (!licenseFiles.length) {
+      const bytes = readFileSync(join(directory, "package.json"));
+      licenseFiles.push(...declaredLicenseMaterials(JSON.parse(bytes), bytes, `licenses/nsis/${name}`, add));
+    }
     components.push({ identifier: `npm:${name}@${builderVersion}`, kind: "installer-template", name, version: builderVersion, license: "MIT", licenseFiles });
   }
   const plugins = JSON.parse(readFileSync(new URL("./vendor-notices/nsis-plugins/sources.json", import.meta.url)));
+  const pluginNotices = JSON.parse(readFileSync(new URL("./vendor-notices/nsis-plugins/original-notices.json", import.meta.url)));
   add("inputs/nsis-plugin-sources.json", json(plugins));
   for (const source of plugins.entries) {
     if (basename(source.file) !== source.file) throw new Error("distribution_nsis_source_archive_path_invalid");
     const bytes = readFileSync(new URL(`./vendor-notices/nsis-plugins/${source.file}`, import.meta.url));
     if (sha256(bytes) !== source.sha256 || bytes.length !== source.sizeBytes) throw new Error("distribution_nsis_source_archive_digest_mismatch");
     const archive = add(`sources/nsis-plugins/${source.file}`, bytes);
-    components.push({ identifier: `nsis-plugin:${source.name}@${source.version}`, name: source.name, version: source.version, kind: "installer-plugin", license: "NOASSERTION", source: source.url, sourceArchive: archive, sourceArchiveSha256: source.sha256, reviewedBinarySha256: source.binarySha256,
+    const notice = pluginNotices.entries.find(entry => entry.name === source.name && entry.version === source.version && entry.sourceArchiveSha256 === source.sha256);
+    if (!notice?.files?.length) throw new Error("distribution_nsis_original_notices_missing");
+    const licenseFiles = notice.files.map(file => {
+      const content = Buffer.from(file.contentBase64, "base64");
+      if (sha256(content) !== file.sha256 || content.length !== file.sizeBytes) throw new Error("distribution_nsis_original_notice_digest_mismatch");
+      return add(`licenses/nsis-plugins/${safeName(`${source.name}@${source.version}`)}/${file.path}`, content);
+    });
+    components.push({ identifier: `nsis-plugin:${source.name}@${source.version}`, name: source.name, version: source.version, kind: "installer-plugin", license: "NOASSERTION", licenseFiles, source: source.url, sourceArchive: archive, sourceArchiveSha256: source.sha256, reviewedBinarySha256: source.binarySha256,
       scope: "Complete unmodified upstream paired source archive, including original applicable license and third-party notices. LGPL components are not described as public domain. Reviewed binary digest is recorded for final-installer verification." });
   }
   components.push({ identifier: `nsis:${receipt.releaseName}`, kind: "installer-runtime", name: receipt.component, version: receipt.releaseName, license: "NOASSERTION", licenseFiles: [licenseFile], source: receipt.archive, sourceArchiveSha256: receipt.archiveSha256,
     scope: "Original compiler-archive COPYING, stock installer templates and narrowly modified private template sources; compiler choice is bound to the exact installed app-builder-lib toolset module. System/nsExec use the compiler terms; StdUtils/nsis7z paired original source archives accompany the installer." });
+}
+
+export function createThirdPartyNotices(manifest) {
+  const limitations = manifest.limitations ?? [];
+  return `# Third-party materials for Ling Stack ${manifest.platform}\n\nSource: ${manifest.sourceSha}\nLockfile SHA-256: ${manifest.lockfileSha256}\n\n${manifest.scope}\n\nStatus: ${manifest.status}. See distribution-manifest.json for unresolved items.\n\n${limitations.length ? `## Evidence limitations\n\n${limitations.map(item => `- ${item.component}: ${item.details}`).join("\n")}\n\n` : ""}${manifest.components.map(component => `- ${component.name} ${component.version ?? ""}: ${component.license ?? "NOASSERTION"}; ${(component.licenseFiles ?? []).join(", ") || "see component evidence"}`).join("\n")}\n`;
 }
 
 export function createSpdx(manifest, material) {
@@ -503,6 +534,8 @@ export function verifyMaterials({ resources, output, platform, sourceSha }) {
   const manifest = JSON.parse(readFileSync(join(directory, "distribution-manifest.json"), "utf8"));
   if (manifest.schemaVersion !== 1 || manifest.kind !== "desktop-distribution-materials" || manifest.platform !== platform || !/^[a-f0-9]{40}$/u.test(manifest.sourceSha ?? "") || (sourceSha && manifest.sourceSha !== sourceSha)) throw new Error("distribution_packaged_identity_mismatch");
   if (manifest.status !== "collected" || !Array.isArray(manifest.gaps) || manifest.gaps.length) throw new Error("distribution_packaged_materials_blocked");
+  const limitations = manifest.limitations ?? [];
+  if (!Array.isArray(limitations) || limitations.some(item => !item || ["component", "reason", "details"].some(key => typeof item[key] !== "string" || !item[key]))) throw new Error("distribution_packaged_limitations_invalid");
   const sums = readFileSync(join(directory, "SHA256SUMS.txt"), "utf8").trim().split("\n");
   const expected = new Map();
   for (const line of sums) {
@@ -522,7 +555,7 @@ export function verifyMaterials({ resources, output, platform, sourceSha }) {
   // Inventory the final expanded resources as evidence. No extension-based license clearance.
   const runtimeFiles = filesBelow(resources, { symlinks: true }).filter(path => !path.startsWith(`${directory}${sep}`));
   const nativeAndFontInventory = runtimeFiles.filter(path => binaryPattern.test(path) || /\/(?:ling-browser-host|ling-image-sanitizer|ling-sandbox-runner|ling-human-evaluation-helper)$/u.test(posix(path))).map(path => ({ path: posix(relative(resources, path)), sizeBytes: lstatSync(path).size, sha256: sha256(readFileSync(path)) }));
-  return { schemaVersion: 1, kind: "desktop-distribution-verification", status: "verified", platform, sourceSha: manifest.sourceSha, materialFiles: actual.length + 1, manifestSha256: sha256(readFileSync(join(directory, "distribution-manifest.json"))), nativeAndFontInventory, scope: "Byte and set verification of embedded collected materials plus inventory of final native/font files; no legal approval or full runtime acceptance claim." };
+  return { schemaVersion: 1, kind: "desktop-distribution-verification", status: "verified", platform, sourceSha: manifest.sourceSha, materialFiles: actual.length + 1, manifestSha256: sha256(readFileSync(join(directory, "distribution-manifest.json"))), limitations, nativeAndFontInventory, scope: "Byte and set verification of embedded collected materials plus inventory of final native/font files; no legal approval or full runtime acceptance claim." };
 }
 
 export function runCli(values = process.argv.slice(2)) {

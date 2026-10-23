@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { parseDesktopCandidateArguments } from "./prepare-desktop-candidate.mjs";
+import { desktopCandidatePackageSelection, parseDesktopCandidateArguments } from "./prepare-desktop-candidate.mjs";
 import { hostedRunnerStorage } from "./resource-workspace.mjs";
 
 test("desktop candidate CLI requires explicit native tools and one storage policy", () => {
@@ -30,4 +30,12 @@ test("ephemeral storage stays bound to one hosted job and its canonical temporar
   await assert.rejects(hostedRunnerStorage(temporary, env), /ephemeral_path_invalid/);
   await assert.rejects(hostedRunnerStorage(join(temporary, "../outside"), env), /ephemeral_path_invalid/);
   await mkdir(root);
+});
+
+test("desktop SDK exclusions stay limited to the independently reviewed native macOS target", () => {
+  assert.equal(desktopCandidatePackageSelection({ platform: "darwin", arch: "arm64" }), "reviewed-sdk-only");
+  for (const target of [{ platform: "win32", arch: "x64" }, { platform: "darwin", arch: "x64" },
+    { platform: "linux", arch: "arm64" }]) {
+    assert.equal(desktopCandidatePackageSelection(target), "retain-complete-upstream");
+  }
 });

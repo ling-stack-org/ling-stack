@@ -133,6 +133,12 @@ jobs:
           corepack pnpm install --frozen-lockfile
       - name: Observe tools and source prerequisites without granting approval
         run: node scripts/release/desktop-prerequisites.mjs inspect
+      - name: Check release, installer and material contracts on the native host
+        if: env.DESKTOP_OPERATION == 'build'
+        run: |
+          node --test scripts/ci/desktop-release.test.mjs scripts/ci/desktop-package.test.mjs \
+            scripts/gstack/source-checkout.test.mjs \
+            apps/desktop/tests/distribution*.test.mjs
       - name: Inspect current distribution inputs without approving redistribution
         run: |
           node apps/desktop/scripts/distribution/materials.mjs inspect \

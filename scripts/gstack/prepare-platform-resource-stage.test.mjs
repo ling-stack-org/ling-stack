@@ -19,6 +19,11 @@ test("resource preparation requires a detached native receipt and never overwrit
     packageSelection: "automatic-fallback", target: { platform: "darwin", arch: "arm64" } }), /gstack_resource_package_selection_invalid/);
   await assert.rejects(prepareGstackPlatformResourceStage({ nativeCandidatePath: input, outputPath: output,
     expectedNativeBuildChecksum: `sha256:${"0".repeat(64)}`, target: { platform: "darwin", arch: "arm64" } }), /gstack_resource_output_already_exists/);
+  // The SDK-only mode is recognized, but never bypasses the normal receipt /
+  // existing-output gates or implicitly accepts an unreviewed target/compiler.
+  await assert.rejects(prepareGstackPlatformResourceStage({ nativeCandidatePath: input, outputPath: output,
+    packageSelection: "reviewed-sdk-only", expectedNativeBuildChecksum: `sha256:${"0".repeat(64)}`,
+    target: { platform: "darwin", arch: "arm64" } }), /gstack_resource_output_already_exists/);
   assert.equal(await readFile(join(output, "KEEP"), "utf8"), "existing resources");
 });
 

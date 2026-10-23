@@ -44,6 +44,12 @@ export function parseDesktopCandidateArguments(args) {
   return options;
 }
 
+// The SDK review currently admits only the native macOS arm64 graph/compiler.
+// Windows keeps its complete dependencies until its own evidence is approved.
+export function desktopCandidatePackageSelection(target = { platform: process.platform, arch: process.arch }) {
+  return target.platform === "darwin" && target.arch === "arm64" ? "reviewed-sdk-only" : "retain-complete-upstream";
+}
+
 export function desktopCandidatePaths(root) {
   return { source: join(root, "artifacts/source/desktop-source"), native: join(root, "artifacts/native/desktop-native"),
     resource: join(root, "artifacts/resource/desktop-resources"), archives: join(root, "artifacts/browser/desktop-archives"),
@@ -74,7 +80,7 @@ async function executeStep(step, options) {
     await prepareGstackPlatformResourceStage({ nativeCandidatePath: paths.native, outputPath: paths.resource,
       expectedNativeBuildChecksum: await checksum(paths.native, "native-build.json"), shellPath: options.shell,
       parserPath: paths.parser, expectedParserChecksum: parser.artifact.checksum, parserProvenance: parser,
-      packageSelection: "retain-complete-upstream", onProgress: progress });
+      packageSelection: desktopCandidatePackageSelection(), onProgress: progress });
   } else if (step === "archives") await collectGstackBrowserArchives({ resourceStagePath: paths.resource, outputPath: paths.archives,
     expectedResourceStageChecksum: await checksum(paths.resource, "resource-stage.json"), onProgress: progress });
   else if (step === "inspection") await inspectGstackBrowserArchives({ resourceStagePath: paths.resource, archivePath: paths.archives,

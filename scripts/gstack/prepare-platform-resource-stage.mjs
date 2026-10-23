@@ -115,7 +115,7 @@ export async function prepareGstackPlatformResourceStage({ nativeCandidatePath, 
   expectedNativeBuildChecksum, target = { platform: process.platform, arch: process.arch },
   shellPath = process.platform === "win32" ? undefined : "/bin/bash", parserPath, expectedParserChecksum,
   parserProvenance, packageSelection = "reviewed-prune", onProgress = () => {} }) {
-  if (!["reviewed-prune", "retain-complete-upstream"].includes(packageSelection)) throw new Error("gstack_resource_package_selection_invalid");
+  if (!["reviewed-prune", "reviewed-sdk-only", "retain-complete-upstream"].includes(packageSelection)) throw new Error("gstack_resource_package_selection_invalid");
   if (!/^sha256:[a-f0-9]{64}$/.test(expectedNativeBuildChecksum ?? "")) throw new Error("gstack_resource_native_receipt_required");
   if (!["darwin", "win32"].includes(target.platform) || !["arm64", "x64"].includes(target.arch)) throw new Error("gstack_resource_target_invalid");
   if (typeof shellPath !== "string" || !isAbsolute(shellPath)) throw new Error("gstack_resource_shell_interpreter_required");
@@ -177,9 +177,9 @@ export async function prepareGstackPlatformResourceStage({ nativeCandidatePath, 
       expectedSourceManifestChecksum: reviewed.manifestChecksum });
     const buildImportBytes = Buffer.from(`${JSON.stringify(bundledBuildImports, null, 2)}\n`);
     await writeFile(join(candidate, "bundled-build-imports.json"), buildImportBytes);
-    // Historical pruning catalogs bind a particular platform, compiler and
-    // import graph. Portable candidates retain dependencies instead of treating
-    // those exclusions as approval for another toolchain.
+    // Every exclusion still requires its exact platform, compiler and import
+    // graph review. SDK-only selection leaves the separate declaration-package
+    // review untouched; other targets can retain the complete upstream tree.
     const retainedSelection = category => ({ schemaVersion: 1, deliveryStage: "resource-prerequisites",
       selectionScope: "complete-upstream-retained", category, releaseEligible: false, target,
       sourceManifestChecksum: reviewed.manifestChecksum, inputNativeBuildChecksum: expectedNativeBuildChecksum,
@@ -188,9 +188,9 @@ export async function prepareGstackPlatformResourceStage({ nativeCandidatePath, 
       })), excludedPackages: [], removedResources: [], removedSizeBytes: 0,
       completeRuntimeSelection: "pending", compiledArtifactBinding: "pending",
       pendingGates: ["toolchain-specific-pruning-review", "complete-dynamic-resource-selection", "redistribution-review", "installed-client-acceptance"] });
-    onProgress(packageSelection === "reviewed-prune" ? "exclude exact reviewed upstream self-test packages from private staging, preserving client API and external CLI paths"
+    onProgress(packageSelection !== "retain-complete-upstream" ? "exclude exact reviewed upstream self-test packages from private staging, preserving client API and external CLI paths"
       : "retain complete upstream self-test dependencies; historical toolchain-specific exclusions are not reused");
-    const selfTestSelection = packageSelection === "reviewed-prune" ? await filterGstackUpstreamSelfTestPackages({ runtimeRoot: runtime, stagingRoot: temporary,
+    const selfTestSelection = packageSelection !== "retain-complete-upstream" ? await filterGstackUpstreamSelfTestPackages({ runtimeRoot: runtime, stagingRoot: temporary,
       target, expectedNativeBuildChecksum, importReports: [sharedCommands, ...bundledBuildImports] }) : retainedSelection("upstream-self-test-packages");
     const selectionBytes = Buffer.from(`${JSON.stringify(selfTestSelection, null, 2)}\n`);
     await writeFile(join(candidate, "self-test-package-selection.json"), selectionBytes);

@@ -7,6 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { originalTemplates, patchInstallerTemplate, prepareDistributionBuilder } from "../scripts/distribution/installer-builder.mjs";
+import { collectInstallerMaterials, inspectInstallerTemplates } from "../scripts/distribution/materials.mjs";
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(join(desktopRoot, "package.json"));
@@ -50,4 +51,22 @@ test("an upstream template change fails closed before transformations", () => {
     assert.throws(() => patchInstallerTemplate(file, `${original}\n; upstream changed\n`), /template_changed/u);
   }
   assert.throws(() => patchInstallerTemplate("templates/nsis/new-safety-path.nsh", ""), /template_changed/u);
+});
+
+test("installer materials include original plug-in grants and complete paired sources", () => {
+  const material = new Map(), components = [], gaps = [];
+  collectInstallerMaterials(resolve(desktopRoot, "../.."), (path, bytes) => { material.set(path, Buffer.from(bytes)); return path; }, components, gaps);
+  assert.deepEqual(gaps, []);
+  assert.equal(inspectInstallerTemplates(resolve(desktopRoot, "../..")).status, "checked");
+  for (const name of ["StdUtils", "nsis7z", "LZMA SDK"]) {
+    const component = components.find(component => component.name === name);
+    assert.ok(component.licenseFiles.length > 0, name);
+    assert.equal(hash(material.get(component.sourceArchive)), component.sourceArchiveSha256);
+    assert.ok(component.licenseFiles.every(file => material.has(file)));
+  }
+  const clarification = [...material].find(([path]) => path.endsWith("/LGPL_CLARIFICATION.txt"))[1].toString("utf8");
+  assert.ok(clarification.includes("verbatim"));
+  const nsis7zReadme = [...material].find(([path]) => path.endsWith("/nsis7z.txt"))[1].toString("utf8");
+  assert.ok(nsis7zReadme.includes("LGPL license"));
+  assert.ok(nsis7zReadme.includes("lzma1900.7z"));
 });
