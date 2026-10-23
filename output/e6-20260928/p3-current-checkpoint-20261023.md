@@ -6,6 +6,13 @@ This is the concise current entry. Older append-only records are history, not a 
 
 ### Current execution — saved merge and completed delta reviews
 
+- New frozen pending packet `office-human-qa-p3-main-delta-frozen-20261024.json`
+  SHA`3c5c7367f4d968bb229245b5b60d07bc166751e4010412a76154a1213d07e062`
+  remains approved=false. Standing internal QA authorization applied only the
+  reviewed90+9 hashes; formal manifest SHA`358fdf79b12bff5c0dbb96f07bac0fcd84435aa4dcd89a1704189836d69b82b8`.
+  Original reader accepted15/1603/current tuple, actual exit0. Next: package once,
+  collect actual exit, verify identity and resume affected real GUI cases.
+
 - Merge checkpoint `4b2147a5c2e5dce44f0d3c99a25b150ff775332b` has both
   original parents and is pushed. Actual push exit0 and independent ls-remote
   readback match. This is not an E6 PR/main merge or a release.
