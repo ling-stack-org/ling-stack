@@ -11,7 +11,8 @@ import {
   type TimelineSnapshot,
 } from "@ling-stack/conversation-ui-core";
 import type { UserInputAnswerAcceptedResponseV1, UserInputAnswerCommandV1 } from "../../../types.js";
-import { ChevronDown, CircleAlert, Loader2, UserRound } from "lucide-react";
+import { ChevronDown, CircleAlert, UserRound } from "lucide-react";
+import { ConversationActivityLabel } from "../feedback/ConversationActivityLabel.js";
 import { renderConversationTimelineItem } from "./renderer-registry.js";
 import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
 import {
@@ -650,9 +651,8 @@ function RootSubAgentTimelineItem({
         </span>
         <strong>{item.label}</strong>
         <span className="conversation-timeline-sub-agent-status">
-          {item.lifecycle === "running" ? <Loader2 size={12} className="spin" aria-hidden="true" /> : null}
           {item.lifecycle === "blocked" || item.lifecycle === "errored" ? <CircleAlert size={12} aria-hidden="true" /> : null}
-          {statusLabel}
+          <ConversationActivityLabel active={item.lifecycle === "running"}>{statusLabel}</ConversationActivityLabel>
         </span>
         {hasChildItems ? <ChevronDown className="conversation-timeline-sub-agent-chevron" size={12} aria-hidden="true" /> : null}
       </button>

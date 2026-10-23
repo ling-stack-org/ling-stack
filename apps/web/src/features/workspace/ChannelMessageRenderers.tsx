@@ -6,7 +6,6 @@ import {
   Copy,
   FileText,
   Image as ImageIcon,
-  Loader2,
   Pencil,
   Reply,
   ThumbsDown,
@@ -110,6 +109,7 @@ function channelMessageTimelineItem(
     id: `message:${role}:${message.id}`,
     role,
     markdown: body,
+    waitingPlaceholder: streaming && !message.body.trim(),
     phase: role === "agent" && !streaming && message.status === "ready" ? "final" : "commentary",
     revision: message.revision,
     threadSequence: 0,
@@ -304,6 +304,7 @@ function channelTurnTimelineItems(
   surface: "channel_root" | "topic" | "branch",
   conversationItems: readonly ConversationItemV1[],
   reasoningSummaries: readonly ConversationReasoningSummaryRecord[],
+  contextCompactions: readonly import("../../types.js").ConversationContextCompactionRecord[],
   t: (key: string, values?: Record<string, string | number>) => string,
   terminalReportById: ReadonlyMap<string, TerminalReportDto>,
   workflowById: ReadonlyMap<string, ChannelWorkflow>,
@@ -341,6 +342,7 @@ function channelTurnTimelineItems(
         conversationItems.filter((item) => item.turnId === turnId),
         reasoningSummaries.filter((summary) => summary.turnId === turnId),
         surface,
+        contextCompactions.filter(record => record.turnId === turnId),
       )
     : [];
   const uncoveredConversationItems = projectUncoveredChannelConversationItems(
@@ -515,6 +517,7 @@ export interface ChannelMessageRenderersInput {
   readonly channelConversationItems: readonly ConversationItemV1[];
   readonly channelUserInputs: readonly UserInputTranscriptItemV1[];
   readonly channelReasoningSummaries: readonly ConversationReasoningSummaryRecord[];
+  readonly channelContextCompactions?: readonly import("../../types.js").ConversationContextCompactionRecord[];
   readonly channelWorkflows: readonly ChannelWorkflow[];
   readonly terminalReports: readonly TerminalReportDto[];
   readonly conversationWorkCellByThreadId: ReadonlyMap<string, ConversationWorkCellViewModel>;
@@ -786,8 +789,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
                 {input.editError ? <div className="inline-error compact-inline-error" role="alert">{input.editError}</div> : null}
               </div>
             ) : (
-              <div className={pendingAiReply ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
-                {pendingAiReply ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
+              <div className="message-body-shell">
                 {bodyOverride ?? (
                   <MessageBodyRenderer
                     text={messagePresentation.body}
@@ -931,6 +933,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             id: `message:agent:pending:${feedItem.preview.id}`,
             role: "agent",
             markdown: input.t("Thinking..."),
+            waitingPlaceholder: true,
             status: "running",
             threadSequence: 1,
             sourceRefs: [],
@@ -950,6 +953,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
               : "channel_root",
           input.channelConversationItems,
           input.channelReasoningSummaries,
+          input.channelContextCompactions ?? [],
           input.t,
           terminalReportById,
           workflowById,
@@ -974,6 +978,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             id: `message:agent:pending:${feedItem.pendingReplyPreview.id}`,
             role: "agent",
             markdown: input.t("Thinking..."),
+            waitingPlaceholder: true,
             status: "running",
             threadSequence: 999_999,
             sourceRefs: [],

@@ -8,6 +8,7 @@ import type {
   ConversationTimelineRowItem,
 } from "@ling-stack/conversation-ui-core";
 import { useI18n } from "../../../i18n.js";
+import { ConversationActivityLabel } from "../feedback/ConversationActivityLabel.js";
 import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
 import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
 
@@ -54,7 +55,8 @@ export function TimelineFactRow({
   });
   const expanded = hasDetail && disclosure.expanded;
   const status = statusLabel ?? timelineStatusLabel(item.status, t);
-  const visibleStatus = compact && item.status === "succeeded" ? undefined : status;
+  const visibleStatus = (item.status === "running" && statusLabel === undefined) || (compact && item.status === "succeeded")
+    ? undefined : status;
   const visibleMeta = meta !== undefined ? meta : compact ? undefined : item.meta;
   const detailId = `conversation-timeline-detail-${domSafeId(item.id)}`;
 
@@ -93,7 +95,7 @@ export function TimelineFactRow({
         >
           <StatusAwareIcon item={item} icon={icon} />
           <span className="conversation-timeline-activity-copy">
-            <strong title={titleTooltip ?? title}>{title}</strong>
+            <strong title={titleTooltip ?? title}><ConversationActivityLabel active={item.status === "running"}>{title}</ConversationActivityLabel></strong>
             {visibleMeta ? <small>{visibleMeta}</small> : null}
           </span>
           {visibleStatus ? <span className="conversation-timeline-activity-status">{visibleStatus}</span> : null}
@@ -103,7 +105,7 @@ export function TimelineFactRow({
         <div className="conversation-timeline-activity-main static">
           <StatusAwareIcon item={item} icon={icon} />
           <span className="conversation-timeline-activity-copy">
-            <strong title={titleTooltip ?? title}>{title}</strong>
+            <strong title={titleTooltip ?? title}><ConversationActivityLabel active={item.status === "running"}>{title}</ConversationActivityLabel></strong>
             {visibleMeta ? <small>{visibleMeta}</small> : null}
           </span>
           {visibleStatus ? <span className="conversation-timeline-activity-status">{visibleStatus}</span> : null}

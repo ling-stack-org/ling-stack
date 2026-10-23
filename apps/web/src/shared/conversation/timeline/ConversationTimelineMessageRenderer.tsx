@@ -4,6 +4,8 @@ import type {
 import { conversationTimelineRendererKey } from "@ling-stack/conversation-ui-core";
 import { MessageBodyRenderer } from "../blocks/MessageBodyRenderer.js";
 import { LocalFileLink } from "../blocks/LocalFileLink.js";
+import { useI18n } from "../../../i18n.js";
+import { ConversationActivityLabel } from "../feedback/ConversationActivityLabel.js";
 import type { ConversationTimelineMessagePresentation } from "./timeline-response-presentation.js";
 
 export interface ConversationTimelineMessageRendererProps {
@@ -27,12 +29,21 @@ export function ConversationTimelineMessageRenderer({
   renderChrome,
   presentation = { ownsIdentity: true },
 }: ConversationTimelineMessageRendererProps): React.JSX.Element {
-  const body = (
+  const { t } = useI18n();
+  const streaming = item.status === "pending" || item.status === "running";
+  // Only explicit adapter placeholders or empty live messages are waiting copy.
+  const waiting = item.kind === "agentMessage" && streaming &&
+    (item.waitingPlaceholder || !item.markdown.trim());
+  const body = waiting ? (
+    <div className="conversation-thinking-indicator" role="status">
+      <ConversationActivityLabel>{item.markdown || t("Thinking...")}</ConversationActivityLabel>
+    </div>
+  ) : (
     <MessageBodyRenderer
       text={item.markdown}
       cwd={cwd}
       compact={false}
-      streaming={item.status === "pending" || item.status === "running"}
+      streaming={streaming}
       renderLocalFile={({ reference }) => {
         return <LocalFileLink reference={reference} />;
       }}
