@@ -2,6 +2,29 @@
 
 This is the concise current entry. Older append-only records are history, not a reason to repeat completed work.
 
+## Superseding checkpoint — 2026-10-24
+
+- `2adfab1c3f68a1031026561035b3e46d2ec6a476` is pushed to the original branch;
+  no E6 PR or main merge has occurred. Prior sections below retain historical facts.
+- Reviewed P3 manifest/application and packet were prepared against that checkpoint.
+  Package session58680 actually exited1 during final DMG extraction/cleanup, not
+  compilation/signing: an unrelated APFS image exposes two whole disks, rejected
+  by a global single-disk assumption. Do not reuse this as a successful new package.
+- P3-DMG-001 source repair retains full inventory/conflict checks while only
+  strict target attach receipts grant single-device detach authority. Native
+  regression130/130 and adjacent185/185 passed with no skips. Real extractor
+  logged successful mount and cleanup, original DMG SHA unchanged and mountpoint
+  absent. Its session23925 handle is gone after interruption; terminal JSON and
+  process absence were inspected, but no captured outer exit status is claimed.
+- New independent delta review is pending; do not update its approval hash before
+  actual review. Evidence/report: `p3-dmg-inventory-repair-20261024.md`.
+- Live GitHub confirms PR585 merged at `7bd33739852cec139822b33e12b4f8189b3964de`.
+  Remote main also includes575/580/583/584, not yet integrated into E6. The UI
+  chat is terminal. Next: preserve current checkpoints, merge current main once,
+  resolve while retaining E6's QA/approval repairs, review actual new deltas,
+  then package and resume affected private/channel cases. No old passing suite
+  or fixed resource rebuild should be repeated without a changed dependency.
+
 ## Current execution
 
 - Implementation: `codex/e6-safe-continuation`, HEAD `2e0b55cf9312d56eae75bbdd0e7c8d57cf10734b`.

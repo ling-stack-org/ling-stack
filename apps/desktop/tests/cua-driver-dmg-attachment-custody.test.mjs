@@ -194,6 +194,56 @@ test("devices already present before attach cannot become new original lineage",
   assert.equal(detachCalls(f).length, 0);
 });
 
+// Regression: P3-DMG-001 — an unrelated APFS image can expose multiple whole disks.
+// Found by /qa on 2026-10-24
+// Report: output/e6-20260928/p3-dmg-inventory-repair-20261024.md
+test("unrelated multi-disk images remain visible without authorizing their detach", async () => {
+  const background = image({ imagePath: "/tmp/EXPLICIT-SYNTHETIC-background.sparsebundle",
+    ownEntities: [...entities("/dev/disk900"), ...entities("/dev/disk901", "/tmp/background-volume")] });
+  const f = fixture({ info() { return { images: [background, ...f.inventory] }; } });
+  const attached = await f.custody.attach();
+  assert.equal(attached.binding.wholeDevice, DEVICE);
+  await f.custody.detach();
+  assert.deepEqual(detachCalls(f).map(call => call.args), [["detach", DEVICE]]);
+  assert.equal(f.custody.receipt().status, "detached");
+});
+
+test("multi-disk background images still enforce mount and device conflicts", async t => {
+  await t.test("occupied-mountpoint", async () => {
+    const background = image({ imagePath: "/tmp/EXPLICIT-SYNTHETIC-background.sparsebundle",
+      ownEntities: [...entities("/dev/disk900"), ...entities("/dev/disk901", MOUNT_POINT)] });
+    const f = fixture({ before: [background] });
+    await rejectsCode(f.custody.attach(), "already_present");
+    assert.equal(f.custody.receipt().attempted, false);
+    assert.equal(detachCalls(f).length, 0);
+  });
+  await t.test("previously-present-device", async () => {
+    const background = image({ imagePath: "/tmp/EXPLICIT-SYNTHETIC-background.sparsebundle",
+      ownEntities: [...entities("/dev/disk900"), ...entities(DEVICE, "/tmp/background-volume")] });
+    const f = fixture({ before: [background] });
+    await rejectsCode(f.custody.attach(), "device_reused");
+    assert.equal(Object.hasOwn(f.custody.receipt(), "binding"), false);
+    assert.equal(detachCalls(f).length, 0);
+  });
+  await t.test("foreign-partition-without-whole-device", async () => {
+    const background = image({ imagePath: "/tmp/EXPLICIT-SYNTHETIC-background.sparsebundle",
+      ownEntities: [...entities("/dev/disk900"), ...entities("/dev/disk901"),
+        { "dev-entry": "/dev/disk902s1" }] });
+    const f = fixture({ before: [background] });
+    await rejectsCode(f.custody.attach(), "whole_device_invalid");
+    assert.equal(f.custody.receipt().attempted, false);
+    assert.equal(detachCalls(f).length, 0);
+  });
+  await t.test("replacement-contains-original-device", async () => {
+    const f = fixture();
+    await f.custody.attach();
+    f.inventory = [image({ imagePath: "/tmp/EXPLICIT-SYNTHETIC-background.sparsebundle",
+      ownEntities: [...entities("/dev/disk900"), ...entities(DEVICE, "/tmp/background-volume")] })];
+    await rejectsCode(f.custody.detach(), "association_mismatch");
+    assert.equal(detachCalls(f).length, 0);
+  });
+});
+
 test("after-info must match every original attach entity, never only the first mount", async t => {
   const cases = [
     ["extra-entity", own => ({ ...own, "system-entities": [...own["system-entities"], { "dev-entry": `${DEVICE}s2` }] })],
