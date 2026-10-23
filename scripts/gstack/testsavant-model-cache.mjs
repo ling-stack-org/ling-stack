@@ -125,6 +125,9 @@ export function createTestsavantModelCache({ modelPin = pin, request = fetch, ti
     if (await exists(final)) return verifyTree(final, acquisition);
     const signal = AbortSignal.timeout(timeoutMs), token = randomUUID(), ownerName = `owner-${token}.json`;
     let locked = false, temporary, lockIdentity, lockCandidate = join(models, `.${acquisition.revision}.${token}.lock-candidate`);
+    const removeEmptyLock = async () => {
+      try { await rmdir(lock); } catch (error) { if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(error.code)) throw error; }
+    };
     const recoverDeadOwner = async () => {
       try {
         await directory(lock, false, true);
@@ -132,7 +135,7 @@ export function createTestsavantModelCache({ modelPin = pin, request = fetch, ti
         if (!names.length) {
           // A terminated writer/recovery may leave an empty lock. Nonrecursive
           // removal cannot delete a competing writer's nonempty owner directory.
-          try { await rmdir(lock); } catch (error) { if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(error.code)) throw error; }
+          await removeEmptyLock();
           return;
         }
         if (names.length !== 1 || !/^owner-[a-f0-9-]{36}\.json$/.test(names[0])) fail("cache_lock_invalid");
@@ -146,7 +149,7 @@ export function createTestsavantModelCache({ modelPin = pin, request = fetch, ti
         // Only the dead writer's unique owner filename is unlinked. A new
         // writer's nonempty canonical directory cannot be removed by rmdir.
         try { await unlink(path); } catch (error) { if (error.code !== "ENOENT") throw error; }
-        try { await rmdir(lock); } catch (error) { if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(error.code)) throw error; }
+        await removeEmptyLock();
         const abandoned = join(models, `.${acquisition.revision}.${owner.token}.partial`);
         if (await exists(abandoned)) { await directory(abandoned, false, true); await rm(abandoned, { recursive: true }); }
       } catch (error) { if (error.code !== "ENOENT") throw error; }
@@ -191,7 +194,7 @@ export function createTestsavantModelCache({ modelPin = pin, request = fetch, ti
       if (locked) {
         const currentLock = await directory(lock, false, true);
         if (currentLock.dev !== lockIdentity?.dev || currentLock.ino !== lockIdentity?.ino) fail("cache_lock_changed");
-        await unlink(join(lock, ownerName)); await rmdir(lock);
+        await unlink(join(lock, ownerName)); await removeEmptyLock();
       }
     }
   }

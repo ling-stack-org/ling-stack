@@ -55,3 +55,8 @@ protected. Its regression first reproduced `cache_busy_timeout` under Windows
 directory-rename semantics and passed after the repair. The existing native,
 runtime, toolchain and Main-graph scope boundaries remain unchanged; the local-file
 IPC/preload/Web capability is outside this Office packaging review.
+
+Forced owner-release interleavings also reproduced and then verified cleanup
+when another recovery removes the empty lock or replaces it with a live owner.
+All lock-removal sites share the same nonrecursive operation: an absent or
+nonempty directory is left alone, and unexpected filesystem failures still fail.

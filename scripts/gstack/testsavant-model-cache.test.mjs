@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import fsPromises, { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import fsPromises, { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, rmdir, writeFile } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { createTestsavantModelCache, testsavantModelAcquisition } from "./testsavant-model-cache.mjs";
@@ -123,3 +123,29 @@ test("an empty orphaned lock recovers when directory rename cannot replace an ex
   assert.equal(f.calls.length, 7);
   assert.deepEqual(await readdir(f.models), [original.revision]);
 });
+
+for (const replacement of ["removed", "new-owner"]) {
+  test(`writer cleanup tolerates another recovery leaving the released lock ${replacement}`, async t => {
+    const f = await fixture(t), lock = `${f.final}.lock`, token = randomUUID();
+    const originalUnlink = fsPromises.unlink;
+    const unlink = t.mock.method(fsPromises, "unlink", async path => {
+      const result = await originalUnlink(path);
+      if (dirname(path) === lock) {
+        // Force the competing recovery after owner release, before our rmdir.
+        await rmdir(lock);
+        if (replacement === "new-owner") {
+          await mkdir(lock, { mode: 0o700 });
+          await writeFile(join(lock, `owner-${token}.json`), JSON.stringify({ pid: process.pid, token }));
+        }
+      }
+      return result;
+    });
+    syncBuiltinESMExports();
+    t.after(() => { unlink.mock.restore(); syncBuiltinESMExports(); });
+    assert.equal(await createTestsavantModelCache(f)(f.stateRoot), f.final);
+    assert.equal(f.calls.length, 7);
+    assert.deepEqual((await readdir(f.models)).sort(), [original.revision,
+      ...(replacement === "new-owner" ? [`${original.revision}.lock`] : [])].sort());
+    if (replacement === "new-owner") assert.deepEqual(await readdir(lock), [`owner-${token}.json`]);
+  });
+}
