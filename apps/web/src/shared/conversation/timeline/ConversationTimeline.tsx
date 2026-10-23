@@ -10,7 +10,8 @@ import {
   type ConversationTimelineScopeKind,
   type TimelineSnapshot,
 } from "@ling-stack/conversation-ui-core";
-import { ChevronDown, CircleAlert, Loader2, UserRound } from "lucide-react";
+import { ChevronDown, CircleAlert, UserRound } from "lucide-react";
+import { ConversationActivityLabel } from "../feedback/ConversationActivityLabel.js";
 import { renderConversationTimelineItem } from "./renderer-registry.js";
 import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
 import {
@@ -116,7 +117,7 @@ export function ConversationTimeline({
   const responseIdForTarget = (target: EventTarget | null): string | undefined => target instanceof Element
     ? target.closest<HTMLElement>(".conversation-timeline-focus-block[data-conversation-response-id]")?.dataset.conversationResponseId
     : undefined;
-  const { model: displayModel, setSubAgentExpanded, setBlockExpanded, revealDisclosurePath } = useConversationTimelineDisplayModel(timelineItems, snapshot.runLifecycles);
+  const { model: displayModel, setSubAgentExpanded, setBlockExpanded, revealDisclosurePath } = useConversationTimelineDisplayModel(timelineItems, snapshot.runLifecycles, snapshot.contextSegmentIdByItemId);
   const displayModelRef = useRef(displayModel);
   displayModelRef.current = displayModel;
   const displayRows = displayModel.rows;
@@ -641,9 +642,8 @@ function RootSubAgentTimelineItem({
         </span>
         <strong>{item.label}</strong>
         <span className="conversation-timeline-sub-agent-status">
-          {item.lifecycle === "running" ? <Loader2 size={12} className="spin" aria-hidden="true" /> : null}
           {item.lifecycle === "blocked" || item.lifecycle === "errored" ? <CircleAlert size={12} aria-hidden="true" /> : null}
-          {statusLabel}
+          <ConversationActivityLabel active={item.lifecycle === "running"}>{statusLabel}</ConversationActivityLabel>
         </span>
         {hasChildItems ? <ChevronDown className="conversation-timeline-sub-agent-chevron" size={12} aria-hidden="true" /> : null}
       </button>

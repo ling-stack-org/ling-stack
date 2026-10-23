@@ -113,6 +113,8 @@ export interface ConversationTimelineMessageItem extends ConversationTimelineIte
   readonly kind: "userMessage" | "agentMessage";
   readonly markdown: string;
   readonly phase?: "commentary" | "final";
+  /** Adapter-created waiting copy; never inferred by matching model prose. */
+  readonly waitingPlaceholder?: boolean;
 }
 
 /** Hydrated question history, not prose, approval or execution evidence. */
@@ -242,6 +244,9 @@ export interface ConversationTimelineContextCompactionItem extends ConversationT
   readonly kind: "contextCompaction";
   readonly summary: string;
   readonly compactedTurnCount?: number;
+  readonly reason?: "manual" | "threshold" | "overflow";
+  readonly tokensBefore?: number;
+  readonly estimatedTokensAfter?: number;
   readonly snapshotRef?: ConversationOperationSourceRef;
 }
 

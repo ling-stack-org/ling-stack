@@ -1,0 +1,37 @@
+.conversation-activity-label {
+  color: inherit;
+}
+
+/* A narrow, quiet light pass acknowledges liveness without moving the row. */
+@supports (background-clip: text) {
+  .conversation-activity-label[data-activity-motion="running"] {
+    background-image: linear-gradient(100deg,
+      currentColor 35%, var(--conversation-text-strong, var(--ling-text-strong)) 50%, currentColor 65%);
+    background-size: 240% 100%;
+    background-position: 100% 0;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: conversation-activity-light 2.8s linear infinite;
+  }
+}
+
+@keyframes conversation-activity-light {
+  0%, 15% { background-position: 100% 0; }
+  85%, 100% { background-position: -100% 0; }
+}
+
+.conversation-thinking-indicator {
+  width: fit-content;
+  padding-block: 2px;
+  color: var(--conversation-text-muted, var(--ling-text-muted));
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+@media (prefers-reduced-motion: reduce), (forced-colors: active) {
+  .conversation-activity-label[data-activity-motion="running"] {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}

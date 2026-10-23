@@ -352,6 +352,8 @@ export function AppShell(): React.JSX.Element {
     channelTurnContextAssignments,
     channelUserInputs,
     channelReasoningSummaries,
+    channelContextCompactions,
+    channelConversationRefreshToken,
     channelGeneratedMedia,
     memoryObjects,
     usedMemoryEvents,
@@ -2556,6 +2558,8 @@ export function AppShell(): React.JSX.Element {
             channelTurnContextAssignments={channelTurnContextAssignments}
             channelUserInputs={channelUserInputs}
             channelReasoningSummaries={channelReasoningSummaries}
+            channelContextCompactions={channelContextCompactions}
+            channelConversationRefreshToken={channelConversationRefreshToken}
             channelGeneratedMedia={channelGeneratedMedia}
             memoryById={memoryById}
             usedMemoryEvents={usedMemoryEvents}

@@ -1,4 +1,3 @@
-import { Loader2 } from "lucide-react";
 import {
   MessageRow as SharedMessageRow,
   type MessageRowAuthorType,
@@ -30,8 +29,7 @@ export function MessageRow({
     />
   ) : null;
   const resolvedBodyNode = bodyNode && !bodyStreaming ? bodyNode : (bodyNode ?? generatedBodyNode) ? (
-    <div className={bodyStreaming ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
-      {bodyStreaming ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
+    <div className="message-body-shell">
       {bodyNode ?? generatedBodyNode}
     </div>
   ) : null;

@@ -168,6 +168,11 @@
   display: block;
 }
 
+.conversation-timeline-activity.kind-contextCompaction .conversation-timeline-activity-copy strong {
+  color: var(--conversation-text-muted);
+  font-weight: 400;
+}
+
 .conversation-timeline-activity.compact .conversation-timeline-activity-copy strong {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -191,20 +196,8 @@
 .conversation-timeline-reasoning {
   min-width: 0;
   max-width: 100%;
-  padding: 2px 0 2px 10px;
-  border-left: 1px solid color-mix(in srgb, var(--ling-border-subtle) 72%, transparent);
+  padding: 2px 0;
   color: var(--conversation-text-muted, var(--ling-text-muted));
-}
-
-.conversation-timeline-reasoning-heading {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 5px;
-  color: var(--conversation-text-muted, var(--ling-text-muted));
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.35;
 }
 
 .conversation-timeline-reasoning-body,
@@ -217,7 +210,7 @@
 }
 
 .conversation-timeline-reasoning-body .message-body-renderer > * + * {
-  margin-top: 7px;
+  margin-top: 8px;
 }
 
 .conversation-timeline-message .message-body-renderer,

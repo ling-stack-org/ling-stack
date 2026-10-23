@@ -122,12 +122,26 @@ test("reasoning summaries rebuild beyond the first RunEvent page without exposin
     });
     assert.equal(JSON.stringify(beforeRestart).includes("RAW_PRIVATE_REASONING"), false);
 
+    const compactStart = store.appendEvent(runId, "context_compaction_start", {
+      attemptId: attempt.id, reason: "threshold", policyVersion: "pi_sdk_lifecycle_v1",
+    });
+    const compacting = buildConversationDetail(store, cwd, thread).contextCompactions;
+    assert.equal(compacting[0].status, "running");
+    store.appendEvent(runId, "context_compaction_end", {
+      attemptId: attempt.id, reason: "threshold", policyVersion: "pi_sdk_lifecycle_v1",
+      outcome: "sdk_installed", willRetry: false, tokensBefore: 60000, estimatedTokensAfter: 14000,
+    });
+    const compacted = buildConversationDetail(store, cwd, thread).contextCompactions;
+    assert.equal(compacted[0].status, "succeeded");
+    assert.equal(compacted[0].eventId, compactStart.id);
+    assert.equal(compacted[0].id, compacting[0].id);
     store.close();
     store = createSqliteRunStore(cwd);
     const restoredThread = store.getLingThread(thread.id);
     assert.ok(restoredThread);
     const afterRestart = buildConversationDetail(store, cwd, restoredThread).reasoningSummaries;
     assert.deepEqual(afterRestart, beforeRestart);
+    assert.deepEqual(buildConversationDetail(store, cwd, restoredThread).contextCompactions, compacted);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

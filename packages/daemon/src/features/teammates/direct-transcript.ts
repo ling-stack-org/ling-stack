@@ -11,6 +11,7 @@ import {
 import { listAllExecutionActionsForRun } from "../runs/execution-actions.js";
 import { resolveTeammateDirectRunOwner } from "./direct-run-owner.js";
 import { projectConversationReasoningSummaries } from "../conversations/reasoning-summary-projection.js";
+import { projectConversationContextCompactions } from "../conversations/context-compaction-projection.js";
 import { projectConversationArtifacts } from "../runs/public-artifacts.js";
 import { projectTeammateDirectInputSnapshots, projectTeammateDirectPublicRun } from "./direct-input-snapshot-projection.js";
 
@@ -92,6 +93,13 @@ export function buildTeammateDirectTranscript(
     runLinks,
     runs: runs.map(projectTeammateDirectPublicRun),
     reasoningSummaries: projectConversationReasoningSummaries({
+      store,
+      thread,
+      runLinks,
+      runs,
+      items: conversationItems,
+    }),
+    contextCompactions: projectConversationContextCompactions({
       store,
       thread,
       runLinks,

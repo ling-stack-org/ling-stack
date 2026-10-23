@@ -13,6 +13,7 @@ Related docs:
 - [Conversation Codex-Parity Component Detailed Design](conversation-codex-parity-component-detailed-design.md)
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
+- [Turn Process Disclosure](conversation-turn-process-disclosure.md)
 
 v3.9.1 note: this document defines only the pure, display-only batch projection. The
 canonical owner is `ConversationTimeline`; `ConversationWorkCell` is a pre-v3.7
@@ -97,13 +98,18 @@ v3.9.1 does not render a cross-kind row such as:
 ```
 
 That row duplicates the owning file, exploration, and command facts and caused the
-completed red-frame/Composer-summary regressions. The compact copy now exists only inside
-the owning batch header:
+completed red-frame/Composer-summary regressions. The original command/exploration
+wrappers keep their compact copy inside the owning batch header:
 
 ```text
 Read 8 items
 Ran 3 commands
 ```
+
+The 2026-10-23 [turn process disclosure](conversation-turn-process-disclosure.md)
+also folds consecutive successful operations, including mixed kinds, under a
+category header. This reversible display group is separate from the three-item
+command/exploration batch rule and adds no summary after the final result.
 
 Rules:
 

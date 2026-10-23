@@ -6,6 +6,7 @@ import type {
   ConversationDomainRef,
   ConversationItemV1,
   ConversationReasoningSummaryRecord,
+  ConversationContextCompactionRecord,
   ChannelMessage,
   ConversationGeneratedMedia,
   TurnContextAssignment,
@@ -31,6 +32,7 @@ export interface ChannelConversationMessagePage {
   readonly turnContextAssignments: readonly TurnContextAssignment[];
   readonly userInputs?: readonly UserInputTranscriptItemV1[];
   readonly reasoningSummaries: readonly ConversationReasoningSummaryRecord[];
+  readonly contextCompactions?: readonly ConversationContextCompactionRecord[];
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly hasMore: boolean;
   readonly nextBeforeSequence?: number;
@@ -47,6 +49,7 @@ export function projectChannelConversationItemPage(
     turnContextAssignments: response.turnContextAssignments,
     ...(response.userInputs !== undefined ? { userInputs: response.userInputs } : {}),
     reasoningSummaries: response.reasoningSummaries ?? [],
+    contextCompactions: response.contextCompactions ?? [],
     generatedMedia: response.generatedMedia,
     hasMore: response.hasMore,
     ...(response.nextBeforeSequence !== undefined
@@ -81,7 +84,19 @@ export function mergeChannelUserInputPage(
     ),
     userInputs: hydration.userInputs,
     reasoningSummaries: mergeReasoningSummaries(current?.reasoningSummaries ?? [], incoming.reasoningSummaries ?? []),
+    contextCompactions: mergeContextCompactions(current?.contextCompactions ?? [], incoming.contextCompactions ?? []),
   };
+}
+
+function mergeContextCompactions(
+  current: readonly ConversationContextCompactionRecord[],
+  incoming: readonly ConversationContextCompactionRecord[],
+): readonly ConversationContextCompactionRecord[] {
+  const byId = new Map(current.map(record => [record.id, record]));
+  for (const record of incoming) {
+    if (record.revision > (byId.get(record.id)?.revision ?? -1)) byId.set(record.id, record);
+  }
+  return [...byId.values()];
 }
 
 function mergeReasoningSummaries(
@@ -263,21 +278,23 @@ export function projectUncoveredChannelConversationItems(
   });
 }
 
-/** Project only provider-safe reasoning rows; message and action rendering stay owned by the channel feed. */
+/** Project safe summaries and Host compaction facts; message/action rendering stays owned by the channel feed. */
 export function projectChannelReasoningSummaryItems(
   items: readonly ConversationItemV1[],
   summaries: readonly ConversationReasoningSummaryRecord[],
   surface: Extract<CanonicalTranscriptScope["surface"], "channel_root" | "topic" | "branch">,
+  compactions: readonly ConversationContextCompactionRecord[] = [],
 ): readonly ConversationTimelineItem[] {
   const first = items[0];
-  if (!first || summaries.length === 0) return [];
+  if (!first || summaries.length === 0 && compactions.length === 0) return [];
   const scopedItems = items
     .filter((item) => item.workspaceId === first.workspaceId && item.threadId === first.threadId)
     .map(toCanonicalChannelItem);
   const scopedSummaries: CanonicalReasoningSummaryRecord[] = summaries
     .filter((summary) => summary.workspaceId === first.workspaceId && summary.threadId === first.threadId)
     .map((summary) => ({ ...summary, sourceRefs: summary.sourceRefs.map((ref) => ({ ...ref })) }));
-  if (scopedSummaries.length === 0) return [];
+  const scopedCompactions = compactions.filter(record => record.workspaceId === first.workspaceId && record.threadId === first.threadId);
+  if (scopedSummaries.length === 0 && scopedCompactions.length === 0) return [];
   return projectCanonicalConversationTimeline({
     scope: {
       surface,
@@ -288,13 +305,14 @@ export function projectChannelReasoningSummaryItems(
     items: scopedItems,
     actions: [],
     reasoningSummaries: scopedSummaries,
+    compactions: scopedCompactions,
     turnRuns: [],
     sourceSequence: scopedItems.reduce((max, item) => Math.max(max, item.sequence), 0),
-    sourceRevision: scopedSummaries
+    sourceRevision: [...scopedSummaries, ...scopedCompactions]
       .map((summary) => `${summary.id}:${summary.revision}`)
       .sort()
       .join("|"),
-  }).items.filter((item) => item.kind === "reasoning");
+  }).items.filter((item) => item.kind === "reasoning" || item.kind === "contextCompaction");
 }
 
 function toCanonicalChannelItem(item: ConversationItemV1): CanonicalConversationItem {

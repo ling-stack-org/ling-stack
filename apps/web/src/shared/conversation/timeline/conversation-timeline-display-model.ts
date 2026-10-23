@@ -6,8 +6,9 @@ import type {
 } from "@ling-stack/conversation-ui-core";
 import type { ConversationDisclosureState } from "../view-store/conversation-view-store.js";
 import { shouldDefaultExpandConversationTimelineSubAgent } from "./conversation-timeline-sub-agent-disclosure.js";
-import { conversationTimelineSubAgentDisclosureKey } from "./conversation-timeline-view-retain-keys.js";
+import { conversationTimelineSubAgentDisclosureKey, timelineActivityDisclosureKey } from "./conversation-timeline-view-retain-keys.js";
 import { projectTimelineProcessSections, timelineItemNeedsVisibleAttention, type TimelineProcessGroup, type TimelineProcessSection } from "./timeline-process-presentation.js";
+import { projectTimelineActivitySections } from "./timeline-activity-presentation.js";
 
 interface ConversationTimelineDisplayRowBase {
   readonly rowKey: string;
@@ -112,6 +113,7 @@ export function projectConversationTimelineDisplayModel(
   items: readonly ConversationTimelineItem[],
   disclosureById: ReadonlyMap<string, ConversationDisclosureState>,
   runLifecycles?: ReadonlyMap<string, TimelineRunLifecycle>,
+  contextSegments?: ReadonlyMap<string, string>,
 ): ConversationTimelineDisplayModel {
   const rows: ConversationTimelineDisplayRow[] = [];
   const segments: ConversationTimelineDisplaySegment[] = [];
@@ -134,10 +136,12 @@ export function projectConversationTimelineDisplayModel(
   ): ConversationTimelineDisplaySegment => {
     const visibleItem = item.kind === "subAgentActivity" ? nestedDepthExceededDiagnostic(item) : item;
     const batch = visibleItem.kind === "commandBatch" || visibleItem.kind === "explorationBatch" ? visibleItem : undefined;
+    const batchDisclosureId = batch ? timelineActivityDisclosureKey(batch, parent?.item.id) ?? batch.batch.id : undefined;
     const batchDisclosure = batch ? {
-      id: batch.batch.id,
+      id: batchDisclosureId!,
       groupId: `conversation-batch-detail-${encodeURIComponent(batch.id)}`,
-      expanded: resolveDisclosureExpanded(batch.batch.id, batch.batch.revisionKey, batch.batch.defaultExpanded, disclosureById),
+      expanded: resolveDisclosureExpanded(disclosureById.has(batchDisclosureId!) ? batchDisclosureId! : batch.batch.id,
+        batch.batch.revisionKey, batch.batch.defaultExpanded, disclosureById),
     } : undefined;
     const base = {
       rowKey: displayRowKey(visibleItem, parent ? 1 : 0, parent?.item.id),
@@ -179,11 +183,23 @@ export function projectConversationTimelineDisplayModel(
       };
       if (visible) rows.push(headerRow);
       potentialRowCount += 1;
-      const childSegments = process.items.map(item => projectItem(item, visible && expanded, [...path, process.id], parent));
+      for (const id of process.wrappedItemIds ?? []) registerLocation(locationByItemId, id, headerRow.rowKey, visible, parent?.item.id, path);
+      const childPath = [...path, process.id];
+      const childSegments = process.presentation === "activity"
+        ? process.items.map(item => projectItem(item, visible && expanded, childPath, parent))
+        : projectScope(projectTimelineActivitySections(process.items, parent?.item.id, contextSegments), visible && expanded, childPath, parent);
       return { kind: "processGroup", headerRow, groupId, expanded, childSegments };
     });
 
-  for (const section of projectTimelineProcessSections(items, "root", runLifecycles)) {
+  const visibleSectionCount = (section: TimelineProcessSection, parentId: string): number => {
+    if (section.kind === "item") return visibleItemCount(section.item, disclosureById, parentId);
+    const group = section.group;
+    if (!group.mustExpand && !resolveDisclosureExpanded(group.id, group.revisionKey, group.defaultExpanded, disclosureById)) return 0;
+    return group.presentation === "activity" ? group.items.length
+      : projectTimelineActivitySections(group.items, parentId, contextSegments).reduce((count, child) => count + visibleSectionCount(child, parentId), 0);
+  };
+
+  for (const section of projectTimelineProcessSections(items, "root", runLifecycles, contextSegments)) {
     if (section.kind === "process") {
       segments.push(...projectScope([section], true, []));
       continue;
@@ -205,12 +221,9 @@ export function projectConversationTimelineDisplayModel(
       expanded,
     };
     rows.push(headerRow);
-    const childSections = projectTimelineProcessSections(item.childItems, item.id, runLifecycles);
+    const childSections = projectTimelineProcessSections(item.childItems, item.id, runLifecycles, contextSegments);
     const parent: ParentAgent = { item, groupId, childIndex: 0,
-      childCount: childSections.reduce((count, section) => count + (section.kind === "item"
-        ? visibleItemCount(section.item, disclosureById)
-        : section.group.mustExpand || resolveDisclosureExpanded(section.group.id, section.group.revisionKey, section.group.defaultExpanded, disclosureById)
-          ? section.group.items.reduce((sum, child) => sum + visibleItemCount(child, disclosureById), 0) : 0), 0) };
+      childCount: childSections.reduce((count, section) => count + visibleSectionCount(section, item.id), 0) };
     const childSegments = projectScope(childSections, expanded, [conversationTimelineSubAgentDisclosureKey(item.id)], parent);
     segments.push({ kind: "subAgentGroup", item, headerRow, childSegments, groupId, expanded });
     potentialRowCount += 1;
@@ -252,10 +265,11 @@ function batchChildren(item: Extract<ConversationTimelineItem, { kind: "commandB
     : item.batch.children;
 }
 
-function visibleItemCount(item: ConversationTimelineItem, disclosure: ReadonlyMap<string, ConversationDisclosureState>): number {
+function visibleItemCount(item: ConversationTimelineItem, disclosure: ReadonlyMap<string, ConversationDisclosureState>, parentId?: string): number {
   if (item.kind !== "commandBatch" && item.kind !== "explorationBatch") return 1;
-  return 1 + (resolveDisclosureExpanded(item.batch.id, item.batch.revisionKey, item.batch.defaultExpanded, disclosure)
-    ? batchChildren(item).reduce((count, child) => count + visibleItemCount(child, disclosure), 0) : 0);
+  const id = timelineActivityDisclosureKey(item, parentId) ?? item.batch.id;
+  return 1 + (resolveDisclosureExpanded(disclosure.has(id) ? id : item.batch.id, item.batch.revisionKey, item.batch.defaultExpanded, disclosure)
+    ? batchChildren(item).reduce((count, child) => count + visibleItemCount(child, disclosure, parentId), 0) : 0);
 }
 
 function displayRowKey(

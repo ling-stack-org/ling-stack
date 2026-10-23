@@ -1,4 +1,3 @@
-import { Brain } from "lucide-react";
 import type { ConversationTimelineReasoningItem } from "@ling-stack/conversation-ui-core";
 import { conversationTimelineRendererKey } from "@ling-stack/conversation-ui-core";
 import { MessageBodyRenderer } from "../blocks/MessageBodyRenderer.js";
@@ -17,10 +16,6 @@ export function ConversationTimelineReasoningRenderer({ item, cwd, depth }: {
       data-conversation-timeline-revision={item.revision}
       data-conversation-timeline-depth={depth}
     >
-      <div className="conversation-timeline-reasoning-heading">
-        <Brain size={13} aria-hidden="true" />
-        <span>{item.title}</span>
-      </div>
       <div className="conversation-timeline-reasoning-body">
         <MessageBodyRenderer text={item.summary} cwd={cwd} compact streaming={false} />
       </div>

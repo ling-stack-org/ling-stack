@@ -3,6 +3,9 @@
 Status: implemented, source/rendered regressions passed, and packaged macOS
 real-history rendering accepted, 2026-10-01. This is not a new live-model run
 or overall E6/Harness acceptance.
+The 2026-10-23 activity-presentation increment has source/browser fixture coverage
+in the production AppShell with a simulated Host; it does not renew packaged or
+real-provider acceptance.
 Extends conversation-turn-response-ownership.md; does not replace its completion,
 copy, privacy or scoped Review authority.
 
@@ -12,6 +15,12 @@ One Turn contains ordered commentary and atomic tool facts, followed by the fina
 answer, net file card and one response footer. Process disclosure is a view-only
 group, not a TerminalReport, another summary, persisted Item or nested Timeline.
 Normal, teammate-private, channel and depth-1 Agent children use the same policy.
+
+Conversation detail and channel pages expose optional `contextCompactions`, a
+read-only reconstruction of SDK start/end Run events with Run/Attempt lineage.
+These independent rows show running, succeeded, failed, cancelled or unconfirmed
+results outside process folds. SDK installation is not a Host recovery receipt;
+this projection changes neither the compaction algorithm nor checkpoint authority.
 
 Public Codex protocol at 6996cde697b228fbf5695ce855b2498c5c668795 confirms
 Turn.items, commentary/final_answer phases and independent completion notification.
@@ -27,10 +36,12 @@ requirement comes from the user's screenshots. Do not repeat upstream research.
   User messages, final answers, unknown-phase text and TerminalReports remain
   outside. A group identity is stable across streaming revisions and batch
   expansion, but does not cross a retry, participant, step or intervening result.
-- Running groups initially expand; successful Host-settled groups initially
-  collapse. Unknown lifecycle stays open, not labelled completed. Explicit user
-  expansion survives revisions and reconnection. Unresolved approval/questions,
-  diagnostics, failed/blocked/cancelled/partial facts force visibility even if a
+- Live and unknown lifecycle keep process content visible without a process
+  header. Adjacent successful operations may collapse by category within matching
+  lineage and a known context segment; successful Host-settled process groups
+  initially collapse. Explicit user expansion survives revisions and reconnection.
+  Unresolved approval/questions, diagnostics and failed/blocked/cancelled/partial
+  facts force visibility even if a
   prior user preference was collapsed.
 - Final phase alone is not completion evidence. Require Host terminal status or
   an owning Host Run lifecycle; live facts override a stale terminal snapshot.
@@ -42,9 +53,12 @@ requirement comes from the user's screenshots. Do not repeat upstream research.
 
 ## Display and recovery
 
-Use one muted, clickable process header with chevron and live/status icon, theme
-foreground on hover/focus. Expansion reveals the original Markdown/tool renderers
-in original order, not duplicated text. Final answer, net +/− file card, Review
+Use one muted, clickable completion entrance with chevron, labelled
+`Worked for {duration}` when Host timing exists, otherwise `Execution details`. Attention uses
+`Needs attention`. Category disclosures name the successful read, edit, command,
+tool or web-search facts. Live waiting copy uses the shared activity label;
+provider-safe reasoning renders without a repeated heading. Expansion reveals the
+original Markdown/tool renderers in original order. Final answer, net +/− file card, Review
 navigation and response footer stay outside process disclosure. Copy still reads
 all privacy-filtered narration in the response, not just mounted/expanded rows.
 
