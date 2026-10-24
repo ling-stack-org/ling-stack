@@ -74,7 +74,7 @@
     "apps/desktop/scripts/packaged-office-daemon-source-inputs.mjs": "b8ee0e7391f3deb5bb68f0634b95461616b24ef67ac7f257796367a0c19ae829",
     "apps/desktop/scripts/packaged-codesign-review-publication.mjs": "86df26e926fe0243df55a9ffa897faab91bf7fe282b197c6ccdc2e84864da909",
     "apps/desktop/scripts/packaged-office-native-asar-checks.mjs": "4382194ce4b4ac20b93879550bbeb91a880546113c675dcba50373930d194f03",
-    "apps/desktop/scripts/packaged-office-native-package-checks.mjs": "649f3a29bec1431fc54df57d13c799f3b957b00a9cb6018f50876acb8eb54273",
+    "apps/desktop/scripts/packaged-office-native-package-checks.mjs": "875532035bb38ffbd5a725af5e39d11ea818f679f420dbf551459e1119877467",
     "apps/desktop/scripts/packaged-office-native-review-inputs.mjs": "f4d3af000c5c6c93b07404484b924a5c6c60c0546a82f47e7de78f58679565f5",
     "apps/desktop/scripts/packaged-office-signing-inputs.mjs": "61080aa53c544eda63c475e870158bf9aba29ba94c0b4f8ba9c12dd6c0b3e3a3",
     "apps/desktop/shared/cua-driver-artifact-layout.mjs": "83c2a27a6d7bc4d8805588901d311bab1ee19fbc2de6475cf1957948a572d72a",

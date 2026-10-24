@@ -141,6 +141,24 @@ jobs:
           rustup toolchain install 1.97.1 --profile minimal --component rustfmt
           corepack enable
           corepack pnpm install --frozen-lockfile
+      - name: Materialize and check the pinned Electron runtime before collecting notices
+        if: env.DESKTOP_OPERATION == 'build'
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from "node:child_process";
+          import { createRequire } from "node:module";
+          const require = createRequire(process.cwd() + "/apps/desktop/package.json");
+          const expected = require("./package.json").devDependencies.electron;
+          if (require("electron/package.json").version !== expected) throw new Error("desktop_electron_package_version_mismatch");
+          // Electron's pinned entry materializes its checksummed native dist on first require.
+          const executable = require("electron");
+          const actual = JSON.parse(execFileSync(executable,
+            ["-p", "JSON.stringify({version:process.versions.electron,platform:process.platform,arch:process.arch})"],
+            { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8", timeout: 30000, maxBuffer: 1048576 }).trim());
+          if (actual.version !== expected || actual.platform !== process.platform || actual.arch !== process.arch)
+            throw new Error("desktop_electron_native_runtime_mismatch");
+          console.log(JSON.stringify({ status: "passed", ...actual }));
+          NODE
       - name: Observe tools and source prerequisites without granting approval
         run: node scripts/release/desktop-prerequisites.mjs inspect
       - name: Build the source and browser manifest verifier dependencies

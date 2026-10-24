@@ -155,3 +155,22 @@ Node 22.22.1 verification each passed all 44 release/package/identity/resource
 contracts without skips. Both original failures have forced RED regressions.
 Real Windows bundling, complete native candidates and same-source assembly remain
 required; these scoped reviews grant no candidate or installed-client acceptance.
+
+The next hosted run, 40112065163, recorded the mounted-DMG signature command
+ending with `code: null`, `signal: SIGTERM`, `killed: true` and empty stderr at
+the fixed 30-second limit. This establishes termination, not signature rejection.
+An independent final-byte review approved aligning that command with the existing
+60-second strict App verification budget. Only the packaging digest for
+`apps/desktop/scripts/packaged-office-native-package-checks.mjs` was rebound, to
+`875532035bb38ffbd5a725af5e39d11ea818f679f420dbf551459e1119877467`.
+The single-line production change leaves imports, command flags, error causes,
+byte rechecks and cleanup unchanged. Local relevant contracts passed 106/106;
+independent package-check contracts passed 69/69. Synthetic timeout and nonzero
+exit cases remain fatal for both ZIP and DMG and retain their original causes.
+The new budget remains bounded and requires successful real hosted verification.
+
+Windows in that run completed daemon bundling and both MSVC native inputs, then
+found Electron distribution notices missing before Electron's native archive had
+been materialized. The workflow now invokes the locked Electron package before
+collecting materials and checks its package/native version, platform and arch.
+The original notice collector still requires both runtime license files.
