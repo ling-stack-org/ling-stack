@@ -30,6 +30,12 @@ export async function inspectDesktopPrerequisites() {
   });
   if (target === "macos-arm64") {
     let runtimeObservation;
+    await check("dmg-attachment-inventory-observation", async () => {
+      const bytes = execFileSync("/usr/bin/hdiutil", ["info", "-plist"],
+        { encoding: "utf8", timeout: 10_000, maxBuffer: 1024 * 1024 });
+      await writeFile(join(evidenceRoot, "macos-dmg-inventory.plist"), bytes);
+      return { approval: "not_granted", evidence: "macos-dmg-inventory.plist" };
+    });
     await check("native-toolchain-observation", async () => {
       const headers = await realpath(process.env.LING_OFFICE_NODE_HEADERS ?? resolve(dirname(process.execPath), "../include/node"));
       process.env.LING_OFFICE_NODE_HEADERS = headers;
