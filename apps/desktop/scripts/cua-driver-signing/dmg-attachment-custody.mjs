@@ -175,11 +175,15 @@ function normalizeInventory(value, snapshotPath) {
     && value.images.length <= MAX_IMAGES, "inventory_invalid");
   const imagePaths = new Set(), devices = new Set(), mountPoints = new Set();
   const images = value.images.map(image => {
-    requireCondition(record(image) && Object.hasOwn(image, "image-path") && safePath(image["image-path"])
-      && Object.hasOwn(image, "hdid-pid") && Number.isSafeInteger(image["hdid-pid"]) && image["hdid-pid"] > 0
+    requireCondition(record(image) && Object.hasOwn(image, "image-path") && safePath(image["image-path"]), "inventory_invalid");
+    const imagePath = image["image-path"];
+    // Kernel-mounted system Cryptex images have no userspace helper. They still
+    // occupy every reported device/mountpoint, but cannot authorize our detach.
+    requireCondition((Object.hasOwn(image, "hdid-pid")
+      ? Number.isSafeInteger(image["hdid-pid"]) && image["hdid-pid"] > 0
+      : imagePath !== snapshotPath)
       && Object.hasOwn(image, "owner-uid") && Number.isSafeInteger(image["owner-uid"]) && image["owner-uid"] >= 0,
     "inventory_invalid");
-    const imagePath = image["image-path"];
     requireCondition(!imagePaths.has(imagePath), "inventory_duplicate");
     imagePaths.add(imagePath);
     // An unrelated APFS image can include both a backing disk and a synthesized
@@ -196,7 +200,7 @@ function normalizeInventory(value, snapshotPath) {
     }
     return Object.freeze({ imagePath, entities,
       wholeDevice: entities.find(entity => WHOLE_DEVICE_PATTERN.test(entity.device)).device,
-      helperPid: image["hdid-pid"], ownerUid: image["owner-uid"] });
+      ...(Object.hasOwn(image, "hdid-pid") ? { helperPid: image["hdid-pid"] } : {}), ownerUid: image["owner-uid"] });
   });
   return Object.freeze(images);
 }

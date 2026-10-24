@@ -10,3 +10,8 @@ packages/daemon/native/image-sanitizer/vendor/jpeg-decoder/strict-entropy.patch 
 # Retain original upstream license bytes, including intentional trailing spaces.
 apps/desktop/scripts/distribution/vendor-notices/NSIS-COPYING -text whitespace=-blank-at-eol
 apps/desktop/scripts/distribution/vendor-notices/standard/*.txt -text whitespace=-blank-at-eol
+
+# Codec dependency review checks original license SHA and exact notice text.
+packages/daemon/native/image-sanitizer/THIRD_PARTY_LICENSES.txt -text whitespace=-blank-at-eol
+packages/daemon/native/image-sanitizer/licenses/** -text whitespace=-blank-at-eol
+packages/daemon/native/image-sanitizer/vendor/jpeg-decoder/LICENSE-MIT -text whitespace=-blank-at-eol
