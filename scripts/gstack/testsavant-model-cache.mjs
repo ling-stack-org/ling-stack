@@ -42,8 +42,21 @@ export function testsavantModelAcquisition(modelPin = pin) {
 async function directory(path, create = false, privateDirectory = false) {
   if (create) await mkdir(path, { mode: 0o700 }).catch(error => { if (error.code !== "EEXIST") throw error; });
   const stat = await lstat(path);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || await realpath(path) !== path ||
-    process.getuid && (stat.uid !== process.getuid() || privateDirectory && stat.mode & 0o077)) fail("cache_directory_invalid");
+  let canonical;
+  if (!stat.isDirectory() || stat.isSymbolicLink() || (canonical = await realpath(path)) !== path ||
+    process.getuid && (stat.uid !== process.getuid() || privateDirectory && stat.mode & 0o077)) {
+    // Observe only a rejected directory; normal lock I/O and validation order
+    // remain unchanged so diagnostics do not serialize a concurrent recovery.
+    const identity = value => ({ directory: value.isDirectory(), symbolicLink: value.isSymbolicLink(),
+      dev: String(value.dev), ino: String(value.ino), mode: value.mode, uid: value.uid });
+    let after;
+    try { after = identity(await lstat(path)); }
+    catch (error) { after = { error: error.code }; }
+    const error = new Error("testsavant_model_cache_directory_invalid");
+    error.directoryObservation = { path: path.slice(0, 2048), canonical: canonical?.slice(0, 2048) ?? null,
+      before: identity(stat), after };
+    throw error;
+  }
   return { dev: stat.dev, ino: stat.ino };
 }
 
