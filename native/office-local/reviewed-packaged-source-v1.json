@@ -23,7 +23,7 @@
     "README.md": "458531f792e01734b360c7312652fddbc455fc95e8821bb1cf38dce7b8d0912b"
   },
   "packagingSha256": {
-    "apps/desktop/scripts/packaged-gstack-resources.mjs": "928069518382b89bbcfcac8a95e469e14c62543de139f43f79e22413cb88f466",
+    "apps/desktop/scripts/packaged-gstack-resources.mjs": "f349b20d1c308aedefd55ef66bc5ad08c9590ef8395eb7b1e1945f8916d3c463",
     "scripts/gstack/executable-bundle.mjs": "707a6b4ce35dec34ce73ff38681f2b857cbdc61c8fbd23952aca65dbe5df15c9",
     "scripts/gstack/upstream-lock.json": "6c666b7e9a40510404f565fe1599954126f82f472651c954496c663ec513d815",
     "apps/desktop/main/entry.ts": "a4aef1637f00a20c4c2827d3761416e6a1931c8bfe37d793ef09deb6670d40f7",

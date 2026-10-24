@@ -12,6 +12,7 @@ import { smokeWindowsInstaller } from "./windows-installer-smoke.mjs";
 import { createVerifiedDistributionArchive, inventoryDistribution } from "./distribution-archive.mjs";
 import { verifyNsisPlugins } from "./verify-nsis-plugins.mjs";
 import { runManagedNode } from "../gstack/run-managed.mjs";
+import { prepareBrowserSmokeWorkspace } from "./browser-acquisition-smoke.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const desktopRoot = join(root, "apps/desktop");
@@ -114,7 +115,7 @@ export async function verifyDesktopPackage() {
   const runnerInstallerSmoke = mac ? { status: "not_run" }
     : await smokeWindowsInstaller({ installer: join(releaseRoot, targetAssets(candidate, target)[0]), unpacked, candidate });
   const browserSmokePath = join(evidenceRoot, "browser-acquisition-smoke.json");
-  const browserSmoke = await runManagedNode({ root: join(process.env.RUNNER_TEMP, "gstack-candidate"),
+  const browserSmoke = await runManagedNode({ root: await prepareBrowserSmokeWorkspace(),
     args: [join(root, "scripts/release/browser-acquisition-smoke.mjs"),
       join(unpacked, mac ? "Contents/Resources/gstack" : "resources/gstack"), browserSmokePath],
     additionalBytes: 2 * 1024 ** 3, timeoutMs: 8 * 60000 });

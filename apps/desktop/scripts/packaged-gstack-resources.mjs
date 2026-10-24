@@ -60,7 +60,7 @@ export function packagedGstackIdentityPlugin({ identity, sourceInputs, desktopRo
   const module = resolve(root, `../../packages/daemon/${sourceInputs ? "src" : "dist"}/features/skills/packaged-identity.${sourceInputs ? "ts" : "js"}`);
   const marker = `const embeddedBundledGstackJson${sourceInputs ? ": string" : ""} = "NO_PACKAGED_GSTACK_IDENTITY";`;
   return { plugin: { name: "build-owned-packaged-gstack-identity", setup(build) {
-    build.onLoad({ filter: /features\/skills\/packaged-identity\.(?:ts|js)$/ }, async args => {
+    build.onLoad({ filter: /features[\\/]skills[\\/]packaged-identity\.(?:ts|js)$/ }, async args => {
       if (await realpath(args.path) !== module) throw new Error("packaged_gstack_identity_module_changed");
       visits++;
       const source = sourceInputs ? sourceInputs.loadSource(module).contents : await readFile(module, "utf8");

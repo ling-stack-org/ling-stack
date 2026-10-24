@@ -135,3 +135,23 @@ Only `apps/desktop/scripts/package-macos-with-office.mjs` was rebound, to
 Imports and fixed roots are unchanged. Orchestration regressions cover success,
 failure, external-input rejection and cleanup; actual hosted ad-hoc identity,
 strict signature and final ZIP/DMG acceptance remain required.
+
+## 2026-10-25: identity hook portability and browser smoke admission
+
+An independent scoped review approved rebinding only
+`apps/desktop/scripts/packaged-gstack-resources.mjs` to
+`f349b20d1c308aedefd55ef66bc5ad08c9590ef8395eb7b1e1945f8916d3c463`.
+The sole source change admits both native Windows and POSIX separators to the
+esbuild hook. Exact canonical module identity, the unique marker and exactly-one
+injection checks remain unchanged; imports and dependency closure are unchanged.
+All other 1,500 packaging digests and all 15 native source digests still match.
+
+Hosted run 40100008261 passed macOS archive extraction and strict signature
+checks, then exhausted the build workspace's two report slots (the parser and
+its provenance). Browser smoke now creates a fresh hosted-only managed workspace;
+the existing capacity, retention, exclusive lease and failed-service ownership
+checks remain unchanged. No build evidence is removed. Local and independent
+Node 22.22.1 verification each passed all 44 release/package/identity/resource
+contracts without skips. Both original failures have forced RED regressions.
+Real Windows bundling, complete native candidates and same-source assembly remain
+required; these scoped reviews grant no candidate or installed-client acceptance.

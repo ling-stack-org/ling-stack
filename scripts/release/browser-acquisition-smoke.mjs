@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { readExecutableBundle } from "../gstack/executable-bundle.mjs";
-import { managedResourceWrite, requireResourceLease } from "../gstack/resource-workspace.mjs";
+import { initResourceWorkspace, managedResourceWrite, requireResourceLease } from "../gstack/resource-workspace.mjs";
 import { ensureBrowserAcquisition } from "../gstack/browser-acquisition.mjs";
 import { loadPackagedBrowserZipParser } from "../gstack/packaged-browse-launch.mjs";
 
@@ -112,6 +112,14 @@ export async function smokeBrowserAcquisition(bundleRoot) {
     if (!live && ownedPids.size === 0) await rm(work, { recursive: true, force: true });
     else throw new Error(`browser_smoke_cleanup_failed_state_retained:${work}`, { cause: cleanupError });
   }
+}
+
+export async function prepareBrowserSmokeWorkspace() {
+  // The build's two retained report slots hold its parser and provenance.
+  // A fresh workspace keeps those inputs intact and keeps the retention gate.
+  const root = join(process.env.RUNNER_TEMP, "gstack-browser-smoke");
+  await initResourceWorkspace({ root, ciEphemeral: true });
+  return root;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

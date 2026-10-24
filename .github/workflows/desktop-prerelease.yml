@@ -157,6 +157,7 @@ jobs:
             scripts/gstack/publish-staged-directory.test.mjs \
             scripts/gstack/testsavant-model-cache.test.mjs scripts/gstack/testsavant-model-state.test.mjs \
             scripts/gstack/browser-acquisition.test.mjs scripts/gstack/packaged-browse-launch.test.mjs \
+            apps/desktop/tests/packaged-gstack-identity.test.mjs \
             apps/desktop/tests/distribution*.test.mjs
       - name: Check browser publication with bounded managed fixtures
         if: env.DESKTOP_OPERATION == 'build'

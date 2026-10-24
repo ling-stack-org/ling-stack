@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,6 +8,36 @@ import { extractedApplicationPath, inventoryApplicationTree } from "../release/d
 import { extractCuaDriverFinalArtifact } from "../../apps/desktop/scripts/cua-driver-signing/final-artifact-extractor.mjs";
 import { smokeWindowsInstaller } from "../release/windows-installer-smoke.mjs";
 import { collectGstackEvidence } from "../release/collect-gstack-evidence.mjs";
+import { prepareBrowserSmokeWorkspace } from "../release/browser-acquisition-smoke.mjs";
+import { acquireResourceLease, initResourceWorkspace, managedResourceWrite } from "../gstack/resource-workspace.mjs";
+
+test("browser smoke has a fresh governed workspace when build reports occupy both retained slots", async t => {
+  const temporary = await realpath(await mkdtemp(join(tmpdir(), "ling-browser-smoke-admission-")));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+  const environment = { GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: "github-hosted", GITHUB_RUN_ID: "123",
+    GITHUB_RUN_ATTEMPT: "1", GITHUB_JOB: "package", RUNNER_TEMP: temporary };
+  const previous = Object.fromEntries(Object.keys(environment).map(key => [key, process.env[key]]));
+  Object.assign(process.env, environment);
+  t.after(() => { for (const [key, value] of Object.entries(previous)) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  } });
+  const candidateRoot = join(temporary, "gstack-candidate");
+  await initResourceWorkspace({ root: candidateRoot, ciEphemeral: true });
+  const buildReports = join(candidateRoot, "artifacts/report"); await mkdir(buildReports);
+  for (const name of ["shell-parser", "shell-parser.build-provenance.json"]) await writeFile(join(buildReports, name), name);
+  const buildLease = await acquireResourceLease(candidateRoot);
+  try {
+    await assert.rejects(managedResourceWrite(join(buildReports, "browser-smoke"), { kind: "report", env: buildLease.env }), /retention_limit/);
+  } finally { await buildLease.release(); }
+  const smokeRoot = await prepareBrowserSmokeWorkspace();
+  const lease = await acquireResourceLease(smokeRoot);
+  try {
+    await managedResourceWrite(join(smokeRoot, "artifacts/report/browser-smoke"), { kind: "report", env: lease.env });
+    assert.notEqual(smokeRoot, candidateRoot);
+    assert.deepEqual((await readdir(buildReports)).sort(), ["shell-parser", "shell-parser.build-provenance.json"]);
+  } finally { await lease.release(); }
+  await assert.rejects(prepareBrowserSmokeWorkspace(), /EEXIST/);
+});
 
 test("package diagnostics preserve fatal status and nested assertion stacks", () => {
   const result = spawnSync(process.execPath, ["--import", new URL("../release/desktop-package-diagnostics.mjs", import.meta.url).href,
