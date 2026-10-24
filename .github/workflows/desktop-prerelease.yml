@@ -117,6 +117,15 @@ jobs:
         if: runner.os == 'Windows'
         with:
           arch: x64
+      - name: Bind Rust to the configured x64 MSVC linker
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:VCToolsInstallDir) { throw 'MSVC toolchain directory is unavailable' }
+          $linker = Join-Path $env:VCToolsInstallDir 'bin\Hostx64\x64\link.exe'
+          if (-not (Test-Path -LiteralPath $linker -PathType Leaf)) { throw "MSVC linker is unavailable: $linker" }
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         if: env.DESKTOP_OPERATION == 'build'
         with:
