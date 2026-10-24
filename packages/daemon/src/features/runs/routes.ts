@@ -37,6 +37,7 @@ import { readNativeArtifactContent } from "../../runtime/adapters/native-artifac
 import { parseRunRequest, type RunRequest } from "./schemas.js";
 import { isApprovalCommandRuleProposalCurrent } from "./approval-command-rules.js";
 import { isPrivateHostRecoveryArtifact, projectPublicRunEventEnvelope, toPublicArtifactMetadata } from "./public-artifacts.js";
+import { projectPublicRunSession } from "./public-execution-snapshots.js";
 
 export async function handleRun(
   request: IncomingMessage,
@@ -81,7 +82,7 @@ export function handleListRuns(response: ServerResponse, url: URL, storeRegistry
         teammateId: url.searchParams.get("teammateId") ?? undefined,
         workflowStepId: url.searchParams.get("workflowStepId") ?? undefined,
         threadId: url.searchParams.get("threadId") ?? undefined,
-      }),
+      }).map((run) => projectPublicRunSession(run, store)),
     });
   } catch (error) {
     writeJson(response, 400, {
@@ -107,7 +108,7 @@ export function handleGetRun(
     return;
   }
 
-  writeJson(response, 200, run);
+  writeJson(response, 200, projectPublicRunSession(run, store));
 }
 
 export function handleGetRunEvents(
@@ -480,7 +481,7 @@ export function handleCancelRun(
   }
 
   if (run.status === "cancelled") {
-    writeJson(response, 200, { cancelled: true, active: false, run });
+    writeJson(response, 200, { cancelled: true, active: false, run: projectPublicRunSession(run, store) });
     return;
   }
 
@@ -488,7 +489,7 @@ export function handleCancelRun(
     writeJson(response, 409, {
       error: "run_not_cancellable",
       message: `Run ${runId} is already ${run.status}.`,
-      run,
+      run: projectPublicRunSession(run, store),
     });
     return;
   }
@@ -516,7 +517,7 @@ export function handleCancelRun(
   writeJson(response, 200, {
     cancelled: true,
     active: !cancelled.inputWait && Boolean(activeRun),
-    run: store.getRun(runId),
+    run: projectPublicRunSession(store.getRun(runId), store),
     event: cancelled.event,
     ...(cancelled.inputWait ? { inputWait: cancelled.inputWait } : {}),
   });

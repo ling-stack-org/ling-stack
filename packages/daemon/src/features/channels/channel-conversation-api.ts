@@ -24,6 +24,7 @@ import { terminalReportIsEligibleForDisplay } from "./terminal-report-eligibilit
 import { projectConversationUserInputs } from "../conversations/user-input-transcript.js";
 import { projectConversationReasoningSummaries } from "../conversations/reasoning-summary-projection.js";
 import { projectConversationContextCompactions } from "../conversations/context-compaction-projection.js";
+import { projectPublicConversationItem, projectPublicLingThread, projectPublicLingTurn } from "../runs/public-execution-snapshots.js";
 
 export function listChannelConversationItems(input: {
   readonly store: RunStore;
@@ -57,9 +58,9 @@ export function listChannelConversationItems(input: {
   return {
     cwd: input.cwd,
     channelId: input.channel.id,
-    thread: input.thread,
-    turns,
-    items: visibleItems,
+    thread: projectPublicLingThread(input.thread),
+    turns: turns.map(turn => projectPublicLingTurn(turn, input.thread)),
+    items: visibleItems.map(item => projectPublicConversationItem(item, input.thread, turns.find(turn => turn.id === item.turnId))),
     turnContextAssignments: turns.flatMap((turn) => {
       const assignment = input.store.getEffectiveTurnContextAssignment(turn.id);
       return assignment ? [assignment] : [];
@@ -110,10 +111,10 @@ export function buildChannelConversationTurnResponse(input: {
     .filter((item) => item.turnId === turn.id && item.kind === "assistant_message");
   const items = [userItem, ...assistantItems];
   return {
-    thread,
-    turn,
-    userItem,
-    ...(assistantItems.length > 0 ? { assistantItems } : {}),
+    thread: projectPublicLingThread(thread),
+    turn: projectPublicLingTurn(turn, thread),
+    userItem: projectPublicConversationItem(userItem, thread, turn),
+    ...(assistantItems.length > 0 ? { assistantItems: assistantItems.map(item => projectPublicConversationItem(item, thread, turn)) } : {}),
     decorations: decorationsForItems(input.store, items),
     ...(input.replyDispatch ? { replyDispatch: input.replyDispatch } : {}),
     ...(input.autoStartedWorkflow ? { autoStartedWorkflow: input.autoStartedWorkflow } : {}),

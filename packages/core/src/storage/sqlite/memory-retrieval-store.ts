@@ -115,9 +115,11 @@ export class SqliteMemoryRetrievalStore {
         event.createdAt,
       );
     for (const memoryId of event.memoryIds) {
+      // Recency is not a semantic edit: changing updated_at would invalidate
+      // the very role-evidence fingerprint whose use this event records.
       this.context.database
-        .prepare("UPDATE memory_objects SET last_used_at = ?, updated_at = ? WHERE id = ?")
-        .run(now, now, memoryId);
+        .prepare("UPDATE memory_objects SET last_used_at = ? WHERE id = ?")
+        .run(now, memoryId);
     }
     return event;
   }

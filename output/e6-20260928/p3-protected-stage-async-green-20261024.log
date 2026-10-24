@@ -1,0 +1,32 @@
+✔ protected issuer rejects cloned/cross-registry source, stage and original prepared capabilities (1131.323ms)
+✔ no-op caller guard cannot bypass original owner epoch or source policy (1413.930333ms)
+✔ workspace approval revision closes a captured source even with a no-op guard (1175.528208ms)
+✔ capture refuses a Run effective-policy snapshot already stale before the no-op guard exists (1021.543208ms)
+✔ capture refuses actual workspace bash deny even when the Run effective snapshot says allow (1033.068625ms)
+✔ terminal original run stage closes explicitly and a new run can register and execute (1492.558125ms)
+✔ real controlled actor denies stage read/write and ancestor rename, actor-before-stage=false (1311.026ms)
+✔ real controlled actor denies stage read/write and ancestor rename, actor-before-stage=true (1340.05175ms)
+✔ launched actor is covered when stage is registered after native launch (1384.649583ms)
+✔ the arena family and static runtime read scopes cannot become protected stage roots (1040.765292ms)
+✔ stage privacy is rechecked, and actual bootstrap/device data scopes are conservatively reserved (1140.070459ms)
+✔ unknown actual bootstrap bytes close registration/current Office only, without blocking no-stage execution (1241.479166ms)
+✔ more than 256 real ordinary commands and more than 64 closed stage lifetimes do not exhaust history budgets (58323.826042ms)
+✔ unknown original launch closes Office coverage without imposing a no-stage execution limit (1342.367458ms)
+✔ unknown fixed topology does not claim coverage and does not poison ordinary no-stage execution (1367.645041ms)
+✔ original stage pathname identity replacement closes forward and new launch, not original FD cleanup (1222.84175ms)
+✔ partial ancestor capture closes every acquired original FD once, including the failed first fstat (1104.145292ms)
+✔ initial actual fstat EBADF tombstones before foreign reuse and partial cleanup never retries that integer (1104.7325ms)
+✔ initial path versus just-acquired original FD identity mismatch still closes the original once (1102.3805ms)
+✔ close-after-actual-close EIO tombstones before an integer is reused and never closes the foreign lifetime (1133.125208ms)
+✔ real lost original FD EBADF cannot later close a reused foreign integer (1077.184ms)
+✔ real lost original FD reused_inode cannot later close a reused foreign integer (1045.230792ms)
+✔ ordinary fstat EIO does not invent descriptor loss and the original FD is closed once (1044.573708ms)
+✔ ordinary fstat EINTR does not invent descriptor loss and the original FD is closed once (1051.20925ms)
+ℹ tests 24
+ℹ suites 0
+ℹ pass 24
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 86292.784334

@@ -1,0 +1,32 @@
+(node:23804) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./output/e6-20260928/public-workflow-search-red-loader.mjs", pathToFileURL("./")); register("./output/e6-20260928/public-workflow-search-red-loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ search uses referenced Run/Turn workflow ownership even under an ordinary Thread (11.899542ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 995.090625
+
+✖ failing tests:
+
+test at packages/daemon/test/public-workflow-history.test.mjs:154:1
+✖ search uses referenced Run/Turn workflow ownership even under an ordinary Thread (11.899542ms)
+  AssertionError [ERR_ASSERTION]: The input was expected to not match the regular expression /PRIVATE_ROLE_MEMORY_HISTORICAL_INPUT_CANARY/u. Input:
+  
+  '{"cwd":"fixture","threads":[{"id":"task_thread","kind":"task","title":"Ordinary task","objective":"Public objective"}],"matches":[{"threadId":"task_thread","turnId":"workflow_turn","field":"turn_instruction","snippet":"PRIVATE_ROLE_MEMORY_HISTORICAL_INPUT_CANARY"},{"threadId":"task_thread","runId":"workflow_run","field":"task_prompt","snippet":"PRIVATE_ROLE_MEMORY_HISTORICAL_INPUT_CANARY"},{"threadId":"task_thread","turnId":"user_turn","field":"turn_instruction","snippet":"User follow-up, keep literal prompt/systemPrompt keys unchanged"},{"threadId":"task_thread","runId":"user_run","field":"task_prompt","snippet":"User follow-up, keep literal prompt/systemPrompt keys unchanged"}]}\n'
+  
+      at TestContext.<anonymous> (file:///Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/daemon/test/public-workflow-history.test.mjs:183:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '{"cwd":"fixture","threads":[{"id":"task_thread","kind":"task","title":"Ordinary task","objective":"Public objective"}],"matches":[{"threadId":"task_thread","turnId":"workflow_turn","field":"turn_instruction","snippet":"PRIVATE_ROLE_MEMORY_HISTORICAL_INPUT_CANARY"},{"threadId":"task_thread","runId":"workflow_run","field":"task_prompt","snippet":"PRIVATE_ROLE_MEMORY_HISTORICAL_INPUT_CANARY"},{"threadId":"task_thread","turnId":"user_turn","field":"turn_instruction","snippet":"User follow-up, keep literal prompt/systemPrompt keys unchanged"},{"threadId":"task_thread","runId":"user_run","field":"task_prompt","snippet":"User follow-up, keep literal prompt/systemPrompt keys unchanged"}]}\n',
+    expected: /PRIVATE_ROLE_MEMORY_HISTORICAL_INPUT_CANARY/u,
+    operator: 'doesNotMatch',
+    diff: 'simple'
+  }

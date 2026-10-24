@@ -1,4 +1,5 @@
 import { CheckCircle2, History, Pencil, RotateCcw } from "lucide-react";
+import { canRerunSnapshot } from "../../api/run-request-builders.js";
 import { useI18n } from "../../i18n.js";
 import {
   canUseProviderForRun,
@@ -111,7 +112,7 @@ export function ProviderRunRepairPanel({
       <div className="provider-run-repair-actions">
         <Button size="sm" leadingIcon={<Pencil />} disabled={!provider} onClick={() => provider && onEdit(provider)}>{t("Edit provider")}</Button>
         <Button size="sm" leadingIcon={<CheckCircle2 />} loading={isChecking} disabled={!provider || isRunning} onClick={() => provider && onCheck(provider.id)}>{t("Check provider")}</Button>
-        <Button size="sm" variant="primary" leadingIcon={<RotateCcw />} loading={isRunning} disabled={!ready || isChecking} onClick={() => onRerun(run)}>{t("Rerun")}</Button>
+        <Button size="sm" variant="primary" leadingIcon={<RotateCcw />} loading={isRunning} disabled={!ready || isChecking || !canRerunSnapshot(run)} onClick={() => canRerunSnapshot(run) && onRerun(run)}>{t("Rerun")}</Button>
         <Button size="sm" leadingIcon={<History />} onClick={() => onOpenRun(run.id)}>{t("Back to run")}</Button>
         <Button size="sm" variant="ghost" onClick={onClear}>{t("Clear")}</Button>
       </div>

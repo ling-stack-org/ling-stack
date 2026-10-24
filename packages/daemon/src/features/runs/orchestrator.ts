@@ -100,7 +100,7 @@ import { appendControlPlaneEvent } from "../control-plane/events.js";
 import { CuaDriverComputerUseProjectionProducer } from "../computer-use/cua-driver-producer.js";
 import { resolveEligibleCuaDriverProjectionServerIds } from "../computer-use/provider-eligibility.js";
 import type { ComputerUseProjectionRegistry } from "../computer-use/registry.js";
-import { renderUsedMemoryPrompt } from "../memory/prompt.js";
+import { assertPreselectedMemoryCurrent, renderUsedMemoryPrompt } from "../memory/prompt.js";
 import { resolveCurrentRunSkill } from "./skill-selection.js";
 import { prepareRunSkillSource } from "./skill-source-context.js";
 import { withGstackHostContext } from "./gstack-host-context.js";
@@ -772,7 +772,9 @@ async function executeAdmittedRunRequest(
       query: `${runRequest.task.title}\n${runRequest.task.prompt}`,
       maxResults: 6,
     });
-    const memoryPrompt = memoryRecall ? renderUsedMemoryPrompt(memoryRecall.memories) : undefined;
+    if (!frozenExecution) assertPreselectedMemoryCurrent(store, runRequest);
+    const memoryPrompt = memoryRecall ? renderUsedMemoryPrompt(memoryRecall.memories)
+      : runRequest.preselectedMemoryUse?.renderedPrompt;
     const appendSystemPrompt = frozenExecution ? frozenExecution.input.appendSystemPrompt ?? [] : appendConversationResponseStyle([
       ...(runRequest.appendSystemPrompt ?? []),
       ...(selectedSkill?.promptFragments ?? []),
@@ -896,12 +898,17 @@ async function executeAdmittedRunRequest(
     if (!frozenExecution && runnerResolution.runner.adapter instanceof PiRunnerAdapter) {
       runnerRequest = withGstackHostContext(runnerRequest, selectedSkillSourceContext);
     }
+    const preselectedMemory = runRequest.preselectedMemoryUse;
     let usedMemory = frozenExecution?.usedMemory ?? (memoryRecall && memoryRecall.memories.length > 0
       ? { memoryIds: memoryRecall.memories.map((item) => item.memory.id), recallQuery: memoryRecall.request.query,
-          policyVersion: memoryRecall.policyVersion } : runRequest.preselectedMemoryUse);
+          policyVersion: memoryRecall.policyVersion } : preselectedMemory ? {
+            memoryIds: preselectedMemory.memoryIds, recallQuery: preselectedMemory.recallQuery,
+            policyVersion: preselectedMemory.policyVersion,
+          } : undefined);
     const assertPreparationCurrent = (): void => {
       if (activeRuns.isShuttingDown()) throw new HttpError(503, "runtime_shutting_down", "Runtime is shutting down.");
       assertHostCapabilitiesCurrent();
+      if (!frozenExecution) assertPreselectedMemoryCurrent(runStore, runRequest);
       delegatedExecution?.assertCurrent();
     };
     if (userInputContinuation?.claim && !userInputBinding) {

@@ -22,6 +22,7 @@ import {
   readWorkflowStepOutputPacketArtifact,
 } from "../dist/features/channels/workflow-step-packets.js";
 import { prepareWorkflowStepStart } from "../dist/features/channels/workflows.js";
+import { createMemorySourceRevisions } from "../dist/features/memory/prompt.js";
 import { finalizeOrchestratedWorkflowStepRun } from "../dist/features/channels/orchestrator.js";
 import { materializeWorkflowDelegatedStepRequirements } from "../dist/features/channels/workflow-step-requirement.js";
 import { preflightWorkflowParticipantProvider } from "../dist/features/channels/workflow-participant-provider.js";
@@ -54,17 +55,29 @@ test("workflow agents share one projection while private role memory stays owner
     ]);
     assert.doesNotMatch(engineer.task.prompt, /private continuity-agent-memory evidence/u);
     assert.doesNotMatch(designer.task.prompt, /private continuity-agent-memory evidence/u);
-    assert.match(engineer.runRequest.task.prompt, /Engineer private continuity-agent-memory evidence/u);
-    assert.doesNotMatch(engineer.runRequest.task.prompt, /Designer private continuity-agent-memory evidence/u);
-    assert.match(designer.runRequest.task.prompt, /Designer private continuity-agent-memory evidence/u);
-    assert.doesNotMatch(designer.runRequest.task.prompt, /Engineer private continuity-agent-memory evidence/u);
+    assert.doesNotMatch(engineer.runRequest.task.prompt, /private continuity-agent-memory evidence/u);
+    assert.doesNotMatch(designer.runRequest.task.prompt, /private continuity-agent-memory evidence/u);
+    assert.match(engineer.runRequest.preselectedMemoryUse.renderedPrompt, /Engineer private continuity-agent-memory evidence/u);
+    assert.doesNotMatch(engineer.runRequest.preselectedMemoryUse.renderedPrompt, /Designer private continuity-agent-memory evidence/u);
+    assert.match(designer.runRequest.preselectedMemoryUse.renderedPrompt, /Designer private continuity-agent-memory evidence/u);
+    assert.doesNotMatch(designer.runRequest.preselectedMemoryUse.renderedPrompt, /Engineer private continuity-agent-memory evidence/u);
     assert.equal(engineer.runRequest.skipMemoryRecall, true);
     assert.deepEqual(engineer.runRequest.preselectedMemoryUse, {
       memoryIds: [fixture.engineerMemory.id],
       recallQuery: `${fixture.workflow.objective}\n${fixture.engineerStep.title}\n${fixture.engineerStep.prompt}`,
       policyVersion: "ling-memory-v1-lexical-v2+memory_use_isolation_v2",
+      renderedPrompt: engineer.runRequest.preselectedMemoryUse.renderedPrompt,
+      sourceRevisions: createMemorySourceRevisions([fixture.engineerMemory]),
     });
     assert.equal(engineer.runRequest.contextProjection.projectionVersion, engineer.runRequest.contextPack.agentContext.contextProjection.projectionVersion);
+
+    fixture.store.recordUsedMemoryEvent({ memoryIds: [fixture.engineerMemory.id],
+      teammateId: fixture.engineerStep.toParticipantId, intent: "task-run",
+      recallQuery: "continuity-agent-memory", policyVersion: "test" }, "2026-08-10T01:00:10.000Z");
+    assert.equal(reviewWorkflowAgentContextStamp({ store: fixture.store,
+      dependencyWorkflowStepId: fixture.engineerStep.id,
+      consumed: engineer.runRequest.contextPack.agentContext }).review.status, "accepted_current",
+    "recording use must not make the consumed private evidence stale; semantic edits below still do");
 
     const forgedProjection = {
       ...engineer.runRequest.contextPack.agentContext,

@@ -22,6 +22,14 @@ test("Office fixed closure pins the shared read-only P3 compaction projection", 
   assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(
     "packages/daemon/src/features/conversations/context-compaction-projection.ts"));
 });
+test("Office fixed closure pins project inputs and public execution projections", () => {
+  for (const path of [
+    "packages/daemon/src/runtime/sandbox/node-command-inputs.ts",
+    "packages/daemon/src/features/runs/public-execution-snapshots.ts",
+  ]) {
+    assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path), `missing reviewed P3 input: ${path}`);
+  }
+});
 test("Office fixed closure pins the cold-start protocol and Desktop stage controller", () => {
   for (const path of ["apps/desktop/main/daemon-lifecycle.ts", "packages/core/src/daemon-resource-bootstrap.ts",
     "packages/core/src/execution-engine-host-authority.ts", "packages/core/src/bundled-skill-source.ts",

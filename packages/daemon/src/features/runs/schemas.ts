@@ -54,10 +54,20 @@ import {
   readString,
 } from "../../shared/validation.js";
 
+export interface MemorySourceRevision {
+  readonly memoryId: string;
+  /** SHA-256 of the complete semantic source; lastUsedAt is observational only. */
+  readonly semanticHash: string;
+}
+
 export interface PreselectedMemoryUse {
   readonly memoryIds: readonly string[];
   readonly recallQuery: string;
   readonly policyVersion: string;
+  /** Host-rendered, one-time hydration only; never part of durable request/task fields. */
+  readonly renderedPrompt?: string;
+  /** Required with first hydration; never included in frozen usedMemory metadata. */
+  readonly sourceRevisions?: readonly MemorySourceRevision[];
 }
 
 export interface RunRequest extends Omit<

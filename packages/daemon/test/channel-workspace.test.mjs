@@ -3868,7 +3868,7 @@ test("conversation stream materializes uploaded attachments into the run prompt"
     assert.equal(done.data.run.requestSnapshot.authorizationMode, "smart");
     assert.equal(done.data.run.requestSnapshot.workspaceAccessMode, "workspace_write");
     assert.equal(done.data.run.requestSnapshot.responseLanguage, "en-US");
-    assert.ok(done.data.run.requestSnapshot.appendSystemPrompt.some((instruction) => /Default conversation tone: friendly\./.test(instruction)));
+    assert.equal(done.data.run.requestSnapshot.appendSystemPrompt, undefined);
 
     const detail = await getJson(`${daemon.url}/conversations/${encodeURIComponent(initialReady.data.thread.id)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(detail.defaults.authorizationMode, "smart");
@@ -4080,7 +4080,9 @@ test("channel hard summary uses the effective workspace provider before dispatch
   try {
     const channel = await createChannel(daemon.url, cwd);
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
-      contextWindow: 1_800,
+      // Leave a real >=1024 input budget after output/overhead reservation;
+      // capability resolution no longer invents an input floor for tiny windows.
+      contextWindow: 2_400,
       maxTokens: 512,
     })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -5664,9 +5666,13 @@ test("model-assisted thread follow-up writes the recent local target without phr
     assert.match(systemText(daemon.selectorRequests[0]), /channel intent selector/i);
     assert.equal(runs.length, 1);
     assert.deepEqual(runs[0].requestSnapshot.tools, ["write"]);
-    assert.match(runs[0].taskSnapshot.prompt, /create_file: file_create -> index\.html/);
-    assert.match(runs[0].taskSnapshot.prompt, /"kind":"literal"/);
-    assert.match(runs[0].taskSnapshot.prompt, /gameReady = true/);
+    const publicRun = await getJson(`${daemon.url}/runs/${encodeURIComponent(runs[0].id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(publicRun.taskSnapshot.prompt, undefined);
+    const storedRun = store.getRun(runs[0].id);
+    assert.equal(runs[0].taskSnapshot.prompt, storedRun.taskSnapshot.prompt);
+    assert.match(storedRun.taskSnapshot.prompt, /create_file: file_create -> index\.html/);
+    assert.match(storedRun.taskSnapshot.prompt, /"kind":"literal"/);
+    assert.match(storedRun.taskSnapshot.prompt, /gameReady = true/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -9838,7 +9844,12 @@ test("workflow collaboration card endpoints derive compact product cards", async
 test("autoplan-lite workflow compiles durable steps and orchestrates them through the runner", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-orchestrator-"));
   const runner = new RecordingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, { storeFactory: storeCwd => {
+    const store = createSqliteRunStore(storeCwd);
+    stores.set(storeCwd, store);
+    return store;
+  } });
   try {
     const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
       name: "Autoplan",
@@ -9920,12 +9931,19 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
     assert.equal(firstRun.workflowStepId, firstStepAfterFirstTick.id);
     assert.equal(firstRun.requestSnapshot.workflowStepId, firstStepAfterFirstTick.id);
     assert.equal(firstRun.requestSnapshot.runnerResolution.requestSource, "workflow_step");
-    assert.match(runner.runs[0].task.prompt, /Build the orchestrator test slice with source-linked evidence/u);
-    assert.doesNotMatch(firstRun.taskSnapshot.prompt, /source-linked evidence/u);
-    assert.doesNotMatch(firstRun.requestSnapshot.task.prompt, /source-linked evidence/u);
+    assert.doesNotMatch(runner.runs[0].task.prompt, /source-linked evidence/u);
+    assert.match(runner.runs[0].appendSystemPrompt.join("\n"), /Build the orchestrator test slice with source-linked evidence/u);
+    assert.equal(firstRun.taskSnapshot.prompt, undefined);
+    assert.equal(firstRun.requestSnapshot.task.prompt, undefined);
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const storedFirstRun = store.getRun(firstRun.id);
+    assert.doesNotMatch(storedFirstRun.taskSnapshot.prompt, /source-linked evidence/u);
+    assert.doesNotMatch(storedFirstRun.requestSnapshot.task.prompt, /source-linked evidence/u);
     assert.equal(firstRun.requestSnapshot.preselectedMemoryUse, undefined);
     const firstWorkUnit = await getJson(`${daemon.url}/work-units/${encodeURIComponent(firstRun.workUnitId)}?cwd=${encodeURIComponent(cwd)}`);
-    assert.doesNotMatch(firstWorkUnit.workUnit.request.task.prompt, /source-linked evidence/u);
+    assert.equal(firstWorkUnit.workUnit.request.task.prompt, undefined);
+    assert.doesNotMatch(store.getWorkUnit(firstRun.workUnitId).request.task.prompt, /source-linked evidence/u);
     assert.equal(firstWorkUnit.workUnit.request.preselectedMemoryUse, undefined);
     const firstRunMemoryUse = await getJson(`${daemon.url}/memory/used?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(firstRun.id)}`);
     assert.deepEqual(firstRunMemoryUse.events[0].memoryIds, [firstStepMemory.id]);

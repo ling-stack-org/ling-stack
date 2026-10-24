@@ -4,6 +4,139 @@ This is the concise current entry. Older append-only records are history, not a 
 
 ## Superseding checkpoint — 2026-10-24
 
+### Current — 2026-10-25: source repair independently closed; final regression live
+
+- Historical workflow transport implementation is complete in the current source.
+  Shared public Run/WorkUnit ownership includes persisted Thread kind, including
+  old generic-resume Runs missing workflowStepId. Public Thread objective,
+  system-dispatch Turn/item, search, preview and fork DTOs omit internal bodies.
+  Generic workflow resume rejects before persistence/start; Host step control is
+  unchanged. Ordinary local-user/Q&A/tool text and internal Store facts remain.
+- Independent review found one additional search leak for workflow-marked Run/Turn
+  under an ordinary Thread. Fixed by checking each referenced trusted Run/Turn,
+  not only Thread kind. Original independent canary now shows all3 leak flags
+  false; scoped unresolved findings0. Report:
+  `p3-public-workflow-history-independent-review-20261024.md` (superseding top entry).
+- Final public/supervisor/history13/13 actual exit0, no skips. Exact negative
+  control restores only the ordinary-Thread bypass and the new test fails1/1.
+  Logs `p3-public-workflow-search-final-20261024.log` and
+  `p3-public-workflow-search-negative-20261024.log`.
+- Broader adjacency87961 ended1:272 total/269 pass/3 fail. All3 were stale/newly
+  mistargeted test assertions (public private-input assertion, internal-run view
+  mistaken for public, missing same-Store variable). Corrected without dropping
+  real Runner/private hydration/storage assertions; targeted3/3 exit0. Log
+  `p3-channel-public-fixture-repair-20261024.log`. Do not call the272 suite green.
+- Final full candidate Daemon regression is live as exec65308, wrapperPID25885,
+  testFiles523, isolated root `ling-e6-memory-final-full-aZrkM8`.
+  Log `p3-memory-daemon-final-full-20261025.log`; runner script records exit and
+  source/candidate fingerprint before/after. Do not recompile that candidate or
+  change source/tests while it runs, and do not start a duplicate full suite.
+- Memory/Pi/native/Web/Office scoped independent report has been persisted as
+  `p3-memory-source-independent-review-20261024.md`; selected findings0, independent
+  Memory11/11 and Web3/3. Reuse those unchanged GREEN inputs.
+- Next: save/push the implementation checkpoint (not acceptance), freeze exact
+  reviewed Office delta1605/native15 under standing isolated-QA-only authority,
+  original reader verification, new package and identity readback, full C01.
+  Current App is still old. Recovery/delegation/Office/H09 and PR/main remain open.
+
+### Current: project inputs saved; Memory source/privacy repair in final integration
+
+Latest continuation (supersedes the pending historical-writer note below):
+
+- Root has taken over and implemented historical public Thread/Turn/item/search/
+  resume-preview/fork/fork-run projection. Prior writer is stopped and is now
+  read-only independent reviewer. Trusted stored Thread kind also protects old
+  Runs/WorkUnits that lost workflowStepId; all public transport calls pass Store.
+- Isolated real SQLite + loopback HTTP canary before repair failed4/4. After
+  repair, history/public/supervisor/normal-fork combined53/53, zero skips,
+  actual exit0 (`p3-public-workflow-history-final-20261024.log`). It also proves
+  internal Store unchanged, local-user/Q&A/tool data retained, and workflow
+  generic resume rejected before its start callback. Candidate tsc exit0.
+- Broader adjacency is live as exec87961, log
+  `p3-public-workflow-adjacency-20261024.log`; no final result claimed yet.
+  No new checkpoint commit/package/GUI/merge. Final historical independent
+  review remains required before freezing the package delta.
+
+- Node project-input repair is committed/pushed as `4fdd39e12b37fe4c7d160defdcd266c008be5743`;
+  actual remote hash matched. Not a PR/main merge or package.
+- Original isolated full session52731 has actually exited1:7501 total,
+  7485 pass/4 fail/12 existing skip/0 cancel. Log retained as
+  `project-inputs-daemon-full-20261024.log`; it is not final-candidate acceptance.
+  Three failures were the already located summary fixture/private Memory defects.
+  The fourth was a synchronous test fault restored before the new asynchronous
+  dependency capture reached the bootstrap reader. The fault-window probe failed
+  deterministically, then unchanged security assertions passed24/24 with a
+  Promise-lifetime test patch (`p3-protected-stage-async-green-20261024.log`).
+- Memory hydration/Core last-used semantic revision and public DTO repair are WIP,
+  not committed yet. Native first-hydration source revisions now span selection,
+  entry and later authority checks; Pi uses the same revision/eligibility helper
+  before initial hydration and after SDK awaits, never a fresh recall on recovery.
+  Pi/SDK integration17/17 exit0 (`p3-pi-memory-source-binding-final-20261024.log`).
+  Native scoped source gate114/114 plus last-used-only1/1 passed in its report.
+- Public DTO/historical workflow Turn/item/resume/fork and supervisor4 arrays
+  are still being integrated by the designated writer. Do not claim privacy
+  closure, freeze an approval record, commit partial helper consumers or package
+  before the writer is terminal and final delta review passes.
+- Web common snapshot rerun is rejected for workflow ownership, disabled at all
+  three controls, and no longer replays cached private system hydration. Pure
+  request/controller14/14 and typecheck pass; no new GUI claim. An attempted
+  source-render harness used an unavailable TS7 transpile API; its log is retained,
+  it was removed from tests, and does not count as a GUI or renderer pass.
+- Fixed Office inventory now explicitly includes node-command-inputs and the new
+  public-execution projection. Its original closure regression1347/1347 exit0;
+  no new approved hashes were generated/applied. Actual package remains old.
+
+Older bullets below describe historical checkpoints and are superseded above.
+
+### Historical: project-input repair verified; three broad-regression failures under repair
+
+- Project scope/Node local-module staging implemented with native FD capture,
+  bounded parser/metadata discovery and no origin fallback. Final27/27 pure,
+  77/77 adjacent,95/95 Contracts,15/15 real native/Electron all actual exit0;
+  final independent boundary review zero remaining findings, independent8/8.
+  See `p3-project-inputs-repair-20261024.md`; do not repeat those green checks.
+- Original full Daemon session52731/PID50145 remains live; no duplicate full
+  suite or normal-dist rebuild. Final deltas compile under project-inputs-final-build.
+- Three channel-workspace failures reproduced3/3. One fixture uses a now-invalid
+  artificial input floor; two identify private role memory in durable task.prompt.
+  Hydration separation and explicit Run/WorkUnit public DTO filtering are under
+  repair. A task-only assertion is insufficient: frozen Runner input also crosses
+  public raw responses. Preserve exact internal recovery input and strict lineage.
+- Current old App does NOT contain these project-input or memory changes. No
+  newer source commit/push/PR/main has occurred after de0f2387 yet. Next: fix/
+  review regressions, save checkpoint, freeze reviewed delta, package and continue
+  full original C01. Recovery/delegation/Office/H09 and total E6 remain open.
+
+### Current: reviewed package running; C01 dependency-staging defect under repair
+
+- Source checkpoint `de0f23875634a29c7e1c76ded90aee56c0a7c24c` is pushed and
+  remote readback matched. No new PR/main merge. Only the pre-existing untracked
+  Daemon crash report remains; preserve it.
+- Reviewed package session55684 and package readback66231 both actually exited0.
+  ASAR `d45720768071cdff5ad4d527c401ee7fc595876c26ef502e266252da3b175f22`;
+  strict codesign passed. Frozen packet afe6e7fa remains approved=false; standing
+  authorization is separately recorded. Do not rebuild/restart the same inputs.
+- Correct isolated Main40920/child Daemon40952/port17928 was launched with the
+  exact owned profile. Mac unlocked; built-in Computer Use works. Old lock-screen
+  and package-refresh instructions below are superseded.
+- Real historical C01 now displays Engineer blocked, not waiting approval.
+  Original Run/history unchanged; screenshot `p3-live-20261024/c01-history-visible-fixed.png`.
+- Real private P01-OFFLINE-R2 Run `run_6f9e76a8-c5b4-4206-b1ef-b8e925b4a52a`
+  executed one approved command, exit0, one final result; WorkUnit webEvents=[];
+  Host capture SHA13bc7b6d. This is not universal network-isolation evidence.
+- New C01-R2 workflow `workflow_a98d28bc-462f-482b-80b5-a266c5cd1de1`,
+  Engineer Run `run_bb4a8881-d5db-4de4-91a2-63e4c3f410a7`, read succeeded then
+  reached real CLI approval, proving the repaired checkpoint lineage advanced.
+  Approved CLI failed exit1: sandbox staged cli.js/records.csv but not its local
+  `./ledger.js` import. Host remained truthful: workflow/Engineer blocked,
+  QA queued, no Run, no fan-in success, webEvents=[]. Final capture SHAb57bce06.
+- Next: resolve execution dependency authority separately from discovery, prove
+  RED/GREEN and independent review, then repackage only changed reviewed inputs
+  and continue the original two-required-participant/full two-new-file project.
+  Do not relax checkpoint.effect_unknown or copy the whole workspace. Relative
+  command paths/binding sourceQuote, recovery/delegation/Office/P4 and PR/main
+  remain open. H09 hard-output-cap condition is still external; do not re-query CPA.
+
 ### New actual C01 blockers repaired, package refresh next
 
 - Original stage A created workflow7560c256 and Engineer Run1d74e385; read

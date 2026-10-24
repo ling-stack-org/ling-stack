@@ -56,6 +56,7 @@ import { resolveConversationExecutionSelection, inheritConversationExecutionSele
 import { parseExecutionBindingRequest } from "@ling-stack/contracts";
 import { projectTerminalReportDto } from "../channels/terminal-report-routes.js";
 import { listExecutionActions } from "../runs/execution-actions.js";
+import { projectPublicRunSession } from "../runs/public-execution-snapshots.js";
 import {
   buildConversationGeneratedMediaProjection,
   runHasConversationGeneratedMedia,
@@ -334,12 +335,12 @@ export async function handleConversationStream(
           updatedAt: latestRun?.updatedAt ?? new Date().toISOString(),
         };
         if (latestRun && (terminalStatus === "succeeded" || terminalStatus === "cancelled")) {
-          safeWrite("done", { thread: latestThread, turn: latestTurn, run: latestRun, assistantMessage: finalAssistant });
+          safeWrite("done", { thread: latestThread, turn: latestTurn, run: projectPublicRunSession(latestRun, store), assistantMessage: finalAssistant });
         } else {
           safeWrite("blocked", {
             thread: latestThread,
             turn: latestTurn,
-            run: latestRun,
+            run: projectPublicRunSession(latestRun, store),
             assistantMessage: finalAssistant,
             error: finalAssistant.errorMessage || latestRun?.errorMessage || finalAssistant.content,
           });
@@ -573,7 +574,7 @@ export function buildConversationDetail(
     userInputs,
     supersessionTombstones: projectConversationSupersessionTombstones(projection),
     runLinks,
-    runs,
+    runs: runs.map((run) => projectPublicRunSession(run, store)),
     reasoningSummaries: projectConversationReasoningSummaries({
       store,
       thread,

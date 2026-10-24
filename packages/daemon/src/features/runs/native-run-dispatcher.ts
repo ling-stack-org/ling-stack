@@ -81,6 +81,7 @@ import {
   syncLingThreadForTerminalRun,
 } from "./threads.js";
 import { appendRuntimeProgressForRunEvent, syncWorkUnitForRunEvent } from "./work-units.js";
+import { assertPreselectedMemoryCurrent, createMemorySourceRevisions, renderUsedMemoryPrompt } from "../memory/prompt.js";
 import type { RunRequest } from "./schemas.js";
 
 export type NativeBoundRunRequest = RunRequest & {
@@ -152,7 +153,11 @@ async function executeNativeRunRequest(
   input: NativeRunDispatchInput,
   dependencies: CreateNativeRunDispatcherOptions,
 ): Promise<string | undefined> {
-  const { runRequest, sink } = input;
+  const { sink } = input;
+  const runRequest = structuredClone(input.runRequest);
+  let hydratedRunRequest = runRequest;
+  let durableRunRequest: NativeBoundRunRequest | undefined;
+  let preparedMemory: ReturnType<typeof prepareNativeMemory> | undefined;
   const binding = runRequest.executionBinding;
   const workspaceCwd = runRequest.workspaceCwd ?? runRequest.cwd;
   let store: RunStore | undefined;
@@ -228,8 +233,12 @@ async function executeNativeRunRequest(
         throw new HttpError(409, "native_conversation_prepared_input_required", "Accepted conversation input is required.");
       }
     }
-    await dependencies.target.assertAvailable?.({ runRequest: { ...runRequest, threadId: thread.id }, store, approvalPolicy, effectivePolicySnapshot,
+    preparedMemory = store.readSnapshot(() => prepareNativeMemory(store!, runRequest));
+    hydratedRunRequest = { ...runRequest, preselectedMemoryUse: undefined,
+      ...(preparedMemory.prompt ? { appendSystemPrompt: [...(runRequest.appendSystemPrompt ?? []), preparedMemory.prompt] } : {}) };
+    await dependencies.target.assertAvailable?.({ runRequest: { ...hydratedRunRequest, threadId: thread.id }, store, approvalPolicy, effectivePolicySnapshot,
       signal: AbortSignal.timeout(15_000) });
+    preparedMemory.assertCurrent();
     if (dependencies.activeRuns.isShuttingDown()) throw new HttpError(503, "runtime_shutting_down", "Runtime is shutting down.");
     // Admission can await native probes. Re-read idempotency before creating any durable execution authority.
     const raced = findExistingIdempotentRunRequest(store, runRequest);
@@ -240,7 +249,7 @@ async function executeNativeRunRequest(
     workflowStartOwner = captureWorkflowStartOwner(store, runRequest);
     turn = ensureLingTurnForRun(store, thread, runRequest, createdAt);
     const durableTaskSnapshot = store.getTask(runRequest.task.id) ?? runRequest.task;
-    const durableRunRequest = { ...runRequest, task: durableTaskSnapshot, preselectedMemoryUse: undefined };
+    durableRunRequest = { ...hydratedRunRequest, task: durableTaskSnapshot };
     const owner = resolveRunWorkUnitOwner(thread, runRequest, turn.id);
     const idempotencyKey = runRequest.idempotencyKey ?? `run:${runId}`;
     const existing = runRequest.idempotencyKey
@@ -313,7 +322,7 @@ async function executeNativeRunRequest(
       && runtimeSettings && effectivePolicySnapshot && thread && turn) {
       const queuedAt = new Date().toISOString();
       releasePreparedRunResources(store, attempt, queuedAt, "queued-conflict");
-      run = createQueuedNativeRun({ store, storeRegistry: dependencies.storeRegistry, runRequest,
+      run = createQueuedNativeRun({ store, storeRegistry: dependencies.storeRegistry, runRequest: durableRunRequest ?? hydratedRunRequest,
         runId, workspaceCwd, workUnit, attempt, thread, turn, runtimeSettings,
         effectivePolicySnapshot, runnerResolution, queuedAt, reason: error.code, message: error.message });
       try { commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner, { claimQueuedTask: true }); }
@@ -370,6 +379,17 @@ async function executeNativeRunRequest(
   const supervision = createRunExecutionSupervision({ store, runId: run.id, workUnit, attempt,
     activeRuns: dependencies.activeRuns, signal: abortController.signal });
   const source = { runId: run.id, ...toRuntimeAttemptFence(attempt) };
+  let memoryUseRecorded = false;
+  const recordAcceptedMemoryUse = (): void => {
+    const used = preparedMemory?.used;
+    if (memoryUseRecorded || !used || used.memoryIds.length === 0) return;
+    // Availability, configuration and a reserved submission are not model-use facts.
+    // Record accepted input even if a later tool, cancellation or transport fails.
+    if (!store!.listNativeAttemptSubmissions(source).some(submission => Boolean(submission.nativeTurnId))) return;
+    store!.recordUsedMemoryEvent({ ...used, intent: "task-run", teammateId: run!.teammateId,
+      channelId: run!.channelId, taskId: run!.taskId, runId: run!.id, responseId: run!.id }, new Date().toISOString());
+    memoryUseRecorded = true;
+  };
   const writers = new AttemptLocalWriterGroup(source);
   const durableCompletion = observeHostAttemptCompletion(store, source, completion.then(() => writers.waitForIdle()),
     () => ({ schemaVersion: 1, kind: "native_journal_v1",
@@ -404,6 +424,7 @@ async function executeNativeRunRequest(
     supervision.start();
     const assertCurrentAuthority = (): void => {
       abortController.signal.throwIfAborted();
+      preparedMemory?.assertCurrent();
       assertWorkflowRunAdmission(store!, run!, workflowStartOwner, abortController.signal);
       resolveNativeRunnerSelection(dependencies.runnerRegistry, runRequest,
         loadWorkspaceRuntimeSettings(store!, dependencies.runnerRegistry).allowedRunnerIds,
@@ -420,7 +441,7 @@ async function executeNativeRunRequest(
       }
     };
     assertCurrentAuthority();
-    const result = await dependencies.target.dispatch({ runRequest: { ...runRequest, threadId: run.threadId }, store, run, workUnit, attempt,
+    const result = await dependencies.target.dispatch({ runRequest: { ...hydratedRunRequest, threadId: run.threadId }, store, run, workUnit, attempt,
       approvalPolicy, effectivePolicySnapshot, signal: abortController.signal,
       assertCurrentAuthority,
       onApprovalWaitChanged: writers.wrapSync("native approval wait", supervision.approvalWaitChanged),
@@ -429,12 +450,14 @@ async function executeNativeRunRequest(
         void lifetime.then(finish, finish);
       },
       onEvent: writers.wrapSync("native event projection", (event) => {
+        recordAcceptedMemoryUse();
         supervision.activity();
         syncWorkUnitForRunEvent(store!, workUnit!.id, attempt!.id, event.type, event);
         appendRuntimeProgressForRunEvent(store!, workUnit!.id, attempt!.id, event.type, event);
         syncLingThreadForRunEvent(store!, run!, event.type, event);
         streamEnvelope(event);
       }) });
+    recordAcceptedMemoryUse();
     if (abortController.signal.aborted) abortController.signal.throwIfAborted();
     if (result.status === "cancelled") {
       const observed = store.getRun(run.id);
@@ -487,6 +510,8 @@ async function executeNativeRunRequest(
       expectedStatus: "running", event: "run_succeeded", actor: "runner", now: endedAt, currentRunId: run.id });
     if (!sinkClosed) sink.end();
   } catch (error) {
+    try { recordAcceptedMemoryUse(); }
+    catch (memoryError) { error = new Error("Native Memory usage evidence could not be persisted.", { cause: memoryError }); }
     const stopIntent = dependencies.activeRuns.getStopIntent(run.id) ?? readActiveRunStopIntent(abortController.signal.reason);
     const observed = store.getRun(run.id);
     if (observed?.status === "cancelled" || stopIntent?.kind === "user_cancel" || stopIntent?.kind === "workflow_cancel") {
@@ -554,6 +579,28 @@ async function executeNativeRunRequest(
     }
   }
   return run.id;
+}
+
+/** Freeze role-private input once. Current eligibility is authority, not a fresh recall. */
+function prepareNativeMemory(store: RunStore, request: NativeBoundRunRequest) {
+  const recall = request.preselectedMemoryUse || request.skipMemoryRecall ? undefined : store.recallMemory({
+    teammateId: request.teammateId, channelId: request.task.channelId, taskId: request.task.id,
+    intent: "task-run", query: `${request.task.title}\n${request.task.prompt}`, maxResults: 6,
+  });
+  const selected = request.preselectedMemoryUse ?? (recall?.memories.length ? {
+    memoryIds: recall.memories.map(item => item.memory.id), recallQuery: recall.request.query,
+    policyVersion: recall.policyVersion, renderedPrompt: renderUsedMemoryPrompt(recall.memories),
+    sourceRevisions: createMemorySourceRevisions(recall.memories.map(item => item.memory)),
+  } : undefined);
+  const prompt = selected?.renderedPrompt;
+  const used = selected ? { memoryIds: [...selected.memoryIds], recallQuery: selected.recallQuery, policyVersion: selected.policyVersion } : undefined;
+  if (Boolean(prompt) !== Boolean(used?.memoryIds.length)) {
+    throw new HttpError(409, "native_memory_input_invalid", "Native Memory input requires matching private hydration and source evidence.");
+  }
+  const frozenRequest = { ...request, preselectedMemoryUse: selected };
+  const assertCurrent = (): void => assertPreselectedMemoryCurrent(store, frozenRequest);
+  assertCurrent();
+  return { prompt, used, assertCurrent };
 }
 
 function createNativeRun(input: {

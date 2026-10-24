@@ -58,9 +58,10 @@ import {
   terminalReportsEnabledForStore,
 } from "./terminal-report-coordinator.js";
 import { buildWorkflowEvidence } from "./workflow-evidence.js";
-import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
+import { createMemorySourceRevisions, renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { reviewWorkflowFanInContext } from "./workflow-fanin.js";
 import type { PreselectedMemoryUse } from "../runs/schemas.js";
+import { projectPublicRunSession } from "../runs/public-execution-snapshots.js";
 import { createWorkflowOperationExecutionSnapshot, type WorkflowOperationExecutionSnapshot } from "../runs/workflow-operation-snapshot.js";
 import type {
   ChannelIntentExecutionOperationV1,
@@ -487,7 +488,8 @@ export async function handleChannelWorkflowEvidence(
   try {
     const store = storeRegistry.getStore(cwd);
     const evidence = buildWorkflowEvidence(store, workflowId);
-    writeJson(response, 200, evidence);
+    writeJson(response, 200, { ...evidence,
+      steps: evidence.steps.map((item) => ({ ...item, linkedRun: projectPublicRunSession(item.linkedRun, store) })) });
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",
@@ -562,7 +564,7 @@ export async function handleChannelWorkflowStepEvidence(
     }
     writeJson(response, 200, {
       workflow: evidence.workflow,
-      workflowStep,
+      workflowStep: { ...workflowStep, linkedRun: projectPublicRunSession(workflowStep.linkedRun, store) },
       selectorDecisions: evidence.selectorDecisions.filter((decision) =>
         decision.sourceWorkflowStepId === workflowStepId || decision.selectedWorkflowStepId === workflowStepId,
       ),
@@ -912,7 +914,15 @@ export function prepareWorkflowStepStart(
   if (contextPack.overBudget) {
     return block(`Workflow step context exceeds provider budget (${contextPack.estimatedInputTokens}/${contextPack.budget.inputBudgetTokens} estimated input tokens).`);
   }
-  const taskPrompt = renderWorkflowStepContextPackPrompt(contextPack);
+  // Account for role evidence in the same budget/stamp, but do not place its
+  // private body in the accepted Task that is exposed by Run/WorkUnit views.
+  // Initial execution hydrates the retained section separately; recovery uses
+  // the frozen Runner input rather than recalling or re-rendering Memory.
+  const roleMemorySection = contextPack.sections.find((section) => section.id === "workflow_role_evidence");
+  const retainedMemoryIds = renderedMemory.memoryIds.filter(id => roleMemorySection?.sourceRefIds?.includes(id));
+  const retainedMemorySources = memoryRecall.memories.filter(item => retainedMemoryIds.includes(item.memory.id));
+  const taskPrompt = renderWorkflowStepContextPackPrompt({ ...contextPack,
+    sections: contextPack.sections.filter((section) => section.id !== "workflow_role_evidence") });
   const unavailableRequiredTools = workflowStepUnavailableRequiredTools(channel.allowedTools, step.metadata);
   if (unavailableRequiredTools.length > 0) {
     return block(`Workflow step requires tools not allowed in this channel: ${unavailableRequiredTools.join(", ")}.`);
@@ -931,11 +941,13 @@ export function prepareWorkflowStepStart(
     workflowOperationExecution: createWorkflowOperationExecutionSnapshot(step),
     skipProviderPreflight: input.skipProviderPreflight ?? false,
     skipMemoryRecall: true,
-    preselectedMemoryUse: renderedMemory.memoryIds.length > 0
+    preselectedMemoryUse: roleMemorySection && retainedMemoryIds.length > 0
       ? {
-          memoryIds: renderedMemory.memoryIds,
+          memoryIds: retainedMemoryIds,
           recallQuery: memoryRecallQuery,
           policyVersion: renderedMemory.policyVersion,
+          renderedPrompt: roleMemorySection.text,
+          sourceRevisions: createMemorySourceRevisions(retainedMemorySources.map(item => item.memory)),
         }
       : undefined,
     idempotencyKey: input.idempotencyKey ?? `workflow-step:${step.id}`,

@@ -24,6 +24,7 @@ import {
 } from "../features/control-plane/processors.js";
 import { executeRunRequest, type RunExecutionSink } from "../features/runs/orchestrator.js";
 import { parseRunRequest } from "../features/runs/schemas.js";
+import { projectPublicRunSession } from "../features/runs/public-execution-snapshots.js";
 import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation } from "../features/runs/interventions.js";
 import { RpcOutboundWriter, type RpcOutboundFrame } from "./rpc-outbound.js";
 
@@ -337,7 +338,7 @@ class RpcConnection {
       throw rpcError(-32004, "run_not_found", "Run was not found in the active daemon stores.");
     }
     if (run.status === "cancelled") {
-      return { cancelled: true, active: false, run };
+      return { cancelled: true, active: false, run: projectPublicRunSession(run, store) };
     }
     if (run.status === "succeeded" || run.status === "failed") {
       throw rpcError(-32009, "run_not_cancellable", `Run ${runId} is already ${run.status}.`);
@@ -362,7 +363,7 @@ class RpcConnection {
     return {
       cancelled: true,
       active: !cancelled.inputWait && Boolean(activeRun),
-      run: store.getRun(runId),
+      run: projectPublicRunSession(store.getRun(runId), store),
       event: cancelled.event,
       ...(cancelled.inputWait ? { inputWait: cancelled.inputWait } : {}),
     };
