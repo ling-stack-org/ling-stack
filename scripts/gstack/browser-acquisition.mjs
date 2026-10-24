@@ -150,11 +150,13 @@ function endpoint(value, acquisition) {
 }
 
 async function bounded(promise, signal) {
-  if (signal.aborted) fail("timeout");
   return new Promise((resolve, reject) => {
     const abort = () => reject(new Error("gstack_browser_acquisition_timeout"));
-    signal.addEventListener("abort", abort, { once: true });
+    // The request already exists. Consume its rejection even when filesystem
+    // work exhausted the deadline before the request was created.
     Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
   });
 }
 

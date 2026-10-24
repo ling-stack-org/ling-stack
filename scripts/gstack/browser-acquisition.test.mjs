@@ -226,6 +226,26 @@ test("network and live-owner waiting both have bounded deadlines", { skip }, asy
   assert.deepEqual(await readdir(f.registry), [`${f.key}.lock`]);
 });
 
+test("expiry before the request consumes its rejection and still releases cache ownership", { skip }, async t => {
+  const f = await fixture(t), originalMkdir = fsPromises.mkdir;
+  const mocked = t.mock.method(fsPromises, "mkdir", async (path, ...args) => {
+    // A slow filesystem can consume the deadline before the request is created.
+    if (String(path).endsWith(".partial")) await delay(40);
+    return originalMkdir(path, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { mocked.mock.restore(); syncBuiltinESMExports(); });
+  let requested = false;
+  await assert.rejects(f.acquire({ timeoutMs: 20, request: async (_url, { signal }) => {
+    requested = true;
+    assert.equal(signal.aborted, true);
+    await delay(5000, undefined, { signal });
+    return new Response("late");
+  } }), /timeout/);
+  assert.equal(requested, true);
+  assert.deepEqual(await readdir(f.registry), []);
+});
+
 test("unbounded response bodies are interrupted before any cache is published", { skip }, async t => {
   const f = await fixture(t);
   await assert.rejects(f.acquire({ timeoutMs: 30, request: async () => new Response(new ReadableStream({ start() {} })) }), /timeout/);

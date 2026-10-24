@@ -56,7 +56,7 @@
     "apps/desktop/scripts/cua-driver-signing/after-sign.mjs": "14b9c771fe8e1b084216f6fe760ec0d20500490ad257f97efc312847052e48e4",
     "apps/desktop/scripts/cua-driver-signing/artifact-build-completed.mjs": "456edeb4adb56c332468451f34800501ef2235e5cbcfd01064bc93c7f4db6abb",
     "apps/desktop/scripts/cua-driver-signing/darwin-platform-signer.mjs": "c4fcb9ea0c468bb5d8cc08a772e26467af414f5365b93aecdd1f8ecc55df3538",
-    "apps/desktop/scripts/cua-driver-signing/dmg-attachment-custody.mjs": "3235c65fd8cdcfd7b3208fd44a88b7c914954cbcb8594a2390a1224c7d4565b0",
+    "apps/desktop/scripts/cua-driver-signing/dmg-attachment-custody.mjs": "350df396c8ed640154a8ef17c85e95b90ac2a4157b19eed36ccb142e73472500",
     "apps/desktop/scripts/cua-driver-signing/dmg-input-snapshot.mjs": "db6339159cf33b6acb7ed56ef669a52f331c279ef7bb8a4a55bf090684bf0c6e",
     "apps/desktop/scripts/cua-driver-signing/electron-builder-mac-sign.mjs": "bd0d776720c126ba65dce6f3c6a4996353f856befc2c3104f286ac8ac28a52b6",
     "apps/desktop/scripts/cua-driver-signing/final-artifact-extractor.mjs": "26c78d05923bab03edb1b0f4b5a73e8af7ebde6c1fd18f6ebb698c073633129d",

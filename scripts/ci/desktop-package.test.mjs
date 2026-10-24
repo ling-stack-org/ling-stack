@@ -20,6 +20,19 @@ test("package diagnostics preserve fatal status and nested assertion stacks", ()
   assert.match(causes[1], /synthetic_inner/u);
 });
 
+test("package diagnostics retain aggregate extraction and cleanup failures", () => {
+  const result = spawnSync(process.execPath, ["--import", new URL("../release/desktop-package-diagnostics.mjs", import.meta.url).href,
+    "--eval", 'throw new AggregateError([new Error("synthetic_attach"), new Error("synthetic_cleanup", { cause: new Error("synthetic_command") })], "synthetic_aggregate");'], { encoding: "utf8" });
+  assert.equal(result.status, 1);
+  const diagnostic = result.stderr.split("\n").find(line => line.startsWith("desktop_package_failure_causes="));
+  assert.ok(diagnostic, result.stderr);
+  const causes = JSON.parse(diagnostic.slice("desktop_package_failure_causes=".length));
+  assert.equal(causes.length, 4);
+  for (const message of ["synthetic_aggregate", "synthetic_attach", "synthetic_cleanup", "synthetic_command"]) {
+    assert.ok(causes.some(stack => stack.includes(message)), message);
+  }
+});
+
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "ling-desktop-payload-test-"));
   t.after(() => rm(root, { recursive: true, force: true }));
