@@ -134,6 +134,9 @@ jobs:
           corepack pnpm install --frozen-lockfile
       - name: Observe tools and source prerequisites without granting approval
         run: node scripts/release/desktop-prerequisites.mjs inspect
+      - name: Build the source and browser manifest verifier dependencies
+        if: env.DESKTOP_OPERATION == 'build'
+        run: corepack pnpm --workspace-concurrency=1 --filter '@ling-stack/core...' build
       - name: Check release, installer and material contracts on the native host
         if: env.DESKTOP_OPERATION == 'build'
         run: |
@@ -163,9 +166,6 @@ jobs:
           node apps/desktop/scripts/distribution/materials.mjs inspect \
             --platform "$DESKTOP_MATERIAL_PLATFORM" \
             > .codex-artifacts/desktop-release/distribution-inspection.json
-      - name: Build the source and browser manifest verifier dependencies
-        if: env.DESKTOP_OPERATION == 'build'
-        run: corepack pnpm --workspace-concurrency=1 --filter '@ling-stack/core...' build
       - name: Produce complete package-owned gstack resources from pinned upstream inputs
         if: env.DESKTOP_OPERATION == 'build'
         run: |
