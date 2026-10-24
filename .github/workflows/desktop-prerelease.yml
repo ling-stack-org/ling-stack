@@ -252,6 +252,16 @@ jobs:
       - name: Collect bounded gstack source and import graph evidence
         if: always() && env.DESKTOP_OPERATION == 'build'
         run: node scripts/release/collect-gstack-evidence.mjs
+      - name: Retain failed macOS archives for diagnosis without admitting a candidate
+        if: failure() && env.DESKTOP_OPERATION == 'build' && runner.os == 'macOS'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: desktop-unverified-archives-${{ matrix.target }}
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+          if-no-files-found: warn
+          retention-days: 3
       - name: Retain prerequisite and platform evidence, including blocked checks
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

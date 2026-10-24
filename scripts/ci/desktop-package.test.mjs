@@ -33,6 +33,27 @@ test("package diagnostics retain aggregate extraction and cleanup failures", () 
   }
 });
 
+for (const timedOut of [true, false]) {
+  test(`package diagnostics distinguish ${timedOut ? "a killed command" : "a command rejection"}`, () => {
+    const source = `import { promisify } from "node:util"; import { execFile } from "node:child_process";
+      await promisify(execFile)(process.execPath, ["--eval", ${JSON.stringify(timedOut
+        ? "setInterval(() => {}, 1000)" : 'process.stderr.write("synthetic_signature_rejected"); process.exit(3)')}],
+      { timeout: ${timedOut ? 100 : 10000} });`;
+    const result = spawnSync(process.execPath, ["--import", new URL("../release/desktop-package-diagnostics.mjs", import.meta.url).href,
+      "--input-type=module", "--eval", source], { encoding: "utf8" });
+    assert.equal(result.status, 1);
+    const diagnostic = result.stderr.split("\n").find(line => line.startsWith("desktop_package_command_failures="));
+    assert.ok(diagnostic, result.stderr);
+    const [command] = JSON.parse(diagnostic.slice("desktop_package_command_failures=".length));
+    assert.equal(command.killed, timedOut);
+    if (timedOut) assert.equal(command.signal, "SIGTERM");
+    else {
+      assert.equal(command.code, 3);
+      assert.equal(command.stderr, "synthetic_signature_rejected");
+    }
+  });
+}
+
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "ling-desktop-payload-test-"));
   t.after(() => rm(root, { recursive: true, force: true }));
