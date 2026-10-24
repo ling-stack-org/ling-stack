@@ -45,14 +45,19 @@ async function directory(path, create = false, privateDirectory = false) {
   let canonical;
   if (!stat.isDirectory() || stat.isSymbolicLink() || (canonical = await realpath(path)) !== path ||
     process.getuid && (stat.uid !== process.getuid() || privateDirectory && stat.mode & 0o077)) {
-    // Observe only a rejected directory; normal lock I/O and validation order
-    // remain unchanged so diagnostics do not serialize a concurrent recovery.
+    // NTFS can resolve a removed handle into $Extend/$Deleted. Distinguish a
+    // confirmed obsolete observation from a stable alias; neither is trusted.
     const identity = value => ({ directory: value.isDirectory(), symbolicLink: value.isSymbolicLink(),
       dev: String(value.dev), ino: String(value.ino), mode: value.mode, uid: value.uid });
-    let after;
-    try { after = identity(await lstat(path)); }
+    let current, after;
+    try { current = await lstat(path); after = identity(current); }
     catch (error) { after = { error: error.code }; }
-    const error = new Error("testsavant_model_cache_directory_invalid");
+    const validBefore = stat.isDirectory() && !stat.isSymbolicLink() && (!process.getuid ||
+      stat.uid === process.getuid() && (!privateDirectory || !(stat.mode & 0o077)));
+    const obsolete = validBefore && canonical !== undefined && canonical !== path &&
+      (after.error === "ENOENT" || current && (current.dev !== stat.dev || current.ino !== stat.ino));
+    const error = new Error(obsolete ? "testsavant_model_cache_directory_changed" : "testsavant_model_cache_directory_invalid");
+    if (obsolete) error.code = "ESTALE";
     error.directoryObservation = { path: path.slice(0, 2048), canonical: canonical?.slice(0, 2048) ?? null,
       before: identity(stat), after };
     throw error;
@@ -157,7 +162,13 @@ export function createTestsavantModelCache({ modelPin = pin, request = fetch, ti
       const abandoned = new Set();
       await retryLockIo(async () => {
         try {
-          await directory(lock, false, true);
+          try { await directory(lock, false, true); }
+          catch (error) {
+            // No mutation followed this obsolete observation. Re-enter the
+            // normal claim loop, which retains the original overall deadline.
+            if (error.code === "ESTALE") return;
+            throw error;
+          }
           const names = await readdir(lock);
           if (!names.length) {
             // A terminated writer/recovery may leave an empty lock. Nonrecursive

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import fsPromises, { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, rmdir, writeFile } from "node:fs/promises";
+import fsPromises, { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, rmdir, writeFile } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -155,6 +155,130 @@ test("an empty orphaned lock with many independent writers publishes exactly one
     throw error;
   }
 });
+
+for (const replacement of ["removed", "live-owner", "stable-alias"]) {
+  test(`a deleted canonical lock observation handles ${replacement} without trusting an alias or deleting a new owner`, async t => {
+    const f = await fixture(t), lock = `${f.final}.lock`, token = randomUUID();
+    await mkdir(f.models, { recursive: true, mode: 0o700 });
+    await mkdir(lock, { mode: 0o700 });
+    const originalRename = fsPromises.rename, originalRealpath = fsPromises.realpath;
+    const rename = t.mock.method(fsPromises, "rename", async (from, to) => {
+      if (to === lock && await lstat(to).catch(error => { if (error.code !== "ENOENT") throw error; })) {
+        throw Object.assign(new Error("Directory target already exists"), { code: "EPERM" });
+      }
+      return originalRename(from, to);
+    });
+    let injected = false;
+    const canonical = t.mock.method(fsPromises, "realpath", async path => {
+      if (path !== lock || injected) return originalRealpath(path);
+      injected = true;
+      // The hosted NTFS reproduction returned $Extend/$Deleted after its
+      // handle's original empty directory had already been removed.
+      if (replacement !== "stable-alias") await rmdir(lock);
+      if (replacement === "live-owner") {
+        await mkdir(lock, { mode: 0o700 });
+        await writeFile(join(lock, `owner-${token}.json`), JSON.stringify({ pid: process.pid, token }));
+      }
+      return join(f.stateRoot, "$Extend", "$Deleted", token);
+    });
+    syncBuiltinESMExports();
+    t.after(() => { canonical.mock.restore(); rename.mock.restore(); syncBuiltinESMExports(); });
+    const acquire = createTestsavantModelCache({ ...f, pollMs: 1, timeoutMs: 1000 });
+    if (replacement === "removed") {
+      assert.equal(await acquire(f.stateRoot), f.final);
+      assert.equal(f.calls.length, 7);
+      assert.deepEqual(await readdir(f.models), [original.revision]);
+    } else {
+      await assert.rejects(acquire(f.stateRoot), replacement === "live-owner" ? /cache_busy_timeout/ : /cache_directory_invalid/);
+      assert.equal(f.calls.length, 0);
+      assert.deepEqual(await readdir(lock), replacement === "live-owner" ? [`owner-${token}.json`] : []);
+      if (replacement === "live-owner") assert.deepEqual(JSON.parse(await readFile(join(lock, `owner-${token}.json`))), { pid: process.pid, token });
+    }
+    assert.equal(injected, true);
+  });
+}
+
+test("an invalid private lock remains rejected after its canonical directory disappears", {
+  skip: process.platform === "win32" && !process.getuid ? "Windows has no process.getuid private directory mode guard" : false
+}, async t => {
+  assert.equal(typeof process.getuid, "function");
+  const f = await fixture(t), lock = `${f.final}.lock`;
+  await mkdir(f.models, { recursive: true, mode: 0o700 });
+  await mkdir(lock, { mode: 0o700 });
+  await chmod(lock, 0o755);
+  const before = await lstat(lock);
+  assert.equal(before.uid, process.getuid());
+  assert.equal(before.mode & 0o777, 0o755);
+  const originalRename = fsPromises.rename, originalRealpath = fsPromises.realpath;
+  const rename = t.mock.method(fsPromises, "rename", async (from, to) => {
+    if (to === lock && await lstat(to).catch(error => { if (error.code !== "ENOENT") throw error; })) {
+      throw Object.assign(new Error("Directory target already exists"), { code: "EPERM" });
+    }
+    return originalRename(from, to);
+  });
+  let injected = false;
+  const canonical = t.mock.method(fsPromises, "realpath", async path => {
+    if (path !== lock || injected) return originalRealpath(path);
+    injected = true;
+    await rmdir(lock);
+    return join(f.stateRoot, "$Extend", "$Deleted", randomUUID());
+  });
+  t.after(() => { canonical.mock.restore(); rename.mock.restore(); syncBuiltinESMExports(); });
+  syncBuiltinESMExports();
+  await assert.rejects(createTestsavantModelCache({ ...f, pollMs: 1, timeoutMs: 1000 })(f.stateRoot), error => {
+    assert.equal(error.message, "testsavant_model_cache_directory_invalid");
+    assert.notEqual(error.code, "ESTALE");
+    assert.equal(error.directoryObservation.before.mode & 0o777, 0o755);
+    assert.deepEqual(error.directoryObservation.after, { error: "ENOENT" });
+    return true;
+  });
+  assert.equal(injected, true);
+  assert.equal(f.calls.length, 0);
+  assert.deepEqual(await readdir(f.models), []);
+});
+
+for (const code of ["EACCES", "EPERM"]) {
+  test(`a rejected canonical lock observation preserves ${code} without deleting its owner`, async t => {
+    const f = await fixture(t), lock = `${f.final}.lock`, token = randomUUID();
+    const ownerName = `owner-${token}.json`, owner = { pid: process.pid, token };
+    await mkdir(f.models, { recursive: true, mode: 0o700 });
+    await mkdir(lock, { mode: 0o700 });
+    await writeFile(join(lock, ownerName), JSON.stringify(owner));
+    const originalRename = fsPromises.rename, originalRealpath = fsPromises.realpath, originalLstat = fsPromises.lstat;
+    const rename = t.mock.method(fsPromises, "rename", async (from, to) => {
+      if (to === lock && await lstat(to).catch(error => { if (error.code !== "ENOENT") throw error; })) {
+        throw Object.assign(new Error("Directory target already exists"), { code: "EPERM" });
+      }
+      return originalRename(from, to);
+    });
+    let injected = false, denied = false;
+    const canonical = t.mock.method(fsPromises, "realpath", async path => {
+      if (path !== lock || injected) return originalRealpath(path);
+      injected = true;
+      return join(f.stateRoot, "$Extend", "$Deleted", token);
+    });
+    const stat = t.mock.method(fsPromises, "lstat", async (path, ...args) => {
+      if (path === lock && injected && !denied) {
+        denied = true;
+        throw Object.assign(new Error("Directory observation denied"), { code });
+      }
+      return originalLstat(path, ...args);
+    });
+    t.after(() => { stat.mock.restore(); canonical.mock.restore(); rename.mock.restore(); syncBuiltinESMExports(); });
+    syncBuiltinESMExports();
+    await assert.rejects(createTestsavantModelCache({ ...f, pollMs: 1, timeoutMs: 1000 })(f.stateRoot), error => {
+      assert.equal(error.message, "testsavant_model_cache_directory_invalid");
+      assert.notEqual(error.code, "ESTALE");
+      assert.deepEqual(error.directoryObservation.after, { error: code });
+      return true;
+    });
+    assert.equal(injected, true); assert.equal(denied, true);
+    assert.equal(f.calls.length, 0);
+    assert.deepEqual(await readdir(f.models), [`${original.revision}.lock`]);
+    assert.deepEqual(await readdir(lock), [ownerName]);
+    assert.deepEqual(JSON.parse(await readFile(join(lock, ownerName))), owner);
+  });
+}
 
 for (const replacement of ["removed", "new-owner"]) {
   test(`writer cleanup tolerates another recovery leaving the released lock ${replacement}`, async t => {
