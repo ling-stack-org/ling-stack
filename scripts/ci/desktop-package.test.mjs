@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { execFileSync, spawnSync } from "node:child_process";
+import { cp, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { inventoryApplicationTree } from "../release/desktop-payload.mjs";
+import { extractedApplicationPath, inventoryApplicationTree } from "../release/desktop-payload.mjs";
+import { extractCuaDriverFinalArtifact } from "../../apps/desktop/scripts/cua-driver-signing/final-artifact-extractor.mjs";
 import { smokeWindowsInstaller } from "../release/windows-installer-smoke.mjs";
 import { collectGstackEvidence } from "../release/collect-gstack-evidence.mjs";
 
@@ -67,6 +68,36 @@ async function fixture(t) {
   }
   return { root, app };
 }
+
+test("actual macOS ZIP extraction removes only the OS temporary-root alias", { skip: process.platform !== "darwin" }, async t => {
+  const f = await fixture(t), app = join(f.root, "Ling Stack.app"), archive = join(f.root, "fixture.zip");
+  await mkdir(join(app, "Contents/Resources/gstack"), { recursive: true });
+  await writeFile(join(app, "Contents/Resources/gstack/manifest.json"), "{}");
+  execFileSync("/usr/bin/ditto", ["-c", "-k", "--keepParent", app, archive]);
+  const extracted = await extractCuaDriverFinalArtifact(archive, { platform: "darwin", artifactRole: "outer-zip" }, {
+    mkdtemp: () => mkdtemp("/tmp/ling-cua-final-zip-"),
+  });
+  try {
+    assert.notEqual(extracted.artifactRoot, await realpath(extracted.artifactRoot));
+    const actual = await extractedApplicationPath(extracted.artifactRoot, "macos-arm64");
+    assert.equal(actual, await realpath(actual));
+    assert.equal((await inventoryApplicationTree(actual)).length, 1);
+  } finally { await extracted.cleanup(); }
+});
+
+test("extracted Windows payload resolves to its physical plain directory", async t => {
+  const f = await fixture(t);
+  assert.equal(await extractedApplicationPath(f.app, "windows-x64"), await realpath(f.app));
+});
+
+test("extracted application selection rejects linked roots and linked product Apps", { skip: process.platform === "win32" }, async t => {
+  const f = await fixture(t), linkedRoot = join(f.root, "linked-root"), extraction = join(f.root, "extracted");
+  await symlink(f.app, linkedRoot);
+  await assert.rejects(extractedApplicationPath(linkedRoot, "windows-x64"), /plain directory/);
+  await mkdir(extraction);
+  await symlink(f.app, join(extraction, "Ling Stack.app"));
+  await assert.rejects(extractedApplicationPath(extraction, "macos-arm64"), /plain directory/);
+});
 
 test("installer smoke refuses a local machine before creating or installing files", { skip: process.platform === "win32" }, async () => {
   await assert.rejects(smokeWindowsInstaller({}), /fresh GitHub-hosted Windows/u);

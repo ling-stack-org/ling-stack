@@ -1521,7 +1521,7 @@
     "packages/daemon/src/shared/html-text.ts": "7e1618867d99492f1fa3e4e2027215108581cad50ce88e4a6bdf39910703db4b",
     "apps/desktop/scripts/distribution/installer-builder.mjs": "5a57643811ead96ae8bf2ec27688eeaa85f6bf67075daf99c12fe85ba7dc9b4e",
     "apps/desktop/scripts/distribution/LingShell.nsh": "869fce8f300a4d3a752ea5dafec591cb15d9fc6bd996224b97f26e0bf751adf3",
-    "scripts/gstack/testsavant-model-cache.mjs": "f8bb2d4036041c549618d4f43d5d49ac82fade0a31e910e4a72d17314b404209",
+    "scripts/gstack/testsavant-model-cache.mjs": "e4b4dcbbae35c124b851435b23d69d9dca4c155382e2fdb8a952bd1aa352c541",
     "scripts/gstack/testsavant-model-pin.json": "811623586d295af6c9e378e414d31b755ae2247d8216818d9a24a9a33093e05b",
     "packages/daemon/src/features/conversations/context-compaction-projection.ts": "864e2ff72cf2af7eca0c8bc3aa54130324aef31e20b02de703166888dfe5cbe4"
   },

@@ -198,6 +198,46 @@ for (const replacement of ["removed", "live-owner", "stable-alias"]) {
   });
 }
 
+for (const replacement of ["removed", "live-owner", "stable"]) {
+  test(`a failed native lock realpath handles ${replacement} without trusting a stale handle`, async t => {
+    const f = await fixture(t), lock = `${f.final}.lock`, token = randomUUID();
+    await mkdir(f.models, { recursive: true, mode: 0o700 });
+    await mkdir(lock, { mode: 0o700 });
+    const originalRename = fsPromises.rename, originalRealpath = fsPromises.realpath;
+    const rename = t.mock.method(fsPromises, "rename", async (from, to) => {
+      if (to === lock && await lstat(to).catch(error => { if (error.code !== "ENOENT") throw error; })) {
+        throw Object.assign(new Error("Directory target already exists"), { code: "EPERM" });
+      }
+      return originalRename(from, to);
+    });
+    let injected = false;
+    const canonical = t.mock.method(fsPromises, "realpath", async path => {
+      if (path !== lock || injected) return originalRealpath(path);
+      injected = true;
+      if (replacement !== "stable") await rmdir(lock);
+      if (replacement === "live-owner") {
+        await mkdir(lock, { mode: 0o700 });
+        await writeFile(join(lock, `owner-${token}.json`), JSON.stringify({ pid: process.pid, token }));
+      }
+      throw Object.assign(new Error("Native realpath handle became invalid"), { code: "EBADF" });
+    });
+    syncBuiltinESMExports();
+    t.after(() => { canonical.mock.restore(); rename.mock.restore(); syncBuiltinESMExports(); });
+    const acquire = createTestsavantModelCache({ ...f, pollMs: 1, timeoutMs: 1000 });
+    if (replacement === "removed") {
+      assert.equal(await acquire(f.stateRoot), f.final);
+      assert.equal(f.calls.length, 7);
+      assert.deepEqual(await readdir(f.models), [original.revision]);
+    } else {
+      await assert.rejects(acquire(f.stateRoot), replacement === "live-owner" ? /cache_busy_timeout/ : { code: "EBADF" });
+      assert.equal(f.calls.length, 0);
+      assert.deepEqual(await readdir(lock), replacement === "live-owner" ? [`owner-${token}.json`] : []);
+      if (replacement === "live-owner") assert.deepEqual(JSON.parse(await readFile(join(lock, `owner-${token}.json`))), { pid: process.pid, token });
+    }
+    assert.equal(injected, true);
+  });
+}
+
 test("an invalid private lock remains rejected after its canonical directory disappears", {
   skip: process.platform === "win32" && !process.getuid ? "Windows has no process.getuid private directory mode guard" : false
 }, async t => {

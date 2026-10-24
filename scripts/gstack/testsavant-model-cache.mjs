@@ -42,8 +42,13 @@ export function testsavantModelAcquisition(modelPin = pin) {
 async function directory(path, create = false, privateDirectory = false) {
   if (create) await mkdir(path, { mode: 0o700 }).catch(error => { if (error.code !== "EEXIST") throw error; });
   const stat = await lstat(path);
-  let canonical;
-  if (!stat.isDirectory() || stat.isSymbolicLink() || (canonical = await realpath(path)) !== path ||
+  const validType = stat.isDirectory() && !stat.isSymbolicLink();
+  let canonical, canonicalError;
+  if (validType) {
+    try { canonical = await realpath(path); }
+    catch (error) { if (error.code !== "EBADF") throw error; canonicalError = error; }
+  }
+  if (!validType || canonicalError || canonical !== path ||
     process.getuid && (stat.uid !== process.getuid() || privateDirectory && stat.mode & 0o077)) {
     // NTFS can resolve a removed handle into $Extend/$Deleted. Distinguish a
     // confirmed obsolete observation from a stable alias; neither is trusted.
@@ -52,14 +57,15 @@ async function directory(path, create = false, privateDirectory = false) {
     let current, after;
     try { current = await lstat(path); after = identity(current); }
     catch (error) { after = { error: error.code }; }
-    const validBefore = stat.isDirectory() && !stat.isSymbolicLink() && (!process.getuid ||
+    const validBefore = validType && (!process.getuid ||
       stat.uid === process.getuid() && (!privateDirectory || !(stat.mode & 0o077)));
-    const obsolete = validBefore && canonical !== undefined && canonical !== path &&
+    const obsolete = validBefore && (canonicalError || canonical !== undefined && canonical !== path) &&
       (after.error === "ENOENT" || current && (current.dev !== stat.dev || current.ino !== stat.ino));
-    const error = new Error(obsolete ? "testsavant_model_cache_directory_changed" : "testsavant_model_cache_directory_invalid");
+    const error = canonicalError && !obsolete ? canonicalError : new Error(obsolete
+      ? "testsavant_model_cache_directory_changed" : "testsavant_model_cache_directory_invalid", { cause: canonicalError });
     if (obsolete) error.code = "ESTALE";
     error.directoryObservation = { path: path.slice(0, 2048), canonical: canonical?.slice(0, 2048) ?? null,
-      before: identity(stat), after };
+      canonicalError: canonicalError?.code ?? null, before: identity(stat), after };
     throw error;
   }
   return { dev: stat.dev, ino: stat.ino };

@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 import { fileRecord, readCandidate, targetAssets } from "./desktop-release.mjs";
 import { extractCuaDriverFinalArtifact } from "../../apps/desktop/scripts/cua-driver-signing/final-artifact-extractor.mjs";
 import { readExecutableBundle } from "../gstack/executable-bundle.mjs";
-import { inventoryApplicationTree } from "./desktop-payload.mjs";
+import { extractedApplicationPath, inventoryApplicationTree } from "./desktop-payload.mjs";
 import { smokeWindowsInstaller } from "./windows-installer-smoke.mjs";
 import { createVerifiedDistributionArchive, inventoryDistribution } from "./distribution-archive.mjs";
 import { verifyNsisPlugins } from "./verify-nsis-plugins.mjs";
@@ -98,7 +98,7 @@ export async function verifyDesktopPackage() {
       artifactRole: mac ? (name.endsWith(".zip") ? "outer-zip" : "outer-dmg") : "outer-nsis",
     });
     try {
-      const app = mac ? join(extracted.artifactRoot, "Ling Stack.app") : extracted.artifactRoot;
+      const app = await extractedApplicationPath(extracted.artifactRoot, target);
       const actual = await inspectApplication(app, candidate, target, distribution);
       if (!isDeepStrictEqual(actual, baseline)) throw new Error("Final archive payload differs from the unpacked application");
     } finally { await extracted.cleanup(); }

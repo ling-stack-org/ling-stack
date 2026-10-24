@@ -1,7 +1,22 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, readdir, readlink } from "node:fs/promises";
+import { lstat, readdir, readlink, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+
+/** Preserve a plain extracted root while removing OS temporary-directory aliases. */
+export async function extractedApplicationPath(artifactRoot, target) {
+  if (!["macos-arm64", "windows-x64"].includes(target)) throw new Error("Unsupported native target");
+  const original = await lstat(artifactRoot);
+  if (!original.isDirectory() || original.isSymbolicLink()) throw new Error("Extraction root must be a plain directory");
+  const root = await realpath(artifactRoot);
+  const observations = await Promise.all([lstat(artifactRoot), lstat(root)]);
+  if (observations.some(stat => !stat.isDirectory() || stat.isSymbolicLink()
+    || stat.dev !== original.dev || stat.ino !== original.ino)) throw new Error("Extraction root changed during canonicalization");
+  const app = target === "macos-arm64" ? join(root, "Ling Stack.app") : root;
+  const stat = await lstat(app);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Application payload root must be a plain directory");
+  return app;
+}
 
 /** Compare every shipped file, including Web chunks, native modules and runtime DLLs. */
 export async function inventoryApplicationTree(directory, { allowLinks = false } = {}) {
