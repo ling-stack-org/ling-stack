@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "component": "NSIS embedded zlib runtime and compiler headers",
+  "appBuilderLibVersion": "26.15.3",
+  "toolsetModuleSha256": "a6e3009ca9680aec48646793289224a8df26cfb9c8dafba1e3b08323f09a331b",
+  "releaseName": "nsis-3.0.4.1",
+  "archive": "https://github.com/electron-userland/electron-builder-binaries/releases/download/nsis-3.0.4.1/nsis-3.0.4.1.7z",
+  "archiveSha256": "9877df902530f96357d13a7a31ae2b9df67f48b11ffc9a1700a7c961574ec5fa",
+  "licensePath": "COPYING",
+  "licenseSha256": "3c8de989f6504d52f5f8dfafedb6668cd47201f5d01f1319570727c091425dd6",
+  "scope": "Original COPYING from the exact compiler archive selected by app-builder-lib 26.15.3. The private stock-template overlay retains stock upgrade/rollback and 7z extraction, replaces WinShell calls with MIT LingShell System/COM macros, and removes SpiderBanner display calls. StdUtils/nsis7z original paired source archives are supplied separately."
+}

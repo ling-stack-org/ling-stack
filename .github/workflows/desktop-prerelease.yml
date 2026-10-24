@@ -1,0 +1,308 @@
+name: Desktop prerelease
+run-name: Desktop ${{ inputs.operation || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }} · ${{ inputs.release_tag || github.event.pull_request.head.sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Inspect prerequisites or build both unsigned candidates
+        type: choice
+        options: [inspect, build]
+        default: inspect
+      source_sha:
+        description: Full reviewed source commit SHA
+        type: string
+        required: true
+      release_tag:
+        description: New prerelease tag matching VERSION (for example v0.1.2-alpha.2)
+        type: string
+        required: true
+      create_draft:
+        description: Create a Draft prerelease after BOTH builds pass (source must be on main)
+        type: boolean
+        default: false
+  # Explicit maintainer opt-in permits inspecting a new workflow before landing it.
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Unrelated label events must not replace a queued native package build.
+  group: desktop-prerelease-${{ inputs.release_tag || (contains(fromJSON('["desktop-package-inspect", "desktop-package-build"]'), github.event.label.name) && github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    if: github.event_name == 'workflow_dispatch' || (contains(fromJSON('["desktop-package-inspect", "desktop-package-build"]'), github.event.label.name) && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      source-sha: ${{ steps.candidate.outputs.source-sha }}
+      tag: ${{ steps.candidate.outputs.tag }}
+      version: ${{ steps.candidate.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha || github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+      - name: Validate immutable source and matching prerelease versions
+        id: candidate
+        shell: bash
+        env:
+          DESKTOP_SOURCE_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha }}
+          DESKTOP_RELEASE_TAG: ${{ inputs.release_tag }}
+          DESKTOP_CREATE_DRAFT: ${{ inputs.create_draft && inputs.operation == 'build' }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            DESKTOP_RELEASE_TAG="v$(node -p 'require("./package.json").version')"
+            export DESKTOP_RELEASE_TAG
+          fi
+          node scripts/release/desktop-release.mjs candidate
+
+  package:
+    needs: candidate
+    name: ${{ matrix.target }} · ${{ inputs.operation || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            material-platform: darwin-arm64
+            runner: macos-26
+          - target: windows-x64
+            material-platform: win32-x64
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      DESKTOP_SOURCE_SHA: ${{ needs.candidate.outputs.source-sha }}
+      DESKTOP_RELEASE_TAG: ${{ needs.candidate.outputs.tag }}
+      DESKTOP_TARGET: ${{ matrix.target }}
+      DESKTOP_MATERIAL_PLATFORM: ${{ matrix.material-platform }}
+      DESKTOP_OPERATION: ${{ inputs.operation || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }}
+      RUSTUP_TOOLCHAIN: 1.97.1
+      # The fixed macOS config selects ad-hoc signing and rejects CSC overrides.
+      LING_CUA_SIGNING_TIER: unsigned_dev
+      LING_CUA_DISTRIBUTION_CHANNEL: development
+      LING_CUA_DRIVER_PACKAGE_PROVIDER: "0"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.candidate.outputs.source-sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10.0.0
+          run_install: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+          cache: pnpm
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        if: runner.os == 'Windows'
+        with:
+          dotnet-version: 8.0.x
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - name: Bind Rust to the configured x64 MSVC linker
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:VCToolsInstallDir) { throw 'MSVC toolchain directory is unavailable' }
+          $linker = Join-Path $env:VCToolsInstallDir 'bin\Hostx64\x64\link.exe'
+          if (-not (Test-Path -LiteralPath $linker -PathType Leaf)) { throw "MSVC linker is unavailable: $linker" }
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        if: env.DESKTOP_OPERATION == 'build'
+        with:
+          go-version: 1.26.3
+          cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        if: env.DESKTOP_OPERATION == 'build'
+        with:
+          bun-version: 1.4.4
+      - name: Install pinned Rust toolchain and locked workspace dependencies
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+          corepack enable
+          corepack pnpm install --frozen-lockfile
+      - name: Observe tools and source prerequisites without granting approval
+        run: node scripts/release/desktop-prerequisites.mjs inspect
+      - name: Build the source and browser manifest verifier dependencies
+        if: env.DESKTOP_OPERATION == 'build'
+        run: corepack pnpm --workspace-concurrency=1 --filter '@ling-stack/core...' build
+      - name: Check release, installer and material contracts on the native host
+        if: env.DESKTOP_OPERATION == 'build'
+        run: |
+          node --test scripts/ci/desktop-release.test.mjs scripts/ci/desktop-package.test.mjs \
+            scripts/gstack/source-checkout.test.mjs \
+            scripts/gstack/filter-upstream-self-test-packages.test.mjs \
+            scripts/gstack/prepare-desktop-candidate.test.mjs scripts/gstack/prepare-platform-resource-stage.test.mjs \
+            scripts/gstack/native-runtime-observer-path.test.mjs \
+            scripts/gstack/publish-staged-directory.test.mjs \
+            scripts/gstack/testsavant-model-cache.test.mjs scripts/gstack/testsavant-model-state.test.mjs \
+            scripts/gstack/browser-acquisition.test.mjs scripts/gstack/packaged-browse-launch.test.mjs \
+            apps/desktop/tests/distribution*.test.mjs
+      - name: Check browser publication with bounded managed fixtures
+        if: env.DESKTOP_OPERATION == 'build'
+        run: |
+          node --input-type=module <<'NODE'
+          import { join } from "node:path";
+          import { initResourceWorkspace } from "./scripts/gstack/resource-workspace.mjs";
+          import { runManagedNode } from "./scripts/gstack/run-managed.mjs";
+          const root = join(process.env.RUNNER_TEMP, "gstack-contract-fixtures");
+          await initResourceWorkspace({ root, ciEphemeral: true });
+          const result = await runManagedNode({ root, additionalBytes: 0,
+            args: ["--test", "scripts/gstack/collect-browser-archives.test.mjs", "scripts/gstack/browser-publication-pipeline.test.mjs",
+              "scripts/gstack/materialize-playwright-browser.test.mjs"] });
+          if (result.exitCode !== 0) throw new Error(`gstack_browser_contracts_failed:${result.reason ?? result.exitCode}`);
+          NODE
+      - name: Inspect current distribution inputs without approving redistribution
+        run: |
+          node apps/desktop/scripts/distribution/materials.mjs inspect \
+            --platform "$DESKTOP_MATERIAL_PLATFORM" \
+            > .codex-artifacts/desktop-release/distribution-inspection.json
+      - name: Produce complete package-owned gstack resources from pinned upstream inputs
+        if: env.DESKTOP_OPERATION == 'build'
+        run: |
+          set -euo pipefail
+          desktop_bun="$(command -v bun)"
+          desktop_shell="$(command -v bash)"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            desktop_bun="$(cygpath -m "$desktop_bun")"
+            desktop_shell="$(cygpath -m "$desktop_shell")"
+          fi
+          node scripts/gstack/prepare-desktop-candidate.mjs \
+            --workspace "$RUNNER_TEMP/gstack-candidate" \
+            --bun "$desktop_bun" --shell "$desktop_shell" --ci-ephemeral \
+            --selection "$GITHUB_WORKSPACE/.ling-stack/build/gstack-desktop-selection.json"
+      - name: Require original native and resource prerequisites before packaging
+        if: env.DESKTOP_OPERATION == 'build'
+        run: node scripts/release/desktop-prerequisites.mjs require
+      - name: Build workspace dependencies for the Desktop candidate
+        if: env.DESKTOP_OPERATION == 'build'
+        run: corepack pnpm --workspace-concurrency=1 --filter '@ling-stack/desktop...' build
+      - name: Build native inputs before collecting their locked source and notices
+        if: env.DESKTOP_OPERATION == 'build'
+        run: |
+          set -euo pipefail
+          corepack pnpm --filter @ling-stack/browser-host build:native
+          if [[ "$DESKTOP_TARGET" == "windows-x64" ]]; then
+            corepack pnpm --filter @ling-stack/daemon build:engine-supervisor
+          else
+            rustup run 1.97.1 cargo fetch --locked --manifest-path native/sandbox/Cargo.toml
+          fi
+      - name: Check the actual hosted Office compiler and embedded Electron runtime
+        if: env.DESKTOP_OPERATION == 'build' && runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          desktop_electron="$(node -p 'require("node:module").createRequire(process.cwd()+"/apps/desktop/package.json")("electron")')"
+          desktop_actor="$(node -p 'require("node:fs").realpathSync(process.execPath)')"
+          node native/office-local/scripts/build.mjs --out "$RUNNER_TEMP/office-native-smoke" --headers "$LING_OFFICE_NODE_HEADERS"
+          ELECTRON_RUN_AS_NODE=1 OFFICE_LOCAL_TEST_ACTOR_NODE="$desktop_actor" \
+            "$desktop_electron" native/office-local/tests/run-isolated.mjs \
+            "$RUNNER_TEMP/office-native-smoke/office-local.node" "$RUNNER_TEMP/office-native-smoke-tests"
+      - name: Generate version-matched notices, original licenses and SBOM
+        if: env.DESKTOP_OPERATION == 'build'
+        run: |
+          node apps/desktop/scripts/distribution/materials.mjs prepare \
+            --platform "$DESKTOP_MATERIAL_PLATFORM" \
+            --gstack-workspace "$RUNNER_TEMP/gstack-candidate"
+      - name: Package the native unsigned development candidate
+        if: env.DESKTOP_OPERATION == 'build'
+        run: |
+          set -euo pipefail
+          if [[ "$DESKTOP_TARGET" == "macos-arm64" ]]; then
+            NODE_OPTIONS="--import=$GITHUB_WORKSPACE/scripts/release/desktop-package-diagnostics.mjs" \
+              corepack pnpm --filter @ling-stack/desktop package:mac
+          else
+            corepack pnpm --filter @ling-stack/desktop package:win
+          fi
+      - name: Verify actual final archives, bundled resources and runtime structure
+        if: env.DESKTOP_OPERATION == 'build'
+        run: node scripts/release/verify-desktop-package.mjs
+      - name: Collect fresh install archives and evidence
+        if: env.DESKTOP_OPERATION == 'build'
+        env:
+          DESKTOP_OUTPUT_ROOT: ${{ runner.temp }}/desktop-${{ matrix.target }}
+        run: node scripts/release/desktop-release.mjs collect
+      - name: Retain verified candidate downloads
+        if: env.DESKTOP_OPERATION == 'build'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: desktop-candidate-${{ matrix.target }}
+          path: ${{ runner.temp }}/desktop-${{ matrix.target }}/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Collect bounded gstack source and import graph evidence
+        if: always() && env.DESKTOP_OPERATION == 'build'
+        run: node scripts/release/collect-gstack-evidence.mjs
+      - name: Retain failed macOS archives for diagnosis without admitting a candidate
+        if: failure() && env.DESKTOP_OPERATION == 'build' && runner.os == 'macOS'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: desktop-unverified-archives-${{ matrix.target }}
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+          if-no-files-found: warn
+          retention-days: 3
+      - name: Retain prerequisite and platform evidence, including blocked checks
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: desktop-evidence-${{ matrix.target }}
+          path: .codex-artifacts/desktop-release/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+
+  draft:
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'build' && inputs.create_draft
+    needs: [candidate, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.candidate.outputs.source-sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: desktop-candidate-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/desktop-inputs
+      - name: Verify both platforms and create a new Draft without replacing releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DESKTOP_SOURCE_SHA: ${{ needs.candidate.outputs.source-sha }}
+          DESKTOP_RELEASE_TAG: ${{ needs.candidate.outputs.tag }}
+          DESKTOP_CREATE_DRAFT: "true"
+          DESKTOP_INPUT_ROOT: ${{ runner.temp }}/desktop-inputs
+          DESKTOP_OUTPUT_ROOT: ${{ runner.temp }}/desktop-release
+        run: |
+          set -euo pipefail
+          node scripts/release/desktop-release.mjs assemble
+          node scripts/release/create-desktop-draft.mjs

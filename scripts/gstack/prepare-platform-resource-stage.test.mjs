@@ -6,6 +6,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { prepareGstackPlatformResourceStage } from "./prepare-platform-resource-stage.mjs";
 
+// These admission fixtures reject before executing a shell. Windows requires
+// an explicit absolute interpreter instead of the POSIX /bin/bash default.
+const shellPath = process.execPath;
+
 test("resource preparation requires a detached native receipt and never overwrites an existing stage", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "ling-gstack-resource-stage-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -13,10 +17,17 @@ test("resource preparation requires a detached native receipt and never overwrit
   const output = join(root, "output");
   await mkdir(input); await mkdir(output);
   await writeFile(join(output, "KEEP"), "existing resources");
-  await assert.rejects(prepareGstackPlatformResourceStage({ nativeCandidatePath: input, outputPath: output,
+  await assert.rejects(prepareGstackPlatformResourceStage({ nativeCandidatePath: input, outputPath: output, shellPath,
     target: { platform: "darwin", arch: "arm64" } }), /gstack_resource_native_receipt_required/);
-  await assert.rejects(prepareGstackPlatformResourceStage({ nativeCandidatePath: input, outputPath: output,
+  await assert.rejects(prepareGstackPlatformResourceStage({ nativeCandidatePath: input, outputPath: output, shellPath,
+    packageSelection: "automatic-fallback", target: { platform: "darwin", arch: "arm64" } }), /gstack_resource_package_selection_invalid/);
+  await assert.rejects(prepareGstackPlatformResourceStage({ nativeCandidatePath: input, outputPath: output, shellPath,
     expectedNativeBuildChecksum: `sha256:${"0".repeat(64)}`, target: { platform: "darwin", arch: "arm64" } }), /gstack_resource_output_already_exists/);
+  // The SDK-only mode is recognized, but never bypasses the normal receipt /
+  // existing-output gates or implicitly accepts an unreviewed target/compiler.
+  await assert.rejects(prepareGstackPlatformResourceStage({ nativeCandidatePath: input, outputPath: output, shellPath,
+    packageSelection: "reviewed-sdk-only", expectedNativeBuildChecksum: `sha256:${"0".repeat(64)}`,
+    target: { platform: "darwin", arch: "arm64" } }), /gstack_resource_output_already_exists/);
   assert.equal(await readFile(join(output, "KEEP"), "utf8"), "existing resources");
 });
 
@@ -28,9 +39,9 @@ test("wrong receipt hashes and unaccepted native stages cannot publish or leave 
   const bytes = Buffer.from(JSON.stringify({ schemaVersion: 1, deliveryStage: "source" }));
   await writeFile(join(input, "native-build.json"), bytes);
   const output = join(root, "output");
-  await assert.rejects(prepareGstackPlatformResourceStage({ nativeCandidatePath: input, outputPath: output,
+  await assert.rejects(prepareGstackPlatformResourceStage({ nativeCandidatePath: input, outputPath: output, shellPath,
     expectedNativeBuildChecksum: `sha256:${"0".repeat(64)}`, target: { platform: "darwin", arch: "arm64" } }), /gstack_resource_native_receipt_mismatch/);
-  await assert.rejects(prepareGstackPlatformResourceStage({ nativeCandidatePath: input, outputPath: output,
+  await assert.rejects(prepareGstackPlatformResourceStage({ nativeCandidatePath: input, outputPath: output, shellPath,
     expectedNativeBuildChecksum: `sha256:${createHash("sha256").update(bytes).digest("hex")}`, target: { platform: "darwin", arch: "arm64" } }), /gstack_resource_native_stage_invalid/);
   assert.deepEqual(await readdir(root), ["input"]);
 });
@@ -41,7 +52,7 @@ test("output aliases into the source tree are rejected before creating resources
   const input = join(root, "input");
   await mkdir(input);
   await symlink(input, join(root, "alias"), "junction");
-  await assert.rejects(prepareGstackPlatformResourceStage({ nativeCandidatePath: input,
+  await assert.rejects(prepareGstackPlatformResourceStage({ nativeCandidatePath: input, shellPath,
     outputPath: join(root, "alias/nested/output"), expectedNativeBuildChecksum: `sha256:${"0".repeat(64)}`,
     target: { platform: "darwin", arch: "arm64" } }), /gstack_resource_input_output_overlap/);
   assert.deepEqual(await readdir(input), []);

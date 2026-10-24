@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants, createReadStream } from "node:fs";
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { filterGstackNativePlatformResources } from "./filter-native-platform-resources.mjs";
@@ -16,12 +16,14 @@ import { verifyReviewedGstackShellDependencies } from "./verify-reviewed-shell-d
 import { verifyReviewedGstackShellCommands } from "./verify-reviewed-shell-commands.mjs";
 import { inspectGstackShellInvocations } from "./inspect-shell-invocations.mjs";
 import { managedResourceWrite, resourceCheckpoint, resourceTreeBytes } from "./resource-workspace.mjs";
+import { publishStagedDirectory } from "./publish-staged-directory.mjs";
 
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
 const lock = JSON.parse(await readFile(join(scriptRoot, "upstream-lock.json"), "utf8"));
 const reviewed = JSON.parse(await readFile(join(scriptRoot, "reviewed-source-bundle.json"), "utf8"));
-const adaptationPaths = ["prepare-platform-resource-stage.mjs", "filter-native-platform-resources.mjs",
+const adaptationPaths = ["prepare-platform-resource-stage.mjs", "publish-staged-directory.mjs", "filter-native-platform-resources.mjs",
   "filter-upstream-self-test-packages.mjs", "reviewed-upstream-self-test-packages.json",
+  "reviewed-upstream-self-test-packages-win32-x64.json",
   "filter-reviewed-build-packages.mjs", "filter-build-only-type-packages.mjs", "reviewed-build-only-type-packages.json",
   "materialize-command-links.mjs", "runtime-dependency-audit.mjs", "install-reviewed-notices.mjs",
   "public-domain-package-review.mjs", "reviewed-public-domain-packages.json", "verify-shared-command-closure.mjs",
@@ -113,7 +115,9 @@ async function inventory(root, prefix = "") {
 // A reproducible preparation receipt is not an executable bundle or release approval.
 export async function prepareGstackPlatformResourceStage({ nativeCandidatePath, outputPath,
   expectedNativeBuildChecksum, target = { platform: process.platform, arch: process.arch },
-  shellPath = process.platform === "win32" ? undefined : "/bin/bash", parserPath, expectedParserChecksum, onProgress = () => {} }) {
+  shellPath = process.platform === "win32" ? undefined : "/bin/bash", parserPath, expectedParserChecksum,
+  parserProvenance, packageSelection = "reviewed-prune", onProgress = () => {} }) {
+  if (!["reviewed-prune", "reviewed-sdk-only", "retain-complete-upstream"].includes(packageSelection)) throw new Error("gstack_resource_package_selection_invalid");
   if (!/^sha256:[a-f0-9]{64}$/.test(expectedNativeBuildChecksum ?? "")) throw new Error("gstack_resource_native_receipt_required");
   if (!["darwin", "win32"].includes(target.platform) || !["arm64", "x64"].includes(target.arch)) throw new Error("gstack_resource_target_invalid");
   if (typeof shellPath !== "string" || !isAbsolute(shellPath)) throw new Error("gstack_resource_shell_interpreter_required");
@@ -137,7 +141,6 @@ export async function prepareGstackPlatformResourceStage({ nativeCandidatePath, 
   const lease = await managedResourceWrite(output, { kind: "resource", additionalBytes: (await resourceTreeBytes(source)) * 2 + 512 * 1024 ** 2 });
   await mkdir(dirname(output), { recursive: true });
   const temporary = await realpath(await mkdtemp(join(dirname(output), ".gstack-resource-stage-")));
-  let reserved = false;
   try {
     const candidate = join(temporary, "candidate");
     onProgress("clone native prerequisites into exclusively owned staging");
@@ -146,6 +149,14 @@ export async function prepareGstackPlatformResourceStage({ nativeCandidatePath, 
     await resourceCheckpoint(lease.root);
     await verifyNativeInput(candidate, expectedNativeBuildChecksum, target);
     const runtime = join(candidate, "runtime");
+    if (parserProvenance) {
+      if (parserProvenance.binding !== "pinned-module-and-repeated-native-byte-identity" ||
+        parserProvenance.artifact?.checksum !== expectedParserChecksum || parserProvenance.releaseEligible !== false ||
+        parserProvenance.target?.platform !== target.platform || parserProvenance.target?.arch !== target.arch) {
+        throw new Error("gstack_resource_parser_provenance_invalid");
+      }
+      await writeFile(join(candidate, "shell-parser-build.json"), `${JSON.stringify(parserProvenance, null, 2)}\n`, { flag: "wx" });
+    }
     onProgress("materialize package commands using packaged Node");
     const links = await materializeGstackCommandLinks({ runtimeRoot: runtime, target });
     await writeFile(join(candidate, "command-link-materialization.json"), `${JSON.stringify({
@@ -167,14 +178,27 @@ export async function prepareGstackPlatformResourceStage({ nativeCandidatePath, 
       expectedSourceManifestChecksum: reviewed.manifestChecksum });
     const buildImportBytes = Buffer.from(`${JSON.stringify(bundledBuildImports, null, 2)}\n`);
     await writeFile(join(candidate, "bundled-build-imports.json"), buildImportBytes);
-    onProgress("exclude exact reviewed upstream self-test packages from private staging, preserving client API and external CLI paths");
-    const selfTestSelection = await filterGstackUpstreamSelfTestPackages({ runtimeRoot: runtime, stagingRoot: temporary,
-      target, expectedNativeBuildChecksum, importReports: [sharedCommands, ...bundledBuildImports] });
+    // Every exclusion still requires its exact platform, compiler and import
+    // graph review. SDK-only selection leaves the separate declaration-package
+    // review untouched; other targets can retain the complete upstream tree.
+    const retainedSelection = category => ({ schemaVersion: 1, deliveryStage: "resource-prerequisites",
+      selectionScope: "complete-upstream-retained", category, releaseEligible: false, target,
+      sourceManifestChecksum: reviewed.manifestChecksum, inputNativeBuildChecksum: expectedNativeBuildChecksum,
+      importGraphs: [sharedCommands, ...bundledBuildImports].map(({ dependencyScope, inputGraphChecksum, compilerChecksum }) => ({
+        dependencyScope, inputGraphChecksum, compilerChecksum,
+      })), excludedPackages: [], removedResources: [], removedSizeBytes: 0,
+      completeRuntimeSelection: "pending", compiledArtifactBinding: "pending",
+      pendingGates: ["toolchain-specific-pruning-review", "complete-dynamic-resource-selection", "redistribution-review", "installed-client-acceptance"] });
+    onProgress(packageSelection !== "retain-complete-upstream" ? "exclude exact reviewed upstream self-test packages from private staging, preserving client API and external CLI paths"
+      : "retain complete upstream self-test dependencies; historical toolchain-specific exclusions are not reused");
+    const selfTestSelection = packageSelection !== "retain-complete-upstream" ? await filterGstackUpstreamSelfTestPackages({ runtimeRoot: runtime, stagingRoot: temporary,
+      target, expectedNativeBuildChecksum, importReports: [sharedCommands, ...bundledBuildImports] }) : retainedSelection("upstream-self-test-packages");
     const selectionBytes = Buffer.from(`${JSON.stringify(selfTestSelection, null, 2)}\n`);
     await writeFile(join(candidate, "self-test-package-selection.json"), selectionBytes);
-    onProgress("exclude exact reviewed build-only declarations, preserving Bun and upstream build inputs");
-    const typeSelection = await filterGstackBuildOnlyTypePackages({ runtimeRoot: runtime, stagingRoot: temporary,
-      target, expectedNativeBuildChecksum, importReports: [sharedCommands, ...bundledBuildImports] });
+    onProgress(packageSelection === "reviewed-prune" ? "exclude exact reviewed build-only declarations, preserving Bun and upstream build inputs"
+      : "retain complete build-only declarations; all command and bundled import verification remains required");
+    const typeSelection = packageSelection === "reviewed-prune" ? await filterGstackBuildOnlyTypePackages({ runtimeRoot: runtime, stagingRoot: temporary,
+      target, expectedNativeBuildChecksum, importReports: [sharedCommands, ...bundledBuildImports] }) : retainedSelection("build-only-type-packages");
     const typeSelectionBytes = Buffer.from(`${JSON.stringify(typeSelection, null, 2)}\n`);
     await writeFile(join(candidate, "build-only-type-package-selection.json"), typeSelectionBytes);
     const selectedImports = [await verifyGstackClientCommandImports({ runtimeRoot: runtime,
@@ -230,7 +254,7 @@ export async function prepareGstackPlatformResourceStage({ nativeCandidatePath, 
       packageAcceptance: "pending", releaseEligible: false, upstreamRevision: native.upstreamRevision,
       upstreamVersion: native.upstreamVersion, nativeAdaptationRevision: native.adaptationRevision,
       adaptationRevision: `ling-${createHash("sha256").update(adaptationInputs).digest("hex")}`,
-      inputNativeBuildChecksum: expectedNativeBuildChecksum, target, inventoryChecksum: checksum(inventoryBytes),
+      inputNativeBuildChecksum: expectedNativeBuildChecksum, target, packageSelection, inventoryChecksum: checksum(inventoryBytes),
       fileCount: files.length, materializedCommands: links.length, removedPlatformFiles: platformResources.removedResources.length,
       sharedCommandEntrypoints: sharedCommands.entrypoints.length, sharedCommandInputCount: sharedCommands.inputs.length,
       sharedCommandDependencyScope: sharedCommands.dependencyScope,
@@ -266,14 +290,10 @@ export async function prepareGstackPlatformResourceStage({ nativeCandidatePath, 
       auditBlockerCounts: Object.fromEntries([...new Set(audit.blockers.map(b => b.code))].sort().map(code => [code, audit.blockers.filter(b => b.code === code).length])) };
     await writeFile(join(candidate, "resource-stage.json"), `${JSON.stringify(record, null, 2)}\n`);
     await resourceCheckpoint(lease.root);
-    await mkdir(output);
-    reserved = true;
-    await rename(candidate, output);
-    reserved = false;
+    await publishStagedDirectory(candidate, output);
     return record;
   } finally {
-    try { if (reserved) await rmdir(output); }
-    finally { await rm(temporary, { recursive: true, force: true }); }
+    await rm(temporary, { recursive: true, force: true });
   }
 }
 

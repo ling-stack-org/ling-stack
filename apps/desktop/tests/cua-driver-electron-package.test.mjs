@@ -46,6 +46,15 @@ test("Builder CLI starts without a PATH shim or shell in a directory with spaces
   }
 });
 
+test("development NSIS CLI starts through private stock tooling without a PATH shim", async () => {
+  assert.equal(await spawnElectronBuilder({
+    appRoot: desktopRoot,
+    args: ["--win", "nsis", "--version"],
+    environment: { ...process.env, PATH: "", LING_CUA_DRIVER_PACKAGE_PROVIDER: "0",
+      LING_CUA_SIGNING_TIER: "unsigned_dev", LING_CUA_DISTRIBUTION_CHANNEL: "development" },
+  }), 0);
+});
+
 test("Electron Builder config keeps external-only provider authority unchanged by default", async () => {
   const desktopPackage = JSON.parse(await readFile(join(desktopRoot, "package.json"), "utf8"));
   const config = await inspectConfig({

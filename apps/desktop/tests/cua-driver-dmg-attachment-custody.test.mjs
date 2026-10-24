@@ -58,6 +58,26 @@ test("complete before/attach/after receipts bind once and detach only the origin
   assert.equal(f.inventory.length, 0);
 });
 
+test("unrelated kernel APFS images retain all devices without granting detach authority", async () => {
+  const foreign = image({ imagePath: "/tmp/FOREIGN-APFS.sparsebundle", device: "/dev/disk998", mountPoint: "/tmp/other" });
+  // Hosted macOS Cryptex images have an owner UID and no userspace helper PID.
+  delete foreign["hdid-pid"];
+  foreign["system-entities"] = [
+    { "dev-entry": "/dev/disk998", "content-hint": "GUID_partition_scheme" },
+    { "dev-entry": "/dev/disk998s2", "content-hint": "7C3457EF-0000-11AA-AA11-00306543ECAC" },
+    { "dev-entry": "/dev/disk999", "content-hint": "EF57347C-0000-11AA-AA11-00306543ECAC" },
+    { "dev-entry": "/dev/disk999s1", "mount-point": "/tmp/other" },
+  ];
+  const f = fixture({ before: [foreign],
+    attach() { f.inventory.push(foreign); return f.output({ "system-entities": f.ownEntities }); },
+    detach() { f.inventory = [foreign]; return { stdout: "", stderr: "" }; },
+  });
+  await f.custody.attach();
+  await f.custody.detach();
+  assert.deepEqual(detachCalls(f).map(call => call.args), [["detach", DEVICE]]);
+  assert.deepEqual(f.inventory, [foreign]);
+});
+
 test("real native plutil parses synthetic XML without any real hdiutil or filesystem operation", {
   skip: process.platform !== "darwin",
 }, async t => {
@@ -86,7 +106,7 @@ test("preflight refuses existing snapshot, occupied mountpoint and unknown kerne
     ["same-image", [image()], "already_present"],
     ["foreign-mount", [image({ imagePath: "/tmp/FOREIGN.dmg", device: "/dev/disk999" })], "already_present"],
     ["kernel-pid-zero", [image({ imagePath: "/tmp/FOREIGN.dmg", device: "/dev/disk999", mountPoint: "/tmp/other", helperPid: 0 })], "inventory_invalid"],
-    ["kernel-pid-missing", [{ "image-path": "/tmp/FOREIGN.dmg", "owner-uid": OWNER_UID, "system-entities": entities("/dev/disk999", "/tmp/other") }], "inventory_invalid"],
+    ["target-pid-missing", [{ "image-path": SNAPSHOT, "owner-uid": OWNER_UID, "system-entities": entities() }], "inventory_invalid"],
   ];
   for (const [name, before, suffix] of cases) await t.test(name, async () => {
     const f = fixture({ before });
@@ -444,6 +464,8 @@ test("absence includes all original devices and mountpoints, not merely the imag
     ["other-original-mount-reused", [image({ imagePath: "/tmp/FOREIGN.dmg", device: "/dev/disk999", mountPoint: "/tmp/original-second-volume" })]],
   ];
   for (const [name, inventory] of candidates) await t.test(name, async () => {
+    // Missing foreign helper metadata must never hide reused devices/mounts.
+    for (const image of inventory) delete image["hdid-pid"];
     const f = fixture({ ownEntities: oldEntities });
     await f.custody.attach();
     f.inventory = inventory;

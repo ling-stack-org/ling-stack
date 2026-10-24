@@ -21,7 +21,7 @@ export async function buildManagedGstackNodeServerResource(options) {
   try {
     const component = await buildTestsavantComponent({ runtimeRoot: options.runtimeRoot, outputRoot: temporary,
       sourceManifestPath: options.sourceManifestPath, sourceManifestChecksum: options.expectedSourceManifestChecksum,
-      productionOnly: true });
+      productionOnly: true, modelMode: options.modelMode ?? "bundled" });
     const receipt = join(temporary, "testsavant-component.json");
     const checksum = (await readGstackClosureFileRecord(receipt)).checksum;
     const result = await buildGstackNodeServerResource({ ...options,

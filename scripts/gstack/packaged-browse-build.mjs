@@ -27,7 +27,7 @@ const directStates = [
   ["async function ensureServer(flags?: GlobalFlags): Promise<ServerState> {\n  const state = readState();", 1, "state"],
 ];
 
-export async function readPackagedBrowseBuildPins({ root, expectedReceiptChecksum }, sourceChecksum) {
+export async function readPackagedBrowseBuildPins({ root, runtimeRoot, expectedReceiptChecksum }, sourceChecksum) {
   root = resolve(root);
   const receipt = await readGstackClosureFileRecord(join(root, "browse/dist/node-server-build-provenance.json"), {
     retain: true, maximumBytes: 512 * 1024,
@@ -55,8 +55,26 @@ export async function readPackagedBrowseBuildPins({ root, expectedReceiptChecksu
   const browser = await readFile(join(root, "browser-selection.json"), "utf8").then(JSON.parse,
     error => { if (error.code !== "ENOENT") throw error; });
   if (browser) {
+    if (browser.activation === "download-required") {
+      if (browser.source !== "playwright-registry" || browser.entryPath !== "../../gstack-browser/browser-acquisition.json" ||
+        !/^sha256:[a-f0-9]{64}$/.test(browser.componentChecksum) || browser.acquisitionChecksum !== browser.componentChecksum ||
+        browser.target?.platform !== process.platform || browser.target?.arch !== process.arch || !runtimeRoot) {
+        throw new Error("packaged_browse_browser_selection_invalid");
+      }
+      const path = "node_modules/playwright-core/lib/utilsBundle.js";
+      const parser = await readGstackClosureFileRecord(join(runtimeRoot, path), { maximumBytes: 16 * 1024 ** 2 });
+      pins.browser = { activation: "download-required", componentChecksum: browser.componentChecksum,
+        parser: { path, checksum: parser.checksum, sizeBytes: parser.sizeBytes } };
+      return pins;
+    }
+    const slug = process.platform === "darwin" && ["arm64", "x64"].includes(process.arch) ? `mac-${process.arch}`
+      : process.platform === "win32" && process.arch === "x64" ? "win64" : undefined;
+    const registryEntry = slug && (process.platform === "win32" ? "../../gstack-browser/chrome-win64/chrome.exe"
+      : `../../gstack-browser/chrome-${slug}/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`);
+    const admittedEntry = browser.entryPath === "../../gstack-browser/Chromium.app/Contents/MacOS/Chromium"
+      && process.platform === "darwin" && process.arch === "arm64" || browser.source === "playwright-registry" && browser.entryPath === registryEntry;
     if (browser.activation !== "package-relative-only" || !/^sha256:[a-f0-9]{64}$/.test(browser.entryChecksum)
-      || browser.entryPath !== "../../gstack-browser/Chromium.app/Contents/MacOS/Chromium" || !/^sha256:[a-f0-9]{64}$/.test(browser.componentChecksum)
+      || !admittedEntry || !/^sha256:[a-f0-9]{64}$/.test(browser.componentChecksum)
       || browser.target?.platform !== process.platform
       || browser.target?.arch !== process.arch) throw new Error("packaged_browse_browser_selection_invalid");
     pins.browser = { path: browser.entryPath, checksum: browser.entryChecksum, componentChecksum: browser.componentChecksum };
@@ -80,7 +98,7 @@ export function packagedBrowseBuildPlugin({ runtimeRoot, pins }) {
         }
         const start = contents.indexOf(nodeStart), end = contents.indexOf(nodeEnd, start);
         if (end < start) throw new Error("packaged_browse_upstream_launch_changed");
-        contents = contents.slice(0, start) + `${nodeStart}\n    const pid = __lingPackagedBrowseSpawn(server, daemonLogPath(),
+        contents = contents.slice(0, start) + `${nodeStart}\n    const pid = await __lingPackagedBrowseSpawn(server, daemonLogPath(),
       { BROWSE_STATE_FILE: config.stateFile, BROWSE_PARENT_PID: parentPid, ...extraEnv });
     spawnedServer = { pid, startTime: __lingPackagedBrowseProcessIdentity(pid, server) };\n` + contents.slice(end);
         contents = contents.replace(originalLaunch, "export function resolveServerLaunch() { return __lingPackagedBrowseLaunch(); }")

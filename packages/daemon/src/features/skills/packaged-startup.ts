@@ -1,6 +1,6 @@
 import { basename, dirname, join } from "node:path";
 import { realpath } from "node:fs/promises";
-import { verifyBundledBrowser } from "@ling-stack/core/bundled-skill-browser";
+import { verifyPackagedBrowser } from "@ling-stack/core/bundled-skill-browser";
 import { resolveUserConfigPaths } from "@ling-stack/core";
 import { prepareBundledSkillStartup } from "./bundled-startup.js";
 import { readPackagedGstackIdentity } from "./packaged-identity.js";
@@ -34,7 +34,7 @@ export async function preparePackagedGstackStartup() {
     expectedAdaptationRevision: identity.adaptationRevision, expectedTarget: identity.target, expectedSkillIds: identity.skillIds },
     async source => {
       const receipt = JSON.parse(await source.readResource("executable-build.json"));
-      const browser = verifyBundledBrowser(join(resources, "gstack-browser"), receipt.browser?.componentChecksum, identity.target);
+      const browser = verifyPackagedBrowser(join(resources, "gstack-browser"), receipt.browser, identity.target);
       const cache = join(resolveUserConfigPaths().sourcesDir, "bundled-gstack");
       const generations = await retainPackagedSkillGeneration(cache, { rootPath,
         expectedManifestChecksum: source.manifestChecksum, expectedUpstreamRevision: identity.upstreamRevision,

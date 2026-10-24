@@ -4,6 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS } from "../../../packages/daemon/src/runtime/sandbox/packaged-office-native-published-review.ts";
 import { PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS } from "./packaged-office-native-review-inputs.mjs";
+import { observeOfficeNativeToolchain, assertOfficeNativeToolchainProfile } from "./packaged-office-native-toolchain.mjs";
 
 const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
 const nativeRoot = join(repositoryRoot, "native/office-local");
@@ -61,9 +62,10 @@ export function readReviewedPackagedOfficeSource() {
   let review;
   try { review = JSON.parse(bytes.toString("utf8")); }
   catch (cause) { throw new Error("packaged_office_native_source_review_invalid", { cause }); }
+  const portable = review?.schemaVersion === 2;
   exactKeys(review, ["schemaVersion", "reviewId", "approval", "protocolVersion", "napiVersion", "deploymentTarget",
-    "sourceSha256", "packagingSha256", "compiler", "sdk", "headers", "runtime", "signing", "trust"]);
-  requireReview(review.schemaVersion === 1 && review.reviewId === "packaged_office_native_v1"
+    "sourceSha256", "packagingSha256", ...(portable ? ["toolchains"] : ["compiler", "sdk"]), "headers", "runtime", "signing", "trust"]);
+  requireReview((review.schemaVersion === 1 || portable) && review.reviewId === "packaged_office_native_v1"
     && review.approval === "approved_source_and_packaging_review" && review.protocolVersion === 2
     && review.napiVersion === 8 && review.deploymentTarget === "13.0"
     && review.trust === "original_office_source_and_packaging_v1");
@@ -74,17 +76,28 @@ export function readReviewedPackagedOfficeSource() {
   exactKeys(review.signing, ["profile", "mode", "identifier"]);
   requireReview(review.signing.profile === "unsigned_dev" && review.signing.mode === "adhoc"
     && review.signing.identifier === "com.ling-stack.office-local.native");
-  exactKeys(review.compiler, ["path", "version", "sha256"]);
-  exactKeys(review.sdk, ["root", "settingsSha256"]);
-  exactKeys(review.headers, ["root", "sha256"]);
-  requireReview([review.compiler.path, review.sdk.root, review.headers.root].every(path => typeof path === "string"
-    && isAbsolute(path) && resolve(path) === path && realpathSync(path) === path)
-    && typeof review.compiler.version === "string" && review.compiler.version.length > 0
-    && review.compiler.version.length <= 4096 && validHash(review.compiler.sha256)
-    && validHash(review.sdk.settingsSha256));
-  requireReview(hash(bytesAt(review.compiler.path, 512 * 1024 * 1024)) === review.compiler.sha256
-    && hash(bytesAt(join(review.sdk.root, "SDKSettings.json"))) === review.sdk.settingsSha256);
-  assertDigests(review.headers.root, review.headers.sha256, headerNames);
+  if (portable) {
+    exactKeys(review.headers, ["selector", "environment", "sha256"]);
+    requireReview(review.headers.selector === "local_environment_path"
+      && review.headers.environment === "LING_OFFICE_NODE_HEADERS");
+    const observed = observeOfficeNativeToolchain();
+    assertOfficeNativeToolchainProfile(review.toolchains, review.headers.sha256, observed);
+    // Expanded paths/facts are transient observations. The approved JSON stays
+    // static and its digest continues to bind the same-process publication.
+    review = { ...review, compiler: observed.compiler, sdk: observed.sdk, headers: observed.headers };
+  } else {
+    exactKeys(review.compiler, ["path", "version", "sha256"]);
+    exactKeys(review.sdk, ["root", "settingsSha256"]);
+    exactKeys(review.headers, ["root", "sha256"]);
+    requireReview([review.compiler.path, review.sdk.root, review.headers.root].every(path => typeof path === "string"
+      && isAbsolute(path) && resolve(path) === path && realpathSync(path) === path)
+      && typeof review.compiler.version === "string" && review.compiler.version.length > 0
+      && review.compiler.version.length <= 4096 && validHash(review.compiler.sha256)
+      && validHash(review.sdk.settingsSha256));
+    requireReview(hash(bytesAt(review.compiler.path, 512 * 1024 * 1024)) === review.compiler.sha256
+      && hash(bytesAt(join(review.sdk.root, "SDKSettings.json"))) === review.sdk.settingsSha256);
+    assertDigests(review.headers.root, review.headers.sha256, headerNames);
+  }
   assertDigests(nativeRoot, review.sourceSha256, OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS, 4 * 1024 * 1024, 16 * 1024 * 1024);
   assertDigests(repositoryRoot, review.packagingSha256, packagingPaths);
   return Object.freeze({ review: freezeReview(review), sourceReviewSha256: hash(bytes) });
