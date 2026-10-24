@@ -33,8 +33,8 @@ jobs:
           node --test scripts/gstack/testsavant-model-cache.test.mjs scripts/gstack/testsavant-model-state.test.mjs
           node --input-type=module <<'NODE'
           import { spawnSync } from "node:child_process";
-          for (let attempt = 1; attempt <= 20; attempt++) {
-            console.log(`Native orphan-lock recovery sample ${attempt}/20`);
+          for (let attempt = 1; attempt <= 200; attempt++) {
+            console.log(`Native orphan-lock recovery sample ${attempt}/200`);
             const result = spawnSync(process.execPath, ["--test", "--test-name-pattern=^an empty orphaned lock",
               "scripts/gstack/testsavant-model-cache.test.mjs"], { stdio: "inherit" });
             if (result.error) throw result.error;
