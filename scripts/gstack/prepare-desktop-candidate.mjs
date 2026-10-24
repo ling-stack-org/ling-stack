@@ -90,7 +90,7 @@ async function executeStep(step, options) {
     target: { platform: process.platform, arch: process.arch }, onProgress: progress });
   else if (step === "model") await collectTestsavantModel({ onProgress: progress });
   else if (step === "assembly") await assembleExecutableBundle({ stageRoot: paths.resource, browserInspectionRoot: paths.inspection,
-    browserArchivesRoot: paths.archives, outputRoot: paths.executable, modelMode: "download-required",
+    browserArchivesRoot: paths.archives, outputRoot: paths.executable, modelMode: "download-required", browserMode: "download-required",
     expectedStageChecksum: await checksum(paths.resource, "resource-stage.json"),
     expectedArchiveReceiptChecksum: await checksum(paths.archives, "browser-archives.json"),
     expectedBrowserInspectionChecksum: await checksum(paths.inspection, "browser-member-inspection.json"), onProgress: progress });

@@ -9,6 +9,7 @@ import { validateNoticeRestoration } from "./restored-notices.mjs";
 import { builderVersion, originalTemplates, patchInstallerTemplate } from "./installer-builder.mjs";
 import { collectSharpLibvipsMaterials } from "./native-vendor-materials.mjs";
 import { collectCanvasMaterials } from "./canvas-materials.mjs";
+import { verifyPackagedBrowser } from "../../../../packages/core/src/bundled-skill-browser.ts";
 
 export const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 export const platformTargets = Object.freeze({ "darwin-arm64": "aarch64-apple-darwin", "win32-x64": "x86_64-pc-windows-msvc" });
@@ -298,6 +299,19 @@ export function collectGstackBundleNotices(name, directory, add) {
   return files;
 }
 
+export function collectBrowserAcquisitionMaterial(directory, selection, target, add, components) {
+  if (selection?.activation !== "download-required") return false;
+  const descriptor = verifyPackagedBrowser(directory, selection, target);
+  const bytes = readFileSync(descriptor.entry), recipe = JSON.parse(bytes);
+  descriptor.assertCurrent();
+  add("inputs/gstack/browser-acquisition.json", bytes);
+  components.push({ identifier: `external-browser:chrome-for-testing@${recipe.browserVersion}:${target.platform}-${target.arch}`,
+    kind: "external-browser-reference", name: "Google Chrome for Testing", version: recipe.browserVersion,
+    license: "NOASSERTION", licenseFiles: [],
+    scope: "Fixed official URL, archive and member hashes only. Chrome is downloaded directly from the official source into the user's cache on first browser use; no browser binary is redistributed in this candidate. Copyright references do not establish a redistribution grant." });
+  return true;
+}
+
 export function collectGstack(workspace, add, components, gaps, repository = repositoryRoot, platform) {
   if (!workspace) { gaps.push({ component: "gstack", reason: "gstack_workspace_required" }); return; }
   if (!existsSync(workspace)) { gaps.push({ component: "gstack", reason: "gstack_workspace_missing" }); return; }
@@ -348,8 +362,12 @@ export function collectGstack(workspace, add, components, gaps, repository = rep
         ...(pkg ? { declaredLicense: pkg.license } : {}) });
     }
   }
+  const executableReceipt = existsSync(join(bundle, "executable-build.json"))
+    ? JSON.parse(readFileSync(join(bundle, "executable-build.json"))) : undefined;
   for (const [name, directory] of [["gstack", bundle], ["gstack-browser", browser]]) {
     if (!existsSync(directory)) { gaps.push({ component: name, reason: "gstack_bundle_missing" }); continue; }
+    if (name === "gstack-browser" && collectBrowserAcquisitionMaterial(directory, executableReceipt?.browser,
+      { platform: platform?.split("-")[0], arch: platform?.split("-")[1] }, add, components)) continue;
     const notices = collectGstackBundleNotices(name, directory, add);
     if (!notices.length) gaps.push({ component: name, reason: "gstack_bundle_notice_texts_missing" });
   }
@@ -391,10 +409,11 @@ export function collectGstack(workspace, add, components, gaps, repository = rep
     if (!Array.isArray(candidates)) throw new Error("distribution_browser_notice_candidates_invalid");
     for (const candidate of candidates) {
       if (typeof candidate.text !== "string" || candidate.checksum !== `sha256:${sha256(candidate.text)}`) throw new Error("distribution_browser_notice_candidate_digest_mismatch");
-      add(`licenses/gstack/browser-originals/${safeName(`${candidate.archive}/${candidate.path}`)}`, candidate.text);
+      const referenceOnly = executableReceipt?.browser?.activation === "download-required" && candidate.archive !== "ffmpeg";
+      add(`${referenceOnly ? "inputs/gstack/browser-source-references" : "licenses/gstack/browser-originals"}/${safeName(`${candidate.archive}/${candidate.path}`)}`, candidate.text);
     }
   }
-  components.push({ identifier: "gstack:desktop-candidate", kind: "bundled-runtime", name: "gstack with browser/native/model resources", version: "candidate", license: "NOASSERTION", licenseFiles: [] });
+  components.push({ identifier: "gstack:desktop-candidate", kind: "bundled-runtime", name: "gstack with native tools, FFmpeg and fixed browser/model acquisition metadata", version: "candidate", license: "NOASSERTION", licenseFiles: [] });
 }
 
 export function validateBunSourceRevision(version, sourceRevision, reportedRevision) {

@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } fr
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { verifyBundledBrowser } from "../dist/bundled-skill-browser.js";
+import { verifyBrowserAcquisitionDescriptor, verifyBundledBrowser, verifyPackagedBrowser } from "../dist/bundled-skill-browser.js";
+import { browserAcquisitionFixture } from "./support/browser-acquisition-fixture.mjs";
 
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 async function fixture(t) {
@@ -70,4 +71,65 @@ test("Playwright Windows components require the exact package entry and zero lin
     assert.throws(await verify({ ...base, ...mutation }), /component_invalid/);
   }
   assert.throws(await verify(base, { platform: "win32", arch: "arm64" }), /component_invalid/);
+});
+
+async function acquisitionFixture(t, target = { platform: "win32", arch: "x64" }) {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "ling-browser-descriptor-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const data = browserAcquisitionFixture(target), path = join(root, "browser-acquisition.json");
+  await writeFile(path, data.bytes);
+  return { root, path, target, ...data };
+}
+
+test("download-required admission keeps only immutable instructions and performs no download", async t => {
+  t.mock.method(globalThis, "fetch", () => assert.fail("resource admission must not download a browser"));
+  for (const target of [{ platform: "win32", arch: "x64" }, { platform: "darwin", arch: "arm64" }]) {
+    const f = await acquisitionFixture(t, target), browser = verifyPackagedBrowser(f.root, f.selection, target);
+    assert.equal(browser.root, f.root); assert.equal(browser.entry, f.path); assert.equal(browser.checksum, f.checksum);
+    assert.ok(Object.isFrozen(browser)); browser.assertCurrent();
+  }
+  assert.equal(globalThis.fetch.mock.callCount(), 0);
+});
+
+test("descriptor mutation, extra files and substituted roots cannot remain admitted", async t => {
+  for (const mutation of ["bytes", "extra", "file-link", "root-link"]) await t.test(mutation, async t => {
+    const f = await acquisitionFixture(t), browser = verifyBrowserAcquisitionDescriptor(f.root, f.checksum, f.target);
+    if (mutation === "bytes") await writeFile(f.path, "{}");
+    if (mutation === "extra") await writeFile(join(f.root, "chrome.exe"), "unlisted executable");
+    if (mutation === "file-link") {
+      const original = `${f.root}-original.json`; await writeFile(original, f.bytes);
+      t.after(() => rm(original, { force: true })); await unlink(f.path); await symlink(original, f.path);
+    }
+    if (mutation === "root-link") {
+      const alias = `${f.root}-alias`; await symlink(f.root, alias); t.after(() => rm(alias, { force: true }));
+      assert.throws(() => verifyBrowserAcquisitionDescriptor(alias, f.checksum, f.target), /component_invalid/);
+      return;
+    }
+    assert.throws(() => browser.assertCurrent(), /component_invalid/);
+    assert.throws(() => verifyBrowserAcquisitionDescriptor(f.root, f.checksum, f.target), /component_invalid/);
+  });
+});
+
+test("self-consistent descriptor hashes do not admit wrong URLs, targets or incomplete member mappings", async t => {
+  const mutations = [
+    recipe => { recipe.mode = "bundled"; }, recipe => { recipe.schemaVersion = 2; },
+    recipe => { recipe.archive.url = "https://untrusted.invalid/chrome.zip"; },
+    recipe => { recipe.archive.url += "?override=1"; }, recipe => { recipe.archive.sizeBytes = 512 * 1024 ** 2 + 1; },
+    recipe => { recipe.target.arch = "arm64"; }, recipe => { recipe.componentChecksum = digest("different"); },
+    recipe => { recipe.members.pop(); }, recipe => { recipe.members.push(structuredClone(recipe.members[0])); },
+    recipe => { recipe.members[1].path = "../chrome.exe"; }, recipe => { recipe.members[1].sizeBytes++; },
+  ];
+  for (const mutation of mutations) {
+    const f = await acquisitionFixture(t), recipe = structuredClone(f.recipe); mutation(recipe);
+    const bytes = JSON.stringify(recipe); await writeFile(f.path, bytes);
+    assert.throws(() => verifyBrowserAcquisitionDescriptor(f.root, digest(bytes), f.target), /component_invalid/);
+  }
+  const f = await acquisitionFixture(t);
+  for (const change of [{ activation: "arbitrary" }, { acquisitionChecksum: digest("other") },
+    { entryPath: "../../gstack-browser/chrome.exe" }, { target: { platform: "win32", arch: "arm64" } }]) {
+    assert.throws(() => verifyPackagedBrowser(f.root, { ...f.selection, ...change }, f.target), /component_invalid/);
+  }
+  await writeFile(f.path, Buffer.alloc(4 * 1024 ** 2 + 1));
+  const oversizedChecksum = digest(await readFile(f.path));
+  assert.throws(() => verifyBrowserAcquisitionDescriptor(f.root, oversizedChecksum, f.target), /component_invalid/);
 });

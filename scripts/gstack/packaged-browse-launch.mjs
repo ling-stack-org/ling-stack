@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { createRequire, isBuiltin } from "node:module";
 import { dirname, resolve } from "node:path";
-import { verifyBundledBrowser } from "../../packages/core/src/bundled-skill-browser.ts";
+import { runInThisContext } from "node:vm";
+import { verifyBundledBrowser, verifyBrowserAcquisitionDescriptor } from "../../packages/core/src/bundled-skill-browser.ts";
+import { ensureBrowserAcquisition } from "./browser-acquisition.mjs";
 
 const packagedBrowsePins = "NO_PACKAGED_BROWSE_PINS";
 
@@ -13,6 +16,28 @@ function verify(path, expected, maximumBytes) {
   const bytes = readFileSync(path), after = lstatSync(path);
   if (bytes.length !== before.size || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs ||
     `sha256:${createHash("sha256").update(bytes).digest("hex")}` !== expected) throw new Error("packaged_browse_resource_mismatch");
+  return bytes;
+}
+
+/** The pinned vendor bundle is self-contained. Optional native dependencies
+ * must not resolve through NODE_PATH, parent directories or a user's install. */
+export function loadPackagedBrowserZipParser(path, expected) {
+  const bytes = verify(path, expected, 16 * 1024 ** 2), nativeRequire = createRequire(path);
+  const builtin = name => {
+    if (!isBuiltin(name)) {
+      const error = new Error("packaged_browse_parser_dependency_not_builtin");
+      error.code = "MODULE_NOT_FOUND";
+      throw error;
+    }
+    return nativeRequire(name);
+  };
+  builtin.resolve = name => { if (!isBuiltin(name)) return builtin(name); return name; };
+  const module = { exports: {} };
+  const load = runInThisContext(`(function(require,module,exports,__filename,__dirname){\n${bytes.toString("utf8")}\n})`, { filename: path });
+  load(builtin, module, module.exports, path, dirname(path));
+  verify(path, expected, 16 * 1024 ** 2);
+  if (typeof module.exports.yauzl?.openPromise !== "function") throw new Error("packaged_browse_parser_invalid");
+  return module.exports.yauzl;
 }
 
 /** The executable's own adjacent resources are authoritative, never PATH/env. */
@@ -24,15 +49,19 @@ export function packagedBrowseLaunch() {
   verify(node, pins.node, 256 * 1024 ** 2);
   verify(script, pins.server, 16 * 1024 ** 2);
   verify(resolve(dist, "bun-polyfill.cjs"), pins.polyfill, 2 * 1024 ** 2);
-  let browser;
-  if (pins.browser) {
+  let browser, acquisition;
+  if (pins.browser?.activation === "download-required") {
+    const descriptor = verifyBrowserAcquisitionDescriptor(resolve(runtime, "../../gstack-browser"), pins.browser.componentChecksum,
+      { platform: process.platform, arch: process.arch });
+    acquisition = { descriptor, recipe: JSON.parse(readFileSync(descriptor.entry)), parser: pins.browser.parser };
+  } else if (pins.browser) {
     const component = verifyBundledBrowser(resolve(runtime, "../../gstack-browser"), pins.browser.componentChecksum,
       { platform: process.platform, arch: process.arch });
     browser = component.entry;
     if (resolve(runtime, pins.browser.path) !== browser) throw new Error("packaged_browse_browser_selection_invalid");
     verify(browser, pins.browser.checksum, 256 * 1024 ** 2);
   }
-  return { runtime: "node", script, node, ...(browser ? { browser } : {}) };
+  return { runtime: "node", script, node, ...(browser ? { browser } : {}), ...(acquisition ? { acquisition } : {}) };
 }
 
 export function packagedBrowseHealth(health) {
@@ -82,7 +111,22 @@ export function packagedBrowseEnvironment(source = process.env, extra = {}) {
 }
 
 /** Only the launcher receives this environment; Node preload/load paths never cross it. */
-export function packagedBrowseSpawn(server, logPath, extra) {
+export async function packagedBrowseSpawn(server, logPath, extra) {
+  let browser = server.browser, acquired;
+  if (server.acquisition) {
+    const { descriptor, recipe, parser } = server.acquisition;
+    descriptor.assertCurrent();
+    const runtime = resolve(dirname(server.script), "../..");
+    if (parser.path !== "node_modules/playwright-core/lib/utilsBundle.js") throw new Error("packaged_browse_parser_invalid");
+    const parserPath = resolve(runtime, parser.path);
+    const yauzl = loadPackagedBrowserZipParser(parserPath, parser.checksum);
+    process.stderr.write("Preparing verified browser cache (first use requires the official download)...\n");
+    acquired = await ensureBrowserAcquisition({ stateRoot: process.env.GSTACK_STATE_ROOT, acquisition: recipe, yauzl });
+    process.stderr.write("Verified browser cache is ready.\n");
+    descriptor.assertCurrent();
+    acquired.assertCurrent();
+    browser = acquired.entry;
+  }
   const code = `const fs=require('node:fs'),{spawn}=require('node:child_process');
     let fd;try{fd=fs.openSync(${JSON.stringify(logPath)},'a')}catch{fd='ignore'}
     const child=spawn(process.execPath,[${JSON.stringify(server.script)}],{detached:true,windowsHide:true,
@@ -91,14 +135,19 @@ export function packagedBrowseSpawn(server, logPath, extra) {
     child.once('spawn',()=>{fs.writeSync(1,String(child.pid));child.unref()});
     if(typeof fd==='number')fs.closeSync(fd);`;
   const env = packagedBrowseEnvironment(process.env, extra);
-  if (server.browser) {
-    env.GSTACK_CHROMIUM_PATH = server.browser;
+  if (browser) {
+    env.GSTACK_CHROMIUM_PATH = browser;
     delete env.BROWSE_HEADLESS_SKIP;
     env.PLAYWRIGHT_BROWSERS_PATH = resolve(dirname(server.script), "../../browser-cache");
     delete env.CI;
     delete env.CONTAINER;
     delete env.GSTACK_CHROMIUM_NO_SANDBOX;
   }
+  // Task environment never chooses the acquisition URL, cache root or browser.
+  // The fixed executable above is used for headed and headless sessions alike.
+  if (server.acquisition && !browser) throw new Error("packaged_browse_acquisition_missing");
+  server.acquisition?.descriptor.assertCurrent();
+  acquired?.assertCurrent();
   const result = Bun.spawnSync([server.node, "-e", code], {
     env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, timeout: 5000,
   });

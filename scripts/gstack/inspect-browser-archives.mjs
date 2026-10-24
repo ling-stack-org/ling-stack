@@ -83,7 +83,9 @@ function requiredArtifacts(archive, target) {
     return { prefix, executable: `${prefix}/chrome-headless-shell${target.platform === "win32" ? ".exe" : ""}`, notice: `${prefix}/LICENSE.headless_shell` };
   }
   const prefix = `chrome-${slug}`;
-  if (target.platform === "win32") return { prefix, executable: `${prefix}/chrome.exe`, notice: `${prefix}/WidevineCdm/LICENSE` };
+  // The Windows Chrome for Testing archive carries ABOUT, not a Widevine
+  // license. This original copyright/reference material grants no approval.
+  if (target.platform === "win32") return { prefix, executable: `${prefix}/chrome.exe`, notice: `${prefix}/ABOUT` };
   const framework = `${prefix}/Google Chrome for Testing.app/Contents/Frameworks/Google Chrome for Testing Framework.framework`;
   const version = `${framework}/Versions/${archive.browserVersion}`;
   return { prefix, executable: `${prefix}/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`,

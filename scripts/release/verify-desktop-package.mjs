@@ -11,6 +11,7 @@ import { inventoryApplicationTree } from "./desktop-payload.mjs";
 import { smokeWindowsInstaller } from "./windows-installer-smoke.mjs";
 import { createVerifiedDistributionArchive, inventoryDistribution } from "./distribution-archive.mjs";
 import { verifyNsisPlugins } from "./verify-nsis-plugins.mjs";
+import { runManagedNode } from "../gstack/run-managed.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const desktopRoot = join(root, "apps/desktop");
@@ -112,6 +113,13 @@ export async function verifyDesktopPackage() {
   if (runtime?.electron !== expectedElectron) throw new Error("Packaged Electron runtime did not start with the pinned version");
   const runnerInstallerSmoke = mac ? { status: "not_run" }
     : await smokeWindowsInstaller({ installer: join(releaseRoot, targetAssets(candidate, target)[0]), unpacked, candidate });
+  const browserSmokePath = join(evidenceRoot, "browser-acquisition-smoke.json");
+  const browserSmoke = await runManagedNode({ root: join(process.env.RUNNER_TEMP, "gstack-candidate"),
+    args: [join(root, "scripts/release/browser-acquisition-smoke.mjs"),
+      join(unpacked, mac ? "Contents/Resources/gstack" : "resources/gstack"), browserSmokePath],
+    additionalBytes: 2 * 1024 ** 3, timeoutMs: 8 * 60000 });
+  if (browserSmoke.exitCode !== 0) throw new Error(`desktop_browser_acquisition_smoke_failed:${browserSmoke.reason ?? browserSmoke.exitCode}`);
+  const runnerBrowserSmoke = JSON.parse(await readFile(browserSmokePath));
   for (const record of archives) {
     if (!isDeepStrictEqual(await fileRecord(join(releaseRoot, record.name)), record)) throw new Error("Final archive changed during installer smoke");
   }
@@ -119,7 +127,7 @@ export async function verifyDesktopPackage() {
     archivePath: join(evidenceRoot, "distribution.tar.gz"), expected: distribution });
   const report = { ...candidate, target, status: "passed", acceptance: "archive_contents_and_unsigned_structure_only",
     archives, distributionArchive, ...(installerPlugins ? { installerPlugins } : {}), ...baseline,
-    electronRuntime: runtime, runnerInstallerSmoke, runtimeAcceptance: "not_run", installedUserAcceptance: "not_run" };
+    electronRuntime: runtime, runnerInstallerSmoke, runnerBrowserSmoke, runtimeAcceptance: "not_run", installedUserAcceptance: "not_run" };
   await writeFile(join(evidenceRoot, "package-verification.json"), JSON.stringify(report, null, 2) + "\n", { flag: "wx" });
   return report;
 }

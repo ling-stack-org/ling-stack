@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { collectDotnetRuntimeMaterials, collectGstackBundleNotices, createSpdx, createThirdPartyNotices, declaredLicenseMaterials, filesBelow, hasCompleteReadmeGrant, lockedPackageKeys, noticePattern, parseArguments, sha256, validateBunSourceRevision, verifyMaterials, writeMaterials } from "../scripts/distribution/materials.mjs";
+import { collectBrowserAcquisitionMaterial, collectDotnetRuntimeMaterials, collectGstackBundleNotices, createSpdx, createThirdPartyNotices, declaredLicenseMaterials, filesBelow, hasCompleteReadmeGrant, lockedPackageKeys, noticePattern, parseArguments, sha256, validateBunSourceRevision, verifyMaterials, writeMaterials } from "../scripts/distribution/materials.mjs";
+import { browserAcquisitionFixture } from "../../../packages/core/test/support/browser-acquisition-fixture.mjs";
 import { createHash } from "node:crypto";
 import { packageIntegrity, validateNoticeRestoration } from "../scripts/distribution/restored-notices.mjs";
 import { collectCanvasMaterials } from "../scripts/distribution/canvas-materials.mjs";
@@ -108,6 +109,24 @@ test("bundle notice collection retains symlink skipping and independent bundle g
   assert.equal(first[0].sourcePath, "LICENSE");
   assert.notEqual(first[0].materialPath, second[0].materialPath);
   assert.equal(new Set(paths).size, paths.length);
+});
+
+test("browser acquisition materials preserve fixed metadata and reject any bundled Chrome payload", t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-browser-reference-test-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const f = browserAcquisitionFixture(), target = f.recipe.target, material = new Map(), components = [];
+  writeFileSync(join(root, "browser-acquisition.json"), f.bytes);
+  assert.equal(collectBrowserAcquisitionMaterial(root, f.selection, target,
+    (path, bytes) => material.set(path, bytes), components), true);
+  assert.deepEqual(material.get("inputs/gstack/browser-acquisition.json"), f.bytes);
+  assert.equal(components[0].kind, "external-browser-reference");
+  assert.deepEqual(components[0].licenseFiles, []);
+  assert.match(components[0].scope, /no browser binary is redistributed/);
+  writeFileSync(join(root, "chrome.exe"), "unlisted browser payload");
+  assert.throws(() => collectBrowserAcquisitionMaterial(root, f.selection, target, () => {}, []), /component_invalid/);
+  rmSync(join(root, "chrome.exe"));
+  assert.throws(() => collectBrowserAcquisitionMaterial(root, { ...f.selection, acquisitionChecksum: `sha256:${"0".repeat(64)}` }, target, () => {}, []), /component_invalid/);
+  assert.throws(() => collectBrowserAcquisitionMaterial(root, f.selection, { platform: "darwin", arch: "arm64" }, () => {}, []), /component_invalid/);
 });
 
 test("Bun's actual nine-character version output binds the fixed full source revision", () => {

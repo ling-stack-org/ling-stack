@@ -4,7 +4,8 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { isDeepStrictEqual } from "node:util";
-import { verifyBundledBrowser } from "../../packages/core/src/bundled-skill-browser.ts";
+import { verifyBrowserAcquisitionDescriptor, verifyBundledBrowser } from "../../packages/core/src/bundled-skill-browser.ts";
+import { browserAcquisitionBytes } from "./browser-acquisition.mjs";
 import { bundleFile, digest } from "./executable-bundle.mjs";
 import { verifyBrowserArchiveCandidates, validateRequiredBrowserArtifacts } from "./inspect-browser-archives.mjs";
 import { inspectBrowserZip } from "./inspect-browser-zip.mjs";
@@ -63,7 +64,9 @@ export async function extractVerifiedBrowserArchive({ zipPath, yauzl, inspected,
 /** Materialization permits development candidate tests, without granting redistribution approval. */
 export async function materializePlaywrightBrowser({ resourceStagePath, archivePath, inspectionPath,
   expectedResourceStageChecksum, expectedArchiveReceiptChecksum, expectedInspectionChecksum,
-  browserOutputRoot, cacheOutputRoot, managedRoot, target = { platform: process.platform, arch: process.arch } }) {
+  browserOutputRoot, cacheOutputRoot, managedRoot, browserMode = "bundled",
+  target = { platform: process.platform, arch: process.arch } }) {
+  if (!["bundled", "download-required"].includes(browserMode)) fail("browser_mode_invalid");
   if (!hash(expectedInspectionChecksum) || target.platform !== process.platform || target.arch !== process.arch) fail("detached_host_inputs_required");
   inspectionPath = resolve(inspectionPath);
   if (await realpath(inspectionPath) !== inspectionPath) fail("inspection_alias");
@@ -102,24 +105,43 @@ export async function materializePlaywrightBrowser({ resourceStagePath, archiveP
     inspections.set(archive.name, { archive, actual, required });
   }
   const chromium = inspections.get("chromium"), ffmpeg = inspections.get("ffmpeg");
-  await resourceCheckpoint(managedRoot, chromium.actual.totalBytes + ffmpeg.actual.totalBytes);
-  await extractVerifiedBrowserArchive({ zipPath: join(verified.root, chromium.archive.filename), yauzl,
-    inspected: chromium.actual, outputRoot: browserOutputRoot, target, checkpoint: () => resourceCheckpoint(managedRoot) });
-  const component = Buffer.from(`${JSON.stringify({ schemaVersion: 1, source: "playwright-registry", target,
+  const component = { schemaVersion: 1, source: "playwright-registry", target,
     entryPath: chromium.required.executablePath,
     files: chromium.actual.members.filter(row => row.kind === "file").map(({ path, checksum, sizeBytes }) => ({ path, checksum, sizeBytes })),
-    links: chromium.actual.members.filter(row => row.kind === "link").map(({ path, linkTarget, resolvedTarget }) => ({ path, linkTarget, resolvedTarget })) }, null, 2)}\n`);
-  await writeFile(join(browserOutputRoot, "browser-component.json"), component, { flag: "wx" });
-  verifyBundledBrowser(browserOutputRoot, digest(component), target);
+    links: chromium.actual.members.filter(row => row.kind === "link").map(({ path, linkTarget, resolvedTarget }) => ({ path, linkTarget, resolvedTarget })) };
+  const componentBytes = Buffer.from(`${JSON.stringify(component, null, 2)}\n`);
+  const acquisitionBytes = browserMode === "download-required" ? browserAcquisitionBytes({
+    schemaVersion: 1, mode: "download-required", source: "playwright-registry", target,
+    browserVersion: chromium.archive.browserVersion,
+    archive: { url: chromium.archive.url, checksum: chromium.archive.checksum, sizeBytes: chromium.archive.sizeBytes },
+    component, componentChecksum: digest(componentBytes), members: chromium.actual.members,
+  }) : undefined;
+  await resourceCheckpoint(managedRoot, (acquisitionBytes?.length ?? chromium.actual.totalBytes) + ffmpeg.actual.totalBytes);
+  let selection;
+  if (acquisitionBytes) {
+    await mkdir(browserOutputRoot);
+    await writeFile(join(browserOutputRoot, "browser-acquisition.json"), acquisitionBytes, { flag: "wx" });
+    const checksum = digest(acquisitionBytes);
+    verifyBrowserAcquisitionDescriptor(browserOutputRoot, checksum, target);
+    selection = { activation: "download-required", componentChecksum: checksum, acquisitionChecksum: checksum,
+      entryPath: "../../gstack-browser/browser-acquisition.json",
+      entryChecksum: chromium.actual.members.find(row => row.path === chromium.required.executablePath).checksum };
+  } else {
+    await extractVerifiedBrowserArchive({ zipPath: join(verified.root, chromium.archive.filename), yauzl,
+      inspected: chromium.actual, outputRoot: browserOutputRoot, target, checkpoint: () => resourceCheckpoint(managedRoot) });
+    await writeFile(join(browserOutputRoot, "browser-component.json"), componentBytes, { flag: "wx" });
+    verifyBundledBrowser(browserOutputRoot, digest(componentBytes), target);
+    selection = { activation: "package-relative-only", componentChecksum: digest(componentBytes),
+      entryPath: `../../gstack-browser/${chromium.required.executablePath}`,
+      entryChecksum: (await bundleFile(browserOutputRoot, chromium.required.executablePath)).checksum };
+  }
   await mkdir(cacheOutputRoot);
   await extractVerifiedBrowserArchive({ zipPath: join(verified.root, ffmpeg.archive.filename), yauzl,
     inspected: ffmpeg.actual, outputRoot: join(cacheOutputRoot, `ffmpeg-${ffmpeg.archive.revision}`), target,
     checkpoint: () => resourceCheckpoint(managedRoot) });
   await verifyBrowserArchiveCandidates(options);
   if (digest(await readFile(join(inspectionPath, "browser-member-inspection.json"))) !== expectedInspectionChecksum) fail("inspection_changed");
-  return { activation: "package-relative-only", source: "playwright-registry", releaseEligible: false, target,
-    componentChecksum: digest(component), entryPath: `../../gstack-browser/${chromium.required.executablePath}`,
-    entryChecksum: (await bundleFile(browserOutputRoot, chromium.required.executablePath)).checksum,
+  return { ...selection, source: "playwright-registry", releaseEligible: false, target,
     playwrightVersion: verified.source.provenance.playwrightVersion, browserVersion: chromium.archive.browserVersion,
     archiveReceiptChecksum: expectedArchiveReceiptChecksum, inspectionChecksum: expectedInspectionChecksum,
     ffmpeg: { revision: ffmpeg.archive.revision, archiveChecksum: ffmpeg.archive.checksum,

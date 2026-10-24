@@ -4,7 +4,7 @@ import { createReadStream } from "node:fs";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { verifyBundledSkillSource } from "../../packages/core/src/bundled-skill-source.ts";
-import { verifyBundledBrowser } from "../../packages/core/src/bundled-skill-browser.ts";
+import { verifyPackagedBrowser } from "../../packages/core/src/bundled-skill-browser.ts";
 import { testsavantModelAcquisition } from "./testsavant-model-cache.mjs";
 
 export const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -50,7 +50,7 @@ export async function readExecutableBundle(root, expectedIdentity) {
     expectedTarget: identity.target, expectedSkillIds: lock.skillIds, requireExecutable: true });
   const receipt = JSON.parse(await source.readResource("executable-build.json"));
   if (receipt.scope !== "isolated-local-client" || receipt.releaseEligible !== false
-    || receipt.upstreamRevision !== lock.revision || receipt.browser?.activation !== "package-relative-only") {
+    || receipt.upstreamRevision !== lock.revision || !["package-relative-only", "download-required"].includes(receipt.browser?.activation)) {
     throw new Error("gstack_executable_receipt_invalid");
   }
   if (receipt.modelAcquisition) {
@@ -60,6 +60,6 @@ export async function readExecutableBundle(root, expectedIdentity) {
       throw new Error("gstack_executable_model_acquisition_invalid");
     }
   }
-  const browser = verifyBundledBrowser(resolve(root, "../gstack-browser"), receipt.browser.componentChecksum, identity.target);
+  const browser = verifyPackagedBrowser(resolve(root, "../gstack-browser"), receipt.browser, identity.target);
   return Object.freeze({ root, identity: Object.freeze(identity), source, receipt, browser });
 }

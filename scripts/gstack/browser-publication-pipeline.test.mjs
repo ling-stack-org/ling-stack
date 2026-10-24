@@ -6,7 +6,8 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { collectGstackBrowserArchives } from "./collect-browser-archives.mjs";
 import { digest } from "./executable-bundle.mjs";
-import { inspectGstackBrowserArchives } from "./inspect-browser-archives.mjs";
+import { inspectGstackBrowserArchives, validateRequiredBrowserArtifacts } from "./inspect-browser-archives.mjs";
+import { inspectBrowserZip } from "./inspect-browser-zip.mjs";
 import { materializePlaywrightBrowser } from "./materialize-playwright-browser.mjs";
 import { requireResourceLease, within } from "./resource-workspace.mjs";
 
@@ -18,11 +19,12 @@ const skip = !process.env.LING_GSTACK_RESOURCE_ROOT && !process.env.LING_GSTACK_
 const browsers = [{ name: "chromium", revision: "1234", browserVersion: "151.0.7922.34" },
   { name: "ffmpeg", revision: "1011" }, { name: "chromium-headless-shell", revision: "1234", browserVersion: "151.0.7922.34" }];
 const notice = Buffer.from("Synthetic original notice; no browser is downloaded or executed.\n");
+const about = Buffer.from("Google Chrome\r\n\r\nCopyright 2026 Google LLC. All rights reserved.\r\n\r\nChrome is made possible by the Chromium open source project\r\n(https://www.chromium.org/) and other open source software\r\n(chrome://credits).\r\n\r\nSee the Terms of Service at chrome://terms.\r\n");
 
-function nativeBytes(library = false) {
+function nativeBytes(library = false, fixtureTarget = target) {
   const bytes = Buffer.alloc(128);
-  if (target.platform === "darwin") {
-    bytes.writeUInt32LE(0xfeedfacf); bytes.writeUInt32LE(target.arch === "arm64" ? 0x0100000c : 0x01000007, 4);
+  if (fixtureTarget.platform === "darwin") {
+    bytes.writeUInt32LE(0xfeedfacf); bytes.writeUInt32LE(fixtureTarget.arch === "arm64" ? 0x0100000c : 0x01000007, 4);
     bytes.writeUInt32LE(library ? 6 : 2, 12);
   } else {
     bytes.write("MZ"); bytes.writeUInt32LE(64, 0x3c); bytes.writeUInt32LE(0x00004550, 64);
@@ -30,6 +32,14 @@ function nativeBytes(library = false) {
     bytes.writeUInt16LE(library ? 0x2002 : 2, 86); bytes.writeUInt16LE(0x20b, 88);
   }
   return bytes;
+}
+
+function devZipTools() {
+  const desktop = createRequire(new URL("../../apps/desktop/package.json", import.meta.url));
+  const playwright = createRequire(desktop.resolve("@playwright/test/package.json"));
+  const core = createRequire(playwright.resolve("playwright/package.json"));
+  const parserPath = join(dirname(core.resolve("playwright-core/package.json")), "lib/utilsBundle.js");
+  return { parserPath, ...core(parserPath) };
 }
 
 async function zipBytes(yazl, entries) {
@@ -48,11 +58,7 @@ async function fixture(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "browser-publication-pipeline-")));
   assert.ok(within(lease.scratchPath, root));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const desktop = createRequire(new URL("../../apps/desktop/package.json", import.meta.url));
-  const playwright = createRequire(desktop.resolve("@playwright/test/package.json"));
-  const core = createRequire(playwright.resolve("playwright/package.json"));
-  const parserPath = join(dirname(core.resolve("playwright-core/package.json")), "lib/utilsBundle.js");
-  const { yazl } = core(parserPath);
+  const { parserPath, yazl } = devZipTools();
   const lock = JSON.parse(await readFile(new URL("./upstream-lock.json", import.meta.url), "utf8"));
   const stage = join(root, "source"), archives = join(root, "archives"), inspection = join(root, "inspection");
   const prefix = "runtime/node_modules/playwright-core/";
@@ -83,7 +89,7 @@ async function fixture(t) {
   const executable = target.platform === "win32" ? `${browserPrefix}/chrome.exe` : `${app}/Contents/MacOS/Google Chrome for Testing`;
   const ffmpeg = target.platform === "win32" ? "ffmpeg-win64.exe" : "ffmpeg-mac";
   const chromium = target.platform === "win32"
-    ? [[executable, nativeBytes(), 0o100755], [`${browserPrefix}/WidevineCdm/LICENSE`, notice]]
+    ? [[executable, nativeBytes(), 0o100755], [`${browserPrefix}/ABOUT`, about]]
     : [[executable, nativeBytes(), 0o100755],
       [`${versionRoot}/Google Chrome for Testing Framework`, nativeBytes(true), 0o100755],
       [`${versionRoot}/Libraries/WidevineCdm/LICENSE`, notice],
@@ -121,12 +127,43 @@ test("browser publication pipeline retains producer provenance through real insp
   const browser = await materializePlaywrightBrowser(f.materialize);
   assert.equal(f.collected.archives.length, 3);
   assert.equal(f.inspected.releaseEligible, false);
+  assert.ok(f.inspected.pendingGates.includes("exact-archive-license-review"));
   assert.equal(browser.releaseEligible, false);
   assert.ok(browser.pendingGates.includes("installed-client-acceptance"));
   assert.deepEqual(await readFile(join(f.materialize.browserOutputRoot, f.executable)), nativeBytes());
   assert.deepEqual(await readFile(join(f.materialize.cacheOutputRoot, "ffmpeg-1011", f.ffmpeg)), nativeBytes());
   const component = JSON.parse(await readFile(join(f.materialize.browserOutputRoot, "browser-component.json"), "utf8"));
   assert.equal(component.links.length, target.platform === "darwin" ? 5 : 0);
+});
+
+test("Windows Chromium requires its exact ABOUT copyright reference without treating it as license approval", { skip }, async t => {
+  const lease = await requireResourceLease();
+  const root = await realpath(await mkdtemp(join(tmpdir(), "browser-original-materials-")));
+  assert.ok(within(lease.scratchPath, root));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { yauzl, yazl } = devZipTools(), windows = { platform: "win32", arch: "x64" };
+  let sequence = 0;
+  const inspect = async (entries, inspectedTarget = windows) => {
+    const zipPath = join(root, `${sequence++}.zip`);
+    await writeFile(zipPath, await zipBytes(yazl, entries), { flag: "wx" });
+    return inspectBrowserZip({ zipPath, yauzl, target: inspectedTarget });
+  };
+  const executable = ["chrome-win64/chrome.exe", nativeBytes(false, windows), 0o100755];
+  const result = await inspect([executable, ["chrome-win64/ABOUT", about]]);
+  assert.deepEqual(result.notices, [{ path: "chrome-win64/ABOUT", sizeBytes: about.length,
+    checksum: digest(about), text: about.toString(), materialKind: "copyright-reference" }]);
+  assert.equal(validateRequiredBrowserArtifacts(browsers[0], result, windows).requiredNoticePath, "chrome-win64/ABOUT");
+  await assert.rejects(readFile(join(root, "chrome-win64/ABOUT")), { code: "ENOENT" });
+  for (const path of [undefined, "chrome-win64/nested/ABOUT", "chrome-win64/about", "chrome-win64/WidevineCdm/LICENSE"]) {
+    const changed = await inspect([executable, ...(path ? [[path, about]] : [])]);
+    assert.throws(() => validateRequiredBrowserArtifacts(browsers[0], changed, windows), /inspection_notice_missing/);
+  }
+  for (const other of [{ platform: "darwin", arch: "arm64" }, { platform: "win32", arch: "arm64" }]) {
+    assert.deepEqual((await inspect([["chrome-win64/ABOUT", about]], other)).notices, []);
+  }
+  for (const bytes of [Buffer.from("\0"), Buffer.from([0xff]), Buffer.from(" \r\n")]) {
+    await assert.rejects(inspect([["chrome-win64/ABOUT", bytes]]), /notice_invalid|encoded data/);
+  }
 });
 
 test("refreshed receipt hashes cannot hide changed publication-helper provenance", { skip }, async t => {

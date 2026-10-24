@@ -19,13 +19,16 @@ const toolNames = ["assemble-executable-bundle.mjs", "publish-staged-directory.m
   "build-bun-native-resource.mjs", "packaged-browse-build.mjs", "packaged-browse-launch.mjs", "testsavant-packaged-client.mjs",
   "testsavant-gs-client.mjs", "testsavant-client.mjs", "testsavant-runtime.mjs", "testsavant-worker.mjs", "testsavant-offline-guard.mjs",
   "testsavant-model-pin.json", "testsavant-model-cache.mjs", "upstream-lock.json", "packaged-browser-source.mjs", "materialize-playwright-browser.mjs",
-  "inspect-browser-archives.mjs", "inspect-browser-zip.mjs", "collect-browser-archives.mjs"];
+  "inspect-browser-archives.mjs", "inspect-browser-zip.mjs", "collect-browser-archives.mjs", "browser-acquisition.mjs"];
 
 /** One complete local candidate, reusing authenticated prerequisites without dependency installs. */
 export async function assembleExecutableBundle({ stageRoot, browserInspectionRoot, outputRoot,
   expectedStageChecksum = retainedStageChecksum, browserArchivesRoot, expectedArchiveReceiptChecksum,
-  expectedBrowserInspectionChecksum, modelMode = "bundled", onProgress = () => {} }) {
+  expectedBrowserInspectionChecksum, modelMode = "bundled", browserMode = "bundled", onProgress = () => {} }) {
   if (!["bundled", "download-required"].includes(modelMode)) throw new Error("gstack_executable_model_mode_invalid");
+  if (!["bundled", "download-required"].includes(browserMode) || browserMode === "download-required" && !browserArchivesRoot) {
+    throw new Error("gstack_executable_browser_mode_invalid");
+  }
   if (!/^sha256:[a-f0-9]{64}$/.test(expectedStageChecksum)) throw new Error("gstack_executable_stage_checksum_required");
   stageRoot = resolve(stageRoot); browserInspectionRoot = resolve(browserInspectionRoot); outputRoot = resolve(outputRoot);
   if (await exists(outputRoot)) throw new Error("gstack_executable_output_exists");
@@ -65,12 +68,13 @@ export async function assembleExecutableBundle({ stageRoot, browserInspectionRoo
       { cwd: retainedRuntime, env, encoding: "utf8", timeout: 120_000, maxBuffer: 1024 ** 2 });
     onProgress("compile current production-only TestSavant server and pinned native CLI");
     build("build-portable-resources.ts", [modelMode === "download-required" ? "node-server-download" : "node-server", retainedRuntime, compiled]);
-    onProgress("materialize independently verified browser with original framework aliases and signatures");
+    onProgress(browserMode === "download-required" ? "seal official browser acquisition metadata without redistributing Chrome" :
+      "materialize independently verified browser with original framework aliases and signatures");
     const browser = browserArchivesRoot ? await materializePlaywrightBrowser({ resourceStagePath: stageRoot,
       archivePath: browserArchivesRoot, inspectionPath: browserInspectionRoot,
       expectedResourceStageChecksum: expectedStageChecksum, expectedArchiveReceiptChecksum,
       expectedInspectionChecksum: expectedBrowserInspectionChecksum, browserOutputRoot: join(candidate, "gstack-browser"),
-      cacheOutputRoot: join(runtime, "browser-cache"), managedRoot: lease.root, target: stage.target })
+      cacheOutputRoot: join(runtime, "browser-cache"), managedRoot: lease.root, target: stage.target, browserMode })
       : await materializeLocalBrowser({ inspectionRoot: browserInspectionRoot, runtimeRoot: retainedRuntime,
         outputRoot: join(candidate, "gstack-browser"), managedRoot: lease.root });
     if (!browserArchivesRoot) browser.ffmpeg = await materializeLocalFfmpeg({ archiveRoot: resolve(scripts, "../../.ling-stack/build/gstack-browser-archives-darwin-arm64-v2"),
