@@ -4,9 +4,9 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import { parse } from "shell-quote";
 import { compileExecutionSandboxPolicy, type EffectiveRunPolicySnapshot, type RuntimeAttemptFenceV1,
   type UnifiedExecCommand, type UnifiedExecIsolationEvidence, type UnifiedExecEnvironmentSummary } from "@ling-stack/core";
-import type { ChannelOperationFileBindingV1 } from "@ling-stack/contracts";
-import { isChannelOperationRelativePathV1 } from "@ling-stack/contracts";
+import type { ChannelCommandInputScopeV1, ChannelOperationFileBindingV1 } from "@ling-stack/contracts";
 import { captureNativeCommandInput } from "./native-input-capture.js";
+import { captureNodeCommandInputs } from "./node-command-inputs.js";
 import { macosSandboxCommandFingerprint, prepareMacosSandboxCommand, readMacosSandboxBackendIdentity } from "./macos-native-command.js";
 import { MACOS_SYSTEM_READ_ROOTS } from "./macos-seatbelt-profile.js";
 import { verifyElectronNodeResources, type ElectronNodeRuntimePin } from "./electron-node-resources.js";
@@ -66,7 +66,7 @@ export class NativeRestrictedCommandRuntime {
     return this.#resolve(command).command;
   }
 
-  #resolve(command: string): { command: UnifiedExecCommand; readRoots: readonly string[]; runtimeProfile?: MacosCommandRuntimeProfile } {
+  #resolve(command: string): { command: UnifiedExecCommand; nodeModules: boolean; readRoots: readonly string[]; runtimeProfile?: MacosCommandRuntimeProfile } {
     requireRuntime(process.platform === "darwin", "restricted_command_platform_unavailable");
     readMacosSandboxBackendIdentity();
     verifyRestrictedCommandBinaryPin(this.#config.inputHelper);
@@ -81,7 +81,7 @@ export class NativeRestrictedCommandRuntime {
     requireRuntime(pin && Object.hasOwn(this.#config.executables, argv[0] as string), "restricted_command_executable_unavailable");
     const executable = verifyRestrictedCommandBinaryPin(pin);
     const resources = pin.runtime === undefined ? undefined : verifyElectronNodeResources(executable, pin.runtime);
-    return { command: { kind: "argv", argv: [executable, ...argv.slice(1) as string[]] },
+    return { command: { kind: "argv", argv: [executable, ...argv.slice(1) as string[]] }, nodeModules: argv[0] === "node",
       readRoots: [executable, ...(resources?.readRoots ?? [])],
       ...(resources ? { runtimeProfile: { kind: "electron_node_v1", resourceIdentitySha256:
         digest(Buffer.from(JSON.stringify({ executableSha256: pin.sha256, resources: resources.resourceIdentitySha256 }))) } as const } : {}) };
@@ -91,6 +91,7 @@ export class NativeRestrictedCommandRuntime {
     readonly command: string;
     readonly cwd: string;
     readonly inputRefs: readonly ChannelOperationFileBindingV1[];
+    readonly commandInputScope?: ChannelCommandInputScopeV1;
     readonly policy: EffectiveRunPolicySnapshot;
     readonly source: RuntimeAttemptFenceV1 & { readonly workspaceId: string; readonly runId: string; readonly toolCallId: string };
     readonly assertCurrentAuthority: () => void;
@@ -132,22 +133,30 @@ export class NativeRestrictedCommandRuntime {
       forward(() => { mkdirSync(copy, { mode: 0o700 }); mkdirSync(scratch, { mode: 0o700 }); });
       const { workspaceId, runId, workUnitId, attemptId, runtimeInstanceId, fencingToken } = input.source;
       const identity = { workspaceId, runId, workUnitId, attemptId, runtimeInstanceId, fencingToken };
+      const capturedInputs = await captureNodeCommandInputs({ inputRefs,
+        analyzeModules: resolved.nodeModules,
+        commandInputScope: input.commandInputScope && structuredClone(input.commandInputScope),
+        hasOptionalInput: path => {
+          check();
+          // Presence only; a present symlink/hardlink/non-file still goes through
+          // native rejection. Missing metadata must not consume a file budget.
+          try { lstatSync(join(origin, path)); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") { check(); return false; } throw error; }
+          check(); return true;
+        },
+        capture: async (path, maxBytes) => {
+          check();
+          return captureNativeCommandInput({ helper: this.#config.inputHelper, root: origin, path, maxBytes, identity,
+            assertCurrentAuthority: check, signal: input.signal, effectGuard: input.hostOperation?.effectGuard });
+        } });
       const files: UnifiedExecIsolationEvidence["inputs"][number][] = [];
-      let bytes = 0;
-      for (const ref of inputRefs) {
-        requireRuntime(isChannelOperationRelativePathV1(ref.path) && !ref.path.split("/").includes(".ling"), "restricted_command_protected_input");
-        const captured = await captureNativeCommandInput({ helper: this.#config.inputHelper, root: origin, path: ref.path,
-          maxBytes: Math.min(16 * 1024 * 1024, 64 * 1024 * 1024 - bytes), identity,
-          assertCurrentAuthority: check, signal: input.signal, effectGuard: input.hostOperation?.effectGuard });
-        bytes += captured.bytes.length;
-        requireRuntime(bytes <= 64 * 1024 * 1024, "restricted_command_input_budget_exceeded");
-        const target = join(copy, ref.path);
+      for (const { bytes, ...evidence } of capturedInputs) {
+        const target = join(copy, evidence.path);
         forward(() => {
           mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
-          writeFileSync(target, captured.bytes, { flag: "wx", mode: 0o400 });
+          writeFileSync(target, bytes, { flag: "wx", mode: 0o400 });
         });
-        files.push({ path: ref.path, sha256: captured.sha256, sizeBytes: captured.bytes.length,
-          sourceItemIds: [...new Set(ref.sourceRefs.map(source => source.itemId))] });
+        files.push(evidence);
       }
       check();
       requireRuntime(realpathSync(input.cwd) === origin, "restricted_command_workspace_changed");

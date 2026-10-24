@@ -4,12 +4,14 @@ import {
   channelOperationPlanFingerprintV1,
   isChannelIntentExecutionPlanV1,
   isChannelOperationRelativePathV1,
+  hasExplicitChannelOperationPathQuoteV1,
   nodeFunctionGoalCommand,
   type ChannelNodeFunctionGoalV1,
   type ChannelIntentExecutionOperationV1,
   type ChannelIntentExecutionPlanV1,
   type ChannelOperationContentSourceV1,
   type ChannelOperationFileBindingV1,
+  type ChannelCommandInputScopeV1,
   type ChannelOperationSourceV1,
 } from "@ling-stack/contracts";
 import type { AiTeammate, RunTool } from "@ling-stack/core";
@@ -39,6 +41,7 @@ export interface ChannelOperationCandidateV2 {
   readonly sourceQuote: string;
   readonly target?: CandidatePath;
   readonly inputs?: readonly CandidateCommandInput[];
+  readonly projectInputRoot?: { readonly path: string; readonly sourceQuote: string };
   readonly command?: { readonly text: string; readonly sourceQuote: string };
   readonly commandGoal?: { readonly kind: "node_function"; readonly module: CandidatePath;
     readonly invocation: string; readonly sourceQuote: string };
@@ -225,6 +228,24 @@ export function bindChannelOperationPlan(input: {
         }
         exactCommands.push(operation.command.text);
       }
+      let commandInputScope: ChannelCommandInputScopeV1 | undefined;
+      if (operation.projectInputRoot) {
+        const root = operation.projectInputRoot;
+        const outsideCommand = operation.command ? operation.sourceQuote.split(operation.command.text).join(" ")
+          : operation.sourceQuote.split(operation.commandGoal?.invocation ?? "\u0000").join(" ");
+        if (operation.kind !== "run_command" || !/^node\s/u.test(exactCommands[0] ?? "")
+          || !outsideCommand.includes(root.sourceQuote)
+          || !isChannelOperationRelativePathV1(root.path) || root.path.split("/").some(part => part.startsWith("."))
+          || !hasExplicitChannelOperationPathQuoteV1(root.sourceQuote, root.path)
+          || !hasExplicitChannelOperationPathQuoteV1(outsideCommand, root.path)
+          || !inputRefs.some(ref => ref.path.startsWith(root.path + "/") && /\.(?:mjs|cjs|js)$/u.test(ref.path))) {
+          fail("projectInputRoot", "Node dependencies need an explicitly named current-operation project directory and source input; a command path prefix is not scope authority.");
+        }
+        const rootSource = quote(root.sourceQuote);
+        assertWorkspacePath(root.path, input.workspaceCwd);
+        commandInputScope = { kind: "node_module_closure_v1", projectRoot: root.path,
+          sourceRefs: [{ ...rootSource, actorType: "local_user" }] };
+      }
       return {
         id: operation.id,
         kind: operation.kind,
@@ -238,6 +259,7 @@ export function bindChannelOperationPlan(input: {
           schemaVersion: 1, ownerParticipantId: owner.id, ownerSelection: defaultOwner ? "host_default" : "explicit", inputRefs, outputRefs,
           ...(contentSource ? { contentSource } : {}), sourceRefs: ownerSource ? [source, ownerSource] : [source],
           ...(commandGoal ? { commandGoal } : {}),
+          ...(commandInputScope ? { commandInputScope } : {}),
           effectScope: { readPaths: inputRefs.map((ref) => ref.path), writePaths: outputRefs.map((ref) => ref.path),
             exactCommands, allowEnvironmentAccess: false, allowNetworkAccess: false },
         },
@@ -294,7 +316,7 @@ export function isChannelOperationCandidatePlanV2(value: unknown): value is Chan
 }
 
 function candidateOperation(value: unknown): value is ChannelOperationCandidateV2 {
-  if (!record(value, ["id", "kind", "targetKind", "required", "dependsOn", "owner", "sourceQuote", "target", "inputs", "command", "commandGoal", "contentSource"])
+  if (!record(value, ["id", "kind", "targetKind", "required", "dependsOn", "owner", "sourceQuote", "target", "inputs", "projectInputRoot", "command", "commandGoal", "contentSource"])
     || !text(value.id) || !text(value.sourceQuote) || typeof value.required !== "boolean" || !texts(value.dependsOn)
     || !["file_read", "file_create", "file_edit", "run_command", "open_local_target"].includes(String(value.kind))
     || (value.kind === "run_command" ? value.targetKind !== "command" : value.targetKind !== "file")
@@ -302,6 +324,8 @@ function candidateOperation(value: unknown): value is ChannelOperationCandidateV
     || (value.target !== undefined && !candidatePath(value.target))
     || (value.inputs !== undefined && (!Array.isArray(value.inputs) || value.inputs.length === 0 || value.inputs.length > 256
       || !value.inputs.every(candidateCommandInput)))
+    || (value.projectInputRoot !== undefined && (!record(value.projectInputRoot, ["path", "sourceQuote"])
+      || !text(value.projectInputRoot.path) || !text(value.projectInputRoot.sourceQuote)))
     || (value.command !== undefined && (!record(value.command, ["text", "sourceQuote"]) || !text(value.command.text) || !text(value.command.sourceQuote)))) return false;
   if (value.commandGoal !== undefined && (!record(value.commandGoal, ["kind", "module", "invocation", "sourceQuote"])
     || value.commandGoal.kind !== "node_function" || !candidatePath(value.commandGoal.module)

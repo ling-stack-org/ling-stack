@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
-import { access, writeFile, readFile, link, mkdir } from "node:fs/promises";
+import { access, writeFile, readFile, link, mkdir, symlink } from "node:fs/promises";
 import { dirname, join, isAbsolute } from "node:path";
 import test from "node:test";
 import { NativeRestrictedCommandRuntime } from "../../../packages/daemon/dist/runtime/sandbox/restricted-command-runtime.js";
@@ -29,6 +29,83 @@ const outcome = reply => {
   return reply.handledResult.details.unifiedExec;
 };
 const events = f => f.store.listEvents(f.run.id, { limit: 1000 });
+const projectScope = { kind: "node_module_closure_v1", projectRoot: "project",
+  sourceRefs: [{ itemId: "source", quote: "Project dependencies in project", actorType: "local_user" }] };
+
+test("C01 scoped CLI stages local imports and package metadata, but never unrelated origin files", async t => {
+  const f = await createRestrictedCommandFixture(t, "node project/cli.js data.csv", [ref("project/cli.js"), ref("data.csv")], projectScope);
+  await mkdir(join(f.cwd, "project"));
+  await writeFile(join(f.cwd, "project/package.json"), '{"type":"module"}');
+  const ledger = "export const sum = rows => rows.reduce((n,v)=>n+Number(v),0);";
+  await writeFile(join(f.cwd, "project/ledger.js"), ledger);
+  await writeFile(join(f.cwd, "data.csv"), "3000\n7000");
+  await writeFile(join(f.cwd, "project/private.js"), "must not stage");
+  await writeFile(join(f.cwd, "project/cli.js"), `import {sum} from './ledger.js';import fs from 'node:fs';
+    console.log(sum(fs.readFileSync(process.argv[2],'utf8').split('\\n')));
+    if(fs.existsSync('project/private.js'))throw Error('unrelated source copied');
+    try{fs.readFileSync(${JSON.stringify(join(f.cwd, "project/private.js"))});throw Error('origin leaked')}
+    catch(e){if(!['EPERM','EACCES'].includes(e.code))throw e;console.log('origin:denied')}`);
+  const result = outcome(await f.approve(runtime()));
+  assert.equal(result.status, "succeeded", JSON.stringify(result));
+  assert.equal(result.stdout.preview, "10000\norigin:denied\n");
+  assert.deepEqual(result.isolation.inputs.map(file => file.path).sort(), ["data.csv", "project/cli.js", "project/ledger.js", "project/package.json"]);
+  const dependency = result.isolation.inputs.find(file => file.path === "project/ledger.js");
+  assert.equal(dependency.sha256, createHash("sha256").update(ledger).digest("hex"));
+  assert.equal(dependency.derivation.parentPath, "project/cli.js");
+  assert.equal(dependency.derivation.parentSha256, result.isolation.inputs.find(file => file.path === "project/cli.js").sha256);
+  assert.equal(dependency.derivation.projectRoot, "project");
+  const artifact = f.store.listArtifacts(f.run.id).find(item => item.id === result.artifacts[0].artifactId);
+  assert.match(await readFile(join(f.store.paths.artifactsDir, artifact.path), "utf8"), /node_module_dependency_v1/u);
+  assert.equal(f.store.listHostCommandWriteBlockers(f.cwd).length, 0);
+});
+
+test("an old explicit-only CLI does not gain project scope; missing dependency is not_started", async t => {
+  const f = await createRestrictedCommandFixture(t, "node project/cli.mjs", [ref("project/cli.mjs")]);
+  await mkdir(join(f.cwd, "project"));
+  await writeFile(join(f.cwd, "project/cli.mjs"), "import './ledger.mjs'; console.log('must-not-run');");
+  await writeFile(join(f.cwd, "project/ledger.mjs"), "export const n=1");
+  const result = outcome(await f.approve(runtime()));
+  assert.equal(result.status, "failed");
+  assert.match(result.stderr.preview, /restricted_command_dependency_scope_required/);
+  assert.equal(result.stdout.preview, "");
+  assert.equal(events(f).find(event => event.type === "host_command_settled").data.outcome, "not_started");
+  assert.equal(f.store.listHostCommandWriteBlockers(f.cwd).length, 0);
+});
+
+test("a derived hardlink is rejected by the same native boundary before command spawn", async t => {
+  const f = await createRestrictedCommandFixture(t, "node project/cli.mjs", [ref("project/cli.mjs")], projectScope);
+  await mkdir(join(f.cwd, "project"));
+  await writeFile(join(f.cwd, "project/cli.mjs"), "import './ledger.mjs'; console.log('must-not-run');");
+  await writeFile(join(f.root, "outside.mjs"), "export const privateValue=1;");
+  await link(join(f.root, "outside.mjs"), join(f.cwd, "project/ledger.mjs"));
+  const result = outcome(await f.approve(runtime()));
+  assert.equal(result.status, "failed"); assert.match(result.stderr.preview, /hardlink_rejected/);
+  assert.equal(events(f).find(event => event.type === "host_command_settled").data.outcome, "not_started");
+});
+
+test("a derived symlink never follows an outside module into the execution copy", async t => {
+  const f = await createRestrictedCommandFixture(t, "node project/cli.mjs", [ref("project/cli.mjs")], projectScope);
+  await mkdir(join(f.cwd, "project"));
+  await writeFile(join(f.cwd, "project/cli.mjs"), "import './ledger.mjs'; console.log('must-not-run');");
+  await writeFile(join(f.root, "private.mjs"), "export const privateValue=1;");
+  await symlink(join(f.root, "private.mjs"), join(f.cwd, "project/ledger.mjs"));
+  const result = outcome(await f.approve(runtime()));
+  assert.equal(result.status, "failed"); assert.match(result.stderr.preview, /native_input/);
+  assert.equal(result.stdout.preview, "");
+  assert.equal(events(f).find(event => event.type === "host_command_settled").data.outcome, "not_started");
+});
+
+test("an open .js package boundary does not silently change an origin ESM script into CJS", async t => {
+  const f = await createRestrictedCommandFixture(t, "node project/cli.js", [ref("project/cli.js")], projectScope);
+  await mkdir(join(f.cwd, "project"));
+  await writeFile(join(f.cwd, "package.json"), '{"type":"module"}');
+  await writeFile(join(f.cwd, "project/cli.js"), "console.log(typeof require);");
+  const result = outcome(await f.approve(runtime()));
+  assert.equal(result.status, "failed");
+  assert.match(result.stderr.preview, /restricted_command_dependency_package_boundary_required/);
+  assert.equal(result.stdout.preview, "");
+  assert.equal(events(f).find(event => event.type === "host_command_settled").data.outcome, "not_started");
+});
 
 test("restricted backend is not approval, and an unapproved internal command never starts", async t => {
   const f = await createRestrictedCommandFixture(t, nodeCommand("console.log('approved-only')"));

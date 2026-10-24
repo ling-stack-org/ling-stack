@@ -5,7 +5,7 @@ import { createSqliteRunStore, resolveSessionRunPolicy, DEFAULT_WORKSPACE_ID, to
 import { createTypedWorkflowBasis, typedOperation, gateOwner } from "./workflow-operation-gate-fixture.mjs";
 import { executeUnifiedBashTool } from "../../dist/features/runs/unified-exec.js";
 import { createRunApprovalHandler } from "../../dist/features/runs/approvals.js";
-export async function createRestrictedCommandFixture(t, command, inputRefs = []) {
+export async function createRestrictedCommandFixture(t, command, inputRefs = [], commandInputScope) {
   const root = await mkdtemp(join(tmpdir(), "ling-restricted-dispatch-"));
   const cwd = join(root, "workspace"); await mkdir(cwd);
   const store = createSqliteRunStore(cwd);
@@ -13,6 +13,10 @@ export async function createRestrictedCommandFixture(t, command, inputRefs = [])
   const now = new Date().toISOString(), runId = "restricted_command_run";
   const operation = typedOperation("run_command", command);
   operation.binding.inputRefs = inputRefs;
+  if (commandInputScope) {
+    operation.binding.commandInputScope = commandInputScope;
+    operation.binding.sourceRefs.push(...structuredClone(commandInputScope.sourceRefs));
+  }
   operation.binding.effectScope.readPaths = inputRefs.map(ref => ref.path);
   const basis = createTypedWorkflowBasis(store, cwd, [operation], now);
   const task = store.createTask({ channelId: basis.channel.id, title: "Restricted command", prompt: "Temporary isolated command fixture", assigneeTeammateId: gateOwner }, now);

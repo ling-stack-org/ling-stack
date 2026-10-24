@@ -90,7 +90,9 @@ export interface UnifiedExecIsolationEvidence {
   readonly actualCommand: UnifiedExecCommand;
   readonly policyHash: string;
   readonly profileHash: string;
-  readonly inputs: readonly { readonly path: string; readonly sha256: string; readonly sizeBytes: number; readonly sourceItemIds: readonly string[] }[];
+  readonly inputs: readonly { readonly path: string; readonly sha256: string; readonly sizeBytes: number; readonly sourceItemIds: readonly string[];
+    readonly derivation?: { readonly kind: "node_module_dependency_v1" | "node_package_metadata_v1";
+      readonly parentPath: string; readonly parentSha256: string; readonly projectRoot: string } }[];
 }
 
 export interface UnifiedExecResult {

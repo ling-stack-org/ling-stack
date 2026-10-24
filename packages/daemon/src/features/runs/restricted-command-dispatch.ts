@@ -82,6 +82,7 @@ export function createRestrictedCommandDispatch(input: {
       const preparation = input.hostOperation?.registerPreparation("restricted-command-prepare");
       try {
         const prepared = await runtime.prepare({ command, cwd: source.cwd, inputRefs: operation.binding!.inputRefs, policy,
+          commandInputScope: operation.binding!.commandInputScope,
           source: { ...fence, workspaceId: workspacePolicy.workspaceId, runId: source.id, toolCallId: request.toolCallId },
           assertCurrentAuthority: check, signal: input.signal, hostOperation: preparation, protectedActorSource });
         return { ...prepared, finishHostPreparation: () => preparation?.finish() };

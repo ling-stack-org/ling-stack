@@ -14,6 +14,31 @@ export interface ChannelOperationFileBindingV1 {
   readonly sourceRefs: readonly ChannelOperationSourceV1[];
 }
 
+/** Host-compiled scope for preparing local Node dependencies, not a general read grant. */
+export interface ChannelCommandInputScopeV1 {
+  readonly kind: "node_module_closure_v1";
+  readonly projectRoot: string;
+  readonly sourceRefs: readonly ChannelOperationSourceV1[];
+}
+
+/** A directory must be explicitly named, not merely a prefix of a script path. */
+export function hasExplicitChannelOperationPathQuoteV1(quote: string, path: string): boolean {
+  let offset = -1;
+  while ((offset = quote.indexOf(path, offset + 1)) !== -1) {
+    const pathCharacter = /[\p{L}\p{N}_./\\-]/u;
+    if ((!offset || !pathCharacter.test(quote[offset - 1]!))
+      && (offset + path.length === quote.length || !pathCharacter.test(quote[offset + path.length]!))) return true;
+  }
+  return false;
+}
+
+export function isChannelCommandInputScopeV1(value: unknown): value is ChannelCommandInputScopeV1 {
+  return record(value, ["kind", "projectRoot", "sourceRefs"]) && value.kind === "node_module_closure_v1"
+    && isChannelOperationRelativePathV1(value.projectRoot) && !value.projectRoot.split("/").some(part => part.startsWith("."))
+    && sources(value.sourceRefs) && value.sourceRefs.every(ref => ref.actorType === "local_user")
+    && value.sourceRefs.some(ref => hasExplicitChannelOperationPathQuoteV1(ref.quote, value.projectRoot as string));
+}
+
 export type ChannelOperationContentSourceV1 =
   | {
       readonly kind: "literal";
@@ -35,6 +60,7 @@ export interface ChannelOperationBindingV1 {
   readonly outputRefs: readonly ChannelOperationFileBindingV1[];
   readonly contentSource?: ChannelOperationContentSourceV1;
   readonly commandGoal?: ChannelNodeFunctionGoalV1;
+  readonly commandInputScope?: ChannelCommandInputScopeV1;
   readonly sourceRefs: readonly ChannelOperationSourceV1[];
   readonly effectScope: {
     readonly readPaths: readonly string[];
@@ -62,7 +88,7 @@ export function channelOperationPlanFingerprintV1(operations: readonly unknown[]
 }
 
 export function isChannelOperationBindingV1(value: unknown): value is ChannelOperationBindingV1 {
-  if (!record(value, ["schemaVersion", "ownerParticipantId", "ownerSelection", "inputRefs", "outputRefs", "contentSource", "commandGoal", "sourceRefs", "effectScope"])
+  if (!record(value, ["schemaVersion", "ownerParticipantId", "ownerSelection", "inputRefs", "outputRefs", "contentSource", "commandGoal", "commandInputScope", "sourceRefs", "effectScope"])
     || value.schemaVersion !== 1 || !text(value.ownerParticipantId)
     || (value.ownerSelection !== undefined && value.ownerSelection !== "explicit" && value.ownerSelection !== "host_default")
     || !Array.isArray(value.inputRefs) || !value.inputRefs.every(fileBinding)
@@ -75,6 +101,21 @@ export function isChannelOperationBindingV1(value: unknown): value is ChannelOpe
     || scope.allowEnvironmentAccess !== false || scope.allowNetworkAccess !== false
     || JSON.stringify(scope.readPaths) !== JSON.stringify(value.inputRefs.map((ref) => ref.path))
     || JSON.stringify(scope.writePaths) !== JSON.stringify(value.outputRefs.map((ref) => ref.path))) return false;
+  if (value.commandInputScope !== undefined) {
+    const dependency = value.commandInputScope;
+    const bindingSources = value.sourceRefs;
+    const command = scope.exactCommands[0];
+    const invocation = typeof value.commandGoal === "object" && value.commandGoal !== null
+      && "invocation" in value.commandGoal && typeof value.commandGoal.invocation === "string" ? value.commandGoal.invocation : "\u0000";
+    if (!isChannelCommandInputScopeV1(dependency)
+      || !value.inputRefs.some(ref => ref.path.startsWith(dependency.projectRoot + "/") && /\.(?:mjs|cjs|js)$/u.test(ref.path))
+      || scope.exactCommands.length !== 1 || !command || !/^node\s/u.test(command)
+      || !dependency.sourceRefs.every(rootSource => bindingSources.some(source => {
+        const outsideCommand = source.quote.split(command).join(" ").split(invocation).join(" ");
+        return source.itemId === rootSource.itemId && outsideCommand.includes(rootSource.quote)
+          && hasExplicitChannelOperationPathQuoteV1(outsideCommand, dependency.projectRoot);
+      }))) return false;
+  }
   if (value.commandGoal !== undefined) {
     const goal = value.commandGoal;
     if (!record(goal, ["kind", "modulePath", "invocation", "inputOperationId", "sourceRefs"])
