@@ -141,6 +141,21 @@ test("an empty orphaned lock recovers when directory rename cannot replace an ex
   }
 });
 
+test("an empty orphaned lock with many independent writers publishes exactly one verified model", async t => {
+  const f = await fixture(t);
+  await mkdir(f.models, { recursive: true, mode: 0o700 });
+  await mkdir(`${f.final}.lock`, { mode: 0o700 });
+  try {
+    const callers = Array.from({ length: 32 }, () => createTestsavantModelCache({ ...f, pollMs: 1 })(f.stateRoot));
+    assert.deepEqual(await Promise.all(callers), Array(32).fill(f.final));
+    assert.equal(f.calls.length, 7);
+    assert.deepEqual(await readdir(f.models), [original.revision]);
+  } catch (error) {
+    error.message += `\ndirectory_observation=${JSON.stringify(error.directoryObservation ?? null)}`;
+    throw error;
+  }
+});
+
 for (const replacement of ["removed", "new-owner"]) {
   test(`writer cleanup tolerates another recovery leaving the released lock ${replacement}`, async t => {
     const f = await fixture(t), lock = `${f.final}.lock`, token = randomUUID();
