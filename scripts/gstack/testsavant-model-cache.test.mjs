@@ -119,7 +119,37 @@ test("an empty orphaned lock recovers when directory rename cannot replace an ex
   const f = await fixture(t), lock = `${f.final}.lock`;
   await mkdir(f.models, { recursive: true, mode: 0o700 });
   await mkdir(lock, { mode: 0o700 });
-  const originalRename = fsPromises.rename;
+  const originalRename = fsPromises.rename, originalLstat = fsPromises.lstat, originalRealpath = fsPromises.realpath;
+  const observations = [];
+  const record = observation => { observations.push(observation); if (observations.length > 64) observations.shift(); };
+  const identity = stat => ({ type: stat.isDirectory() ? "directory" : stat.isFile() ? "file" : stat.isSymbolicLink() ? "link" : "other",
+    isSymbolicLink: stat.isSymbolicLink(), dev: String(stat.dev), ino: String(stat.ino) });
+  let extraReads = 0;
+  const observeAfterAnomaly = async operation => {
+    if (extraReads++ >= 64) return;
+    try { record({ operation, after: identity(await originalLstat(lock)) }); }
+    catch (error) { record({ operation, afterError: { code: error.code, message: error.message } }); }
+  };
+  const stat = t.mock.method(fsPromises, "lstat", async (path, ...args) => {
+    let result;
+    try { result = await originalLstat(path, ...args); }
+    catch (error) { if (path === lock) record({ operation: "lstat", error: { code: error.code, message: error.message } }); throw error; }
+    if (path === lock) {
+      record({ operation: "lstat", ...identity(result) });
+      if (!result.isDirectory() || result.isSymbolicLink()) await observeAfterAnomaly("lstat-anomaly");
+    }
+    return result;
+  });
+  const canonical = t.mock.method(fsPromises, "realpath", async (path, ...args) => {
+    let result;
+    try { result = await originalRealpath(path, ...args); }
+    catch (error) { if (path === lock) record({ operation: "realpath", error: { code: error.code, message: error.message } }); throw error; }
+    if (path === lock) {
+      record({ operation: "realpath", requested: path, resolved: result });
+      if (result !== path) await observeAfterAnomaly("realpath-anomaly");
+    }
+    return result;
+  });
   // Exercise Windows directory-rename collisions on every native test host.
   const rename = t.mock.method(fsPromises, "rename", async (from, to) => {
     if (to === lock) {
@@ -129,11 +159,16 @@ test("an empty orphaned lock recovers when directory rename cannot replace an ex
     return originalRename(from, to);
   });
   syncBuiltinESMExports();
-  t.after(() => { rename.mock.restore(); syncBuiltinESMExports(); });
-  const acquire = () => createTestsavantModelCache({ ...f, pollMs: 1, timeoutMs: 1000 })(f.stateRoot);
-  assert.deepEqual(await Promise.all([acquire(), acquire()]), [f.final, f.final]);
-  assert.equal(f.calls.length, 7);
-  assert.deepEqual(await readdir(f.models), [original.revision]);
+  t.after(() => { rename.mock.restore(); stat.mock.restore(); canonical.mock.restore(); syncBuiltinESMExports(); });
+  try {
+    const acquire = () => createTestsavantModelCache({ ...f, pollMs: 1, timeoutMs: 1000 })(f.stateRoot);
+    assert.deepEqual(await Promise.all([acquire(), acquire()]), [f.final, f.final]);
+    assert.equal(f.calls.length, 7);
+    assert.deepEqual(await readdir(f.models), [original.revision]);
+  } catch (error) {
+    error.message += `\nlock_observations=${JSON.stringify(observations)}`;
+    throw error;
+  }
 });
 
 for (const replacement of ["removed", "new-owner"]) {
