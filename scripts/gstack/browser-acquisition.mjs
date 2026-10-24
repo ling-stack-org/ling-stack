@@ -254,9 +254,9 @@ async function retryLockIo(operation) {
   }
 }
 
-async function acquire({ stateRoot, acquisition, yauzl, request, timeoutMs, pollMs }, bytes) {
+async function acquire({ stateRoot, acquisition, yauzl, request, timeoutMs, pollMs, signal }, bytes) {
   if (typeof stateRoot !== "string" || !isAbsolute(stateRoot) || resolve(stateRoot) !== stateRoot) fail("state_root_required");
-  const started = Date.now(), signal = AbortSignal.timeout(timeoutMs);
+  const started = Date.now();
   const state = await directory(stateRoot, false, false);
   const cache = join(stateRoot, "browser-cache"), registry = join(cache, "playwright");
   const parents = [state, await directory(cache, true), await directory(registry, true)];
@@ -348,7 +348,12 @@ export async function ensureBrowserAcquisition({ stateRoot, acquisition, yauzl, 
     !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 180000 || !Number.isSafeInteger(pollMs) || pollMs < 1 || pollMs > 1000) fail("limits_invalid");
   const bytes = browserAcquisitionBytes(acquisition), key = `${stateRoot}\0${digest(bytes)}`;
   if (active.has(key)) return active.get(key);
-  const pending = acquire({ stateRoot, acquisition, yauzl, request, timeoutMs, pollMs }, bytes);
+  // AbortSignal.timeout uses an unreferenced timer. An idle response body can
+  // otherwise let Node exit before abort and ownership cleanup have completed.
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(new Error("gstack_browser_acquisition_timeout")), timeoutMs);
+  const pending = acquire({ stateRoot, acquisition, yauzl, request, timeoutMs, pollMs, signal: controller.signal }, bytes);
   active.set(key, pending);
-  try { return await pending; } finally { if (active.get(key) === pending) active.delete(key); }
+  try { return await pending; }
+  finally { clearTimeout(deadline); if (active.get(key) === pending) active.delete(key); }
 }

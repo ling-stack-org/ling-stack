@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fsPromises, { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { browserAcquisitionBytes, ensureBrowserAcquisition, validateBrowserAcquisition } from "./browser-acquisition.mjs";
@@ -232,10 +232,30 @@ test("unbounded response bodies are interrupted before any cache is published", 
   assert.deepEqual(await readdir(f.registry), []);
 });
 
+test("an isolated process keeps the acquisition deadline alive through abort and lock cleanup", { skip }, async t => {
+  const f = await fixture(t), recipe = join(f.stateRoot, "recipe.json");
+  await writeFile(recipe, browserAcquisitionBytes(f.acquisition));
+  const code = `import{readFile}from'node:fs/promises';import{createRequire}from'node:module';
+    import{ensureBrowserAcquisition}from${JSON.stringify(new URL("./browser-acquisition.mjs", import.meta.url).href)};
+    const{yauzl}=createRequire(import.meta.url)(${JSON.stringify(parserPath)});
+    try{await ensureBrowserAcquisition({stateRoot:process.argv[1],acquisition:JSON.parse(await readFile(process.argv[2])),
+      yauzl,timeoutMs:30,request:async()=>new Response(new ReadableStream({start(){}}))});throw Error('unexpected acquisition');}
+    catch(error){if(!String(error).includes('acquisition_timeout'))throw error;console.log('deadline-and-cleanup-completed');}`;
+  const child = spawn(process.execPath, ["--input-type=module", "-e", code, f.stateRoot, recipe], { stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "", stderr = "";
+  child.stdout.on("data", part => { stdout += part; }); child.stderr.on("data", part => { stderr += part; });
+  const guard = setTimeout(() => child.kill(), 5000);
+  const status = await new Promise((resolve, reject) => { child.once("error", reject); child.once("close", resolve); })
+    .finally(() => clearTimeout(guard));
+  assert.equal(status, 0, stderr);
+  assert.equal(stdout.trim(), "deadline-and-cleanup-completed");
+  assert.deepEqual(await readdir(f.registry), []);
+});
+
 test("the shared deadline also rejects expiry after extraction without publishing partial content", { skip }, async t => {
   const f = await fixture(t), originalWrite = fsPromises.writeFile;
   const mocked = t.mock.method(fsPromises, "writeFile", async (path, ...args) => {
-    if (String(path).endsWith("/browser-component.json")) await delay(150);
+    if (basename(String(path)) === "browser-component.json") await delay(150);
     return originalWrite(path, ...args);
   });
   syncBuiltinESMExports();
