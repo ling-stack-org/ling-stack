@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { createPackage, extractFile, listPackage } from "@electron/asar";
+import { collectGstackBundleNotices } from "../scripts/distribution/materials.mjs";
 
 const require = createRequire(import.meta.url);
 const builderRequire = createRequire(require.resolve("electron-builder/package.json"));
@@ -22,6 +23,12 @@ test("Builder keeps complete distribution materials outside app.asar", async t =
     ["licenses/example/LICENSE", Buffer.from("fixture original grant\n")],
     ["distribution-manifest.json", Buffer.from('{"fixture":true}\n')],
   ]);
+  const browser = join(root, "browser-notice-source");
+  for (const name of ["Browser.app/Contents/Frameworks/Runtime.framework/Resources/LICENSE", "Other.app/Contents/LICENSE"]) {
+    await mkdir(dirname(join(browser, name)), { recursive: true });
+    await writeFile(join(browser, name), `Original terms for ${name}\r\n`);
+  }
+  collectGstackBundleNotices("gstack-browser", browser, (path, bytes) => { materials.set(path, bytes); return path; });
   for (const [name, bytes] of [["package.json", '{"main":"dist/main.js"}'], ["dist/main.js", "fixture main"],
     ["dist/daemon/cli.mjs", "fixture daemon"], ...[...materials].map(([name, bytes]) => [`dist/distribution/${name}`, bytes])]) {
     const path = join(app, name);

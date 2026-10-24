@@ -284,6 +284,20 @@ export function collectMaterials(options) {
   return { manifest, material };
 }
 
+export function collectGstackBundleNotices(name, directory, add) {
+  const notices = filesBelow(directory, { symlinks: true }).filter(file => noticePattern.test(basename(file)));
+  const files = notices.map(file => {
+    const sourcePath = posix(relative(directory, file)), bytes = readFileSync(file);
+    // Original .app/.framework ancestors are provenance, not executable
+    // bundles. Keep them in the index so the signer sees only notice files.
+    const materialPath = add(`licenses/gstack/${name}/${sha256(sourcePath)}/${basename(file)}`, bytes);
+    return { sourcePath, materialPath, sizeBytes: bytes.length, sha256: sha256(bytes) };
+  });
+  if (files.length) add(`inputs/gstack/${name}-notice-paths.json`, json({ schemaVersion: 1, group: name,
+    scope: "Copy mapping for selected original notice bytes; archive provenance remains in the existing candidate inputs.", files }));
+  return files;
+}
+
 export function collectGstack(workspace, add, components, gaps, repository = repositoryRoot, platform) {
   if (!workspace) { gaps.push({ component: "gstack", reason: "gstack_workspace_required" }); return; }
   if (!existsSync(workspace)) { gaps.push({ component: "gstack", reason: "gstack_workspace_missing" }); return; }
@@ -336,8 +350,7 @@ export function collectGstack(workspace, add, components, gaps, repository = rep
   }
   for (const [name, directory] of [["gstack", bundle], ["gstack-browser", browser]]) {
     if (!existsSync(directory)) { gaps.push({ component: name, reason: "gstack_bundle_missing" }); continue; }
-    const notices = filesBelow(directory, { symlinks: true }).filter(file => noticePattern.test(basename(file)));
-    for (const file of notices) add(`licenses/gstack/${name}/${posix(relative(directory, file))}`, readFileSync(file));
+    const notices = collectGstackBundleNotices(name, directory, add);
     if (!notices.length) gaps.push({ component: name, reason: "gstack_bundle_notice_texts_missing" });
   }
   if (existsSync(join(bundle, "native-build.json"))) add("inputs/gstack/native-build.json", readFileSync(join(bundle, "native-build.json")));

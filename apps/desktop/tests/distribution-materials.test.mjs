@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { collectDotnetRuntimeMaterials, createSpdx, createThirdPartyNotices, declaredLicenseMaterials, filesBelow, hasCompleteReadmeGrant, lockedPackageKeys, noticePattern, parseArguments, sha256, validateBunSourceRevision, verifyMaterials, writeMaterials } from "../scripts/distribution/materials.mjs";
+import { collectDotnetRuntimeMaterials, collectGstackBundleNotices, createSpdx, createThirdPartyNotices, declaredLicenseMaterials, filesBelow, hasCompleteReadmeGrant, lockedPackageKeys, noticePattern, parseArguments, sha256, validateBunSourceRevision, verifyMaterials, writeMaterials } from "../scripts/distribution/materials.mjs";
 import { createHash } from "node:crypto";
 import { packageIntegrity, validateNoticeRestoration } from "../scripts/distribution/restored-notices.mjs";
 import { collectCanvasMaterials } from "../scripts/distribution/canvas-materials.mjs";
@@ -52,6 +52,62 @@ test("vendor notice discovery retains plural and joined Chromium/ThirdParty file
   for (const name of ["LICENSES.chromium.html", "ThirdPartyNotices.txt", "THIRD-PARTY-LICENSES", "COPYING.LESSER"]) assert.equal(noticePattern.test(name), true, name);
   assert.equal(noticePattern.test("license-checker.js"), true);
   assert.equal(noticePattern.test("readme.md"), false);
+});
+
+test("bundle notice materials retain exact bytes and source paths without creating signable bundle directories", t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-bundle-notice-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const sources = new Map([
+    ["chrome/Google Chrome for Testing.app/Contents/Frameworks/Google Chrome for Testing Framework.framework/Versions/151/Libraries/WidevineCdm/LICENSE", Buffer.from("Original framework terms\r\n原始声明\r\n")],
+    ["headless/Browser.app/Contents/Resources/LICENSE", Buffer.from("Different original terms\n© Supplier\n")],
+  ]);
+  for (const [path, bytes] of [...sources, ["chrome/program", Buffer.from("not a notice")]]) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), bytes);
+  }
+  const material = new Map(), add = (path, bytes) => {
+    assert.equal(material.has(path), false, "notice paths must not collide");
+    material.set(path, Buffer.from(bytes)); return path;
+  };
+  const records = collectGstackBundleNotices("gstack-browser", root, add);
+  assert.equal(records.length, sources.size);
+  assert.equal(new Set(records.map(file => file.materialPath)).size, sources.size);
+  for (const file of records) {
+    assert.equal(file.materialPath.split("/").slice(0, -1).some(part => /\.(?:app|framework)$/iu.test(part)), false,
+      "license containers must not be mistaken for executable bundles");
+    assert.ok(file.materialPath.endsWith("/LICENSE"));
+    assert.deepEqual(material.get(file.materialPath), sources.get(file.sourcePath));
+    assert.deepEqual(readFileSync(join(root, file.sourcePath)), sources.get(file.sourcePath));
+    assert.equal(file.sizeBytes, sources.get(file.sourcePath).length);
+    assert.equal(file.sha256, sha256(sources.get(file.sourcePath)));
+  }
+  const index = JSON.parse(material.get("inputs/gstack/gstack-browser-notice-paths.json"));
+  assert.equal(index.group, "gstack-browser");
+  assert.deepEqual(index.files, records);
+  assert.deepEqual(new Set(index.files.map(file => file.sourcePath)), new Set(sources.keys()));
+  const input = fixture(t, [], { material });
+  assert.equal(verifyMaterials({ ...input, platform: "darwin-arm64", sourceSha }).status, "verified");
+  for (const [path, bytes] of material) {
+    assert.deepEqual(readFileSync(join(input.output, path)), bytes);
+    assert.deepEqual(readFileSync(join(input.resources, "distribution", path)), bytes);
+  }
+  const empty = join(root, "empty"); mkdirSync(empty);
+  assert.deepEqual(collectGstackBundleNotices("gstack", empty, () => assert.fail("empty notice set must not emit materials")), []);
+});
+
+test("bundle notice collection retains symlink skipping and independent bundle groups", { skip: process.platform === "win32" }, t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-bundle-notice-link-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, "LICENSE"), "original terms\n");
+  symlinkSync("LICENSE", join(root, "NOTICE"));
+  const paths = [];
+  const add = (path) => { paths.push(path); return path; };
+  const first = collectGstackBundleNotices("gstack", root, add);
+  const second = collectGstackBundleNotices("gstack-browser", root, add);
+  assert.equal(first.length, 1); assert.equal(second.length, 1);
+  assert.equal(first[0].sourcePath, "LICENSE");
+  assert.notEqual(first[0].materialPath, second[0].materialPath);
+  assert.equal(new Set(paths).size, paths.length);
 });
 
 test("Bun's actual nine-character version output binds the fixed full source revision", () => {
