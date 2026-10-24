@@ -851,9 +851,12 @@ async function executeAdmittedRunRequest(
     if (!thread || !turn) {
       throw new HttpError(409, "continuation_source_incomplete", "Run thread or turn lineage is incomplete.");
     }
+    // A Task row is the canonical objective, not necessarily the actual model
+    // input: workflow steps render a source-bound context pack into task.prompt.
+    // Preserve Task metadata but freeze the accepted execution fields for both
+    // checkpoints and restart. Existing Runs retain their original snapshot.
     durableTaskSnapshot = userInputContinuation ? runRequest.task : run?.taskSnapshot as RunRequest["task"] | undefined
-      ?? store.getTask(runRequest.task.id)
-      ?? runRequest.task;
+      ?? { ...store.getTask(runRequest.task.id), ...runRequest.task, channelId: runRequest.task.channelId };
     const harnessFeatureSnapshot = runRequest.harnessFeatureSnapshot ?? createHarnessFeatureSnapshot({
       harness: runtimeSupervisor.getHarnessFeatures(),
     });

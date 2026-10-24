@@ -1,0 +1,43 @@
+✔ workflow participant timeline identity is scoped per workflow (4.0495ms)
+✔ workflow-only participant steps do not fabricate sub Agent evidence (0.347292ms)
+✖ workflow participant status preserves blocked, cancellation, queued and distinct waits (1.323ms)
+✔ workflow child interleaves narration with its actual read sequence and source lineage (0.509125ms)
+✔ workflow child tool updates do not move the read behind the final narrative (0.450833ms)
+✔ workflow child keeps streaming narrative commentary rather than a final result (0.256958ms)
+✔ workflow child rejects foreign narrative ownership {"runId":"run-other"} (0.178791ms)
+✔ workflow child rejects foreign narrative ownership {"participantId":"teammate_builtin_qa"} (0.168625ms)
+✔ narration refresh rejects late retry and lower-revision responses (1.822042ms)
+✔ narration refresh clears revoked text without accepting another scope or step lifecycle (0.167ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 9
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 138.327708
+
+✖ failing tests:
+
+test at apps/web/test/workflow-progress-identity.test.mjs:146:1
+✖ workflow participant status preserves blocked, cancellation, queued and distinct waits (1.323ms)
+  AssertionError [ERR_ASSERTION]: blocked
+  + actual - expected
+  
+  + 'waiting'
+  - 'blocked'
+  
+      at TestContext.<anonymous> (file:///Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/apps/web/test/workflow-progress-identity.test.mjs:156:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'waiting',
+    expected: 'blocked',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

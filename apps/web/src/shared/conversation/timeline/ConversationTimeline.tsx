@@ -614,7 +614,7 @@ function RootSubAgentTimelineItem({
 }): React.JSX.Element {
   const { t } = useI18n();
   const hasChildItems = item.childItems.length > 0;
-  const statusLabel = t(subAgentStatusLabel(item.lifecycle));
+  const statusLabel = item.stateLabel ?? t(subAgentStatusLabel(item.lifecycle));
 
   return (
     <section

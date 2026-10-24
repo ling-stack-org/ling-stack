@@ -450,6 +450,8 @@ export interface ConversationTimelineSubAgentItem extends ConversationTimelineIt
   readonly workflowStepId: string | null;
   readonly label: string;
   readonly lifecycle: "started" | "running" | "waiting" | "interrupted" | "completed" | "blocked" | "errored";
+  /** Optional adapter display label; never used to infer lifecycle or status. */
+  readonly stateLabel?: string;
   readonly childItems: readonly ConversationTimelineItem[];
 }
 
@@ -664,7 +666,7 @@ export function projectConversationSubAgentActivity(
     revision: revisionFromSpan(span),
     threadSequence: projectedChildItems[0]?.threadSequence ?? 0,
     partIndex: 0,
-    status: statusFromTone(span.tone),
+    status: statusFromLifecycle(lifecycleFromSpan(span)),
     turnId: options.turnId,
     participantId,
     runId: span.runId ?? firstFactRunId,
@@ -672,6 +674,7 @@ export function projectConversationSubAgentActivity(
       workflowStepId: span.workflowStepId ?? firstFactWorkflowStepId ?? null,
     label: span.label,
     lifecycle: lifecycleFromSpan(span),
+    ...(span.stateLabel ? { stateLabel: span.stateLabel } : {}),
     sourceRefs: span.sourceRefs ?? firstFactSourceRefs ?? [],
     childItems: projectedChildItems,
   };
@@ -1241,15 +1244,17 @@ function revisionFromSpan(span: ConversationAgentActivitySpan): number {
   return revisions.length > 0 ? Math.max(...revisions) : 0;
 }
 
-function statusFromTone(tone: ConversationAgentActivitySpan["tone"]): ConversationTimelineItemStatus | undefined {
-  if (tone === "running") return "running";
-  if (tone === "waiting") return "waiting";
-  if (tone === "failed") return "failed";
-  if (tone === "success") return "succeeded";
-  return undefined;
+function statusFromLifecycle(lifecycle: ConversationTimelineSubAgentItem["lifecycle"]): ConversationTimelineItemStatus {
+  if (lifecycle === "completed") return "succeeded";
+  if (lifecycle === "blocked") return "blocked";
+  if (lifecycle === "errored") return "failed";
+  if (lifecycle === "waiting") return "waiting";
+  if (lifecycle === "interrupted") return "cancelled";
+  return lifecycle === "started" ? "pending" : "running";
 }
 
 function lifecycleFromSpan(span: ConversationAgentActivitySpan): ConversationTimelineSubAgentItem["lifecycle"] {
+  if (span.lifecycle) return span.lifecycle;
   if (span.tone === "failed") return "errored";
   if (span.tone === "waiting") return "waiting";
   if (span.tone === "running") return "running";

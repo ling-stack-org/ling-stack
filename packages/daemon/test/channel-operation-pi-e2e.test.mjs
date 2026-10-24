@@ -3,13 +3,15 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createCompositeSecretResolver, createSqliteRunStore } from "../../core/dist/index.js";
+import { createCompositeSecretResolver, createSqliteRunStore, readRunProgressFrozenExecution } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
+import { readStoredRunnerExecution, rebuildExistingRunRequest } from "../dist/features/runs/existing-run-request.js";
 import { ensureEmptyGitRepo } from "./git-test-helpers.mjs";
 import { fileOperationCandidate } from "./support/channel-operation-candidate-fixture.mjs";
 import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
 
-test("real Pi plus loopback SSE completes source-bound read and exclusive create through the workflow", async () => {
+for (const continuationMode of ["off", "enforce"]) {
+test(`real Pi plus loopback SSE completes source-bound read and exclusive create with continuations=${continuationMode}`, async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-operation-pi-e2e-"));
   await ensureEmptyGitRepo(cwd);
   await writeFile(join(cwd, "input.txt"), "source");
@@ -35,7 +37,8 @@ test("real Pi plus loopback SSE completes source-bound read and exclusive create
     return { text: "Read input.txt and created output.txt with SOURCE." };
   });
   const stores = new Map();
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, channels: { intentSelector: true, terminalReports: false } }, {
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, channels: { intentSelector: true, terminalReports: false },
+    harness: { continuations: { mode: continuationMode }, toolBroker: { mode: continuationMode } } }, {
     secretResolver: createCompositeSecretResolver({ env: { LING_TEST_LOOPBACK_KEY: "static-loopback-only" } }),
     storeFactory: (storeCwd) => { const store = createSqliteRunStore(storeCwd); stores.set(storeCwd, store); return store; },
   });
@@ -70,7 +73,24 @@ test("real Pi plus loopback SSE completes source-bound read and exclusive create
       if (run && ["succeeded", "failed", "cancelled"].includes(run.status)) break;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
-    assert.equal(run?.status, "succeeded", JSON.stringify({ run, step: store.getChannelWorkflowStep(step.id) }));
+    assert.equal(run?.status, "succeeded", JSON.stringify({ runId: run?.id, error: run?.error,
+      blocker: store.getChannelWorkflowStep(step.id).blocker, executionTurns }));
+    const execution = readRunProgressFrozenExecution(run);
+    assert.equal(run.taskSnapshot.prompt, execution.input.task.prompt);
+    assert.equal(run.requestSnapshot.task.prompt, execution.input.task.prompt);
+    assert.notEqual(store.getTask(run.taskId).prompt, execution.input.task.prompt,
+      "the canonical Task remains the objective; the Run freezes its rendered workflow input");
+    assert.equal(readStoredRunnerExecution(run)?.preparedInput.fingerprint, execution.preparedInput.fingerprint);
+    const tampered = structuredClone(run);
+    tampered.taskSnapshot.prompt += " changed after acceptance";
+    assert.throws(() => readRunProgressFrozenExecution(tampered), { code: "checkpoint.lineage_mismatch" });
+    if (continuationMode === "enforce") {
+      const request = rebuildExistingRunRequest(run, "daemon_recovery");
+      assert.deepEqual(request.task, execution.input.task);
+      const checkpoints = store.database.prepare("SELECT source_event_seq FROM run_progress_checkpoints WHERE run_id=?").all(run.id);
+      assert.ok(checkpoints.length >= 2, "both settled tool rounds must checkpoint before further model I/O");
+    }
+    assert.equal(executionTurns, 3, "read, create and final each occur once, without replaying tools");
     assert.equal(approvedCreates, 1);
     assert.equal(await readFile(join(cwd, "output.txt"), "utf8"), "SOURCE");
     assert.equal(await readFile(join(cwd, "input.txt"), "utf8"), "source");
@@ -82,6 +102,7 @@ test("real Pi plus loopback SSE completes source-bound read and exclusive create
     await daemon.stop(); await upstream.close(); await rm(cwd, { recursive: true, force: true });
   }
 });
+}
 
 async function json(url, body, method = "POST") {
   const response = await fetch(url, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });

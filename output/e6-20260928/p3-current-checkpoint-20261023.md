@@ -4,6 +4,49 @@ This is the concise current entry. Older append-only records are history, not a 
 
 ## Superseding checkpoint — 2026-10-24
 
+### New actual C01 blockers repaired, package refresh next
+
+- Original stage A created workflow7560c256 and Engineer Run1d74e385; read
+  succeeded once, then checkpoint.lineage_mismatch blocked the next model request.
+  QA remained queued, no approval or CLI execution. Real screenshot/full AX and
+  bounded public Host capture are retained under p3-live-20261024. Do not blindly
+  retry this failed original or call it collaboration success.
+- Root cause: canonical Task objective replaced the accepted rendered workflow
+  prompt in Run.taskSnapshot. Fresh Run persistence now preserves accepted fields
+  and Task metadata; no canonical Task/history repair or relaxed Core guard.
+  Actual enhanced RED2/2 -> GREEN2/2; adjacent28/28, tsc exit0. Independent final
+  scope0 findings. See p3-channel-checkpoint-repair-20261024.md.
+- UI mapped blocked color to waiting/approval. Typed lifecycle/status and source
+  display labels now survive both workflow/collaboration adapters. Independent
+  review found and closed queued/input-focus and mixed done/cancelled mirrors;
+  Core197/197, Web120/120, tsc exit0. Final independent48/48, scope0 findings.
+  See p3-child-status-independent-review-20261024.md. Not yet in the running App.
+- Offline-prefetch final review is complete, source hashes unchanged from21/21
+  green; packaged revalidation remains open. Do not re-investigate the same regex.
+- Next: save this source checkpoint, freeze only the two changed Office packaging
+  inputs plus separately reviewed UI bytes, apply standing internal QA scope,
+  package once, verify identity and re-enter affected live cases. H09 hard-cap,
+  real recovery/delegation/Office matrix and PR/main remain open. No release.
+
+### Latest real GUI continuation — Mac unlocked, P01 and new offline finding
+
+- The isolated Main69127/child Daemon69142/port17928 were reverified live. Built-in
+  Computer Use now operates normally. The old unlock blocker below is superseded;
+  do not ask to unlock, re-launch or rebuild the already verified package.
+- P01 historical three-file +36/-0 review and actual cents.mjs/README.md diff
+  selection were verified in the real new GUI. New P01 live approval appeared
+  without reload, allowed once, executed exactly one bash command and ended with
+  one final reply. Actual final/expanded-output PNG and AX files are saved under
+  `p3-live-20261024`; Host capture SHA99d4e71959874d099b716c89b14d742445390be92c9b5207c4c3919c844a232e.
+- P01 offline assertion FAILED: shared eager prefetch missed “明确离线” and
+  “不搜索网页”; Host recorded four blocked searches before model execution. Exact
+  regression RED1/2 then candidate GREEN21/21, Daemon tsc exit0. Full causal
+  evidence/limits are in `p3-offline-prefetch-repair-20261024.md`. Current package
+  does not contain this candidate; review and packaged revalidation remain open.
+- New C01/F01-20261024 task has been sent through the real GUI to the existing
+  Engineer+QA channel. Follow that actual task; do not replace it with synthetic
+  evidence or repeat old failed task claims. Total E6/PR/main goal remains active.
+
 ### Current execution — saved merge and completed delta reviews
 
 #### New package is complete; GUI is waiting for manual Mac unlock

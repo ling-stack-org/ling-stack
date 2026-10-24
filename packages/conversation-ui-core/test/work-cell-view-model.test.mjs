@@ -402,6 +402,21 @@ test("nested agent projection reuses the same typed child timeline", () => {
   assert.equal(nested.childItems[1].participantId, "engineer");
 });
 
+test("explicit participant lifecycle is not inferred from tone or localized labels", () => {
+  for (const [lifecycle, status] of [
+    ["started", "pending"], ["running", "running"], ["waiting", "waiting"],
+    ["blocked", "blocked"], ["interrupted", "cancelled"],
+    ["completed", "succeeded"], ["errored", "failed"],
+  ]) {
+    const item = projectConversationSubAgentActivity({ id: "owned-agent", label: "Engineer",
+      lifecycle, stateLabel: "source label only", tone: "waiting", rows: [],
+    }, [readRow("owned-read", "owned-run", "owned.txt", { participantId: "owned-agent" })]);
+    assert.equal(item.lifecycle, lifecycle);
+    assert.equal(item.status, status);
+    assert.equal(item.stateLabel, "source label only");
+  }
+});
+
 test("legacy child projection converts a third-level participant into a blocked diagnostic", () => {
   const nestedAgent = {
     id: "sub-agent:researcher",
