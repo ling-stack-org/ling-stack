@@ -55,6 +55,7 @@ export function restorePreparedRunnerOptions(
   if (payload.toolHydrationEnabled && !(current.initialToolSurface?.toolHydration ?? Boolean(current.onToolHydrationRequest)) ||
     payload.input.initialToolSurface?.userInput === true && current.initialToolSurface?.userInput !== true ||
     payload.input.initialToolSurface?.delegation === true && current.initialToolSurface?.delegation !== true ||
+    (payload.input.initialToolSurface?.nativeFileCreate === true) !== (current.initialToolSurface?.nativeFileCreate === true) ||
     !requiredRuntimeToolFeaturesRemainAvailable(payload.input.runtimeToolFeatures, current.runtimeToolFeatures)) {
     throw new HttpError(409, "prepared_tool_capability_changed", "Prepared runtime tool capabilities changed.");
   }
@@ -108,13 +109,24 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
   }
   if (value.input.initialToolSurface !== undefined) {
     const surface = value.input.initialToolSurface;
-    if (!isRecord(surface) || Object.keys(surface).some(key => !["mediaGeneration", "toolHydration", "userInput", "delegation"].includes(key)) ||
+    if (!isRecord(surface) || Object.keys(surface).some(key => !["mediaGeneration", "toolHydration", "userInput", "delegation", "nativeFileCreate"].includes(key)) ||
       Object.values(surface).some(selected => typeof selected !== "boolean") ||
       surface.userInput !== undefined && prepared.tools.some(tool => tool.name === "request_user_input") !== surface.userInput ||
       prepared.tools.filter(tool => (DELEGATION_TOOL_NAMES as readonly string[]).includes(tool.name)).length
         !== (surface.delegation === true ? DELEGATION_TOOL_NAMES.length : 0)) {
       throw new Error("Invalid prepared user-input tool surface");
     }
+  }
+  const write = prepared.tools.find(tool => tool.name === "write");
+  if (write) {
+    const rawParameters: unknown = write.parameters;
+    const parameters = isRecord(rawParameters) ? rawParameters : {};
+    const properties = isRecord(parameters.properties) ? parameters.properties : {};
+    const native = parameters.additionalProperties === false && parameters.anyOf === undefined
+      && isDeepStrictEqual(parameters.required, ["path", "content"])
+      && isDeepStrictEqual(Object.keys(properties).sort(), ["content", "path"]);
+    const selected = isRecord(value.input.initialToolSurface) && value.input.initialToolSurface.nativeFileCreate === true;
+    if (native !== selected) throw new Error("Invalid prepared native-create tool surface");
   }
   if (value.input.hostCapabilityTools !== undefined && (!Array.isArray(value.input.hostCapabilityTools) ||
     !value.input.hostCapabilityTools.every(isHostCapabilityToolDefinitionV1) ||

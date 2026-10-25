@@ -469,6 +469,8 @@ export interface PiRunnerRunOptions {
     readonly userInput?: boolean;
     /** Original Host registry selection; callback presence alone never enables schema preparation. */
     readonly delegation?: boolean;
+    /** Typed workflow writes use path/content and Host exclusive-create, never the patch writer. Schema only, not authority. */
+    readonly nativeFileCreate?: boolean;
   };
   /** Host-owned preparation evidence; never a permission grant or a session history. */
   readonly preparedInput?: PiRunnerPreparedInput;

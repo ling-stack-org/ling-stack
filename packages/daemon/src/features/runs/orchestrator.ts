@@ -894,6 +894,7 @@ async function executeAdmittedRunRequest(
     runnerRequest = { ...runnerRequest, mediaGenerationTools: currentMediaTools,
       initialToolSurface: { mediaGeneration: currentMediaTools.length > 0, toolHydration: toolHydrationEnabled,
         userInput: userInputAvailable(),
+        nativeFileCreate: runRequest.workflowOperationExecution !== undefined,
         delegation: delegationToolSurfaceEnabled } };
     if (!frozenExecution && runnerResolution.runner.adapter instanceof PiRunnerAdapter) {
       runnerRequest = withGstackHostContext(runnerRequest, selectedSkillSourceContext);
@@ -961,6 +962,7 @@ async function executeAdmittedRunRequest(
         initialToolSurface: { mediaGeneration: mediaGenerationEligible,
           toolHydration: runnerResolution.runner.toolHydration?.mode === "daemon_hydrated" && runnerResolution.runner.toolHydration.conformance === "verified",
           userInput: userInputAvailable(),
+          nativeFileCreate: runRequest.workflowOperationExecution !== undefined,
           delegation: currentDelegationToolSurfaceEnabled },
         provider: resolvedProvider, mcpTools: currentMcp, mediaGenerationTools: mediaGenerationEligible
           ? createConversationMediaGenerationToolDefinitions(listConversationMediaGenerationTargets(runStore, secretResolver)) : [] });

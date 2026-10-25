@@ -33,6 +33,11 @@ test(`real Pi plus loopback SSE completes source-bound read and exclusive create
     }
     if (/context segmentation policy proposer/.test(text)) return { text: JSON.stringify({ action: "uncertain", candidateSegmentIds: [] }) };
     executionTurns += 1;
+    // Regression: C01-R10; real Host preparation and actual wire must agree with exclusive create.
+    const writeSchema = request.tools.find(tool => tool.function.name === "write").function.parameters;
+    assert.deepEqual(writeSchema.required, ["path", "content"]);
+    assert.equal(writeSchema.properties.patchText, undefined);
+    assert.equal(writeSchema.additionalProperties, false);
     assert.match(text, /OWNER_PRIVATE_MEMORY_CANARY/, "the assigned Agent still receives its frozen private memory");
     if (executionTurns === 1) return { tool: "read", input: { path: "input.txt" } };
     if (executionTurns === 2) {
@@ -86,6 +91,7 @@ test(`real Pi plus loopback SSE completes source-bound read and exclusive create
     assert.equal(run?.status, "succeeded", JSON.stringify({ runId: run?.id, error: run?.error,
       blocker: store.getChannelWorkflowStep(step.id).blocker, executionTurns }));
     const execution = readRunProgressFrozenExecution(run);
+    assert.equal(execution.input.initialToolSurface.nativeFileCreate, true);
     assert.equal(run.taskSnapshot.prompt, execution.input.task.prompt);
     assert.equal(run.requestSnapshot.task.prompt, execution.input.task.prompt);
     assert.doesNotMatch(run.taskSnapshot.prompt, /OWNER_PRIVATE_MEMORY_CANARY/);
