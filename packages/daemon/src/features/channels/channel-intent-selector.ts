@@ -27,7 +27,7 @@ import { ChannelIntentDiagnosticPersistenceError, createChannelIntentDiagnostics
   type ChannelIntentRequestPurpose } from "./channel-intent-diagnostics.js";
 import { publishChannelOperationBlocker, recoverChannelOperationBlocker,
   type ChannelOperationBlockedResult } from "./channel-operation-blocker.js";
-import { channelOperationVisibleSources } from "./channel-operation-sources.js";
+import { channelOperationContinuationContext, channelOperationVisibleSources } from "./channel-operation-sources.js";
 import { formatServerCatalogMessage } from "@ling-stack/localization";
 import { PiRunnerAdapter } from "@ling-stack/runner-pi";
 import type { ResolvedDaemonConfig } from "../../config.js";
@@ -437,8 +437,7 @@ function applyModelIntentOutput(input: ChannelIntentSelectorInput, output: Chann
 }
 
 function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, output: ChannelIntentModelOutput): ChannelIntentSelectorResult {
-  const reasonCode = detectWorkflowIntentReason(input.sourceMessage) ?? "ordered_work_request";
-  const { candidates, binding } = bindModelIntentOperations(input, output.execution);
+  const { candidates, binding, routingInput, reasonCode } = bindModelIntentOperations(input, output.execution);
   if (binding.status === "blocked") {
     return publishChannelOperationBlocker(input);
   }
@@ -448,9 +447,10 @@ function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, out
     return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
   }
   const ownerIds = new Set(binding.execution.operations.map((operation) => operation.binding!.ownerParticipantId));
-  const explicitlyRequiredIds = new Set(explicitRequestedParticipantIds(input));
-  const participants = candidates.filter((participant) => ownerIds.has(participant.teammate.id)
-    || explicitlyRequiredIds.has(participant.teammate.id));
+  const explicitlyRequiredIds = new Set(explicitRequestedParticipantIds(routingInput));
+  const excludedIds = new Set(binding.excludedParticipantIds);
+  const participants = candidates.filter((participant) => !excludedIds.has(participant.teammate.id)
+    && (ownerIds.has(participant.teammate.id) || explicitlyRequiredIds.has(participant.teammate.id)));
   const decisionAction = output.action === "execute" ? "execute" : "workflow_proposal";
   const participantManifest = createParticipantManifest(input, participants.map((participant) => ({
     teammate: participant.teammate,
@@ -479,8 +479,15 @@ function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, out
 
 /** The same read-only admission check governs repair and final publication. */
 function bindModelIntentOperations(input: ChannelIntentSelectorInput, candidate: unknown) {
-  const reasonCode = detectWorkflowIntentReason(input.sourceMessage) ?? "ordered_work_request";
-  const candidates = selectTypedProposalParticipants(input, reasonCode);
+  const continuationContext = channelOperationContinuationContext({ store: input.store, sourceItemId: input.sourceMessage.id });
+  const continuationRequested = typeof candidate === "object" && candidate !== null && "continuation" in candidate;
+  const originalMessage = continuationRequested && continuationContext
+    ? getChannelMessageView(input.store, continuationContext.source.itemId) : undefined;
+  // Only routing identity comes from the pending original request. Publication,
+  // current constraints, provider, approval and execution all keep the new Turn.
+  const routingInput = originalMessage ? { ...input, sourceMessage: originalMessage } : input;
+  const reasonCode = detectWorkflowIntentReason(routingInput.sourceMessage) ?? "ordered_work_request";
+  const candidates = selectTypedProposalParticipants(routingInput, reasonCode);
   const binding = bindChannelOperationPlan({
     candidate,
     sourceItemId: input.sourceMessage.id,
@@ -489,9 +496,10 @@ function bindModelIntentOperations(input: ChannelIntentSelectorInput, candidate:
     participants: candidates.map((participant) => participant.teammate),
     ...(candidates.length === 1 ? { defaultOwnerParticipantId: candidates[0]!.teammate.id } : {}),
     visibleSources: channelOperationVisibleSources({ store: input.store, sourceItemId: input.sourceMessage.id }),
+    continuationContext,
     hostCapabilityAvailable: input.hostCapabilityAvailable,
   });
-  return { candidates, binding };
+  return { candidates, binding, routingInput, reasonCode };
 }
 
 /** Host routing selects the default; a candidate can request it but cannot name a replacement. */

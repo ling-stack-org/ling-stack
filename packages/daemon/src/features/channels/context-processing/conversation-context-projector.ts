@@ -31,6 +31,8 @@ export interface BuildConversationContextProjectionInput {
   readonly view: ConversationContextProjectionView;
   readonly consumerTeammateId?: string;
   readonly maxTailTextChars?: number;
+  /** Host-selected items already visible in this projection; only text-budget trimming is bypassed. */
+  readonly retainItemIds?: readonly string[];
   readonly explicitItemIds?: readonly string[];
   /**
    * Include the other committed Items from the source Turn as explicit context.
@@ -164,6 +166,7 @@ export function buildConversationContextProjection(
     visibleItems,
     sourceItem.id,
     input.maxTailTextChars ?? 32_768,
+    input.retainItemIds,
   );
   const visibilityFingerprint = fingerprint({
     scope: projectionVisibilityScope(input.view, input.consumerTeammateId),
@@ -424,6 +427,7 @@ function trimProjectionItemsByTextBudget(
   items: readonly ConversationItemV1[],
   sourceItemId: string,
   maxTextChars: number,
+  retainItemIds: readonly string[] = [],
 ): readonly ConversationItemV1[] {
   const safeMax = Math.min(Math.max(Math.floor(maxTextChars), 1_024), 256_000);
   const selected: ConversationItemV1[] = [];
@@ -438,7 +442,7 @@ function trimProjectionItemsByTextBudget(
   });
   for (const item of [...ordered].reverse()) {
     const size = projectionItemText(item).length;
-    if (item.id !== sourceItemId && selected.length > 0 && used + size > safeMax) continue;
+    if (item.id !== sourceItemId && !retainItemIds.includes(item.id) && selected.length > 0 && used + size > safeMax) continue;
     selected.push(item);
     used += size;
   }

@@ -17,7 +17,7 @@ import {
 } from "@ling-stack/contracts";
 import type { AiTeammate, RunTool } from "@ling-stack/core";
 import { commandMatchesPolicy } from "./command-operation-match.js";
-import type { ChannelOperationVisibleSource } from "./channel-operation-sources.js";
+import type { ChannelOperationContinuationAnchor, ChannelOperationContinuationContext, ChannelOperationVisibleSource } from "./channel-operation-sources.js";
 
 interface CandidatePath {
   /** Workspace-relative unless relativeTo explicitly supplies the directory anchor. */
@@ -59,6 +59,10 @@ export interface ChannelOperationCandidateV2 {
 
 export interface ChannelOperationCandidatePlanV2 {
   readonly schemaVersion: 2;
+  readonly continuation?: ChannelOperationContinuationAnchor & {
+    readonly confirmationQuote: string;
+    readonly excludedParticipants?: readonly { readonly participantId: string; readonly sourceQuote: string }[];
+  };
   readonly operations: readonly ChannelOperationCandidateV2[];
 }
 
@@ -71,6 +75,7 @@ export interface ChannelOperationCandidateShapeIssue {
 
 export type ChannelOperationBindingResult =
   | { readonly status: "bound"; readonly execution: ChannelIntentExecutionPlanV1;
+      readonly excludedParticipantIds: readonly string[];
       readonly capabilityBlockers: readonly { readonly operationId: string; readonly participantId: string; readonly tool: RunTool }[] }
   | { readonly status: "blocked"; readonly code: "operation_binding_host_capability_unavailable";
       readonly operationId: string; readonly reason: string }
@@ -90,6 +95,8 @@ export function bindChannelOperationPlan(input: {
   readonly workspaceCwd: string;
   readonly participants: readonly Pick<AiTeammate, "id" | "displayName" | "roleKey" | "allowedTools">[];
   readonly visibleSources?: readonly ChannelOperationVisibleSource[];
+  /** Resolved from canonical Host state, never supplied by the model or HTTP. */
+  readonly continuationContext?: ChannelOperationContinuationContext;
   readonly hostCapabilityAvailable?: (capabilityId: "host.open_local_target") => boolean;
   /** Selected by existing Host routing, never by the candidate's participant ID. */
   readonly defaultOwnerParticipantId?: string;
@@ -101,10 +108,34 @@ export function bindChannelOperationPlan(input: {
         reason: `Operation candidate schema rejected: ${shapeIssue!.path} (${shapeIssue!.code}).` };
     }
     const candidate = input.candidate;
+    const continuation = candidate.continuation ? input.continuationContext : undefined;
+    const excludedParticipantIds = new Set<string>();
+    if (candidate.continuation) {
+      const { confirmationQuote, ...anchor } = candidate.continuation;
+      if (!continuation || Object.entries(continuation.anchor).some(([key, value]) => anchor[key as keyof typeof anchor] !== value)
+        || continuation.confirmation.itemId !== input.sourceItemId || continuation.confirmation.body !== input.sourceText
+        || confirmationQuote !== input.sourceText || continuation.source.actorType !== "local_user"
+        || ![continuation.source, continuation.confirmation, continuation.clarification].every(source =>
+          input.visibleSources?.some(item => item.itemId === source.itemId && item.revision === source.revision
+            && item.actorType === source.actorType && item.body === source.body))) {
+        fail("execution.continuation", "Continuation must match the Host's current pending clarification and complete current user confirmation.");
+      }
+      for (const exclusion of candidate.continuation.excludedParticipants ?? []) {
+        const participant = input.participants.find(item => item.id === exclusion.participantId);
+        if (!participant || excludedParticipantIds.has(participant.id)
+          || !input.sourceText.includes(exclusion.sourceQuote)
+          || ![participant.id, participant.displayName, participant.roleKey].some(name =>
+            exclusion.sourceQuote.toLocaleLowerCase().includes(name.toLocaleLowerCase()))) {
+          fail("execution.continuation.excludedParticipants", "A participant exclusion needs a unique selected identity and a verbatim quote from the complete current confirmation.");
+        }
+        excludedParticipantIds.add(participant.id);
+      }
+    }
+    const instructionItemId = continuation?.source.itemId ?? input.sourceItemId;
     const capabilityBlockers: { operationId: string; participantId: string; tool: RunTool }[] = [];
     const byId = new Map(candidate.operations.map((operation) => [operation.id, operation]));
     if (byId.size !== candidate.operations.length) fail("execution.operations", "Operation IDs must be unique.");
-    const quote = (value: string, sourceItemId = input.sourceItemId): ChannelOperationSourceV1 => {
+    const quote = (value: string, sourceItemId = instructionItemId): ChannelOperationSourceV1 => {
       const source = input.visibleSources?.find((item) => item.itemId === sourceItemId);
       const body = sourceItemId === input.sourceItemId ? input.sourceText : source?.body;
       if (!value.trim() || !body?.includes(value)) fail("sourceQuote", "Binding provenance is not a verbatim quote from a current projected canonical item.");
@@ -135,6 +166,7 @@ export function bindChannelOperationPlan(input: {
       const ownerId = defaultOwner ? input.defaultOwnerParticipantId : operation.owner.participantId;
       const owner = input.participants.find((participant) => participant.id === ownerId);
       if (!owner) fail("owner.participantId", `Operation ${operation.id} names an unavailable or unselected participant.`);
+      if (excludedParticipantIds.has(owner.id)) fail("owner.participantId", "A currently excluded participant cannot own an operation.");
       const ownerQuote = ownerSource?.quote.toLocaleLowerCase();
       if (ownerQuote !== undefined && ![owner.id, owner.displayName, owner.roleKey].some((name) => ownerQuote.includes(name.toLocaleLowerCase()))) {
         fail("owner.sourceQuote", `Operation ${operation.id} has no source-backed participant identity.`);
@@ -178,7 +210,7 @@ export function bindChannelOperationPlan(input: {
         const anchorSource = quote(anchor.sourceQuote, anchor.sourceItemId);
         if (!isChannelOperationRelativePathV1(anchor.path)
           || !hasExplicitChannelOperationPathQuoteV1(anchor.sourceQuote, anchor.path)
-          || ((!anchor.sourceItemId || anchor.sourceItemId === input.sourceItemId)
+          || ((!anchor.sourceItemId || anchor.sourceItemId === instructionItemId)
             && !operation.sourceQuote.includes(anchor.sourceQuote))) {
           fail("inputs.relativeTo", "The command input anchor needs its own literal directory quote in this operation's instruction span.");
         }
@@ -192,7 +224,7 @@ export function bindChannelOperationPlan(input: {
         return { path, sourceRefs: [sourceRef, anchorSource] };
       };
       const target = operation.target ? file(operation.target) : undefined;
-      if (operation.target && (!operation.target.sourceItemId || operation.target.sourceItemId === input.sourceItemId)
+      if (operation.target && (!operation.target.sourceItemId || operation.target.sourceItemId === instructionItemId)
         && !operation.sourceQuote.includes(operation.target.sourceQuote)) fail("target.sourceQuote", "The file target must belong to this operation's instruction span.");
       if (operation.kind === "run_command" && Boolean(operation.command) === Boolean(operation.commandGoal)) {
         fail("command", `Operation ${operation.id} needs either an explicit command or a source-bound invocation goal, not both.`);
@@ -206,7 +238,7 @@ export function bindChannelOperationPlan(input: {
       if (operation.contentSource) {
         const content = operation.contentSource;
         const sourceRef = quote(content.sourceQuote, content.sourceItemId);
-        if ((!content.sourceItemId || content.sourceItemId === input.sourceItemId)
+        if ((!content.sourceItemId || content.sourceItemId === instructionItemId)
           && !operation.sourceQuote.includes(content.sourceQuote)) fail("contentSource.sourceQuote", "Content must belong to this operation's instruction span.");
         if (!content.sourceQuote.includes(content.text)) fail("contentSource.text", "Content or objective text must be separately quoted, not extracted from a path suffix.");
         if (content.kind === "literal") {
@@ -229,7 +261,7 @@ export function bindChannelOperationPlan(input: {
       if (operation.inputs) {
         if (operation.kind !== "run_command") fail("inputs", "Only a command operation may declare staged command inputs.");
         for (const commandInput of operation.inputs) {
-          if ((!commandInput.sourceItemId || commandInput.sourceItemId === input.sourceItemId)
+          if ((!commandInput.sourceItemId || commandInput.sourceItemId === instructionItemId)
             && !operation.sourceQuote.includes(commandInput.sourceQuote)) {
             fail("inputs.sourceQuote", "A command input must belong to this operation's instruction span.");
           }
@@ -322,7 +354,9 @@ export function bindChannelOperationPlan(input: {
         ...(exactCommands.length ? { commandMatchPolicy: { kind: "exact_command" as const, command: exactCommands[0]! } } : {}),
         binding: {
           schemaVersion: 1, ownerParticipantId: owner.id, ownerSelection: defaultOwner ? "host_default" : "explicit", inputRefs, outputRefs,
-          ...(contentSource ? { contentSource } : {}), sourceRefs: ownerSource ? [source, ownerSource] : [source],
+          ...(contentSource ? { contentSource } : {}), sourceRefs: [source, ...(ownerSource ? [ownerSource] : []),
+            ...(continuation ? [quote(continuation.confirmation.body, input.sourceItemId),
+              quote(continuation.clarification.body, continuation.clarification.itemId)] : [])],
           ...(commandGoal ? { commandGoal } : {}),
           ...(commandInputScope ? { commandInputScope } : {}),
           ...(workingDirectory ? { workingDirectory } : {}),
@@ -348,7 +382,7 @@ export function bindChannelOperationPlan(input: {
       && input.hostCapabilityAvailable?.("host.open_local_target") !== true);
     if (unsupported) return { status: "blocked", code: "operation_binding_host_capability_unavailable",
       operationId: unsupported.id, reason: "Opening a local target requires an independent Host executor and authorization; this runtime has neither connected." };
-    return { status: "bound", execution, capabilityBlockers };
+    return { status: "bound", execution, capabilityBlockers, excludedParticipantIds: [...excludedParticipantIds] };
   } catch (error) {
     if (error instanceof BindingError) return { status: "clarify", missingFields: [error.field], reason: error.message };
     throw error;
@@ -402,10 +436,23 @@ const operationPath = "execution.operations[]";
 
 /** The boolean guard and diagnostics share exactly the same strict validator. */
 function validateCandidatePlan(value: unknown, report?: ShapeReporter): value is ChannelOperationCandidatePlanV2 {
-  return record(value, ["schemaVersion", "operations"], report, "execution")
+  return record(value, ["schemaVersion", "operations", "continuation"], report, "execution")
     && literal(value.schemaVersion, 2, report, "execution.schemaVersion")
+    && (value.continuation === undefined || candidateContinuation(value.continuation, report))
     && array(value.operations, 1, 64, report, "execution.operations")
     && value.operations.every(operation => candidateOperation(operation, report));
+}
+
+function candidateContinuation(value: unknown, report?: ShapeReporter): value is NonNullable<ChannelOperationCandidatePlanV2["continuation"]> {
+  const path = "execution.continuation";
+  return record(value, ["sourceItemId", "sourceRevision", "clarificationDecisionId", "clarificationItemId",
+    "clarificationRevision", "contextSegmentId", "projectionFingerprint", "confirmationQuote", "excludedParticipants"], report, path)
+    && ["sourceItemId", "clarificationDecisionId", "clarificationItemId", "contextSegmentId", "projectionFingerprint", "confirmationQuote"]
+      .every(key => text(value[key], report, `${path}.${key}`))
+    && ["sourceRevision", "clarificationRevision"].every(key => scalar(value[key], "number", report, `${path}.${key}`)
+      && shape(Number.isSafeInteger(value[key]) && Number(value[key]) >= 0, `${path}.${key}`, "invalid_value", report))
+    && (value.excludedParticipants === undefined || (array(value.excludedParticipants, 1, 64, report, `${path}.excludedParticipants`)
+      && value.excludedParticipants.every(item => quotedPair(item, "participantId", report, `${path}.excludedParticipants[]`))));
 }
 
 function candidateOperation(value: unknown, report?: ShapeReporter): value is ChannelOperationCandidateV2 {
@@ -466,7 +513,7 @@ function candidateOwner(value: unknown, report?: ShapeReporter): value is Channe
       && text(value.participantId, report, `${p}.participantId`) && text(value.sourceQuote, report, `${p}.sourceQuote`);
 }
 
-function quotedPair(value: unknown, key: "path" | "text", report: ShapeReporter | undefined, path: string): boolean {
+function quotedPair(value: unknown, key: "path" | "text" | "participantId", report: ShapeReporter | undefined, path: string): boolean {
   return record(value, [key, "sourceQuote"], report, path)
     && text(value[key], report, `${path}.${key}`) && text(value.sourceQuote, report, `${path}.sourceQuote`);
 }
