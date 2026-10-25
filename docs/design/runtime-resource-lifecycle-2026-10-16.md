@@ -1,6 +1,6 @@
 # B011 实施合同：显式续租期限与安全 expiry SQL
 
-日期：2026-10-16。唯一实施树：`/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack`。
+日期：2026-10-16。唯一实施树：本机专用 worktree `ling-e6-continuation/ling-stack`（绝对路径仅保存在本地 QA 记录）。
 
 本合同采用 Root 已固定的单一接口，覆盖先前 `b011-resource-lifecycle-trace-20261016.md` 中尚未确定的接口选项。
 本合同不新增通用 reconciliation 事务、任意回调或自动撤权机制；先前 trace 的更宽建议不作为本次实现范围。

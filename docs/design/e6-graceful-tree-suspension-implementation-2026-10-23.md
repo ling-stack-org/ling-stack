@@ -12,7 +12,7 @@
 旧production optional测试的post-run hook已移到真实SDK settled窗口，完整文件13/13、actualexit0；
 没有放宽Core/Host准入、超时、排空、usage或result断言。最终Core/Daemon全套正在执行。
 基线：`codex/e6-safe-continuation`，`c71bae7526955d6458909ea6d919de7ac6ec317a` 加当前 WIP。
-唯一实施树：`/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack`。
+唯一实施树：本机专用 worktree `ling-e6-continuation/ling-stack`（绝对路径仅保存在本地 QA 记录）。
 
 ## 固定边界
 

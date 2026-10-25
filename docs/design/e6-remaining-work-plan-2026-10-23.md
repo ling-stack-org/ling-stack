@@ -52,7 +52,7 @@ canonical 路径与目录身份检查、最多两代及中断残留阻断。监�
 
 ### P1 当前实际检查点
 
-- 独立私有目录：`/Users/tianxiao/Library/Caches/ling-gstack-e6-20261023/resources`。
+- 独立私有目录：用户缓存目录中的 `ling-gstack-e6-20261023/resources`（本机绝对路径仅保存在本地 QA 记录）。
 - 固定上游 GStack `1.91.101.0@47d639abffa882b8cbb641d7d1dedf08ecada9ec` 源码已获取，
   3714 文件/57 技能完整验证。旧 source manifest 通过精确字节重建恢复，未更新 reviewed pin；
   当前 recipe 与恢复产物的区别保存在资源目录 `artifacts/report/source-reconstruction.json`。

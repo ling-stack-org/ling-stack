@@ -1,7 +1,7 @@
 # E6：A29–A32、B006、B008 已验证本地检查点
 
 日期：2026-10-16。基线 HEAD：a44c4377832b74416cbd332e626a322f9f35ab8d（PR #552）。
-唯一实施树：`/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack`；
+唯一实施树：本机专用 worktree `ling-e6-continuation/ling-stack`（绝对路径仅保存在本地 QA 记录）；
 分支 `codex/e6-safe-continuation`。只保存本文列出的 46 个 owned 输入和本文，不包含另一 writer WIP。
 
 ## 已实施和实测
