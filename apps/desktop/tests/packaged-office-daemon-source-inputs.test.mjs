@@ -30,6 +30,8 @@ test("Office fixed closure pins project inputs and public execution projections"
   for (const path of [
     "packages/daemon/src/runtime/sandbox/node-command-inputs.ts",
     "packages/daemon/src/features/runs/public-execution-snapshots.ts",
+    "packages/daemon/src/features/channels/channel-intent-diagnostics.ts",
+    "packages/daemon/src/features/channels/terminal-report-command-evidence.ts",
   ]) {
     assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path), `missing reviewed P3 input: ${path}`);
   }
