@@ -117,20 +117,28 @@ test("the private stock NSIS overlay installs and uninstalls a small real payloa
     { env, encoding: "utf8", timeout: 120_000, maxBuffer: 1024 * 1024 });
   const deepPath = "resources/gstack/runtime/lib/diagram-render/node_modules/@radix-ui/react-tabs/node_modules/@radix-ui/react-primitive/node_modules/@radix-ui/react-slot/node_modules/@radix-ui/react-compose-refs/ling-upstream-license-provenance.json";
   try {
-    for (const deep of [false, true]) {
-      if (deep) {
-        await mkdir(join(payload, dirname(deepPath)), { recursive: true });
-        await writeFile(join(payload, deepPath), "Long path fixture\n");
-      }
-      await build();
+    // Build once, with the long member present from the start: a second build
+    // could reuse the first payload archive and conceal the failing layer.
+    await mkdir(join(payload, dirname(deepPath)), { recursive: true });
+    await writeFile(join(payload, deepPath), "Long path fixture\n");
+    await build();
+    const extractor = await prepareNsisExtractor();
+    t.after(extractor.cleanup);
+    const nested = join(root, "verified-app.7z");
+    await writeFile(nested, execFileSync(extractor.path, ["e", "-so", "-bd", "-bb0", installer, "$PLUGINSDIR/app-64.7z"],
+      { timeout: 30_000, maxBuffer: 64 * 1024 * 1024 }));
+    assert.equal(execFileSync(extractor.path, ["e", "-so", "-bd", "-bb0", nested, deepPath],
+      { timeout: 30_000, encoding: "utf8" }), "Long path fixture\n", "the actual embedded archive must contain the deep member before installation");
+    t.diagnostic("Verified long member bytes inside the actual installer archive");
+    for (let iteration = 0; iteration < 2; iteration++) {
       const started = performance.now();
-      t.diagnostic(`Installing stock fixture; deepPath=${deep}; finalPathLength=${join(installPath, deepPath).length}`);
+      t.diagnostic(`Installing stock fixture; iteration=${iteration}; finalPathLength=${join(installPath, deepPath).length}`);
       t.diagnostic(run(`$ErrorActionPreference = 'Stop';
   $p = Start-Process -FilePath $env:LING_FIXTURE_INSTALLER -ArgumentList @('/S', ('/D=' + $env:LING_FIXTURE_INSTALL_PATH)) -PassThru -Wait;
   if ($p.ExitCode -ne 0) { throw ('Fixture installer exit: ' + $p.ExitCode) }`));
       t.diagnostic(`Small stock installer elapsed milliseconds: ${performance.now() - started}`);
       assert.equal(await readFile(join(installPath, "fixture.txt"), "utf8"), "Stock installer payload\n");
-      if (deep) assert.equal(await readFile(join(installPath, deepPath), "utf8"), "Long path fixture\n");
+      assert.equal(await readFile(join(installPath, deepPath), "utf8"), "Long path fixture\n");
       t.diagnostic(run(`$ErrorActionPreference = 'Stop';
   $p = Start-Process -FilePath (Join-Path $env:LING_FIXTURE_INSTALL_PATH 'Uninstall Ling Stack.exe') -ArgumentList '/S' -PassThru -Wait;
   if ($p.ExitCode -ne 0) { throw ('Fixture uninstaller exit: ' + $p.ExitCode) }`));
