@@ -79,6 +79,7 @@ import {
   effectiveApprovalStatus,
 } from "../lib/approvals.js";
 import { buildInlineApprovalViews } from "../lib/inline-approvals.js";
+import { approvalRecoveryNotice } from "../lib/approval-recovery.js";
 import {
   channelToForm,
   defaultChannelCreateForm,
@@ -1254,6 +1255,12 @@ export function AppShell(): React.JSX.Element {
     () => deriveChannelRuns(selectedChannelId, tasks, runs, run),
     [run, runs, selectedChannelId, tasks],
   );
+  const approvalRefreshOwnerRef = useRef({ cwd: form.cwd.trim(), channelId: selectedChannelId });
+  if (approvalRefreshOwnerRef.current.cwd !== form.cwd.trim() || approvalRefreshOwnerRef.current.channelId !== selectedChannelId) {
+    // Replace the identity, including when the user later returns to this scope.
+    approvalRefreshOwnerRef.current = { cwd: form.cwd.trim(), channelId: selectedChannelId };
+  }
+  const approvalRefreshOwner = approvalRefreshOwnerRef.current;
   const channelRunArtifactsKey = useMemo(
     () => channelRunsForArtifacts.map((item) => `${item.id}:${item.updatedAt}`).join("|"),
     [channelRunsForArtifacts],
@@ -2183,6 +2190,59 @@ export function AppShell(): React.JSX.Element {
     }
   }
 
+  async function refreshApprovalDependents(workspaceCwd: string, event: {
+    readonly runId?: string;
+    readonly mediaJobId?: string;
+    readonly externalWorkActionId?: string;
+    readonly channelId?: string;
+  }): Promise<void> {
+    const owner = approvalRefreshOwner;
+    const isCurrent = () => approvalRefreshOwnerRef.current === owner && owner.cwd === workspaceCwd;
+    if (!isCurrent()) return;
+    await refreshConversationThreads(workspaceCwd);
+    if (!isCurrent()) return;
+    window.setTimeout(() => {
+      if (isCurrent()) void refreshConversationThreads(workspaceCwd);
+    }, 750);
+    if (event.runId && selectedConversationDetail?.runs.some((run) => run.id === event.runId)) {
+      await refreshSelectedConversation(workspaceCwd);
+      if (!isCurrent()) return;
+    }
+    if (event.externalWorkActionId) {
+      await refreshExternalActionDetailsByIds(workspaceCwd, [event.externalWorkActionId]);
+      if (!isCurrent()) return;
+    }
+    const isDiagnosticRun = event.runId && (event.runId === activeRunId || event.runId === lookupRunId || event.runId === approvalRepairRunId);
+    if (isDiagnosticRun) {
+      await Promise.all([loadRun(event.runId, workspaceCwd), refreshRuns(workspaceCwd)]);
+      if (!isCurrent()) return;
+      window.setTimeout(() => {
+        if (!isCurrent()) return;
+        void loadRun(event.runId, workspaceCwd);
+        void refreshRuns(workspaceCwd);
+        void refreshApprovals(workspaceCwd, event.runId);
+      }, 750);
+    }
+    if (event.mediaJobId) await refreshMediaJobs(workspaceCwd);
+    if (!isCurrent()) return;
+    const channelId = selectedChannelId && (event.channelId
+      ? event.channelId === selectedChannelId
+      : channelRunsForArtifacts.some(candidate => candidate.id === event.runId)) ? selectedChannelId : undefined;
+    if (channelId) {
+      // Do not call refreshChannelActivity: it also refreshes approval receipts.
+      await Promise.all([
+        ...(isDiagnosticRun ? [] : [refreshRuns(workspaceCwd)]),
+        refreshTasks(channelId),
+        refreshChannelMessages(channelId, selectedChannelMessageThreadId),
+        refreshChannelProtocol(channelId),
+        refreshChannelFiles(channelId),
+        refreshChannelRunArtifacts(workspaceCwd, channelId, channelRunsForArtifacts),
+        refreshChannelExecutionActions(workspaceCwd, channelId, channelRunsForArtifacts),
+        refreshChannelActivityTransitions(workspaceCwd, channelId, channelRunsForArtifacts),
+      ]);
+    }
+  }
+
   async function handleDomainEvent(event: DomainEvent): Promise<void> {
     const workspaceCwd = form.cwd.trim();
     switch (event.type) {
@@ -2195,37 +2255,31 @@ export function AppShell(): React.JSX.Element {
         setActiveSidebarTarget(event.target ?? event.view);
         return;
 
-      case "approval.resolved":
-        if (event.reconciliationPending) {
+      case "approval.recoveryChanged": {
+        if (event.cwd !== workspaceCwd) return;
+        const scope = `approval:${event.approvalId}:postcommit`;
+        const notice = approvalRecoveryNotice(event.recoveryState);
+        if (notice) {
           showToast({
-            message: t("Approval was recorded, but execution recovery is pending. Check run status before trying again."),
-            scope: `approval:${event.approvalId}:postcommit`,
-            tone: "warning",
-            durationMs: 15_000,
+            message: t(notice.message),
+            scope,
+            tone: notice.tone,
+            durationMs: notice.tone === "warning" ? 15_000 : 3_000,
           });
+        } else {
+          dismissToast(scope);
+          // Recovery completion may arrive without SSE. Refresh the owning
+          // views, not the receipt observer itself, to avoid recursive lookups.
+          if (event.runId || event.mediaJobId || event.externalWorkActionId || event.channelId) {
+            await refreshApprovalDependents(workspaceCwd, event);
+          }
         }
+        return;
+      }
+
+      case "approval.resolved":
         await refreshApprovals(workspaceCwd, event.runId);
-        await refreshConversationThreads(workspaceCwd);
-        window.setTimeout(() => {
-          void refreshConversationThreads(workspaceCwd);
-        }, 750);
-        if (event.runId && selectedConversationDetail?.runs.some((run) => run.id === event.runId)) {
-          await refreshSelectedConversation(workspaceCwd);
-        }
-        if (event.externalWorkActionId) {
-          await refreshExternalActionDetailsByIds(workspaceCwd, [event.externalWorkActionId]);
-        }
-        if (event.runId && (event.runId === activeRunId || event.runId === lookupRunId || event.runId === approvalRepairRunId)) {
-          await Promise.all([loadRun(event.runId, workspaceCwd), refreshRuns(workspaceCwd)]);
-          window.setTimeout(() => {
-            void loadRun(event.runId, workspaceCwd);
-            void refreshRuns(workspaceCwd);
-            void refreshApprovals(workspaceCwd, event.runId);
-          }, 750);
-        }
-        if (event.mediaJobId) {
-          await refreshMediaJobs(workspaceCwd);
-        }
+        await refreshApprovalDependents(workspaceCwd, event);
         return;
 
       case "provider.repairRequested": {

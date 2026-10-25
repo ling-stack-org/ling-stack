@@ -10,6 +10,11 @@ export function catalogHookPort() {
       if (!cells[i]) cells[i] = { value: typeof initial === "function" ? initial() : initial };
       return [cells[i].value, value => { cells[i].value = typeof value === "function" ? value(cells[i].value) : value; }];
     },
+    useReducer(reducer, initial, initialize) {
+      const i = cursor++;
+      if (!cells[i]) cells[i] = { value: initialize ? initialize(initial) : initial };
+      return [cells[i].value, update => { cells[i].value = reducer(cells[i].value, update); }];
+    },
     useRef(initial) {
       const i = cursor++;
       if (!cells[i]) cells[i] = { value: { current: initial } };
@@ -40,5 +45,6 @@ export function catalogHookPort() {
       // Controller IO ports use resolved Promises; drain their continuations without timers.
       await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     },
+    unmount() { for (const cell of cells) cell?.cleanup?.(); queued = []; },
   };
 }
