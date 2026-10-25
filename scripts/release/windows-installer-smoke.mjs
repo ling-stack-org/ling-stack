@@ -8,7 +8,7 @@ const product = "Ling Stack", uninstallerName = "Uninstall Ling Stack.exe";
 const registryProbe = `
 $ErrorActionPreference = 'Stop'
 $keys = @(Get-ChildItem 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall' -ErrorAction SilentlyContinue |
-  Get-ItemProperty | Where-Object { $_.DisplayName -eq 'Ling Stack' })
+  Get-ItemProperty | Where-Object { $_.DisplayName -eq 'Ling Stack' -or $_.DisplayName -like 'Ling Stack *' })
 $installKeys = @(Get-ChildItem 'HKCU:\\Software' | Get-ItemProperty -ErrorAction SilentlyContinue |
   Where-Object { $_.InstallLocation -eq $env:LING_INSTALL_SMOKE_PATH })
 $shortcuts = @(@([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs')) |
@@ -20,8 +20,10 @@ $shortcutDetails = @($shortcuts | ForEach-Object {
   @{ path = $_; appId = $item.ExtendedProperty('System.AppUserModel.ID') }
 })
 ConvertTo-Json -Compress -Depth 4 @{ entries = @($keys | ForEach-Object {
-  @{ path = $_.PSPath; location = $_.InstallLocation; version = $_.DisplayVersion }
-}); installKeys = @($installKeys | ForEach-Object { $_.PSPath }); shortcuts = @($shortcutDetails) }
+  @{ path = $_.PSPath; name = $_.DisplayName; version = $_.DisplayVersion; uninstaller = $_.UninstallString }
+}); installKeys = @($installKeys | ForEach-Object {
+  @{ path = $_.PSPath; location = $_.InstallLocation }
+}); shortcuts = @($shortcutDetails) }
 `;
 
 /** Fresh hosted runner only; this does not establish end-user GUI acceptance. */
@@ -64,8 +66,12 @@ if ($p.ExitCode -ne 0) { throw ('Uninstaller failed: ' + $p.ExitCode) }`);
       }
       const registration = inspect();
       console.log("Windows installer registration: " + JSON.stringify(registration));
-      if (registration.entries.length !== 1 || registration.entries[0].location !== installPath
-        || registration.entries[0].version !== candidate.version || registration.installKeys.length !== 1
+      // The pinned stock installer uses a versioned DisplayName and a separate
+      // installation key for InstallLocation; the uninstall key has no such field.
+      if (registration.entries.length !== 1 || registration.entries[0].name !== `${product} ${candidate.version}`
+        || registration.entries[0].version !== candidate.version
+        || registration.entries[0].uninstaller !== `"${join(installPath, uninstallerName)}" /currentuser`
+        || registration.installKeys.length !== 1 || registration.installKeys[0].location !== installPath
         || registration.shortcuts.length !== 2 || registration.shortcuts.some(shortcut => shortcut.appId !== "com.lingstack.desktop")) {
         throw new Error("Installer registration or per-user shortcuts are incomplete");
       }

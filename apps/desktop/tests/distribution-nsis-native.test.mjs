@@ -160,7 +160,7 @@ if ($p.ExitCode -ne 0) { throw ('Fixture cleanup exit: ' + $p.ExitCode) }`);
       assert.equal(await readFile(join(installPath, deepPath), "utf8"), "Long path fixture\n");
       const registration = JSON.parse(run(`$ErrorActionPreference = 'Stop';
 $entries = @(Get-ChildItem 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall' |
-  Get-ItemProperty | Where-Object { $_.DisplayName -eq 'Ling Stack' });
+  Get-ItemProperty | Where-Object { $_.DisplayName -eq 'Ling Stack' -or $_.DisplayName -like 'Ling Stack *' });
 $installKeys = @(Get-ChildItem 'HKCU:\\Software' | Get-ItemProperty -ErrorAction SilentlyContinue |
   Where-Object { $_.InstallLocation -eq $env:LING_FIXTURE_INSTALL_PATH });
 $shell = New-Object -ComObject Shell.Application;
@@ -172,11 +172,12 @@ $shortcuts = @(@([Environment]::GetFolderPath('Desktop'), [Environment]::GetFold
     @{ path = $_; appId = $item.ExtendedProperty('System.AppUserModel.ID') }
   });
 ConvertTo-Json -Compress -Depth 4 @{ entries = @($entries | ForEach-Object {
-  @{ location = $_.InstallLocation; version = $_.DisplayVersion }
-}); installKeyCount = $installKeys.Count; shortcuts = $shortcuts }`));
+  @{ name = $_.DisplayName; version = $_.DisplayVersion; uninstaller = $_.UninstallString }
+}); installLocations = @($installKeys | ForEach-Object { $_.InstallLocation }); shortcuts = $shortcuts }`));
       t.diagnostic("Native fixture registration: " + JSON.stringify(registration));
-      assert.deepEqual(registration.entries, [{ location: installPath, version: metadata.version }]);
-      assert.equal(registration.installKeyCount, 1);
+      assert.deepEqual(registration.entries, [{ name: `${metadata.build.productName} ${metadata.version}`, version: metadata.version,
+        uninstaller: `"${join(installPath, "Uninstall Ling Stack.exe")}" /currentuser` }]);
+      assert.deepEqual(registration.installLocations, [installPath]);
       assert.equal(registration.shortcuts.length, 2);
       assert.ok(registration.shortcuts.every(shortcut => shortcut.appId === metadata.build.appId));
     }

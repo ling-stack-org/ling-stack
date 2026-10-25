@@ -6,6 +6,8 @@ on:
       - scripts/release/verify-nsis-plugins.mjs
       - scripts/release/nsis-extractor.mjs
       - apps/desktop/tests/distribution-nsis-native.test.mjs
+      - apps/desktop/scripts/distribution/installer-builder.mjs
+      - apps/desktop/scripts/distribution/LingShell.nsh
       - apps/desktop/scripts/distribution/vendor-notices/nsis-plugins/sources.json
       - .github/workflows/installer-contracts.yml
   workflow_dispatch:
