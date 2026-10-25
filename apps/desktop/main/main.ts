@@ -1973,6 +1973,9 @@ async function waitForSmokeCondition(
 
 async function shutdown(): Promise<void> {
   const activeMainWindowOpen = mainWindowOpenCoordinator.stopAcceptingAndWait();
+  // A refused/unconfirmed Host stop must leave its window, IPC and execution
+  // transports alive. Do not enter best-effort teardown before this barrier.
+  await desktopRuntime?.prepareShutdown();
   let firstCleanupError: unknown;
   let cleanupFailed = false;
   const attemptCleanup = async (cleanup: () => void | Promise<void>): Promise<void> => {

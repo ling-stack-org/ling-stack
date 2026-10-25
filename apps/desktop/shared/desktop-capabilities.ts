@@ -37,7 +37,7 @@ export function isComputerUsePreviewLocale(value: unknown): value is ComputerUse
 }
 
 export interface DesktopDaemonStatus {
-  readonly state: "checking" | "starting" | "connected" | "disconnected";
+  readonly state: "checking" | "starting" | "connected" | "disconnected" | "draining" | "blocked";
   readonly baseUrl: string;
   readonly ownedByDesktop: boolean;
   readonly reason?:
@@ -45,8 +45,25 @@ export interface DesktopDaemonStatus {
     | "start_timeout"
     | "child_exited"
     | "resource_missing"
-    | "spawn_failed";
+    | "spawn_failed"
+    | "stop_blocked"
+    | "stop_unconfirmed";
   readonly message?: string;
+}
+
+export function isDesktopDaemonStatus(value: unknown): value is DesktopDaemonStatus {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const status = value as Record<string, unknown>;
+  if (!["checking", "starting", "connected", "disconnected", "draining", "blocked"].includes(String(status.state))
+    || typeof status.baseUrl !== "string" || status.baseUrl.length > 2048
+    || typeof status.ownedByDesktop !== "boolean"
+    || status.message !== undefined && (typeof status.message !== "string" || status.message.length > 2048)) return false;
+  if (status.reason !== undefined && !["bridge_incompatible", "start_timeout", "child_exited", "resource_missing",
+    "spawn_failed", "stop_blocked", "stop_unconfirmed"].includes(String(status.reason))) return false;
+  if (status.state === "draining") return status.ownedByDesktop === true && status.reason === undefined;
+  if (status.state === "blocked") return status.ownedByDesktop === true
+    && (status.reason === "stop_blocked" || status.reason === "stop_unconfirmed");
+  return status.reason !== "stop_blocked" && status.reason !== "stop_unconfirmed";
 }
 
 export interface DesktopMobileAccessStatus {
@@ -275,6 +292,7 @@ export interface LingDesktopCapabilities {
   readonly daemon: {
     getStatus(): Promise<DesktopDaemonStatus>;
     restart(): Promise<DesktopDaemonStatus>;
+    onStatusChanged(listener: (status: DesktopDaemonStatus) => void): () => void;
   };
   readonly mobileAccess?: DesktopMobileAccessCapabilities;
   readonly executionEngines?: DesktopExecutionEngineCapabilities;

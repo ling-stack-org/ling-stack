@@ -406,5 +406,11 @@
   "This folder is empty": "此目录为空",
   "Showing the first 500 entries. Open this folder in your file manager to see all items.": "仅显示前 500 项，请在文件管理器中打开此目录查看全部内容。",
   "This file type cannot be previewed": "暂不支持预览此类文件",
-  "Open this file in another application to view it.": "请在其他应用中打开此文件查看。"
+  "Open this file in another application to view it.": "请在其他应用中打开此文件查看。",
+  "Draining local work": "正在排空本地执行",
+  "Local work could not stop": "本地执行停止受阻",
+  "Local work stop is unconfirmed": "本地执行停止尚未确认",
+  "Waiting for the original Host to finish. Existing executions and their evidence are preserved.": "正在等待原 Host 完成排空，保留原执行和证据。",
+  "Stop proof is unavailable. The original Host is retained; automatic restart is withheld.": "缺少停止证明，已保留原 Host，并阻止自动重启。",
+  "The original Host has not confirmed a clean stop. No replacement will be started.": "尚未确认原 Host 安全退出，不会启动替代实例。"
 }

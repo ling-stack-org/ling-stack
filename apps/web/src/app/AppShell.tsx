@@ -104,6 +104,7 @@ import { useAutomationsDomain } from "../domains/automations/use-automations-dom
 import { DesktopComputerUseBridge } from "./DesktopComputerUseBridge.js";
 import { AppPresentationSurfaceBridge } from "./AppPresentationSurfaceBridge.js";
 import { AppConnectionStatus } from "./AppConnectionStatus.js";
+import { useDesktopDaemonStatus } from "./use-desktop-daemon-status.js";
 import { AppShellOverlayBoundary } from "./AppShellOverlayBoundary.js";
 import { DesktopWindowChrome } from "./DesktopWindowChrome.js";
 import { DesktopTitlebarProvider, DesktopTitlebarSurface } from "./DesktopTitlebarSurface.js";
@@ -263,6 +264,7 @@ export function AppShell(): React.JSX.Element {
   const [channelSidebarOpen, setChannelSidebarOpen] = useState(() => !narrowViewport);
   const [selectedChannelBranchId, setSelectedChannelBranchId] = useState("");
   const [daemonHealthy, setDaemonHealthy] = useState<boolean | undefined>();
+  const desktopDaemonStatus = useDesktopDaemonStatus();
   const focusRevalidationToken = useFocusRevalidationToken({ enabled: daemonHealthy === true });
   const [daemonHealthRefreshing, setDaemonHealthRefreshing] = useState(false);
   const [daemonFeatures, setDaemonFeatures] = useState<DaemonFeatureFlags>({
@@ -2487,6 +2489,7 @@ export function AppShell(): React.JSX.Element {
         hasSelectedTeammate={Boolean(selectedAiTeammate)}
       />
       <AppConnectionStatus
+        desktopStatus={desktopDaemonStatus}
         offline={daemonHealthy === false}
         refreshing={daemonHealthRefreshing}
         onRetry={() => void refreshHealth()}

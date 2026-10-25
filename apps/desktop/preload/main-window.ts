@@ -8,10 +8,11 @@ import type {
   ComputerUsePreviewSummary,
   ComputerControlPermissionKind,
   DesktopNavigationIntent,
+  DesktopDaemonStatus,
   DesktopWindowState,
   LingDesktopCapabilities,
 } from "../shared/desktop-capabilities.js";
-import { isDesktopNavigationIntent } from "../shared/desktop-capabilities.js";
+import { isDesktopNavigationIntent, isDesktopDaemonStatus } from "../shared/desktop-capabilities.js";
 import type {
   DesktopThemePackageArchiveRequest,
   DesktopThemePackageDeleteRequest,
@@ -142,6 +143,20 @@ const capabilities: LingDesktopCapabilities = {
   daemon: {
     getStatus: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.daemonStatus),
     restart: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.daemonRestart),
+    onStatusChanged: listener => subscribeWithInitialRead<DesktopDaemonStatus | undefined>({
+      read: async () => {
+        const status: unknown = await ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.daemonStatus);
+        return isDesktopDaemonStatus(status) && status.baseUrl === daemonBaseUrl ? status : undefined;
+      },
+      subscribe: onStatus => {
+        const wrapped = (_event: Electron.IpcRendererEvent, status: unknown): void => {
+          if (isDesktopDaemonStatus(status) && status.baseUrl === daemonBaseUrl) onStatus(status);
+        };
+        ipcRenderer.on(DESKTOP_IPC_CHANNELS.daemonStatus, wrapped);
+        return () => { ipcRenderer.off(DESKTOP_IPC_CHANNELS.daemonStatus, wrapped); };
+      },
+      onValue: status => { if (status) listener(status); },
+    }),
   },
   mobileAccess: {
     status: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessStatus),

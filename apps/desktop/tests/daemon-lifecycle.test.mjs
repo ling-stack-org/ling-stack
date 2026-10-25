@@ -308,7 +308,7 @@ test("unexpected owned child exit emits one recovery signal while intentional st
   assert.deepEqual(intentionalExits, []);
 });
 
-test("Desktop daemon escalates to SIGKILL when startup cleanup cannot stop the child", async () => {
+test("Desktop retains startup ownership when cleanup cannot confirm the original stop", async () => {
   const child = createFakeChild({ exitOnTerm: false });
   const diagnostics = [];
   const lifecycle = new DesktopDaemonLifecycle({
@@ -323,10 +323,20 @@ test("Desktop daemon escalates to SIGKILL when startup cleanup cannot stop the c
     onDiagnostic: (event) => diagnostics.push(event),
   });
 
-  await assert.rejects(lifecycle.ensureStarted(), /daemon_start_timeout/);
+  // R03 changes the former forced-cleanup contract: startup timeout cannot
+  // prove that a spawned Host never served work. It must not authorize SIGKILL.
+  await assert.rejects(lifecycle.ensureStarted(), error => error?.code === "stop_unconfirmed");
 
-  assert.deepEqual(child.killSignals, ["SIGTERM", "SIGKILL"]);
-  assert.ok(diagnostics.includes("daemon.force_killed"));
+  assert.deepEqual(child.killSignals, ["SIGTERM"]);
+  assert.equal(diagnostics.includes("daemon.force_killed"), false);
+  assert.equal(child.exitCode, null);
+  assert.equal(child.signalCode, null);
+  assert.equal(lifecycle.status.ownedByDesktop, true);
+  assert.equal(lifecycle.status.reason, "stop_unconfirmed");
+  await assert.rejects(lifecycle.restart(), error => error?.code === "stop_unconfirmed");
+  assert.deepEqual(child.killSignals, ["SIGTERM"]);
+  child.exitCode = 0;
+  child.emit("exit", 0, null);
 });
 
 test("missing daemon resources produce a typed recoverable startup failure", async () => {
@@ -943,8 +953,8 @@ test("an older stop cannot overwrite a newer owned daemon connection", async () 
   assert.deepEqual(oldChild.killSignals, ["SIGTERM"]);
 
   const restarting = lifecycle.ensureStarted();
-  oldChild.signalCode = "SIGTERM";
-  oldChild.emit("exit", null, "SIGTERM");
+  oldChild.exitCode = 0;
+  oldChild.emit("exit", 0, null);
   const restarted = await restarting;
   assert.equal(restarted.state, "connected");
   assert.equal(restarted.ownedByDesktop, true);
@@ -1006,8 +1016,8 @@ test("ensureStarted waits for an in-flight stop before probing daemon health", a
   assert.equal(restartSettled, false);
 
   oldChildAlive = false;
-  oldChild.signalCode = "SIGTERM";
-  oldChild.emit("exit", null, "SIGTERM");
+  oldChild.exitCode = 0;
+  oldChild.emit("exit", 0, null);
   const restarted = await restarting;
   await stoppingOldChild;
 
@@ -1050,8 +1060,8 @@ test("concurrent stopOwnedDaemon calls share the same child termination", async 
   assert.deepEqual(child.killSignals, ["SIGTERM"]);
   assert.equal(secondStopSettled, false, "all stop callers must await the same child exit barrier");
 
-  child.signalCode = "SIGTERM";
-  child.emit("exit", null, "SIGTERM");
+  child.exitCode = 0;
+  child.emit("exit", 0, null);
   await Promise.all([firstStop, secondStop]);
   assert.equal(lifecycle.status.state, "disconnected");
 });
@@ -1104,8 +1114,8 @@ test("restart waits for an in-flight owned stop before probing daemon health", a
   assert.equal(restartSettled, false);
 
   oldChildAlive = false;
-  oldChild.signalCode = "SIGTERM";
-  oldChild.emit("exit", null, "SIGTERM");
+  oldChild.exitCode = 0;
+  oldChild.emit("exit", 0, null);
   const restarted = await restarting;
   await stoppingOldChild;
 
@@ -1154,8 +1164,8 @@ test("concurrent restart calls share one stop and one replacement startup", asyn
   await new Promise((resolve) => setImmediate(resolve));
 
   oldChildAlive = false;
-  oldChild.signalCode = "SIGTERM";
-  oldChild.emit("exit", null, "SIGTERM");
+  oldChild.exitCode = 0;
+  oldChild.emit("exit", 0, null);
   const [firstStatus, secondStatus] = await Promise.all([firstRestart, secondRestart]);
 
   assert.equal(sharedRestart, true, "restart callers must receive the same in-flight operation");
@@ -1353,8 +1363,11 @@ function createFakeChild(options = {}) {
     kill(signal = "SIGTERM") {
       this.killSignals.push(signal);
       if (signal === "SIGKILL" || options.exitOnTerm !== false) {
-        this.signalCode = signal;
-        queueMicrotask(() => this.emit("exit", null, signal));
+        // Model a handled SIGTERM only after actual successful Host cleanup.
+        // Abrupt/signal exits remain separately covered by R03 regression-1.
+        this.exitCode = signal === "SIGKILL" ? null : 0;
+        this.signalCode = signal === "SIGKILL" ? signal : null;
+        queueMicrotask(() => this.emit("exit", this.exitCode, this.signalCode));
       }
       return true;
     },

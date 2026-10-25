@@ -1,6 +1,7 @@
 # E6 R03：停止失败路径修复与接续点
 
-状态：源码修复/隔离回归检查点；**不是 packaged R03 通过，不是总目标完成**。
+状态：Host/Desktop/共享 UI 源码修复及隔离组合回归已通过；
+**新包差量冻结与真实 packaged R03 尚未完成，不是总目标完成**。
 唯一实施树仍是 `ling-e6-continuation/ling-stack`，分支 `codex/e6-safe-continuation`。
 
 ## 1. 原始真实现场：保留，不重发
@@ -117,3 +118,58 @@ stopped receipt、Run 终态或重放授权，不新增表、不改旧历史。
   审阅与 33 项结果仅覆盖本 slice，不覆盖未接线的 Desktop/UI。
 - 下一步仅接 Desktop owner/停止观察/退出预检和共享状态；不能把此 slice 当已修正
   旧 3 秒强杀、失败仍退出或 GUI 显示。原失败 case 不重发，原 83 项不无故重跑。
+
+### 6.2 Desktop、连接保留与最终源码集成检查点
+
+本节覆盖上一 slice 的“尚未接线”，不改变原真实失败记录。
+
+- Desktop 默认 spawn 保留 FD3/FD4 固定位置并接私有 FD5；按直接拥有的 child/PID
+  观察停止阶段。观察超时、拒绝或异常退出均保留 owner，不发送 SIGKILL、不启动替代实例。
+  EOF 本身不是成功，真实 clean exit 才能解除停止门槛。
+- 停止单飞在发布同步状态前安装；逐个隔离状态监听器及其诊断异常，不能因观察者
+  抛错而跳过 SIGTERM、崩溃 timeout 回调或让其他观察者收不到同一事实。
+  startup 两处异步 race 先复核 generation，再分类 child error/exit，避免把已排空的
+  原 owner 误报为普通 startup failure 并弹重试/退出提示。
+- Runtime 新增 `prepareShutdown()`：同步关新准入，串行等待原 Host 真实停止。
+  失败保留 coordinator、platform owner、continuation lease/heartbeat；未知停止异常
+  规范为 `stop_unconfirmed`。失败 memo 可由下次显式退出重查，但不自动重试、不放开新工作。
+- Main 在销毁窗口、IPC、Office、Computer Use 等任何资源之前完成上述预检。
+  Exit lifecycle 仅对真实 typed `stop_blocked/stop_unconfirmed` 拒绝退出；停止已确认后
+  的普通 cleanup 错误仍保留 exit-1 契约。停止确认晚到时，需用户显式再次退出才清理。
+  restart 顺序同样为原 Host 停止 → 旧 coordinator 清理 → successor。
+- Main coordinator/proxy/lease publisher 有不可重开的 drain 闩；保留已接受 exchange
+  及其当前 session/in-flight requestId 绑定的取消通知。迟到 readiness、SSE 丢失、DELETE、
+  lease 失败不能在排空中重新开门、拆 transport 或自动启动 provider。
+- Daemon pool 同步停止新 acquire；已退休条目仍保留到真实最终清理。
+  `index.ts` 仅在 `runShutdown` 成功后调用 final pool disposal，不再与停止证明并发。
+  原 durable lease fence、stale-result、effectCoverage 与 no-replay 规则不变。
+- Main IPC → preload 初读/订阅 → 公共 AppShell 状态栏已接通；普通/私聊/频道
+  使用同一 Host 状态。draining/blocked 不展示原始 message/baseUrl、不提供隐式重启。
+  Browser 原 HTTP offline/reconnect 不变。
+- 55 语言目录同步完成：本次 6 个状态键及既有 6 个缺译键补齐，保留已有译文。
+  新补非中英文译文来自仓库机器翻译脚本，不声称逐语种人工审校。
+
+最终验证分别计数，不把相同用例的中间 rerun 累加为独立覆盖：
+
+| 范围 | 最终结果 | 证据 |
+| --- | --- | --- |
+| Desktop owner/退出/IPC/初始订阅，9 文件 | 101/101，actual exit 0 | `output/e6-20260928/r03-daemon-restart-packaged-20261026/desktop-owner-exit-final-20261026.log` |
+| Runtime + Main transport，6 文件 | 102/102，actual exit 0 | 同目录 `desktop-runtime-transport-final-20261026.log` |
+| Daemon pool/原停止链，11 文件 | 213/213，actual exit 0 | `output/r03-host-lease-drain-20261026/qa-report.md` |
+| 共享状态栏实际 authored component render | 4/4，actual exit 0 | `apps/web/test/app-connection-status.regression-1.test.mjs` |
+| 55 语言目录/编译/本地化测试 | 审计通过，15/15，actual exit 0 | `corepack pnpm --filter @ling-stack/localization test` |
+
+Daemon、Desktop Main/preload/renderer、Web 类型检查及 diff-check 通过。
+保留红回归：Runtime 原 8 项全失败、退出/预检原 9 项中 6 失败、观察者异常 1 失败、
+FD5 draining 后 startup 错误分类 2 失败、pool retirement 与并发 final disposal 各自失败。
+所有修复后均由上述最终组合覆盖；没有操作真实用户数据库、没有外部模型费用。
+
+只读差量独审确认观察者异常与 startup 分类两项 finding 已闭环；UI/IPC slice
+没有剩余 confirmed finding。最终复核源码 SHA256：
+
+- `daemon-lifecycle.ts`：`141c56041b382e90c3c6eefb4174dddaa83cea59a8af72074bb1bca68231d450`
+- `desktop-runtime.ts`：`79c5db69ac9515e3553c264ab698ce23779cedd29b120e09a6f7ad86081a1f85`
+
+**唯一下一步：** 对本次变更补精确 Office/打包输入差量冻结和审阅，随后新 QA 包、
+读回归属和新唯一 R03 case 的真实 macOS 验收。保留旧未知效果 Host 与失败历史；
+不强杀旧实例、不删除安全锁、不重发旧任务，不以本节隔离验证冒充 packaged 通过。

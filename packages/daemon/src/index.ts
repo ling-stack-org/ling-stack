@@ -996,8 +996,10 @@ export function createDaemonServer(
       });
     },
     settle: () => settleHarnessLifetimes([
-      runShutdown.shutdown("daemon_restart"),
-      cuaDriverActivationCoordinator.shutdown(), providerImportShutdown ?? Promise.resolve(),
+      // Final pool disposal is authorized only by the original successful Host
+      // drain. A refused stop proof retains execution transports, not just Stores.
+      runShutdown.shutdown("daemon_restart").then(() => cuaDriverActivationCoordinator.shutdown()),
+      providerImportShutdown ?? Promise.resolve(),
       // The public stop observer owns the finite deadline; this barrier proves
       // actual completion, so a timed-out observer cannot poison later drain.
       storeRegistry.mediaLocalExecutions.waitForIdle(),

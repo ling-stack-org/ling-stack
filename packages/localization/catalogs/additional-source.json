@@ -406,5 +406,11 @@
   "This folder is empty": "This folder is empty",
   "Showing the first 500 entries. Open this folder in your file manager to see all items.": "Showing the first 500 entries. Open this folder in your file manager to see all items.",
   "This file type cannot be previewed": "This file type cannot be previewed",
-  "Open this file in another application to view it.": "Open this file in another application to view it."
+  "Open this file in another application to view it.": "Open this file in another application to view it.",
+  "Draining local work": "Draining local work",
+  "Local work could not stop": "Local work could not stop",
+  "Local work stop is unconfirmed": "Local work stop is unconfirmed",
+  "Waiting for the original Host to finish. Existing executions and their evidence are preserved.": "Waiting for the original Host to finish. Existing executions and their evidence are preserved.",
+  "Stop proof is unavailable. The original Host is retained; automatic restart is withheld.": "Stop proof is unavailable. The original Host is retained; automatic restart is withheld.",
+  "The original Host has not confirmed a clean stop. No replacement will be started.": "The original Host has not confirmed a clean stop. No replacement will be started."
 }

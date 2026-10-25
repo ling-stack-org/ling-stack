@@ -109,6 +109,7 @@ export class CuaDriverMcpProxy {
   private readonly server: Server;
   private readonly token: string;
   private readonly sockets = new Set<Socket>();
+  private readonly activeClientRequests = new Map<string | number | null, number>();
   private endpointValue: CuaDriverMcpProxyEndpoint | undefined;
   private startPromise: Promise<CuaDriverMcpProxyEndpoint> | undefined;
   private closePromise: Promise<void> | undefined;
@@ -123,6 +124,7 @@ export class CuaDriverMcpProxy {
   private sseDrainListener: (() => void) | undefined;
   private removeHostListener: (() => void) | undefined;
   private closed = false;
+  private hostDraining = false;
   private callGateOpen = false;
   private callGateClosedReason: string | undefined;
   private closingEpoch = 0;
@@ -169,9 +171,15 @@ export class CuaDriverMcpProxy {
     });
   }
 
+  /** Irreversible admission fence; accepted exchanges retain their original host. */
+  beginHostDrain(reason = "host_draining"): void {
+    this.hostDraining = true;
+    this.closeCallGate(reason);
+  }
+
   /** Re-open one retained same-generation session after readiness recovers. */
   openCallGate(): void {
-    if (this.closed) {
+    if (this.closed || this.hostDraining) {
       return;
     }
     const wasOpen = this.callGateOpen;
@@ -186,6 +194,9 @@ export class CuaDriverMcpProxy {
   }
 
   start(): Promise<CuaDriverMcpProxyEndpoint> {
+    if (this.hostDraining) {
+      return Promise.reject(new CuaDriverMcpProxyError("mcp_host_draining"));
+    }
     if (this.endpointValue) {
       return Promise.resolve(this.endpointValue);
     }
@@ -311,6 +322,10 @@ export class CuaDriverMcpProxy {
     const isInitialize = "method" in message && message.method === "initialize";
     const requestSessionId = readSessionId(request);
     if (isInitialize) {
+      if (this.hostDraining) {
+        this.writeJson(response, 503, { error: "mcp_host_draining" });
+        return;
+      }
       const initializeEpoch = this.closingEpoch;
       this.assertOpenEpoch(initializeEpoch);
       if (requestSessionId) {
@@ -356,13 +371,18 @@ export class CuaDriverMcpProxy {
       try {
         disposition = await this.options.onInitialized?.();
       } catch (error) {
-        await this.options.host.stop("readiness_failed").catch(() => undefined);
-        throw error;
+        if (!this.hostDraining) {
+          await this.options.host.stop("readiness_failed").catch(() => undefined);
+          throw error;
+        }
+        // Readiness no longer admits work while draining. Its late failure
+        // must not tear down the host of an already accepted exchange.
+        disposition = { callGate: "closed" };
       }
       // Final async-boundary fence before the session and authorization
       // response become visible to the daemon.
       this.assertOpenEpoch(initializeEpoch);
-      this.callGateOpen = disposition?.callGate !== "closed";
+      this.callGateOpen = !this.hostDraining && disposition?.callGate !== "closed";
       this.callGateClosedReason = this.callGateOpen
         ? undefined
         : this.callGateClosedReason ?? "readiness_pending";
@@ -385,7 +405,15 @@ export class CuaDriverMcpProxy {
       this.writeJson(response, 409, { error: "mcp_session_required" });
       return;
     }
-    if (!this.callGateOpen && !isInitializedNotification) {
+    const isRetainedClientReply = this.hostDraining && !("method" in message);
+    const isActiveCancellation = this.hostDraining
+      && "method" in message
+      && message.method === "notifications/cancelled"
+      && !("id" in message)
+      && isRecord(message.params)
+      && "requestId" in message.params
+      && this.activeClientRequests.has(message.params.requestId as string | number | null);
+    if (!this.callGateOpen && !isRetainedClientReply && !isActiveCancellation && (!isInitializedNotification || this.hostDraining)) {
       if ("id" in message) {
         this.writeJson(response, 200, {
           jsonrpc: "2.0",
@@ -401,12 +429,27 @@ export class CuaDriverMcpProxy {
       }
       return;
     }
-    const responseValue = await this.options.host.exchange(message);
+    const responseValue = await this.exchangeAcceptedMessage(message);
     if (responseValue === undefined) {
       response.writeHead(202, { "mcp-session-id": this.sessionId, "cache-control": "no-store" });
       response.end();
     } else {
       this.writeJson(response, 200, responseValue, { "mcp-session-id": this.sessionId, "cache-control": "no-store" });
+    }
+  }
+
+  private async exchangeAcceptedMessage(message: JsonRpcClientMessage): Promise<JsonRpcResponse | undefined> {
+    if (!("method" in message) || !("id" in message)) {
+      return this.options.host.exchange(message);
+    }
+    const id = message.id;
+    this.activeClientRequests.set(id, (this.activeClientRequests.get(id) ?? 0) + 1);
+    try {
+      return await this.options.host.exchange(message);
+    } finally {
+      const remaining = (this.activeClientRequests.get(id) ?? 1) - 1;
+      if (remaining === 0) this.activeClientRequests.delete(id);
+      else this.activeClientRequests.set(id, remaining);
     }
   }
 
@@ -429,6 +472,11 @@ export class CuaDriverMcpProxy {
     this.enqueueSseFrame(": ling-cua-driver\n\n");
     response.once("close", () => {
       if (this.sseResponse === response) {
+        if (this.hostDraining) {
+          this.clearSseQueue();
+          this.sseResponse = undefined;
+          return;
+        }
         if (this.retainGatedSession && this.initializeResult !== undefined) {
           this.detachGatedSession();
           this.telemetry.emit("info", "cua_driver.proxy.gated_session_detached", {
@@ -450,6 +498,10 @@ export class CuaDriverMcpProxy {
   private async handleDelete(request: IncomingMessage, response: ServerResponse): Promise<void> {
     if (!this.sessionId || readSessionId(request) !== this.sessionId) {
       this.writeJson(response, 409, { error: "mcp_session_required" });
+      return;
+    }
+    if (this.hostDraining) {
+      this.writeJson(response, 409, { error: "mcp_host_draining" });
       return;
     }
     if (this.retainGatedSession && this.initializeResult !== undefined) {
@@ -578,6 +630,13 @@ export class CuaDriverMcpProxy {
   }
 
   private revokeSseSession(reason: string): void {
+    if (this.hostDraining) {
+      const response = this.sseResponse;
+      this.clearSseQueue();
+      this.sseResponse = undefined;
+      response?.end();
+      return;
+    }
     this.invalidateSession(reason);
     void this.options.host.stop(reason).catch(() => undefined);
   }
