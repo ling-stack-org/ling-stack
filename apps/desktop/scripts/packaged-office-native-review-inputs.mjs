@@ -886,6 +886,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/channels/workflow-step-finalizer.ts",
   "packages/daemon/src/features/channels/workflow-step-narration.ts",
   "packages/daemon/src/features/channels/workflow-step-packets.ts",
+  "packages/daemon/src/features/channels/workflow-step-prompt.ts",
   "packages/daemon/src/features/channels/workflow-step-requirement.ts",
   "packages/daemon/src/features/channels/workflow-step-run-policy.ts",
   "packages/daemon/src/features/channels/workflow-step-user-input-history.ts",

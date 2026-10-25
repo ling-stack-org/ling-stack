@@ -37,6 +37,7 @@ import { isRecord, readOptionalBoolean, readOptionalNumber, readOptionalString, 
 import { listExecutableSkillDefinitions } from "../skills/registry.js";
 import { resolveCouncilSlotParticipant } from "./council-slot-resolver.js";
 import { createLingAgentExecutor, isLingAgentExecutorId } from "./ling-agent-executor.js";
+import { renderGraphNodePrompt } from "./workflow-step-prompt.js";
 
 export interface CompileWorkflowGraphInput {
   readonly channelId: string;
@@ -580,17 +581,6 @@ function defaultWorkflowGraphStepPolicy(graph: WorkflowGraph): WorkflowStepPolic
     onApprovalDenied: approvalFailure,
     retryable: true,
   };
-}
-
-function renderGraphNodePrompt(node: WorkflowGraphNode, objective: string): string {
-  return [
-    `Workflow objective:\n${objective}`,
-    `Current graph node: ${node.name}`,
-    node.skillId ? `Skill: ${node.skillId}` : undefined,
-    node.prompt,
-    "Complete this graph node only. Do not start or approve later workflow nodes.",
-    "Return a concise terminal summary and any artifacts or follow-up decisions needed by later nodes.",
-  ].filter(isString).join("\n\n");
 }
 
 function readOptionalWorkflowStepPolicy(record: Record<string, unknown>, key: string): WorkflowStepPolicy | undefined {
