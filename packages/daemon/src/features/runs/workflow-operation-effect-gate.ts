@@ -8,7 +8,7 @@ import { validateWorkflowOperationRunContext, type WorkflowOperationBlock } from
 import { commandWriteRiskRejection } from "./command-write-risk-gate.js";
 import { commandMatchesPolicy } from "../channels/command-operation-match.js";
 import { isNativeRestrictedCommandRuntime, type NativeRestrictedCommandRuntime } from "../../runtime/sandbox/restricted-command-runtime.js";
-import { bindWorkflowCommandRequest } from "./workflow-command-cwd.js";
+import { bindWorkflowCommandRequest, WorkflowCommandBindingError } from "./workflow-command-cwd.js";
 
 interface FileEffect {
   readonly path: string;
@@ -63,7 +63,11 @@ export function workflowOperationAuthorityRejection(input: {
       return blocked("operation_binding_isolation_unavailable", "Typed bash requires the Host restricted command runtime; raw spawn is not a fallback.");
     }
     try { request = bindWorkflowCommandRequest(input.store, input.run, request); }
-    catch (error) { return blocked(error instanceof Error ? error.message : "operation_binding_cwd_mismatch", "Command request does not match its immutable operation directory."); }
+    catch (error) {
+      return error instanceof WorkflowCommandBindingError
+        ? blocked(error.code, error.reason)
+        : blocked("operation_binding_cwd_mismatch", "Command request does not match its immutable operation directory.");
+    }
     const command = isRecord(request.input) && typeof request.input.command === "string" ? request.input.command : "";
     const matches = context.ownedOperations.filter(operation => operation.kind === "run_command"
       && operation.commandMatchPolicy?.kind === "exact_command" && commandMatchesPolicy(command, operation.commandMatchPolicy)

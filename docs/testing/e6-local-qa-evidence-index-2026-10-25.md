@@ -2,9 +2,20 @@
 
 Status: partial verification, not complete E6 acceptance, a merge receipt or release approval.
 
-The implementation checkpoint is `bb009269`. The current source-bound cwd regression
-is still running; the four completed phases passed Core 185, Contracts 95, Web 798 and
-real macOS native conformance 5 tests. These are scoped test results, not packaged GUI acceptance.
+The implementation checkpoint is `bb009269`. Its source-bound cwd regression actually exited 1:
+Core 185, Contracts 95, Web 798 and real macOS native conformance 5 passed; Daemon had
+7562 pass, 2 failures and 12 pre-existing skips. The original failed log remains immutable.
+The two failures were traced to a lost binding-error explanation and incomplete synthetic cwd
+evidence. A successor repair preserves the authority/evidence conditions: targeted 5/5,
+all 683 tests in 22 affected Daemon files, real native conformance 5/5, and independent
+delta review passed. The repair run actually exited 0 with all 7316 inputs unchanged.
+None of these are packaged GUI acceptance or a claim that the original full suite passed.
+
+Successor local raw verification log: `channel-followup-repair-verification-20261025.log`,
+SHA256 `d18655d9ff36ab2c48dd307000e8351cd93efa0c5dafd3009c2b222bb726c64b`.
+Independent incremental review: `channel-followup-repair-independent-review-20261025.md`,
+SHA256 `5ccf86c0d152ed8d3dff91f01c8850421da977cf272c634c9d97a2f54be44c95`.
+These local-only records are not replacements for the original 35 immutable records below.
 
 ## Immutable local-only records
 

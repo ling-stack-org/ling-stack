@@ -6715,10 +6715,11 @@ test("multi-participant executable request blocks when one explicit participant 
   }
 });
 
-test("single-participant execute acknowledgement stays non-terminal until callback publication settles the source turn", async () => {
+for (const evidenceCwd of ["bound", "missing", "foreign"]) {
+test(`single-participant execute acknowledgement stays non-terminal until callback publication settles the source turn (${evidenceCwd} cwd evidence)`, async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-single-participant-convergence-"));
   const command = `node -e "process.stdout.write('proof:7319')"`;
-  const runner = new DelayedCommandEvidenceRunner(command);
+  const runner = new DelayedCommandEvidenceRunner(command, evidenceCwd);
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
     storeFactory: (storeCwd) => {
@@ -6783,7 +6784,7 @@ test("single-participant execute acknowledgement stays non-terminal until callba
 
     runner.releaseExecution();
     await waitForCondition(
-      () => store.getLingTurn(sourceItem.turnId)?.status === "succeeded",
+      () => store.getLingTurn(sourceItem.turnId)?.status === (evidenceCwd === "bound" ? "succeeded" : "blocked"),
       "single participant callback publication to settle the source turn",
     );
 
@@ -6792,6 +6793,19 @@ test("single-participant execute acknowledgement stays non-terminal until callba
     const finalWorkflow = store.getChannelWorkflow(workflowId);
     const reports = store.listTerminalReports({ sourceKind: "workflow", sourceId: workflowId, limit: 20 });
     assert.equal(finalRun.status, "succeeded");
+    if (evidenceCwd !== "bound") {
+      assert.equal(finalStep.status, "blocked");
+      assert.equal(finalStep.metadata.delegatedOutcome.kind, "blocked");
+      assert.equal(finalStep.metadata.delegatedOutcome.code, "required_operation_evidence_missing");
+      assert.equal(finalStep.metadata.executionVerification.operationResults[0].reasonCode, "required_operation_missing_evidence");
+      assert.equal(finalWorkflow.status, "blocked");
+      assert.equal(finalWorkflow.metadata.completionGate.status, "blocked");
+      assert.equal(reports.length, 1);
+      assert.equal(reports[0].status, "fallback");
+      assert.equal(store.listStateTransitionEvents({ entityType: "turn", entityId: sourceItem.turnId })
+        .filter((event) => event.toStatus === "succeeded").length, 0);
+      return;
+    }
     assert.equal(finalStep.status, "succeeded");
     assert.equal(finalStep.metadata.delegatedOutcome.kind, "completed");
     assert.equal(finalWorkflow.status, "succeeded");
@@ -6816,6 +6830,7 @@ test("single-participant execute acknowledgement stays non-terminal until callba
     await rm(cwd, { recursive: true, force: true });
   }
 });
+}
 
 test("model-assisted create-and-run clarifies when the required command is missing", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-model-create-run-command-clarify-"));
@@ -15434,8 +15449,9 @@ class WorkflowEvidenceRunner {
 }
 
 class DelayedCommandEvidenceRunner {
-  constructor(command) {
+  constructor(command, evidenceCwd = "bound") {
     this.command = command;
+    this.evidenceCwd = evidenceCwd;
     this.executionRuns = [];
     this.selectorRuns = [];
     this.reportRuns = [];
@@ -15464,6 +15480,7 @@ class DelayedCommandEvidenceRunner {
       this.pendingExecution = resolveExecution;
     });
     const toolCallId = "single_participant_node";
+    const startedAt = new Date().toISOString();
     options.onEvent?.({
       type: "tool_start",
       toolCallId,
@@ -15474,7 +15491,17 @@ class DelayedCommandEvidenceRunner {
       type: "tool_end",
       toolCallId,
       toolName: "bash",
-      result: { content: [{ type: "text", text: "proof:7319" }] },
+      // Synthetic Host evidence must satisfy the same cwd/exit contract as a
+      // real journaled command. A text-only tool result is not completion proof.
+      result: { content: [{ type: "text", text: "proof:7319" }],
+        ...(this.evidenceCwd === "missing" ? {} : { details: { unifiedExec: {
+        status: "succeeded", cwd: this.evidenceCwd === "foreign" ? resolve(options.cwd, "foreign") : options.cwd,
+        command: { kind: "shell", command: this.command, shell: "bash" },
+        startedAt, endedAt: new Date().toISOString(), durationMs: 0,
+        exitCode: 0, timedOut: false, cancelled: false,
+        stdout: { byteCount: 10, lineCount: 1, preview: "proof:7319", truncated: false },
+        stderr: { byteCount: 0, lineCount: 0, preview: "", truncated: false }, artifacts: [],
+      } } }) },
       isError: false,
     });
     const text = "Verified proof:7319.";

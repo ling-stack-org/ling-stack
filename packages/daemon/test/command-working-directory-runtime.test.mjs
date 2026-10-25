@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { createSqliteRunStore, digestHarnessToolValue } from "@ling-stack/core";
-import { bindWorkflowCommandRequest } from "../dist/features/runs/workflow-command-cwd.js";
+import { bindWorkflowCommandRequest, WorkflowCommandBindingError } from "../dist/features/runs/workflow-command-cwd.js";
+import { workflowOperationEffectRejection } from "../dist/features/runs/workflow-operation-effect-gate.js";
 import { captureRestrictedCommandDirectory } from "../dist/runtime/sandbox/restricted-command-directory.js";
+import { NativeRestrictedCommandRuntime } from "../dist/runtime/sandbox/restricted-command-runtime.js";
 import { createApprovalCommandRuleProposal, isApprovalCommandRuleProposalCurrent, findMatchingApprovalCommandRulesForCommand } from "../dist/features/runs/approval-command-rules.js";
 import { createRestrictedCommandFixture } from "./support/restricted-command-fixture.mjs";
 import { executeHarnessedBashTool } from "../dist/features/harness/tool-execution/broker.js";
@@ -15,6 +17,29 @@ import { createDelegatedStepRequirement } from "../dist/features/channels/workfl
 import { createWorkflowOperationExecutionSnapshot } from "../dist/features/runs/workflow-operation-snapshot.js";
 
 const directory = { path: "project", sourceRefs: [{ itemId: "source", quote: "在目录 project 中运行", actorType: "local_user" }] };
+
+test("command binding preserves a machine code and explanatory reason at both rejection boundaries", async t => {
+  const f = await createRestrictedCommandFixture(t, "node cli.js ../records.csv", [], undefined, directory);
+  // Identity-only runtime: a binding rejection must happen before resolving any
+  // binary, and this configuration cannot admit or execute a command.
+  const runtime = new NativeRestrictedCommandRuntime({
+    inputHelper: { path: "/not-executed", sha256: "0".repeat(64), version: "binding-rejection-test" }, executables: {},
+  });
+  for (const [request, code, reason] of [
+    [{ ...f.request, input: { command: "node other.js" } }, "operation_binding_command_out_of_scope",
+      "No unique owned operation authorizes this exact command."],
+    [{ ...f.request, cwd: tmpdir() }, "operation_binding_cwd_mismatch",
+      "Command execution cwd differs from the immutable operation directory."],
+  ]) {
+    assert.throws(() => bindWorkflowCommandRequest(f.store, f.run, request), error =>
+      error instanceof WorkflowCommandBindingError && error.code === code && error.reason === reason
+      && error.message === `${code}: ${reason}`);
+    const rejection = workflowOperationEffectRejection({ store: f.store, run: f.run, request,
+      restrictedCommandRuntime: runtime });
+    assert.equal(rejection.code, code);
+    assert.equal(rejection.reason, reason);
+  }
+});
 
 test("Host binds session cwd to the frozen directory without changing Run or raw command", async t => {
   const f = await createRestrictedCommandFixture(t, "node cli.js ../records.csv", [], undefined, directory);
