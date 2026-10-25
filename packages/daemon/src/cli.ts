@@ -5,6 +5,7 @@ import { readPackagedRestrictedCommandConfig } from "./runtime/sandbox/packaged-
 import { readPackagedOfficeLocalNativeArtifact } from "./runtime/sandbox/packaged-office-native-bootstrap.js";
 import { preparePackagedGstackStartup } from "./features/skills/packaged-startup.js";
 import { readPackagedQaHarnessSelection } from "./runtime/packaged-qa-harness-bootstrap.js";
+import { createDaemonSignalShutdown } from "./runtime/signal-shutdown.js";
 import { writeExecutionEngineHostAuthority } from "@ling-stack/core/execution-engine-host-authority";
 import { writeDaemonResourceBootstrap } from "@ling-stack/core/daemon-resource-bootstrap";
 
@@ -50,14 +51,24 @@ if (engineAuthorityChannel === "3" && ["127.0.0.1", "localhost", "::1"].includes
 }
 console.log(`Ling Stack daemon listening on http://${daemon.config.host}:${daemon.config.port}`);
 
-const stop = async (): Promise<void> => {
-  await daemon.stop();
-  process.exit(0);
-};
+// Keep this Host alive on an unverified stop. Letting its rejection become an
+// unhandled crash would trigger Desktop's automatic restart without a stopped
+// receipt. This is an explicit blocked lifecycle, not evidence of active work.
+let blockedShutdownKeepAlive: ReturnType<typeof setInterval> | undefined;
+const stop = createDaemonSignalShutdown({
+  // A finite embedding observer may time out while real cleanup continues.
+  // Signals await that original cleanup instead of permanently caching timeout.
+  stop: () => daemon.stop({ waitForOwnedDrain: true }),
+  exit: code => { process.exit(code); },
+  onBlocked: () => {
+    blockedShutdownKeepAlive ??= setInterval(() => undefined, 60_000);
+    console.error("daemon_shutdown_blocked: stop proof unavailable; Host retained, automatic restart withheld");
+  },
+});
 
-process.once("SIGINT", () => {
+process.on("SIGINT", () => {
   void stop();
 });
-process.once("SIGTERM", () => {
+process.on("SIGTERM", () => {
   void stop();
 });

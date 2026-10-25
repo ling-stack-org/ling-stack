@@ -252,7 +252,8 @@ export interface DaemonServer {
   /** Trusted embedding only. Never serialize this object into health or browser responses. */
   readonly engineManagement: EngineManagementFeature["credentials"];
   start(): Promise<void>;
-  stop(): Promise<void>;
+  /** CLI observes the original physical drain, not a bounded media observation. */
+  stop(options?: { readonly waitForOwnedDrain?: boolean }): Promise<void>;
 }
 
 export function createDaemonServer(
@@ -944,7 +945,11 @@ export function createDaemonServer(
       automationSchedulers.waitForIdle(), backgroundSchedulers.waitForIdle(),
       providerStartupRefresh.waitForIdle(), harnessProjectionReconciler.waitForIdle(),
       harnessArtifactRetention.waitForIdle(),
-      networkShutdown ?? Promise.resolve(), remoteAccessShutdown ?? Promise.resolve(),
+      // A refused stop proof must report failure, not wait forever on observers
+      // whose transport cleanup is gated by that same proof. Rejection retains
+      // Stores/leases; only successful run drain can proceed to network closure.
+      runShutdown.shutdown("daemon_restart").then(() => networkShutdown),
+      remoteAccessShutdown ?? Promise.resolve(),
     ]),
   });
   harnessLifecycle.register({
@@ -962,7 +967,20 @@ export function createDaemonServer(
       // Shared with the delegation domain. Persist/seal first, then wait for
       // actual SDK/tool/executor finalization; never race the old abort tree
       // against a source that is still producing its suspension checkpoint.
-      await runShutdown.shutdown("daemon_restart");
+      try {
+        await runShutdown.shutdown("daemon_restart");
+      } catch (error) {
+        // The original local lifetimes have settled, but durable effect/stop
+        // proof may still be unknown. Disconnect passive observers only; do not
+        // dispose browser/Office/capability executors or release writable Stores.
+        const failures = [error];
+        for (const close of [() => controlPlaneEvents.closeAll(), () => rpcWebSocketServer.close(),
+          () => server.closeAllConnections()]) {
+          try { close(); } catch (closeError) { failures.push(closeError); }
+        }
+        if (failures.length === 1) throw error;
+        throw new AggregateError(failures, "runtime_shutdown_and_observer_close_failed");
+      }
       // Keep the established broker-before-controller shutdown order, even if the broker fails.
       await shutdownAfterNativeBroker(async () => { await chromeBrowserNativeBroker?.close(); }, async () => {
         controlPlaneEvents.closeAll();
@@ -1144,7 +1162,7 @@ export function createDaemonServer(
         });
       }, () => daemon.stop());
     },
-    stop: async () => {
+    stop: async (options) => {
       // Observe the existing finite media deadline alongside the whole Host
       // drain. A parent may itself be waiting for this media writer, so a
       // deadline hidden in the later settle phase would never be reached.
@@ -1152,7 +1170,7 @@ export function createDaemonServer(
       // drain retains Stores/leases until real completion, including on retry.
       const [receipt] = await Promise.all([
         harnessLifecycle.shutdown(),
-        storeRegistry.mediaLocalExecutions.waitForIdle(5_000),
+        storeRegistry.mediaLocalExecutions.waitForIdle(options?.waitForOwnedDrain === true ? undefined : 5_000),
       ]);
       if (receipt.status !== "closed") {
         throw new AggregateError(harnessLifecycle.getFailureCauses().map(failure => failure.error), "harness_shutdown_incomplete_stores_retained");
