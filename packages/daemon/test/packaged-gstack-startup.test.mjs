@@ -77,13 +77,26 @@ test("packaged startup admits and retains a descriptor without downloading the b
   t.mock.method(globalThis, "fetch", () => assert.fail("startup must not acquire browser bytes"));
   const module = code => `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
   const installedModule = module("export let installed; export function installPackagedSkillRuntime(current,retained){installed={current,retained};}");
+  const fixtureModule = module(`
+    let fixture;
+    export function configure(value) { fixture = value; }
+    export function resolveUserConfigPaths() { return { sourcesDir: fixture.sourcesDir }; }
+    export function readPackagedGstackIdentity() { return fixture.identity; }
+    export async function prepareBundledSkillStartup(selection, callback) {
+      return callback({
+        manifestChecksum: selection.expectedManifestChecksum,
+        readResource: async () => fixture.receipt,
+      });
+    }
+  `);
+  (await import(fixtureModule)).configure({ sourcesDir: join(root, "sources"), identity, receipt });
   // Only desktop discovery and the unrelated loader/install singleton are test
   // substitutes. Descriptor admission and generation publication remain real.
   const replacements = new Map([
     ["@ling-stack/core/bundled-skill-browser", new URL("../../core/dist/bundled-skill-browser.js", import.meta.url).href],
-    ["@ling-stack/core", module(`export function resolveUserConfigPaths(){return {sourcesDir:${JSON.stringify(join(root, "sources"))}};}`)],
-    ["./packaged-identity.js", module(`export function readPackagedGstackIdentity(){return ${JSON.stringify(identity)};}`)],
-    ["./bundled-startup.js", module(`export async function prepareBundledSkillStartup(selection, callback){return callback({manifestChecksum:selection.expectedManifestChecksum,readResource:async()=>${JSON.stringify(receipt)}});}`)],
+    ["@ling-stack/core", fixtureModule],
+    ["./packaged-identity.js", fixtureModule],
+    ["./bundled-startup.js", fixtureModule],
     ["./packaged-runtime.js", installedModule],
     ["./packaged-history.js", new URL("../dist/features/skills/packaged-history.js", import.meta.url).href],
   ]);
