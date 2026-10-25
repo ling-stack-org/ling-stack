@@ -1,12 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, copyFile, cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyBundledSkillSource } from "../../packages/core/dist/bundled-skill-source.js";
 import { applyGstackRuntimeSecurityPatches } from "./apply-runtime-security-patches.mjs";
 import { managedResourceWrite, resourceCheckpoint } from "./resource-workspace.mjs";
 import { verifyGstackSecuritySidecarRuntime } from "./verify-security-sidecar-runtime.mjs";
+import { buildWindowsCsoResource } from "./build-windows-cso-resource.mjs";
+import { publishStagedDirectory } from "./publish-staged-directory.mjs";
 
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
 const lock = JSON.parse(await readFile(join(scriptRoot, "upstream-lock.json"), "utf8"));
@@ -15,6 +17,9 @@ const adaptationFiles = ["upstream-lock.json", "reviewed-source-bundle.json", "r
 adaptationFiles.push("build-managed-node-server.mjs", "build-testsavant-component.mjs", "packaged-browse-build.mjs",
   "packaged-browse-launch.mjs", "testsavant-gs-client.mjs", "testsavant-packaged-client.mjs", "testsavant-client.mjs",
   "testsavant-worker.mjs", "testsavant-runtime.mjs", "testsavant-model-pin.json", "testsavant-offline-guard.mjs");
+adaptationFiles.push("testsavant-model-cache.mjs");
+adaptationFiles.push("build-windows-cso-resource.mjs");
+adaptationFiles.push("publish-staged-directory.mjs");
 const digest = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const nativeEntries = [
   ["find-browse", "browse/dist/find-browse"],
@@ -25,7 +30,7 @@ const nativeEntries = [
 
 // This builds prerequisites, not a certified Ling host. T4 owns execution adaptation.
 export async function buildGstackNativeRuntime({
-  sourceBundlePath, outputPath, bunCommand = "bun", nodeCommand = process.execPath,
+  sourceBundlePath, outputPath, bunCommand = "bun", nodeCommand = process.execPath, shellCommand = "bash",
   target = { platform: process.platform, arch: process.arch }, onProgress = () => {},
 }) {
   if (!["darwin", "win32"].includes(target.platform) || !["arm64", "x64"].includes(target.arch) ||
@@ -54,7 +59,6 @@ export async function buildGstackNativeRuntime({
   assertNativeTarget(await readFile(nodePath), target);
   await mkdir(dirname(output), { recursive: true });
   const stage = await mkdtemp(join(dirname(output), ".gstack-native-stage-"));
-  let reserved = false;
   try {
     const candidate = join(stage, "candidate");
     await cp(source, candidate, { recursive: true, errorOnExist: true, force: false });
@@ -116,7 +120,11 @@ export async function buildGstackNativeRuntime({
       await run("bind unmodified upstream CSO compilation, signing and native publication", bunPath,
         ["--no-env-file", "--no-install", join(scriptRoot, "build-cso-resource.mjs"), runtime]);
       provenanceOutputs.push("bin/cso-build-provenance.json");
-    } else await run("build upstream trusted Windows CSO launcher and core (lineage still pending)", "bash", ["scripts/build-cso.sh"]);
+    } else {
+      onProgress("build pinned upstream Windows CSO launcher/core and bind native tool/source identities");
+      await buildWindowsCsoResource({ runtimeRoot: runtime, shellPath: await commandPath(shellCommand), env });
+      provenanceOutputs.push("bin/cso-build-provenance.json");
+    }
     for (const path of ["bin/gstack-cso-core", "bin/gstack-cso-launcher", ...(target.platform === "darwin" ? ["bin/gstack-cso-watchdog"] : [])]) {
       const name = `${path}${suffix}`;
       await verifyNativeFile(join(runtime, name), target);
@@ -172,14 +180,10 @@ export async function buildGstackNativeRuntime({
     await rename(join(candidate, "manifest.json"), join(candidate, "source-manifest.json"));
     await writeFile(join(candidate, "native-build.json"), `${JSON.stringify(record, null, 2)}\n`);
     await resourceCheckpoint(lease.root);
-    await mkdir(output);
-    reserved = true;
-    await rename(candidate, output);
-    reserved = false;
+    await publishStagedDirectory(candidate, output);
     return record;
   } finally {
-    try { if (reserved) await rmdir(output); }
-    finally { await rm(stage, { recursive: true, force: true }); }
+    await rm(stage, { recursive: true, force: true });
   }
 }
 
@@ -187,6 +191,26 @@ export function assertNativeTarget(bytes, target) {
   if (target.platform === "darwin") {
     const cpu = target.arch === "arm64" ? 0x0100000c : 0x01000007;
     if (bytes.length >= 32 && bytes.readUInt32LE(0) === 0xfeedfacf && bytes.readUInt32LE(4) === cpu) return;
+    if (bytes.length >= 8 && [0xcafebabe, 0xcafebabf].includes(bytes.readUInt32BE(0))) {
+      const stride = bytes.readUInt32BE(0) === 0xcafebabe ? 20 : 32, count = bytes.readUInt32BE(4);
+      if (count > 0 && count <= 16 && bytes.length >= 8 + count * stride) {
+        const slices = [];
+        let matched = false;
+        for (let index = 0; index < count; index++) {
+          const row = 8 + index * stride, declaredCpu = bytes.readUInt32BE(row);
+          const offset = stride === 20 ? bytes.readUInt32BE(row + 8) : Number(bytes.readBigUInt64BE(row + 8));
+          const size = stride === 20 ? bytes.readUInt32BE(row + 12) : Number(bytes.readBigUInt64BE(row + 16));
+          const align = bytes.readUInt32BE(row + (stride === 20 ? 16 : 24));
+          if (![0x01000007, 0x0100000c].includes(declaredCpu) || !Number.isSafeInteger(offset) || !Number.isSafeInteger(size) ||
+            offset < 8 + count * stride || size < 32 || offset > bytes.length - size || align > 30 || offset % 2 ** align ||
+            slices.some(slice => offset < slice.offset + slice.size && slice.offset < offset + size) ||
+            bytes.readUInt32LE(offset) !== 0xfeedfacf || bytes.readUInt32LE(offset + 4) !== declaredCpu) break;
+          slices.push({ offset, size });
+          matched ||= declaredCpu === cpu;
+        }
+        if (matched && slices.length === count) return;
+      }
+    }
   } else if (target.platform === "win32" && bytes.length >= 64 && bytes.toString("ascii", 0, 2) === "MZ") {
     const offset = bytes.readUInt32LE(0x3c);
     const cpu = target.arch === "arm64" ? 0xaa64 : 0x8664;
@@ -204,7 +228,11 @@ async function verifyNativeFile(path, target) {
 
 export function buildEnvironment({ bunPath, nodePath, home, temporary, cachePath, inherited = process.env }) {
   const env = {};
-  for (const key of ["PATH", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT", "SDKROOT", "DEVELOPER_DIR", "LANG", "LC_ALL"]) {
+  for (const key of ["PATH", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT", "SDKROOT", "DEVELOPER_DIR", "LANG", "LC_ALL",
+    "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "PSModulePath"]) {
+    if (inherited[key]) env[key] = inherited[key];
+  }
+  for (const key of ["GITHUB_ACTIONS", "RUNNER_ENVIRONMENT", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB", "RUNNER_TEMP"]) {
     if (inherited[key]) env[key] = inherited[key];
   }
   const separator = process.platform === "win32" ? ";" : ":";

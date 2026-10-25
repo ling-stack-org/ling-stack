@@ -37,7 +37,7 @@ export type ProviderApi =
   | "media-job";
 
 export type ProviderTransport = "auto" | "websocket" | "websocket-cached" | "sse";
-export type ProviderThinkingMode = "off" | "auto" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ProviderThinkingMode = "off" | "auto" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 
 export interface ProviderThinkingSupport {
   readonly levels: readonly ProviderThinkingMode[];
@@ -283,6 +283,8 @@ export const providerThinkingModes: readonly ProviderThinkingMode[] = [
   "medium",
   "high",
   "xhigh",
+  "max",
+  "ultra",
 ];
 
 export const providerCapabilities: readonly ProviderCapability[] = [

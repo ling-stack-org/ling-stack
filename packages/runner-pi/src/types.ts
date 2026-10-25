@@ -32,7 +32,7 @@ export interface PiRunnerProviderConfig {
   readonly headers?: Record<string, string>;
   readonly authHeader?: boolean;
   readonly reasoning?: boolean;
-  readonly thinkingLevelMap?: ThinkingLevelMap;
+  readonly thinkingLevelMap?: ThinkingLevelMap & { readonly ultra?: string | null };
   readonly input?: readonly ("text" | "image")[];
   readonly contextWindow?: number;
   readonly maxTokens?: number;
@@ -403,7 +403,7 @@ export interface PiRunnerRunOptions {
   readonly hostCapabilityTools?: readonly PiRunnerHostCapabilityToolDefinition[];
   readonly onHostCapabilityCall?: (request: PiRunnerHostCapabilityCallRequest) => PiRunnerToolHandledResult | Promise<PiRunnerToolHandledResult>;
   readonly mediaGenerationTools?: readonly PiRunnerMediaGenerationToolDefinition[];
-  readonly thinkingLevel?: ModelThinkingLevel;
+  readonly thinkingLevel?: ModelThinkingLevel | "ultra";
   /** Provider-designated public reasoning summary; never raw model thinking. */
   readonly reasoningSummary?: PiRunnerReasoningSummaryMode;
   readonly systemPrompt?: string;

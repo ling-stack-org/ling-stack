@@ -9,6 +9,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { retainPackagedSkillGeneration } from "../dist/features/skills/packaged-history.js";
 import { PackagedSkillRuntimeCatalog } from "../dist/features/skills/packaged-runtime.js";
+import { browserAcquisitionFixture } from "../../core/test/support/browser-acquisition-fixture.mjs";
 
 const hash = text => `sha256:${createHash("sha256").update(text).digest("hex")}`;
 async function fixture(t) {
@@ -130,6 +131,45 @@ test("missing browser is rejected before copying any candidate bytes", async t =
   finally { fsPromises.cp = copy; syncBuiltinESMExports(); }
   assert.equal(copies, 0);
   assert.deepEqual(await readdir(cache), []);
+});
+
+async function addBrowserAcquisition(input, browserRoot) {
+  await mkdir(browserRoot);
+  const data = browserAcquisitionFixture(input.expectedTarget);
+  await writeFile(join(browserRoot, "browser-acquisition.json"), data.bytes);
+  const receipt = Buffer.from(JSON.stringify({ browser: data.selection }));
+  await writeFile(join(input.rootPath, "executable-build.json"), receipt);
+  const path = join(input.rootPath, "manifest.json"), manifest = JSON.parse(await readFile(path));
+  manifest.files.push({ path: "executable-build.json", checksum: hash(receipt), sizeBytes: receipt.length });
+  const bytes = JSON.stringify(manifest); await writeFile(path, bytes);
+  input.expectedManifestChecksum = hash(bytes);
+  return data;
+}
+
+test("download descriptors survive two retained generations without acquiring browser bytes", async t => {
+  const { cwd, cache, selection } = await fixture(t), first = await selection(1), second = await selection(2);
+  const firstBrowser = join(cwd, "browser-one"), secondBrowser = join(cwd, "browser-two");
+  const descriptor = await addBrowserAcquisition(first, firstBrowser); await addBrowserAcquisition(second, secondBrowser);
+  t.mock.method(globalThis, "fetch", () => assert.fail("generation admission must not download a browser"));
+  const old = await retainPackagedSkillGeneration(cache, first, firstBrowser);
+  const context = old.current.bind({ skillId: "qa", sourceKind: "gstack-skill-directory", loaded: true, truncated: false,
+    sourceChecksum: hash("# qa 1\n"), referencedFiles: [{ path: "manifest.json", checksum: first.expectedManifestChecksum }] });
+  const next = await retainPackagedSkillGeneration(cache, second, secondBrowser);
+  const retry = await retainPackagedSkillGeneration(cache, second, secondBrowser);
+  assert.equal(next.retained.length, 1); assert.equal(retry.retained.length, 1);
+  for (const input of [first, second]) {
+    const root = join(cache, input.expectedManifestChecksum.slice(7), "gstack-browser");
+    assert.deepEqual(await readdir(root), ["browser-acquisition.json"]);
+    assert.deepEqual(await readFile(join(root, "browser-acquisition.json")), descriptor.bytes);
+  }
+  for (const path of [first.rootPath, second.rootPath, firstBrowser, secondBrowser]) await rm(path, { recursive: true });
+  const catalog = new PackagedSkillRuntimeCatalog(retry.current, retry.retained);
+  assert.deepEqual(catalog.restore(context, "qa"), context);
+  assert.equal(globalThis.fetch.mock.callCount(), 0);
+  const retainedDescriptor = join(cache, first.expectedManifestChecksum.slice(7), "gstack-browser/browser-acquisition.json");
+  await writeFile(retainedDescriptor, "{}");
+  assert.throws(() => old.current.assertCurrent(), /component_invalid/);
+  await assert.rejects(retainPackagedSkillGeneration(cache, second), /component_invalid/);
 });
 
 for (const phase of ["after-lock", "after-publication"]) {

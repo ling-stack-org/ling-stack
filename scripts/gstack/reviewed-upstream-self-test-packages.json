@@ -4,11 +4,11 @@
     "platform": "darwin",
     "arch": "arm64"
   },
-  "sourceManifestChecksum": "sha256:2921f0cfd111004b078f33b50b91efb053e5d81a661f9fc9473c9ff0e2dcbf8d",
+  "sourceManifestChecksum": "sha256:25e50f1790d789b85d7c99f808a41726f922029b5f8a92874383c9912fc0a384",
   "upstreamRevision": "47d639abffa882b8cbb641d7d1dedf08ecada9ec",
   "sourceFileCount": 3714,
   "marker": "claude-agent-sdk",
-  "compilerChecksum": "sha256:35d20dd0263e5c950194434b925454fdfa9ba6e4467da960410fa05b08a7a5b5",
+  "compilerChecksum": "sha256:0a2237cdcfa0d16ef501d9acca9f0026309ef348bea7393a64e8d1e3609565cc",
   "importGraphs": [
     {
       "dependencyScope": "client-command-imports",

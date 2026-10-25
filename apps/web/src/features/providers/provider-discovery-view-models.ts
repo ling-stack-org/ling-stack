@@ -34,7 +34,7 @@ export function modelThinkingModes(model: ProviderModelOption): readonly Provide
 
 export function providerOrderedThinkingModes(modes: readonly ProviderThinkingMode[]): readonly ProviderThinkingMode[] {
   const selectedModes = new Set(modes);
-  const order: readonly ProviderThinkingMode[] = ["off", "auto", "minimal", "low", "medium", "high", "xhigh"];
+  const order: readonly ProviderThinkingMode[] = ["off", "auto", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
   return order.filter((mode) => selectedModes.has(mode));
 }
 
@@ -46,6 +46,8 @@ export function providerThinkingModeLabel(mode: ProviderThinkingMode, t: (key: s
     case "low": return t("Low");
     case "medium": return t("Medium");
     case "high": return t("High");
+    case "max": return t("Max");
+    case "ultra": return t("Ultra");
     case "xhigh": return t("XHigh");
   }
 }

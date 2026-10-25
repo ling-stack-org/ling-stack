@@ -2033,7 +2033,7 @@ function readSnapshotPermissionConfirmation(record: Record<string, unknown>, key
 
 function readSnapshotThinkingLevel(record: Record<string, unknown>, key: string): RunRequest["thinkingLevel"] {
   const value = record[key];
-  return typeof value === "string" && ["off", "minimal", "low", "medium", "high", "xhigh"].includes(value)
+  return typeof value === "string" && ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(value)
     ? value as RunRequest["thinkingLevel"]
     : undefined;
 }

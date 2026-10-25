@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeModelTokenLimits } from "../provider-model-catalog-normalization.mjs";
+import { normalizeModelTokenLimits, normalizeThinkingModes } from "../provider-model-catalog-normalization.mjs";
+
+test("catalog sync preserves provider-native top reasoning levels", () => {
+  assert.deepEqual(normalizeThinkingModes([{ type: "effort", values: ["low", "xhigh", "max", "maximum", "ultra", "unknown"] }]),
+    ["low", "xhigh", "max", "ultra"]);
+  assert.deepEqual(normalizeThinkingModes([{ type: "toggle" }]), ["off", "auto"]);
+});
 
 test("catalog token limits preserve output capacity that leaves room for model input", () => {
   assert.deepEqual(normalizeModelTokenLimits({ context: 8_192, output: 4_096 }), {

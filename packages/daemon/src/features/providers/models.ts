@@ -1,6 +1,7 @@
 import {
   builtinMediaModelCandidates,
   enrichProviderModelOption,
+  knownProviderModelThinkingSupport,
   normalizeProviderBaseUrlForAdapter,
   normalizeProviderThinkingModes,
   normalizeProviderThinkingSupport,
@@ -334,7 +335,7 @@ function parseProviderModelOption(value: unknown, preset: ProviderPreset): Provi
     api: explicitApi ?? (explicitCapabilities?.some(isProviderGenerationCapability) ? "media-job" : undefined),
     input: explicitInput ?? (explicitCapabilities?.some(isProviderGenerationCapability) ? providerModelInputTypes : undefined),
     capabilities: explicitCapabilities,
-    thinkingModes: parseProviderModelThinkingModes(value),
+    thinkingModes: parseProviderModelThinkingModes(value, explicitApi ?? preset.api),
     thinkingSupport: parseProviderModelThinkingSupport(value),
     contextWindow: readPositiveInteger(
       value.contextWindow ??
@@ -529,7 +530,7 @@ function parseProviderModelModalities(value: unknown): readonly ("text" | "image
   return result.length > 0 ? result : undefined;
 }
 
-function parseProviderModelThinkingModes(value: Record<string, unknown>): readonly ProviderThinkingMode[] | undefined {
+function parseProviderModelThinkingModes(value: Record<string, unknown>, api: ProviderApi): readonly ProviderThinkingMode[] | undefined {
   const rawModes = value.thinkingModes ?? value.thinking_modes ?? value.reasoningLevels ?? value.reasoning_levels;
   if (Array.isArray(rawModes) && rawModes.length === 0) return [];
   const explicit = normalizeProviderThinkingModes(
@@ -542,6 +543,11 @@ function parseProviderModelThinkingModes(value: Record<string, unknown>): readon
   if (support) {
     return support.levels;
   }
+  if (value.reasoning === false || value.supports_reasoning === false || value.supportsThinking === false || value.supports_thinking === false) {
+    return [];
+  }
+  const knownSupport = knownProviderModelThinkingSupport(String(value.id ?? ""), api);
+  if (knownSupport) return knownSupport.levels;
   if (value.reasoning === true || value.supports_reasoning === true || value.supportsThinking === true || value.supports_thinking === true) {
     return ["off", "low", "medium", "high"];
   }

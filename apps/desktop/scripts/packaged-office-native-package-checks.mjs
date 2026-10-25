@@ -193,7 +193,7 @@ function verifyAppSignature(appPath) {
   return new Promise((settle, reject) => {
     execFile("/usr/bin/codesign", ["--verify", "--deep", "--strict", appPath], {
       env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }, encoding: "utf8",
-      timeout: 30_000, maxBuffer: 1024 * 1024, windowsHide: true,
+      timeout: 60_000, maxBuffer: 1024 * 1024, windowsHide: true,
     }, error => {
       if (error) reject(new Error("packaged_office_native_signature_verification_failed", { cause: error }));
       else settle();

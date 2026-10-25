@@ -132,13 +132,16 @@ Metadata precedence for a discovered model is:
 
 1. explicit user/admin advanced override on the saved preset;
 2. explicit metadata returned by the configured provider;
-3. exact model match in the versioned Ling catalog;
-4. bundled provider template or reviewed family rule;
-5. conservative fallback.
+3. reviewed model-and-API thinking rules when explicit thinking metadata is missing;
+4. exact model match in the versioned Ling catalog;
+5. bundled provider template or reviewed family rule;
+6. conservative fallback.
 
 An upstream declaration is authoritative for the fields it actually returns. Ling must
 not union catalog capabilities into an explicit smaller upstream capability set. Missing
 fields may still be filled from the next layer.
+
+Thinking levels retain distinct `xhigh`, `max`, and `ultra` values during discovery and catalog synchronization. For `gpt-6.1-sol` and its date snapshots on `openai-responses`, the reviewed fallback is `low`, `medium`, `high`, `xhigh`, `max`; it does not infer `ultra`. Explicit levels, empty lists, or disabled reasoning take precedence.
 
 Capability metadata is descriptive. Runtime authority is separate:
 
@@ -232,6 +235,8 @@ existing source inspector instead of adding another status card.
 - no price, raw metadata, catalog JSON or checksum appears in the default list;
 - refreshing models replaces the current discovery result without changing saved models;
 - importing a model keeps the current confirmation and preflight behavior.
+
+The normal-conversation thinking slider shows only declared selectable levels, without adding `off`. Reset chooses `off` when supported, otherwise `medium`, otherwise the first supported level. Switching models preserves a supported selection; an unsupported selection changes to that default with an explanation.
 
 ## Failure Behavior
 
