@@ -3,6 +3,32 @@
 状态：源码修复及新 packaged GUI 的四项只读回归已通过；完整小项目与整个 E6 尚未完成。
 唯一实施树仍为 `ling-e6-continuation/ling-stack`，不改根 checkout。
 
+## R8 输入坐标契约收口（2026-10-25，实施中）
+
+R8-C1 实际停在 `inputs.path`，原被拒候选未持久化，不能声称已还原其具体字段。
+独立临时目录探针 capture030/031 确认现有候选契约的表示歧义：无 `relativeTo`
+的 canonical 输入会被再次拼接 cwd；操作数字面引用与 canonical 引用混用会被拒绝。
+这不是授权扩大问题，也不能通过重发提示词或删除来源检查解决。
+
+从本切片起，候选路径与已有持久 binding 的坐标保持一致：
+
+1. 没有 `relativeTo` 的 `inputs[].path` / `commandGoal.module.path` 一律相对 workspace，
+   与 `workingDirectory` 是否存在无关；Host 不按文件存在性、basename 或前缀猜测坐标。
+2. 只有显式 `relativeTo` 改变路径锚点。command input/module 可使用逐字引用的
+   `cli.js`、`../records.csv`，分别引用独立的 canonical workspace-relative 目录锚点。
+   锚点原始目录必须在归一化前检查，不能让 `../` 擦掉 symlink 或非目录。
+3. 路径、锚点各有真实来源引用；当前来源必须属于当前 operation 的责任块。
+   历史材料仍只取 canonical source registry，不因此获得新的执行意图。
+4. `workingDirectory` 只决定进程启动位置。原 command、owner、projectInputRoot、
+   sandbox/approval、producer dependsOn、Run/Attempt/fingerprint/evidence 检查不变。
+5. 仅 command input/module 的显式锚点形式归一化 `..`；普通 file target 不放宽。
+   持久 inputRefs/modulePath 仍是 canonical workspace-relative；不改表、历史或冻结 Run。
+
+同步修改 selector prompt、binder 与原生回归。旧 cwd 回归改为显式锚点夹具，保留其
+argv、canonical input、越界和 import 断言；新增反例覆盖 canonical 不重复加前缀、
+无锚点不隐式相对 cwd、来源/目录校验及 producer 精确匹配。旧 capture 和真实失败保留。
+本切片在新包真实项目通过前不能记为 C01/E6 完成。
+
 ## 最新真实 GUI 回归（2026-10-25）
 
 新包 ASAR `ffc306b6660098034c5054fa780f73ed56de96dcafebc8eaebb386ec9451cbc0`，

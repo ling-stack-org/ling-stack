@@ -15,7 +15,8 @@ async function fixture(t, command = "node cli.js ../records.csv") {
     owner: { participantId: "engineer", sourceQuote: "Engineer" }, sourceQuote: body,
     command: { text: command, sourceQuote: command },
     workingDirectory: { path: "project", sourceQuote: "目录 project 中" },
-    inputs: [{ path: "cli.js", sourceQuote: "cli.js" }, { path: "../records.csv", sourceQuote: "../records.csv" }] };
+    inputs: [{ path: "cli.js", sourceQuote: "cli.js", relativeTo: { path: "project", sourceQuote: "目录 project 中" } },
+      { path: "../records.csv", sourceQuote: "../records.csv", relativeTo: { path: "project", sourceQuote: "目录 project 中" } }] };
   const bind = () => bindChannelOperationPlan({ candidate: { schemaVersion: 2, operations: [operation] },
     sourceItemId: "current-user", sourceText: body, workspaceCwd: cwd,
     participants: [{ id: "engineer", displayName: "Engineer", roleKey: "engineer", allowedTools: ["bash"] }] });
@@ -52,7 +53,8 @@ test("a script prefix or historical/invented directory quote cannot choose comma
 
 test("cwd cannot authorize workspace escapes or symlink directories", async t => {
   const f = await fixture(t, "node cli.js ../../records.csv");
-  f.operation.inputs[1] = { path: "../../records.csv", sourceQuote: "../../records.csv" };
+  f.operation.inputs[1] = { path: "../../records.csv", sourceQuote: "../../records.csv",
+    relativeTo: { path: "project", sourceQuote: "目录 project 中" } };
   assert.equal(f.bind().status, "clarify");
   const g = await fixture(t);
   await rm(join(g.cwd, "project"), { recursive: true });
@@ -75,6 +77,7 @@ test("a cwd quote does not grant local-module closure and cannot be attached to 
 test("a request without workingDirectory retains root-relative paths and rejects raw parent inputs", async t => {
   const f = await fixture(t);
   delete f.operation.workingDirectory;
+  for (const input of f.operation.inputs) delete input.relativeTo;
   assert.equal(f.bind().status, "clarify");
   f.operation.inputs = [{ path: "cli.js", sourceQuote: "cli.js" }];
   const result = f.bind();
@@ -89,7 +92,8 @@ test("natural-language function goals keep canonical module paths and generate c
     const f = await fixture(t, `Node 从 ${path} 调用 proof("7319")`);
     delete f.operation.command;
     delete f.operation.inputs;
-    f.operation.commandGoal = { kind: "node_function", module: { path, sourceQuote: path },
+    f.operation.commandGoal = { kind: "node_function", module: { path, sourceQuote: path,
+      relativeTo: { path: "project", sourceQuote: "目录 project 中" } },
       invocation: 'proof("7319")', sourceQuote: 'proof("7319")' };
     const result = f.bind();
     assert.equal(result.status, "bound", JSON.stringify(result));

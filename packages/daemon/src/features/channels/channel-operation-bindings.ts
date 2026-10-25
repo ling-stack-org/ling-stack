@@ -20,6 +20,7 @@ import { commandMatchesPolicy } from "./command-operation-match.js";
 import type { ChannelOperationVisibleSource } from "./channel-operation-sources.js";
 
 interface CandidatePath {
+  /** Workspace-relative unless relativeTo explicitly supplies the directory anchor. */
   readonly path: string;
   readonly sourceQuote: string;
   readonly sourceItemId?: string;
@@ -151,18 +152,32 @@ export function bindChannelOperationPlan(input: {
         workingDirectory = { path: directory.path, sourceRefs: [{ ...directorySource, actorType: "local_user" }] };
       }
       const commandFile = (target: CandidatePath): ChannelOperationFileBindingV1 => {
-        if (!workingDirectory || target.relativeTo) return file(target);
-        // Only command operands gain cwd-relative normalization. General file
-        // targets remain canonical workspace-relative paths and still reject .. .
         const sourceRef = quote(target.sourceQuote, target.sourceItemId);
         if (!text(target.path) || target.path.startsWith("/") || /[\\\u0000-\u001f:*?]/u.test(target.path)
-          || target.path.split("/").some(part => !part) || !target.sourceQuote.includes(target.path)) {
-          fail("inputs.path", "A command input must be a literal quoted path relative to its frozen directory.");
+          || target.path.split("/").some(part => !part)
+          || !hasExplicitChannelOperationPathQuoteV1(target.sourceQuote, target.path)) {
+          fail("inputs.path", "A command input needs its literal path quote; relativeTo alone supplies an explicit directory anchor.");
         }
-        const path = posix.normalize(`${workingDirectory.path}/${target.path}`);
+        // Cwd chooses where to launch, never how to interpret file coordinates.
+        // General file targets still reject ..; only explicitly anchored command
+        // inputs/modules may normalize quoted parent operands within workspace.
+        if (!target.relativeTo) return file(target);
+        const anchor = target.relativeTo;
+        const anchorSource = quote(anchor.sourceQuote, anchor.sourceItemId);
+        if (!isChannelOperationRelativePathV1(anchor.path)
+          || !hasExplicitChannelOperationPathQuoteV1(anchor.sourceQuote, anchor.path)
+          || ((!anchor.sourceItemId || anchor.sourceItemId === input.sourceItemId)
+            && !operation.sourceQuote.includes(anchor.sourceQuote))) {
+          fail("inputs.relativeTo", "The command input anchor needs its own literal directory quote in this operation's instruction span.");
+        }
+        // Inspect the original directory before normalization can erase it via .. .
+        assertWorkspaceDirectory(anchor.path, input.workspaceCwd, "inputs.relativeTo");
+        const lexicalPath = `${anchor.path}/${target.path}`;
+        const path = posix.normalize(lexicalPath);
         if (!isChannelOperationRelativePathV1(path)) fail("inputs.path", "Command input escapes its workspace.");
+        assertWorkspaceDirectory(posix.dirname(lexicalPath), input.workspaceCwd, "inputs.relativeTo");
         assertWorkspacePath(path, input.workspaceCwd);
-        return { path, sourceRefs: [sourceRef, ...workingDirectory.sourceRefs] };
+        return { path, sourceRefs: [sourceRef, anchorSource] };
       };
       const target = operation.target ? file(operation.target) : undefined;
       if (operation.target && (!operation.target.sourceItemId || operation.target.sourceItemId === input.sourceItemId)
@@ -342,19 +357,20 @@ function assertWorkspacePath(path: string, workspaceCwd: string): void {
   }
 }
 
-function assertWorkspaceDirectory(path: string, workspaceCwd: string): void {
+function assertWorkspaceDirectory(path: string, workspaceCwd: string, field = "workingDirectory"): void {
   let current = realpathSync(workspaceCwd);
   for (const part of path.split("/")) {
     current = join(current, part);
     try {
       const fact = lstatSync(current);
-      if (!fact.isDirectory() || fact.isSymbolicLink()) fail("workingDirectory", "Command directory cannot traverse a symlink or a non-directory.");
+      if (!fact.isDirectory() || fact.isSymbolicLink()) fail(field, "Command directory cannot traverse a symlink or a non-directory.");
     } catch (error) {
-      // A preceding explicit create may create the directory later. Execution
-      // requires it to exist and captures its real identity before any await.
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      // A producer may create missing directories later. Still inspect the rest:
+      // lexical .. can return to an existing ancestor before another symlink.
+      // Execution must capture the final directory identity before any await.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
       if (error instanceof BindingError) throw error;
-      fail("workingDirectory", "Command directory could not be verified.");
+      fail(field, "Command directory could not be verified.");
     }
   }
 }
