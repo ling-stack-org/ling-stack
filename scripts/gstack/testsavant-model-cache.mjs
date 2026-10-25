@@ -59,8 +59,18 @@ async function directory(path, create = false, privateDirectory = false) {
     catch (error) { after = { error: error.code }; }
     const validBefore = validType && (!process.getuid ||
       stat.uid === process.getuid() && (!privateDirectory || !(stat.mode & 0o077)));
+    let canonicalRecovered = false;
+    if (validBefore && (canonicalError || canonical !== undefined && canonical !== path) && current &&
+      current.dev === stat.dev && current.ino === stat.ino && current.isDirectory() && !current.isSymbolicLink() &&
+      (!process.getuid || current.uid === process.getuid() && (!privateDirectory || !(current.mode & 0o077)))) {
+      // NTFS may reuse the deleted directory's file ID. A fresh canonical
+      // observation only permits retrying admission, never reading or deleting
+      // an owner using the obsolete observation. Stable aliases remain invalid.
+      try { canonicalRecovered = await realpath(path) === path; }
+      catch (error) { if (!["ENOENT", "EBADF"].includes(error.code)) throw error; }
+    }
     const obsolete = validBefore && (canonicalError || canonical !== undefined && canonical !== path) &&
-      (after.error === "ENOENT" || current && (current.dev !== stat.dev || current.ino !== stat.ino));
+      (after.error === "ENOENT" || current && (current.dev !== stat.dev || current.ino !== stat.ino) || canonicalRecovered);
     const error = canonicalError && !obsolete ? canonicalError : new Error(obsolete
       ? "testsavant_model_cache_directory_changed" : "testsavant_model_cache_directory_invalid", { cause: canonicalError });
     if (obsolete) error.code = "ESTALE";

@@ -170,7 +170,7 @@ for (const replacement of ["removed", "live-owner", "stable-alias"]) {
     });
     let injected = false;
     const canonical = t.mock.method(fsPromises, "realpath", async path => {
-      if (path !== lock || injected) return originalRealpath(path);
+      if (path !== lock || injected && replacement !== "stable-alias") return originalRealpath(path);
       injected = true;
       // The hosted NTFS reproduction returned $Extend/$Deleted after its
       // handle's original empty directory had already been removed.
@@ -212,7 +212,7 @@ for (const replacement of ["removed", "live-owner", "stable"]) {
     });
     let injected = false;
     const canonical = t.mock.method(fsPromises, "realpath", async path => {
-      if (path !== lock || injected) return originalRealpath(path);
+      if (path !== lock || injected && replacement !== "stable") return originalRealpath(path);
       injected = true;
       if (replacement !== "stable") await rmdir(lock);
       if (replacement === "live-owner") {
@@ -235,6 +235,41 @@ for (const replacement of ["removed", "live-owner", "stable"]) {
       if (replacement === "live-owner") assert.deepEqual(JSON.parse(await readFile(join(lock, `owner-${token}.json`))), { pid: process.pid, token });
     }
     assert.equal(injected, true);
+  });
+}
+
+for (const failure of ["deleted-alias", "EBADF"]) {
+  test(`a ${failure} lock observation retries a canonical live owner with reused file identity`, async t => {
+    const f = await fixture(t), lock = `${f.final}.lock`, token = randomUUID();
+    await mkdir(f.models, { recursive: true, mode: 0o700 }); await mkdir(lock, { mode: 0o700 });
+    const originalRename = fsPromises.rename, originalRealpath = fsPromises.realpath, originalLstat = fsPromises.lstat;
+    let injected = false, previous, reused = false;
+    const rename = t.mock.method(fsPromises, "rename", async (from, to) => {
+      if (to === lock && await originalLstat(to).catch(error => { if (error.code !== "ENOENT") throw error; })) {
+        throw Object.assign(new Error("Existing live lock"), { code: "EPERM" });
+      }
+      return originalRename(from, to);
+    });
+    const canonical = t.mock.method(fsPromises, "realpath", async path => {
+      if (path !== lock || injected) return originalRealpath(path);
+      previous = await originalLstat(lock); injected = true;
+      await rmdir(lock); await mkdir(lock, { mode: 0o700 });
+      await writeFile(join(lock, `owner-${token}.json`), JSON.stringify({ pid: process.pid, token }));
+      if (failure === "EBADF") throw Object.assign(new Error("Removed native handle"), { code: "EBADF" });
+      return join(f.stateRoot, "$Extend", "$Deleted", token);
+    });
+    const stat = t.mock.method(fsPromises, "lstat", async (path, ...args) => {
+      const current = await originalLstat(path, ...args);
+      if (path === lock && injected) { current.dev = previous.dev; current.ino = previous.ino; reused = true; }
+      return current;
+    });
+    syncBuiltinESMExports();
+    t.after(() => { stat.mock.restore(); canonical.mock.restore(); rename.mock.restore(); syncBuiltinESMExports(); });
+    await assert.rejects(createTestsavantModelCache({ ...f, timeoutMs: 1000, pollMs: 1 })(f.stateRoot), /cache_busy_timeout/);
+    assert.equal(reused, true); assert.equal(f.calls.length, 0);
+    assert.deepEqual(await readdir(lock), [`owner-${token}.json`]);
+    assert.deepEqual(JSON.parse(await readFile(join(lock, `owner-${token}.json`))), { pid: process.pid, token });
+    assert.equal(await originalRealpath(lock), lock);
   });
 }
 
