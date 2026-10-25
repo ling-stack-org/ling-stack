@@ -1,5 +1,5 @@
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
-import type { AiTeammateTemplate } from "@ling-stack/core";
+import type { AiTeammateTemplate } from "@ling-stack/core/skill-types";
 import type { ChannelActivityTriageDraft, ChannelActivityTriageResult } from "../../lib/channel-activity-triage.js";
 import type {
   ApprovalRequest,

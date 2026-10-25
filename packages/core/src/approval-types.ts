@@ -44,6 +44,7 @@ export interface ApprovalCommandRuleProposal {
   readonly display: string;
   readonly fingerprint: string;
   readonly version: 1;
+  readonly cwd?: string;
 }
 
 export interface ApprovalCommandRule extends ApprovalCommandRuleProposal {

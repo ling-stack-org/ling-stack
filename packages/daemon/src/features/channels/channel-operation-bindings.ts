@@ -1,5 +1,5 @@
 import { lstatSync, realpathSync } from "node:fs";
-import { dirname, relative, resolve, sep } from "node:path";
+import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import {
   channelOperationPlanFingerprintV1,
   isChannelIntentExecutionPlanV1,
@@ -12,6 +12,7 @@ import {
   type ChannelOperationContentSourceV1,
   type ChannelOperationFileBindingV1,
   type ChannelCommandInputScopeV1,
+  type ChannelCommandWorkingDirectoryV1,
   type ChannelOperationSourceV1,
 } from "@ling-stack/contracts";
 import type { AiTeammate, RunTool } from "@ling-stack/core";
@@ -42,6 +43,7 @@ export interface ChannelOperationCandidateV2 {
   readonly target?: CandidatePath;
   readonly inputs?: readonly CandidateCommandInput[];
   readonly projectInputRoot?: { readonly path: string; readonly sourceQuote: string };
+  readonly workingDirectory?: { readonly path: string; readonly sourceQuote: string };
   readonly command?: { readonly text: string; readonly sourceQuote: string };
   readonly commandGoal?: { readonly kind: "node_function"; readonly module: CandidatePath;
     readonly invocation: string; readonly sourceQuote: string };
@@ -132,6 +134,36 @@ export function bindChannelOperationPlan(input: {
         capabilityBlockers.push({ operationId: operation.id, participantId: owner.id, tool });
       }
       const writes = operation.kind === "file_create" || operation.kind === "file_edit";
+      let workingDirectory: ChannelCommandWorkingDirectoryV1 | undefined;
+      if (operation.workingDirectory) {
+        const directory = operation.workingDirectory;
+        const outsideCommand = operation.sourceQuote.split(operation.command?.text ?? operation.commandGoal?.invocation ?? "\u0000").join(" ");
+        if (operation.kind !== "run_command" || !isChannelOperationRelativePathV1(directory.path)
+          || !hasExplicitChannelOperationPathQuoteV1(directory.sourceQuote, directory.path)
+          || !outsideCommand.includes(directory.sourceQuote)) {
+          fail("workingDirectory", "The command directory needs its own current-operation quote, separate from command operands.");
+        }
+        const directorySource = quote(directory.sourceQuote);
+        if (directorySource.actorType !== undefined && directorySource.actorType !== "local_user") {
+          fail("workingDirectory", "A command directory must be selected by the current local user, not model text.");
+        }
+        assertWorkspaceDirectory(directory.path, input.workspaceCwd);
+        workingDirectory = { path: directory.path, sourceRefs: [{ ...directorySource, actorType: "local_user" }] };
+      }
+      const commandFile = (target: CandidatePath): ChannelOperationFileBindingV1 => {
+        if (!workingDirectory || target.relativeTo) return file(target);
+        // Only command operands gain cwd-relative normalization. General file
+        // targets remain canonical workspace-relative paths and still reject .. .
+        const sourceRef = quote(target.sourceQuote, target.sourceItemId);
+        if (!text(target.path) || target.path.startsWith("/") || /[\\\u0000-\u001f:*?]/u.test(target.path)
+          || target.path.split("/").some(part => !part) || !target.sourceQuote.includes(target.path)) {
+          fail("inputs.path", "A command input must be a literal quoted path relative to its frozen directory.");
+        }
+        const path = posix.normalize(`${workingDirectory.path}/${target.path}`);
+        if (!isChannelOperationRelativePathV1(path)) fail("inputs.path", "Command input escapes its workspace.");
+        assertWorkspacePath(path, input.workspaceCwd);
+        return { path, sourceRefs: [sourceRef, ...workingDirectory.sourceRefs] };
+      };
       const target = operation.target ? file(operation.target) : undefined;
       if (operation.target && (!operation.target.sourceItemId || operation.target.sourceItemId === input.sourceItemId)
         && !operation.sourceQuote.includes(operation.target.sourceQuote)) fail("target.sourceQuote", "The file target must belong to this operation's instruction span.");
@@ -172,7 +204,7 @@ export function bindChannelOperationPlan(input: {
             && !operation.sourceQuote.includes(commandInput.sourceQuote)) {
             fail("inputs.sourceQuote", "A command input must belong to this operation's instruction span.");
           }
-          const ref = file(commandInput);
+          const ref = commandFile(commandInput);
           if (inputRefs.some((candidate) => candidate.path === ref.path)) fail("inputs", "Command input paths must be unique.");
           if (commandInput.fromOperationId) {
             const predecessor = byId.get(commandInput.fromOperationId);
@@ -204,7 +236,7 @@ export function bindChannelOperationPlan(input: {
         if (!/\bnode\b/iu.test(operation.sourceQuote) || !operation.sourceQuote.includes(goal.sourceQuote) || !goal.sourceQuote.includes(goal.invocation)) {
           fail("commandGoal.sourceQuote", "The invocation must be quoted in the current operation, not supplied by prior model text.");
         }
-        const module = file(goal.module);
+        const module = commandFile(goal.module);
         const predecessors = operation.dependsOn.map(id => byId.get(id)).filter(predecessor => predecessor
           && ["file_read", "file_create", "file_edit"].includes(predecessor.kind)
           && predecessor.target && file(predecessor.target).path === module.path);
@@ -213,7 +245,7 @@ export function bindChannelOperationPlan(input: {
         }
         commandGoal = { kind: "node_function", modulePath: module.path, invocation: goal.invocation,
           ...(predecessors[0] ? { inputOperationId: predecessors[0].id } : {}), sourceRefs: [source, goalSource, ...module.sourceRefs] };
-        const command = nodeFunctionGoalCommand(commandGoal);
+        const command = nodeFunctionGoalCommand(commandGoal, workingDirectory?.path);
         if (!command || !commandMatchesPolicy(command, { kind: "exact_command", command })) {
           fail("commandGoal.invocation", "Node invocation needs a named export and bounded JSON-literal arguments; arbitrary expressions are not executable goals.");
         }
@@ -260,6 +292,7 @@ export function bindChannelOperationPlan(input: {
           ...(contentSource ? { contentSource } : {}), sourceRefs: ownerSource ? [source, ownerSource] : [source],
           ...(commandGoal ? { commandGoal } : {}),
           ...(commandInputScope ? { commandInputScope } : {}),
+          ...(workingDirectory ? { workingDirectory } : {}),
           effectScope: { readPaths: inputRefs.map((ref) => ref.path), writePaths: outputRefs.map((ref) => ref.path),
             exactCommands, allowEnvironmentAccess: false, allowNetworkAccess: false },
         },
@@ -309,6 +342,23 @@ function assertWorkspacePath(path: string, workspaceCwd: string): void {
   }
 }
 
+function assertWorkspaceDirectory(path: string, workspaceCwd: string): void {
+  let current = realpathSync(workspaceCwd);
+  for (const part of path.split("/")) {
+    current = join(current, part);
+    try {
+      const fact = lstatSync(current);
+      if (!fact.isDirectory() || fact.isSymbolicLink()) fail("workingDirectory", "Command directory cannot traverse a symlink or a non-directory.");
+    } catch (error) {
+      // A preceding explicit create may create the directory later. Execution
+      // requires it to exist and captures its real identity before any await.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      if (error instanceof BindingError) throw error;
+      fail("workingDirectory", "Command directory could not be verified.");
+    }
+  }
+}
+
 export function isChannelOperationCandidatePlanV2(value: unknown): value is ChannelOperationCandidatePlanV2 {
   return record(value, ["schemaVersion", "operations"]) && value.schemaVersion === 2
     && Array.isArray(value.operations) && value.operations.length > 0 && value.operations.length <= 64
@@ -316,7 +366,7 @@ export function isChannelOperationCandidatePlanV2(value: unknown): value is Chan
 }
 
 function candidateOperation(value: unknown): value is ChannelOperationCandidateV2 {
-  if (!record(value, ["id", "kind", "targetKind", "required", "dependsOn", "owner", "sourceQuote", "target", "inputs", "projectInputRoot", "command", "commandGoal", "contentSource"])
+  if (!record(value, ["id", "kind", "targetKind", "required", "dependsOn", "owner", "sourceQuote", "target", "inputs", "projectInputRoot", "workingDirectory", "command", "commandGoal", "contentSource"])
     || !text(value.id) || !text(value.sourceQuote) || typeof value.required !== "boolean" || !texts(value.dependsOn)
     || !["file_read", "file_create", "file_edit", "run_command", "open_local_target"].includes(String(value.kind))
     || (value.kind === "run_command" ? value.targetKind !== "command" : value.targetKind !== "file")
@@ -326,6 +376,8 @@ function candidateOperation(value: unknown): value is ChannelOperationCandidateV
       || !value.inputs.every(candidateCommandInput)))
     || (value.projectInputRoot !== undefined && (!record(value.projectInputRoot, ["path", "sourceQuote"])
       || !text(value.projectInputRoot.path) || !text(value.projectInputRoot.sourceQuote)))
+    || (value.workingDirectory !== undefined && (!record(value.workingDirectory, ["path", "sourceQuote"])
+      || !text(value.workingDirectory.path) || !text(value.workingDirectory.sourceQuote)))
     || (value.command !== undefined && (!record(value.command, ["text", "sourceQuote"]) || !text(value.command.text) || !text(value.command.sourceQuote)))) return false;
   if (value.commandGoal !== undefined && (!record(value.commandGoal, ["kind", "module", "invocation", "sourceQuote"])
     || value.commandGoal.kind !== "node_function" || !candidatePath(value.commandGoal.module)

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { conversationWorkspaceFileRefSourcesV1 } from "@ling-stack/contracts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   runInterventionModes,
@@ -918,9 +919,14 @@ function readOptionalRunInterventionWorkspaceFilePayloads(
     const label = readOptionalString(item, "label");
     const previewText = readOptionalString(item, "previewText");
     const blockedReason = readOptionalString(item, "blockedReason");
+    const source = item.source;
+    if (source !== undefined && source !== "composer" && source !== "explicit_text" && source !== "api" && source !== "inferred_text") {
+      throw new Error(`fileRefs source must be one of ${conversationWorkspaceFileRefSourcesV1.join(", ")}`);
+    }
     return {
       path: readString(item, "path"),
       ...(label ? { label } : {}),
+      ...(source ? { source } : {}),
       rootRelation: readRunInterventionWorkspaceFileRootRelation(item.rootRelation),
       kind: readRunInterventionWorkspaceFileKind(item.kind),
       materializationStatus: readRunInterventionMaterializationStatus(item.materializationStatus),

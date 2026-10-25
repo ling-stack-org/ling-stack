@@ -84,7 +84,8 @@ function parseApprovalCommandRuleProposal(value: string | undefined): ApprovalCo
     parsed.version !== 1 ||
     prefix.length === 0 ||
     typeof parsed.display !== "string" ||
-    typeof parsed.fingerprint !== "string"
+    typeof parsed.fingerprint !== "string" ||
+    (parsed.cwd !== undefined && (typeof parsed.cwd !== "string" || !parsed.cwd))
   ) {
     return undefined;
   }
@@ -93,6 +94,7 @@ function parseApprovalCommandRuleProposal(value: string | undefined): ApprovalCo
     display: parsed.display,
     fingerprint: parsed.fingerprint,
     version: 1,
+    ...(typeof parsed.cwd === "string" ? { cwd: parsed.cwd } : {}),
   };
 }
 

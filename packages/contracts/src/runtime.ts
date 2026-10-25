@@ -6,6 +6,7 @@ import type { ApprovalCommandRuleProposal, ApprovalDecisionKind } from "./approv
 import type { RunProviderErrorDiagnostic, RunProviderRetryEvidence } from "./provider-diagnostics.js";
 import type { HarnessFeatureSnapshotV1 } from "./harness.js";
 import type { ExecutionBindingRequest } from "./execution-engines.js";
+import type { ConversationWorkspaceFileRefSourceV1 } from "./conversation-continuity.js";
 
 export type RuntimePermissionRequestKind =
   | "core_tool"
@@ -930,6 +931,7 @@ export interface RunInterventionLinkPreviewPayload {
 export interface RunInterventionWorkspaceFilePayload {
   readonly path: string;
   readonly label?: string;
+  readonly source?: ConversationWorkspaceFileRefSourceV1;
   readonly rootRelation: "inside_workspace" | "outside_workspace" | "unknown";
   readonly kind: "file" | "directory" | "glob" | "unknown";
   readonly materializationStatus: RunInterventionMaterializationStatus;

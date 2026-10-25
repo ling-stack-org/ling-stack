@@ -5,6 +5,7 @@ import type { HarnessArtifactRetentionStore, HarnessProjectionStore } from "./ha
 import type { DelegationCompletionEvidenceV1, GetDelegationCompletionEvidenceInput } from "./delegation-completion-evidence.js";
 import type {
   ConversationItemV1,
+  ConversationWorkspaceFileRefSourceV1,
   CompactionCheckpoint,
   CreateCompactionCheckpointInput,
   CreatePostCompactionUndoRecordInput,
@@ -1368,6 +1369,7 @@ export interface RunInterventionLinkPreviewPayload {
 export interface RunInterventionWorkspaceFilePayload {
   readonly path: string;
   readonly label?: string;
+  readonly source?: ConversationWorkspaceFileRefSourceV1;
   readonly rootRelation: "inside_workspace" | "outside_workspace" | "unknown";
   readonly kind: "file" | "directory" | "glob" | "unknown";
   readonly materializationStatus: RunInterventionMaterializationStatus;
@@ -2536,7 +2538,7 @@ export interface RunStore extends NativeExecutionStore, HarnessProjectionStore, 
   expireApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   cancelApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   listApprovalCommandRules(options?: { readonly includeRevoked?: boolean }): ApprovalCommandRule[];
-  findMatchingApprovalCommandRule(toolName: "bash", argv: readonly string[]): ApprovalCommandRule | undefined;
+  findMatchingApprovalCommandRule(toolName: "bash", argv: readonly string[], cwd?: string): ApprovalCommandRule | undefined;
   revokeApprovalCommandRule(id: string, now: string): ApprovalCommandRule | undefined;
   createApprovalCheckpoint(input: CreateApprovalCheckpointInput, now: string): LingApprovalCheckpoint;
   getApprovalCheckpoint(id: string): LingApprovalCheckpoint | undefined;

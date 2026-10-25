@@ -4,7 +4,8 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import { parse } from "shell-quote";
 import { compileExecutionSandboxPolicy, type EffectiveRunPolicySnapshot, type RuntimeAttemptFenceV1,
   type UnifiedExecCommand, type UnifiedExecIsolationEvidence, type UnifiedExecEnvironmentSummary } from "@ling-stack/core";
-import type { ChannelCommandInputScopeV1, ChannelOperationFileBindingV1 } from "@ling-stack/contracts";
+import type { ChannelCommandInputScopeV1, ChannelCommandWorkingDirectoryV1, ChannelOperationFileBindingV1 } from "@ling-stack/contracts";
+import { captureRestrictedCommandDirectory } from "./restricted-command-directory.js";
 import { captureNativeCommandInput } from "./native-input-capture.js";
 import { captureNodeCommandInputs } from "./node-command-inputs.js";
 import { macosSandboxCommandFingerprint, prepareMacosSandboxCommand, readMacosSandboxBackendIdentity } from "./macos-native-command.js";
@@ -92,6 +93,7 @@ export class NativeRestrictedCommandRuntime {
     readonly cwd: string;
     readonly inputRefs: readonly ChannelOperationFileBindingV1[];
     readonly commandInputScope?: ChannelCommandInputScopeV1;
+    readonly workingDirectory?: ChannelCommandWorkingDirectoryV1;
     readonly policy: EffectiveRunPolicySnapshot;
     readonly source: RuntimeAttemptFenceV1 & { readonly workspaceId: string; readonly runId: string; readonly toolCallId: string };
     readonly assertCurrentAuthority: () => void;
@@ -100,6 +102,7 @@ export class NativeRestrictedCommandRuntime {
     readonly protectedActorSource?: ProtectedHostActorSource;
   }) {
     const protectedSource = input.protectedActorSource;
+    const directory = captureRestrictedCommandDirectory(input.cwd, input.workingDirectory);
     requireRuntime(!this.#protectedStages || protectedSource, "protected_host_actor_source_invalid");
     requireRuntime(this.#protectedStages || !protectedSource, "protected_host_registry_invalid");
     const check = () => {
@@ -108,9 +111,10 @@ export class NativeRestrictedCommandRuntime {
       const result: unknown = input.assertCurrentAuthority();
       if (result instanceof Promise) void result.catch(() => undefined);
       requireRuntime(result === undefined, "restricted_command_authority_must_be_synchronous");
+      directory.assertCurrent();
     };
     check();
-    const resolved = this.#resolve(input.command), { command } = resolved, origin = realpathSync(input.cwd);
+    const resolved = this.#resolve(input.command), { command } = resolved, origin = directory.root;
     const inputRefs = structuredClone(input.inputRefs);
     requireRuntime(inputRefs.length <= 256 && new Set(inputRefs.map(ref => ref.path)).size === inputRefs.length,
       "restricted_command_input_budget_exceeded");
@@ -121,6 +125,7 @@ export class NativeRestrictedCommandRuntime {
     const root = forward(() => realpathSync(mkdtempSync("/private/tmp/ling-command-")));
     const rootFact = lstatSync(root, { bigint: true });
     const copy = join(root, "workspace"), scratch = join(root, "scratch");
+    const executionCwd = directory.relativePath ? join(copy, directory.relativePath) : copy;
     let disposed = false;
     const dispose = () => {
       if (disposed) return;
@@ -130,7 +135,8 @@ export class NativeRestrictedCommandRuntime {
       cleanup(() => { rmSync(root, { recursive: true }); disposed = true; });
     };
     try {
-      forward(() => { mkdirSync(copy, { mode: 0o700 }); mkdirSync(scratch, { mode: 0o700 }); });
+      forward(() => { mkdirSync(copy, { mode: 0o700 }); mkdirSync(scratch, { mode: 0o700 });
+        if (executionCwd !== copy) mkdirSync(executionCwd, { recursive: true, mode: 0o700 }); });
       const { workspaceId, runId, workUnitId, attemptId, runtimeInstanceId, fencingToken } = input.source;
       const identity = { workspaceId, runId, workUnitId, attemptId, runtimeInstanceId, fencingToken };
       const capturedInputs = await captureNodeCommandInputs({ inputRefs,
@@ -162,18 +168,18 @@ export class NativeRestrictedCommandRuntime {
       requireRuntime(realpathSync(input.cwd) === origin, "restricted_command_workspace_changed");
       const protectedRoots = this.#protectedStages && protectedSource ? this.#protectedStages.protectedRoots(protectedSource) : [];
       const policy = compileExecutionSandboxPolicy({ now: new Date().toISOString(), platform: "darwin", tool: "bash",
-        workspaceRoot: copy, cwd: copy, temporaryRoot: scratch, runtimeReadRoots: [...MACOS_SYSTEM_READ_ROOTS, ...resolved.readRoots],
+        workspaceRoot: copy, cwd: executionCwd, temporaryRoot: scratch, runtimeReadRoots: [...MACOS_SYSTEM_READ_ROOTS, ...resolved.readRoots],
         deniedReadRoots: [origin, ...protectedRoots], protectedWriteRoots: protectedRoots, backend: readMacosSandboxBackendIdentity(), grants: [],
         // A full-access session may still request a narrower typed operation. This
         // conversion only removes writes/network/environment, never adds access.
         policy: { ...input.policy, ...(input.policy.workspaceAccessMode === "full_access"
           ? { workspaceAccessMode: "workspace_write" as const, mode: "workspace_write" as const } : {}), allowedWritePaths: [] },
-        binding: { ...input.source, operationHash: macosSandboxCommandFingerprint(command, copy, scratch, resolved.runtimeProfile) } });
+        binding: { ...input.source, operationHash: macosSandboxCommandFingerprint(command, executionCwd, scratch, resolved.runtimeProfile) } });
       const prepared = prepareMacosSandboxCommand({ policy, command, runtimeProfile: resolved.runtimeProfile });
       const actor = this.#protectedStages && protectedSource ? this.#protectedStages.bindPreparedActor(protectedSource, prepared) : undefined;
-      const evidence: UnifiedExecIsolationEvidence = { backend: "macos_seatbelt", originalCwd: input.cwd, executionCwd: copy,
+      const evidence: UnifiedExecIsolationEvidence = { backend: "macos_seatbelt", originalCwd: directory.originalCwd, executionCwd,
         actualCommand: command, policyHash: policy.policyHash, profileHash: prepared.profileHash, inputs: files };
-      const environmentSummary: UnifiedExecEnvironmentSummary = { mode: "explicit", cwd: copy,
+      const environmentSummary: UnifiedExecEnvironmentSummary = { mode: "explicit", cwd: executionCwd,
         keys: prepared.environmentKeys, redactedKeys: [], pathEntryCount: 4 };
       return { evidence, environmentSummary, dispose,
         spawn: () => {

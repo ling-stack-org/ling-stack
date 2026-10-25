@@ -65,6 +65,7 @@ import { classifyApprovalRisk, evaluateApprovalActionPolicy, evaluateApprovalPol
 export { isRunTool } from "./approval-action-policy.js";
 import { commandMatchesPolicy } from "../channels/command-operation-match.js";
 import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
+import { bindWorkflowCommandRequest } from "./workflow-command-cwd.js";
 import type { NativeRestrictedCommandRuntime } from "../../runtime/sandbox/restricted-command-runtime.js";
 import type { AttemptHostOperationTracker } from "../../runtime/attempt-host-operation-tracker.js";
 import type { HostCommandOperation } from "../../runtime/host-operation-effects.js";
@@ -206,6 +207,12 @@ export function createRunApprovalHandler(options: {
     if (options.store.getRun(options.run.id)?.status !== "running") {
       return { approved: false, reason: "stale_run_execution: Run is no longer active for this approval request." } as const;
     }
+    try { request = bindWorkflowCommandRequest(options.store, options.run, request); }
+    catch (error) {
+      const reason = error instanceof Error ? error.message : "operation_binding_cwd_mismatch";
+      return { approved: false, reason,
+        handledResult: createUnifiedExecDeniedResult({ toolCallId: request.toolCallId, reason }) };
+    }
     const isHost = request.toolName.startsWith("host_");
     const unifiedExecBash = options.unifiedExecEnabled === true && request.toolName === "bash";
     const fileMutation = request.toolName === "write" || request.toolName === "edit";
@@ -325,6 +332,7 @@ export function createRunApprovalHandler(options: {
       const matchingRules = findMatchingApprovalCommandRulesForCommand(
         options.store,
         approvalInput.payload.command,
+        approvalInput.payload.cwd,
       );
       if (matchingRules) {
         policyDecision = {
@@ -337,6 +345,7 @@ export function createRunApprovalHandler(options: {
           requestedPrefix: readInputStringList(request.input, "prefix_rule"),
           risk: approvalInput.risk,
           riskFlags: approvalInput.payload.riskFlags,
+          cwd: approvalInput.payload.cwd,
         });
         if (proposedCommandRule) {
           approvalInput = {

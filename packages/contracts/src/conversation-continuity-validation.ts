@@ -755,7 +755,8 @@ function isExecutionOperation(value: unknown): value is ChannelIntentExecutionOp
   if (value.binding !== undefined) {
     if (!isChannelOperationBindingV1(value.binding)) return false;
     const binding = value.binding;
-    if ((binding.commandGoal !== undefined || binding.commandInputScope !== undefined) && value.kind !== "run_command") return false;
+    if ((binding.commandGoal !== undefined || binding.commandInputScope !== undefined || binding.workingDirectory !== undefined)
+      && value.kind !== "run_command") return false;
     const writes = value.kind === "file_create" || value.kind === "file_edit";
     if (writes ? binding.outputRefs.length !== 1 || !binding.contentSource : binding.outputRefs.length > 0 || binding.contentSource !== undefined) return false;
     const targets = writes ? binding.outputRefs : binding.inputRefs;

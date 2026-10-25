@@ -156,7 +156,7 @@ function assertRequestActor(store: RunStore, sourceItemId: string, request: RunR
 }
 function json(value: unknown): unknown { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)); }
 function isConversationFileRefSource(value: unknown): value is ChannelMessageFileRefSource {
-  return value === "composer" || value === "explicit_text" || value === "api";
+  return value === "composer" || value === "explicit_text" || value === "api" || value === "inferred_text";
 }
 function freeze<T>(value: T): T {
   if (value && typeof value === "object") { Object.values(value).forEach(freeze); Object.freeze(value); }

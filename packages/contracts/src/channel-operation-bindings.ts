@@ -21,6 +21,18 @@ export interface ChannelCommandInputScopeV1 {
   readonly sourceRefs: readonly ChannelOperationSourceV1[];
 }
 
+/** Execution location only. This does not authorize reading all files in that directory. */
+export interface ChannelCommandWorkingDirectoryV1 {
+  readonly path: string;
+  readonly sourceRefs: readonly ChannelOperationSourceV1[];
+}
+
+export function isChannelCommandWorkingDirectoryV1(value: unknown): value is ChannelCommandWorkingDirectoryV1 {
+  return record(value, ["path", "sourceRefs"]) && isChannelOperationRelativePathV1(value.path)
+    && sources(value.sourceRefs) && value.sourceRefs.every(ref => ref.actorType === "local_user")
+    && value.sourceRefs.some(ref => hasExplicitChannelOperationPathQuoteV1(ref.quote, value.path as string));
+}
+
 /** A directory must be explicitly named, not merely a prefix of a script path. */
 export function hasExplicitChannelOperationPathQuoteV1(quote: string, path: string): boolean {
   let offset = -1;
@@ -61,6 +73,7 @@ export interface ChannelOperationBindingV1 {
   readonly contentSource?: ChannelOperationContentSourceV1;
   readonly commandGoal?: ChannelNodeFunctionGoalV1;
   readonly commandInputScope?: ChannelCommandInputScopeV1;
+  readonly workingDirectory?: ChannelCommandWorkingDirectoryV1;
   readonly sourceRefs: readonly ChannelOperationSourceV1[];
   readonly effectScope: {
     readonly readPaths: readonly string[];
@@ -88,7 +101,7 @@ export function channelOperationPlanFingerprintV1(operations: readonly unknown[]
 }
 
 export function isChannelOperationBindingV1(value: unknown): value is ChannelOperationBindingV1 {
-  if (!record(value, ["schemaVersion", "ownerParticipantId", "ownerSelection", "inputRefs", "outputRefs", "contentSource", "commandGoal", "commandInputScope", "sourceRefs", "effectScope"])
+  if (!record(value, ["schemaVersion", "ownerParticipantId", "ownerSelection", "inputRefs", "outputRefs", "contentSource", "commandGoal", "commandInputScope", "workingDirectory", "sourceRefs", "effectScope"])
     || value.schemaVersion !== 1 || !text(value.ownerParticipantId)
     || (value.ownerSelection !== undefined && value.ownerSelection !== "explicit" && value.ownerSelection !== "host_default")
     || !Array.isArray(value.inputRefs) || !value.inputRefs.every(fileBinding)
@@ -101,6 +114,21 @@ export function isChannelOperationBindingV1(value: unknown): value is ChannelOpe
     || scope.allowEnvironmentAccess !== false || scope.allowNetworkAccess !== false
     || JSON.stringify(scope.readPaths) !== JSON.stringify(value.inputRefs.map((ref) => ref.path))
     || JSON.stringify(scope.writePaths) !== JSON.stringify(value.outputRefs.map((ref) => ref.path))) return false;
+  let workingDirectoryPath: string | undefined;
+  if (value.workingDirectory !== undefined) {
+    const directory = value.workingDirectory;
+    const command = scope.exactCommands[0];
+    const bindingSources = value.sourceRefs;
+    const invocation = typeof value.commandGoal === "object" && value.commandGoal !== null
+      && "invocation" in value.commandGoal && typeof value.commandGoal.invocation === "string" ? value.commandGoal.invocation : "\u0000";
+    if (!isChannelCommandWorkingDirectoryV1(directory) || scope.exactCommands.length !== 1 || !command
+      || !directory.sourceRefs.every(ref => bindingSources.some(source => {
+        const outsideCommand = source.quote.split(command).join(" ").split(invocation).join(" ");
+        return source.itemId === ref.itemId && outsideCommand.includes(ref.quote)
+          && hasExplicitChannelOperationPathQuoteV1(outsideCommand, directory.path);
+      }))) return false;
+    workingDirectoryPath = directory.path;
+  }
   if (value.commandInputScope !== undefined) {
     const dependency = value.commandInputScope;
     const bindingSources = value.sourceRefs;
@@ -125,7 +153,7 @@ export function isChannelOperationBindingV1(value: unknown): value is ChannelOpe
       || !goal.sourceRefs.some(ref => ref.quote.includes(goal.invocation as string))
       || value.inputRefs.length !== 1 || value.inputRefs[0].path !== goal.modulePath
       || scope.exactCommands.length !== 1
-      || nodeFunctionGoalCommand({ modulePath: goal.modulePath, invocation: goal.invocation }) !== scope.exactCommands[0]) return false;
+      || nodeFunctionGoalCommand({ modulePath: goal.modulePath, invocation: goal.invocation }, workingDirectoryPath) !== scope.exactCommands[0]) return false;
   }
   if (value.contentSource === undefined) return true;
   const content = value.contentSource;

@@ -5962,8 +5962,8 @@ export class SqliteRunStore implements RunStore {
     return this.approvalRequests.listApprovalCommandRules(options);
   }
 
-  findMatchingApprovalCommandRule(toolName: "bash", argv: readonly string[]): ApprovalCommandRule | undefined {
-    return this.approvalRequests.findMatchingApprovalCommandRule(toolName, argv);
+  findMatchingApprovalCommandRule(toolName: "bash", argv: readonly string[], cwd?: string): ApprovalCommandRule | undefined {
+    return this.approvalRequests.findMatchingApprovalCommandRule(toolName, argv, cwd ?? this.paths.cwd);
   }
 
   revokeApprovalCommandRule(id: string, now: string): ApprovalCommandRule | undefined {

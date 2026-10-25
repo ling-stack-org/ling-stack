@@ -114,6 +114,7 @@ export const conversationWorkspaceFileRefSourcesV1 = [
   "composer",
   "explicit_text",
   "api",
+  "inferred_text",
 ] as const;
 
 export type ConversationWorkspaceFileRefSourceV1 = (typeof conversationWorkspaceFileRefSourcesV1)[number];

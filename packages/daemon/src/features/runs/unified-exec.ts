@@ -36,6 +36,7 @@ import { createStreamCapture, createSyntheticStreamCapture, toStreamSummary, typ
 import type { HostCommandOperation } from "../../runtime/host-operation-effects.js";
 import { createUnifiedExecRawDispatch } from "./unified-exec-raw-source.js";
 import { normalizeBashRequest } from "./unified-exec-request.js";
+import { bindWorkflowCommandRequest } from "./workflow-command-cwd.js";
 import { readStoredRunnerExecution } from "./existing-run-request.js";
 import { packagedSkillEnvironment, preparePackagedSkillState, restorePackagedSkillContext } from "../skills/packaged-runtime.js";
 
@@ -59,6 +60,9 @@ export async function executeUnifiedBashTool(input: {
   let delegated = false;
   try {
     input.hostOperation?.assertMayPrepare();
+    try { input = { ...input, request: bindWorkflowCommandRequest(input.store, input.run, input.request) }; }
+    catch (error) { return createUnifiedExecDeniedResult({ toolCallId: input.request.toolCallId,
+      approvalId: input.approvalId, reason: formatError(error) }); }
     const normalized = normalizeBashRequest(input.run, input.request, input.approvalId);
     if ("error" in normalized) {
       return writeSyntheticFailureResult({

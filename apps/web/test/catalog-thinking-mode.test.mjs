@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { catalogConsumerHarness } from "./support/catalog-consumer-harness.mjs";
+import { catalogConsumerHarness, React, renderToStaticMarkup } from "./support/catalog-consumer-harness.mjs";
 
 const h = await catalogConsumerHarness({ after }, {
   exports: {
@@ -15,6 +15,7 @@ const h = await catalogConsumerHarness({ after }, {
 });
 
 const noop = () => {};
+const escapedText = text => renderToStaticMarkup(React.createElement(React.Fragment, null, text));
 const model = { id: "qa-provider", providerId: "qa-provider", label: "Offline fixture", displayName: "Offline fixture", model: "qa-no-call",
   enabled: true, runnable: true, thinkingModes: ["off", "low", "high"] };
 const composer = {
@@ -56,9 +57,9 @@ for (const [locale, meaning] of Object.entries(disabledMeaning)) {
     const menuLabel = h.module.normalConversationThinkingLabel("off", t);
     const markup = h.render(h.module.NormalConversationComposer, composer);
     const selectedAria = t("Selected thinking mode {label}", { label: menuLabel });
-    assert.ok(markup.includes(selectedAria));
-    assert.ok(markup.includes(t("Thinking is off; no thinking level will be sent.")));
-    assert.ok(markup.includes(t("Thinking off")));
+    assert.ok(markup.includes(escapedText(selectedAria)));
+    assert.ok(markup.includes(escapedText(t("Thinking is off; no thinking level will be sent."))));
+    assert.ok(markup.includes(`<span class="conversation-model-trigger-effort">${escapedText(t("Thinking off"))}</span>`));
     const requests = await sendThroughHome();
     assert.equal(requests.length, 1);
     assert.equal(Object.hasOwn(requests[0].model, "thinkingLevel"), false);
@@ -76,8 +77,12 @@ test("C011 non-off still sends its exact level and locked Home cannot submit", a
   assert.equal(requests[0].model.thinkingLevel, "high");
   assert.deepEqual(await sendThroughHome("off", { sending: true }), []);
   const markup = h.render(h.module.NormalConversationComposer, { ...composer, sendBusy: true });
-  assert.ok(markup.includes("conversation-thinking-button off"));
-  assert.match(markup, /disabled=""[^>]*>[^]*?Thinking off/u);
+  assert.match(markup, /<button\b[^>]*class="[^"]*conversation-model-trigger[^"]*"[^>]*disabled=""/u);
+  assert.ok(markup.includes('<span class="conversation-model-trigger-effort">Thinking off</span>'));
+  const highMarkup = h.render(h.module.NormalConversationComposer, { ...composer, selectedThinkingLevel: "high" });
+  assert.ok(highMarkup.includes('Selected thinking mode High'));
+  assert.ok(highMarkup.includes('<span class="conversation-model-trigger-effort">High</span>'));
+  assert.equal(highMarkup.includes("Thinking is off; no thinking level will be sent."), false);
 });
 
 test("C011 selected-locale gaps and default English preserve the exact same off payload", async () => {

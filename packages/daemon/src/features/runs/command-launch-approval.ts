@@ -38,7 +38,7 @@ export function assertCommandLaunchApproval(input: {
       && !(Array.isArray(profile?.requiredForTools) && profile.requiredForTools.includes("bash"))
       && !(Array.isArray(profile?.requiredForActions) && profile.requiredForActions.includes(actionType));
     if (unforced && policy.toolDecisions.bash === "allow" && review.status === "not_required") return;
-    requireApproval(unforced && review.status === "not_required" && findMatchingApprovalCommandRulesForCommand(store, command), "approval_required");
+    requireApproval(unforced && review.status === "not_required" && findMatchingApprovalCommandRulesForCommand(store, command, request.cwd), "approval_required");
     return;
   }
   const approval = store.getApprovalRequest(input.approvalId);

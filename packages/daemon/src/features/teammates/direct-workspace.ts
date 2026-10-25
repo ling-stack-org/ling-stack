@@ -77,6 +77,8 @@ export function assertDirectFileRefsWithinWorkspace(input: {
     binding.worktreePath,
   ].filter((path): path is string => Boolean(path?.trim())));
   for (const fileRef of input.fileRefs) {
+    // Lexical tokens annotate the user's text; they do not request file access.
+    if (fileRef.source === "inferred_text") continue;
     if (!fileRef.path.trim()) {
       continue;
     }

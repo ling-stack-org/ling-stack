@@ -80,6 +80,9 @@ export const PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS = Object.freeze([
 ]);
 
 export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
+  // Explicit source-bound command cwd delta; listing is not review approval.
+  "packages/daemon/src/features/runs/workflow-command-cwd.ts",
+  "packages/daemon/src/runtime/sandbox/restricted-command-directory.ts",
   "packages/core/src/storage/sqlite/work-summary-migration.ts",
   "packages/core/src/storage/sqlite/work-summary-store.ts",
   "packages/core/src/string-boundaries.ts",

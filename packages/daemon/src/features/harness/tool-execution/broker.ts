@@ -32,6 +32,7 @@ import {
 } from "./executors/file-mutation.js";
 import { recordNativeFileMutationCompletion } from "./native-file-mutation-completion.js";
 import { readBrokerCommandResult, type BrokerCommandResult } from "./broker-command-result.js";
+import { bindWorkflowCommandRequest } from "../../runs/workflow-command-cwd.js";
 
 const TOOL_EXECUTION_LEASE_GRACE_MS = 2 * 60 * 1000;
 const DEFAULT_TOOL_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -97,6 +98,11 @@ export async function executeHarnessedBashTool(input: HarnessBashExecutionInput)
   };
   try {
     input.hostOperation?.assertMayPrepare();
+    try { input = { ...input, request: bindWorkflowCommandRequest(input.store, input.run, input.request) }; }
+    catch (error) {
+      settleBeforeDispatch();
+      return createUnifiedExecDeniedResult({ toolCallId: input.request.toolCallId, approvalId: input.approvalId, reason: formatError(error) });
+    }
     const result = await executeHarnessedBashToolInternal(input, execute);
     settleBeforeDispatch();
     return result;

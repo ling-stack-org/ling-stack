@@ -76,7 +76,8 @@ export function buildRunInterventionContinuationRequest(
         actorType: intervention.requestedBy === "system" ? "system" : "local_user",
         message: intervention.messagePayload?.body || intervention.instruction,
         attachmentIds: intervention.messagePayload?.attachmentIds ?? [],
-        fileRefs: (intervention.messagePayload?.fileRefs ?? []).map((ref) => ({ path: ref.path, ...(ref.label ? { label: ref.label } : {}) })),
+        fileRefs: (intervention.messagePayload?.fileRefs ?? []).map((ref) => ({ path: ref.path,
+          ...(ref.label ? { label: ref.label } : {}), ...(ref.source ? { source: ref.source } : {}) })),
         sourceTurnId: normalSource.id,
         interventionId: intervention.id, turnKind: intervention.mode === "interrupt_redirect" ? "interrupt_redirect" : "queued_followup",
         idempotencyKey: `run_intervention:${intervention.id}`, now: new Date().toISOString() })
@@ -235,12 +236,13 @@ function renderRunInterventionLinkPreviewsForPrompt(payload: RunInterventionMess
 }
 
 function renderRunInterventionWorkspaceFileRefsForPrompt(payload: RunInterventionMessagePayload): string | undefined {
-  if (!payload.fileRefs?.length) {
+  const fileRefs = payload.fileRefs?.filter(ref => ref.source !== "inferred_text") ?? [];
+  if (fileRefs.length === 0) {
     return undefined;
   }
   return [
     "Workspace file refs:",
-    ...payload.fileRefs.map((ref, index) => [
+    ...fileRefs.map((ref, index) => [
       `- ${index + 1}. ${ref.label ? `${ref.label}: ` : ""}${ref.path} (${ref.kind}, ${ref.rootRelation}, materialization=${ref.materializationStatus})`,
       ref.blockedReason ? `  statusReason: ${ref.blockedReason}` : undefined,
       ref.previewText ? `  preview:\n${indentPromptBlock(ref.previewText)}` : undefined,

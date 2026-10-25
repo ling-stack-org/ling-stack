@@ -256,8 +256,10 @@ test("C011 current composer label/tooltip and Home request source retain the off
   // This is source-contract coverage of the unextracted Home event handler,
   // not a simulated payload builder or an assertion that GUI sending ran.
   const composer = source("features/workspace/NormalConversationComposer.tsx");
-  assert.ok(composer.includes('thinkingOff ? t("Thinking off")'));
-  assert.ok(composer.includes('t("Thinking is off; no thinking level will be sent.")'));
+  assert.ok(composer.includes("<ConversationModelControl"));
+  const modelControl = source("features/workspace/ConversationModelControl.tsx");
+  assert.ok(modelControl.includes('thinkingOff ? t("Thinking off")'));
+  assert.ok(modelControl.includes('t("Thinking is off; no thinking level will be sent.")'));
   assert.match(source("features/workspace/ConversationHome.tsx"), /thinkingEnabled\s*&&\s*selectedThinkingLevel\s*!==\s*"off"\s*\?\s*\{\s*thinkingLevel:\s*selectedThinkingLevel\s*\}\s*:\s*\{\s*\}/u);
 });
 

@@ -7,6 +7,7 @@ import { validateWorkflowOperationRunContext } from "./workflow-operation-snapsh
 import { workflowOperationAuthorityRejection } from "./workflow-operation-effect-gate.js";
 import { assertCommandLaunchApproval } from "./command-launch-approval.js";
 import type { HostCommandOperation } from "../../runtime/host-operation-effects.js";
+import { bindWorkflowCommandRequest } from "./workflow-command-cwd.js";
 
 function requireAuthority(value: unknown, code: string): asserts value {
   if (!value) throw new Error(code);
@@ -26,7 +27,8 @@ export function createRestrictedCommandDispatch(input: {
   readonly extraSecrets?: readonly (string | undefined)[];
   readonly hostOperation?: HostCommandOperation;
 }) {
-  const source = structuredClone(input.run), request = structuredClone(input.request);
+  const source = structuredClone(input.run);
+  const request = structuredClone(bindWorkflowCommandRequest(input.store, source, input.request));
   const fence = Object.freeze({ ...input.sourceFence });
   const context = validateWorkflowOperationRunContext({ store: input.store, run: source });
   if (context.status === "legacy") return undefined;
@@ -83,6 +85,7 @@ export function createRestrictedCommandDispatch(input: {
       try {
         const prepared = await runtime.prepare({ command, cwd: source.cwd, inputRefs: operation.binding!.inputRefs, policy,
           commandInputScope: operation.binding!.commandInputScope,
+          workingDirectory: operation.binding!.workingDirectory,
           source: { ...fence, workspaceId: workspacePolicy.workspaceId, runId: source.id, toolCallId: request.toolCallId },
           assertCurrentAuthority: check, signal: input.signal, hostOperation: preparation, protectedActorSource });
         return { ...prepared, finishHostPreparation: () => preparation?.finish() };
