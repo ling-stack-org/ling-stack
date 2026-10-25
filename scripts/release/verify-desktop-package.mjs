@@ -13,6 +13,7 @@ import { createVerifiedDistributionArchive, inventoryDistribution } from "./dist
 import { verifyNsisPlugins } from "./verify-nsis-plugins.mjs";
 import { runManagedNode } from "../gstack/run-managed.mjs";
 import { prepareBrowserSmokeWorkspace } from "./browser-acquisition-smoke.mjs";
+import { prepareNsisExtractor } from "./nsis-extractor.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const desktopRoot = join(root, "apps/desktop");
@@ -85,26 +86,28 @@ export async function verifyDesktopPackage() {
   let installerPlugins;
   for (const name of targetAssets(candidate, target)) {
     const path = join(releaseRoot, name), original = await fileRecord(path);
-    if (!mac) {
-      const state = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
-        "(Get-AuthenticodeSignature -LiteralPath $env:LING_DESKTOP_VERIFY_FILE).Status.ToString()"],
-      { env: { ...process.env, LING_DESKTOP_VERIFY_FILE: path }, timeout: 30_000, encoding: "utf8" }).trim();
-      if (state !== "NotSigned") throw new Error("Expected an unsigned Windows development installer");
-      const builderRequire = createRequire(requireDesktop.resolve("electron-builder/package.json"));
-      installerPlugins = await verifyNsisPlugins({ installer: path,
-        sevenZipPath: await builderRequire("app-builder-lib/out/toolsets/7zip.js").getPath7za() });
-    }
-    const extracted = await extractCuaDriverFinalArtifact(path, {
-      platform: mac ? "darwin" : "win32",
-      artifactRole: mac ? (name.endsWith(".zip") ? "outer-zip" : "outer-dmg") : "outer-nsis",
-    });
+    const nsisExtractor = mac ? undefined : await prepareNsisExtractor();
     try {
-      const app = await extractedApplicationPath(extracted.artifactRoot, target);
-      const actual = await inspectApplication(app, candidate, target, distribution);
-      if (!isDeepStrictEqual(actual, baseline)) throw new Error("Final archive payload differs from the unpacked application");
-    } finally { await extracted.cleanup(); }
-    if (!isDeepStrictEqual(await fileRecord(path), original)) throw new Error("Final archive changed during verification");
-    archives.push(original);
+      if (!mac) {
+        const state = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+          "(Get-AuthenticodeSignature -LiteralPath $env:LING_DESKTOP_VERIFY_FILE).Status.ToString()"],
+        { env: { ...process.env, LING_DESKTOP_VERIFY_FILE: path }, timeout: 30_000, encoding: "utf8" }).trim();
+        if (state !== "NotSigned") throw new Error("Expected an unsigned Windows development installer");
+        installerPlugins = await verifyNsisPlugins({ installer: path,
+          sevenZipPath: nsisExtractor.path });
+      }
+      const extracted = await extractCuaDriverFinalArtifact(path, {
+        platform: mac ? "darwin" : "win32",
+        artifactRole: mac ? (name.endsWith(".zip") ? "outer-zip" : "outer-dmg") : "outer-nsis",
+      }, nsisExtractor ? { getPath7za: async () => nsisExtractor.path } : {});
+      try {
+        const app = await extractedApplicationPath(extracted.artifactRoot, target);
+        const actual = await inspectApplication(app, candidate, target, distribution);
+        if (!isDeepStrictEqual(actual, baseline)) throw new Error("Final archive payload differs from the unpacked application");
+      } finally { await extracted.cleanup(); }
+      if (!isDeepStrictEqual(await fileRecord(path), original)) throw new Error("Final archive changed during verification");
+      archives.push(original);
+    } finally { await nsisExtractor?.cleanup(); }
   }
   const executable = mac ? join(unpacked, "Contents/MacOS/Ling Stack") : join(unpacked, "Ling Stack.exe");
   const probe = execFileSync(executable, ["-e", 'console.log("LING_DESKTOP_RUNTIME="+JSON.stringify(process.versions))'],

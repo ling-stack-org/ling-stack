@@ -4,7 +4,9 @@ on:
   pull_request:
     paths:
       - scripts/release/verify-nsis-plugins.mjs
+      - scripts/release/nsis-extractor.mjs
       - scripts/ci/nsis-plugin-native.test.mjs
+      - apps/desktop/scripts/distribution/vendor-notices/nsis-plugins/sources.json
       - .github/workflows/installer-contracts.yml
   workflow_dispatch:
 
