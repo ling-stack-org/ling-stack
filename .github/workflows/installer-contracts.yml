@@ -5,6 +5,7 @@ on:
     paths:
       - scripts/release/verify-nsis-plugins.mjs
       - scripts/release/nsis-extractor.mjs
+      - scripts/ci/desktop-bun-entry.test.mjs
       - apps/desktop/tests/distribution-nsis-native.test.mjs
       - apps/desktop/scripts/distribution/installer-builder.mjs
       - apps/desktop/scripts/distribution/LingShell.nsh
@@ -37,5 +38,13 @@ jobs:
           cache: pnpm
       - name: Install locked dependencies without build hooks
         run: corepack pnpm install --frozen-lockfile --ignore-scripts
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+      - name: Check compiled browser entry lifecycle on the native host
+        shell: pwsh
+        run: |
+          $env:LING_BUN_ENTRY_PROBE_BINARY = (Get-Command bun).Source
+          node --test scripts/ci/desktop-bun-entry.test.mjs
       - name: Check actual NSIS archive plug-in bytes on Windows
         run: node --test apps/desktop/tests/distribution-nsis-native.test.mjs

@@ -43,8 +43,8 @@ export async function smokeBrowserAcquisition(bundleRoot) {
     BROWSE_STATE_FILE: stateFile, BROWSE_PARENT_PID: "0", BROWSE_START_TIMEOUT: "30000",
     GSTACK_CHROMIUM_PATH: "/untrusted/browser", PLAYWRIGHT_BROWSERS_PATH: "/untrusted/cache",
     NODE_OPTIONS: "--require=/untrusted/preload", NODE_PATH: "/untrusted/dependencies" };
-  let live = false;
-  async function command(args, timeout = 45000) {
+  let live = false, completed = false;
+  async function command(args, timeout = 45000, expectedStatus = 0) {
     const child = spawn(cli, args, { cwd: work, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let output = "", error = "", bytes = 0;
     for (const [stream, append] of [[child.stdout, value => { output += value; }], [child.stderr, value => { error += value; }]]) {
@@ -54,9 +54,11 @@ export async function smokeBrowserAcquisition(bundleRoot) {
     const status = await new Promise((resolve, reject) => { child.once("error", reject); child.once("close", resolve); })
       .finally(() => clearTimeout(timer));
     commands.push({ args, status });
-    assert.equal(status, 0, `${args.join(" ")}\n${output}\n${error}`);
-    if (args[0] === "status") {
-      const state = JSON.parse(await readFile(stateFile));
+    assert.equal(status, expectedStatus, `${args.join(" ")}\n${output}\n${error}`);
+    if (args[0] === "status" && status === 0) {
+      const state = await readFile(stateFile).then(JSON.parse, cause => {
+        throw new Error(`browser_smoke_state_unavailable\nstdout: ${output.slice(0, 4096)}\nstderr: ${error.slice(0, 4096)}`, { cause });
+      });
       assert.ok(Number.isSafeInteger(state.pid) && state.pid > 0);
       ownedPids.add(state.pid);
     }
@@ -72,9 +74,13 @@ export async function smokeBrowserAcquisition(bundleRoot) {
       }
       ownedPids.clear();
     }
-    return output;
+    return expectedStatus === 0 ? output : error;
   }
   try {
+    assert.match(await command(["--version"]), /\S/u, "the native CLI must execute its entry point");
+    env.BROWSE_NO_AUTOSTART = "1";
+    assert.match(await command(["status"], 45000, 1), /Server not available/u);
+    delete env.BROWSE_NO_AUTOSTART;
     // Empty state: exercise the compiled acquisition path and real official URL.
     live = true;
     await command(["status"], 240000);
@@ -96,6 +102,7 @@ export async function smokeBrowserAcquisition(bundleRoot) {
     assert.match(await command(["text"]), /Cache ready/);
     await command(["stop"]); live = false;
     bundle.browser.assertCurrent(); cached.assertCurrent();
+    completed = true;
     return { status: "passed", scope: "native-packaged-cli-browser-acquisition-and-cache",
       browserVersion: acquisition.browserVersion, archive: acquisition.archive,
       descriptorChecksum: bundle.browser.checksum, componentChecksum: cached.checksum,
@@ -109,8 +116,10 @@ export async function smokeBrowserAcquisition(bundleRoot) {
       catch (error) { cleanupError = error; }
     }
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
-    if (!live && ownedPids.size === 0) await rm(work, { recursive: true, force: true });
-    else throw new Error(`browser_smoke_cleanup_failed_state_retained:${work}`, { cause: cleanupError });
+    if (!live && ownedPids.size === 0) {
+      if (completed) await rm(work, { recursive: true, force: true });
+      else console.error(`browser_smoke_failed_state_retained:${work}`);
+    } else throw new Error(`browser_smoke_cleanup_failed_state_retained:${work}`, { cause: cleanupError });
   }
 }
 

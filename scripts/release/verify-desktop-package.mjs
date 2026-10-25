@@ -117,6 +117,8 @@ export async function verifyDesktopPackage() {
   if (runtime?.electron !== expectedElectron) throw new Error("Packaged Electron runtime did not start with the pinned version");
   const runnerInstallerSmoke = mac ? { status: "not_run" }
     : await smokeWindowsInstaller({ installer: join(releaseRoot, targetAssets(candidate, target)[0]), unpacked, candidate });
+  await writeFile(join(evidenceRoot, "runner-installer-smoke.json"),
+    JSON.stringify({ ...candidate, target, ...runnerInstallerSmoke }, null, 2) + "\n", { flag: "wx" });
   const browserSmokePath = join(evidenceRoot, "browser-acquisition-smoke.json");
   const browserSmoke = await runManagedNode({ root: await prepareBrowserSmokeWorkspace(),
     args: [join(root, "scripts/release/browser-acquisition-smoke.mjs"),
