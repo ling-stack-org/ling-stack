@@ -13407,8 +13407,10 @@ export async function handleDaemonRoute(
       await route.fulfill({ status: 400, json: { error: "provider_not_found", message: "No available chat model is configured." } });
       return;
     }
-    const now = new Date(Date.UTC(2026, 4, 25, 1, state.turns.length, 0)).toISOString();
     const requestedThreadId = typeof body.threadId === "string" ? body.threadId : "";
+    const latestTurnTime = state.turns.filter((turn) => turn.threadId === requestedThreadId)
+      .reduce((latest, turn) => Math.max(latest, Date.parse(turn.createdAt) || 0), 0);
+    const now = new Date(Math.max(Date.UTC(2026, 4, 25, 1, state.turns.length, 0), latestTurnTime + 1_000)).toISOString();
     let thread = requestedThreadId ? state.threads.find((item) => item.id === requestedThreadId && item.kind === "conversation") : undefined;
     const conversationTitle = summarizeMockConversationTitle(message || conversationAttachments.map((attachment) => String(attachment.fileName ?? "attachment")).join(", "));
     if (!thread) {

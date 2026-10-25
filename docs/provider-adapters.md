@@ -188,6 +188,13 @@ Keep this adapter thin:
 - Use Ling Stack for tasks, channels, approvals, audit logs, artifacts, and UI.
 - Do not fork pi unless upstream blocks a required product behavior.
 
+Run `thinkingLevel` accepts `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`; CLI `--thinking` uses the same values. Model capabilities determine which levels are available.
+
+- `max` and `ultra` remain distinct provider-native values; `maximum` normalizes to `max`, never `xhigh`.
+- Both top levels require an explicit matching `thinkingLevelMap` declaration and a compatible runtime adapter. Missing support is rejected before dispatch.
+- OpenAI Chat Completions, Responses, and Codex Responses adapters can carry declared native efforts. Chat-template-only formats and explicitly disabled `reasoning_effort` reject them; Anthropic `max` additionally requires adaptive thinking, and other budget-only adapters reject both top levels.
+- Pi 1.1 has no `ultra` slot. Ling maps its internal `max` slot to native `ultra` on a session-local model copy, preserving the external request and subsequent `max` requests.
+
 ### OpenAI
 
 Target capabilities:

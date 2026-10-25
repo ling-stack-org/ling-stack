@@ -178,7 +178,8 @@ export function enrichProviderModelOption(
   const hasExplicitThinking = model.thinkingModes !== undefined || model.thinkingSupport !== undefined;
   const thinkingSupport = upstreamThinkingSupport ?? (hasExplicitThinking
     ? undefined
-    : catalogEntry?.thinkingSupport ?? thinkingFamilyEntry?.thinkingSupport);
+    : knownProviderModelThinkingSupport(model.id, model.api ?? context.api)
+      ?? catalogEntry?.thinkingSupport ?? thinkingFamilyEntry?.thinkingSupport);
   const thinkingModes = normalizeProviderThinkingModes(upstreamThinkingModes ?? thinkingSupport?.levels);
   const api = model.api ?? generationFamily?.api ?? catalogEntry?.api;
   const inferredCapabilities = normalizeProviderCapabilities([
@@ -232,6 +233,14 @@ export function findProviderModelCatalogRecord(
   return uniqueMatches?.length === 1 ? uniqueMatches[0] : undefined;
 }
 
+/** API capabilities differ from the reasoning controls offered by first-party clients. */
+export function knownProviderModelThinkingSupport(modelId: string, api: ProviderApi): ProviderThinkingSupport | undefined {
+  if (api === "openai-responses" && /^gpt-6\.1-sol(?:-\d{4}-\d{2}-\d{2})?$/i.test(modelId)) {
+    return { levels: ["low", "medium", "high", "xhigh", "max"] };
+  }
+  return undefined;
+}
+
 export function normalizeProviderThinkingModes(value: readonly string[] | undefined): readonly ProviderThinkingMode[] | undefined {
   if (!value || value.length === 0) {
     return undefined;
@@ -268,7 +277,7 @@ export function providerThinkingModesToLevelMap(
     return undefined;
   }
   const supportedModes = new Set(modes);
-  const runnerModes = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+  const runnerModes = ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
   const map: Record<string, string | null> = {};
   for (const mode of runnerModes) {
     map[mode] = supportedModes.has(mode) ? mode : null;
@@ -342,13 +351,13 @@ function normalizeProviderThinkingMode(value: string): ProviderThinkingMode | un
   if (normalized === "none" || normalized === "disabled") {
     return "off";
   }
-  if (normalized === "max" || normalized === "maximum") {
-    return "xhigh";
+  if (normalized === "maximum") {
+    return "max";
   }
   if (normalized === "minimum" || normalized === "min") {
     return "minimal";
   }
-  if (["off", "auto", "minimal", "low", "medium", "high", "xhigh"].includes(normalized)) {
+  if (["off", "auto", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(normalized)) {
     return normalized as ProviderThinkingMode;
   }
   return undefined;

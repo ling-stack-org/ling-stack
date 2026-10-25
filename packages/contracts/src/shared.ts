@@ -5,7 +5,7 @@ export type RunStatus = "queued" | "running" | "waiting_for_approval" | "yielded
 
 export type RunTool = "read" | "grep" | "find" | "ls" | "bash" | "edit" | "write";
 
-export type RunThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type RunThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 
 /** Provider-designated public reasoning summary verbosity; never raw chain-of-thought. */
 export type ReasoningSummaryMode = "auto" | "concise" | "detailed" | "none";
