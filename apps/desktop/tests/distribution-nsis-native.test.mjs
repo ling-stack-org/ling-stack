@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -116,6 +116,15 @@ test("the production NSIS overlay installs, upgrades and uninstalls long-path me
   const run = code => execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", code],
     { env, encoding: "utf8", timeout: 120_000, maxBuffer: 1024 * 1024 });
   const deepPath = "resources/gstack/runtime/lib/diagram-render/node_modules/@radix-ui/react-tabs/node_modules/@radix-ui/react-primitive/node_modules/@radix-ui/react-slot/node_modules/@radix-ui/react-compose-refs/ling-upstream-license-provenance.json";
+  const trace = join(root, "rename-failure.txt");
+  const uninstallerTemplate = join(prepared.appBuilderLibRoot, "templates/nsis/uninstaller.nsh");
+  const originalUninstaller = await readFile(uninstallerTemplate, "utf8");
+  await writeFile(uninstallerTemplate, originalUninstaller.replace('      StrCpy $R3 "$INSTDIR$R0\\$R2"', `      StrCpy $R3 "$INSTDIR$R0\\$R2"
+      Push $R4
+      FileOpen $R4 "${trace}" a
+      FileWrite $R4 "source=$INSTDIR$R0\\$R2$\\r$\\ndestination=$PLUGINSDIR\\old-install$R0\\$R2$\\r$\\n"
+      FileClose $R4
+      Pop $R4`));
   try {
     // Build once, with the long member present from the start: a second build
     // could reuse the first payload archive and conceal the failing layer.
@@ -130,6 +139,23 @@ test("the production NSIS overlay installs, upgrades and uninstalls long-path me
     assert.equal(execFileSync(extractor.path, ["e", "-so", "-bd", "-bb0", nested, deepPath],
       { timeout: 30_000, encoding: "utf8" }), "Long path fixture\n", "the actual embedded archive must contain the deep member before installation");
     t.diagnostic("Verified long member bytes inside the actual installer archive");
+    await mkdir(installPath);
+    await writeFile(join(installPath, "fixture.txt"), "Owned locked destination\n");
+    const forcedCopy = JSON.parse(run(`$ErrorActionPreference = 'Stop';
+$locked = [IO.File]::Open((Join-Path $env:LING_FIXTURE_INSTALL_PATH 'fixture.txt'), 'Open', 'ReadWrite', 'None');
+try {
+  $p = Start-Process -FilePath $env:LING_FIXTURE_INSTALLER -ArgumentList @('/S', ('/D=' + $env:LING_FIXTURE_INSTALL_PATH)) -PassThru -Wait;
+  @{ exitCode = $p.ExitCode } | ConvertTo-Json -Compress
+} finally { $locked.Dispose() }`));
+    const forcedUninstaller = await lstat(join(installPath, "Uninstall Ling Stack.exe")).then(() => true, error => {
+      if (error.code === "ENOENT") return false; throw error;
+    });
+    t.diagnostic(JSON.stringify({ forcedCopyFailure: forcedCopy, registeredUninstaller: forcedUninstaller }));
+    // Old failing behavior creates an uninstaller: remove that fixture normally
+    // before the independent upgrade probe. No real user installation is used.
+    if (forcedUninstaller) run(`$p = Start-Process -FilePath (Join-Path $env:LING_FIXTURE_INSTALL_PATH 'Uninstall Ling Stack.exe') -ArgumentList '/S' -PassThru -Wait;
+if ($p.ExitCode -ne 0) { throw ('Fixture cleanup exit: ' + $p.ExitCode) }`);
+    await rm(installPath, { recursive: true, force: true });
     for (let iteration = 0; iteration < 2; iteration++) {
       const started = performance.now();
       t.diagnostic(`Installing stock fixture; iteration=${iteration}; finalPathLength=${join(installPath, deepPath).length}`);
@@ -147,8 +173,12 @@ test("the production NSIS overlay installs, upgrades and uninstalls long-path me
   if ($p.ExitCode -ne 0) { throw ('Fixture uninstaller exit: ' + $p.ExitCode) }`));
     await assert.rejects(readFile(join(installPath, "fixture.txt")), { code: "ENOENT" });
     await assert.rejects(readFile(join(installPath, deepPath)), { code: "ENOENT" });
+    await assert.rejects(lstat(installPath), { code: "ENOENT" });
+    assert.notEqual(forcedCopy.exitCode, 0, "exhausted copy failures must not be reported as a successful installation");
+    assert.equal(forcedUninstaller, false, "failed copy must not admit a partial installation");
     completed = true;
   } catch (error) {
+    t.diagnostic(await readFile(trace, "utf8").catch(traceError => traceError.message));
     t.diagnostic(run(`Add-Type -AssemblyName UIAutomationClient;
 Get-CimInstance Win32_Process | Where-Object {
   $_.ExecutablePath -eq $env:LING_FIXTURE_INSTALLER -or ($_.CommandLine -and $_.CommandLine.Contains($env:LING_FIXTURE_ROOT))
