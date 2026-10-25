@@ -691,6 +691,60 @@ test("normal conversation replacement retry keeps the original idempotency key",
   await expect(conversation).toContainText("Ling Agent response: UI2 history prompt 17");
 });
 
+test("reasoning slider preserves max and ultra and explains unsupported model switches", async ({ page }) => {
+  await prepareSurface(page, "dark", 1280, 800);
+  const errors = collectRuntimeErrors(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  installProviders(state);
+  installStableConversationFixture(state);
+  state.providers[0] = createChatProvider({ ...state.providers[0], model: "gpt-6.1-sol", api: "openai-responses",
+    thinkingModes: ["low", "medium", "high", "xhigh", "max", "ultra"] });
+  state.providers[1] = createChatProvider({ ...state.providers[1], thinkingModes: ["low", "medium", "high"] });
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openConversation(page, "UI2 composer controls");
+  const composer = page.getByLabel("New conversation composer");
+  const trigger = composer.getByRole("button", { name: /Selected model gpt-6.1-sol/ });
+  await expect(trigger).toContainText("Medium");
+  await trigger.click();
+  const panel = page.getByRole("dialog", { name: "Thinking mode" });
+  const slider = panel.getByRole("slider");
+  await expect(slider).toHaveAttribute("max", "5");
+  await slider.focus();
+  await slider.press("End");
+  await expect(slider).toHaveAttribute("aria-valuetext", "Ultra");
+  await slider.press("ArrowLeft");
+  await expect(slider).toHaveAttribute("aria-valuetext", "Max");
+  await page.screenshot({ path: "/tmp/ling-reasoning-max.png" });
+  await slider.press("End");
+  await page.screenshot({ path: "/tmp/ling-reasoning-ultra.png" });
+  await panel.getByRole("button", { name: "Model options" }).click();
+  await page.getByRole("dialog", { name: "Model options" }).getByRole("button", { name: /claude-sonnet-4/ }).click();
+  await expect(composer).toContainText("Reasoning level changed to Medium");
+  const sonnet = composer.getByRole("button", { name: /Selected model claude-sonnet-4/ });
+  await expect(sonnet).toContainText("Medium");
+  await sonnet.click();
+  await expect(slider).toHaveAttribute("max", "2");
+  await slider.press("End");
+  await expect(slider).toHaveAttribute("aria-valuetext", "High");
+  await panel.getByRole("button", { name: "Reset", exact: true }).click();
+  await expect(slider).toHaveAttribute("aria-valuetext", "Medium");
+  await panel.getByRole("button", { name: "Model options" }).click();
+  await page.getByRole("dialog", { name: "Model options" }).locator(".conversation-model-option").filter({ hasText: "gpt-6.1-sol" }).click();
+  await trigger.click();
+  await slider.press("End");
+  await page.keyboard.press("Escape");
+  await composer.getByRole("textbox").fill("Check the selected effort");
+  const submitted = page.waitForRequest(request => request.method() === "POST" && new URL(request.url()).pathname === "/conversations/stream");
+  await composer.getByRole("button", { name: "Send", exact: true }).click();
+  expect((await submitted).postDataJSON().thinkingLevel).toBe("ultra");
+  await expect(page.getByText("Ling Agent response: Check the selected effort")).toBeVisible();
+  await page.reload();
+  await openConversation(page, "UI2 composer controls");
+  await expect(composer.getByRole("button", { name: /Selected model gpt-6.1-sol/ })).toContainText("Ultra");
+  expect(errors).toEqual([]);
+});
+
 function installProviders(state: MockState): void {
   const lastCheck = {
     ok: true,
@@ -703,7 +757,7 @@ function installProviders(state: MockState): void {
       id: "provider_ui2_normal_primary",
       displayName: "Local Relay",
       model: "gpt-5.5",
-      thinkingModes: ["minimal", "low", "medium", "high", "xhigh"],
+      thinkingModes: ["off", "minimal", "low", "medium", "high", "xhigh"],
       lastCheck,
     }),
     createChatProvider({
@@ -711,7 +765,7 @@ function installProviders(state: MockState): void {
       displayName: "Sonnet",
       providerId: "anthropic",
       model: "claude-sonnet-4",
-      thinkingModes: ["low", "high"],
+      thinkingModes: ["off", "low", "high"],
       lastCheck,
     }),
   ];

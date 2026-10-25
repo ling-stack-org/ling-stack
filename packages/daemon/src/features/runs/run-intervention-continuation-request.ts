@@ -317,7 +317,9 @@ function readSnapshotThinkingLevel(record: Record<string, unknown>, key: string)
     value === "low" ||
     value === "medium" ||
     value === "high" ||
-    value === "xhigh"
+    value === "xhigh" ||
+    value === "max" ||
+    value === "ultra"
   )
     ? value
     : undefined;
