@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createQaSseFaultRelay } from "../scripts/qa-sse-fault-relay.mjs";
-import { readExistingPrivateToken } from "../scripts/qa-sse-supervisor-support.mjs";
+import { buildQaGuiEnvironment, readExistingPrivateToken } from "../scripts/qa-sse-supervisor-support.mjs";
 
 // QA transport regression: a control-only cut does not prove execution SSE loss.
 // No model, GUI or actual tool execution is represented by this loopback fixture.
@@ -107,4 +107,16 @@ test("private QA identity reader accepts existing protected valid input without 
   await writeFile(path, valid, { flag: "wx", mode: 0o600 });
   assert.equal(await readExistingPrivateToken(path), valid);
   assert.equal(await readFile(path, "utf8"), valid);
+});
+
+// Regression: R02-QA-002 — the Node-mode supervisor must launch a real GUI child.
+// Found by /qa on 2026-10-26; report r02-recovery-successor-20261026.
+test("GUI child does not inherit supervisor Node mode or mutate its parent environment", () => {
+  const parent = Object.freeze({ ELECTRON_RUN_AS_NODE: "1", PATH: "/synthetic/bin", LING_QA_SYNTHETIC: "retained" });
+  const child = buildQaGuiEnvironment(parent);
+  assert.equal(Object.hasOwn(child, "ELECTRON_RUN_AS_NODE"), false);
+  assert.deepEqual(child, { PATH: "/synthetic/bin", LING_QA_SYNTHETIC: "retained" });
+  assert.equal(parent.ELECTRON_RUN_AS_NODE, "1");
+  assert.notEqual(child, parent);
+  assert.deepEqual(buildQaGuiEnvironment(Object.freeze({ PATH: "/synthetic/bin" })), { PATH: "/synthetic/bin" });
 });

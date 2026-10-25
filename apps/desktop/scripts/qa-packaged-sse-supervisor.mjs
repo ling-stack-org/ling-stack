@@ -11,7 +11,7 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { createQaSseFaultRelay } from "./qa-sse-fault-relay.mjs";
-import { readExistingPrivateToken } from "./qa-sse-supervisor-support.mjs";
+import { buildQaGuiEnvironment, readExistingPrivateToken } from "./qa-sse-supervisor-support.mjs";
 
 const root = resolve(import.meta.dirname, "../../..");
 const app = resolve(root, "apps/desktop/release/human-qa/mac-arm64/Ling Stack Human QA.app");
@@ -19,7 +19,7 @@ const executable = resolve(app, "Contents/MacOS/Ling Stack Human QA");
 const resourcesRoot = resolve(app, "Contents/Resources");
 const appPath = resolve(resourcesRoot, "app.asar");
 const profilePath = resolve(root, "output/e6-20260928/h09-packaged-human-qa-20261010/profile");
-const expectedSha = "5bef6248237c2aa7ddd5fcfed0d1e8afe6048633b6566171eb6e5ff512a5fc84";
+const expectedSha = "4db75650e50300c45fdc033f715ef231fa41dc1db0d670eaf1f34c1dfeb70c35";
 assert.equal(realpathSync(process.execPath), realpathSync(executable), "Run with the frozen packaged Electron runtime");
 assert.ok(process.versions.electron, "Packaged Electron ASAR support is required");
 // Electron's patched fs treats app.asar itself as a virtual directory. Hash the
@@ -77,7 +77,7 @@ try {
   assert.equal(response.routeTokenAccepted, true);
   assert.equal(response.defaultWorkspaceCwd, profile.workspaceCwd);
   state.bridgeAuthenticated = true;
-  desktop = spawn(executable, mainArgs, { cwd: profile.workspaceCwd, env: { ...process.env }, stdio: "ignore" });
+  desktop = spawn(executable, mainArgs, { cwd: profile.workspaceCwd, env: buildQaGuiEnvironment(process.env), stdio: "ignore" });
   state.desktopPid = desktop.pid;
   desktop.once("exit", (code, signal) => {
     desktopExited = true;

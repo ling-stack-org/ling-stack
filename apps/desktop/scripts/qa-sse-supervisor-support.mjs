@@ -3,6 +3,13 @@ import assert from "node:assert/strict";
 import { constants, lstatSync, realpathSync } from "node:fs";
 import { open } from "node:fs/promises";
 
+export function buildQaGuiEnvironment(environment) {
+  const child = { ...environment };
+  // The supervisor needs Node mode; the actual packaged Main must not inherit it.
+  delete child.ELECTRON_RUN_AS_NODE;
+  return child;
+}
+
 export async function readExistingPrivateToken(path) {
   const before = lstatSync(path, { bigint: true });
   const valid = stat => stat.isFile() && !stat.isSymbolicLink() && stat.uid === BigInt(process.getuid())
