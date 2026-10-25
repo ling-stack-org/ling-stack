@@ -1,4 +1,4 @@
 # Negative login-validation fixture, not a usable account or credential.
 # packages/daemon/test/codex-login.test.mjs:102 asserts that this URL is rejected.
 # Preserve its exact appearance in immutable full-regression logs; no pattern wildcard.
-https://user:pass@auth.openai.com/
+https://user:pass@auth.openai.com
