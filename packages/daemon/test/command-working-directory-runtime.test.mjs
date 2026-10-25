@@ -15,8 +15,70 @@ import { verifyWorkflowStepExecutionOperations } from "../dist/features/channels
 import { createTypedWorkflowBasis, typedOperation, gateOwner } from "./support/workflow-operation-gate-fixture.mjs";
 import { createDelegatedStepRequirement } from "../dist/features/channels/workflow-step-requirement.js";
 import { createWorkflowOperationExecutionSnapshot } from "../dist/features/runs/workflow-operation-snapshot.js";
+import { createLingStackBashToolExtension } from "../../runner-pi/dist/extensions/bash.js";
+import { normalizeBashRequest } from "../dist/features/runs/unified-exec-request.js";
 
 const directory = { path: "project", sourceRefs: [{ itemId: "source", quote: "在目录 project 中运行", actorType: "local_user" }] };
+
+test("ordinary and teammate requests bind one effective cwd before approval and execution", async t => {
+  const root = await mkdtemp(join(tmpdir(), "ling-ordinary-command-cwd-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = createSqliteRunStore(root);
+  t.after(() => store.close());
+  const now = new Date().toISOString();
+  const teammate = store.createAiTeammate({ roleKey: "engineer", displayName: "Cwd fixture",
+    description: "Temporary directory contract", allowedTools: ["bash"], approvalProfile: { mode: "none" } }, now);
+  for (const teammateId of [undefined, teammate.id]) {
+    const id = teammateId ? "private-cwd" : "ordinary-cwd";
+    store.createRun({ id, cwd: root, taskId: id, teammateId, providerName: "fixture", providerModel: "fixture",
+      taskSnapshot: { id, title: id }, providerSnapshot: {}, requestSnapshot: {}, createdAt: now });
+    const run = store.getRun(id);
+    for (const inputCwd of [undefined, "project", join(root, "project")]) {
+      const request = { toolName: "bash", toolCallId: id, cwd: root, task: run.taskSnapshot,
+        input: { command: "printf cwd", ...(inputCwd === undefined ? {} : { cwd: inputCwd }) } };
+      const bound = bindWorkflowCommandRequest(store, run, request);
+      const expected = inputCwd === undefined ? root : join(root, "project");
+      assert.equal(bound.cwd, expected);
+      assert.equal(normalizeBashRequest(run, bound).request.cwd, expected);
+      assert.deepEqual(bound.input, request.input);
+      assert.equal(store.getRun(id).cwd, root);
+      assert.equal(bindWorkflowCommandRequest(store, run, bound).cwd, expected, "rebinding is idempotent");
+    }
+    for (const cwd of ["../outside", tmpdir(), "", "  ", 7, null]) {
+      const request = { toolName: "bash", toolCallId: id, cwd: root, task: run.taskSnapshot,
+        input: { command: "printf cwd", cwd } };
+      assert.throws(() => bindWorkflowCommandRequest(store, run, request), /command_cwd_invalid/);
+      assert.ok("error" in normalizeBashRequest(run, request), "direct launch normalization cannot accept invalid cwd either");
+    }
+  }
+});
+
+test("model-visible bash cwd reaches the immutable Host binding without moving the Run workspace", async t => {
+  const command = "node cli.js ../records.csv";
+  const f = await createRestrictedCommandFixture(t, command, [], undefined, directory);
+  const registered = [], requests = [];
+  createLingStackBashToolExtension({ cwd: f.cwd, task: f.request.task,
+    provider: { provider: "fixture", model: "fixture" },
+    async onApprovalRequired(request) {
+      const bound = bindWorkflowCommandRequest(f.store, f.run, request);
+      requests.push(bound);
+      return { approved: true, handledResult: { content: [{ type: "text", text: "binding-only probe; no process dispatched" }] } };
+    },
+  })({ on() {}, registerTool: tool => registered.push(tool) });
+  assert.equal(registered[0].parameters.properties.cwd?.type, "string");
+  for (const cwd of [undefined, "project", join(f.cwd, "project")]) {
+    const params = { command, ...(cwd === undefined ? {} : { cwd }) };
+    await registered[0].execute(`cwd-${requests.length}`, params);
+    assert.equal(requests.at(-1).cwd, join(f.cwd, "project"));
+    assert.deepEqual(requests.at(-1).input, params);
+    assert.equal(f.store.getRun(f.run.id).cwd, f.cwd);
+  }
+  for (const cwd of [f.cwd, "other", "../escape", 7, null]) {
+    await assert.rejects(registered[0].execute("foreign-cwd", { command, cwd }), /operation_binding_cwd_mismatch/);
+  }
+  assert.equal(requests.length, 3, "foreign/malformed cwd never reaches the accepted Host callback");
+  assert.equal(f.store.listHarnessToolExecutions(f.run.id).length, 0, "this probe never launches or fabricates an execution");
+});
 
 test("command binding preserves a machine code and explanatory reason at both rejection boundaries", async t => {
   const f = await createRestrictedCommandFixture(t, "node cli.js ../records.csv", [], undefined, directory);

@@ -13,6 +13,21 @@ const confirmation = () => ({ mode: "full_access", confirmed: true,
   confirmedAt: new Date(Date.now() - 1000).toISOString(), reason: "Temporary isolated source regression" });
 const forbiddenProducer = () => { throw new Error("forbidden raw producer entered"); };
 
+for (const commandRule of [false, true]) {
+  test(`root ${commandRule ? "command rule" : "one-time approval"} cannot authorize a model-selected subdirectory`, async t => {
+    const f = await createRawSourceFixture(t, { authorizationMode: "ask" });
+    mkdirSync(join(f.cwd, "project"));
+    const approved = approveRawCommand(f, "printf raw-source", { commandRule });
+    const calls = observeRawProducer(t);
+    const result = await f.execute({ cwd: "project" }, commandRule ? {} : { approvalId: approved.approval.id });
+    assert.equal(calls.length, 0, "approval cwd must match the actual process cwd before native entry");
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, commandRule ? /approval_required/ : /approval_invalid/);
+    assertKnownNoStart(f, { requireCommandFact: false });
+    assert.equal(commandFacts(f).length, 0, "denial occurs before command preparation, not after launch");
+  });
+}
+
 test("public legacy raw entry refuses an active stage before the producer and durably proves no-start", async t => {
   const f = await createRawSourceFixture(t, { activeStage: true });
   const approved = approveRawCommand(f);
@@ -267,12 +282,26 @@ for (const [name, overrides] of [
   });
 }
 
-test("a legitimate Pi input subdirectory remains executable with exact normalized source and root approval payload", async t => {
+for (const commandRule of [false, true]) {
+  test(`exported raw factory cannot borrow a root ${commandRule ? "rule" : "approval"} for a subdirectory`, async t => {
+    const f = await createRawSourceFixture(t, { authorizationMode: "ask" });
+    mkdirSync(join(f.cwd, "subA"));
+    const approved = approveRawCommand(f, "printf raw-source", { commandRule });
+    const calls = observeRawProducer(t, forbiddenProducer);
+    assert.throws(() => createRealRawDispatch(f, {
+      ...(commandRule ? {} : { approvalId: approved.approval.id }),
+      approvalRequest: { input: { cwd: "subA" } },
+    }), commandRule ? /approval_required/ : /approval_invalid/);
+    assert.equal(calls.length, 0);
+  });
+}
+
+test("a legitimate Pi input subdirectory requires its own approval payload at the original raw source", async t => {
   const f = await createRawSourceFixture(t, { activeStage: true, authorizationMode: "smart",
     workspaceAccessMode: "full_access", permissionConfirmation: confirmation() });
   const subdirectory = join(f.cwd, "subA"); mkdirSync(subdirectory);
-  const approved = approveRawCommand(f, "pwd");
-  assert.equal(approved.approval.payload.cwd, f.cwd, "preserve the existing public approval payload meaning");
+  const approved = approveRawCommand({ ...f, cwd: subdirectory }, "pwd");
+  assert.equal(approved.approval.payload.cwd, subdirectory);
   const dispatch = createRealRawDispatch(f, { approvalId: approved.approval.id,
     approvalRequest: { input: { command: "pwd", cwd: "subA" } } });
   const calls = observeRawProducer(t);

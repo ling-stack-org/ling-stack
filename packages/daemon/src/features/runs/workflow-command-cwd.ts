@@ -3,6 +3,7 @@ import type { RunSession, RunStore } from "@ling-stack/core";
 import { isRecord } from "../../shared/validation.js";
 import { commandMatchesPolicy } from "../channels/command-operation-match.js";
 import { validateWorkflowOperationRunContext } from "./workflow-operation-snapshot.js";
+import { normalizeBashWorkingDirectory } from "./unified-exec-request.js";
 
 export class WorkflowCommandBindingError extends Error {
   constructor(readonly code: string, readonly reason: string) {
@@ -11,15 +12,19 @@ export class WorkflowCommandBindingError extends Error {
   }
 }
 
-/** Pi supplies the session workspace. Only the immutable Host operation may
- * select another directory; optional model cwd is a consistency check, not authority.
+/** Pi supplies the session workspace. Bind ordinary cwd before any approval;
+ * typed workflows may only use their immutable Host operation directory.
  */
 export function bindWorkflowCommandRequest<T extends { readonly toolName: string; readonly input: unknown; readonly cwd: string }>(
   store: RunStore, run: RunSession, request: T,
 ): T {
   if (request.toolName !== "bash") return request;
   const context = validateWorkflowOperationRunContext({ store, run });
-  if (context.status === "legacy") return request;
+  if (context.status === "legacy") {
+    const directory = normalizeBashWorkingDirectory(run, request);
+    if (directory.error) throw new WorkflowCommandBindingError("command_cwd_invalid", directory.error);
+    return { ...request, cwd: directory.cwd };
+  }
   if (context.status === "blocked") throw new WorkflowCommandBindingError(context.code, context.reason);
   const command = isRecord(request.input) && typeof request.input.command === "string" ? request.input.command : "";
   const operations = context.ownedOperations.filter(operation => operation.kind === "run_command"

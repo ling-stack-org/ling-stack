@@ -118,6 +118,37 @@ approval pending/retry/restart 不改 cwd；无 workingDirectory 的原 root 行
 
 ## 4. 完成边界与接续
 
+### 第三切片：模型可见的 cwd 与三种会话的审批一致性
+
+后继 QA 包已启动并真实发送 C01 R4。Engineer 读取后显式 blocked：Bash schema
+没有 cwd，模型不能同时满足“子目录运行”和“命令逐字不变”。这不是工具执行成功，
+也不能用 Run succeeded 代替 workflow/step evidence；QA 尚未运行，原失败保留。
+
+Runner 现在公开可选 `cwd`，相对路径仍以 session workspace 为基准，参数原样交给
+Host，不改 command、不改变 `Run.cwd`、没有 SDK local Bash fallback。省略参数时，
+typed workflow 使用不可变 operation 目录；ordinary/private 使用 session 根目录。
+typed 显式参数只是和冻结目录的一致性检查，不能赋予另一目录或额外文件的权限。
+
+公开此参数必须同时补齐普通/私聊的 Host 入口。原 legacy 分支直接返回 session cwd，
+后面的 execution normalizer 却消费 input.cwd，导致审批展示、批准指纹、相似命令规则
+和实际进程目录分叉。真实临时 SQLite/原生 producer 回归已复现根目录一次批准和规则
+可错误启动子目录命令，不能只修频道或仅在 UI 显示目录。
+
+共享 `normalizeBashWorkingDirectory` 在审批前选定 effective cwd；同一结果贯穿
+approval payload/proposal、规则匹配、Broker identity 和 original launch 检查。
+最终 execution normalization 复用同一函数，拒绝非字符串、空白和 workspace 外目录。
+保持 Run workspace 权威根、原 command/input、typed immutable authority 和原权限策略。
+目录选择不是读取授权，也不是 Full Access；原文件/sandbox/launch 校验仍必须通过。
+
+新回归分别覆盖：普通和真实 teammate Run 的幂等绑定；审批事件、持久 payload、
+新规则与实际结果目录一致；根目录一次批准/规则不能用于子目录；被拒绝时零 producer、
+真实 Host no-start；有效子目录审批后能执行；原 typed consistency/malformed 拒绝。
+Runner 17/17 和全套 569/569 已通过；Host 最终10个完整文件215/215、真实macOS
+native conformance 5/5均actual exit0，零失败/取消/skip；回归冻结输入前后一致。
+9文件最终独立静态复审0个未闭环finding，原始source factory另行防止直接调用借root grant。
+新ordinary raw正例使用Node默认文件进程隔离，不清除产品sticky actor history。
+这不是整个Daemon全套或新包GUI结果；下一步更新具体QA packet、重包，新nonce复验C01。
+
 ### 独审后补齐的内部边界
 
 前一扩大回归（444 Daemon / 183 Core / 95 Contracts / 797 Web / 5 native）和
