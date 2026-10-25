@@ -1,18 +1,20 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { verifyNsisPlugins } from "../release/verify-nsis-plugins.mjs";
-import { prepareNsisExtractor } from "../release/nsis-extractor.mjs";
+import { verifyNsisPlugins } from "../../../scripts/release/verify-nsis-plugins.mjs";
+import { prepareNsisExtractor } from "../../../scripts/release/nsis-extractor.mjs";
+import { prepareDistributionBuilder } from "../scripts/distribution/installer-builder.mjs";
 
 test("the pinned native NSIS compiler retains the reviewed plug-in bytes", async t => {
   const root = await mkdtemp(join(tmpdir(), "ling-native-nsis-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const desktopRequire = createRequire(new URL("../../apps/desktop/package.json", import.meta.url));
+  const desktopRequire = createRequire(new URL("../package.json", import.meta.url));
   const builderRequire = createRequire(desktopRequire.resolve("electron-builder/package.json"));
   const toolset = builderRequire("app-builder-lib/out/toolsets/windows.js");
   const compiler = await toolset.getMakeNsisPath("0.0.0");
@@ -26,7 +28,7 @@ test("the pinned native NSIS compiler retains the reviewed plug-in bytes", async
   await writeFile(join(root, "payload.txt"), "Exact nested payload bytes\n");
   const payload = join(root, "app-64.7z");
   execFileSync(bootstrap, ["a", "-bd", payload, "payload.txt"], { cwd: root, timeout: 30_000 });
-  const sources = JSON.parse(await readFile(new URL("../../apps/desktop/scripts/distribution/vendor-notices/nsis-plugins/sources.json", import.meta.url)));
+  const sources = JSON.parse(await readFile(new URL("../scripts/distribution/vendor-notices/nsis-plugins/sources.json", import.meta.url)));
   const installer = join(root, "plugin-fixture.exe"), script = join(root, "plugin-fixture.nsi");
   await writeFile(script, `Unicode true
 Name "Ling plug-in fixture"
@@ -84,3 +86,71 @@ for (const [size, message] of [[1663507, /exceeds its pinned size/u], [1663506, 
     assert.deepEqual(await roots(), before);
   });
 }
+
+test("the private stock NSIS overlay installs and uninstalls a small real payload", {
+  skip: process.platform !== "win32" || process.env.GITHUB_ACTIONS !== "true" || process.env.RUNNER_ENVIRONMENT !== "github-hosted",
+}, async t => {
+  const root = await realpath(await mkdtemp(join(process.env.RUNNER_TEMP, "ling-stock-installer-")));
+  let completed = false;
+  t.after(() => completed ? rm(root, { recursive: true, force: true }) : undefined);
+  const desktopRoot = await realpath(fileURLToPath(new URL("../", import.meta.url)));
+  const metadata = JSON.parse(await readFile(join(desktopRoot, "package.json")));
+  const app = join(root, "app"), payload = join(root, "payload"), output = join(root, "release");
+  await mkdir(app); await mkdir(payload);
+  await writeFile(join(app, "package.json"), JSON.stringify({ name: metadata.name, version: metadata.version,
+    description: metadata.description, author: metadata.author, license: metadata.license, main: "main.js" }));
+  // This is an installer fixture, not a claim that Node is the Desktop runtime.
+  await copyFile(process.execPath, join(payload, "Ling Stack.exe"));
+  await writeFile(join(payload, "fixture.txt"), "Stock installer payload\n");
+  const prepared = prepareDistributionBuilder({ desktopRoot, outputRoot: join(root, "builder") });
+  const require = createRequire(join(prepared.electronBuilderRoot, "package.json"));
+  const builder = require(prepared.electronBuilderRoot);
+  const build = () => builder.build({ projectDir: app, prepackaged: payload, publish: "never",
+    targets: builder.Platform.WINDOWS.createTarget("nsis", builder.Arch.x64),
+    config: { appId: metadata.build.appId, productName: metadata.build.productName,
+      electronVersion: metadata.devDependencies.electron, directories: { app, output, buildResources: join(desktopRoot, "build") },
+      win: { artifactName: "stock-fixture.exe", signAndEditExecutable: false },
+      nsis: { ...metadata.build.nsis, include: join(desktopRoot, "build/installer.nsh") } } });
+  const installer = join(output, "stock-fixture.exe"), installPath = join(root, "Ling Stack");
+  const env = { ...process.env, LING_FIXTURE_INSTALLER: installer, LING_FIXTURE_ROOT: root, LING_FIXTURE_INSTALL_PATH: installPath };
+  const run = code => execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", code],
+    { env, encoding: "utf8", timeout: 120_000, maxBuffer: 1024 * 1024 });
+  const deepPath = "resources/gstack/runtime/lib/diagram-render/node_modules/@radix-ui/react-tabs/node_modules/@radix-ui/react-primitive/node_modules/@radix-ui/react-slot/node_modules/@radix-ui/react-compose-refs/ling-upstream-license-provenance.json";
+  try {
+    for (const deep of [false, true]) {
+      if (deep) {
+        await mkdir(join(payload, dirname(deepPath)), { recursive: true });
+        await writeFile(join(payload, deepPath), "Long path fixture\n");
+      }
+      await build();
+      const started = performance.now();
+      t.diagnostic(`Installing stock fixture; deepPath=${deep}; finalPathLength=${join(installPath, deepPath).length}`);
+      t.diagnostic(run(`$ErrorActionPreference = 'Stop';
+  $p = Start-Process -FilePath $env:LING_FIXTURE_INSTALLER -ArgumentList @('/S', ('/D=' + $env:LING_FIXTURE_INSTALL_PATH)) -PassThru -Wait;
+  if ($p.ExitCode -ne 0) { throw ('Fixture installer exit: ' + $p.ExitCode) }`));
+      t.diagnostic(`Small stock installer elapsed milliseconds: ${performance.now() - started}`);
+      assert.equal(await readFile(join(installPath, "fixture.txt"), "utf8"), "Stock installer payload\n");
+      if (deep) assert.equal(await readFile(join(installPath, deepPath), "utf8"), "Long path fixture\n");
+      t.diagnostic(run(`$ErrorActionPreference = 'Stop';
+  $p = Start-Process -FilePath (Join-Path $env:LING_FIXTURE_INSTALL_PATH 'Uninstall Ling Stack.exe') -ArgumentList '/S' -PassThru -Wait;
+  if ($p.ExitCode -ne 0) { throw ('Fixture uninstaller exit: ' + $p.ExitCode) }`));
+      await assert.rejects(readFile(join(installPath, "fixture.txt")), { code: "ENOENT" });
+    }
+    completed = true;
+  } catch (error) {
+    t.diagnostic(run(`Add-Type -AssemblyName UIAutomationClient;
+Get-CimInstance Win32_Process | Where-Object {
+  $_.ExecutablePath -eq $env:LING_FIXTURE_INSTALLER -or ($_.CommandLine -and $_.CommandLine.Contains($env:LING_FIXTURE_ROOT))
+} | ForEach-Object {
+  $p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+  $text = @()
+  if ($p.MainWindowHandle -ne 0) {
+    $window = [System.Windows.Automation.AutomationElement]::FromHandle($p.MainWindowHandle)
+    $text = @($window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+      ForEach-Object { $_.Current.Name } | Select-Object -First 30)
+  }
+  @{ pid = $_.ProcessId; parent = $_.ParentProcessId; command = $_.CommandLine; title = $p.MainWindowTitle; text = $text; responding = $p.Responding; cpu = $p.CPU }
+} | ConvertTo-Json -Compress -Depth 4`));
+    throw error;
+  }
+});

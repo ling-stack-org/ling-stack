@@ -5,7 +5,7 @@ on:
     paths:
       - scripts/release/verify-nsis-plugins.mjs
       - scripts/release/nsis-extractor.mjs
-      - scripts/ci/nsis-plugin-native.test.mjs
+      - apps/desktop/tests/distribution-nsis-native.test.mjs
       - apps/desktop/scripts/distribution/vendor-notices/nsis-plugins/sources.json
       - .github/workflows/installer-contracts.yml
   workflow_dispatch:
@@ -36,4 +36,4 @@ jobs:
       - name: Install locked dependencies without build hooks
         run: corepack pnpm install --frozen-lockfile --ignore-scripts
       - name: Check actual NSIS archive plug-in bytes on Windows
-        run: node --test scripts/ci/nsis-plugin-native.test.mjs
+        run: node --test apps/desktop/tests/distribution-nsis-native.test.mjs
