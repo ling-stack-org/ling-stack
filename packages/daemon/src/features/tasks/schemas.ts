@@ -35,7 +35,7 @@ export interface TaskRunRequest {
   readonly permissionPreset?: PermissionPreset;
   readonly permissionMode?: SessionPermissionMode;
   readonly permissionConfirmation?: PermissionConfirmation;
-  readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
   readonly systemPrompt?: string;
   readonly appendSystemPrompt?: readonly string[];
   readonly agentDir?: string;
@@ -276,8 +276,8 @@ function readOptionalThinkingLevel(record: Record<string, unknown>, key: string)
   if (value === undefined) {
     return undefined;
   }
-  if (value !== "off" && value !== "minimal" && value !== "low" && value !== "medium" && value !== "high" && value !== "xhigh") {
-    throw new Error(`${key} must be one of: off, minimal, low, medium, high, xhigh`);
+  if (value !== "off" && value !== "minimal" && value !== "low" && value !== "medium" && value !== "high" && value !== "xhigh" && value !== "max" && value !== "ultra") {
+    throw new Error(`${key} must be one of: off, minimal, low, medium, high, xhigh, max, ultra`);
   }
   return value;
 }

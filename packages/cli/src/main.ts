@@ -67,7 +67,7 @@ const DEFAULT_PORT = "17891";
 const DEFAULT_TOOLS = ["read", "grep", "find", "ls"] as const;
 const VALID_TOOLS: ReadonlySet<string> = new Set(Object.keys(defaultApprovalToolDecisions) as RunTool[]);
 const VALID_POLICY_DECISIONS: ReadonlySet<string> = new Set(approvalToolDecisions);
-const VALID_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+const VALID_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 const VALID_PROVIDER_KINDS = new Set(["openai", "anthropic", "google", "openai-compatible", "doubao", "deepseek", "minimax", "glm", "jimeng", "seedream", "seedance"]);
 const VALID_PROVIDER_APIS = new Set(["openai-completions", "openai-responses", "openai-codex-responses", "anthropic-messages", "google-generative-ai", "mistral-conversations", "media-job"]);
 const VALID_PROVIDER_TRANSPORTS = new Set(["auto", "websocket", "websocket-cached", "sse"]);
@@ -7801,7 +7801,7 @@ Options:
   --prompt-file <path|->       Read prompt text from file or stdin
   --output-last-message <file> Write final assistant message to file
   --tool <name>                Repeatable. Default: read,grep,find,ls
-  --thinking <level>           off|minimal|low|medium|high|xhigh. Default: medium
+  --thinking <level>           off|minimal|low|medium|high|xhigh|max|ultra. Default: medium
   --system-prompt <text>       Override system prompt
   --append-system-prompt <txt> Repeatable appended system prompt
   --agent-dir <path>           Pi agent directory

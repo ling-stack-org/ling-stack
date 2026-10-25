@@ -39,7 +39,7 @@ export interface LocalConversationAuthorizationSelection {
 
 const storageKey = "ling-stack.conversationRecords.v1";
 const maxRecords = 20;
-const providerThinkingModes = new Set<ProviderThinkingMode>(["off", "minimal", "low", "medium", "high", "xhigh"]);
+const providerThinkingModes = new Set<ProviderThinkingMode>(["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 const sessionPermissionModes = new Set<SessionPermissionMode>(["ask_everything", "balanced", "workspace_write", "full_access", "custom"]);
 const permissionPresets = new Set<PermissionPreset>(["read_only", "workspace_collaboration", "full_access", "custom"]);
 const defaultConversationPermissionMode: SessionPermissionMode = "workspace_write";

@@ -33,3 +33,26 @@ export function normalizeModelTokenLimits(limit) {
 function positiveInteger(value) {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
+
+export function normalizeThinkingModes(value) {
+  if (!Array.isArray(value)) return [];
+  const modes = [];
+  for (const option of value) {
+    if (!(option !== null && typeof option === "object" && !Array.isArray(option))) continue;
+    if (option.type === "toggle") modes.push("off", "auto");
+    if (option.type !== "effort") continue;
+    for (const raw of (Array.isArray(option.values) ? option.values.filter((value) => typeof value === "string") : [])) {
+      const mode = normalizeThinkingMode(raw);
+      if (mode) modes.push(mode);
+    }
+  }
+  const order = ["off", "auto", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+  return order.filter((mode) => modes.includes(mode));
+}
+
+function normalizeThinkingMode(value) {
+  const mode = value.trim().toLowerCase();
+  if (mode === "none" || mode === "disabled") return "off";
+  if (mode === "maximum") return "max";
+  return ["off", "auto", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(mode) ? mode : undefined;
+}
