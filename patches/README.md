@@ -8,6 +8,7 @@ Reviewed baseline: `fd39ec302cbae759e4d4a866172a804e1bc5abfd`, 2026-10-12.
 
 | Package | Advisory / purpose | Actual consumer | Removal gate |
 | --- | --- | --- | --- |
+| `@expo/cli@58.1.13` | Preserve the optional MCP tunnel's Zod 3 schema protocol while the CLI uses fixed Zod 4 for [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5) | Expo dev-tools MCP command schemas | Upstream tunnel supports Zod 4 and command enum, parameter types, and strict JSON Schema conversion regressions pass without this bridge |
 | `node-forge@1.4.0` | [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv): reject unconsumed nested DigestAlgorithm elements | Expo code-signing certificates | Released upstream fix plus malformed-signature and valid-certificate regressions |
 | `braces@3.0.3` | [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm): cap brace/parenthesis nesting and validate direct AST inputs | Metro file matching via micromatch | Upstream depth protection covering parse, compile, expand and stringify |
 | `sprintf-js@1.0.3`, `sprintf-js@1.1.3` | [GHSA-hp3w-g68c-fv3c](https://github.com/advisories/GHSA-hp3w-g68c-fv3c): bound floating-point precision | Mammoth CLI via argparse; Desktop downloader logger via Roarr | Upstream protection plus formatter, CLI help and logger regressions |
@@ -17,6 +18,13 @@ Reviewed baseline: `fd39ec302cbae759e4d4a866172a804e1bc5abfd`, 2026-10-12.
 
 ## Patch Behavior And Provenance
 
+- `@expo/cli`: only the MCP command-schema factory imports the fixed Zod
+  package's public `zod/v3` compatibility entry. Its command enum and optional
+  string, number, and boolean parameters retain the schema protocol consumed by
+  `@expo/mcp-tunnel` and `zod-to-json-schema` 3. The plugin and output collection
+  validators keep the patched Zod 4 default export. This local compatibility
+  bridge contains no array, map, or set schemas and does not backport Zod 4's
+  collection fix to the compatibility entry.
 - `node-forge`: backport the `lib/rsa.js` change from
   [official PR 1152](https://github.com/digitalbazaar/forge/pull/1152), reviewed at
   `ceba34402e329f0365134f23fe19898756527d65`. No cryptographic primitive is replaced.
