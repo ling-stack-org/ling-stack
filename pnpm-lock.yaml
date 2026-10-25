@@ -6,25 +6,32 @@ settings:
 
 overrides:
   '@radix-ui/react-dismissable-layer@1.1.19': 1.1.20
+  '@expo/cli>zod': 4.6.6
   brace-expansion@>=1.0.0 <1.1.21: 1.1.21
   brace-expansion@>=2.0.0 <2.1.7: 2.1.7
   brace-expansion@>=5.0.0 <5.0.12: 5.0.12
-  fast-uri@>=3.0.0 <3.1.8: 3.1.8
-  hono@>=4.0.0 <4.13.7: 4.13.7
+  body-parser@>=2.0.0 <2.4.0: 2.4.0
+  dompurify@>=3.0.0 <3.4.17: 3.4.17
+  fast-uri@>=3.0.0 <3.1.9: 3.1.9
+  hono@>=4.0.0 <4.13.11: 4.13.11
   http-cache-semantics@>=4.0.0 <4.3.0: 4.3.0
-  ip-address@>=10.0.0 <10.7.1: 10.7.1
+  ip-address@>=10.0.0 <10.7.4: 10.7.4
   js-yaml@>=4.0.0 <4.3.2: 4.3.2
   postcss@>=8.0.0 <=8.5.17: 8.5.25
   protobufjs@>=7.5.0 <7.6.5: 7.6.5
   tar@>=7.0.0 <=7.5.20: 7.5.22
-  undici@>=7.0.0 <7.29.1: 7.30.0
+  node-gyp>undici@>=6.0.0 <6.29.1: 6.29.1
+  '@electron/get>undici@>=7.0.0 <7.30.1': 7.30.1
   uuid@7.0.3: 11.1.1
   image-size@1.2.1: 2.0.4
   officeparser>pdfjs-dist: 6.2.108
-  undici@>=8.0.0 <8.10.2: 8.11.2
+  '@earendil-works/pi-coding-agent>undici@>=8.0.0 <8.12.2': 8.12.2
   katex@>=0.11.0 <0.18.2: 0.19.0
 
 patchedDependencies:
+  '@expo/cli@58.1.13':
+    hash: 12f30ea7444cd7bac70249452357c3b0fc1bad94ed2841996fb82c508a7b139d
+    path: patches/@expo__cli@58.1.13.patch
   braces@3.0.3:
     hash: ad74a34b0200bbe14ba95e31e8f296205ce32a374eca2cef25cc8940aa0c76c1
     path: patches/braces@3.0.3.patch
@@ -130,8 +137,8 @@ importers:
         specifier: 3.0.1
         version: 3.0.1(ajv@8.20.0)
       electron:
-        specifier: 44.8.0
-        version: 44.8.0
+        specifier: 44.9.1
+        version: 44.9.1
       electron-builder:
         specifier: ^26.15.3
         version: 26.15.3(electron-builder-squirrel-windows@26.15.3)
@@ -398,10 +405,10 @@ importers:
     dependencies:
       '@agentclientprotocol/sdk':
         specifier: 1.9.0
-        version: 1.9.0(zod@4.4.3)
+        version: 1.9.0(zod@4.6.6)
       '@anthropic-ai/sdk':
         specifier: 0.135.0
-        version: 0.135.0(zod@4.4.3)
+        version: 0.135.0(zod@4.6.6)
       '@ling-stack/browser-host':
         specifier: workspace:*
         version: link:../browser-host
@@ -428,7 +435,7 @@ importers:
         version: link:../runner-pi
       '@modelcontextprotocol/sdk':
         specifier: 1.32.1
-        version: 1.32.1(zod@4.4.3)
+        version: 1.32.1(zod@4.6.6)
       '@napi-rs/keyring':
         specifier: 2.1.1
         version: 2.1.1
@@ -471,6 +478,9 @@ importers:
       xlsx-populate:
         specifier: 1.21.0
         version: 1.21.0
+      zod:
+        specifier: 4.6.6
+        version: 4.6.6
     devDependencies:
       '@babel/parser':
         specifier: 8.0.7
@@ -520,16 +530,19 @@ importers:
     dependencies:
       '@earendil-works/pi-ai':
         specifier: 1.1.0
-        version: 1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))(@smithy/signature-v4@5.7.4)(undici@7.30.1)(ws@8.22.0)(zod@4.4.3)
+        version: 1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.6))(@smithy/signature-v4@5.7.4)(undici@7.30.1)(ws@8.22.0)(zod@4.6.6)
       '@earendil-works/pi-coding-agent':
         specifier: 1.1.0
-        version: 1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))(@smithy/signature-v4@5.7.4)(ws@8.22.0)(zod@4.4.3)
+        version: 1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.6))(@smithy/signature-v4@5.7.4)(ws@8.22.0)(zod@4.6.6)
       '@ling-stack/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
       undici:
         specifier: 7.30.1
         version: 7.30.1
+      zod:
+        specifier: 4.6.6
+        version: 4.6.6
 
   packages/ui-react:
     dependencies:
@@ -1543,7 +1556,7 @@ packages:
     resolution: {integrity: sha512-TA//nWMqPhbfdfneACk6t5a9eqbS9lABEPyKn0/xZTah3H3U2XaVg85rJFl0/Fyit0I552YDHgXGVSf3GwqbUw==}
     engines: {node: '>=20'}
     peerDependencies:
-      hono: 4.13.7
+      hono: 4.13.11
 
   '@iconify/types@2.0.0':
     resolution: {integrity: sha512-+wluvCrRhXrhyOmRDJ3q8mux9JkKy5SJ/v8ol2tu4FVjyYvtEzkc/3pK15ET6RKg4b4w4BmTk1+gsCUhf21Ykg==}
@@ -3149,8 +3162,8 @@ packages:
   bmp-js@0.1.0:
     resolution: {integrity: sha512-vHdS19CnY3hwiNdkaqk93DvjVLfbEcI8mys4UjuWrlX1haDmroo8o4xCzh4wD6DGV6HxRCyauwhHRqMTfERtjw==}
 
-  body-parser@2.3.0:
-    resolution: {integrity: sha512-2cGmJupaNgg+QUwVLAucDuWuoMZ6EX9iHDRswZ5lsNYEmwPaRknMPCLZz07yTzVq/83p4o/wzbDZbBrTvGGTIw==}
+  body-parser@2.4.0:
+    resolution: {integrity: sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==}
     engines: {node: '>=18'}
 
   boolean@3.2.0:
@@ -3719,8 +3732,8 @@ packages:
     resolution: {integrity: sha512-vQLEYi45vlN/auiMHgx4oC95wbP5qPaD7Vanfixcd3wtTl5gLUPWqUpwbw6yVN0/U6o3p3EX4P5puAeYPXvcSQ==}
     engines: {node: '>=10'}
 
-  dompurify@3.4.16:
-    resolution: {integrity: sha512-sqo+pNp3qRhCIpbgRi1y8Tgk27Bo2Ry7w0dC1NBeNTdZChWjz9Xb/KOoZbRP/R6pQZ80Qw8YhXw13hWWBbMRnQ==}
+  dompurify@3.4.17:
+    resolution: {integrity: sha512-B/pSlYVHQ58kqISD/yDjuJ1yfzI34m1gF4lAod2bwSRhiN4K5Cl3H8Af7hqB2PmTL911tdEudnnXn5FnhRoz0w==}
 
   dotenv-expand@11.0.7:
     resolution: {integrity: sha512-zIHwmZPRshsCdpMDyVsqGmgyP0yT8GAgXUnkdAoJisxvf33k7yO6OuoKmcTGuXPWSsm8Oh88nZicRLA9Y0rUeA==}
@@ -3769,8 +3782,8 @@ packages:
     resolution: {integrity: sha512-bO3y10YikuUwUuDUQRM4KfwNkKhnpVO7IPdbsrejwN9/AABJzzTQ4GeHwyzNSrVO+tEH3/Np255a3sVZpZDjvg==}
     engines: {node: '>=8.0.0'}
 
-  electron@44.8.0:
-    resolution: {integrity: sha512-Yn2tJ335l8MGRJj86vaAYq1MOidtiw9eXdmHX6p3ecHQWwucsMMBxDzqUrYnXEHyqdc/IhOh2KGHzmizJvzd3Q==}
+  electron@44.9.1:
+    resolution: {integrity: sha512-x/tECFFDa2OFNjMObFH0EGKWrCnFZPOR1wP2iMIVt0STecGl8FmDXdaiaryY0kf8mtw9kSLP2yK8dfdaWkfDmw==}
     engines: {node: '>= 22.12.0'}
     hasBin: true
 
@@ -4041,8 +4054,8 @@ packages:
   fast-sha256@1.3.0:
     resolution: {integrity: sha512-n11RGP/lrWEFI/bWdygLxhI+pVeo1ZYIVwvvPkW7azl/rOy+F3HYRZ2K5zeE9mmkhQppyv9sQFx0JM9UabnpPQ==}
 
-  fast-uri@3.1.8:
-    resolution: {integrity: sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==}
+  fast-uri@3.1.9:
+    resolution: {integrity: sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==}
 
   fastdom@1.0.12:
     resolution: {integrity: sha512-LB+xjSTEbjHE1cWsxu+tN2Xqr1kpi+V9aADI7sVM5ZMaXyYGPHULQMzpJMYqOTULK/73pUkWVzzObFRBkPr+hg==}
@@ -4301,8 +4314,8 @@ packages:
   highlight.js@10.7.3:
     resolution: {integrity: sha512-tzcUFauisWKNHaRkN4Wjl/ZA07gENAjFl3J/c480dprkGTg5EQstgaNFqBfUqCq54kZRIEcreTsAgF/m2quD7A==}
 
-  hono@4.13.7:
-    resolution: {integrity: sha512-c8/gF9ac8Y78/agExVocyLevgR+JlpNB444Py0FSX8pJoPdYUfUzRcXtYEYGwt6l19qIlVZPN5Mfsw9jFShmQQ==}
+  hono@4.13.11:
+    resolution: {integrity: sha512-/SMX/RQNJn7oNmFwH6DtwDqcrzZU2otm1FD6OJe2cWF6cfy/F8hq0XVBv7xW3FTJshRQwuBnXHDq2kNsdZnshg==}
     engines: {node: '>=16.9.0'}
 
   hosted-git-info@4.1.0:
@@ -4400,8 +4413,8 @@ packages:
   invariant@2.2.4:
     resolution: {integrity: sha512-phJfQVBuaJM5raOpJjSfkiD6BpbCE4Ns//LaXl6wGYtUBY83nWS6Rf9tXm2e8VaK60JEjYldbPif/A2B1C2gNA==}
 
-  ip-address@10.7.1:
-    resolution: {integrity: sha512-4OUAqU9Z1i3vCnS05hzGiFnEMDpQ+62pAD/MVQOp83fYyNC8GleCqaS0QikQBmcWCrKFiUs/B8ztRRiYOAXuCA==}
+  ip-address@10.7.4:
+    resolution: {integrity: sha512-DWBMKyeM25D70nrIiTkgQth59/G+naKOTep6huF9j+GmeK3DMD60Zvxg5d5qQnz+38AHgou6ean2LECX+lrKDg==}
     engines: {node: '>= 12'}
 
   ipaddr.js@1.9.1:
@@ -5186,7 +5199,7 @@ packages:
       '@aws-sdk/credential-provider-node': '>=3.972.0 <4'
       '@smithy/hash-node': '>=4.3.0 <5'
       '@smithy/signature-v4': '>=5.4.0 <6'
-      undici: 7.30.0
+      undici: '>=5 <9'
       ws: ^8.21.0
       zod: ^3.25 || ^4.0
     peerDependenciesMeta:
@@ -5438,6 +5451,10 @@ packages:
 
   qs@6.16.0:
     resolution: {integrity: sha512-h6fhOIaRrID2CbEY2fqs+7t+UXZo+MLAnU5gRIq85uFtdiUPCdsApMlHhXogKVM4HM2DVbIjGNTTYH2OcmP1vA==}
+    engines: {node: '>=0.6'}
+
+  qs@6.16.1:
+    resolution: {integrity: sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==}
     engines: {node: '>=0.6'}
 
   quick-lru@5.1.1:
@@ -6064,16 +6081,12 @@ packages:
     resolution: {integrity: sha512-EvRlUt/QqAEvXdQeRMYUfwOQsfzpDztykrG2owGEE/rBOBoYv9uF39ZzsNDh4lTFHhTr2XOZjKkYgueD12ZmGA==}
     engines: {node: '>=18.17'}
 
-  undici@7.30.0:
-    resolution: {integrity: sha512-dkrQXeHSaoamnItlYbmzG0wFYrM0ZwDxCIg0A7aKjTyyhh9svRzCNFEzV+Vm05/yehjCzjDZ31KXfGEjYSztDQ==}
-    engines: {node: '>=20.18.1'}
-
   undici@7.30.1:
     resolution: {integrity: sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==}
     engines: {node: '>=20.18.1'}
 
-  undici@8.10.2:
-    resolution: {integrity: sha512-/y4/bH9YNU5hi9NIrpOuvGXFcxrj3CMrV+/AYpowAYTpHn8gX/XPFjNy766FPoYY0miQhdW977JFWKGNhBdwyQ==}
+  undici@8.12.2:
+    resolution: {integrity: sha512-XtuDWVdqTLr3NAxm2ly9/hU6kUsJOgGh1RASzMBbsw6aWCOaQzHdW+QQDfdERjfJ2V5vL5pRPa4RetO9UfivDg==}
     engines: {node: '>=22.19.0'}
 
   unicode-canonical-property-names-ecmascript@2.0.1:
@@ -6411,11 +6424,8 @@ packages:
     peerDependencies:
       zod: ^3.25.28 || ^4
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
-
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+  zod@4.6.6:
+    resolution: {integrity: sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==}
 
   zustand@4.5.7:
     resolution: {integrity: sha512-CHOUy7mu3lbD6o6LJLfllpjkzhHXSBlX8B9+qPddUsIfeF5S/UZ5q0kmCsnRqT1UHFQZchNFDDzMbQsuesHWlw==}
@@ -6446,29 +6456,29 @@ snapshots:
     optionalDependencies:
       typescript: 7.0.2
 
-  '@agentclientprotocol/sdk@1.9.0(zod@4.4.3)':
+  '@agentclientprotocol/sdk@1.9.0(zod@4.6.6)':
     dependencies:
-      zod: 4.4.3
+      zod: 4.6.6
 
   '@antfu/install-pkg@2.1.0':
     dependencies:
       package-manager-detector: 1.9.0
       tinyexec: 1.3.1
 
-  '@anthropic-ai/sdk@0.129.0(zod@4.4.3)':
+  '@anthropic-ai/sdk@0.129.0(zod@4.6.6)':
     dependencies:
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.1.1
     optionalDependencies:
-      zod: 4.4.3
+      zod: 4.6.6
 
-  '@anthropic-ai/sdk@0.135.0(zod@4.4.3)':
+  '@anthropic-ai/sdk@0.135.0(zod@4.6.6)':
     dependencies:
       '@opentelemetry/api': 1.9.1
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.1.1
     optionalDependencies:
-      zod: 4.4.3
+      zod: 4.6.6
 
   '@aws-sdk/client-bedrock-runtime@3.1127.0':
     dependencies:
@@ -7129,9 +7139,9 @@ snapshots:
     dependencies:
       esbuild: 0.28.2
 
-  '@earendil-works/pi-agent-core@1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)(zod@4.4.3)':
+  '@earendil-works/pi-agent-core@1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.6))(@smithy/signature-v4@5.7.4)(undici@8.12.2)(ws@8.22.0)(zod@4.6.6)':
     dependencies:
-      '@earendil-works/pi-ai': 1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)(zod@4.4.3)
+      '@earendil-works/pi-ai': 1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.6))(@smithy/signature-v4@5.7.4)(undici@8.12.2)(ws@8.22.0)(zod@4.6.6)
       typebox: 1.3.27
     transitivePeerDependencies:
       - '@aws-sdk/credential-provider-node'
@@ -7146,16 +7156,16 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))(@smithy/signature-v4@5.7.4)(undici@7.30.1)(ws@8.22.0)(zod@4.4.3)':
+  '@earendil-works/pi-ai@1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.6))(@smithy/signature-v4@5.7.4)(undici@7.30.1)(ws@8.22.0)(zod@4.6.6)':
     dependencies:
-      '@anthropic-ai/sdk': 0.129.0(zod@4.4.3)
+      '@anthropic-ai/sdk': 0.129.0(zod@4.6.6)
       '@aws-sdk/client-bedrock-runtime': 3.1127.0
       '@earendil-works/pi-telemetry': 1.1.0
-      '@google/genai': 2.21.0(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))
+      '@google/genai': 2.21.0(@modelcontextprotocol/sdk@1.32.1(zod@4.6.6))
       '@smithy/node-http-handler': 4.12.1
       http-proxy-agent: 9.1.0
       https-proxy-agent: 9.1.0
-      openai: 7.19.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.4)(undici@7.30.1)(ws@8.22.0)(zod@4.4.3)
+      openai: 7.19.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.4)(undici@7.30.1)(ws@8.22.0)(zod@4.6.6)
       partial-json: 0.1.7
       typebox: 1.3.27
     transitivePeerDependencies:
@@ -7171,16 +7181,16 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)(zod@4.4.3)':
+  '@earendil-works/pi-ai@1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.6))(@smithy/signature-v4@5.7.4)(undici@8.12.2)(ws@8.22.0)(zod@4.6.6)':
     dependencies:
-      '@anthropic-ai/sdk': 0.129.0(zod@4.4.3)
+      '@anthropic-ai/sdk': 0.129.0(zod@4.6.6)
       '@aws-sdk/client-bedrock-runtime': 3.1127.0
       '@earendil-works/pi-telemetry': 1.1.0
-      '@google/genai': 2.21.0(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))
+      '@google/genai': 2.21.0(@modelcontextprotocol/sdk@1.32.1(zod@4.6.6))
       '@smithy/node-http-handler': 4.12.1
       http-proxy-agent: 9.1.0
       https-proxy-agent: 9.1.0
-      openai: 7.19.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)(zod@4.4.3)
+      openai: 7.19.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.4)(undici@8.12.2)(ws@8.22.0)(zod@4.6.6)
       partial-json: 0.1.7
       typebox: 1.3.27
     transitivePeerDependencies:
@@ -7200,11 +7210,11 @@ snapshots:
     dependencies:
       quickjs-wasi: 3.6.2
 
-  '@earendil-works/pi-coding-agent@1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))(@smithy/signature-v4@5.7.4)(ws@8.22.0)(zod@4.4.3)':
+  '@earendil-works/pi-coding-agent@1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.6))(@smithy/signature-v4@5.7.4)(ws@8.22.0)(zod@4.6.6)':
     dependencies:
       '@earendil-works/chord': 1.1.0
-      '@earendil-works/pi-agent-core': 1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)(zod@4.4.3)
-      '@earendil-works/pi-ai': 1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)(zod@4.4.3)
+      '@earendil-works/pi-agent-core': 1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.6))(@smithy/signature-v4@5.7.4)(undici@8.12.2)(ws@8.22.0)(zod@4.6.6)
+      '@earendil-works/pi-ai': 1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.6))(@smithy/signature-v4@5.7.4)(undici@8.12.2)(ws@8.22.0)(zod@4.6.6)
       '@earendil-works/pi-codemode': 1.1.0
       '@earendil-works/pi-mcp': 1.1.0
       '@earendil-works/pi-tui': 1.1.0
@@ -7223,7 +7233,7 @@ snapshots:
       quickjs-wasi: 3.6.2
       semver: 7.8.5
       typebox: 1.3.27
-      undici: 8.10.2
+      undici: 8.12.2
       yaml: 2.9.0
     transitivePeerDependencies:
       - '@aws-sdk/credential-provider-node'
@@ -7290,7 +7300,7 @@ snapshots:
       semver: 7.8.5
       sumchecker: 3.0.1
     optionalDependencies:
-      undici: 7.30.0
+      undici: 7.30.1
     transitivePeerDependencies:
       - supports-color
 
@@ -7434,7 +7444,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@expo/cli@58.1.13(@expo/dom-webview@58.0.2)(expo-constants@58.0.12(expo@58.0.16)(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(typescript@7.0.2))(expo-font@58.0.9(expo@58.0.16)(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0))(expo@58.0.16)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)(typescript@7.0.2)':
+  '@expo/cli@58.1.13(patch_hash=12f30ea7444cd7bac70249452357c3b0fc1bad94ed2841996fb82c508a7b139d)(@expo/dom-webview@58.0.2)(expo-constants@58.0.12(expo@58.0.16)(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(typescript@7.0.2))(expo-font@58.0.9(expo@58.0.16)(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0))(expo@58.0.16)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)(typescript@7.0.2)':
     dependencies:
       2g: 1.0.1(typescript@7.0.2)
       '@expo/code-signing-certificates': 0.0.7
@@ -7499,7 +7509,7 @@ snapshots:
       toqr: 0.1.1
       wrap-ansi: 7.0.0
       ws: 8.22.0
-      zod: 3.25.76
+      zod: 4.6.6
     optionalDependencies:
       react-native: 0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0)
     transitivePeerDependencies:
@@ -7836,22 +7846,22 @@ snapshots:
 
   '@fontsource-variable/inter@5.3.0': {}
 
-  '@google/genai@2.21.0(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))':
+  '@google/genai@2.21.0(@modelcontextprotocol/sdk@1.32.1(zod@4.6.6))':
     dependencies:
       google-auth-library: 10.9.1
       p-retry: 4.6.2
       protobufjs: 7.6.5
       ws: 8.22.0
     optionalDependencies:
-      '@modelcontextprotocol/sdk': 1.32.1(zod@4.4.3)
+      '@modelcontextprotocol/sdk': 1.32.1(zod@4.6.6)
     transitivePeerDependencies:
       - bufferutil
       - supports-color
       - utf-8-validate
 
-  '@hono/node-server@2.1.3(hono@4.13.7)':
+  '@hono/node-server@2.1.3(hono@4.13.11)':
     dependencies:
-      hono: 4.13.7
+      hono: 4.13.11
 
   '@iconify/types@2.0.0': {}
 
@@ -7921,9 +7931,9 @@ snapshots:
     dependencies:
       '@chevrotain/types': 11.1.2
 
-  '@modelcontextprotocol/sdk@1.32.1(zod@4.4.3)':
+  '@modelcontextprotocol/sdk@1.32.1(zod@4.6.6)':
     dependencies:
-      '@hono/node-server': 2.1.3(hono@4.13.7)
+      '@hono/node-server': 2.1.3(hono@4.13.11)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -7933,13 +7943,13 @@ snapshots:
       eventsource-parser: 3.1.1
       express: 5.2.1
       express-rate-limit: 8.7.1(express@5.2.1)
-      hono: 4.13.7
+      hono: 4.13.11
       jose: 6.2.12
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 4.4.3
-      zod-to-json-schema: 3.25.2(zod@4.4.3)
+      zod: 4.6.6
+      zod-to-json-schema: 3.25.2(zod@4.6.6)
     transitivePeerDependencies:
       - supports-color
 
@@ -9209,7 +9219,7 @@ snapshots:
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 3.1.8
+      fast-uri: 3.1.9
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -9427,7 +9437,7 @@ snapshots:
 
   bmp-js@0.1.0: {}
 
-  body-parser@2.3.0:
+  body-parser@2.4.0:
     dependencies:
       bytes: 3.1.2
       content-type: 2.1.0
@@ -9435,7 +9445,7 @@ snapshots:
       http-errors: 2.0.1
       iconv-lite: 0.7.3
       on-finished: 2.4.1
-      qs: 6.16.0
+      qs: 6.16.1
       raw-body: 3.0.2
       type-is: 2.1.0
     transitivePeerDependencies:
@@ -10017,7 +10027,7 @@ snapshots:
       xml: 1.0.1
       xml-js: 1.6.11
 
-  dompurify@3.4.16:
+  dompurify@3.4.17:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
 
@@ -10104,7 +10114,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron@44.8.0:
+  electron@44.9.1:
     dependencies:
       '@electron-internal/extract-zip': 1.0.5
       '@electron/get': 5.1.0
@@ -10344,7 +10354,7 @@ snapshots:
   expo@58.0.16(@babel/core@7.29.7)(@expo/dom-webview@58.0.2)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)(typescript@7.0.2):
     dependencies:
       '@babel/runtime': 7.29.10
-      '@expo/cli': 58.1.13(@expo/dom-webview@58.0.2)(expo-constants@58.0.12(expo@58.0.16)(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(typescript@7.0.2))(expo-font@58.0.9(expo@58.0.16)(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0))(expo@58.0.16)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)(typescript@7.0.2)
+      '@expo/cli': 58.1.13(patch_hash=12f30ea7444cd7bac70249452357c3b0fc1bad94ed2841996fb82c508a7b139d)(@expo/dom-webview@58.0.2)(expo-constants@58.0.12(expo@58.0.16)(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(typescript@7.0.2))(expo-font@58.0.9(expo@58.0.16)(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0))(expo@58.0.16)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)(typescript@7.0.2)
       '@expo/config': 58.0.6(typescript@7.0.2)
       '@expo/config-plugins': 58.0.9(typescript@7.0.2)
       '@expo/devtools': 58.0.2(expo@58.0.16)(react-native@0.88.0(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)
@@ -10389,14 +10399,14 @@ snapshots:
     dependencies:
       debug: 4.4.3
       express: 5.2.1
-      ip-address: 10.7.1
+      ip-address: 10.7.4
     transitivePeerDependencies:
       - supports-color
 
   express@5.2.1:
     dependencies:
       accepts: 2.0.0
-      body-parser: 2.3.0
+      body-parser: 2.4.0
       content-disposition: 1.1.0
       content-type: 1.0.5
       cookie: 0.7.2
@@ -10432,7 +10442,7 @@ snapshots:
 
   fast-sha256@1.3.0: {}
 
-  fast-uri@3.1.8: {}
+  fast-uri@3.1.9: {}
 
   fastdom@1.0.12:
     dependencies:
@@ -10751,7 +10761,7 @@ snapshots:
 
   highlight.js@10.7.3: {}
 
-  hono@4.13.7: {}
+  hono@4.13.11: {}
 
   hosted-git-info@4.1.0:
     dependencies:
@@ -10853,7 +10863,7 @@ snapshots:
     dependencies:
       loose-envify: 1.4.0
 
-  ip-address@10.7.1: {}
+  ip-address@10.7.4: {}
 
   ipaddr.js@1.9.1: {}
 
@@ -11302,7 +11312,7 @@ snapshots:
       d3-sankey: 0.12.3
       dagre-d3-es: 7.0.14
       dayjs: 1.11.23
-      dompurify: 3.4.16
+      dompurify: 3.4.17
       es-toolkit: 1.52.0
       fastdom: 1.0.12
       katex: 0.19.0
@@ -11881,21 +11891,21 @@ snapshots:
       is-docker: 2.2.1
       is-wsl: 2.2.0
 
-  openai@7.19.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.4)(undici@7.30.1)(ws@8.22.0)(zod@4.4.3):
+  openai@7.19.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.4)(undici@7.30.1)(ws@8.22.0)(zod@4.6.6):
     optionalDependencies:
       '@aws-sdk/credential-provider-node': 3.972.84
       '@smithy/signature-v4': 5.7.4
       undici: 7.30.1
       ws: 8.22.0
-      zod: 4.4.3
+      zod: 4.6.6
 
-  openai@7.19.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)(zod@4.4.3):
+  openai@7.19.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.4)(undici@8.12.2)(ws@8.22.0)(zod@4.6.6):
     optionalDependencies:
       '@aws-sdk/credential-provider-node': 3.972.84
       '@smithy/signature-v4': 5.7.4
-      undici: 8.10.2
+      undici: 8.12.2
       ws: 8.22.0
-      zod: 4.4.3
+      zod: 4.6.6
 
   opencollective-postinstall@2.0.3: {}
 
@@ -12118,6 +12128,11 @@ snapshots:
       yargs: 15.4.1
 
   qs@6.16.0:
+    dependencies:
+      es-define-property: 1.0.1
+      side-channel: 1.1.1
+
+  qs@6.16.1:
     dependencies:
       es-define-property: 1.0.1
       side-channel: 1.1.1
@@ -12846,12 +12861,9 @@ snapshots:
 
   undici@6.29.1: {}
 
-  undici@7.30.0:
-    optional: true
-
   undici@7.30.1: {}
 
-  undici@8.10.2: {}
+  undici@8.12.2: {}
 
   unicode-canonical-property-names-ecmascript@2.0.1: {}
 
@@ -13129,13 +13141,11 @@ snapshots:
 
   zlibjs@0.3.1: {}
 
-  zod-to-json-schema@3.25.2(zod@4.4.3):
+  zod-to-json-schema@3.25.2(zod@4.6.6):
     dependencies:
-      zod: 4.4.3
+      zod: 4.6.6
 
-  zod@3.25.76: {}
-
-  zod@4.4.3: {}
+  zod@4.6.6: {}
 
   zustand@4.5.7(@types/react@19.3.0)(react@19.3.0):
     dependencies:

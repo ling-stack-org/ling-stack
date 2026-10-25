@@ -17,6 +17,7 @@
     "@earendil-works/pi-ai": "1.1.0",
     "@earendil-works/pi-coding-agent": "1.1.0",
     "@ling-stack/plugin-sdk": "workspace:*",
-    "undici": "7.30.1"
+    "undici": "7.30.1",
+    "zod": "4.6.6"
   }
 }
