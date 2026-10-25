@@ -561,6 +561,81 @@ test("restart finalizes a manually denied suspended approval exactly once withou
   }
 });
 
+// Regression: P5 — terminal denial recovery must not manufacture recent activity.
+// Found by /qa on 2026-10-26
+// Report: output/e6-20260928/p5-denial-recency-repair-20261026/charter.md
+for (const projection of ["settled", "stale", "later-title", "later-goal"]) {
+  test(`terminal denial recovery preserves recency and reconciliation: ${projection}`, async t => {
+    const fixture = await createResumeFixture(`denial-recency-${projection}`,
+      "printf unsafe > must-not-run.txt", false, true, true, "pending");
+    t.after(() => fixture.close());
+    const terminalAt = "2026-10-26T00:00:00.000Z";
+    t.mock.timers.enable({ apis: ["Date"], now: Date.parse(terminalAt) });
+    fixture.store.updateWorkUnitAttemptStatus({
+      workUnitId: fixture.priorAttempt.workUnitId, attemptId: fixture.priorAttempt.id,
+      runtimeInstanceId: fixture.priorAttempt.runtimeInstanceId, fencingToken: fixture.priorAttempt.fencingToken,
+      status: "lost", now: terminalAt, endedAt: terminalAt, errorCode: "runtime_suspend",
+      errorMessage: "daemon restart before human decision",
+    });
+    const approval = fixture.store.denyApprovalRequest(fixture.approval.id,
+      { reason: "user rejected the command", resolvedBy: "local-user" }, terminalAt);
+    assert.equal(approval.status, "denied");
+    const reconciled = [];
+    const coordinator = new ApprovalResumeCoordinator({
+      activeRuns: new ActiveRunRegistry(), runnerRegistry: fixture.runnerRegistry,
+      runtimeSupervisor: fixture.runtimeSupervisor,
+      afterRunTerminal: run => { reconciled.push(run.id); },
+    });
+    coordinator.registerStore(fixture.store);
+    const run = fixture.store.getRun(fixture.run.id);
+    assert.equal(run.status, "failed");
+    assert.equal(run.endedAt, terminalAt);
+    const threadId = run.threadId;
+    assert.equal(fixture.store.getLingThread(threadId).status, "failed");
+    if (projection === "stale") {
+      fixture.store.updateLingThread(threadId, { status: "waiting_for_approval", activeRunId: run.id,
+        lastRunId: null }, "2026-08-16T02:00:00.000Z");
+    } else if (projection === "later-title") {
+      fixture.store.updateLingThread(threadId, { title: "User renamed this conversation" },
+        "2026-10-26T00:10:00.000Z");
+    }
+    const goal = projection === "later-goal" ? fixture.store.createLingThreadGoal({ threadId,
+      objective: "A new goal after the denied Run ended" }, "2026-10-26T00:10:00.000Z") : undefined;
+    const before = fixture.store.getLingThread(threadId);
+    const newer = fixture.store.createLingThread({ kind: "conversation", teammateId: "ling_agent",
+      title: "A genuinely newer conversation", objective: "Keep genuine recency order" }, "2026-10-26T00:20:00.000Z");
+    const events = fixture.store.listEvents(run.id, { limit: 1000 });
+    const checkpoint = fixture.store.getApprovalCheckpoint(fixture.checkpoint.id);
+    const attempts = fixture.store.listWorkUnitAttempts(fixture.workUnit.id);
+    t.mock.timers.tick(60 * 60 * 1000);
+    coordinator.registerStore(fixture.store);
+    const after = fixture.store.getLingThread(threadId);
+    if (goal) {
+      const recoveredGoal = fixture.store.getLingThreadGoal(threadId);
+      assert.equal(recoveredGoal.updatedAt, new Date().toISOString(), "goal maintenance keeps the current recovery clock");
+      assert.ok(recoveredGoal.updatedAt >= goal.createdAt, "goal time must never precede its creation");
+    }
+    assert.equal(after.status, "failed", "stale status is repaired, not skipped");
+    assert.equal(after.activeRunId, undefined);
+    assert.equal(after.lastRunId, run.id);
+    const expectedActivityAt = projection === "later-title" ? before.updatedAt : terminalAt;
+    assert.equal(after.updatedAt, expectedActivityAt, "recovery is not new conversation activity");
+    assert.equal(after.metadata.lastActivityAt, expectedActivityAt);
+    assert.equal(fixture.store.listLingThreads({ limit: 10 })[0].id, newer.id);
+    if (projection !== "stale") assert.deepEqual(after, before);
+    t.mock.timers.tick(60 * 60 * 1000);
+    coordinator.registerStore(fixture.store);
+    assert.deepEqual(fixture.store.getLingThread(threadId), after, "repeated recovery stays stable");
+    assert.deepEqual(reconciled, [run.id, run.id, run.id], "terminal reconciliation is never skipped");
+    assert.deepEqual(fixture.store.getRun(run.id), run);
+    assert.deepEqual(fixture.store.listEvents(run.id, { limit: 1000 }), events);
+    assert.deepEqual(fixture.store.getApprovalCheckpoint(checkpoint.id), checkpoint);
+    assert.deepEqual(fixture.store.listWorkUnitAttempts(fixture.workUnit.id), attempts);
+    assert.equal(fixture.runnerCalls.length, 0);
+    await assert.rejects(readFile(resolve(fixture.cwd, "must-not-run.txt")), /ENOENT/);
+  });
+}
+
 test("restart recovery scans denied checkpoints past the first 500 with tied timestamps", () => {
   const checkpoints = Array.from({ length: 501 }, (_, index) => ({
     id: `checkpoint_${String(index).padStart(4, "0")}`,

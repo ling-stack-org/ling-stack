@@ -202,12 +202,14 @@ export function syncLingThreadForRunEvent(
   }
 }
 
-export function syncLingThreadForTerminalRun(store: RunStore, runId: string, now: string): LingThread | undefined {
+export function syncLingThreadForTerminalRun(
+  store: RunStore, runId: string, now: string, threadActivityAt = now,
+): LingThread | undefined {
   const run = store.getRun(runId);
   if (!run || !isTerminalRunStatus(run.status)) {
     return undefined;
   }
-  return updateLingThreadForTerminalRunStatus(store, run, run.status, now);
+  return updateLingThreadForTerminalRunStatus(store, run, run.status, now, threadActivityAt);
 }
 
 export function updateLingThreadForTerminalRunStatus(
@@ -215,6 +217,7 @@ export function updateLingThreadForTerminalRunStatus(
   run: RunSession,
   status: Extract<RunStatus, "succeeded" | "failed" | "cancelled">,
   now: string,
+  threadActivityAt = now,
 ): LingThread | undefined {
   if (!run.threadId) {
     return undefined;
@@ -230,7 +233,8 @@ export function updateLingThreadForTerminalRunStatus(
       activeRunId: thread.activeRunId === run.id ? null : thread.activeRunId,
       lastRunId: run.id,
     },
-    now,
+    // Recovery's historical activity clock must not roll back Goal/narration maintenance.
+    threadActivityAt,
   );
   syncLingThreadGoalForTerminalRun(store, run, now);
   publishNormalNarrationAfterRun(store, run.id, now);

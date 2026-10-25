@@ -118,8 +118,14 @@ export class ApprovalResumeCoordinator {
     }
     if (run.status === "failed" && workUnit.status === "failed") {
       this.publishRecoveredApprovalDecision(input.store, input.approval);
-      syncLingThreadForTerminalRun(input.store, run.id, new Date().toISOString());
-      void this.reconcileTerminalRun(input.store, run.id, new Date().toISOString()).catch(() => undefined);
+      // Recovery repairs a projection; it is not new conversation activity.
+      // Retain later user edits, and still repair a stale terminal projection.
+      const terminalAt = run.endedAt ?? run.updatedAt;
+      const thread = run.threadId ? input.store.getLingThread(run.threadId) : undefined;
+      const activityAt = thread && thread.updatedAt > terminalAt ? thread.updatedAt : terminalAt;
+      const now = new Date().toISOString();
+      syncLingThreadForTerminalRun(input.store, run.id, now, activityAt);
+      void this.reconcileTerminalRun(input.store, run.id, now).catch(() => undefined);
       return { status: "finalized", runId: run.id };
     }
     if (run.status !== "waiting_for_approval"
