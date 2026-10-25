@@ -1696,6 +1696,11 @@ test("daemon blocks channel task runs while the channel root thread is in Plan M
 
 class SuccessfulRunner {
   async runTask(options) {
+    // The paging fixture must admit an ordinary discussion intent. Returning
+    // plain text here exercises the separate malformed-intent blocker contract.
+    const content = options.task.title.startsWith("Channel intent selection in ")
+      ? JSON.stringify({ action: "reply", reason: "Synthetic discussion-only intent." })
+      : "done";
     options.onEvent?.({
       type: "run_start",
       taskId: options.task.id,
@@ -1711,7 +1716,7 @@ class SuccessfulRunner {
     return {
       taskId: options.task.id,
       events: [],
-      messages: [{ role: "assistant", content: "done" }],
+      messages: [{ role: "assistant", content }],
     };
   }
 }
