@@ -31,20 +31,22 @@ test("private tooling retains original builder modules and stock install/upgrade
     assert.equal(after.includes("WinShell::"), false);
     assert.equal(after.includes("SpiderBanner::"), false);
     if (file.endsWith("/extractAppPackage.nsh")) {
-      const [prefix, suffix, extra] = before.replace('  SetOutPath "$PLUGINSDIR\\7z-out"', '  SetOutPath "\\\\?\\$PLUGINSDIR\\7z-out"')
-        .split('    CopyFiles /SILENT "$PLUGINSDIR\\7z-out\\*" $OUTDIR');
-      assert.equal(extra, undefined);
-      assert.ok(after.startsWith(prefix) && after.endsWith(suffix), "only the output path prefix and copy call may change; stock retries remain intact");
+      assert.equal(after.split("!macro extractUsing7za FILE")[0], before.split("!macro extractUsing7za FILE")[0],
+        "compression and architecture/package selection remain unchanged");
       assert.ok(after.includes('"$SYSDIR\\robocopy.exe"'));
       assert.ok(after.includes("/E /COPY:DAT /DCOPY:DAT /R:0 /W:0"));
       assert.equal(after.includes("CopyFiles /SILENT"), false);
+      assert.equal([...after.matchAll(/Nsis7z::Extract/gu)].length, 1, "failed copies cannot use the unchecked direct-extraction fallback");
       continue;
     }
     // Every other original line stays byte-identical: atomic rename/rollback,
     // existing-install discovery, file cleanup, shortcuts and registry lifecycle.
-    const expected = file.endsWith("/installSection.nsh")
+    let expected = file.endsWith("/installSection.nsh")
       ? before.replace(/^\s*SpiderBanner::Show[^\r\n]*$/gmu, "    ; Ling development distribution: keep the stock MUI progress page.")
       : '; Ling shell replacements; original electron-builder MIT terms retained.\n!include "LingShell.nsh"\n' + before.replaceAll("WinShell::SetLnkAUMI", "!insertmacro Ling_SetShortcutAUMI").replaceAll("WinShell::UninstShortcut", "!insertmacro Ling_UnpinShortcut").replaceAll("WinShell::UninstAppUserModelId", "!insertmacro Ling_RemoveAppDestinations");
+    if (file.endsWith("/uninstaller.nsh")) expected = expected.replaceAll('"$INSTDIR$R0\\', '"\\\\?\\$INSTDIR$R0\\')
+      .replaceAll('"$PLUGINSDIR\\old-install', '"\\\\?\\$PLUGINSDIR\\old-install')
+      .replace("RMDir /r $INSTDIR", 'RMDir /r "\\\\?\\$INSTDIR"');
     assert.equal(after, expected);
   }
   assert.ok(readFileSync(join(result.appBuilderLibRoot, "templates/nsis/uninstaller.nsh"), "utf8").includes("Call un.atomicRMDir"));

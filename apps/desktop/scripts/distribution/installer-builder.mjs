@@ -22,8 +22,8 @@ export function patchInstallerTemplate(file, before) {
   } else if (file.endsWith("/extractAppPackage.nsh")) {
     // The original plug-in silently omits deep members without this prefix.
     // NSIS CopyFiles uses SHFileOperation, which drops members beyond MAX_PATH.
-    // Robocopy is an OS tool with long-path support; retain the stock retries,
-    // extraction, directory ownership and install/uninstall lifecycle.
+    // Robocopy is an OS tool with long-path support. Keep the stock retries,
+    // but never fall back to an extractor that ignores copy/extraction errors.
     after = before.replace('  SetOutPath "$PLUGINSDIR\\7z-out"', '  SetOutPath "\\\\?\\$PLUGINSDIR\\7z-out"');
     after = after.replace('    CopyFiles /SILENT "$PLUGINSDIR\\7z-out\\*" $OUTDIR', `    Push $R2
     Push $R3
@@ -40,7 +40,19 @@ export function patchInstallerTemplate(file, before) {
     Pop $R3
     Pop $R2`);
     if (after === before) throw new Error("distribution_installer_copy_site_changed");
+    const fallbackStart = after.indexOf("    # As an absolutely last resort"), fallbackEnd = after.indexOf("  AbortExtract7za:");
+    if (fallbackStart < 0 || fallbackEnd <= fallbackStart) throw new Error("distribution_installer_fallback_site_changed");
+    after = after.slice(0, fallbackStart) + "    Goto AbortExtract7za\n\n" + after.slice(fallbackEnd);
+    after = after.replace("/SD IDRETRY IDCANCEL AbortExtract7za", "/SD IDCANCEL IDRETRY RetryExtract7za")
+      .replace("  AbortExtract7za:\n    Quit", "  AbortExtract7za:\n    SetErrorLevel 2\n    Quit");
   } else {
+    if (file.endsWith("/uninstaller.nsh")) {
+      // Both the installed tree and the rollback tree can exceed MAX_PATH.
+      // Preserve the original traversal/rename/restore algorithm and OS calls.
+      after = after.replaceAll('"$INSTDIR$R0\\', '"\\\\?\\$INSTDIR$R0\\')
+        .replaceAll('"$PLUGINSDIR\\old-install', '"\\\\?\\$PLUGINSDIR\\old-install')
+        .replace("RMDir /r $INSTDIR", 'RMDir /r "\\\\?\\$INSTDIR"');
+    }
     for (const [call, macro] of Object.entries(replacements)) after = after.replaceAll(`WinShell::${call}`, `!insertmacro ${macro}`);
     if (after.includes("WinShell::")) throw new Error("distribution_installer_shell_sites_unconverted");
     after = '; Ling shell replacements; original electron-builder MIT terms retained.\n!include "LingShell.nsh"\n' + after;
@@ -96,7 +108,7 @@ export function prepareDistributionBuilder({ desktopRoot, outputRoot }) {
   const shell = readFileSync(new URL("./LingShell.nsh", import.meta.url));
   writeFileSync(join(appBuilderLibRoot, "templates/nsis/include/LingShell.nsh"), shell);
   const receipt = { schemaVersion: 1, kind: "desktop-installer-template-overlay", builderVersion, changes, shellSha256: hash(shell),
-    compression: "Unchanged stock 7z payload and original extractor", copy: "Extended-length extraction path and system robocopy retain long-path members; stock retries and lifecycle retained", progress: "Unchanged stock progress page; SpiderBanner call sites removed", shell: "MIT LingShell macros using the NSIS System plug-in and the same Windows COM interfaces", sharedToolchainModified: false };
+    compression: "Unchanged stock 7z payload and original extractor", copy: "Extended-length extraction/rollback paths and system robocopy retain long-path members; exhausted copy retries exit with failure", progress: "Unchanged stock progress page; SpiderBanner call sites removed", shell: "MIT LingShell macros using the NSIS System plug-in and the same Windows COM interfaces", sharedToolchainModified: false };
   const receiptPath = join(outputRoot, "installer-template-overlay.json");
   writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + "\n");
   return { electronBuilderRoot: join(modules, "electron-builder"), appBuilderLibRoot, receiptPath, ...receipt };

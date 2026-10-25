@@ -116,18 +116,6 @@ test("the production NSIS overlay installs, upgrades and uninstalls long-path me
   const run = code => execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", code],
     { env, encoding: "utf8", timeout: 120_000, maxBuffer: 1024 * 1024 });
   const deepPath = "resources/gstack/runtime/lib/diagram-render/node_modules/@radix-ui/react-tabs/node_modules/@radix-ui/react-primitive/node_modules/@radix-ui/react-slot/node_modules/@radix-ui/react-compose-refs/ling-upstream-license-provenance.json";
-  const trace = join(root, "rename-failure.txt");
-  const uninstallerTemplate = join(prepared.appBuilderLibRoot, "templates/nsis/uninstaller.nsh");
-  const originalUninstaller = await readFile(uninstallerTemplate, "utf8");
-  await writeFile(uninstallerTemplate, originalUninstaller.replace('      IfErrors 0 +3\n      StrCpy $R3 "$INSTDIR$R0\\$R2"\n      Goto done', `      IfErrors 0 Ling_Test_RenameSucceeded
-      StrCpy $R3 "$INSTDIR$R0\\$R2"
-      Push $R4
-      FileOpen $R4 "${trace}" a
-      FileWrite $R4 "source=$INSTDIR$R0\\$R2$\\r$\\ndestination=$PLUGINSDIR\\old-install$R0\\$R2$\\r$\\n"
-      FileClose $R4
-      Pop $R4
-      Goto done
-    Ling_Test_RenameSucceeded:`));
   try {
     // Build once, with the long member present from the start: a second build
     // could reuse the first payload archive and conceal the failing layer.
@@ -181,7 +169,6 @@ if ($p.ExitCode -ne 0) { throw ('Fixture cleanup exit: ' + $p.ExitCode) }`);
     assert.equal(forcedUninstaller, false, "failed copy must not admit a partial installation");
     completed = true;
   } catch (error) {
-    t.diagnostic(await readFile(trace, "utf8").catch(traceError => traceError.message));
     t.diagnostic(run(`Add-Type -AssemblyName UIAutomationClient;
 Get-CimInstance Win32_Process | Where-Object {
   $_.ExecutablePath -eq $env:LING_FIXTURE_INSTALLER -or ($_.CommandLine -and $_.CommandLine.Contains($env:LING_FIXTURE_ROOT))
