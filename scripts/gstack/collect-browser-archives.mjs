@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { matchesNativeDependency } from "./runtime-dependency-audit.mjs";
 import { managedResourceWrite, resourceCheckpoint } from "./resource-workspace.mjs";
+import { publishStagedDirectory } from "./publish-staged-directory.mjs";
 
 const lockBytes = await readFile(new URL("./upstream-lock.json", import.meta.url));
 const lock = JSON.parse(lockBytes.toString("utf8"));
@@ -19,7 +20,7 @@ const exists = path => lstat(path).then(() => true, error => { if (error.code ==
 const browserNames = ["chromium", "ffmpeg", "chromium-headless-shell"];
 const maximumArchiveBytes = 512 * 1024 * 1024;
 const collectorInputNames = ["collect-browser-archives.mjs", "upstream-lock.json", "runtime-dependency-audit.mjs",
-  "build-native-runtime.mjs", "public-domain-package-review.mjs", "reviewed-public-domain-packages.json"];
+  "build-native-runtime.mjs", "public-domain-package-review.mjs", "reviewed-public-domain-packages.json", "publish-staged-directory.mjs"];
 async function collectorInputs() {
   return Promise.all(collectorInputNames.map(async path => ({ path,
     checksum: checksum(await readFile(new URL(path, import.meta.url))) })));
@@ -73,7 +74,9 @@ export async function verifyBrowserArchiveSource({ resourceStagePath, expectedRe
   for (const file of files) {
     if (paths.has(file.path) || !digest(file.checksum)) throw new Error("gstack_browser_source_inventory_invalid");
     paths.add(file.path);
-    const bytes = await plainBytes(root, file.path, 128 * 1024 * 1024);
+    // A universal macOS Node may contain both CPU slices; package files retain
+    // the smaller bound and the exact Node entry remains inventory-hash bound.
+    const bytes = await plainBytes(root, file.path, (file.path === nodePath ? 256 : 128) * 1024 * 1024);
     if (bytes.length !== file.sizeBytes || checksum(bytes) !== file.checksum) throw new Error(`gstack_browser_source_changed:${file.path}`);
   }
   if (required.some(path => !paths.has(path))) throw new Error("gstack_browser_source_incomplete");
@@ -192,7 +195,6 @@ export async function collectGstackBrowserArchives({ resourceStagePath, outputPa
   const lease = await managedResourceWrite(output, { kind: "browser", additionalBytes: 2 * 1024 ** 3 });
   await mkdir(dirname(output), { recursive: true });
   const temporary = await realpath(await mkdtemp(join(dirname(output), ".gstack-browser-acquisition-")));
-  let reserved = false;
   try {
     const home = join(temporary, "home"), candidate = join(temporary, "candidate");
     await mkdir(home); await mkdir(candidate);
@@ -227,12 +229,10 @@ export async function collectGstackBrowserArchives({ resourceStagePath, outputPa
         "owned-resource-materialization", "real-browser-execution", "installed-client-acceptance"] };
     await writeFile(join(candidate, "browser-archives.json"), `${JSON.stringify(receipt, null, 2)}\n`, { flag: "wx" });
     await resourceCheckpoint(lease.root);
-    await mkdir(output); reserved = true;
-    await rename(candidate, output); reserved = false;
+    await publishStagedDirectory(candidate, output);
     return receipt;
   } finally {
-    try { if (reserved) await rmdir(output); }
-    finally { await rm(temporary, { recursive: true, force: true }); }
+    await rm(temporary, { recursive: true, force: true });
   }
 }
 

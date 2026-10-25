@@ -247,7 +247,7 @@ test("Office package checks: synthetic active reader/signer/extractor, NOT real 
     assert.equal(result.evidenceKind, "build_byte_pins_only");
     assert.deepEqual(f.signatureCalls, [{ command: "/usr/bin/codesign",
       args: ["--verify", "--deep", "--strict", f.appPath], options: {
-        env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }, encoding: "utf8", timeout: 30_000,
+        env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }, encoding: "utf8", timeout: 60_000,
         maxBuffer: 1024 * 1024, windowsHide: true,
       } }]);
   });
@@ -257,6 +257,18 @@ test("Office package checks: synthetic active reader/signer/extractor, NOT real 
     await assert.rejects(f.api.verifyOfficeAfterSign(f.context), error =>
       error.message === "packaged_office_native_signature_verification_failed" && error.cause === failure);
   });
+  for (const kind of ["zip", "dmg"]) for (const timedOut of [true, false]) {
+    await t.test(`${kind} signature ${timedOut ? "timeout" : "rejection"} stays fatal and cleans its extraction`, async t => {
+      const f = await fixture(t), a = f.artifact(kind);
+      const failure = Object.assign(new Error("SYNTHETIC SIGNATURE COMMAND FAILURE"), timedOut
+        ? { code: null, signal: "SIGTERM", killed: true, stderr: "" }
+        : { code: 1, signal: null, killed: false, stderr: "SYNTHETIC SIGNATURE REJECTION" });
+      f.state.signature = (_command, _args, _options, callback) => callback(failure);
+      await assert.rejects(f.api.verifyOfficeFinalArtifact(a.event), error =>
+        error.message === "packaged_office_native_signature_verification_failed" && error.cause === failure);
+      assert.equal(f.state.cleanupCalls, 1);
+    });
+  }
   await t.test("afterSign rechecks the actual ASAR CLI after the signature window", async t => {
     const f = await fixture(t);
     f.state.signature = (_command, _args, _options, callback) => {

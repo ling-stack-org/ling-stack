@@ -93,6 +93,7 @@
     "files": [
       "dist/**/*",
       "package.json",
+      "!dist/distribution{,/**/*}",
       "!dist/office-local{,/**/*}",
       "!dist/.office-local-next-*{,/**/*}",
       "!**/node_modules/@ling-stack/browser-host/dist/native{,/**/*}",

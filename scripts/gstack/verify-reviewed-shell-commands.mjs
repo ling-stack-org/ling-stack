@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { inspectGstackShellCallSites } from "./inspect-shell-call-sites.mjs";
 import { readGstackClosureFileRecord } from "./verify-shared-command-closure.mjs";
 
-export const PINNED_SHELL_COMMAND_REVIEW_CHECKSUM = "sha256:0f2c72aa025ac7b7ebf782d8dc99d709b0b57ee02a3a533f6da4a5802ea7ac2b";
+export const PINNED_SHELL_COMMAND_REVIEW_CHECKSUM = "sha256:00862041dbf5512be574578ac4f8ae89aad67765c4c118f74489beafd0bfe69f";
 const reviewFile = fileURLToPath(new URL("./reviewed-shell-commands.json", import.meta.url));
 const scriptFile = fileURLToPath(import.meta.url);
 const checksum = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;

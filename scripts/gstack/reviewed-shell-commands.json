@@ -3,7 +3,7 @@
   "reviewStatus": "reviewed-command-expression-mappings",
   "releaseEligible": false,
   "upstreamRevision": "47d639abffa882b8cbb641d7d1dedf08ecada9ec",
-  "sourceManifestChecksum": "sha256:2921f0cfd111004b078f33b50b91efb053e5d81a661f9fc9473c9ff0e2dcbf8d",
+  "sourceManifestChecksum": "sha256:25e50f1790d789b85d7c99f808a41726f922029b5f8a92874383c9912fc0a384",
   "callGraphChecksum": "sha256:5dc13f5ff671e44102cb3dab305952bfebb40a3e126113dcdd879aa6d06503df",
   "commandSiteGraphChecksum": "sha256:ea8006d2f66b7574dc1ea27e7b9663dda16f668b10aa2a99daf1d021a7ce913d",
   "entries": [

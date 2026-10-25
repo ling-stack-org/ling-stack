@@ -1,7 +1,40 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { packagedBrowseCommandMatches, packagedBrowseEnvironment } from "./packaged-browse-launch.mjs";
+import { loadPackagedBrowserZipParser, packagedBrowseCommandMatches, packagedBrowseEnvironment } from "./packaged-browse-launch.mjs";
+
+test("the pinned ZIP parser cannot load optional dependencies from NODE_PATH or its parent", async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "ling-parser-closure-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const require = createRequire(new URL("../../apps/desktop/package.json", import.meta.url));
+  const playwright = createRequire(require.resolve("@playwright/test/package.json"));
+  const core = createRequire(playwright.resolve("playwright/package.json"));
+  const original = join(dirname(core.resolve("playwright-core/package.json")), "lib/utilsBundle.js");
+  const bytes = await readFile(original), parser = join(root, "utilsBundle.cjs");
+  const checksum = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+  await writeFile(parser, bytes);
+  for (const modules of [join(root, "injected"), join(root, "node_modules")]) {
+    for (const name of ["bufferutil", "fsevents", "utf-8-validate"]) {
+      await mkdir(join(modules, name), { recursive: true });
+      await writeFile(join(modules, name, "index.js"), 'require("node:fs").writeFileSync(process.env.PARSER_INJECTION_MARKER,"executed");module.exports={};');
+    }
+  }
+  const marker = join(root, "external-code-ran");
+  const script = `import {loadPackagedBrowserZipParser} from ${JSON.stringify(new URL("./packaged-browse-launch.mjs", import.meta.url).href)};
+    const parser=loadPackagedBrowserZipParser(process.argv[1],process.argv[2]);console.log(typeof parser.openPromise);`;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script, parser, checksum], {
+    env: { ...process.env, NODE_PATH: join(root, "injected"), PARSER_INJECTION_MARKER: marker }, encoding: "utf8", timeout: 15000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), "function");
+  await assert.rejects(readFile(marker), { code: "ENOENT" });
+  assert.throws(() => loadPackagedBrowserZipParser(parser, `sha256:${"0".repeat(64)}`), /resource_mismatch/);
+});
 
 test("process ownership recognizes exact Mac/Windows argv with spaces, never extra arguments or JSON escapes", () => {
   for (const server of [
@@ -37,7 +70,8 @@ test("healthy and unhealthy responses must identify the selected admitted compon
   const marker = 'const packagedBrowsePins = "NO_PACKAGED_BROWSE_PINS";';
   assert.equal(source.split(marker).length, 2);
   const code = source.replace(marker, `const packagedBrowsePins = ${JSON.stringify(JSON.stringify({ component }))};`)
-    .replace('"../../packages/core/src/bundled-skill-browser.ts"', JSON.stringify(new URL("../../packages/core/src/bundled-skill-browser.ts", import.meta.url).href));
+    .replace('"../../packages/core/src/bundled-skill-browser.ts"', JSON.stringify(new URL("../../packages/core/src/bundled-skill-browser.ts", import.meta.url).href))
+    .replace('"./browser-acquisition.mjs"', JSON.stringify(new URL("./browser-acquisition.mjs", import.meta.url).href));
   const { packagedBrowseHealth, packagedBrowseAssertExisting } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
   assert.equal(packagedBrowseHealth({ status: "healthy", lingComponent: component }), true);
   assert.equal(packagedBrowseHealth({ status: "unhealthy", lingComponent: component }), false);

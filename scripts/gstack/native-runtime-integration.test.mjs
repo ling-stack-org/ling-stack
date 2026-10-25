@@ -30,6 +30,8 @@ test("real native prerequisites retain input provenance, target binaries and fun
     "build-managed-node-server.mjs", "build-testsavant-component.mjs", "packaged-browse-build.mjs",
     "packaged-browse-launch.mjs", "testsavant-gs-client.mjs", "testsavant-packaged-client.mjs", "testsavant-client.mjs",
     "testsavant-worker.mjs", "testsavant-runtime.mjs", "testsavant-model-pin.json", "testsavant-offline-guard.mjs",
+    "testsavant-model-cache.mjs",
+    "build-windows-cso-resource.mjs",
   ].map((path) => readFile(join(scriptRoot, path)))));
   assert.equal(record.adaptationRevision, `ling-${createHash("sha256").update(inputs).digest("hex")}`);
   assert.equal(checksum(await readFile(join(nativeRoot, "source-manifest.json"))), reviewed.manifestChecksum);
