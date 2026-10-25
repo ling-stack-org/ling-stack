@@ -30,6 +30,15 @@ test("private tooling retains original builder modules and stock install/upgrade
     const after = readFileSync(join(result.appBuilderLibRoot, file), "utf8");
     assert.equal(after.includes("WinShell::"), false);
     assert.equal(after.includes("SpiderBanner::"), false);
+    if (file.endsWith("/extractAppPackage.nsh")) {
+      const [prefix, suffix, extra] = before.split('    CopyFiles /SILENT "$PLUGINSDIR\\7z-out\\*" $OUTDIR');
+      assert.equal(extra, undefined);
+      assert.ok(after.startsWith(prefix) && after.endsWith(suffix), "only the copy call may change; extraction and stock retries remain intact");
+      assert.ok(after.includes('"$SYSDIR\\robocopy.exe"'));
+      assert.ok(after.includes("/E /COPY:DAT /DCOPY:DAT /R:0 /W:0"));
+      assert.equal(after.includes("CopyFiles /SILENT"), false);
+      continue;
+    }
     // Every other original line stays byte-identical: atomic rename/rollback,
     // existing-install discovery, file cleanup, shortcuts and registry lifecycle.
     const expected = file.endsWith("/installSection.nsh")
@@ -39,7 +48,7 @@ test("private tooling retains original builder modules and stock install/upgrade
   }
   assert.ok(readFileSync(join(result.appBuilderLibRoot, "templates/nsis/uninstaller.nsh"), "utf8").includes("Call un.atomicRMDir"));
   assert.ok(readFileSync(join(result.appBuilderLibRoot, "templates/nsis/uninstaller.nsh"), "utf8").includes("Call un.restoreFiles"));
-  assert.equal(hash(readFileSync(join(result.appBuilderLibRoot, "templates/nsis/include/extractAppPackage.nsh"))), hash(readFileSync(join(originalLibrary, "templates/nsis/include/extractAppPackage.nsh"))));
+  assert.ok(result.copy.includes("long-path members"));
   assert.equal(result.sharedToolchainModified, false);
   assert.ok(existsSync(result.receiptPath));
   assert.throws(() => prepareDistributionBuilder({ desktopRoot, outputRoot }), /must_be_empty/u);

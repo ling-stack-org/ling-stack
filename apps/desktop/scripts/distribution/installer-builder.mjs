@@ -7,6 +7,7 @@ export const builderVersion = "26.15.3";
 export const originalTemplates = Object.freeze({
   "templates/nsis/installSection.nsh": "74c4dbb4163cdd90ca4850b75d304e916235c882d6af7b5cdad63bffbc977072",
   "templates/nsis/include/installer.nsh": "0e319437dd01dcbf911f3f48f664fde0cefbaef704f1cdb1739f63d563f5d4a0",
+  "templates/nsis/include/extractAppPackage.nsh": "e4174388a0f7a1df0b85a0742aa1ea7a4b2b18f9f29dccd6ef10a66212f68148",
   "templates/nsis/uninstaller.nsh": "9ee2dac4593478083e8aa6f8487287ce9401006ccd50ecc538871d133ea4a42c",
 });
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -18,6 +19,25 @@ export function patchInstallerTemplate(file, before) {
   if (file.endsWith("/installSection.nsh")) {
     if ([...before.matchAll(/SpiderBanner::Show/gu)].length !== 2) throw new Error("distribution_installer_banner_sites_changed");
     after = before.replace(/^\s*SpiderBanner::Show[^\r\n]*$/gmu, "    ; Ling development distribution: keep the stock MUI progress page.");
+  } else if (file.endsWith("/extractAppPackage.nsh")) {
+    // NSIS CopyFiles uses SHFileOperation, which drops members beyond MAX_PATH.
+    // Robocopy is an OS tool with long-path support; retain the stock retries,
+    // extraction, directory ownership and install/uninstall lifecycle.
+    after = before.replace('    CopyFiles /SILENT "$PLUGINSDIR\\7z-out\\*" $OUTDIR', `    Push $R2
+    Push $R3
+    nsExec::ExecToStack '"$SYSDIR\\robocopy.exe" "$PLUGINSDIR\\7z-out" "$OUTDIR" /E /COPY:DAT /DCOPY:DAT /R:0 /W:0 /NFL /NDL /NJH /NJS /NP'
+    Pop $R2
+    Pop $R3
+    ClearErrors
+    \${if} $R2 == "error"
+    \${orIf} $R2 == "timeout"
+      SetErrors
+    \${elseIf} $R2 >= 8
+      SetErrors
+    \${endIf}
+    Pop $R3
+    Pop $R2`);
+    if (after === before) throw new Error("distribution_installer_copy_site_changed");
   } else {
     for (const [call, macro] of Object.entries(replacements)) after = after.replaceAll(`WinShell::${call}`, `!insertmacro ${macro}`);
     if (after.includes("WinShell::")) throw new Error("distribution_installer_shell_sites_unconverted");
@@ -37,7 +57,7 @@ function copyPackage(source, destination) {
   }
 }
 
-/** Preserve every stock install/upgrade/uninstall path in private tooling copies. */
+/** Adapt pinned stock templates in private tooling copies. */
 export function prepareDistributionBuilder({ desktopRoot, outputRoot }) {
   desktopRoot = realpathSync(desktopRoot); outputRoot = resolve(outputRoot);
   if (existsSync(outputRoot) && readdirSync(outputRoot).length) throw new Error("distribution_installer_output_must_be_empty");
@@ -74,7 +94,7 @@ export function prepareDistributionBuilder({ desktopRoot, outputRoot }) {
   const shell = readFileSync(new URL("./LingShell.nsh", import.meta.url));
   writeFileSync(join(appBuilderLibRoot, "templates/nsis/include/LingShell.nsh"), shell);
   const receipt = { schemaVersion: 1, kind: "desktop-installer-template-overlay", builderVersion, changes, shellSha256: hash(shell),
-    compression: "Unchanged stock 7z payload and original extractor", progress: "Unchanged stock progress page; SpiderBanner call sites removed", shell: "MIT LingShell macros using the NSIS System plug-in and the same Windows COM interfaces", sharedToolchainModified: false };
+    compression: "Unchanged stock 7z payload and original extractor", copy: "System robocopy replaces SHFileOperation to retain long-path members; stock retries and lifecycle retained", progress: "Unchanged stock progress page; SpiderBanner call sites removed", shell: "MIT LingShell macros using the NSIS System plug-in and the same Windows COM interfaces", sharedToolchainModified: false };
   const receiptPath = join(outputRoot, "installer-template-overlay.json");
   writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + "\n");
   return { electronBuilderRoot: join(modules, "electron-builder"), appBuilderLibRoot, receiptPath, ...receipt };
