@@ -23,7 +23,7 @@
     "README.md": "458531f792e01734b360c7312652fddbc455fc95e8821bb1cf38dce7b8d0912b"
   },
   "packagingSha256": {
-    "packages/daemon/src/features/runs/workflow-command-cwd.ts": "ce4839c97ec110877c42ee80dfecc8068bdfa7d8ee6ff48627d4646a444eb721",
+    "packages/daemon/src/features/runs/workflow-command-cwd.ts": "1c73d349fa937aaec5e01bb78c9de0bb23f0ad56579bc220c2c852ade3828c2e",
     "packages/daemon/src/runtime/sandbox/restricted-command-directory.ts": "38d8dd069e7f7f2e5630b40c0bf37580e5681c1dcf634ab480d8a98a1ee189a1",
     "packages/core/src/storage/sqlite/work-summary-migration.ts": "1b48d6b16f1c6f243b8ffa385b661081f0fda46d8d94fe1b7e1fb897c22a10d5",
     "packages/core/src/storage/sqlite/work-summary-store.ts": "da2894cbdb6958b342297510bb4f0224addeda424ac3efcdf90eb01f8f6b5b88",
@@ -1147,8 +1147,8 @@
     "packages/daemon/src/features/runs/unified-exec-model-output.ts": "03edd2b23797f9dd18bb4031e0a6d32eca6484c476d5acab34429d5fc2185bc1",
     "packages/daemon/src/features/runs/unified-exec-output.ts": "984cac7a71c86ad28feb41352e27dbae0391f001cfd82cd06b748dbec1a0d4a2",
     "packages/daemon/src/features/runs/unified-exec-process.ts": "ef60d23405522098d8ddecb5b06f9872f26bee06721810f7fde8362f8f4cf0eb",
-    "packages/daemon/src/features/runs/unified-exec-raw-source.ts": "45455bcc6772bd5d0c2f53ab20b950d36f4aab2e31c7f089b607c452b8097e3b",
-    "packages/daemon/src/features/runs/unified-exec-request.ts": "272c266aa464fb2325c8e741025ef69090f7c75220f5768d9751fe69262fcc0d",
+    "packages/daemon/src/features/runs/unified-exec-raw-source.ts": "3787468c8fa169f1706d516996938355b83624f7b08713b06d21ae5d0e589716",
+    "packages/daemon/src/features/runs/unified-exec-request.ts": "1f440ac8be7c866dbcfd76e794337f0d1495a32445953063bcb29e930f861f6e",
     "packages/daemon/src/features/runs/unified-exec.ts": "913375999943717d33fc7c06b87c02ac5f216160ed98a391dffe7cbbb543e04b",
     "packages/daemon/src/features/runs/user-input-answer-dispatch.ts": "5891c9daa5a6091a9ccab30fd3e1158fe2252557f46ba6586f12ab7e3a2cf600",
     "packages/daemon/src/features/runs/user-input-answer-routes.ts": "6a7fcf070e9713fe30af06ae6238139868852956c51be8ed3a10f73715ddcd8b",
@@ -1436,7 +1436,7 @@
     "packages/runner-pi/src/content.ts": "51a175e19218666f96df70bfac471df4a85ac5218e018434ba3cd54cca6c187f",
     "packages/runner-pi/src/events.ts": "981888987705c0f5abb5bcd748a555e38b1f6f51c583f3b487600f41d38179bd",
     "packages/runner-pi/src/extensions/approval.ts": "1705f641bad7952a5d6d57e6f7c673aaae4813150284548996ea8797fb3803c3",
-    "packages/runner-pi/src/extensions/bash.ts": "446c97f7934ab867a511e17dd155bee685819153e0f66025b2b276843e53ad11",
+    "packages/runner-pi/src/extensions/bash.ts": "9bd81e1d66846a91de722f49bfc437a244135ff2b775e1626f71cabfd7115388",
     "packages/runner-pi/src/extensions/file-mutation.ts": "867010737116246123f022e591d3794be63bd640c16a42b590f630c4510ae781",
     "packages/runner-pi/src/extensions/host-capability.ts": "3159fef5c2cd8fccd0f737cd8548a4eac5f089e4cbc0314a2b9f54f0212b892d",
     "packages/runner-pi/src/extensions/mcp-proxy.ts": "56e5c75cc583fe5d484fd585252c2416ba4b1c27ba3cc6f51ef5ffa033648399",
