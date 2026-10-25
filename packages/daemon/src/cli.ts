@@ -8,6 +8,7 @@ import { readPackagedQaHarnessSelection } from "./runtime/packaged-qa-harness-bo
 import { createDaemonSignalShutdown } from "./runtime/signal-shutdown.js";
 import { writeExecutionEngineHostAuthority } from "@ling-stack/core/execution-engine-host-authority";
 import { writeDaemonResourceBootstrap } from "@ling-stack/core/daemon-resource-bootstrap";
+import { createDaemonShutdownReporter } from "@ling-stack/core/daemon-shutdown-observer";
 
 const host = process.env.LING_STACK_HOST ?? "127.0.0.1";
 const port = Number.parseInt(process.env.LING_STACK_PORT ?? "17891", 10);
@@ -21,6 +22,12 @@ const engineAuthorityChannel = process.env.LING_STACK_ENGINE_AUTHORITY_FD;
 delete process.env.LING_STACK_ENGINE_AUTHORITY_FD;
 const resourceBootstrapChannel = process.env.LING_STACK_RESOURCE_BOOTSTRAP_FD;
 delete process.env.LING_STACK_RESOURCE_BOOTSTRAP_FD;
+const shutdownObserverChannel = process.env.LING_STACK_SHUTDOWN_OBSERVER_FD;
+delete process.env.LING_STACK_SHUTDOWN_OBSERVER_FD;
+if (shutdownObserverChannel !== undefined && shutdownObserverChannel !== "5") {
+  throw new Error("daemon_shutdown_observer_invalid");
+}
+const shutdownReporter = shutdownObserverChannel === "5" ? createDaemonShutdownReporter({ fd: 5 }) : undefined;
 if (resourceBootstrapChannel !== undefined
   && (resourceBootstrapChannel !== "4" || process.env.LING_STACK_PACKAGED_DESKTOP !== "1")) {
   throw new Error("daemon_resource_bootstrap_invalid");
@@ -56,12 +63,15 @@ console.log(`Ling Stack daemon listening on http://${daemon.config.host}:${daemo
 // receipt. This is an explicit blocked lifecycle, not evidence of active work.
 let blockedShutdownKeepAlive: ReturnType<typeof setInterval> | undefined;
 const stop = createDaemonSignalShutdown({
+  onDraining: () => { shutdownReporter?.publish("draining"); },
   // A finite embedding observer may time out while real cleanup continues.
   // Signals await that original cleanup instead of permanently caching timeout.
   stop: () => daemon.stop({ waitForOwnedDrain: true }),
   exit: code => { process.exit(code); },
   onBlocked: () => {
     blockedShutdownKeepAlive ??= setInterval(() => undefined, 60_000);
+    // Retention is installed before observer I/O, including a closed Main pipe.
+    try { shutdownReporter?.publish("blocked"); } catch { /* Host still retained. */ }
     console.error("daemon_shutdown_blocked: stop proof unavailable; Host retained, automatic restart withheld");
   },
 });

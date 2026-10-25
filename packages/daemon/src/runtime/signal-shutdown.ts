@@ -3,6 +3,7 @@ export function createDaemonSignalShutdown(input: {
   readonly stop: () => Promise<void>;
   readonly exit: (code: number) => void;
   readonly onBlocked: (error: unknown) => void;
+  readonly onDraining?: () => void;
 }): () => Promise<void> {
   let work: Promise<void> | undefined;
   return () => {
@@ -17,6 +18,9 @@ export function createDaemonSignalShutdown(input: {
       try { input.onBlocked(error); } catch { /* Keep the failed lifecycle retained. */ }
       resolve();
     };
+    // Publish before closing HTTP. Broken observation must never bypass the
+    // original safety/drain operation or convert success into a blocked stop.
+    try { input.onDraining?.(); } catch { /* Private observer unavailable. */ }
     try {
       void input.stop().then(() => { input.exit(0); resolve(); }, blocked);
     } catch (error) { blocked(error); }

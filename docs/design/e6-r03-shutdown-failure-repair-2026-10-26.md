@@ -73,3 +73,47 @@
 
 权威总计划仍是 [剩余目标计划](e6-remaining-work-plan-2026-10-23.md)。
 本文件不授权发布、不启用主 CI、不升级全局 gstack，也不将总 Goal 标为完成。
+
+## 6. Host → Desktop 停止观察契约（后继实现）
+
+停止成功仍只来自原 Host 完整排空后真实正常退出；新通道**不是** effectCoverage、
+stopped receipt、Run 终态或重放授权，不新增表、不改旧历史。
+
+- Main 给其直接拥有的 Daemon 继承私有 FD5，与 FD3 engine authority、FD4 资源准备分开。
+  stdout/stderr、HTTP、模型文本和文件均不能代替此通道。环境变量只接受固定 FD5，
+  CLI 在启动派生执行器前删除该变量，writer 校验 FIFO/socket。
+- 协议仅有 `draining`、`blocked`，固定 schemaVersion/PID/phase 三字段，严格单调最多
+  两条 newline-delimited JSON，总字节有界，不携带命令、路径、密钥或原始错误。
+  `draining` 在原 stop 前发布；最终拒绝才发布 `blocked`。重复 signal 不重复 stop/事件。
+  observer I/O 失败不得跳过原 stop，也不得让被保留 Host crash。
+- Main 从 spawn 时绑定的 child/PID/FD5读取；无效、截断、过大、乱序、身份不符或通道丢失
+  都不能证明停止成功。EOF 不等于成功；需与原 child 的实际 exit 配对，避免正常退出
+  时 pipe EOF 比 exit 先到造成错误重启。被替换 child 的晚事件不得改新状态。
+- 已服务 Host 的 stop/restart 必须保留 child owner，观察超时仅表示停止未确认，不能
+  SIGKILL、释放旧执行资源或启动 successor。启动前失败清理与已服务 Host 分开审查，
+  不把旧 3 秒强杀规则套到有运行/效果的 Host。
+- 退出预检要在销毁 IPC/窗口/Office/Computer Use 之前请求原 Host 排空。仅精确的
+  停止受阻/未确认拒绝退出，其他普通 cleanup 错误保持既有失败退出契约；不能笼统吞错。
+- DesktopRuntime 在 draining/blocked 时保留排空所需 transport；禁止新的 provider 调用。
+  preload 补现有 daemonStatus IPC 的订阅，并由三种会话共享的连接状态栏消费。
+  普通浏览器仍保持 HTTP offline 契约。停止受阻显示静态 Host 状态，不提供会隐式启动
+  successor 的重连；不插入 agentMessage 或伪造任务最终总结。
+
+分步验证：先隔离验证私有协议、signal 单飞和错误路径；再验证 Desktop owner/退出/恢复、
+共享 UI 订阅及相邻正常退出。完成差量独审后才重包做新 nonce 的真实客户端验收。
+这段设计与新增协议源码不代表 Desktop/UI 或 packaged R03 已完成。
+
+### 6.1 本次已完成的 Host slice
+
+- 已实现 Core 私有 FD5 reporter/observer、CLI 环境入口和 signal 的前置 draining 通知。
+  reader 不从 EOF 推断成功，writer 不发送 stopped，原排空/保活门槛不变。
+- 019 原代码两项红回归：缺少前置 draining；修复后 021 五文件组合 33/33，
+  零失败/取消/跳过，actual exit0，完整 stdout/stderr 已读。含真实 FD5 子进程、
+  实际 CLI signal/observer 丢失，只有不相关 server startup 被替换，无真实模型调用。
+- 020 的 32pass/1fail 是新非 pipe 夹具把额外 fd 设为 ignore 后被 Node 重用；
+  已改为显式继承只读普通文件，并断言 fstat.isFile，保留原拒绝断言，021 全通过。
+- Core/Daemon TypeScript 编译和 diff-check 通过。独立只读差量审阅未确认剩余问题，
+  精确源码 SHA 前缀：observer `97586c0f`、CLI `0e7a8389`、signal `30fc8f13`。
+  审阅与 33 项结果仅覆盖本 slice，不覆盖未接线的 Desktop/UI。
+- 下一步仅接 Desktop owner/停止观察/退出预检和共享状态；不能把此 slice 当已修正
+  旧 3 秒强杀、失败仍退出或 GUI 显示。原失败 case 不重发，原 83 项不无故重跑。
