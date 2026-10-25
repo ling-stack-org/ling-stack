@@ -1519,7 +1519,7 @@
     "packages/daemon/src/runtime/runner-acceptance.ts": "d5790797673095ab286b29880f8a58b72526e78f4e832f365cb73c3adc6cf6f5",
     "packages/daemon/src/runtime/sandbox/native-process-launch.ts": "329ee408f790d1e5a19aacc87a914e392813a13f1e544a37804cf30a72894c41",
     "packages/daemon/src/shared/html-text.ts": "7e1618867d99492f1fa3e4e2027215108581cad50ce88e4a6bdf39910703db4b",
-    "apps/desktop/scripts/distribution/installer-builder.mjs": "5a57643811ead96ae8bf2ec27688eeaa85f6bf67075daf99c12fe85ba7dc9b4e",
+    "apps/desktop/scripts/distribution/installer-builder.mjs": "f7c408d5ba05ee997cd8ff323d9b2f74af06d24f8303905ae6c3ba6546284883",
     "apps/desktop/scripts/distribution/LingShell.nsh": "869fce8f300a4d3a752ea5dafec591cb15d9fc6bd996224b97f26e0bf751adf3",
     "scripts/gstack/testsavant-model-cache.mjs": "e4b4dcbbae35c124b851435b23d69d9dca4c155382e2fdb8a952bd1aa352c541",
     "scripts/gstack/testsavant-model-pin.json": "811623586d295af6c9e378e414d31b755ae2247d8216818d9a24a9a33093e05b",
