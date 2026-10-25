@@ -718,9 +718,11 @@ export function isChannelIntentExecutionPlanV1(value: unknown): value is Channel
       const inputPaths: string[] = operation.kind === "file_edit" ? [binding.outputRefs[0]!.path] : [];
       for (const inputId of content.inputOperationIds) {
         const predecessor = byId.get(inputId);
-        if (!predecessor || predecessor.kind !== "file_read"
+        if (!predecessor || (predecessor.kind !== "file_read" && predecessor.kind !== "run_command")
           || predecessor.binding?.ownerParticipantId !== binding.ownerParticipantId
           || !operation.dependsOn.includes(inputId)) return false;
+        // A command contributes its Host result, never its staged read scope.
+        if (predecessor.kind === "run_command") continue;
         const path = predecessor.binding.inputRefs[0]!.path;
         if (!inputPaths.includes(path)) inputPaths.push(path);
       }

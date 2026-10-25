@@ -225,6 +225,10 @@ function actionSucceededForOperation(action: ExecutionAction, operation: Channel
   const evidence = action.commandEvidence;
   return Boolean(evidence
     && evidence.exitCode === 0
+    // Legacy UI projection may infer exit0 from isError=false. Typed operation
+    // completion needs the explicit control flags supplied only by a fully
+    // parsed structured command result, never that display-only inference.
+    && (!operation.binding || (evidence.timedOut === false && evidence.cancelled === false))
     && evidence.timedOut !== true
     && evidence.cancelled !== true
     && !evidence.signal);

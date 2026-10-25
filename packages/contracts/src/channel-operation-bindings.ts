@@ -60,6 +60,8 @@ export type ChannelOperationContentSourceV1 =
   | {
       readonly kind: "generated_objective";
       readonly text: string;
+      /** Same-owner file_read/run_command evidence, also explicitly in dependsOn.
+       * Only file_read inputs contribute file-read authority to the output. */
       readonly inputOperationIds: readonly string[];
       readonly sourceRefs: readonly ChannelOperationSourceV1[];
     };

@@ -205,8 +205,10 @@ export function bindChannelOperationPlan(input: {
             const predecessor = byId.get(id);
             const predecessorOwnerId = predecessor?.owner.kind === "host_default" ? input.defaultOwnerParticipantId
               : predecessor?.owner.participantId;
-            if (!predecessor || predecessor.kind !== "file_read" || predecessorOwnerId !== owner.id
-              || !operation.dependsOn.includes(id)) fail("contentSource.inputOperationIds", "Generated content inputs must name this owner's explicit read dependencies.");
+            if (!predecessor || (predecessor.kind !== "file_read" && predecessor.kind !== "run_command")
+              || predecessorOwnerId !== owner.id || !operation.dependsOn.includes(id)) {
+              fail("contentSource.inputOperationIds", "Generated content inputs must name this owner's explicit read or command dependencies.");
+            }
           }
           contentSource = { kind: "generated_objective", text: content.text, inputOperationIds, sourceRefs: [sourceRef] };
         }
@@ -237,6 +239,10 @@ export function bindChannelOperationPlan(input: {
       if (contentSource?.kind === "generated_objective") {
         for (const id of contentSource.inputOperationIds) {
           const predecessor = byId.get(id)!;
+          // Command results are evidence dependencies, not file-read authority.
+          // Their exact command/cwd and successful completion are checked by
+          // the existing immutable-Run effect gate and operation verifier.
+          if (predecessor.kind === "run_command") continue;
           if (!predecessor.target) fail("contentSource.inputOperationIds", "Generated content input has no file target.");
           const ref = file(predecessor.target);
           if (!inputRefs.some((inputRef) => inputRef.path === ref.path)) inputRefs.push(ref);
