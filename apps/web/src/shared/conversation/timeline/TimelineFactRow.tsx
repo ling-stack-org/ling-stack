@@ -54,7 +54,9 @@ export function TimelineFactRow({
     preserveTouchedStateOnRevision: true,
   });
   const expanded = hasDetail && disclosure.expanded;
-  const status = statusLabel ?? timelineStatusLabel(item.status, t);
+  const status = item.approvalOutcome === "denied" ? t("Denied")
+    : item.approvalOutcome === "expired" ? t("Expired")
+    : statusLabel ?? timelineStatusLabel(item.status, t);
   const visibleStatus = (item.status === "running" && statusLabel === undefined) || (compact && item.status === "succeeded")
     ? undefined : status;
   const visibleMeta = meta !== undefined ? meta : compact ? undefined : item.meta;

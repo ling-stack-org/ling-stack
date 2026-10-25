@@ -79,6 +79,8 @@ export interface ConversationTimelineItemBase {
   readonly itemId?: string;
   readonly actionId?: string;
   readonly approvalId?: string;
+  /** Exact Host rejection outcome, independent of the non-success lifecycle. Never inferred from failed. */
+  readonly approvalOutcome?: "denied" | "expired";
   readonly toolCallId?: string;
   readonly runId?: string;
   readonly attemptId?: string;
