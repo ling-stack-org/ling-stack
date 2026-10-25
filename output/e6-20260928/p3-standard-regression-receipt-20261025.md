@@ -36,6 +36,15 @@ codesign or sandbox checks.
 
 ## Remaining gates
 
+Checkpoint preservation: local commit `93de59fb` retains the raw package and
+regression logs without whitespace normalization. Source whitespace validation
+excludes only the raw package log's tool-generated ANSI/trailing whitespace.
+The pre-push credential finding is the literal rejected-login negative fixture
+from `packages/daemon/test/codex-login.test.mjs:102`, not a real credential;
+the repository allowlist records only that exact sample, without bypassing the
+hook or broadening credential patterns. Test revision numbers and synthetic
+network-rejection cases may still be reported as nonblocking PII-shaped values.
+
 Mac remains locked in the latest built-in Cua response; no alternate driver or
 authentication bypass was attempted. New QA package is real and identity-verified,
 but C01-R3 Engineer success plus QA expiry is not required fan-in or full project
