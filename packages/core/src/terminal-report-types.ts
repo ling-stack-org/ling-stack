@@ -71,7 +71,27 @@ export interface TerminalReportEvidenceOperation {
   readonly runId?: string;
   readonly teammateId?: string;
   readonly changedPaths: readonly string[];
+  /** Bounded Host command facts, not model narration or proof of tree drain. */
+  readonly commandEvidence?: TerminalReportEvidenceCommand;
   readonly sourceRefs: readonly TerminalReportSourceRef[];
+}
+
+export interface TerminalReportEvidenceCommand {
+  readonly command: string;
+  readonly commandTruncated: boolean;
+  readonly cwd?: string;
+  readonly outcome?: "succeeded" | "failed" | "timed_out" | "cancelled" | "unknown";
+  readonly exitCode?: number;
+  readonly signal?: string;
+  readonly timedOut?: boolean;
+  readonly cancelled?: boolean;
+  readonly durationMs?: number;
+  /** Whitespace-preserving, redacted previews sharing one character budget. */
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly outputTruncated: boolean;
+  /** This projection/chunk reports redaction; false does not certify raw input. */
+  readonly outputRedacted: boolean;
 }
 
 export interface TerminalReportEvidenceCheck {

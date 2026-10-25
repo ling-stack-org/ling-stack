@@ -37,6 +37,7 @@ import { verifyWorkflowStepExecutionOperations } from "./workflow-operation-evid
 import { collectTerminalInterruptionRisks, terminalReportFailureSummary } from "./terminal-report-interruption-risks.js";
 import { extractWorkflowStepChangedPaths } from "./workflow-step-packets.js";
 import { collectTerminalReportDelegationEvidence, type TerminalReportDelegationEvidence } from "./terminal-report-delegation-evidence.js";
+import { projectTerminalReportCommandEvidence } from "./terminal-report-command-evidence.js";
 
 export interface TerminalReportEvidenceBudgets {
   readonly steps: number;
@@ -633,6 +634,7 @@ function mapOperation(
     status: operationStatus(action.status),
     runId: action.runId,
     changedPaths,
+    commandEvidence: projectTerminalReportCommandEvidence(action, maxCharacters),
     sourceRefs: uniqueRefs([
       sourceRefFor("operation", action.id, action.title),
       ...(action.runId ? [sourceRefFor("run", action.runId, "Operation run")] : []),
