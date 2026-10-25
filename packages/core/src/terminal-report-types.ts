@@ -335,8 +335,10 @@ export interface ListLingTerminalReportsOptions {
   readonly sourceKind?: TerminalReportSourceKind;
   readonly sourceId?: string;
   readonly status?: TerminalReportRecordStatus;
-  /** Return only the newest committed/fallback revision for each source. */
+  /** Return the newest committed/fallback revision for each source within the selected publication scope. */
   readonly effectiveOnly?: boolean;
+  /** Require a matching committed canonical result Item; does not publish or settle anything. */
+  readonly publishedOnly?: boolean;
   readonly limit?: number;
 }
 

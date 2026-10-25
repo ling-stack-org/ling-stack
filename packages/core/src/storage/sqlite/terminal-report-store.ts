@@ -132,10 +132,14 @@ export class SqliteTerminalReportStore {
       clauses.push("status = ?");
       params.push(options.status);
     }
+    if (options.publishedOnly) {
+      clauses.push("status IN ('committed', 'fallback')");
+      clauses.push(publishedReportPredicate("ling_terminal_reports"));
+    }
     if (options.effectiveOnly) {
-      // A newer draft or failed synthesis must not hide the last user-visible
-      // report. Effective history is the newest committed/fallback revision
-      // for each logical source.
+      // Internal coordination still selects the newest committed evidence.
+      // Display/context readers additionally require a canonical publication,
+      // both here and in the successor test, before applying the result limit.
       clauses.push(`NOT EXISTS (
         SELECT 1
         FROM ling_terminal_reports AS newer
@@ -144,6 +148,7 @@ export class SqliteTerminalReportStore {
           AND newer.source_id = ling_terminal_reports.source_id
           AND newer.generation > ling_terminal_reports.generation
           AND newer.status IN ('committed', 'fallback')
+          ${options.publishedOnly ? `AND ${publishedReportPredicate("newer")}` : ""}
       )`);
       clauses.push("status IN ('committed', 'fallback')");
     }
@@ -322,6 +327,34 @@ export class SqliteTerminalReportStore {
     }
     return report;
   }
+}
+
+/** Fixed internal aliases only; no caller data is interpolated into this SQL. */
+function publishedReportPredicate(alias: "ling_terminal_reports" | "newer"): string {
+  return `EXISTS (
+    SELECT 1 FROM conversation_items AS publication
+    WHERE publication.id = ${alias}.result_item_id
+      AND publication.workspace_id = ${alias}.workspace_id
+      AND publication.channel_id IS ${alias}.channel_id
+      AND (${alias}.thread_id IS NULL OR publication.thread_id = ${alias}.thread_id)
+      AND (${alias}.turn_id IS NULL OR publication.turn_id = ${alias}.turn_id)
+      AND publication.kind = 'terminal_report' AND publication.status = 'committed'
+      AND publication.visibility IN ('channel', 'thread_participants')
+      AND publication.visibility_owner_id IS NULL
+      AND json_extract(publication.payload_json, '$.reportId') = ${alias}.id
+      AND json_extract(publication.payload_json, '$.generation') = ${alias}.generation
+      AND json_extract(publication.payload_json, '$.sourceKind') = ${alias}.source_kind
+      AND json_extract(publication.payload_json, '$.sourceId') = ${alias}.source_id
+      AND json_extract(publication.payload_json, '$.evidenceFingerprint') = ${alias}.evidence_fingerprint
+      AND json_extract(publication.payload_json, '$.outcomeStatus') = ${alias}.outcome_status
+      AND (${alias}.source_message_id IS NULL OR EXISTS (
+        SELECT 1 FROM conversation_items AS source
+        WHERE source.id = ${alias}.source_message_id
+          AND source.workspace_id = publication.workspace_id
+          AND source.channel_id IS publication.channel_id
+          AND source.thread_id = publication.thread_id AND source.turn_id = publication.turn_id
+      ))
+  )`;
 }
 
 function assertValidSnapshot(snapshot: TerminalReportEvidenceSnapshot): void {

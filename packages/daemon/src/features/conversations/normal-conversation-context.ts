@@ -59,7 +59,7 @@ export function collectNormalConversationContextWithinSnapshot(input: CaptureNor
       const report = store.getTerminalReport(item.payload.reportId);
       const effective = store.listTerminalReports({ workspaceId: thread.workspaceId,
         sourceKind: item.payload.sourceKind, sourceId: item.payload.sourceId,
-        effectiveOnly: true, limit: 1 })[0];
+        effectiveOnly: true, publishedOnly: true, limit: 1 })[0];
       if (!report || (report.status !== "committed" && report.status !== "fallback") ||
         effective?.id !== report.id || !report.report || report.report.outcome.status !== item.payload.outcomeStatus ||
         report.resultItemId !== item.id || report.workspaceId !== thread.workspaceId || report.threadId !== thread.id ||
