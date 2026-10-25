@@ -119,12 +119,15 @@ test("the production NSIS overlay installs, upgrades and uninstalls long-path me
   const trace = join(root, "rename-failure.txt");
   const uninstallerTemplate = join(prepared.appBuilderLibRoot, "templates/nsis/uninstaller.nsh");
   const originalUninstaller = await readFile(uninstallerTemplate, "utf8");
-  await writeFile(uninstallerTemplate, originalUninstaller.replace('      StrCpy $R3 "$INSTDIR$R0\\$R2"', `      StrCpy $R3 "$INSTDIR$R0\\$R2"
+  await writeFile(uninstallerTemplate, originalUninstaller.replace('      IfErrors 0 +3\n      StrCpy $R3 "$INSTDIR$R0\\$R2"\n      Goto done', `      IfErrors 0 Ling_Test_RenameSucceeded
+      StrCpy $R3 "$INSTDIR$R0\\$R2"
       Push $R4
       FileOpen $R4 "${trace}" a
       FileWrite $R4 "source=$INSTDIR$R0\\$R2$\\r$\\ndestination=$PLUGINSDIR\\old-install$R0\\$R2$\\r$\\n"
       FileClose $R4
-      Pop $R4`));
+      Pop $R4
+      Goto done
+    Ling_Test_RenameSucceeded:`));
   try {
     // Build once, with the long member present from the start: a second build
     // could reuse the first payload archive and conceal the failing layer.
