@@ -63,6 +63,7 @@ if ($p.ExitCode -ne 0) { throw ('Uninstaller failed: ' + $p.ExitCode) }`);
         throw new Error("Installed or upgraded payload differs from the verified complete application");
       }
       const registration = inspect();
+      console.log("Windows installer registration: " + JSON.stringify(registration));
       if (registration.entries.length !== 1 || registration.entries[0].location !== installPath
         || registration.entries[0].version !== candidate.version || registration.installKeys.length !== 1
         || registration.shortcuts.length !== 2 || registration.shortcuts.some(shortcut => shortcut.appId !== "com.lingstack.desktop")) {

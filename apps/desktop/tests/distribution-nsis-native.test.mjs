@@ -158,6 +158,27 @@ if ($p.ExitCode -ne 0) { throw ('Fixture cleanup exit: ' + $p.ExitCode) }`);
       t.diagnostic(`Small stock installer elapsed milliseconds: ${performance.now() - started}`);
       assert.equal(await readFile(join(installPath, "fixture.txt"), "utf8"), "Stock installer payload\n");
       assert.equal(await readFile(join(installPath, deepPath), "utf8"), "Long path fixture\n");
+      const registration = JSON.parse(run(`$ErrorActionPreference = 'Stop';
+$entries = @(Get-ChildItem 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall' |
+  Get-ItemProperty | Where-Object { $_.DisplayName -eq 'Ling Stack' });
+$installKeys = @(Get-ChildItem 'HKCU:\\Software' | Get-ItemProperty -ErrorAction SilentlyContinue |
+  Where-Object { $_.InstallLocation -eq $env:LING_FIXTURE_INSTALL_PATH });
+$shell = New-Object -ComObject Shell.Application;
+$shortcuts = @(@([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs')) |
+  ForEach-Object { Join-Path $_ 'Ling Stack.lnk' } | Where-Object { Test-Path -LiteralPath $_ } |
+  ForEach-Object {
+    $folder = $shell.NameSpace([IO.Path]::GetDirectoryName($_));
+    $item = $folder.ParseName([IO.Path]::GetFileName($_));
+    @{ path = $_; appId = $item.ExtendedProperty('System.AppUserModel.ID') }
+  });
+ConvertTo-Json -Compress -Depth 4 @{ entries = @($entries | ForEach-Object {
+  @{ location = $_.InstallLocation; version = $_.DisplayVersion }
+}); installKeyCount = $installKeys.Count; shortcuts = $shortcuts }`));
+      t.diagnostic("Native fixture registration: " + JSON.stringify(registration));
+      assert.deepEqual(registration.entries, [{ location: installPath, version: metadata.version }]);
+      assert.equal(registration.installKeyCount, 1);
+      assert.equal(registration.shortcuts.length, 2);
+      assert.ok(registration.shortcuts.every(shortcut => shortcut.appId === metadata.build.appId));
     }
     t.diagnostic(run(`$ErrorActionPreference = 'Stop';
   $p = Start-Process -FilePath (Join-Path $env:LING_FIXTURE_INSTALL_PATH 'Uninstall Ling Stack.exe') -ArgumentList '/S' -PassThru -Wait;
