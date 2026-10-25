@@ -23,7 +23,7 @@ import type {
 } from "@ling-stack/contracts";
 import { channelOperationPlanFingerprintV1, createRequiredParticipantManifestV1 } from "@ling-stack/contracts";
 import { bindChannelOperationPlan, isChannelOperationCandidatePlanV2 } from "./channel-operation-bindings.js";
-import { ChannelOperationBlockerPublicationError, publishChannelOperationBlocker, recoverChannelOperationBlocker,
+import { publishChannelOperationBlocker, recoverChannelOperationBlocker,
   type ChannelOperationBlockedResult } from "./channel-operation-blocker.js";
 import { channelOperationVisibleSources } from "./channel-operation-sources.js";
 import { formatServerCatalogMessage } from "@ling-stack/localization";
@@ -369,16 +369,19 @@ async function maybeSelectModelAssistedIntent(input: ChannelIntentSelectorInput)
   if (!input.config?.channels.intentSelector || !input.runnerRegistry) {
     return undefined;
   }
+  let output: ChannelIntentModelOutput;
   try {
-    const output = await requestModelIntent(input);
-    return applyModelIntentOutput(input, output);
-  } catch (error) {
-    if (error instanceof ChannelOperationBlockerPublicationError) throw error;
-    return createReplyIntentResult(
-      input,
-      `Intent model output was unavailable or invalid; fail-open to an ordinary reply. ${error instanceof Error ? error.message : String(error)}`,
-    );
+    output = await requestModelIntent(input);
+  } catch {
+    // A failed routing/planning request is not a successful ordinary reply.
+    // Keep the diagnostic Host-owned and replayable; never ask a tool-free
+    // reply model to explain a failure it cannot observe.
+    return publishChannelOperationBlocker(input, "channel_intent_selection_failed");
   }
+  // Host application may already have committed a proposal or result item.
+  // Preserve its publication error and recovery lineage, rather than claiming
+  // that model selection failed before any plan was admitted.
+  return applyModelIntentOutput(input, output);
 }
 
 function createReplyIntentResult(
@@ -411,7 +414,10 @@ function applyModelIntentOutput(input: ChannelIntentSelectorInput, output: Chann
   if (output.action === "clarify") {
     const clarification = output.clarification;
     if (!clarification) throw new Error("Intent model clarify output omitted structured clarification.");
-    validateClarificationForCurrentTurn(input, clarification);
+    if (!validateClarificationForCurrentTurn(input, clarification)) {
+      return createReplyIntentResult(input,
+        "Intent model cannot request a local target for an independently answerable content turn.");
+    }
     return createClarifyReply(
       input,
       clarifyReasonFromMissingFields(clarification.missingFields),
@@ -517,7 +523,9 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
   let prompt = renderContextPack(contextPack);
   const runnerResolution = input.runnerRegistry.resolve({ tools: [], allowFallback: true });
   const textDeltas: string[] = [];
+  let requestCount = 0;
   const runIntentTask = async (taskPrompt: string) => {
+    if (requestCount >= 2) throw new Error("Channel intent selection request allowance exhausted.");
     requireChannelNoToolsBudget({ budget: contextPack.budget, contextPackOverBudget: contextPack.overBudget,
       prompt: taskPrompt, systemPrompt: "You are Ling's channel intent selector. Return strict JSON only." });
     const provider = resolveProviderForRun(input.store, {
@@ -534,6 +542,7 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
       thinkingLevel: "low",
       systemPrompt: "You are Ling's channel intent selector. Return strict JSON only.",
     }, input.secretResolver);
+    requestCount += 1;
     return runnerResolution.runner.adapter.runTask({
       cwd: input.store.paths.cwd,
       task: {
@@ -591,10 +600,21 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
     result = await runIntentTask(prompt);
   }
   const text = textDeltas.join("").trim() || extractAssistantText(result.messages) || "";
-  const output = parseModelIntentOutput(text);
+  let output: ChannelIntentModelOutput;
+  try {
+    output = parseModelIntentOutput(text);
+  } catch (error) {
+    if (requestCount >= 2) throw error;
+    // Compaction, format and binding repair share one additional request. No
+    // JSON patching, guessed graph, tool invocation or effect is admitted here.
+    textDeltas.length = 0;
+    const repairedResult = await runIntentTask(`${prompt}\n\nYour previous response was not valid strict JSON or did not match the declared intent schema. Return one complete strict JSON object for the same current user request, with all declared required fields and no Markdown or additional fields. No operation has been admitted or executed. Preserve the source registry, participant ownership and requested permissions; do not invent commands or sources.`);
+    const repairedText = textDeltas.join("").trim() || extractAssistantText(repairedResult.messages) || "";
+    output = parseModelIntentOutput(repairedText);
+  }
   if (output.action !== "execute" && output.action !== "workflow_proposal") return output;
   const initialBinding = bindModelIntentOperations(input, output.execution).binding;
-  if (initialBinding.status !== "clarify") return output;
+  if (initialBinding.status !== "clarify" || requestCount >= 2) return output;
 
   // A valid JSON shape is not a valid source binding. Give both graph-shape and
   // provenance failures one repair attempt; capability blockers never trigger
@@ -2167,11 +2187,9 @@ function missingFieldsForClarifyReason(reasonCode: ClarifyReasonCode): readonly 
 function validateClarificationForCurrentTurn(
   input: ChannelIntentSelectorInput,
   clarification: ChannelIntentClarificationV2,
-): void {
+): boolean {
   validateClarificationShape(clarification);
-  if (clarification.missingFields.includes("target") && !currentTurnMayRequireExecutionTarget(input.sourceMessage.body)) {
-    throw new Error("Intent model cannot request a local target for an independently answerable content turn.");
-  }
+  return !clarification.missingFields.includes("target") || currentTurnMayRequireExecutionTarget(input.sourceMessage.body);
 }
 
 function validateClarificationShape(clarification: ChannelIntentClarificationV2): void {

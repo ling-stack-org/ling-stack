@@ -7886,7 +7886,7 @@ test("model-assisted channel intent no_reply falls through to ordinary Ling repl
   }
 });
 
-test("model-assisted channel intent fallback cannot turn a reply block into a confirmable proposal", async () => {
+test("model-assisted channel intent failure cannot become an ordinary reply or confirmable proposal", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-model-fallback-"));
   const runner = new ScriptedRunner([
     "not json",
@@ -7920,18 +7920,20 @@ test("model-assisted channel intent fallback cannot turn a reply block into a co
 
     assert.equal(created.autoStartedWorkflow, undefined);
     assert.equal(created.aiReply.kind, "ai_reply");
-    assert.ok(["pending", "ready"].includes(created.aiReply.status));
-    await waitForCondition(() => runner.runs.length === 2, "ordinary channel reply after selector parse failure");
-    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
-    assert.equal(listed.messages.find((message) => message.id === created.aiReply.id).body, "普通频道回复。");
+    assert.equal(created.aiReply.status, "blocked");
+    assert.equal(created.aiReply.errorMessage, "channel_intent_selection_failed");
+    assert.equal(runner.runs.length, 2, "initial selection and exactly one format repair");
+    assert.ok(runner.runs.every(run => /channel intent selector/i.test(run.systemPrompt)));
+    assert.doesNotMatch(created.aiReply.body, /普通频道回复|ling_task_proposal/);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 0);
     const allProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(allProposals.proposals.length, 0);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
-    assertSingleReplyIntentDecision(decisions.decisions, created.message.id);
-    assert.equal(decisions.decisions[0].createdBy, "deterministic");
-    assert.match(decisions.decisions[0].reason, /fail-open to an ordinary reply/i);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].status, "failed");
+    assert.equal(decisions.decisions[0].errorCode, "channel_intent_selection_failed");
+    assert.deepEqual(decisions.decisions[0].resultItemIds, [created.aiReply.id]);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

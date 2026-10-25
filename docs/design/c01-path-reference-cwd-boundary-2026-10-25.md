@@ -1,7 +1,41 @@
 # C01 路径引用与命令工作目录边界
 
-状态：源码修复与后继实施切片；不是 packaged GUI 验收或整个 E6 完成记录。
+状态：源码修复及新 packaged GUI 的四项只读回归已通过；完整小项目与整个 E6 尚未完成。
 唯一实施树仍为 `ling-e6-continuation/ling-stack`，不改根 checkout。
+
+## 最新真实 GUI 回归（2026-10-25）
+
+新包 ASAR `ffc306b6660098034c5054fa780f73ed56de96dcafebc8eaebb386ec9451cbc0`，
+UI任务 `E6-C01-CWD-R6-20261025-1453`，Host workflow
+`workflow_9f30e6f6-3113-4ff8-9348-62c51cd6e0aa` 已 succeeded。
+Engineer/QA 两个独立 Run 各自真实读取 constraints 并执行自己的精确 Node 命令；
+Host cwd、staging topology、原始 argv、exit0及输入来源均有实证。每条命令 prepare/settle 各一次。
+原8文件SHA不变；QA终态前父任务仍 running，最终仅一个有效父结果。
+证据位于 `output/e6-20260928/p3-bash-cwd-contract-live-20261025/`：capture010/011、
+`r6-after-qa-approval-host-lineage.json`、`r6-terminal.png`、`r6-terminal-full.txt`。
+
+范围限制：只证明四项只读静态协作和本次 cwd 修复，不证明完整两文件项目、
+动态委派/整树停止或全部恢复通过。后继 R7 真实失败：意图 JSON 解析错误被
+accepted reply fallback 吞掉，未创建 workflow，普通回复错误声称没有工具。
+失败截图、AX、capture012 保留；不能用 R6 的成功覆盖它。
+
+R7 后继修复契约：压缩重试、格式修正、来源绑定修正共用最多两次 selector 调用；
+仍无法解析时发布 Host-owned `channel_intent_selection_failed` blocked 结果，
+不调用普通回复模型、不产生执行计划或额外权限。诊断 item 是半持久化恢复锚点，
+同 source 的重放/重启不重复选择或发布。Host apply/持久化异常必须向上保留，
+不能混入 selector 异常，更不能用诊断掩盖已创建 proposal 的 lineage 缺口。
+合法普通回复及独立可答内容的防误澄清不变。
+验证：新增异常回归14/14；完整澄清、operation bindings、capability blocker三文件47/47；
+channel-workspace公开入口定向1/1；编译及diff-check通过。四份完整回归文件加一个入口
+共62项，无失败/取消/skip；不是channel-workspace全文件、Daemon全套或真实外部模型验证。
+三文件精确字节的独立增量审阅0未闭环finding，证据capture018–022及
+`intent-failure-independent-review-20261025.md`。尚未打新包复验。
+
+R5 要求重述已确认是 current-turn sourceQuote 约束，不是 SQLite 历史丢失；
+后续需以用户明确承接与 canonical 历史来源为依据设计，不能直接取消 source authority。
+R6 审批 pending 提示独立待查；每条真实命令仅执行一次，原失败历史保留。
+
+以下为原设计与实施历史，当前执行顺序以上述检查点为准。
 
 ## 1. 已复现的根因
 

@@ -71,10 +71,12 @@ for (const clarification of [
 ]) {
   test(`malformed clarification remains non-executable: ${JSON.stringify(clarification)}`, async t => {
     const f = await fixture(t, clarification);
-    assert.equal((await selectChannelWorkflowIntent(f.input)).action, "continue");
+    assert.equal((await selectChannelWorkflowIntent(f.input)).action, "blocked");
     const decision = f.store.listChannelIntentDecisions({ sourceItemId: f.input.sourceMessage.id, limit: 10 })[0];
     assert.equal(decision.action, "reply");
-    assert.match(decision.reason, /clarification schema is invalid/);
+    assert.equal(decision.status, "failed");
+    assert.equal(decision.errorCode, "channel_intent_selection_failed");
+    assert.equal(f.calls(), 2, "malformed clarification receives only one format repair");
     assert.deepEqual(f.store.listChannelExecutionProposals({ channelId: f.channel.id, limit: 10 }), []);
   });
 }
