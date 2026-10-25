@@ -34,8 +34,8 @@ export async function smokeWindowsInstaller({ installer, unpacked, candidate }) 
   const temporary = await realpath(await mkdtemp(join(runnerTemp, "ling-installer-smoke-")));
   const owner = await lstat(temporary), installPath = join(temporary, product);
   const env = { ...process.env, LING_INSTALL_SMOKE_PATH: installPath };
-  const powershell = (code, extraEnv = {}) => execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", code],
-    { env: { ...env, ...extraEnv }, timeout: 240_000, encoding: "utf8", maxBuffer: 1024 * 1024 }).trim();
+  const powershell = (code, extraEnv = {}, timeout = 240_000) => execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", code],
+    { env: { ...env, ...extraEnv }, timeout, encoding: "utf8", maxBuffer: 1024 * 1024 }).trim();
   const inspect = () => JSON.parse(powershell(registryProbe));
   const runInstaller = customPath => powershell(`$ErrorActionPreference = 'Stop';
 $installArgs = @('/S'); if ($env:LING_INSTALL_SMOKE_CUSTOM_PATH -eq 'true') { $installArgs += ('/D=' + $env:LING_INSTALL_SMOKE_PATH) }
@@ -52,7 +52,10 @@ if ($p.ExitCode -ne 0) { throw ('Uninstaller failed: ' + $p.ExitCode) }`);
     if (before.entries.length || before.installKeys.length || before.shortcuts.length) throw new Error("Refusing installer smoke over an existing Ling installation or shortcut");
     for (let iteration = 0; iteration < 2; iteration++) {
       installed = true; // A partially failed installation still needs its own cleanup.
+      const started = performance.now();
+      console.log(`Windows installer smoke: ${iteration === 0 ? "custom-path install" : "registered-path upgrade"} started`);
       runInstaller(iteration === 0); // Upgrade must rediscover the registered custom path itself.
+      console.log(`Windows installer smoke: installer exited after ${Math.round(performance.now() - started)} ms; comparing complete payload`);
       const payload = await inventoryApplicationTree(installPath);
       const uninstaller = payload.find(file => file.name === uninstallerName);
       if (!uninstaller || uninstaller.type !== "file" || uninstaller.sizeBytes === 0
@@ -78,6 +81,29 @@ if ($p.ExitCode -ne 0) { throw ('Uninstaller failed: ' + $p.ExitCode) }`);
     await lstat(installPath).then(() => { throw new Error("Uninstaller left its application directory behind"); }, error => { if (error.code !== "ENOENT") throw error; });
     return { status: "passed", environment: "github-hosted-windows-x64", install: "passed", sameVersionUpgrade: "passed",
       uninstall: "passed", installedPayloadFiles: baseline.length, guiAndModelAcceptance: "not_run" };
+  } catch (error) {
+    // Diagnose only this invocation's new directory and its installer process
+    // tree. Preserve the original failure and the unchanged acceptance limits.
+    try {
+      const files = await inventoryApplicationTree(installPath);
+      const names = new Set(files.map(file => file.name));
+      console.error("Windows installer payload diagnostics: " + JSON.stringify({ entries: files.length,
+        sizeBytes: files.reduce((sum, file) => sum + (file.sizeBytes ?? 0), 0),
+        uninstallerPresent: names.has(uninstallerName), missingMembers: baseline.filter(file => !names.has(file.name)).slice(0, 12).map(file => file.name) }));
+    } catch (diagnosticError) { console.error(`Windows installer payload diagnostics failed: ${diagnosticError.message}`); }
+    try {
+      console.error("Windows installer process diagnostics: " + powershell(`$all = @(Get-CimInstance Win32_Process);
+$owned = @($all | Where-Object { $_.ExecutablePath -eq $env:LING_INSTALL_SMOKE_EXE });
+for ($i = 0; $i -lt 8; $i++) {
+  $children = @($all | Where-Object { $_.ParentProcessId -in $owned.ProcessId -and $_.ProcessId -notin $owned.ProcessId });
+  if ($children.Count -eq 0) { break }; $owned += $children
+}
+@($owned | Select-Object -First 20 | ForEach-Object {
+  $p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue;
+  @{ pid = $_.ProcessId; parent = $_.ParentProcessId; command = $_.CommandLine; title = $p.MainWindowTitle; responding = $p.Responding; cpu = $p.CPU }
+}) | ConvertTo-Json -Compress -Depth 3`, { LING_INSTALL_SMOKE_EXE: resolve(installer) }, 30_000));
+    } catch (diagnosticError) { console.error(`Windows installer process diagnostics failed: ${diagnosticError.message}`); }
+    throw error;
   } finally {
     if (installed) {
       // Only invoke the uninstaller in this invocation's new owned directory.
