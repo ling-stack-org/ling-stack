@@ -3,11 +3,11 @@ import type { ProviderModelCatalogManifest, ProviderModelCatalogRecord } from ".
 
 export const providerModelCatalogManifest = {
   "schemaVersion": 1,
-  "version": "models.dev:a8156011576f",
+  "version": "models.dev:e3be9366c06f",
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
   "license": "MIT",
-  "generatedAt": "2026-10-25T07:40:39.089Z",
+  "generatedAt": "2026-10-25T11:47:19.856Z",
   "updatedAt": "2026-10-23"
 } as const satisfies ProviderModelCatalogManifest;
 
@@ -29,7 +29,7 @@ export const providerModelCatalogRecords = [
       "auto",
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 384000,
@@ -51,7 +51,7 @@ export const providerModelCatalogRecords = [
       "off",
       "auto",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 131072,
@@ -76,7 +76,7 @@ export const providerModelCatalogRecords = [
       "auto",
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1048576,
     "maxTokens": 16384,
@@ -1030,7 +1030,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 128000,
@@ -1054,7 +1055,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 128000,
@@ -1116,7 +1118,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 128000,
@@ -1186,7 +1189,7 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 128000,
@@ -1210,7 +1213,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 128000,
@@ -1234,7 +1238,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 128000,
@@ -1258,7 +1263,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 128000,
@@ -1282,7 +1288,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 128000,
@@ -1342,7 +1349,7 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 128000,
@@ -1368,7 +1375,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 128000,
@@ -1392,7 +1400,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 128000,
@@ -1417,7 +1426,7 @@ export const providerModelCatalogRecords = [
       "auto",
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1048576,
     "maxTokens": 393216,
@@ -1442,7 +1451,7 @@ export const providerModelCatalogRecords = [
       "auto",
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1048576,
     "maxTokens": 393216,
@@ -1467,7 +1476,7 @@ export const providerModelCatalogRecords = [
       "auto",
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1048576,
     "maxTokens": 393216,
@@ -1490,7 +1499,7 @@ export const providerModelCatalogRecords = [
       "auto",
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1048576,
     "maxTokens": 393216,
@@ -2390,7 +2399,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 524288,
@@ -2486,7 +2496,7 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "off",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1048576,
     "maxTokens": 131072,
@@ -2943,7 +2953,7 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "off",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1048576,
     "maxTokens": 131072,
@@ -2964,7 +2974,7 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1048576,
     "maxTokens": 131072,
@@ -2987,7 +2997,7 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1048576,
     "maxTokens": 131072,
@@ -3068,7 +3078,7 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1048576,
     "maxTokens": 16384,
@@ -3091,7 +3101,7 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1048576,
     "maxTokens": 16384,
@@ -3114,7 +3124,7 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1048576,
     "maxTokens": 16384,
@@ -3696,7 +3706,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1050000,
     "maxTokens": 128000,
@@ -3721,7 +3732,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1050000,
     "maxTokens": 128000,
@@ -3746,7 +3758,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1050000,
     "maxTokens": 128000,
@@ -3771,7 +3784,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1050000,
     "maxTokens": 128000,
@@ -3795,7 +3809,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1050000,
     "maxTokens": 128000,
@@ -3820,7 +3835,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1050000,
     "maxTokens": 128000,
@@ -3845,7 +3861,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1050000,
     "maxTokens": 128000,
@@ -3869,7 +3886,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1050000,
     "maxTokens": 128000,
@@ -3894,7 +3912,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 1050000,
     "maxTokens": 128000,
@@ -3919,7 +3938,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 400000,
     "maxTokens": 128000,
@@ -5091,7 +5111,7 @@ export const providerModelCatalogRecords = [
     ],
     "thinkingModes": [
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1049000,
     "maxTokens": 262000,
@@ -5112,7 +5132,7 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1049000,
     "maxTokens": 262000,
@@ -5135,7 +5155,7 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1049000,
     "maxTokens": 262000,
@@ -5416,7 +5436,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 256000,
     "maxTokens": 64000,
@@ -5442,7 +5463,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 262144,
     "maxTokens": 131072,
@@ -5468,7 +5490,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 256000,
     "maxTokens": 131072,
@@ -5494,7 +5517,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 256000,
     "maxTokens": 131072,
@@ -5520,7 +5544,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 256000,
     "maxTokens": 128000,
@@ -5546,7 +5571,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 256000,
     "maxTokens": 16384,
@@ -5572,7 +5598,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 256000,
     "maxTokens": 16384,
@@ -5623,7 +5650,8 @@ export const providerModelCatalogRecords = [
       "low",
       "medium",
       "high",
-      "xhigh"
+      "xhigh",
+      "max"
     ],
     "contextWindow": 256000,
     "maxTokens": 16384,
@@ -5670,7 +5698,7 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 131072,
@@ -6200,7 +6228,7 @@ export const providerModelCatalogRecords = [
       "off",
       "auto",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 131072,
@@ -6221,7 +6249,7 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 131072,
@@ -6244,7 +6272,7 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 131072,
@@ -6267,7 +6295,7 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 131072,
@@ -6557,7 +6585,7 @@ export const providerModelCatalogRecords = [
       "off",
       "auto",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 131072,
@@ -6578,7 +6606,7 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 131072,
@@ -6601,7 +6629,7 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 131072,
@@ -6624,7 +6652,7 @@ export const providerModelCatalogRecords = [
     "thinkingModes": [
       "low",
       "high",
-      "xhigh"
+      "max"
     ],
     "contextWindow": 1000000,
     "maxTokens": 131072,
