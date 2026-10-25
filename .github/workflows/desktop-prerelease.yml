@@ -167,7 +167,9 @@ jobs:
       - name: Check release, installer and material contracts on the native host
         if: env.DESKTOP_OPERATION == 'build'
         run: |
+          export LING_BUN_ENTRY_PROBE_BINARY=bun
           node --test scripts/ci/desktop-release.test.mjs scripts/ci/desktop-package.test.mjs \
+            scripts/ci/desktop-bun-entry.test.mjs \
             scripts/gstack/source-checkout.test.mjs \
             scripts/gstack/filter-upstream-self-test-packages.test.mjs \
             scripts/gstack/prepare-desktop-candidate.test.mjs scripts/gstack/prepare-platform-resource-stage.test.mjs \

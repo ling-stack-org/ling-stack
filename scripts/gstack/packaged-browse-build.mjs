@@ -20,12 +20,29 @@ const nodeStart = "  if (server.runtime === 'node') {";
 const nodeEnd = "  } else {\n    // macOS/Linux: Bun.spawn().unref()";
 const healthResult = "    return health.status === 'healthy';";
 const cleanupIdentity = "readPidStartTime(pid) === startTime && readPidCmdline(pid).split(/\\s+/).includes(server.script)";
+const originalMain = `if (import.meta.main) {
+  main().catch((err) => {
+    console.error(\`[browse] \${err.message}\`);
+    process.exit(1);
+  });
+}`;
 const directStates = [
   ["    const existingState = readState();", 2, "existingState"],
   ["    const stopState = readState();", 1, "stopState"],
   ["async function tunnelDaemonState(): Promise<ServerState | null> {\n  const state = readState();", 1, "state"],
   ["async function ensureServer(flags?: GlobalFlags): Promise<ServerState> {\n  const state = readState();", 1, "state"],
 ];
+
+/** Only the fixed CLI entry is executable; dependency main guards stay intact. */
+export function activatePackagedBrowseEntrypoint(contents) {
+  if (contents.split(originalMain).length !== 2 || !contents.trimEnd().endsWith(originalMain)) {
+    throw new Error("packaged_browse_upstream_entry_changed");
+  }
+  // Bun 1.4.4 API-compiled Windows executables report import.meta.main=false.
+  // This plugin owns the unique executable entry, so invoke it explicitly.
+  return contents.replace(originalMain, originalMain.slice("if (import.meta.main) {\n  ".length, -2)
+    .replace("main().catch", "await main().catch"));
+}
 
 export async function readPackagedBrowseBuildPins({ root, runtimeRoot, expectedReceiptChecksum }, sourceChecksum) {
   root = resolve(root);
@@ -88,7 +105,7 @@ export function packagedBrowseBuildPlugin({ runtimeRoot, pins }) {
     build.onLoad({ filter: /(?:cli\.ts|packaged-browse-launch\.mjs)$/ }, async args => {
       if (await realpath(args.path) !== args.path) throw new Error("packaged_browse_build_alias");
       if (args.path === cli) {
-        let contents = await readFile(cli, "utf8");
+        let contents = activatePackagedBrowseEntrypoint(await readFile(cli, "utf8"));
         for (const marker of [originalLaunch, nodeStart, nodeEnd, healthResult, cleanupIdentity]) {
           if (contents.split(marker).length !== 2) throw new Error("packaged_browse_upstream_launch_changed");
         }

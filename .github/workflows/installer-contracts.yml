@@ -6,6 +6,7 @@ on:
       - scripts/release/verify-nsis-plugins.mjs
       - scripts/release/nsis-extractor.mjs
       - scripts/ci/desktop-bun-entry.test.mjs
+      - scripts/gstack/packaged-browse-build.mjs
       - apps/desktop/tests/distribution-nsis-native.test.mjs
       - apps/desktop/scripts/distribution/installer-builder.mjs
       - apps/desktop/scripts/distribution/LingShell.nsh
