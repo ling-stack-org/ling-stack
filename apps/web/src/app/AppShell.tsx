@@ -1701,6 +1701,7 @@ export function AppShell(): React.JSX.Element {
     providers,
     providerTemplates,
     selectedChannelId,
+    selectedChannelMessageThreadId,
     activeSidebarTarget,
     channelDecisions,
     setActiveView,

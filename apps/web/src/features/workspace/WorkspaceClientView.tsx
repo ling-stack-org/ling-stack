@@ -1274,6 +1274,16 @@ export function WorkspaceClientView({
     };
   }, [teammateManagerOpen]);
 
+  const silentChannelReplyRunIds = useMemo(
+    () => deriveSilentChannelReplyRunIds({
+      runs: channelRuns,
+      workUnits,
+      approvals,
+      executionActions: channelExecutionActionsForDisplay,
+      terminalReports: terminalReportsForDisplay,
+    }),
+    [approvals, channelExecutionActionsForDisplay, channelRuns, terminalReportsForDisplay, workUnits],
+  );
   const conversationTurnProjection = useMemo(
     () => buildConversationTurnProjection({
       channelId: selectedChannelId,
@@ -1289,6 +1299,7 @@ export function WorkspaceClientView({
       operationCellByThreadId: conversationWorkCellByThreadId,
       lingAgentAuthorId: LING_AGENT_AUTHOR_ID,
       terminalReportResultItemIds,
+      silentChannelReplyRunIds,
     }),
     [
       channelExecutionProposals,
@@ -1302,6 +1313,7 @@ export function WorkspaceClientView({
       conversationWorkCellByWorkflowId,
       selectedChannelId,
       terminalReportResultItemIds,
+      silentChannelReplyRunIds,
       usedMemoryEventsForDisplay,
     ],
   );
@@ -1405,16 +1417,6 @@ export function WorkspaceClientView({
       selectedChannelBranchActivityScope,
       workflowProgressByWorkflowId,
     ],
-  );
-  const silentChannelReplyRunIds = useMemo(
-    () => deriveSilentChannelReplyRunIds({
-      runs: channelRuns,
-      workUnits,
-      approvals,
-      executionActions: channelExecutionActionsForDisplay,
-      terminalReports: terminalReportsForDisplay,
-    }),
-    [approvals, channelExecutionActionsForDisplay, channelRuns, terminalReportsForDisplay, workUnits],
   );
   const renderableActivityItems = useMemo(
     () => visibleActivityItems.filter((item) => {

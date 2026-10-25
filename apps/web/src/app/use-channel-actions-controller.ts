@@ -1,4 +1,5 @@
 import { useRef, type Dispatch, type SetStateAction } from "react";
+import type { ConversationItemV1 } from "@ling-stack/contracts";
 import {
   createChannel,
   createChannelContextSummary,
@@ -173,6 +174,7 @@ export function useChannelActionsController(input: {
   readonly providers: readonly ProviderPreset[];
   readonly providerTemplates: readonly ProviderTemplate[];
   readonly selectedChannelId: string;
+  readonly selectedChannelMessageThreadId?: string;
   readonly activeSidebarTarget: SidebarTarget;
   readonly channelDecisions: readonly ChannelDecision[];
   readonly setActiveView: Dispatch<SetStateAction<ViewId>>;
@@ -189,7 +191,7 @@ export function useChannelActionsController(input: {
   readonly setTaskForm: Dispatch<SetStateAction<TaskFormState>>;
   readonly setTasks: Dispatch<SetStateAction<readonly Task[]>>;
   readonly setChannelMessages: Dispatch<SetStateAction<readonly ChannelMessage[]>>;
-  readonly setChannelConversationItems: Dispatch<SetStateAction<readonly import("@ling-stack/contracts").ConversationItemV1[]>>;
+  readonly setChannelConversationItems: Dispatch<SetStateAction<readonly ConversationItemV1[]>>;
   readonly setChannelExecutionProposals: Dispatch<SetStateAction<readonly ChannelExecutionProposal[]>>;
   readonly setChannelAttachments: Dispatch<SetStateAction<readonly ChannelAttachment[]>>;
   readonly setChannelLinkPreviews: Dispatch<SetStateAction<readonly ChannelLinkPreview[]>>;
@@ -220,6 +222,10 @@ export function useChannelActionsController(input: {
   readonly refreshRuntimeState: (cwd?: string) => Promise<void>;
   readonly refreshChannelActivity: () => Promise<void>;
 }): ChannelActionsController {
+  const streamOwnerKey = JSON.stringify([input.form.cwd.trim(), input.selectedChannelId, input.selectedChannelMessageThreadId ?? ""]);
+  const streamOwnerRef = useRef({ key: streamOwnerKey });
+  // Identity changes on every owner transition, including A -> B -> A.
+  if (streamOwnerRef.current.key !== streamOwnerKey) streamOwnerRef.current = { key: streamOwnerKey };
   const uploadOwnerKey = JSON.stringify([input.form.cwd.trim(), input.selectedChannelId]);
   const uploadOwnerRef = useRef({ key: uploadOwnerKey, pending: 0 });
   if (uploadOwnerRef.current.key !== uploadOwnerKey) uploadOwnerRef.current = { key: uploadOwnerKey, pending: 0 };
@@ -498,6 +504,19 @@ export function useChannelActionsController(input: {
       return { errorMessage };
     }
     const channelId = input.selectedChannelId;
+    const streamOwner = streamOwnerRef.current;
+    const submissionOwnerKey = JSON.stringify([input.form.cwd.trim(), channelId, messageInput.threadId ?? ""]);
+    const canPublishStream = () => streamOwnerRef.current === streamOwner && streamOwner.key === submissionOwnerKey;
+    function publishStreamProjection(
+      messages: (current: readonly ChannelMessage[]) => readonly ChannelMessage[],
+      items: (current: readonly ConversationItemV1[]) => readonly ConversationItemV1[],
+    ): void {
+      // A topic has its own reader. Its SSE must never publish into the parent
+      // viewport; recheck queued React updaters after a navigation as well.
+      if (!canPublishStream()) return;
+      input.setChannelMessages((current) => canPublishStream() ? messages(current) : current);
+      input.setChannelConversationItems((current) => canPublishStream() ? items(current) : current);
+    }
     const selectedChannel = input.channels.find((channel) => channel.id === channelId);
     const providerPresetId = messageInput.requestAiReply
       ? selectedChannel?.defaultProviderPresetId
@@ -543,8 +562,10 @@ export function useChannelActionsController(input: {
           const data = projectChannelConversationTurn(raw);
           const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
           receivedAiReply = receivedAiReply || aiReplies.length > 0;
-          input.setChannelMessages((current) => projectChannelStreamReady(current, data));
-          input.setChannelConversationItems((current) => projectChannelItemsReady(current, data));
+          publishStreamProjection(
+            (current) => projectChannelStreamReady(current, data),
+            (current) => projectChannelItemsReady(current, data),
+          );
           if (!messageAccepted) {
             messageAccepted = true;
             submissionLookupJournal.forget(submissionScope, idempotencyKey);
@@ -563,16 +584,20 @@ export function useChannelActionsController(input: {
         }
         if (event.event === "delta") {
           const data = JSON.parse(event.data) as ChannelConversationStreamDeltaEvent;
-          input.setChannelMessages((current) => current.map((message) => message.id === data.itemId ? { ...message, body: data.body, status: "pending" } : message));
-          input.setChannelConversationItems((current) => projectChannelItemDelta(current, data.itemId, data.body));
+          publishStreamProjection(
+            (current) => current.map((message) => message.id === data.itemId ? { ...message, body: data.body, status: "pending" } : message),
+            (current) => projectChannelItemDelta(current, data.itemId, data.body),
+          );
           return;
         }
         if (event.event === "run_linked") {
           const data = JSON.parse(event.data) as ChannelConversationStreamRunLinkedEvent;
-          input.setChannelMessages((current) => current.map((message) =>
-            message.id === data.itemId ? { ...message, linkedRunId: data.linkedRunId } : message
-          ));
-          input.setChannelConversationItems((current) => projectChannelItemRunLinked(current, data.itemId, data.linkedRunId));
+          publishStreamProjection(
+            (current) => current.map((message) =>
+              message.id === data.itemId ? { ...message, linkedRunId: data.linkedRunId } : message
+            ),
+            (current) => projectChannelItemRunLinked(current, data.itemId, data.linkedRunId),
+          );
           if (data.activeReply) {
             messageInput.onReplyLinked?.(data.activeReply);
           }
@@ -589,8 +614,10 @@ export function useChannelActionsController(input: {
           const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
           receivedAiReply = receivedAiReply || aiReplies.length > 0;
           autoStartedWorkflow = Boolean(data.autoStartedWorkflow);
-          input.setChannelMessages((current) => projectChannelStreamTerminal(current, data));
-          input.setChannelConversationItems((current) => projectChannelItemsTerminal(current, data));
+          publishStreamProjection(
+            (current) => projectChannelStreamTerminal(current, data),
+            (current) => projectChannelItemsTerminal(current, data),
+          );
           if (data.replyDispatch) messageInput.onReplyDispatch?.(data.replyDispatch);
           return;
         }
@@ -599,8 +626,10 @@ export function useChannelActionsController(input: {
           const data = { ...projectChannelConversationTurn(raw), ...(raw.error ? { error: raw.error } : {}) };
           const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
           receivedAiReply = receivedAiReply || aiReplies.length > 0;
-          input.setChannelMessages((current) => projectChannelStreamTerminal(current, data));
-          input.setChannelConversationItems((current) => projectChannelItemsTerminal(current, data));
+          publishStreamProjection(
+            (current) => projectChannelStreamTerminal(current, data),
+            (current) => projectChannelItemsTerminal(current, data),
+          );
           if (data.error) {
             streamErrorMessage = data.error;
           }
@@ -634,8 +663,10 @@ export function useChannelActionsController(input: {
           const messages = [data.message, ...(data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [])]
             .filter((message): message is ChannelMessage => Boolean(message));
           receivedAiReply = receivedAiReply || messages.some((message) => message.kind === "ai_reply");
-          input.setChannelMessages((current) => projectChannelStreamTerminal(current, data));
-          input.setChannelConversationItems((current) => projectChannelItemsTerminal(current, data));
+          publishStreamProjection(
+            (current) => projectChannelStreamTerminal(current, data),
+            (current) => projectChannelItemsTerminal(current, data),
+          );
           if (data.error) {
             streamErrorMessage = data.error;
           }
