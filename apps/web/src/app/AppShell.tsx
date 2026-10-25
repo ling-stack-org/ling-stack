@@ -1796,6 +1796,7 @@ export function AppShell(): React.JSX.Element {
     channelRunsForArtifacts,
     setSkillLibraryRefreshToken,
     refreshRuns,
+    refreshConversationThreads,
     refreshSelectedConversation,
     refreshRuntimeState,
     refreshApprovals,

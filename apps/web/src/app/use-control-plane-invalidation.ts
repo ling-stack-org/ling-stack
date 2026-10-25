@@ -34,6 +34,7 @@ export function useControlPlaneInvalidation(input: {
   readonly channelRunsForArtifacts: readonly RunSession[];
   readonly setSkillLibraryRefreshToken: (update: (current: number) => number) => void;
   readonly refreshRuns: (cwd?: string) => Promise<void>;
+  readonly refreshConversationThreads: (cwd?: string, options?: { readonly throwOnError?: boolean }) => Promise<void>;
   readonly refreshSelectedConversation: (cwd?: string) => Promise<void>;
   readonly refreshRuntimeState: (cwd?: string) => Promise<void>;
   readonly refreshApprovals: (cwd?: string, runId?: string) => Promise<void>;
@@ -138,6 +139,11 @@ export function useControlPlaneInvalidation(input: {
     }
     const conversationDomain = (["runs", "work_units", "approvals", "artifacts"] as const)
       .find((domain) => changed.has(domain));
+    if (conversationDomain) {
+      // The POST stream can disappear while execution continues. Recover the
+      // global recent list too, even when a different surface is selected.
+      trackRefresh(conversationDomain, "conversation-list", input.refreshConversationThreads(workspaceCwd, { throwOnError: true }));
+    }
     if (conversationDomain && !input.selectedChannelId) {
       trackRefresh(conversationDomain, "selected-conversation", input.refreshSelectedConversation(workspaceCwd));
       if (input.selectedChannelId && !changed.has("runs")) {

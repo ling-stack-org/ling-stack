@@ -68,6 +68,11 @@ export interface ConversationStreamHandlers {
   readonly shouldCommit?: (threadId?: string) => boolean;
 }
 
+interface AcceptedStreamObservation {
+  readonly operation: ConversationErrorOperation;
+  readonly sourceItemId: string;
+}
+
 export function useConversationDomain(input: {
   readonly cwd: string;
   readonly translate: (key: string, values?: Record<string, string | number>) => string;
@@ -84,7 +89,7 @@ export function useConversationDomain(input: {
     readonly conversationComposerError: string;
   };
   readonly actions: {
-    readonly refreshConversationThreads: (cwd?: string) => Promise<void>;
+    readonly refreshConversationThreads: (cwd?: string, options?: { readonly throwOnError?: boolean }) => Promise<void>;
     readonly refreshSelectedConversation: (cwd?: string) => Promise<void>;
     readonly openNewConversation: () => void;
     readonly selectConversationThread: (
@@ -112,8 +117,31 @@ export function useConversationDomain(input: {
   const threadListLoadingOperationsRef = useRef(0);
   currentCwdRef.current = input.cwd.trim();
   const conversationErrors = useConversationErrorOwner();
+  const acceptedStreamObservationsRef = useRef(new Map<number, AcceptedStreamObservation>());
   const detailReadEpochRef = useRef(createConversationReadEpoch());
   const conversationStreamBusyOwner = useConversationStreamBusyOwner();
+
+  const reconcileStreamObservations = useCallback((
+    detail: ConversationDetailResponse,
+    observations: readonly AcceptedStreamObservation[],
+  ): void => {
+    for (const observation of observations) {
+      const { operation, sourceItemId } = observation;
+      if (acceptedStreamObservationsRef.current.get(operation.sequence) !== observation) continue;
+      if (!conversationErrors.isCurrent(operation)) {
+        acceptedStreamObservationsRef.current.delete(operation.sequence);
+        continue;
+      }
+      // Only a read started after this failure, containing the exact accepted
+      // source in its own scope, recovers transport observation. Host execution
+      // errors remain in the canonical transcript, even when observation heals.
+      if (detail.cwd !== operation.workspaceCwd || detail.thread.id !== operation.identity
+        || !detail.messages.some(message => message.id === sourceItemId && message.role === "user"
+          && message.threadId === operation.identity)) continue;
+      conversationErrors.clear(operation);
+      acceptedStreamObservationsRef.current.delete(operation.sequence);
+    }
+  }, [conversationErrors]);
 
   const beginThreadListLoading = useCallback((): void => {
     threadListLoadingOperationsRef.current += 1;
@@ -150,7 +178,10 @@ export function useConversationDomain(input: {
     commitConversationSurfaceIdentity(createConversationDraftIdentity(draftGeneration));
   }, [commitConversationSurfaceIdentity, commitSelectedConversationThreadId, input.cwd]);
 
-  const refreshConversationThreads = useCallback(async (cwd = input.cwd): Promise<void> => {
+  const refreshConversationThreads = useCallback(async (
+    cwd = input.cwd,
+    options?: { readonly throwOnError?: boolean },
+  ): Promise<void> => {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd) {
       setConversationThreads([]);
@@ -171,6 +202,7 @@ export function useConversationDomain(input: {
       }
     } catch (error) {
       conversationErrors.report(operation, error instanceof Error ? error.message : String(error));
+      if (options?.throwOnError) throw error;
     } finally {
       finishThreadListLoading();
     }
@@ -213,6 +245,7 @@ export function useConversationDomain(input: {
       scope: "select",
     });
     conversationErrors.clear(operation);
+    const observations = [...acceptedStreamObservationsRef.current.values()];
     try {
       const detail = await getConversation(workspaceCwd, threadId);
       if (detail.thread.id !== threadId) throw new Error("Conversation response scope mismatch.");
@@ -227,6 +260,7 @@ export function useConversationDomain(input: {
       }
       commitSelectedConversationThreadId(threadId);
       setSelectedConversationDetail(mergeConversationDetailSnapshots(undefined, detail));
+      reconcileStreamObservations(detail, observations);
       commitConversationSurfaceIdentity(threadId);
       return true;
     } catch (error) {
@@ -244,7 +278,7 @@ export function useConversationDomain(input: {
         selectionInFlightRef.current = undefined;
       }
     }
-  }, [commitConversationSurfaceIdentity, commitSelectedConversationThreadId, conversationErrors, input.cwd, openNewConversation]);
+  }, [commitConversationSurfaceIdentity, commitSelectedConversationThreadId, conversationErrors, input.cwd, openNewConversation, reconcileStreamObservations]);
 
   const refreshSelectedConversation = useCallback(async (cwd = input.cwd): Promise<void> => {
     // A background refresh must not supersede a navigation selection read.
@@ -262,6 +296,7 @@ export function useConversationDomain(input: {
     });
     const detailRead = detailReadEpochRef.current.begin(JSON.stringify([workspaceCwd, requestedThreadId]));
     conversationErrors.clear(operation);
+    const observations = [...acceptedStreamObservationsRef.current.values()];
     try {
       const detail = await getConversation(workspaceCwd, requestedThreadId);
       if (detail.thread.id !== requestedThreadId) throw new Error("Conversation response scope mismatch.");
@@ -273,11 +308,12 @@ export function useConversationDomain(input: {
         && selectedConversationThreadIdRef.current === requestedThreadId
       ) {
         setSelectedConversationDetail((current) => mergeConversationDetailSnapshots(current, detail));
+        reconcileStreamObservations(detail, observations);
       }
     } catch (error) {
       conversationErrors.report(operation, error instanceof Error ? error.message : String(error));
     }
-  }, [conversationErrors, input.cwd]);
+  }, [conversationErrors, input.cwd, reconcileStreamObservations]);
 
   const archiveConversationThread = useCallback(async (threadId: string, cwd = input.cwd): Promise<void> => {
     const workspaceCwd = cwd.trim();
@@ -384,6 +420,7 @@ export function useConversationDomain(input: {
     const originSurfaceIdentity = conversationSurfaceIdentityRef.current;
     let activeThreadId = originThreadId;
     let messageAccepted = false;
+    let acceptedSourceItemId = "";
     let submitted = false;
     const submissionScope = { cwd: workspaceCwd, surface: "normal" as const, threadId: originThreadId || undefined };
     const idempotencyKey = crypto.randomUUID();
@@ -398,6 +435,9 @@ export function useConversationDomain(input: {
       scope: "stream",
     });
     conversationErrors.clear(streamOperation);
+    for (const [sequence, observation] of acceptedStreamObservationsRef.current) {
+      if (!conversationErrors.isCurrent(observation.operation)) acceptedStreamObservationsRef.current.delete(sequence);
+    }
     const canCommitToSurface = (threadId = activeThreadId): boolean => {
       if (currentCwdRef.current !== workspaceCwd) return false;
       if (handlers.shouldCommit) return handlers.shouldCommit(threadId || undefined);
@@ -522,6 +562,7 @@ export function useConversationDomain(input: {
           const event = JSON.parse(parsed.data) as ConversationStreamReadyEvent;
           activeThreadId = event.thread.id;
           messageAccepted = true;
+          acceptedSourceItemId = event.userMessage.id;
           submissionLookupJournal.forget(submissionScope, idempotencyKey);
           handlers.onThreadBound?.(activeThreadId);
           retargetStreamOperation(activeThreadId);
@@ -651,6 +692,7 @@ export function useConversationDomain(input: {
         rejectionConfirmed = submissionWasRejected(error, receipt);
         if (receipt?.threadId && receipt.turnId && receipt.sourceItemId) {
           messageAccepted = true;
+          acceptedSourceItemId = receipt.sourceItemId;
           submissionLookupJournal.forget(submissionScope, idempotencyKey);
           activeThreadId = receipt.threadId;
           handlers.onThreadBound?.(activeThreadId);
@@ -680,11 +722,24 @@ export function useConversationDomain(input: {
       if (rejectionConfirmed) submissionLookupJournal.forget(submissionScope, idempotencyKey);
       const messageText = error instanceof Error ? error.message : String(error);
       conversationErrors.report(streamOperation, messageText);
+      if (messageAccepted && acceptedSourceItemId) {
+        if (conversationErrors.isCurrent(streamOperation)) {
+          acceptedStreamObservationsRef.current.set(streamOperation.sequence, {
+            operation: streamOperation,
+            sourceItemId: acceptedSourceItemId,
+          });
+        }
+        // Accepted input is never re-sent and a lost POST stream is not a
+        // failed execution. Observe the Host now, or let control-plane recovery
+        // perform the same read after connectivity returns.
+        if (canCommitToSurface(activeThreadId)) await refreshSelectedConversation(workspaceCwd);
+        return;
+      }
       if (canCommitToSurface(activeThreadId)) handlers.onError?.(messageText);
     } finally {
       conversationStreamBusyOwner.finish(busyOperation);
     }
-  }, [commitConversationSurfaceIdentity, commitSelectedConversationThreadId, conversationErrors, conversationStreamBusyOwner, input.cwd, refreshConversationThreads]);
+  }, [commitConversationSurfaceIdentity, commitSelectedConversationThreadId, conversationErrors, conversationStreamBusyOwner, input.cwd, refreshConversationThreads, refreshSelectedConversation]);
 
   const workspaceCwd = input.cwd.trim();
   const conversationSidebarError = selectConversationError(conversationErrors.entries, {
