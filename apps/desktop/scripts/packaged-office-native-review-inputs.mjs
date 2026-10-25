@@ -80,6 +80,9 @@ export const PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS = Object.freeze([
 ]);
 
 export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
+  // FD5 observer and its CLI signal owner are explicit, independently reviewed inputs.
+  "packages/core/src/daemon-shutdown-observer.ts",
+  "packages/daemon/src/runtime/signal-shutdown.ts",
   // Explicit source-bound command cwd delta; listing is not review approval.
   "packages/daemon/src/features/runs/workflow-command-cwd.ts",
   "packages/daemon/src/runtime/sandbox/restricted-command-directory.ts",

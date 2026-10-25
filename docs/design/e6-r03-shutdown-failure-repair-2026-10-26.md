@@ -173,3 +173,26 @@ FD5 draining 后 startup 错误分类 2 失败、pool retirement 与并发 final
 **唯一下一步：** 对本次变更补精确 Office/打包输入差量冻结和审阅，随后新 QA 包、
 读回归属和新唯一 R03 case 的真实 macOS 验收。保留旧未知效果 Host 与失败历史；
 不强杀旧实例、不删除安全锁、不重发旧任务，不以本节隔离验证冒充 packaged 通过。
+
+### 6.3 保留原 Host 时的隔离后继 QA 构建
+
+04:56 本机进程读回确认原 Main/Host 仍存活，17928 无监听。因此不能运行要求旧 PID
+消失的原构建 runner，也不能覆盖它们正在执行的 `release/human-qa` App。
+
+- 仅新增闭集选择 `LING_DESKTOP_PACKAGE_HUMAN_QA=retained-host-r03`，固定使用
+  `com.lingstack.desktop.human-qa.r03-successor`、`Ling Stack R03 Successor QA`、
+  `release/human-qa-r03-successor`。普通与原 Human QA 的选择和输出不变。
+- 准入、派生环境和异步 config 之后比较精确 lane 身份，而非两个 QA 共有的 boolean。
+  继续使用原 Office source/publication、资源、签名和 final-artifact 校验及 `publish: never`；
+  不接受任意名称、输出路径、签名或 Builder config 覆盖。
+- 专用 runner 必须核对原 PID 的启动时间/父进程/命令、原 App 字节及新输出路径不重叠；
+  不操作旧进程，构建前后核对原包未变。独立单写入者拒绝并发构建，不覆盖不明旧输出。
+- 新客户端只使用新建的专用 QA profile/workspace，不复制或恢复原未知效果 Run。
+  启动前再次确认17928无监听，并读回新 Main 直接拥有的 Host、目录与端口归属。
+  此新客户端不是原逻辑 Run 的 successor；不得通过新隔离实例绕过原 workspace 的停止门槛。
+- 固定包装清单显式补上 `daemon-shutdown-observer.ts` 和 `signal-shutdown.ts` 两个
+  新运行时依赖；没有运行时发现或自动批准。新冻结记录保留 `approved:false/approval:null`，
+  独审完整受影响差量后按现有 standing QA-only 授权应用正式 manifest，不作发布。
+
+新 lane/清单回归先红后绿，五文件组合301/301、无失败/取消/跳过、actual exit0。
+它只证明编排、固定身份和校验边界，不是实际构建、原生签名或 GUI 验收。

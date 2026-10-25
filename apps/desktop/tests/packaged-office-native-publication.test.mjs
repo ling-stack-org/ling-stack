@@ -99,6 +99,12 @@ test("Office recovery discovery validation remains an explicit packaging source 
     "packages/core/src/storage/sqlite/recovery-discovery-validation.ts"));
 });
 
+test("Host private shutdown observer and signal handling remain explicit reviewed runtime inputs", () => {
+  for (const path of ["packages/core/src/daemon-shutdown-observer.ts", "packages/daemon/src/runtime/signal-shutdown.ts"]) {
+    assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path), path);
+  }
+});
+
 test("C001 parent-lease stream writer remains an explicit packaging source input", () => {
   assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(
     "apps/desktop/scripts/cua-driver-parent-lease-stream-writer.mjs"));
