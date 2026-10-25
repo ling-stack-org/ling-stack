@@ -23,7 +23,8 @@ export function patchInstallerTemplate(file, before) {
     // NSIS CopyFiles uses SHFileOperation, which drops members beyond MAX_PATH.
     // Robocopy is an OS tool with long-path support; retain the stock retries,
     // extraction, directory ownership and install/uninstall lifecycle.
-    after = before.replace('    CopyFiles /SILENT "$PLUGINSDIR\\7z-out\\*" $OUTDIR', `    Push $R2
+    after = before.replace('  SetOutPath "$PLUGINSDIR\\7z-out"', '  SetOutPath "\\\\?\\$PLUGINSDIR\\7z-out"');
+    after = after.replace('    CopyFiles /SILENT "$PLUGINSDIR\\7z-out\\*" $OUTDIR', `    Push $R2
     Push $R3
     nsExec::ExecToStack '"$SYSDIR\\robocopy.exe" "$PLUGINSDIR\\7z-out" "$OUTDIR" /E /COPY:DAT /DCOPY:DAT /R:0 /W:0 /NFL /NDL /NJH /NJS /NP'
     Pop $R2

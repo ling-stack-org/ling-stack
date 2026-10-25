@@ -31,9 +31,10 @@ test("private tooling retains original builder modules and stock install/upgrade
     assert.equal(after.includes("WinShell::"), false);
     assert.equal(after.includes("SpiderBanner::"), false);
     if (file.endsWith("/extractAppPackage.nsh")) {
-      const [prefix, suffix, extra] = before.split('    CopyFiles /SILENT "$PLUGINSDIR\\7z-out\\*" $OUTDIR');
+      const [prefix, suffix, extra] = before.replace('  SetOutPath "$PLUGINSDIR\\7z-out"', '  SetOutPath "\\\\?\\$PLUGINSDIR\\7z-out"')
+        .split('    CopyFiles /SILENT "$PLUGINSDIR\\7z-out\\*" $OUTDIR');
       assert.equal(extra, undefined);
-      assert.ok(after.startsWith(prefix) && after.endsWith(suffix), "only the copy call may change; extraction and stock retries remain intact");
+      assert.ok(after.startsWith(prefix) && after.endsWith(suffix), "only the output path prefix and copy call may change; stock retries remain intact");
       assert.ok(after.includes('"$SYSDIR\\robocopy.exe"'));
       assert.ok(after.includes("/E /COPY:DAT /DCOPY:DAT /R:0 /W:0"));
       assert.equal(after.includes("CopyFiles /SILENT"), false);
