@@ -154,12 +154,16 @@ export function buildConversationContextProjection(
           return item;
         })
     : [];
+  const inheritedItemIds = new Set(inheritedItems.map((item) => item.id));
   const historicalGuidanceItemIds = historicalRunGuidanceItemIds(input.store);
   const visibleItems = uniqueItems([...inheritedItems, ...tail, ...explicitItems, ...explicitTurnItems, sourceItem])
     .filter((item) => item.id === sourceItem.id || !historicalGuidanceItemIds.has(item.id))
     .filter((item) => isConversationContextItemVisible(item, input.view, input.consumerTeammateId))
     .filter((item) =>
       item.sequence <= sourceItem.sequence
+      // Sequence counters belong to each Thread. A child at sequence1 must
+      // retain its frozen parent answer at sequence2 (or later).
+      || inheritedItemIds.has(item.id)
       || explicitItemIds.includes(item.id)
       || explicitTurnItemIds.has(item.id));
   const items = trimProjectionItemsByTextBudget(

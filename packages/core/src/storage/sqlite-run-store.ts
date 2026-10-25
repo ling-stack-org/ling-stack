@@ -628,6 +628,7 @@ import { SqliteTeammateDirectInputStore } from "./sqlite/teammate-direct-input-s
 import { SqliteNormalConversationForkStore } from "./sqlite/normal-conversation-fork-store.js";
 import { SqliteConversationPreparedInputStore } from "./sqlite/conversation-prepared-input-store.js";
 import { applyConversationAcceptedInputMigration } from "./sqlite/conversation-accepted-input-migration.js";
+import { applyConversationEmptyForkMigration } from "./sqlite/conversation-empty-fork-migration.js";
 import { applyUserInputMigration } from "./sqlite/user-input-migration.js";
 import { SqliteUserInputStore } from "./sqlite/user-input-store.js";
 import { SqliteUserInputTranscriptStore } from "./sqlite/user-input-transcript-store.js";
@@ -1582,6 +1583,13 @@ export class SqliteRunStore implements RunStore {
         if (!options.deferContinuityV2MigrationForTest) {
           this.applyContinuityV2AuthorityCutover();
           applyConversationAcceptedInputMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
+            hasTable: (tableName) => this.hasTable(tableName),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyConversationEmptyForkMigration({
             database: this.database,
             hasMigration: (version) => this.hasMigration(version),
             hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
@@ -3698,7 +3706,24 @@ export class SqliteRunStore implements RunStore {
   }
 
   createChannelBranch(input: CreateChannelBranchInput, now: string): ChannelBranch {
-    return this.channelCore.createChannelBranch(input, now);
+    if (!input.conversationThread) return this.channelCore.createChannelBranch(input, now);
+    if (input.conversationThread.channelId !== input.channelId || input.rootThreadId) {
+      throw new Error("Channel branch origin must belong to its channel and allocate its own thread.");
+    }
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const { thread, created } = this.conversationThreadTopology.resolveOrCreateWithinTransaction(input.conversationThread, now);
+      if (!created) throw new Error("A channel branch must allocate its own conversation thread.");
+      const branch = this.channelCore.createChannelBranch({ ...input, rootThreadId: thread.id }, now);
+      if (branch.status === "archived") this.lingThreads.updateLingThread(thread.id, {
+        archivedAt: branch.archivedAt ?? now, archivedReason: "channel_branch_archived",
+      }, now);
+      this.database.exec("COMMIT");
+      return branch;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   getChannelBranch(id: string): ChannelBranch | undefined {

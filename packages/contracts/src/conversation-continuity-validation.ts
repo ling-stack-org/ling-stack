@@ -254,9 +254,10 @@ export function isLingThreadContinuityV2(value: unknown): value is LingThreadCon
       && value.forkContextSnapshotId === undefined;
   }
   if (value.relationKind === "branch") {
+    // Empty-parent forks have no Turn to reference. The Store validates the
+    // matching zero-watermark snapshot and parent emptiness atomically.
     return value.surfaceKind === "branch"
       && isText(value.parentThreadId)
-      && isText(value.parentTurnId)
       && value.anchorItemId === undefined
       && isText(value.forkContextSnapshotId);
   }
@@ -399,11 +400,14 @@ export function isConversationContextSnapshot(value: unknown): value is Conversa
   return isRecordWithOnlyKeys(value, SNAPSHOT_KEYS)
     && isText(value.id)
     && isText(value.threadId)
-    && isText(value.segmentId)
     && isText(value.projectionVersion)
     && isNonNegativeInteger(value.throughItemSequence)
     && isTextArray(value.summaryIds)
     && isArrayOf(value.sourceRefs, isConversationDomainRef)
+    && (value.throughItemSequence === 0
+      ? value.segmentId === undefined && value.summaryIds.length === 0
+        && value.sourceRefs.length === 1 && value.sourceRefs[0]?.type === "thread" && value.sourceRefs[0].id === value.threadId
+      : isText(value.segmentId))
     && isText(value.policyVersion)
     && isCanonicalTimestamp(value.createdAt);
 }

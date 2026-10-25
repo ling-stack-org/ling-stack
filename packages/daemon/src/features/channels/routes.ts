@@ -49,6 +49,7 @@ import { validateChannelModelUpdate } from "./model-binding-validation.js";
 import { createInitialChannelWorkspaceBinding } from "./workspace.js";
 import { hydrateProposedPlanSourceStates } from "../runs/proposed-plan-source-state.js";
 import { assertRunnableConversationProvider } from "../providers/conversation-model-validation.js";
+import { buildChannelBranchOrigin } from "./channel-branch-origin.js";
 
 export async function handleChannelsCollection(
   request: IncomingMessage,
@@ -294,12 +295,11 @@ export async function handleChannelBranchesCollection(
       const body = await readJsonBody(request, config.maxBodyBytes);
       const input = parseCreateChannelBranchInput(body);
       const now = new Date().toISOString();
-      const thread = createChannelBranchRootThread(store, channel, input.name, now, input.status ?? "active");
       const branch = store.createChannelBranch({
         ...input,
         id: createChannelBranchId(),
         channelId,
-        rootThreadId: thread.id,
+        conversationThread: buildChannelBranchOrigin({ store, channel, name: input.name, now }),
       }, now);
       writeJson(response, 201, { branch });
       return;
@@ -307,8 +307,8 @@ export async function handleChannelBranchesCollection(
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel branches` });
   } catch (error) {
-    writeJson(response, 400, {
-      error: "bad_request",
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }
@@ -507,18 +507,10 @@ function createChannelBranchRootThread(
   branchStatus: ChannelBranch["status"],
   archivedAt?: string,
 ) {
-  return store.createLingThread(
-    {
-      kind: "channel_discussion",
-      channelId: channel.id,
-      title: branchName || "Channel branch",
-      objective: `Conversation branch "${branchName || "Channel branch"}" for ${channel.name}.`,
-      status: "open",
-      archivedAt: branchStatus === "archived" ? archivedAt ?? now : undefined,
-      archivedReason: branchStatus === "archived" ? "channel_branch_archived" : undefined,
-    },
-    now,
-  );
+  const { thread } = store.resolveOrCreateConversationThread(buildChannelBranchOrigin({ store, channel, name: branchName, now }), now);
+  return branchStatus === "archived" ? store.updateLingThread(thread.id, {
+    archivedAt: archivedAt ?? now, archivedReason: "channel_branch_archived",
+  }, now) ?? thread : thread;
 }
 
 function syncChannelBranchRootThreadArchive(store: RunStore, branch: ChannelBranch, now: string): void {

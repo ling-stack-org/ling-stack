@@ -370,7 +370,8 @@ export interface ConversationContextSummary {
 export interface ConversationContextSnapshot {
   readonly id: string;
   readonly threadId: string;
-  readonly segmentId: string;
+  /** Absent only for an explicitly empty fork boundary (sequence zero). */
+  readonly segmentId?: string;
   readonly projectionVersion: string;
   readonly throughItemSequence: number;
   readonly summaryIds: readonly string[];

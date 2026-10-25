@@ -466,7 +466,7 @@ function compactionSourceRefs(
     ...checkpoint.summaryIds.map((id) => ({ kind: "context_summary", id })),
     ...checkpoint.sourceRefs.map((ref) => ({ kind: ref.type, id: ref.id, label: ref.label })),
     ...(checkpoint.contextViewId ? [{ kind: "context_view", id: checkpoint.contextViewId }] : []),
-    ...(snapshot ? [{ kind: "context_snapshot", id: snapshot.id }, { kind: "segment", id: snapshot.segmentId }] : []),
+    ...(snapshot ? [{ kind: "context_snapshot", id: snapshot.id }, ...(snapshot.segmentId ? [{ kind: "segment", id: snapshot.segmentId }] : [])] : []),
   ]);
 }
 
@@ -831,7 +831,7 @@ function buildContextSegmentLookup(
 ): ReadonlyMap<string, string> {
   const lookup = new Map<string, string>();
   for (const snapshot of snapshots) {
-    if (!snapshot.segmentId.trim()) continue;
+    if (!snapshot.segmentId?.trim()) continue;
     for (const itemId of snapshot.sourceItemIds) {
       // Newer snapshots win for the same source item; this is deterministic
       // because detail snapshots are immutable and ordered by source refs.
@@ -852,7 +852,7 @@ export interface ContextSnapshotResolutionDiagnostic {
 export interface ResolvedContextSnapshot {
   readonly id: string;
   readonly threadId: string;
-  readonly segmentId: string;
+  readonly segmentId?: string;
   readonly projectionVersion: string;
   readonly throughItemSequence: number;
   readonly summaryIds: readonly string[];

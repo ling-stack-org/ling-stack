@@ -426,6 +426,8 @@ export interface CreateChannelBranchInput {
   readonly name: string;
   readonly status?: ChannelBranchStatus;
   readonly rootThreadId?: string;
+  /** Host-built canonical origin; persisted atomically with the registry row. */
+  readonly conversationThread?: Extract<import("./conversation-thread-topology-types.js").ResolveOrCreateConversationThreadInput, { surfaceKind: "branch" }>;
   readonly archivedAt?: string;
   readonly deletedAt?: string;
 }
