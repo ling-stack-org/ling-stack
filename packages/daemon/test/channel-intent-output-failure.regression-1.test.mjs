@@ -71,7 +71,8 @@ test("format repair cannot add a third binding repair or admit an invalid graph"
   const f = await fixture(t, [malformed, { action: "execute", reason: "Still invalid graph",
     execution: { schemaVersion: 2, operations: [] } }]);
   const result = await f.select();
-  assert.equal(result.action, "clarify");
+  assert.equal(result.action, "blocked");
+  assert.equal(result.errorCode, "channel_operation_plan_invalid");
   assert.equal(f.prompts.length, 2);
   assertNoExecution(f);
 });
@@ -79,7 +80,7 @@ test("format repair cannot add a third binding repair or admit an invalid graph"
 for (const [label, output, action] of [
   ["bad JSON", malformed, "blocked"],
   ["invalid binding", { action: "execute", reason: "Still invalid graph",
-    execution: { schemaVersion: 2, operations: [] } }, "clarify"],
+    execution: { schemaVersion: 2, operations: [] } }, "blocked"],
   ["valid reply", { action: "reply", reason: "Discussion only" }, "continue"],
 ]) test(`context compaction retry shares the two-call limit with ${label}`, async t => {
   const f = await fixture(t, [new Error("maximum context length exceeded"), output]);

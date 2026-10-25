@@ -62,12 +62,20 @@ export interface ChannelOperationCandidatePlanV2 {
   readonly operations: readonly ChannelOperationCandidateV2[];
 }
 
+export interface ChannelOperationCandidateShapeIssue {
+  /** Host schema path only: never a candidate key, value, ID or array index. */
+  readonly path: string;
+  readonly code: "missing" | "invalid_type" | "invalid_value" | "unexpected_fields"
+    | "empty_array" | "too_many_items" | "duplicate_value";
+}
+
 export type ChannelOperationBindingResult =
   | { readonly status: "bound"; readonly execution: ChannelIntentExecutionPlanV1;
       readonly capabilityBlockers: readonly { readonly operationId: string; readonly participantId: string; readonly tool: RunTool }[] }
   | { readonly status: "blocked"; readonly code: "operation_binding_host_capability_unavailable";
       readonly operationId: string; readonly reason: string }
-  | { readonly status: "clarify"; readonly missingFields: readonly string[]; readonly reason: string };
+  | { readonly status: "clarify"; readonly missingFields: readonly string[]; readonly reason: string;
+      readonly shapeIssue?: ChannelOperationCandidateShapeIssue };
 
 /**
  * Binds only explicit candidate fields. It never re-parses the whole request into
@@ -87,7 +95,11 @@ export function bindChannelOperationPlan(input: {
   readonly defaultOwnerParticipantId?: string;
 }): ChannelOperationBindingResult {
   try {
-    if (!isChannelOperationCandidatePlanV2(input.candidate)) fail("execution.operations", "A versioned operation graph with per-operation owner, target and content bindings is required.");
+    let shapeIssue: ChannelOperationCandidateShapeIssue | undefined;
+    if (!validateCandidatePlan(input.candidate, issue => { shapeIssue ??= issue; })) {
+      return { status: "clarify", missingFields: [shapeIssue!.path], shapeIssue,
+        reason: `Operation candidate schema rejected: ${shapeIssue!.path} (${shapeIssue!.code}).` };
+    }
     const candidate = input.candidate;
     const capabilityBlockers: { operationId: string; participantId: string; tool: RunTool }[] = [];
     const byId = new Map(candidate.operations.map((operation) => [operation.id, operation]));
@@ -382,68 +394,113 @@ function assertWorkspaceDirectory(path: string, workspaceCwd: string, field = "w
 }
 
 export function isChannelOperationCandidatePlanV2(value: unknown): value is ChannelOperationCandidatePlanV2 {
-  return record(value, ["schemaVersion", "operations"]) && value.schemaVersion === 2
-    && Array.isArray(value.operations) && value.operations.length > 0 && value.operations.length <= 64
-    && value.operations.every(candidateOperation);
+  return validateCandidatePlan(value);
 }
 
-function candidateOperation(value: unknown): value is ChannelOperationCandidateV2 {
-  if (!record(value, ["id", "kind", "targetKind", "required", "dependsOn", "owner", "sourceQuote", "target", "inputs", "projectInputRoot", "workingDirectory", "command", "commandGoal", "contentSource"])
-    || !text(value.id) || !text(value.sourceQuote) || typeof value.required !== "boolean" || !texts(value.dependsOn)
-    || !["file_read", "file_create", "file_edit", "run_command", "open_local_target"].includes(String(value.kind))
-    || (value.kind === "run_command" ? value.targetKind !== "command" : value.targetKind !== "file")
-    || !candidateOwner(value.owner)
-    || (value.target !== undefined && !candidatePath(value.target))
-    || (value.inputs !== undefined && (!Array.isArray(value.inputs) || value.inputs.length === 0 || value.inputs.length > 256
-      || !value.inputs.every(candidateCommandInput)))
-    || (value.projectInputRoot !== undefined && (!record(value.projectInputRoot, ["path", "sourceQuote"])
-      || !text(value.projectInputRoot.path) || !text(value.projectInputRoot.sourceQuote)))
-    || (value.workingDirectory !== undefined && (!record(value.workingDirectory, ["path", "sourceQuote"])
-      || !text(value.workingDirectory.path) || !text(value.workingDirectory.sourceQuote)))
-    || (value.command !== undefined && (!record(value.command, ["text", "sourceQuote"]) || !text(value.command.text) || !text(value.command.sourceQuote)))) return false;
-  if (value.commandGoal !== undefined && (!record(value.commandGoal, ["kind", "module", "invocation", "sourceQuote"])
-    || value.commandGoal.kind !== "node_function" || !candidatePath(value.commandGoal.module)
-    || !text(value.commandGoal.invocation) || !text(value.commandGoal.sourceQuote))) return false;
+type ShapeReporter = (issue: ChannelOperationCandidateShapeIssue) => void;
+const operationPath = "execution.operations[]";
+
+/** The boolean guard and diagnostics share exactly the same strict validator. */
+function validateCandidatePlan(value: unknown, report?: ShapeReporter): value is ChannelOperationCandidatePlanV2 {
+  return record(value, ["schemaVersion", "operations"], report, "execution")
+    && literal(value.schemaVersion, 2, report, "execution.schemaVersion")
+    && array(value.operations, 1, 64, report, "execution.operations")
+    && value.operations.every(operation => candidateOperation(operation, report));
+}
+
+function candidateOperation(value: unknown, report?: ShapeReporter): value is ChannelOperationCandidateV2 {
+  const p = operationPath;
+  if (!record(value, ["id", "kind", "targetKind", "required", "dependsOn", "owner", "sourceQuote", "target", "inputs", "projectInputRoot", "workingDirectory", "command", "commandGoal", "contentSource"], report, p)
+    || !text(value.id, report, `${p}.id`) || !text(value.sourceQuote, report, `${p}.sourceQuote`)
+    || !scalar(value.required, "boolean", report, `${p}.required`)
+    || !texts(value.dependsOn, report, `${p}.dependsOn`)
+    || !oneOf(value.kind, ["file_read", "file_create", "file_edit", "run_command", "open_local_target"], report, `${p}.kind`)
+    || !literal(value.targetKind, value.kind === "run_command" ? "command" : "file", report, `${p}.targetKind`)
+    || !candidateOwner(value.owner, report)
+    || (value.target !== undefined && !candidatePath(value.target, report, `${p}.target`))
+    || (value.inputs !== undefined && (!array(value.inputs, 1, 256, report, `${p}.inputs`)
+      || !value.inputs.every(input => candidateCommandInput(input, report))))
+    || (value.projectInputRoot !== undefined && !quotedPair(value.projectInputRoot, "path", report, `${p}.projectInputRoot`))
+    || (value.workingDirectory !== undefined && !quotedPair(value.workingDirectory, "path", report, `${p}.workingDirectory`))
+    || (value.command !== undefined && !quotedPair(value.command, "text", report, `${p}.command`))) return false;
+  if (value.commandGoal !== undefined && (!record(value.commandGoal, ["kind", "module", "invocation", "sourceQuote"], report, `${p}.commandGoal`)
+    || !literal(value.commandGoal.kind, "node_function", report, `${p}.commandGoal.kind`)
+    || !candidatePath(value.commandGoal.module, report, `${p}.commandGoal.module`)
+    || !text(value.commandGoal.invocation, report, `${p}.commandGoal.invocation`)
+    || !text(value.commandGoal.sourceQuote, report, `${p}.commandGoal.sourceQuote`))) return false;
   const content = value.contentSource;
-  return content === undefined || (record(content, ["kind", "text", "sourceQuote", "sourceItemId", "inputOperationIds"])
-    && typeof content.text === "string" && text(content.sourceQuote)
-    && (content.sourceItemId === undefined || text(content.sourceItemId))
-    && (content.kind === "literal" ? content.inputOperationIds === undefined
-      : content.kind === "generated_objective" && text(content.text) && texts(content.inputOperationIds)));
+  const c = `${p}.contentSource`;
+  return content === undefined || (record(content, ["kind", "text", "sourceQuote", "sourceItemId", "inputOperationIds"], report, c)
+    && scalar(content.text, "string", report, `${c}.text`) && text(content.sourceQuote, report, `${c}.sourceQuote`)
+    && (content.sourceItemId === undefined || text(content.sourceItemId, report, `${c}.sourceItemId`))
+    && (content.kind === "literal" ? shape(content.inputOperationIds === undefined, `${c}.inputOperationIds`, "invalid_value", report)
+      : literal(content.kind, "generated_objective", report, `${c}.kind`)
+        && text(content.text, report, `${c}.text`) && texts(content.inputOperationIds, report, `${c}.inputOperationIds`)));
 }
 
-function candidateCommandInput(value: unknown): value is CandidateCommandInput {
-  return record(value, ["path", "sourceQuote", "sourceItemId", "relativeTo", "fromOperationId"])
-    && text(value.path) && text(value.sourceQuote)
-    && (value.sourceItemId === undefined || text(value.sourceItemId))
-    && (value.relativeTo === undefined || (record(value.relativeTo, ["path", "sourceQuote", "sourceItemId"])
-      && text(value.relativeTo.path) && text(value.relativeTo.sourceQuote)
-      && (value.relativeTo.sourceItemId === undefined || text(value.relativeTo.sourceItemId))))
-    && (value.fromOperationId === undefined || text(value.fromOperationId));
+function candidateCommandInput(value: unknown, report?: ShapeReporter): value is CandidateCommandInput {
+  const p = `${operationPath}.inputs[]`;
+  return record(value, ["path", "sourceQuote", "sourceItemId", "relativeTo", "fromOperationId"], report, p)
+    && pathFields(value, report, p)
+    && (value.fromOperationId === undefined || text(value.fromOperationId, report, `${p}.fromOperationId`));
 }
 
-function candidatePath(value: unknown): value is CandidatePath {
-  return record(value, ["path", "sourceQuote", "sourceItemId", "relativeTo"]) && text(value.path) && text(value.sourceQuote)
-    && (value.sourceItemId === undefined || text(value.sourceItemId))
-    && (value.relativeTo === undefined || (record(value.relativeTo, ["path", "sourceQuote", "sourceItemId"])
-      && text(value.relativeTo.path) && text(value.relativeTo.sourceQuote)
-      && (value.relativeTo.sourceItemId === undefined || text(value.relativeTo.sourceItemId))));
+function candidatePath(value: unknown, report: ShapeReporter | undefined, path: string): value is CandidatePath {
+  return record(value, ["path", "sourceQuote", "sourceItemId", "relativeTo"], report, path) && pathFields(value, report, path);
 }
 
-function candidateOwner(value: unknown): value is ChannelOperationCandidateV2["owner"] {
-  return record(value, ["kind"]) && value.kind === "host_default"
-    || record(value, ["kind", "participantId", "sourceQuote"]) && (value.kind === undefined || value.kind === "explicit")
-      && text(value.participantId) && text(value.sourceQuote);
+function pathFields(value: Record<string, unknown>, report: ShapeReporter | undefined, path: string): boolean {
+  return text(value.path, report, `${path}.path`) && text(value.sourceQuote, report, `${path}.sourceQuote`)
+    && (value.sourceItemId === undefined || text(value.sourceItemId, report, `${path}.sourceItemId`))
+    && (value.relativeTo === undefined || (record(value.relativeTo, ["path", "sourceQuote", "sourceItemId"], report, `${path}.relativeTo`)
+      && text(value.relativeTo.path, report, `${path}.relativeTo.path`)
+      && text(value.relativeTo.sourceQuote, report, `${path}.relativeTo.sourceQuote`)
+      && (value.relativeTo.sourceItemId === undefined || text(value.relativeTo.sourceItemId, report, `${path}.relativeTo.sourceItemId`))));
 }
 
-function record(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    && Object.keys(value).every((key) => keys.includes(key));
+function candidateOwner(value: unknown, report?: ShapeReporter): value is ChannelOperationCandidateV2["owner"] {
+  const p = `${operationPath}.owner`;
+  if (!record(value, ["kind", "participantId", "sourceQuote"], report, p)) return false;
+  return value.kind === "host_default" ? record(value, ["kind"], report, p)
+    : (value.kind === undefined || literal(value.kind, "explicit", report, `${p}.kind`))
+      && text(value.participantId, report, `${p}.participantId`) && text(value.sourceQuote, report, `${p}.sourceQuote`);
 }
 
-function text(value: unknown): value is string { return typeof value === "string" && value.trim().length > 0; }
-function texts(value: unknown): value is readonly string[] {
-  return Array.isArray(value) && value.every(text) && new Set(value).size === value.length;
+function quotedPair(value: unknown, key: "path" | "text", report: ShapeReporter | undefined, path: string): boolean {
+  return record(value, [key, "sourceQuote"], report, path)
+    && text(value[key], report, `${path}.${key}`) && text(value.sourceQuote, report, `${path}.sourceQuote`);
+}
+
+function shape(valid: boolean, path: string, code: ChannelOperationCandidateShapeIssue["code"], report?: ShapeReporter): boolean {
+  if (!valid) report?.({ path, code });
+  return valid;
+}
+function scalar(value: unknown, type: "string" | "number" | "boolean", report: ShapeReporter | undefined, path: string): boolean {
+  return shape(typeof value === type, path, value === undefined ? "missing" : "invalid_type", report);
+}
+function literal(value: unknown, expected: string | number, report: ShapeReporter | undefined, path: string): boolean {
+  return scalar(value, typeof expected === "string" ? "string" : "number", report, path)
+    && shape(value === expected, path, "invalid_value", report);
+}
+function oneOf(value: unknown, allowed: readonly string[], report: ShapeReporter | undefined, path: string): boolean {
+  return scalar(value, "string", report, path) && shape(allowed.includes(value as string), path, "invalid_value", report);
+}
+function record(value: unknown, keys: readonly string[], report?: ShapeReporter, path = "execution"): value is Record<string, unknown> {
+  return shape(typeof value === "object" && value !== null && !Array.isArray(value), path, value === undefined ? "missing" : "invalid_type", report)
+    && shape(Object.keys(value as object).every(key => keys.includes(key)), path, "unexpected_fields", report);
+}
+function text(value: unknown, report?: ShapeReporter, path = "execution"): value is string {
+  return shape(typeof value === "string", path, value === undefined ? "missing" : "invalid_type", report)
+    && shape((value as string).trim().length > 0, path, "invalid_value", report);
+}
+function array(value: unknown, min: number, max: number, report: ShapeReporter | undefined, path: string): value is readonly unknown[] {
+  return shape(Array.isArray(value), path, value === undefined ? "missing" : "invalid_type", report)
+    && shape((value as unknown[]).length >= min, path, "empty_array", report)
+    && shape((value as unknown[]).length <= max, path, "too_many_items", report);
+}
+function texts(value: unknown, report?: ShapeReporter, path = "execution"): value is readonly string[] {
+  return array(value, 0, Infinity, report, path) && value.every(item => text(item, report, `${path}[]`))
+    && shape(new Set(value).size === value.length, path, "duplicate_value", report);
 }
 class BindingError extends Error {
   constructor(readonly field: string, message: string) { super(message); }

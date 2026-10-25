@@ -18,6 +18,12 @@ const blockers = {
     zh: "本次请求的操作规划未能完成校验，未启动任何队友、工具或任务。请重试本次请求；无需额外授予权限。",
     en: "The request could not be validated during operation planning. No teammate, tool or task was started. Retry the request; no additional permissions are needed.",
   },
+  channel_operation_plan_invalid: {
+    key: "channel-operation-plan-blocker",
+    reason: "The model operation candidate failed Host schema or source binding after bounded selection. No plan or execution was admitted.",
+    zh: "本次操作规划未通过格式或来源校验，未启动任何队友、工具或任务。无需重新列出本来没有的文件，也无需增加权限；可重试本次请求。",
+    en: "The operation plan failed schema or source validation. No teammate, tool or task was started. No extra file inputs or permissions are needed; retry the request.",
+  },
 } as const;
 type BlockerCode = keyof typeof blockers;
 const capabilityCode = "operation_binding_host_capability_unavailable" as const;

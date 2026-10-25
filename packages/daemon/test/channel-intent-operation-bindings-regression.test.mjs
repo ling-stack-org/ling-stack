@@ -3,7 +3,7 @@ import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createCompositeSecretResolver, createSqliteRunStore } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, createCompositeSecretResolver, createSqliteRunStore } from "@ling-stack/core";
 import { appendChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import { selectChannelWorkflowIntent } from "../dist/features/channels/channel-intent-selector.js";
 import { bindChannelOperationPlan, isChannelOperationCandidatePlanV2 } from "../dist/features/channels/channel-operation-bindings.js";
@@ -59,9 +59,20 @@ async function select(t, body = c01, modelOutput = workflowChoice, options = {})
   assert.equal(store.listRuns({ channelId: channel.id, limit: 20 }).length, 0);
   assert.equal(store.listTasks({ channelId: channel.id, limit: 20 }).length, 0);
   const decision = store.listChannelIntentDecisions({ sourceItemId: sourceMessage.id, limit: 10 })[0];
-  assert.notEqual(decision?.action, "reply", decision?.reason);
+  if (decision?.status === "failed") assert.equal(decision.errorCode, "channel_operation_plan_invalid");
+  else assert.notEqual(decision?.action, "reply", decision?.reason);
   const operations = decision?.execution?.operations ?? [];
-  return { result, decision, operations, store, channel, prompts };
+  const diagnostics = store.listControlPlaneEvents({ workspaceId: DEFAULT_WORKSPACE_ID,
+    entityType: "channel_intent_selection", entityId: sourceMessage.id });
+  return { result, decision, operations, store, channel, prompts, diagnostics };
+}
+
+function assertPlanBlocked(result, decision) {
+  assert.equal(result.action, "blocked");
+  assert.equal(result.errorCode, "channel_operation_plan_invalid");
+  assert.equal(decision.action, "reply", "failed diagnostic only, not an accepted ordinary reply");
+  assert.equal(decision.status, "failed");
+  assert.equal(decision.errorCode, "channel_operation_plan_invalid");
 }
 
 test("incomplete operation graph gets one bounded repair before Host binding", async (t) => {
@@ -98,11 +109,12 @@ test("valid-shaped owner-span mistakes receive one repair without weakening Host
 test("repeated semantic binding failure stays closed after exactly one repair", async (t) => {
   const invalid = c01BoundCandidate();
   invalid.operations[0].owner = invalid.operations[3].owner;
-  const { result, decision, operations, prompts } = await select(t, c01,
+  const { result, decision, operations, prompts, diagnostics } = await select(t, c01,
     { action: "execute", reason: "Invalid cross-owner span", execution: invalid }, { expectedClassifications: 2 });
   assert.equal(prompts.length, 2);
-  assert.equal(result.action, "clarify");
-  assert.deepEqual(decision.clarification.missingFields, ["owner.sourceQuote"]);
+  assertPlanBlocked(result, decision);
+  assert.deepEqual(diagnostics.filter(e => e.data.outcome === "binding_rejected").map(e => e.data.fields),
+    [["owner.sourceQuote"], ["owner.sourceQuote"]]);
   assert.deepEqual(operations, []);
   assert.doesNotMatch(result.aiReply.body, /owner\.sourceQuote/u, "internal validator fields are audit facts, not user prose");
 });
@@ -113,20 +125,19 @@ test("semantic repair cannot evade the binding gate by changing to a text reply"
   const { result, decision, operations } = await select(t, c01,
     { action: "execute", reason: "Invalid owner span", execution: invalid },
     { repairOutput: { action: "reply", reason: "Pretend that work was completed" }, expectedClassifications: 2 });
-  assert.equal(result.action, "clarify");
-  assert.equal(decision.action, "clarify");
+  assertPlanBlocked(result, decision);
   assert.deepEqual(operations, []);
 });
 
 test("failed semantic repair transport retains the original fail-closed decision", async (t) => {
   const invalid = c01BoundCandidate();
   invalid.operations[0].sourceQuote = "真实读取 todo.mjs 和 app.js";
-  const { result, decision, operations, prompts } = await select(t, c01,
+  const { result, decision, operations, prompts, diagnostics } = await select(t, c01,
     { action: "execute", reason: "Invalid owner span", execution: invalid },
     { repairError: new Error("Fixture transport disconnected"), expectedClassifications: 2 });
   assert.equal(prompts.length, 2);
-  assert.equal(result.action, "clarify");
-  assert.match(decision.reason, /instruction span/u);
+  assertPlanBlocked(result, decision);
+  assert.deepEqual(diagnostics.find(e => e.data.outcome === "binding_rejected").data.fields, ["owner.sourceQuote"]);
   assert.deepEqual(operations, []);
 });
 
@@ -138,8 +149,7 @@ test("repair cannot evade Host source binding by inventing a quote", async (t) =
   const { result, decision } = await select(t, c01,
     { action: "execute", reason: "Incomplete work", execution: malformed },
     { repairOutput: { action: "execute", reason: "Invented provenance", execution: invented }, expectedClassifications: 2 });
-  assert.equal(result.action, "clarify");
-  assert.equal(decision.action, "clarify");
+  assertPlanBlocked(result, decision);
 });
 
 test("repeated malformed operation graph stops after one repair request", async (t) => {
@@ -149,8 +159,7 @@ test("repeated malformed operation graph stops after one repair request", async 
     { action: "execute", reason: "Incomplete work", execution: malformed },
     { expectedClassifications: 2 });
   assert.equal(prompts.length, 2);
-  assert.equal(result.action, "clarify");
-  assert.equal(decision.action, "clarify");
+  assertPlanBlocked(result, decision);
 });
 
 test("explicit review-only participant stays required when another participant owns the Host operation", async (t) => {
@@ -315,8 +324,7 @@ for (const [name, mutate] of [
     const { result, decision, operations } = await select(t, c01,
       { action: "execute", reason: "Invalid candidate must not trigger materialization fallback", execution: candidate },
       { expectedClassifications: 2 });
-    assert.equal(result.action, "clarify");
-    assert.equal(decision.action, "clarify");
+    assertPlanBlocked(result, decision);
     assert.deepEqual(operations, []);
   });
 }

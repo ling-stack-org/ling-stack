@@ -22,7 +22,9 @@ import type {
   RequiredParticipantRequestedByV1,
 } from "@ling-stack/contracts";
 import { channelOperationPlanFingerprintV1, createRequiredParticipantManifestV1 } from "@ling-stack/contracts";
-import { bindChannelOperationPlan, isChannelOperationCandidatePlanV2 } from "./channel-operation-bindings.js";
+import { bindChannelOperationPlan } from "./channel-operation-bindings.js";
+import { ChannelIntentDiagnosticPersistenceError, createChannelIntentDiagnostics,
+  type ChannelIntentRequestPurpose } from "./channel-intent-diagnostics.js";
 import { publishChannelOperationBlocker, recoverChannelOperationBlocker,
   type ChannelOperationBlockedResult } from "./channel-operation-blocker.js";
 import { channelOperationVisibleSources } from "./channel-operation-sources.js";
@@ -372,7 +374,8 @@ async function maybeSelectModelAssistedIntent(input: ChannelIntentSelectorInput)
   let output: ChannelIntentModelOutput;
   try {
     output = await requestModelIntent(input);
-  } catch {
+  } catch (error) {
+    if (error instanceof ChannelIntentDiagnosticPersistenceError) throw error;
     // A failed routing/planning request is not a successful ordinary reply.
     // Keep the diagnostic Host-owned and replayable; never ask a tool-free
     // reply model to explain a failure it cannot observe.
@@ -440,9 +443,9 @@ function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, out
     return publishChannelOperationBlocker(input);
   }
   if (binding.status === "clarify") {
-    const question = "本次操作计划未通过队友归属、步骤依赖与来源校验，尚未开始执行。请分别列出每位队友负责的操作、输入和输出文件、命令及内容要求。";
-    return createClarifyReply(input, "ambiguous_target", "model_policy", binding.reason,
-      question, { missingFields: binding.missingFields, question });
+    // A rejected model candidate is not evidence that the user omitted a
+    // product decision. Genuine questions use the explicit clarify action.
+    return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
   }
   const ownerIds = new Set(binding.execution.operations.map((operation) => operation.binding!.ownerParticipantId));
   const explicitlyRequiredIds = new Set(explicitRequestedParticipantIds(input));
@@ -524,7 +527,28 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
   const runnerResolution = input.runnerRegistry.resolve({ tools: [], allowFallback: true });
   const textDeltas: string[] = [];
   let requestCount = 0;
-  const runIntentTask = async (taskPrompt: string) => {
+  let requestPurpose: ChannelIntentRequestPurpose = "initial";
+  const diagnose = createChannelIntentDiagnostics(input);
+  const observe = (event: Parameters<ReturnType<typeof createChannelIntentDiagnostics>>[2]) => diagnose(requestCount, requestPurpose, event);
+  const parse = (text: string) => {
+    let output: ChannelIntentModelOutput;
+    try { output = parseModelIntentOutput(text); }
+    catch (error) {
+      observe({ phase: "validation", outcome: "intent_schema_rejected" });
+      throw error;
+    }
+    observe({ phase: "validation", outcome: "intent_schema_accepted" });
+    return output;
+  };
+  const inspect = (output: ChannelIntentModelOutput) => {
+    const binding = bindModelIntentOperations(input, output.execution).binding;
+    observe({ phase: "validation", outcome: binding.status === "bound" ? "bound"
+      : binding.status === "blocked" ? "capability_blocked" : binding.shapeIssue ? "shape_rejected" : "binding_rejected",
+      ...(binding.status === "clarify" ? { fields: binding.missingFields,
+        ...(binding.shapeIssue ? { issue: binding.shapeIssue } : {}) } : {}) });
+    return binding;
+  };
+  const runIntentTask = async (taskPrompt: string, purpose: ChannelIntentRequestPurpose) => {
     if (requestCount >= 2) throw new Error("Channel intent selection request allowance exhausted.");
     requireChannelNoToolsBudget({ budget: contextPack.budget, contextPackOverBudget: contextPack.overBudget,
       prompt: taskPrompt, systemPrompt: "You are Ling's channel intent selector. Return strict JSON only." });
@@ -543,36 +567,46 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
       systemPrompt: "You are Ling's channel intent selector. Return strict JSON only.",
     }, input.secretResolver);
     requestCount += 1;
-    return runnerResolution.runner.adapter.runTask({
-      cwd: input.store.paths.cwd,
-      task: {
-        id: input.sourceMessage.id,
-        title: `Channel intent selection in ${input.channel.name}`,
-        prompt: taskPrompt,
-        channelId: input.channel.id,
-      },
-      provider,
-      ...(runnerResolution.runner.adapter instanceof PiRunnerAdapter
-        ? createProviderInvocationObserver({
-            store: input.store, provider, taskId: input.sourceMessage.id, origin: "intent",
-            onFailure: failure => { recordProviderInvocationFailureObservations({
-              store: input.store, secretResolver: input.secretResolver, failure,
-            }); },
-          })
-        : {}),
-      tools: [],
-      thinkingLevel: "low",
-      systemPrompt: "You are Ling's channel intent selector. Return strict JSON only.",
-      onEvent: (event) => {
-        if (event.type === "assistant_text_delta") {
-          textDeltas.push(event.text);
-        }
-      },
-    });
+    requestPurpose = purpose;
+    observe({ phase: "request_started", outcome: "started" });
+    let result: Awaited<ReturnType<typeof runnerResolution.runner.adapter.runTask>>;
+    try {
+      result = await runnerResolution.runner.adapter.runTask({
+        cwd: input.store.paths.cwd,
+        task: {
+          id: input.sourceMessage.id,
+          title: `Channel intent selection in ${input.channel.name}`,
+          prompt: taskPrompt,
+          channelId: input.channel.id,
+        },
+        provider,
+        ...(runnerResolution.runner.adapter instanceof PiRunnerAdapter
+          ? createProviderInvocationObserver({
+              store: input.store, provider, taskId: input.sourceMessage.id, origin: "intent",
+              onFailure: failure => { recordProviderInvocationFailureObservations({
+                store: input.store, secretResolver: input.secretResolver, failure,
+              }); },
+            })
+          : {}),
+        tools: [],
+        thinkingLevel: "low",
+        systemPrompt: "You are Ling's channel intent selector. Return strict JSON only.",
+        onEvent: (event) => {
+          if (event.type === "assistant_text_delta") {
+            textDeltas.push(event.text);
+          }
+        },
+      });
+    } catch (error) {
+      observe({ phase: "request_finished", outcome: isContextLengthError(error) ? "context_length_error" : "transport_error" });
+      throw error;
+    }
+    observe({ phase: "request_finished", outcome: "completed" });
+    return result;
   };
   let result: Awaited<ReturnType<typeof runIntentTask>>;
   try {
-    result = await runIntentTask(prompt);
+    result = await runIntentTask(prompt, "initial");
   } catch (error) {
     if (error instanceof ChannelModelBudgetError || !isContextLengthError(error)) {
       throw error;
@@ -597,38 +631,45 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
     });
     prompt = renderContextPack(contextPack);
     textDeltas.length = 0;
-    result = await runIntentTask(prompt);
+    result = await runIntentTask(prompt, "compaction_retry");
   }
   const text = textDeltas.join("").trim() || extractAssistantText(result.messages) || "";
   let output: ChannelIntentModelOutput;
   try {
-    output = parseModelIntentOutput(text);
+    output = parse(text);
   } catch (error) {
-    if (requestCount >= 2) throw error;
+    if (error instanceof ChannelIntentDiagnosticPersistenceError || requestCount >= 2) throw error;
     // Compaction, format and binding repair share one additional request. No
     // JSON patching, guessed graph, tool invocation or effect is admitted here.
     textDeltas.length = 0;
-    const repairedResult = await runIntentTask(`${prompt}\n\nYour previous response was not valid strict JSON or did not match the declared intent schema. Return one complete strict JSON object for the same current user request, with all declared required fields and no Markdown or additional fields. No operation has been admitted or executed. Preserve the source registry, participant ownership and requested permissions; do not invent commands or sources.`);
+    const repairedResult = await runIntentTask(`${prompt}\n\nYour previous response was not valid strict JSON or did not match the declared intent schema. Return one complete strict JSON object for the same current user request, with all declared required fields and no Markdown or additional fields. No operation has been admitted or executed. Preserve the source registry, participant ownership and requested permissions; do not invent commands or sources.`, "format_repair");
     const repairedText = textDeltas.join("").trim() || extractAssistantText(repairedResult.messages) || "";
-    output = parseModelIntentOutput(repairedText);
+    output = parse(repairedText);
   }
   if (output.action !== "execute" && output.action !== "workflow_proposal") return output;
-  const initialBinding = bindModelIntentOperations(input, output.execution).binding;
+  const initialBinding = inspect(output);
   if (initialBinding.status !== "clarify" || requestCount >= 2) return output;
 
   // A valid JSON shape is not a valid source binding. Give both graph-shape and
   // provenance failures one repair attempt; capability blockers never trigger
   // a model retry. No task, proposal, Run or effect is admitted by this check.
+  let repaired: ChannelIntentModelOutput;
   try {
     textDeltas.length = 0;
-    const repairedResult = await runIntentTask(`${prompt}\n\nYour previous JSON selected ${output.action} but Host binding rejected it. Invalid fields: ${initialBinding.missingFields.join(", ")}. Host validation: ${initialBinding.reason}\nPrevious candidate (not execution authority): ${JSON.stringify(output.execution)}\nReturn one corrected strict JSON object with execution.schemaVersion=2 and a nonempty operations array. Each operation needs id, kind, targetKind, required, dependsOn, sourceQuote and owner, plus its quoted target, command or content as applicable. Use only the provided current user turn and canonical source registry; do not invent paths, commands, owners or source quotes. Each explicit owner.sourceQuote must occur inside that operation's verbatim sourceQuote. For a named owner's multi-operation block, quote that owner's complete instruction span when a shorter clause omits the owner. Keep separate owners and every required operation; do not borrow another owner's instruction span. Do not change the action to reply/no_reply to evade validation.`);
+    const repairedResult = await runIntentTask(`${prompt}\n\nYour previous JSON selected ${output.action} but Host binding rejected it. Invalid fields: ${initialBinding.missingFields.join(", ")}. Host validation: ${initialBinding.reason}\nPrevious candidate (not execution authority): ${JSON.stringify(output.execution)}\nReturn one corrected strict JSON object with execution.schemaVersion=2 and a nonempty operations array. Each operation needs id, kind, targetKind, required, dependsOn, sourceQuote and owner, plus its quoted target, command or content as applicable. Use only the provided current user turn and canonical source registry; do not invent paths, commands, owners or source quotes. Each explicit owner.sourceQuote must occur inside that operation's verbatim sourceQuote. For a named owner's multi-operation block, quote that owner's complete instruction span when a shorter clause omits the owner. Keep separate owners and every required operation; do not borrow another owner's instruction span. Do not change the action to reply/no_reply to evade validation.`, "binding_repair");
     const repairedText = textDeltas.join("").trim() || extractAssistantText(repairedResult.messages) || "";
-    const repaired = parseModelIntentOutput(repairedText);
-    if ((repaired.action === "execute" || repaired.action === "workflow_proposal")
-      && isChannelOperationCandidatePlanV2(repaired.execution)) return repaired;
-  } catch {
-    // Retain the original invalid graph for the binder's structured clarify.
+    repaired = parse(repairedText);
+  } catch (error) {
+    if (error instanceof ChannelIntentDiagnosticPersistenceError) throw error;
+    // Transport/parse failure retains the original rejected candidate. It is
+    // never dispatched or converted to an ordinary reply.
+    return output;
   }
+  if (repaired.action === "execute" || repaired.action === "workflow_proposal") {
+    inspect(repaired);
+    return repaired;
+  }
+  observe({ phase: "validation", outcome: "repair_action_rejected" });
   return output;
 }
 
