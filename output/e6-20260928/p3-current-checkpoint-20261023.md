@@ -4,6 +4,80 @@ This is the concise current entry. Older append-only records are history, not a 
 
 ## Superseding checkpoint — 2026-10-24
 
+### Current — 2026-10-25: standard complete-dist full passed; GUI still locked
+
+- The exact full suite exec27515 actually exited0; do not poll/restart its old
+  PID. All523 test files:7546 total,7534 pass,0 fail,0 cancelled,12 existing skip.
+  Log `p3-standard-dist-full-20261025.log` SHA256
+  `2c82488dbc3afd26f17f1daff7589c1c7b78692c31a602cf34e84cf62a4408e4`.
+  All8808 frozen source/test/dist/native inputs remained identical:
+  `5f5d966ba03ce18cdcb94451a5790e5302f12fab79d47b1e751848e749d0245d`.
+  Actual duration2710206.538917ms. No current suite failure is hidden by the old
+  candidate's resource/URL adapter or the revised public/raw fixture assertion.
+- Targeted70/70 and independent A27 19/19 results below remain valid; no need
+  to run them again for documentation/commit. Original42-fail log remains RED.
+- Fresh built-in Cua after full completion still reports Mac locked. No new
+  GUI screenshot/approval, full C01, SSE/restart, delegation, Office or H09
+  acceptance is claimed. Manual-unlock request is already pending.
+- Offline follow-up has identified the earlier relative-path C01 boundary:
+  shared Composer path inference becomes attached fileRefs, envelope resolves
+  them against workspace root, and materialization clarification precedes typed
+  intent. A subdirectory command argument `../records.csv` therefore blocks the
+  whole turn before any per-command cwd can be bound. Tool cwd also currently
+  equals immutable Run workspace. Independent read-only design check is active;
+  no path/sandbox guard has been loosened and no new repair is claimed yet.
+
+### Current — 2026-10-25: standard-dist targeted closure; final full running
+
+- Root reviewed the sole permission fixture helper change: SQLite equals raw
+  Store, HTTP equals independently redacted expectation, four private fields
+  explicitly absent, raw Store returned for unchanged recovery/no-replay checks.
+  Agent's fresh standard-dist file result is19/19,actual exit0,zero skips.
+- Root's original-module/resource revalidation actually exited0 as exec89841:
+  five files,70/70,zero fail/cancel/skip. All1541 candidate/ordinary JavaScript
+  files matched;5233 frozen inputs unchanged, SHA
+  `edd4ecb33a2d3d065bf25e25548f786ef86e55358df4cedb3dd62c652827dc44`.
+  Log `p3-standard-dist-revalidated-20261025.log`. No production guard relaxed.
+  This closes the targeted image-import/codesign/A27 prerequisites, not E6.
+- Standard complete-dist full523-file suite is now exec27515,wrapper66288,
+  child66291; log `p3-standard-dist-full-20261025.log`. Before8808-input SHA
+  `5f5d966ba03ce18cdcb94451a5790e5302f12fab79d47b1e751848e749d0245d`.
+  No final result yet; do not edit source/tests/dist or start a duplicate suite.
+  The new runner initially failed syntax validation before executing tests;
+  that missing callback closure was fixed before this actual launch.
+- Cua fresh read still reports Mac locked/automatic unlock unsuccessful. The
+  prior manual-unlock request remains pending; no repeat request, alternate
+  driver or authentication workaround. Live Main54334/Daemon55755 ownership
+  was read back again. Real required fan-in/full-project GUI remains open.
+- Original candidate7546/7492pass/42fail/12skip log is retained unchanged.
+  Read-only exact classification is in
+  `p3-full-regression-failure-classification-20261025.md`;42 includes38 leaves
+  and4 parent aggregates. No current full-suite or GUI success is claimed.
+
+### Current — 2026-10-25: new package verified; partial C01; full result needs repair
+
+- Source b3c1937c is saved/pushed. New reviewed package31911 and readback8665
+  actually exited0. ASAR ec8ba0a7; original reader15/1605 and strict codesign
+  passed. See `p3-memory-packaged-checkpoint-20261025.md` for exact fingerprints.
+  Do not use or rebuild the old d4572076 package as current evidence.
+- Real new-package C01-R3 Engineer Run eaa3785d succeeded with read/approved
+  command; QA Run8f767f89 approval expired and workflow3c1d8621 is blocked.
+  Both are genuine participant Runs, no web events,8 original files unchanged,
+  no new files. This is not full required fan-in or the original project passed.
+- Correct isolated Main54334/Daemon55755/17928 was verified. Built-in Cua later
+  reported Mac locked; manual-unlock request is pending. No backup driver or
+  authentication workaround. Continue GUI after actual unlock, not by assumption.
+- Candidate full65308 has now actually exited1:7546 total/7492pass/42fail/
+  12skip/0cancel; sourceAndCandidateUnchanged=true. Do not wait on its old PID
+  or call it live/green. Eight image cases already8/8 with the real product codec.
+- Failed classes are being independently diagnosed.11 permission cases need
+  fixture separation of raw SQLite/Store versus public DTO; do not restore private
+  API fields or remove authority assertions. Standard dist1541 JavaScript files
+  match candidate exactly, so use original module locations for codesign probes.
+- Next: close failed-fixture/resource evidence, then correct standard full suite;
+  resume genuine two-required/full-two-file C01 once GUI is available. Recovery,
+  delegation, Office/H09, PR/main and total E6 remain open. No release.
+
 ### Current — 2026-10-25: source repair independently closed; final regression live
 
 - Historical workflow transport implementation is complete in the current source.

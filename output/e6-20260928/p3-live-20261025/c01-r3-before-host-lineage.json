@@ -1,0 +1,69 @@
+{
+  "capturedAt": "2026-10-24T16:44:11.172Z",
+  "label": "before",
+  "source": "real dedicated QA files and public packaged Host APIs; no DB mutation",
+  "files": [
+    {
+      "path": "brief.md",
+      "original": true,
+      "size": 827,
+      "sha256": "183414e1300e1ce575a353befefa32457eff01d60503b2fdc6b7f640b66ce253"
+    },
+    {
+      "path": "constraints.md",
+      "original": true,
+      "size": 735,
+      "sha256": "148ef42d71f6c26746c9e356078d60733acd0dc55916e8661e9ac1eaac0fe325"
+    },
+    {
+      "path": "records.csv",
+      "original": true,
+      "size": 117,
+      "sha256": "14f3d5999baef60bd5fd1fcdcaccef0c4e48dc7af7e3a3d4afb28e6c59ce637e"
+    },
+    {
+      "path": "qinglan-ledger/package.json",
+      "original": true,
+      "size": 266,
+      "sha256": "cf73bfb454e1b2eba989ed4518fa38e47283236e60d22d3bbef501f44d38bed0"
+    },
+    {
+      "path": "qinglan-ledger/ledger.js",
+      "original": true,
+      "size": 4042,
+      "sha256": "3172fa368ffd124dcf1b2aa061bdf257abd7650b78563d1fbd350ac0e718bcb0"
+    },
+    {
+      "path": "qinglan-ledger/cli.js",
+      "original": true,
+      "size": 1862,
+      "sha256": "0a8a65cba0a999efce3a2b8e6aeec3b1a48c40f97af779b2b96998ac662d3e94"
+    },
+    {
+      "path": "qinglan-ledger/ledger.test.js",
+      "original": true,
+      "size": 4637,
+      "sha256": "402a66f8f8c86226c9be14da3579b4f612888024732a075ed3773361090882d1"
+    },
+    {
+      "path": "qinglan-ledger/README.md",
+      "original": true,
+      "size": 2827,
+      "sha256": "862992eade71f7f9c404c28c05e402383fc24664f906954c63232633a1f722a0"
+    },
+    {
+      "path": "qinglan-ledger/constraints-check.test.js",
+      "original": false,
+      "exists": false
+    },
+    {
+      "path": "qinglan-ledger-audit.md",
+      "original": false,
+      "exists": false
+    }
+  ],
+  "limits": [
+    "Public projection, file hashes and genuine GUI screenshots are different evidence",
+    "No single stage establishes full two-file project or dynamic delegation acceptance"
+  ]
+}

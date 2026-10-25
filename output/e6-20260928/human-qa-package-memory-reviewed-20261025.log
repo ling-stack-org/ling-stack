@@ -1,0 +1,1234 @@
+
+> @ling-stack/desktop@0.1.2-alpha.1 package:mac /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/apps/desktop
+> corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build && node scripts/package-macos-with-office.mjs
+
+
+> @ling-stack/browser-host@0.1.1 build:native /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/browser-host
+> node scripts/build-native.mjs
+
+{"built":true,"output":"/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/browser-host/dist/native/ling-browser-host","schema":"ling.browser-host.build.v1","version":"0.1.1","protocol":"ling.chrome.native.v1","platform":"darwin-arm64","executable":"ling-browser-host","signing":"adhoc","hostSha256":"bb0552b6103ebad87acfc6ff2f6a5025ecad8fab5ac88023efc8a68cdf3b46a0","sourceCommit":"b3c1937cd8fb5dac8515ca0d2249a23ff959a876"}
+
+> @ling-stack/desktop@0.1.2-alpha.1 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/apps/desktop
+> corepack pnpm build:office-driver && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/chrome-extension build && corepack pnpm --filter @ling-stack/web build && corepack pnpm --filter @ling-stack/daemon build && tsc -p tsconfig.main.json && esbuild preload/main-window.ts preload/computer-use-preview.ts --bundle --platform=node --format=cjs --external:electron --outdir=dist/preload --out-extension:.js=.cjs && corepack pnpm build:engine-secret-worker && node scripts/build-packaged-daemon.mjs && node scripts/stage-development-bundled-plugins.mjs && vite build --config vite.config.ts
+
+
+> @ling-stack/desktop@0.1.2-alpha.1 build:office-driver /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/apps/desktop
+> node scripts/build-office-driver.mjs
+
+/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/apps/desktop/dist/office-driver/darwin-arm64/OfficeDriver.app: replacing existing signature
+Built /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/apps/desktop/dist/office-driver/darwin-arm64/OfficeDriver.app/Contents/MacOS/ling-office-driver
+
+> @ling-stack/browser-host@0.1.1 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/browser-host
+> corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json
+
+
+> @ling-stack/contracts@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/contracts
+> corepack pnpm --filter @ling-stack/localization build && tsc -p tsconfig.json
+
+
+> @ling-stack/localization@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/localization
+> node scripts/compile-catalogs.mjs && tsc -p tsconfig.json
+
+Compiled 55 localization catalogs
+
+> @ling-stack/chrome-extension@0.1.2 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/apps/chrome-extension
+> node scripts/build.mjs
+
+
+> @ling-stack/web@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/apps/web
+> corepack pnpm --filter @ling-stack/localization build && corepack pnpm --filter @ling-stack/ui-react build && corepack pnpm --filter @ling-stack/conversation-ui-core build && corepack pnpm --filter @ling-stack/conversation-ui-react build && corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && tsc -p tsconfig.json && vite build
+
+
+> @ling-stack/localization@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/localization
+> node scripts/compile-catalogs.mjs && tsc -p tsconfig.json
+
+Compiled 55 localization catalogs
+
+> @ling-stack/ui-react@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/ui-react
+> tsc -p tsconfig.json && node scripts/copy-styles.mjs
+
+
+> @ling-stack/conversation-ui-core@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/conversation-ui-core
+> tsc -p tsconfig.json
+
+
+> @ling-stack/conversation-ui-react@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/conversation-ui-react
+> tsc -p tsconfig.json && node scripts/copy-styles.mjs
+
+
+> @ling-stack/api-client@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/api-client
+> corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json
+
+
+> @ling-stack/contracts@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/contracts
+> corepack pnpm --filter @ling-stack/localization build && tsc -p tsconfig.json
+
+
+> @ling-stack/localization@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/localization
+> node scripts/compile-catalogs.mjs && tsc -p tsconfig.json
+
+Compiled 55 localization catalogs
+
+> @ling-stack/core@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/core
+> corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && tsc -p tsconfig.json
+
+
+> @ling-stack/contracts@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/contracts
+> corepack pnpm --filter @ling-stack/localization build && tsc -p tsconfig.json
+
+
+> @ling-stack/localization@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/localization
+> node scripts/compile-catalogs.mjs && tsc -p tsconfig.json
+
+Compiled 55 localization catalogs
+
+> @ling-stack/plugin-sdk@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/plugin-sdk
+> tsc -p tsconfig.json
+
+vite v8.3.4 building client environment for production...
+transforming...
+✓ 5833 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/assets/KaTeX_Size3-Regular-CTq5MqoE.woff                 4.42 kB
+dist/assets/KaTeX_Size4-Regular-Dl5lxZxV.woff2                4.92 kB
+dist/assets/KaTeX_Size2-Regular-Dy4dx90m.woff2                5.20 kB
+dist/assets/KaTeX_Size1-Regular-mCD8mA8B.woff2                5.46 kB
+dist/assets/KaTeX_Size4-Regular-BF-4gkZK.woff                 5.98 kB
+dist/assets/KaTeX_Size2-Regular-oD1tc_U0.woff                 6.18 kB
+dist/assets/KaTeX_Size1-Regular-C195tn64.woff                 6.49 kB
+dist/assets/KaTeX_Caligraphic-Regular-Di6jR-x-.woff2          6.90 kB
+dist/assets/KaTeX_Caligraphic-Bold-Dq_IR9rO.woff2             6.91 kB
+dist/assets/KaTeX_Size3-Regular-DgpXs0kz.ttf                  7.58 kB
+dist/assets/KaTeX_Caligraphic-Regular-CTRA-rTL.woff           7.65 kB
+dist/assets/KaTeX_Caligraphic-Bold-BEiXGLvX.woff              7.71 kB
+dist/assets/KaTeX_Script-Regular-D3wIWfF6.woff2               9.64 kB
+dist/assets/KaTeX_SansSerif-Regular-DDBCnlJ7.woff2           10.34 kB
+dist/assets/KaTeX_Size4-Regular-DWFBv043.ttf                 10.36 kB
+dist/assets/KaTeX_Script-Regular-D5yQViql.woff               10.58 kB
+dist/assets/KaTeX_Fraktur-Regular-CTYiF6lA.woff2             11.31 kB
+dist/assets/KaTeX_Fraktur-Bold-CL6g_b3V.woff2                11.34 kB
+dist/assets/KaTeX_Size2-Regular-B7gKUWhC.ttf                 11.50 kB
+dist/assets/KaTeX_SansSerif-Italic-C3H0VqGB.woff2            12.02 kB
+dist/assets/KaTeX_SansSerif-Bold-D1sUS0GD.woff2              12.21 kB
+dist/assets/KaTeX_Size1-Regular-Dbsnue_I.ttf                 12.22 kB
+dist/assets/KaTeX_SansSerif-Regular-CS6fqUqJ.woff            12.31 kB
+dist/assets/KaTeX_Caligraphic-Regular-wX97UBjC.ttf           12.34 kB
+dist/assets/KaTeX_Caligraphic-Bold-ATXxdsX0.ttf              12.36 kB
+dist/assets/KaTeX_Fraktur-Regular-Dxdc4cR9.woff              13.20 kB
+dist/assets/KaTeX_Fraktur-Bold-BsDP51OF.woff                 13.29 kB
+dist/assets/KaTeX_Typewriter-Regular-CO6r4hn1.woff2          13.56 kB
+dist/index.html                                              13.57 kB │ gzip:   3.21 kB
+dist/assets/KaTeX_SansSerif-Italic-DN2j7dab.woff             14.11 kB
+dist/assets/KaTeX_SansSerif-Bold-DbIhKOiC.woff               14.40 kB
+dist/assets/KaTeX_Typewriter-Regular-C0xS9mPB.woff           16.02 kB
+dist/assets/KaTeX_Math-BoldItalic-CZnvNsCZ.woff2             16.40 kB
+dist/assets/KaTeX_Math-Italic-t53AETM-.woff2                 16.44 kB
+dist/assets/KaTeX_Script-Regular-C5JkGWo-.ttf                16.64 kB
+dist/assets/KaTeX_Main-BoldItalic-DxDJ3AOS.woff2             16.78 kB
+dist/assets/KaTeX_Main-Italic-NWA7e6Wa.woff2                 16.98 kB
+dist/assets/KaTeX_Math-BoldItalic-iY-2wyZ7.woff              18.66 kB
+dist/assets/KaTeX_Math-Italic-DA0__PXp.woff                  18.74 kB
+dist/assets/KaTeX_Main-BoldItalic-SpSLRI95.woff              19.41 kB
+dist/assets/KaTeX_SansSerif-Regular-BNo7hRIc.ttf             19.43 kB
+dist/assets/KaTeX_Fraktur-Regular-CB_wures.ttf               19.57 kB
+dist/assets/KaTeX_Fraktur-Bold-BdnERNNW.ttf                  19.58 kB
+dist/assets/KaTeX_Main-Italic-BMLOBm91.woff                  19.67 kB
+dist/assets/KaTeX_SansSerif-Italic-YYjJ1zSn.ttf              22.36 kB
+dist/assets/KaTeX_SansSerif-Bold-CFMepnvq.ttf                24.50 kB
+dist/assets/KaTeX_Main-Bold-Cx986IdX.woff2                   25.32 kB
+dist/assets/KaTeX_Main-Regular-B22Nviop.woff2                26.27 kB
+dist/assets/KaTeX_Typewriter-Regular-D3Ib7_Hf.ttf            27.55 kB
+dist/assets/KaTeX_AMS-Regular-BQhdFMY1.woff2                 28.07 kB
+dist/assets/KaTeX_Main-Bold-Jm3AIy58.woff                    29.91 kB
+dist/assets/KaTeX_Main-Regular-Dr94JaBh.woff                 30.77 kB
+dist/assets/KaTeX_Math-BoldItalic-B3XSjfu4.ttf               31.19 kB
+dist/assets/KaTeX_Math-Italic-flOr_0UB.ttf                   31.30 kB
+dist/assets/KaTeX_Main-BoldItalic-DzxPMmG6.ttf               32.96 kB
+dist/assets/KaTeX_AMS-Regular-DMm9YOAa.woff                  33.51 kB
+dist/assets/KaTeX_Main-Italic-3WenGoN9.ttf                   33.58 kB
+dist/assets/KaTeX_Main-Bold-waoOVXN0.ttf                     51.33 kB
+dist/assets/KaTeX_Main-Regular-ypZvNtVU.ttf                  53.58 kB
+dist/assets/KaTeX_AMS-Regular-DRggAlZN.ttf                   63.63 kB
+dist/assets/TeammateWorkspace-B3-8RZeZ.css                    2.28 kB │ gzip:   0.67 kB
+dist/assets/components-CcxxNeIT.css                           5.52 kB │ gzip:   1.37 kB
+dist/assets/MediaProductionWorkspace-DLioOiRN.css            15.41 kB │ gzip:   2.56 kB
+dist/assets/index-CQQ0d0s5.css                              803.99 kB │ gzip: 113.36 kB
+dist/assets/array-BifhSqXX.js                                 0.10 kB │ gzip:   0.11 kB
+dist/assets/pie-WAS4IAKB-CrcR4qG1.js                          0.10 kB │ gzip:   0.12 kB
+dist/assets/info-A6RAGUB7-Bqu5pE7P.js                         0.10 kB │ gzip:   0.12 kB
+dist/assets/radar-RG4KPBEZ-DvfE-i7u.js                        0.10 kB │ gzip:   0.12 kB
+dist/assets/packet-AYTQ26CC-CDN5J0Q6.js                       0.11 kB │ gzip:   0.12 kB
+dist/assets/cynefin-OW5HDTMX-BDdMRke7.js                      0.11 kB │ gzip:   0.12 kB
+dist/assets/treemap-WGGIJYW6-Bp_BVdTD.js                      0.11 kB │ gzip:   0.12 kB
+dist/assets/wardley-WFR3VGLG-DmQONHTI.js                      0.11 kB │ gzip:   0.12 kB
+dist/assets/gitGraph-4MIJSDKK-BPEmE-U1.js                     0.11 kB │ gzip:   0.12 kB
+dist/assets/railroad-74A4TZTK-B79Z0_aT.js                     0.11 kB │ gzip:   0.12 kB
+dist/assets/treeView-Q6P3EWNA-BcWQvxGi.js                     0.11 kB │ gzip:   0.12 kB
+dist/assets/channel-BWB9K_e-.js                               0.11 kB │ gzip:   0.12 kB
+dist/assets/railroad-peg-WCYAUIDC-B61dAPF7.js                 0.11 kB │ gzip:   0.13 kB
+dist/assets/architecture-7GRP2DOG-OUD_o7Sb.js                 0.11 kB │ gzip:   0.13 kB
+dist/assets/railroad-abnf-HS5TGJTU-BLbfgB8Z.js                0.11 kB │ gzip:   0.13 kB
+dist/assets/railroad-ebnf-LZEXJU2U-CSv8R1l4.js                0.11 kB │ gzip:   0.13 kB
+dist/assets/eventmodeling-NTZA5JFV-dETj78yr.js                0.11 kB │ gzip:   0.13 kB
+dist/assets/init-C-OQMol4.js                                  0.14 kB │ gzip:   0.12 kB
+dist/assets/chunk-Y2CYZVJY-DsF7k-Jl.js                        0.15 kB │ gzip:   0.14 kB
+dist/assets/chevron-up-inkOilqj.js                            0.15 kB │ gzip:   0.15 kB
+dist/assets/ccount-CyGsA0u7.js                                0.18 kB │ gzip:   0.16 kB
+dist/assets/plus-iOs7s2qf.js                                  0.18 kB │ gzip:   0.16 kB
+dist/assets/chunk-2Q5K7J3B-C1jixKkw.js                        0.19 kB │ gzip:   0.16 kB
+dist/assets/arrow-left-B2o8vG6R.js                            0.19 kB │ gzip:   0.17 kB
+dist/assets/arrow-right-BpIp8Brv.js                           0.19 kB │ gzip:   0.17 kB
+dist/assets/clock-3-CGf9LyED.js                               0.19 kB │ gzip:   0.18 kB
+dist/assets/play-DlefZDcq.js                                  0.21 kB │ gzip:   0.19 kB
+dist/assets/chunk-JWPE2WC7-DVXcaiue.js                        0.22 kB │ gzip:   0.17 kB
+dist/assets/rotate-ccw-B0SrJwL0.js                            0.22 kB │ gzip:   0.20 kB
+dist/assets/circle-check-D0bpI2fE.js                          0.23 kB │ gzip:   0.20 kB
+dist/assets/pause-Dm9aMKie.js                                 0.24 kB │ gzip:   0.18 kB
+dist/assets/activity-l0cmrawZ.js                              0.26 kB │ gzip:   0.21 kB
+dist/assets/message-circle-DhQgVx4n.js                        0.27 kB │ gzip:   0.22 kB
+dist/assets/external-link-CSeWu8wL.js                         0.28 kB │ gzip:   0.22 kB
+dist/assets/settings-2-DI5j30sx.js                            0.28 kB │ gzip:   0.21 kB
+dist/assets/archive-DpwQhG0-.js                               0.28 kB │ gzip:   0.22 kB
+dist/assets/route-CwI4lrJB.js                                 0.28 kB │ gzip:   0.22 kB
+dist/assets/chunk-XXDRQBXY-x1B2tccL.js                        0.28 kB │ gzip:   0.23 kB
+dist/assets/rotate-ccw-clock-BINnaN66.js                      0.29 kB │ gzip:   0.23 kB
+dist/assets/pencil-I7Ia08m3.js                                0.30 kB │ gzip:   0.24 kB
+dist/assets/git-pull-request-WRVtO00K.js                      0.31 kB │ gzip:   0.24 kB
+dist/assets/arrow-up-CwUvOTAB.js                              0.32 kB │ gzip:   0.23 kB
+dist/assets/wrench-D0eXQFLN.js                                0.33 kB │ gzip:   0.25 kB
+dist/assets/users-BejxOONv.js                                 0.33 kB │ gzip:   0.24 kB
+dist/assets/box-D31IInN2.js                                   0.33 kB │ gzip:   0.24 kB
+dist/assets/shield-check-BT7RnqWn.js                          0.34 kB │ gzip:   0.26 kB
+dist/assets/refresh-cw-DKi-UAvx.js                            0.35 kB │ gzip:   0.24 kB
+dist/assets/bot-BtIZCyZ8.js                                   0.35 kB │ gzip:   0.24 kB
+dist/assets/chunk-5VM5RSS4-ZNzvKenW.js                        0.36 kB │ gzip:   0.27 kB
+dist/assets/pin-off-BxkijWu0.js                               0.36 kB │ gzip:   0.26 kB
+dist/assets/camera-3HGWEHZS.js                                0.36 kB │ gzip:   0.27 kB
+dist/assets/server-DZb6fRuI.js                                0.36 kB │ gzip:   0.23 kB
+dist/assets/archive-restore-NDvjsTvs.js                       0.36 kB │ gzip:   0.25 kB
+dist/assets/pin-BG94LD0E.js                                   0.37 kB │ gzip:   0.25 kB
+dist/assets/trash-CJA4Zobs.js                                 0.37 kB │ gzip:   0.24 kB
+dist/assets/conversation-guidance-visibility-djv7eJAu.js      0.40 kB │ gzip:   0.30 kB
+dist/assets/download-DYDi-ojd.js                              0.46 kB │ gzip:   0.31 kB
+dist/assets/eye-CySLebxI.js                                   0.51 kB │ gzip:   0.29 kB
+dist/assets/palette-CJcLCP8e.js                               0.53 kB │ gzip:   0.29 kB
+dist/assets/codeowners-C8r90Shi.js                            0.54 kB │ gzip:   0.31 kB
+dist/assets/flowDiagram-HODETNUW-CNpZpEmL.js                  0.56 kB │ gzip:   0.31 kB
+dist/assets/chunk-POPQ4Y6H-D-o9jJ8f.js                        0.56 kB │ gzip:   0.40 kB
+dist/assets/artifacts-BPN-85IX.js                             0.61 kB │ gzip:   0.42 kB
+dist/assets/infoDiagram-27XIBGKW-t_SlzMyl.js                  0.65 kB │ gzip:   0.41 kB
+dist/assets/cpu-SHj5oPqT.js                                   0.67 kB │ gzip:   0.30 kB
+dist/assets/save-Bc46eW1s.js                                  0.70 kB │ gzip:   0.38 kB
+dist/assets/shellsession-CVsQGYfZ.js                          0.71 kB │ gzip:   0.43 kB
+dist/assets/rolldown-runtime-hePW80VL.js                      0.71 kB │ gzip:   0.42 kB
+dist/assets/DesktopTitlebarSurface-BNBkfxBv.js                0.72 kB │ gzip:   0.40 kB
+dist/assets/formatting-fuYtKrfK.js                            0.72 kB │ gzip:   0.45 kB
+dist/assets/tsv-sltzmVWM.js                                   0.73 kB │ gzip:   0.33 kB
+dist/assets/classDiagram-ZZMXUADV-PxsPZgJl.js                 0.77 kB │ gzip:   0.45 kB
+dist/assets/classDiagram-v2-VYDZK3BY-PxsPZgJl.js              0.77 kB │ gzip:   0.45 kB
+dist/assets/stateDiagram-v2-MP3YSRHH-Dz4p_0Jm.js              0.78 kB │ gzip:   0.45 kB
+dist/assets/unlink-BW3ecbQ2.js                                0.82 kB │ gzip:   0.39 kB
+dist/assets/swimlanesDiagram-VR7AAH4N--yh7Vmp6.js             0.83 kB │ gzip:   0.48 kB
+dist/assets/html-derivative-DNPJNw-0.js                       0.84 kB │ gzip:   0.45 kB
+dist/assets/sizeCapture-INFHLROL-3uHXrFqA.js                  0.87 kB │ gzip:   0.51 kB
+dist/assets/unplug-U6WSYRQt.js                                0.87 kB │ gzip:   0.43 kB
+dist/assets/workflow-Dhp8XyJ9.js                              0.94 kB │ gzip:   0.42 kB
+dist/assets/line-CnUatbKn.js                                  0.94 kB │ gzip:   0.47 kB
+dist/assets/git-rebase-BDPpS8w6.js                            0.98 kB │ gzip:   0.44 kB
+dist/assets/qmldir-DCQb3MpD.js                                0.99 kB │ gzip:   0.44 kB
+dist/assets/value-DRzWgzJE.js                                 1.04 kB │ gzip:   0.55 kB
+dist/assets/useApprovalDecisionController-r-KJmc52.js         1.12 kB │ gzip:   0.60 kB
+dist/assets/csv-Dx-8-gkx.js                                   1.13 kB │ gzip:   0.36 kB
+dist/assets/ordinal-BDEzSJ7C.js                               1.17 kB │ gzip:   0.56 kB
+dist/assets/git-commit-BSykSTBG.js                            1.22 kB │ gzip:   0.52 kB
+dist/assets/xsl-BOPS8gLt.js                                   1.36 kB │ gzip:   0.49 kB
+dist/assets/chunk-GVQU2GXP-BGMrpEbx.js                        1.41 kB │ gzip:   0.78 kB
+dist/assets/sparql-D_iOobhT.js                                1.47 kB │ gzip:   0.81 kB
+dist/assets/profile-n0uC0Jcw.js                               1.49 kB │ gzip:   0.48 kB
+dist/assets/ini-B5eOa1yu.js                                   1.51 kB │ gzip:   0.49 kB
+dist/assets/preload-helper-CRzLMJPS.js                        1.53 kB │ gzip:   0.80 kB
+dist/assets/railroadDiagram-O6MQD6OU-CtEszlwG.js              1.65 kB │ gzip:   0.77 kB
+dist/assets/fortran-fixed-form-DEKoE2YW.js                    1.66 kB │ gzip:   0.68 kB
+dist/assets/docker-IyjqRm3v.js                                1.73 kB │ gzip:   0.59 kB
+dist/assets/dotenv-CuH5my32.js                                1.74 kB │ gzip:   0.60 kB
+dist/assets/desktop-Dlh5hvp9.js                               1.82 kB │ gzip:   0.75 kB
+dist/assets/abnfDiagram-VCTEODGH-CXtFGk4R.js                  1.84 kB │ gzip:   0.89 kB
+dist/assets/hxml-Dcm88srW.js                                  1.89 kB │ gzip:   0.89 kB
+dist/assets/chunk-P2QGCYS3-BkmHscxo.js                        1.94 kB │ gzip:   0.95 kB
+dist/assets/chunk-F27PBJKO-JfC5cxZO.js                        1.99 kB │ gzip:   0.90 kB
+dist/assets/pegDiagram-XKGWAZYB-B7MGHC_G.js                   2.01 kB │ gzip:   0.94 kB
+dist/assets/ebnfDiagram-PWID7BFC-BZogRUHX.js                  2.05 kB │ gzip:   0.89 kB
+dist/assets/erb-CpQ5AKmM.js                                   2.13 kB │ gzip:   0.62 kB
+dist/assets/wenyan-C8pVoKbM.js                                2.15 kB │ gzip:   1.08 kB
+dist/assets/dist-v5Q1xZ2K.js                                  2.17 kB │ gzip:   0.98 kB
+dist/assets/jssm-DXw9l8Rf.js                                  2.23 kB │ gzip:   0.61 kB
+dist/assets/path-fybaL0A-.js                                  2.27 kB │ gzip:   0.98 kB
+dist/assets/data-BtQIFnPQ.js                                  2.28 kB │ gzip:   0.81 kB
+dist/assets/edge-D8qeodQq.js                                  2.30 kB │ gzip:   0.67 kB
+dist/assets/reg-CRGYupPL.js                                   2.33 kB │ gzip:   0.69 kB
+dist/assets/ai-councils-CdmWqo8D.js                           2.35 kB │ gzip:   0.96 kB
+dist/assets/diff-woXpYk--.js                                  2.56 kB │ gzip:   0.68 kB
+dist/assets/gleam-CSRkHgEL.js                                 2.57 kB │ gzip:   0.81 kB
+dist/assets/hy-CZbG8q4J.js                                    2.64 kB │ gzip:   1.17 kB
+dist/assets/openscad-BUDT5pXO.js                              2.81 kB │ gzip:   1.00 kB
+dist/assets/log-BNLmms1o.js                                   2.84 kB │ gzip:   0.89 kB
+dist/assets/json-DAgxKhMr.js                                  2.89 kB │ gzip:   0.82 kB
+dist/assets/cairo-DLTphjLi.js                                 2.93 kB │ gzip:   0.80 kB
+dist/assets/berry-DKpUyyne.js                                 2.99 kB │ gzip:   0.80 kB
+dist/assets/jsonl-CmCQp5Yx.js                                 3.00 kB │ gzip:   0.78 kB
+dist/assets/ThreadPage-J3lN6sbV.js                            3.07 kB │ gzip:   1.30 kB
+dist/assets/jsonc-CYpm1nAK.js                                 3.10 kB │ gzip:   0.78 kB
+dist/assets/logo-Cluzi2Zq.js                                  3.12 kB │ gzip:   1.46 kB
+dist/assets/sliders-horizontal-6ALXPhXm.js                    3.19 kB │ gzip:   1.31 kB
+dist/assets/po-BiJDBrnU.js                                    3.23 kB │ gzip:   0.90 kB
+dist/assets/json5-BR5RXkoi.js                                 3.24 kB │ gzip:   0.82 kB
+dist/assets/mipsasm-BMqwQI7S.js                               3.25 kB │ gzip:   1.17 kB
+dist/assets/tasl-DMoTqEGO.js                                  3.28 kB │ gzip:   0.84 kB
+dist/assets/rbs-C0MpOrj4.js                                   3.30 kB │ gzip:   0.72 kB
+dist/assets/genie-CV2tkWYe.js                                 3.34 kB │ gzip:   1.20 kB
+dist/assets/rel-BtDbiS_P.js                                   3.36 kB │ gzip:   1.10 kB
+dist/assets/vala-zf12oZj6.js                                  3.36 kB │ gzip:   1.18 kB
+dist/assets/splunk-BC2Px7Mm.js                                3.42 kB │ gzip:   1.51 kB
+dist/assets/arc-Pry-7G1_.js                                   3.47 kB │ gzip:   1.46 kB
+dist/assets/hurl-DCZHXKU4.js                                  3.51 kB │ gzip:   1.09 kB
+dist/assets/fluent-C03EYrpw.js                                3.60 kB │ gzip:   0.89 kB
+dist/assets/ssh-config-BgfXC-Er.js                            3.61 kB │ gzip:   1.59 kB
+dist/assets/jsonnet-CJTPZ8u_.js                               3.61 kB │ gzip:   1.03 kB
+dist/assets/kdl-CsD5j6eV.js                                   3.62 kB │ gzip:   1.03 kB
+dist/assets/narrat-_X_XdTYD.js                                3.66 kB │ gzip:   1.09 kB
+dist/assets/turtle-ByJddavk.js                                3.69 kB │ gzip:   0.96 kB
+dist/assets/glsl-D5MA2a_X.js                                  3.69 kB │ gzip:   1.46 kB
+dist/assets/zenscript-BnlCZFoB.js                             3.90 kB │ gzip:   1.28 kB
+dist/assets/ron-VUp2lXgN.js                                   3.90 kB │ gzip:   0.97 kB
+dist/assets/gn-CAXYAgV-.js                                    4.01 kB │ gzip:   1.48 kB
+dist/assets/pascal-4ZHwLPI5.js                                4.14 kB │ gzip:   1.67 kB
+dist/assets/diagram-Z3DM3KII-tNtH5Bub.js                      4.28 kB │ gzip:   1.84 kB
+dist/assets/http-kmH8AyfE.js                                  4.41 kB │ gzip:   1.06 kB
+dist/assets/tcl-CZd0xW_V.js                                   4.42 kB │ gzip:   1.50 kB
+dist/assets/nextflow-CSgcYZcx.js                              4.50 kB │ gzip:   1.16 kB
+dist/assets/rosmsg-CAekHB0j.js                                4.51 kB │ gzip:   1.05 kB
+dist/assets/linear-DmJId_2G.js                                4.57 kB │ gzip:   1.85 kB
+dist/assets/defaultLocale-BFoDCU3G.js                         4.63 kB │ gzip:   2.12 kB
+dist/assets/polar-C7UOKdEL.js                                 4.66 kB │ gzip:   1.12 kB
+dist/assets/sdbl-bTVj8UrX.js                                  4.69 kB │ gzip:   2.00 kB
+dist/assets/fennel-DQxkIbk2.js                                4.76 kB │ gzip:   1.53 kB
+dist/assets/bibtex-Ci_nEsc7.js                                4.78 kB │ gzip:   0.83 kB
+dist/assets/llvm-DqHOMS-s.js                                  5.03 kB │ gzip:   2.01 kB
+dist/assets/wgsl-BsKzXJz4.js                                  5.13 kB │ gzip:   1.38 kB
+dist/assets/gdresource-xMC7jr7x.js                            5.28 kB │ gzip:   1.33 kB
+dist/assets/approvals-DwRoNRyR.js                             5.30 kB │ gzip:   2.03 kB
+dist/assets/zig-CMLA9XwU.js                                   5.33 kB │ gzip:   1.55 kB
+dist/assets/qml-_a-QhfPD.js                                   5.33 kB │ gzip:   1.38 kB
+dist/assets/dax-BkyTk9wS.js                                   5.35 kB │ gzip:   2.21 kB
+dist/assets/bicep-CUHmPFLl.js                                 5.37 kB │ gzip:   1.14 kB
+dist/assets/xml-BlnrEAEy.js                                   5.44 kB │ gzip:   1.25 kB
+dist/assets/awk-BWXHIvNe.js                                   5.45 kB │ gzip:   1.37 kB
+dist/assets/jinja-81yqctvv.js                                 5.62 kB │ gzip:   1.36 kB
+dist/assets/lean-CewbzKMR.js                                  5.77 kB │ gzip:   1.91 kB
+dist/assets/chunk-PWAF6VOD-DB7zRbQ6.js                        5.82 kB │ gzip:   2.68 kB
+dist/assets/powerquery-DNMTfnFr.js                            5.89 kB │ gzip:   1.51 kB
+dist/assets/shaderlab-TOUzSsQk.js                             5.91 kB │ gzip:   2.08 kB
+dist/assets/cypher-ClKdZ_lG.js                                5.94 kB │ gzip:   1.71 kB
+dist/assets/coq-CGaSfhwR.js                                   6.04 kB │ gzip:   1.95 kB
+dist/assets/vb-DOwzaHZ0.js                                    6.06 kB │ gzip:   2.32 kB
+dist/assets/media-job-form-view-models-CsGjFcV0.js            6.07 kB │ gzip:   2.64 kB
+dist/assets/moonbit-D9W784E_.js                               6.07 kB │ gzip:   1.70 kB
+dist/assets/diagram-UQ7AKVKN-DX3Bd1XF.js                      6.07 kB │ gzip:   2.56 kB
+dist/assets/pieDiagram-E7YTZNPT-BWacRk_8.js                   6.22 kB │ gzip:   2.59 kB
+dist/assets/min-dark-BSWPekZh.js                              6.28 kB │ gzip:   1.70 kB
+dist/assets/gdshader-CBce3t8t.js                              6.31 kB │ gzip:   1.72 kB
+dist/assets/ara-4CJ0cIlV.js                                   6.35 kB │ gzip:   1.80 kB
+dist/assets/verilog-B2gwz-sJ.js                               6.40 kB │ gzip:   1.92 kB
+dist/assets/clojure-DqKBuwfJ.js                               6.40 kB │ gzip:   1.41 kB
+dist/assets/postcss-BXeXVLqQ.js                               6.41 kB │ gzip:   1.90 kB
+dist/assets/toml-CcmNWLt0.js                                  6.41 kB │ gzip:   1.28 kB
+dist/assets/proto-DB4EqR-F.js                                 6.54 kB │ gzip:   1.41 kB
+dist/assets/chapel-DmtgEXO_.js                                6.62 kB │ gzip:   1.85 kB
+dist/assets/red-CYlAq2b0.js                                   6.73 kB │ gzip:   1.70 kB
+dist/assets/talonscript-CohzipZa.js                           6.75 kB │ gzip:   1.48 kB
+dist/assets/r-BHcO8Vjq.js                                     6.80 kB │ gzip:   1.89 kB
+dist/assets/riscv-Ckw8ddFX.js                                 6.90 kB │ gzip:   1.97 kB
+dist/assets/soy-CXX9LSpm.js                                   6.92 kB │ gzip:   1.62 kB
+dist/assets/solarized-light-DFPxpIYQ.js                       6.93 kB │ gzip:   1.79 kB
+dist/assets/min-light-DDpmG2fV.js                             6.96 kB │ gzip:   1.88 kB
+dist/assets/scheme-DQCgrYNe.js                                7.16 kB │ gzip:   2.04 kB
+dist/assets/hlsl-Cvrh5tZx.js                                  7.25 kB │ gzip:   2.18 kB
+dist/assets/solarized-dark-b97czJOk.js                        7.39 kB │ gzip:   1.89 kB
+dist/assets/qss-Fe1Jh2GI.js                                   7.46 kB │ gzip:   2.57 kB
+dist/assets/external-work-E0S5LmYt.js                         7.48 kB │ gzip:   1.93 kB
+dist/assets/prisma-DMgNhnYS.js                                7.73 kB │ gzip:   1.48 kB
+dist/assets/systemd-BxMlprV5.js                               7.86 kB │ gzip:   2.54 kB
+dist/assets/regexp-DR20uMnK.js                                8.05 kB │ gzip:   1.47 kB
+dist/assets/diagram-S7CK7UJ4-9F38C9My.js                      8.12 kB │ gzip:   3.64 kB
+dist/assets/monokai-BscAjiQZ.js                               8.24 kB │ gzip:   1.97 kB
+dist/assets/haml-ChtpF0E7.js                                  8.33 kB │ gzip:   1.86 kB
+dist/assets/vue-html-DkKkQnZL.js                              8.47 kB │ gzip:   1.68 kB
+dist/assets/plsql-DGHpHOYJ.js                                 8.50 kB │ gzip:   2.99 kB
+dist/assets/dart-CHZY9Xhz.js                                  8.60 kB │ gzip:   1.99 kB
+dist/assets/src-D0eqkmdE.js                                   8.75 kB │ gzip:   3.64 kB
+dist/assets/horizon-CE9ld1lL.js                               8.77 kB │ gzip:   1.94 kB
+dist/assets/kotlin-DhhofPvG.js                                8.77 kB │ gzip:   2.12 kB
+dist/assets/horizon-bright-DSNQnXHK.js                        8.78 kB │ gzip:   1.96 kB
+dist/assets/make-Dixweg8N.js                                  8.95 kB │ gzip:   1.76 kB
+dist/assets/andromeeda-vGVdxbeo.js                            9.01 kB │ gzip:   2.35 kB
+dist/assets/sas-D3h2pRQf.js                                   9.06 kB │ gzip:   3.82 kB
+dist/assets/dark-plus-Cs2F2srj.js                             9.09 kB │ gzip:   2.10 kB
+dist/assets/slack-dark-DnToyrRv.js                            9.11 kB │ gzip:   1.96 kB
+dist/assets/smithy-Dgaz7aur.js                                9.12 kB │ gzip:   1.51 kB
+dist/assets/sass-DXrisJhu.js                                  9.28 kB │ gzip:   2.48 kB
+dist/assets/plastic-DQwYfKfQ.js                               9.29 kB │ gzip:   1.96 kB
+dist/assets/slack-ochin-B2OO5cIa.js                           9.42 kB │ gzip:   2.08 kB
+dist/assets/jison-CBjhYtSs.js                                 9.69 kB │ gzip:   1.86 kB
+dist/assets/chunk-L3NEJ4N5-DsRhcqkG.js                        9.71 kB │ gzip:   2.97 kB
+dist/assets/tex-BK-H2Wn4.js                                   9.73 kB │ gzip:   3.10 kB
+dist/assets/cmake-Bj61d0ZC.js                                 9.84 kB │ gzip:   3.37 kB
+dist/assets/light-plus-DVQuIRkW.js                            9.93 kB │ gzip:   2.27 kB
+dist/assets/cynefinDiagram-5FMLGOSQ-Dgxel7sB.js               9.94 kB │ gzip:   3.50 kB
+dist/assets/hcl-Dh228itO.js                                  10.04 kB │ gzip:   1.93 kB
+dist/assets/rst-hVyWO_Fc.js                                  10.31 kB │ gzip:   2.24 kB
+dist/assets/pkl-ot-7Btpt.js                                  10.36 kB │ gzip:   1.37 kB
+dist/assets/dream-maker-DW3nJb8Q.js                          10.46 kB │ gzip:   2.25 kB
+dist/assets/raku-B3gFvitq.js                                 10.46 kB │ gzip:   2.94 kB
+dist/assets/nextflow-groovy-D7IRt6Pp.js                      10.52 kB │ gzip:   2.16 kB
+dist/assets/yaml-Du_6cdrH.js                                 10.57 kB │ gzip:   2.32 kB
+dist/assets/stateDiagram-D77RDMKH-DJslXI7P.js                10.67 kB │ gzip:   3.75 kB
+dist/assets/diagram-VSXAHHWV-NJRzFdfJ.js                     10.68 kB │ gzip:   4.12 kB
+dist/assets/just-BuSkJCkO.js                                 10.84 kB │ gzip:   2.62 kB
+dist/assets/elm-o4NJxfws.js                                  10.94 kB │ gzip:   2.09 kB
+dist/assets/dagre-GXQ25YYZ-DdZzDatW.js                       10.96 kB │ gzip:   4.15 kB
+dist/assets/github-light-EUqPIrTm.js                         11.18 kB │ gzip:   2.49 kB
+dist/assets/prolog-iXnhIJG7.js                               11.34 kB │ gzip:   3.84 kB
+dist/assets/terraform-DswuEJGm.js                            11.38 kB │ gzip:   2.51 kB
+dist/assets/github-dark-C-LZuMrd.js                          11.40 kB │ gzip:   2.53 kB
+dist/assets/puppet-CDv2pdJW.js                               11.43 kB │ gzip:   2.10 kB
+dist/assets/laserwave-C_8bwKvT.js                            11.49 kB │ gzip:   2.57 kB
+dist/assets/gherkin-DExj1W_8.js                              11.93 kB │ gzip:   5.04 kB
+dist/assets/wasm-ByWQv1Qj.js                                 12.00 kB │ gzip:   2.17 kB
+dist/assets/hjson-CxZEssPk.js                                12.04 kB │ gzip:   1.64 kB
+dist/assets/surrealql-BZoq2lXR.js                            12.06 kB │ gzip:   3.29 kB
+dist/assets/providers-DY6ePksP.js                            12.40 kB │ gzip:   3.82 kB
+dist/assets/apache-U0d_L8uA.js                               12.44 kB │ gzip:   3.71 kB
+dist/assets/handlebars-CpsBgm7t.js                           12.48 kB │ gzip:   2.42 kB
+dist/assets/vesper-DdrHHSXu.js                               12.73 kB │ gzip:   1.99 kB
+dist/assets/beancount-C2IN4Vk8.js                            12.84 kB │ gzip:   2.21 kB
+dist/assets/bat-qdxAdBWQ.js                                  12.88 kB │ gzip:   3.23 kB
+dist/assets/fish-BJitypiv.js                                 13.03 kB │ gzip:   1.73 kB
+dist/assets/nsis-CjNLYCLg.js                                 13.11 kB │ gzip:   4.06 kB
+dist/assets/v-DBj4K9d_.js                                    13.32 kB │ gzip:   2.75 kB
+dist/assets/vitesse-light-VbXTXTou.js                        13.61 kB │ gzip:   3.03 kB
+dist/assets/aurora-x-CDeNXAV0.js                             13.65 kB │ gzip:   2.28 kB
+dist/assets/vitesse-black-fwtXNY1n.js                        13.67 kB │ gzip:   3.05 kB
+dist/assets/vitesse-dark-BZCL-v6S.js                         13.75 kB │ gzip:   3.06 kB
+dist/assets/pug-Co4hciMS.js                                  13.84 kB │ gzip:   2.58 kB
+dist/assets/synthwave-84-nFMaYfgc.js                         14.03 kB │ gzip:   2.85 kB
+dist/assets/smalltalk-BHpQb5nM.js                            14.11 kB │ gzip:   2.14 kB
+dist/assets/ApprovalsPage-CQN1haji.js                        14.14 kB │ gzip:   4.03 kB
+dist/assets/github-light-default-BXViO-2h.js                 14.15 kB │ gzip:   3.02 kB
+dist/assets/github-light-high-contrast-B68TUdTA.js           14.27 kB │ gzip:   3.00 kB
+dist/assets/clarity-CtfBBspg.js                              14.35 kB │ gzip:   2.50 kB
+dist/assets/WorkItemRow-_WCQEJyM.js                          14.42 kB │ gzip:   4.61 kB
+dist/assets/github-dark-dimmed-Bx1FflLF.js                   14.43 kB │ gzip:   3.11 kB
+dist/assets/github-dark-default-DXG-b-1a.js                  14.43 kB │ gzip:   3.12 kB
+dist/assets/github-dark-high-contrast-B_tTalzw.js            14.59 kB │ gzip:   3.07 kB
+dist/assets/gnuplot-7GGW24-e.js                              14.77 kB │ gzip:   3.27 kB
+dist/assets/rust-DpiIf5JO.js                                 15.16 kB │ gzip:   2.72 kB
+dist/assets/kusto-C7mF5XQf.js                                15.16 kB │ gzip:   3.92 kB
+dist/assets/nix-IvuFDN5E.js                                  15.50 kB │ gzip:   2.47 kB
+dist/assets/actionscript-3-Cs6JJXT5.js                       15.53 kB │ gzip:   2.70 kB
+dist/assets/lua-FONpmTUP.js                                  15.60 kB │ gzip:   3.19 kB
+dist/assets/chunk-SVP7TREG-CmK7ZMRz.js                       15.63 kB │ gzip:   4.35 kB
+dist/assets/diagram-VX7I27RA-DlC_pkvt.js                     15.78 kB │ gzip:   5.54 kB
+dist/assets/abap-CLvhMVsD.js                                 15.84 kB │ gzip:   5.93 kB
+dist/assets/matlab-D7qyCx1q.js                               16.07 kB │ gzip:   3.06 kB
+dist/assets/cue-CE9AQfxI.js                                  16.19 kB │ gzip:   2.04 kB
+dist/assets/elixir-BkREp_f2.js                               16.26 kB │ gzip:   2.76 kB
+dist/assets/luau-VGWVLoqX.js                                 16.29 kB │ gzip:   3.56 kB
+dist/assets/solidity-Bj7E1mRn.js                             16.40 kB │ gzip:   3.14 kB
+dist/assets/odin-B1RWQWA5.js                                 16.50 kB │ gzip:   2.92 kB
+dist/assets/ts-tags-C4CDubZg.js                              16.54 kB │ gzip:   2.05 kB
+dist/assets/mermaid-parser.core-B9YFs2-W.js                  16.74 kB │ gzip:   3.93 kB
+dist/assets/kanagawa-wave-BML5mF2J.js                        17.11 kB │ gzip:   2.90 kB
+dist/assets/kanagawa-lotus-BmuOG9ZW.js                       17.11 kB │ gzip:   2.91 kB
+dist/assets/kanagawa-dragon-Bozd7klA.js                      17.12 kB │ gzip:   2.92 kB
+dist/assets/ishikawaDiagram-5VMMS53U-DQ3bUtNA.js             17.30 kB │ gzip:   6.53 kB
+dist/assets/move-BYnGhZoM.js                                 17.65 kB │ gzip:   3.06 kB
+dist/assets/graphql-Ctjuxyvl.js                              18.08 kB │ gzip:   2.53 kB
+dist/assets/liquid-VY2h0b2O.js                               18.10 kB │ gzip:   3.14 kB
+dist/assets/svelte-CZ5lJGR6.js                               18.25 kB │ gzip:   3.14 kB
+dist/assets/material-theme-Bm3Qr25_.js                       18.61 kB │ gzip:   3.10 kB
+dist/assets/material-theme-darker-2IIEA8gg.js                18.62 kB │ gzip:   3.10 kB
+dist/assets/material-theme-ocean-CHQ94UKr.js                 18.62 kB │ gzip:   3.12 kB
+dist/assets/material-theme-lighter-uhdI0v04.js               18.63 kB │ gzip:   3.10 kB
+dist/assets/material-theme-palenight-B5W6OYN7.js             18.63 kB │ gzip:   3.11 kB
+dist/assets/gdscript-DYvRD3hg.js                             19.08 kB │ gzip:   3.76 kB
+dist/assets/groovy-CacY0gHj.js                               19.17 kB │ gzip:   3.59 kB
+dist/assets/AiTeammatesPage-gmFFbK4t.js                      19.57 kB │ gzip:   5.99 kB
+dist/assets/ayu-dark-DluEY0Gj.js                             20.07 kB │ gzip:   3.93 kB
+dist/assets/ayu-mirage-Bqwy1Gya.js                           20.08 kB │ gzip:   3.91 kB
+dist/assets/glimmer-js-BTqwx0oO.js                           20.08 kB │ gzip:   2.94 kB
+dist/assets/glimmer-ts-N9jKyowB.js                           20.08 kB │ gzip:   2.93 kB
+dist/assets/mdc-CX_1c8hS.js                                  20.08 kB │ gzip:   6.81 kB
+dist/assets/powershell-QtSnmXcu.js                           20.14 kB │ gzip:   4.05 kB
+dist/assets/ayu-light-C3h-C4tm.js                            20.14 kB │ gzip:   3.89 kB
+dist/assets/kanban-definition-UXKFOSKX-C2mNbkKX.js           20.25 kB │ gzip:   7.15 kB
+dist/assets/viml-DvXPmvsu.js                                 20.35 kB │ gzip:   6.73 kB
+dist/assets/ApprovalCard-C0xsNIyf.js                         20.38 kB │ gzip:   6.00 kB
+dist/assets/ProfilePage-x5kyZU9j.js                          20.56 kB │ gzip:   6.16 kB
+dist/assets/snazzy-light-4G7pJPwS.js                         20.77 kB │ gzip:   3.80 kB
+dist/assets/dracula-BHWKrbxM.js                              21.06 kB │ gzip:   3.99 kB
+dist/assets/dracula-soft-5eyTD99u.js                         21.07 kB │ gzip:   4.02 kB
+dist/assets/wit-DdvCle-K.js                                  21.46 kB │ gzip:   2.87 kB
+dist/assets/rose-pine-aMsaMD1D.js                            21.73 kB │ gzip:   3.88 kB
+dist/assets/rose-pine-moon-DO-qXg-I.js                       21.74 kB │ gzip:   3.89 kB
+dist/assets/rose-pine-dawn-8PwUyIlP.js                       21.74 kB │ gzip:   3.89 kB
+dist/assets/nushell--0fT3PI1.js                              21.76 kB │ gzip:   5.44 kB
+dist/assets/nim-BrYFxDF2.js                                  22.45 kB │ gzip:   3.15 kB
+dist/assets/common-lisp-Cv5bFMCO.js                          22.57 kB │ gzip:   6.07 kB
+dist/assets/gruvbox-dark-hard-C820rvS2.js                    22.63 kB │ gzip:   4.15 kB
+dist/assets/gruvbox-dark-soft-MrdJrrXF.js                    22.63 kB │ gzip:   4.15 kB
+dist/assets/gruvbox-light-hard-BC_s9l72.js                   22.63 kB │ gzip:   4.16 kB
+dist/assets/gruvbox-light-soft-BSMLrYjP.js                   22.63 kB │ gzip:   4.16 kB
+dist/assets/gruvbox-dark-medium-BPjhmG05.js                  22.63 kB │ gzip:   4.15 kB
+dist/assets/gruvbox-light-medium-BAWPOn9u.js                 22.63 kB │ gzip:   4.16 kB
+dist/assets/sankeyDiagram-P5KCCOFB-B3UD1dKh.js               22.81 kB │ gzip:   8.26 kB
+dist/assets/journeyDiagram-3NMN7TZE-CWfzvPLK.js              23.18 kB │ gzip:   8.16 kB
+dist/assets/mindmap-definition-YA3MSWOX-Bptd5DtW.js          23.43 kB │ gzip:   8.01 kB
+dist/assets/cadence-CQ2zXKGN.js                              23.66 kB │ gzip:   3.65 kB
+dist/assets/sql-ByhjMBKn.js                                  23.73 kB │ gzip:   7.57 kB
+dist/assets/graphlib-DS17s2tU.js                             23.90 kB │ gzip:   8.31 kB
+dist/assets/astro-Dq6p_VTJ.js                                24.02 kB │ gzip:   7.59 kB
+dist/assets/apl-BRH60u60.js                                  24.02 kB │ gzip:   4.16 kB
+dist/assets/templ-EWf5LxrK.js                                24.06 kB │ gzip:   5.41 kB
+dist/assets/angular-html-CPrDeWzk.js                         24.24 kB │ gzip:   3.99 kB
+dist/assets/vhdl-BroJfC0k.js                                 24.25 kB │ gzip:   3.86 kB
+dist/assets/purescript-9MfHhQsQ.js                           24.67 kB │ gzip:   3.24 kB
+dist/assets/twig-D6Rh4Rda.js                                 24.85 kB │ gzip:   4.00 kB
+dist/assets/vue-D5NIjYCb.js                                  24.96 kB │ gzip:   3.03 kB
+dist/assets/wardleyDiagram-VM6X3IG4-fNjkYobQ.js              25.20 kB │ gzip:   6.54 kB
+dist/assets/one-light-D7Lr4KcI.js                            25.29 kB │ gzip:   3.63 kB
+dist/assets/fsharp-D13ZGOAj.js                               25.30 kB │ gzip:   4.12 kB
+dist/assets/marko-BRIeiu02.js                                25.72 kB │ gzip:   3.66 kB
+dist/assets/night-owl-light-eJ-hLW7d.js                      25.89 kB │ gzip:   4.23 kB
+dist/assets/c3-D0apG41V.js                                   26.37 kB │ gzip:   3.97 kB
+dist/assets/system-verilog-Dh5ihWbf.js                       26.54 kB │ gzip:   4.85 kB
+dist/assets/nord-Cb4Vim4T.js                                 26.72 kB │ gzip:   4.35 kB
+dist/assets/codeql-oeQT6MSM.js                               26.87 kB │ gzip:   3.79 kB
+dist/assets/typespec-BGhR2SqG.js                             26.99 kB │ gzip:   2.75 kB
+dist/assets/rough.esm-Dy-Kn_BL.js                            27.10 kB │ gzip:   8.85 kB
+dist/assets/scss-DDJaLTnA.js                                 27.26 kB │ gzip:   4.23 kB
+dist/assets/java-DdHNQ9hk.js                                 27.28 kB │ gzip:   4.31 kB
+dist/assets/coffee-CiiSLhB6.js                               27.42 kB │ gzip:   6.35 kB
+dist/assets/razor-DVe451rE.js                                27.45 kB │ gzip:   3.54 kB
+dist/assets/scala-BiFt_7mu.js                                28.88 kB │ gzip:   3.93 kB
+dist/assets/night-owl-DhmEMT88.js                            28.91 kB │ gzip:   5.14 kB
+dist/assets/si-D8uLi0_L.js                                   28.91 kB │ gzip:  12.27 kB
+dist/assets/gitGraphDiagram-WWUBYQGX-C3nG4eNm.js             29.03 kB │ gzip:   8.52 kB
+dist/assets/crystal-Bn4W9FYe.js                              29.41 kB │ gzip:   4.44 kB
+dist/assets/applescript-CCn79oCD.js                          29.56 kB │ gzip:   5.94 kB
+dist/assets/GlobalWorkBoardPage-Bi4GOkI7.js                  30.06 kB │ gzip:   9.03 kB
+dist/assets/timeline-definition-24CTP7MA-CPSYYCPM.js         30.40 kB │ gzip:   9.97 kB
+dist/assets/erDiagram-RLTQ6QDP-A6OYrzx9.js                   30.72 kB │ gzip:  10.59 kB
+dist/assets/chunk-75Z2AOVW-EhtJzF7l.js                       30.79 kB │ gzip:   8.52 kB
+dist/assets/requirementDiagram-BXWQKSXE-CGAZJqXq.js          31.00 kB │ gzip:   9.77 kB
+dist/assets/stylus-B6D30XZt.js                               31.06 kB │ gzip:   8.01 kB
+dist/assets/MediaJobsPage-XkPHCS1p.js                        31.13 kB │ gzip:   8.80 kB
+dist/assets/julia-KRkZs2hS.js                                31.22 kB │ gzip:   4.34 kB
+dist/assets/ahk-DwADkxyd.js                                  31.44 kB │ gzip:   7.83 kB
+dist/assets/poimandres-DRFjx7u4.js                           33.49 kB │ gzip:   5.49 kB
+dist/assets/quadrantDiagram-AXDQQJYC-DwDrpFxL.js             33.54 kB │ gzip:   9.75 kB
+dist/assets/bsl-_VjlB9mv.js                                  33.94 kB │ gzip:   8.35 kB
+dist/assets/useRunsThreadsPageController-BrGXbazI.js         34.92 kB │ gzip:  10.09 kB
+dist/assets/nginx-BTMw9COX.js                                35.35 kB │ gzip:   4.45 kB
+dist/assets/houston-CsvMBhTu.js                              35.41 kB │ gzip:   5.76 kB
+dist/assets/tokyo-night-oM2G3aXe.js                          35.66 kB │ gzip:   6.22 kB
+dist/assets/haxe-C8oCnwJJ.js                                 35.94 kB │ gzip:   6.00 kB
+dist/assets/org-Cd0u8vWD.js                                  36.26 kB │ gzip:   3.67 kB
+dist/assets/chunk-OSK3NFVY-DvwoFaGI.js                       36.50 kB │ gzip:   7.96 kB
+dist/assets/dagre-D7JM2Yhv.js                                36.84 kB │ gzip:  13.23 kB
+dist/assets/one-dark-pro-C6YyR8OD.js                         37.05 kB │ gzip:   6.10 kB
+dist/assets/erlang-Cphh6RMH.js                               37.47 kB │ gzip:   4.36 kB
+dist/assets/chunk-IMKFNOWR-Did7fWYe.js                       37.67 kB │ gzip:  12.27 kB
+dist/assets/bird2-CYIUgYqB.js                                38.67 kB │ gzip:   8.49 kB
+dist/assets/cobol-CGlx5WnO.js                                39.07 kB │ gzip:  10.88 kB
+dist/assets/asm-Cmm7eHzH.js                                  40.71 kB │ gzip:   8.16 kB
+dist/assets/vennDiagram-4TSXK5OY-B7LtwnmF.js                 41.18 kB │ gzip:  15.12 kB
+dist/assets/blockDiagram-I7D4REHJ-jFLOAqBV.js                41.46 kB │ gzip:  13.36 kB
+dist/assets/haskell-D8IpX4py.js                              41.48 kB │ gzip:   6.41 kB
+dist/assets/shellscript-Da78Ox-3.js                          41.54 kB │ gzip:   6.13 kB
+dist/assets/perl-1pN6i0RM.js                                 43.14 kB │ gzip:   4.64 kB
+dist/assets/d-qD-0Kul2.js                                    43.78 kB │ gzip:   8.43 kB
+dist/assets/xychartDiagram-S5SC5T6Z-5LsQqw88.js              44.15 kB │ gzip:  12.24 kB
+dist/assets/ahk2-_6rzW9BS.js                                 45.05 kB │ gzip:   9.87 kB
+dist/assets/ruby-Zd-8tM08.js                                 46.63 kB │ gzip:   5.70 kB
+dist/assets/go-rLFTqkRN.js                                   46.81 kB │ gzip:   5.14 kB
+dist/assets/src-C_gRsKqw.js                                  47.06 kB │ gzip:  15.89 kB
+dist/assets/apex-KFGFyKwG.js                                 47.88 kB │ gzip:   6.85 kB
+dist/assets/ada-X3Y2mlq2.js                                  48.07 kB │ gzip:   5.96 kB
+dist/assets/AutomationsPage-DP6taEez.js                      48.35 kB │ gzip:  12.95 kB
+dist/assets/chunk-TICWLB2K-DIKEDBPS.js                       48.81 kB │ gzip:  15.75 kB
+dist/assets/ProviderSettings-BPn2QNx-.js                     49.26 kB │ gzip:  13.73 kB
+dist/assets/imba-DsUTQ-LC.js                                 49.92 kB │ gzip:   9.47 kB
+dist/assets/catppuccin-mocha-DjuaAJKi.js                     50.84 kB │ gzip:   8.47 kB
+dist/assets/catppuccin-latte-CtsyrtPq.js                     50.84 kB │ gzip:   8.48 kB
+dist/assets/catppuccin-frappe-C9Q5zVZY.js                    50.85 kB │ gzip:   8.48 kB
+dist/assets/catppuccin-macchiato-R8nAf1vR.js                 50.85 kB │ gzip:   8.48 kB
+dist/assets/chunk-GMAD6QVW-5bHwvoI8.js                       51.24 kB │ gzip:  16.70 kB
+dist/assets/api-CADxa-UQ.js                                  51.68 kB │ gzip:  15.52 kB
+dist/assets/css-AeYbVOD-.js                                  53.43 kB │ gzip:  12.53 kB
+dist/assets/everforest-dark-sB-x3p7T.js                      53.74 kB │ gzip:   8.37 kB
+dist/assets/everforest-light-Df2xbC6M.js                     53.74 kB │ gzip:   8.36 kB
+dist/assets/mermaid-BxpfTIzt.js                              54.80 kB │ gzip:   4.79 kB
+dist/assets/wikitext-ClFFjSW2.js                             55.87 kB │ gzip:   4.81 kB
+dist/assets/stata-CjrVU8-t.js                                56.99 kB │ gzip:  12.39 kB
+dist/assets/html-hnucWepv.js                                 57.32 kB │ gzip:  11.78 kB
+dist/assets/PluginManagerPage-CISRProv.js                    58.24 kB │ gzip:  16.03 kB
+dist/assets/ballerina-B7ZEbQpA.js                            58.68 kB │ gzip:   8.10 kB
+dist/assets/markdown-BYOwaDjH.js                             59.32 kB │ gzip:   5.66 kB
+dist/assets/chunk-SHT3W25Y-DQ6wofmM.js                       61.23 kB │ gzip:  19.85 kB
+dist/assets/RunHistory-BCy-RdBC.js                           62.06 kB │ gzip:  17.47 kB
+dist/assets/ocaml-O90oeIOV.js                                62.44 kB │ gzip:   5.04 kB
+dist/assets/c4Diagram-7LVT6UL2-IZXNFqC4.js                   64.77 kB │ gzip:  18.54 kB
+dist/assets/ganttDiagram-EL5Y4UJY-jlfFHtZu.js                69.38 kB │ gzip:  22.78 kB
+dist/assets/mojo-fg40_ntQ.js                                 69.51 kB │ gzip:   9.20 kB
+dist/assets/python-gzcpVVnB.js                               69.94 kB │ gzip:   9.09 kB
+dist/assets/CouncilWorkspacePage-C8z9sXHr.js                 70.26 kB │ gzip:  18.54 kB
+dist/assets/c-iCihek07.js                                    72.17 kB │ gzip:  10.55 kB
+dist/assets/latex-CvI9akcJ.js                                73.24 kB │ gzip:   6.78 kB
+dist/assets/vyper-CgoNMtux.js                                74.64 kB │ gzip:  10.69 kB
+dist/assets/hack-ZTcFnVsP.js                                 81.07 kB │ gzip:  26.45 kB
+dist/assets/cose-bilkent-JH36ORCC-CFK7gQcs.js                81.25 kB │ gzip:  21.53 kB
+dist/assets/swift-CyEgAFGc.js                                87.22 kB │ gzip:  14.79 kB
+dist/assets/fortran-free-form-CYNrtFtB.js                    88.96 kB │ gzip:  11.18 kB
+dist/assets/csharp-dmMxLVLW.js                               91.43 kB │ gzip:  10.79 kB
+dist/assets/racket-DcIDlBhZ.js                               92.38 kB │ gzip:  15.07 kB
+dist/assets/mermaid.core-BpjyJBDA.js                         94.73 kB │ gzip:  32.61 kB
+dist/assets/less-DVTAwKKz.js                                 97.62 kB │ gzip:  14.84 kB
+dist/assets/chunk-4HAMMTFA-xiZc-jsH.js                      104.88 kB │ gzip:  25.49 kB
+dist/assets/blade-CC3PQRrX.js                               104.97 kB │ gzip:  28.29 kB
+dist/assets/objective-c-D1A_Heim.js                         105.40 kB │ gzip:  23.63 kB
+dist/assets/swimlanes-42K2YHIH-CJ34jzu4.js                  111.06 kB │ gzip:  38.00 kB
+dist/assets/php-C7NaTRTO.js                                 113.12 kB │ gzip:  28.84 kB
+dist/assets/sequenceDiagram-WJ2MYXX4-9Q_Yy4zi.js            115.77 kB │ gzip:  30.59 kB
+dist/assets/asciidoc-SCjQUq34.js                            136.04 kB │ gzip:   9.45 kB
+dist/assets/mdx-DQZ5AkYe.js                                 136.10 kB │ gzip:  23.54 kB
+dist/assets/architectureDiagram-5GKGNRK7-Cr70pLZg.js        148.90 kB │ gzip:  41.12 kB
+dist/assets/dist-BuzmZq5a.js                                154.78 kB │ gzip:  46.56 kB
+dist/assets/typst-Bq_qwoSs.js                               163.48 kB │ gzip:  10.96 kB
+dist/assets/objective-cpp-BsSzOQcm.js                       171.96 kB │ gzip:  30.98 kB
+dist/assets/javascript-obGGvMPs.js                          174.89 kB │ gzip:  16.68 kB
+dist/assets/tsx-CUOciP0b.js                                 175.60 kB │ gzip:  16.68 kB
+dist/assets/jsx-gTgmArGx.js                                 177.85 kB │ gzip:  16.77 kB
+dist/assets/inline-approvals-BIwWaTSh.js                    180.12 kB │ gzip:  49.22 kB
+dist/assets/TeammateWorkspace-BweRgZUX.js                   180.61 kB │ gzip:  53.11 kB
+dist/assets/typescript-BydbNFcO.js                          181.14 kB │ gzip:  16.29 kB
+dist/assets/angular-ts-DCisMPVX.js                          183.73 kB │ gzip:  16.78 kB
+dist/assets/vue-vine-C-CFC0K-.js                            190.05 kB │ gzip:  18.07 kB
+dist/assets/chunk-DU6HZSFF-RXQf9z8J.js                      236.71 kB │ gzip:  38.63 kB
+dist/assets/katex-nLxf_RlZ.js                               258.93 kB │ gzip:  77.67 kB
+dist/assets/wolfram-DLL8P-h_.js                             262.38 kB │ gzip:  77.63 kB
+dist/assets/MediaProductionWorkspace-B9bR6pGy.js            277.29 kB │ gzip:  78.27 kB
+dist/assets/SettingsPage-QOEMg5hZ.js                        310.81 kB │ gzip:  82.72 kB
+dist/assets/WorkspaceClientView-C1EVf8_u.js                 358.53 kB │ gzip:  96.13 kB
+dist/assets/runs-Dgpb9uOp.js                                360.24 kB │ gzip: 102.92 kB
+dist/assets/zh-HK-DNPSrPyb.js                               390.73 kB │ gzip: 130.38 kB
+dist/assets/zh-TW-C0GIji3t.js                               390.73 kB │ gzip: 130.38 kB
+dist/assets/zh-CN-Dl8-P6nb.js                               390.97 kB │ gzip: 126.31 kB
+dist/assets/en-US-BX8cnKVF.js                               401.70 kB │ gzip:  84.16 kB
+dist/assets/nb-NO-BjLB3cch.js                               424.14 kB │ gzip: 124.54 kB
+dist/assets/ms-MY-DW7L3Zg5.js                               425.01 kB │ gzip: 121.01 kB
+dist/assets/da-DK-D4DoQSOX.js                               425.28 kB │ gzip: 124.60 kB
+dist/assets/id-ID-DQ2yp2zk.js                               428.42 kB │ gzip: 121.71 kB
+dist/assets/et-EE-BPqM56zO.js                               429.79 kB │ gzip: 129.56 kB
+dist/assets/sv-SE-8owYOtg3.js                               430.21 kB │ gzip: 126.27 kB
+dist/assets/sl-SI-BQzptXBN.js                               431.43 kB │ gzip: 130.78 kB
+dist/assets/bs-BA-COOF7Mq2.js                               431.73 kB │ gzip: 130.52 kB
+dist/assets/hr-HR-caUACgUu.js                               433.25 kB │ gzip: 130.84 kB
+dist/assets/is-IS-Csd9Zc8i.js                               433.26 kB │ gzip: 132.03 kB
+dist/assets/cytoscape.esm-CHBj4VkZ.js                       434.61 kB │ gzip: 137.74 kB
+dist/assets/fi-FI-55Syx6sa.js                               435.94 kB │ gzip: 131.56 kB
+dist/assets/sw-TZ-Brybhy0C.js                               437.66 kB │ gzip: 127.80 kB
+dist/assets/nl-NL-Backvliz.js                               440.71 kB │ gzip: 128.75 kB
+dist/assets/so-SO-GtaLMamg.js                               444.43 kB │ gzip: 133.11 kB
+dist/assets/cs-CZ-Dl3Myqbb.js                               445.15 kB │ gzip: 134.28 kB
+dist/assets/tr-TR-NZd4uYHv.js                               448.42 kB │ gzip: 130.79 kB
+dist/assets/sk-SK-4fYvRunm.js                               448.45 kB │ gzip: 136.18 kB
+dist/assets/pl-PL-4FbrdG7-.js                               453.80 kB │ gzip: 137.54 kB
+dist/assets/lv-LV-DFvCR_Zd.js                               454.78 kB │ gzip: 133.36 kB
+dist/assets/pt-BR-C7Ow2KBL.js                               455.76 kB │ gzip: 128.50 kB
+dist/assets/ro-RO-oroDifIb.js                               455.84 kB │ gzip: 131.91 kB
+dist/assets/pt-PT-BJ_QPh6o.js                               457.11 kB │ gzip: 129.75 kB
+dist/assets/ca-ES-Cwz4D60d.js                               457.46 kB │ gzip: 130.79 kB
+dist/assets/ko-KR-CoxnzKLf.js                               457.80 kB │ gzip: 133.32 kB
+dist/assets/sq-AL-CpKVbAWh.js                               459.82 kB │ gzip: 134.27 kB
+dist/assets/it-IT-C6iSyrAY.js                               460.80 kB │ gzip: 130.05 kB
+dist/assets/es-419-CWIwxLgI.js                              461.64 kB │ gzip: 130.74 kB
+dist/assets/es-ES-BByPV8Dw.js                               461.66 kB │ gzip: 130.75 kB
+dist/assets/de-DE-Dt2vm0Sj.js                               462.59 kB │ gzip: 135.10 kB
+dist/assets/hu-HU-B5OqMW5U.js                               470.90 kB │ gzip: 138.73 kB
+dist/assets/fr-FR-DxLCA5U-.js                               472.18 kB │ gzip: 133.03 kB
+dist/assets/fr-CA-NN5Xe25R.js                               472.28 kB │ gzip: 133.41 kB
+dist/assets/vi-VN-CHFV0ZnG.js                               501.84 kB │ gzip: 132.40 kB
+dist/assets/ja-JP-BA9B-8Nr.js                               520.61 kB │ gzip: 142.46 kB
+dist/assets/sr-RS-CP2pZNCr.js                               592.70 kB │ gzip: 149.79 kB
+dist/assets/uk-UA-ECDx4qJs.js                               611.08 kB │ gzip: 152.26 kB
+dist/assets/wasm-BnjxR4X6.js                                622.32 kB │ gzip: 232.09 kB
+dist/assets/mk-MK-ByobTfwn.js                               627.73 kB │ gzip: 150.23 kB
+dist/assets/hy-AM-03oNBoKS.js                               630.35 kB │ gzip: 148.32 kB
+dist/assets/ru-RU-Bw_oEGYJ.js                               631.10 kB │ gzip: 155.67 kB
+dist/assets/bg-BG-CnNT7ib8.js                               636.35 kB │ gzip: 151.09 kB
+dist/assets/el-GR-Y_pVjdTN.js                               658.86 kB │ gzip: 158.12 kB
+dist/assets/chunk-FOHPRMQF-DD4dKubD.js                      662.08 kB │ gzip: 143.15 kB
+dist/assets/gu-IN-SxcPuw8E.js                               703.51 kB │ gzip: 149.02 kB
+dist/assets/mr-IN-DV4fEpNe.js                               713.83 kB │ gzip: 149.93 kB
+dist/assets/hi-IN-B30DKsad.js                               725.12 kB │ gzip: 152.48 kB
+dist/assets/th-TH-Culs0OHe.js                               733.26 kB │ gzip: 146.50 kB
+dist/assets/bn-BD-bHgZynmZ.js                               741.30 kB │ gzip: 149.67 kB
+dist/assets/index-DXXdWUTV.js                               780.73 kB │ gzip: 224.90 kB
+dist/assets/cpp-71xkOQct.js                                 785.54 kB │ gzip:  58.27 kB
+dist/assets/emacs-lisp-DR2vtWaj.js                          790.01 kB │ gzip: 200.31 kB
+dist/assets/te-IN-DT6FbcKC.js                               794.92 kB │ gzip: 155.11 kB
+dist/assets/ka-GE-D4rlnR8F.js                               798.01 kB │ gzip: 153.61 kB
+dist/assets/kn-IN-C6_xiU04.js                               803.31 kB │ gzip: 154.69 kB
+dist/assets/ta-IN-CdbTO_a9.js                               851.21 kB │ gzip: 154.02 kB
+dist/assets/my-MM-BEaqtXeT.js                               898.45 kB │ gzip: 159.81 kB
+dist/assets/components-rFdt9Of1.js                        1,353.75 kB │ gzip: 310.76 kB
+
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 1.46s
+
+> @ling-stack/daemon@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/daemon
+> corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json && node scripts/build-image-sanitizer.mjs
+
+
+> @ling-stack/contracts@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/contracts
+> corepack pnpm --filter @ling-stack/localization build && tsc -p tsconfig.json
+
+
+> @ling-stack/localization@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/localization
+> node scripts/compile-catalogs.mjs && tsc -p tsconfig.json
+
+Compiled 55 localization catalogs
+
+> @ling-stack/plugin-sdk@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/plugin-sdk
+> tsc -p tsconfig.json
+
+
+> @ling-stack/browser-host@0.1.1 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/browser-host
+> corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json
+
+
+> @ling-stack/contracts@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/contracts
+> corepack pnpm --filter @ling-stack/localization build && tsc -p tsconfig.json
+
+
+> @ling-stack/localization@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/localization
+> node scripts/compile-catalogs.mjs && tsc -p tsconfig.json
+
+Compiled 55 localization catalogs
+
+> @ling-stack/core@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/core
+> corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && tsc -p tsconfig.json
+
+
+> @ling-stack/contracts@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/contracts
+> corepack pnpm --filter @ling-stack/localization build && tsc -p tsconfig.json
+
+
+> @ling-stack/localization@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/localization
+> node scripts/compile-catalogs.mjs && tsc -p tsconfig.json
+
+Compiled 55 localization catalogs
+
+> @ling-stack/plugin-sdk@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/plugin-sdk
+> tsc -p tsconfig.json
+
+
+> @ling-stack/runner-pi@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/runner-pi
+> corepack pnpm --filter @ling-stack/plugin-sdk build && tsc -p tsconfig.json
+
+
+> @ling-stack/plugin-sdk@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/plugin-sdk
+> tsc -p tsconfig.json
+
+
+> @ling-stack/providers@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/providers
+> corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && tsc -p tsconfig.json
+
+
+> @ling-stack/contracts@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/contracts
+> corepack pnpm --filter @ling-stack/localization build && tsc -p tsconfig.json
+
+
+> @ling-stack/localization@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/localization
+> node scripts/compile-catalogs.mjs && tsc -p tsconfig.json
+
+Compiled 55 localization catalogs
+
+> @ling-stack/plugin-sdk@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/plugin-sdk
+> tsc -p tsconfig.json
+
+
+> @ling-stack/remote-protocol@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/remote-protocol
+> corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json
+
+
+> @ling-stack/contracts@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/contracts
+> corepack pnpm --filter @ling-stack/localization build && tsc -p tsconfig.json
+
+
+> @ling-stack/localization@0.0.0 build /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/localization
+> node scripts/compile-catalogs.mjs && tsc -p tsconfig.json
+
+Compiled 55 localization catalogs
+warning: unexpected `cfg` condition value: `asmjs`
+ --> vendor/jpeg-decoder/src/worker/mod.rs:4:13
+  |
+4 |     not(any(target_arch = "asmjs", target_arch = "wasm32")),
+  |             ^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: expected values for `target_arch` are: `aarch64`, `amdgpu`, `arm`, `arm64ec`, `avr`, `bpf`, `csky`, `hexagon`, `loongarch32`, `loongarch64`, `m68k`, `mips`, `mips32r6`, `mips64`, `mips64r6`, `msp430`, `nvptx64`, `powerpc`, `powerpc64`, `riscv32`, `riscv64`, `s390x`, `sparc`, `sparc64`, `wasm32`, `wasm64`, `x86`, `x86_64`, and `xtensa`
+  = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+  = note: `#[warn(unexpected_cfgs)]` on by default
+
+warning: unexpected `cfg` condition value: `asmjs`
+  --> vendor/jpeg-decoder/src/worker/mod.rs:50:17
+   |
+50 |         not(any(target_arch = "asmjs", target_arch = "wasm32")),
+   |                 ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: expected values for `target_arch` are: `aarch64`, `amdgpu`, `arm`, `arm64ec`, `avr`, `bpf`, `csky`, `hexagon`, `loongarch32`, `loongarch64`, `m68k`, `mips`, `mips32r6`, `mips64`, `mips64r6`, `msp430`, `nvptx64`, `powerpc`, `powerpc64`, `riscv32`, `riscv64`, `s390x`, `sparc`, `sparc64`, `wasm32`, `wasm64`, `x86`, `x86_64`, and `xtensa`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `asmjs`
+  --> vendor/jpeg-decoder/src/worker/mod.rs:54:19
+   |
+54 |     #[cfg(not(any(target_arch = "asmjs", target_arch = "wasm32")))]
+   |                   ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: expected values for `target_arch` are: `aarch64`, `amdgpu`, `arm`, `arm64ec`, `avr`, `bpf`, `csky`, `hexagon`, `loongarch32`, `loongarch64`, `m68k`, `mips`, `mips32r6`, `mips64`, `mips64r6`, `msp430`, `nvptx64`, `powerpc`, `powerpc64`, `riscv32`, `riscv64`, `s390x`, `sparc`, `sparc64`, `wasm32`, `wasm64`, `x86`, `x86_64`, and `xtensa`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `asmjs`
+  --> vendor/jpeg-decoder/src/worker/mod.rs:74:25
+   |
+74 |                 not(any(target_arch = "asmjs", target_arch = "wasm32")),
+   |                         ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: expected values for `target_arch` are: `aarch64`, `amdgpu`, `arm`, `arm64ec`, `avr`, `bpf`, `csky`, `hexagon`, `loongarch32`, `loongarch64`, `m68k`, `mips`, `mips32r6`, `mips64`, `mips64r6`, `msp430`, `nvptx64`, `powerpc`, `powerpc64`, `riscv32`, `riscv64`, `s390x`, `sparc`, `sparc64`, `wasm32`, `wasm64`, `x86`, `x86_64`, and `xtensa`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `asmjs`
+  --> vendor/jpeg-decoder/src/worker/mod.rs:79:27
+   |
+79 |             #[cfg(not(any(target_arch = "asmjs", target_arch = "wasm32")))]
+   |                           ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: expected values for `target_arch` are: `aarch64`, `amdgpu`, `arm`, `arm64ec`, `avr`, `bpf`, `csky`, `hexagon`, `loongarch32`, `loongarch64`, `m68k`, `mips`, `mips32r6`, `mips64`, `mips64r6`, `msp430`, `nvptx64`, `powerpc`, `powerpc64`, `riscv32`, `riscv64`, `s390x`, `sparc`, `sparc64`, `wasm32`, `wasm64`, `x86`, `x86_64`, and `xtensa`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `asmjs`
+  --> vendor/jpeg-decoder/src/worker/mod.rs:86:25
+   |
+86 |                 not(any(target_arch = "asmjs", target_arch = "wasm32")),
+   |                         ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: expected values for `target_arch` are: `aarch64`, `amdgpu`, `arm`, `arm64ec`, `avr`, `bpf`, `csky`, `hexagon`, `loongarch32`, `loongarch64`, `m68k`, `mips`, `mips32r6`, `mips64`, `mips64r6`, `msp430`, `nvptx64`, `powerpc`, `powerpc64`, `riscv32`, `riscv64`, `s390x`, `sparc`, `sparc64`, `wasm32`, `wasm64`, `x86`, `x86_64`, and `xtensa`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `asmjs`
+  --> vendor/jpeg-decoder/src/worker/mod.rs:90:27
+   |
+90 |             #[cfg(not(any(target_arch = "asmjs", target_arch = "wasm32")))]
+   |                           ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: expected values for `target_arch` are: `aarch64`, `amdgpu`, `arm`, `arm64ec`, `avr`, `bpf`, `csky`, `hexagon`, `loongarch32`, `loongarch64`, `m68k`, `mips`, `mips32r6`, `mips64`, `mips64r6`, `msp430`, `nvptx64`, `powerpc`, `powerpc64`, `riscv32`, `riscv64`, `s390x`, `sparc`, `sparc64`, `wasm32`, `wasm64`, `x86`, `x86_64`, and `xtensa`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `asmjs`
+   --> vendor/jpeg-decoder/src/worker/mod.rs:104:17
+    |
+104 |         not(any(target_arch = "asmjs", target_arch = "wasm32")),
+    |                 ^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `target_arch` are: `aarch64`, `amdgpu`, `arm`, `arm64ec`, `avr`, `bpf`, `csky`, `hexagon`, `loongarch32`, `loongarch64`, `m68k`, `mips`, `mips32r6`, `mips64`, `mips64r6`, `msp430`, `nvptx64`, `powerpc`, `powerpc64`, `riscv32`, `riscv64`, `s390x`, `sparc`, `sparc64`, `wasm32`, `wasm64`, `x86`, `x86_64`, and `xtensa`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: `jpeg-decoder` (lib) generated 8 warnings
+    Finished `release` profile [optimized] target(s) in 0.02s
+{"built":true,"output":"/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/packages/daemon/dist/native/image-sanitizer","schema":"ling.image-sanitizer.build.v1","protocol":"ling.image-sanitizer.v1","version":"0.1.0","platform":"darwin-arm64","target":"aarch64-apple-darwin","executable":"ling-image-sanitizer","digestStage":"before-desktop-signing","dependencies":[{"name":"adler2","version":"2.0.1","selectedLicense":"MIT"},{"name":"autocfg","version":"1.5.1","selectedLicense":"MIT"},{"name":"bitflags","version":"2.13.2","selectedLicense":"MIT"},{"name":"byteorder-lite","version":"0.1.0","selectedLicense":"MIT"},{"name":"cfg-if","version":"1.0.5","selectedLicense":"MIT"},{"name":"crc32fast","version":"1.5.2","selectedLicense":"MIT"},{"name":"fdeflate","version":"0.3.7","selectedLicense":"MIT"},{"name":"flate2","version":"1.1.10","selectedLicense":"MIT"},{"name":"image-webp","version":"0.2.4","selectedLicense":"MIT"},{"name":"jpeg-decoder","version":"0.3.2","selectedLicense":"MIT"},{"name":"miniz_oxide","version":"0.8.9","selectedLicense":"MIT"},{"name":"miniz_oxide","version":"0.9.1","selectedLicense":"MIT"},{"name":"moxcms","version":"0.9.1","selectedLicense":"BSD-3-Clause"},{"name":"num-traits","version":"0.2.19","selectedLicense":"MIT"},{"name":"png","version":"0.18.1","selectedLicense":"MIT"},{"name":"pxfm","version":"0.1.30","selectedLicense":"BSD-3-Clause"},{"name":"quick-error","version":"2.0.1","selectedLicense":"MIT"},{"name":"simd-adler32","version":"0.3.10","selectedLicense":"MIT"}],"sha256":"e27d0fbed8c42fdd3807772282b747a6dec4a32ee6b0bbc584c6add95c092562","sourceSha256":"53ed737e17c7aebdbc8b9bec028506f1b7ff9080d46956f224ad95ec65331a29","noticesSha256":"2e491e4dacb16b7c5df54b89d5db3992c9b0a4bde08e1f1c0adc9150b7b32f5d"}
+
+  dist/preload/main-window.cjs           25.6kb
+  dist/preload/computer-use-preview.cjs  19.2kb
+
+⚡ Done in 100ms
+
+> @ling-stack/desktop@0.1.2-alpha.1 build:engine-secret-worker /Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/apps/desktop
+> esbuild ../../packages/daemon/dist/features/execution-engines/engine-secret-worker.js --bundle --platform=node --format=esm --external:@napi-rs/keyring --outfile=dist/daemon/engine-secret-worker.js
+
+
+  dist/daemon/engine-secret-worker.js  1.7kb
+
+⚡ Done in 1ms
+Staged 3 bundled plugin metadata files for development.
+vite v8.3.4 building client environment for production...
+transforming...
+✓ 2136 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/renderer/computer-use-preview/index.html                                              1.06 kB │ gzip:   0.49 kB
+dist/renderer/computer-use-preview/assets/inter-vietnamese-wght-normal-CBcvBZtf.woff2     10.25 kB
+dist/renderer/computer-use-preview/assets/inter-greek-ext-wght-normal-DlzME5K_.woff2      11.23 kB
+dist/renderer/computer-use-preview/assets/inter-cyrillic-wght-normal-DqGufNeO.woff2       18.74 kB
+dist/renderer/computer-use-preview/assets/inter-greek-wght-normal-CkhJZR-_.woff2          18.99 kB
+dist/renderer/computer-use-preview/assets/inter-cyrillic-ext-wght-normal-BOeWTOD4.woff2   25.96 kB
+dist/renderer/computer-use-preview/assets/inter-latin-wght-normal-Dx4kXJAl.woff2          48.25 kB
+dist/renderer/computer-use-preview/assets/inter-latin-ext-wght-normal-DO1Apj_S.woff2      85.06 kB
+dist/renderer/computer-use-preview/assets/preview-gxMJTEZZ.css                            77.57 kB │ gzip:  12.22 kB
+dist/renderer/computer-use-preview/messages.js                                             0.14 kB │ gzip:   0.11 kB
+dist/renderer/computer-use-preview/page-deck-view-model.js                                 0.58 kB │ gzip:   0.31 kB
+dist/renderer/computer-use-preview/preview-view-model.js                                   3.19 kB │ gzip:   1.11 kB
+dist/renderer/computer-use-preview/assets/zh-HK-DNPSrPyb.js                              390.73 kB │ gzip: 130.38 kB
+dist/renderer/computer-use-preview/assets/zh-TW-C0GIji3t.js                              390.73 kB │ gzip: 130.38 kB
+dist/renderer/computer-use-preview/assets/zh-CN-Dl8-P6nb.js                              390.97 kB │ gzip: 126.31 kB
+dist/renderer/computer-use-preview/assets/preview-Luiqwp5_.js                            406.04 kB │ gzip: 126.54 kB
+dist/renderer/computer-use-preview/assets/messages-CJqKAUp-.js                           415.20 kB │ gzip:  89.38 kB
+dist/renderer/computer-use-preview/assets/nb-NO-BjLB3cch.js                              424.14 kB │ gzip: 124.54 kB
+dist/renderer/computer-use-preview/assets/ms-MY-DW7L3Zg5.js                              425.01 kB │ gzip: 121.01 kB
+dist/renderer/computer-use-preview/assets/da-DK-D4DoQSOX.js                              425.28 kB │ gzip: 124.60 kB
+dist/renderer/computer-use-preview/assets/id-ID-DQ2yp2zk.js                              428.42 kB │ gzip: 121.71 kB
+dist/renderer/computer-use-preview/assets/et-EE-BPqM56zO.js                              429.79 kB │ gzip: 129.56 kB
+dist/renderer/computer-use-preview/assets/sv-SE-8owYOtg3.js                              430.21 kB │ gzip: 126.27 kB
+dist/renderer/computer-use-preview/assets/sl-SI-BQzptXBN.js                              431.43 kB │ gzip: 130.78 kB
+dist/renderer/computer-use-preview/assets/bs-BA-COOF7Mq2.js                              431.73 kB │ gzip: 130.52 kB
+dist/renderer/computer-use-preview/assets/hr-HR-caUACgUu.js                              433.25 kB │ gzip: 130.84 kB
+dist/renderer/computer-use-preview/assets/is-IS-Csd9Zc8i.js                              433.26 kB │ gzip: 132.03 kB
+dist/renderer/computer-use-preview/assets/fi-FI-55Syx6sa.js                              435.94 kB │ gzip: 131.56 kB
+dist/renderer/computer-use-preview/assets/sw-TZ-Brybhy0C.js                              437.66 kB │ gzip: 127.80 kB
+dist/renderer/computer-use-preview/assets/nl-NL-Backvliz.js                              440.71 kB │ gzip: 128.75 kB
+dist/renderer/computer-use-preview/assets/so-SO-GtaLMamg.js                              444.43 kB │ gzip: 133.11 kB
+dist/renderer/computer-use-preview/assets/cs-CZ-Dl3Myqbb.js                              445.15 kB │ gzip: 134.28 kB
+dist/renderer/computer-use-preview/assets/tr-TR-NZd4uYHv.js                              448.42 kB │ gzip: 130.79 kB
+dist/renderer/computer-use-preview/assets/sk-SK-4fYvRunm.js                              448.45 kB │ gzip: 136.18 kB
+dist/renderer/computer-use-preview/assets/pl-PL-4FbrdG7-.js                              453.80 kB │ gzip: 137.54 kB
+dist/renderer/computer-use-preview/assets/lv-LV-DFvCR_Zd.js                              454.78 kB │ gzip: 133.36 kB
+dist/renderer/computer-use-preview/assets/pt-BR-C7Ow2KBL.js                              455.76 kB │ gzip: 128.50 kB
+dist/renderer/computer-use-preview/assets/ro-RO-oroDifIb.js                              455.84 kB │ gzip: 131.91 kB
+dist/renderer/computer-use-preview/assets/pt-PT-BJ_QPh6o.js                              457.11 kB │ gzip: 129.75 kB
+dist/renderer/computer-use-preview/assets/ca-ES-Cwz4D60d.js                              457.46 kB │ gzip: 130.79 kB
+dist/renderer/computer-use-preview/assets/ko-KR-CoxnzKLf.js                              457.80 kB │ gzip: 133.32 kB
+dist/renderer/computer-use-preview/assets/sq-AL-CpKVbAWh.js                              459.82 kB │ gzip: 134.27 kB
+dist/renderer/computer-use-preview/assets/it-IT-C6iSyrAY.js                              460.80 kB │ gzip: 130.05 kB
+dist/renderer/computer-use-preview/assets/es-419-CWIwxLgI.js                             461.64 kB │ gzip: 130.74 kB
+dist/renderer/computer-use-preview/assets/es-ES-BByPV8Dw.js                              461.66 kB │ gzip: 130.75 kB
+dist/renderer/computer-use-preview/assets/de-DE-Dt2vm0Sj.js                              462.59 kB │ gzip: 135.10 kB
+dist/renderer/computer-use-preview/assets/hu-HU-B5OqMW5U.js                              470.90 kB │ gzip: 138.73 kB
+dist/renderer/computer-use-preview/assets/fr-FR-DxLCA5U-.js                              472.18 kB │ gzip: 133.03 kB
+dist/renderer/computer-use-preview/assets/fr-CA-NN5Xe25R.js                              472.28 kB │ gzip: 133.41 kB
+dist/renderer/computer-use-preview/assets/vi-VN-CHFV0ZnG.js                              501.84 kB │ gzip: 132.40 kB
+dist/renderer/computer-use-preview/assets/ja-JP-BA9B-8Nr.js                              520.61 kB │ gzip: 142.46 kB
+dist/renderer/computer-use-preview/assets/sr-RS-CP2pZNCr.js                              592.70 kB │ gzip: 149.79 kB
+dist/renderer/computer-use-preview/assets/uk-UA-ECDx4qJs.js                              611.08 kB │ gzip: 152.26 kB
+dist/renderer/computer-use-preview/assets/mk-MK-ByobTfwn.js                              627.73 kB │ gzip: 150.23 kB
+dist/renderer/computer-use-preview/assets/hy-AM-03oNBoKS.js                              630.35 kB │ gzip: 148.32 kB
+dist/renderer/computer-use-preview/assets/ru-RU-Bw_oEGYJ.js                              631.10 kB │ gzip: 155.67 kB
+dist/renderer/computer-use-preview/assets/bg-BG-CnNT7ib8.js                              636.35 kB │ gzip: 151.09 kB
+dist/renderer/computer-use-preview/assets/el-GR-Y_pVjdTN.js                              658.86 kB │ gzip: 158.12 kB
+dist/renderer/computer-use-preview/assets/gu-IN-SxcPuw8E.js                              703.51 kB │ gzip: 149.02 kB
+dist/renderer/computer-use-preview/assets/mr-IN-DV4fEpNe.js                              713.83 kB │ gzip: 149.93 kB
+dist/renderer/computer-use-preview/assets/hi-IN-B30DKsad.js                              725.12 kB │ gzip: 152.48 kB
+dist/renderer/computer-use-preview/assets/th-TH-Culs0OHe.js                              733.26 kB │ gzip: 146.50 kB
+dist/renderer/computer-use-preview/assets/bn-BD-bHgZynmZ.js                              741.30 kB │ gzip: 149.67 kB
+dist/renderer/computer-use-preview/assets/te-IN-DT6FbcKC.js                              794.92 kB │ gzip: 155.11 kB
+dist/renderer/computer-use-preview/assets/ka-GE-D4rlnR8F.js                              798.01 kB │ gzip: 153.61 kB
+dist/renderer/computer-use-preview/assets/kn-IN-C6_xiU04.js                              803.31 kB │ gzip: 154.69 kB
+dist/renderer/computer-use-preview/assets/ta-IN-CdbTO_a9.js                              851.21 kB │ gzip: 154.02 kB
+dist/renderer/computer-use-preview/assets/my-MM-BEaqtXeT.js                              898.45 kB │ gzip: 159.81 kB
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-switch@1.4.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@_20cc35fdfc04b0cbf7c7089521100790/node_modules/@radix-ui/react-switch/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-switch@1.4.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@_20cc35fdfc04b0cbf7c7089521100790/node_modules/@radix-ui/react-switch/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-toggle-group@1.2.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+_b9d8412748aa981c9914c568f0dd567f/node_modules/@radix-ui/react-toggle-group/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-toggle-group@1.2.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+_b9d8412748aa981c9914c568f0dd567f/node_modules/@radix-ui/react-toggle-group/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-primitive@2.2.0_@types+react-dom@19.3.0_@types+react@19.3.0__@types+rea_c31f5d2e8dd1090b081609bcec07c67f/node_modules/@radix-ui/react-primitive/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-primitive@2.2.0_@types+react-dom@19.3.0_@types+react@19.3.0__@types+rea_c31f5d2e8dd1090b081609bcec07c67f/node_modules/@radix-ui/react-primitive/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-tabs@1.2.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@19_6d065e221b7af2120aa9f3ff73729ae0/node_modules/@radix-ui/react-tabs/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-tabs@1.2.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@19_6d065e221b7af2120aa9f3ff73729ae0/node_modules/@radix-ui/react-tabs/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-collapsible@1.2.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+r_5b0e492b6a82e324caa0f52e878bb214/node_modules/@radix-ui/react-collapsible/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-collapsible@1.2.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+r_5b0e492b6a82e324caa0f52e878bb214/node_modules/@radix-ui/react-collapsible/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-direction@1.2.0_@types+react@19.3.0_react@19.3.0/node_modules/@radix-ui/react-direction/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-direction@1.2.0_@types+react@19.3.0_react@19.3.0/node_modules/@radix-ui/react-direction/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-dropdown-menu@2.2.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types_1d1a84d73e3c31b1d3153d77d81ceee0/node_modules/@radix-ui/react-dropdown-menu/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-dropdown-menu@2.2.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types_1d1a84d73e3c31b1d3153d77d81ceee0/node_modules/@radix-ui/react-dropdown-menu/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-toggle@1.2.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@_0e58fe07f563b3cead9895209c8dbf5a/node_modules/@radix-ui/react-toggle/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-toggle@1.2.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@_0e58fe07f563b3cead9895209c8dbf5a/node_modules/@radix-ui/react-toggle/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-tooltip@1.4.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react_6b024258fc950250eb2fe8f7b373fd06/node_modules/@radix-ui/react-tooltip/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-tooltip@1.4.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react_6b024258fc950250eb2fe8f7b373fd06/node_modules/@radix-ui/react-tooltip/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-presence@1.1.11_@types+react-dom@19.3.0_@types+react@19.3.0__@types+rea_fea964e47d1f796c036ae060b7c5470f/node_modules/@radix-ui/react-presence/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-presence@1.1.11_@types+react-dom@19.3.0_@types+react@19.3.0__@types+rea_fea964e47d1f796c036ae060b7c5470f/node_modules/@radix-ui/react-presence/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-popover@1.3.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react_e30c1a3361e595871e7a1c2e1a74b81d/node_modules/@radix-ui/react-popover/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-popover@1.3.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react_e30c1a3361e595871e7a1c2e1a74b81d/node_modules/@radix-ui/react-popover/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-dialog@1.3.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@_a3b87985ed5587cda38fa4297542256b/node_modules/@radix-ui/react-dialog/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-dialog@1.3.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@_a3b87985ed5587cda38fa4297542256b/node_modules/@radix-ui/react-dialog/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-portal@1.2.0_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@_8edac65ad48366ac38478b64ccb751ca/node_modules/@radix-ui/react-portal/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-portal@1.2.0_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@_8edac65ad48366ac38478b64ccb751ca/node_modules/@radix-ui/react-portal/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-focus-guards@1.2.0_@types+react@19.3.0_react@19.3.0/node_modules/@radix-ui/react-focus-guards/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-focus-guards@1.2.0_@types+react@19.3.0_react@19.3.0/node_modules/@radix-ui/react-focus-guards/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-visually-hidden@1.2.13_@types+react-dom@19.3.0_@types+react@19.3.0__@ty_3e70f9ceb6ce834e3d5b3a4bc36ce3d4/node_modules/@radix-ui/react-visually-hidden/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-visually-hidden@1.2.13_@types+react-dom@19.3.0_@types+react@19.3.0__@ty_3e70f9ceb6ce834e3d5b3a4bc36ce3d4/node_modules/@radix-ui/react-visually-hidden/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-roving-focus@1.2.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+_aff1a8706ec7fd31d50401219eccf7bc/node_modules/@radix-ui/react-roving-focus/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-roving-focus@1.2.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+_aff1a8706ec7fd31d50401219eccf7bc/node_modules/@radix-ui/react-roving-focus/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-focus-scope@1.3.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+r_c545200fe192271ccc07b707063d52f1/node_modules/@radix-ui/react-focus-scope/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-focus-scope@1.3.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+r_c545200fe192271ccc07b707063d52f1/node_modules/@radix-ui/react-focus-scope/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-dismissable-layer@1.2.1_@types+react-dom@19.3.0_@types+react@19.3.0__@t_2656bb590de67d8af7daa53dbff259b7/node_modules/@radix-ui/react-dismissable-layer/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-dismissable-layer@1.2.1_@types+react-dom@19.3.0_@types+react@19.3.0__@t_2656bb590de67d8af7daa53dbff259b7/node_modules/@radix-ui/react-dismissable-layer/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-toast@1.3.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@1_9e7c08a11157ed276bff36e462c11a8f/node_modules/@radix-ui/react-toast/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-toast@1.3.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@1_9e7c08a11157ed276bff36e462c11a8f/node_modules/@radix-ui/react-toast/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-popper@1.4.0_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@_25dd0b9b4aa60217c4c6d2973ec26adf/node_modules/@radix-ui/react-popper/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-popper@1.4.0_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@_25dd0b9b4aa60217c4c6d2973ec26adf/node_modules/@radix-ui/react-popper/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-collection@1.2.0_@types+react-dom@19.3.0_@types+react@19.3.0__@types+re_ed1cf60c896980c87315abaf5b210e94/node_modules/@radix-ui/react-collection/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-collection@1.2.0_@types+react-dom@19.3.0_@types+react@19.3.0__@types+re_ed1cf60c896980c87315abaf5b210e94/node_modules/@radix-ui/react-collection/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-arrow@1.1.17_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@_87b97c80112cadbf114ecf5fb3348e77/node_modules/@radix-ui/react-arrow/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-arrow@1.1.17_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@_87b97c80112cadbf114ecf5fb3348e77/node_modules/@radix-ui/react-arrow/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/@radix-ui+react-menu@2.2.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@19_c1dfce9d83c1c8808d1274f6610bc405/node_modules/@radix-ui/react-menu/dist/index.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/@radix-ui+react-menu@2.2.1_@types+react-dom@19.3.0_@types+react@19.3.0__@types+react@19_c1dfce9d83c1c8808d1274f6610bc405/node_modules/@radix-ui/react-menu/dist/index.mjs:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/lucide-react@1.58.0_@types+react@19.3.0_react@19.3.0/node_modules/lucide-react/dist/esm/context.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/lucide-react@1.58.0_@types+react@19.3.0_react@19.3.0/node_modules/lucide-react/dist/esm/context.mjs:2:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m2 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[MODULE_LEVEL_DIRECTIVE] [0mThe semantics of the module level directive "use client" in "../../node_modules/.pnpm/lucide-react@1.58.0_@types+react@19.3.0_react@19.3.0/node_modules/lucide-react/dist/esm/Icon.mjs" may not be preserved when bundling.
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m ../../node_modules/.pnpm/lucide-react@1.58.0_@types+react@19.3.0_react@19.3.0/node_modules/lucide-react/dist/esm/Icon.mjs:2:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m2 │[0m "use client";
+ [38;5;240m  │[0m ──────┬──────  
+ [38;5;240m  │[0m       ╰──────── module level directive may not be preserved
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mHelp[0m: For more information, see https://rolldown.rs/in-depth/directives#other-directives
+[38;5;246m───╯[0m
+
+[33m[INEFFECTIVE_DYNAMIC_IMPORT] [0m../../packages/localization/dist/generated/catalogs/en-US.js is dynamically imported by ../../packages/localization/dist/generated/catalog-loaders.js but also statically imported by renderer/computer-use-preview/messages.ts, dynamic import will not move module into another chunk.
+
+✓ built in 473ms
+  • electron-builder  version=26.15.3 os=27.0.0
+  • loaded configuration  file=package.json ("build" field)
+  • packageManager not detected by file, falling back to environment detection  resolvedPackageManager=pnpm detected=/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/apps/desktop
+  • detected workspace root for project using packageManager field  pm=pnpm config=pnpm@10.0.0 resolved=/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack projectDir=/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/apps/desktop
+  • executing @electron/rebuild  electronVersion=44.8.0 arch=arm64 buildFromSource=false workspaceRoot=/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack projectDir=./ appDir=./
+  • installing native dependencies  arch=arm64
+  • completed installing native dependencies
+  • packaging       platform=darwin arch=arm64 electron=44.8.0 appOutDir=release/human-qa/mac-arm64
+  • downloaded      label=electron progress=100%
+  • downloaded electron zip extracted successfully  output=/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/apps/desktop/release/human-qa/mac-arm64
+  • searching for node modules  pm=pnpm searchDir=/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/apps/desktop
+  • collector stderr output  dependencies=["[WARN] The \"pnpm\" field in package.json is no longer read by pnpm. The following keys were ignored: \"pnpm.onlyBuiltDependencies\", \"pnpm.overrides\", \"pnpm.patchedDependencies\". See https://pnpm.io/settings for the new home of each setting.\n","[WARN] The \"pnpm\" field in package.json is no longer read by pnpm. The following keys were ignored: \"pnpm.onlyBuiltDependencies\", \"pnpm.overrides\", \"pnpm.patchedDependencies\". See https://pnpm.io/settings for the new home of each setting.\n","[WARN] The \"pnpm\" field in package.json is no longer read by pnpm. The following keys were ignored: \"pnpm.onlyBuiltDependencies\", \"pnpm.overrides\", \"pnpm.patchedDependencies\". See https://pnpm.io/settings for the new home of each setting.\n"]
+  • duplicate dependency references  dependencies=["@ling-stack/contracts@link:../../packages/contracts","lucide-react@1.58.0","react-dom@19.3.0","@radix-ui/react-slot@1.5.0","@radix-ui/react-compose-refs@1.1.5","@radix-ui/react-context@1.3.0","@radix-ui/react-dismissable-layer@1.2.1","@radix-ui/react-focus-guards@1.2.0","@radix-ui/react-focus-scope@1.3.1","@radix-ui/react-id@1.1.4","@radix-ui/react-popper@1.4.0","@radix-ui/react-portal@1.2.0","@radix-ui/react-presence@1.1.11","@radix-ui/react-primitive@2.2.0","@radix-ui/react-use-controllable-state@1.3.0","@radix-ui/react-use-layout-effect@1.1.4","aria-hidden@1.2.6","react-remove-scroll@2.7.2","@radix-ui/react-use-size@1.1.5","@radix-ui/react-direction@1.2.0","@radix-ui/react-roving-focus@1.2.1","@radix-ui/react-visually-hidden@1.2.13","@radix-ui/react-collection@1.2.0","@radix-ui/react-use-callback-ref@1.1.5","@radix-ui/react-use-effect-event@0.0.5","react-style-singleton@2.2.3"]
+  • platform-specific optional dependencies not bundled — add them to your project's optionalDependencies if your app requires them (pnpm 10+ does not auto-install transitive platform binaries)  dependencies=["@napi-rs/canvas-android-arm64@1.0.11","@napi-rs/canvas-darwin-x64@1.0.11","@napi-rs/canvas-linux-arm-gnueabihf@1.0.11","@napi-rs/canvas-linux-arm64-gnu@1.0.11","@napi-rs/canvas-linux-arm64-musl@1.0.11","@napi-rs/canvas-linux-riscv64-gnu@1.0.11","@napi-rs/canvas-linux-x64-gnu@1.0.11","@napi-rs/canvas-linux-x64-musl@1.0.11","@napi-rs/canvas-win32-arm64-msvc@1.0.11","@napi-rs/canvas-win32-x64-msvc@1.0.11","@napi-rs/keyring-darwin-x64@2.1.1","@napi-rs/keyring-freebsd-x64@2.1.1","@napi-rs/keyring-linux-arm-gnueabihf@2.1.1","@napi-rs/keyring-linux-arm64-gnu@2.1.1","@napi-rs/keyring-linux-arm64-musl@2.1.1","@napi-rs/keyring-linux-riscv64-gnu@2.1.1","@napi-rs/keyring-linux-x64-gnu@2.1.1","@napi-rs/keyring-linux-x64-musl@2.1.1","@napi-rs/keyring-win32-arm64-msvc@2.1.1","@napi-rs/keyring-win32-ia32-msvc@2.1.1","@napi-rs/keyring-win32-x64-msvc@2.1.1","@napi-rs/canvas-android-arm64@0.1.80","@napi-rs/canvas-darwin-x64@0.1.80","@napi-rs/canvas-linux-arm-gnueabihf@0.1.80","@napi-rs/canvas-linux-arm64-gnu@0.1.80","@napi-rs/canvas-linux-arm64-musl@0.1.80","@napi-rs/canvas-linux-riscv64-gnu@0.1.80","@napi-rs/canvas-linux-x64-gnu@0.1.80","@napi-rs/canvas-linux-x64-musl@0.1.80","@napi-rs/canvas-win32-x64-msvc@0.1.80"]
+  • file source doesn't exist  from=/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/apps/desktop/dist/distribution
+  • file source doesn't exist  from=/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/apps/desktop/dist/distribution
+  • file source doesn't exist  from=/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/apps/desktop/dist/distribution
+  • file source doesn't exist  from=/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack/apps/desktop/dist/distribution
+  • executing @electron/fuses  electronPath=release/human-qa/mac-arm64/Ling Stack Human QA.app
+  • signing         file=release/human-qa/mac-arm64/Ling Stack Human QA.app platform=darwin type=distribution identityName=- identityHash=none provisioningProfile=none
+  • skipped macOS notarization  reason=`notarize` options were unable to be generated
+  • building        target=macOS zip arch=arm64 file=release/human-qa/Ling-Stack-0.1.2-alpha.1-macos-arm64.zip
+  • building        target=DMG arch=arm64 file=release/human-qa/Ling-Stack-0.1.2-alpha.1-macos-arm64.dmg
+  • building block map  blockMapFile=release/human-qa/Ling-Stack-0.1.2-alpha.1-macos-arm64.dmg.blockmap
+  • building block map  blockMapFile=release/human-qa/Ling-Stack-0.1.2-alpha.1-macos-arm64.zip.blockmap
