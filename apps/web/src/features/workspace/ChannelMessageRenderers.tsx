@@ -410,6 +410,7 @@ function channelTurnTerminalReportTimelineItem(
   return visibleTerminalReportTimelineItem({
     id: `terminal-report:${block.terminalReportId}`,
     kind: "terminalReport",
+    reportStatus: report?.status,
     language: report?.language,
     outcomeSourceRefs: terminalReportSourceRefs(report?.outcome.sourceRefs ?? []),
     revision: block.revision ?? 1,

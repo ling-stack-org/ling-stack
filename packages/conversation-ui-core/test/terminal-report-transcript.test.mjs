@@ -264,6 +264,7 @@ test("normal deterministic fallback uses one compact outcome instead of repeatin
   assert.equal(result.kind, "terminalReport");
   assert.equal(result.title, "任务已完成。");
   assert.equal(result.summary, "");
+  assert.equal(result.reportStatus, "fallback");
   assert.equal(result.reportId, "report-fallback");
   assert.equal(result.sourceRefs.some((reference) => reference.kind === "turn" && reference.id === "turn-1"), true);
 });

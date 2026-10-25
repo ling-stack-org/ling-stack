@@ -253,6 +253,8 @@ export interface ConversationTimelineContextCompactionItem extends ConversationT
 /** The single Host-owned outcome row for an executed turn. */
 export interface ConversationTimelineTerminalReportItem extends ConversationTimelineActivityPayload {
   readonly kind: "terminalReport";
+  /** Host report provenance; separate from the execution's outcome status. */
+  readonly reportStatus?: "committed" | "fallback";
   readonly language?: import("@ling-stack/localization").SupportedLocale;
   readonly outcomeSourceRefs?: readonly ConversationOperationSourceRef[];
   readonly reportId: string;

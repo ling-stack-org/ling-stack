@@ -791,6 +791,7 @@ function projectTerminalReports(
       output.set(anchor.id, {
         id: `terminal-report:${entry.report.id}`,
         kind: "terminalReport",
+        reportStatus: entry.report.status,
         language: entry.report.language,
         outcomeSourceRefs: entry.report.outcome.sourceRefs,
         revision: anchor.revision,
