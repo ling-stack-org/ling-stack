@@ -491,7 +491,7 @@ export function inspectInstallerTemplates(root) {
     files.push({ path: file, originalSha256: sha256(before), modifiedSha256: sha256(after) });
     if (/\b(?:SpiderBanner|WinShell)::/u.test(after)) throw new Error("distribution_removed_installer_plugin_still_referenced");
   }
-  return { schemaVersion: 1, kind: "installer-template-audit", status: gaps.length ? "blocked" : "checked", builderVersion, files, retainedPlugins: ["System", "nsExec", "StdUtils", "nsis7z"], scope: "Stock install, upgrade, atomic rename/rollback, uninstall and 7z extraction are retained. Private tooling replaces SpiderBanner display calls and WinShell calls, and uses system robocopy in place of SHFileOperation for long-path payload members.", gaps };
+  return { schemaVersion: 1, kind: "installer-template-audit", status: gaps.length ? "blocked" : "checked", builderVersion, files, retainedPlugins: ["System", "nsExec", "StdUtils", "nsis7z"], scope: "Stock install, upgrade, atomic rename/rollback, uninstall and 7z extraction are retained. Private tooling replaces SpiderBanner display calls and WinShell calls, adds an extended-length extraction path, and uses system robocopy in place of SHFileOperation for long-path payload members.", gaps };
 }
 
 export function collectInstallerMaterials(root, add, components, gaps) {

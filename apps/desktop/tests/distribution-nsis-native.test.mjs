@@ -87,7 +87,7 @@ for (const [size, message] of [[1663507, /exceeds its pinned size/u], [1663506, 
   });
 }
 
-test("the private stock NSIS overlay installs and uninstalls a small real payload", {
+test("the production NSIS overlay installs, upgrades and uninstalls long-path members", {
   skip: process.platform !== "win32" || process.env.GITHUB_ACTIONS !== "true" || process.env.RUNNER_ENVIRONMENT !== "github-hosted",
 }, async t => {
   const root = await realpath(await mkdtemp(join(process.env.RUNNER_TEMP, "ling-stock-installer-")));
@@ -116,21 +116,6 @@ test("the private stock NSIS overlay installs and uninstalls a small real payloa
   const run = code => execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", code],
     { env, encoding: "utf8", timeout: 120_000, maxBuffer: 1024 * 1024 });
   const deepPath = "resources/gstack/runtime/lib/diagram-render/node_modules/@radix-ui/react-tabs/node_modules/@radix-ui/react-primitive/node_modules/@radix-ui/react-slot/node_modules/@radix-ui/react-compose-refs/ling-upstream-license-provenance.json";
-  const trace = join(root, "install-stages.jsonl"), probe = join(root, "inspect-stage.cjs");
-  await writeFile(probe, `const fs = require("node:fs"), path = require("node:path");
-const [source, destination, phase, copyExitCode] = process.argv.slice(2);
-const inspect = root => { try { return fs.readFileSync(path.join(root, ${JSON.stringify(deepPath)}), "utf8"); } catch (error) { return { code: error.code, message: error.message }; } };
-fs.appendFileSync(${JSON.stringify(trace)}, JSON.stringify({phase, copyExitCode, source, destination, sourceDeep: inspect(source), destinationDeep: inspect(destination)}) + "\\n");
-`);
-  const templatePath = join(prepared.appBuilderLibRoot, "templates/nsis/include/extractAppPackage.nsh");
-  let template = await readFile(templatePath, "utf8");
-  const observe = phase => `    nsExec::ExecToStack '"${process.execPath}" "${probe}" "$PLUGINSDIR\\7z-out" "$OUTDIR" "${phase}" "$R2"'
-    Pop $R3
-    Pop $R3
-`;
-  template = template.replace("  # Retry counter", `  Push $R2\n  Push $R3\n${observe("extracted")}  Pop $R3\n  Pop $R2\n\n  # Retry counter`);
-  template = template.replace("    Pop $R3\n    ClearErrors", `    Pop $R3\n${observe("copied")}    ClearErrors`);
-  await writeFile(templatePath, template);
   try {
     // Build once, with the long member present from the start: a second build
     // could reuse the first payload archive and conceal the failing layer.
@@ -149,19 +134,21 @@ fs.appendFileSync(${JSON.stringify(trace)}, JSON.stringify({phase, copyExitCode,
       const started = performance.now();
       t.diagnostic(`Installing stock fixture; iteration=${iteration}; finalPathLength=${join(installPath, deepPath).length}`);
       t.diagnostic(run(`$ErrorActionPreference = 'Stop';
-  $p = Start-Process -FilePath $env:LING_FIXTURE_INSTALLER -ArgumentList @('/S', ('/D=' + $env:LING_FIXTURE_INSTALL_PATH)) -PassThru -Wait;
+  $installArgs = @('/S');
+  ${iteration === 0 ? "$installArgs += ('/D=' + $env:LING_FIXTURE_INSTALL_PATH);" : ""}
+  $p = Start-Process -FilePath $env:LING_FIXTURE_INSTALLER -ArgumentList $installArgs -PassThru -Wait;
   if ($p.ExitCode -ne 0) { throw ('Fixture installer exit: ' + $p.ExitCode) }`));
       t.diagnostic(`Small stock installer elapsed milliseconds: ${performance.now() - started}`);
       assert.equal(await readFile(join(installPath, "fixture.txt"), "utf8"), "Stock installer payload\n");
       assert.equal(await readFile(join(installPath, deepPath), "utf8"), "Long path fixture\n");
-      t.diagnostic(run(`$ErrorActionPreference = 'Stop';
+    }
+    t.diagnostic(run(`$ErrorActionPreference = 'Stop';
   $p = Start-Process -FilePath (Join-Path $env:LING_FIXTURE_INSTALL_PATH 'Uninstall Ling Stack.exe') -ArgumentList '/S' -PassThru -Wait;
   if ($p.ExitCode -ne 0) { throw ('Fixture uninstaller exit: ' + $p.ExitCode) }`));
-      await assert.rejects(readFile(join(installPath, "fixture.txt")), { code: "ENOENT" });
-    }
+    await assert.rejects(readFile(join(installPath, "fixture.txt")), { code: "ENOENT" });
+    await assert.rejects(readFile(join(installPath, deepPath)), { code: "ENOENT" });
     completed = true;
   } catch (error) {
-    t.diagnostic(await readFile(trace, "utf8").catch(traceError => traceError.message));
     t.diagnostic(run(`Add-Type -AssemblyName UIAutomationClient;
 Get-CimInstance Win32_Process | Where-Object {
   $_.ExecutablePath -eq $env:LING_FIXTURE_INSTALLER -or ($_.CommandLine -and $_.CommandLine.Contains($env:LING_FIXTURE_ROOT))

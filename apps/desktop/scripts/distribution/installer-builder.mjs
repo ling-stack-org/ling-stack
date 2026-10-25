@@ -20,6 +20,7 @@ export function patchInstallerTemplate(file, before) {
     if ([...before.matchAll(/SpiderBanner::Show/gu)].length !== 2) throw new Error("distribution_installer_banner_sites_changed");
     after = before.replace(/^\s*SpiderBanner::Show[^\r\n]*$/gmu, "    ; Ling development distribution: keep the stock MUI progress page.");
   } else if (file.endsWith("/extractAppPackage.nsh")) {
+    // The original plug-in silently omits deep members without this prefix.
     // NSIS CopyFiles uses SHFileOperation, which drops members beyond MAX_PATH.
     // Robocopy is an OS tool with long-path support; retain the stock retries,
     // extraction, directory ownership and install/uninstall lifecycle.
@@ -95,7 +96,7 @@ export function prepareDistributionBuilder({ desktopRoot, outputRoot }) {
   const shell = readFileSync(new URL("./LingShell.nsh", import.meta.url));
   writeFileSync(join(appBuilderLibRoot, "templates/nsis/include/LingShell.nsh"), shell);
   const receipt = { schemaVersion: 1, kind: "desktop-installer-template-overlay", builderVersion, changes, shellSha256: hash(shell),
-    compression: "Unchanged stock 7z payload and original extractor", copy: "System robocopy replaces SHFileOperation to retain long-path members; stock retries and lifecycle retained", progress: "Unchanged stock progress page; SpiderBanner call sites removed", shell: "MIT LingShell macros using the NSIS System plug-in and the same Windows COM interfaces", sharedToolchainModified: false };
+    compression: "Unchanged stock 7z payload and original extractor", copy: "Extended-length extraction path and system robocopy retain long-path members; stock retries and lifecycle retained", progress: "Unchanged stock progress page; SpiderBanner call sites removed", shell: "MIT LingShell macros using the NSIS System plug-in and the same Windows COM interfaces", sharedToolchainModified: false };
   const receiptPath = join(outputRoot, "installer-template-overlay.json");
   writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + "\n");
   return { electronBuilderRoot: join(modules, "electron-builder"), appBuilderLibRoot, receiptPath, ...receipt };
