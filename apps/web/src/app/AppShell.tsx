@@ -181,6 +181,7 @@ import { useWorkspaceSettingsController } from "./use-workspace-settings-control
 import { useDesktopNavigationIntents } from "./use-desktop-navigation-intents.js";
 import { useAppNarrowViewport } from "./use-app-viewport-state.js";
 import { useShellErrorFeedback } from "./use-shell-error-feedback.js";
+import { useNotificationBridge } from "../domains/notifications/use-notification-bridge.js";
 import { buildSidebarObjectContextSeeds } from "./sidebar-object-context.js";
 import { useSidebarObjectContexts } from "./use-sidebar-object-contexts.js";
 import {
@@ -712,6 +713,7 @@ export function AppShell(): React.JSX.Element {
     }),
   });
   const computerControl = useComputerControlController({ plugins: pluginsDomain });
+  useNotificationBridge({ cwd: form.cwd.trim() });
   const {
     plugins,
     pluginsLoading,

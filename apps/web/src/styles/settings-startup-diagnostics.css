@@ -510,3 +510,50 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }
 }
+
+.notifications-preferences-card {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--ling-space-5);
+  padding: var(--ling-space-5);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md, 10px);
+}
+
+.notifications-preferences-body {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-4);
+}
+
+.notifications-preferences-switch-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+}
+
+.notifications-preferences-switch-row span {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.notifications-preferences-switch-row svg {
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+}
+
+.notifications-preferences-switch-row small {
+  color: var(--ling-text-muted, #6b7280);
+}
+
+.notifications-quiet-hours-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ling-space-4);
+  max-width: 320px;
+}

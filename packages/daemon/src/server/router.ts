@@ -368,6 +368,7 @@ import { allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js"
 import { setCorsHeaders, writeJson } from "../shared/response.js";
 import { handleStartupStatus } from "../startup/routes.js";
 import { handleDiagnosticsDoctor, handleDiagnosticsLogs } from "../features/diagnostics/routes.js";
+import { handleNotifications } from "../features/notifications/routes.js";
 import { handleHumanEvaluationDesktopRoute } from "../features/harness/evaluations/human-evaluation-routes.js";
 
 export async function routeRequest(
@@ -409,6 +410,7 @@ export async function routeRequest(
     nativeRunDispatcher,
     cuaDriverActivationService,
     workspaceFileCapabilities,
+    notificationHub,
   } = context;
   setCorsHeaders(response);
 
@@ -642,6 +644,11 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/notifications" || url.pathname === "/notifications/preferences" || url.pathname === "/notifications/stream") {
+    await handleNotifications(request, response, context);
+    return;
+  }
+
   if (url.pathname === "/config/effective") {
     await handleEffectiveConfig(request, response, config, storeRegistry, runnerRegistry);
     return;
@@ -793,6 +800,7 @@ export async function routeRequest(
             },
           )),
       automationSchedulers,
+      notificationHub,
     );
     return;
   }

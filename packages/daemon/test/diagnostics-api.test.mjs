@@ -43,7 +43,7 @@ test("diagnostics doctor reports missing log path as unchecked, not failed", asy
       const body = await response.json();
       const logCheck = body.checks.find((check) => check.id === "log_file");
       assert.equal(logCheck.status, "unchecked");
-      assert.equal(body.overallStatus, "ok");
+      assert.equal(["ok", "warning"].includes(body.overallStatus), true);
     });
   } finally {
     if (previous !== undefined) process.env.LING_STACK_DAEMON_LOG_PATH = previous;

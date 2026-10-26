@@ -7,6 +7,10 @@ import type {
   DiagnosticsDoctorResponse,
   DiagnosticsLogTailResponse,
   EffectiveConfigResponse,
+  NotificationListResponse,
+  NotificationPreferencesResponse,
+  NotificationPreferences,
+  NotificationPreferencesUpdate,
   HarnessFeatureSnapshotV1,
   UpdateUserProfileRequest,
   UpdateWorkspaceSettingsRequest,
@@ -79,6 +83,25 @@ export const systemEndpoints = {
 
   async getDiagnosticsLogs(this: LingDaemonEndpointContext, lines?: number): Promise<DiagnosticsLogTailResponse> {
       return this._get("/diagnostics/logs", { lines: lines === undefined ? undefined : String(lines) });
+    },
+
+  async listNotifications(this: LingDaemonEndpointContext, since?: string): Promise<NotificationListResponse> {
+      return this._get("/notifications", { since });
+    },
+
+  async waitForNotifications(this: LingDaemonEndpointContext, since?: string): Promise<NotificationListResponse> {
+      return this._get("/notifications/stream", { since });
+    },
+
+  async getNotificationPreferences(this: LingDaemonEndpointContext): Promise<NotificationPreferencesResponse> {
+      return this._get("/notifications/preferences");
+    },
+
+  async updateNotificationPreferences(
+    this: LingDaemonEndpointContext,
+    input: NotificationPreferencesUpdate,
+  ): Promise<NotificationPreferencesResponse> {
+      return this._patch("/notifications/preferences", undefined, input);
     },
 
   async selectWorkspaceDirectory(this: LingDaemonEndpointContext, cwd: string): Promise<WorkspaceDirectorySelectResponse> {

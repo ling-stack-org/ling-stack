@@ -7954,6 +7954,60 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  if (request.method() === "GET" && path === "/notifications/preferences") {
+    await route.fulfill({
+      json: {
+        schemaVersion: 1,
+        preferences: {
+          schemaVersion: 1,
+          globalEnabled: true,
+          events: {
+            automation_run_finished: "failures",
+            automation_run_failed: "all",
+            approval_required: "all",
+          },
+        },
+      },
+    });
+    return;
+  }
+  if (request.method() === "PATCH" && path === "/notifications/preferences") {
+    await route.fulfill({
+      json: {
+        schemaVersion: 1,
+        preferences: {
+          schemaVersion: 1,
+          globalEnabled: true,
+          events: {
+            automation_run_finished: "failures",
+            automation_run_failed: "all",
+            approval_required: "all",
+          },
+        },
+      },
+    });
+    return;
+  }
+  if (request.method() === "GET" && (path === "/notifications" || path === "/notifications/stream")) {
+    await route.fulfill({
+      json: {
+        schemaVersion: 1,
+        notifications: [
+          {
+            id: "notification-1",
+            kind: "automation_run_failed",
+            title: "Automation run failed",
+            body: "Daily brief could not start.",
+            createdAt: "2026-10-26T00:00:00.000Z",
+            automationId: "automation_daily_brief",
+            cwd,
+          },
+        ],
+        nextSince: "notification-1",
+      },
+    });
+    return;
+  }
   if (request.method() === "GET" && path === "/diagnostics/doctor") {
     await route.fulfill({
       json: {

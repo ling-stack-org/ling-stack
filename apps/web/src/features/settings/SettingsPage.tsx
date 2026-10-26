@@ -27,6 +27,7 @@ import { ExecutionPermissionsSettingsPanel } from "./ExecutionPermissionsSetting
 import { ExternalWorkSettingsPanel } from "./ExternalWorkSettingsPanel.js";
 import { StartupDiagnosticsSettingsPanel } from "./MaintenanceSettingsPanel.js";
 import { DiagnosticsDoctorCard } from "./DiagnosticsDoctorCard.js";
+import { NotificationsPreferencesCard } from "./NotificationsPreferencesCard.js";
 import { HumanQaSettingsPanel } from "./human-qa/HumanQaSettingsPanel.js";
 import { InterfacePreferencesSettingsPanel, PersonalSettingsPanel } from "./PersonalInterfaceSettingsPanel.js";
 import { PersonalizationSettingsPanel } from "./PersonalizationSettingsPanel.js";
@@ -406,8 +407,9 @@ export function SettingsPage({
             onRefreshStartup={onRefreshStartup}
             onOpenRunDiagnostics={onOpenRunDiagnostics}
           />
-          <HumanQaSettingsPanel key={cwd} cwd={cwd} />
           <DiagnosticsDoctorCard cwd={cwd} />
+          <NotificationsPreferencesCard cwd={cwd} />
+          <HumanQaSettingsPanel key={cwd} cwd={cwd} />
           </div>
         ) : null}
     </SettingsShell>

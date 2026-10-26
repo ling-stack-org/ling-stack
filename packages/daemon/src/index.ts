@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { join } from "node:path";
 import { createServer, type Server } from "node:http";
 import {
   listBuiltinSkillPackExtensions,
@@ -8,6 +9,7 @@ import {
   type RunStore,
 } from "@ling-stack/core";
 import { createPiRunner, getPiRunnerExtension } from "@ling-stack/runner-pi";
+import { NotificationHub } from "./features/notifications/hub.js";
 import {
   listBuiltinProviderExtensions,
 } from "@ling-stack/providers";
@@ -277,6 +279,10 @@ export function createDaemonServer(
       ?? createLazyCuaDriverLeaseClientFactory(desktopBridgeToken),
   });
   const controlPlaneEvents = new ControlPlaneEventHub();
+  const notificationHub = new NotificationHub({
+    journalPath: join(defaultStoragePaths.user.rootDir, "notifications", "journal.json"),
+    preferencesPath: join(defaultStoragePaths.user.rootDir, "notifications", "preferences.json"),
+  });
   const startupState = new StartupStateRegistry();
   const computerUsePreviews = new ComputerUseProjectionRegistry(dependencies.computerUseProjectionOptions);
   const hostCapabilityBridge = new HostCapabilityBridgeController();
@@ -514,6 +520,7 @@ export function createDaemonServer(
     controlPlaneEvents,
     startupState,
     nativeRunDispatcher,
+    notificationHub,
   );
   startupOptionalWarmups = new StartupOptionalWarmupCoordinator({
     startupState,
@@ -721,6 +728,7 @@ export function createDaemonServer(
     backgroundSchedulers,
     automationSchedulers,
     controlPlaneEvents,
+    notificationHub,
     providerStartupRefresh,
     providerImportPreflight,
     startupState,
