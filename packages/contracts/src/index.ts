@@ -79,3 +79,4 @@ export type * from "./harness-diagnostics.js";
 export type * from "./work-summary.js";
 export type * from "./diagnostics.js";
 export * from "./notifications.js";
+export * from "./im-destinations.js";

@@ -10,6 +10,7 @@ import {
 } from "@ling-stack/core";
 import { createPiRunner, getPiRunnerExtension } from "@ling-stack/runner-pi";
 import { NotificationHub } from "./features/notifications/hub.js";
+import { ImDestinationRegistry } from "./features/im-destinations/registry.js";
 import {
   listBuiltinProviderExtensions,
 } from "@ling-stack/providers";
@@ -282,6 +283,20 @@ export function createDaemonServer(
   const notificationHub = new NotificationHub({
     journalPath: join(defaultStoragePaths.user.rootDir, "notifications", "journal.json"),
     preferencesPath: join(defaultStoragePaths.user.rootDir, "notifications", "preferences.json"),
+  });
+  const imDestinations = new ImDestinationRegistry({
+    storePath: join(defaultStoragePaths.user.rootDir, "notifications", "im-destinations.json"),
+    secretResolver: baseSecretResolver,
+  });
+  notificationHub.setDeliverSink(async (record) => {
+    const destinations = imDestinations.list().filter((destination) => destination.enabled);
+    if (destinations.length === 0) return;
+    const message = {
+      title: record.title,
+      bodyMarkdown: record.body,
+      severity: record.kind === "automation_run_failed" ? ("danger" as const) : ("info" as const),
+    };
+    await Promise.allSettled(destinations.map((destination) => imDestinations.dispatch(destination, message)));
   });
   const startupState = new StartupStateRegistry();
   const computerUsePreviews = new ComputerUseProjectionRegistry(dependencies.computerUseProjectionOptions);
@@ -729,6 +744,7 @@ export function createDaemonServer(
     automationSchedulers,
     controlPlaneEvents,
     notificationHub,
+    imDestinations,
     providerStartupRefresh,
     providerImportPreflight,
     startupState,

@@ -42,6 +42,8 @@ export interface NotificationDelivery {
   readonly deliver: boolean;
 }
 
+export type NotificationDeliverSink = (record: NotificationRecord) => Promise<void>;
+
 /**
  * File-backed notification journal + preferences with in-process waiters for
  * long-poll delivery. The journal is bounded (oldest entries dropped) and
@@ -54,10 +56,16 @@ export class NotificationHub {
   private preferences: NotificationPreferences = defaultNotificationPreferences();
   private loaded = false;
   private loadPromise: Promise<void> | null = null;
+  private deliverSink: NotificationDeliverSink | null = null;
 
   constructor(paths: { journalPath?: string | null; preferencesPath?: string | null } = {}) {
     this.journalPath = paths.journalPath ?? null;
     this.preferencesPath = paths.preferencesPath ?? null;
+  }
+
+  /** Optional external delivery hook (e.g. IM destinations). Invoked only for delivered records. */
+  setDeliverSink(sink: NotificationDeliverSink | null): void {
+    this.deliverSink = sink;
   }
 
   async ensureLoaded(): Promise<void> {
@@ -153,6 +161,13 @@ export class NotificationHub {
     const tone: NotificationDeliveryTone | undefined = this.preferences.events[input.kind];
     if (!notificationMatchesTone(input.kind, tone)) return { record, deliver: false };
     if (isQuietHour(this.preferences, at)) return { record, deliver: false };
+    if (this.deliverSink) {
+      try {
+        await this.deliverSink(record);
+      } catch {
+        // Delivery failures never break run completion.
+      }
+    }
     return { record, deliver: true };
   }
 

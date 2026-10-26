@@ -25,6 +25,7 @@ import type { ProviderImportPreflightService } from "./features/providers/import
 import type { ApprovalResumeCoordinator } from "./features/runs/approval-resume-coordinator.js";
 import type { UserInputDeliveryWorker } from "./features/runs/user-input-delivery-worker.js";
 import type { NotificationHub } from "./features/notifications/hub.js";
+import type { ImDestinationRegistry } from "./features/im-destinations/registry.js";
 import type { ControlPlaneEventHub} from "./features/control-plane/events.js";
 import type { ComputerUsePreviewProjection } from "@ling-stack/contracts";
 import type {
@@ -232,6 +233,7 @@ export interface DaemonContext {
   readonly automationSchedulers: AutomationSchedulerRegistry;
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly notificationHub: NotificationHub;
+  readonly imDestinations: ImDestinationRegistry;
   readonly providerStartupRefresh: ProviderStartupRefreshService;
   readonly providerImportPreflight: ProviderImportPreflightService;
   readonly startupState: StartupStateRegistry;
