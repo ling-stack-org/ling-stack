@@ -1,0 +1,29 @@
+name: Full CI label
+
+# Keeps label events out of ci.yml: the required gate resolves against the
+# latest CI run on each head, and label runs must never exist without it.
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    name: Dispatch full CI for full-ci label
+    if: github.event.label.name == 'full-ci'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Trigger full CI on the PR head
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          gh workflow run ci.yml --ref "$HEAD_SHA"
+          printf 'Full CI dispatched for %s\n' "$HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"

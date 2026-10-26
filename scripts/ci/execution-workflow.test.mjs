@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+const labelWorkflow = readFileSync(new URL("../../.github/workflows/full-ci-label.yml", import.meta.url), "utf8");
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
 const platformJobs = ["daemon-tests", "daemon-linux-contracts", "restricted-command-macos"];
@@ -29,7 +30,9 @@ function runQuality(overrides = {}) {
 }
 
 test("PR transitions and full-ci labels trigger validation while full regression is daily", () => {
-  assert.match(workflow, /types: \[opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled\]/u);
+  assert.match(workflow, /types: \[opened, synchronize, reopened, ready_for_review, converted_to_draft\]/u);
+  assert.match(labelWorkflow, /types: \[labeled\]/u);
+  assert.match(labelWorkflow, /gh workflow run ci\.yml --ref "\$HEAD_SHA"/u);
   assert.match(workflow, /cron: "17 3 \* \* \*"/u);
   assert.doesNotMatch(workflow, /^  (?:push|paths|paths-ignore):/mu);
   assert.match(jobSource("scope"), /--event-file "\$GITHUB_EVENT_PATH"/u);
@@ -55,14 +58,16 @@ test("every expensive job requires complete execution and retains its scope sele
   assert.match(dependencyPolicy, /name: Check production dependency update policy\n        run: node --test scripts\/production-dependency-policy\.test\.mjs/u);
 });
 
-test("unrelated labels cannot cancel validation or publish the required context", () => {
-  assert.match(workflow, /group: .*github\.event\.label\.name != 'full-ci'.*github\.run_id/u);
-  assert.match(workflow, /cancel-in-progress: .*github\.event\.label\.name == 'full-ci'/u);
-  assert.match(jobSource("scope"), /^    if: .*github\.event\.label\.name == 'full-ci'/mu);
-  assert.match(jobSource("quality"), /name: .*github\.event\.label\.name != 'full-ci'.*CI label event \(no validation\).*Typecheck, unit tests, and Web build/u);
-  const ignored = runQuality({ IGNORED_LABEL_EVENT: "true", SCOPE_RESULT: "skipped", EXECUTION_TIER: "" });
-  assert.equal(ignored.status, 0, ignored.stderr);
-  assert.match(ignored.stdout, /Unrelated label event/u);
+test("label events never create CI runs so the latest run always publishes the required context", () => {
+  // The required gate resolves against the newest CI run on a head; a label run
+  // without the gate job makes the ruleset report it as expected and block merges.
+  assert.doesNotMatch(workflow, /labeled/u);
+  assert.match(jobSource("quality"), /^    name: Typecheck, unit tests, and Web build$/mu);
+  assert.doesNotMatch(jobSource("quality"), /IGNORED_LABEL_EVENT/u);
+  assert.doesNotMatch(jobSource("scope"), /^    if:/mu);
+  assert.match(labelWorkflow, /if: github\.event\.label\.name == 'full-ci'/u);
+  assert.match(labelWorkflow, /actions: write/u);
+  assert.match(labelWorkflow, /pull_request\.head\.sha/u);
 });
 
 test("long-running jobs respond to cancellation while quality still reports incomplete validation", () => {
