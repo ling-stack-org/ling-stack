@@ -112,6 +112,15 @@ failure, not a reason to remove a lock or relabel an old generation. Scratch
 source reproduction must be real; equal content must not be used to substitute
 metadata or inherit new-recipe/native/download-mode acceptance.
 
+One necessary prerequisite is now implemented and tested: the managed build
+supervisor requires a final absence observation and direct close before scratch
+cleanup; unknown/live/unfinished consumers retain the lease. Output failures,
+including asynchronous EPIPE and paused-open CLI pipes, no longer bypass that
+supervision. See `e6-managed-build-settlement-2026-10-26.md` for the exact 33-test
+evidence and process-group-only limitations. This does **not** supply the
+wrapper's remaining consumer inventory, selection/output ownership or container
+verification, and no resource cache cleanup/build has run.
+
 ## Direct continuation
 
 1. Implement and independently review the owned-scratch, non-overwriting
