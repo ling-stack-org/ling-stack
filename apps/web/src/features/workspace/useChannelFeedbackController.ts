@@ -17,6 +17,7 @@ export type ChannelFeedbackScope =
   | "stream";
 
 export interface ChannelFeedbackEntry {
+  readonly workspaceCwd: string;
   readonly surface: ChannelFeedbackSurface;
   readonly identity: string;
   readonly scope: ChannelFeedbackScope;
@@ -26,20 +27,22 @@ export interface ChannelFeedbackEntry {
 export interface ChannelFeedbackController {
   readonly entries: readonly ChannelFeedbackEntry[];
   readonly report: (entry: ChannelFeedbackEntry) => void;
-  readonly clear: (surface: ChannelFeedbackSurface, identity: string) => void;
+  readonly clear: (surface: ChannelFeedbackSurface, identity: string, workspaceCwd: string) => void;
   readonly entry: (
     surface: ChannelFeedbackSurface,
     identity: string,
+    workspaceCwd: string,
   ) => ChannelFeedbackEntry | undefined;
   readonly message: (
     surface: ChannelFeedbackSurface,
     identity: string,
+    workspaceCwd: string,
   ) => string | undefined;
   readonly reset: () => void;
 }
 
-function feedbackKey(surface: ChannelFeedbackSurface, identity: string): string {
-  return JSON.stringify([surface, identity]);
+function feedbackKey(workspaceCwd: string, surface: ChannelFeedbackSurface, identity: string): string {
+  return JSON.stringify([workspaceCwd.trim(), surface, identity]);
 }
 
 export function useChannelFeedbackController(): ChannelFeedbackController {
@@ -47,18 +50,22 @@ export function useChannelFeedbackController(): ChannelFeedbackController {
     ReadonlyMap<string, ChannelFeedbackEntry>
   >(() => new Map());
 
-  const clear = useCallback((surface: ChannelFeedbackSurface, identity: string): void => {
-    const key = feedbackKey(surface, identity);
+  const clear = useCallback((surface: ChannelFeedbackSurface, identity: string, workspaceCwd: string): void => {
     setFeedbackByKey((current) => {
-      if (!current.has(key)) return current;
       const next = new Map(current);
-      next.delete(key);
+      for (const [key, entry] of current) {
+        if (entry.surface !== surface || entry.identity !== identity) continue;
+        if (entry.workspaceCwd !== workspaceCwd.trim()) continue;
+        next.delete(key);
+      }
+      if (next.size === current.size) return current;
       return next;
     });
   }, []);
 
   const report = useCallback((nextEntry: ChannelFeedbackEntry): void => {
-    const key = feedbackKey(nextEntry.surface, nextEntry.identity);
+    const normalizedWorkspaceCwd = nextEntry.workspaceCwd.trim();
+    const key = feedbackKey(normalizedWorkspaceCwd, nextEntry.surface, nextEntry.identity);
     const normalizedMessage = nextEntry.message.trim();
 
     setFeedbackByKey((current) => {
@@ -78,7 +85,7 @@ export function useChannelFeedbackController(): ChannelFeedbackController {
       }
 
       const next = new Map(current);
-      next.set(key, { ...nextEntry, message: normalizedMessage });
+      next.set(key, { ...nextEntry, workspaceCwd: normalizedWorkspaceCwd, message: normalizedMessage });
       return next;
     });
   }, []);
@@ -86,16 +93,18 @@ export function useChannelFeedbackController(): ChannelFeedbackController {
   const entry = useCallback((
     surface: ChannelFeedbackSurface,
     identity: string,
+    workspaceCwd: string,
   ): ChannelFeedbackEntry | undefined => (
-    feedbackByKey.get(feedbackKey(surface, identity))
+    feedbackByKey.get(feedbackKey(workspaceCwd, surface, identity))
   ), [feedbackByKey]);
 
   const message = useCallback((
     surface: ChannelFeedbackSurface,
     identity: string,
+    workspaceCwd: string,
   ): string | undefined => (
-    feedbackByKey.get(feedbackKey(surface, identity))?.message
-  ), [feedbackByKey]);
+    entry(surface, identity, workspaceCwd)?.message
+  ), [entry]);
 
   const reset = useCallback((): void => {
     setFeedbackByKey((current) => current.size === 0 ? current : new Map());

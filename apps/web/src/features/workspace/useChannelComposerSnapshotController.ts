@@ -116,6 +116,8 @@ export function useChannelComposerSnapshotController({
     threadReply: {
       activeThreadId: "",
       draft: "",
+      loadError: "",
+      sendError: "",
       error: "",
     },
   }), []);
