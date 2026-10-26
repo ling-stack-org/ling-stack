@@ -16,10 +16,14 @@ import type { ConversationReasoningSummaryRecord, UserInputTranscriptItemV1 } fr
 import { deriveChannelReplyGuidanceTargets } from "./channel-guidance-targets.js";
 import { findMentionsInText } from "./channelMentionText.js";
 import { RecoveredConversationSubmissionError, UnconfirmedConversationSubmissionError } from "../../shared/conversation/conversation-submission-recovery.js";
+import { channelTopicScopeKey, type ChannelStreamErrorOwner } from "../../shared/conversation/stream-error-ownership.js";
 
 export interface ChannelThreadReplySnapshot {
   readonly activeThreadId: string;
   readonly draft: string;
+  readonly loadError: string;
+  readonly sendError: string;
+  /** Combined legacy field for snapshot consumers that only render one alert. */
   readonly error: string;
 }
 
@@ -42,7 +46,8 @@ interface ChannelThreadReplyControllerInput {
     readonly requestAiReply: boolean;
     readonly replyDisposition?: ChannelReplyDisposition;
     readonly onMessageAccepted?: (message: ChannelMessage) => void;
-  }) => Promise<{ readonly errorMessage?: string }>;
+    readonly streamOwner?: "topic-thread";
+  }) => Promise<{ readonly errorMessage?: string; readonly errorOwner?: ChannelStreamErrorOwner }>;
 }
 
 export interface ChannelThreadReplyController {
@@ -56,6 +61,8 @@ export interface ChannelThreadReplyController {
   readonly contextCompactions: readonly import("../../types.js").ConversationContextCompactionRecord[];
   readonly draft: string;
   readonly pending: boolean;
+  readonly loadError: string;
+  readonly sendError: string;
   readonly error: string;
   readonly snapshot: ChannelThreadReplySnapshot;
   readonly openThreadForMessage: (message: ChannelMessage) => void;
@@ -85,12 +92,17 @@ export function useChannelThreadReplyController({
   const [loading, setLoading] = useState(false);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [sendError, setSendError] = useState("");
   const loadVersionRef = useRef(0);
   const sendVersionRef = useRef(0);
   const topicPageRef = useRef<ChannelConversationMessagePage | undefined>(undefined);
   const [topicPage, setTopicPage] = useState<ChannelConversationMessagePage | undefined>(undefined);
-  const topicOwner = JSON.stringify([cwd.trim(), selectedChannelId, activeThreadId]);
+  const topicOwner = channelTopicScopeKey({
+    workspaceCwd: cwd,
+    channelId: selectedChannelId,
+    topicThreadId: activeThreadId,
+  });
   const [topicPageOwner, setTopicPageOwner] = useState("");
   const topicOwnerRef = useRef(topicOwner);
   if (topicOwnerRef.current !== topicOwner) {
@@ -131,7 +143,7 @@ export function useChannelThreadReplyController({
     const version = ++loadVersionRef.current;
     const requestedOwner = topicOwner;
     setLoading(true);
-    setError("");
+    setLoadError("");
     try {
       const response = await listChannelConversationItems(workspaceCwd, selectedChannelId, {
         limit: 200,
@@ -153,7 +165,7 @@ export function useChannelThreadReplyController({
       if (loadVersionRef.current !== version) return;
       setResolvedThreadId("");
       setTopicMessages([]);
-      setError(loadError instanceof Error ? loadError.message : String(loadError));
+      setLoadError(loadError instanceof Error ? loadError.message : String(loadError));
     } finally {
       if (loadVersionRef.current === version) setLoading(false);
     }
@@ -161,6 +173,8 @@ export function useChannelThreadReplyController({
 
   useEffect(() => {
     setPending(false);
+    setLoadError("");
+    setSendError("");
     topicPageRef.current = undefined;
     setTopicPage(undefined);
   }, [topicOwner]);
@@ -196,12 +210,13 @@ export function useChannelThreadReplyController({
     ++sendVersionRef.current;
     setPending(false);
     setActiveThreadId(message.threadAnchorItemId ?? message.id);
-    setError("");
+    setLoadError("");
+    setSendError("");
   }, []);
 
   const changeDraft = useCallback((value: string): void => {
     setDraft(value);
-    setError("");
+    setSendError("");
   }, []);
 
   const closeThread = useCallback((): void => {
@@ -213,7 +228,8 @@ export function useChannelThreadReplyController({
     setTopicMessages([]);
     setLoading(false);
     setDraft("");
-    setError("");
+    setLoadError("");
+    setSendError("");
   }, []);
 
   const restoreSnapshot = useCallback((snapshot: ChannelThreadReplySnapshot): void => {
@@ -225,7 +241,8 @@ export function useChannelThreadReplyController({
     setTopicMessages([]);
     setLoading(Boolean(snapshot.activeThreadId));
     setDraft(snapshot.draft);
-    setError(snapshot.error);
+    setLoadError(snapshot.loadError ?? "");
+    setSendError(snapshot.sendError ?? snapshot.error ?? "");
   }, []);
 
   const sendReply = useCallback(async (): Promise<void> => {
@@ -239,7 +256,7 @@ export function useChannelThreadReplyController({
     const isCurrent = (): boolean => sendVersionRef.current === version && topicOwnerRef.current === topicOwner;
     let accepted = false;
     setPending(true);
-    setError("");
+    setSendError("");
     try {
       const result = await onSendMessage({
         threadId: resolvedThreadId,
@@ -249,6 +266,7 @@ export function useChannelThreadReplyController({
         linkPreviewIds: [],
         fileRefs: [],
         requestAiReply: shouldRequestAi,
+        streamOwner: "topic-thread",
         onMessageAccepted: () => {
           accepted = true;
           if (isCurrent()) setDraft((current) => current === draft ? "" : current);
@@ -265,7 +283,13 @@ export function useChannelThreadReplyController({
       if (!isCurrent()) return;
       if (result.errorMessage) {
         if (accepted) await loadTopicMessages({ kind: "thread", threadId: resolvedThreadId });
-        if (isCurrent()) setError(result.errorMessage);
+        if (isCurrent()) {
+          if (result.errorOwner === "assistant-reply") {
+            setSendError("");
+          } else {
+            setSendError(result.errorMessage);
+          }
+        }
         return;
       }
       setDraft((current) => current === draft ? "" : current);
@@ -278,7 +302,7 @@ export function useChannelThreadReplyController({
         return;
       }
       if (accepted) await loadTopicMessages({ kind: "thread", threadId: resolvedThreadId });
-      if (isCurrent()) setError(sendError instanceof UnconfirmedConversationSubmissionError ? "Pending confirmation" : sendError instanceof Error ? sendError.message : String(sendError));
+      if (isCurrent()) setSendError(sendError instanceof UnconfirmedConversationSubmissionError ? "Pending confirmation" : sendError instanceof Error ? sendError.message : String(sendError));
     } finally {
       if (isCurrent()) setPending(false);
     }
@@ -292,9 +316,10 @@ export function useChannelThreadReplyController({
     if (activeThreadId) await loadTopicMessages({ kind: "topic", anchorItemId: activeThreadId });
   }, [activeThreadId, loadTopicMessages, resolvedThreadId]);
 
+  const error = sendError || loadError;
   const snapshot = useMemo<ChannelThreadReplySnapshot>(
-    () => ({ activeThreadId, draft, error }),
-    [activeThreadId, draft, error],
+    () => ({ activeThreadId, draft, loadError, sendError, error }),
+    [activeThreadId, draft, error, loadError, sendError],
   );
 
   return {
@@ -307,6 +332,8 @@ export function useChannelThreadReplyController({
     contextCompactions: topicPageOwner === topicOwner && topicPage?.threadId === resolvedThreadId ? topicPage.contextCompactions ?? [] : [],
     draft,
     pending: pending || loading,
+    loadError,
+    sendError,
     error,
     snapshot,
     openThreadForMessage,

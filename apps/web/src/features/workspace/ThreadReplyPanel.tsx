@@ -22,6 +22,8 @@ export function ThreadReplyPanel({
   usedMemoryEvents,
   draft,
   pending,
+  loadError,
+  sendError,
   error,
   onDraftChange,
   onSend,
@@ -52,6 +54,8 @@ export function ThreadReplyPanel({
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly draft: string;
   readonly pending: boolean;
+  readonly loadError?: string;
+  readonly sendError?: string;
   readonly error: string;
   readonly onDraftChange: (value: string) => void;
   readonly onSend: () => void;
@@ -214,10 +218,16 @@ export function ThreadReplyPanel({
           placeholder={t("Reply in this topic")}
           aria-label={t("Topic reply input")}
         />
-        {error ? (
-          <div className="composer-status-row failed" role="alert">
+        {loadError ? (
+          <div className="composer-status-row failed" role="alert" data-error-scope="topic-load">
             <CircleAlert size={14} />
-            <span>{error}</span>
+            <span>{loadError}</span>
+          </div>
+        ) : null}
+        {sendError || (!loadError ? error : "") ? (
+          <div className="composer-status-row failed" role="alert" data-error-scope="topic-send">
+            <CircleAlert size={14} />
+            <span>{sendError || error}</span>
           </div>
         ) : null}
         <button className="primary-button compact-button" type="button" onClick={onSend} disabled={!canSend}>
