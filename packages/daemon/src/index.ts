@@ -814,6 +814,11 @@ export function createDaemonServer(
     engineManagement: engineManagement.credentials,
     start: async () => {
       cuaDriverActivationCoordinator.resetForDaemonStart();
+      if (!isLoopbackHost(resolvedConfig.host) && !resolvedConfig.authToken) {
+        throw new Error(
+          "daemon_bind_refused: non-loopback binds require an auth token (set LING_STACK_AUTH_TOKEN or config.authToken).",
+        );
+      }
       await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
         server.listen(resolvedConfig.port, resolvedConfig.host, () => {
@@ -1000,6 +1005,10 @@ export function createDaemonServer(
     },
   };
   return daemon;
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
 }
 
 function readChromeBrowserExtensionIds(value: string | undefined): readonly string[] {

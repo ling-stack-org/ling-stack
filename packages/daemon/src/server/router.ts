@@ -420,6 +420,30 @@ export async function routeRequest(
     return;
   }
 
+  // Cloud/self-host slice: non-loopback binds require a bearer token on every
+  // request. /health stays open so lifecycle probes keep working.
+  if (config.authToken) {
+    const pathname = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`).pathname;
+    if (pathname !== "/health") {
+      const authorization = request.headers.authorization ?? "";
+      const expected = `Bearer ${config.authToken}`;
+      const provided = typeof authorization === "string" ? authorization : "";
+      let tokenMatches = false;
+      if (provided.length === expected.length) {
+        // Constant-time-ish compare; length equality checked first.
+        let difference = 0;
+        for (let index = 0; index < expected.length; index += 1) {
+          difference |= provided.charCodeAt(index) ^ expected.charCodeAt(index);
+        }
+        tokenMatches = difference === 0;
+      }
+      if (!tokenMatches) {
+        writeJson(response, 401, { error: "unauthorized", message: "A valid bearer token is required for non-loopback access." });
+        return;
+      }
+    }
+  }
+
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const maybeContinueRunInterventions = async (terminalRun: RunSession): Promise<void> => {
     const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
