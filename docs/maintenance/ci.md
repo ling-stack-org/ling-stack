@@ -110,7 +110,7 @@ Draft 减少执行不改变改动范围。不能把大 PR 的范围伪装成 `do
 
 PR 工作流保留稳定入口，在 job 层选择任务；不要用顶层 `paths` 跳过受保护的整个工作流。以下事件和质量门规则已在 P1 接入，其余平台分组仍待 P2 验证。
 
-- 覆盖 `opened`、`synchronize`、`reopened`、`ready_for_review`、`converted_to_draft`。标签事件不进入 CI 工作流：必需门按名称在该 head 最新一次 CI 运行中解析，任何缺门 job 的运行都会被规则判为缺失并拦截合并。`full-ci` 标签由独立工作流 `full-ci-label.yml` 接管，对 PR head 分发一次完整 `workflow_dispatch` 运行；无关标签不产生任何 CI 运行。`unlabeled` 不触发工作流，移除标签只影响下一次正常运行。
+- 覆盖 `opened`、`synchronize`、`reopened`、`ready_for_review`、`converted_to_draft`。标签事件不进入 CI 工作流：必需门按名称在该 head 最新一次 CI 运行中解析，任何缺门 job 的运行都会被规则判为缺失并拦截合并。`full-ci` 标签由独立工作流 `full-ci-label.yml` 接管：以 `pull_request_target` 触发（fork PR 才能拿到可 dispatch 的 token），用 head 分支名（而非 SHA）分发一次完整 `workflow_dispatch` 运行；fork 的 head 分支在本仓库没有可寻址 ref，该任务显式失败并提示推送新提交；无关标签不产生任何 CI 运行。`full-ci-label.yml` 只调用 API 分发，绝不 checkout 或执行 PR 代码。`unlabeled` 不触发工作流，移除标签只影响下一次正常运行。
 - Draft 使用明确的轻量反馈结果。稳定的完整质量门不能通过 `if` 跳过来表示完成，也不能把延后的任务视为范围外。`quality` 明确失败并说明 `deferred_by_draft_policy`，轻量任务单独显示结果；转正式评审或显式完整运行后补齐。
 - 汇总门使用 `always()` 和显式的必需任务集合。选中的任务只有 `success` 可通过；`failure`、`cancelled`、`skipped`、空结果均拒绝。只有分类确认范围外的任务才允许跳过。
 - 分类、公共检查、清单校验失败时，汇总门必须失败。文档范围也不能因上游失败而得到成功。

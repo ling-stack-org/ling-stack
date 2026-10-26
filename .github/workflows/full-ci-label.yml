@@ -2,8 +2,10 @@ name: Full CI label
 
 # Keeps label events out of ci.yml: the required gate resolves against the
 # latest CI run on each head, and label runs must never exist without it.
+# pull_request_target keeps a workflow-dispatch-capable token for fork pull
+# requests; this workflow must never check out or execute pull-request code.
 on:
-  pull_request:
+  pull_request_target:
     types: [labeled]
 
 permissions:
@@ -19,11 +21,18 @@ jobs:
       actions: write
       contents: read
     steps:
-      - name: Trigger full CI on the PR head
+      - name: Trigger full CI on the PR head branch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           set -euo pipefail
-          gh workflow run ci.yml --ref "$HEAD_SHA"
-          printf 'Full CI dispatched for %s\n' "$HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
+          # workflow_dispatch addresses a branch or tag ref, not a commit SHA,
+          # and a forked head branch has no ref in this repository.
+          if [[ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]]; then
+            echo "::error::The full-ci label cannot dispatch CI for a forked branch: workflow_dispatch requires a ref in this repository. Push a commit to rerun the pull request with full scope." >&2
+            exit 1
+          fi
+          gh workflow run ci.yml --ref "$HEAD_REF"
+          printf 'Full CI dispatched for %s\n' "$HEAD_REF" >> "$GITHUB_STEP_SUMMARY"

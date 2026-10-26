@@ -25,14 +25,14 @@ function runQuality(overrides = {}) {
     cwd: root,
     encoding: "utf8",
     env: { ...process.env, EXECUTION_TIER: "complete", SCOPE_MODE: "full", DAEMON_SELECTED: "true",
-      IGNORED_LABEL_EVENT: "false", ...Object.fromEntries(lanes.map((lane) => [`${lane}_RESULT`, "success"])), ...overrides },
+      ...Object.fromEntries(lanes.map((lane) => [`${lane}_RESULT`, "success"])), ...overrides },
   });
 }
 
 test("PR transitions and full-ci labels trigger validation while full regression is daily", () => {
   assert.match(workflow, /types: \[opened, synchronize, reopened, ready_for_review, converted_to_draft\]/u);
-  assert.match(labelWorkflow, /types: \[labeled\]/u);
-  assert.match(labelWorkflow, /gh workflow run ci\.yml --ref "\$HEAD_SHA"/u);
+  assert.match(labelWorkflow, /pull_request_target:\n    types: \[labeled\]/u);
+  assert.match(labelWorkflow, /gh workflow run ci\.yml --ref "\$HEAD_REF"/u);
   assert.match(workflow, /cron: "17 3 \* \* \*"/u);
   assert.doesNotMatch(workflow, /^  (?:push|paths|paths-ignore):/mu);
   assert.match(jobSource("scope"), /--event-file "\$GITHUB_EVENT_PATH"/u);
@@ -67,7 +67,11 @@ test("label events never create CI runs so the latest run always publishes the r
   assert.doesNotMatch(jobSource("scope"), /^    if:/mu);
   assert.match(labelWorkflow, /if: github\.event\.label\.name == 'full-ci'/u);
   assert.match(labelWorkflow, /actions: write/u);
-  assert.match(labelWorkflow, /pull_request\.head\.sha/u);
+  assert.match(labelWorkflow, /pull_request\.head\.ref/u);
+  // The dispatch job holds a write token on pull_request_target; it must stay a
+  // pure API caller and refuse forked heads that workflow_dispatch cannot address.
+  assert.doesNotMatch(labelWorkflow, /actions\/checkout/u);
+  assert.match(labelWorkflow, /"\$HEAD_REPO" != "\$GITHUB_REPOSITORY"/u);
 });
 
 test("long-running jobs respond to cancellation while quality still reports incomplete validation", () => {
