@@ -23,7 +23,45 @@ export type PreviewContentKind =
   | "image"
   | "pdf"
   | "office"
+  | "html_interactive"
   | "unsupported";
+
+/**
+ * Gen UI interactive HTML preview (ux-gap-roadmap-02). Rendered inside an
+ * opaque-origin sandboxed iframe: scripts run, but the document gets no
+ * same-origin access to Ling, the daemon, or storage.
+ */
+export const HTML_INTERACTIVE_SANDBOX: readonly string[] = ["allow-scripts"];
+export const HTML_INTERACTIVE_MAX_BYTES = 2 * 1024 * 1024;
+
+export interface PreviewHtmlInteractive {
+  readonly html: string;
+  readonly sandbox: readonly string[];
+}
+
+export interface InteractiveHtmlScanResult {
+  readonly ok: boolean;
+  readonly reason?: string;
+}
+
+/**
+ * Bounded safety scan applied before an HTML document is offered as an
+ * interactive preview. Remote subresources and script URLs are rejected —
+ * artifacts are offline-first; remote loading is a future explicit opt-in.
+ */
+export function scanInteractiveHtml(html: string, maxBytes: number = HTML_INTERACTIVE_MAX_BYTES): InteractiveHtmlScanResult {
+  if (new TextEncoder().encode(html).length > maxBytes) {
+    return { ok: false, reason: "Interactive HTML exceeds the preview size cap." };
+  }
+  const remoteResource = /(?:src|href|poster|data)\s*=\s*(?:"\s*(?:https?:)?\/\/|'\s*(?:https?:)?\/\/|(?:https?:)?\/\/)/iu;
+  if (remoteResource.test(html)) {
+    return { ok: false, reason: "Interactive HTML must not reference remote resources." };
+  }
+  if (/javascript\s*:/iu.test(html)) {
+    return { ok: false, reason: "Interactive HTML must not use javascript: URLs." };
+  }
+  return { ok: true };
+}
 
 export interface PreviewFileRef {
   readonly id: string;
@@ -44,6 +82,7 @@ export interface PreviewContentResponse {
   readonly textStartLine?: number;
   readonly imageUrl?: string;
   readonly compare?: PreviewImageCompare;
+  readonly htmlInteractive?: PreviewHtmlInteractive;
   readonly truncated: boolean;
   readonly sizeBytes?: number;
   readonly redactionNotes: readonly string[];

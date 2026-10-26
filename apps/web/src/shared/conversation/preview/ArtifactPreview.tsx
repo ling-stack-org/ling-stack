@@ -16,6 +16,18 @@ export function ArtifactPreview({ preview }: ArtifactPreviewProps): React.JSX.El
     return <ImageCompareViewer current={{ label: preview.ref.label, imageUrl: preview.imageUrl }} compare={preview.compare} />;
   }
 
+  if (preview.kind === "html_interactive" && preview.htmlInteractive) {
+    return (
+      <iframe
+        className="artifact-preview-interactive-frame"
+        data-ui2-artifact-interactive="true"
+        sandbox={preview.htmlInteractive.sandbox.join(" ")}
+        srcDoc={preview.htmlInteractive.html}
+        title={preview.ref.label}
+      />
+    );
+  }
+
   if (preview.text !== undefined) {
     if (preview.kind === "markdown_text" || preview.kind === "plain_text" || preview.kind === "pdf" || preview.kind === "office") {
       return (
@@ -70,6 +82,9 @@ function previewKindLabel(kind: PreviewContentKind): string {
   }
   if (kind === "office") {
     return "Office";
+  }
+  if (kind === "html_interactive") {
+    return "Interactive";
   }
   return "Unsupported";
 }

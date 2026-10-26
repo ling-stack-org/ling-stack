@@ -9,6 +9,7 @@ export * from "./user-input-transcript.js";
 export * from "./user-input-event-position.js";
 export * from "./user-input-validation.js";
 export type * from "./artifacts.js";
+export { HTML_INTERACTIVE_MAX_BYTES, HTML_INTERACTIVE_SANDBOX, scanInteractiveHtml } from "./artifacts.js";
 export type * from "./runtime.js";
 export * from "./harness.js";
 export type * from "./harness-evaluation-qa.js";

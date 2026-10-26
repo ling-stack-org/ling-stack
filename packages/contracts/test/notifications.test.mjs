@@ -44,3 +44,14 @@ test("defaults suppress successful-run noise but surface failures and approvals"
   assert.equal(notificationMatchesTone("automation_run_failed", defaults.events.automation_run_failed), true);
   assert.equal(notificationMatchesTone("approval_required", defaults.events.approval_required), true);
 });
+
+import { HTML_INTERACTIVE_SANDBOX, scanInteractiveHtml } from "../dist/index.js";
+
+test("interactive html scan accepts offline self-contained documents and rejects remote/javascript URLs", () => {
+  assert.deepEqual(HTML_INTERACTIVE_SANDBOX, ["allow-scripts"]);
+  assert.equal(scanInteractiveHtml("<html><body><script>1+1</script></body></html>").ok, true);
+  assert.equal(scanInteractiveHtml("<img src='https://example.com/x.png'>").ok, false);
+  assert.equal(scanInteractiveHtml("<img src='//example.com/x.png'>").ok, false);
+  assert.equal(scanInteractiveHtml("<a href='javascript:x()'>y</a>").ok, false);
+  assert.equal(scanInteractiveHtml("x".repeat(3 * 1024 * 1024)).ok, false);
+});
