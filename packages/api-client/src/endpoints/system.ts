@@ -4,6 +4,8 @@ import type {
   ControlPlaneEventsResponse,
   ControlPlaneSnapshotResponse,
   DaemonHealthResponse,
+  DiagnosticsDoctorResponse,
+  DiagnosticsLogTailResponse,
   EffectiveConfigResponse,
   HarnessFeatureSnapshotV1,
   UpdateUserProfileRequest,
@@ -69,6 +71,14 @@ export const systemEndpoints = {
 
   async refreshStartupStatus(this: LingDaemonEndpointContext, cwd?: string): Promise<StartupRefreshResponse> {
       return this._post("/startup/refresh", { cwd });
+    },
+
+  async getDiagnosticsDoctor(this: LingDaemonEndpointContext, cwd?: string): Promise<DiagnosticsDoctorResponse> {
+      return this._get("/diagnostics/doctor", { cwd });
+    },
+
+  async getDiagnosticsLogs(this: LingDaemonEndpointContext, lines?: number): Promise<DiagnosticsLogTailResponse> {
+      return this._get("/diagnostics/logs", { lines: lines === undefined ? undefined : String(lines) });
     },
 
   async selectWorkspaceDirectory(this: LingDaemonEndpointContext, cwd: string): Promise<WorkspaceDirectorySelectResponse> {

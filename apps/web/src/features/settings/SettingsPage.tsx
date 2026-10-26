@@ -26,6 +26,7 @@ import { ArchivedSettingsPanel } from "./ArchivedSettingsPanel.js";
 import { ExecutionPermissionsSettingsPanel } from "./ExecutionPermissionsSettingsPanel.js";
 import { ExternalWorkSettingsPanel } from "./ExternalWorkSettingsPanel.js";
 import { StartupDiagnosticsSettingsPanel } from "./MaintenanceSettingsPanel.js";
+import { DiagnosticsDoctorCard } from "./DiagnosticsDoctorCard.js";
 import { HumanQaSettingsPanel } from "./human-qa/HumanQaSettingsPanel.js";
 import { InterfacePreferencesSettingsPanel, PersonalSettingsPanel } from "./PersonalInterfaceSettingsPanel.js";
 import { PersonalizationSettingsPanel } from "./PersonalizationSettingsPanel.js";
@@ -406,6 +407,7 @@ export function SettingsPage({
             onOpenRunDiagnostics={onOpenRunDiagnostics}
           />
           <HumanQaSettingsPanel key={cwd} cwd={cwd} />
+          <DiagnosticsDoctorCard cwd={cwd} />
           </div>
         ) : null}
     </SettingsShell>

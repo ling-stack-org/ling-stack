@@ -367,6 +367,7 @@ import { RunControlService } from "../run-control.js";
 import { allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
 import { handleStartupStatus } from "../startup/routes.js";
+import { handleDiagnosticsDoctor, handleDiagnosticsLogs } from "../features/diagnostics/routes.js";
 import { handleHumanEvaluationDesktopRoute } from "../features/harness/evaluations/human-evaluation-routes.js";
 
 export async function routeRequest(
@@ -628,6 +629,16 @@ export async function routeRequest(
 
   if (url.pathname === "/startup/status" || url.pathname === "/startup/refresh") {
     await handleStartupStatus(request, response, context);
+    return;
+  }
+
+  if (url.pathname === "/diagnostics/doctor") {
+    await handleDiagnosticsDoctor(request, response, context);
+    return;
+  }
+
+  if (url.pathname === "/diagnostics/logs") {
+    await handleDiagnosticsLogs(request, response, context);
     return;
   }
 

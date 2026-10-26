@@ -76,3 +76,4 @@ export { isCommittedRunNarrationV1, type CommittedRunNarrationV1 } from "./commi
 export type * from "./harness-diagnostics.js";
 
 export type * from "./work-summary.js";
+export type * from "./diagnostics.js";

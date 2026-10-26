@@ -7954,6 +7954,34 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  if (request.method() === "GET" && path === "/diagnostics/doctor") {
+    await route.fulfill({
+      json: {
+        doctorVersion: 1,
+        cwd,
+        overallStatus: "ok",
+        checks: [
+          { id: "workspace_store", category: "workspace", status: "ok", summary: "Workspace run store opened", details: `cwd: ${cwd}` },
+          { id: "startup_phases", category: "startup", status: "ok", summary: "Startup state: ready" },
+          { id: "log_file", category: "logs", status: "ok", summary: "Daemon log file readable" },
+          { id: "feature_flags", category: "config", status: "ok", summary: "Feature configuration loaded" },
+        ],
+        generatedAt: "2026-10-26T00:00:00.000Z",
+      },
+    });
+    return;
+  }
+  if (request.method() === "GET" && path === "/diagnostics/logs") {
+    await route.fulfill({
+      json: {
+        logVersion: 1,
+        logPath: "/tmp/ling/daemon.log",
+        truncated: false,
+        lines: ["2026-10-26T00:00:00.000Z info daemon listening on 127.0.0.1:17891"],
+      },
+    });
+    return;
+  }
   if (request.method() === "GET" && path === "/provider-templates") {
     await route.fulfill({ json: { templates: options.templates ?? [] } });
     return;

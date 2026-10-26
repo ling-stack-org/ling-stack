@@ -396,3 +396,117 @@
     gap: var(--ling-space-1);
   }
 }
+
+.diagnostics-doctor-card {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--ling-space-5);
+  padding: var(--ling-space-5);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md, 10px);
+}
+
+.diagnostics-doctor-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+  flex-wrap: wrap;
+}
+
+.diagnostics-doctor-heading-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-3);
+  flex-wrap: wrap;
+}
+
+.diagnostics-doctor-check-list {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  gap: var(--ling-space-3);
+  list-style: none;
+}
+
+.diagnostics-doctor-check {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: var(--ling-space-3);
+}
+
+.diagnostics-doctor-check-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+}
+
+.diagnostics-doctor-check-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.diagnostics-doctor-check[data-status="ok"] .diagnostics-doctor-check-icon { color: var(--ling-color-success, #16a34a); }
+.diagnostics-doctor-check[data-status="warning"] .diagnostics-doctor-check-icon { color: var(--ling-color-warning, #d97706); }
+.diagnostics-doctor-check[data-status="fail"] .diagnostics-doctor-check-icon { color: var(--ling-color-danger, #dc2626); }
+.diagnostics-doctor-check[data-status="unchecked"] .diagnostics-doctor-check-icon { color: var(--ling-text-muted, #6b7280); }
+
+.diagnostics-doctor-check-body {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.diagnostics-doctor-check-body small {
+  color: var(--ling-text-muted, #6b7280);
+  overflow-wrap: anywhere;
+}
+
+.diagnostics-doctor-check-remediation {
+  font-style: italic;
+}
+
+.diagnostics-doctor-log-lines {
+  margin: 0;
+  padding: var(--ling-space-3);
+  max-height: 280px;
+  overflow: auto;
+  background: var(--ling-surface-muted, rgba(127, 127, 127, 0.08));
+  border-radius: var(--ling-radius-sm, 6px);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.composer-dictating-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ling-space-2, 6px);
+  margin-bottom: var(--ling-space-2, 6px);
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--ling-color-danger, #dc2626);
+  background: color-mix(in srgb, var(--ling-color-danger, #dc2626) 10%, transparent);
+}
+
+.composer-dictate-button.dictating {
+  color: var(--ling-color-danger, #dc2626);
+}
+
+.composer-dictate-button[data-dictating="true"] {
+  animation: composer-dictate-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes composer-dictate-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
