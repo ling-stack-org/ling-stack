@@ -28,15 +28,15 @@
   "runtime": {
     "platform": "darwin",
     "architecture": "arm64",
-    "electron": "44.8.0",
+    "electron": "44.9.1",
     "node": "24.22.0",
     "uv": "1.52.1"
   },
   "os": {
-    "release": "25.6.0",
-    "backendHelperVersion": "ling-seatbelt-v1:25.6.0:06215a5d32689aefe395c29710e182eb54ba22162f50df8b4842290f8a19bf1c",
-    "backendSha256": "abc5bb136d6b5cce8fa85d789f78e3326c51ca60cae637b2064adfb67a1dcd9a",
-    "codesignSha256": "844d30a12929b59c9f2215e2a308c3e1db572831a478f35906e452a54025603e",
+    "release": "27.0.0",
+    "backendHelperVersion": "ling-seatbelt-v1:27.0.0:bdfc2354c683c8fb95a39e63fbc8610e9739b0256c89ab880564edefbe73a5ce",
+    "backendSha256": "58839ef01b4eef8aac0d2aa8f9d1c074ae45aafe3533965b030672450064acc8",
+    "codesignSha256": "d517c9be608ffd266ec106c685e880cda71abc94001450e36d2476016406dd1e",
     "templateSha256": "12d57318f9c62af5c345d791d20b9af726b96093e12c7699cd5559f85e847784",
     "taskgatedBinding": "reviewed_xml_v1"
   },

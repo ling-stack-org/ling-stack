@@ -17,12 +17,16 @@ export function selectPackagedOfficeBuildLane(config, environment) {
   // No caller-controlled name, path, config or signing policy is accepted.
   const successor = lane === "human-qa-r03-successor";
   const observation = lane === "human-qa-r03-observation";
+  const integrated = lane === "human-qa-integrated-main";
   return {
     ...config,
-    appId: observation ? "com.lingstack.desktop.human-qa.r03-observation"
+    appId: integrated ? "com.lingstack.desktop.human-qa.integrated-main"
+      : observation ? "com.lingstack.desktop.human-qa.r03-observation"
       : successor ? "com.lingstack.desktop.human-qa.r03-successor" : "com.lingstack.desktop.human-qa",
-    productName: observation ? "Ling Stack R03 Observation QA" : successor ? "Ling Stack R03 Successor QA" : "Ling Stack Human QA",
-    directories: { ...config.directories, output: observation ? "release/human-qa-r03-observation"
+    productName: integrated ? "Ling Stack Integrated Main QA"
+      : observation ? "Ling Stack R03 Observation QA" : successor ? "Ling Stack R03 Successor QA" : "Ling Stack Human QA",
+    directories: { ...config.directories, output: integrated ? "release/human-qa-integrated-main"
+      : observation ? "release/human-qa-r03-observation"
       : successor ? "release/human-qa-r03-successor" : "release/human-qa" },
     extraMetadata: {
       ...config.extraMetadata,
@@ -43,5 +47,6 @@ export function readPackagedOfficeBuildLane(environment) {
   if (environment.LING_DESKTOP_PACKAGE_HUMAN_QA === "1") return "human-qa";
   if (environment.LING_DESKTOP_PACKAGE_HUMAN_QA === "retained-host-r03") return "human-qa-r03-successor";
   if (environment.LING_DESKTOP_PACKAGE_HUMAN_QA === "retained-host-r03-observation") return "human-qa-r03-observation";
+  if (environment.LING_DESKTOP_PACKAGE_HUMAN_QA === "integrated-main") return "human-qa-integrated-main";
   throw new Error("packaged_human_qa_lane_invalid");
 }

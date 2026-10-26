@@ -269,6 +269,52 @@ test("fixed Office package entry regression (test-only loader, no native/signatu
     assert.equal(f.state.active, undefined);
   });
 
+  await t.test("integrated-main QA preserves original publication, signer, final hooks and no-publish path", async t => {
+    const f = await fixture(t, {
+      derivedEnvironment: { LING_DESKTOP_PACKAGE_HUMAN_QA: "integrated-main" },
+      topLevelConfig: { appId: "com.lingstack.desktop", productName: "Ling Stack", directories: { output: "release" } },
+    });
+    process.env.LING_DESKTOP_PACKAGE_HUMAN_QA = "integrated-main";
+    await f.api.packageMacosWithOffice();
+    assert.equal(f.state.tokens.length, 1);
+    assert.equal(f.state.humanBuildCalls, 1);
+    assert.equal(f.state.buildCalls.length, 1);
+    const { config } = f.state.buildCalls[0];
+    assert.equal(config.appId, "com.lingstack.desktop.human-qa.integrated-main");
+    assert.equal(config.productName, "Ling Stack Integrated Main QA");
+    assert.equal(config.directories.output, "release/human-qa-integrated-main");
+    assert.equal(config.mac.identity, "-");
+    assert.equal(config.mac.sign, undefined);
+    assert.equal(config.extraMetadata.lingHumanQaPackage.release, false);
+    assert.equal(f.state.active, undefined);
+  });
+
+  await t.test("integrated-main and every retained lane reject derived or config-time identity substitution", async t => {
+    for (const retained of ["1", "retained-host-r03", "retained-host-r03-observation"]) {
+      for (const [admitted, replacement] of [["integrated-main", retained], [retained, "integrated-main"]]) {
+        await t.test(`${admitted} to ${replacement} before native`, async t => {
+          const f = await fixture(t, { derivedEnvironment: { LING_DESKTOP_PACKAGE_HUMAN_QA: replacement } });
+          process.env.LING_DESKTOP_PACKAGE_HUMAN_QA = admitted;
+          await assert.rejects(f.api.packageMacosWithOffice(), /human_qa_selection_changed/u);
+          assert.equal(f.state.tokens.length, 0);
+          assert.equal(f.state.buildCalls.length, 0);
+        });
+        await t.test(`${admitted} to ${replacement} after config`, async t => {
+          const f = await fixture(t, {
+            derivedEnvironment: { LING_DESKTOP_PACKAGE_HUMAN_QA: admitted },
+            onConfig: () => { process.env.LING_DESKTOP_PACKAGE_HUMAN_QA = replacement; },
+            topLevelConfig: { appId: "com.lingstack.desktop", productName: "Ling Stack" },
+          });
+          process.env.LING_DESKTOP_PACKAGE_HUMAN_QA = admitted;
+          await assert.rejects(f.api.packageMacosWithOffice(), /human_qa_selection_changed/u);
+          assert.equal(f.state.tokens.length, 1);
+          assert.equal(f.state.buildCalls.length, 0);
+          assert.equal(f.state.active, undefined);
+        });
+      }
+    }
+  });
+
   await t.test("derived environment cannot replace the observation lane with a retained successor", async t => {
     const f = await fixture(t, { derivedEnvironment: { LING_DESKTOP_PACKAGE_HUMAN_QA: "retained-host-r03" } });
     process.env.LING_DESKTOP_PACKAGE_HUMAN_QA = "retained-host-r03-observation";

@@ -96,3 +96,32 @@ test("QA lane accepts no caller-chosen output or successor name", async () => {
     assert.throws(() => readPackagedOfficeBuildLane({ LING_DESKTOP_PACKAGE_HUMAN_QA: value }), /human_qa_lane_invalid/u);
   }
 });
+
+test("integrated-main QA has a fourth fixed identity without replacing retained Hosts' Apps", async () => {
+  const { readPackagedOfficeBuildLane, readPackagedOfficeHumanQaSelection, selectPackagedOfficeBuildLane } = await import(helperUrl.href);
+  const environment = { LING_DESKTOP_PACKAGE_HUMAN_QA: "integrated-main" };
+  const snapshot = structuredClone(base);
+  const selected = selectPackagedOfficeBuildLane(base, environment);
+  assert.equal(readPackagedOfficeBuildLane(environment), "human-qa-integrated-main");
+  assert.equal(readPackagedOfficeHumanQaSelection(environment), true);
+  assert.equal(selected.appId, "com.lingstack.desktop.human-qa.integrated-main");
+  assert.equal(selected.productName, "Ling Stack Integrated Main QA");
+  assert.equal(selected.directories.output, "release/human-qa-integrated-main");
+  for (const selector of ["1", "retained-host-r03", "retained-host-r03-observation"]) {
+    const retained = selectPackagedOfficeBuildLane(base, { LING_DESKTOP_PACKAGE_HUMAN_QA: selector });
+    for (const field of ["appId", "productName"]) assert.notEqual(selected[field], retained[field]);
+    assert.notEqual(selected.directories.output, retained.directories.output);
+    assert.deepEqual(selected.extraMetadata.lingHumanQaPackage, retained.extraMetadata.lingHumanQaPackage);
+  }
+  for (const field of ["afterPack", "afterSign", "artifactBuildCompleted", "mac", "files", "extraResources", "electronFuses"]) {
+    assert.deepEqual(selected[field], base[field]);
+  }
+  assert.equal(selected.directories.buildResources, base.directories.buildResources);
+  assert.deepEqual(base, snapshot);
+  for (const changed of [{ appId: "foreign.app" }, { productName: "Foreign" }]) {
+    assert.throws(() => selectPackagedOfficeBuildLane({ ...base, ...changed }, environment), /packaged_human_qa_base_invalid/u);
+  }
+  for (const value of ["integrated-main ", "integrated-main/../human-qa", "human-qa-integrated-main", "release/human-qa-integrated-main"]) {
+    assert.throws(() => readPackagedOfficeBuildLane({ LING_DESKTOP_PACKAGE_HUMAN_QA: value }), /human_qa_lane_invalid/u);
+  }
+});
