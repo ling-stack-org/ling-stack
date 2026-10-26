@@ -1,7 +1,8 @@
 import type { ExecutionBindingRequest } from "@ling-stack/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { archiveLingThread, getConversation, getConversationSubmission, listLingThreads, streamConversation } from "../../api.js";
-import { LingDaemonError } from "@ling-stack/api-client";
+import { LingDaemonError, LingDaemonTransportError } from "@ling-stack/api-client";
+import { DaemonObservationDeferredError, isDaemonObservationPausedForWorkspace, liveDaemonObservation, type DaemonObservation } from "../../shared/conversation/observation/daemon-observation.js";
 import { recoverSubmissionReceipt, submissionWasRejected } from "../../shared/conversation/conversation-submission-recovery.js";
 import { submissionLookupJournal } from "../../shared/conversation/conversation-submission-journal.js";
 import { validateConversationSubmissionReceipt } from "../../shared/conversation/submission-receipt-scope.js";
@@ -75,6 +76,7 @@ interface AcceptedStreamObservation {
 
 export function useConversationDomain(input: {
   readonly cwd: string;
+  readonly observation?: DaemonObservation;
   readonly translate: (key: string, values?: Record<string, string | number>) => string;
 }): {
   readonly state: {
@@ -90,7 +92,7 @@ export function useConversationDomain(input: {
   };
   readonly actions: {
     readonly refreshConversationThreads: (cwd?: string, options?: { readonly throwOnError?: boolean }) => Promise<void>;
-    readonly refreshSelectedConversation: (cwd?: string) => Promise<void>;
+    readonly refreshSelectedConversation: (cwd?: string, options?: { readonly throwOnError?: boolean }) => Promise<void>;
     readonly openNewConversation: () => void;
     readonly selectConversationThread: (
       threadId: string,
@@ -120,6 +122,19 @@ export function useConversationDomain(input: {
   const acceptedStreamObservationsRef = useRef(new Map<number, AcceptedStreamObservation>());
   const detailReadEpochRef = useRef(createConversationReadEpoch());
   const conversationStreamBusyOwner = useConversationStreamBusyOwner();
+  const observationRef = useRef(input.observation ?? liveDaemonObservation);
+  observationRef.current = input.observation ?? liveDaemonObservation;
+  const observationPaused = isDaemonObservationPausedForWorkspace(observationRef.current, input.cwd);
+  const canObserve = (cwd: string): boolean => !isDaemonObservationPausedForWorkspace(observationRef.current, cwd);
+  const reportObservationError = useCallback((operation: ConversationErrorOperation, error: unknown): void => {
+    conversationErrors.report(operation, error instanceof Error ? error.message : String(error),
+      error instanceof LingDaemonTransportError ? "transport" : undefined);
+  }, [conversationErrors]);
+
+  useEffect(() => {
+    // Late successes from a previous observation cannot certify the current UI.
+    detailReadEpochRef.current.invalidate();
+  }, [input.observation?.epoch]);
 
   const reconcileStreamObservations = useCallback((
     detail: ConversationDetailResponse,
@@ -183,6 +198,10 @@ export function useConversationDomain(input: {
     options?: { readonly throwOnError?: boolean },
   ): Promise<void> => {
     const workspaceCwd = cwd.trim();
+    if (!canObserve(workspaceCwd)) {
+      if (options?.throwOnError) throw new DaemonObservationDeferredError();
+      return;
+    }
     if (!workspaceCwd) {
       setConversationThreads([]);
       return;
@@ -195,18 +214,22 @@ export function useConversationDomain(input: {
     });
     conversationErrors.clear(operation);
     beginThreadListLoading();
+    const observationEpoch = observationRef.current.epoch;
     try {
       const response = await listLingThreads(workspaceCwd, { kind: "conversation", archived: "exclude", limit: 20 });
-      if (conversationErrors.isCurrent(operation) && currentCwdRef.current === workspaceCwd) {
+      if (canObserve(workspaceCwd) && observationRef.current.epoch === observationEpoch
+        && conversationErrors.isCurrent(operation) && currentCwdRef.current === workspaceCwd) {
         setConversationThreads(response.threads);
+      } else if (options?.throwOnError) {
+        throw new DaemonObservationDeferredError();
       }
     } catch (error) {
-      conversationErrors.report(operation, error instanceof Error ? error.message : String(error));
+      if (!(error instanceof DaemonObservationDeferredError)) reportObservationError(operation, error);
       if (options?.throwOnError) throw error;
     } finally {
       finishThreadListLoading();
     }
-  }, [beginThreadListLoading, conversationErrors, finishThreadListLoading, input.cwd]);
+  }, [beginThreadListLoading, conversationErrors, finishThreadListLoading, input.cwd, reportObservationError]);
 
   const openNewConversation = useCallback((): void => {
     detailReadEpochRef.current.invalidate();
@@ -225,6 +248,7 @@ export function useConversationDomain(input: {
     shouldCommit: () => boolean = () => true,
   ): Promise<boolean> => {
     const workspaceCwd = cwd.trim();
+    if (!canObserve(workspaceCwd)) return false;
     if (!workspaceCwd || !threadId) {
       if (shouldCommit()) {
         openNewConversation();
@@ -246,12 +270,14 @@ export function useConversationDomain(input: {
     });
     conversationErrors.clear(operation);
     const observations = [...acceptedStreamObservationsRef.current.values()];
+    const observationEpoch = observationRef.current.epoch;
     try {
       const detail = await getConversation(workspaceCwd, threadId);
       if (detail.thread.id !== threadId) throw new Error("Conversation response scope mismatch.");
       conversationErrors.clear(operation);
       if (
         !detailReadEpochRef.current.isCurrent(detailRead)
+        || !canObserve(workspaceCwd) || observationRef.current.epoch !== observationEpoch
         || selectionSequence !== selectionSequenceRef.current
         || currentCwdRef.current !== workspaceCwd
         || !shouldCommit()
@@ -264,7 +290,7 @@ export function useConversationDomain(input: {
       commitConversationSurfaceIdentity(threadId);
       return true;
     } catch (error) {
-      conversationErrors.report(operation, error instanceof Error ? error.message : String(error));
+      reportObservationError(operation, error);
       if (
         selectionSequence !== selectionSequenceRef.current
         || currentCwdRef.current !== workspaceCwd
@@ -278,11 +304,18 @@ export function useConversationDomain(input: {
         selectionInFlightRef.current = undefined;
       }
     }
-  }, [commitConversationSurfaceIdentity, commitSelectedConversationThreadId, conversationErrors, input.cwd, openNewConversation, reconcileStreamObservations]);
+  }, [commitConversationSurfaceIdentity, commitSelectedConversationThreadId, conversationErrors, input.cwd, openNewConversation, reconcileStreamObservations, reportObservationError]);
 
-  const refreshSelectedConversation = useCallback(async (cwd = input.cwd): Promise<void> => {
+  const refreshSelectedConversation = useCallback(async (cwd = input.cwd, options?: { readonly throwOnError?: boolean }): Promise<void> => {
+    if (!canObserve(cwd)) {
+      if (options?.throwOnError) throw new DaemonObservationDeferredError();
+      return;
+    }
     // A background refresh must not supersede a navigation selection read.
-    if (selectionInFlightRef.current !== undefined) return;
+    if (selectionInFlightRef.current !== undefined) {
+      if (options?.throwOnError) throw new DaemonObservationDeferredError();
+      return;
+    }
     const workspaceCwd = cwd.trim();
     const requestedThreadId = selectedConversationThreadIdRef.current;
     if (!workspaceCwd || !requestedThreadId || conversationSurfaceIdentityRef.current !== requestedThreadId) {
@@ -297,23 +330,28 @@ export function useConversationDomain(input: {
     const detailRead = detailReadEpochRef.current.begin(JSON.stringify([workspaceCwd, requestedThreadId]));
     conversationErrors.clear(operation);
     const observations = [...acceptedStreamObservationsRef.current.values()];
+    const observationEpoch = observationRef.current.epoch;
     try {
       const detail = await getConversation(workspaceCwd, requestedThreadId);
       if (detail.thread.id !== requestedThreadId) throw new Error("Conversation response scope mismatch.");
       conversationErrors.clear(operation);
       if (
         detailReadEpochRef.current.isCurrent(detailRead)
+        && canObserve(workspaceCwd) && observationRef.current.epoch === observationEpoch
         && conversationErrors.isCurrent(operation)
         && currentCwdRef.current === workspaceCwd
         && selectedConversationThreadIdRef.current === requestedThreadId
       ) {
         setSelectedConversationDetail((current) => mergeConversationDetailSnapshots(current, detail));
         reconcileStreamObservations(detail, observations);
+      } else if (options?.throwOnError) {
+        throw new DaemonObservationDeferredError();
       }
     } catch (error) {
-      conversationErrors.report(operation, error instanceof Error ? error.message : String(error));
+      if (!(error instanceof DaemonObservationDeferredError)) reportObservationError(operation, error);
+      if (options?.throwOnError) throw error;
     }
-  }, [conversationErrors, input.cwd, reconcileStreamObservations]);
+  }, [conversationErrors, input.cwd, reconcileStreamObservations, reportObservationError]);
 
   const archiveConversationThread = useCallback(async (threadId: string, cwd = input.cwd): Promise<void> => {
     const workspaceCwd = cwd.trim();
@@ -463,13 +501,30 @@ export function useConversationDomain(input: {
       conversationStreamBusyOwner.finish(busyOperation);
       return;
     }
+    if (!canObserve(workspaceCwd)) {
+      conversationStreamBusyOwner.finish(busyOperation);
+      return;
+    }
+    const streamObservation = observationRef.current;
+    const canPublishStream = (threadId = activeThreadId): boolean => canCommitToSurface(threadId)
+      && canObserve(workspaceCwd) && observationRef.current.epoch === streamObservation.epoch
+      && observationRef.current.baseUrl === streamObservation.baseUrl;
 
     try {
       const pendingKey = submissionLookupJournal.read(submissionScope);
       if (pendingKey) {
+        const observationEpoch = observationRef.current.epoch;
+        const assertObservationCurrent = (): void => {
+          if (!canObserve(workspaceCwd) || observationRef.current.epoch !== observationEpoch) {
+            throw new DaemonObservationDeferredError();
+          }
+        };
         const query = { surface: "normal" as const, idempotencyKey: pendingKey, threadId: originThreadId || undefined };
-        const receipt = await recoverSubmissionReceipt(async () => validateConversationSubmissionReceipt(
-          await getConversationSubmission(workspaceCwd, query), workspaceCwd, query));
+        const receipt = await recoverSubmissionReceipt(async () => {
+          assertObservationCurrent();
+          return validateConversationSubmissionReceipt(await getConversationSubmission(workspaceCwd, query), workspaceCwd, query);
+        });
+        assertObservationCurrent();
         if (!receipt?.threadId || !receipt.sourceItem) {
           conversationErrors.report(streamOperation, input.translate("Pending confirmation"));
           if (canCommitToSurface()) handlers.onSubmissionUnknown?.(true);
@@ -478,6 +533,7 @@ export function useConversationDomain(input: {
         activeThreadId = receipt.threadId;
         const detail = await getConversation(workspaceCwd, activeThreadId);
         if (detail.thread.id !== activeThreadId) throw new Error("Conversation response scope mismatch.");
+        assertObservationCurrent();
         if (canCommitToSurface(activeThreadId)) {
           const original = detail.messages.find(item => item.id === receipt.sourceItemId);
           handlers.onSubmissionRecovered?.(activeThreadId, original?.content ?? "");
@@ -518,7 +574,7 @@ export function useConversationDomain(input: {
       let evidenceRefreshPromise: Promise<void> | undefined;
       let evidenceRefreshRequested = false;
       const refreshActiveConversationEvidence = (): Promise<void> => {
-        if (!activeThreadId || !canCommitToSurface(activeThreadId)) {
+        if (!canObserve(workspaceCwd) || !activeThreadId || !canCommitToSurface(activeThreadId)) {
           return Promise.resolve();
         }
         if (evidenceRefreshPromise) {
@@ -526,12 +582,14 @@ export function useConversationDomain(input: {
           return evidenceRefreshPromise;
         }
         const requestedThreadId = activeThreadId;
+        const observationEpoch = observationRef.current.epoch;
         const detailRead = detailReadEpochRef.current.begin(JSON.stringify([workspaceCwd, requestedThreadId]));
         evidenceRefreshPromise = (async () => {
           try {
             const detail = await getConversation(workspaceCwd, requestedThreadId);
             if (detail.thread.id !== requestedThreadId) throw new Error("Conversation response scope mismatch.");
-            if (detailReadEpochRef.current.isCurrent(detailRead) && requestedThreadId === activeThreadId && canCommitToSurface(requestedThreadId)) {
+            if (canObserve(workspaceCwd) && observationRef.current.epoch === observationEpoch
+              && detailReadEpochRef.current.isCurrent(detailRead) && requestedThreadId === activeThreadId && canCommitToSurface(requestedThreadId)) {
               setSelectedConversationDetail((current) => mergeConversationDetailSnapshots(current, detail));
             }
           } catch {
@@ -570,31 +628,32 @@ export function useConversationDomain(input: {
             conversationStreamBusyOwner.finish(busyOperation);
           }
           if (canCommitToSurface(activeThreadId)) {
+            // Acceptance/linkage is a fact even when its message snapshot is
+            // no longer the current observation. Do not turn it into a resend.
+            handlers.onMessageAccepted?.(event);
+            if (event.activeReply) handlers.onReplyLinked?.(event.activeReply);
             commitSelectedConversationThreadId(activeThreadId);
             commitConversationSurfaceIdentity(activeThreadId);
-            setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, event.thread, [
-              event.userMessage,
-              event.assistantMessage,
-            ]));
+          }
+          if (canPublishStream(activeThreadId)) {
+            setSelectedConversationDetail((current) => canPublishStream(activeThreadId)
+              ? mergeConversationMessages(current, workspaceCwd, event.thread, [event.userMessage, event.assistantMessage]) : current);
             scheduleEvidenceRefresh();
             handlers.onReady?.(event);
-            handlers.onMessageAccepted?.(event);
-            messageAccepted = true;
-            submissionLookupJournal.forget(submissionScope, idempotencyKey);
-            if (event.activeReply) handlers.onReplyLinked?.(event.activeReply);
           }
           return;
         }
         if (parsed.event === "run_event") {
           const event = JSON.parse(parsed.data) as ConversationStreamRunEvent;
           handlers.onThreadBound?.(event.threadId);
-          if (event.assistantMessage && canCommitToSurface(event.threadId)) {
-            setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, undefined, [event.assistantMessage as ConversationTranscriptMessage]));
+          if (event.assistantMessage && canPublishStream(event.threadId)) {
+            setSelectedConversationDetail((current) => canPublishStream(event.threadId)
+              ? mergeConversationMessages(current, workspaceCwd, undefined, [event.assistantMessage as ConversationTranscriptMessage]) : current);
           }
-          if (canCommitToSurface(event.threadId) && conversationEventNeedsDetailRefresh(event.event.type)) {
+          if (canPublishStream(event.threadId) && conversationEventNeedsDetailRefresh(event.event.type)) {
             scheduleEvidenceRefresh();
           }
-          if (canCommitToSurface(event.threadId)) handlers.onRunEvent?.(event);
+          if (canPublishStream(event.threadId)) handlers.onRunEvent?.(event);
           return;
         }
         if (parsed.event === "done") {
@@ -606,7 +665,10 @@ export function useConversationDomain(input: {
           if (canCommitToSurface(activeThreadId)) {
             commitSelectedConversationThreadId(activeThreadId);
             commitConversationSurfaceIdentity(activeThreadId);
-            setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, event.thread, [event.assistantMessage]));
+          }
+          if (canPublishStream(activeThreadId)) {
+            setSelectedConversationDetail((current) => canPublishStream(activeThreadId)
+              ? mergeConversationMessages(current, workspaceCwd, event.thread, [event.assistantMessage]) : current);
             handlers.onDone?.(event);
           }
           return;
@@ -625,10 +687,11 @@ export function useConversationDomain(input: {
             commitSelectedConversationThreadId(activeThreadId);
             commitConversationSurfaceIdentity(activeThreadId);
           }
-          if (event.assistantMessage && canCommitToSurface(activeThreadId)) {
-            setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, event.thread, [event.assistantMessage as ConversationTranscriptMessage]));
+          if (event.assistantMessage && canPublishStream(activeThreadId)) {
+            setSelectedConversationDetail((current) => canPublishStream(activeThreadId)
+              ? mergeConversationMessages(current, workspaceCwd, event.thread, [event.assistantMessage as ConversationTranscriptMessage]) : current);
           }
-          if (canCommitToSurface(activeThreadId)) handlers.onBlocked?.(event);
+          if (canPublishStream(activeThreadId)) handlers.onBlocked?.(event);
           return;
         }
         if (parsed.event === "error") {
@@ -642,8 +705,9 @@ export function useConversationDomain(input: {
           if (!event.assistantMessage && !messageAccepted) {
             conversationErrors.report(streamOperation, messageText);
           }
-          if (event.assistantMessage && canCommitToSurface(activeThreadId)) {
-            setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, event.thread, [event.assistantMessage as ConversationTranscriptMessage]));
+          if (event.assistantMessage && canPublishStream(activeThreadId)) {
+            setSelectedConversationDetail((current) => canPublishStream(activeThreadId)
+              ? mergeConversationMessages(current, workspaceCwd, event.thread, [event.assistantMessage as ConversationTranscriptMessage]) : current);
           }
           if (canCommitToSurface(activeThreadId)) handlers.onError?.(messageText, event);
         }
@@ -656,7 +720,7 @@ export function useConversationDomain(input: {
         await evidenceRefreshPromise;
         // A lost stream must reconcile accepted input just like a normal terminal event.
         if (messageAccepted) await refreshConversationThreads(workspaceCwd);
-        if (messageAccepted && activeThreadId && canCommitToSurface(activeThreadId)) {
+        if (messageAccepted && canObserve(workspaceCwd) && activeThreadId && canCommitToSurface(activeThreadId)) {
           const refreshOperation = conversationErrors.begin({
             workspaceCwd,
             surface: "thread",
@@ -665,31 +729,48 @@ export function useConversationDomain(input: {
           });
           conversationErrors.clear(refreshOperation);
           const detailRead = detailReadEpochRef.current.begin(JSON.stringify([workspaceCwd, activeThreadId]));
+          const observationEpoch = observationRef.current.epoch;
           try {
             const detail = await getConversation(workspaceCwd, activeThreadId);
             if (detail.thread.id !== activeThreadId) throw new Error("Conversation response scope mismatch.");
             conversationErrors.clear(refreshOperation);
-            if (detailReadEpochRef.current.isCurrent(detailRead) && canCommitToSurface(activeThreadId)) {
+            if (canObserve(workspaceCwd) && observationRef.current.epoch === observationEpoch
+              && detailReadEpochRef.current.isCurrent(detailRead) && canCommitToSurface(activeThreadId)) {
               setSelectedConversationDetail((current) => mergeConversationDetailSnapshots(current, detail));
             }
           } catch (error) {
-            conversationErrors.report(refreshOperation, error instanceof Error ? error.message : String(error));
+            reportObservationError(refreshOperation, error);
           }
         }
       }
       if (!messageAccepted) throw new Error("Pending confirmation");
     } catch (error) {
       if (!submitted) {
-        conversationErrors.report(streamOperation, input.translate("Pending confirmation"));
+        if (error instanceof DaemonObservationDeferredError) {
+          conversationErrors.report(streamOperation, input.translate("Pending confirmation"));
+        } else {
+          reportObservationError(streamOperation, error);
+        }
         if (canCommitToSurface(activeThreadId)) handlers.onSubmissionUnknown?.(true);
         return;
       }
       let rejectionConfirmed = false;
       if (!messageAccepted) {
+        if (!canObserve(workspaceCwd)) {
+          reportObservationError(streamOperation, error);
+          if (canCommitToSurface(activeThreadId)) handlers.onSubmissionUnknown?.();
+          return;
+        }
+        const observationEpoch = observationRef.current.epoch;
         const query = { surface: "normal" as const, idempotencyKey, threadId: originThreadId || undefined };
-        const receipt = await recoverSubmissionReceipt(async () => validateConversationSubmissionReceipt(
-          await getConversationSubmission(workspaceCwd, query), workspaceCwd, query));
-        rejectionConfirmed = submissionWasRejected(error, receipt);
+        const receipt = await recoverSubmissionReceipt(async () => {
+          if (!canObserve(workspaceCwd) || observationRef.current.epoch !== observationEpoch) {
+            throw new DaemonObservationDeferredError();
+          }
+          return validateConversationSubmissionReceipt(await getConversationSubmission(workspaceCwd, query), workspaceCwd, query);
+        });
+        const receiptObservationCurrent = canObserve(workspaceCwd) && observationRef.current.epoch === observationEpoch;
+        rejectionConfirmed = receiptObservationCurrent && submissionWasRejected(error, receipt);
         if (receipt?.threadId && receipt.turnId && receipt.sourceItemId) {
           messageAccepted = true;
           acceptedSourceItemId = receipt.sourceItemId;
@@ -703,25 +784,33 @@ export function useConversationDomain(input: {
             commitConversationSurfaceIdentity(activeThreadId);
             const detailRead = detailReadEpochRef.current.begin(JSON.stringify([workspaceCwd, activeThreadId]));
             try {
+              if (!canObserve(workspaceCwd) || observationRef.current.epoch !== observationEpoch) {
+                throw new DaemonObservationDeferredError();
+              }
               const detail = await getConversation(workspaceCwd, activeThreadId);
               if (detail.thread.id !== activeThreadId) throw new Error("Conversation response scope mismatch.");
-              if (detailReadEpochRef.current.isCurrent(detailRead) && canCommitToSurface(activeThreadId)) {
+              if (canObserve(workspaceCwd) && observationRef.current.epoch === observationEpoch
+                && detailReadEpochRef.current.isCurrent(detailRead) && canCommitToSurface(activeThreadId)) {
                 setSelectedConversationDetail(current => mergeConversationDetailSnapshots(current, detail));
               }
             } catch (readError) {
-              conversationErrors.report(streamOperation, readError instanceof Error ? readError.message : String(readError));
+              if (!(readError instanceof DaemonObservationDeferredError)) reportObservationError(streamOperation, readError);
             }
           }
           await refreshConversationThreads(workspaceCwd);
         } else if (!rejectionConfirmed) {
-          conversationErrors.report(streamOperation, input.translate("Pending confirmation"));
+          if (receiptObservationCurrent) {
+            conversationErrors.report(streamOperation, input.translate("Pending confirmation"));
+          } else {
+            reportObservationError(streamOperation, error);
+          }
           if (canCommitToSurface(activeThreadId)) handlers.onSubmissionUnknown?.();
           return;
         }
       }
       if (rejectionConfirmed) submissionLookupJournal.forget(submissionScope, idempotencyKey);
       const messageText = error instanceof Error ? error.message : String(error);
-      conversationErrors.report(streamOperation, messageText);
+      reportObservationError(streamOperation, error);
       if (messageAccepted && acceptedSourceItemId) {
         if (conversationErrors.isCurrent(streamOperation)) {
           acceptedStreamObservationsRef.current.set(streamOperation.sequence, {
@@ -739,25 +828,28 @@ export function useConversationDomain(input: {
     } finally {
       conversationStreamBusyOwner.finish(busyOperation);
     }
-  }, [commitConversationSurfaceIdentity, commitSelectedConversationThreadId, conversationErrors, conversationStreamBusyOwner, input.cwd, refreshConversationThreads, refreshSelectedConversation]);
+  }, [commitConversationSurfaceIdentity, commitSelectedConversationThreadId, conversationErrors, conversationStreamBusyOwner, input.cwd, refreshConversationThreads, refreshSelectedConversation, reportObservationError]);
 
   const workspaceCwd = input.cwd.trim();
   const conversationSidebarError = selectConversationError(conversationErrors.entries, {
     workspaceCwd,
     surface: "sidebar",
     scopes: ["load", "archive"],
+    excludeTransport: observationPaused,
   })?.message ?? "";
   const conversationSurfaceError = selectConversationError(conversationErrors.entries, {
     workspaceCwd,
     surface: "thread",
     identity: conversationSurfaceIdentity,
     scopes: ["select", "refresh", "action"],
+    excludeTransport: observationPaused,
   })?.message ?? "";
   const conversationComposerError = selectConversationError(conversationErrors.entries, {
     workspaceCwd,
     surface: "composer",
     identity: conversationSurfaceIdentity,
     scopes: ["stream"],
+    excludeTransport: observationPaused,
   })?.message ?? "";
   const conversationStreamBusy = conversationStreamBusyOwner.isBusy({
     workspaceCwd,

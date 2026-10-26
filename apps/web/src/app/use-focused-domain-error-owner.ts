@@ -35,13 +35,13 @@ export interface FocusedDomainErrorOwner<
   readonly clear: (request: FocusedErrorRequest<TDomain, TAction>) => boolean;
   readonly report: (
     request: FocusedErrorRequest<TDomain, TAction>,
-    error: Pick<DomainError, "scope" | "message" | "retryLabel">,
+    error: Pick<DomainError, "scope" | "message" | "retryLabel" | "origin">,
   ) => boolean;
   readonly reportImmediate: (
     domain: TDomain,
     objectId: string,
     action: TAction,
-    error: Pick<DomainError, "scope" | "message" | "retryLabel">,
+    error: Pick<DomainError, "scope" | "message" | "retryLabel" | "origin">,
   ) => FocusedErrorRequest<TDomain, TAction>;
   readonly invalidateRequests: () => void;
   readonly clearAll: () => void;
@@ -119,6 +119,7 @@ export function createFocusedDomainErrorOwner<
           requestId: request.requestId,
           retryLabel: error.retryLabel,
           scope: error.scope,
+          origin: error.origin,
         },
         order: ++reportSequence,
       });

@@ -1,4 +1,5 @@
 import type { RunEventEnvelope } from "./types.js";
+import { LingDaemonTransportError } from "@ling-stack/api-client";
 
 export type StreamMessage =
   | { readonly kind: "ready"; readonly runId: string }
@@ -189,7 +190,15 @@ export async function readSseResponse(response: Response, onMessage: (message: {
   let buffer = "";
 
   for (;;) {
-    const { done, value } = await reader.read();
+    // Only reader IO is transport. Decoder/JSON/onMessage exceptions remain
+    // protocol/business errors and must never be hidden by a Host stop banner.
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try { chunk = await reader.read(); }
+    catch (cause) {
+      if (cause instanceof Error && cause.name === "AbortError") throw cause;
+      throw new LingDaemonTransportError("stream-read", cause);
+    }
+    const { done, value } = chunk;
     if (done) {
       buffer += decoder.decode();
       const parsed = parseSseBlock(buffer);

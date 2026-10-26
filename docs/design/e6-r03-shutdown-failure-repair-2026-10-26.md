@@ -222,3 +222,81 @@ FD5 draining 后 startup 错误分类 2 失败、pool retirement 与并发 final
 
 完整证据位于 `output/e6-20260928/r03-packaging-successor-20261026/`。
 本节不是重打包、R03 GUI 或 P3/P4/P5 的完成证明。
+
+### 6.5 新包真实 R03 后的观察层缺口
+
+后继构建与包身份读回已成功；新独立 profile 的真实 GUI 提交一次任务并允许一次，
+tick8 时仅对所属 Host 请求一次停止。客户端真实显示 draining→blocked，保留原 Host、
+阻止 successor；工具自然完成也未把 descendants/effectCoverage 的 unverified 升级为安全。
+Run 仍 running，此结果只证明安全阻断 slice，不证明 R03 整体或重启恢复通过。
+
+同一现场发现：HTTP已关闭后，会话/侧栏/输入框/toast重复展示 Failed to fetch，旧action
+与Agent placeholder仍被当成实时状态。Desktop新claim仍持续轮询。完整证据见
+`output/e6-20260928/r03-packaging-retry-20261026/live-findings.md`。
+
+后继修复契约：
+
+- 只有可信Desktop自有Host的停止状态且endpoint归属匹配，才暂停新只读观察/重连；
+  browser普通断线、外部Host或不同endpoint不得误暂停。
+- 观察暂停与执行终态独立。保留快照和accepted submission，不改Run/Attempt/Item事实，
+  不重发提交，不凭断线推导失败/取消/成功。
+- 错误合并必须保留transport来源，不能按错误字符串或scope把业务/HTTP/校验失败吞掉。
+  已开始请求的迟到失败和停止后的新刷新都应受当前观察闩约束；恢复后仍需精确source读回。
+- 三种会话和嵌套子Agent共用观察暂停展示；实时动画停下，并标明上次观察状态，不另造最终回复。
+- Main只关闭新claim准入/availability；已接纳执行、lease、结果回执和helper资源仍由原停止契约保留。
+  在途claim返回必须明确处理，不可直接丢弃已接纳操作或使用shared abort假装排空。
+
+恢复与投影的额外约束：
+
+- receipt查询每次backoff后的实际GET都重查当前准入与原epoch；暂停前的`unknown`不能
+  在暂停或恢复后充当本次提交被拒绝的证明，未确认journal继续保持query-only。
+- 有效accepted receipt、原已接纳stream的生命周期回执仍是事实，可释放对应防重复指针、
+  收口本地发送状态；旧epoch的消息body/narration/详情快照不得覆盖恢复后的投影。
+  观察中断不能把同一stream真实done变成失败；也不能从本地发送settle推导Run已安全结束。
+- strict控制面刷新若因navigation/paused/stale epoch未实际应用读取，必须defer，不能推进
+  invalidation cursor。新epoch的频道Run详情必须重新读取，不能因旧缓存或旧load key跳过。
+- `loadRun`及其`refreshRuntimeState`的分阶段读取需要在每个await后核准入；只在外层await
+  完成后检查，挡不住内部后续请求或已经发布的旧WorkUnit/lease投影。真实业务错误保持可见。
+- 停止/撤销已接纳操作不受新消息/新guidance准入门的总禁用影响；不abort既有lease/result。
+
+源码/隔离回归与差量独审正在收口；当前运行包尚不含本节修复，真实GUI仍未验收。
+不重复已通过的FD5接线、长套或旧任务。
+
+#### R03-OBS 源码检查点（2026-10-26）
+
+本节的源码和隔离回归已收口；上句“正在收口”保留为历史过程，不是重新开工指令。
+Desktop/Office仅暂停新claim及idle availability，保留accepted execution、lease与result；
+只在显式新Host rebind后开放新generation，含被较新drain打断rebind后的合法恢复。
+停止状态订阅不再错误依赖Computer Use启用开关。对应源码/测试本地提交`134ea739`。
+API fetch/SSE reader保留typed transport来源，AbortError/HTTP/JSON解析/业务异常保持独立；
+不增加重试。API源码/测试本地提交`6c8dc912`。
+
+Web以共享observation context接入三种会话及嵌套子Agent，只改变观察语义与实时动画，
+不改canonical status/revision/sourceRefs。普通/频道/私聊的新消息、receipt backoff、
+迟到snapshot与SSE presentation分层；真实接纳/链接/终态发送生命周期保留，旧epoch消息
+不得覆盖新快照。频道Run和Runtime分阶段读取、列表及旧cwd callback都检查当前owner。
+审批已成功后的typed deferred读取只停止fan-out，不能反报审批失败；真实错误继续归原owner。
+
+验证（不是GUI）：Desktop最终49/49、API53/53；Web最终八文件组合132/132，均actual exit0，
+零失败/取消/跳过。Main/Web类型与diff-check通过；不把多次局部重跑累加为新的案例数量。
+Web最终命令：`node --experimental-strip-types --test`，显式指定以下八文件：
+
+- `daemon-observation.regression-1.test.mjs`
+- `conversation-stream-observation-recovery.regression-1.test.mjs`
+- `control-plane-conversation-recovery.regression-1.test.mjs`
+- `channel-observation-pause.regression-1.test.mjs`
+- `teammate-observation-pause.regression-1.test.mjs`
+- `run-observation-pause.regression-1.test.mjs`
+- `app-shell-observation-pause.regression-1.test.mjs`
+- `app-shell-approval-refresh.regression-1.test.mjs`
+
+最终日志位于`output/e6-20260928/r03-packaging-retry-20261026/`：
+`web-observation-integrated-final.log` SHA256
+`6963aab5111e887b83b79d7af116e73d86fb985397c7be3cfd8be457a784d02c`。
+差量独审分别见同目录`desktop-observation-independent-review.md`、
+`web-core-observation-independent-review.md`、`runs-runtime-shell-observation-independent-review.md`。
+初审私聊finding由未实现这两文件的主代理复核最新源码与最终组合结果，无剩余确认问题。
+
+仍未完成：新字节精确QA冻结/打包/真实GUI复验，以及总计划P3/P4/P5。
+当前保留Main/Host和App/profile不得被本检查点覆盖、强杀或重放；未知效果仍保持未知。
+没有push、PR、merge或发布，不把本地checkpoint当最终交付。

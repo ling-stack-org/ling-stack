@@ -33,6 +33,7 @@ import { readSseResponse } from "../sse.js";
 import { recoverSubmissionReceipt, submissionWasRejected, UnconfirmedConversationSubmissionError, RecoveredConversationSubmissionError } from "../shared/conversation/conversation-submission-recovery.js";
 import { submissionLookupJournal } from "../shared/conversation/conversation-submission-journal.js";
 import { validateConversationSubmissionReceipt } from "../shared/conversation/submission-receipt-scope.js";
+import { DaemonObservationDeferredError, isDaemonObservationPausedForWorkspace, liveDaemonObservation, shouldDeferDaemonObservationError, type DaemonObservation } from "../shared/conversation/observation/daemon-observation.js";
 import type {
   AiTeammate,
   Channel,
@@ -166,6 +167,7 @@ interface CreateTaskFromSlashCommandInput {
 
 export function useChannelActionsController(input: {
   readonly form: RunFormState;
+  readonly observation?: DaemonObservation;
   readonly setForm: Dispatch<SetStateAction<RunFormState>>;
   readonly channels: readonly Channel[];
   readonly channelForm: ChannelCreateFormState;
@@ -222,6 +224,17 @@ export function useChannelActionsController(input: {
   readonly refreshRuntimeState: (cwd?: string) => Promise<void>;
   readonly refreshChannelActivity: () => Promise<void>;
 }): ChannelActionsController {
+  const observationRef = useRef(input.observation ?? liveDaemonObservation);
+  observationRef.current = input.observation ?? liveDaemonObservation;
+  function assertSubmissionAllowed(cwd = input.form.cwd): void {
+    if (isDaemonObservationPausedForWorkspace(observationRef.current, cwd)) throw new DaemonObservationDeferredError();
+  }
+  function admitMutation<Args extends unknown[], Result>(action: (...args: Args) => Promise<Result>) {
+    return async (...args: Args): Promise<Result> => {
+      assertSubmissionAllowed();
+      return action(...args);
+    };
+  }
   const streamOwnerKey = JSON.stringify([input.form.cwd.trim(), input.selectedChannelId, input.selectedChannelMessageThreadId ?? ""]);
   const streamOwnerRef = useRef({ key: streamOwnerKey });
   // Identity changes on every owner transition, including A -> B -> A.
@@ -236,6 +249,7 @@ export function useChannelActionsController(input: {
     scope: ChannelActionFeedbackScope,
     caught: unknown,
   ): string {
+    if (shouldDeferDaemonObservationError(caught, observationRef.current, input.form.cwd)) return "";
     const message = caught instanceof Error ? caught.message : String(caught);
     input.reportFeedback({ surface, identity, scope, message });
     return message;
@@ -262,6 +276,7 @@ export function useChannelActionsController(input: {
   async function applyCreatedChannelTeammates(channelId: string, form: ChannelCreateFormState): Promise<void> {
     const teammateIds = [...new Set(form.selectedTeammateIds.filter(Boolean))];
     for (const teammateId of teammateIds) {
+      assertSubmissionAllowed();
       await input.addChannelTeammate(channelId, teammateId);
     }
   }
@@ -503,10 +518,19 @@ export function useChannelActionsController(input: {
       const errorMessage = reportFeedback("composer", "unselected", "validation", "请先选择 channel");
       return { errorMessage };
     }
+    assertSubmissionAllowed();
     const channelId = input.selectedChannelId;
     const streamOwner = streamOwnerRef.current;
+    const observation = observationRef.current;
+    const submissionCwd = input.form.cwd.trim();
+    const canObserveStream = () => observationRef.current.epoch === observation.epoch
+      && observationRef.current.baseUrl === observation.baseUrl && observationRef.current.workspaceCwd === observation.workspaceCwd
+      && !isDaemonObservationPausedForWorkspace(observationRef.current, submissionCwd);
+    async function refreshObservation(read: () => Promise<void>): Promise<void> {
+      if (canObserveStream()) await read();
+    }
     const submissionOwnerKey = JSON.stringify([input.form.cwd.trim(), channelId, messageInput.threadId ?? ""]);
-    const canPublishStream = () => streamOwnerRef.current === streamOwner && streamOwner.key === submissionOwnerKey;
+    const canPublishStream = () => streamOwnerRef.current === streamOwner && streamOwner.key === submissionOwnerKey && canObserveStream();
     function publishStreamProjection(
       messages: (current: readonly ChannelMessage[]) => readonly ChannelMessage[],
       items: (current: readonly ConversationItemV1[]) => readonly ConversationItemV1[],
@@ -528,10 +552,12 @@ export function useChannelActionsController(input: {
     const pendingKey = submissionLookupJournal.read(submissionScope);
     if (pendingKey) {
       const query = { surface: "channel" as const, channelId, threadId: messageInput.threadId, idempotencyKey: pendingKey };
-      const receipt = await recoverSubmissionReceipt(async () => validateConversationSubmissionReceipt(
-        await getConversationSubmission(submissionScope.cwd, query), submissionScope.cwd, query));
+      const receipt = await recoverSubmissionReceipt(async () => {
+        if (!canObserveStream()) throw new DaemonObservationDeferredError();
+        return validateConversationSubmissionReceipt(await getConversationSubmission(submissionScope.cwd, query), submissionScope.cwd, query);
+      });
       if (!receipt?.sourceItem) throw new UnconfirmedConversationSubmissionError(pendingKey, true);
-      await input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true });
+      await refreshObservation(() => input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true }));
       submissionLookupJournal.forget(submissionScope, pendingKey);
       throw new RecoveredConversationSubmissionError(projectMessageItem(receipt.sourceItem, []).body);
     }
@@ -602,9 +628,9 @@ export function useChannelActionsController(input: {
             messageInput.onReplyLinked?.(data.activeReply);
           }
           const workspaceCwd = input.form.cwd.trim();
-          void Promise.allSettled([
-            input.refreshRuns(workspaceCwd),
-            input.refreshRuntimeState(workspaceCwd),
+          if (canObserveStream()) void Promise.allSettled([
+            refreshObservation(() => input.refreshRuns(workspaceCwd)),
+            refreshObservation(() => input.refreshRuntimeState(workspaceCwd)),
           ]);
           return;
         }
@@ -674,16 +700,16 @@ export function useChannelActionsController(input: {
         }
       });
       if (!messageAccepted) throw new Error("Pending confirmation");
-      await input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true });
-      await input.refreshChannelExecutionProposals(channelId);
-      await input.refreshChannelIntentDecisions(channelId);
+      await refreshObservation(() => input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true }));
+      await refreshObservation(() => input.refreshChannelExecutionProposals(channelId));
+      await refreshObservation(() => input.refreshChannelIntentDecisions(channelId));
       if (receivedAiReply) {
-        await input.refreshUsedMemoryAudit(input.form.cwd.trim());
+        await refreshObservation(() => input.refreshUsedMemoryAudit(submissionCwd));
       }
-      await input.refreshChannelMessageRouteDecisions(channelId);
-      await input.refreshChannelFiles(channelId);
+      await refreshObservation(() => input.refreshChannelMessageRouteDecisions(channelId));
+      await refreshObservation(() => input.refreshChannelFiles(channelId));
       if (autoStartedWorkflow) {
-        await input.refreshChannelActivity();
+        await refreshObservation(() => input.refreshChannelActivity());
       }
       if (streamErrorMessage) {
         reportFeedback("composer", channelId, "stream", streamErrorMessage);
@@ -691,17 +717,33 @@ export function useChannelActionsController(input: {
       }
       return {};
     } catch (error) {
+      if (shouldDeferDaemonObservationError(error, observationRef.current, submissionCwd)) {
+        // Loss of observation neither rejects an accepted source nor authorizes
+        // replay. Unacknowledged requests retain their original query pointer.
+        if (messageAccepted) return {};
+        throw new UnconfirmedConversationSubmissionError(idempotencyKey);
+      }
       let rejectionConfirmed = false;
       if (!messageAccepted) {
+        if (isDaemonObservationPausedForWorkspace(observationRef.current, submissionCwd)) {
+          reportFeedback("composer", channelId, "stream", error);
+          throw error;
+        }
         const query = { surface: "channel" as const, channelId, threadId: messageInput.threadId, idempotencyKey };
-        const receipt = await recoverSubmissionReceipt(async () => validateConversationSubmissionReceipt(
-          await getConversationSubmission(submissionScope.cwd, query), submissionScope.cwd, query));
-        rejectionConfirmed = submissionWasRejected(error, receipt);
+        const receipt = await recoverSubmissionReceipt(async () => {
+          if (!canObserveStream()) throw new DaemonObservationDeferredError();
+          return validateConversationSubmissionReceipt(await getConversationSubmission(submissionScope.cwd, query), submissionScope.cwd, query);
+        });
+        rejectionConfirmed = canObserveStream() && submissionWasRejected(error, receipt);
         if (receipt?.sourceItem) {
           messageAccepted = true;
           submissionLookupJournal.forget(submissionScope, idempotencyKey);
           messageInput.onMessageAccepted?.(projectMessageItem(receipt.sourceItem, []));
         } else if (!rejectionConfirmed) {
+          if (!canObserveStream()) {
+            reportFeedback("composer", channelId, "stream", error);
+            throw error;
+          }
           throw new UnconfirmedConversationSubmissionError(idempotencyKey);
         }
       }
@@ -709,7 +751,7 @@ export function useChannelActionsController(input: {
       if (messageAccepted) {
         // Reconcile the original accepted turn; a broken stream is not a resend request.
         await Promise.allSettled([
-          input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true }),
+          refreshObservation(() => input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true })),
         ]);
       }
       reportFeedback("composer", channelId, "stream", error);
@@ -1013,28 +1055,28 @@ export function useChannelActionsController(input: {
   }
 
   return {
-    saveChannel,
-    saveDefaultChannel,
-    saveChannelEdit,
-    saveChannelBranch,
-    archiveSidebarChannel,
-    archiveSidebarChannelBranch,
-    removeChannel,
-    saveTask,
-    createTaskFromSlashCommand,
+    saveChannel: admitMutation(saveChannel),
+    saveDefaultChannel: admitMutation(saveDefaultChannel),
+    saveChannelEdit: admitMutation(saveChannelEdit),
+    saveChannelBranch: admitMutation(saveChannelBranch),
+    archiveSidebarChannel: admitMutation(archiveSidebarChannel),
+    archiveSidebarChannelBranch: admitMutation(archiveSidebarChannelBranch),
+    removeChannel: admitMutation(removeChannel),
+    saveTask: admitMutation(saveTask),
+    createTaskFromSlashCommand: admitMutation(createTaskFromSlashCommand),
     sendChannelMessage,
-    uploadChannelFiles,
-    addChannelLinkPreview,
-    removeChannelAttachment,
-    saveChannelBrief,
-    saveChannelProtocolPatch,
-    revertChannelProtocolSettings,
-    supersedeChannelDecision,
-    rejectChannelDecision,
-    createHandoffFromTask,
-    updateHandoffStatusValue,
-    startWorkflowFromHandoff,
-    createTaskFromContextSummary,
-    runActivityTriageAction,
+    uploadChannelFiles: admitMutation(uploadChannelFiles),
+    addChannelLinkPreview: admitMutation(addChannelLinkPreview),
+    removeChannelAttachment: admitMutation(removeChannelAttachment),
+    saveChannelBrief: admitMutation(saveChannelBrief),
+    saveChannelProtocolPatch: admitMutation(saveChannelProtocolPatch),
+    revertChannelProtocolSettings: admitMutation(revertChannelProtocolSettings),
+    supersedeChannelDecision: admitMutation(supersedeChannelDecision),
+    rejectChannelDecision: admitMutation(rejectChannelDecision),
+    createHandoffFromTask: admitMutation(createHandoffFromTask),
+    updateHandoffStatusValue: admitMutation(updateHandoffStatusValue),
+    startWorkflowFromHandoff: admitMutation(startWorkflowFromHandoff),
+    createTaskFromContextSummary: admitMutation(createTaskFromContextSummary),
+    runActivityTriageAction: admitMutation(runActivityTriageAction),
   };
 }

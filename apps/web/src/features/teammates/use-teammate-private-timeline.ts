@@ -1,10 +1,49 @@
 import { useEffect, useRef, useState } from "react";
+import { LingDaemonTransportError } from "@ling-stack/api-client";
 import type { CanonicalTranscriptProjection } from "@ling-stack/conversation-ui-core";
 import { listTeammateDirectMessages } from "../../api.js";
 import { projectConversationDetailTimeline } from "../../domains/conversations/canonical-transcript-snapshot.js";
 import { mergeConversationDetailSnapshots } from "../../domains/conversations/conversation-detail-merge.js";
 import type { ConversationDetailResponse, LingTurn, LingTurnRun, RunSession } from "../../types.js";
 import { privateMessageIdsByCanonicalItemId, privateTimelineResponseIsOwned } from "./teammate-private-timeline-items.js";
+import { isDaemonObservationPausedForWorkspace, useDaemonObservation } from "../../shared/conversation/observation/daemon-observation.js";
+
+interface PrivateObservationRead {
+  readonly cwd: string;
+  readonly epoch: number;
+  readonly baseUrl: string;
+  readonly workspaceCwd: string;
+}
+
+/** Only gates observation reads, never accepted commands or their receipts. */
+export function useTeammateObservationReads(cwd: string) {
+  const observation = useDaemonObservation();
+  const latest = useRef({ cwd: cwd.trim(), observation });
+  latest.current = { cwd: cwd.trim(), observation };
+  return {
+    paused: isDaemonObservationPausedForWorkspace(observation, cwd),
+    epoch: observation.epoch,
+    baseUrl: observation.baseUrl,
+    workspaceCwd: observation.workspaceCwd,
+    begin(): PrivateObservationRead | undefined {
+      const current = latest.current;
+      return isDaemonObservationPausedForWorkspace(current.observation, current.cwd) ? undefined
+        : { cwd: current.cwd, epoch: current.observation.epoch, baseUrl: current.observation.baseUrl,
+          workspaceCwd: current.observation.workspaceCwd };
+    },
+    isCurrent(read: PrivateObservationRead): boolean {
+      const current = latest.current;
+      return read.cwd === current.cwd && read.epoch === current.observation.epoch
+        && read.baseUrl === current.observation.baseUrl && read.workspaceCwd === current.observation.workspaceCwd
+        && !isDaemonObservationPausedForWorkspace(current.observation, current.cwd);
+    },
+    shouldMergeTransport(error: unknown): boolean {
+      const current = latest.current;
+      return error instanceof LingDaemonTransportError
+        && isDaemonObservationPausedForWorkspace(current.observation, current.cwd);
+    },
+  };
+}
 
 interface PrivateTimelineState {
   readonly owner: string;
@@ -32,6 +71,7 @@ export function useTeammatePrivateTimeline(input: {
   readonly active: boolean;
 }): PrivateTimelineState {
   const cwd = input.cwd.trim();
+  const observationReads = useTeammateObservationReads(cwd);
   const owner = JSON.stringify([cwd, input.teammateId, input.directThreadId ?? ""]);
   const ownerRef = useRef(owner);
   ownerRef.current = owner;
@@ -51,7 +91,7 @@ export function useTeammatePrivateTimeline(input: {
     let lastStartedAt = 0;
     let timeout: number | undefined;
     const schedule = (urgent = false): void => {
-      if (cancelled || ownerRef.current !== owner || !cwd) return;
+      if (cancelled || ownerRef.current !== owner || !cwd || !observationReads.begin()) return;
       pending = true;
       urgentPending ||= urgent;
       if (loading) return;
@@ -63,14 +103,15 @@ export function useTeammatePrivateTimeline(input: {
       timeout = window.setTimeout(() => { timeout = undefined; void refresh(); }, delay);
     };
     const refresh = async (): Promise<void> => {
-      if (loading || cancelled || ownerRef.current !== owner || !cwd) return;
+      const observationRead = observationReads.begin();
+      if (loading || cancelled || ownerRef.current !== owner || !cwd || !observationRead) return;
       loading = true;
       pending = false;
       urgentPending = false;
       lastStartedAt = Date.now();
       try {
         const response = await listTeammateDirectMessages(cwd, input.teammateId);
-        if (cancelled || ownerRef.current !== owner) return;
+        if (cancelled || ownerRef.current !== owner || !observationReads.isCurrent(observationRead)) return;
         if (!privateTimelineResponseIsOwned(response, input)) {
           currentDetail = undefined;
           setSnapshot({ owner, status: "error" });
@@ -93,8 +134,8 @@ export function useTeammatePrivateTimeline(input: {
           threadId: detail?.thread.id,
           workspaceId: detail?.thread.workspaceId,
         });
-      } catch {
-        if (!cancelled && ownerRef.current === owner) setSnapshot((current) => ({
+      } catch (error) {
+        if (!cancelled && ownerRef.current === owner && !observationReads.shouldMergeTransport(error)) setSnapshot((current) => ({
           ...(current.owner === owner ? current : { owner }),
           status: "error",
         }));
@@ -115,6 +156,9 @@ export function useTeammatePrivateTimeline(input: {
       if (timeout !== undefined) window.clearTimeout(timeout);
     };
   }, [cwd, input.teammateId, input.directThreadId, owner]);
+  useEffect(() => {
+    if (!observationReads.paused) refreshRef.current?.(true);
+  }, [observationReads.paused, observationReads.epoch, observationReads.baseUrl, observationReads.workspaceCwd, owner]);
   useEffect(() => {
     // Coalesce action/message revisions, but flush terminal state promptly.
     // This does not restart an in-flight request for every streaming token.

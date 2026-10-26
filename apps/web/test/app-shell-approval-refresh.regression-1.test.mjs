@@ -13,6 +13,7 @@ import { ts, visitTypeScriptNode, withTypeScriptSourceFiles } from "../scripts/t
 // no_claim=actual AppShell callback with stubbed view IO is not packaged GUI or live SSE recovery.
 const webRoot = fileURLToPath(new URL("..", import.meta.url));
 const appPath = fileURLToPath(new URL("../src/app/AppShell.tsx", import.meta.url));
+class DaemonObservationDeferredError extends Error {}
 const callback = withTypeScriptSourceFiles([appPath], files => {
   const source = files.get(appPath), matches = [];
   visitTypeScriptNode(source, node => {
@@ -28,15 +29,56 @@ function fixture(overrides = {}) {
     "loadRun", "refreshRuns", "refreshMediaJobs", "refreshTasks", "refreshChannelMessages", "refreshChannelProtocol",
     "refreshChannelFiles", "refreshChannelRunArtifacts", "refreshChannelExecutionActions", "refreshChannelActivityTransitions"]
     .map(name => [name, async (...args) => { calls.push({ name, args }); }]));
-  const context = { ...io, window: { setTimeout: callback => { timers.push(callback); return timers.length; } },
+  const context = { ...io, DaemonObservationDeferredError, window: { setTimeout: callback => { timers.push(callback); return timers.length; } },
     selectedConversationDetail: undefined, activeRunId: "", lookupRunId: "", approvalRepairRunId: "",
     selectedChannelId: "channel-qa", selectedChannelMessageThreadId: "topic-qa", channelRunsForArtifacts: [{ id: "run-qa" }],
     approvalRefreshOwnerRef: { current: { cwd: "/isolated/qa", channelId: "channel-qa" } },
+    daemonObservationRef: { current: { paused: false, epoch: 1 } },
     refreshApprovals: () => { throw new Error("receipt observer must not recurse"); }, ...overrides };
   context.approvalRefreshOwner = context.approvalRefreshOwnerRef.current;
   return { calls, timers, refresh: runInNewContext(`(${callback})`, context),
+    pause(paused = true) { context.daemonObservationRef.current = { paused, epoch: context.daemonObservationRef.current.epoch + 1 }; },
     replaceOwner(cwd, channelId) { context.approvalRefreshOwnerRef.current = { cwd, channelId }; } };
 }
+
+// Regression: R03-OBS — delayed receipt invalidation bypassed Host pause.
+// Found by /qa on 2026-10-26
+// Report: output/e6-20260928/r03-packaging-retry-20261026/live-findings.md
+test("paused Host receipt callbacks cannot start new observation reads", async () => {
+  const f = fixture(); f.pause();
+  await f.refresh("/isolated/qa", { runId: "run-qa", channelId: "channel-qa" });
+  assert.equal(f.calls.length, 0); assert.equal(f.timers.length, 0);
+});
+
+test("a receipt refresh spanning pause and resume cannot schedule stale fan-out", async () => {
+  let release;
+  const f = fixture({ refreshConversationThreads: () => new Promise(resolve => { release = resolve; }) });
+  const pending = f.refresh("/isolated/qa", { runId: "run-qa", channelId: "channel-qa" });
+  f.pause(); f.pause(false); release(); await pending;
+  assert.equal(f.calls.length, 0); assert.equal(f.timers.length, 0);
+});
+
+test("receipt follow-up timers consult current Host observation before issuing reads", async () => {
+  const f = fixture({ activeRunId: "run-qa" });
+  await f.refresh("/isolated/qa", { runId: "run-qa", channelId: "channel-qa" });
+  const prior = f.calls.length; assert.equal(f.timers.length, 2);
+  f.pause(); f.pause(false);
+  for (const timer of f.timers) timer();
+  assert.equal(f.calls.length, prior);
+});
+
+test("a deferred diagnostic read after approval completion stops fan-out without reporting approval failure", async () => {
+  const f = fixture({ activeRunId: "run-qa", loadRun: async () => { f.pause(); throw new DaemonObservationDeferredError(); } });
+  await f.refresh("/isolated/qa", { runId: "run-qa", channelId: "channel-qa" });
+  assert.equal(f.calls.some(c => channelNames.includes(c.name)), false);
+});
+
+test("approval read fan-out retains HTTP and plain errors even if they resemble observation deferral", async () => {
+  for (const error of [new Error("HTTP 403 denied"), Object.assign(new Error("Observation paused"), { name: "DaemonObservationDeferredError" })]) {
+    const f = fixture({ activeRunId: "run-qa", loadRun: async () => { throw error; } });
+    await assert.rejects(f.refresh("/isolated/qa", { runId: "run-qa", channelId: "channel-qa" }), caught => caught === error);
+  }
+});
 const channelNames = ["refreshTasks", "refreshChannelMessages", "refreshChannelProtocol", "refreshChannelFiles",
   "refreshChannelRunArtifacts", "refreshChannelExecutionActions", "refreshChannelActivityTransitions"];
 

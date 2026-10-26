@@ -1,4 +1,6 @@
 import { useEffect, useRef } from "react";
+import { LingDaemonTransportError } from "@ling-stack/api-client";
+import { DaemonObservationDeferredError, isDaemonObservationPausedForWorkspace, liveDaemonObservation, type DaemonObservation } from "../shared/conversation/observation/daemon-observation.js";
 import { getControlPlaneSnapshot } from "../api/control-plane.js";
 import {
   controlPlaneRpcStreamUrl,
@@ -27,6 +29,7 @@ export interface ControlPlaneInvalidationController {
 export function useControlPlaneInvalidation(input: {
   readonly daemonBaseUrl: string;
   readonly daemonHealthy: boolean | undefined;
+  readonly observation?: DaemonObservation;
   readonly localWebSocketRpcEnabled: boolean;
   readonly workspaceCwd: string;
   readonly selectedChannelId: string;
@@ -35,7 +38,7 @@ export function useControlPlaneInvalidation(input: {
   readonly setSkillLibraryRefreshToken: (update: (current: number) => number) => void;
   readonly refreshRuns: (cwd?: string) => Promise<void>;
   readonly refreshConversationThreads: (cwd?: string, options?: { readonly throwOnError?: boolean }) => Promise<void>;
-  readonly refreshSelectedConversation: (cwd?: string) => Promise<void>;
+  readonly refreshSelectedConversation: (cwd?: string, options?: { readonly throwOnError?: boolean }) => Promise<void>;
   readonly refreshRuntimeState: (cwd?: string) => Promise<void>;
   readonly refreshApprovals: (cwd?: string, runId?: string) => Promise<void>;
   readonly refreshApprovalPolicy: () => Promise<void>;
@@ -53,13 +56,18 @@ export function useControlPlaneInvalidation(input: {
 }): ControlPlaneInvalidationController {
   const workspaceIdentity = input.workspaceCwd.trim() || "workspace:unavailable";
   const errorOwner = useFocusedDomainErrorOwner<"control-plane", string>(workspaceIdentity);
+  const observationRef = useRef(input.observation ?? liveDaemonObservation);
+  observationRef.current = input.observation ?? liveDaemonObservation;
+  const observationPaused = isDaemonObservationPausedForWorkspace(observationRef.current, input.workspaceCwd);
   const invalidationRef = useRef<(domains: readonly ControlPlaneDomain[]) => Promise<void>>(async () => undefined);
   invalidationRef.current = async (domains) => {
     const workspaceCwd = input.workspaceCwd;
+    if (isDaemonObservationPausedForWorkspace(observationRef.current, workspaceCwd)) throw new DaemonObservationDeferredError();
     if (!workspaceCwd) {
       return;
     }
     const changed = new Set(domains);
+    const observationEpoch = observationRef.current.epoch;
     if (domains.some((domain) => ["runs", "work_units", "approvals", "artifacts", "channels", "teammates"].includes(domain))) {
       window.dispatchEvent(new CustomEvent("ling:work-summary-invalidated", { detail: { cwd: workspaceCwd } }));
     }
@@ -70,11 +78,16 @@ export function useControlPlaneInvalidation(input: {
       errorOwner.clear(request);
       refreshes.push(refresh.then(
         (value) => {
+          if (observationRef.current.epoch !== observationEpoch
+            || isDaemonObservationPausedForWorkspace(observationRef.current, workspaceCwd)) throw new DaemonObservationDeferredError();
           errorOwner.clear(request);
           return value;
         },
         (caught: unknown) => {
-          errorOwner.report(request, { scope: "stream", message: domainErrorMessage(caught) });
+          if (!(caught instanceof DaemonObservationDeferredError)) {
+            errorOwner.report(request, { scope: "stream", message: domainErrorMessage(caught),
+              origin: caught instanceof LingDaemonTransportError ? "transport" : undefined });
+          }
           throw caught;
         },
       ));
@@ -145,7 +158,7 @@ export function useControlPlaneInvalidation(input: {
       trackRefresh(conversationDomain, "conversation-list", input.refreshConversationThreads(workspaceCwd, { throwOnError: true }));
     }
     if (conversationDomain && !input.selectedChannelId) {
-      trackRefresh(conversationDomain, "selected-conversation", input.refreshSelectedConversation(workspaceCwd));
+      trackRefresh(conversationDomain, "selected-conversation", input.refreshSelectedConversation(workspaceCwd, { throwOnError: true }));
       if (input.selectedChannelId && !changed.has("runs")) {
         trackRefresh(
           conversationDomain,
@@ -162,7 +175,7 @@ export function useControlPlaneInvalidation(input: {
 
   useEffect(() => {
     const workspaceCwd = input.workspaceCwd;
-    if (!workspaceCwd || input.daemonHealthy !== true) {
+    if (!workspaceCwd || input.daemonHealthy !== true || observationPaused) {
       return undefined;
     }
     let closed = false;
@@ -410,13 +423,16 @@ export function useControlPlaneInvalidation(input: {
   }, [
     input.daemonBaseUrl,
     input.daemonHealthy,
+    observationPaused,
+    input.observation?.epoch,
     input.localWebSocketRpcEnabled,
     input.workspaceCwd,
   ]);
 
+  const errors = errorOwner.errors().filter(error => !observationPaused || error.origin !== "transport");
   return {
-    errors: errorOwner.errors() as readonly ControlPlaneInvalidationError[],
-    error: errorOwner.latest() as ControlPlaneInvalidationError | undefined,
+    errors: errors as readonly ControlPlaneInvalidationError[],
+    error: errors.at(-1) as ControlPlaneInvalidationError | undefined,
     clearError: errorOwner.clearAll,
   };
 }

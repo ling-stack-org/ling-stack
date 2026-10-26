@@ -30,6 +30,7 @@ import {
   updateChannelCouncilPolicy,
 } from "../../api.js";
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
+import { isDaemonObservationPausedForWorkspace, liveDaemonObservation, shouldDeferDaemonObservationError, type DaemonObservation } from "../../shared/conversation/observation/daemon-observation.js";
 import { deriveChannelTasks } from "../../lib/channel-artifacts.js";
 import { mergeConversationItems, mergeChannelUserInputPage, projectChannelConversationItemPage, type ChannelConversationMessagePage } from "../../lib/channel-conversation-items.js";
 import { createConversationReadEpoch } from "../../lib/conversation-read-epoch.js";
@@ -226,6 +227,7 @@ interface WorkspaceFeedbackEntry {
 
 export function useWorkspaceDomain(input: {
   readonly cwd: string;
+  readonly observation?: DaemonObservation;
   readonly initialWorkspaceCwd: string;
   readonly selectedChannelBranchId: string;
   readonly translate: (value: string) => string;
@@ -324,6 +326,20 @@ export function useWorkspaceDomain(input: {
   const [channelCouncilSaving, setChannelCouncilSaving] = useState(false);
   const [error, setError] = useState<DomainError | undefined>();
   const loadGuard = useLatestKeyedRequestGuard();
+  const observationRef = useRef(input.observation ?? liveDaemonObservation);
+  observationRef.current = input.observation ?? liveDaemonObservation;
+
+  function beginObservationRead(cwd: string) {
+    const observation = observationRef.current;
+    const admitted = !isDaemonObservationPausedForWorkspace(observation, cwd);
+    return { admitted, isCurrent: () => admitted && observationRef.current.epoch === observation.epoch
+      && observationRef.current.baseUrl === observation.baseUrl && observationRef.current.workspaceCwd === observation.workspaceCwd
+      && !isDaemonObservationPausedForWorkspace(observationRef.current, cwd) };
+  }
+
+  function deferObservationError(caught: unknown, cwd = input.cwd): boolean {
+    return shouldDeferDaemonObservationError(caught, observationRef.current, cwd);
+  }
 
   const selectedChannelBranch = channelBranches.find((branch) =>
     branch.id === input.selectedChannelBranchId &&
@@ -398,22 +414,31 @@ export function useWorkspaceDomain(input: {
 
   function beginChannelPanelRead(key: string, cwd: string, channelId: string) {
     const owner = channelPanelOwnerRef.current;
+    const observationRead = beginObservationRead(cwd);
     const token = owner.key === JSON.stringify([cwd, channelId]) ? loadGuard.next(key) : undefined;
-    const isCurrent = () => token !== undefined && channelPanelOwnerRef.current === owner && loadGuard.isCurrent(key, token);
+    const isOwnerCurrent = () => token !== undefined && channelPanelOwnerRef.current === owner && loadGuard.isCurrent(key, token);
+    const isCurrent = () => isOwnerCurrent() && observationRead.isCurrent();
     function publish<T>(setter: Dispatch<SetStateAction<T>>, update: SetStateAction<NoInfer<T>>): void {
       if (!isCurrent()) return;
       // React may apply an updater after navigation or a newer request.
       setter(current => !isCurrent() ? current : typeof update === "function"
         ? (update as (value: T) => T)(current) : update);
     }
+    function publishOwned<T>(setter: Dispatch<SetStateAction<T>>, update: SetStateAction<NoInfer<T>>): void {
+      if (!isOwnerCurrent()) return;
+      setter(current => !isOwnerCurrent() ? current : typeof update === "function"
+        ? (update as (value: T) => T)(current) : update);
+    }
     function report(surface: WorkspaceFeedbackSurface, caught: unknown): void {
-      if (!isCurrent()) return;
+      // Host/business errors remain errors even when their successful snapshot
+      // would have been too old to publish. Only typed IO loss may be merged.
+      if (!isOwnerCurrent() || deferObservationError(caught, cwd)) return;
       const message = caught instanceof Error ? caught.message : String(caught);
       const error: DomainError = { scope: "load", message };
-      publish(setError, error);
+      setError(current => isOwnerCurrent() ? error : current);
       input.reportFeedback({ surface, identity: channelId, scope: "load", message });
     }
-    return { isCurrent, publish, report };
+    return { isCurrent, isOwnerCurrent, publish, publishOwned, report };
   }
 
   function clearScopedFeedback(surface: WorkspaceFeedbackSurface, identity: string): void {
@@ -425,13 +450,17 @@ export function useWorkspaceDomain(input: {
     identity: string,
     scope: WorkspaceFeedbackScope,
     caught: unknown,
+    cwd = input.cwd,
   ): void {
+    if (deferObservationError(caught, cwd)) return;
     const message = caught instanceof Error ? caught.message : String(caught);
     setError({ scope, message });
     input.reportFeedback({ surface, identity, scope, message });
   }
 
   async function refreshChannels(cwd = input.cwd): Promise<void> {
+    const observationRead = beginObservationRead(cwd);
+    if (!observationRead.admitted) return;
     if (!cwd) {
       setChannels([]);
       setChannelBranches([]);
@@ -445,7 +474,7 @@ export function useWorkspaceDomain(input: {
       clearScopedFeedback("workspace", cwd);
       setError(undefined);
       const response = await listChannels(cwd);
-      if (!loadGuard.isCurrent(`channels:${cwd}`, token)) {
+      if (!loadGuard.isCurrent(`channels:${cwd}`, token) || !observationRead.isCurrent()) {
         return;
       }
       setChannels(response.channels);
@@ -458,7 +487,7 @@ export function useWorkspaceDomain(input: {
       });
     } catch (caught) {
       if (!loadGuard.isCurrent(`channels:${cwd}`, token)) return;
-      reportScopedFeedback("workspace", cwd, "load", caught);
+      reportScopedFeedback("workspace", cwd, "load", caught, cwd);
     } finally {
       if (loadGuard.isCurrent(`channels:${cwd}`, token)) {
         setChannelsLoading(false);
@@ -472,7 +501,7 @@ export function useWorkspaceDomain(input: {
     if (!read.isCurrent()) return;
     if (!cwd || !channelId) {
       read.publish(setTasks, []);
-      read.publish(setTasksLoading, false);
+      read.publishOwned(setTasksLoading, false);
       return;
     }
 
@@ -491,11 +520,13 @@ export function useWorkspaceDomain(input: {
     } catch (caught) {
       read.report("task", caught);
     } finally {
-      read.publish(setTasksLoading, false);
+      read.publishOwned(setTasksLoading, false);
     }
   }
 
   async function refreshAiCouncils(cwd = input.cwd.trim()): Promise<void> {
+    const observationRead = beginObservationRead(cwd);
+    if (!observationRead.admitted) return;
     if (!cwd) {
       setAiCouncils([]);
       setAiCouncilHealthReport(undefined);
@@ -512,14 +543,14 @@ export function useWorkspaceDomain(input: {
         listAiCouncils(cwd, { limit: 100 }),
         getAiCouncilHealth(cwd, { limit: 500 }),
       ]);
-      if (!loadGuard.isCurrent(`aiCouncils:${cwd}`, token)) {
+      if (!loadGuard.isCurrent(`aiCouncils:${cwd}`, token) || !observationRead.isCurrent()) {
         return;
       }
       setAiCouncils(listResponse.councils);
       setAiCouncilHealthReport(healthResponse.report);
     } catch (caught) {
       if (!loadGuard.isCurrent(`aiCouncils:${cwd}`, token)) return;
-      reportScopedFeedback("workspace", selectedChannelId || cwd, "load", caught);
+      reportScopedFeedback("workspace", selectedChannelId || cwd, "load", caught, cwd);
     } finally {
       if (loadGuard.isCurrent(`aiCouncils:${cwd}`, token)) {
         setAiCouncilsLoading(false);
@@ -534,7 +565,7 @@ export function useWorkspaceDomain(input: {
     if (!cwd || !channelId) {
       read.publish(setChannelCouncilPolicy, undefined);
       read.publish(setChannelEffectiveCouncil, undefined);
-      read.publish(setChannelCouncilLoading, false);
+      read.publishOwned(setChannelCouncilLoading, false);
       return;
     }
 
@@ -551,7 +582,7 @@ export function useWorkspaceDomain(input: {
     } catch (caught) {
       read.report("workspace", caught);
     } finally {
-      read.publish(setChannelCouncilLoading, false);
+      read.publishOwned(setChannelCouncilLoading, false);
     }
   }
 
@@ -560,6 +591,7 @@ export function useWorkspaceDomain(input: {
     channelId = selectedChannelId,
   ): Promise<void> {
     const cwd = input.cwd.trim();
+    if (!beginObservationRead(cwd).admitted) return;
     if (!cwd || !channelId || channelCouncilSaving) {
       return;
     }
@@ -569,9 +601,8 @@ export function useWorkspaceDomain(input: {
       clearScopedFeedback("workspace", channelId);
       setError(undefined);
       const policyResponse = await updateChannelCouncilPolicy(cwd, channelId, policyInput);
-      const effectiveResponse = await getChannelEffectiveCouncil(cwd, channelId);
       setChannelCouncilPolicy(policyResponse.policy);
-      setChannelEffectiveCouncil(effectiveResponse.effectiveCouncil);
+      await refreshSelectedChannelCouncil(channelId);
     } catch (caught) {
       reportScopedFeedback("workspace", channelId, "mutation", caught);
     } finally {
@@ -585,6 +616,8 @@ export function useWorkspaceDomain(input: {
     options?: ChannelMessageRefreshOptions,
   ): Promise<void> {
     const cwd = input.cwd.trim();
+    const observationRead = beginObservationRead(cwd);
+    if (!observationRead.admitted) return;
     if (!cwd || !channelId) {
       setChannelMessages([]);
       setChannelConversationItems([]);
@@ -617,7 +650,7 @@ export function useWorkspaceDomain(input: {
         limit: channelMessageInitialLimit,
         surface: threadId ? { kind: "thread", threadId } : { kind: "channel_root" },
       });
-      if (!loadGuard.isCurrent(guardKey, token) || !channelReadEpochRef.current.isCurrent(readTicket)) {
+      if (!loadGuard.isCurrent(guardKey, token) || !channelReadEpochRef.current.isCurrent(readTicket) || !observationRead.isCurrent()) {
         return;
       }
       if (!isSelectedChannelConversation(channelId, threadId)) {
@@ -657,6 +690,8 @@ export function useWorkspaceDomain(input: {
 
   async function loadOlderChannelMessages(channelId = selectedChannelId, threadId?: string): Promise<void> {
     const cwd = input.cwd.trim();
+    const observationRead = beginObservationRead(cwd);
+    if (!observationRead.admitted) return;
     if (!cwd || !channelId || channelItemsBeforeSequence === undefined || channelMessagesLoadingOlder || !channelMessagesHasOlder) {
       return;
     }
@@ -676,7 +711,7 @@ export function useWorkspaceDomain(input: {
         beforeSequence: requestedBeforeSequence,
         surface: threadId ? { kind: "thread", threadId } : { kind: "channel_root" },
       });
-      if (!loadGuard.isCurrent(guardKey, token) || !channelReadEpochRef.current.isCurrent(readTicket)) {
+      if (!loadGuard.isCurrent(guardKey, token) || !channelReadEpochRef.current.isCurrent(readTicket) || !observationRead.isCurrent()) {
         return;
       }
       if (!isSelectedChannelConversation(channelId, threadId)) {
@@ -744,7 +779,7 @@ export function useWorkspaceDomain(input: {
     if (!cwd || !channelId) {
       read.publish(setChannelAttachments, []);
       read.publish(setChannelLinkPreviews, []);
-      read.publish(setChannelFilesLoading, false);
+      read.publishOwned(setChannelFilesLoading, false);
       return;
     }
 
@@ -761,7 +796,7 @@ export function useWorkspaceDomain(input: {
     } catch (caught) {
       read.report("dock", caught);
     } finally {
-      read.publish(setChannelFilesLoading, false);
+      read.publishOwned(setChannelFilesLoading, false);
     }
   }
 
@@ -791,11 +826,11 @@ export function useWorkspaceDomain(input: {
           return { runId: sourceRun.id, artifacts: response.artifacts } as const;
         } catch (caught) {
           const message = caught instanceof Error ? caught.message : String(caught);
-          return { runId: sourceRun.id, error: message } as const;
+          return { runId: sourceRun.id, error: message, caught } as const;
         }
       }),
     );
-    if (!read.isCurrent()) {
+    if (!read.isOwnerCurrent()) {
       return;
     }
 
@@ -804,13 +839,14 @@ export function useWorkspaceDomain(input: {
     for (const result of results) {
       if ("artifacts" in result) {
         nextArtifacts[result.runId] = result.artifacts ?? [];
-      } else {
+      } else if (!deferObservationError(result.caught, cwd)) {
         nextErrors[result.runId] = result.error;
       }
     }
     read.publish(setChannelArtifactsByRun, nextArtifacts);
-    read.publish(setChannelArtifactErrorsByRun, nextErrors);
-    read.publish(setChannelRunArtifactsLoading, false);
+    if (read.isCurrent()) read.publish(setChannelArtifactErrorsByRun, nextErrors);
+    else if (Object.keys(nextErrors).length > 0) read.publishOwned(setChannelArtifactErrorsByRun, current => ({ ...current, ...nextErrors }));
+    read.publishOwned(setChannelRunArtifactsLoading, false);
   }
 
   async function refreshChannelExecutionActions(
@@ -837,27 +873,29 @@ export function useWorkspaceDomain(input: {
           const response = await listExecutionActions(cwd, { runId: sourceRun.id, limit: 100 });
           return { actions: response.actions } as const;
         } catch (caught) {
-          return { error: caught instanceof Error ? caught.message : String(caught) } as const;
+          return { error: caught } as const;
         }
       }),
     ), Promise.all(liveNarrationWorkflowIds(channelWorkflowStepsRef.current, channelRuns, channelId).map(async workflowId => {
       try {
         return { steps: (await listChannelWorkflowSteps(cwd, workflowId)).workflowSteps };
       } catch (caught) {
-        return { error: caught instanceof Error ? caught.message : String(caught) };
+        return { error: caught };
       }
     }))]);
-    if (!read.isCurrent()) {
+    if (!read.isOwnerCurrent()) {
       return;
     }
 
     const nextActions = new Map<string, ExecutionAction>();
     const errors = new Set<string>();
     read.publish(setChannelWorkflowSteps, current => mergeWorkflowNarration(current, narrationResults.flatMap(result => result.steps ?? [])));
-    for (const result of narrationResults) if (result.error) errors.add(result.error);
+    for (const result of narrationResults) if ("error" in result && !deferObservationError(result.error, cwd)) {
+      errors.add(result.error instanceof Error ? result.error.message : String(result.error));
+    }
     for (const result of results) {
       if ("error" in result) {
-        errors.add(result.error ?? "unknown_error");
+        if (!deferObservationError(result.error, cwd)) errors.add(result.error instanceof Error ? result.error.message : String(result.error));
       } else {
         for (const action of result.actions) {
           nextActions.set(action.id, action);
@@ -868,7 +906,8 @@ export function useWorkspaceDomain(input: {
       (b.completedAt ?? b.executedAt ?? b.resolvedAt ?? b.createdAt).localeCompare(a.completedAt ?? a.executedAt ?? a.resolvedAt ?? a.createdAt) ||
       b.id.localeCompare(a.id),
     ));
-    read.publish(setChannelExecutionActionError, errors.size > 0 ? [...errors][0] : "");
+    if (errors.size > 0) read.publishOwned(setChannelExecutionActionError, [...errors][0]!);
+    else read.publish(setChannelExecutionActionError, "");
   }
 
   async function refreshChannelActivityTransitions(
@@ -907,11 +946,11 @@ export function useWorkspaceDomain(input: {
           });
           return { transitions: response.transitions } as const;
         } catch (caught) {
-          return { error: caught instanceof Error ? caught.message : String(caught) } as const;
+          return { error: caught } as const;
         }
       }),
     );
-    if (!read.isCurrent()) {
+    if (!read.isOwnerCurrent()) {
       return;
     }
 
@@ -919,7 +958,7 @@ export function useWorkspaceDomain(input: {
     const errors = new Set<string>();
     for (const result of results) {
       if ("error" in result) {
-        errors.add(result.error ?? "unknown_error");
+        if (!deferObservationError(result.error, cwd)) errors.add(result.error instanceof Error ? result.error.message : String(result.error));
       } else {
         for (const transition of result.transitions) {
           nextTransitions.set(transition.id, transition);
@@ -928,9 +967,10 @@ export function useWorkspaceDomain(input: {
     }
 
     read.publish(setChannelStateTransitions, [...nextTransitions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
-    read.publish(setChannelActivityTransitionError, errors.size > 0 ? [...errors][0] : "");
-    channelActivityTransitionsLoadedScopeRef.current = scopeKey;
-    read.publish(setChannelActivityTransitionsLoading, false);
+    if (errors.size > 0) read.publishOwned(setChannelActivityTransitionError, [...errors][0]!);
+    else read.publish(setChannelActivityTransitionError, "");
+    if (read.isCurrent()) channelActivityTransitionsLoadedScopeRef.current = scopeKey;
+    read.publishOwned(setChannelActivityTransitionsLoading, false);
   }
 
   async function refreshChannelGovernanceNotifications(channelId = selectedChannelId): Promise<void> {
@@ -951,15 +991,16 @@ export function useWorkspaceDomain(input: {
         limit: 50,
       });
       read.publish(setChannelGovernanceNotifications, response.notifications);
-    } catch {
-      read.publish(setChannelGovernanceNotifications, []);
+    } catch (caught) {
+      read.report("workspace", caught);
     } finally {
-      read.publish(setChannelGovernanceNotificationsLoading, false);
+      read.publishOwned(setChannelGovernanceNotificationsLoading, false);
     }
   }
 
   async function markChannelGovernanceNotificationSeen(notificationId: string): Promise<void> {
     const cwd = input.cwd.trim();
+    if (!beginObservationRead(cwd).admitted) return;
     if (!cwd || !notificationId || channelGovernanceNotificationActionId) {
       return;
     }
@@ -980,6 +1021,7 @@ export function useWorkspaceDomain(input: {
 
   async function dismissChannelGovernanceNotification(notificationId: string): Promise<void> {
     const cwd = input.cwd.trim();
+    if (!beginObservationRead(cwd).admitted) return;
     if (!cwd || !notificationId || channelGovernanceNotificationActionId) {
       return;
     }
@@ -1071,11 +1113,13 @@ export function useWorkspaceDomain(input: {
     } catch (caught) {
       read.report("protocol", caught);
     } finally {
-      read.publish(setChannelProtocolLoading, false);
+      read.publishOwned(setChannelProtocolLoading, false);
     }
   }
 
   async function refreshUsedMemoryAudit(cwd = input.cwd.trim()): Promise<void> {
+    const observationRead = beginObservationRead(cwd);
+    if (!observationRead.admitted) return;
     if (!cwd) {
       setMemoryObjects([]);
       setUsedMemoryEvents([]);
@@ -1088,17 +1132,17 @@ export function useWorkspaceDomain(input: {
         listMemoryObjects(cwd),
         listUsedMemoryEvents(cwd, { limit: 200 }),
       ]);
-      if (!loadGuard.isCurrent(`memory:${cwd}`, token)) {
+      if (!loadGuard.isCurrent(`memory:${cwd}`, token) || !observationRead.isCurrent()) {
         return;
       }
       setMemoryObjects(memoryResponse.memories);
       setUsedMemoryEvents(usedResponse.events);
-    } catch {
+    } catch (caught) {
+      if (deferObservationError(caught, cwd)) return;
       if (!loadGuard.isCurrent(`memory:${cwd}`, token)) {
         return;
       }
-      setMemoryObjects([]);
-      setUsedMemoryEvents([]);
+      reportScopedFeedback("workspace", selectedChannelId || cwd, "load", caught, cwd);
     }
   }
 

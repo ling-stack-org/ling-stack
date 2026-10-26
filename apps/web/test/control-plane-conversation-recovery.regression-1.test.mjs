@@ -90,3 +90,22 @@ test("a failed list refresh blocks advancing the replay cursor and reconnects fr
   assert.equal(new URL(f.sources.at(-1).url).searchParams.get("afterSeq"), "100");
   assert.equal(f.sources.length, 2);
 });
+
+// Regression: R03-OBS — Host drain is not ordinary offline and cannot consume invalidations.
+// Found by /qa on 2026-10-26
+// Report: output/e6-20260928/r03-packaging-retry-20261026/live-findings.md
+test("Host pause closes observation without new refresh/reconnect; resume takes a fresh snapshot", async t => {
+  const f = await fixture(t);
+  f.input.observation = { paused: true, workspaceCwd: "/isolated/r02", epoch: 2, baseUrl: f.input.daemonBaseUrl };
+  f.render(); await f.flush();
+  const count = f.sources.length;
+  await f.invalidate(["runs"]); await f.flush();
+  assert.deepEqual(f.calls, []);
+  assert.equal(f.sources.length, count);
+  f.input.observation = { ...f.input.observation, paused: false, epoch: 3 };
+  f.render(); await f.flush();
+  assert.equal(f.sources.length, count + 1);
+  assert.equal(new URL(f.sources.at(-1).url).searchParams.get("afterSeq"), "100");
+  f.replayReady(f.sources.at(-1), 100); await f.flush();
+  assert.ok(f.calls.some(call => call.name === "refreshConversationThreads"));
+});
