@@ -300,3 +300,30 @@ Web最终命令：`node --experimental-strip-types --test`，显式指定以下�
 仍未完成：新字节精确QA冻结/打包/真实GUI复验，以及总计划P3/P4/P5。
 当前保留Main/Host和App/profile不得被本检查点覆盖、强杀或重放；未知效果仍保持未知。
 没有push、PR、merge或发布，不把本地checkpoint当最终交付。
+
+#### R03-OBS 新包结果与侧栏补充（2026-10-26）
+
+f802141d新包已真实完成冻结、构建、包读回和GUI单次命令/审批/停止请求；
+不是仍在等待打包。证据目录为`output/e6-20260928/r03-observation-package-20261026/`。
+Main28239/Host28249保留，marker start1/tick60/done1，prepared/settled/start/end各一次；
+SQLite仍为Run running、stop stopping、descendants/effectCoverage unverified。
+drained_at和工具自然退出不是后代安全证明，不能自动successor或重放。原5715/5734同样保留。
+
+GUI真实看到了draining→blocked、Agent待确认、工具旧快照，重复transport错误已消失。
+但侧栏仍将快照直接读作运行中，不能把该包的R03-OBS完整验收标绿。
+侧栏沿用现有可信、同workspace的DaemonObservation：只对running/waiting添加旧快照说明、
+中性色和可访问/hover文案，保留canonical primaryStatus、审批计数、failed/paused状态。
+不从断线推导终态，不改数据库，不禁用或删除已接纳运行的Stop入口。
+
+新原生回归`sidebar-observation.regression-1.test.mjs`已在修前真实失败、修后通过；
+覆盖三owners×四状态×live/同cwd暂停/异cwd暂停及输入不变，与共享观察回归组合5/5。
+Web typecheck:ci及diff-check通过；最终两文件独审0确认问题，具体SHA和证据见
+`output/e6-20260928/r03-sidebar-observation-repair-20261026/`。
+这是源码/SSR验证，尚未进入新包，不冒称当前GUI已修复。
+
+另一个现场诊断已结案：五秒locked-task-continuation sync_failed来自已关闭HTTP的锁策略续约。
+它不是Web新claim、不是重放，也不是递归loop。现有failed-preflight回归刻意要求保留该lease；
+在真实cleanup前不能为消除诊断将其取消或改变过期策略。本轮不作此类改动。
+
+后续只需在下一份非覆盖QA包中核验最终侧栏字节，再继续其它P3/P4/P5案例。
+不重发任何保留现场的命令、审批或SIGTERM，不重复先前132/49/53项套件。
