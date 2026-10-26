@@ -109,7 +109,7 @@ jobs:
         with:
           node-version: 22.22.1
           cache: pnpm
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         if: runner.os == 'Windows'
         with:
           dotnet-version: 8.0.x
