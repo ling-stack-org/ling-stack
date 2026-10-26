@@ -158,9 +158,10 @@ by changing the report or claiming the reviewer reran those fixtures.
 
 ## Direct continuation
 
-1. The failure-staging checkpoint and accurate source-only rebind below are
-   complete. Save the archive-registry repair below and freeze the reviewed
-   owned-scratch successor at the resulting clean HEAD.
+1. The failure-staging checkpoint, accurate source-only rebind and actual
+   catalog-consumer verification below are complete. Save the narrow consumer
+   rebind and regression guard, then freeze the reviewed v2 owned-scratch
+   successor at the resulting clean HEAD, using its distinct evidence directory.
    The exact source/runtime/OS proposal review and scoped
    standing-authorization application are complete; do not regenerate them
    without an affected input change.
@@ -281,3 +282,60 @@ that temporary directory. The next fix must follow actual consumers, not merely
 the presence of a `finally`. Source-only rebind does not grant native/resource/
 archive/executable/packaged acceptance. No Go cache cleanup or new QA package has
 run, and P3/H09/final PR/main merge remain open.
+
+## Actual full build and exact consumer rebind
+
+This section supersedes earlier statements that no real cache cleanup or native
+build has run. The saved `4ecad097` checkpoint was frozen and the full original
+wrapper actually executed. Fixed-object source reproduction, original 6 GiB
+native admission after the reviewed exact Go build-cache cleanup, native
+compilation and repeated Go parser compilation passed. Resource preparation
+then strictly failed because the macOS SDK catalog still named the old source
+manifest, not because of a native receipt schema mismatch. Managed child 77159
+closed/exit 1, process group absent, output settled and lease released after
+305,904 ms. No selection/output claim, App, ZIP or DMG was created.
+
+The next review-preparation wrapper verifies every relevant consumer together,
+without changing production review files. Its first run reached the unchanged
+five import graph pins but failed on a nested SDK `.bin` link because the QA
+wrapper had omitted production command-link materialization. That actual exit 1
+and the original static review remain preserved. A distinct, delta-reviewed v2
+uses the original materialize/platform-filter/import/SDK-filter sequence; no
+product link check was weakened.
+
+V2 completed with actual exit 0, **259,651 ms**, managed child 84234 closed/0,
+process group absent, output settled, lease released and no termination errors.
+It genuinely regenerated source/native/parser. Five compiler graphs contain
+274/416/81/982/4 inputs with the unchanged Bun 1.4.4 checksum and graph pins.
+The production SDK filter checked 3,714 source files, 29 marker classifications
+and the original two SDK 0.2.117 metadata records; it removed only those SDK
+roots from private staging. Real Bash/Go checks processed 136 scripts, 14,990
+calls, 128 source sites, 26 dynamic sites and 270 expressions in 99 groups,
+preserving every reviewed mapping and all graph pins. The parser was repeatedly
+built with fixed Go 1.26.3; no substitute prebuilt parser was admitted.
+
+The independent result review supports only four precise source-identity
+rebindings and their three detached shell checksum constants. The census
+retains its original compact layout, so its actual-byte checksum differs from
+the semantically identical pretty-printed proposal; the regression caught that
+application mismatch before packaging. Final focused tests: **25/25**, actual
+exit 0, 223.218542 ms, no skip/cancellation. Neither schema, classification,
+permission, graph, compiler nor package version is broadened. Windows and the
+unused build-only type catalog remain unchanged. None of these seven production
+files belongs to the approved Office packaging source list, so this rebind does
+not require regenerating that unrelated formal review.
+
+The retained result review SHA256 is
+`36e057309e39b49b4e98fcbc02f7b82b3f64e4aeedeb4ee8ac2641544c809317`.
+It separately records the before-application frozen-input checks and the final
+minimal production diff/actual-byte census checksum; it does not claim the old
+pre-application packet still matches the rebound checkout.
+
+The full successor v2 changes only its evidence directory and additionally pins
+the actual compiled Core source verifier. Its two-line delta review is complete
+(`08207e7d001d7e689bc5dc3e5238d59d96f78c27092a82742f8a3baed103e876`).
+It has **not** been frozen or run yet. All old Apps, resource generations,
+selection and unknown Run effects remain preserved. The completed candidate
+review is not new resource/archive/executable/package/GUI or release acceptance;
+those original production gates still must run. H09 still needs a proven hard
+output cap. Main CI stays off; P3/H09/P5/final PR/main merge remain open.
