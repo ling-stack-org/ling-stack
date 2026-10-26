@@ -159,8 +159,8 @@ by changing the report or claiming the reviewer reran those fixtures.
 ## Direct continuation
 
 1. The failure-staging checkpoint and accurate source-only rebind below are
-   complete. Before freezing the owned-scratch successor, close the remaining
-   archive-registry failure-staging path described below.
+   complete. Save the archive-registry repair below and freeze the reviewed
+   owned-scratch successor at the resulting clean HEAD.
    The exact source/runtime/OS proposal review and scoped
    standing-authorization application are complete; do not regenerate them
    without an affected input change.
@@ -242,15 +242,38 @@ collector focused tests passed **7/7**, no failure/cancellation/skip, 154.505083
 ms. That checkout conversion fixture is not Windows runtime acceptance. Neither
 changed source-review file belongs to the formal Office packaging input closure.
 
-### Remaining archive-registry failure path
+### Archive-registry failure path repair
 
-The complete successor must not yet be described as ready. The archive collector
-still creates its internal temporary directory beside the output and always
-removes it in `finally`. Its real `registryPlan(source, home)` launches an
+The archive collector previously created its internal temporary directory beside
+the output and always removed it in `finally`. Its real `registryPlan(source, home)` launches an
 inventory-bound Node subprocess with a 30-second timeout and uses that temporary
 home. A failed/timed-out registry call has the same early-cleanup concern as the
-six repaired builders. Apply the same lease-scratch/failure-retention contract
-there with a focused regression before a real successor build.
+six repaired builders. It now uses the same lease-scratch/failure-retention
+contract: failed staging stays inside the authenticated lease's scratch, while
+normal success cleans only after exclusive publication has completed.
+
+The new fixture uses a real isolated local-bounded lease and artifact-output
+admission, then injects `ETIMEDOUT` without starting a registry subprocess. The
+valid RED failed because `home` had been removed; GREEN preserves its file,
+checks its exact lease-scratch placement and empty artifact directory, and
+confirms that explicit owner release removes it. An earlier fixture setup failed
+on the macOS `/var` alias; canonicalizing that test path preceded the real RED.
+The successful collection case also checks its captured home is removed, so the
+old output-parent assertion does not become a vacuous cleanup check.
+
+The three-file collection/inspection/materialization combination completed with
+actual exit 0: **18 passed, 8 skipped, 0 failed**, 90,289.908125 ms; managed child
+76087 closed/exit 0, group absent, output settled and lease released after
+93,878 ms. The eight inspection cases require real resource/archive inputs and
+are not passing evidence. The test-only success-home assertion was added after
+that cut. The final targeted success/failure collector cases then completed
+**2/2**, actual exit 0, 12,089.021625 ms; managed child 76353 closed/exit 0,
+group absent, output settled and lease released after 14,233 ms. These are
+synthetic archive/registry fixtures, not a real registry subprocess, download or
+OS-descendant acceptance. `archive-registry-final-verification.json` retains
+the exact cuts and actual receipt summary.
+No source recipe input changed: the accurately rebound `ling-35d2...be5c` pair
+remains current, so its real generation is not repeated for this collector fix.
 
 Do not mechanically change the archive inspector: it creates its receipt-writing
 stage only after all ZIP inspections have been awaited; no registry process uses
