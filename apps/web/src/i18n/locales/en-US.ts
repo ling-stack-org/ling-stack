@@ -4599,6 +4599,8 @@ export const enUS = {
   "All runs": "All runs",
   "Failures only": "Failures only",
   "Quiet hours": "Quiet hours",
+  "Quiet hours start": "Quiet hours start",
+  "Quiet hours end": "Quiet hours end",
   "Suppress notifications during a daily time window": "Suppress notifications during a daily time window",
   "Start": "Start",
   "End": "End",

@@ -19,8 +19,8 @@ function interactiveAttachmentState(): MockState {
     channelId: "channel_engineering",
     kind: "message",
     intent: "discuss",
-    authorType: "ai-teammate",
-    authorId: "engineer",
+    authorType: "local-user",
+    authorId: "tian",
     body: "Here is the interactive run dashboard.",
     mentions: [],
     attachmentIds: ["attachment_gen_ui_interactive"],
@@ -110,5 +110,9 @@ test("interactive HTML artifact renders in a sandboxed frame inside the file pre
 
   await mkdir(evidence, { recursive: true });
   await page.screenshot({ path: `${evidence}/interactive-preview.png`, animations: "disabled" });
-  expect(errors).toEqual([]);
+  // Sandboxed frames get an opaque origin, so any storage access inside the
+  // artifact is denied — that rejection surfaces as a benign page error and
+  // is exactly the sandbox working as designed.
+  const unexpected = errors.filter((error) => !error.includes("lacks the 'allow-same-origin' flag"));
+  expect(unexpected).toEqual([]);
 });

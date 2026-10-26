@@ -12,11 +12,13 @@ test("daemon notification journal surfaces an in-app toast and preferences card"
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
   });
-  await mockDaemon(page, createBaseState());
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
   // The bridge polls on mount; the mocked journal has one failed-run record.
-  const toast = page.locator(".ling-ui-toast", { hasText: "自动化运行失败" });
+  // The toast shows the daemon-provided record text (English fixture data),
+  // even when the UI chrome is zh-CN.
+  const toast = page.locator(".ling-ui-toast", { hasText: "Automation run failed" });
   await expect(toast).toBeVisible({ timeout: 15_000 });
 
   // Preferences card lives in the startup diagnostics settings section.

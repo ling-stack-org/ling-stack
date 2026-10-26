@@ -6472,6 +6472,8 @@ export const zhCN = {
   "All runs": "全部运行",
   "Failures only": "仅失败时",
   "Quiet hours": "免打扰时段",
+  "Quiet hours start": "免打扰开始",
+  "Quiet hours end": "免打扰结束",
   "Suppress notifications during a daily time window": "在每日时段内抑制通知",
   "Start": "开始",
   "End": "结束",

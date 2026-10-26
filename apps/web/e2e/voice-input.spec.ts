@@ -46,7 +46,10 @@ test("voice dictation appends transcript to the draft and never auto-sends", asy
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await installFakeRecognition(page);
-  const state = createBaseState();
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -70,7 +73,7 @@ test("voice dictation appends transcript to the draft and never auto-sends", asy
     instances[0].emit("hello from voice", true);
   });
 
-  const input = composer.getByRole("textbox");
+  const input = page.getByRole("textbox", { name: "Conversation message", exact: true });
   await expect(input).toHaveAttribute("data-value", "hello from voice");
 
   // Dictation must not send by itself.
@@ -85,7 +88,10 @@ test("voice dictation appends transcript to the draft and never auto-sends", asy
 
 test("denied microphone access surfaces the recovery message", async ({ page }) => {
   await installFakeRecognition(page);
-  const state = createBaseState();
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];

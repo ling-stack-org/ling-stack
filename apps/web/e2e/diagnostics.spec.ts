@@ -8,7 +8,7 @@ const evidence = resolve("../../output/playwright/diagnostics");
 test("startup diagnostics panel shows daemon doctor checks and log tail", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await mockDaemon(page, createBaseState());
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /^(Settings|设置)$/ }).click();
   const sections = page.getByLabel(/^(Settings sections|设置分组)$/);
@@ -26,7 +26,7 @@ test("startup diagnostics panel shows daemon doctor checks and log tail", async 
   await logSection.locator("summary").click();
   await expect(logSection.locator(".diagnostics-doctor-log-lines")).toContainText("daemon listening on 127.0.0.1:17891");
 
-  await expect(page.locator(".settings-startup-diagnostics")).toBeVisible();
+  await expect(page.locator("section[data-ui2-settings-startup-diagnostics]")).toBeVisible();
   await mkdirIfMissing();
   await page.screenshot({ path: `${evidence}/diagnostics-healthy.png`, animations: "disabled", fullPage: true });
   expect(errors).toEqual([]);

@@ -51,8 +51,8 @@ test("Settings shell owns navigation, embedded tools, and exact return at 1440x9
   }
   await expect(settingsNavigation.locator('[aria-current="page"]')).toHaveCount(1);
   await expect(settingsNavigation.getByRole("button", { name: "User profile", exact: true })).toHaveAttribute("aria-current", "page");
-  await expect(settingsNavigation.getByRole("button", { name: "Startup and diagnostics", exact: true })).toHaveCount(0);
-  await expect(settingsNavigation.locator('[data-settings-section="startup-diagnostics"]')).toBeHidden();
+  // Startup and diagnostics is a first-class section now (ux-gap-roadmap-13).
+  await expect(settingsNavigation.getByRole("button", { name: "Startup and diagnostics", exact: true })).toBeVisible();
   await expect(settingsNavigation.getByRole("group", { name: "Device" })).toHaveCount(0);
   await expect(settingsNavigation.getByRole("button", { name: "Back to app" })).toHaveClass(/ling-ui-button/u);
   await expectSettingsScrollOwnership(settingsNavigation, content);
