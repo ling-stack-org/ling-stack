@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 
 const GiB = 1024 ** 3;
 export const RESOURCE_LIMITS = Object.freeze({ budgetBytes: 12 * GiB, minFreeBytes: 20 * GiB });
+export const RESOURCE_REVIEW_HOLD_NAME = ".retain-for-review.json";
 const marker = ".gstack-resource-workspace.json";
 const lockName = ".heavy-operation.json";
 const lockPath = record => join(record.storageMode === "local-bounded" ? record.localParentPath : record.mountPath,
@@ -226,6 +227,12 @@ export async function acquireResourceLease(root, { additionalBytes = 0 } = {}) {
         if (released) return;
         const current = JSON.parse(await readFile(path, "utf8"));
         if (current.token !== token) throw new Error("gstack_resource_lease_mismatch");
+        // Process settlement cannot prove an external pointer was restored.
+        // Any node at this fixed marker blocks cleanup; never parse an unknown
+        // marker into permission to remove it or its referenced scratch.
+        const hold = await lstat(join(scratchPath, RESOURCE_REVIEW_HOLD_NAME))
+          .catch(error => { if (error.code === "ENOENT") return null; throw error; });
+        if (hold) throw new Error("gstack_resource_scratch_retained_for_review");
         await rm(scratchPath, { recursive: true, force: true });
         await handle.close();
         await rm(path);

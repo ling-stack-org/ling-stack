@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import { initResourceWorkspace } from "./resource-workspace.mjs";
+import { initResourceWorkspace, RESOURCE_REVIEW_HOLD_NAME } from "./resource-workspace.mjs";
 import { managedNodeArguments, runManagedNode } from "./run-managed.mjs";
 
 async function fixture(t, mayClean = () => true) {
@@ -64,6 +64,27 @@ test("supervision preserves real exit status, external tmp/cache, and removes on
   assert.equal(result.reason, null);
   assert.deepEqual(await readdir(join(options.root, "runs")), []);
   assert.ok(!(await readdir(options.root)).includes(".heavy-operation.json"));
+});
+
+test("a real exited child cannot authorize scratch cleanup while a selection hold remains", async t => {
+  const options = await fixture(t);
+  const script = `const fs = require('fs'), path = require('path');
+    fs.writeFileSync(path.join(path.dirname(process.env.TMPDIR), ${JSON.stringify(RESOURCE_REVIEW_HOLD_NAME)}),
+      JSON.stringify({scope:'fixture-external-selection'}), {flag:'wx',mode:0o600});`;
+  await assert.rejects(runManagedNode({ ...options, args: ["-e", script] }), /scratch_retained_for_review/);
+  const [scratch] = await readdir(join(options.root, "runs"));
+  assert.ok(scratch);
+  const hold = join(options.root, "runs", scratch, RESOURCE_REVIEW_HOLD_NAME);
+  assert.equal(JSON.parse(await readFile(hold)).scope, "fixture-external-selection");
+  const receipt = JSON.parse(await readFile(join(options.root, "last-run.json")));
+  assert.equal(receipt.settlement.directChild.closed, true);
+  assert.equal(receipt.settlement.directChild.exitCode, 0);
+  assert.equal(receipt.settlement.processGroup.status, "absent");
+  assert.notEqual(receipt.leaseDisposition, "released");
+  const lockName = (await readdir(dirname(options.root))).find(name => name.endsWith(".heavy-operation.json"));
+  assert.ok(lockName);
+  const lock = JSON.parse(await readFile(join(dirname(options.root), lockName)));
+  assert.equal(lock.scratchPath, join(options.root, "runs", scratch));
 });
 
 test("a timed-out child and oversized output are terminal failures, not successful retries", async t => {

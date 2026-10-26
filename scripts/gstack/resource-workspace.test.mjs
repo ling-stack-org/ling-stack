@@ -88,3 +88,19 @@ test("a changed storage receipt and abandoned scratch both fail closed", async t
   await writeFile(path, JSON.stringify(receipt));
   await assert.rejects(openResourceWorkspace(root), /(?:mount|local)_identity/);
 });
+
+test("a persistent external-consumer hold prevents scratch and lease removal until its owner clears it", async t => {
+  const { root, acquire } = await workspace(t);
+  const lease = await acquire(), hold = join(lease.scratchPath, ".retain-for-review.json");
+  await writeFile(hold, JSON.stringify({ reason: "temporary selection still references this scratch" }), { flag: "wx", mode: 0o600 });
+  try {
+    await assert.rejects(lease.release(), /scratch_retained_for_review/);
+    assert.equal(JSON.parse(await readFile(hold, "utf8")).reason, "temporary selection still references this scratch");
+    await assert.rejects(acquireResourceLease(root), /workspace_busy/);
+  } finally {
+    // This isolated fixture owns the marker; no real selection was created.
+    await rm(hold, { force: true });
+  }
+  await lease.release();
+  assert.deepEqual(await readdir(join(root, "runs")), []);
+});

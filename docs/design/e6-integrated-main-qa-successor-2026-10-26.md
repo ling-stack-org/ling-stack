@@ -121,6 +121,40 @@ evidence and process-group-only limitations. This does **not** supply the
 wrapper's remaining consumer inventory, selection/output ownership or container
 verification, and no resource cache cleanup/build has run.
 
+### Temporary selection ownership prerequisite
+
+`qa-temporary-selection.mjs` now owns a temporary swap of the fixed selection
+pointer, not approval of a bundle. It authenticates the existing lease, captures
+candidate JSON bytes and the required lease environment before the first await,
+pins the predecessor's inode/mode/exact bytes and checksum, and retains that
+original node in an exclusive custody directory. Publication and restoration
+use exclusive links; a foreign replacement is not overwritten.
+
+Before moving the original pointer it creates a fixed scratch review hold.
+`lease.release()` refuses cleanup while **any node** exists at that marker.
+Successful process settlement alone is insufficient to remove referenced
+scratch. Only a successful owned-pointer restoration removes its own marker.
+Concurrent restoration callers share one promise, including a cached failure.
+If restoration partially succeeds and then fails, the marker stays and recovery
+requires explicit inspection; `restoration.json` is not standalone cleanup
+authority. File fsync is used, but directory fsync/order under power loss has
+not been certified. Controlled/cooperating writers are the scope, not arbitrary
+unrestricted same-UID programs.
+
+The two mutable-input tests failed before the fix (0/2), and the eight-caller
+restoration fixture exposed seven racing failures before single-flight was
+added. Final focused combination: **38/38**, actual exit 0, 26,940 ms, no
+cancelled/skipped tests. This includes a real exited child with exit 0 and an
+observed absent group whose persistent selection hold still prevents removal
+of its scratch and lease. These tests use isolated fixtures; they did not swap
+the real selection, clean the real cache, build a successor or validate a GUI.
+The full wrapper and actual resource/package acceptance below are still open.
+The independent ownership review is complete with no remaining confirmed
+finding on these five exact source/test inputs; report SHA256
+`1d69169032b39960a7422a3b29534243f36c083451a00bdab491195111b8e55e`.
+Its earlier test-status cut is superseded by the final 38/38 tool receipt, not
+by changing the report or claiming the reviewer reran those fixtures.
+
 ## Direct continuation
 
 1. Implement and independently review the owned-scratch, non-overwriting
