@@ -32,7 +32,12 @@ import { readSseResponse } from "../sse.js";
 import { recoverSubmissionReceipt, submissionWasRejected, UnconfirmedConversationSubmissionError, RecoveredConversationSubmissionError } from "../shared/conversation/conversation-submission-recovery.js";
 import { submissionLookupJournal } from "../shared/conversation/conversation-submission-journal.js";
 import { validateConversationSubmissionReceipt } from "../shared/conversation/submission-receipt-scope.js";
-import { shouldReportConversationStreamError } from "../shared/conversation/stream-error-ownership.js";
+import {
+  channelConversationScopeKey,
+  channelStreamErrorOwner,
+  type ChannelStreamErrorOwner,
+  type ChannelStreamErrorOwnerHint,
+} from "../shared/conversation/stream-error-ownership.js";
 import type {
   AiTeammate,
   Channel,
@@ -129,12 +134,14 @@ export interface ChannelActionsController {
 
 export interface ChannelMessageSendResult {
   readonly errorMessage?: string;
+  readonly errorOwner?: ChannelStreamErrorOwner;
 }
 
 type ChannelActionFeedbackSurface = "create-dialog" | "workspace" | "composer" | "task" | "workflow" | "protocol" | "dock" | "sidebar";
 type ChannelActionFeedbackScope = "validation" | "mutation" | "stream";
 
 interface ChannelActionFeedbackEntry {
+  readonly workspaceCwd: string;
   readonly surface: ChannelActionFeedbackSurface;
   readonly identity: string;
   readonly scope: ChannelActionFeedbackScope;
@@ -149,6 +156,7 @@ interface SendChannelMessageInput {
   readonly linkPreviewIds: readonly string[];
   readonly fileRefs: readonly ChannelMessageFileRef[];
   readonly requestAiReply: boolean;
+  readonly streamOwner?: ChannelStreamErrorOwnerHint;
   readonly replyDisposition?: ChannelReplyDisposition;
   readonly onMessageAccepted?: (message: ChannelMessage) => void;
   readonly onReplyPending?: (pending: ChannelReplyPendingEvent) => void;
@@ -174,6 +182,7 @@ export function useChannelActionsController(input: {
   readonly providers: readonly ProviderPreset[];
   readonly providerTemplates: readonly ProviderTemplate[];
   readonly selectedChannelId: string;
+  readonly selectedChannelBranchRootThreadId?: string;
   readonly activeSidebarTarget: SidebarTarget;
   readonly channelDecisions: readonly ChannelDecision[];
   readonly setActiveView: Dispatch<SetStateAction<ViewId>>;
@@ -203,7 +212,11 @@ export function useChannelActionsController(input: {
   readonly setChannelWorkflows: Dispatch<SetStateAction<readonly ChannelWorkflow[]>>;
   readonly setChannelWorkflowSteps: Dispatch<SetStateAction<readonly ChannelWorkflowStep[]>>;
   readonly reportFeedback: (entry: ChannelActionFeedbackEntry) => void;
-  readonly clearFeedback: (surface: ChannelActionFeedbackSurface, identity: string) => void;
+  readonly clearFeedback: (
+    surface: ChannelActionFeedbackSurface,
+    identity: string,
+    workspaceCwd: string,
+  ) => void;
   readonly t: (value: string, values?: Record<string, string | number>) => string;
   readonly addChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
   readonly setDefaultChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
@@ -232,12 +245,20 @@ export function useChannelActionsController(input: {
     caught: unknown,
   ): string {
     const message = caught instanceof Error ? caught.message : String(caught);
-    input.reportFeedback({ surface, identity, scope, message });
+    input.reportFeedback({ workspaceCwd: input.form.cwd.trim(), surface, identity, scope, message });
     return message;
   }
 
+  function composerFeedbackIdentity(channelId = input.selectedChannelId): string {
+    return channelConversationScopeKey({
+      workspaceCwd: input.form.cwd,
+      channelId,
+      branchRootThreadId: input.selectedChannelBranchRootThreadId,
+    });
+  }
+
   function clearFeedback(surface: ChannelActionFeedbackSurface, identity: string): void {
-    input.clearFeedback(surface, identity);
+    input.clearFeedback(surface, identity, input.form.cwd.trim());
   }
 
   function buildChannelCreatePayload(form: ChannelCreateFormState): ChannelFormState {
@@ -470,12 +491,12 @@ export function useChannelActionsController(input: {
       return;
     }
     if (!commandInput.prompt.trim()) {
-      reportFeedback("composer", input.selectedChannelId, "validation", "Slash command prompt 不能为空");
+      reportFeedback("composer", composerFeedbackIdentity(input.selectedChannelId), "validation", "Slash command prompt 不能为空");
       return;
     }
 
     try {
-      clearFeedback("composer", input.selectedChannelId);
+      clearFeedback("composer", composerFeedbackIdentity(input.selectedChannelId));
       const selectedChannel = input.channels.find((channel) => channel.id === input.selectedChannelId);
       const response = await createTask(input.form.cwd.trim(), input.selectedChannelId, {
         title: commandInput.title.trim() || titleFromPrompt(commandInput.prompt),
@@ -488,7 +509,7 @@ export function useChannelActionsController(input: {
       await input.refreshTasks(input.selectedChannelId);
       await input.refreshChannelActivity();
     } catch (error) {
-      reportFeedback("composer", input.selectedChannelId, "mutation", error);
+      reportFeedback("composer", composerFeedbackIdentity(input.selectedChannelId), "mutation", error);
       throw error;
     }
   }
@@ -518,11 +539,11 @@ export function useChannelActionsController(input: {
       throw new RecoveredConversationSubmissionError(projectMessageItem(receipt.sourceItem, []).body);
     }
     const idempotencyKey = crypto.randomUUID();
+    let receivedAiReply = false;
+    let streamErrorMessage = "";
     try {
-      clearFeedback("composer", channelId);
-      let receivedAiReply = false;
+      clearFeedback("composer", composerFeedbackIdentity(channelId));
       let autoStartedWorkflow = false;
-      let streamErrorMessage = "";
       submissionLookupJournal.begin(submissionScope, idempotencyKey);
       const response = await streamChannelTurn(submissionScope.cwd, channelId, {
         idempotencyKey,
@@ -659,12 +680,31 @@ export function useChannelActionsController(input: {
       // feed renders that error beside the persisted assistant message; keep
       // Composer feedback for transport failures that have no reply record to
       // anchor the error to.
-      if (shouldReportConversationStreamError({ error: streamErrorMessage, hasAssistantReply: receivedAiReply })) {
-        reportFeedback("composer", channelId, "stream", streamErrorMessage);
-        return { errorMessage: streamErrorMessage };
+      if (streamErrorMessage) {
+        return {
+          errorMessage: streamErrorMessage,
+          errorOwner: channelStreamErrorOwner({
+            hasAssistantReply: receivedAiReply,
+            fallbackOwner: messageInput.streamOwner ?? "channel-composer",
+          }),
+        };
       }
       return {};
     } catch (error) {
+      if (streamErrorMessage) {
+        if (messageAccepted) {
+          await Promise.allSettled([
+            input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true }),
+          ]);
+        }
+        return {
+          errorMessage: streamErrorMessage,
+          errorOwner: channelStreamErrorOwner({
+            hasAssistantReply: receivedAiReply,
+            fallbackOwner: messageInput.streamOwner ?? "channel-composer",
+          }),
+        };
+      }
       let rejectionConfirmed = false;
       if (!messageAccepted) {
         const query = { surface: "channel" as const, channelId, threadId: messageInput.threadId, idempotencyKey };
@@ -686,7 +726,6 @@ export function useChannelActionsController(input: {
           input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true }),
         ]);
       }
-      reportFeedback("composer", channelId, "stream", error);
       throw error;
     } finally {
       submissionLookupJournal.finish(submissionScope, idempotencyKey);
@@ -708,7 +747,7 @@ export function useChannelActionsController(input: {
     owner.pending++;
     input.setChannelFilesLoading(true);
     try {
-      clearFeedback("composer", channelId);
+      clearFeedback("composer", composerFeedbackIdentity(channelId));
       const responses = await Promise.all(files.map((file) => uploadChannelAttachment(sourceCwd, channelId, file)));
       const uploaded = responses.map((response) => response.attachment);
       if (uploadOwnerRef.current === owner) input.setChannelAttachments((current) => [...uploaded, ...current]);
@@ -725,7 +764,7 @@ export function useChannelActionsController(input: {
       return undefined;
     }
     try {
-      clearFeedback("composer", input.selectedChannelId);
+      clearFeedback("composer", composerFeedbackIdentity(input.selectedChannelId));
       const response = await createChannelLinkPreview(input.form.cwd.trim(), input.selectedChannelId, { url });
       input.setChannelLinkPreviews((current) => [
         response.linkPreview,
@@ -733,7 +772,7 @@ export function useChannelActionsController(input: {
       ]);
       return response.linkPreview;
     } catch (error) {
-      reportFeedback("composer", input.selectedChannelId, "mutation", error);
+      reportFeedback("composer", composerFeedbackIdentity(input.selectedChannelId), "mutation", error);
       throw error;
     }
   }
@@ -741,11 +780,11 @@ export function useChannelActionsController(input: {
   async function removeChannelAttachment(attachmentId: string): Promise<void> {
     const channelId = input.selectedChannelId || "unselected";
     try {
-      clearFeedback("composer", channelId);
+      clearFeedback("composer", composerFeedbackIdentity(channelId));
       await deleteChannelAttachment(input.form.cwd.trim(), attachmentId);
       input.setChannelAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
     } catch (error) {
-      reportFeedback("composer", channelId, "mutation", error);
+      reportFeedback("composer", composerFeedbackIdentity(channelId), "mutation", error);
     }
   }
 
