@@ -8313,11 +8313,7 @@ export async function handleDaemonRoute(
     return;
   }
   if (request.method() === "GET" && path === "/runtime/conversation-execution") {
-    const requestedCwd = url.searchParams.get("cwd");
-    if (!requestedCwd) {
-      await route.fulfill({ status: 400, json: { error: "bad_request", message: "cwd is required" } });
-      return;
-    }
+    const requestedCwd = url.searchParams.get("cwd") ?? cwd;
     const { defaultRunnerId, defaultExecutionBinding } = state.runtimeSettings;
     // Synthetic settings alone cannot certify native execution readiness.
     const selection: ConversationExecutionSelectionResponse = defaultRunnerId === "pi" && !defaultExecutionBinding

@@ -5,6 +5,7 @@ import { LingDaemonError } from "@ling-stack/api-client";
 import { recoverSubmissionReceipt, submissionWasRejected } from "../../shared/conversation/conversation-submission-recovery.js";
 import { submissionLookupJournal } from "../../shared/conversation/conversation-submission-journal.js";
 import { validateConversationSubmissionReceipt } from "../../shared/conversation/submission-receipt-scope.js";
+import { shouldReportConversationStreamError } from "../../shared/conversation/stream-error-ownership.js";
 import { readSseResponse } from "../../sse.js";
 import type {
   AuthorizationMode,
@@ -577,7 +578,7 @@ export function useConversationDomain(input: {
             handlers.onThreadBound?.(activeThreadId);
             retargetStreamOperation(activeThreadId);
           }
-          if (event.error && !event.assistantMessage && !messageAccepted) {
+          if (shouldReportConversationStreamError({ error: event.error, hasAssistantReply: Boolean(event.assistantMessage) }) && !messageAccepted) {
             conversationErrors.report(streamOperation, event.error);
           }
           if (event.thread && canCommitToSurface(activeThreadId)) {
@@ -598,7 +599,7 @@ export function useConversationDomain(input: {
             handlers.onThreadBound?.(activeThreadId);
             retargetStreamOperation(activeThreadId);
           }
-          if (!event.assistantMessage && !messageAccepted) {
+          if (shouldReportConversationStreamError({ error: messageText, hasAssistantReply: Boolean(event.assistantMessage) }) && !messageAccepted) {
             conversationErrors.report(streamOperation, messageText);
           }
           if (event.assistantMessage && canCommitToSurface(activeThreadId)) {
