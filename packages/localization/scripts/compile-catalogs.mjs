@@ -8,6 +8,14 @@ const generatedCatalogRoot = path.join(generatedRoot, "catalogs");
 fs.mkdirSync(generatedCatalogRoot, { recursive: true });
 
 function writeFileAtomic(file, content) {
+  // Preserve stable generated inputs when compilation produces identical bytes.
+  // Links still take the replacement path so a build never adopts their target.
+  try {
+    const current = fs.lstatSync(file);
+    if (current.isFile() && current.nlink === 1 && fs.readFileSync(file).equals(Buffer.from(content))) return;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
   const temporary = `${file}.tmp-${process.pid}-${Math.random().toString(16).slice(2)}`;
   fs.writeFileSync(temporary, content);
   fs.renameSync(temporary, file);
