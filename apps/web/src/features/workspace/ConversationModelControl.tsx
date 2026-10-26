@@ -3,7 +3,7 @@ import { ArrowLeft, Check, ChevronDown, ChevronRight, RotateCcw, Search } from "
 import { useI18n } from "../../i18n.js";
 import { Button, IconButton, Input, Popover, PopoverContent, PopoverTrigger } from "../../shared/ui/index.js";
 import type { ProviderThinkingMode } from "../../types.js";
-import { normalConversationThinkingLabel, normalConversationThinkingOptions } from "./normal-conversation-composer-options.js";
+import { normalConversationDefaultThinkingLevel, normalConversationThinkingLabel, normalConversationThinkingOptions } from "./normal-conversation-composer-options.js";
 import type { ConversationHomeModelOption } from "./normal-conversation-types.js";
 
 interface ConversationModelControlProps {
@@ -34,6 +34,7 @@ export function ConversationModelControl({
   const modelLabel = selectedModel?.model || defaultProviderLabel;
   const levels = useMemo(() => normalConversationThinkingOptions(selectedModel?.thinkingModes ?? []), [selectedModel?.thinkingModes]);
   const supportsReasoning = levels.length > 0;
+  const defaultLevel = normalConversationDefaultThinkingLevel(levels);
   const levelIndex = Math.max(0, levels.indexOf(thinkingLevel));
   const levelLabel = normalConversationThinkingLabel(levels[levelIndex] ?? "off", t);
   const thinkingOff = (levels[levelIndex] ?? "off") === "off";
@@ -111,8 +112,8 @@ export function ConversationModelControl({
                 icon={RotateCcw}
                 label={t("Reset")}
                 tooltip={t("Reset")}
-                disabled={thinkingLevel === "off"}
-                onClick={() => onThinkingLevelChange("off")}
+                disabled={thinkingLevel === defaultLevel}
+                onClick={() => onThinkingLevelChange(defaultLevel)}
               />
             </div>
             <div className="conversation-reasoning-slider" style={{ "--reasoning-progress": levelIndex / Math.max(1, levels.length - 1) } as CSSProperties}>
@@ -123,9 +124,10 @@ export function ConversationModelControl({
                 data-ling-control-native="true"
                 type="range"
                 min={0}
-                max={Math.max(1, levels.length - 1)}
+                max={Math.max(0, levels.length - 1)}
                 step={1}
                 value={levelIndex}
+                disabled={levels.length <= 1 || disabled}
                 aria-label={t("Thinking mode")}
                 aria-valuetext={levelLabel}
                 onChange={(event) => {

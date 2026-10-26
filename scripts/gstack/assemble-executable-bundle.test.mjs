@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, rmdir, writeFile } from "node:fs/promises";
+import * as fs from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -42,17 +43,34 @@ test("assembly never overwrites an existing executable generation", async t => {
   assert.equal(await readFile(join(f.outputRoot, "KEEP"), "utf8"), "existing generation");
 });
 
-test("failed publication removes only its empty reservation, never a directory populated by another writer", async t => {
+test("failed publication removes only its empty reservation, never a directory populated by another writer", {
+  skip: process.platform === "win32" ? "POSIX reservation interleaving; Windows uses non-replacing Directory.Move" : false,
+}, async t => {
   const f = await fixture(t);
   const source = await readFile(new URL("./assemble-executable-bundle.mjs", import.meta.url), "utf8");
-  const block = source.match(/    await mkdir\(outputRoot\);\n    try \{ await rename\(candidate, outputRoot\); \}\n    catch \(error\) \{[^\n]+\}/)?.[0];
-  assert.ok(block);
-  const execute = new (Object.getPrototypeOf(async function () {}).constructor)("mkdir", "rename", "rm", "rmdir", "outputRoot", "candidate", block);
+  assert.match(source, /await publishStagedDirectory\(candidate, outputRoot\);/);
+  const helper = await readFile(new URL("./publish-staged-directory.mjs", import.meta.url), "utf8");
+  const key = `publicationProbe${Math.random().toString(36).slice(2)}`;
   const error = Object.assign(new Error("forced publish failure"), { code: "EIO" });
-  await assert.rejects(execute(mkdir, async () => { throw error; }, rm, rmdir, f.outputRoot, "/fixture/candidate"), value => value === error);
-  await assert.rejects(lstat(f.outputRoot), { code: "ENOENT" });
-  await assert.rejects(execute(mkdir, async () => {
-    await writeFile(join(f.outputRoot, "KEEP"), "other writer"); throw error;
-  }, rm, rmdir, f.outputRoot, "/fixture/candidate"), value => value === error);
-  assert.equal(await readFile(join(f.outputRoot, "KEEP"), "utf8"), "other writer");
+  let otherWriter = false;
+  globalThis[key] = { ...fs, rename: async () => {
+    if (otherWriter) await writeFile(join(f.outputRoot, "KEEP"), "other writer");
+    throw error;
+  } };
+  const instrumented = helper.replace('import { mkdir, rename, rmdir } from "node:fs/promises";',
+    `const { mkdir, rename, rmdir } = globalThis[${JSON.stringify(key)}];`);
+  assert.notEqual(instrumented, helper);
+  try {
+    const { publishStagedDirectory } = await import(`data:text/javascript;base64,${Buffer.from(instrumented).toString("base64")}`);
+    await assert.rejects(publishStagedDirectory("/fixture/candidate", f.outputRoot), value => value === error);
+    await assert.rejects(lstat(f.outputRoot), { code: "ENOENT" });
+    otherWriter = true;
+    await assert.rejects(publishStagedDirectory("/fixture/candidate", f.outputRoot), value => {
+      assert.ok(value instanceof AggregateError);
+      assert.equal(value.errors[0], error);
+      assert.equal(value.errors[1].code, "ENOTEMPTY");
+      return true;
+    });
+    assert.equal(await readFile(join(f.outputRoot, "KEEP"), "utf8"), "other writer");
+  } finally { delete globalThis[key]; }
 });

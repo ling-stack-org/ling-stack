@@ -21,7 +21,9 @@ const recipes = {
 const compileFlags = ["--no-compile-autoload-dotenv", "--no-compile-autoload-bunfig",
   "--no-compile-autoload-tsconfig", "--no-compile-autoload-package-json"];
 const tooling = ["build-bun-native-resource.mjs", "build-native-runtime.mjs", "verify-shared-command-closure.mjs", "resource-workspace.mjs",
-  "packaged-browse-build.mjs", "packaged-browse-launch.mjs"];
+  "packaged-browse-build.mjs", "packaged-browse-launch.mjs", "browser-acquisition.mjs", "inspect-browser-zip.mjs"];
+const ownedCompilerInputs = ["scripts/gstack/packaged-browse-launch.mjs", "scripts/gstack/browser-acquisition.mjs",
+  "scripts/gstack/inspect-browser-zip.mjs", "packages/core/src/bundled-skill-browser.ts"];
 const scripts = dirname(fileURLToPath(import.meta.url));
 const exists = path => lstat(path).then(() => true, error => { if (error.code === "ENOENT") return false; throw error; });
 const fail = code => { throw new Error(`gstack_bun_native_${code}`); };
@@ -83,7 +85,8 @@ export async function buildGstackBunNativeResource({ kind, runtimeRoot, outputRo
   const packaged = kind === "packaged-browse";
   if (packaged && (!globalThis.Bun || !packagedServer) || !packaged && packagedServer) fail("packaged_server_required");
   if (packaged && (await realpath(process.execPath)) !== compilerPath) fail("compiler_mismatch");
-  const launchPins = packaged && await readPackagedBrowseBuildPins(packagedServer, source.checksum);
+  const launchSelection = packaged && { ...packagedServer, runtimeRoot: root };
+  const launchPins = packaged && await readPackagedBrowseBuildPins(launchSelection, source.checksum);
   const tools = async () => Promise.all(tooling.map(async name => ({ path: `scripts/gstack/${name}`,
     ...await readGstackClosureFileRecord(fileURLToPath(new URL(name, import.meta.url))) })));
   const toolInputs = await tools();
@@ -94,6 +97,10 @@ export async function buildGstackBunNativeResource({ kind, runtimeRoot, outputRo
     return { path: name, ...actual };
   }
   await input(entry, true);
+  if (launchPins?.browser?.parser) {
+    const parser = await input(launchPins.browser.parser.path);
+    if (parser.checksum !== launchPins.browser.parser.checksum || parser.sizeBytes !== launchPins.browser.parser.sizeBytes) fail("build_inputs_changed");
+  }
   const sourceDirectory = posix.relative(posix.dirname(outputBase), posix.dirname(entry)) || ".";
   const dirnameExpression = `__dirname=require("node:path").resolve(require("node:path").dirname(process.execPath),${JSON.stringify(sourceDirectory)})`;
   const recipe = { kind, entrypoint: entry, outputPath: path, compileFlags, dirnameExpression };
@@ -132,12 +139,9 @@ export async function buildGstackBunNativeResource({ kind, runtimeRoot, outputRo
       for (const [name, info] of entries) {
         if (!isAbsolute(name) && /^[a-z]:/i.test(name)) fail("compiler_graph_invalid");
         const absolute = resolve(root, name);
-        if (packaged && absolute === join(scripts, "packaged-browse-launch.mjs")) {
-          inputs.push({ path: "scripts/gstack/packaged-browse-launch.mjs", ...await readGstackClosureFileRecord(absolute) });
-          continue;
-        }
-        if (packaged && absolute === resolve(scripts, "../../packages/core/src/bundled-skill-browser.ts")) {
-          inputs.push({ path: "packages/core/src/bundled-skill-browser.ts", ...await readGstackClosureFileRecord(absolute) });
+        const owned = packaged && ownedCompilerInputs.find(path => absolute === resolve(scripts, "../..", path));
+        if (owned) {
+          inputs.push({ path: owned, ...await readGstackClosureFileRecord(absolute) });
           continue;
         }
         const key = compilerInputPath({ rootPath: root, inputPath: resolve(root, name) });
@@ -148,6 +152,11 @@ export async function buildGstackBunNativeResource({ kind, runtimeRoot, outputRo
         inputs.push(actual);
       }
       if (!seen.has(entry)) fail("entry_not_compiled");
+      if (launchPins?.browser?.parser && !seen.has(launchPins.browser.parser.path)) {
+        const parser = await input(launchPins.browser.parser.path);
+        inputs.push(parser);
+        seen.add(parser.path);
+      }
       const metadata = new Set();
       for (const key of seen) {
         let directory = posix.dirname(key);
@@ -173,7 +182,7 @@ export async function buildGstackBunNativeResource({ kind, runtimeRoot, outputRo
           : await input(expected.path);
       if (JSON.stringify(actual) !== JSON.stringify(expected)) fail("build_inputs_changed");
     }
-    if (packaged && JSON.stringify(await readPackagedBrowseBuildPins(packagedServer, source.checksum)) !== JSON.stringify(launchPins)) fail("build_inputs_changed");
+    if (packaged && JSON.stringify(await readPackagedBrowseBuildPins(launchSelection, source.checksum)) !== JSON.stringify(launchPins)) fail("build_inputs_changed");
     if ((await readGstackClosureFileRecord(manifestFile)).checksum !== source.checksum ||
       (await readGstackClosureFileRecord(compilerPath)).checksum !== compiler.checksum ||
       JSON.stringify(await tools()) !== JSON.stringify(toolInputs)) fail("build_inputs_changed");

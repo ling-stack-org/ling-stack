@@ -4,7 +4,8 @@ import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { requireResourceLease, resourceCheckpoint, within } from "./resource-workspace.mjs";
 import { packagedBrowserSource } from "./packaged-browser-source.mjs";
-import { readGstackClosureFileRecord } from "./verify-shared-command-closure.mjs";
+import { compilerInputPath, readGstackClosureFileRecord } from "./verify-shared-command-closure.mjs";
+import { testsavantModelAcquisition } from "./testsavant-model-cache.mjs";
 
 const scripts = dirname(fileURLToPath(import.meta.url));
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -13,17 +14,29 @@ export function testsavantHealthSource(source, componentChecksum) {
   if (source.split(marker).length !== 2) throw new Error("testsavant_health_marker_invalid");
   return source.replace(marker, `${marker}\n        lingComponent: ${JSON.stringify(componentChecksum)},`);
 }
-export function testsavantGsClientPlugin({ componentChecksum } = {}) {
+export function testsavantRequiredModelSource(source) {
+  const marker = "          // L4 failure during scan: degrade to WARN per D7.\n          if (verdict === 'PASS') {\n            verdict = 'WARN';";
+  if (source.split(marker).length !== 2) throw new Error("testsavant_required_model_route_marker_invalid");
+  const unavailable = "      } else if (!sidecarAvail.available && verdict === 'PASS') {\n        verdict = 'WARN';";
+  if (source.split(unavailable).length !== 2) throw new Error("testsavant_required_model_unavailable_marker_invalid");
+  return source.replace(marker, "          // A required local classifier must complete before content can pass.\n          if (verdict !== 'BLOCK') {\n            verdict = 'BLOCK';")
+    .replace(unavailable, "      } else if (!sidecarAvail.available && verdict !== 'BLOCK') {\n        verdict = 'BLOCK';");
+}
+
+export function testsavantGsClientPlugin({ componentChecksum, modelMode = "bundled" } = {}) {
   if (componentChecksum !== undefined && !/^sha256:[a-f0-9]{64}$/.test(componentChecksum)) {
     throw new Error("testsavant_component_pin_invalid");
   }
   const client = join(scripts, componentChecksum ? "testsavant-packaged-client.mjs" : "testsavant-gs-client.mjs");
   return { name: "ling-managed-testsavant-client", setup(build) {
-    build.onResolve({ filter: /(?:^|\/)security-sidecar-client$/ }, () => ({ path: client }));
-    if (componentChecksum) build.onLoad({ filter: /browse\/src\/browser-manager\.ts$/ }, async args => ({
+    build.onResolve({ filter: /(?:^|[\\/])security-sidecar-client$/ }, () => ({ path: client }));
+    if (modelMode === "download-required") build.onLoad({ filter: /browse[\\/]src[\\/]routes[\\/]pty\.ts$/ }, async args => ({
+      contents: testsavantRequiredModelSource(await readFile(args.path, "utf8")), loader: "ts", resolveDir: dirname(args.path),
+    }));
+    if (componentChecksum) build.onLoad({ filter: /browse[\\/]src[\\/]browser-manager\.ts$/ }, async args => ({
       contents: packagedBrowserSource(await readFile(args.path, "utf8")), loader: "ts", resolveDir: dirname(args.path),
     }));
-    if (componentChecksum) build.onLoad({ filter: /browse\/src\/routes\/core\.ts$/ }, async args => {
+    if (componentChecksum) build.onLoad({ filter: /browse[\\/]src[\\/]routes[\\/]core\.ts$/ }, async args => {
       const source = await readFile(args.path, "utf8");
       return { contents: testsavantHealthSource(source, componentChecksum),
         loader: "ts", resolveDir: dirname(args.path) };
@@ -41,7 +54,8 @@ export function testsavantGsClientPlugin({ componentChecksum } = {}) {
 // Only small component outputs are built here. Frozen retained inputs are
 // authenticated and read-only; no dependency tree or model is copied.
 export async function buildTestsavantComponent({ runtimeRoot, outputRoot, sourceManifestPath, sourceManifestChecksum,
-  productionOnly = false }) {
+  productionOnly = false, modelMode = "bundled" }) {
+  if (!["bundled", "download-required"].includes(modelMode)) throw new Error("testsavant_model_mode_invalid");
   if (typeof productionOnly !== "boolean") throw new Error("testsavant_component_mode_invalid");
   if (!globalThis.Bun) throw new Error("testsavant_bun_build_required");
   const lease = await requireResourceLease();
@@ -91,11 +105,11 @@ export async function buildTestsavantComponent({ runtimeRoot, outputRoot, source
         const actual = await readGstackClosureFileRecord(path);
         let relative;
         if (within(runtimeRoot, path)) {
-          relative = path.slice(runtimeRoot.length + 1);
+          relative = compilerInputPath({ rootPath: runtimeRoot, inputPath: path });
           const expected = sources.get(relative);
           if (!expected || actual.checksum !== expected.checksum || actual.sizeBytes !== expected.sizeBytes) throw new Error(`testsavant_build_source_mismatch:${relative}`);
           relative = `runtime/${relative}`;
-        } else if (within(scripts, path)) relative = `scripts/gstack/${path.slice(scripts.length + 1)}`;
+        } else if (within(scripts, path)) relative = `scripts/gstack/${compilerInputPath({ rootPath: scripts, inputPath: path })}`;
         else throw new Error("testsavant_unlisted_build_input");
         inputs.push({ path: relative, ...actual });
         bound.set(relative, { actualPath: path, ...actual });
@@ -145,6 +159,7 @@ export async function buildTestsavantComponent({ runtimeRoot, outputRoot, source
   for (const path of ["package.json", "dist/transformers.node.mjs"]) externalInputs.push({ path: `node_modules/@huggingface/transformers/${path}`,
     ...await readGstackClosureFileRecord(join(transformers, path)) });
   const report = { schemaVersion: 1, scope: "managed-testsavant-component", releaseEligible: false,
+    ...(modelMode === "download-required" ? { modelAcquisition: testsavantModelAcquisition() } : {}),
     runtimeMode: productionOnly ? "production-worker-only" : "comparison-harness",
     sourceManifestChecksum: source.checksum, compiler, producer, sourceReferences, artifacts: records, externalInputs,
     node: await readGstackClosureFileRecord(join(runtimeRoot, "tools", process.platform === "win32" ? "node.exe" : "node")),

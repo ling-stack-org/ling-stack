@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { cp, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, statfs, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { verifyBundledSkillSource } from "@ling-stack/core/bundled-skill-source";
-import { verifyBundledBrowser } from "@ling-stack/core/bundled-skill-browser";
+import { verifyPackagedBrowser } from "@ling-stack/core/bundled-skill-browser";
 import { PackagedSkillRuntime } from "./packaged-runtime.js";
 
 type Selection = Parameters<typeof verifyBundledSkillSource>[0];
@@ -39,7 +39,7 @@ async function admit(root: string, identity: Identity, browserChecksum?: string)
   const receipt = source.manifest.files.some(file => file.path === "executable-build.json")
     ? JSON.parse(await source.readResource("executable-build.json")) : undefined;
   if (receipt?.browser?.componentChecksum !== browserChecksum) fail("browser_mismatch");
-  const browser = browserChecksum ? verifyBundledBrowser(join(root, "gstack-browser"), browserChecksum, identity.expectedTarget!) : undefined;
+  const browser = browserChecksum ? verifyPackagedBrowser(join(root, "gstack-browser"), receipt.browser, identity.expectedTarget!) : undefined;
   return new PackagedSkillRuntime(join(root, "gstack"), source, browser);
 }
 async function load(root: string): Promise<PackagedSkillRuntime> {
@@ -85,7 +85,7 @@ export async function retainPackagedSkillGeneration(cache: string, selection: Se
     const receipt = source.manifest.files.some(file => file.path === "executable-build.json")
       ? JSON.parse(await source.readResource("executable-build.json")) : undefined;
     if (Boolean(receipt?.browser?.componentChecksum) !== Boolean(browserRoot)) fail("browser_mismatch");
-    const browser = browserRoot ? verifyBundledBrowser(browserRoot, receipt.browser?.componentChecksum, identity.expectedTarget!) : undefined;
+    const browser = browserRoot ? verifyPackagedBrowser(browserRoot, receipt.browser, identity.expectedTarget!) : undefined;
     const original = new PackagedSkillRuntime(rootPath, source, browser);
     const volume = await statfs(cache);
     const additional = await treeBytes(rootPath) + (browserRoot ? await treeBytes(browserRoot) : 0) + 65536;

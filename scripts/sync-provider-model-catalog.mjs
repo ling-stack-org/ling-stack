@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { normalizeModelTokenLimits } from "./provider-model-catalog-normalization.mjs";
+import { normalizeModelTokenLimits, normalizeThinkingModes } from "./provider-model-catalog-normalization.mjs";
 
 const SOURCE_URL = "https://models.dev/api.json";
 const TRUSTED_PROVIDER_IDS = [
@@ -109,29 +109,6 @@ function normalizeModel(providerId, value) {
     maxTokens: tokenLimits.maxTokens,
     updatedAt: normalizedDate(value.last_updated),
   });
-}
-
-function normalizeThinkingModes(value) {
-  if (!Array.isArray(value)) return [];
-  const modes = [];
-  for (const option of value) {
-    if (!isRecord(option)) continue;
-    if (option.type === "toggle") appendUnique(modes, "off", "auto");
-    if (option.type !== "effort") continue;
-    for (const raw of stringArray(option.values)) {
-      const mode = normalizeThinkingMode(raw);
-      if (mode) appendUnique(modes, mode);
-    }
-  }
-  const order = ["off", "auto", "minimal", "low", "medium", "high", "xhigh"];
-  return order.filter((mode) => modes.includes(mode));
-}
-
-function normalizeThinkingMode(value) {
-  const mode = value.trim().toLowerCase();
-  if (mode === "none" || mode === "disabled") return "off";
-  if (mode === "max" || mode === "maximum") return "xhigh";
-  return ["off", "auto", "minimal", "low", "medium", "high", "xhigh"].includes(mode) ? mode : undefined;
 }
 
 function renderCatalog({ generatedAt, records, updatedAt, version }) {

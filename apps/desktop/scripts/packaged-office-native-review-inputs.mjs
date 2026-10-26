@@ -39,6 +39,8 @@
  */
 export const PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS = Object.freeze([
   "apps/desktop/main/resource-paths.ts",
+  "apps/desktop/scripts/after-sign.mjs",
+  "apps/desktop/scripts/engine-supervisor-package.mjs",
   "apps/desktop/scripts/build-packaged-daemon.mjs",
   "apps/desktop/scripts/build-packaged-office-native.mjs",
   "apps/desktop/scripts/stage-development-bundled-plugins.mjs",
@@ -69,6 +71,7 @@ export const PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS = Object.freeze([
   "apps/desktop/scripts/packaged-office-native-package-checks.mjs",
   "apps/desktop/scripts/packaged-office-native-review-inputs.mjs",
   "apps/desktop/scripts/packaged-office-native-review.mjs",
+  "apps/desktop/scripts/packaged-office-native-toolchain.mjs",
   "apps/desktop/scripts/packaged-office-signing-inputs.mjs",
   "apps/desktop/shared/cua-driver-package-authority-contract.mjs",
   "native/sandbox/scripts/build.mjs",
@@ -148,6 +151,9 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "apps/desktop/main/qa-launch-profile.ts",
   "apps/desktop/scripts/build-human-evaluation-helper.mjs",
   "apps/desktop/scripts/packaged-office-native-review.mjs",
+  "apps/desktop/scripts/packaged-office-native-toolchain.mjs",
+  "apps/desktop/scripts/after-sign.mjs",
+  "apps/desktop/scripts/engine-supervisor-package.mjs",
   "LICENSE",
   "apps/desktop/main/resource-paths.ts",
   "apps/desktop/package.json",
@@ -1700,4 +1706,11 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/providers/tsconfig.json",
   "packages/remote-protocol/tsconfig.json",
   "packages/runner-pi/tsconfig.json",
+  // Reviewed literal authored edges added by native-engine, user-input and
+  // work-summary integration. Explicit data only; builds never discover inputs.
+  // Reviewed private installer tooling and fixed first-use model acquisition inputs.
+  "apps/desktop/scripts/distribution/installer-builder.mjs",
+  "apps/desktop/scripts/distribution/LingShell.nsh",
+  "scripts/gstack/testsavant-model-cache.mjs",
+  "scripts/gstack/testsavant-model-pin.json",
 ]);

@@ -86,15 +86,32 @@ async function readWorkspaceRecord(root) {
   } finally { await file.close(); }
 }
 
-export async function initResourceWorkspace({ root, mountPath, storageMode = "external-volume" }) {
-  if (!["external-volume", "local-bounded"].includes(storageMode) || storageMode === "local-bounded" && mountPath !== undefined) {
-    throw new Error("gstack_resource_storage_mode_invalid");
+export async function hostedRunnerStorage(root, env = process.env) {
+  if (env.GITHUB_ACTIONS !== "true" || env.RUNNER_ENVIRONMENT !== "github-hosted" ||
+    !/^\d+$/.test(env.GITHUB_RUN_ID ?? "") || !/^\d+$/.test(env.GITHUB_RUN_ATTEMPT ?? "") ||
+    !/^[a-zA-Z0-9_-]+$/.test(env.GITHUB_JOB ?? "") || !env.RUNNER_TEMP || !isAbsolute(env.RUNNER_TEMP)) {
+    throw new Error("gstack_resource_github_hosted_identity_required");
   }
+  const mountPath = resolve(env.RUNNER_TEMP), path = resolve(root);
+  const info = await lstat(mountPath);
+  if (!info.isDirectory() || info.isSymbolicLink() || await realpath(mountPath) !== mountPath ||
+    path === mountPath || !within(mountPath, path) || await canonicalDestination(path) !== path) {
+    throw new Error("gstack_resource_ephemeral_path_invalid");
+  }
+  return { mountPath, mountDevice: info.dev, mountInode: info.ino,
+    storagePolicy: "github-hosted-ephemeral", runnerIdentity: {
+      runId: env.GITHUB_RUN_ID, runAttempt: env.GITHUB_RUN_ATTEMPT, job: env.GITHUB_JOB } };
+}
+
+export async function initResourceWorkspace({ root, mountPath, storageMode = "external-volume", ciEphemeral = false }) {
+  if (!["external-volume", "local-bounded"].includes(storageMode) || typeof ciEphemeral !== "boolean"
+    || storageMode === "local-bounded" && (mountPath !== undefined || ciEphemeral)
+    || ciEphemeral && mountPath !== undefined) throw new Error("gstack_resource_storage_mode_invalid");
   if (!root || !isAbsolute(root)) throw new Error("gstack_resource_workspace_required");
   const hostPath = await realpath(homedir());
   const path = resolve(root);
   const local = storageMode === "local-bounded";
-  const mount = local ? undefined : await externalMount(mountPath, hostPath);
+  const mount = local ? undefined : ciEphemeral ? await hostedRunnerStorage(root) : await externalMount(mountPath, hostPath);
   if (await canonicalDestination(path) !== path) {
     throw new Error("gstack_resource_workspace_path_alias");
   }
@@ -127,15 +144,24 @@ export async function openResourceWorkspace(root) {
     || record.budgetBytes !== RESOURCE_LIMITS.budgetBytes || record.minFreeBytes !== RESOURCE_LIMITS.minFreeBytes) {
     throw new Error("gstack_resource_mount_identity_mismatch");
   }
-  if (record.schemaVersion === 2 && record.storageMode === "local-bounded") {
+  if (record.storagePolicy !== undefined && record.storagePolicy !== "github-hosted-ephemeral") {
+    throw new Error("gstack_resource_runner_identity_mismatch");
+  }
+  if (record.schemaVersion === 2 && record.storageMode === "local-bounded" && record.storagePolicy === undefined) {
     const parent = await privateDirectory(dirname(path)), workspace = await privateDirectory(path);
     if (record.localParentPath !== dirname(path) || record.localParentDevice !== parent.dev || record.localParentInode !== parent.ino
       || record.workspaceDevice !== workspace.dev || record.workspaceInode !== workspace.ino || workspace.dev !== parent.dev) {
       throw new Error("gstack_resource_local_identity_mismatch");
     }
   } else if (record.schemaVersion === 1 && record.storageMode === undefined) {
-    const mount = await externalMount(record.mountPath, record.hostPath);
-    if (!within(mount.mountPath, path) || record.mountDevice !== mount.mountDevice || record.mountInode !== mount.mountInode
+    const mount = record.storagePolicy === "github-hosted-ephemeral"
+      ? await hostedRunnerStorage(root) : await externalMount(record.mountPath, record.hostPath);
+    if (record.storagePolicy === "github-hosted-ephemeral"
+      && JSON.stringify(record.runnerIdentity) !== JSON.stringify(mount.runnerIdentity)) {
+      throw new Error("gstack_resource_runner_identity_mismatch");
+    }
+    if (record.mountPath !== mount.mountPath || !within(mount.mountPath, path)
+      || record.mountDevice !== mount.mountDevice || record.mountInode !== mount.mountInode
       || (await stat(path)).dev !== mount.mountDevice) throw new Error("gstack_resource_mount_identity_mismatch");
   } else throw new Error("gstack_resource_storage_mode_invalid");
   for (const name of ["artifacts", "cache", "runs"]) {

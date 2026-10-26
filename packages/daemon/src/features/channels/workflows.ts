@@ -116,7 +116,7 @@ export interface WorkflowStepRunRequest {
     readonly channelId?: string;
   };
   readonly tools?: readonly RunTool[];
-  readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
   readonly contextPack?: WorkflowStepRunContextPackSnapshot;
   readonly contextProjection?: ContextPack["contextProjection"];
   readonly contextCompactions?: readonly WorkflowStepContextCompactionSummary[];

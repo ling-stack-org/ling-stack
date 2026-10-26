@@ -8,3 +8,11 @@ targetRules = ["generic-api-key"]
 paths = ['''(^|/)packages/localization/catalogs/[a-z]{2}-([A-Z]{2}|[0-9]{3})\.json$''']
 regexTarget = "line"
 regexes = ['''^\s*"(?:[^"\\]|\\.)+": "[a-f0-9]{64}",?\s*$''']
+
+[[allowlists]]
+description = "SHA-256 source-file review records, including paths containing auth or secret."
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''(^|/)native/office-local/reviewed-packaged-source-v1\.json$''']
+regexTarget = "line"
+regexes = ['''^\s*"packages/[^"\\]+\.ts": "[a-f0-9]{64}",?\s*$''']

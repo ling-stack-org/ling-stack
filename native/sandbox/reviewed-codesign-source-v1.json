@@ -28,8 +28,8 @@
   "runtime": {
     "platform": "darwin",
     "architecture": "arm64",
-    "electron": "44.7.0",
-    "node": "24.21.0",
+    "electron": "44.8.0",
+    "node": "24.22.0",
     "uv": "1.52.1"
   },
   "os": {

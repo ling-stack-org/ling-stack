@@ -1,11 +1,63 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { verifyImageCodecDependencies } from "../scripts/image-codec-dependencies.mjs";
+
+test("Windows Git checkout preserves reviewed codec license bytes and exact notice text", async t => {
+  const root = await mkdtemp(join(tmpdir(), "ling-codec-checkout-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repository = fileURLToPath(new URL("../../../", import.meta.url));
+  const fixture = join(root, "repository"), checkout = join(root, "checkout"), registry = join(root, "registry");
+  await mkdir(fixture); await mkdir(checkout);
+  const git = (cwd, args) => {
+    const result = spawnSync("git", ["-c", `core.attributesFile=${join(root, "no-extra-attributes")}`, ...args], {
+      cwd, env: { ...process.env, GIT_INDEX_FILE: join(root, "fixture-index"),
+        GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: join(root, "no-global-config") },
+    });
+    assert.equal(result.status, 0, result.stderr?.toString());
+    return result.stdout;
+  };
+  const prefix = "packages/daemon/native/image-sanitizer";
+  const inventory = JSON.parse(await readFile(join(repository, prefix, "dependency-inventory.json"), "utf8"));
+  const paths = [`${prefix}/THIRD_PARTY_LICENSES.txt`, ...inventory.active.map(row => `${prefix}/${row.licensePath}`),
+    `${prefix}/vendor/jpeg-decoder/LICENSE-MIT`];
+  const original = new Map();
+  for (const path of paths) {
+    const bytes = git(repository, ["cat-file", "blob", `HEAD:${path}`]);
+    original.set(path, bytes);
+    await mkdir(dirname(join(fixture, path)), { recursive: true });
+    await writeFile(join(fixture, path), bytes);
+  }
+  await writeFile(join(fixture, ".gitattributes"), await readFile(join(repository, ".gitattributes")));
+  git(fixture, ["init", "--quiet", "--template="]);
+  git(fixture, ["-c", "core.autocrlf=false", "add", "--all"]);
+  git(fixture, ["-c", "core.autocrlf=true", "checkout-index", "--all", `--prefix=${checkout}${sep}`]);
+
+  // Cargo registry extraction retains the original crate bytes independently
+  // from Git's checkout rules; the local patched decoder lives in the checkout.
+  const packages = [];
+  for (const row of inventory.active) {
+    const local = row.name === "jpeg-decoder";
+    const manifest = local ? join(checkout, prefix, "vendor/jpeg-decoder/Cargo.toml")
+      : join(registry, dirname(row.licensePath), "Cargo.toml");
+    if (!local) {
+      await mkdir(dirname(manifest), { recursive: true });
+      await writeFile(join(dirname(manifest), row.licenseFile), original.get(`${prefix}/${row.licensePath}`));
+    }
+    packages.push({ name: row.name, version: row.version, license: row.upstreamLicense, manifest_path: manifest,
+      ...(local ? {} : { source: "registry+https://github.com/rust-lang/crates.io-index" }) });
+  }
+  const dependencies = await verifyImageCodecDependencies({ metadata: { packages }, activePackages: packages, inventory,
+    lock: { package: inventory.active.map(row => ({ name: row.name, version: row.version, checksum: row.originalCrateSHA256 })) },
+    notices: await readFile(join(checkout, prefix, "THIRD_PARTY_LICENSES.txt"), "utf8"), nativeRoot: join(checkout, prefix) });
+  assert.equal(dependencies.length, inventory.active.length);
+  for (const [path, bytes] of original) assert.deepEqual(await readFile(join(checkout, path)), bytes, path);
+});
 
 test("image sanitizer build explains a missing or outdated Rust toolchain before compiling", {
   skip: process.platform === "win32" ? "Executable PATH fixtures require POSIX shebang support" : false,

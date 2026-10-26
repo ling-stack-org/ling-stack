@@ -1,6 +1,6 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
-import { resolve, dirname, join, basename } from "node:path";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readExecutableBundle } from "../../../scripts/gstack/executable-bundle.mjs";
 
@@ -25,17 +25,15 @@ export async function preparePackagedGstackBuild({ required = false, selectionPa
 }
 export function packagedGstackBuilderConfig() {
   if (!active) return {};
-  // Builder's directory walker skips these names before applying any filter.
-  // Explicit file sets preserve only entries already authenticated by the full
-  // selected manifest; the post-copy complete inventory/hash guard stays intact.
-  const exactFiles = active.source.manifest.files
-    .filter(file => [".gitkeep", ".DS_Store"].includes(basename(file.path)))
-    .map(file => ({ from: join(active.root, file.path), to: `gstack/${file.path}` }));
+  // Builder's directory walker skips these names before applying filters.
+  // Exact file mappings preserve the authenticated manifest without exclusions.
+  const retainedFiles = active.source.manifest.files.filter(file =>
+    file.path.split("/").some(name => name === ".gitkeep" || name === ".DS_Store"))
+    .map(file => ({ from: join(active.root, file.path), to: join("gstack", file.path) }));
   const extraResources = [{ from: active.root, to: "gstack", filter: ["**/*"] },
-    { from: active.browser.root, to: "gstack-browser", filter: ["**/*"] }, ...exactFiles];
-  // Builder interprets macros in both fields, even for authenticated literal
-  // paths. Refuse before copying, not after a rewritten path has caused effects.
-  if (extraResources.some(file => file.from.includes("${") || file.to.includes("${"))) {
+    { from: active.browser.root, to: "gstack-browser", filter: ["**/*"] }, ...retainedFiles];
+  // FileMatcher expands macros in both paths. Authenticated paths must stay literal.
+  if (extraResources.some(entry => [entry.from, entry.to].some(path => path.includes("${")))) {
     throw new Error("packaged_gstack_builder_path_macro_unsupported");
   }
   return { extraResources,
@@ -62,7 +60,7 @@ export function packagedGstackIdentityPlugin({ identity, sourceInputs, desktopRo
   const module = resolve(root, `../../packages/daemon/${sourceInputs ? "src" : "dist"}/features/skills/packaged-identity.${sourceInputs ? "ts" : "js"}`);
   const marker = `const embeddedBundledGstackJson${sourceInputs ? ": string" : ""} = "NO_PACKAGED_GSTACK_IDENTITY";`;
   return { plugin: { name: "build-owned-packaged-gstack-identity", setup(build) {
-    build.onLoad({ filter: /features\/skills\/packaged-identity\.(?:ts|js)$/ }, async args => {
+    build.onLoad({ filter: /features[\\/]skills[\\/]packaged-identity\.(?:ts|js)$/ }, async args => {
       if (await realpath(args.path) !== module) throw new Error("packaged_gstack_identity_module_changed");
       visits++;
       const source = sourceInputs ? sourceInputs.loadSource(module).contents : await readFile(module, "utf8");

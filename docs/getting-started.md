@@ -89,7 +89,10 @@ the process exit code as an installation-only verdict.
 
 ## Have A First Conversation
 
-Choose **New conversation** and confirm the selected chat model. Send a small prompt:
+Choose **New conversation** and confirm the selected chat model. Open the model control
+to adjust **Thinking mode**; the slider includes `max` or `ultra` only when declared
+for that model. If a model switch cannot keep the selected level, Ling chooses a
+supported default and explains the change. Send a small prompt:
 
 > Help me turn these notes into three concrete action items: review the README,
 > check the startup guide, and prepare an alpha release description.

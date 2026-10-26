@@ -1,28 +1,39 @@
 import { execFileSync } from "node:child_process";
 import { constants } from "node:fs";
-import { cp, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { cp, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { bundleFile, bundleInventory, digest, readExecutableBundle } from "./executable-bundle.mjs";
 import { materializeLocalBrowser, materializeLocalFfmpeg } from "./materialize-local-browser.mjs";
+import { materializePlaywrightBrowser } from "./materialize-playwright-browser.mjs";
 import { managedResourceWrite, resourceCheckpoint } from "./resource-workspace.mjs";
 import { testsavantArtifactName, verifyTestsavantModel } from "./collect-testsavant-model.mjs";
 import { verifyBrowserArchiveSource } from "./collect-browser-archives.mjs";
+import { testsavantModelAcquisition } from "./testsavant-model-cache.mjs";
+import { publishStagedDirectory } from "./publish-staged-directory.mjs";
 
 const scripts = dirname(fileURLToPath(import.meta.url));
 const exists = path => lstat(path).then(() => true, error => { if (error.code !== "ENOENT") throw error; return false; });
-const toolNames = ["assemble-executable-bundle.mjs", "executable-bundle.mjs", "materialize-local-browser.mjs",
+const toolNames = ["assemble-executable-bundle.mjs", "publish-staged-directory.mjs", "executable-bundle.mjs", "materialize-local-browser.mjs",
   "build-managed-node-server.mjs", "build-node-server-resource.mjs", "build-testsavant-component.mjs", "build-portable-resources.ts",
   "build-bun-native-resource.mjs", "packaged-browse-build.mjs", "packaged-browse-launch.mjs", "testsavant-packaged-client.mjs",
   "testsavant-gs-client.mjs", "testsavant-client.mjs", "testsavant-runtime.mjs", "testsavant-worker.mjs", "testsavant-offline-guard.mjs",
   "testsavant-model-pin.json", "upstream-lock.json", "packaged-browser-source.mjs", "collect-browser-archives.mjs",
-  "reviewed-source-bundle.json", "runtime-dependency-audit.mjs"];
+  "reviewed-source-bundle.json", "runtime-dependency-audit.mjs", "testsavant-model-cache.mjs", "materialize-playwright-browser.mjs",
+  "inspect-browser-archives.mjs", "inspect-browser-zip.mjs", "browser-acquisition.mjs"];
 
 /** One complete local candidate, reusing authenticated prerequisites without dependency installs. */
 export async function assembleExecutableBundle({ stageRoot, browserInspectionRoot, archiveRoot, outputRoot,
-  expectedResourceStageChecksum, onProgress = () => {} }) {
+  expectedResourceStageChecksum, browserArchivesRoot, expectedArchiveReceiptChecksum,
+  expectedBrowserInspectionChecksum, modelMode = "bundled", browserMode = "bundled", onProgress = () => {} }) {
   if (!/^sha256:[a-f0-9]{64}$/.test(expectedResourceStageChecksum ?? "")) throw new Error("gstack_executable_stage_receipt_required");
-  if (typeof archiveRoot !== "string" || !archiveRoot) throw new Error("gstack_executable_archive_root_required");
+  if (!(typeof archiveRoot === "string" && archiveRoot || typeof browserArchivesRoot === "string" && browserArchivesRoot)) {
+    throw new Error("gstack_executable_archive_root_required");
+  }
+  if (!["bundled", "download-required"].includes(modelMode)) throw new Error("gstack_executable_model_mode_invalid");
+  if (!["bundled", "download-required"].includes(browserMode) || browserMode === "download-required" && !browserArchivesRoot) {
+    throw new Error("gstack_executable_browser_mode_invalid");
+  }
   stageRoot = resolve(stageRoot); browserInspectionRoot = resolve(browserInspectionRoot); outputRoot = resolve(outputRoot);
   if (await exists(outputRoot)) throw new Error("gstack_executable_output_exists");
   if (await realpath(stageRoot) !== stageRoot) throw new Error("gstack_executable_stage_alias");
@@ -31,6 +42,7 @@ export async function assembleExecutableBundle({ stageRoot, browserInspectionRoo
   const stageBytes = await readFile(join(stageRoot, "resource-stage.json"));
   if (digest(stageBytes) !== expectedResourceStageChecksum) throw new Error("gstack_executable_prerequisites_changed");
   const stage = JSON.parse(stageBytes), inventoryBytes = await readFile(join(stageRoot, "resource-inventory.json"));
+  if (stage.schemaVersion !== 1 || stage.deliveryStage !== "resource-prerequisites" || stage.releaseEligible !== false) throw new Error("gstack_executable_stage_invalid");
   if (digest(inventoryBytes) !== stage.inventoryChecksum || stage.target.platform !== process.platform
     || stage.target.arch !== process.arch) throw new Error("gstack_executable_prerequisites_changed");
   const inputInventory = JSON.parse(inventoryBytes).files;
@@ -51,7 +63,8 @@ export async function assembleExecutableBundle({ stageRoot, browserInspectionRoo
     throw new Error("gstack_executable_prerequisites_changed");
   }
   const modelRoot = join(lease.root, "artifacts/resource", testsavantArtifactName);
-  await verifyTestsavantModel(modelRoot);
+  if (modelMode === "bundled") await verifyTestsavantModel(modelRoot);
+  const modelAcquisition = modelMode === "download-required" ? testsavantModelAcquisition() : undefined;
   await mkdir(dirname(outputRoot), { recursive: true });
   const work = await mkdtemp(join(lease.scratchPath, "tmp", "gstack-executable-")), candidate = join(work, "candidate"), mainRoot = join(candidate, "gstack");
   try {
@@ -62,29 +75,41 @@ export async function assembleExecutableBundle({ stageRoot, browserInspectionRoo
     const runtime = join(mainRoot, "runtime"), retainedRuntime = join(stageRoot, "runtime"), compiled = join(work, "compiled");
     await mkdir(compiled);
     const env = { ...process.env, NODE_OPTIONS: "", NODE_PATH: "" };
-    const build = (script, args) => execFileSync(join(retainedRuntime, "tools/bun"), ["--no-env-file", "--no-install", join(scripts, script), ...args],
+    const suffix = stage.target.platform === "win32" ? ".exe" : "";
+    const build = (script, args) => execFileSync(join(retainedRuntime, `tools/bun${suffix}`), ["--no-env-file", "--no-install", join(scripts, script), ...args],
       { cwd: retainedRuntime, env, encoding: "utf8", timeout: 120_000, maxBuffer: 1024 ** 2 });
     onProgress("compile current production-only TestSavant server and pinned native CLI");
-    build("build-portable-resources.ts", ["node-server", retainedRuntime, compiled]);
-    onProgress("materialize independently verified browser with original framework aliases and signatures");
-    const browser = await materializeLocalBrowser({ inspectionRoot: browserInspectionRoot, runtimeRoot: retainedRuntime,
-      outputRoot: join(candidate, "gstack-browser"), managedRoot: lease.root });
-    browser.ffmpeg = await materializeLocalFfmpeg({ archiveRoot: resolve(archiveRoot),
+    build("build-portable-resources.ts", [modelMode === "download-required" ? "node-server-download" : "node-server", retainedRuntime, compiled]);
+    onProgress(browserMode === "download-required" ? "seal official browser acquisition metadata without redistributing Chrome" :
+      "materialize independently verified browser with original framework aliases and signatures");
+    const browser = browserArchivesRoot ? await materializePlaywrightBrowser({ resourceStagePath: stageRoot,
+      archivePath: browserArchivesRoot, inspectionPath: browserInspectionRoot,
+      expectedResourceStageChecksum, expectedArchiveReceiptChecksum,
+      expectedInspectionChecksum: expectedBrowserInspectionChecksum, browserOutputRoot: join(candidate, "gstack-browser"),
+      cacheOutputRoot: join(runtime, "browser-cache"), managedRoot: lease.root, target: stage.target, browserMode })
+      : await materializeLocalBrowser({ inspectionRoot: browserInspectionRoot, runtimeRoot: retainedRuntime,
+        outputRoot: join(candidate, "gstack-browser"), managedRoot: lease.root });
+    if (!browserArchivesRoot) browser.ffmpeg = await materializeLocalFfmpeg({ archiveRoot: resolve(archiveRoot),
       runtimeRoot: retainedRuntime, cacheRoot: join(runtime, "browser-cache"), managedRoot: lease.root });
     await mkdir(join(compiled, "tools"));
-    await copyFile(join(retainedRuntime, "tools/node"), join(compiled, "tools/node"));
+    await copyFile(join(retainedRuntime, `tools/node${suffix}`), join(compiled, `tools/node${suffix}`));
     // Browser pins become compiler input, not a runtime environment override.
     await writeFile(join(compiled, "browser-selection.json"), `${JSON.stringify(browser, null, 2)}\n`, { flag: "wx" });
     build("build-bun-native-resource.mjs", ["packaged-browse", retainedRuntime, compiled]);
-    for (const path of ["browse/dist/browse", "browse/dist/browse.build-provenance.json", "browse/dist/server-node.mjs",
+    for (const path of [`browse/dist/browse${suffix}`, `browse/dist/browse${suffix}.build-provenance.json`, "browse/dist/server-node.mjs",
       "browse/dist/bun-polyfill.cjs", "browse/dist/node-server-build-provenance.json", "browse/dist/testsavant-component.json",
       "browse/dist/testsavant-sidecar.mjs", "browser-selection.json"]) {
       const destination = join(runtime, path);
       if (await exists(destination)) await rm(destination);
       await copyFile(join(compiled, path), destination, constants.COPYFILE_EXCL);
     }
-    await mkdir(join(runtime, "models"), { recursive: true });
-    await cp(modelRoot, join(runtime, "models/testsavant-small"), { recursive: true, errorOnExist: true, force: false });
+    if (modelMode === "bundled") {
+      await mkdir(join(runtime, "models"), { recursive: true });
+      await cp(modelRoot, join(runtime, "models/testsavant-small"), { recursive: true, errorOnExist: true, force: false });
+    } else {
+      if (await exists(join(runtime, "models"))) throw new Error("gstack_executable_unexpected_bundled_models");
+      await writeFile(join(runtime, "testsavant-model-acquisition.json"), `${JSON.stringify(modelAcquisition, null, 2)}\n`, { flag: "wx" });
+    }
     await resourceCheckpoint(lease.root);
     if (canonical(tools) !== canonical(await Promise.all(toolPaths.map(path => bundleFile(repo, path))))) throw new Error("gstack_executable_build_inputs_changed");
     const adaptationRevision = `ling-${digest(Buffer.from(canonical(tools))).slice(7)}`;
@@ -92,6 +117,7 @@ export async function assembleExecutableBundle({ stageRoot, browserInspectionRoo
       releaseEligible: false, packageAcceptance: "pending", upstreamRevision: source.upstream.revision,
       retainedStageChecksum: expectedResourceStageChecksum, stageSelection: "explicit-detached-rebuilt-or-retained",
       adaptationRevision, toolInputs: tools, browser,
+      ...(modelAcquisition ? { modelAcquisition } : {}),
       pendingGates: ["whole-package-review", "installed-client-all57", "native-windows", "redistribution-notices-and-authorization"] }, null, 2)}\n`, { flag: "wx" });
     onProgress("seal exact executable inventory and verify every byte, all57 skills and zero links");
     const manifest = { ...source, deliveryStage: "executable", target: stage.target, adaptationRevision,
@@ -99,11 +125,7 @@ export async function assembleExecutableBundle({ stageRoot, browserInspectionRoo
     await writeFile(join(mainRoot, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
     const verified = await readExecutableBundle(mainRoot);
     await resourceCheckpoint(lease.root);
-    // The managed lease serializes writers. Reserve the destination exclusively
-    // as well, so a late unrelated writer can never be overwritten by rename.
-    await mkdir(outputRoot);
-    try { await rename(candidate, outputRoot); }
-    catch (error) { await rmdir(outputRoot).catch(() => {}); throw error; }
+    await publishStagedDirectory(candidate, outputRoot);
     return { identity: verified.identity, fileCount: manifest.files.length, sizeBytes: manifest.files.reduce((sum, row) => sum + row.sizeBytes, 0) };
   } finally { await rm(work, { recursive: true, force: true }); }
 }

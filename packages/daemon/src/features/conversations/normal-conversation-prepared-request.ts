@@ -116,7 +116,7 @@ function validatePayload(value: unknown, expected: { threadId: string; turnId: s
     const parsedProvider = json(parsed.provider);
     const thinking = request.provider.thinkingLevelMap;
     if (thinking !== undefined && (!isRecord(thinking) || Object.entries(thinking).some(([key, level]) =>
-      !["off", "minimal", "low", "medium", "high", "xhigh"].includes(key) || level !== null && typeof level !== "string"))) {
+      !["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(key) || level !== null && typeof level !== "string"))) {
       throw new Error("Invalid prepared provider thinking map");
     }
     for (const [key, item] of Object.entries(request.provider)) {

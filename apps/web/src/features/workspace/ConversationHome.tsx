@@ -36,7 +36,7 @@ import {
   buildNormalConversationDockViewModel,
   runTaskSnapshotTitle,
 } from "./normal-conversation-dock-projections.js";
-import { normalConversationThinkingOptions } from "./normal-conversation-composer-options.js";
+import { normalConversationDefaultThinkingLevel, normalConversationThinkingLabel, normalConversationThinkingOptions } from "./normal-conversation-composer-options.js";
 import {
   createConversationHomeMessageId,
   upsertConversationHomeMessage,
@@ -432,7 +432,7 @@ export function ConversationHome({
       return;
     }
     if (!thinkingMenuOptions.includes(selectedThinkingLevel)) {
-      setSelectedThinkingLevel("off");
+      setSelectedThinkingLevel(normalConversationDefaultThinkingLevel(thinkingMenuOptions));
     }
   }, [selectedThinkingLevel, thinkingEnabled, thinkingMenuOptions]);
 
@@ -710,11 +710,16 @@ export function ConversationHome({
       return;
     }
     setSelectedProviderPresetId(option.id);
-    setSelectedThinkingLevel((current) => {
-      const supported = normalConversationThinkingOptions(option.thinkingModes ?? []);
-      return supported.includes(current) ? current : "off";
-    });
+    const supported = normalConversationThinkingOptions(option.thinkingModes ?? []);
+    const nextLevel = supported.includes(selectedThinkingLevel)
+      ? selectedThinkingLevel : normalConversationDefaultThinkingLevel(supported);
+    setSelectedThinkingLevel(nextLevel);
     actionFeedback.clear("validation");
+    if (nextLevel !== selectedThinkingLevel) {
+      actionFeedback.report("validation", t("Reasoning level changed to {level} because the selected model does not support {previous}.", {
+        level: normalConversationThinkingLabel(nextLevel, t), previous: normalConversationThinkingLabel(selectedThinkingLevel, t),
+      }));
+    }
   }
 
   function selectThinkingLevel(level: ProviderThinkingMode): void {

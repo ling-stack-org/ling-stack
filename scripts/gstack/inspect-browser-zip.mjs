@@ -19,7 +19,7 @@ function normalizedPath(value) {
   return value;
 }
 
-function memberMetadata(entry, limits) {
+function memberMetadata(entry, limits, target) {
   if (entry.generalPurposeBitFlag & 0x41) fail("member_encrypted");
   if (![0, 8].includes(entry.compressionMethod)) fail("member_compression_invalid");
   if (!Number.isSafeInteger(entry.uncompressedSize) || entry.uncompressedSize < 0 || entry.uncompressedSize > limits.maxMemberBytes ||
@@ -32,10 +32,13 @@ function memberMetadata(entry, limits) {
     !directory && entry.externalFileAttributes & 0x10) fail("member_type_invalid");
   const kind = directory ? "directory" : type === 0xa000 ? "link" : "file";
   if (kind === "directory" && entry.uncompressedSize || kind === "link" && entry.uncompressedSize > 4_096) fail("member_size_invalid");
-  const notice = kind === "file" && /^(?:LICENSE(?:[._-].*)?|COPYING(?:[._-].*)?|NOTICE(?:[._-].*)?)$/iu.test(posix.basename(path));
+  // Retain this exact original copyright/reference without classifying an
+  // arbitrary ABOUT file as a license or complete third-party notice set.
+  const copyrightReference = kind === "file" && target.platform === "win32" && target.arch === "x64" && path === "chrome-win64/ABOUT";
+  const notice = kind === "file" && (/^(?:LICENSE(?:[._-].*)?|COPYING(?:[._-].*)?|NOTICE(?:[._-].*)?)$/iu.test(posix.basename(path)) || copyrightReference);
   if (notice && entry.uncompressedSize > maxNoticeBytes) fail("member_notice_too_large");
   return { path, kind, mode, sizeBytes: entry.uncompressedSize, compressedSizeBytes: entry.compressedSize,
-    compressionMethod: entry.compressionMethod, notice };
+    compressionMethod: entry.compressionMethod, notice, copyrightReference };
 }
 
 function thinMach(header) {
@@ -214,7 +217,7 @@ export async function inspectBrowserZip({ zipPath, yauzl, target, limits: overri
       zip.on("error", stop); zip.on("end", () => stop());
       zip.on("entry", entry => {
         operation = (async () => {
-          const member = memberMetadata(entry, limits);
+          const member = memberMetadata(entry, limits, target);
           if (rootPrefix && member.path !== rootPrefix && !member.path.startsWith(`${rootPrefix}/`)) fail("member_root_invalid");
           if (members.length >= limits.maxMembers || totalBytes + member.sizeBytes > limits.maxTotalBytes) fail("member_total_size_invalid");
           const chunks = [], hash = createHash("sha256"), probe = new NativeProbe(member.sizeBytes, target);
@@ -239,9 +242,11 @@ export async function inspectBrowserZip({ zipPath, yauzl, target, limits: overri
           if (member.notice) {
             const text = decode(Buffer.concat(chunks));
             if (!text.trim() || text.includes("\0")) fail("member_notice_invalid");
-            notices.push({ path: member.path, sizeBytes, checksum: member.checksum, text });
+            notices.push({ path: member.path, sizeBytes, checksum: member.checksum, text,
+              ...(member.copyrightReference ? { materialKind: "copyright-reference" } : {}) });
           }
           delete member.notice;
+          delete member.copyrightReference;
           totalBytes += sizeBytes; members.push(member);
           if (!settled) zip.readEntry();
         })().catch(stop);

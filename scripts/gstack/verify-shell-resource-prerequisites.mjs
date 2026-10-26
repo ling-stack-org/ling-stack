@@ -6,7 +6,7 @@ import { delimiter, dirname, isAbsolute, join, posix, resolve, win32 } from "nod
 import { fileURLToPath } from "node:url";
 import { readGstackClosureFileRecord } from "./verify-shared-command-closure.mjs";
 
-export const PINNED_SHELL_INVENTORY_CHECKSUM = "sha256:658cb78be8d2a973b271390ccce872e4e4cc3d393319775461b998df8e86db77";
+export const PINNED_SHELL_INVENTORY_CHECKSUM = "sha256:ee964e7d6efd6beb225ed4829437f18dafedd7e92e95def0171ad7a7d3c7d9e2";
 const inventoryFile = fileURLToPath(new URL("./pinned-shell-inventory.json", import.meta.url));
 const checksum = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const validChecksum = value => /^sha256:[a-f0-9]{64}$/.test(value ?? "");

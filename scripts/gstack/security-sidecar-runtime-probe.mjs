@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { createRequire, registerHooks, syncBuiltinESMExports } from "node:module";
-import { isAbsolute, join, relative } from "node:path";
+import { isAbsolute, join, relative, toNamespacedPath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = process.argv[2];
@@ -17,7 +17,12 @@ const inputs = new Map(), addons = new Set();
 function record(absolute) {
   const path = localPath(absolute);
   const before = lstatSync(absolute);
-  if (!before.isFile() || before.isSymbolicLink() || before.size > 128 * 1024 ** 2) throw new Error("security_runtime_input_invalid");
+  // The admitted macOS universal Node includes both native slices (currently
+  // 231 MiB). Its bytes are independently bound by the caller before/after
+  // this probe; keep the smaller limit for every dependency and module input.
+  const maximumBytes = absolute === process.execPath && path === `tools/node${process.platform === "win32" ? ".exe" : ""}`
+    ? 256 * 1024 ** 2 : 128 * 1024 ** 2;
+  if (!before.isFile() || before.isSymbolicLink() || before.size > maximumBytes) throw new Error("security_runtime_input_invalid");
   const fd = openSync(absolute, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
     const opened = fstatSync(fd), hash = createHash("sha256"), buffer = Buffer.alloc(64 * 1024);
@@ -50,9 +55,19 @@ registerHooks({ load(url, context, nextLoad) {
 } });
 const originalDlopen = process.dlopen;
 process.dlopen = function(module, filename, ...args) {
-  record(filename);
+  // Node 22's permission-aware realpath cannot walk a namespaced drive root.
+  // Resolve its ordinary spelling, then require the exact canonical namespace.
+  const ordinary = process.platform === "win32" && filename.startsWith("\\\\?\\")
+    ? filename.startsWith("\\\\?\\UNC\\") ? `\\\\${filename.slice(8)}` : filename.slice(4) : filename;
+  const canonical = realpathSync(ordinary);
+  // Node's Windows .node loader passes exactly toNamespacedPath(filename).
+  // Admit that spelling only; aliases and links must still fail closed.
+  if (filename !== canonical && (process.platform !== "win32" || filename !== toNamespacedPath(canonical))) {
+    throw new Error("security_runtime_external_or_linked_input");
+  }
+  record(canonical);
   const result = originalDlopen.call(this, module, filename, ...args);
-  addons.add(localPath(filename));
+  addons.add(localPath(canonical));
   return result;
 };
 

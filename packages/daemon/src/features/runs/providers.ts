@@ -100,6 +100,10 @@ export function resolveProviderRunThinkingLevel(
   requestedLevel: RunRequest["thinkingLevel"],
 ): RunRequest["thinkingLevel"] {
   const level = requestedLevel ?? "medium";
+  if ((level === "max" || level === "ultra") &&
+    (provider.reasoning === false || provider.thinkingLevelMap?.[level] !== level)) {
+    throw new HttpError(400, "unsupported_capability", `Selected model does not support reasoning level ${level}. Refresh its model capabilities or choose a supported level.`);
+  }
   if (provider.reasoning === false) {
     return "off";
   }

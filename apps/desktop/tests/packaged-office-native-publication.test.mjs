@@ -22,7 +22,31 @@ const sourceReviewMaximumBytes = 256 * 1024;
 // Bounded representatives of each added execution edge, including every fixed
 // native helper source and the normal mac/provider=false packaging dependencies.
 const addedDependencyGroups = Object.freeze({
+  nativeAdmission: [
+    "packages/core/src/approval-decisions.ts", "packages/core/src/execution-engine-host-authority.ts",
+    "packages/core/src/storage/sqlite/native-approval-wait.ts",
+    "packages/daemon/src/features/execution-engines/authority.ts",
+    "packages/daemon/src/features/execution-engines/native-admission.ts",
+    "packages/daemon/src/runtime/adapters/codex/owned-execution.ts",
+    "packages/daemon/src/runtime/acp/openclaw-owned-execution.ts",
+    "packages/daemon/src/runtime/sandbox/native-process-launch.ts",
+  ],
+  userInputAdmission: [
+    "packages/core/src/storage/sqlite/user-input-admission-policy.ts",
+    "packages/daemon/src/features/runs/user-input-source-policy.ts",
+    "packages/daemon/src/features/runs/user-input-continuation-receiver.ts",
+    "packages/daemon/src/features/runs/user-input-workflow-terminal.ts",
+  ],
+  workSummary: [
+    "packages/core/src/storage/sqlite/work-summary-migration.ts",
+    "packages/core/src/storage/sqlite/work-summary-store.ts",
+    "packages/daemon/src/features/work-summary/routes.ts",
+    "packages/daemon/src/features/work-summary/git-summary.ts",
+    "packages/daemon/src/features/work-summary/pull-requests.ts",
+  ],
   build: [
+    "apps/desktop/scripts/after-sign.mjs",
+    "apps/desktop/scripts/engine-supervisor-package.mjs",
     "apps/desktop/scripts/build-restricted-command-helper.mjs",
     "apps/desktop/scripts/packaged-codesign-review-publication.mjs",
     "apps/desktop/scripts/packaged-office-native-asar-checks.mjs",
@@ -94,6 +118,22 @@ test("Office signing admission remains an explicit authored root and packaging s
   assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path));
 });
 
+test("package-owned afterSign wrapper and all imported branches remain explicit reviewed inputs", () => {
+  for (const path of ["apps/desktop/scripts/after-sign.mjs", "apps/desktop/scripts/engine-supervisor-package.mjs"]) {
+    assert.ok(PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS.includes(path));
+    assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path));
+  }
+});
+
+test("new admission and summary dependencies are pinned while Main graph remains outside Office scope", () => {
+  for (const paths of [addedDependencyGroups.nativeAdmission, addedDependencyGroups.userInputAdmission, addedDependencyGroups.workSummary]) {
+    for (const path of paths) assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path), path);
+  }
+  assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes("apps/desktop/main/main.ts"), false);
+  assert.equal(new Set(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS).size,
+    PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.length);
+});
+
 test("Office recovery discovery validation remains an explicit packaging source input", () => {
   assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(
     "packages/core/src/storage/sqlite/recovery-discovery-validation.ts"));
@@ -124,7 +164,7 @@ test("Office bundled-plugin staging code and copied metadata remain in the fixed
 });
 
 /** Disposable, explicitly synthetic compiler/signature fixture. It never approves product sources. */
-async function fixture(t) {
+async function fixture(t, { portable = false } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-office-publication-test-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const scripts = join(root, "apps/desktop/scripts"), nativeRoot = join(root, "native/office-local");
@@ -149,19 +189,31 @@ async function fixture(t) {
   writeFileSync(producerModule, producer);
   mkdirSync(join(root, "temporary"));
   const compilerPath = join(root, "toolchain/clang++"), sdkRoot = join(root, "sdk"), headersRoot = join(root, "headers");
-  newFile(compilerPath, "SYNTHETIC COMPILER IDENTITY"); newFile(join(sdkRoot, "SDKSettings.json"), "SYNTHETIC SDK");
+  newFile(compilerPath, "SYNTHETIC COMPILER IDENTITY"); newFile(join(sdkRoot, "SDKSettings.json"), portable ? JSON.stringify({ CanonicalName: "macosx27.0", Version: "27.0" }) : "SYNTHETIC SDK");
   const headerNames = ["node_api.h", "js_native_api.h", "js_native_api_types.h", "node_api_types.h"];
   for (const name of headerNames) newFile(join(headersRoot, name), "SYNTHETIC HEADER:" + name);
   const review = { schemaVersion: 1, reviewId: "packaged_office_native_v1", approval: "approved_source_and_packaging_review",
     protocolVersion: 2, napiVersion: 8, deploymentTarget: "13.0",
     sourceSha256: Object.fromEntries(OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS.map(name => [name, hash(readFileSync(join(nativeRoot, name)))])),
     packagingSha256: Object.fromEntries(paths.map(name => [name, hash(readFileSync(join(root, name)))])),
-    compiler: { path: compilerPath, version: "explicit synthetic compiler", sha256: hash(readFileSync(compilerPath)) },
+    compiler: { path: compilerPath, version: portable ? "Apple clang version 21.0.0 (clang-2100.3.34.2)" : "explicit synthetic compiler", sha256: hash(readFileSync(compilerPath)) },
     sdk: { root: sdkRoot, settingsSha256: hash(readFileSync(join(sdkRoot, "SDKSettings.json"))) },
     headers: { root: headersRoot, sha256: Object.fromEntries(headerNames.map(name => [name, hash(readFileSync(join(headersRoot, name)))])) },
     runtime: { platform: "darwin", architecture: "arm64", electron: "44.5.1", node: "24.14.0", uv: "1.51.0" },
     signing: { profile: "unsigned_dev", mode: "adhoc", identifier: "com.ling-stack.office-local.native" },
     trust: "original_office_source_and_packaging_v1" };
+  const buildReview = structuredClone(review);
+  if (portable) {
+    review.schemaVersion = 2;
+    review.toolchains = [{ id: "explicit-synthetic-profile", compilerVersionFirstLine: review.compiler.version,
+      compilerSha256: review.compiler.sha256, sdkCanonicalName: "macosx27.0", sdkVersion: "27.0", sdkSettingsSha256: review.sdk.settingsSha256 }];
+    delete review.compiler; delete review.sdk;
+    review.headers = { selector: "local_environment_path", environment: "LING_OFFICE_NODE_HEADERS", sha256: review.headers.sha256 };
+    const previousHeaders = process.env.LING_OFFICE_NODE_HEADERS;
+    process.env.LING_OFFICE_NODE_HEADERS = headersRoot;
+    t.after(() => { if (previousHeaders === undefined) delete process.env.LING_OFFICE_NODE_HEADERS;
+      else process.env.LING_OFFICE_NODE_HEADERS = previousHeaders; });
+  }
   const reviewPath = join(nativeRoot, "reviewed-packaged-source-v1.json");
   writeFileSync(reviewPath, JSON.stringify(review));
   let signCalls = 0, verifyCalls = 0;
@@ -171,7 +223,7 @@ async function fixture(t) {
         import { mkdirSync, writeFileSync } from "node:fs";
         import { join } from "node:path";
         import { createHash } from "node:crypto";
-        const review = ${JSON.stringify(review)};
+        const review = ${JSON.stringify(buildReview)};
         export function buildNativeEvidence({output}) {
           mkdirSync(output); const bytes = Buffer.from("EXPLICIT SYNTHETIC UNSIGNED OFFICE ADDON");
           writeFileSync(join(output, "office-local.node"), bytes);
@@ -191,6 +243,8 @@ async function fixture(t) {
     t.after(() => Object.defineProperty(process, key, original));
   }
   const mock = t.mock.method(childProcess, "spawnSync", (command, argv) => {
+    if (portable && command === "/usr/bin/xcrun") return { status: 0, stdout: argv.includes("--find") ? compilerPath : sdkRoot };
+    if (portable && command === compilerPath) return { status: 0, stdout: buildReview.compiler.version };
     assert.equal(command, "/usr/bin/codesign");
     if (argv[0] === "--force") {
       signCalls++;
@@ -207,6 +261,42 @@ async function fixture(t) {
 }
 
 test("Office publication private origin and final-byte contracts (synthetic compiler/signature, not packaged validation)", async t => {
+  await t.test("portable exact tool profile preserves original publication and immutable source approvals", async t => {
+    const f = await fixture(t, { portable: true }), row = readFileSync(f.reviewPath);
+    const first = f.reviewApi.readReviewedPackagedOfficeSource();
+    assert.equal(first.review.schemaVersion, 2);
+    assert.equal(first.review.compiler.path, join(f.root, "toolchain/clang++"));
+    assert.equal(first.review.headers.root, join(f.root, "headers"));
+    const token = f.api.buildFreshPackagedOfficeNativePublication();
+    assert.equal(f.api.readOriginalPackagedOfficeNativePublication(token).schemaVersion, 1);
+    assert.deepEqual(readFileSync(f.reviewPath), row);
+    assert.throws(() => f.api.readOriginalPackagedOfficeNativePublication(Object.freeze({})), /publication_invalid/u);
+    f.review.toolchains[0].compilerSha256 = "0".repeat(64);
+    writeFileSync(f.reviewPath, JSON.stringify(f.review));
+    assert.throws(() => f.api.readOriginalPackagedOfficeNativePublication(token), /toolchain_invalid/u);
+    assert.throws(() => f.api.buildFreshPackagedOfficeNativePublication(), /toolchain_invalid/u);
+    assert.equal(f.counts().signCalls, 1);
+  });
+  await t.test("portable profile rejects changed header bytes and extra/missing approval inputs", async t => {
+    const f = await fixture(t, { portable: true }), original = structuredClone(f.review);
+    for (const mutate of [
+      row => { row.toolchains[0].compilerSha256 = "0".repeat(64); },
+      row => { row.toolchains[0].sdkSettingsSha256 = "0".repeat(64); },
+      row => { row.toolchains[0].extra = true; },
+      row => { row.toolchains.push(structuredClone(row.toolchains[0])); },
+      row => { row.headers.environment = "OTHER_HEADERS"; },
+      row => { row.headers.sha256.extra = "a".repeat(64); },
+      row => { row.toolchains = []; },
+      row => { delete row.toolchains; },
+    ]) {
+      const row = structuredClone(original); mutate(row); writeFileSync(f.reviewPath, JSON.stringify(row));
+      assert.throws(() => f.api.buildFreshPackagedOfficeNativePublication(), /(?:toolchain|source_review)_invalid/u);
+    }
+    writeFileSync(f.reviewPath, JSON.stringify(original));
+    writeFileSync(join(f.root, "headers/node_api.h"), "CHANGED HEADER BYTES");
+    assert.throws(() => f.api.buildFreshPackagedOfficeNativePublication(), /toolchain_invalid/u);
+    assert.equal(f.counts().signCalls, 0);
+  });
   await t.test("fixed review accepts its exact closure and rejects pending approval", async t => {
     const f = await fixture(t);
     assert.equal(Object.isFrozen(f.reviewApi.readReviewedPackagedOfficeSource().review.headers.sha256), true);

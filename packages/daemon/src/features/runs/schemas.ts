@@ -5,6 +5,7 @@ import {
   reasoningSummaryModes,
   permissionModeForPreset,
   permissionPresets,
+  providerThinkingModes,
   providerTransports,
   responseLanguages,
   runContinuationReasons,
@@ -343,11 +344,25 @@ function parseInlineProvider(provider: Record<string, unknown>): PiRunnerProvide
     headers: readOptionalStringRecord(provider, "headers"),
     authHeader: readOptionalBoolean(provider, "authHeader"),
     reasoning: readOptionalBoolean(provider, "reasoning"),
+    thinkingLevelMap: readOptionalThinkingLevelMap(provider),
     input: readOptionalStringArray(provider, "input", ["text", "image"]),
     contextWindow: readOptionalNumber(provider, "contextWindow"),
     maxTokens: readOptionalNumber(provider, "maxTokens"),
     compat: isRecord(provider.compat) ? provider.compat : undefined,
   };
+}
+
+function readOptionalThinkingLevelMap(provider: Record<string, unknown>): PiRunnerProviderConfig["thinkingLevelMap"] {
+  if (provider.thinkingLevelMap === undefined) return undefined;
+  if (!isRecord(provider.thinkingLevelMap)) throw new Error("thinkingLevelMap must be an object");
+  const result: Record<string, string | null> = {};
+  for (const [level, value] of Object.entries(provider.thinkingLevelMap)) {
+    if (!providerThinkingModes.some((mode) => mode === level) || (value !== null && typeof value !== "string")) {
+      throw new Error("thinkingLevelMap must map known reasoning levels to strings or null");
+    }
+    result[level] = value;
+  }
+  return result;
 }
 
 function readOptionalApprovalProfile(record: Record<string, unknown>, key: string): SkillApprovalProfile | undefined {
@@ -369,6 +384,8 @@ function readOptionalThinkingLevel(record: Record<string, unknown>, key: string)
     "medium",
     "high",
     "xhigh",
+    "max",
+    "ultra",
   ])?.[0];
 }
 

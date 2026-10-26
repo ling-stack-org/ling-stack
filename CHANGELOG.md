@@ -10,6 +10,9 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ### Added
 
+- Model reasoning controls support distinct `max` and `ultra` levels when the
+  selected model declares them, and explain changes to a supported default when
+  switching models.
 - Unified workspace summaries show sessions, net Git changes, recent commits, and
   linked pull requests in the existing Summary panel. Change details open in the
   current conversation's right review drawer.

@@ -15,7 +15,7 @@ const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 let fixtureNumber = 0;
 function newFile(path, bytes) { mkdirSync(dirname(path), { recursive: true, mode: 0o700 }); writeFileSync(path, bytes, { mode: 0o600 }); }
 
-/** Real esbuild/source projection; native/codesign origin and review are explicitly synthetic. */
+/** Real esbuild/source projection; native/codesign origin, review and external gstack selection are explicitly synthetic. */
 async function fixture(t) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-office-emitted-test-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -263,5 +263,5 @@ test("Office emitted CLI pins: real esbuild, synthetic publication/signature, no
     assert.equal(f.state.nativeBuilds, 1); assert.equal(f.state.codesignBuilds, 1);
     assert.equal(f.api.readActiveOriginalPackagedOfficeDaemonBundle().sha256, hash(readFileSync(f.cliPath)));
   });
-  t.diagnostic("Real esbuild/source projection and disposable inputs only; synthetic source review and original native/codesign readers. These output custody contracts do not replace the real source-review integration, real signatures, Electron, ZIP/DMG, or packaged acceptance.");
+  t.diagnostic("Real esbuild/source projection and disposable inputs only; synthetic source review, original native/codesign readers and external gstack selection/identity. These output custody contracts do not replace the real source-review integration, gstack resource/identity validation, real signatures, Electron, ZIP/DMG, or packaged acceptance.");
 });

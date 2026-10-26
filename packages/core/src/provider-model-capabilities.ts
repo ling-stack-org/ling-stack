@@ -1,4 +1,5 @@
 import { defaultProviderTemplates, type ProviderTemplate } from "./provider-templates.js";
+import { knownProviderModelThinkingSupport } from "./provider-model-catalog.js";
 import type { ProviderApi, ProviderCapability, ProviderKind, ProviderPreset, ProviderThinkingMode } from "./provider-types.js";
 
 export type ProviderModelCapabilitySource =
@@ -168,6 +169,10 @@ export function resolveProviderModelCapabilitySnapshot(
 export function resolveProviderModelThinkingModes(input: ProviderModelThinkingModeInput): readonly ProviderThinkingMode[] {
   if (input.api === "media-job") {
     return [];
+  }
+  const knownSupport = knownProviderModelThinkingSupport(input.model, input.api);
+  if (knownSupport && (!input.capabilities?.length || input.capabilities.includes("reasoning"))) {
+    return knownSupport.levels;
   }
   if (input.capabilities?.includes("reasoning")) {
     return FULL_THINKING_MODES;

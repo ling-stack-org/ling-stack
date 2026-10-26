@@ -2925,7 +2925,7 @@ test("provider model listing probes the endpoint with the provided API key", asy
         max_completion_tokens: 64000,
         supported_parameters: ["reasoning_effort", "tools"],
         thinking: {
-          levels: ["low", "medium", "high", "max"],
+          levels: ["low", "medium", "high", "xhigh", "max", "ultra"],
           min: 1024,
           max: 64000,
           zero_allowed: true,
@@ -2964,8 +2964,8 @@ test("provider model listing probes the endpoint with the provided API key", asy
       "plain-image-output",
     ], JSON.stringify({ result, requests: openai.requests }));
     const codexModel = result.models.find((model) => model.id === "gpt-5.5-codex");
-    assert.deepEqual(codexModel.thinkingModes, ["low", "medium", "high", "xhigh"]);
-    assert.deepEqual(codexModel.thinkingSupport.levels, ["low", "medium", "high", "xhigh"]);
+    assert.deepEqual(codexModel.thinkingModes, ["low", "medium", "high", "xhigh", "max", "ultra"]);
+    assert.deepEqual(codexModel.thinkingSupport.levels, ["low", "medium", "high", "xhigh", "max", "ultra"]);
     assert.equal(codexModel.thinkingSupport.maxTokens, 64000);
     assert.equal(codexModel.contextWindow, 256000);
     assert.equal(codexModel.maxTokens, 64000);

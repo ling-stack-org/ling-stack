@@ -70,3 +70,20 @@ test("native outputs require the actual Mach-O or PE target architecture", () =>
   assert.throws(() => assertNativeTarget(pe, { platform: "win32", arch: "x64" }), /target_mismatch/);
   assert.throws(() => assertNativeTarget(Buffer.from("#!/bin/sh\n"), { platform: "darwin", arch: "arm64" }), /target_mismatch/);
 });
+
+test("universal Node binaries require every actual slice header and the native host architecture", () => {
+  const fat = Buffer.alloc(128);
+  fat.writeUInt32BE(0xcafebabe); fat.writeUInt32BE(2, 4);
+  for (const [index, cpu] of [0x01000007, 0x0100000c].entries()) {
+    const row = 8 + index * 20, offset = 64 + index * 32;
+    fat.writeUInt32BE(cpu, row); fat.writeUInt32BE(offset, row + 8); fat.writeUInt32BE(32, row + 12);
+    fat.writeUInt32LE(0xfeedfacf, offset); fat.writeUInt32LE(cpu, offset + 4);
+  }
+  assert.doesNotThrow(() => assertNativeTarget(fat, { platform: "darwin", arch: "arm64" }));
+  assert.doesNotThrow(() => assertNativeTarget(fat, { platform: "darwin", arch: "x64" }));
+  for (const mutate of [bytes => bytes.writeUInt32LE(0x01000007, 100), bytes => bytes.writeUInt32BE(64, 36),
+    bytes => bytes.writeUInt32BE(0xffffffff, 36), bytes => bytes.writeUInt32BE(33, 44)]) {
+    const changed = Buffer.from(fat); mutate(changed);
+    assert.throws(() => assertNativeTarget(changed, { platform: "darwin", arch: "arm64" }), /target_mismatch/);
+  }
+});

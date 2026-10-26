@@ -164,7 +164,7 @@ export async function startConversationReplacementRun(input: {
   return { turn, runId };
 }
 
-const thinkingLevels: readonly RunThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const thinkingLevels: readonly RunThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 const reasoningSummaryModes = ["auto", "concise", "detailed", "none"] as const;
 const runTools: readonly RunTool[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 const permissionPresets: readonly PermissionPreset[] = ["read_only", "workspace_collaboration", "full_access", "custom"];

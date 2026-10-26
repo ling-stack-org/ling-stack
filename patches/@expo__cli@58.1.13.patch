@@ -1,0 +1,16 @@
+diff --git a/build/src/start/server/createMCPDevToolsExtensionSchema.js b/build/src/start/server/createMCPDevToolsExtensionSchema.js
+index 3b6f73d81bda27c90ec68aec19eb2568758ddd66..80b7c245cf5f00ee1f35811b6a2fae5fa34a4fd1 100644
+--- a/build/src/start/server/createMCPDevToolsExtensionSchema.js
++++ b/build/src/start/server/createMCPDevToolsExtensionSchema.js
+@@ -9,7 +9,10 @@ Object.defineProperty(exports, "createMCPDevToolsExtensionSchema", {
+     }
+ });
+ function _zod() {
+-    const data = require("zod");
++    // The optional MCP tunnel still converts these primitive-only schemas with
++    // zod-to-json-schema v3. Keep its schema protocol while other CLI validators
++    // use the patched Zod 4 default export.
++    const data = require("zod/v3");
+     _zod = function() {
+         return data;
+     };

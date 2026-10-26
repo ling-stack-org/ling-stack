@@ -43,7 +43,7 @@ export function createDmgAttachmentCustody(input) {
     let output;
     try { output = await runCommand("/usr/bin/hdiutil", ["info", "-plist"], { timeoutMs: QUERY_TIMEOUT_MS }); }
     catch (cause) { throw failure("info_unavailable", cause); }
-    return normalizeInventory(await convertPlist(output, runCommand));
+    return normalizeInventory(await convertPlist(output, runCommand), snapshotPath);
   };
   const association = inventory => {
     const devices = new Set(binding?.entities.map(entity => entity.device) ?? []);
@@ -170,22 +170,26 @@ async function convertPlist(output, runCommand) {
   return value;
 }
 
-function normalizeInventory(value) {
+function normalizeInventory(value, snapshotPath) {
   requireCondition(Object.hasOwn(value, "images") && Array.isArray(value.images)
     && value.images.length <= MAX_IMAGES, "inventory_invalid");
   const imagePaths = new Set(), devices = new Set(), mountPoints = new Set();
   const images = value.images.map(image => {
-    requireCondition(record(image) && Object.hasOwn(image, "image-path") && safePath(image["image-path"])
-      && Object.hasOwn(image, "hdid-pid") && Number.isSafeInteger(image["hdid-pid"]) && image["hdid-pid"] > 0
+    requireCondition(record(image) && Object.hasOwn(image, "image-path") && safePath(image["image-path"]), "inventory_invalid");
+    const imagePath = image["image-path"];
+    // Kernel-mounted system Cryptex images have no userspace helper. They still
+    // occupy every reported device/mountpoint, but cannot authorize our detach.
+    requireCondition((Object.hasOwn(image, "hdid-pid")
+      ? Number.isSafeInteger(image["hdid-pid"]) && image["hdid-pid"] > 0
+      : imagePath !== snapshotPath)
       && Object.hasOwn(image, "owner-uid") && Number.isSafeInteger(image["owner-uid"]) && image["owner-uid"] >= 0,
     "inventory_invalid");
-    const imagePath = image["image-path"];
     requireCondition(!imagePaths.has(imagePath), "inventory_duplicate");
     imagePaths.add(imagePath);
-    // APFS inventory can include both its backing disk and synthesized container.
-    // Retain every device for conflict checks; only our attach receipt may select
-    // a single whole device for detach authority.
-    const entities = normalizeEntities(image, { allowMultipleWholeDevices: true });
+    // An unrelated APFS image can include both a backing disk and a synthesized
+    // container disk. Keep every entity for collision checks; only our snapshot
+    // may supply the single whole-device lineage used to authorize detach.
+    const entities = normalizeEntities(image, { allowMultipleWholeDevices: imagePath !== snapshotPath });
     for (const entity of entities) {
       requireCondition(!devices.has(entity.device), "inventory_duplicate");
       devices.add(entity.device);
@@ -197,7 +201,7 @@ function normalizeInventory(value) {
     const wholeDevices = entities.filter(entity => WHOLE_DEVICE_PATTERN.test(entity.device));
     return Object.freeze({ imagePath, entities,
       wholeDevice: wholeDevices.length === 1 ? wholeDevices[0].device : undefined,
-      helperPid: image["hdid-pid"], ownerUid: image["owner-uid"] });
+      ...(Object.hasOwn(image, "hdid-pid") ? { helperPid: image["hdid-pid"] } : {}), ownerUid: image["owner-uid"] });
   });
   return Object.freeze(images);
 }

@@ -53,6 +53,7 @@ function assertRestored() {
   assert.equal(process.env[keys.removed], "remove-before");
   assert.equal(process.env[keys.omitted], "untouched-before");
   assert.equal(Object.hasOwn(process.env, "LING_CUA_DRIVER_PACKAGE_PROVIDER"), false);
+  assert.equal(Object.hasOwn(process.env, "CSC_FOR_PULL_REQUEST"), false);
 }
 
 /**
@@ -131,6 +132,7 @@ async function fixture(t, options = {}) {
     },
     async config(originalUrl) {
       this.audit.push("config-enter"); this.assertScope(true);
+      assert.equal(Object.hasOwn(process.env, "CSC_FOR_PULL_REQUEST"), false);
       this.configUrls.push(originalUrl); this.configEntered.settle();
       await (options.configGate?.promise ?? Promise.resolve());
       this.assertScope(true); this.fail("config"); this.audit.push("config-completed");
@@ -146,6 +148,7 @@ async function fixture(t, options = {}) {
     },
     async build(input) {
       this.audit.push("build-enter"); this.assertScope(true); this.buildCalls.push(input);
+      assert.equal(process.env.CSC_FOR_PULL_REQUEST, "true");
       assert.deepEqual(Object.keys(input).sort(), ["config", "projectDir", "publish", "targets"]);
       assert.equal(input.projectDir, desktopRoot); assert.equal(input.publish, "never");
       assert.equal(input.config.testOnly.pid, process.pid); assert.equal(input.config.testOnly.token, this.active);
@@ -153,6 +156,7 @@ async function fixture(t, options = {}) {
       this.builderEntered.settle();
       await options.onBuild?.();
       await (options.builderGate?.promise ?? Promise.resolve());
+      assert.equal(process.env.CSC_FOR_PULL_REQUEST, "true");
       this.assertScope(true); this.fail("builder"); this.audit.push("build-completed");
     },
   };

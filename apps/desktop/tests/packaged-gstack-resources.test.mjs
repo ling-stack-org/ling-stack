@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { build } from "esbuild";
 import { bundleInventory, digest, readExecutableBundle } from "../../../scripts/gstack/executable-bundle.mjs";
 
-async function fixture(t, { builderSkippedFiles = false, additionalSkippedPaths = [], rootName = "bundle" } = {}) {
+const require = createRequire(import.meta.url);
+const builderRequire = createRequire(require.resolve("electron-builder/package.json"));
+const { getFileMatchers, copyFiles } = builderRequire("app-builder-lib/out/fileMatcher.js");
+const { expandMacro } = builderRequire("app-builder-lib/out/util/macroExpander.js");
+
+async function fixture(t, { rootName = "bundle", retainedPrefix = "runtime", additionalSkippedPaths = [] } = {}) {
   const work = await realpath(await mkdtemp(join(tmpdir(), "ling-desktop-gs-")));
   t.after(() => rm(work, { recursive: true, force: true }));
   const root = join(work, rootName); await mkdir(root);
@@ -19,19 +24,15 @@ async function fixture(t, { builderSkippedFiles = false, additionalSkippedPaths 
     await writeFile(join(root, skill.entryPath), `# ${skill.id}\nFull instructions.\n`);
   }
   await writeFile(join(root, "LICENSE"), "MIT fixture\n");
-  if (builderSkippedFiles) {
-    await mkdir(join(root, "runtime/node_modules/tr46/lib"), { recursive: true });
-    await writeFile(join(root, "runtime/node_modules/tr46/lib/.gitkeep"), "authenticated placeholder\n");
-    await writeFile(join(root, "runtime/.DS_Store"), "authenticated inert fixture\n");
-  }
-  for (const path of additionalSkippedPaths) {
+  // Builder's directory walker skips these names before applying glob filters.
+  for (const path of [`${retainedPrefix}/node_modules/tr46/lib/.gitkeep`, "runtime/.DS_Store", "runtime/.gitkeep/retained.txt", ...additionalSkippedPaths]) {
     await mkdir(dirname(join(root, path)), { recursive: true });
-    await writeFile(join(root, path), "authenticated literal path fixture\n");
+    await writeFile(join(root, path), path.endsWith(".gitkeep") ? "" : "authenticated resource bytes");
   }
   const browserRoot = join(work, "gstack-browser"), framework = "Chromium.app/Contents/Frameworks/Chromium Framework.framework";
   const browserEntry = "Chromium.app/Contents/MacOS/Chromium";
   await mkdir(join(browserRoot, framework, "Versions/A"), { recursive: true });
-  await writeFile(join(browserRoot, framework, "Versions/A/framework.bin"), "inert framework fixture");
+  await writeFile(join(browserRoot, framework, "Versions/A/fixture.txt"), "retained framework resource");
   await mkdir(dirname(join(browserRoot, browserEntry)), { recursive: true });
   await writeFile(join(browserRoot, browserEntry), "browser fixture, never executed");
   const browserFiles = await bundleInventory(browserRoot);
@@ -61,27 +62,37 @@ test("build-owned selection copies one complete resource tree and verifies it af
   const f = await fixture(t);
   assert.deepEqual(await f.module.preparePackagedGstackBuild({ required: true, selectionPath: f.selectionPath }), f.identity);
   const config = f.module.packagedGstackBuilderConfig();
-  assert.equal(config.extraResources.length, 2);
+  assert.equal(config.extraResources.filter(entry => entry.filter).length, 2);
   assert.equal(config.extraResources[0].from, f.root);
   assert.equal(config.extraResources[0].to, "gstack");
   assert.deepEqual(config.extraMetadata.lingPackagedGstack, f.identity);
   const context = { electronPlatformName: "darwin", appOutDir: join(f.work, "out"),
     packager: { appInfo: { productFilename: "Ling" }, config } };
   const copied = join(context.appOutDir, "Ling.app/Contents/Resources/gstack");
-  await cp(f.root, copied, { recursive: true });
-  await cp(f.browser.root, join(context.appOutDir, "Ling.app/Contents/Resources/gstack-browser"), { recursive: true, verbatimSymlinks: true });
+  await copyFiles(getFileMatchers(config, "extraResources", dirname(copied), {
+    defaultSrc: f.work, macroExpander: value => expandMacro(value, process.arch, {}),
+    customBuildOptions: {}, globalOutDir: context.appOutDir,
+  }));
   await f.module.verifyPackagedGstack(context);
+  assert.equal(await readFile(join(copied, "manifest.json"), "utf8"), await readFile(join(f.root, "manifest.json"), "utf8"));
   await writeFile(join(copied, "LICENSE"), "changed");
   await assert.rejects(f.module.verifyPackagedGstack(context), /bundle_resource_checksum_mismatch/);
   await rm(f.selectionPath);
   await assert.rejects(f.module.preparePackagedGstackBuild({ selectionPath: f.selectionPath }), { code: "ENOENT" });
+});
+test("authenticated resource paths cannot become Builder macros", async t => {
+  for (const options of [{ rootName: "bundle-${platform}" }, { retainedPrefix: "runtime/${platform}" }]) {
+    const f = await fixture(t, options);
+    await f.module.preparePackagedGstackBuild({ required: true, selectionPath: f.selectionPath });
+    assert.throws(() => f.module.packagedGstackBuilderConfig(), /packaged_gstack_builder_path_macro_unsupported/);
+  }
 });
 test("package declarations without a selected build fail instead of silently skipping verification", async t => {
   const f = await fixture(t);
   await assert.rejects(f.module.verifyPackagedGstack({ packager: { config: { extraMetadata: { lingPackagedGstack: f.identity } } } }), /selection_missing/);
 });
 test("actual Builder copy preserves manifest-authenticated files omitted by its directory walker", async t => {
-  const f = await fixture(t, { builderSkippedFiles: true });
+  const f = await fixture(t);
   await f.module.preparePackagedGstackBuild({ required: true, selectionPath: f.selectionPath });
   const config = f.module.packagedGstackBuilderConfig();
   const require = createRequire(import.meta.url);
