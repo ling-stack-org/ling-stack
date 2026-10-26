@@ -1629,7 +1629,7 @@
     "packages/daemon/src/runtime/acp/kimi-oauth-credentials.ts": "698fc753fff41030660dca7a1f8b6d758032091397fe84e5ef182d6ad4ed2234",
     "packages/daemon/src/runtime/adapters/native-model-relay.ts": "7ac52938a16b59cfa41cef1670e3a8e0f62aaf1224ef35d10d6261410f5c43c2",
     "packages/daemon/src/runtime/adapters/native-tool-content.ts": "30f0c028e69e1ea754ea32507695b417f52792e4e3b46f470938575278ec855b",
-    "pnpm-lock.yaml": "3acab5b137fdd0371cebab7d7075089ed03d057fed951b07c9c20dc0c6ab8c65",
+    "pnpm-lock.yaml": "46f37854dc9456064c168d7ea07dbb4949ebec566b746bdf5cf65edea4a489e3",
     "packages/browser-host/tsconfig.json": "ba10bae6415c98673a85ed99d9dc66da33bd0123c644b64856b44fa2a2dce053",
     "packages/contracts/tsconfig.json": "463f23957c8696dbce5c700e6bea9a925d360d9fb38e62f79ed8af7dcfabba47",
     "packages/core/tsconfig.json": "ba10bae6415c98673a85ed99d9dc66da33bd0123c644b64856b44fa2a2dce053",

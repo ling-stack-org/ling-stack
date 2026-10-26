@@ -109,7 +109,7 @@ jobs:
         with:
           node-version: 22.22.1
           cache: pnpm
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         if: runner.os == 'Windows'
         with:
           dotnet-version: 8.0.x
@@ -126,7 +126,7 @@ jobs:
           $linker = Join-Path $env:VCToolsInstallDir 'bin\Hostx64\x64\link.exe'
           if (-not (Test-Path -LiteralPath $linker -PathType Leaf)) { throw "MSVC linker is unavailable: $linker" }
           "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         if: env.DESKTOP_OPERATION == 'build'
         with:
           go-version: 1.26.3
