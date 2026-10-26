@@ -370,6 +370,7 @@ import { handleStartupStatus } from "../startup/routes.js";
 import { handleDiagnosticsDoctor, handleDiagnosticsLogs } from "../features/diagnostics/routes.js";
 import { handleNotifications } from "../features/notifications/routes.js";
 import { handleImDestinations } from "../features/im-destinations/routes.js";
+import { handleSkillsMarketplaceInspect } from "../features/skills/marketplace-route.js";
 import { handleHumanEvaluationDesktopRoute } from "../features/harness/evaluations/human-evaluation-routes.js";
 
 export async function routeRequest(
@@ -677,6 +678,11 @@ export async function routeRequest(
 
   if (url.pathname === "/im-destinations" || url.pathname.startsWith("/im-destinations/")) {
     await handleImDestinations(request, response, context);
+    return;
+  }
+
+  if (url.pathname === "/skills/marketplace/inspect") {
+    await handleSkillsMarketplaceInspect(request, response, context);
     return;
   }
 

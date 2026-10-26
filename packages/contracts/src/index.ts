@@ -80,3 +80,4 @@ export type * from "./work-summary.js";
 export type * from "./diagnostics.js";
 export * from "./notifications.js";
 export * from "./im-destinations.js";
+export * from "./marketplace.js";
