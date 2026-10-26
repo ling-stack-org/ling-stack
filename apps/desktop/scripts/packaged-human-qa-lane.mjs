@@ -13,14 +13,17 @@ export function selectPackagedOfficeBuildLane(config, environment) {
   if (config.appId !== "com.lingstack.desktop" || config.productName !== "Ling Stack") {
     throw new Error("packaged_human_qa_base_invalid");
   }
-  // The successor must never overwrite the App still owned by a blocked Host.
+  // Fixed successors must never overwrite Apps still owned by retained Hosts.
   // No caller-controlled name, path, config or signing policy is accepted.
   const successor = lane === "human-qa-r03-successor";
+  const observation = lane === "human-qa-r03-observation";
   return {
     ...config,
-    appId: successor ? "com.lingstack.desktop.human-qa.r03-successor" : "com.lingstack.desktop.human-qa",
-    productName: successor ? "Ling Stack R03 Successor QA" : "Ling Stack Human QA",
-    directories: { ...config.directories, output: successor ? "release/human-qa-r03-successor" : "release/human-qa" },
+    appId: observation ? "com.lingstack.desktop.human-qa.r03-observation"
+      : successor ? "com.lingstack.desktop.human-qa.r03-successor" : "com.lingstack.desktop.human-qa",
+    productName: observation ? "Ling Stack R03 Observation QA" : successor ? "Ling Stack R03 Successor QA" : "Ling Stack Human QA",
+    directories: { ...config.directories, output: observation ? "release/human-qa-r03-observation"
+      : successor ? "release/human-qa-r03-successor" : "release/human-qa" },
     extraMetadata: {
       ...config.extraMetadata,
       // A package identity/scope marker, never proof of a human decision.
@@ -39,5 +42,6 @@ export function readPackagedOfficeBuildLane(environment) {
   if (!Object.hasOwn(environment, "LING_DESKTOP_PACKAGE_HUMAN_QA")) return "ordinary";
   if (environment.LING_DESKTOP_PACKAGE_HUMAN_QA === "1") return "human-qa";
   if (environment.LING_DESKTOP_PACKAGE_HUMAN_QA === "retained-host-r03") return "human-qa-r03-successor";
+  if (environment.LING_DESKTOP_PACKAGE_HUMAN_QA === "retained-host-r03-observation") return "human-qa-r03-observation";
   throw new Error("packaged_human_qa_lane_invalid");
 }

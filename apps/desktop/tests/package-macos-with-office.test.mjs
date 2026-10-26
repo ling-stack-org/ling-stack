@@ -243,6 +243,49 @@ test("fixed Office package entry regression (test-only loader, no native/signatu
     assert.equal(f.state.active, undefined);
   });
 
+  await t.test("retained-host observation uses a third fixed identity through the original publication and signing path", async t => {
+    const f = await fixture(t, {
+      derivedEnvironment: { LING_DESKTOP_PACKAGE_HUMAN_QA: "retained-host-r03-observation" },
+      topLevelConfig: { appId: "com.lingstack.desktop", productName: "Ling Stack", directories: { output: "release" } },
+    });
+    process.env.LING_DESKTOP_PACKAGE_HUMAN_QA = "retained-host-r03-observation";
+    await f.api.packageMacosWithOffice();
+    assert.equal(f.state.tokens.length, 1);
+    assert.equal(f.state.humanBuildCalls, 1);
+    assert.equal(f.state.buildCalls.length, 1);
+    const { config } = f.state.buildCalls[0];
+    assert.equal(config.appId, "com.lingstack.desktop.human-qa.r03-observation");
+    assert.equal(config.productName, "Ling Stack R03 Observation QA");
+    assert.equal(config.directories.output, "release/human-qa-r03-observation");
+    assert.equal(config.mac.identity, "-");
+    assert.equal(config.mac.sign, undefined);
+    assert.deepEqual(config.extraMetadata.lingHumanQaPackage, {
+      schemaVersion: 1, purpose: "synthetic-human-evaluation", release: false,
+    });
+    assert.equal(f.state.active, undefined);
+  });
+
+  await t.test("derived environment cannot replace the observation lane with a retained successor", async t => {
+    const f = await fixture(t, { derivedEnvironment: { LING_DESKTOP_PACKAGE_HUMAN_QA: "retained-host-r03" } });
+    process.env.LING_DESKTOP_PACKAGE_HUMAN_QA = "retained-host-r03-observation";
+    await assert.rejects(f.api.packageMacosWithOffice(), /human_qa_selection_changed/u);
+    assert.equal(f.state.tokens.length, 0);
+    assert.equal(f.state.buildCalls.length, 0);
+  });
+
+  await t.test("config-time switching into observation closes publication without Builder", async t => {
+    const f = await fixture(t, {
+      derivedEnvironment: { LING_DESKTOP_PACKAGE_HUMAN_QA: "1" },
+      onConfig: () => { process.env.LING_DESKTOP_PACKAGE_HUMAN_QA = "retained-host-r03-observation"; },
+      topLevelConfig: { appId: "com.lingstack.desktop", productName: "Ling Stack" },
+    });
+    process.env.LING_DESKTOP_PACKAGE_HUMAN_QA = "1";
+    await assert.rejects(f.api.packageMacosWithOffice(), /human_qa_selection_changed/u);
+    assert.equal(f.state.tokens.length, 1);
+    assert.equal(f.state.buildCalls.length, 0);
+    assert.equal(f.state.active, undefined);
+  });
+
   await t.test("derived environment cannot switch between two QA identities", async t => {
     const f = await fixture(t, { derivedEnvironment: { LING_DESKTOP_PACKAGE_HUMAN_QA: "retained-host-r03" } });
     process.env.LING_DESKTOP_PACKAGE_HUMAN_QA = "1";

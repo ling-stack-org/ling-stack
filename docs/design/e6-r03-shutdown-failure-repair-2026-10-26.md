@@ -327,3 +327,11 @@ Web typecheck:ci及diff-check通过；最终两文件独审0确认问题，具�
 
 后续只需在下一份非覆盖QA包中核验最终侧栏字节，再继续其它P3/P4/P5案例。
 不重发任何保留现场的命令、审批或SIGTERM，不重复先前132/49/53项套件。
+
+第三固定QA输出：两组旧App仍被保留Host占用，新的`retained-host-r03-observation`
+只映射到`release/human-qa-r03-observation`及独立固定身份，不能由调用者传路径/名称。
+仍沿原awaited macOS打包、资源/Office/signing/final-artifact守卫和publish:never路径，
+不放宽原两lane或ordinary行为，不修改旧App、profile或未知效果。精确lane选择在所有
+异步构建边界保持一致；第三lane和既有完整邻接原生回归104/104通过，先RED后GREEN。
+这属于隔离验收的打包基础，不是新的运行权限或正式发布授权；对应closure只有lane源码
+一项变化，须独审并将精确差量绑定QA记录，不能直接忽略旧manifest的hash不匹配。
