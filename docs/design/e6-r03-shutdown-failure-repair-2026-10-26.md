@@ -196,3 +196,29 @@ FD5 draining 后 startup 错误分类 2 失败、pool retirement 与并发 final
 
 新 lane/清单回归先红后绿，五文件组合301/301、无失败/取消/跳过、actual exit0。
 它只证明编排、固定身份和校验边界，不是实际构建、原生签名或 GUI 验收。
+
+### 6.4 真实打包失败后的诊断与新尝试
+
+05:14 的后继打包实际在最终 DMG 子进程校验失败，原日志与 ZIP/DMG 保留。
+系统休眠/唤醒与该命令重叠，但日志没有信号或耗时，不能追认精确杀死原因。
+旧 Host 同期 exit 1，旧 Main 仍在；这两件事不得互相充当因果或安全停止证明。
+
+- `runBoundedCommand` 的失败增加固定、有界 transport 诊断：命令 basename、闭集
+  hdiutil verb、PID、开始时间、单调耗时、配置 timeout、exit/error code、signal、
+  killed、stdin 失败、输出字节数与 `outputComplete`。诊断直接进入 Error message，
+  避免 Builder 只打印隐藏 cause 外壳；不记录 argv、输入、输出正文或环境变量。
+- 诊断不是新的停止权威。原错误仍拒绝，`outputComplete` 原 predicate 不变，
+  timeout/signal/overflow/spawn 失败不能据诊断产出 attach ownership 或安全效果。
+  新真实子进程断言在修前 6 项失败；修后与 attachment custody 组合 138/138。
+  两文件差量独审 0 confirmed finding，未重复原 301/101/102/213 长套。
+- 打包恢复与原 Run 恢复分开：原失败日志、产物、锁、App/profile 和 unknown effects
+  必须留存。只在明确核验当前受控构建进程/解释器目录和相关挂载均无占用、原 App
+  完整 inventory 不变后，才可用精确目标的可恢复 rename 保留失败输出与旧构建锁。
+  此核验只允许下一次受控打包，不追认原历史后代停止，也不改变旧 Run/效果/预算。
+- 新尝试记录 direct build 结果必须先于 post-build invariant 检查；后置进程身份
+  变化不能抹掉原退出结果。独占 lease 仅在 awaited 成功后释放，失败继续保留。
+  使用进程作用域 `caffeinate -i` 防止本次实际出现的 idle sleep，不改变系统设置，
+  不保证抵抗手动休眠/合盖/关机/强杀，不延长时限或绕过最终校验。
+
+完整证据位于 `output/e6-20260928/r03-packaging-successor-20261026/`。
+本节不是重打包、R03 GUI 或 P3/P4/P5 的完成证明。
