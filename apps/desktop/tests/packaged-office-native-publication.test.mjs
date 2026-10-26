@@ -164,7 +164,7 @@ test("Office bundled-plugin staging code and copied metadata remain in the fixed
 });
 
 /** Disposable, explicitly synthetic compiler/signature fixture. It never approves product sources. */
-async function fixture(t, { portable = false } = {}) {
+async function fixture(t, { portable = false, onCompilerVersion } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-office-publication-test-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const scripts = join(root, "apps/desktop/scripts"), nativeRoot = join(root, "native/office-local");
@@ -216,7 +216,7 @@ async function fixture(t, { portable = false } = {}) {
   }
   const reviewPath = join(nativeRoot, "reviewed-packaged-source-v1.json");
   writeFileSync(reviewPath, JSON.stringify(review));
-  let signCalls = 0, verifyCalls = 0;
+  let signCalls = 0, verifyCalls = 0, compilerCalls = 0, discoveryCalls = 0;
   const loader = registerHooks({ load(url, context, nextLoad) {
     if (url === pathToFileURL(join(nativeRoot, "scripts/build.mjs")).href) {
       return { format: "module", shortCircuit: true, source: `
@@ -243,8 +243,15 @@ async function fixture(t, { portable = false } = {}) {
     t.after(() => Object.defineProperty(process, key, original));
   }
   const mock = t.mock.method(childProcess, "spawnSync", (command, argv) => {
-    if (portable && command === "/usr/bin/xcrun") return { status: 0, stdout: argv.includes("--find") ? compilerPath : sdkRoot };
-    if (portable && command === compilerPath) return { status: 0, stdout: buildReview.compiler.version };
+    if (portable && command === "/usr/bin/xcrun") {
+      discoveryCalls++;
+      return { status: 0, stdout: argv.includes("--find") ? compilerPath : sdkRoot };
+    }
+    if (portable && command === compilerPath) {
+      compilerCalls++;
+      const version = onCompilerVersion?.({ root, compilerPath, sdkRoot, headersRoot, version: buildReview.compiler.version });
+      return { status: 0, stdout: version ?? buildReview.compiler.version };
+    }
     assert.equal(command, "/usr/bin/codesign");
     if (argv[0] === "--force") {
       signCalls++;
@@ -257,10 +264,66 @@ async function fixture(t, { portable = false } = {}) {
   const api = await import(pathToFileURL(producerModule).href);
   const reviewApi = await import(pathToFileURL(reviewModule).href);
   return { root, api, reviewApi, review, reviewPath, paths, stage: join(root, "apps/desktop/dist/office-local"),
-    counts: () => ({ signCalls, verifyCalls }) };
+    counts: () => ({ signCalls, verifyCalls }),
+    toolchainCounts: () => ({ compilerCalls, discoveryCalls }) };
 }
 
 test("Office publication private origin and final-byte contracts (synthetic compiler/signature, not packaged validation)", async t => {
+  await t.test("portable reader rejects stale authored closure before any tool discovery or compiler execution", async t => {
+    const f = await fixture(t, { portable: true });
+    f.review.packagingSha256[f.paths[0]] = "0".repeat(64);
+    writeFileSync(f.reviewPath, JSON.stringify(f.review));
+    assert.throws(() => f.reviewApi.readReviewedPackagedOfficeSource(), /source_review_invalid/u);
+    assert.equal(f.toolchainCounts().discoveryCalls, 0);
+    assert.equal(f.toolchainCounts().compilerCalls, 0);
+    assert.equal(f.counts().signCalls, 0);
+  });
+  await t.test("portable reader rejects unreviewed compiler bytes before invoking that compiler", async t => {
+    const f = await fixture(t, { portable: true });
+    writeFileSync(join(f.root, "toolchain/clang++"), "UNREVIEWED SYNTHETIC COMPILER BYTES");
+    assert.throws(() => f.reviewApi.readReviewedPackagedOfficeSource(), /toolchain_invalid/u);
+    assert.equal(f.toolchainCounts().compilerCalls, 0);
+    assert.equal(f.counts().signCalls, 0);
+  });
+  await t.test("portable reader rejects invalid profiles, SDK and header identities without executing a compiler", async t => {
+    const f = await fixture(t, { portable: true }), original = structuredClone(f.review);
+    for (const mutate of [
+      row => { row.toolchains = []; },
+      row => { row.toolchains[0].sdkSettingsSha256 = "0".repeat(64); },
+      row => { row.headers.sha256["node_api.h"] = "0".repeat(64); },
+    ]) {
+      const row = structuredClone(original); mutate(row);
+      writeFileSync(f.reviewPath, JSON.stringify(row));
+      assert.throws(() => f.reviewApi.readReviewedPackagedOfficeSource(), /toolchain_invalid/u);
+      assert.equal(f.toolchainCounts().compilerCalls, 0);
+    }
+    assert.equal(f.counts().signCalls, 0);
+  });
+  await t.test("unapproved toolchain observation reads identity without executing a candidate compiler", async t => {
+    const f = await fixture(t, { portable: true });
+    const api = await import(pathToFileURL(join(f.root, "apps/desktop/scripts/packaged-office-native-toolchain.mjs")).href);
+    const observed = api.observeOfficeNativeToolchain();
+    assert.equal(observed.compiler.version, null);
+    assert.equal(observed.profile.compilerVersionFirstLine, null);
+    assert.equal(f.toolchainCounts().compilerCalls, 0);
+    assert.equal(f.counts().signCalls, 0);
+  });
+  await t.test("portable reader rejects compiler, SDK, headers and authored inputs changed during an admitted version probe", async t => {
+    for (const [name, mutate, error] of [
+      ["compiler", value => { writeFileSync(value.compilerPath, "CHANGED DURING VERSION PROBE"); }, /toolchain_invalid/u],
+      ["SDK", value => { writeFileSync(join(value.sdkRoot, "SDKSettings.json"), "CHANGED DURING VERSION PROBE"); }, /toolchain_invalid/u],
+      ["headers", value => { writeFileSync(join(value.headersRoot, "node_api.h"), "CHANGED DURING VERSION PROBE"); }, /toolchain_invalid/u],
+      ["authored closure", value => { writeFileSync(join(value.root, PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS[0]), "CHANGED DURING VERSION PROBE"); }, /source_review_invalid/u],
+      ["reported version", () => "Apple clang version 99.0.0 (clang-9900.1.0)", /toolchain_invalid/u],
+    ]) {
+      await t.test(name, async t => {
+        const f = await fixture(t, { portable: true, onCompilerVersion: mutate });
+        assert.throws(() => f.reviewApi.readReviewedPackagedOfficeSource(), error);
+        assert.equal(f.toolchainCounts().compilerCalls, 1);
+        assert.equal(f.counts().signCalls, 0);
+      });
+    }
+  });
   await t.test("portable exact tool profile preserves original publication and immutable source approvals", async t => {
     const f = await fixture(t, { portable: true }), row = readFileSync(f.reviewPath);
     const first = f.reviewApi.readReviewedPackagedOfficeSource();

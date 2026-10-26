@@ -38,17 +38,18 @@ function absolutePath(value) {
 /**
  * Read build facts, never approve them. Paths are observations; a committed
  * source review must separately match the exact compiler/SDK/header identities.
- * The one environment input chooses a local header location, never header bytes.
+ * Paths from xcrun/header environment are untrusted observations, not execution
+ * authority. Without a reviewed profile this reads identities only; the version
+ * fields stay null. A matching compiler/SDK/header identity is required before
+ * the discovered compiler may execute even its --version probe.
  */
-export function observeOfficeNativeToolchain() {
+export function observeOfficeNativeToolchain({ profiles, headerDigests } = {}) {
   requireToolchain(process.platform === "darwin" && process.arch === "arm64");
   const environment = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
   if (Object.hasOwn(process.env, "DEVELOPER_DIR")) environment.DEVELOPER_DIR = absolutePath(process.env.DEVELOPER_DIR);
   const compilerPath = absolutePath(command("/usr/bin/xcrun", ["--find", "clang++"], environment));
   const sdkRoot = absolutePath(command("/usr/bin/xcrun", ["--sdk", "macosx", "--show-sdk-path"], environment));
   const headerRoot = absolutePath(process.env.LING_OFFICE_NODE_HEADERS);
-  const compilerVersion = command(compilerPath, ["--version"], environment);
-  requireToolchain(compilerVersion.length > 0 && compilerVersion.length <= 4096);
   const sdkBytes = bytes(join(sdkRoot, "SDKSettings.json"), 8 * 1024 * 1024);
   let sdkSettings;
   try { sdkSettings = JSON.parse(sdkBytes.toString("utf8")); }
@@ -56,15 +57,35 @@ export function observeOfficeNativeToolchain() {
   requireToolchain(typeof sdkSettings.CanonicalName === "string" && /^macosx\d+\.\d+(?:\.\d+)?$/u.test(sdkSettings.CanonicalName)
     && typeof sdkSettings.Version === "string" && /^\d+\.\d+(?:\.\d+)?$/u.test(sdkSettings.Version));
   const compilerSha256 = hash(bytes(compilerPath, 512 * 1024 * 1024));
-  return Object.freeze({
+  const observedHeaders = Object.freeze({ root: headerRoot, sha256: Object.freeze(Object.fromEntries(OFFICE_NATIVE_HEADER_NAMES
+    .map(name => [name, hash(bytes(join(headerRoot, name), 8 * 1024 * 1024))]))) });
+  const identity = { compilerSha256, sdkCanonicalName: sdkSettings.CanonicalName,
+    sdkVersion: sdkSettings.Version, sdkSettingsSha256: hash(sdkBytes) };
+  let compilerVersion = null;
+  if (profiles !== undefined || headerDigests !== undefined) {
+    const candidate = Array.isArray(profiles) && profiles.find(profile => profile && typeof profile === "object"
+      && Object.keys(identity).every(key => profile[key] === identity[key]));
+    requireToolchain(candidate);
+    // Validate the complete policy, all profiles and actual headers before any
+    // compiler call. The reviewed first line is only a provisional comparison;
+    // the real version is checked again after executing the admitted compiler.
+    assertOfficeNativeToolchainProfile(profiles, headerDigests, { headers: observedHeaders,
+      profile: { ...identity, compilerVersionFirstLine: candidate.compilerVersionFirstLine } });
+    requireToolchain(hash(bytes(compilerPath, 512 * 1024 * 1024)) === compilerSha256);
+    compilerVersion = command(compilerPath, ["--version"], environment);
+    requireToolchain(compilerVersion.length > 0 && compilerVersion.length <= 4096);
+    requireToolchain(hash(bytes(compilerPath, 512 * 1024 * 1024)) === compilerSha256
+      && hash(bytes(join(sdkRoot, "SDKSettings.json"), 8 * 1024 * 1024)) === identity.sdkSettingsSha256
+      && OFFICE_NATIVE_HEADER_NAMES.every(name => hash(bytes(join(headerRoot, name), 8 * 1024 * 1024)) === observedHeaders.sha256[name]));
+  }
+  const observation = Object.freeze({
     compiler: Object.freeze({ path: compilerPath, version: compilerVersion, sha256: compilerSha256 }),
     sdk: Object.freeze({ root: sdkRoot, settingsSha256: hash(sdkBytes) }),
-    headers: Object.freeze({ root: headerRoot, sha256: Object.freeze(Object.fromEntries(OFFICE_NATIVE_HEADER_NAMES
-      .map(name => [name, hash(bytes(join(headerRoot, name), 8 * 1024 * 1024))]))) }),
-    profile: Object.freeze({ compilerVersionFirstLine: compilerVersion.split(/\r?\n/u)[0],
-      compilerSha256,
-      sdkCanonicalName: sdkSettings.CanonicalName, sdkVersion: sdkSettings.Version, sdkSettingsSha256: hash(sdkBytes) }),
+    headers: observedHeaders,
+    profile: Object.freeze({ compilerVersionFirstLine: compilerVersion?.split(/\r?\n/u)[0] ?? null, ...identity }),
   });
+  if (profiles !== undefined || headerDigests !== undefined) assertOfficeNativeToolchainProfile(profiles, headerDigests, observation);
+  return observation;
 }
 
 /** Exact reviewed tool pair; no first-seen approval, version ranges, or path trust. */
