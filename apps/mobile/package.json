@@ -43,7 +43,7 @@
     "@expo/dom-webview": "~58.0.2"
   },
   "devDependencies": {
-    "expo-doctor": "1.21.4",
+    "expo-doctor": "1.21.5",
     "react-dom": "19.3.0",
     "react-types-mobile": "npm:@types/react@19.3.0",
     "typescript": "~7.0.2"
