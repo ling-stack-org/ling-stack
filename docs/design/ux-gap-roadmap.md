@@ -18,6 +18,18 @@ Two candidate items were deliberately excluded at roadmap review:
 
 ## Items
 
+Implementation status on this branch (2026-10-26):
+
+- Implemented with tests: 03 (notifications + preferences; exportable
+  reports and IM destinations delivered via 04's sink), 04 (webhook
+  destinations, builders, egress pinning, signing), 02 (interactive HTML
+  artifacts), 09 (Phase A: bind guard + bearer token), 10 (index contract +
+  inspect route), 11 (voice dictation), 13 (startup diagnostics panel).
+- Design-complete, code as follow-up slices on the same plan: 01 (document
+  deliverables), 05 (built-in browser), 06 (computer use hardening),
+  07 (memory citations), 08 (work board acceptance), 12 (pack export/import
+  UI and browse surface beyond the inspect route).
+
 | # | Doc | Item | Priority |
 |---|-----|------|----------|
 | 01 | [ux-gap-roadmap-01-document-deliverables.md](ux-gap-roadmap-01-document-deliverables.md) | Document deliverables (PPT/Word/Excel generation loop) | P0 |
