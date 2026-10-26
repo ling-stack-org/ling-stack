@@ -32,6 +32,7 @@ import { readSseResponse } from "../sse.js";
 import { recoverSubmissionReceipt, submissionWasRejected, UnconfirmedConversationSubmissionError, RecoveredConversationSubmissionError } from "../shared/conversation/conversation-submission-recovery.js";
 import { submissionLookupJournal } from "../shared/conversation/conversation-submission-journal.js";
 import { validateConversationSubmissionReceipt } from "../shared/conversation/submission-receipt-scope.js";
+import { shouldReportConversationStreamError } from "../shared/conversation/stream-error-ownership.js";
 import type {
   AiTeammate,
   Channel,
@@ -654,7 +655,11 @@ export function useChannelActionsController(input: {
       if (autoStartedWorkflow) {
         await input.refreshChannelActivity();
       }
-      if (streamErrorMessage) {
+      // A failed or blocked AI reply owns its provider error. The channel
+      // feed renders that error beside the persisted assistant message; keep
+      // Composer feedback for transport failures that have no reply record to
+      // anchor the error to.
+      if (shouldReportConversationStreamError({ error: streamErrorMessage, hasAssistantReply: receivedAiReply })) {
         reportFeedback("composer", channelId, "stream", streamErrorMessage);
         return { errorMessage: streamErrorMessage };
       }
