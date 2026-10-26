@@ -31,6 +31,10 @@ export class OfficeDriverRuntime {
   private helper: OfficeDriverHelper | undefined;
   private client: OfficeDriverDaemonTransport | undefined;
   private abortController: AbortController | undefined;
+  private claimAbortController: AbortController | undefined;
+  private claimsPaused = false;
+  private pauseRevision = 0;
+  private acceptedCommand = false;
   private runPromise: Promise<void> | undefined;
   private helperRecoveryPromise: Promise<void> | undefined;
   private heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -52,12 +56,15 @@ export class OfficeDriverRuntime {
   }) {}
 
   async start(): Promise<void> {
-    if (this.runPromise) return;
+    if (this.runPromise || this.abortController || this.claimsPaused) return;
     const platform = readPlatform(this.options.platform ?? process.platform);
     if (!platform) return;
     this.platformValue = platform;
     this.generation = Math.max(this.generation + 1, this.now());
     this.abortController = new AbortController();
+    this.claimAbortController = new AbortController();
+    const signal = this.abortController.signal;
+    const claimSignal = this.claimAbortController.signal;
     this.helper = this.options.helper ?? new OfficeDriverHelperProcess({
       executablePath: this.options.executablePath,
       recoveryRoot: this.options.recoveryRoot,
@@ -71,27 +78,38 @@ export class OfficeDriverRuntime {
     });
     try {
       await this.helper.start();
-      await this.refreshAvailability(platform);
+      if (signal.aborted || this.claimsPaused) return;
+      await this.refreshAvailability(platform, claimSignal);
     } catch (error) {
+      if (signal.aborted || this.claimsPaused) return;
       this.options.onDiagnostic?.("office_driver.start_failed", { error: safeErrorCode(error) });
-      await this.publishSyntheticFailure(platform, safeErrorCode(error));
+      await this.publishSyntheticFailure(platform, safeErrorCode(error), claimSignal);
     }
-    const signal = this.abortController.signal;
-    this.runPromise = this.runClaimLoop(signal);
+    if (signal.aborted || this.claimsPaused) return;
+    this.runPromise = this.runClaimLoop(signal, claimSignal);
     this.heartbeat = setInterval(() => {
-      void this.refreshAvailability(platform).catch((error) => {
+      if (signal.aborted || (this.claimsPaused && !this.acceptedCommand)) return;
+      const availabilitySignal = this.acceptedCommand ? signal : claimSignal;
+      // A draining accepted command needs its original authority lease, not a
+      // new helper health operation or helper-recovery side effect.
+      const publication = this.claimsPaused
+        ? this.renewAcceptedAvailability(signal)
+        : this.refreshAvailability(platform, availabilitySignal);
+      void publication.catch((error) => {
+        if (availabilitySignal.aborted) return;
         const errorCode = safeErrorCode(error);
         this.options.onDiagnostic?.("office_driver.heartbeat_failed", { error: errorCode });
-        if (!shouldRecoverHelper(errorCode)) return;
+        if (this.claimsPaused || !shouldRecoverHelper(errorCode)) return;
         return this.recoverHelper().catch((recoveryError) =>
-          this.publishSyntheticFailure(platform, safeErrorCode(recoveryError)));
+          this.publishSyntheticFailure(platform, safeErrorCode(recoveryError), claimSignal));
       });
     }, AVAILABILITY_HEARTBEAT_MS);
   }
 
   async stop(): Promise<void> {
-    if (this.heartbeat) clearInterval(this.heartbeat);
-    this.heartbeat = undefined;
+    this.stopHeartbeat();
+    this.claimAbortController?.abort();
+    this.claimAbortController = undefined;
     this.abortController?.abort();
     this.abortController = undefined;
     await this.helperRecoveryPromise?.catch(() => undefined);
@@ -104,32 +122,68 @@ export class OfficeDriverRuntime {
     this.platformValue = undefined;
   }
 
+  /** Fence this generation's admission, retaining accepted helper/result owners. */
+  pauseNewClaims(): void {
+    this.pauseRevision += 1;
+    this.claimsPaused = true;
+    this.claimAbortController?.abort();
+    if (!this.acceptedCommand) this.stopHeartbeat();
+  }
+
   /** Rebind the desktop driver lease after the daemon authority is recreated. */
   async restart(): Promise<void> {
-    if (!this.runPromise && !this.abortController) return;
+    if (!this.runPromise && !this.abortController && !this.claimsPaused) return;
+    const revision = this.pauseRevision;
     await this.stop();
+    if (revision !== this.pauseRevision) return;
+    this.claimsPaused = false;
     await this.start();
   }
 
-  private async runClaimLoop(signal: AbortSignal): Promise<void> {
-    while (!signal.aborted) {
+  private async runClaimLoop(signal: AbortSignal, claimSignal: AbortSignal): Promise<void> {
+    while (!signal.aborted && !this.claimsPaused) {
+      let accepted = false;
       try {
-        const command = await this.client?.claim(signal);
+        const command = await this.client?.claim(claimSignal);
         if (!command || signal.aborted) continue;
+        if (this.claimsPaused || claimSignal.aborted) {
+          this.claimedNotStarted(command.id);
+          return;
+        }
+        accepted = true;
+        this.acceptedCommand = true;
         const result = await this.execute(command);
         await this.client?.complete(result, signal);
       } catch (error) {
-        if (signal.aborted) return;
+        if (signal.aborted || (this.claimsPaused && !accepted)) return;
         const code = safeErrorCode(error);
         this.options.onDiagnostic?.("office_driver.claim_failed", { error: code });
-        if (code === "office_driver_authority_invalid" && this.platformValue) {
-          await this.refreshAvailability(this.platformValue).catch((recoveryError) => {
-            if (!signal.aborted) this.options.onDiagnostic?.("office_driver.availability_failed", { error: safeErrorCode(recoveryError) });
+        if (!this.claimsPaused && code === "office_driver_authority_invalid" && this.platformValue) {
+          await this.refreshAvailability(this.platformValue, claimSignal).catch((recoveryError) => {
+            if (!claimSignal.aborted) this.options.onDiagnostic?.("office_driver.availability_failed", { error: safeErrorCode(recoveryError) });
           });
         }
-        await delay(ERROR_BACKOFF_MS, signal);
+        if (!this.claimsPaused) await delay(ERROR_BACKOFF_MS, claimSignal);
+      } finally {
+        if (accepted) {
+          this.acceptedCommand = false;
+          if (this.claimsPaused) this.stopHeartbeat();
+        }
       }
     }
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = undefined;
+  }
+
+  private claimedNotStarted(commandId: string): void {
+    try {
+      this.options.onDiagnostic?.("office_driver.claimed_not_started", {
+        commandId, effectState: "not_started", hostState: "unknown",
+      });
+    } catch { /* No fabricated completion or change of Host authority. */ }
   }
 
   private async execute(command: OfficeDriverRequest): Promise<OfficeDriverResult> {
@@ -159,16 +213,17 @@ export class OfficeDriverRuntime {
     const helper = this.helper;
     const platform = this.platformValue;
     const signal = this.abortController?.signal;
-    if (!helper || !platform || signal?.aborted) return;
+    if (!helper || !platform || signal?.aborted || this.claimsPaused) return;
     const recovery = (async () => {
       await helper.stop().catch(() => undefined);
-      if (signal?.aborted) return;
+      if (signal?.aborted || this.claimsPaused) return;
       await helper.start();
       if (signal?.aborted) {
         await helper.stop().catch(() => undefined);
         return;
       }
-      await this.refreshAvailability(platform);
+      if (this.claimsPaused) return;
+      await this.refreshAvailability(platform, this.claimAbortController?.signal ?? signal);
       this.options.onDiagnostic?.("office_driver.recovered");
     })();
     this.helperRecoveryPromise = recovery;
@@ -179,10 +234,10 @@ export class OfficeDriverRuntime {
     }
   }
 
-  private async refreshAvailability(platform: OfficeDriverPlatform): Promise<void> {
+  private async refreshAvailability(platform: OfficeDriverPlatform, signal?: AbortSignal): Promise<void> {
     const helper = this.helper;
     const client = this.client;
-    if (!helper || !client) return;
+    if (!helper || !client || signal?.aborted || this.claimsPaused) return;
     const id = randomUUID();
     const result = await helper.call({
       protocol: OFFICE_DRIVER_PROTOCOL,
@@ -192,6 +247,9 @@ export class OfficeDriverRuntime {
       deadlineAt: new Date(Date.now() + 5_000).toISOString(),
       idempotencyKey: `driver-status:${this.generation}:${Math.floor(Date.now() / AVAILABILITY_HEARTBEAT_MS)}`,
     });
+    // driver_status may have been in flight when admission closed. It is not
+    // permission to publish a fresh idle lease or recover/restart the helper.
+    if (signal?.aborted || this.claimsPaused) return;
     if (!result.ok) throw new Error(result.error?.code ?? "office_driver_status_failed");
     const status = readHelperStatus(result.result);
     const availability = parseOfficeDriverAvailability({
@@ -204,14 +262,20 @@ export class OfficeDriverRuntime {
     });
     this.availability = availability;
     try {
-      await client.publishAvailability(availability, this.abortController?.signal);
+      await client.publishAvailability(availability, signal);
     } catch (error) {
-      if (this.abortController?.signal.aborted) throw error;
+      if (signal?.aborted) throw error;
       throw new Error("office_driver_daemon_unavailable");
     }
   }
 
-  private async publishSyntheticFailure(platform: OfficeDriverPlatform, errorCode: string): Promise<void> {
+  private async renewAcceptedAvailability(signal: AbortSignal): Promise<void> {
+    if (signal.aborted || !this.acceptedCommand || !this.availability) return;
+    await this.client?.publishAvailability({ ...this.availability, checkedAt: new Date().toISOString() }, signal);
+  }
+
+  private async publishSyntheticFailure(platform: OfficeDriverPlatform, errorCode: string, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted || this.claimsPaused) return;
     const availability = parseOfficeDriverAvailability({
       protocol: OFFICE_DRIVER_PROTOCOL,
       generation: this.generation,
@@ -227,7 +291,7 @@ export class OfficeDriverRuntime {
       checkedAt: new Date().toISOString(),
     });
     this.availability = availability;
-    await this.client?.publishAvailability(availability, this.abortController?.signal).catch(() => undefined);
+    await this.client?.publishAvailability(availability, signal).catch(() => undefined);
   }
 
   private now(): number {

@@ -201,11 +201,11 @@ export class DesktopRuntime {
       });
     this.desktopInstanceId = options.desktopInstanceId
       ?? `desktop-${randomBytes(16).toString("hex")}`;
-    if (desktopBundledCuaDriverGateEnabled(this.featureFlags, this.platform)) {
-      this.stopDaemonStatusObserver = options.daemon.onStatusChanged((status) => {
-        this.handleDaemonStatusChanged(status);
-      });
-    }
+    // Host admission is not a Computer Use feature. Native execution must
+    // observe the same stop fence even when the CUA provider is disabled.
+    this.stopDaemonStatusObserver = options.daemon.onStatusChanged((status) => {
+      this.handleDaemonStatusChanged(status);
+    });
     // Task continuation is independent from Cua Driver readiness. Even when a
     // provider owner fails to compose, Desktop must still publish lock state.
     if (options.powerMonitor) {

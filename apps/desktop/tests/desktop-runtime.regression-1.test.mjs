@@ -175,6 +175,15 @@ test("a late engine authority response cannot authorize new work after Host drai
   await f.runtime.shutdown();
 });
 
+// R03-OBS: Host lifecycle admission is independent of the optional CUA feature.
+test("disabled Computer Use still fences execution authority on owned Host drain", async () => {
+  const f = fixture({ featureFlags: { bundledEmbedded: { darwin: false, win32: false }, packagedProvider: { darwin: false, win32: false } } });
+  f.daemon.getExecutionEngineAuthority = async () => ({ fixture: true });
+  f.daemon.emit("draining");
+  await assert.rejects(f.runtime.getExecutionEngineAuthority(), error => error?.code === "shutdown_requested");
+  await f.runtime.shutdown();
+});
+
 test("a failed preflight retains the continuation heartbeat until confirmed cleanup", async t => {
   t.mock.timers.enable({ apis: ["setInterval"] });
   let fail = true;
@@ -232,7 +241,7 @@ function fixture(options = {}) {
     daemon, daemonBaseUrl: baseUrl, bridgeToken: "fixture", workspaceCwd,
     resourcesRoot: "/tmp/ling-r03-runtime-resources", userDataPath: "/tmp/ling-r03-runtime-data",
     platform: "darwin", architecture: "arm64", readSystemSessionLocked: async () => false,
-    featureFlags: { bundledEmbedded: { darwin: true, win32: false }, packagedProvider: { darwin: true, win32: false } },
+    featureFlags: options.featureFlags ?? { bundledEmbedded: { darwin: true, win32: false }, packagedProvider: { darwin: true, win32: false } },
     coordinatorFactory: () => coordinator,
     platformOwner: { platform: "darwin", async start() {}, async dispose() { disposed++; events.push("platform.dispose"); } },
     lockedTaskContinuationClient: {
