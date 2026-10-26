@@ -79,6 +79,7 @@ export async function collectPinnedSource({ outputPath, bunCommand = "bun", onPr
   const currentRecipe = async () => Buffer.concat(await Promise.all(buildInputs.map(path => readFile(new URL(path, import.meta.url)))));
   const recipeBytes = await currentRecipe();
   const work = await mkdtemp(join(lease.scratchPath, "source-acquisition-"));
+  let completed = false;
   try {
     const plan = sourceAcquisitionPlan(work), checkout = join(work, "checkout"), candidate = join(work, "source");
     for (const path of [checkout, plan.env.HOME, plan.env.TMPDIR]) await mkdir(path, { recursive: true });
@@ -122,10 +123,14 @@ export async function collectPinnedSource({ outputPath, bunCommand = "bun", onPr
     await mkdir(output, { mode: 0o700 });
     try { await rename(candidate, output); }
     catch (error) { await rmdir(output).catch(() => {}); throw error; }
+    completed = true;
     return { ...built, generatedManifestChecksum: built.manifestChecksum, manifestChecksum: verified.manifestChecksum,
       output, repository: plan.repository, reviewedManifestMatched: true, reconstructed: recovered.reconstructed,
       currentRecipeApprovedByPriorRecord: false };
-  } finally { await rm(work, { recursive: true, force: true }); }
+  } finally {
+    // An interrupted Git/render process may still own this checkout or stage.
+    if (completed) await rm(work, { recursive: true, force: true });
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

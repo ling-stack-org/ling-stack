@@ -103,7 +103,8 @@ retained resource-stage generation. The ordinary byte checkpoints/watchdog
 still apply to every intermediate under the resource root; this is not an OS
 quota or protection from unrestricted same-UID/Full Access processes.
 
-This execution wrapper is **not implemented or reviewed yet**. It must first
+The execution wrapper is now implemented and independently reviewed within its
+static scope, but has not been frozen or run. It must first
 freeze its source, selected tools and predecessor inventories; retain exact
 build/selection/publication receipts; reject pre-existing output; restore only
 its own temporary selection; and settle its owned build processes before
@@ -157,8 +158,9 @@ by changing the report or claiming the reviewer reran those fixtures.
 
 ## Direct continuation
 
-1. Implement and independently review the owned-scratch, non-overwriting
-   successor path. The exact source/runtime/OS proposal review and scoped
+1. Save the reviewed failure-staging checkpoint below, then generate and review
+   the changed source recipe before freezing the owned-scratch successor path.
+   The exact source/runtime/OS proposal review and scoped
    standing-authorization application are complete; do not regenerate them
    without an affected input change.
 2. Preserve all resource admission limits. Recompute exact logical capacity
@@ -178,3 +180,36 @@ is available, but binding either the retained observation QA or ordinary Human
 QA window returned server `-10005 timeoutReached`. No GUI input was sent, no
 fallback was used, and this result is not proof of a lock screen or an App
 failure. Continue non-GUI preparation instead of repeatedly touching old Runs.
+
+## Failure-staging prerequisite and changed source recipe
+
+Six builders previously removed their working inputs in unconditional `finally`
+blocks, including after compiler/Git/render failure or timeout. They now retain
+failed staging for the outer managed owner to settle. Source/native/resource
+staging is inside `lease.scratchPath/tmp`, including artifact-output invocations;
+normal success retains the original local cleanup behavior. `completed` is a
+successful builder marker, not proof that every successful subprocess descendant
+has drained. This change does not strengthen the controlled-process boundary to
+whole-host or unrestricted same-UID containment.
+
+The synthetic parser timeout regression failed before the fix (expected one
+retained stage, actual zero). Final five-file focused suite: **23/23**, actual
+exit 0, 460.872959 ms, no failure/cancellation/skip. This uses compiler/admission
+fixtures, not real native compilation, artifact-output failure cleanup, OS drain
+or GUI acceptance. Final receipt and independent review are in the existing
+`p5-merged-input-review-20261026` evidence directory; review SHA256:
+`39b495f18a428cbe700639616bc3dde4867307ad2691bdc0900d4a6abf9a9c27`.
+
+Because the source builder hashes itself, the repair changes the recipe to
+`ling-35d2bce87d68a986b352980d196e383a1ed1ea9bc6684d7edcc5d5a2ca64be5c`.
+The reviewed pin remains unchanged. Next, genuinely fetch/render the fixed
+upstream object under the original resource lease, retain its actual manifest,
+compare every file record with the predecessor, review the changed producer and
+actual object, and only then bind the accurate new source pin. The collector's
+old metadata recovery is not new-recipe approval; the wrapper requires a real
+source generation with `reconstructed === false`.
+
+Wrapper and cache reviews are static scoped evidence, not an executed build.
+No real cache cleanup, new resource build, new package or GUI acceptance follows
+from this checkpoint alone. Prior 38-test selection and 33-test settlement
+results remain valid and are not rerun without an affected-input change.

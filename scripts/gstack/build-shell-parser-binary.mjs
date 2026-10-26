@@ -15,6 +15,7 @@ export async function buildShellParser({ outputPath, goCommand = "go" }) {
   const scripts = dirname(fileURLToPath(import.meta.url)), source = join(scripts, "shell-ast");
   const inputs = await Promise.all(["main.go", "go.mod", "go.sum", "THIRD-PARTY-NOTICES"].map(path => bundleFile(source, path)));
   const work = await mkdtemp(join(lease.scratchPath, "tmp", "shell-parser-"));
+  let completed = false;
   try {
     const code = join(work, "code");
     await mkdir(code);
@@ -52,6 +53,11 @@ export async function buildShellParser({ outputPath, goCommand = "go" }) {
     await copyFile(outputs[0].binary, outputPath, 1);
     await writeFile(`${outputPath}.provenance.json`, `${JSON.stringify(report, null, 2)}\n`, { flag: "wx" });
     await resourceCheckpoint(lease.root);
+    completed = true;
     return report;
-  } finally { await rm(work, { recursive: true, force: true }); }
+  } finally {
+    // A failed compiler can have surviving children. Leave failure staging in
+    // this lease for the outer supervisor's process-settlement cleanup.
+    if (completed) await rm(work, { recursive: true, force: true });
+  }
 }

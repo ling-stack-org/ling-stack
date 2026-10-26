@@ -11,7 +11,7 @@ import test from "node:test";
 // Found by /qa on 2026-10-26.
 // Report: output/e6-20260928/p5-main-integration-20261026/qa-report-main-integration-2026-10-26.md
 // Compiler, native verification and lease admission are synthetic; no real Go/native/package acceptance.
-async function fixture(t, { changedCopy = false, changedSecondBuild = false } = {}) {
+async function fixture(t, { changedCopy = false, changedSecondBuild = false, compilerFailure = false } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "gstack-binary-parser-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   const scratchPath = join(root, "scratch"), calls = [], key = `binaryParserProbe${Math.random().toString(36).slice(2)}`;
@@ -26,6 +26,7 @@ async function fixture(t, { changedCopy = false, changedSecondBuild = false } = 
     calls.push({ args, options });
     if (args[0] === "version") return "go version go99.0.0 synthetic";
     assert.equal(args[0], "build");
+    if (compilerFailure) throw Object.assign(new Error("synthetic compiler failed before drain evidence"), { code: "ETIMEDOUT" });
     builds++;
     writeFileSync(args[args.indexOf("-o") + 1], changedSecondBuild ? `synthetic-${builds}` : "same synthetic binary");
     return "";
@@ -72,6 +73,7 @@ test("binary output keeps isolated compiler inputs and emits its own repeated-bu
   assert.equal(report.producer.path, "scripts/gstack/build-shell-parser-binary.mjs");
   assert.deepEqual(JSON.parse(await readFile(`${f.outputPath}.provenance.json`, "utf8")), report);
   assert.equal(await readFile(f.outputPath, "utf8"), "same synthetic binary");
+  assert.deepEqual(await fs.readdir(join(f.scratchPath, "tmp")), []);
 });
 
 test("a changed copied input is rejected before executing any compiler command", async t => {
@@ -86,4 +88,14 @@ test("different bytes from the repeated build cannot publish a binary or provena
   await assert.rejects(f.buildShellParser(f), /repeated_build_changed/);
   await assert.rejects(readFile(f.outputPath), { code: "ENOENT" });
   await assert.rejects(readFile(`${f.outputPath}.provenance.json`), { code: "ENOENT" });
+});
+
+test("failed compiler staging remains owned until the outer supervisor can prove drain", async t => {
+  const f = await fixture(t, { compilerFailure: true });
+  await assert.rejects(f.buildShellParser(f), { code: "ETIMEDOUT" });
+  const work = await fs.readdir(join(f.scratchPath, "tmp"));
+  assert.equal(work.length, 1);
+  assert.match(work[0], /^shell-parser-/);
+  assert.ok((await readFile(join(f.scratchPath, "tmp", work[0], "code/main.go"))).length > 0);
+  await assert.rejects(readFile(f.outputPath), { code: "ENOENT" });
 });

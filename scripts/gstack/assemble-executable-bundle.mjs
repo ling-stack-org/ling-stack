@@ -67,6 +67,7 @@ export async function assembleExecutableBundle({ stageRoot, browserInspectionRoo
   const modelAcquisition = modelMode === "download-required" ? testsavantModelAcquisition() : undefined;
   await mkdir(dirname(outputRoot), { recursive: true });
   const work = await mkdtemp(join(lease.scratchPath, "tmp", "gstack-executable-")), candidate = join(work, "candidate"), mainRoot = join(candidate, "gstack");
+  let completed = false;
   try {
     await mkdir(candidate);
     onProgress("materialize one no-link local candidate from retained prerequisites");
@@ -126,8 +127,11 @@ export async function assembleExecutableBundle({ stageRoot, browserInspectionRoo
     const verified = await readExecutableBundle(mainRoot);
     await resourceCheckpoint(lease.root);
     await publishStagedDirectory(candidate, outputRoot);
+    completed = true;
     return { identity: verified.identity, fileCount: manifest.files.length, sizeBytes: manifest.files.reduce((sum, row) => sum + row.sizeBytes, 0) };
-  } finally { await rm(work, { recursive: true, force: true }); }
+  } finally {
+    if (completed) await rm(work, { recursive: true, force: true });
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
