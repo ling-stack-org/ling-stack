@@ -158,8 +158,9 @@ by changing the report or claiming the reviewer reran those fixtures.
 
 ## Direct continuation
 
-1. Save the reviewed failure-staging checkpoint below, then generate and review
-   the changed source recipe before freezing the owned-scratch successor path.
+1. The failure-staging checkpoint and accurate source-only rebind below are
+   complete. Before freezing the owned-scratch successor, close the remaining
+   archive-registry failure-staging path described below.
    The exact source/runtime/OS proposal review and scoped
    standing-authorization application are complete; do not regenerate them
    without an affected input change.
@@ -213,3 +214,47 @@ Wrapper and cache reviews are static scoped evidence, not an executed build.
 No real cache cleanup, new resource build, new package or GUI acceptance follows
 from this checkpoint alone. Prior 38-test selection and 33-test settlement
 results remain valid and are not rerun without an affected-input change.
+
+### Actual new source generation and binding
+
+The seven-file repair was saved and pushed as `6b2a53dd`; remote readback matched
+the full SHA. The source recipe preview then actually generated the fixed
+upstream object under the same resource root. The v2 preview failed because it
+omitted the production verifier's mandatory `expectedSkillIds`; its real exit 1
+and failure log remain in `source-recipe-preview-run-v2`. No source pin changed
+on that failure. The small preview correction passes the fixed lock inventory,
+retains the actual manifest before verification and uses a distinct v3 directory.
+
+V3 completed with actual exit 0, **20,162 ms**, direct child 74729 closed/exit 0,
+POSIX group absent, output settled and lease released. The original builder and
+the production verifier checked the full generated source. The actual manifest
+is `sha256:46d0b73ac3efa12039ea2332f03782b9d940cdd47c3798bf99cd75406166f866`.
+All 3,714 file records, 57 skills, and all non-recipe manifest fields equal the
+previous actual object; `reconstructed` is false. Independent review rehashed
+the manifest/recipe, deep-compared the complete manifests and checked the 212
+input pins plus command/policy/settlement receipts. It did not claim to rehash
+already released scratch file bytes.
+
+`reviewed-source-bundle.json` now binds this actual new source and recipe only;
+its historical pair remains documented and in Git. The checkout identity test
+first failed with the old recipe (0/1); after accurate binding, it and the source
+collector focused tests passed **7/7**, no failure/cancellation/skip, 154.505083
+ms. That checkout conversion fixture is not Windows runtime acceptance. Neither
+changed source-review file belongs to the formal Office packaging input closure.
+
+### Remaining archive-registry failure path
+
+The complete successor must not yet be described as ready. The archive collector
+still creates its internal temporary directory beside the output and always
+removes it in `finally`. Its real `registryPlan(source, home)` launches an
+inventory-bound Node subprocess with a 30-second timeout and uses that temporary
+home. A failed/timed-out registry call has the same early-cleanup concern as the
+six repaired builders. Apply the same lease-scratch/failure-retention contract
+there with a focused regression before a real successor build.
+
+Do not mechanically change the archive inspector: it creates its receipt-writing
+stage only after all ZIP inspections have been awaited; no registry process uses
+that temporary directory. The next fix must follow actual consumers, not merely
+the presence of a `finally`. Source-only rebind does not grant native/resource/
+archive/executable/packaged acceptance. No Go cache cleanup or new QA package has
+run, and P3/H09/final PR/main merge remain open.
