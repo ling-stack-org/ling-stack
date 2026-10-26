@@ -116,7 +116,7 @@
     "apps/desktop/scripts/cua-driver-signing/dmg-attachment-custody.mjs": "e8a9103a9b86ec9cc906c91b265d5af2d790d1537eacea3ffeaa1bb51d05f75d",
     "apps/desktop/scripts/cua-driver-signing/dmg-input-snapshot.mjs": "db6339159cf33b6acb7ed56ef669a52f331c279ef7bb8a4a55bf090684bf0c6e",
     "apps/desktop/scripts/cua-driver-signing/electron-builder-mac-sign.mjs": "bd0d776720c126ba65dce6f3c6a4996353f856befc2c3104f286ac8ac28a52b6",
-    "apps/desktop/scripts/cua-driver-signing/final-artifact-extractor.mjs": "26c78d05923bab03edb1b0f4b5a73e8af7ebde6c1fd18f6ebb698c073633129d",
+    "apps/desktop/scripts/cua-driver-signing/final-artifact-extractor.mjs": "b75fbb31c67da52df438839e06899490e68dfffa517ac5aad244d97e21bfcc62",
     "apps/desktop/scripts/cua-driver-signing/fixture-signer.mjs": "382224e246f6b98123c54f732fe8e2de206849a00c66111c349761d726feb381",
     "apps/desktop/scripts/cua-driver-signing/hooks.mjs": "530c274d2f52bf37caccbabd88347a0f9e2b8daffa29b44a090f427b5e43621a",
     "apps/desktop/scripts/cua-driver-signing/provider-layout.mjs": "8b7da06cfa6ee17631b5b68ecff9bb39ea8ed696768654be5333705dcea67f34",
