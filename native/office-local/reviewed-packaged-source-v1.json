@@ -135,7 +135,7 @@
     "apps/desktop/scripts/packaged-office-native-review-inputs.mjs": "15804d26498f98418c45b3aa72826c73df4187009c199b325d0b4245e3db7026",
     "apps/desktop/scripts/packaged-office-signing-inputs.mjs": "61080aa53c544eda63c475e870158bf9aba29ba94c0b4f8ba9c12dd6c0b3e3a3",
     "apps/desktop/shared/cua-driver-artifact-layout.mjs": "83c2a27a6d7bc4d8805588901d311bab1ee19fbc2de6475cf1957948a572d72a",
-    "apps/desktop/scripts/packaged-human-qa-lane.mjs": "0945836db2d2844a53060ecea57cc4d1ae42385e6a2c2c7ddb09e3e8f0a2b831",
+    "apps/desktop/scripts/packaged-human-qa-lane.mjs": "1bee013da6a0cfbeeb7628632dce0596d7f25034c790b87be9d51f066d1e41f3",
     "apps/desktop/shared/cua-driver-package-authority-contract.mjs": "b37130300143ef31a42e6601526f664098fffdc659943a4dee2d9b727a332003",
     "apps/desktop/shared/cua-driver-provider-lock-contract.mjs": "66e5058de139c996bd91c308efa35ae9640acbe41b5f5bb3d37a394a1e5eeca8",
     "native/office-local/scripts/build.mjs": "e477c42391274c3766551e4a0bfbb8647ae22fd7514d384511394536e419d057",

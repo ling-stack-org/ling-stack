@@ -335,3 +335,29 @@ Web typecheck:ci及diff-check通过；最终两文件独审0确认问题，具�
 异步构建边界保持一致；第三lane和既有完整邻接原生回归104/104通过，先RED后GREEN。
 这属于隔离验收的打包基础，不是新的运行权限或正式发布授权；对应closure只有lane源码
 一项变化，须独审并将精确差量绑定QA记录，不能直接忽略旧manifest的hash不匹配。
+
+#### R03-OBS 最终侧栏增量的真实客户端检查点（2026-10-26 12:43）
+
+第三固定lane源码已保存`20ad9ee1`，相关104/104及helper隔离安全12/12不重复。
+两份最终差量独审0剩余确认问题；正式manifest仅更新该lane源码SHA。
+pending packet `b3dd8311b46346e72f31d85193ac959df75b4eec76c52ab708a68f4dfc669846`
+保持false/null。真实build004和readback005均actual exit0，不再等待或重包；
+617 Web文件完整匹配，strict deep codesign exit0，ASAR `0276a506cff02445eec9f9f09337be3b99e475175db90a8992a4a59fdace0a99`。
+
+新Main41969/Host41974/profile隔离启动，旧两组App/Host/历史均保留。A正常完成先于停止请求，
+009守卫正确拒绝且没有发信号；A不算停止验收。独立审阅新的B输入后，新建真实GUI会话并
+允许一次180秒有界命令，012在tick11只向精确Host41974发过一次SIGTERM。
+B Run `run_9932b8d4-5efd-4b84-a225-373d7ca92aa9`，Attempt `work_unit_attempt_da44459e-ec2f-43e8-94d2-8265df02f76a`。
+
+实际内置Computer Use截图/AX显示draining→blocked，侧栏中性色“旧快照 · 运行中”、
+正文“待确认”、工具旧快照，Stop入口保留，没有继续思考动画或多处Failed to fetch。
+该**普通会话侧栏/观察增量已真实验证**，不代表三种会话所有组合或完整R03成功重启通过。
+014只读SQLite确认prepared/settled/start/end/approval各一次，marker92记录、一个PID、
+start1/tick90/done1；工具180132ms自然exit0。drained_at真实落库但descendants/effectCoverage
+仍unverified，Run非终态、daemon.spawned仍1，UI正确保留缺少停止证明与阻止自动重启。
+
+证据目录`output/e6-20260928/r03-final-observation-package-20261026/`，真实终帧为
+`08-case-b-final-blocked.png`及同名AX；汇总为`qa-report-r03-final-observation-2026-10-26.md`。
+materializer最终blocked/open[]保留002旧preflight拒绝、001旧freeze和009错过窗口，
+不能通过重包/重发旧案例刷绿。本节更新覆盖上述“侧栏仍未进包/GUI未验证”的历史状态。
+P3其它联合案例、P4 H09、P5最终独审/PR/merge继续；不强杀、不改真实DB、不重放、不发布。
