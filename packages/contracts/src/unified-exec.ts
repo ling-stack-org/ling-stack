@@ -1,3 +1,5 @@
+import type { ChannelCommandInputPolicyAuthorityV1 } from "./channel-operation-bindings.js";
+
 export type UnifiedExecCommand =
   | {
       readonly kind: "shell";
@@ -92,7 +94,8 @@ export interface UnifiedExecIsolationEvidence {
   readonly profileHash: string;
   readonly inputs: readonly { readonly path: string; readonly sha256: string; readonly sizeBytes: number; readonly sourceItemIds: readonly string[];
     readonly derivation?: { readonly kind: "node_module_dependency_v1" | "node_package_metadata_v1";
-      readonly parentPath: string; readonly parentSha256: string; readonly projectRoot: string } }[];
+      readonly parentPath: string; readonly parentSha256: string; readonly projectRoot: string;
+      readonly policyAuthority?: ChannelCommandInputPolicyAuthorityV1 } }[];
 }
 
 export interface UnifiedExecResult {

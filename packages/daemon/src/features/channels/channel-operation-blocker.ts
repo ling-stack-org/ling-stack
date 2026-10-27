@@ -6,6 +6,12 @@ import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import { resolveChannelResponseLanguage } from "./response-language.js";
 
 const blockers = {
+  operation_binding_input_read_unavailable: {
+    key: "channel-operation-input-read-blocker",
+    reason: "Host could not verify effective channel/participant read authority or the execution root. No inherited inputs or commands were started.",
+    zh: "Host 无法确认本次命令的频道/队友有效读取权限或工作区位置，未准备额外依赖，也未启动任务。请检查该项目位置及读取权限；重复提供依赖目录不能代替权限校验，命令审批也不会自动授予额外读取权限。",
+    en: "The Host could not verify effective channel/participant read permission or the project location. No extra dependencies or task were started. Check that project's location and read permission; repeating a directory or approving the command does not grant additional read access.",
+  },
   operation_binding_host_capability_unavailable: {
     key: "channel-operation-capability-blocker",
     reason: "Host rejected open_local_target: its independent executor and authorization are not connected.",

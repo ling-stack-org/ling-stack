@@ -14,11 +14,30 @@ export interface ChannelOperationFileBindingV1 {
   readonly sourceRefs: readonly ChannelOperationSourceV1[];
 }
 
+/** A Host policy snapshot. Shape validation does not authenticate its issuer or grant permission. */
+export interface ChannelCommandInputPolicyAuthorityV1 {
+  readonly kind: "channel_effective_policy_v1";
+  readonly channelId: string;
+  readonly workspaceId: string;
+  readonly participantId: string;
+  readonly operationId: string;
+  readonly sourceItemId: string;
+  readonly sourceRevision: number;
+  readonly workspaceCwd: string;
+  readonly executionCwd: string;
+  readonly workspaceRootIdentity: { readonly device: string; readonly inode: string };
+  readonly executionRootIdentity: { readonly device: string; readonly inode: string };
+  readonly channelUpdatedAt: string;
+  readonly workspacePolicyUpdatedAt: string;
+  readonly policyFingerprint: string;
+}
+
 /** Host-compiled scope for preparing local Node dependencies, not a general read grant. */
 export interface ChannelCommandInputScopeV1 {
   readonly kind: "node_module_closure_v1";
   readonly projectRoot: string;
   readonly sourceRefs: readonly ChannelOperationSourceV1[];
+  readonly policyAuthority?: ChannelCommandInputPolicyAuthorityV1;
 }
 
 /** Execution location only. This does not authorize reading all files in that directory. */
@@ -45,10 +64,26 @@ export function hasExplicitChannelOperationPathQuoteV1(quote: string, path: stri
 }
 
 export function isChannelCommandInputScopeV1(value: unknown): value is ChannelCommandInputScopeV1 {
-  return record(value, ["kind", "projectRoot", "sourceRefs"]) && value.kind === "node_module_closure_v1"
-    && isChannelOperationRelativePathV1(value.projectRoot) && !value.projectRoot.split("/").some(part => part.startsWith("."))
+  if (!record(value, ["kind", "projectRoot", "sourceRefs", "policyAuthority"]) || value.kind !== "node_module_closure_v1") return false;
+  if (value.policyAuthority !== undefined) {
+    return isChannelCommandInputPolicyAuthorityV1(value.policyAuthority) && value.projectRoot === "."
+      && Array.isArray(value.sourceRefs) && value.sourceRefs.length === 0;
+  }
+  return isChannelOperationRelativePathV1(value.projectRoot) && !value.projectRoot.split("/").some(part => part.startsWith("."))
     && sources(value.sourceRefs) && value.sourceRefs.every(ref => ref.actorType === "local_user")
     && value.sourceRefs.some(ref => hasExplicitChannelOperationPathQuoteV1(ref.quote, value.projectRoot as string));
+}
+
+export function isChannelCommandInputPolicyAuthorityV1(value: unknown): value is ChannelCommandInputPolicyAuthorityV1 {
+  return record(value, ["kind", "channelId", "workspaceId", "participantId", "operationId", "sourceItemId", "sourceRevision",
+    "workspaceCwd", "executionCwd", "workspaceRootIdentity", "executionRootIdentity", "channelUpdatedAt", "workspacePolicyUpdatedAt", "policyFingerprint"])
+    && value.kind === "channel_effective_policy_v1"
+    && text(value.channelId) && text(value.workspaceId) && text(value.participantId) && text(value.operationId) && text(value.sourceItemId)
+    && typeof value.sourceRevision === "number" && Number.isSafeInteger(value.sourceRevision) && value.sourceRevision >= 0
+    && absoluteDirectoryPath(value.workspaceCwd) && absoluteDirectoryPath(value.executionCwd)
+    && directoryIdentity(value.workspaceRootIdentity) && directoryIdentity(value.executionRootIdentity)
+    && timestamp(value.channelUpdatedAt) && timestamp(value.workspacePolicyUpdatedAt)
+    && typeof value.policyFingerprint === "string" && /^[a-f0-9]{64}$/u.test(value.policyFingerprint);
 }
 
 export type ChannelOperationContentSourceV1 =
@@ -102,7 +137,7 @@ export function channelOperationPlanFingerprintV1(operations: readonly unknown[]
   return `opbv1_${hash.toString(16).padStart(16, "0")}`;
 }
 
-export function isChannelOperationBindingV1(value: unknown): value is ChannelOperationBindingV1 {
+export function isChannelOperationBindingV1(value: unknown, operationId?: string): value is ChannelOperationBindingV1 {
   if (!record(value, ["schemaVersion", "ownerParticipantId", "ownerSelection", "inputRefs", "outputRefs", "contentSource", "commandGoal", "commandInputScope", "workingDirectory", "sourceRefs", "effectScope"])
     || value.schemaVersion !== 1 || !text(value.ownerParticipantId)
     || (value.ownerSelection !== undefined && value.ownerSelection !== "explicit" && value.ownerSelection !== "host_default")
@@ -138,7 +173,12 @@ export function isChannelOperationBindingV1(value: unknown): value is ChannelOpe
     const invocation = typeof value.commandGoal === "object" && value.commandGoal !== null
       && "invocation" in value.commandGoal && typeof value.commandGoal.invocation === "string" ? value.commandGoal.invocation : "\u0000";
     if (!isChannelCommandInputScopeV1(dependency)
-      || !value.inputRefs.some(ref => ref.path.startsWith(dependency.projectRoot + "/") && /\.(?:mjs|cjs|js)$/u.test(ref.path))
+      || (dependency.policyAuthority !== undefined && (dependency.policyAuthority.participantId !== value.ownerParticipantId
+        || operationId !== undefined && dependency.policyAuthority.operationId !== operationId
+        || !bindingSources.some(ref => ref.itemId === dependency.policyAuthority!.sourceItemId
+          && ref.revision === dependency.policyAuthority!.sourceRevision && ref.actorType === "local_user")))
+      || !value.inputRefs.some(ref => (dependency.policyAuthority !== undefined || ref.path.startsWith(dependency.projectRoot + "/"))
+        && /\.(?:mjs|cjs|js)$/u.test(ref.path))
       || scope.exactCommands.length !== 1 || !command || !/^node\s/u.test(command)
       || !dependency.sourceRefs.every(rootSource => bindingSources.some(source => {
         const outsideCommand = source.quote.split(command).join(" ").split(invocation).join(" ");
@@ -191,6 +231,21 @@ function texts(value: unknown): value is readonly string[] {
 
 function text(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function absoluteDirectoryPath(value: unknown): value is string {
+  return text(value) && !/[\u0000-\u001f]/u.test(value)
+    && (/^\//u.test(value) || /^[A-Za-z]:[\\/]/u.test(value) || /^\\\\[^\\/]+[\\/][^\\/]+/u.test(value))
+    && !value.split(/[\\/]/u).some(part => part === "." || part === "..");
+}
+
+function directoryIdentity(value: unknown): boolean {
+  return record(value, ["device", "inode"]) && typeof value.device === "string" && typeof value.inode === "string"
+    && /^(?:0|[1-9][0-9]*)$/u.test(value.device) && /^(?:0|[1-9][0-9]*)$/u.test(value.inode);
+}
+
+function timestamp(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 }
 
 function record(value: unknown, keys: readonly string[]): value is Record<string, unknown> {

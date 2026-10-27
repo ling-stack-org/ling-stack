@@ -1,5 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { lstatSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
+import type { ChannelCommandInputScopeV1 } from "@ling-stack/contracts";
 import { isDeepStrictEqual } from "node:util";
 import type { EffectiveRunPolicySnapshot, ExecutionSandboxBackendIdentity, HostOfficeLocalDirectoryExecutionRecordV2,
   RunSession, RunStore, RuntimeAttemptFenceV1 } from "@ling-stack/core";
@@ -18,6 +19,8 @@ import { captureOriginalOfficeDirectoryWindowPaths, type OriginalOfficeDirectory
   type OriginalOfficeDirectoryWindowPathClosure } from "./protected-host-office-directory-window.js";
 import { readOriginalOfficeDirectoryRuntimeReleasePermitV2, consumeOriginalOfficeDirectoryRuntimeReleasePermitV2,
   type OriginalOfficeDirectoryRuntimeReleasePermitV2 } from "../../features/office-documents/office-local-native-runtime.js";
+import { validateWorkflowOperationRunContext } from "../../features/runs/workflow-operation-snapshot.js";
+import { assertChannelCommandInputPolicyCurrent } from "../../features/channels/channel-command-input-policy.js";
 
 declare const stageBrand: unique symbol;
 declare const sourceBrand: unique symbol;
@@ -168,13 +171,37 @@ function captureSource(input: ProtectedHostSourceInput): SourceState {
 function assertSourceCurrent(source: SourceState): void {
   source.store.readSnapshot(() => {
     const current = source.store.getRun(source.run.id);
+    const snapshot = source.run.requestSnapshot as Record<string, unknown> | undefined;
+    const basis = snapshot?.workflowOperationExecution as { plan?: { operations?: readonly { binding?: { commandInputScope?: ChannelCommandInputScopeV1 } }[] } } | undefined;
+    const hasPolicy = basis?.plan?.operations?.some(operation => operation.binding?.commandInputScope?.policyAuthority);
+    const context = hasPolicy ? validateWorkflowOperationRunContext({ store: source.store, run: source.run }) : undefined;
+    const scopedOperations = context?.status === "ready" ? context.ownedOperations.filter(operation =>
+      operation.binding?.commandInputScope?.policyAuthority) : [];
     requireScope(current?.status === "running" && source.run.workUnitId === source.sourceFence.workUnitId
-      && source.store.paths.cwd === source.run.cwd
+      // Legacy sources retain their original same-root contract. Only an owned,
+      // independently revalidated policy scope can bind a distinct execution root.
+      && (source.store.paths.cwd === source.run.cwd || scopedOperations.length > 0)
       && source.store.isCurrentRunExecutionOwner(source.run.id, source.sourceFence)
       && ["cwd", "workUnitId", "taskId", "workflowStepId", "teammateId", "channelId", "threadId"].every(key =>
         current[key as keyof RunSession] === source.run[key as keyof RunSession])
       && isDeepStrictEqual(current.requestSnapshot, source.run.requestSnapshot)
       && isDeepStrictEqual(source.store.getApprovalPolicy(), source.workspacePolicy), "protected_host_source_obsolete");
+    // The DB-backed issuer, not a replaceable preparation callback, owns the
+    // inherited read scope. Legacy Runs without such a scope are not enlarged.
+    if (hasPolicy) {
+      requireScope(context?.status === "ready", "restricted_command_input_policy_changed");
+      const policy = snapshot?.effectivePolicySnapshot as EffectiveRunPolicySnapshot | undefined;
+      for (const operation of scopedOperations) {
+        const scope = operation.binding?.commandInputScope;
+        if (!scope?.policyAuthority) continue;
+        requireScope(policy?.toolDecisions.read === "allow", "restricted_command_input_read_not_allowed");
+        requireScope(source.run.channelId && realpathSync(source.run.cwd) === scope.policyAuthority.executionCwd,
+          "restricted_command_input_policy_changed");
+        assertChannelCommandInputPolicyCurrent({ store: source.store, scope, channelId: source.run.channelId,
+          participantId: context.snapshot.participantId, operationId: operation.id, workspaceCwd: source.store.paths.cwd,
+          effectiveReadDecision: "allow" });
+      }
+    }
   });
 }
 
@@ -385,6 +412,7 @@ export class ProtectedHostStageRegistry {
   assertActorSource(source: ProtectedHostActorSource, input: {
     readonly command: string; readonly cwd: string; readonly policy: EffectiveRunPolicySnapshot;
     readonly source: RuntimeAttemptFenceV1 & { readonly workspaceId: string; readonly runId: string; readonly toolCallId: string };
+    readonly commandInputScope?: ChannelCommandInputScopeV1;
   }): void {
     const state = this.#source(source);
     assertSourceCurrent(state);
@@ -392,6 +420,16 @@ export class ProtectedHostStageRegistry {
       && state.run.id === input.source.runId && state.workspacePolicy.workspaceId === input.source.workspaceId
       && Object.entries(state.sourceFence).every(([key, value]) => input.source[key as keyof typeof input.source] === value)
       && isDeepStrictEqual(state.policy, input.policy), "protected_host_actor_binding_invalid");
+    const context = validateWorkflowOperationRunContext({ store: state.store, run: state.run });
+    const operations = context.status === "ready" ? context.ownedOperations.filter(operation => operation.kind === "run_command"
+      && operation.binding?.effectScope.exactCommands.includes(input.command)) : [];
+    // The frozen source, not the caller's optional field, determines whether
+    // policy scope must match. Omission or a user-scope substitute is not a downgrade.
+    if (input.commandInputScope?.policyAuthority || operations.some(operation => operation.binding?.commandInputScope?.policyAuthority)) {
+      requireScope(context.status === "ready", "restricted_command_input_policy_changed");
+      requireScope(operations.length === 1 && isDeepStrictEqual(operations[0]!.binding!.commandInputScope, input.commandInputScope),
+        "protected_host_actor_binding_invalid");
+    }
   }
 
   /** Capture currently active deny roots before compilation; no serialized root list becomes authority. */

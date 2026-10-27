@@ -9,9 +9,31 @@ export type CapturedCommandInput = InputEvidence & { readonly bytes: Buffer };
 type SyntaxNode = { readonly type: string; readonly [key: string]: unknown };
 const builtins = new Set(builtinModules.flatMap(name => [name, name.replace(/^node:/u, ""), `node:${name.replace(/^node:/u, "")}`]));
 const moduleFile = (path: string) => /\.(?:js|mjs|cjs)$/u.test(path);
-const inside = (root: string, path: string) => path.startsWith(root + "/");
+const inside = (root: string, path: string) => root === "."
+  ? isChannelOperationRelativePathV1(path) : path.startsWith(root + "/");
 const protectedPath = (path: string) => path.split("/").some(part => part.startsWith("."));
-function requireInput(value: unknown, code: string): asserts value { if (!value) throw new Error(code); }
+type PreparationCode = "restricted_command_dependency_scope_required" | "restricted_command_dependency_outside_scope"
+  | "restricted_command_dependency_unsupported";
+
+/** Diagnostics never include source text, arbitrary specifiers or protected paths. */
+export class NodeCommandInputPreparationError extends Error {
+  readonly code: PreparationCode;
+  readonly path?: string;
+  constructor(code: PreparationCode, path?: string) {
+    super(code);
+    this.name = "NodeCommandInputPreparationError";
+    this.code = code;
+    if (path !== undefined && isChannelOperationRelativePathV1(path) && !protectedPath(path)) this.path = path;
+  }
+}
+
+function requireInput(value: unknown, code: string): asserts value {
+  if (!value) {
+    if (code === "restricted_command_dependency_scope_required" || code === "restricted_command_dependency_outside_scope"
+      || code === "restricted_command_dependency_unsupported") throw new NodeCommandInputPreparationError(code);
+    throw new Error(code);
+  }
+}
 
 /** Pure analysis of captured bytes. Its results are dependency facts, never grants. */
 function dependencies(bytes: Buffer): readonly string[] {
@@ -89,17 +111,23 @@ export async function captureNodeCommandInputs(input: {
   for (const file of files.values()) {
     if (input.analyzeModules === false || !moduleFile(file.path)) continue;
     const scopeForFile = scope && inside(scope.projectRoot, file.path) ? scope : undefined;
+    // Policy source identity attributes the request; it is not a fabricated
+    // local-user quote authorizing every parser-derived dependency.
+    const sourceItemIds = scopeForFile?.policyAuthority ? [scopeForFile.policyAuthority.sourceItemId]
+      : scopeForFile?.sourceRefs.map(source => source.itemId) ?? [];
+    const policyDerivation = scopeForFile?.policyAuthority ? { policyAuthority: scopeForFile.policyAuthority } : {};
     if (scopeForFile) {
       let directory = posix.dirname(file.path);
       let packageBoundary = false;
       while (directory === scopeForFile.projectRoot || inside(scopeForFile.projectRoot, directory)) {
-        const metadataPath = `${directory}/package.json`;
+        const metadataPath = posix.join(directory, "package.json");
         if (!metadataChecked.has(metadataPath)) {
           requireInput(metadataChecked.size < 2048, "restricted_command_dependency_probe_budget_exceeded");
           metadataChecked.add(metadataPath);
           requireInput(!protectedPath(metadataPath), "restricted_command_dependency_outside_scope");
-          await capture(metadataPath, scopeForFile.sourceRefs.map(source => source.itemId), {
-            kind: "node_package_metadata_v1", parentPath: file.path, parentSha256: file.sha256, projectRoot: scopeForFile.projectRoot }, true);
+          await capture(metadataPath, sourceItemIds, {
+            kind: "node_package_metadata_v1", parentPath: file.path, parentSha256: file.sha256,
+            projectRoot: scopeForFile.projectRoot, ...policyDerivation }, true);
         }
         const metadata = files.get(metadataPath);
         if (metadata) {
@@ -122,10 +150,11 @@ export async function captureNodeCommandInputs(input: {
       const path = posix.normalize(posix.join(posix.dirname(file.path), specifier));
       requireInput(isChannelOperationRelativePathV1(path) && !protectedPath(path), "restricted_command_dependency_outside_scope");
       if (files.has(path)) continue; // Already explicitly authorized or safely derived.
-      requireInput(scopeForFile, "restricted_command_dependency_scope_required");
-      requireInput(inside(scopeForFile.projectRoot, path), "restricted_command_dependency_outside_scope");
-      await capture(path, scopeForFile.sourceRefs.map(source => source.itemId), {
-        kind: "node_module_dependency_v1", parentPath: file.path, parentSha256: file.sha256, projectRoot: scopeForFile.projectRoot });
+      if (!scopeForFile) throw new NodeCommandInputPreparationError("restricted_command_dependency_scope_required", path);
+      if (!inside(scopeForFile.projectRoot, path)) throw new NodeCommandInputPreparationError("restricted_command_dependency_outside_scope", path);
+      await capture(path, sourceItemIds, {
+        kind: "node_module_dependency_v1", parentPath: file.path, parentSha256: file.sha256,
+        projectRoot: scopeForFile.projectRoot, ...policyDerivation });
     }
   }
   return [...files.values()];

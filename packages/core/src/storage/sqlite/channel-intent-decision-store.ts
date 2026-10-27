@@ -249,7 +249,8 @@ export class SqliteChannelIntentDecisionStore {
           if (!draft.slots.some(slot => slot.operationId === operation.id)) return operation;
           const { commandInputScope, ...binding } = operation.binding!;
           const answerRef = binding.sourceRefs.at(-1);
-          if (!commandInputScope || commandInputScope.sourceRefs.some(ref => ref.itemId !== answer.id || ref.revision !== answer.revision
+          if (!commandInputScope || commandInputScope.policyAuthority !== undefined || commandInputScope.sourceRefs.length === 0
+            || commandInputScope.sourceRefs.some(ref => ref.itemId !== answer.id || ref.revision !== answer.revision
             || ref.actorType !== "local_user" || !answer.payload.body.includes(ref.quote))
             || answerRef?.itemId !== answer.id || answerRef.revision !== answer.revision
             || answerRef.actorType !== "local_user" || answerRef.quote !== answer.payload.body) {

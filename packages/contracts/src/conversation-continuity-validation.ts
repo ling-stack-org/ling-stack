@@ -789,7 +789,7 @@ function isExecutionOperation(value: unknown): value is ChannelIntentExecutionOp
     return false;
   }
   if (value.binding !== undefined) {
-    if (!isChannelOperationBindingV1(value.binding)) return false;
+    if (!isChannelOperationBindingV1(value.binding, value.id)) return false;
     const binding = value.binding;
     if ((binding.commandGoal !== undefined || binding.commandInputScope !== undefined || binding.workingDirectory !== undefined)
       && value.kind !== "run_command") return false;

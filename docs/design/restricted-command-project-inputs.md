@@ -1,6 +1,9 @@
 # Restricted command project inputs
 
-Status: implementation in progress; no packaged acceptance or merge claimed.
+Status: explicit user-root contract retained. For new channel tasks, the approved
+[channel-policy command input design](channel-policy-command-inputs-2026-10-27.md)
+supersedes the default requirement for a separately quoted user directory.
+No packaged acceptance or merge is implied by this design update.
 
 ## Cause and authority
 
@@ -25,7 +28,9 @@ copy a complete workspace, change failed history, or relax effect-unknown gates.
 - `effectScope.readPaths` continues to enumerate direct inputs. The additional
   scope is narrowly for preparing this exact command's local Node source/module
   dependencies, not a new `read` tool grant or write/network/environment grant.
-- Scope absence never enables automatic expansion. A known missing local module
+- A legacy plan's scope absence never enables automatic expansion. New operations
+  may instead receive a separately recorded Host-compiled policy scope under the
+  linked design; binding a workspace alone still grants nothing. A known missing local module
   must fail preparation with `restricted_command_dependency_scope_required`,
   before spawning the command, rather than fail later as MODULE_NOT_FOUND.
 
@@ -44,7 +49,7 @@ change the module interpretation or read metadata outside the scope. `.mjs` and
 `.cjs` have explicit formats. Copy only the discovered set, not every
 file under that root. JSON modules are data, not parsed JavaScript.
 
-All derived paths must remain inside the explicit root, use supported extensions,
+All derived paths must remain inside the accepted explicit or Host-policy root, use supported extensions,
 and exclude hidden/protected directory components. Builtin modules need no copy.
 Version1 supports exact relative JS/MJS/CJS/JSON specifiers, static imports and
 re-exports, literal dynamic import and literal CommonJS require. Package names,

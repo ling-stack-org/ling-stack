@@ -101,6 +101,8 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/core/src/channel-pending-operation.ts",
   "packages/core/src/storage/sqlite/channel-pending-operation-migration.ts",
   "packages/daemon/src/features/channels/channel-pending-operation.ts",
+  // Host-issued channel dependency scope; listing alone grants no approval.
+  "packages/daemon/src/features/channels/channel-command-input-policy.ts",
   // FD5 observer and its CLI signal owner are explicit, independently reviewed inputs.
   "packages/core/src/daemon-shutdown-observer.ts",
   "packages/daemon/src/runtime/signal-shutdown.ts",

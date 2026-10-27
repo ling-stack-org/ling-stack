@@ -9,6 +9,7 @@ import { commandWriteRiskRejection } from "./command-write-risk-gate.js";
 import { commandMatchesPolicy } from "../channels/command-operation-match.js";
 import { isNativeRestrictedCommandRuntime, type NativeRestrictedCommandRuntime } from "../../runtime/sandbox/restricted-command-runtime.js";
 import { bindWorkflowCommandRequest, WorkflowCommandBindingError } from "./workflow-command-cwd.js";
+import { assertChannelCommandInputPolicyCurrent } from "../channels/channel-command-input-policy.js";
 
 interface FileEffect {
   readonly path: string;
@@ -74,6 +75,24 @@ export function workflowOperationAuthorityRejection(input: {
       && operation.binding!.effectScope.exactCommands.includes(command));
     if (matches.length !== 1) return blocked("operation_binding_command_out_of_scope", "No unique owned operation authorizes this exact command.");
     const operation = matches[0]!;
+    const inputScope = operation.binding!.commandInputScope;
+    if (inputScope?.policyAuthority) {
+      const snapshot = context.run.requestSnapshot;
+      const policy = isRecord(snapshot) && isRecord(snapshot.effectivePolicySnapshot) ? snapshot.effectivePolicySnapshot : undefined;
+      if (!policy || !isRecord(policy.toolDecisions) || policy.toolDecisions.read !== "allow") {
+        return blocked("restricted_command_input_read_not_allowed", "Dependency preparation requires effective read permission; command approval does not authorize extra file reads.");
+      }
+      try {
+        if (!context.run.channelId || realpathSync(context.run.cwd) !== inputScope.policyAuthority.executionCwd) {
+          throw new Error("restricted_command_input_policy_changed");
+        }
+        assertChannelCommandInputPolicyCurrent({ store: input.store, scope: inputScope,
+          channelId: context.run.channelId, participantId: context.run.teammateId!, operationId: operation.id,
+          workspaceCwd: input.store.paths.cwd, effectiveReadDecision: "allow" });
+      } catch {
+        return blocked("restricted_command_input_policy_changed", "Channel, participant, source or read scope changed. No new inputs may be prepared under the old operation.");
+      }
+    }
     if (operation.binding!.effectScope.allowEnvironmentAccess || operation.binding!.effectScope.allowNetworkAccess
       || operation.binding!.effectScope.writePaths.length > 0) {
       return blocked("operation_binding_command_scope_unsupported", "This operation requires a capability not enforced by the selected command backend.");

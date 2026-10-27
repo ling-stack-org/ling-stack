@@ -9,7 +9,7 @@ import { selectChannelWorkflowIntent } from "../dist/features/channels/channel-i
 import { applyChannelPendingAnswerPatch } from "../dist/features/channels/channel-pending-operation.js";
 
 const owner = "teammate_builtin_qa";
-const body = "@QA 仅执行 node project/validate.mjs，输入 project/validate.mjs；不写文件、不联网。";
+const body = "@QA 仅执行 node project/validate.mjs，输入 project/validate.mjs；请先询问依赖目录再开始；不写文件、不联网。";
 const question = "请明确 Node 项目依赖目录；当前尚未执行。";
 const candidate = () => ({ schemaVersion: 2, operations: [{ id: "validate", kind: "run_command", targetKind: "command",
   required: true, dependsOn: [], owner: { participantId: owner, sourceQuote: "QA" }, sourceQuote: body,
@@ -144,7 +144,7 @@ test("a question replaced during the model request cannot revive its old draft",
 
 test("a multi-participant pending plan retains every required owner and dependency", async t => {
   const engineer = "@Engineer 创建 project/validate.mjs，内容为输出 ok 的 Node 程序。";
-  const qa = "@QA 仅执行 node project/validate.mjs，输入 project/validate.mjs；不写文件、不联网。";
+  const qa = "@QA 仅执行 node project/validate.mjs，输入 project/validate.mjs；请先询问依赖目录再开始；不写文件、不联网。";
   const execution = { schemaVersion: 2, operations: [
     { id: "create", kind: "file_create", targetKind: "file", required: true, dependsOn: [], sourceQuote: engineer,
       owner: { participantId: "teammate_builtin_engineer", sourceQuote: "Engineer" },

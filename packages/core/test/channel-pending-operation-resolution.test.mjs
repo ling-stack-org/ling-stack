@@ -216,6 +216,27 @@ for (const change of ["none", "command", "participant"]) test(`Core ${change ===
   } else assert.equal(f.store.resolveChannelPendingOperation(f.input(), publish, f.now).replayed, false);
 });
 
+for (const reopen of [false, true]) test(`a ${reopen ? "recovered" : "current"} pending slot cannot inherit a new policy scope`, async t => {
+  const f = await fixture(t);
+  if (reopen) f.reopen();
+  const execution = structuredClone(f.pending.execution), operation = execution.operations[0];
+  const answer = f.store.getConversationItem(f.answer.id), original = f.store.getConversationItem(f.original.id);
+  operation.binding.sourceRefs.push({ itemId: answer.id, revision: answer.revision, actorType: "local_user", quote: answer.payload.body });
+  operation.binding.commandInputScope = { kind: "node_module_closure_v1", projectRoot: ".", sourceRefs: [],
+    policyAuthority: { kind: "channel_effective_policy_v1", channelId: f.channel.id, workspaceId: f.decision.workspaceId,
+      participantId: operation.binding.ownerParticipantId, operationId: operation.id,
+      sourceItemId: original.id, sourceRevision: original.revision, workspaceCwd: f.cwd, executionCwd: f.cwd,
+      workspaceRootIdentity: { device: "1", inode: "2" }, executionRootIdentity: { device: "1", inode: "2" },
+      channelUpdatedAt: f.now, workspacePolicyUpdatedAt: f.now, policyFingerprint: "a".repeat(64) } };
+  execution.fingerprint = channelOperationPlanFingerprintV1(execution.operations);
+  const publish = () => f.createDecision(f.answer, { action: "execute", selectedTeammateIds: ["teammate_builtin_qa"],
+    execution, participantManifest: f.pending.participantManifest });
+  assert.throws(() => f.store.resolveChannelPendingOperation(f.input(), publish, f.now), /changed_frozen_plan/u);
+  assert.deepEqual(f.store.listChannelIntentDecisions({ sourceItemId: f.answer.id }), []);
+  assert.equal(f.store.getChannelPendingOperationResolution(f.decision.id), undefined);
+  assert.equal(f.store.listRuns({ channelId: f.channel.id }).length, 0);
+});
+
 test("a pending snapshot cannot borrow a later answer as its original source", async t => {
   const f = await fixture(t), pending = structuredClone(f.pending), answer = f.store.getConversationItem(f.answer.id);
   pending.execution.operations[0].binding.sourceRefs = [{ itemId: answer.id, revision: answer.revision,

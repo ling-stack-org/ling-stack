@@ -44,6 +44,8 @@ export interface ChannelOperationCandidateV2 {
   readonly target?: CandidatePath;
   readonly inputs?: readonly CandidateCommandInput[];
   readonly projectInputRoot?: { readonly path: string; readonly sourceQuote: string };
+  /** A model may narrow preparation, never grant a read scope. */
+  readonly commandInputConstraint?: { readonly mode: "direct_inputs_only" | "ask_first"; readonly sourceQuote: string };
   readonly workingDirectory?: { readonly path: string; readonly sourceQuote: string };
   readonly command?: { readonly text: string; readonly sourceQuote: string };
   readonly commandGoal?: { readonly kind: "node_function"; readonly module: CandidatePath;
@@ -82,8 +84,9 @@ export interface ChannelOperationCandidateShapeIssue {
 export type ChannelOperationBindingResult =
   | { readonly status: "bound"; readonly execution: ChannelIntentExecutionPlanV1;
       readonly excludedParticipantIds: readonly string[];
+      readonly pendingInputScopeOperationIds?: readonly string[];
       readonly capabilityBlockers: readonly { readonly operationId: string; readonly participantId: string; readonly tool: RunTool }[] }
-  | { readonly status: "blocked"; readonly code: "operation_binding_host_capability_unavailable";
+  | { readonly status: "blocked"; readonly code: "operation_binding_host_capability_unavailable" | "operation_binding_input_read_unavailable";
       readonly operationId: string; readonly reason: string }
   | { readonly status: "clarify"; readonly missingFields: readonly string[]; readonly reason: string;
       readonly shapeIssue?: ChannelOperationCandidateShapeIssue };
@@ -106,6 +109,9 @@ export function bindChannelOperationPlan(input: {
   readonly hostCapabilityAvailable?: (capabilityId: "host.open_local_target") => boolean;
   /** Selected by existing Host routing, never by the candidate's participant ID. */
   readonly defaultOwnerParticipantId?: string;
+  /** Internal Host compiler only. Candidate/HTTP fields cannot supply this function. */
+  readonly compileCommandInputScope?: (input: { readonly operationId: string; readonly participantId: string;
+    readonly sourceItemId: string; readonly workspaceCwd: string }) => ChannelCommandInputScopeV1 | undefined;
 }): ChannelOperationBindingResult {
   try {
     let shapeIssue: ChannelOperationCandidateShapeIssue | undefined;
@@ -139,6 +145,7 @@ export function bindChannelOperationPlan(input: {
     }
     const instructionItemId = continuation?.source.itemId ?? input.sourceItemId;
     const capabilityBlockers: { operationId: string; participantId: string; tool: RunTool }[] = [];
+    const pendingInputScopeOperationIds: string[] = [];
     const byId = new Map(candidate.operations.map((operation) => [operation.id, operation]));
     if (byId.size !== candidate.operations.length) fail("execution.operations", "Operation IDs must be unique.");
     const quote = (value: string, sourceItemId = instructionItemId, field = "sourceQuote"): ChannelOperationSourceV1 => {
@@ -332,6 +339,18 @@ export function bindChannelOperationPlan(input: {
         exactCommands.push(operation.command.text);
       }
       let commandInputScope: ChannelCommandInputScopeV1 | undefined;
+      const hostInputRestriction = commandInputInheritanceRestriction(input.sourceText);
+      // Both sources may narrow preparation. Neither may remove an ask-first
+      // requirement, including a stronger restriction found by the Host.
+      const inputRestriction = hostInputRestriction === "ask_first" || operation.commandInputConstraint?.mode === "ask_first"
+        ? "ask_first" : operation.commandInputConstraint?.mode ?? hostInputRestriction;
+      if (operation.commandInputConstraint) {
+        const constraint = operation.commandInputConstraint;
+        if (operation.kind !== "run_command" || !operation.sourceQuote.includes(constraint.sourceQuote)) {
+          fail("commandInputConstraint", "A preparation restriction must be quoted in the current command instruction.");
+        }
+        quote(constraint.sourceQuote, instructionItemId, `${operationPath}.commandInputConstraint.sourceQuote`);
+      }
       if (operation.projectInputRoot) {
         const root = operation.projectInputRoot;
         const outsideCommand = operation.command ? operation.sourceQuote.split(operation.command.text).join(" ")
@@ -348,6 +367,22 @@ export function bindChannelOperationPlan(input: {
         assertWorkspacePath(root.path, input.workspaceCwd);
         commandInputScope = { kind: "node_module_closure_v1", projectRoot: root.path,
           sourceRefs: [{ ...rootSource, actorType: "local_user" }] };
+      }
+      if (commandInputScope && inputRestriction) {
+        fail("projectInputRoot", "A task's ask-first or direct-input-only restriction cannot be overridden by a project directory.");
+      }
+      // Only a new, otherwise fully bound command can inherit policy authority.
+      // A legacy continuation/pending answer keeps its original accepted scope.
+      if (!commandInputScope && !continuation && operation.kind === "run_command"
+        && /^node\s/u.test(exactCommands[0] ?? "") && inputRefs.some(ref => /\.(?:mjs|cjs|js)$/u.test(ref.path))
+        && !inputRestriction) {
+        commandInputScope = input.compileCommandInputScope?.({ operationId: operation.id, participantId: owner.id,
+          sourceItemId: instructionItemId, workspaceCwd: input.workspaceCwd });
+        if (input.compileCommandInputScope && !commandInputScope) throw new CommandInputPolicyUnavailable(operation.id);
+      }
+      if (!commandInputScope && inputRestriction === "ask_first" && operation.kind === "run_command"
+        && /^node\s/u.test(exactCommands[0] ?? "") && inputRefs.some(ref => /\.(?:mjs|cjs|js)$/u.test(ref.path))) {
+        pendingInputScopeOperationIds.push(operation.id);
       }
       return {
         id: operation.id,
@@ -388,8 +423,11 @@ export function bindChannelOperationPlan(input: {
       && input.hostCapabilityAvailable?.("host.open_local_target") !== true);
     if (unsupported) return { status: "blocked", code: "operation_binding_host_capability_unavailable",
       operationId: unsupported.id, reason: "Opening a local target requires an independent Host executor and authorization; this runtime has neither connected." };
-    return { status: "bound", execution, capabilityBlockers, excludedParticipantIds: [...excludedParticipantIds] };
+    return { status: "bound", execution, capabilityBlockers, excludedParticipantIds: [...excludedParticipantIds],
+      ...(pendingInputScopeOperationIds.length ? { pendingInputScopeOperationIds } : {}) };
   } catch (error) {
+    if (error instanceof CommandInputPolicyUnavailable) return { status: "blocked", code: "operation_binding_input_read_unavailable",
+      operationId: error.operationId, reason: "Host could not verify inherited read authority for this command; no extra inputs were read." };
     if (error instanceof BindingError) return { status: "clarify", missingFields: [error.field], reason: error.message };
     throw error;
   }
@@ -446,6 +484,16 @@ export function isChannelOperationCandidatePlanV2(value: unknown): value is Chan
   return validateCandidatePlan(value);
 }
 
+/** Conservative denial guard, not a natural-language permission classifier.
+ * The selector must also preserve semantic restrictions in commandInputConstraint.
+ * False positives ask unnecessarily; no match is never itself a read grant.
+ */
+export function commandInputInheritanceRestriction(text: string): "ask_first" | "direct_inputs_only" | undefined {
+  if (/(?:先|执行前|开始前)[^。！？\n]{0,48}(?:询问|问我|问|确认|征求)[^。！？\n]{0,48}(?:目录|依赖|范围|授权)|(?:ask|confirm|request)[^.!?\n]{0,100}(?:before|first|director|scope|dependenc|permission)/iu.test(text)) return "ask_first";
+  if (/(?:只|仅)(?:允许)?(?:读取|读|查看|看|访问|使用)[^。！？\n]{0,160}(?:文件|file|\.[a-z0-9]{1,8}\b)|(?:仅|只)(?:限)?(?:这|该|此|一个|单个)?文件|不(?:读取|访问|使用)[^。！？\n]{0,32}(?:其他|其它|额外)|only\s+(?:read|use|access|inspect)[^.!?\n]{0,100}file|do\s+not\s+read\s+(?:other|additional)/iu.test(text)) return "direct_inputs_only";
+  return undefined;
+}
+
 type ShapeReporter = (issue: ChannelOperationCandidateShapeIssue) => void;
 const operationPath = "execution.operations[]";
 
@@ -472,7 +520,7 @@ function candidateContinuation(value: unknown, report?: ShapeReporter): value is
 
 function candidateOperation(value: unknown, report?: ShapeReporter): value is ChannelOperationCandidateV2 {
   const p = operationPath;
-  if (!record(value, ["id", "kind", "targetKind", "required", "dependsOn", "owner", "sourceQuote", "target", "inputs", "projectInputRoot", "workingDirectory", "command", "commandGoal", "contentSource"], report, p)
+  if (!record(value, ["id", "kind", "targetKind", "required", "dependsOn", "owner", "sourceQuote", "target", "inputs", "projectInputRoot", "commandInputConstraint", "workingDirectory", "command", "commandGoal", "contentSource"], report, p)
     || !text(value.id, report, `${p}.id`) || !text(value.sourceQuote, report, `${p}.sourceQuote`)
     || !scalar(value.required, "boolean", report, `${p}.required`)
     || !texts(value.dependsOn, report, `${p}.dependsOn`)
@@ -483,6 +531,9 @@ function candidateOperation(value: unknown, report?: ShapeReporter): value is Ch
     || (value.inputs !== undefined && (!array(value.inputs, 1, 256, report, `${p}.inputs`)
       || !value.inputs.every(input => candidateCommandInput(input, report))))
     || (value.projectInputRoot !== undefined && !quotedPair(value.projectInputRoot, "path", report, `${p}.projectInputRoot`))
+    || (value.commandInputConstraint !== undefined && (!record(value.commandInputConstraint, ["mode", "sourceQuote"], report, `${p}.commandInputConstraint`)
+      || !oneOf(value.commandInputConstraint.mode, ["direct_inputs_only", "ask_first"], report, `${p}.commandInputConstraint.mode`)
+      || !text(value.commandInputConstraint.sourceQuote, report, `${p}.commandInputConstraint.sourceQuote`)))
     || (value.workingDirectory !== undefined && !quotedPair(value.workingDirectory, "path", report, `${p}.workingDirectory`))
     || (value.command !== undefined && !quotedPair(value.command, "text", report, `${p}.command`))) return false;
   if (value.commandGoal !== undefined && (!record(value.commandGoal, ["kind", "module", "invocation", "sourceQuote"], report, `${p}.commandGoal`)
@@ -566,5 +617,8 @@ function texts(value: unknown, report?: ShapeReporter, path = "execution"): valu
 }
 class BindingError extends Error {
   constructor(readonly field: string, message: string) { super(message); }
+}
+class CommandInputPolicyUnavailable extends Error {
+  constructor(readonly operationId: string) { super("operation_binding_input_read_unavailable"); }
 }
 function fail(field: string, reason: string): never { throw new BindingError(field, reason); }

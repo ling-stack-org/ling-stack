@@ -23,6 +23,9 @@ import type {
 } from "@ling-stack/contracts";
 import { channelOperationPlanFingerprintV1, createRequiredParticipantManifestV1 } from "@ling-stack/contracts";
 import { bindChannelOperationPlan } from "./channel-operation-bindings.js";
+import { compileChannelCommandInputPolicyScope } from "./channel-command-input-policy.js";
+import { resolveChannelExecutionCwd } from "@ling-stack/core";
+import { isRecord } from "../../shared/validation.js";
 import { ChannelIntentDiagnosticPersistenceError, createChannelIntentDiagnostics,
   type ChannelIntentRequestPurpose } from "./channel-intent-diagnostics.js";
 import { publishChannelOperationBlocker, recoverChannelOperationBlocker,
@@ -434,11 +437,22 @@ function applyModelIntentOutput(input: ChannelIntentSelectorInput, output: Chann
     }
     let pendingOperation: ChannelIntentClarificationV2["pendingOperation"];
     if (output.pendingDraft) {
-      const { binding, candidates, routingInput } = bindModelIntentOperations(input, output.pendingDraft.execution);
+      const bound = bindModelIntentOperations(input, output.pendingDraft.execution);
+      const { binding, candidates, routingInput } = bound;
+      if (binding.status === "blocked") return publishChannelOperationBlocker(input, binding.code);
       if (binding.status !== "bound" || routingInput.sourceMessage.id !== input.sourceMessage.id
         || clarification.missingFields.length !== 1 || clarification.missingFields[0] !== "projectInputRoot"
         || channelPendingOperationForAnswer(input.store, input.sourceMessage.id)) {
         return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
+      }
+      // A complete new graph need not ask the user to repeat a directory already
+      // covered by effective channel policy. This never patches an old draft.
+      const slots = output.pendingDraft.slots;
+      if (Array.isArray(slots) && slots.length > 0 && new Set(slots.map(slot => slot?.operationId)).size === slots.length
+        && slots.every(slot => isRecord(slot) && Object.keys(slot).length === 2
+          && typeof slot.operationId === "string" && slot.field === "project_input_root" && binding.execution.operations.some(operation =>
+          operation.id === slot.operationId && operation.binding?.commandInputScope?.policyAuthority))) {
+        return createModelAssistedExecuteResult(input, { action: "execute", reason: output.reason }, bound);
       }
       const manifest = createParticipantManifest(routingInput, candidates.map(candidate => ({ teammate: candidate.teammate,
         stepAction: candidate.role.action })), "execute", binding.execution);
@@ -475,7 +489,7 @@ function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, out
   frozenBinding?: ReturnType<typeof bindModelIntentOperations> & { readonly participantManifest?: RequiredParticipantManifestV1 }): ChannelIntentSelectorResult {
   const { candidates, binding, routingInput, reasonCode } = frozenBinding ?? bindModelIntentOperations(input, output.execution);
   if (binding.status === "blocked") {
-    return publishChannelOperationBlocker(input);
+    return publishChannelOperationBlocker(input, binding.code);
   }
   if (binding.status === "clarify") {
     // A rejected model candidate is not evidence that the user omitted a
@@ -499,6 +513,18 @@ function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, out
     return createClarifyReply(input, "missing_acceptance", "model_policy",
       "Required participants cannot be silently dropped from the bound operation graph.",
       question, { missingFields: ["participant.operations"], question });
+  }
+  if (binding.pendingInputScopeOperationIds?.length) {
+    const language = resolveChannelResponseLanguage({ store: input.store, channel: input.channel, sourceText: input.sourceMessage.body }).language;
+    const question = language.startsWith("zh")
+      ? "你要求执行前先确认依赖范围。请提供本次命令允许读取的工作区相对项目目录；原命令、参与者和其他限制保持不变，尚未开始执行。"
+      : "You requested confirmation before execution. Which workspace-relative project directory may supply this command's dependencies? The original command, participants and other constraints are unchanged; execution has not started.";
+    const pendingOperation = freezeChannelPendingOperation({ store: input.store, channelId: input.channel.id,
+      sourceItemId: input.sourceMessage.id, execution: binding.execution, participantManifest,
+      slots: binding.pendingInputScopeOperationIds.map(operationId => ({ operationId, field: "project_input_root" })),
+      sandbox: input.config?.sandbox });
+    return createClarifyReply(input, clarifyReasonFromMissingFields(["projectInputRoot"]), "model_policy", "Host preserved the user's ask-first constraint.",
+      question, { missingFields: ["projectInputRoot"], question, pendingOperation });
   }
   const missingChannelTools = requiredToolsForExecutionOperations(binding.execution.operations)
     .filter((tool) => !input.channel.allowedTools.includes(tool));
@@ -572,12 +598,16 @@ function bindModelIntentOperations(input: ChannelIntentSelectorInput, candidate:
     candidate,
     sourceItemId: input.sourceMessage.id,
     sourceText: input.sourceMessage.body,
-    workspaceCwd: input.channel.boundPath ?? input.store.paths.cwd,
+    workspaceCwd: resolveChannelExecutionCwd(input.store.getChannel(input.channel.id) ?? input.channel, input.store.paths.cwd),
     participants: candidates.map((participant) => participant.teammate),
     ...(candidates.length === 1 ? { defaultOwnerParticipantId: candidates[0]!.teammate.id } : {}),
     visibleSources: channelOperationVisibleSources({ store: input.store, sourceItemId: input.sourceMessage.id }),
     continuationContext,
     hostCapabilityAvailable: input.hostCapabilityAvailable,
+    compileCommandInputScope: basis => compileChannelCommandInputPolicyScope({
+      store: input.store, channelId: input.channel.id, participantId: basis.participantId,
+      operationId: basis.operationId, sourceItemId: basis.sourceItemId, workspaceCwd: input.store.paths.cwd,
+    }),
   });
   return { candidates, binding, routingInput, reasonCode };
 }
