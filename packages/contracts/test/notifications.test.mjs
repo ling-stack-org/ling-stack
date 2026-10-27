@@ -45,7 +45,7 @@ test("defaults suppress successful-run noise but surface failures and approvals"
   assert.equal(notificationMatchesTone("approval_required", defaults.events.approval_required), true);
 });
 
-import { HTML_INTERACTIVE_SANDBOX, scanInteractiveHtml } from "../dist/index.js";
+import { HTML_INTERACTIVE_CSP, HTML_INTERACTIVE_SANDBOX, injectInteractiveHtmlCsp, scanInteractiveHtml } from "../dist/index.js";
 
 test("interactive html scan accepts offline self-contained documents and rejects remote/javascript URLs", () => {
   assert.deepEqual(HTML_INTERACTIVE_SANDBOX, ["allow-scripts"]);
@@ -54,4 +54,17 @@ test("interactive html scan accepts offline self-contained documents and rejects
   assert.equal(scanInteractiveHtml("<img src='//example.com/x.png'>").ok, false);
   assert.equal(scanInteractiveHtml("<a href='javascript:x()'>y</a>").ok, false);
   assert.equal(scanInteractiveHtml("x".repeat(3 * 1024 * 1024)).ok, false);
+});
+
+test("interactive html preview carries the offline CSP so scripts cannot reach the daemon or the network", () => {
+  const cspMeta = '<meta http-equiv="Content-Security-Policy" content="' + HTML_INTERACTIVE_CSP + '">';
+  const withHead = injectInteractiveHtmlCsp("<html><head><title>t</title></head><body><script>1+1</script></body></html>");
+  assert.ok(withHead.startsWith("<html><head>" + cspMeta), withHead.slice(0, 120));
+  const withHtmlOnly = injectInteractiveHtmlCsp("<html><body>x</body></html>");
+  assert.ok(withHtmlOnly.includes("<head>" + cspMeta + "</head>"));
+  const bare = injectInteractiveHtmlCsp("<script>1+1</script>");
+  assert.ok(bare.startsWith(cspMeta));
+  assert.equal(injectInteractiveHtmlCsp(withHead), withHead, "injection is idempotent");
+  assert.match(HTML_INTERACTIVE_CSP, /connect-src 'none'/u);
+  assert.match(HTML_INTERACTIVE_CSP, /form-action 'none'/u);
 });

@@ -12,7 +12,7 @@ import type {
   RunArtifact,
   TeammatePrivateAttachment,
 } from "@ling-stack/core";
-import { HTML_INTERACTIVE_MAX_BYTES, HTML_INTERACTIVE_SANDBOX, scanInteractiveHtml } from "@ling-stack/core";
+import { HTML_INTERACTIVE_MAX_BYTES, HTML_INTERACTIVE_SANDBOX, injectInteractiveHtmlCsp, scanInteractiveHtml } from "@ling-stack/core";
 import { defaultLingMaterializationBudgets } from "../channels/materialization/budgets.js";
 import { officeExtractorV1 } from "../channels/materialization/extractors/office.js";
 import { pdfExtractorV1 } from "../channels/materialization/extractors/pdf.js";
@@ -315,7 +315,7 @@ function buildPreviewResponse(input: {
     return {
       ref: input.ref,
       kind: "html_interactive",
-      htmlInteractive: { html: decoded.text, sandbox: HTML_INTERACTIVE_SANDBOX },
+      htmlInteractive: { html: injectInteractiveHtmlCsp(decoded.text), sandbox: HTML_INTERACTIVE_SANDBOX },
       truncated,
       sizeBytes,
       redactionNotes: [

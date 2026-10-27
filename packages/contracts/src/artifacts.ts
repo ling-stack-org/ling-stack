@@ -34,6 +34,24 @@ export type PreviewContentKind =
 export const HTML_INTERACTIVE_SANDBOX: readonly string[] = ["allow-scripts"];
 export const HTML_INTERACTIVE_MAX_BYTES = 2 * 1024 * 1024;
 
+/**
+ * Interactive artifacts are documents, not network clients: scripts may run
+ * for in-frame interactivity, but the opaque origin must not be able to reach
+ * the daemon, the network, or form endpoints.
+ */
+export const HTML_INTERACTIVE_CSP = "connect-src 'none'; form-action 'none'; base-uri 'none'";
+
+/** Attach the offline CSP to a scanned document, idempotently. */
+export function injectInteractiveHtmlCsp(html: string): string {
+  const meta = '<meta http-equiv="Content-Security-Policy" content="' + HTML_INTERACTIVE_CSP + '">';
+  if (html.includes(HTML_INTERACTIVE_CSP)) return html;
+  const headOpen = /<head(?:\s[^>]*)?>/iu.exec(html);
+  if (headOpen) return html.slice(0, headOpen.index + headOpen[0].length) + meta + html.slice(headOpen.index + headOpen[0].length);
+  const htmlOpen = /<html(?:\s[^>]*)?>/iu.exec(html);
+  if (htmlOpen) return html.slice(0, htmlOpen.index + htmlOpen[0].length) + "<head>" + meta + "</head>" + html.slice(htmlOpen.index + htmlOpen[0].length);
+  return meta + html;
+}
+
 export interface PreviewHtmlInteractive {
   readonly html: string;
   readonly sandbox: readonly string[];

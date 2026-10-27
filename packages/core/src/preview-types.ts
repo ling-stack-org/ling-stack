@@ -14,8 +14,10 @@ export type {
   PreviewImageCompareSource,
 } from "@ling-stack/contracts";
 export {
+  HTML_INTERACTIVE_CSP,
   HTML_INTERACTIVE_MAX_BYTES,
   HTML_INTERACTIVE_SANDBOX,
+  injectInteractiveHtmlCsp,
   scanInteractiveHtml,
 } from "@ling-stack/contracts";
 export type { InteractiveHtmlScanResult } from "@ling-stack/contracts";
