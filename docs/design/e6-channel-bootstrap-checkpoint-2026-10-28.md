@@ -90,7 +90,24 @@ new regression reproduced 6 failures before the fix and the rebuilt affected
 combination passed 87/87, exit 0. This is not yet a fresh-package pass. Evidence:
 `output/e6-20260928/channel-policy-single-native-failure-20261028.md`.
 Complete the repaired single-file/revocation/recovery/final ownership cases.
-Remote main `37413fe2` (#604) is fetched but not integrated. Continue the existing
+Remote main `37413fe2` (#604) is now integrated locally at `49121df7`;
+this merge has not yet been pushed. The 55 catalog conflicts were limited to
+`sourceRevision`; merged messages/source hashes were checked against all three
+Git stages and the revision recalculated. Catalog check, Contracts/localization
+builds, API/Daemon/Web typechecks and Desktop typecheck passed. The new manager
+scope/editor-ownership regressions and their exact unchanged replay reproduced
+7 failures / 1 pass before repair. The repair is now saved as `8cd5db5f` (Web)
+and `3de11693` (Host cancellation/drain). Final affected Host combination is
+67/67 (capture 023); Web/transport/real isolated HTTP and owned protocol peers
+are 40/40 (capture 026), including 17 new manager cases. Web/Daemon and Desktop
+main/preload typechecks passed. One intermediate version-probe timeout remains
+recorded, and its exact unchanged replay passed; assertions were not relaxed.
+This is source/fixture integration evidence, not packaged-client acceptance.
+The wider retained evidence chain remains inconclusive with historical probes
+superseded/open; no old failure was rewritten or task resent. Fixed Codex references and the precise
+borrowing boundary are recorded in
+`execution-engine-lifecycle-codex-cross-check-2026-10-28.md`.
+Continue the existing
 P3/H09/P5/Office matrix and full E6 plan,
 then prepare/review the PR and verify the actual main merge. H09's provider hard
 output-cap requirement remains unproven. Do not reopen accepted duration/copy
