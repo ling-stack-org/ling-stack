@@ -67,6 +67,18 @@ function readDist(metadata: Record<string, unknown>): { tarball: string; integri
 }
 
 async function extractTarball(tarball: string, targetDir: string, spawnImpl: typeof spawn): Promise<void> {
+  const entries = await new Promise<string>((resolve, reject) => {
+    const child = spawnImpl("tar", ["-tzf", tarball], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    child.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
+    child.once("error", reject);
+    child.once("exit", (code) => (code === 0 ? resolve(stdout) : reject(new ManagedInstallError("managed_install_list_failed"))));
+  });
+  for (const entry of entries.split("\n").filter(Boolean)) {
+    if (entry.startsWith("/") || entry.includes("..") || entry.includes("\\")) {
+      throw new ManagedInstallError("managed_install_archive_entry_rejected");
+    }
+  }
   await mkdir(targetDir, { recursive: true });
   await new Promise<void>((resolve, reject) => {
     const child = spawnImpl("tar", ["-xzf", tarball, "-C", targetDir], { stdio: ["ignore", "ignore", "pipe"] });
@@ -84,6 +96,8 @@ export interface InstallManagedEngineOptions {
   readonly platform?: NodeJS.Platform;
   readonly arch?: string;
   readonly now?: () => Date;
+  /** Testing seam: a fixture package record with the pin matching the synthetic tarball. */
+  readonly packageOverride?: ManagedEnginePackage;
 }
 
 /** Download, verify and install the pinned engine package under the user root. */
@@ -92,7 +106,7 @@ export async function installManagedEngine(
   userPaths: Pick<LingStackUserConfigPaths, "rootDir">,
   options: InstallManagedEngineOptions = {},
 ): Promise<ManagedInstallResult> {
-  const pkg = getManagedEnginePackage(engineId);
+  const pkg = options.packageOverride ?? getManagedEnginePackage(engineId);
   if (!pkg?.installable || !pkg.install) throw new ManagedInstallError(`managed_install_unsupported_engine:${engineId}`);
   const platform = options.platform ?? process.platform;
   const arch = options.arch ?? process.arch;
@@ -105,6 +119,12 @@ export async function installManagedEngine(
   const binaryVersion = pkg.install.binaryVersion(pkg.pinnedVersion, target.platformKey);
   const metadata = await fetchJson(fetchImpl, `https://registry.npmjs.org/${binaryPackage}/${binaryVersion}`, options.signal);
   const dist = readDist(metadata);
+  const tarballUrl = new URL(dist.tarball);
+  if (tarballUrl.protocol !== "https:" || tarballUrl.hostname !== "registry.npmjs.org") {
+    throw new ManagedInstallError("managed_install_tarball_host_rejected");
+  }
+  const pinnedIntegrity = pkg.pinnedIntegrityByPlatform?.[target.platformKey];
+  if (!pinnedIntegrity) throw new ManagedInstallError(`managed_install_unpinned_platform:${target.platformKey}`);
 
   const root = await mkdtemp(join(tmpdir(), "ling-engine-install-"));
   try {
@@ -113,7 +133,7 @@ export async function installManagedEngine(
     if (!response.ok) throw new ManagedInstallError(`managed_install_download_http_${response.status}`);
     const bytes = Buffer.from(await response.arrayBuffer());
     const digest = `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
-    if (digest !== dist.integrity) throw new ManagedInstallError("managed_install_integrity_mismatch");
+    if (digest !== pinnedIntegrity || digest !== dist.integrity) throw new ManagedInstallError("managed_install_integrity_mismatch");
     await writeFile(tarballPath, bytes);
 
     const extractDir = join(root, "extract");

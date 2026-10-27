@@ -21,6 +21,8 @@ export interface ManagedEnginePackage {
   /** Shown when the engine is not installable in this release. */
   readonly manualGuidance?: string;
   readonly install?: ManagedEngineInstallLayout;
+  /** Reviewed per-platform sha512 digests for the pinned binary tarball. */
+  readonly pinnedIntegrityByPlatform?: Readonly<Record<string, string>>;
 }
 
 /** How a managed package tarball maps onto the executable on disk. */
@@ -42,6 +44,14 @@ export const MANAGED_ENGINE_PACKAGES: readonly ManagedEnginePackage[] = [
     maxVerified: "0.164.0",
     installable: true,
     commandName: "codex",
+    pinnedIntegrityByPlatform: {
+      "darwin-arm64": "sha512-pDizgOUAtq3/k3AbUFHbaU19WpYKCja+oFpNSTLKrDQj4lTUNSDuTPJip4uQVn2/1EipQdpQrGMOQBVuI1znAA==",
+      "darwin-x64": "sha512-lIe+udnguPGzBezkgbkj2Eaz0YqOhNXT7jja136Fj0sXfI+UKNS2icmaK14GcoRAgeVEpDTtC1ftamWBPmD1zg==",
+      "linux-x64": "sha512-XLAoaWsGOT2khzl+P4FYDPTkzAr9W0VFXFaVkqlFdkM0soa1gH/4S0wSD57Ek3HHwkirAEGz2/Mwehseh+l5Mg==",
+      "linux-arm64": "sha512-LL5iTQjyDL4YRX44EWqhIfEQ5uGnmgxkQBJSxjZSeJ8L1Og83pdlzUJW/PRJ76oaVwOVgh6HXwuPEiBNEHU4lg==",
+      "win32-x64": "sha512-urWPhwh9YavuoAPIkmVYKBTtd5OtGVL4Ki0Fb28dhK/Mz6Pt4LSy+gbRrZFz5+RXrw9ubvXuXDCcd8beYcWhDg==",
+      "win32-arm64": "sha512-Zkzt8HNmB/vOnlDo5D7IOlrt5rHaxYQB7iGbNP7bHcXZtrk6gaD7UriwaieGYJpcf8DqAT/0tqzY4xbs8ZwbmQ==",
+    },
     install: {
       binaryPackageName: () => "@openai/codex",
       binaryVersion: (pinnedVersion, platformKey) => pinnedVersion + "-" + platformKey,
@@ -56,6 +66,16 @@ export const MANAGED_ENGINE_PACKAGES: readonly ManagedEnginePackage[] = [
     maxVerified: "2.1.311",
     installable: true,
     commandName: "claude",
+    pinnedIntegrityByPlatform: {
+      "darwin-arm64": "sha512-PHxqWpXJ7ED6ZD+2xNiTfiPoK9Aq5siPMhZ2lLHwA1HB10XluHP4dSJ6YSA24Hb4cD/P3nTlhFMauk2VPdMMNA==",
+      "darwin-x64": "sha512-DEMAnoIk6qVaZ7r+o/QsFH532HOO9c6I+0mE2WuTygq5H8Gr7jgzpK7HVB6d1xzAuliu6MEw32G+oo//gYuvqw==",
+      "linux-x64": "sha512-dk1lVMt7n+NlYucKM7dLp/PfrK32pa/4oKQkacfazlSj8rG+hkH67wnDnaFG9Gs2al3OjK8PTVHgZ2WGHXoWUg==",
+      "linux-arm64": "sha512-yZwDmtXmoZcFcCjCaoznOKqjrjjdQyc6PVuh6brANqQcaKpP+WZGuFlgUjgQh86u8HBybHZBB60WWOumKpO6uQ==",
+      "linux-x64-musl": "sha512-/SY8KhtVq5HRIdJu6Ow1ImkAplgL46J88j8vhH5FTZaNPVBjyk4A4yuIFMgyy8dVaNgVXxlpjXIEnfX39uDq5Q==",
+      "linux-arm64-musl": "sha512-ymSGc6vv0QCcVQZCC2JG03P/upLraox+iXAG1DfnUU1OZBCIR9QncxINBEp6QgnKbqywwR2/ic3GD8hAz0Tiow==",
+      "win32-x64": "sha512-fKXnBqsAPxVeIc20kCdzI4GznhuCJxumy1ZbwkyIfgZRsZXKHzMaayrJ/Ro2O+Dfb/s9rG/gAqGkqJCsA3FgJg==",
+      "win32-arm64": "sha512-Gc9o60Ji5RuP6xm7MBJsLUJE/AGymq8HF11idETBANHnLqg4uITD4O3tdOFE0yR7y6zEz2wl5D/7n4NlrY16Yg==",
+    },
     install: {
       binaryPackageName: (platformKey) => "@anthropic-ai/claude-code-" + platformKey,
       binaryVersion: (pinnedVersion) => pinnedVersion,

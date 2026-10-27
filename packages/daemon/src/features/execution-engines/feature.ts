@@ -96,7 +96,7 @@ export class EngineManagementFeature {
   }
 
   private installStatus(engineId: ExternalExecutionEngineId) {
-    return this.installs.get(engineId) ?? { phase: "idle" as const };
+    return this.installs.get(engineId) ?? { engineId, phase: "idle" as const, updatedAt: new Date(0).toISOString() };
   }
 
   private async install(engineId: ExternalExecutionEngineId, signal: AbortSignal) {
@@ -105,7 +105,7 @@ export class EngineManagementFeature {
     const existing = this.installs.get(engineId);
     if (existing && (existing.phase === "downloading" || existing.phase === "verifying")) return existing;
     const mark = (phase: ManagedInstallPhase, extra: Record<string, string | undefined> = {}) => {
-      const status = { phase, updatedAt: new Date().toISOString(), ...extra };
+      const status = { engineId, phase, updatedAt: new Date().toISOString(), ...extra };
       this.installs.set(engineId, status);
       return status;
     };

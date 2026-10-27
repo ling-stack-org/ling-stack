@@ -93,7 +93,10 @@ echo "2.1.311 (Claude Code)"
 `;
   const tarball = await packTarball({ "package/claude": binary });
   const metadata = { dist: { tarball: "https://registry.npmjs.org/@anthropic-ai/claude-code-darwin-arm64/-/claude-code-darwin-arm64-2.1.311.tgz", integrity: tarball.integrity } };
+  const contracts = await import("@ling-stack/contracts");
+  const base = contracts.getManagedEnginePackage("claude-agent-sdk");
   const result = await installManagedEngine("claude-agent-sdk", { rootDir }, {
+    packageOverride: { ...base, pinnedIntegrityByPlatform: { "darwin-arm64": tarball.integrity } },
     platform: "darwin", arch: "arm64", fetchImpl: registryFetch(metadata, tarball),
   });
   assert.equal(result.version, "2.1.311");
