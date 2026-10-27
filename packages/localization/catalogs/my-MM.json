@@ -8678,7 +8678,7 @@
     "Daemon diagnostics unavailable": "Daemon ရောဂါရှာဖွေမှုများ မရရှိနိုင်ပါ။",
     "Daemon duplicate precheck completed without using a model call.": "Daemon မော်ဒယ်ခေါ်ဆိုမှုကို အသုံးမပြုဘဲ ကြိုတင်စစ်ဆေးချက် ပွားနေသည်။",
     "Daemon is offline": "Daemon အော့ဖ်လိုင်းဖြစ်သည်။",
-    "Daemon log tail": "Daemon သစ်လုံးအမြီး",
+    "Daemon log tail": "နောက်ဆုံး daemon မှတ်တမ်းလိုင်းများ",
     "Daemon offline": "Daemon အော့ဖ်လိုင်း",
     "Daemon ready": "Daemon အဆင်သင့်ဖြစ်ပါပြီ။",
     "Daemon will restore scheduled automations automatically": "Daemon သည် စီစဉ်ထားသော အလိုအလျောက်စနစ်များကို အလိုအလျောက် ပြန်လည်ရယူပါမည်။",

@@ -10267,7 +10267,7 @@
     "Messages": "メッセージ",
     "Metadata only": "メタデータのみ",
     "Metadata only. No published SKILL.md snapshot is attached yet.": "メタデータのみ。公開された SKILL.md スナップショットはまだ添付されていません。",
-    "Microphone access was denied. Enable it in your browser settings to dictate.": "マイクへのアクセスが拒否されました。ブラウザの設定で有効にして指示します。",
+    "Microphone access was denied. Enable it in your browser settings to dictate.": "マイクへのアクセスが拒否されました。音声入力を使用するには、ブラウザの設定でマイクを有効にしてください。",
     "Microsoft Excel is not running. File tools remain available.": "Microsoft Excel が実行されていません。ファイル ツールは引き続き利用可能です。",
     "Microsoft Excel was not detected. File tools remain available.": "Microsoft Excelが検出されませんでした。ファイル ツールは引き続き利用可能です。",
     "Mine": "私の",

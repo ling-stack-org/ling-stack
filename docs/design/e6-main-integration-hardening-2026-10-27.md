@@ -55,8 +55,26 @@ type-only diagnostics contract，以及共享鉴权 helper。列表包含不等�
 实现停止写入后绑定，不重读字节未变的全部源码，也不放松既有审核契约。
 最终包含共享鉴权 helper 的原 source-input 组合已实际正常退出：1397/1397，
 零 fail/cancel/skip。独立静态审查覆盖固定表与三类负例接线，不等于全部新字节
-已获内容批准。只读 proposal 仍为 approved:false、approval:null：12 项新增、
+已获内容批准。首份只读 proposal 为 approved:false、approval:null：12 项新增、
 71 项原输入 hash 变化、1554 项未变，15 个原生输入未变；正式审核记录尚未更新。
+
+## 新增本地化文案的内容差量
+
+独立阅读了 55 种语言各 39 条新增文案，共 2145 条，发现结构检查无法识别的
+领域错译：执行被当作赛跑、日志被当作木头、听写被当作独裁，以及 `Ultra`
+被译成人物身份。仅修正确认有误的 96 个值，覆盖 46 个 locale 的 12 个新键；
+其余旧文案、英文键、sourceRevision、sourceHashes、模型能力和执行枚举不变。
+没有整库重译、在线翻译或新增翻译服务。
+
+原 catalog audit、稳定字节 compiler、已安装 tsc 均实际 exit 0，本地化现有
+20/20 测试通过。另对全部源对象按 d369 加精确修正清单重建比对，55 个生成
+模块均匹配原模板，46 个 hash 变化、9 个未变；不因文案改动重跑 Web 全套。
+这些结构测试并不能证明语义正确，语义证据来自内容独审和精确前后值核验；
+仍保留模型辅助语言审阅不是各语言母语认证的限制。
+
+首份 proposal 保留且不覆盖这 46 个新 hash。后继只读 proposal
+`main-integration-office-unapproved-proposal-after-catalog-20261027.json`
+仍未批准；正式 Office 记录未改，后续精确输入绑定和打包验收仍是独立门槛。
 
 ## 测试隔离事故，必须保留
 
