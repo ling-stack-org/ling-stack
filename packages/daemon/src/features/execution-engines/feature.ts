@@ -115,7 +115,10 @@ export class EngineManagementFeature {
       const result = await install(engineId, this.options.userPaths, { signal });
       return mark("installed", { executablePath: result.executablePath, version: result.version });
     } catch (error) {
-      if (signal.aborted) throw error;
+      if (signal.aborted) {
+        this.installs.delete(engineId);
+        throw error;
+      }
       const message = error instanceof Error ? error.message : String(error);
       mark("failed", { error: message });
       throw error;

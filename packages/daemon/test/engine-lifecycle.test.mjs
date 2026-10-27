@@ -71,6 +71,20 @@ function registryFetch(metadata, tarball) {
   };
 }
 
+test("discovery classifies out-of-range versions as unsupported", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "ling-engine-range-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const fake = join(dir, "codex");
+  await writeFile(fake, "#!/bin/sh\necho \"codex-cli 0.100.0\"\n", { mode: 0o755 });
+  const report = await discoverEngines({
+    platform: "darwin", probeTimeoutMs: 3000,
+    resolveExecutable: async (command) => (command === "codex" ? fake : undefined),
+  });
+  const codex = report.candidates.find((candidate) => candidate.engineId === "codex-app-server");
+  assert.equal(codex?.status, "unsupported");
+  assert.equal(codex?.version, "0.100.0");
+});
+
 test("managed install downloads, verifies and probes the pinned platform binary", async (t) => {
   const rootDir = await mkdtemp(join(tmpdir(), "ling-engine-root-"));
   t.after(() => rm(rootDir, { recursive: true, force: true }));

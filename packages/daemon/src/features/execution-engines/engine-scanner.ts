@@ -41,6 +41,21 @@ async function firstExecutable(paths: readonly string[]): Promise<string | undef
   return undefined;
 }
 
+/** Numeric dotted-version compare; engine versions are all dotted numerics today. */
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(/[.-]/u).map((part) => Number.parseInt(part, 10) || 0);
+  const pb = b.split(/[.-]/u).map((part) => Number.parseInt(part, 10) || 0);
+  for (let index = 0; index < Math.max(pa.length, pb.length); index += 1) {
+    const delta = (pa[index] ?? 0) - (pb[index] ?? 0);
+    if (delta !== 0) return delta < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+function versionInRange(version: string, minSupported: string, maxVerified: string): boolean {
+  return compareVersions(version, minSupported) >= 0 && compareVersions(version, maxVerified) <= 0;
+}
+
 function discoveryProfile(engineId: ExternalExecutionEngineId, executablePath: string): ExecutionEngineProfile {
   return {
     schemaVersion: 1,
@@ -81,9 +96,10 @@ export async function discoverEngines(options: DiscoverEnginesOptions = {}): Pro
     const probe = await probeEngineInstallation(discoveryProfile(pkg.engineId, executable), {
       signal: options.signal, timeoutMs: options.probeTimeoutMs ?? 3000, spawn: options.spawn,
     });
+    const outOfRange = probe.runtimeVersion && pkg.installable && !versionInRange(probe.runtimeVersion, pkg.minSupported, pkg.maxVerified);
     candidates.push({
       engineId: pkg.engineId,
-      status: "detected",
+      status: outOfRange ? "unsupported" : "detected",
       executablePath: executable,
       version: probe.runtimeVersion,
       digest: probe.executableDigest,
