@@ -1,0 +1,162 @@
+.workspace-background-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  visibility: hidden;
+  background: var(--ling-bg-app);
+}
+.workspace-background-layer > :is(img, video), .background-video-fallback { width: 100%; height: 100%; object-fit: cover; object-position: var(--background-focus-x, 50%) var(--background-focus-y, 50%); }
+.background-playback-controls { position: fixed; right: 14px; bottom: 12px; z-index: 5; display: flex; align-items: center; gap: 8px; max-width: min(420px, 50vw); }
+.background-playback-controls > span { padding: 8px 12px; border-radius: var(--ling-control-radius); color: var(--ling-text-default); background: var(--ling-bg-panel); font-size: 12px; }
+.background-playback-controls .ling-ui-button { width: 32px; min-width: 32px; height: 32px; padding: 0; }
+.background-playback-controls svg { width: 14px; height: 14px; }
+.workspace-background-scrim { position: absolute; inset: 0; background: var(--ling-bg-app); opacity: var(--user-background-scrim, 1); }
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .workspace-background-layer { visibility: visible; }
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell { position: relative; background: transparent; }
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell {
+  --conversation-document-background: var(--ling-bg-panel);
+  --conversation-document-padding: 12px 16px;
+  --conversation-document-radius: var(--ling-control-radius);
+  --conversation-document-width: fit-content;
+}
+/* Protect populated table rows, keeping its empty layout area transparent. */
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .plugin-table-row { background: var(--ling-bg-panel); }
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .plugin-table-row:hover { background: var(--ling-bg-subtle); }
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell.desktop-window-shell > .desktop-window-chrome {
+  background: transparent;
+  box-shadow: none;
+}
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell.desktop-window-shell > .desktop-window-chrome > .desktop-window-chrome-leading {
+  background: color-mix(in srgb, var(--ling-bg-sidebar) var(--user-background-sidebar, 100%), transparent);
+}
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell.desktop-window-shell > .desktop-window-chrome > :is(
+  .desktop-window-titlebar-surface,
+  .desktop-window-controls
+) {
+  background: color-mix(in srgb, var(--ling-bg-panel) var(--user-background-workspace, 100%), transparent);
+}
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .workspace {
+  background: color-mix(in srgb, var(--ling-bg-panel) var(--user-background-workspace, 100%), transparent);
+  border-color: var(--ling-surface-border-subtle);
+  box-shadow: var(--ling-surface-shadow-shell);
+}
+/* Management pages opt into the same ambient scene as the home and conversation
+   surfaces. Their own cards and editors still provide readable semantic panels. */
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell > .workspace:not(.workspace-client-surface) {
+  background: transparent;
+  border-color: var(--ling-surface-border-subtle);
+}
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell :is(
+  .workspace-plugins-surface,
+  .plugin-manager-page,
+  .plugin-manager-page > .settings-plugin-manager,
+  .workspace-teammates-surface,
+  .teammates-page,
+  .workspace-teammate-private-surface,
+  .teammate-workspace,
+  .teammate-private-chat,
+  .workspace-councils-surface,
+  .workspace-provider-surface,
+  .provider-workbench-surface,
+  .provider-workbench,
+  .plugin-table,
+  .channel-chat-panel,
+  .work-board-page,
+  .profile-page
+) {
+  background: transparent;
+}
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell :is(
+  .teammate-workspace.chat-mode .teammate-message-list,
+  .teammate-private-feed-owner
+) {
+  background: transparent;
+}
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .right-panel {
+  background: color-mix(in srgb, var(--ling-bg-panel) var(--user-background-panel, 100%), transparent);
+  border-color: var(--ling-surface-border-subtle);
+  box-shadow: var(--ling-surface-shadow-shell);
+}
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .left-nav {
+  --text-muted: var(--ling-text-default);
+  --text-soft: var(--ling-text-default);
+  --ling-text-muted: var(--ling-text-default);
+  --ling-text-soft: var(--ling-text-default);
+  --sidebar-local-surface-active: var(--ling-action-selection);
+
+  background: color-mix(in srgb, var(--ling-bg-sidebar) var(--user-background-sidebar, 100%), transparent);
+  border-color: var(--ling-surface-border-subtle);
+  box-shadow: var(--ling-surface-shadow-shell);
+}
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .channel-left-drawer :is(
+  .nav-item,
+  .sidebar-section-title,
+  .sidebar-row,
+  .sidebar-row-shell,
+  .sidebar-branch-row-shell
+),
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .sidebar-compact-rail :is(
+  .sidebar-compact-rail-action,
+  .primary-nav-compact .nav-item
+) {
+  background: transparent;
+  color: var(--ling-text-default);
+}
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .channel-left-drawer .nav-item:hover,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .channel-left-drawer .nav-item:focus-visible,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .channel-left-drawer .nav-item.active,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .channel-left-drawer .sidebar-row:hover,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .channel-left-drawer .sidebar-row:focus-visible,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .channel-left-drawer .sidebar-row-shell:hover,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .channel-left-drawer .sidebar-row-shell:focus-within,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .channel-left-drawer .sidebar-row-shell.selected,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .channel-left-drawer .sidebar-branch-row-shell:hover,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .channel-left-drawer .sidebar-branch-row-shell:focus-within,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .channel-left-drawer .sidebar-branch-row-shell.selected,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .sidebar-compact-rail .sidebar-compact-rail-action:hover,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .sidebar-compact-rail .sidebar-compact-rail-action:focus-visible,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .sidebar-compact-rail .sidebar-compact-rail-action.active,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .sidebar-compact-rail .sidebar-compact-rail-action[aria-pressed="true"],
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .sidebar-compact-rail .primary-nav-compact .nav-item:hover,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .sidebar-compact-rail .primary-nav-compact .nav-item:focus-visible,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .sidebar-compact-rail .primary-nav-compact .nav-item.active,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .sidebar-compact-rail .primary-nav-compact .nav-item[aria-pressed="true"] {
+  background: var(--sidebar-local-surface-active);
+  color: var(--ling-text-strong);
+}
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell :is(.normal-conversation-page, .normal-conversation-header, .conversation-home, .client-window, .task-workbench-main, .task-workbench-window, .workspace-right-dock-frame, .right-dock, .channel-side-panel, .workspace-automations-surface, .automation-ui2-page, .workspace-generation-surface, .media-production-page) { background: transparent; }
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell :is(.normal-conversation-header, .workspace-right-dock-frame, .right-dock, .channel-side-panel) {
+  border-color: var(--ling-surface-border-subtle);
+}
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .conversation-home h1,
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .conversation-home-center > p {
+  text-shadow: 0 1px 2px var(--ling-bg-app), 0 0 12px color-mix(in srgb, var(--ling-bg-app) 78%, transparent);
+}
+/* The feed frame is only a layout boundary. Keep it transparent so it cannot
+   create a centered rectangle over the scene; message bubbles, code blocks,
+   inputs and overlays retain their own semantic surfaces. */
+html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell :is(.normal-conversation-feed-frame, [data-conversation-timeline="true"]) {
+  background-color: transparent;
+}
+.background-description { color: var(--ling-text-muted); font-size: 13px; margin: 4px 0 16px; max-width: 66ch; }
+.background-editor { position: relative; isolation: isolate; display: grid; grid-template-columns: minmax(180px, 280px) minmax(0, 1fr); gap: 20px; padding: 16px; border: 1px solid var(--ling-surface-border-subtle); border-radius: calc(var(--ling-control-radius) + 2px); background: var(--ling-bg-panel); box-shadow: var(--ling-surface-shadow-shell); }
+.background-preview { position: relative; isolation: isolate; overflow: hidden; aspect-ratio: 16 / 10; border: 1px solid var(--ling-surface-border-emphasis); border-radius: var(--ling-control-radius); background: var(--ling-bg-app); }
+.background-preview > :is(img, video, .background-video-fallback) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: var(--background-focus-x, 50%) var(--background-focus-y, 50%); }
+.background-preview-scrim { position: absolute; inset: 0; background: var(--ling-bg-app); opacity: var(--preview-scrim, 1); }
+.background-preview-shell { position: absolute; inset: 0; display: grid; grid-template-columns: 22% 1fr 25%; gap: 1px; }
+.background-preview-shell > span { background: color-mix(in srgb, var(--ling-bg-panel) var(--preview-panel, 100%), transparent); padding: 15px 9px; }
+.background-preview-shell > span:first-child { background: color-mix(in srgb, var(--ling-bg-sidebar) var(--preview-sidebar, 100%), transparent); }
+.background-preview-shell > span:nth-child(2) { display: flex; flex-direction: column; justify-content: center; gap: 8px; background: color-mix(in srgb, var(--ling-bg-panel) var(--preview-workspace, 100%), transparent); }
+.background-preview-shell > span:nth-child(2) i { height: 12px; margin: 0; background: var(--ling-bg-panel); }
+.background-preview-shell i { display: block; height: 6px; margin-bottom: 8px; border-radius: 3px; background: var(--ling-border-default); }
+.background-preview-shell i:last-child { width: 60%; }
+.background-controls { display: grid; align-content: center; gap: 12px; min-width: 0; font-size: 12px; color: var(--ling-text-muted); }
+.background-size-note { margin: 0; }
+.background-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.background-opacity-control { display: grid; grid-template-columns: minmax(160px, 1fr) 44px; align-items: center; gap: 10px; min-height: 32px; }
+.background-opacity-control input[type="range"] { width: 100%; accent-color: var(--ling-action-accent); }
+.background-opacity-control span { color: var(--ling-text-default); font-variant-numeric: tabular-nums; text-align: right; }
+@media (max-width: 1280px) { .background-editor { grid-template-columns: 1fr; } .background-preview { max-width: 320px; } }
+@media (forced-colors: active), (prefers-reduced-transparency: reduce), (width < 1180px) { .workspace-background-layer { display: none; } }

@@ -5,7 +5,7 @@
 - [主题系统入口](../themes/README.md)
 - [主题包 Schema 与 Token 合同](../themes/02-主题包Schema与Token合同.md)
 - [沉浸式主题与 Presentation Profile](../themes/01-独立主题包产品模型.md)
-- [AI 生成主题产品流程](../themes/07-AI生成主题产品流程.md)
+- [AI 生成主题产品流程（历史停用）](../themes/07-AI生成主题产品流程.md)
 - [CSS 目标目录与加载顺序](../architecture/03-CSS所有权与迁移规则.md)
 - [主题注册表与运行时切换](../architecture/07-主题注册表与运行时切换.md)
 
@@ -14,9 +14,9 @@
 Tokens 和内置 Theme Pack 由 `@ling-stack/ui-react` 定义。Web 现有 `base.css`
 在迁移期只保留 reset、AppShell 必要布局和旧变量 alias，不再新增视觉 token。
 
-Theme Pack 是完整、独立的外观单元。`ling-light` 和 `ling-dark` 是两个平级内置主题，
-不是同一主题内部的 Light/Dark 双模式。`System` 只是根据 OS 外观解析 Theme Pack
-的选择策略。
+Theme Pack 是完整、独立的外观单元。`ling-light`、`ling-dark` 是经典内置主题，
+`ling-breeze`、`ling-ocean`、`ling-night` 是官方场景主题。它们不是同一主题内部的
+Light/Dark 双模式。`System` 只是根据 OS 外观解析 Theme Pack 的选择策略。
 
 ## Token Layers
 
@@ -100,7 +100,7 @@ Built-in token values 由
 - 主题包不得覆盖 space、font、radius、motion、z-index 和 icon 尺寸 token。
 - Feature CSS 中主题颜色字面量目标为 `0`。
 
-## Built-In And Imported Themes
+## Built-In Themes
 
 ### Built-In
 
@@ -108,14 +108,11 @@ Built-in token values 由
 - 使用 `ling.tokens.theme` layer 产生 token-only selectors。
 - 启动时同步可用，不等待异步存储。
 
-### Imported
+### 历史导入/生成数据
 
-- 使用同一 Schema 和 token allowlist。
-- 通过经验证 variable map 由单一 runtime style owner 应用。
-- 不能包含 CSS、JavaScript、字体、远程 URL 或 Logo 替换。
-- 不完整或对比度不合格的主题不能进入 ready registry。
-- `local-generated` 与 `local-import` 使用同一 token/Profile/resource validator。
-- Quick/Generate/Advanced 都由 Theme Compiler 产生完整 token，不接受模型生成的 runtime CSS。
+- 当前产品不提供导入或生成主题入口。
+- 历史 local-import/local-generated 数据不进入可用 registry。
+- 历史选择按颜色模式回退到官方浅色或深色主题，不自动删除本地数据。
 
 ## Semantic Status
 
@@ -131,7 +128,7 @@ Feature 只指定语义 tone，不指定颜色。颜色不能是唯一状态信�
 
 ## Bootstrap
 
-- 首帧同步解析 ThemeSelection 和内置/经验证导入主题 snapshot。
+- 首帧同步解析 ThemeSelection 和内置主题；非 built-in 历史 snapshot 不再授权给首帧。
 - 首帧与 React 最终解析的 Theme Pack ID、colorScheme 和 sentinel token 必须一致。
 - shared UI 不直接读 localStorage、IndexedDB 或 Desktop store，由客户端 adapter 注入。
 - 无效 selection 回退内置主题，不等待 daemon 或渲染空白页。

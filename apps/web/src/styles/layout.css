@@ -20,9 +20,9 @@ body {
 .inspector,
 .client-window,
 .context-panel-card {
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-surface-border-subtle);
   background: var(--surface-panel);
-  box-shadow: none;
+  box-shadow: var(--ling-surface-shadow-shell);
   backdrop-filter: var(--material-blur);
   -webkit-backdrop-filter: var(--material-blur);
 }

@@ -105,17 +105,27 @@
   place-items: center;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: var(--ling-radius-md);
+  border-radius: var(--ling-control-radius);
   color: var(--ling-text-muted);
   background: transparent;
   cursor: pointer;
 }
 
+@media (forced-colors: active) {
+  .normal-conversation-composer .composer-drop-hint {
+    border: 2px solid Highlight;
+    color: CanvasText;
+    background: Canvas;
+    forced-color-adjust: none;
+  }
+}
+
 [data-conversation-composer] .composer-attach-button:hover,
 [data-conversation-composer] .composer-attach-button:focus-within {
-  border-color: var(--ling-border-default);
+  border-color: var(--ling-border-focus);
   color: var(--ling-text-strong);
-  background: var(--ling-bg-subtle);
+  background: var(--ling-action-selection);
+  box-shadow: var(--ling-focus-ring);
 }
 
 [data-conversation-composer] .composer-attach-button[aria-disabled="true"] {

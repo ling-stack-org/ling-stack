@@ -277,8 +277,8 @@ Desktop theme behavior:
 - Desktop preload resolves and injects the validated Theme Pack before the
   renderer's first visible frame. Theme persistence belongs to the Desktop
   settings adapter, not to shared UI components.
-- Locally imported themes are data and approved local images only. Desktop does
-  not execute theme CSS/JavaScript or expose arbitrary filesystem APIs to the renderer.
+- Only official built-in themes are available. Desktop does not execute theme CSS/JavaScript,
+  import third-party theme packages, or expose arbitrary filesystem APIs to the renderer.
 
 ## Daemon Lifecycle
 

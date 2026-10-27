@@ -4,11 +4,11 @@
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-md);
+  border: 1px solid var(--ling-surface-border-subtle);
+  border-radius: var(--ling-control-radius);
   color: var(--ling-text-default);
   background: var(--ling-bg-panel);
-  box-shadow: var(--ling-shadow-low);
+  box-shadow: var(--ling-surface-shadow-shell);
   font: inherit;
   font-size: var(--ling-font-sm);
   line-height: var(--ling-line-sm);
@@ -40,7 +40,7 @@
 .ling-ui-input:hover:not([data-disabled="true"]),
 .ling-ui-select:hover:not([data-disabled="true"]),
 .ling-ui-textarea:hover:not(:disabled) {
-  border-color: var(--ling-border-strong);
+  border-color: var(--ling-surface-border-emphasis);
 }
 
 .ling-ui-input:focus-within,
@@ -257,8 +257,8 @@
 }
 
 .ling-ui-checkbox input:focus-visible + .ling-ui-checkbox-control {
-  outline: 2px solid var(--ling-border-focus);
-  outline-offset: 2px;
+  outline: 0;
+  box-shadow: var(--ling-focus-ring);
 }
 
 .ling-ui-checkbox[data-disabled="true"] {
@@ -323,8 +323,8 @@
 }
 
 .ling-ui-radio input:focus-visible + .ling-ui-radio-control {
-  outline: 2px solid var(--ling-border-focus);
-  outline-offset: 2px;
+  outline: 0;
+  box-shadow: var(--ling-focus-ring);
 }
 
 .ling-ui-radio[data-disabled="true"] {

@@ -1,5 +1,4 @@
 import { Languages } from "lucide-react";
-import { useState } from "react";
 import { useI18n, type Locale } from "../../i18n.js";
 import { SupportedLocaleOptions } from "../../i18n/SupportedLocaleOptions.js";
 import type { ResponseLanguagePreference, UserProfile } from "../../types.js";
@@ -8,7 +7,7 @@ import { ProfilePage } from "../profile/ProfilePage.js";
 import { Field, Select } from "../../shared/ui/index.js";
 import { DesktopComputerUsePreference } from "./DesktopComputerUsePreference.js";
 import { InterfaceThemeSettings } from "./InterfaceThemeSettings.js";
-import { ThemeStudioSurface } from "./theme-studio/ThemeStudioSurface.js";
+import { InterfaceBackgroundSettings } from "./InterfaceBackgroundSettings.js";
 
 export function PersonalSettingsPanel({
   cwd,
@@ -30,18 +29,14 @@ export function InterfacePreferencesSettingsPanel({
   readonly onWorkspaceResponseLanguageChange: (language: ResponseLanguagePreference) => void;
 }): React.JSX.Element {
   const { locale, localeLoadError, pendingLocale, t } = useI18n();
-  const [surface, setSurface] = useState<"overview" | "quick-studio">("overview");
-
-  if (surface === "quick-studio") {
-    return <ThemeStudioSurface onBack={() => setSurface("overview")} />;
-  }
 
   return (
     <div
       className="interface-settings-panel"
       data-ui2-interface-preferences
     >
-      <InterfaceThemeSettings onCreateTheme={() => setSurface("quick-studio")} />
+      <InterfaceThemeSettings />
+      <InterfaceBackgroundSettings />
       <DesktopComputerUsePreference />
       <section
         className="settings-interface-section settings-interface-language"

@@ -13,9 +13,10 @@
 .ling-ui-tabs-list[data-appearance="contained"],
 .ling-ui-segmented-control {
   padding: var(--ling-space-1);
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-lg);
-  background: var(--ling-bg-panel);
+  border: 1px solid var(--ling-surface-border-subtle);
+  border-radius: calc(var(--ling-control-radius) + 2px);
+  background: color-mix(in srgb, var(--ling-bg-panel) 92%, transparent);
+  box-shadow: var(--ling-surface-shadow-shell);
 }
 
 .ling-ui-tabs-trigger,
@@ -32,7 +33,7 @@
   gap: var(--ling-space-3);
   padding: 0 var(--ling-space-5);
   border: 0;
-  border-radius: var(--ling-radius-md);
+  border-radius: var(--ling-control-radius);
   outline: none;
   color: var(--ling-text-muted);
   background: transparent;
@@ -66,8 +67,8 @@
 
 .ling-ui-tabs-trigger:focus-visible,
 .ling-ui-segmented-control-item:focus-visible {
-  outline: 2px solid var(--ling-border-focus);
-  outline-offset: -2px;
+  outline: 0;
+  box-shadow: inset 0 0 0 1px var(--ling-border-focus), var(--ling-focus-ring);
 }
 
 .ling-ui-tabs-trigger[data-disabled],
@@ -99,8 +100,9 @@
 }
 
 .ling-ui-tabs-list[data-appearance="contained"] .ling-ui-tabs-trigger[data-state="active"] {
-  color: var(--ling-action-accent-fg);
-  background: var(--ling-action-accent);
+  color: var(--ling-text-strong);
+  background: var(--ling-action-selection);
+  box-shadow: inset 0 -1px 0 var(--ling-action-accent);
 }
 
 .ling-ui-tabs-trigger-badge {

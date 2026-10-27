@@ -69,16 +69,16 @@
 
 .ling-ui-data-row[data-compact="true"] { min-height: 40px; padding-block: var(--ling-space-3); }
 .ling-ui-data-row:hover:not([data-disabled="true"]) { background: var(--ling-bg-subtle); }
-.ling-ui-data-row[data-selected="true"] { background: var(--ling-bg-pressed); }
+.ling-ui-data-row[data-selected="true"] { background: var(--ling-action-selection); box-shadow: inset 2px 0 0 var(--ling-action-accent); }
 .ling-ui-data-row[data-disabled="true"] { opacity: 0.58; }
-.ling-ui-data-row:focus-visible { outline: 2px solid var(--ling-border-focus); outline-offset: -2px; }
+.ling-ui-data-row:focus-visible { outline: 0; box-shadow: inset 0 0 0 1px var(--ling-border-focus), var(--ling-focus-ring); }
 .ling-ui-data-row-identity,
 .ling-ui-data-row-summary,
 .ling-ui-data-row-status { min-width: 0; }
 .ling-ui-data-row-summary { color: var(--ling-text-muted); }
 .ling-ui-data-row-actions { display: inline-flex; justify-content: flex-end; gap: var(--ling-space-4); }
 
-.ling-ui-table-container { min-width: 0; max-width: 100%; overflow: auto; border: 1px solid var(--ling-border-default); border-radius: var(--ling-radius-md); background: var(--ling-bg-panel); }
+.ling-ui-table-container { min-width: 0; max-width: 100%; overflow: auto; border: 1px solid var(--ling-surface-border-subtle); border-radius: var(--ling-control-radius); background: var(--ling-bg-panel); box-shadow: var(--ling-surface-shadow-shell); }
 .ling-ui-table { width: 100%; border-collapse: collapse; color: var(--ling-text-default); font-size: var(--ling-font-sm); line-height: var(--ling-line-sm); }
 .ling-ui-table-header-cell { position: sticky; z-index: 1; top: 0; padding: var(--ling-space-4) var(--ling-space-5); border-bottom: 1px solid var(--ling-border-strong); color: var(--ling-text-muted); background: var(--ling-bg-subtle); font-size: var(--ling-font-xs); font-weight: 600; text-align: left; }
 .ling-ui-table-cell { min-width: 0; padding: var(--ling-space-5); border-bottom: 1px solid var(--ling-border-default); vertical-align: middle; }

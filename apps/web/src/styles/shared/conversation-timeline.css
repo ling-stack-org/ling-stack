@@ -191,6 +191,19 @@
   max-width: 100%;
 }
 
+/* Adapters with MessageRow chrome already provide a reading surface. Bare
+ * narration and reasoning share the same theme contract without boxing the
+ * layout lane or nested activity groups. */
+.conversation-timeline-reading-body,
+.conversation-timeline-reasoning-body {
+  box-sizing: border-box;
+  width: var(--conversation-document-width, auto);
+  max-width: 100%;
+  padding: var(--conversation-document-padding, 0);
+  border-radius: var(--conversation-document-radius, 0);
+  background: var(--conversation-document-background, transparent);
+}
+
 /* Reasoning summaries are safe provider-authored context, not execution facts.
  * Keep them in a quiet document lane instead of rendering another fact card. */
 .conversation-timeline-reasoning {

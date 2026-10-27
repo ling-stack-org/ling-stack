@@ -5,11 +5,11 @@
   min-width: 0;
   padding: var(--ling-space-4);
   overflow: visible;
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-lg);
+  border: 1px solid var(--ling-surface-border-subtle);
+  border-radius: calc(var(--ling-control-radius) + 2px);
   color: var(--ling-text-default);
   background: var(--ling-bg-composer);
-  box-shadow: var(--ling-shadow-medium);
+  box-shadow: var(--ling-surface-shadow-shell);
   transition:
     border-color var(--ling-motion-fast) var(--ling-ease-standard),
     box-shadow var(--ling-motion-fast) var(--ling-ease-standard);
@@ -19,7 +19,7 @@
   border-color: var(--ling-border-focus);
   box-shadow:
     inset 0 0 0 1px var(--ling-border-focus),
-    var(--ling-shadow-medium);
+    var(--ling-surface-shadow-shell);
 }
 
 .conversation-composer-density-floating {
@@ -117,7 +117,7 @@
   padding: 7px 8px 2px;
   overflow: auto;
   border: 0;
-  border-radius: var(--ling-radius-md);
+  border-radius: var(--ling-control-radius);
   color: var(--ling-text-default);
   background: transparent;
   box-shadow: none;

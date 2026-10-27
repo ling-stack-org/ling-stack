@@ -2,7 +2,7 @@
 
 Status: active UI2 product contract
 Owner: Settings shell and feature owners
-Last verified: 2026-08-03
+Last verified: 2026-10-23
 Code anchors: `apps/web/src/features/settings/`, `apps/web/src/styles/settings-skill-library/`
 Test anchors: `apps/web/e2e/ui2-settings-shell.spec.ts`, `apps/web/e2e/settings.spec.ts`
 
@@ -27,9 +27,7 @@ Settings 是全屏管理边界，隐藏主 Sidebar，保留自身导航、返回
 只保留真实可编辑的治理下拉、主题、语言和界面偏好。移除只读“高级治理”、来源/存储路径、刷新按钮和
 整块模式说明；候选发布和绑定仍需人工审核的安全说明可以保留一句。
 
-Quick Theme 使用本地图片分析生成配色和 token，图片不作为运行时背景；Generate/Advanced 按
-[AI 主题流程](../../themes/07-AI生成主题产品流程.md)执行。Desktop 原生发布未完成前不得把 Web 结果写成
-跨平台已完成。
+主题区只展示官方内置主题，场景主题提供完整氛围缩略图。Theme Studio / Quick Theme 生成入口已停用；自定义背景通过独立背景区上传本地图片或 MP4/WebM，不属于 Theme Pack。
 
 ### 外部工作与 MCP
 
@@ -56,8 +54,8 @@ scoped busy/error。
   [实施计划](08-Startup与Diagnostics-implementation-plan.md)完成产品化。
 - Workspace Tools 嵌入态尚未完成，按
   [实施计划](09-Workspace-Tools嵌入态-implementation-plan.md)推进，不恢复旧 iframe/跳转体验。
-- Desktop Theme Pack 原生存储、发布和恢复按
-  [实施计划](10-Desktop-Theme-Pack-Persistence-implementation-plan.md)验收。
+- 历史 Desktop Theme Pack 原生存储计划已停用；当前主题只使用官方内置主题，用户背景按
+  [官方场景主题与自定义媒体背景验收矩阵](../../../full-window-theme-background-acceptance-matrix.md)验收。
 - 工作看板和 Inbox 不是 Settings 已发布入口，不通过 Settings 文案暗示已可用。
 
 ## Acceptance

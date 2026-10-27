@@ -319,6 +319,19 @@
   color: var(--text-strong);
 }
 
+.channel-left-drawer .nav-item:focus-visible,
+.channel-left-drawer .sidebar-row-shell:focus-within,
+.channel-left-drawer .sidebar-branch-row-shell:focus-within {
+  outline: 0;
+  box-shadow: var(--ling-focus-ring);
+}
+
+.channel-left-drawer .nav-item.active,
+.channel-left-drawer .sidebar-row-shell.selected,
+.channel-left-drawer .sidebar-branch-row-shell.selected {
+  box-shadow: inset 2px 0 0 var(--ling-action-accent);
+}
+
 .channel-left-drawer .nav-item svg {
   justify-self: center;
   width: 18px;

@@ -2,11 +2,11 @@
   z-index: var(--ling-z-tooltip);
   max-width: 240px;
   padding: var(--ling-space-2) var(--ling-space-4);
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-sm);
+  border: 1px solid var(--ling-surface-border-emphasis);
+  border-radius: var(--ling-control-radius);
   color: var(--ling-text-default);
   background: var(--ling-bg-elevated);
-  box-shadow: var(--ling-shadow-overlay);
+  box-shadow: var(--ling-surface-shadow-overlay);
   font-size: var(--ling-font-xs);
   line-height: var(--ling-line-xs);
   letter-spacing: 0;
@@ -25,11 +25,11 @@
   z-index: var(--ling-z-menu);
   min-width: 168px;
   padding: var(--ling-space-2);
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-md);
+  border: 1px solid var(--ling-surface-border-emphasis);
+  border-radius: var(--ling-control-radius);
   color: var(--ling-text-default);
   background: var(--ling-bg-elevated);
-  box-shadow: var(--ling-shadow-overlay);
+  box-shadow: var(--ling-surface-shadow-overlay);
   animation: ling-ui-menu-enter var(--ling-motion-fast) var(--ling-ease-enter);
 }
 
@@ -49,7 +49,9 @@
 }
 
 .ling-ui-menu-item[data-highlighted] {
-  background: var(--ling-bg-subtle);
+  color: var(--ling-text-strong);
+  background: var(--ling-action-selection);
+  box-shadow: inset 2px 0 0 var(--ling-action-accent);
 }
 
 .ling-ui-menu-radio-item[data-state="checked"] {

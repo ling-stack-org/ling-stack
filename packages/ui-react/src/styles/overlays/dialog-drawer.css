@@ -31,10 +31,10 @@
   max-height: calc(100vh - 32px);
   max-height: calc(100dvh - 32px);
   overflow: hidden;
-  border: 1px solid var(--ling-border-default);
-  background: var(--ling-bg-elevated);
+  border: 1px solid var(--ling-surface-border-emphasis);
+  background: color-mix(in srgb, var(--ling-bg-elevated) calc(var(--ling-surface-overlay-alpha) * 100%), transparent);
   color: var(--ling-text-default);
-  box-shadow: var(--ling-shadow-overlay);
+  box-shadow: var(--ling-surface-shadow-overlay);
 }
 
 .ling-ui-dialog-content {
@@ -160,8 +160,8 @@
 
 .ling-ui-dialog-content:focus-visible,
 .ling-ui-drawer-content:focus-visible {
-  outline: 2px solid var(--ling-border-focus);
-  outline-offset: -2px;
+  outline: 0;
+  box-shadow: inset 0 0 0 1px var(--ling-border-focus), var(--ling-surface-shadow-overlay);
 }
 
 @keyframes ling-ui-overlay-presence {

@@ -6,8 +6,11 @@ fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(format!("{}/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
 }
 fn run(bytes: &[u8], max_pixels: &str) -> std::process::Output {
+    run_args(bytes, &[max_pixels])
+}
+fn run_args(bytes: &[u8], args: &[&str]) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_ling-image-sanitizer"))
-        .arg(max_pixels)
+        .args(args)
         .env_clear()
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -16,6 +19,41 @@ fn run(bytes: &[u8], max_pixels: &str) -> std::process::Output {
         .unwrap();
     let _ = child.stdin.take().unwrap().write_all(bytes);
     child.wait_with_output().unwrap()
+}
+
+#[test]
+fn background_preset_resizes_but_artifact_protocol_retains_original_dimensions() {
+    let mut input = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut input, 4096, 8);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(&vec![127; 4096 * 8 * 4])
+            .unwrap();
+    }
+    let original = run(&input, "16000000");
+    assert_eq!(original.status.code(), Some(0));
+    assert_eq!(
+        (decode(&original.stdout).0, decode(&original.stdout).1),
+        (4096, 8)
+    );
+    let background = run_args(&input, &["16000000", "--background"]);
+    assert_eq!(background.status.code(), Some(0));
+    assert_eq!(
+        (decode(&background.stdout).0, decode(&background.stdout).1),
+        (2560, 5)
+    );
+    for args in [
+        ["16000000", "--unknown"].as_slice(),
+        &["16000000", "--background", "extra"],
+    ] {
+        let output = run_args(&input, args);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+    }
 }
 fn decode(bytes: &[u8]) -> (u32, u32, Vec<u8>) {
     let mut reader = png::Decoder::new(Cursor::new(bytes)).read_info().unwrap();

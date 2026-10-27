@@ -17,7 +17,7 @@ import {
 
 test("built-in themes are independent complete manifests with fixed and system resolution", () => {
   const registry = new ThemeRegistry();
-  assert.deepEqual(registry.list().map((theme) => theme.manifest.id), ["ling-dark", "ling-light"]);
+  assert.deepEqual(registry.list().map((theme) => theme.manifest.id), ["ling-breeze", "ling-dark", "ling-light", "ling-night", "ling-ocean", "ling-journey"]);
   assert.equal(registry.resolve(DEFAULT_THEME_SELECTION, "light").themeId, "ling-light");
   assert.equal(registry.resolve(DEFAULT_THEME_SELECTION, "dark").themeId, "ling-dark");
 
@@ -26,6 +26,12 @@ test("built-in themes are independent complete manifests with fixed and system r
   assert.equal(fixedDark.colorScheme, "dark");
   assert.equal(fixedDark.presentationProfileId, "ling-standard");
   assert.equal(Object.keys(fixedDark.variableMap).length, LING_THEME_CSS_VARIABLES.length);
+
+  const breeze = registry.resolve({ mode: "fixed", themeId: "ling-breeze" }, "dark");
+  assert.equal(breeze.manifest.scene?.id, "forest-breeze");
+  assert.equal(breeze.presentationProfileId, "ling-illustrated");
+  assert.equal(registry.resolve({ mode: "fixed", themeId: "ling-night" }, "light").manifest.scene?.id, "midnight-aurora");
+  assert.equal(registry.resolve({ mode: "fixed", themeId: "ling-journey" }, "light").manifest.scene?.id, "farbound-journey");
 });
 
 test("registry validates imported themes, protects built-ins, and falls back without rewriting selection", () => {
@@ -73,6 +79,13 @@ test("manifest validation rejects executable colors, incomplete tokens, weak con
   }, { source: "local-import" });
   assert.equal(unknownProfile.ok, false);
   assert.equal(unknownProfile.issues.some((item) => item.code === "invalid-presentation"), true);
+
+  const importedScene = validateThemeManifest({
+    ...importedTheme("imported-scene"),
+    scene: { id: "forest-breeze", mascot: true, corners: true },
+  }, { source: "local-import" });
+  assert.equal(importedScene.ok, false);
+  assert.equal(importedScene.issues.some((item) => item.code === "invalid-artwork"), true);
 });
 
 test("selection and bootstrap snapshot parsers accept only complete allowlisted state", () => {

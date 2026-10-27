@@ -2,7 +2,7 @@
 
 Status: current planning index
 Owner: repository maintainers
-Last verified: 2026-10-19 (Native Execution Engines row); 2026-10-17 (P2 and bundled GStack rows); other work retains its owning plan's verification date
+Last verified: 2026-10-25 (official scene-theme/custom media-background row); 2026-10-19 (Native Execution Engines row); 2026-10-17 (P2 Conversation and bundled GStack rows); other work retains its owning plan's verification date
 Document type: governance index
 
 ## Purpose
@@ -50,7 +50,8 @@ counts, screenshots, hashes and run diaries belong in CI or Release artifacts.
 | [Office Documents Native Plugin](office-documents-native-plugin-implementation-plan.md) | Source implementation and automated acceptance are complete | Real Excel/WPS acceptance and Windows/macOS packaged driver gates close |
 | [Sidebar, Approval, And Proposal Dialogs](sidebar-approval-proposal-dialogs-implementation-plan.md) | Sidebar context previews, runtime approval queue, and channel proposal dialog boundaries are defined | Focused Web, Playwright, and real-browser acceptance across all three surfaces closes |
 | [Thread-First Work History](thread-first-work-history-implementation-plan.md) | V1/V2 storage, evidence, archive and fork foundations exist | Diagnostics UI placement and remaining V2 work close |
-| [Desktop Theme Persistence](ui2.0升级/modules/settings/10-Desktop-Theme-Pack-Persistence-implementation-plan.md) | Web, repository and Apple Silicon implementation exist | Intel macOS and Windows packaged gates pass |
+| [Official Scene Themes And Custom Media Background](full-window-theme-background-implementation-plan.md) | Six built-in themes are implemented locally. Journey uses a static integrated master; Core IP/startup animation remain paused and the original Logo is kept. Custom PNG/JPEG/static WebP/MP4/WebM overrides remain local. Current reading, playback and per-theme profile behavior is owned by the [hardening contract](theme-background-hardening-plan.md) | Signed macOS arm64/x64 and Windows packages, native drag/drop, long-duration resource budgets and assistive-technology gates remain open; browser evidence does not close release gates |
+| [Ling Journey UI Visual Adaptation](ling-journey-ui-adaptation-implementation-plan.md) | P0–P6 are implemented locally, including Journey-vs-Dark comparison and UI-01–UI-12 evidence. Reading protection now uses shared conversation surfaces with transparent layout lanes; media player and per-theme focus/pause preferences are unified under the [hardening contract](theme-background-hardening-plan.md) | Current local test/screenshot results and remaining Desktop acceptance boundaries are maintained in the hardening contract; no theme PR or merge in this round |
 
 ## Pending Product Reopening Or Architecture Decision
 

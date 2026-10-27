@@ -12,6 +12,19 @@
   --ling-radius-md: 6px;
   --ling-radius-lg: 8px;
   --ling-radius-pill: 999px;
+  /* Shared presentation semantics. Themes may tune these values, while
+     components continue to consume the semantic names. */
+  --ling-surface-ambient-alpha: 1;
+  --ling-surface-shell-alpha: 1;
+  --ling-surface-content-alpha: 1;
+  --ling-surface-overlay-alpha: 1;
+  --ling-surface-border-subtle: var(--ling-border-default, currentColor);
+  --ling-surface-border-emphasis: var(--ling-border-strong, currentColor);
+  --ling-surface-shadow-shell: var(--ling-shadow-low, none);
+  --ling-surface-shadow-overlay: var(--ling-shadow-overlay, none);
+  --ling-control-radius: var(--ling-radius-md);
+  --ling-control-height: var(--ling-control-md);
+  --ling-focus-ring: 0 0 0 2px color-mix(in srgb, currentColor 24%, transparent);
   --ling-control-sm: 32px;
   --ling-control-md: 36px;
   --ling-control-lg: 40px;
@@ -29,6 +42,9 @@
   --ling-motion-continuous-spin: 900ms;
   --ling-motion-continuous-spin-reduced: 1800ms;
   --ling-motion-continuous-shimmer: 1400ms;
+  --ling-motion-ambient-breath: 5200ms;
+  --ling-motion-ambient-drift: 8400ms;
+  --ling-motion-ambient-orbit: 24000ms;
   --ling-ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --ling-ease-enter: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ling-ease-exit: cubic-bezier(0.4, 0, 1, 1);

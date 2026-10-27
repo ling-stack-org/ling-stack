@@ -1,40 +1,16 @@
-# 主题包 Schema 与 Token 合同
+# 官方主题 Schema 与 Token 合同
 
 ## Goal
 
-用一份可验证、可版本化、不能执行任意代码的 manifest 表达主题。
-内置主题和本地导入主题使用同一语义合同。
+用一份可验证、可版本化、不能执行任意代码的 manifest 表达官方主题。所有可用主题都编译进 `@ling-stack/ui-react`，不来自用户导入包或远程资源。
 
 ## Implementation Status
 
-The schema、complete token map and runtime validator are `implemented` for P2A as of 2026-07-18.
-Current validation covers identity/reserved namespace、metadata、complete colors and shadows、contrast、
-Desktop tokens、registered Profile IDs、local PNG/WebP artwork paths、generation metadata and exact
-bootstrap variable allowlists. Registry source overrides manifest source for local install.
-
-`.ling-theme` archive parsing、ZIP limits、asset decode/hash verification and published schema migration
-tools remain assigned to Theme import and Compiler slices. Evidence:
-[Ling UI 2.0 验收总规范](../03-UI2.0验收总规范.md).
+经典主题的 schema、complete token map 和 runtime validator 已实现。`scene` metadata、三套官方场景主题、连续背景可见度和自定义媒体背景按[实施方案](../../full-window-theme-background-implementation-plan.md)进入当前交付。
 
 ## Package Shape
 
-内置主题以 TypeScript manifest 编译进 `@ling-stack/ui-react`。本地导入使用
-`.ling-theme` 归档，归档根目录必须包含 `theme.json`。
-
-```text
-theme.json
-assets/
-  background.webp       # optional
-  hero.webp             # optional, approved Profile only
-  corner-start.webp     # optional transparent decoration
-  corner-end.webp       # optional transparent decoration
-  preview.webp          # optional
-LICENSE.txt              # optional but recommended
-```
-
-归档不得包含 CSS、JavaScript、HTML、字体、可执行文件、symlink 或远程 URL。
-
-## Manifest
+官方主题以 TypeScript manifest 编译进产品：
 
 ```ts
 export interface LingThemePackManifest {
@@ -47,37 +23,27 @@ export interface LingThemePackManifest {
   readonly homepage?: string;
   readonly license?: string;
   readonly colorScheme: "light" | "dark";
-  readonly source: "built-in" | "local-import" | "local-generated";
+  readonly source: "built-in";
   readonly tokens: LingThemeTokens;
   readonly desktop?: LingDesktopThemeTokens;
   readonly presentation?: LingThemePresentationSelection;
-  readonly artwork?: LingThemeArtwork;
-  readonly generation?: LingThemeGenerationMetadata;
-  readonly preview?: string;
+  readonly scene?: LingThemeScene;
 }
 ```
 
-`source` 由注册器确定，导入文件中的同名字段被忽略，避免冒充内置或 AI 生成主题。
-UI 2.0 主题实现开始前可以在 `schemaVersion: 1` 中加入这些可选字段；一旦已有正式用户主题，
-新增必填字段或改变现有语义必须提升 schema version。
+`ling-*` 命名空间保留给官方主题。validator 不接受非 built-in source 的 scene、Presentation Profile 自定义定义或任何可执行资源。
 
 ## Identity Rules
 
 - `schemaVersion` 必须精确支持，不对未知版本做猜测兼容。
 - `id` 使用小写 ASCII kebab-case，最长 64 字符。
-- `ling-*` 命名空间为内置主题保留，本地导入时拒绝覆盖。
 - `name` 最长 80 个 Unicode 字符，不允许控制字符或多行文本。
 - `familyId` 只用于 ThemePicker 分组，不用于 token 继承。
 - `homepage` 只能是 `https` URL，显式用户操作才能打开。
 
 ## Color Scheme
 
-`colorScheme` 是主题包的固有元数据：
-
-- 用于 `document.documentElement.style.colorScheme`。
-- 用于原生 input、select、scrollbar、form autofill 和系统菜单协调。
-- 用于固定主题失效时选择 `ling-light` 或 `ling-dark` 回退。
-- 不会为当前主题自动生成另一套 token。
+`colorScheme` 是主题包固有元数据：用于 `document.documentElement.style.colorScheme`、原生控件和固定主题失效后的官方浅色/深色回退。不会为当前主题自动生成另一套 token。
 
 ## Required Semantic Tokens
 
@@ -131,16 +97,9 @@ export interface LingThemeTokens {
     readonly scrollbarHover: string;
   };
 }
-
-export interface LingSemanticTone {
-  readonly foreground: string;
-  readonly background: string;
-  readonly border: string;
-}
 ```
 
-主题包必须提供完整 token set。注册器不从另一主题填补缺失字段。
-可以使用 package 内置的安全 fallback 显示错误预览，但不能将不完整主题标记为已安装。
+主题包必须提供完整 token set。注册器不从另一主题填补缺失字段。正文、muted text、focus、status 和 accentForeground 必须通过对比度检查。
 
 ## Desktop Tokens
 
@@ -155,42 +114,30 @@ export interface LingDesktopThemeTokens {
 }
 ```
 
-- Desktop tokens 是可选表面增强，不能复制 Button/Dialog/Menu 样式。
-- 不支持 blur 或用户关闭透明效果时，使用已验证的不透明 fallback。
-- macOS 和 Windows 读取相同 token，平台 adapter 只解释窗口材质。
+Desktop tokens 是可选表面增强，不能复制 Button/Dialog/Menu 样式。不支持 blur 或用户关闭透明效果时，使用已验证的不透明 fallback。macOS 和 Windows 读取相同 token，平台 adapter 只解释窗口材质。
 
-## Artwork
+## Scene Metadata
 
 ```ts
-export type LingThemeArtworkSlot =
-  | "shell-background"
-  | "home-hero"
-  | "home-corner-start"
-  | "home-corner-end";
+export type LingBuiltInSceneId =
+  | "forest-breeze"
+  | "ocean-drift"
+  | "midnight-aurora"
+  | "sakura-bloom"
+  | "ember-dusk";
 
-export interface LingThemeArtwork {
-  readonly assets: readonly LingThemeArtworkAsset[];
-}
-
-export interface LingThemeArtworkAsset {
-  readonly slot: LingThemeArtworkSlot;
-  readonly image: string;
-  readonly variants?: Readonly<Partial<Record<"16:9" | "16:10" | "21:9", string>>>;
-  readonly safeArea?: "left" | "right" | "center" | "none";
-  readonly focusX?: number;
-  readonly focusY?: number;
-  readonly taskMode?: "off" | "ambient" | "banner";
-  readonly scrim?: "auto" | "light" | "dark";
+export interface LingThemeScene {
+  readonly id: LingBuiltInSceneId;
+  readonly mascot: boolean;
+  readonly corners: boolean;
 }
 ```
 
-- `focusX/focusY` 范围为 `0..1`。
-- 第一阶段要求 `shell-background` 或 `home-hero` 至少有一个主资源；变体和装饰可选。
-- `home-corner-*` 只允许透明 PNG/WebP，并且只在 `ling-illustrated` Profile 生效。
-- slot 坐标、最大尺寸、断点和 z-index 由 Profile registry 决定，manifest 不能提供。
-- 默认内置 `Ling Light` / `Ling Dark` 不使用背景图。
-- Profile 的 shell ambient policy 不得减弱表格、Settings、Inspector、Dialog 和诊断内容可读性。
-- 高密度页面可根据产品规则自动收敛为 token-only surface，但不改变主题 ID。
+- `scene` 只能出现在官方 built-in manifest。
+- scene ID 必须在应用注册的 renderer 中存在。
+- manifest 不能保存 SVG、CSS、图片路径、脚本、坐标、opacity、selector 或远程 URL。
+- scene renderer 负责全窗插画、主题缩略图、Ling Core IP 和角落装饰。
+- 经典 `ling-light` / `ling-dark` 不声明 scene。
 
 ## Presentation Selection
 
@@ -209,43 +156,13 @@ export interface LingThemePresentationSelection {
 }
 ```
 
-- 未声明时使用 `ling-standard`。
-- Theme Pack 只能选择注册表中存在的 Profile，不能提供 Profile definition。
-- intensity 由 Profile 映射到内部 token，不能传入 opacity、blur、CSS variable 或函数。
-- Feature 不得根据 Profile ID 编写样式分支，只有 AppShell presentation layer 可以消费。
+Theme Pack 只能选择注册表中存在的 Profile，不能提供 Profile definition。Feature 不得根据 Profile ID 编写样式分支，只有 AppShell presentation layer 可以消费。
 
-## Generation Metadata
+## Theme Bootstrap
 
-```ts
-export interface LingThemeGenerationMetadata {
-  readonly mode: "quick" | "generate" | "advanced";
-  readonly createdAt: string;
-  readonly compilerVersion: string;
-  readonly plannerModelRef?: string;
-  readonly artworkModelRef?: string;
-  readonly promptTemplateVersion?: string;
-  readonly sourceAssetCount: number;
-}
-```
+内置主题直接由编译后的 manifest 和 CSS layer 提供首帧，不需要 localStorage 保存大型变量快照。历史 local-import/local-generated bootstrap snapshot 不再授权给首帧，避免旧导入主题闪回。
 
-- 只保存非秘密、非路径的来源信息，不保存 API Key、Base URL、provider response 或图片字节。
-- 模型引用使用稳定 display reference，不把 Theme Pack 与具体 provider runtime 强绑定。
-- 用户导出时可移除可选生成元数据，但 license/attribution warning 不能被静默删除。
-- generation metadata 不参与 token resolution，不允许改变主题行为。
-
-## Token Validation
-
-- 颜色只允许标准 hex、rgb/rgba、hsl/hsla 和经过限制的 `color-mix()` 结果。
-- 不允许 `url()`、`var()`、`env()`、`attr()`、CSS function injection 或分号。
-- 阴影通过专用 parser 验证，不将原始字符串写入任意 CSS。
-- status foreground/background/border 必须保留语义，不允许 danger 与 success 无法区分。
-- 普通正文、muted text、focus ring、disabled 和主行动必须通过对比度阈值。
-- 用户导入主题不得改变 geometry、motion、z-index 或图标 token。
-- Profile、slot、intensity 和 generation metadata 必须通过 allowlist/schema 验证。
-
-## CSS Variable Mapping
-
-Registry 将 manifest 映射到固定变量，例如：
+## Variable Map
 
 ```text
 tokens.background.app              -> --ling-bg-app
@@ -258,31 +175,11 @@ tokens.status.danger.background    -> --ling-danger-soft
 tokens.status.danger.border        -> --ling-danger-border
 ```
 
-Feature 不得直接读取 manifest 字段，只能消费 CSS semantic variables 或共享视图模型。
+变量映射由单一 runtime style owner 应用。Feature 不直接读取 manifest 或拼装变量名。
 
-## Versioning
+## Validation Boundary
 
-- `schemaVersion: 1` 的 required token set 不可在 minor 发布中静默改变。
-- 新增可选 token 需有 package fallback。
-- 新增必填 token 必须提升 schema version 并提供显式迁移器。
-- 无法迁移的主题保留本地文件，但标记为 incompatible，不直接删除用户资产。
-
-## Non-Executable Contract
-
-- Theme Pack 不包含 selector、class name、component name 或 DOM path。
-- Theme Pack 不包含 CSS、JS、React component、Radix config 或业务 handler。
-- Theme Pack 不能请求网络、读取 workspace、访问 daemon 或执行 shell。
-- 主题显示名和描述不经过 `dangerouslySetInnerHTML`。
-- Theme Pack 不包含 Profile definition、slot 坐标、prompt executor 或模型调用配置。
-- AI plan/artwork 输出必须经过 Theme Compiler，不能直接作为 manifest 或 token map 安装。
-
-## Built-In Theme Contract
-
-`ling-light` 与 `ling-dark` 是两个独立、完整且不可删除的 Theme Pack，共用 schema 和组件几何，
-不通过一套 token 的明暗分支实现。
-
-- Light 使用清晰的浅色层级、低阴影和稳定边框，不以纯白吞掉列表、Inspector 或滚动区域边界。
-- Dark 使用分层深灰而不是大面积纯黑；app、panel、elevated、subtle 和 pressed 必须可区分。
-- 两个主题的正文、muted text、focus、disabled、selection 与四类状态都必须独立通过对比度验收。
-- 原生 input、select、scrollbar、titlebar 和菜单使用对应 `color-scheme`，不建立 Feature dark override。
-- 首帧 dataset、CSS variables 和 native `color-scheme` 必须一致，不能先显示另一内置主题再切换。
+- 颜色必须是 safe hex、rgb(a)、hsl(a) 或受限制的 color-mix 值。
+- shadow 不能包含可执行 CSS。
+- scene、profile、identity 和 token 完整性由 validator 统一检查。
+- 用户自定义背景不进入 Theme Pack schema，也不改变主题 tokens。

@@ -12,10 +12,6 @@
   resize: vertical;
 }
 
-.channel-message-row > .message-content {
-  max-width: 100%;
-}
-
 .channel-message-row > .message-content > p,
 .channel-message-row .message-body-paragraph {
   margin: 0;
@@ -121,11 +117,6 @@
 
 .conversation-turn-assistant-row {
   grid-template-columns: 30px minmax(0, 1fr);
-}
-
-.message-bubble-inline.channel-message-row.ai-teammate .message-content {
-  width: 100%;
-  max-width: 100%;
 }
 
 .conversation-turn-assistant-transcript {

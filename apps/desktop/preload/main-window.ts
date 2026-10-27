@@ -23,6 +23,7 @@ import {
   DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS,
 } from "../shared/ipc-channels.js";
 import { parseDesktopThemePackageFirstPaintArgument } from "../shared/theme-package-first-paint.js";
+import { BACKGROUND_CHANNELS } from "../shared/background-capabilities.js";
 import { desktopPlatform } from "../main/platform.js";
 import { subscribeWithInitialRead } from "../shared/initial-state-subscription.js";
 
@@ -38,6 +39,12 @@ const platform = desktopPlatform();
 const capabilities: LingDesktopCapabilities = {
   platform,
   daemonBaseUrl,
+  backgrounds: {
+    read: () => ipcRenderer.invoke(BACKGROUND_CHANNELS.read),
+    prepare: request => ipcRenderer.invoke(BACKGROUND_CHANNELS.prepare, request),
+    release: requestId => ipcRenderer.invoke(BACKGROUND_CHANNELS.release, requestId),
+    commit: request => ipcRenderer.invoke(BACKGROUND_CHANNELS.commit, request),
+  },
   ...(platform === "macos" ? {
     humanEvaluation: {
       // Main is the authoritative exact-payload parser; no auth flags are added here.

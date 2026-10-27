@@ -1,0 +1,109 @@
+{
+  "generation": "built-in imagegen; model version not exposed",
+  "artwork": "AI-generated photographic-style scenes, not camera photographs",
+  "processing": "Pillow WebP quality 88, method 6; same-source 640x360 maximum thumbnails quality 82; no compositing",
+  "promptSet": "photographic-scenes-v1.prompts.json",
+  "assets": [
+    {
+      "themeId": "ling-breeze",
+      "sourceFile": "exec-e11dcff2-08ce-40e7-9646-03f300b17256.png",
+      "sourceSha256": "e87c60ac4f7cdf2dc05139289187ad93dff7cf68962e59c194602cc2f7be45ac",
+      "exports": [
+        {
+          "path": "ling-breeze/forest-morning-v1.webp",
+          "bytes": 425816,
+          "size": [
+            1672,
+            941
+          ],
+          "sha256": "ec8a16f9e4dae5de66ae1c3dbc63b1260c72f0420eb7a42d45096088087859b7"
+        },
+        {
+          "path": "ling-breeze/forest-morning-v1-thumb.webp",
+          "bytes": 68224,
+          "size": [
+            640,
+            360
+          ],
+          "sha256": "f883e2534d353e305e81e34fc0e75c6b056498ef43a7964919c3964c51d98f6b"
+        }
+      ]
+    },
+    {
+      "themeId": "ling-ocean",
+      "sourceFile": "exec-f75dc8c4-e293-40d8-bf76-95e0d9ee59e0.png",
+      "sourceSha256": "e865848f379b6ad89e30a9996f2ad6a108b60b0f89a43aa4ba87f83383ad99b4",
+      "exports": [
+        {
+          "path": "ling-ocean/salt-coast-v1.webp",
+          "bytes": 249548,
+          "size": [
+            1672,
+            941
+          ],
+          "sha256": "8b5ba5b94d7138db5fd963f08a3251cf954d0710ebdc0c58da4c2a566eb2d31e"
+        },
+        {
+          "path": "ling-ocean/salt-coast-v1-thumb.webp",
+          "bytes": 31332,
+          "size": [
+            640,
+            360
+          ],
+          "sha256": "631c5ae962248594db34cc7fbcd52db5883bbed4598ed06a4705ba905da5f82b"
+        }
+      ]
+    },
+    {
+      "themeId": "ling-night",
+      "sourceFile": "exec-19c9cf1f-8077-424e-bf10-7b0b83b6c639.png",
+      "sourceSha256": "f66fa7f0094a24c099f4d305d2a118eedefafe3110a9f7be5419db2e1bb139f8",
+      "exports": [
+        {
+          "path": "ling-night/rain-window-v2.webp",
+          "bytes": 195270,
+          "size": [
+            1672,
+            941
+          ],
+          "sha256": "39599f8f2b34d34c49a074fb8039a4444e881ca8f848f8de6cfa438478e1b07c"
+        },
+        {
+          "path": "ling-night/rain-window-v2-thumb.webp",
+          "bytes": 31370,
+          "size": [
+            640,
+            360
+          ],
+          "sha256": "3befe974d4acc01d92007fbad5f1567cbd4b3658ba03f39f736ea348c94bc30f"
+        }
+      ],
+      "supersededFirstCandidate": {
+        "themeId": "ling-night",
+        "sourceFile": "exec-e7d04609-9905-4df8-ae6f-c9e010a89b02.png",
+        "sourceSha256": "af4d6fda53a027b07c287b059dad3b90ac7dc506550c90c5ef3cb7b223c5414e",
+        "exports": [
+          {
+            "path": "ling-night/rain-window-v1.webp",
+            "bytes": 196958,
+            "size": [
+              1672,
+              940
+            ],
+            "sha256": "68458284341fd4f8fe7a07ed8ee9b199bd0853f3eae0f5a6130f6090ea37ba1b"
+          },
+          {
+            "path": "ling-night/rain-window-v1-thumb.webp",
+            "bytes": 30066,
+            "size": [
+              640,
+              360
+            ],
+            "sha256": "59b6d60106f0e7bb35d4f8c1fe74ecf6604f90c5c7fdaff2a3dc6f5590c7f782"
+          }
+        ]
+      },
+      "revisionReason": "Move full lamp inward for normal desktop center cropping; imagegen edit of original scene."
+    }
+  ]
+}

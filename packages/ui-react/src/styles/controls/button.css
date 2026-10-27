@@ -6,13 +6,13 @@
   align-items: center;
   justify-content: center;
   gap: var(--ling-space-3);
-  height: var(--ling-control-md);
+  height: var(--ling-control-height);
   padding: 0 var(--ling-space-5);
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-md);
+  border: 1px solid var(--ling-surface-border-subtle);
+  border-radius: var(--ling-control-radius);
   color: var(--ling-text-default);
   background: var(--ling-bg-panel);
-  box-shadow: var(--ling-shadow-low);
+  box-shadow: var(--ling-surface-shadow-shell);
   font: inherit;
   font-size: var(--ling-font-sm);
   line-height: var(--ling-line-sm);
@@ -60,13 +60,18 @@
 }
 
 .ling-ui-button:hover:not(:disabled, [aria-disabled="true"]) {
-  border-color: var(--ling-border-strong);
+  border-color: var(--ling-surface-border-emphasis);
   background: var(--ling-bg-subtle);
 }
 
 .ling-ui-button[data-variant="primary"]:hover:not(:disabled, [aria-disabled="true"]) {
   border-color: var(--ling-action-accent-hover);
   background: var(--ling-action-accent-hover);
+}
+
+.ling-ui-button[data-variant="primary"]:active:not(:disabled, [aria-disabled="true"]) {
+  border-color: var(--ling-action-accent-pressed);
+  background: var(--ling-action-accent-pressed);
 }
 
 .ling-ui-button[data-variant="danger"]:hover:not(:disabled, [aria-disabled="true"]) {
@@ -79,8 +84,8 @@
 }
 
 .ling-ui-button:focus-visible {
-  outline: 2px solid var(--ling-border-focus);
-  outline-offset: 2px;
+  outline: 0;
+  box-shadow: var(--ling-focus-ring), var(--ling-surface-shadow-shell);
 }
 
 .ling-ui-button:disabled,

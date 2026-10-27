@@ -3,7 +3,7 @@
   place-items: start center;
   min-height: 100%;
   padding: 126px 48px 72px;
-  background: var(--app-bg);
+  background: transparent;
 }
 
 .conversation-home-center {
@@ -17,18 +17,11 @@
 .conversation-home-mark {
   display: grid;
   place-items: center;
-  width: 64px;
-  height: 64px;
-  margin-bottom: 12px;
+  width: 256px;
+  height: 150px;
+  margin-bottom: 2px;
   border: 0;
   background: transparent;
-}
-
-.conversation-home-mark img {
-  display: block;
-  width: 64px;
-  height: 64px;
-  object-fit: contain;
 }
 
 .conversation-home h1 {
@@ -39,6 +32,7 @@
   letter-spacing: 0;
   line-height: 38px;
   text-align: center;
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--ling-bg-app) 72%, transparent);
 }
 
 .conversation-home-center > p {
@@ -66,9 +60,10 @@
   gap: 6px;
   height: 32px;
   padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface-panel);
+  border: 1px solid var(--ling-surface-border-subtle);
+  border-radius: var(--ling-control-radius);
+  background: color-mix(in srgb, var(--ling-bg-panel) 88%, transparent);
+  box-shadow: var(--ling-surface-shadow-shell);
   color: var(--text-muted);
   font-size: 13px;
   font-weight: 500;
@@ -76,8 +71,9 @@
 
 .conversation-home-shortcuts button:hover,
 .conversation-home-shortcuts button:focus-visible {
-  background: var(--surface-hover);
-  color: var(--text-strong);
+  border-color: var(--ling-border-focus);
+  background: var(--ling-action-selection);
+  color: var(--ling-text-strong);
 }
 
 :root[data-theme="dark"] .conversation-home [data-conversation-composer][data-surface="normal_conversation"] {

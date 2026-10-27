@@ -1,4 +1,4 @@
-import { type DragEvent, type KeyboardEvent, type Ref } from "react";
+import { type DragEvent, type KeyboardEvent, type ReactNode, type Ref } from "react";
 import { ArrowUp, CircleAlert, FileText, Plus, RotateCcw, SlidersHorizontal, Square } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import { useI18n } from "../../i18n.js";
@@ -45,6 +45,7 @@ export interface NormalConversationComposerProps {
   readonly canSend: boolean;
   readonly notice: string;
   readonly dragActive: boolean;
+  readonly dropFeedback?: ReactNode;
   readonly onDraftChange: (value: string, caret: number) => void;
   readonly onComposerKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
   readonly onComposerPasteFiles: (files: readonly File[]) => void;
@@ -72,6 +73,7 @@ export function NormalConversationComposer({
   defaultProviderLabel,
   defaultProviderPresetId,
   dragActive,
+  dropFeedback,
   draft,
   inputParts,
   inputRef,
@@ -149,6 +151,7 @@ export function NormalConversationComposer({
         />
       ) : null}
       dropZoneClassName={dragActive ? "active" : undefined}
+      dropZoneStyle={{ borderRadius: "var(--ling-radius-md)" }}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
@@ -188,9 +191,12 @@ export function NormalConversationComposer({
           )}
         </div>
       ) : null}
-      dropHintNode={dragActive ? (
-        <div className="composer-drop-hint"><FileText size={16} /><span>{t("Drop files to attach")}</span></div>
-      ) : null}
+      dropHintNode={<>
+        {dropFeedback}
+        {dragActive ? (
+          <div className="composer-drop-hint"><FileText size={16} /><span>{t("Drop files to attach")}</span></div>
+        ) : null}
+      </>}
       previewNode={pendingAttachments.length > 0 || attachmentCleanupFailures.length > 0 ? (
         <ComposerPendingAssetStrip attachments={pendingAttachments} onRemoveAttachment={onRemoveAttachment}
           onRetryAttachment={onRetryAttachment} cleanupFailures={attachmentCleanupFailures} onRetryCleanup={onRetryAttachmentCleanup} />

@@ -107,9 +107,15 @@
 }
 
 :root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* Legacy feature styles consume the same semantic theme as shared controls. */
+:root[data-theme="dark"],
+:root[data-ui-theme="ling-breeze"],
+:root[data-ui-theme="ling-ocean"] {
   color: var(--text-strong);
   background: var(--app-bg);
-  color-scheme: dark;
   --app-bg: var(--ling-bg-app);
   --window-bg: var(--ling-bg-app);
   --surface-sidebar: var(--ling-bg-sidebar);
@@ -178,6 +184,9 @@
   --conversation-drawer-shadow: var(--ling-shadow-overlay);
   --conversation-active-shimmer: var(--ling-text-muted);
   --conversation-locate-pulse-bg: color-mix(in srgb, var(--ling-text-strong) 8%, transparent);
+}
+
+:root[data-theme="dark"] {
   --composer-ambient-shadow:
     0 10px 28px rgb(0 0 0 / 22%),
     inset 0 1px 0 rgb(255 255 255 / 4%);

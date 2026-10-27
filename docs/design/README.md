@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-10-17 (bundled GStack navigation; other delivery states retain their owners)
+Last verified: 2026-10-23 (official scene-theme and custom media-background replan; other delivery states retain their owners)
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -19,6 +19,15 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 ## Product And Architecture
 
 - [Implementation Status](implementation-status.md)
+- [Official Scene Theme, Background And Interaction Motion Contract](theme-background-motion-contract.md)
+- [Ling Core IP Design Contract](ling-core-ip-design.md)
+- [Official Scene Theme And Custom Media Background Implementation Plan](full-window-theme-background-implementation-plan.md)
+- [Ling Journey UI Visual Adaptation Implementation Plan](ling-journey-ui-adaptation-implementation-plan.md)
+- [Official Scene Theme And Custom Media Background Acceptance Matrix](full-window-theme-background-acceptance-matrix.md)
+- [Official Scene Theme And Custom Media Background Validation](scene-theme-background-validation.md)
+- [Theme Reading Protection, Playback And Composition Plan](theme-background-hardening-plan.md)
+- [Breeze, Ocean And Night Refinement Directions](scene-theme-refinement-directions.md)
+- [Full-Window Theme Background Research](full-window-theme-background-research.md)
 - [Product Design](../product-design.md)
 - [Architecture](../architecture.md)
 - [Platform Architecture](platform-architecture.md)
@@ -161,3 +170,5 @@ part of the current product acceptance scope.
 - Use Git history instead of creating an archive directory.
 - Every new long-lived document must declare status, owner, last verification date,
   canonical replacement when applicable, and code or test anchors.
+
+当前官方场景主题与自定义媒体背景的本机结果见[验证记录](scene-theme-background-validation.md)；旧静态背景实现与平台放行状态见[历史验证记录](full-window-theme-background-validation.md)。

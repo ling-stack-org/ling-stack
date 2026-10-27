@@ -1,7 +1,7 @@
 # Ling UI 2.0 文档入口
 
 Status: current design source of truth
-Updated: 2026-08-03
+Updated: 2026-10-23
 
 ## Current Boundary
 
@@ -10,7 +10,7 @@ Updated: 2026-08-03
 - Work Board 产品重新开放；
 - Startup 与 Diagnostics 重新开放；
 - Workspace Tools 嵌入态；
-- Desktop Theme Pack 原生发布与持久化；
+- 官方场景主题与自定义媒体背景的原生发布与持久化；
 - packaged macOS/Windows、Computer Use PiP 和签名发布验收；
 - 产品合同明确标记 pending 的 Council runtime、MCP 或其他高级能力。
 

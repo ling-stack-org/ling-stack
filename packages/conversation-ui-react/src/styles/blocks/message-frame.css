@@ -194,12 +194,12 @@
    messages keep their own bubble below; neither treatment changes identity,
    timeline ownership or the separate message-action row. */
 [data-conversation-message-row].message-bubble-document > .message-content {
-  width: 100%;
+  width: var(--conversation-document-width, 100%);
   max-width: min(100%, 760px);
-  padding: 0;
+  padding: var(--conversation-document-padding, 0);
   border: 0;
-  border-radius: 0;
-  background: transparent;
+  border-radius: var(--conversation-document-radius, 0);
+  background: var(--conversation-document-background, transparent);
   box-shadow: none;
 }
 
