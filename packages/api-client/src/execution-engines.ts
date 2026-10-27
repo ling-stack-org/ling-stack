@@ -1,6 +1,7 @@
 import type { ExecutionEngineConnectionProbe, ExecutionEngineInstallationProbe, ExecutionEngineLoginMethod, ExecutionEngineLoginOperation, ExecutionEngineManagementSession, ExecutionEngineProfileListResponse,
   ExecutionEngineProfileResponse, ExternalExecutionEngineId, SaveExecutionEngineProfileRequest, SaveExecutionEngineSecretRequest } from "@ling-stack/contracts";
 import { isExecutionEngineSecretValue } from "@ling-stack/contracts";
+import type { EngineDiscoveryReport, ManagedInstallStatus } from "@ling-stack/contracts";
 import { LingDaemonError } from "./errors.js";
 
 export interface ExecutionEngineManagementClientOptions {
@@ -50,6 +51,18 @@ export class ExecutionEngineManagementClient {
 
   listProfiles(): Promise<ExecutionEngineProfileListResponse> {
     return this.request("", "GET");
+  }
+
+  discover(): Promise<EngineDiscoveryReport> {
+    return this.request("/discovery", "GET");
+  }
+
+  install(engineId: ExternalExecutionEngineId): Promise<{ readonly install: ManagedInstallStatus }> {
+    return this.request(enginePath(engineId) + "/install", "POST", {});
+  }
+
+  installStatus(engineId: ExternalExecutionEngineId): Promise<{ readonly install: ManagedInstallStatus }> {
+    return this.request(enginePath(engineId) + "/install", "GET");
   }
 
   async getProfile(engineId: ExternalExecutionEngineId): Promise<ExecutionEngineProfileResponse> {
@@ -151,6 +164,11 @@ export class ExecutionEngineManagementClient {
     }
     return result;
   }
+}
+
+function enginePath(engineId: ExternalExecutionEngineId): string {
+  profilePath(engineId);
+  return `/${engineId}`;
 }
 
 function profilePath(engineId: ExternalExecutionEngineId): string {
