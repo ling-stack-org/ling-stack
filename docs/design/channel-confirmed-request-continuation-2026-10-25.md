@@ -3,6 +3,26 @@
 状态：原始明确承接实现的 145 项回归及独立差量审查通过；2026-10-27 的字段续接是新的未交付增量，不能复用原独审或 macOS 验收结论。
 本设计补充 c01-path-reference-cwd-boundary-2026-10-25.md 的 R5，不替代 Continuity v2。
 
+### 2026-10-27 最新验证覆盖
+
+字段续接增量已在 `63ecdbb9`、`9afa5248`、`c965dda7` 实现并独审；
+`99b9ee2d` 已绑定其隔离 QA 打包输入并推送。真实模型 capture013 已通过：
+初始澄清冻结完整草稿，回答只补 `demo` 目录范围；去掉新增范围和回答来源后，
+操作图与 required participant manifest 与冻结值完全一致。SQLite Store 关闭重开后
+复用同一 proposal，不再次请求模型。实际两次 logical model task、一个 proposal，
+零 Run/Task/tool event。这是规划协议证据，不是工具执行或 macOS GUI 验收。
+
+必须使用精确 wire 名称：`clarification.missingFields=["projectInputRoot"]`，
+`slots[].field="project_input_root"`。旧提示词未明确该既有契约，已补全，未新增
+宽松 alias、权限或自动修复。capture009–012 及旧 GUI 失败保持原判定；012 helper
+的 slot 匹配布尔受正则转义错误影响，不作为产品缺陷证据，也不重跑它寻找成功样本。
+
+证据：`output/e6-20260928/pending-operation-real-model-wire-result-20261027.md`、
+`pending-operation-wire-fields-{verification,independent-review}-20261027.md`。
+下一门槛为新包实际确认、执行、产品 retry 与恢复，不重复已经通过的协议探针。
+新包前另修复了 Desktop 停 owned Host 后向死端点释放租约的退出时序；该增量独立
+验证，不能用规划协议结果替代客户端正常退出证明。
+
 ## 2026-10-27 补充：待决项续接与工具审批必须分层
 
 本节最初是待实现契约。2026-10-27 已接入下面的 Host/Core/Daemon 增量及隔离回归；
