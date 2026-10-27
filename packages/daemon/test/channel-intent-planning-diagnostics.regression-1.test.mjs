@@ -116,6 +116,29 @@ test("planner declares generated content dependencies as required and literal co
   assert.deepEqual(bound.execution.operations[0].binding.effectScope.readPaths, []);
 });
 
+test("pending scope wire fields are explicit and a noncanonical clarification is diagnosed without graph repair", async t => {
+  const sourceBody = "@Engineer 只执行 node project/check.mjs，输入 project/check.mjs；先确认 Node 依赖目录，不写文件、不联网。";
+  const candidate = plan();
+  Object.assign(candidate.operations[0], { sourceQuote: sourceBody,
+    command: { text: "node project/check.mjs", sourceQuote: "node project/check.mjs" },
+    inputs: [{ path: "project/check.mjs", sourceQuote: "project/check.mjs" }] });
+  const f = await fixture(t, [{ action: "clarify", reason: "Missing project dependencies",
+    clarification: { missingFields: ["PRIVATE_NONCANONICAL_FIELD"], question: "Node 项目依赖目录是什么？" },
+    pendingDraft: { execution: candidate, slots: [{ operationId: "version", field: "project_input_root" }] } }], sourceBody);
+  const result = await f.select();
+  assert.equal(result.action, "blocked");
+  const event = f.diagnostics().find(item => item.data.outcome === "shape_rejected"
+    && item.data.fields?.includes("clarification.missingFields"));
+  assert.ok(event, "a bound graph does not prove the pending clarification envelope is valid");
+  assert.deepEqual(event.data.fields, ["clarification.missingFields"]);
+  assert.deepEqual(event.data.issue, { path: "clarification.missingFields", code: "invalid_value" });
+  assert.match(f.prompts[0], /clarification\.missingFields MUST be exactly \["projectInputRoot"\]/u);
+  assert.match(f.prompts[0], /slots\[\]\.field MUST be exactly "project_input_root"/u);
+  assert.equal(f.prompts.length, 1);
+  assert.equal(f.store.listChannelExecutionProposals({ channelId: f.channel.id }).length, 0);
+  assert.doesNotMatch(JSON.stringify(f.diagnostics().map(item => item.data)), /PRIVATE_NONCANONICAL_FIELD|node project|依赖目录/u);
+});
+
 test("provenance diagnostics identify the fixed field path without persisting rejected quote text", async t => {
   for (const [mutate, field] of [
     [p => { p.operations[0].sourceQuote = "PRIVATE_REJECTED_OPERATION"; }, "execution.operations[].sourceQuote"],

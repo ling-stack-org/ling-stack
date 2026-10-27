@@ -739,6 +739,12 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
     // A draft is not execution authority, but its rejected fields must remain
     // observable just like an executable candidate. Do not regenerate the graph.
     inspect(output, true);
+    if (output.clarification!.missingFields.length !== 1 || output.clarification!.missingFields[0] !== "projectInputRoot") {
+      // The graph may bind while its envelope still fails application. Keep the
+      // fixed protocol path, never the model's field spelling or question text.
+      observe({ phase: "validation", outcome: "shape_rejected", fields: ["clarification.missingFields"],
+        issue: { path: "clarification.missingFields", code: "invalid_value" } });
+    }
     return output;
   }
   if (output.action !== "execute" && output.action !== "workflow_proposal") return output;
