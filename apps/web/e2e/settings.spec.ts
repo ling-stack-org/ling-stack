@@ -327,10 +327,10 @@ test("settings hides pending startup and diagnostics", async ({ page }) => {
 
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   const settingsSections = page.getByLabel("Settings sections");
+  // Startup and diagnostics is a first-class section now (ux-gap-roadmap-13);
+  // only the retired Startup readiness placeholder stays absent.
   await expect(settingsSections.getByRole("button", { name: /Startup readiness/ })).toHaveCount(0);
-  await expect(settingsSections.getByRole("button", { name: /Startup and diagnostics/ })).toHaveCount(0);
-  await expect(settingsSections.locator('[data-settings-section="startup-diagnostics"]')).toBeHidden();
-  await expect(page.locator("[data-ui2-settings-startup-diagnostics]")).toHaveCount(0);
+  await expect(settingsSections.getByRole("button", { name: /Startup and diagnostics/ })).toBeVisible();
 });
 
 test("settings archived items use one remembered category list with scoped search", async ({ page }) => {
