@@ -64,6 +64,11 @@ test("marketplace inspect fetches, bounds and validates indexes over https", asy
     const rejected = await fetch(`http://127.0.0.1:${port}/skills/marketplace/inspect?url=${encodeURIComponent("http://cdn.example.com/index.json")}`);
     assert.equal(rejected.status, 400);
 
+    for (const internal of ["https://127.0.0.1/index.json", "https://192.168.1.10/index.json", "https://printer.internal/index.json", "https://localhost/index.json"]) {
+      const blocked = await fetch(`http://127.0.0.1:${port}/skills/marketplace/inspect?url=${encodeURIComponent(internal)}`);
+      assert.equal(blocked.status, 400, internal);
+    }
+
     const missing = await fetch(`http://127.0.0.1:${port}/skills/marketplace/inspect`);
     assert.equal(missing.status, 400);
 

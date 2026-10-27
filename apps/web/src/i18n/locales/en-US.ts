@@ -4569,7 +4569,7 @@ export const enUS = {
     "Choose how much provider-safe reasoning summary appears in conversations. Raw reasoning is never shown.": "Choose how much provider-safe reasoning summary appears in conversations. Raw reasoning is never shown.",
     "Reasoning summary preference applied": "Reasoning summary preference applied",
     "Reasoning summary preference was not applied.": "Reasoning summary preference was not applied.",
-  
+
   "Daemon diagnostics": "Daemon diagnostics",
   "Refresh diagnostics": "Refresh diagnostics",
   "Refreshing diagnostics...": "Refreshing diagnostics...",

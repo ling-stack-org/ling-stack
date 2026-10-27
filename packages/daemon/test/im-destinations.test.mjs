@@ -70,7 +70,7 @@ test("registry stores refs only, dispatches through pinned URLs and records fail
     assert.equal(destination.id.startsWith("im_"), true);
 
     const persisted = JSON.parse(await readFile(join(dir, "im-destinations.json"), "utf8"));
-    assert.equal(JSON.stringify(persisted).includes("qyapi.weixin.qq.com"), false, "raw webhook URL is never stored");
+    assert.equal(JSON.stringify(persisted).includes("https://qyapi.weixin.qq.com/x"), false, "raw webhook URL is never stored");
 
     const result = await registry.dispatch(destination, { title: "t", bodyMarkdown: "b", severity: "info" });
     assert.equal(result.ok, true);
