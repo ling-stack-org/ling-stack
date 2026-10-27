@@ -71,17 +71,17 @@ function canvasFixture(version) {
 }
 
 test("Canvas supplier records bind native SBOM crate hashes and retain old historical limits", t => {
-  for (const version of ["0.1.80", "1.0.11"]) {
+  for (const version of ["0.1.80", "1.0.11", "1.0.13"]) {
     const { record, metadata, binding, sbom } = canvasFixture(version);
-    assert.equal(validateCanvasSourceMaterials(record, binding, metadata, version === "1.0.11" ? sbom : undefined), undefined);
+    assert.equal(validateCanvasSourceMaterials(record, binding, metadata, version !== "0.1.80" ? sbom : undefined), undefined);
     const nativeDirectory = mkdtempSync(join(tmpdir(), "ling-canvas-source-test-"));
     t.after(() => rmSync(nativeDirectory, { recursive: true, force: true }));
     writeFileSync(join(nativeDirectory, "package.json"), JSON.stringify(metadata));
-    if (version === "1.0.11") writeFileSync(join(nativeDirectory, "sbom.cdx.json"), JSON.stringify(sbom));
+    if (version !== "0.1.80") writeFileSync(join(nativeDirectory, "sbom.cdx.json"), JSON.stringify(sbom));
     const material = new Map(), components = [];
     const result = collectCanvasMaterials({ metadata: { name: "@napi-rs/canvas", version }, nativeDirectory, sourceBinding: binding }, (path, bytes) => { material.set(path, bytes); return path; }, components);
     assert.ok(result.licenseFiles.length > 20);
-    assert.equal(result.historicalRustResolutionPublished, version === "1.0.11");
+    assert.equal(result.historicalRustResolutionPublished, version !== "0.1.80");
     assert.equal(result.limitations.length, version === "0.1.80" ? 1 : 0);
     if (version === "0.1.80") {
       assert.equal(record.crates.length, 0, "never substitute newer Rust crates for the historical binary");
