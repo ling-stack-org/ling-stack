@@ -628,12 +628,13 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
     observe({ phase: "validation", outcome: "intent_schema_accepted" });
     return output;
   };
-  const inspect = (output: ChannelIntentModelOutput) => {
-    const binding = bindModelIntentOperations(input, output.execution).binding;
+  const inspect = (output: ChannelIntentModelOutput, pendingDraft = false) => {
+    const binding = bindModelIntentOperations(input, pendingDraft ? output.pendingDraft!.execution : output.execution).binding;
+    const path = (value: string) => pendingDraft ? `pendingDraft.${value}` : value;
     observe({ phase: "validation", outcome: binding.status === "bound" ? "bound"
       : binding.status === "blocked" ? "capability_blocked" : binding.shapeIssue ? "shape_rejected" : "binding_rejected",
-      ...(binding.status === "clarify" ? { fields: binding.missingFields,
-        ...(binding.shapeIssue ? { issue: binding.shapeIssue } : {}) } : {}) });
+      ...(binding.status === "clarify" ? { fields: binding.missingFields.map(path),
+        ...(binding.shapeIssue ? { issue: { ...binding.shapeIssue, path: path(binding.shapeIssue.path) } } : {}) } : {}) });
     return binding;
   };
   const runIntentTask = async (taskPrompt: string, purpose: ChannelIntentRequestPurpose) => {
@@ -733,6 +734,12 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
     const repairedResult = await runIntentTask(`${prompt}\n\nYour previous response was not valid strict JSON or did not match the declared intent schema. Return one complete strict JSON object for the same current user request, with all declared required fields and no Markdown or additional fields. No operation has been admitted or executed. Preserve the source registry, participant ownership and requested permissions; do not invent commands or sources.`, "format_repair");
     const repairedText = textDeltas.join("").trim() || extractAssistantText(repairedResult.messages) || "";
     output = parse(repairedText);
+  }
+  if (output.action === "clarify" && output.pendingDraft) {
+    // A draft is not execution authority, but its rejected fields must remain
+    // observable just like an executable candidate. Do not regenerate the graph.
+    inspect(output, true);
+    return output;
   }
   if (output.action !== "execute" && output.action !== "workflow_proposal") return output;
   // A frozen pending graph cannot enter the full-graph binding repair loop.

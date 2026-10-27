@@ -68,6 +68,32 @@ test("scalar shape diagnostics distinguish missing, wrong type and invalid value
   }
 });
 
+for (const [name, mutate, expected] of [
+  ["source", p => { p.operations[0].inputs[0].sourceQuote = "PRIVATE_PENDING_QUOTE"; },
+    { outcome: "binding_rejected", fields: ["pendingDraft.inputs.sourceQuote"] }],
+  ["shape", p => { delete p.operations[0].required; },
+    { outcome: "shape_rejected", fields: ["pendingDraft.execution.operations[].required"], issue: { path: "pendingDraft.execution.operations[].required", code: "missing" } }],
+]) test(`pending draft ${name} rejection has safe field diagnostics without graph regeneration`, async t => {
+  const sourceBody = "@Engineer 只执行 node project/check.mjs，输入 project/check.mjs；先确认 Node 依赖目录，不写文件、不联网。";
+  const candidate = plan();
+  Object.assign(candidate.operations[0], { sourceQuote: sourceBody,
+    command: { text: "node project/check.mjs", sourceQuote: "node project/check.mjs" },
+    inputs: [{ path: "project/check.mjs", sourceQuote: "project/check.mjs" }] });
+  mutate(candidate);
+  const f = await fixture(t, [{ action: "clarify", reason: "Explicit project directory is missing",
+    clarification: { missingFields: ["projectInputRoot"], question: "Node 项目依赖目录是什么？" },
+    pendingDraft: { execution: candidate, slots: [{ operationId: "version", field: "project_input_root" }] } }], sourceBody);
+  const result = await f.select();
+  assert.equal(result.action, "blocked");
+  const event = f.diagnostics().find(item => item.data.outcome === expected.outcome);
+  assert.ok(event, "pending-draft branch must not disappear after schema acceptance");
+  assert.deepEqual(event.data.fields, expected.fields);
+  if (expected.issue) assert.deepEqual(event.data.issue, expected.issue);
+  assert.equal(f.prompts.length, 1);
+  assert.equal(f.store.listChannelExecutionProposals({ channelId: f.channel.id }).length, 0);
+  assert.doesNotMatch(JSON.stringify(f.diagnostics().map(item => item.data)), /PRIVATE_PENDING_QUOTE|node project|先确认/u);
+});
+
 test("planner declares generated content dependencies as required and literal content dependencies as forbidden", async t => {
   const f = await fixture(t, [{ action: "reply", reason: "No effects in the prompt contract probe" }]);
   await f.select();
