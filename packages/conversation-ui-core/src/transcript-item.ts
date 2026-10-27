@@ -10,6 +10,7 @@ import type {
 } from "./work-cell-view-model.js";
 import type { CanonicalUserInputRequest, CanonicalUserInputAnswer, CanonicalUserInputUnavailable } from "./user-input-transcript-snapshot.js";
 import { isUserInputTimelinePayload } from "./user-input-timeline.js";
+import type { ConversationBlockedExplanation } from "./blocked-explanation.js";
 
 /**
  * A typed, rebuildable presentation item. This is intentionally separate from the
@@ -349,6 +350,8 @@ export interface ConversationTimelineProtocolEventItem extends ConversationTimel
   readonly kind: "protocolEvent";
   readonly protocolKind: "decision" | "handoff" | "summary" | "workflow" | "workflow-step" | "task" | "run" | "state-transition";
   readonly availableActions?: readonly ConversationProtocolAction[];
+  /** Host-validated block with separately labelled, unverified model explanation. */
+  readonly blockedExplanation?: ConversationBlockedExplanation;
 }
 
 export interface ConversationTimelineDiagnosticItem extends ConversationTimelineActivityPayload {

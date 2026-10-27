@@ -516,7 +516,7 @@ function renderOwnedOperationBinding(
     return `- ${operation.id}: ${operation.kind} -> ${target}${dependency}${command}${binding}`;
   });
   const header = "Host-materialized operation bindings (authoritative for completion, not display advice):";
-  const rule = "Execute only the operations owned by this step. An exact command must be run exactly; do not substitute a semantically equivalent command. If the binding cannot be executed, return structured blocked instead of ready text or narration.";
+  const rule = "Execute only the operations owned by this step. An exact command must be run exactly; do not substitute a semantically equivalent command. If the binding cannot be executed, explain concisely to the user what was not executed or verified and the limitation; do not return ready text or a raw blocked JSON as the user-facing answer. The Host records the structured blocked outcome from verified tool and execution evidence, not from your narrative or JSON.";
   return [header, ...lines, rule].join("\n");
 }
 

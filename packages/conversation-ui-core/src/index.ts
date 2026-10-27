@@ -54,6 +54,8 @@ export type { ActiveRunSnapshot, TimelineSnapshot, TimelineRunLifecycle } from "
 export { createTimelineSnapshot } from "./timeline-snapshot.js";
 export { projectConversationRunNarration, mergeConversationRunNarration } from "./run-narration.js";
 export type { ConversationRunNarrationSegment } from "./run-narration.js";
+export { parseUnverifiedBlockedNarration } from "./blocked-explanation.js";
+export type { ConversationBlockedExplanation, UnverifiedBlockedNarration } from "./blocked-explanation.js";
 export {
   conversationTimelineRendererKey,
   fingerprintConversationTimeline,
