@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
+import { fileURLToPath } from "node:url";
+import { createServer } from "vite";
 import { terminalReportToViewModel } from "@ling-stack/conversation-ui-core";
 import { buildDeterministicTerminalReport } from "../../../packages/core/dist/index.js";
 import { formatSynchronousCatalogMessage } from "../../../packages/localization/dist/index.js";
 import { taskTerminalFixture } from "../../../packages/daemon/test/support/task-terminal-empty-contribution-fixture.mjs";
-import { terminalReportCopyText } from "../src/shared/conversation/timeline/terminal-report-copy-text.ts";
+const vite = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)),
+  configFile: false, logLevel: "silent", server: { middlewareMode: true } });
+after(() => vite.close());
+const { terminalReportCopyText } = await vite.ssrLoadModule("/src/shared/conversation/timeline/terminal-report-copy-text.ts");
 
 function timelineItem(report, resultItemId = "b010-core-only-blocked-report") {
   return { id: resultItemId, kind: "terminalReport", reportId: report.id, resultItemId, generation: 1,

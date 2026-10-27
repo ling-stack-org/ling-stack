@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { terminalReportFallbackSummary } from "../src/shared/conversation/timeline/terminal-report-fallback-summary.ts";
+import test, { after } from "node:test";
+import { fileURLToPath } from "node:url";
+import { createServer } from "vite";
+const vite = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)),
+  configFile: false, logLevel: "silent", server: { middlewareMode: true } });
+after(() => vite.close());
+const { terminalReportFallbackSummary } = await vite.ssrLoadModule("/src/shared/conversation/timeline/terminal-report-fallback-summary.ts");
 
 function report(overrides = {}) {
   return { id: "item", kind: "terminalReport", reportId: "report", resultItemId: "result", generation: 1,
@@ -58,7 +63,8 @@ test("a Host fallback describes visible files and real check states without clai
   const summary = terminalReportFallbackSummary(item);
   assert.match(summary, /src\/ledger\.js/u);
   assert.doesNotMatch(summary, /\+12|−3/u, "exact diff counts belong to the file cards, not this prose preview");
-  assert.match(summary, /node --test ledger\.test\.js.*已通过/u);
+  assert.match(summary, /Ledger tests.*已通过/u);
+  assert.doesNotMatch(summary, /node --test ledger\.test\.js/u, "commands stay in the tool item, not the final result");
   assert.doesNotMatch(summary, /MODEL_ONLY_DO_NOT_COPY/u);
   assert.equal(JSON.stringify(item), before);
 });
@@ -112,10 +118,11 @@ test("fallback check statuses stay distinct and metadata counts cannot invent ev
 test("fallback fact previews are bounded and render hostile Markdown as code, not links", () => {
   const item = report({ reportStatus: "fallback", changes: Array.from({ length: 20 }, (_, i) => ({
     id: `file-${i}`, paths: [`file-${i}-` + "x".repeat(300)], sourceRefs: [],
-  })), verification: [{ id: "cmd", title: "unused", command: "printf '`](https://example.invalid)\\n'\nnext", status: "unknown", sourceRefs: [] }] });
+  })), verification: [{ id: "cmd", title: "Check `](https://example.invalid)\nnext", command: "RAW_COMMAND_SENTINEL", status: "unknown", sourceRefs: [] }] });
   const summary = terminalReportFallbackSummary(item);
   assert.match(summary, /file-0-/u);
   assert.doesNotMatch(summary, /file-4-/u);
-  assert.match(summary, /``printf/u);
+  assert.match(summary, /``Check/u);
+  assert.doesNotMatch(summary, /RAW_COMMAND_SENTINEL/u);
   assert.ok(summary.length < 1500);
 });

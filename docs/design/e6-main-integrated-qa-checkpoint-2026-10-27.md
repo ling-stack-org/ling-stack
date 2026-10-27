@@ -3,6 +3,43 @@
 日期：2026-10-27。源码树为 `ling-e6-continuation/ling-stack`，分支
 `codex/e6-safe-continuation`。本记录不是总计划完成、main 合并或发布证明。
 
+## 后继检查点：频道权限继承与共享执行详情归属
+
+权限继承实现已保存/推送为 `a5517f19a2039aaca9aaa229a933349ac538818e`。
+统一 Daemon 最终组合 132/132、typecheck 通过。真实 native 首组 7/8，唯一新
+symlink 测试的错误名预期已纠正，精确补测 1/1 通过；不改写成一次全组 8/8。
+已完成两份未参与各自选定实现切片的独审，不宣称全 E6 完全独立审阅。
+这不代表频道新策略已在新 macOS 包完成 GUI 验收。
+
+Office 正式记录在同一 standing QA-only 授权下继续只更新 packaging map：
+
+- 本节覆盖下方旧「最新源码」数值：新完整 SHA 为
+  `f0b0f91e4a4975b68a2c2cfcbdae420cc82680acf5c0342eb4abe348c8892ef0`。
+- 1637→1638；1 added、12 changed、1625 unchanged、0 removed；15 native 与全部
+  non-map 字段不变。完整 JSON 精确重建、独立机械 closure 和原 reader 15/1638
+  均通过。proposal `cdd76a3b…` 仍为 false/null，不伪造新本人批准。
+- Web 四个 presentation 源码不属于这个固定 Office runtime map；由各自内容审阅
+  与新 QA 包冻结负责，不为它们扩充 Office map 或重做旧全量阅读。
+
+用户最新「执行详情归具体工具」规则在三种会话及嵌套子 Agent 的共享 timeline
+实现；不重写三个入口、不改 SQLite/终态/fan-in。命令/cwd/输出/耗时/exit 保留在
+具体工具，文件卡及逐文件 +/- 保留。结尾和日常复制仅结果/必要限制，不再追加
+整份 TerminalReport；完整报告仅保留底层和显式 serializer。整轮 commentary+
+final 复制、settled-only 和单 footer 不变。设计见
+`execution-detail-ownership-2026-10-27.md`。
+
+本节记录时：共享 SSR/邻接 58/58 与 Web typecheck 已通过；Root 另跑的中英文
+failed/cancelled/blocked 真实临时 SQLite 6/6 通过。浏览器 mock 的频道夹具曾有
+source turn/Run/report 不同归属，生产校验正确拒绝；仅在当前 spec 对齐合法
+lineage，不能把早期「成功态不见报告」当有效隐藏证据。新的五个频道状态分别
+1/1 和 4/4 通过，复用未受影响的普通/私聊/attention 12 项，形成 12+5=17 项矩阵，
+不是最后一次统一跑 17 项。待最终审阅、checkpoint 后，用新包/新 nonce 验收。
+这些 fixture 和 SSR 结果均不当作 packaged GUI。
+
+旧 8795/b013cb54 App 已正常退出，精确 Main/Host/launcher 排空且旧输出整体保全，
+没有删除历史或复用旧 one-shot。新 wrapper/launcher 只准备新 run 和新回执路径，
+未知 final HEAD/ASAR 必须拒绝，真实 freeze/build/GUI 结果仍需单独收取。
+
 ## 已保存的源码与当前范围
 
 普通 merge `d369e4ca` 保留 E6 与 main `d507c048` 的两边历史；后继修复保存于

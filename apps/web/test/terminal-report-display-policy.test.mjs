@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
+import { fileURLToPath } from "node:url";
+import { createServer } from "vite";
 import { visibleTerminalReportTimelineItem } from "@ling-stack/conversation-ui-core";
 import { terminalReportDisplayPolicy } from "../src/shared/conversation/timeline/terminal-report-display-policy.ts";
 import { hasFinalTimelineResponseNarration, projectTimelineResponsePresentation } from "../src/shared/conversation/timeline/timeline-response-presentation.ts";
-import { timelineResponseCopyText } from "../src/shared/conversation/timeline/terminal-report-copy-text.ts";
+const vite = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)),
+  configFile: false, logLevel: "silent", server: { middlewareMode: true } });
+after(() => vite.close());
+const { timelineResponseCopyText } = await vite.ssrLoadModule("/src/shared/conversation/timeline/terminal-report-copy-text.ts");
 
 function report(overrides = {}) {
   return { id: "report", kind: "terminalReport", reportId: "report", turnId: "turn", runId: "run",

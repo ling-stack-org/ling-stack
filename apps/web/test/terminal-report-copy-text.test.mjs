@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { terminalReportCopyText } from "../src/shared/conversation/timeline/terminal-report-copy-text.ts";
+import test, { after } from "node:test";
+import { fileURLToPath } from "node:url";
+import { createServer } from "vite";
+
+// Native Node cannot resolve the production .js specifiers to TypeScript source.
+// Load the unchanged production export through the same Vite SSR boundary as the renderer tests.
+const vite = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)),
+  configFile: false, logLevel: "silent", server: { middlewareMode: true } });
+after(() => vite.close());
+const { terminalReportCopyText } = await vite.ssrLoadModule("/src/shared/conversation/timeline/terminal-report-copy-text.ts");
 
 function report(overrides = {}) {
   return {
