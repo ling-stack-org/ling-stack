@@ -489,7 +489,14 @@ export function isChannelOperationCandidatePlanV2(value: unknown): value is Chan
  * False positives ask unnecessarily; no match is never itself a read grant.
  */
 export function commandInputInheritanceRestriction(text: string): "ask_first" | "direct_inputs_only" | undefined {
-  if (/(?:先|执行前|开始前)[^。！？\n]{0,48}(?:询问|问我|问|确认|征求)[^。！？\n]{0,48}(?:目录|依赖|范围|授权)|(?:ask|confirm|request)[^.!?\n]{0,100}(?:before|first|director|scope|dependenc|permission)/iu.test(text)) return "ask_first";
+  // A preceding execution marker must not turn "不要询问扩大授权" into a
+  // positive ask-first requirement. Mask only explicitly negated request verbs;
+  // retain the original source for file limits and quoted model constraints.
+  // This remains a denial guard, not permission to read undeclared inputs.
+  const positiveAskText = text
+    .replace(/(?:不要|不需要|不必|无需|无须|禁止|不得|不允许|勿|别)[ \t]*(?:(?:先|再|继续|单独|直接|另行|主动)[ \t]*){0,3}(?:询问|问我|问|确认|征求)/gu, " ")
+    .replace(/\b(?:do\s+not|don['’]t|must\s+not|never|no\s+need\s+to)\s+(?:(?:first|again|directly|separately)\s+){0,3}(?:ask|confirm|request)\b/giu, " ");
+  if (/(?:先|执行前|开始前)[^。！？\n]{0,48}(?:询问|问我|问|确认|征求)[^。！？\n]{0,48}(?:目录|依赖|范围|授权)|(?:ask|confirm|request)[^.!?\n]{0,100}(?:before|first|director|scope|dependenc|permission)/iu.test(positiveAskText)) return "ask_first";
   if (/(?:只|仅)(?:允许)?(?:读取|读|查看|看|访问|使用)[^。！？\n]{0,160}(?:文件|file|\.[a-z0-9]{1,8}\b)|(?:仅|只)(?:限)?(?:这|该|此|一个|单个)?文件|不(?:读取|访问|使用)[^。！？\n]{0,32}(?:其他|其它|额外)|only\s+(?:read|use|access|inspect)[^.!?\n]{0,100}file|do\s+not\s+read\s+(?:other|additional)/iu.test(text)) return "direct_inputs_only";
   return undefined;
 }

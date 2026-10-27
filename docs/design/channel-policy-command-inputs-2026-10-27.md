@@ -19,6 +19,14 @@ quoted instructions; a conservative Host guard also blocks automatic inheritance
 for explicit single-file/ask-first restrictions. This is not a claim that regexes
 prove arbitrary natural-language intent. Ambiguity is clarified, not expanded.
 
+An explicit prohibition on asking for broader scope is not an ask-first
+request. In particular, “执行前…不要询问扩大授权” must keep an accompanying
+single-file limit instead of creating a project-root question. The Host guard
+masks explicitly negated question verbs only for its positive ask-first check;
+the original source still supplies all file restrictions and provenance.
+Missing dependencies then remain capability/scope blockers, not permission to
+expand or a reason to repeatedly request a directory.
+
 Only newly bound operations may receive policy scope. Existing accepted plans,
 pending drafts, Runs and Attempts are never retroactively enlarged. A recovered
 pending draft still accepts only its named slot patch, not a replacement graph.

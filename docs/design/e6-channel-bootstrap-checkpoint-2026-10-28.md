@@ -27,6 +27,26 @@ This is not a full E6 completion or release record.
 
 Detailed native evidence: `output/e6-20260928/channel-policy-auto-native-result-20261028.md`.
 
+### Later native continuation (2026-10-28)
+
+The earlier pending state above is historical. A fresh one-shot QA launcher
+restored the same source and frozen decision in the same isolated profile.
+Root supplied the dependency directory once through the native client, then
+approved the original exact command once. Capture 006/007/008 each exited 0.
+The original Run `run_fb113b09-7b02-4718-889b-7b5bb7df77a2`, step and workflow
+succeeded with a verified completion gate, one resolution, one proposal, one
+Run and one tool start/end. Actual exit was 0, stdout was
+`CHANNEL_POLICY_AUTO_GUI_OK_20261027 sum=73`. Exact graph comparison retained
+participants, command and required manifest, adding only scope/answer provenance.
+The three audit decisions do not represent three tasks. The actual native
+screenshot and Host record are linked in
+`output/e6-20260928/channel-policy-ask-native-result-20261028.md`.
+
+This is normal pending-task continuation, not in-flight crash/SSE acceptance.
+The previous instance's exit result remains unknown. Electron's
+`task_name_for_pid` diagnostic and unverified descendants remain limitations.
+The running policy package still excludes the later startup repair `f3ec9834`.
+
 ## Startup repair
 
 The native package showed zero sidebar channels although its Host returned the
@@ -62,8 +82,16 @@ does not contain these new Shell bytes.
 
 ## Remaining work, not replaced by this checkpoint
 
-Complete CP-ASK slot-only continuation and single-file/revocation/recovery/final
-ownership cases. Continue the existing P3/H09/P5/Office matrix and full E6 plan,
+CP-ASK slot-only continuation is complete within the limits above. The native
+single-file negative case failed: Host misread “执行前…不要询问扩大授权” as a
+positive ask-first request and created a directory question, with zero Runs or
+tool events. No answer or retry was submitted. Its source guard is now repaired;
+new regression reproduced 6 failures before the fix and the rebuilt affected
+combination passed 87/87, exit 0. This is not yet a fresh-package pass. Evidence:
+`output/e6-20260928/channel-policy-single-native-failure-20261028.md`.
+Complete the repaired single-file/revocation/recovery/final ownership cases.
+Remote main `37413fe2` (#604) is fetched but not integrated. Continue the existing
+P3/H09/P5/Office matrix and full E6 plan,
 then prepare/review the PR and verify the actual main merge. H09's provider hard
 output-cap requirement remains unproven. Do not reopen accepted duration/copy
 work, publish a release, enable main CI, upgrade global gstack or test Windows.
