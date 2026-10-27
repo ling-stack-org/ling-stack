@@ -28,6 +28,8 @@ import { ChannelIntentDiagnosticPersistenceError, createChannelIntentDiagnostics
 import { publishChannelOperationBlocker, recoverChannelOperationBlocker,
   type ChannelOperationBlockedResult } from "./channel-operation-blocker.js";
 import { channelOperationContinuationContext, channelOperationVisibleSources } from "./channel-operation-sources.js";
+import { applyChannelPendingAnswerPatch, channelPendingOperationForAnswer, freezeChannelPendingOperation,
+  parseChannelPendingAnswerPatch, type ChannelPendingAnswerPatch } from "./channel-pending-operation.js";
 import { formatServerCatalogMessage } from "@ling-stack/localization";
 import { PiRunnerAdapter } from "@ling-stack/runner-pi";
 import type { ResolvedDaemonConfig } from "../../config.js";
@@ -139,10 +141,12 @@ interface MaterializationClarifyReason {
 }
 
 interface ChannelIntentModelOutput {
-  readonly action: "no_reply" | "reply" | "visible_multi_reply" | "clarify" | "workflow_proposal" | "execute";
+  readonly action: "no_reply" | "reply" | "visible_multi_reply" | "clarify" | "workflow_proposal" | "execute" | "resolve_pending";
   readonly reason: string;
   readonly clarification?: ChannelIntentClarificationV2;
   readonly execution?: unknown;
+  readonly pendingDraft?: { readonly execution: unknown; readonly slots: unknown };
+  readonly pendingAnswer?: ChannelPendingAnswerPatch;
 }
 
 
@@ -402,6 +406,13 @@ function createReplyIntentResult(
 }
 
 function applyModelIntentOutput(input: ChannelIntentSelectorInput, output: ChannelIntentModelOutput): ChannelIntentSelectorResult | undefined {
+  if (output.action === "resolve_pending") return resolvePendingModelIntent(input, output);
+  // Once a complete Host-bound draft exists, an answer may not replace it with
+  // another graph. Cancellation/unrelated text still follows reply/clarify.
+  if ((output.action === "execute" || output.action === "workflow_proposal")
+    && channelPendingOperationForAnswer(input.store, input.sourceMessage.id)) {
+    return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
+  }
   if (output.action === "reply") {
     return createReplyIntentResult(input, output.reason, "model_policy");
   }
@@ -421,13 +432,37 @@ function applyModelIntentOutput(input: ChannelIntentSelectorInput, output: Chann
       return createReplyIntentResult(input,
         "Intent model cannot request a local target for an independently answerable content turn.");
     }
+    let pendingOperation: ChannelIntentClarificationV2["pendingOperation"];
+    if (output.pendingDraft) {
+      const { binding, candidates, routingInput } = bindModelIntentOperations(input, output.pendingDraft.execution);
+      if (binding.status !== "bound" || routingInput.sourceMessage.id !== input.sourceMessage.id
+        || clarification.missingFields.length !== 1 || clarification.missingFields[0] !== "projectInputRoot"
+        || channelPendingOperationForAnswer(input.store, input.sourceMessage.id)) {
+        return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
+      }
+      const manifest = createParticipantManifest(routingInput, candidates.map(candidate => ({ teammate: candidate.teammate,
+        stepAction: candidate.role.action })), "execute", binding.execution);
+      const ownerIds = new Set(binding.execution.operations.map(operation => operation.binding!.ownerParticipantId));
+      if (manifest.participants.some(participant => !ownerIds.has(participant.participantId) && participant.expectedOutcome !== "synthesis")) {
+        return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
+      }
+      try {
+        pendingOperation = freezeChannelPendingOperation({ store: input.store, channelId: input.channel.id,
+          sourceItemId: input.sourceMessage.id, execution: binding.execution, slots: output.pendingDraft.slots,
+          participantManifest: manifest,
+          sandbox: input.config?.sandbox });
+      } catch (error) {
+        if (!isPendingOperationValidationError(error)) throw error;
+        return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
+      }
+    }
     return createClarifyReply(
       input,
       clarifyReasonFromMissingFields(clarification.missingFields),
       "model_policy",
       output.reason,
       clarification.question,
-      clarification,
+      { ...clarification, ...(pendingOperation ? { pendingOperation } : {}) },
     );
   }
   if (output.action === "visible_multi_reply") {
@@ -436,8 +471,9 @@ function applyModelIntentOutput(input: ChannelIntentSelectorInput, output: Chann
   return createModelAssistedExecuteResult(input, output);
 }
 
-function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, output: ChannelIntentModelOutput): ChannelIntentSelectorResult {
-  const { candidates, binding, routingInput, reasonCode } = bindModelIntentOperations(input, output.execution);
+function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, output: ChannelIntentModelOutput,
+  frozenBinding?: ReturnType<typeof bindModelIntentOperations> & { readonly participantManifest?: RequiredParticipantManifestV1 }): ChannelIntentSelectorResult {
+  const { candidates, binding, routingInput, reasonCode } = frozenBinding ?? bindModelIntentOperations(input, output.execution);
   if (binding.status === "blocked") {
     return publishChannelOperationBlocker(input);
   }
@@ -452,7 +488,7 @@ function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, out
   const participants = candidates.filter((participant) => !excludedIds.has(participant.teammate.id)
     && (ownerIds.has(participant.teammate.id) || explicitlyRequiredIds.has(participant.teammate.id)));
   const decisionAction = output.action === "execute" ? "execute" : "workflow_proposal";
-  const participantManifest = createParticipantManifest(input, participants.map((participant) => ({
+  const participantManifest = frozenBinding?.participantManifest ?? createParticipantManifest(input, participants.map((participant) => ({
     teammate: participant.teammate,
     stepAction: participant.role.action,
   })), decisionAction, binding.execution);
@@ -474,7 +510,51 @@ function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, out
     "model_policy", output.reason, participants, binding.execution, capabilityBlocker ? {
       message: capabilityBlocker,
       code: binding.capabilityBlockers.length > 0 ? "participant_required_tools_unavailable" : "operation_binding_channel_tools_unavailable",
-    } : undefined);
+    } : undefined, participantManifest);
+}
+
+function isPendingOperationValidationError(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith("channel_pending_operation.");
+}
+
+function resolvePendingModelIntent(input: ChannelIntentSelectorInput, output: ChannelIntentModelOutput): ChannelIntentSelectorResult {
+  const context = channelPendingOperationForAnswer(input.store, input.sourceMessage.id);
+  if (!context || !output.pendingAnswer) return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
+  const { pending, continuation, decision } = context;
+  try {
+    applyChannelPendingAnswerPatch({ store: input.store, sourceItemId: input.sourceMessage.id,
+      patch: output.pendingAnswer, sandbox: input.config?.sandbox });
+    const resolved = input.store.resolveChannelPendingOperation({ pendingDecisionId: decision.id,
+      expectedDraftFingerprint: pending.fingerprint, answerItemId: continuation.confirmation.itemId,
+      expectedAnswerRevision: continuation.confirmation.revision!, expectedQuestionRevision: continuation.clarification.revision! }, () => {
+      // No await or tool effect is permitted between these live authority checks
+      // and the atomic proposal + decision + answer-consumption write.
+      const execution = applyChannelPendingAnswerPatch({ store: input.store, sourceItemId: input.sourceMessage.id,
+        patch: output.pendingAnswer!, sandbox: input.config?.sandbox });
+      const original = getChannelMessageView(input.store, continuation.source.itemId)!;
+      const routingInput = { ...input, channel: input.store.getChannel(input.channel.id)!, sourceMessage: original };
+      const reasonCode = detectWorkflowIntentReason(original) ?? "ordered_work_request";
+      const candidates = selectTypedProposalParticipants(routingInput, reasonCode);
+      const capabilityBlockers = execution.operations.flatMap(operation => {
+        const tools = requiredToolsForExecutionOperations([operation]);
+        const participant = candidates.find(candidate => candidate.teammate.id === operation.binding!.ownerParticipantId);
+        if (!participant) throw new Error("channel_pending_operation.participant_unavailable");
+        return tools.filter(tool => !participant.teammate.allowedTools.includes(tool)).map(tool => ({
+          operationId: operation.id, participantId: participant.teammate.id, tool }));
+      });
+      const result = createModelAssistedExecuteResult({ ...input, channel: routingInput.channel },
+        { action: "execute", reason: output.reason }, { candidates, routingInput, reasonCode, participantManifest: pending.participantManifest,
+          binding: { status: "bound", execution, excludedParticipantIds: [], capabilityBlockers } });
+      if (result.action !== "workflow_proposal") throw new Error("channel_pending_operation.invalid_publication");
+      return input.store.getChannelIntentDecision(result.intentDecisionId)!;
+    }, new Date().toISOString());
+    const proposal = resolved.decision.proposalId && input.store.getChannelExecutionProposal(resolved.decision.proposalId);
+    if (!proposal) throw new Error("channel_pending_operation.invalid_publication");
+    return recoverExistingProposalLineage(input, proposal);
+  } catch (error) {
+    if (!isPendingOperationValidationError(error)) throw error;
+    return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
+  }
 }
 
 /** The same read-only admission check governs repair and final publication. */
@@ -655,6 +735,8 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
     output = parse(repairedText);
   }
   if (output.action !== "execute" && output.action !== "workflow_proposal") return output;
+  // A frozen pending graph cannot enter the full-graph binding repair loop.
+  if (channelPendingOperationForAnswer(input.store, input.sourceMessage.id)) return output;
   const initialBinding = inspect(output);
   if (initialBinding.status !== "clarify" || requestCount >= 2) return output;
 
@@ -725,14 +807,15 @@ function parseModelIntentOutput(text: string): ChannelIntentModelOutput {
       action !== "visible_multi_reply" &&
       action !== "clarify" &&
       action !== "workflow_proposal" &&
-      action !== "execute") ||
+      action !== "execute" && action !== "resolve_pending") ||
     typeof reason !== "string" ||
     reason.trim().length === 0
   ) {
     throw new Error("Intent model output schema is invalid.");
   }
   const allowedKeys = action === "clarify"
-    ? new Set(["action", "reason", "clarification"])
+    ? new Set(["action", "reason", "clarification", "pendingDraft"])
+    : action === "resolve_pending" ? new Set(["action", "reason", "pendingAnswer"])
     : action === "execute" || action === "workflow_proposal"
       ? new Set(["action", "reason", "execution"])
       : new Set(["action", "reason"]);
@@ -744,7 +827,17 @@ function parseModelIntentOutput(text: string): ChannelIntentModelOutput {
     reason: reason.trim(),
     ...(action === "clarify" ? { clarification: parseModelClarification(record.clarification) } : {}),
     ...(action === "execute" || action === "workflow_proposal" ? { execution: record.execution } : {}),
+    ...(action === "resolve_pending" ? { pendingAnswer: parseChannelPendingAnswerPatch(record.pendingAnswer) } : {}),
+    ...(action === "clarify" && record.pendingDraft !== undefined ? { pendingDraft: parsePendingDraft(record.pendingDraft) } : {}),
   };
+}
+
+function parsePendingDraft(value: unknown): { readonly execution: unknown; readonly slots: unknown } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)
+    || Object.keys(value).length !== 2 || !("execution" in value) || !("slots" in value)) {
+    throw new Error("Intent model pending draft schema is invalid.");
+  }
+  return { execution: value.execution, slots: value.slots };
 }
 
 function parseModelClarification(value: unknown): ChannelIntentClarificationV2 {
@@ -830,6 +923,7 @@ function createWorkflowProposal(
   participants: readonly ProposalParticipantSelection[],
   boundExecution?: ChannelIntentExecutionPlanV1,
   bindingBlocker?: { readonly message: string; readonly code: string },
+  frozenParticipantManifest?: RequiredParticipantManifestV1,
 ): ChannelIntentSelectorResult {
   const existingProposal = input.store
     .listChannelExecutionProposals({ channelId: input.channel.id, sourceMessageId: input.sourceMessage.id, limit: 1 })
@@ -850,7 +944,7 @@ function createWorkflowProposal(
     ? genericWorkflowExecutionPlan(input)
     : deriveMultiParticipantExecutionPlan(input, participants));
   const persistedDecisionAction = execution ? "execute" : decisionAction;
-  const participantManifest = createParticipantManifest(
+  const participantManifest = frozenParticipantManifest ?? createParticipantManifest(
     input,
     participants.map((participant) => ({
       teammate: participant.teammate,

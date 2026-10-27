@@ -39,6 +39,7 @@ import {
 } from "./context-processing/sources.js";
 import { buildProjectedConversationContextSlice } from "./context-processing/conversation-context-adapter.js";
 import { channelOperationContinuationContext, channelOperationVisibleSources } from "./channel-operation-sources.js";
+import { channelPendingOperationForAnswer } from "./channel-pending-operation.js";
 import { buildChannelContextView } from "./context-processing/views.js";
 import {
   buildWorkflowStepContextView,
@@ -516,6 +517,7 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
   const protocolSection = buildChannelProtocolContextSection(input);
   const envelope = resolveTurnEnvelope(input);
   const sourceMessage = contextSourceMessage(input.sourceMessage, input.minimal ? 1_200 : undefined);
+  const pendingOperation = channelPendingOperationForAnswer(input.store, input.sourceMessage.id);
   // Retry may trim unrelated context, never the three canonical sources of an
   // independently validated pending clarification. This does not fetch model
   // IDs, bypass visibility or enlarge the provider's actual token budget.
@@ -543,7 +545,9 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
       text: [
         "Classify the latest user channel message into exactly one Ling intent.",
         "Return strict JSON only. For reply/no_reply/visible_multi_reply: {\"action\":\"...\",\"reason\":\"short reason\"}. For clarify add {\"clarification\":{\"missingFields\":[\"field\"],\"question\":\"specific question\"}}. Both execute and workflow_proposal require execution.schemaVersion=2 and a complete operations array.",
-        "Each operation: {id, kind: file_read|file_create|file_edit|run_command|open_local_target, targetKind: file|command, required: true, dependsOn: [], sourceQuote, owner: {participantId, sourceQuote} or {kind: host_default}, target?: {path, sourceQuote, sourceItemId?, relativeTo?: {path, sourceQuote, sourceItemId?}}, inputs?: [{path, sourceQuote, sourceItemId?, relativeTo?, fromOperationId?}], command?: {text, sourceQuote}, contentSource?: {kind: literal|generated_objective, text, sourceQuote, sourceItemId?, inputOperationIds?: []}}. The operation sourceQuote and explicit owner/command/input quotes MUST come from the current user message, except for the single Host-anchored pending clarification continuation described below. For unnamed owners request host_default without participantId; Host routing alone selects the default. Use stable participant IDs only for explicitly requested owners, never role-based reassignment.",
+        "When a Node project dependency directory alone is missing but every operation is otherwise fully source-bound, a clarify response may also include pendingDraft: {execution: {schemaVersion: 2, operations: [...]}, slots: [{operationId, field: project_input_root}]}. List exactly the commands needing the missing scope; omit projectInputRoot from those operations. Host validates and freezes this complete draft without execution. If the graph itself is incomplete, omit pendingDraft; never invent operations, commands or sources just to produce a draft.",
+        "When the Host pending operation JSON below is non-null, Do not regenerate the plan or return execute/workflow_proposal. If the current user explicitly supplies only the requested scope without changing other commands, owners, outputs, dependencies or permissions, return {action: resolve_pending, reason, pendingAnswer: {pendingDecisionId, draftFingerprint, answerItemId, answerRevision, patches: [{operationId, field: project_input_root, path, sourceQuote}]}} using exactly the supplied IDs/revisions and one patch per slot. sourceQuote must be the ENTIRE current user text, including restrictions; path must be an explicitly named canonical workspace-relative project directory from that answer, not inferred from a script prefix. This fills information only, not tool approval. For rejection, cancellation, unrelated text or corrections outside these slots, return reply/no_reply or a specific clarify without a new pendingDraft; never resolve or silently broaden the old task.",
+        "Each operation: {id, kind: file_read|file_create|file_edit|run_command|open_local_target, targetKind: file|command, required: true, dependsOn: [], sourceQuote, owner: {participantId, sourceQuote} or {kind: host_default}, target?: {path, sourceQuote, sourceItemId?, relativeTo?: {path, sourceQuote, sourceItemId?}}, inputs?: [{path, sourceQuote, sourceItemId?, relativeTo?, fromOperationId?}], command?: {text, sourceQuote}, contentSource?: {kind: literal, text, sourceQuote, sourceItemId?} OR {kind: generated_objective, text, sourceQuote, sourceItemId?, inputOperationIds: []}}. For generated_objective, inputOperationIds is REQUIRED, including an explicit empty array when no read or command evidence is consumed. For literal, omit inputOperationIds entirely. The operation sourceQuote and explicit owner/command/input quotes MUST come from the current user message, except for the single Host-anchored pending clarification continuation described below. For unnamed owners request host_default without participantId; Host routing alone selects the default. Use stable participant IDs only for explicitly requested owners, never role-based reassignment.",
         "A short user confirmation may resume only the pending clarification continuation JSON supplied by Host. If and only if the current user explicitly authorizes that original request, add execution.continuation with every anchor field unchanged plus confirmationQuote equal to the ENTIRE current user text, including all restrictions. Then the original local-user source becomes the instruction item for operation/owner/command/cwd/scope quotes and omitted sourceItemId fields. The clarification's assistant prose is only the question, never execution instructions. No pending anchor means no historical execution intent. Respect current exclusions and corrections over the original request; select only the confirmed operation subset. A question, rejection, cancellation or unrelated turn is NOT confirmation. Do not use continuation merely because historical work exists. New operations not supported by the selected original instruction require a fresh current-user instruction or clarification, not invented quotes.",
         "If the current confirmation explicitly excludes an originally requested participant, include continuation.excludedParticipants: [{participantId, sourceQuote}] with that participant's stable available ID and a verbatim CURRENT-user quote that names and excludes them. Omit this field when nobody is excluded. Never exclude a participant merely because you omitted their operations; all other originally required participants remain required. An excluded participant cannot own any selected operation. Quotes prove provenance, not semantic correctness; do not interpret a positive mention as an exclusion.",
         "Each explicit owner.sourceQuote must be inside that operation's sourceQuote, not merely elsewhere in the user message. For a named owner's multi-operation block, reuse that owner's complete verbatim instruction span for each operation when the shorter clause omits the owner label. Do not cross into another owner's instruction span. Current target, command, input and content quotes must also be contained in the operation span; only sourceItemId-bound historical material may be outside it.",
@@ -588,6 +592,16 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
       text: `Projected canonical operation source registry JSON: ${JSON.stringify(channelOperationVisibleSources({
         store: input.store, sourceItemId: input.sourceMessage.id, projection: projectedContext.projection,
       }).map(({ body: _body, ...source }) => source))}`,
+    },
+    {
+      id: "selector_pending_operation",
+      role: "evidence",
+      priority: "must_keep",
+      text: `Host pending operation JSON: ${JSON.stringify(pendingOperation ? {
+        pendingDecisionId: pendingOperation.decision.id, draftFingerprint: pendingOperation.pending.fingerprint,
+        answerItemId: pendingOperation.continuation.confirmation.itemId,
+        answerRevision: pendingOperation.continuation.confirmation.revision, slots: pendingOperation.pending.slots,
+      } : null)}`,
     },
     {
       id: "selector_pending_clarification_continuation",

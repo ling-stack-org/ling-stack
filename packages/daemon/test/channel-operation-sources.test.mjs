@@ -96,7 +96,7 @@ test("a foreign canonical item cannot enter the source registry merely because i
   const observations = f.store.listControlPlaneEvents({ workspaceId: DEFAULT_WORKSPACE_ID,
     entityType: "channel_intent_selection", entityId: f.source.id });
   assert.deepEqual(observations.filter(e => e.data.outcome === "binding_rejected").map(e => e.data.fields),
-    [["sourceQuote"], ["sourceQuote"]]);
+    [["execution.operations[].contentSource.sourceQuote"], ["execution.operations[].contentSource.sourceQuote"]]);
 });
 
 test("previous assistant text cannot be substituted for the current operation authorization quote", async (t) => {

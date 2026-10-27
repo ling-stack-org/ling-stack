@@ -11,7 +11,7 @@ export interface EffectiveChannelAiTeammateEntry {
 
 export function listEffectiveChannelAiTeammateEntries(store: RunStore, channel: Channel): readonly EffectiveChannelAiTeammateEntry[] {
   const activeTeammates = store
-    .listAiTeammates({ status: "active", includeHidden: false, limit: 100 })
+    .readAiTeammates({ status: "active", includeHidden: false, limit: 100 })
     .filter((teammate) => !isLingAgentExecutorId(teammate.id));
   const activeById = new Map(activeTeammates.map((teammate) => [teammate.id, teammate]));
   const selected = new Map<string, { teammate: AiTeammate; sources: ChannelExecutionProposalStepSource[]; isDefault: boolean }>();

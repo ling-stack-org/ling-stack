@@ -49,11 +49,17 @@ export interface ChannelOperationCandidateV2 {
   readonly commandGoal?: { readonly kind: "node_function"; readonly module: CandidatePath;
     readonly invocation: string; readonly sourceQuote: string };
   readonly contentSource?: {
-    readonly kind: "literal" | "generated_objective";
+    readonly kind: "literal";
     readonly text: string;
     readonly sourceQuote: string;
     readonly sourceItemId?: string;
-    readonly inputOperationIds?: readonly string[];
+    readonly inputOperationIds?: never;
+  } | {
+    readonly kind: "generated_objective";
+    readonly text: string;
+    readonly sourceQuote: string;
+    readonly sourceItemId?: string;
+    readonly inputOperationIds: readonly string[];
   };
 }
 
@@ -135,21 +141,21 @@ export function bindChannelOperationPlan(input: {
     const capabilityBlockers: { operationId: string; participantId: string; tool: RunTool }[] = [];
     const byId = new Map(candidate.operations.map((operation) => [operation.id, operation]));
     if (byId.size !== candidate.operations.length) fail("execution.operations", "Operation IDs must be unique.");
-    const quote = (value: string, sourceItemId = instructionItemId): ChannelOperationSourceV1 => {
+    const quote = (value: string, sourceItemId = instructionItemId, field = "sourceQuote"): ChannelOperationSourceV1 => {
       const source = input.visibleSources?.find((item) => item.itemId === sourceItemId);
       const body = sourceItemId === input.sourceItemId ? input.sourceText : source?.body;
-      if (!value.trim() || !body?.includes(value)) fail("sourceQuote", "Binding provenance is not a verbatim quote from a current projected canonical item.");
+      if (!value.trim() || !body?.includes(value)) fail(field, "Binding provenance is not a verbatim quote from a current projected canonical item.");
       return { itemId: sourceItemId, quote: value,
         ...(source ? { revision: source.revision, actorType: source.actorType } : {}) };
     };
-    const file = (target: CandidatePath): ChannelOperationFileBindingV1 => {
-      const sourceRefs = [quote(target.sourceQuote, target.sourceItemId)];
+    const file = (target: CandidatePath, field = `${operationPath}.target`): ChannelOperationFileBindingV1 => {
+      const sourceRefs = [quote(target.sourceQuote, target.sourceItemId, `${field}.sourceQuote`)];
       if (!isChannelOperationRelativePathV1(target.path) || !target.sourceQuote.includes(target.path)) {
         fail("target.path", "A file target must be a quoted workspace-relative path, not an inferred first file or display label.");
       }
       let path = target.path;
       if (target.relativeTo) {
-        sourceRefs.push(quote(target.relativeTo.sourceQuote, target.relativeTo.sourceItemId));
+        sourceRefs.push(quote(target.relativeTo.sourceQuote, target.relativeTo.sourceItemId, `${field}.relativeTo.sourceQuote`));
         if (!isChannelOperationRelativePathV1(target.relativeTo.path) || !target.relativeTo.sourceQuote.includes(target.relativeTo.path)) {
           fail("target.relativeTo", "The input directory needs its own explicit source binding.");
         }
@@ -159,9 +165,9 @@ export function bindChannelOperationPlan(input: {
       return { path, sourceRefs };
     };
     const operations = candidate.operations.map((operation): ChannelIntentExecutionOperationV1 => {
-      const source = quote(operation.sourceQuote);
+      const source = quote(operation.sourceQuote, instructionItemId, `${operationPath}.sourceQuote`);
       const defaultOwner = operation.owner.kind === "host_default";
-      const ownerSource = defaultOwner ? undefined : quote(operation.owner.sourceQuote);
+      const ownerSource = defaultOwner ? undefined : quote(operation.owner.sourceQuote, instructionItemId, `${operationPath}.owner.sourceQuote`);
       if (ownerSource && !operation.sourceQuote.includes(ownerSource.quote)) fail("owner.sourceQuote", "The named owner must belong to this operation's instruction span.");
       const ownerId = defaultOwner ? input.defaultOwnerParticipantId : operation.owner.participantId;
       const owner = input.participants.find((participant) => participant.id === ownerId);
@@ -188,15 +194,15 @@ export function bindChannelOperationPlan(input: {
           || !outsideCommand.includes(directory.sourceQuote)) {
           fail("workingDirectory", "The command directory needs its own current-operation quote, separate from command operands.");
         }
-        const directorySource = quote(directory.sourceQuote);
+        const directorySource = quote(directory.sourceQuote, instructionItemId, `${operationPath}.workingDirectory.sourceQuote`);
         if (directorySource.actorType !== undefined && directorySource.actorType !== "local_user") {
           fail("workingDirectory", "A command directory must be selected by the current local user, not model text.");
         }
         assertWorkspaceDirectory(directory.path, input.workspaceCwd);
         workingDirectory = { path: directory.path, sourceRefs: [{ ...directorySource, actorType: "local_user" }] };
       }
-      const commandFile = (target: CandidatePath): ChannelOperationFileBindingV1 => {
-        const sourceRef = quote(target.sourceQuote, target.sourceItemId);
+      const commandFile = (target: CandidatePath, field = `${operationPath}.inputs[]`): ChannelOperationFileBindingV1 => {
+        const sourceRef = quote(target.sourceQuote, target.sourceItemId, `${field}.sourceQuote`);
         if (!text(target.path) || target.path.startsWith("/") || /[\\\u0000-\u001f:*?]/u.test(target.path)
           || target.path.split("/").some(part => !part)
           || !hasExplicitChannelOperationPathQuoteV1(target.sourceQuote, target.path)) {
@@ -205,9 +211,9 @@ export function bindChannelOperationPlan(input: {
         // Cwd chooses where to launch, never how to interpret file coordinates.
         // General file targets still reject ..; only explicitly anchored command
         // inputs/modules may normalize quoted parent operands within workspace.
-        if (!target.relativeTo) return file(target);
+        if (!target.relativeTo) return file(target, field);
         const anchor = target.relativeTo;
-        const anchorSource = quote(anchor.sourceQuote, anchor.sourceItemId);
+        const anchorSource = quote(anchor.sourceQuote, anchor.sourceItemId, `${field}.relativeTo.sourceQuote`);
         if (!isChannelOperationRelativePathV1(anchor.path)
           || !hasExplicitChannelOperationPathQuoteV1(anchor.sourceQuote, anchor.path)
           || ((!anchor.sourceItemId || anchor.sourceItemId === instructionItemId)
@@ -237,7 +243,7 @@ export function bindChannelOperationPlan(input: {
       let contentSource: ChannelOperationContentSourceV1 | undefined;
       if (operation.contentSource) {
         const content = operation.contentSource;
-        const sourceRef = quote(content.sourceQuote, content.sourceItemId);
+        const sourceRef = quote(content.sourceQuote, content.sourceItemId, `${operationPath}.contentSource.sourceQuote`);
         if ((!content.sourceItemId || content.sourceItemId === instructionItemId)
           && !operation.sourceQuote.includes(content.sourceQuote)) fail("contentSource.sourceQuote", "Content must belong to this operation's instruction span.");
         if (!content.sourceQuote.includes(content.text)) fail("contentSource.text", "Content or objective text must be separately quoted, not extracted from a path suffix.");
@@ -297,11 +303,11 @@ export function bindChannelOperationPlan(input: {
       let commandGoal: ChannelNodeFunctionGoalV1 | undefined;
       if (operation.commandGoal) {
         const goal = operation.commandGoal;
-        const goalSource = quote(goal.sourceQuote);
+        const goalSource = quote(goal.sourceQuote, instructionItemId, `${operationPath}.commandGoal.sourceQuote`);
         if (!/\bnode\b/iu.test(operation.sourceQuote) || !operation.sourceQuote.includes(goal.sourceQuote) || !goal.sourceQuote.includes(goal.invocation)) {
           fail("commandGoal.sourceQuote", "The invocation must be quoted in the current operation, not supplied by prior model text.");
         }
-        const module = commandFile(goal.module);
+        const module = commandFile(goal.module, `${operationPath}.commandGoal.module`);
         const predecessors = operation.dependsOn.map(id => byId.get(id)).filter(predecessor => predecessor
           && ["file_read", "file_create", "file_edit"].includes(predecessor.kind)
           && predecessor.target && file(predecessor.target).path === module.path);
@@ -318,7 +324,7 @@ export function bindChannelOperationPlan(input: {
         exactCommands.push(command);
       }
       if (operation.command) {
-        quote(operation.command.sourceQuote);
+        quote(operation.command.sourceQuote, instructionItemId, `${operationPath}.command.sourceQuote`);
         if (!operation.sourceQuote.includes(operation.command.sourceQuote) || !operation.command.sourceQuote.includes(operation.command.text)
           || !commandMatchesPolicy(operation.command.text, { kind: "exact_command", command: operation.command.text })) {
           fail("command", "An exact command must be source-bound and pass the host shell-structure policy.");
@@ -338,7 +344,7 @@ export function bindChannelOperationPlan(input: {
           || !inputRefs.some(ref => ref.path.startsWith(root.path + "/") && /\.(?:mjs|cjs|js)$/u.test(ref.path))) {
           fail("projectInputRoot", "Node dependencies need an explicitly named current-operation project directory and source input; a command path prefix is not scope authority.");
         }
-        const rootSource = quote(root.sourceQuote);
+        const rootSource = quote(root.sourceQuote, instructionItemId, `${operationPath}.projectInputRoot.sourceQuote`);
         assertWorkspacePath(root.path, input.workspaceCwd);
         commandInputScope = { kind: "node_module_closure_v1", projectRoot: root.path,
           sourceRefs: [{ ...rootSource, actorType: "local_user" }] };
@@ -406,6 +412,15 @@ function assertWorkspacePath(path: string, workspaceCwd: string): void {
   const remainder = relative(root, physical);
   if (remainder === ".." || remainder.startsWith(`..${sep}`) || resolve(root, remainder) !== physical) {
     fail("target.path", "File target resolves through a symlink outside the workspace.");
+  }
+}
+
+/** The same filesystem boundary applies to a deferred scope field. */
+export function assertChannelOperationWorkspacePath(path: string, workspaceCwd: string): void {
+  try { assertWorkspacePath(path, workspaceCwd); }
+  catch (error) {
+    if (!(error instanceof BindingError)) throw error;
+    throw new Error("channel_pending_operation.invalid_project_scope", { cause: error });
   }
 }
 

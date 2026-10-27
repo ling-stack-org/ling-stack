@@ -68,6 +68,50 @@ test("scalar shape diagnostics distinguish missing, wrong type and invalid value
   }
 });
 
+test("planner declares generated content dependencies as required and literal content dependencies as forbidden", async t => {
+  const f = await fixture(t, [{ action: "reply", reason: "No effects in the prompt contract probe" }]);
+  await f.select();
+  assert.match(f.prompts[0], /For generated_objective, inputOperationIds is REQUIRED, including an explicit empty array when no read or command evidence is consumed/u);
+  assert.match(f.prompts[0], /For literal, omit inputOperationIds entirely/u);
+  assert.doesNotMatch(f.prompts[0], /inputOperationIds\?:/u);
+  const candidate = { schemaVersion: 2, operations: [{ id: "create", kind: "file_create", targetKind: "file",
+    required: true, dependsOn: [], owner: { participantId: owner, sourceQuote: "Engineer" },
+    sourceQuote: "@Engineer 创建 stats.mjs，导出有限数值求和函数。",
+    target: { path: "stats.mjs", sourceQuote: "stats.mjs" },
+    contentSource: { kind: "generated_objective", text: "导出有限数值求和函数", sourceQuote: "导出有限数值求和函数" } }] };
+  const bind = () => bindChannelOperationPlan({ candidate, sourceItemId: f.source.id,
+    sourceText: candidate.operations[0].sourceQuote, workspaceCwd: f.cwd,
+    participants: [f.store.getAiTeammate(owner)] });
+  assert.deepEqual(bind().shapeIssue, { path: "execution.operations[].contentSource.inputOperationIds", code: "missing" });
+  candidate.operations[0].contentSource.inputOperationIds = [];
+  const bound = bind();
+  assert.equal(bound.status, "bound", JSON.stringify(bound));
+  assert.deepEqual(bound.execution.operations[0].binding.contentSource.inputOperationIds, []);
+  assert.deepEqual(bound.execution.operations[0].binding.effectScope.readPaths, []);
+});
+
+test("provenance diagnostics identify the fixed field path without persisting rejected quote text", async t => {
+  for (const [mutate, field] of [
+    [p => { p.operations[0].sourceQuote = "PRIVATE_REJECTED_OPERATION"; }, "execution.operations[].sourceQuote"],
+    [p => { p.operations[0].owner.sourceQuote = "PRIVATE_REJECTED_OWNER"; }, "execution.operations[].owner.sourceQuote"],
+    [p => { p.operations[0].command.sourceQuote = "PRIVATE_REJECTED_COMMAND"; }, "execution.operations[].command.sourceQuote"],
+  ]) {
+    const candidate = plan(); mutate(candidate);
+    const f = await fixture(t, [execute(candidate)]);
+    const result = await f.select();
+    assert.equal(result.action, "blocked");
+    assert.equal(result.errorCode, "channel_operation_plan_invalid");
+    const diagnostics = f.diagnostics();
+    const rejected = diagnostics.filter(event => event.data.outcome === "binding_rejected");
+    assert.equal(rejected.length, 2);
+    assert.deepEqual(rejected.map(event => event.data.fields), [[field], [field]]);
+    assert.doesNotMatch(JSON.stringify(diagnostics.map(event => event.data)), /PRIVATE_REJECTED|Private model reason|node --version/u);
+    assert.equal(f.store.listRuns({ channelId: f.channel.id }).length, 0);
+    assert.equal(f.store.listTasks({ channelId: f.channel.id }).length, 0);
+    assert.equal(f.store.listChannelExecutionProposals({ channelId: f.channel.id }).length, 0);
+  }
+});
+
 for (const [name, mutate, path, code] of [
   ["missing execution", () => undefined, "execution", "missing"],
   ["empty operations", p => ({ ...p, operations: [] }), "execution.operations", "empty_array"],

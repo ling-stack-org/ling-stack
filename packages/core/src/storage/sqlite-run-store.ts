@@ -5,6 +5,7 @@ import { publishNormalRunNarration } from "./sqlite/normal-run-narration-publica
 import { isCurrentRunExecutionOwner } from "./sqlite/run-execution-admission.js";
 import { SqliteTeammateDirectMessageRuntimeStore } from "./sqlite/teammate-direct-message-runtime-store.js";
 import { withCancellationFence } from "./sqlite/cancellation-transaction.js";
+import { applyChannelPendingOperationMigration } from "./sqlite/channel-pending-operation-migration.js";
 import { assertConversationMediaExecutionAdmission, assertReusableConversationMediaExecutionAdmission } from "./sqlite/conversation-media-execution-admission.js";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -1346,6 +1347,8 @@ export class SqliteRunStore implements RunStore {
         hasAiTeammate: (id) => Boolean(this.getAiTeammate(id)),
         getConversationItem: (id) => this.getConversationItem(id),
         getEffectiveTurnContextAssignment: (turnId) => this.getEffectiveTurnContextAssignment(turnId),
+        getEffectiveConversationItem: (id) => this.getEffectiveConversationItem(id),
+        listConversationItemsForSegment: (input) => this.listConversationItemsForSegment(input),
       },
     );
     this.channelProposals = new SqliteChannelProposalStore(
@@ -1620,6 +1623,13 @@ export class SqliteRunStore implements RunStore {
           applyChannelEvidencePublicationMigration({
             database: this.database,
             artifactsDir: this.paths.artifactsDir,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          // Legacy manifest repair may rebuild channel_intent_decisions. Create
+          // its dependent ledger only after those parent-table repairs finish.
+          applyChannelPendingOperationMigration({
+            database: this.database,
             hasMigration: (version) => this.hasMigration(version),
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
@@ -3874,6 +3884,10 @@ export class SqliteRunStore implements RunStore {
     return this.aiTeammates.listAiTeammates(options);
   }
 
+  readAiTeammates(options: ListAiTeammatesOptions = {}): AiTeammate[] {
+    return this.aiTeammates.readAiTeammates(options);
+  }
+
   updateAiTeammate(id: string, input: AiTeammateUpdateInput, now: string): AiTeammate | undefined {
     return this.aiTeammates.updateAiTeammate(id, input, now);
   }
@@ -4724,6 +4738,16 @@ export class SqliteRunStore implements RunStore {
 
   listChannelIntentDecisions(options: ListChannelIntentDecisionsOptions = {}): ChannelIntentDecision[] {
     return this.channelIntentDecisions.listChannelIntentDecisions(options);
+  }
+
+  getChannelPendingOperationResolution(pendingDecisionId: string): import("../channel-pending-operation.js").ChannelPendingOperationResolution | undefined {
+    return this.channelIntentDecisions.getChannelPendingOperationResolution(pendingDecisionId);
+  }
+
+  resolveChannelPendingOperation(input: import("../channel-pending-operation.js").ResolveChannelPendingOperationInput,
+    publish: () => ChannelIntentDecision, now: string): import("../channel-pending-operation.js").ChannelPendingOperationResolved {
+    if (this.legacyContinuityFixtureMode) throw new Error("channel_pending_operation.continuity_unavailable");
+    return this.channelIntentDecisions.resolveChannelPendingOperation(input, publish, now);
   }
 
   createChannelExecutionProposal(input: CreateChannelExecutionProposalInput, now: string): ChannelExecutionProposal {

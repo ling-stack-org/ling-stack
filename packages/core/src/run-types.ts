@@ -2081,6 +2081,8 @@ export interface RunStore extends NativeExecutionStore, HarnessProjectionStore, 
   createAiTeammate(input: CreateAiTeammateInput, now: string): AiTeammate;
   getAiTeammate(id: string): AiTeammate | undefined;
   listAiTeammates(options?: ListAiTeammatesOptions): AiTeammate[];
+  /** Read-only snapshot; safe within an existing admission transaction. */
+  readAiTeammates(options?: ListAiTeammatesOptions): AiTeammate[];
   updateAiTeammate(id: string, input: AiTeammateUpdateInput, now: string): AiTeammate | undefined;
   disableAiTeammate(id: string, now: string): AiTeammate | undefined;
   hardDeleteAiTeammate(id: string, input: HardDeleteAiTeammateInput, now: string): HardDeleteAiTeammateResult | undefined;
@@ -2295,6 +2297,10 @@ export interface RunStore extends NativeExecutionStore, HarnessProjectionStore, 
   createChannelIntentDecision(input: CreateChannelIntentDecisionInput, now: string): ChannelIntentDecision;
   getChannelIntentDecision(id: string): ChannelIntentDecision | undefined;
   listChannelIntentDecisions(options?: ListChannelIntentDecisionsOptions): ChannelIntentDecision[];
+  getChannelPendingOperationResolution(pendingDecisionId: string): import("./channel-pending-operation.js").ChannelPendingOperationResolution | undefined;
+  /** One synchronous Host transaction for resolution, proposal and decision; no OS effects. */
+  resolveChannelPendingOperation(input: import("./channel-pending-operation.js").ResolveChannelPendingOperationInput,
+    publish: () => ChannelIntentDecision, now: string): import("./channel-pending-operation.js").ChannelPendingOperationResolved;
   createChannelExecutionProposal(input: CreateChannelExecutionProposalInput, now: string): ChannelExecutionProposal;
   getChannelExecutionProposal(id: string): ChannelExecutionProposal | undefined;
   listChannelExecutionProposals(options: ListChannelExecutionProposalsOptions): ChannelExecutionProposal[];
@@ -2877,6 +2883,7 @@ export type TeammateStoreFacet = RunStoreFacet<
   | "createAiTeammate"
   | "getAiTeammate"
   | "listAiTeammates"
+  | "readAiTeammates"
   | "updateAiTeammate"
   | "disableAiTeammate"
   | "hardDeleteAiTeammate"

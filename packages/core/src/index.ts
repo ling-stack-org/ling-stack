@@ -170,6 +170,7 @@ export * from "./effective-skill-registry.js";
 export * from "./mcp-types.js";
 export * from "./mcp-metadata-types.js";
 export * from "./workspace-types.js";
+export * from "./channel-pending-operation.js";
 export * from "./teammate-model-binding.js";
 export * from "./patch/index.js";
 export * from "./runtime-permissions.js";

@@ -422,6 +422,21 @@ export type ChannelIntentDecisionV2CreatedBy = (typeof channelIntentDecisionV2Cr
 export interface ChannelIntentClarificationV2 {
   readonly missingFields: readonly string[];
   readonly question: string;
+  /** Host-bound draft only. Its existence grants no scheduling or tool authority. */
+  readonly pendingOperation?: ChannelIntentPendingOperationV1;
+}
+
+export interface ChannelIntentPendingOperationV1 {
+  readonly schemaVersion: 1;
+  readonly sourceRevision: number;
+  readonly sourceAssignmentId: string;
+  readonly sourceAssignmentRevision: number;
+  readonly authorityFingerprint: string;
+  readonly execution: ChannelIntentExecutionPlanV1;
+  readonly participantManifest: RequiredParticipantManifestV1;
+  /** Only these typed fields may change when this question is answered. */
+  readonly slots: readonly { readonly operationId: string; readonly field: "project_input_root" }[];
+  readonly fingerprint: string;
 }
 
 export const commandMatchExecutableValuesV1 = [

@@ -31,6 +31,7 @@ import {
   type ChannelIntentDecisionV2Action,
   type ChannelIntentExecutionPlanV1,
   type ChannelIntentExecutionOperationV1,
+  type ChannelIntentPendingOperationV1,
   type CommandMatchPolicyV1,
   type RequiredParticipantManifestV1,
   type ContextSegment,
@@ -683,10 +684,39 @@ function isConversationWorkspaceFileRef(value: unknown): value is {
 }
 
 function isClarification(value: unknown): boolean {
-  return isRecordWithOnlyKeys(value, new Set(["missingFields", "question"]))
+  return isRecordWithOnlyKeys(value, new Set(["missingFields", "question", "pendingOperation"]))
     && isUniqueTextArray(value.missingFields)
     && value.missingFields.length > 0
-    && isText(value.question, 8_192);
+    && isText(value.question, 8_192)
+    && (value.pendingOperation === undefined || isChannelIntentPendingOperationV1(value.pendingOperation));
+}
+
+export function isChannelIntentPendingOperationV1(value: unknown): value is ChannelIntentPendingOperationV1 {
+  if (!isRecordWithOnlyKeys(value, new Set(["schemaVersion", "sourceRevision", "sourceAssignmentId", "sourceAssignmentRevision", "authorityFingerprint", "execution", "participantManifest", "slots", "fingerprint"]))
+    || value.schemaVersion !== 1 || !isNonNegativeInteger(value.sourceRevision)
+    || !isText(value.sourceAssignmentId) || !isNonNegativeInteger(value.sourceAssignmentRevision)
+    || typeof value.authorityFingerprint !== "string" || !/^[a-f0-9]{64}$/u.test(value.authorityFingerprint)
+    || typeof value.fingerprint !== "string" || !/^[a-f0-9]{64}$/u.test(value.fingerprint)
+    || !isChannelIntentExecutionPlanV1(value.execution) || value.execution.bindingVersion !== 1
+    || !isRequiredParticipantManifestV1(value.participantManifest)
+    || !Array.isArray(value.slots) || value.slots.length === 0 || value.slots.length > 64) return false;
+  const execution = value.execution;
+  const participants = value.participantManifest.participants;
+  if (execution.operations.some(operation => !participants.some(participant => participant.participantId === operation.binding!.ownerParticipantId
+    && (!operation.required || participant.requiredOperationIds.includes(operation.id))))
+    || participants.some(participant => participant.requiredOperationIds.some(id => !execution.operations.some(operation =>
+      operation.id === id && operation.required && operation.binding!.ownerParticipantId === participant.participantId)))) return false;
+  const ids = new Set<string>();
+  return value.slots.every(slot => {
+    if (!isRecordWithOnlyKeys(slot, new Set(["operationId", "field"])) || !isText(slot.operationId)
+      || slot.field !== "project_input_root" || ids.has(slot.operationId)) return false;
+    ids.add(slot.operationId);
+    const operation = execution.operations.find(operation => operation.id === slot.operationId);
+    return operation?.kind === "run_command" && operation.binding?.commandInputScope === undefined
+      && operation.binding?.effectScope.exactCommands.length === 1
+      && /^node\s/u.test(operation.binding.effectScope.exactCommands[0]!)
+      && operation.binding.inputRefs.some(ref => /\.(?:mjs|cjs|js)$/u.test(ref.path));
+  });
 }
 
 export function isChannelIntentExecutionPlanV1(value: unknown): value is ChannelIntentExecutionPlanV1 {
