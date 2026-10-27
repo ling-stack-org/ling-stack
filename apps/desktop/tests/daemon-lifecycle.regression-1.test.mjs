@@ -13,14 +13,14 @@ import { DesktopDaemonLifecycle } from "../dist/main/daemon-lifecycle.js";
 // seam=existing spawnDaemon; no_claim=actual packaged GUI (controlled child/health).
 function fixture(t, outcome, beforeReady) {
   const children = [], diagnostics = [], unexpected = [];
-  let active;
+  let active, external = false;
   const workspace = "/tmp/ling-e6-r03-owned-observer";
   const lifecycle = new DesktopDaemonLifecycle({
     baseUrl: "http://127.0.0.1:17991", daemonEntryPath: new URL("../package.json", import.meta.url).pathname,
     defaultWorkspaceCwd: workspace, shutdownTimeoutMs: 0,
     probePort: async () => "free",
     fetch: async () => {
-      if (!active || active.exitCode !== null || active.signalCode !== null || active.stopping) throw new Error("offline");
+      if (!external && (!active || active.exitCode !== null || active.signalCode !== null || active.stopping)) throw new Error("offline");
       await beforeReady?.();
       return new Response(JSON.stringify({ service: "ling-stack-daemon", defaultWorkspaceCwd: workspace }));
     },
@@ -56,8 +56,41 @@ function fixture(t, outcome, beforeReady) {
       for (const io of child.stdio) io?.destroy();
     }
   });
-  return { lifecycle, children, unexpected, diagnostics };
+  return { lifecycle, children, unexpected, diagnostics, reuseExternal: () => { external = true; } };
 }
+
+test("stop receipts distinguish unowned, confirmed clean stop, repeat and reused successor", async t => {
+  const f = fixture(t, "closed");
+  assert.deepEqual(await f.lifecycle.stopOwnedDaemon(), { kind: "not_owned" });
+  await f.lifecycle.ensureStarted();
+  const receipt = await f.lifecycle.stopOwnedDaemon();
+  assert.deepEqual(receipt, { kind: "owned_stopped", pid: f.children[0].pid, code: 0, signal: null });
+  assert.deepEqual(await f.lifecycle.stopOwnedDaemon(), receipt);
+  f.reuseExternal();
+  assert.equal((await f.lifecycle.ensureStarted()).ownedByDesktop, false);
+  assert.deepEqual(await f.lifecycle.stopOwnedDaemon(), { kind: "not_owned" });
+});
+
+test("late clean exit retains actual stop receipt for explicit retry without a second signal", async t => {
+  const f = fixture(t, "pending");
+  await f.lifecycle.ensureStarted();
+  await assert.rejects(f.lifecycle.stopOwnedDaemon(), error => error?.code === "stop_unconfirmed");
+  f.children[0].finish(0);
+  assert.deepEqual(await f.lifecycle.stopOwnedDaemon(), {
+    kind: "owned_stopped", pid: f.children[0].pid, code: 0, signal: null,
+  });
+  assert.deepEqual(f.children[0].killSignals, ["SIGTERM"]);
+});
+
+test("old stop receipt cannot apply to a new owned Host", async t => {
+  const f = fixture(t, "closed");
+  await f.lifecycle.ensureStarted();
+  const first = await f.lifecycle.stopOwnedDaemon();
+  await f.lifecycle.ensureStarted();
+  const second = await f.lifecycle.stopOwnedDaemon();
+  assert.notEqual(second.pid, first.pid);
+  assert.deepEqual(second, { kind: "owned_stopped", pid: f.children[1].pid, code: 0, signal: null });
+});
 
 test("blocked original Host retains ownership and rejects ensure/restart without a successor", async t => {
   const f = fixture(t, "blocked");

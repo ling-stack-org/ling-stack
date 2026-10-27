@@ -608,7 +608,7 @@ test("closed gate never composes a provider even when the daemon returned a type
   assert.equal(status.state, "connected");
   assert.equal(factoryCalls, 0);
   assert.equal(bindingFactoryCalls, 0);
-  assert.equal(daemon.statusListenerCount, 0, "closed gates do not add provider lifecycle observers");
+  assert.equal(daemon.statusListenerCount, 1, "Host drain must fence execution authority even with Computer Use disabled");
   assert.equal(runtime.cuaDriverCoordinator, undefined);
 });
 
@@ -1514,6 +1514,7 @@ function fakeDaemon(initialAuthority, options = {}) {
     async stopOwnedDaemon() {
       this.stopCalls += 1;
       options.onStop?.();
+      return { kind: "owned_stopped", pid: 42000, code: 0, signal: null };
     },
     onStatusChanged(listener) {
       statusListeners.add(listener);

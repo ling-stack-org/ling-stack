@@ -106,6 +106,8 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/conversations/context-compaction-projection.ts",
   // Explicit cold resource-bootstrap delta; listing alone grants no approval.
   "apps/desktop/main/daemon-lifecycle.ts",
+  // Explicit shutdown/lease-consumer delta, independently reviewed before binding.
+  "apps/desktop/main/desktop-runtime.ts",
   "packages/core/src/daemon-resource-bootstrap.ts",
   // Explicit graceful-tree/final-settlement/terminal-handoff review delta.
   // Merely listing these inputs grants no approval; current bytes need review.

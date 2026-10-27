@@ -7,6 +7,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { DesktopDaemonLifecycle } from "../dist/main/daemon-lifecycle.js";
+import { DesktopRuntime } from "../dist/main/desktop-runtime.js";
+import { createLockedTaskContinuationDaemonClient } from "../dist/main/locked-task-continuation/daemon-client.js";
 
 // Regression: E6-R03 — default Desktop spawn must preserve FD3/FD4 holes and private FD5.
 // Found by /qa on 2026-10-26
@@ -58,7 +60,22 @@ for (const outcome of ["blocked", "closed"]) test(`default spawn observes a real
     await assert.rejects(lifecycle.restart(), error => error?.code === "stop_blocked");
     assert.equal(diagnostics.filter(x => x.event === "daemon.spawned").length, 1);
   } else {
-    await lifecycle.stopOwnedDaemon();
+    const continuation = createLockedTaskContinuationDaemonClient({ daemonBaseUrl: `http://127.0.0.1:${port}`, bridgeToken: "fixture" });
+    let releases = 0;
+    const runtime = new DesktopRuntime({
+      daemon: lifecycle, daemonBaseUrl: `http://127.0.0.1:${port}`, workspaceCwd: workspace,
+      bridgeToken: "fixture", resourcesRoot: parent, userDataPath: parent,
+      platform: "darwin", architecture: "arm64", readSystemSessionLocked: async () => false,
+      featureFlags: { bundledEmbedded: { darwin: false, win32: false }, packagedProvider: { darwin: false, win32: false } },
+      lockedTaskContinuationClient: {
+        async publish() {},
+        async release(input) { releases++; await continuation.release(input); },
+      },
+    });
+    await runtime.ensureStarted();
+    await Promise.all(Array.from({ length: 8 }, () => runtime.shutdown()));
+    assert.equal(releases, 0, "the real stopped endpoint must not receive a release RPC");
+    await assert.rejects(fetch(`http://127.0.0.1:${port}/health`));
     assert.equal(child.exitCode, 0);
     assert.equal(child.signalCode, null);
     assert.equal(lifecycle.status.state, "disconnected");

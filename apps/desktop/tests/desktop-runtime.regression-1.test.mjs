@@ -43,7 +43,7 @@ test("prepareShutdown is single-flight and keeps resources until original Host s
   await f.runtime.shutdown();
   assert.deepEqual(f.events, [
     "coordinator.drain:desktop_quit", "daemon.stop.begin", "daemon.stop.end",
-    "coordinator.shutdown", "platform.dispose", "continuation.release",
+    "coordinator.shutdown", "platform.dispose",
   ]);
   assert.equal(f.daemon.stopCalls, 1);
 });
@@ -66,7 +66,48 @@ test("unconfirmed stop retains every owner and an explicit retry accepts late cl
   assert.equal(f.daemon.stopCalls, 2, "explicit retry must recheck the original owner, not reuse a rejected preflight");
   assert.equal(f.coordinator.shutdownCalls, 1);
   assert.equal(f.disposals(), 1);
+  assert.equal(f.releases(), 0, "the stopped Host has already discarded its in-memory lease");
+});
+
+test("shutdown never calls an endpoint after its owned Host has really stopped", async () => {
+  let endpointOpen = true;
+  const f = fixture({
+    stop: async () => { endpointOpen = false; },
+    release: async () => { if (!endpointOpen) throw new Error("fixture_endpoint_closed"); },
+  });
+  await f.runtime.ensureStarted();
+  await Promise.all(Array.from({ length: 8 }, () => f.runtime.shutdown()));
+  assert.equal(endpointOpen, false);
+  assert.equal(f.daemon.stopCalls, 1);
+  assert.equal(f.coordinator.shutdownCalls, 1);
+  assert.equal(f.disposals(), 1);
+  assert.equal(f.releases(), 0);
+});
+
+test("reused Host still receives lease release and its transport failure is not suppressed", async () => {
+  const error = new Error("fixture_reused_host_release_failed");
+  const f = fixture({ owned: false, release: async () => { throw error; } });
+  await f.runtime.ensureStarted();
+  await assert.rejects(f.runtime.shutdown(), actual => actual === error);
   assert.equal(f.releases(), 1);
+  assert.equal(f.disposals(), 1);
+});
+
+test("reused Host lease is released exactly once after ordinary cleanup", async () => {
+  const f = fixture({ owned: false });
+  await f.runtime.ensureStarted();
+  await Promise.all(Array.from({ length: 8 }, () => f.runtime.shutdown()));
+  assert.equal(f.releases(), 1);
+  assert.deepEqual(f.events.slice(-3), ["coordinator.shutdown", "platform.dispose", "continuation.release"]);
+});
+
+test("missing stop disposition cannot stand in for actual stop proof", async () => {
+  const f = fixture({ stopResult: undefined });
+  await f.runtime.ensureStarted();
+  await assert.rejects(f.runtime.shutdown(), error => error?.code === "stop_unconfirmed");
+  assert.equal(f.coordinator.shutdownCalls, 0);
+  assert.equal(f.disposals(), 0);
+  assert.equal(f.releases(), 0);
 });
 
 test("owned drain during in-flight enable cannot turn authority loss into destructive cleanup", async () => {
@@ -209,13 +250,16 @@ function fixture(options = {}) {
   const makeAuthority = epoch => Object.freeze({ daemonAuthorityEpoch: "fixture", bridgeConnectionId: `bridge-${epoch}`,
     desktopInstanceEpoch: epoch, workspaceCwd, readinessDetailsV1: false });
   const daemon = {
-    status: { state: "connected", baseUrl, ownedByDesktop: true },
+    status: { state: "connected", baseUrl, ownedByDesktop: options.owned !== false },
     cuaDriverAuthorityTuple: makeAuthority(1), stopCalls: 0, restartCalls: 0,
     async ensureStarted() { return this.status; },
     async stopOwnedDaemon() {
       this.stopCalls++; events.push("daemon.stop.begin");
       await options.stop?.();
       events.push("daemon.stop.end");
+      return Object.hasOwn(options, "stopResult") ? options.stopResult
+        : options.owned === false ? { kind: "not_owned" }
+          : { kind: "owned_stopped", pid: 42000, code: 0, signal: null };
     },
     async restart() {
       this.restartCalls++; events.push("daemon.restart");
@@ -245,7 +289,8 @@ function fixture(options = {}) {
     coordinatorFactory: () => coordinator,
     platformOwner: { platform: "darwin", async start() {}, async dispose() { disposed++; events.push("platform.dispose"); } },
     lockedTaskContinuationClient: {
-      async publish() { published++; }, async release() { released++; events.push("continuation.release"); },
+      async publish() { published++; },
+      async release() { released++; events.push("continuation.release"); await options.release?.(); },
     },
   });
   return { runtime, daemon, coordinator, events, disposals: () => disposed, releases: () => released, publications: () => published };

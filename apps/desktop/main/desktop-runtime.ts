@@ -36,6 +36,7 @@ import {
   DesktopDaemonLifecycleError,
   type DesktopDaemonCuaDriverAuthorityTuple,
   type DesktopDaemonLifecycle,
+  type DesktopDaemonStopResult,
 } from "./daemon-lifecycle.js";
 import { createLockedControlCapabilityAttestor } from "./locked-computer-control/capability-attestor.js";
 import { createLockedControlDaemonClient } from "./locked-computer-control/daemon-client.js";
@@ -163,6 +164,7 @@ export class DesktopRuntime {
   private shutdownRequested = false;
   private hostDraining = false;
   private hostStopConfirmed = false;
+  private hostStopResult: DesktopDaemonStopResult | undefined;
   private hostDrainFailure: unknown;
   private prepareShutdownPromise: Promise<void> | undefined;
   private shutdownCleanupStarted = false;
@@ -409,6 +411,7 @@ export class DesktopRuntime {
         this.hostDraining = false;
         this.hostDrainFailure = undefined;
         this.hostStopConfirmed = false;
+        this.hostStopResult = undefined;
         successorStarted = true;
         const status = await this.options.daemon.restart();
         this.assertCanStart();
@@ -566,6 +569,9 @@ export class DesktopRuntime {
       await attempt(() => this.shutdownCoordinator("desktop_quit"));
       await attempt(() => this.options.platformOwner?.dispose());
       await attempt(() => this.enqueueLockedTaskContinuation(async () => {
+        // Owned Host shutdown has already cleared its in-memory continuation
+        // lease. Only a reused, still-independent Host needs the release RPC.
+        if (this.hostStopResult?.kind === "owned_stopped") return;
         await this.lockedTaskContinuationClient.release?.({
           workspaceCwd: this.workspaceCwd,
           desktopInstanceId: this.desktopInstanceId,
@@ -1031,6 +1037,7 @@ export class DesktopRuntime {
     if (!this.hostDraining) {
       this.hostDraining = true;
       this.hostStopConfirmed = false;
+      this.hostStopResult = undefined;
       this.hostDrainFailure = undefined;
     }
     this.coordinatorValue?.beginHostDrain?.(reason);
@@ -1038,7 +1045,12 @@ export class DesktopRuntime {
 
   private async awaitOriginalHostStop(): Promise<void> {
     try {
-      await this.options.daemon.stopOwnedDaemon();
+      const result = await this.options.daemon.stopOwnedDaemon();
+      if (result?.kind !== "not_owned"
+        && !(result?.kind === "owned_stopped" && result.code === 0 && result.signal === null)) {
+        throw new DesktopDaemonLifecycleError("stop_unconfirmed", this.options.daemonBaseUrl);
+      }
+      this.hostStopResult = result;
     } catch (error) {
       if (error instanceof DesktopDaemonLifecycleError
         && (error.code === "stop_blocked" || error.code === "stop_unconfirmed")) throw error;

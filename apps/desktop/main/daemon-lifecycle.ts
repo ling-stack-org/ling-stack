@@ -48,6 +48,11 @@ export interface DesktopDaemonOwnedExit {
   readonly signal: NodeJS.Signals | null;
 }
 
+export type DesktopDaemonStopResult = Readonly<
+  | { kind: "owned_stopped"; pid: number | undefined; code: 0; signal: null }
+  | { kind: "not_owned" }
+>;
+
 export type DesktopDaemonUnexpectedExit = DesktopDaemonOwnedExit & {
   readonly baseUrl: string;
 };
@@ -113,6 +118,7 @@ export class DesktopDaemonLifecycle {
   private readonly bundledCuaDriverGateEnabled: boolean;
   private child: ChildProcess | undefined;
   private ownedShutdown: OwnedDaemonShutdown | undefined;
+  private ownedStopResult: DesktopDaemonStopResult | undefined;
   private engineAuthority: {
     readonly child: ChildProcess;
     readonly result: Promise<ExecutionEngineHostAuthority | undefined>;
@@ -123,7 +129,7 @@ export class DesktopDaemonLifecycle {
   private cuaDriverAuthorityGeneration = 0;
   private ensureStartedPromise: Promise<DesktopDaemonStatus> | undefined;
   private restartPromise: Promise<DesktopDaemonStatus> | undefined;
-  private stopOwnedDaemonPromise: Promise<void> | undefined;
+  private stopOwnedDaemonPromise: Promise<DesktopDaemonStopResult> | undefined;
   private startupGeneration = 0;
   private statusGeneration = 0;
 
@@ -217,6 +223,7 @@ export class DesktopDaemonLifecycle {
     const existingProbe = await this.probeDaemon();
     this.assertStartupCurrent(startupGeneration);
     if (existingProbe === "compatible") {
+      this.ownedStopResult = undefined;
       this.options.onDiagnostic?.("daemon.reused", { baseUrl: this.options.baseUrl });
       return this.update({ state: "connected", baseUrl: this.options.baseUrl, ownedByDesktop: false });
     }
@@ -295,6 +302,7 @@ export class DesktopDaemonLifecycle {
     }
     this.options.onDiagnostic?.("daemon.spawned", { pid: child.pid ?? null, baseUrl: this.options.baseUrl });
     this.child = child;
+    this.ownedStopResult = undefined;
     const ownedShutdown: OwnedDaemonShutdown = { child, listeners: new Set(), stopRequested: false };
     this.ownedShutdown = ownedShutdown;
     const shutdownChannel = (child.stdio as readonly unknown[] | undefined)?.[5];
@@ -379,6 +387,9 @@ export class DesktopDaemonLifecycle {
       }
       if (ownedShutdown.stopRequested || ownedShutdown.phase) {
         if (code === 0 && signal === null) {
+          // Keep the actual exit receipt for an explicit retry after a finite
+          // observation timeout. A disconnected status alone is not proof.
+          this.ownedStopResult = Object.freeze({ kind: "owned_stopped", pid: child.pid, code: 0, signal: null });
           this.child = undefined;
           this.ownedShutdown = undefined;
           this.engineAuthority = undefined;
@@ -592,6 +603,7 @@ export class DesktopDaemonLifecycle {
         continue;
       }
       if (probe === "compatible") {
+        this.ownedStopResult = undefined;
         return this.update({
           state: "connected",
           baseUrl: this.options.baseUrl,
@@ -624,7 +636,7 @@ export class DesktopDaemonLifecycle {
     }
   }
 
-  stopOwnedDaemon(): Promise<void> {
+  stopOwnedDaemon(): Promise<DesktopDaemonStopResult> {
     this.clearCuaDriverAuthorityTuple();
     const stopStatusGeneration = ++this.statusGeneration;
     this.startupGeneration += 1;
@@ -632,9 +644,9 @@ export class DesktopDaemonLifecycle {
     let pending = this.stopOwnedDaemonPromise;
     if (!pending) {
       const child = this.child;
-      let resolve!: () => void;
+      let resolve!: (result: DesktopDaemonStopResult) => void;
       let reject!: (error: unknown) => void;
-      pending = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+      pending = new Promise<DesktopDaemonStopResult>((done, failed) => { resolve = done; reject = failed; });
       // State listeners are synchronous and may request stop again. Install
       // single-flight before stopChild publishes state or sends any signal.
       this.stopOwnedDaemonPromise = pending;
@@ -650,13 +662,21 @@ export class DesktopDaemonLifecycle {
           }
         },
       );
-      try { void (child ? this.stopChild(child) : Promise.resolve()).then(resolve, reject); }
+      try {
+        void (child
+          ? this.stopChild(child).then((): DesktopDaemonStopResult => Object.freeze({
+              kind: "owned_stopped", pid: child.pid, code: 0, signal: null,
+            }))
+          : Promise.resolve(this.ownedStopResult ?? Object.freeze({ kind: "not_owned" } as const)))
+          .then(resolve, reject);
+      }
       catch (error) { reject(error); }
     }
-    return pending.then(() => {
+    return pending.then(result => {
       if (stopStatusGeneration === this.statusGeneration) {
         this.update({ state: "disconnected", baseUrl: this.options.baseUrl, ownedByDesktop: false });
       }
+      return result;
     });
   }
 
