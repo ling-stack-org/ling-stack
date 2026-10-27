@@ -44,6 +44,7 @@ export class EngineManagementFeature {
   private store?: ExecutionEngineProfileStore;
   private readonly probes = new Map<ExternalExecutionEngineId, { readonly controller: AbortController; readonly result: Promise<ExecutionEngineProbe> }>();
   private readonly logins: EngineLoginManager;
+  private readonly lifecycleTasks = new Set<Promise<void>>();
   private closing?: Promise<void>;
   private readonly installs = new Map<ExternalExecutionEngineId, { readonly phase: ManagedInstallPhase; readonly error?: string; readonly executablePath?: string; readonly version?: string; readonly updatedAt: string }>();
   private readonly secretResolver: SecretResolver;
@@ -70,7 +71,7 @@ export class EngineManagementFeature {
       logins: this.logins,
       secretStore,
       probe: (profile, signal, mode) => this.probe(profile, signal, mode),
-      discover: () => discoverEngines(),
+      discover: (signal) => this.trackLifecycle(signal, () => discoverEngines({ signal })),
       install: (engineId, signal) => this.install(engineId, signal),
       installStatus: (engineId) => this.installStatus(engineId),
       beforeProfileChange: (engineId) => this.logins.assertIdle(engineId),
@@ -86,7 +87,8 @@ export class EngineManagementFeature {
     if (this.closing) return this.closing;
     this.authority.close();
     for (const probe of this.probes.values()) probe.controller.abort();
-    this.closing = Promise.allSettled([this.logins.close(), ...[...this.probes.values()].map((probe) => probe.result)]).then((results) => {
+    this.closing = Promise.allSettled([this.logins.close(), ...[...this.probes.values()].map((probe) => probe.result),
+      ...this.lifecycleTasks]).then((results) => {
       this.store?.close();
       this.store = undefined;
       const failed = results.find((result) => result.status === "rejected");
@@ -110,19 +112,36 @@ export class EngineManagementFeature {
       return status;
     };
     mark("downloading");
-    try {
-      const install = this.options.lifecycle?.install ?? installManagedEngine;
-      const result = await install(engineId, this.options.userPaths, { signal });
-      return mark("installed", { executablePath: result.executablePath, version: result.version });
-    } catch (error) {
-      if (signal.aborted) {
-        this.installs.delete(engineId);
+    return this.trackLifecycle(signal, async () => {
+      try {
+        signal.throwIfAborted();
+        const install = this.options.lifecycle?.install ?? installManagedEngine;
+        const result = await install(engineId, this.options.userPaths, { signal });
+        signal.throwIfAborted();
+        return mark("installed", { executablePath: result.executablePath, version: result.version });
+      } catch (error) {
+        if (signal.aborted) this.installs.delete(engineId);
+        else {
+          const message = error instanceof Error ? error.message : String(error);
+          mark("failed", { error: message });
+        }
         throw error;
       }
-      const message = error instanceof Error ? error.message : String(error);
-      mark("failed", { error: message });
+    });
+  }
+
+  /** Shutdown owns actual settlement, not just delivery of a cancellation signal. */
+  private trackLifecycle<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+    const result = Promise.resolve().then(() => { signal.throwIfAborted(); return work(); });
+    const settled = result.then(() => undefined, (error: unknown) => {
+      // Expected cancellation is not a shutdown error; cleanup errors must still surface.
+      if (signal.aborted && error === signal.reason) return;
       throw error;
-    }
+    });
+    this.lifecycleTasks.add(settled);
+    const remove = (): void => { this.lifecycleTasks.delete(settled); };
+    void settled.then(remove, remove);
+    return result;
   }
 
   private probe(profile: ExecutionEngineProfile, signal: AbortSignal, mode: ExecutionEngineProbeMode): Promise<ExecutionEngineProbe> {
