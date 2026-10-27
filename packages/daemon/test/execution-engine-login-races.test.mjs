@@ -131,7 +131,7 @@ async function runFixture(target, scenario) {
   const base = new URL(`../${target}/features/execution-engines/`, import.meta.url);
   const modules = new Map(["native-login", "native-secrets", "codex-login", "codex-connection", "login-manager", "authority", "feature", "controller",
     "claude-environment", "windows-supervisor", "kimi-auth-state", "native-auth-file", "kimi-native-executable", "kimi-terminal-login",
-    "engine-secret-store", "secret-profile"]
+    "engine-secret-store", "secret-profile", "engine-scanner", "managed-engine-installer"]
     .map((name) => [`./${name}.js`, new URL(`${name}.${extension}`, base).href]));
   const requestUrl = new URL(`../../shared/request.${extension}`, base).href;
   const realUrls = new Set([...modules.values(), requestUrl]);
