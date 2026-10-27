@@ -33,6 +33,20 @@ export function registerExecutionEngineIpc(input: {
     if (args.length !== 0) invalid();
     return (client) => client.listProfiles();
   });
+  bind(DESKTOP_IPC_CHANNELS.executionEnginesDiscover, (args) => {
+    if (args.length !== 0) invalid();
+    return (client) => client.discover();
+  });
+  bind(DESKTOP_IPC_CHANNELS.executionEnginesInstall, (args) => {
+    if (args.length !== 1) invalid();
+    const engineId = readEngineId(args[0]);
+    return (client) => client.install(engineId);
+  });
+  bind(DESKTOP_IPC_CHANNELS.executionEnginesInstallStatus, (args) => {
+    if (args.length !== 1) invalid();
+    const engineId = readEngineId(args[0]);
+    return (client) => client.installStatus(engineId);
+  });
   bind(DESKTOP_IPC_CHANNELS.executionEngineProfileGet, (args) => {
     if (args.length !== 1) invalid();
     const engineId = readEngineId(args[0]);

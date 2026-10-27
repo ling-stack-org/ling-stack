@@ -21,6 +21,7 @@ export * from "./provider-diagnostics.js";
 export type * from "./runner-readiness.js";
 export * from "./runner-acceptance.js";
 export * from "./execution-engines.js";
+export * from "./engine-lifecycle.js";
 export * from "./threads.js";
 export type * from "./conversations.js";
 export * from "./conversation-continuity.js";

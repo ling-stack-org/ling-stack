@@ -5,6 +5,7 @@ import { assertProfileRevision, ExecutionEngineProfileError, isExternalExecution
   parseExecutionEngineProfileConfiguration, type ExecutionEngineProfileStore } from "@ling-stack/core";
 import { readJsonBody } from "../../shared/request.js";
 import { EngineAuthorityError, type EngineManagementAuthority } from "./authority.js";
+import { ManagedInstallError } from "./managed-engine-installer.js";
 import { EngineProbeBusyError } from "./installation-probe.js";
 import type { EngineLoginManager } from "./login-manager.js";
 import { EngineLoginError } from "./native-login.js";
@@ -18,6 +19,9 @@ export class EngineManagementController {
     readonly authority: EngineManagementAuthority;
     readonly getStore: () => ExecutionEngineProfileStore;
     readonly probe?: (profile: ExecutionEngineProfile, signal: AbortSignal, mode: ExecutionEngineProbeMode) => Promise<ExecutionEngineProbe>;
+    readonly discover?: () => Promise<unknown>;
+    readonly install?: (engineId: ExternalExecutionEngineId, signal: AbortSignal) => Promise<unknown>;
+    readonly installStatus?: (engineId: ExternalExecutionEngineId) => unknown;
     readonly onProfileChanged?: (engineId: ExternalExecutionEngineId) => void;
     readonly beforeProfileChange?: (engineId: ExternalExecutionEngineId) => void;
     readonly logins?: EngineLoginManager;
@@ -57,11 +61,17 @@ export class EngineManagementController {
         writeEngineJson(response, 200, { revoked: true }, origin);
         return true;
       }
+      if (url.pathname === `${prefix}/discovery` && request.method === "GET") {
+        if (!this.options.discover) { writeEngineJson(response, 404, { error: "engine_route_not_found" }, origin); return true; }
+        this.options.authority.authorize(request);
+        writeEngineJson(response, 200, await this.options.discover(), origin);
+        return true;
+      }
       if (url.pathname === prefix && request.method === "GET") {
         writeEngineJson(response, 200, { profiles: this.options.getStore().list() }, origin);
         return true;
       }
-      const match = /^\/execution-engines\/([^/]+)\/(profile|probe|auth)(?:\/([^/]+))?$/.exec(url.pathname);
+      const match = /^\/execution-engines\/([^/]+)\/(profile|probe|auth|install)(?:\/([^/]+))?$/.exec(url.pathname);
       const engineId = match?.[1];
       const secretRoute = match?.[2] === "profile" && match[3] === "secret";
       if (!isExternalExecutionEngineId(engineId) || (match?.[3] && match?.[2] !== "auth" && !secretRoute)) {
@@ -116,6 +126,29 @@ export class EngineManagementController {
           this.options.authority.authorize(request);
           writeEngineJson(response, 200, result, origin);
         } else writeEngineJson(response, 405, { error: "engine_method_not_allowed" }, origin);
+        return true;
+      }
+      if (match?.[2] === "install") {
+        if (match[3]) { writeEngineJson(response, 404, { error: "engine_route_not_found" }, origin); return true; }
+        if (!this.options.install || !this.options.installStatus) { writeEngineJson(response, 404, { error: "engine_route_not_found" }, origin); return true; }
+        if (request.method === "GET") {
+          writeEngineJson(response, 200, { install: this.options.installStatus(engineId) }, origin);
+          return true;
+        }
+        if (request.method !== "POST") { writeEngineJson(response, 405, { error: "engine_method_not_allowed" }, origin); return true; }
+        this.options.authority.authorize(request);
+        this.options.beforeProfileChange?.(engineId);
+        const abort = new AbortController();
+        const closed = (): void => { if (!response.writableEnded) abort.abort(); };
+        response.once("close", closed);
+        try {
+          const signal = AbortSignal.any([abort.signal, this.options.authority.lifetime(principal)]);
+          const result = await this.options.install(engineId, signal);
+          this.options.authority.authorize(request);
+          writeEngineJson(response, 200, { install: result }, origin);
+        } finally {
+          response.off("close", closed);
+        }
         return true;
       }
       if (match?.[2] === "probe") {
@@ -213,6 +246,7 @@ function classifyError(error: unknown): { readonly status: number; readonly code
   if (error instanceof EngineSecretStoreError) return { status: 500, code: error.code };
   if (error instanceof EngineLoginError) return { status: error.code === "engine_login_not_found" ? 404 : 409, code: error.code };
   if (error instanceof EngineProbeBusyError) return { status: 409, code: error.code };
+  if (error instanceof ManagedInstallError) return { status: error.message.startsWith("managed_install_unsupported_engine") ? 400 : 500, code: error.message.split(":")[0] ?? "managed_install_failed" };
   if (error instanceof EngineAuthorityError) {
     return { status: error.code === "engine_authority_required" ? 401 : error.code === "engine_enrollment_rate_limited" ? 429 : 403, code: error.code };
   }
