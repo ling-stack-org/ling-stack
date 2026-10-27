@@ -114,7 +114,7 @@
     "apps/desktop/scripts/cua-driver-parent-lease-stream-writer.mjs": "7efd979d0ec1445d3e1c30f306c9a33e4f181b8062ec4adbc87bf0caa7bb90ee",
     "apps/desktop/scripts/cua-driver-signing/after-pack.mjs": "46dfa66bf3582d6654f6c39c46e98d45f1425dada974447a7f7aaff64e8197cb",
     "apps/desktop/scripts/cua-driver-signing/after-sign.mjs": "14b9c771fe8e1b084216f6fe760ec0d20500490ad257f97efc312847052e48e4",
-    "apps/desktop/scripts/cua-driver-signing/artifact-build-completed.mjs": "456edeb4adb56c332468451f34800501ef2235e5cbcfd01064bc93c7f4db6abb",
+    "apps/desktop/scripts/cua-driver-signing/artifact-build-completed.mjs": "0334a0a609fbc132b013598a158fd0ea229fea457e3319af4846d0e941f5bafa",
     "apps/desktop/scripts/cua-driver-signing/darwin-platform-signer.mjs": "c4fcb9ea0c468bb5d8cc08a772e26467af414f5365b93aecdd1f8ecc55df3538",
     "apps/desktop/scripts/cua-driver-signing/dmg-attachment-custody.mjs": "bdba1977e0de2d1b06bae39ee466aacf90c2b85e460da73af990c1b2345d91b3",
     "apps/desktop/scripts/cua-driver-signing/dmg-input-snapshot.mjs": "db6339159cf33b6acb7ed56ef669a52f331c279ef7bb8a4a55bf090684bf0c6e",
