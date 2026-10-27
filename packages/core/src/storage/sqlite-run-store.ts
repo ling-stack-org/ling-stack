@@ -6,6 +6,7 @@ import { isCurrentRunExecutionOwner } from "./sqlite/run-execution-admission.js"
 import { SqliteTeammateDirectMessageRuntimeStore } from "./sqlite/teammate-direct-message-runtime-store.js";
 import { withCancellationFence } from "./sqlite/cancellation-transaction.js";
 import { applyChannelPendingOperationMigration } from "./sqlite/channel-pending-operation-migration.js";
+import { applyChannelPendingAuthorityMigration, getChannelPendingAuthorityVersions } from "./sqlite/channel-pending-authority.js";
 import { assertConversationMediaExecutionAdmission, assertReusableConversationMediaExecutionAdmission } from "./sqlite/conversation-media-execution-admission.js";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -1629,6 +1630,11 @@ export class SqliteRunStore implements RunStore {
           // Legacy manifest repair may rebuild channel_intent_decisions. Create
           // its dependent ledger only after those parent-table repairs finish.
           applyChannelPendingOperationMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyChannelPendingAuthorityMigration({
             database: this.database,
             hasMigration: (version) => this.hasMigration(version),
             recordMigration: (version, name) => this.recordMigration(version, name),
@@ -4742,6 +4748,10 @@ export class SqliteRunStore implements RunStore {
 
   getChannelPendingOperationResolution(pendingDecisionId: string): import("../channel-pending-operation.js").ChannelPendingOperationResolution | undefined {
     return this.channelIntentDecisions.getChannelPendingOperationResolution(pendingDecisionId);
+  }
+
+  getChannelPendingAuthorityVersions(input: import("../channel-pending-operation.js").GetChannelPendingAuthorityVersionsInput): import("../channel-pending-operation.js").ChannelPendingAuthorityVersions {
+    return getChannelPendingAuthorityVersions(this.database, input);
   }
 
   resolveChannelPendingOperation(input: import("../channel-pending-operation.js").ResolveChannelPendingOperationInput,

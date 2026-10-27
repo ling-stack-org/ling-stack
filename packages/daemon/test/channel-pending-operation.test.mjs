@@ -28,6 +28,9 @@ async function fixture(t, options = {}) {
     allowedTools: ["read", "bash"] }, now);
   store.replaceTeammateChannelMemberships(owner, [{ channelId: channel.id }], now);
   if (options.engineer) store.replaceTeammateChannelMemberships("teammate_builtin_engineer", [{ channelId: channel.id }], now);
+  const council = options.council ? store.createAiCouncil({ displayName: "Pending authority council",
+    members: [{ teammateId: owner }] }, now) : undefined;
+  if (council) store.upsertChannelCouncilPolicy(channel.id, { attachedCouncilIds: [council.id] }, now);
   const original = appendChannelItemFixture(store, { channelId: channel.id, authorType: "local-user", body: options.body ?? body,
     mentions: [{ kind: "ai-teammate", id: owner, label: "QA" },
       ...(options.engineer ? [{ kind: "ai-teammate", id: "teammate_builtin_engineer", label: "Engineer" }] : [])] }, now);
@@ -53,7 +56,7 @@ async function fixture(t, options = {}) {
     pendingAnswer: { pendingDecisionId: decision.id, draftFingerprint: decision.clarification.pendingOperation.fingerprint,
       answerItemId: answer.id, answerRevision: store.getConversationItem(answer.id).revision,
       patches: [{ operationId: "validate", field: "project_input_root", path: "project", sourceQuote: answer.body }] } });
-  return { cwd, channel, original, initial, decision, answer, prompts, patch, select, now,
+  return { cwd, channel, council, original, initial, decision, answer, prompts, patch, select, now,
     get store() { return store; }, reopen() { store.close(); store = createSqliteRunStore(cwd); } };
 }
 
@@ -115,6 +118,7 @@ test("policy drift while the model is answering blocks publication", async t => 
   const f = await fixture(t);
   const result = await f.select(f.answer, f.patch(), () => f.store.updateChannel(f.channel.id, { allowedTools: ["read"] }, f.now));
   assert.equal(result.action, "blocked");
+  assert.equal(result.errorCode, "channel_pending_operation_authority_changed");
   assert.equal(f.store.listChannelExecutionProposals({ channelId: f.channel.id }).length, 0);
 });
 
@@ -126,8 +130,137 @@ test("policy is checked again inside the atomic publication, not only before it"
   };
   const result = await f.select(f.answer, f.patch());
   assert.equal(result.action, "blocked");
+  assert.equal(result.errorCode, "channel_pending_operation_authority_changed");
   assert.equal(f.store.getChannelPendingOperationResolution(f.decision.id), undefined);
   assert.equal(f.store.listChannelExecutionProposals({ channelId: f.channel.id }).length, 0);
+});
+
+// Regression: CP-REVOKE-20261028-02 — an authority rejection was mislabeled
+// as invalid model JSON, telling the user to retry an expired operation.
+// Found by /qa on 2026-10-28; see the engine-lifecycle native acceptance report.
+for (const regenerated of [false, true]) test(`revoked pending authority keeps its own blocker even with regenerated=${regenerated}`, async t => {
+  const f = await fixture(t);
+  f.store.updateChannel(f.channel.id, { allowedTools: ["read"] }, "2026-10-27T09:00:01.000Z");
+  const output = regenerated ? { action: "execute", reason: "Unexpected whole plan", execution: candidate() } : f.patch();
+  const result = await f.select(f.answer, output);
+  assert.equal(result.action, "blocked");
+  assert.equal(result.errorCode, "channel_pending_operation_authority_changed");
+  assert.match(result.aiReply.body, /权限|authorization/u);
+  assert.doesNotMatch(result.aiReply.body, /可重试本次请求|retry the request/u);
+  const decision = f.store.getChannelIntentDecision(result.intentDecisionId);
+  assert.equal(decision.errorCode, result.errorCode);
+  assert.deepEqual(f.store.listChannelExecutionProposals({ channelId: f.channel.id }), []);
+  assert.deepEqual(f.store.listRuns({ channelId: f.channel.id }), []);
+  assert.equal(f.store.getChannelPendingOperationResolution(f.decision.id), undefined);
+  f.store.updateChannel(f.channel.id, { allowedTools: ["read", "bash"] }, "2026-10-27T09:00:02.000Z");
+  f.reopen();
+  const calls = f.prompts.length;
+  const replay = await f.select(f.answer, new Error("recovery must not call the model"));
+  assert.equal(replay.errorCode, result.errorCode);
+  assert.equal(replay.aiReply.id, result.aiReply.id);
+  assert.equal(replay.intentDecisionId, result.intentDecisionId);
+  assert.equal(f.prompts.length, calls);
+  assert.deepEqual(f.store.listChannelExecutionProposals({ channelId: f.channel.id }), []);
+});
+
+test("restoring the same policy before an answer cannot revive an older authority revision", async t => {
+  const f = await fixture(t);
+  f.store.updateChannel(f.channel.id, { allowedTools: ["read"] }, "2026-10-27T09:00:01.000Z");
+  f.store.updateChannel(f.channel.id, { allowedTools: ["read", "bash"] }, "2026-10-27T09:00:02.000Z");
+  const result = await f.select(f.answer, f.patch());
+  assert.equal(result.action, "blocked");
+  assert.equal(result.errorCode, "channel_pending_operation_authority_changed");
+  assert.deepEqual(f.store.listChannelExecutionProposals({ channelId: f.channel.id }), []);
+  assert.equal(f.store.getChannelPendingOperationResolution(f.decision.id), undefined);
+});
+
+// Independent review found that equal values/timestamps do not prove that
+// authority stayed unchanged. These public Store writes use the same timestamp.
+for (const scope of ["workspace", "channel", "approval", "participant", "membership", "council_policy", "council_member", "council"]) {
+  test(`same-time ${scope} authority ABA stays expired across Store reopen`, async t => {
+    const f = await fixture(t, { council: scope.startsWith("council") });
+    if (scope === "workspace") {
+      const old = f.store.getWorkspaceSettings();
+      f.store.updateWorkspaceSettings({ defaultAuthorizationMode: "ask", defaultWorkspaceAccessMode: "read_only" }, f.now);
+      f.store.updateWorkspaceSettings({ defaultAuthorizationMode: old.defaultAuthorizationMode,
+        defaultWorkspaceAccessMode: old.defaultWorkspaceAccessMode,
+        defaultPermissionMode: old.defaultPermissionMode, defaultPermissionPreset: old.defaultPermissionPreset }, f.now);
+    } else if (scope === "channel") {
+      f.store.updateChannel(f.channel.id, { allowedTools: ["read"] }, f.now);
+      f.store.updateChannel(f.channel.id, { allowedTools: ["read", "bash"] }, f.now);
+    } else if (scope === "approval") {
+      const old = f.store.getApprovalPolicy();
+      f.store.updateApprovalPolicy({ toolDecisions: { bash: "deny" } }, old.updatedAt);
+      f.store.updateApprovalPolicy({ toolDecisions: old.toolDecisions }, old.updatedAt);
+    } else if (scope === "participant") {
+      const old = f.store.getAiTeammate(owner);
+      f.store.updateAiTeammate(owner, { allowedTools: ["read"] }, old.updatedAt);
+      f.store.updateAiTeammate(owner, { allowedTools: old.allowedTools }, old.updatedAt);
+    } else if (scope === "membership") {
+      f.store.replaceTeammateChannelMemberships(owner, [], f.now);
+      f.store.replaceTeammateChannelMemberships(owner, [{ channelId: f.channel.id }], f.now);
+    } else if (scope === "council_policy") {
+      f.store.upsertChannelCouncilPolicy(f.channel.id, { attachedCouncilIds: [] }, f.now);
+      f.store.upsertChannelCouncilPolicy(f.channel.id, { attachedCouncilIds: [f.council.id] }, f.now);
+    } else if (scope === "council_member") {
+      f.store.replaceAiCouncilMembers(f.council.id, [{ teammateId: owner, enabled: false }], f.now);
+      f.store.replaceAiCouncilMembers(f.council.id, [{ teammateId: owner, enabled: true }], f.now);
+    } else {
+      f.store.updateAiCouncil(f.council.id, { status: "paused" }, f.now);
+      f.store.updateAiCouncil(f.council.id, { status: "active" }, f.now);
+    }
+    f.reopen();
+    const result = await f.select(f.answer, f.patch());
+    assert.equal(result.action, "blocked");
+    assert.equal(result.errorCode, "channel_pending_operation_authority_changed");
+    assert.deepEqual(f.store.listChannelExecutionProposals({ channelId: f.channel.id }), []);
+    assert.deepEqual(f.store.listRuns({ channelId: f.channel.id }), []);
+    assert.equal(f.store.getChannelPendingOperationResolution(f.decision.id), undefined);
+  });
+}
+
+test("theme changes and no-op permission writes do not expire a pending operation", async t => {
+  const f = await fixture(t), old = f.store.getWorkspaceSettings();
+  f.store.updateWorkspaceSettings({ theme: "dark" }, "2026-10-27T09:00:01.000Z");
+  f.store.updateWorkspaceSettings({ defaultAuthorizationMode: old.defaultAuthorizationMode,
+    defaultWorkspaceAccessMode: old.defaultWorkspaceAccessMode }, "2026-10-27T09:00:02.000Z");
+  f.reopen();
+  const result = await f.select(f.answer, f.patch());
+  assert.equal(result.action, "workflow_proposal");
+  assert.equal(f.store.listChannelExecutionProposals({ channelId: f.channel.id }).length, 1);
+});
+
+for (const scope of ["channel", "approval", "participant"]) test(`timestamp-only ${scope} writes preserve pending authority`, async t => {
+  const f = await fixture(t), later = "2026-10-27T09:00:02.000Z";
+  if (scope === "channel") f.store.updateChannel(f.channel.id, { allowedTools: f.channel.allowedTools }, later);
+  else if (scope === "approval") f.store.updateApprovalPolicy({ toolDecisions: f.store.getApprovalPolicy().toolDecisions }, later);
+  else f.store.updateAiTeammate(owner, { allowedTools: f.store.getAiTeammate(owner).allowedTools }, later);
+  f.reopen();
+  const result = await f.select(f.answer, f.patch());
+  assert.equal(result.action, "workflow_proposal");
+  assert.equal(f.store.listChannelExecutionProposals({ channelId: f.channel.id }).length, 1);
+});
+
+// Healthy contract: authority-storage integrity failures belong to the Host,
+// not the model's patch validator, and cannot leave a publication behind.
+for (const damage of ["missing trigger", "missing version"]) test(`pending resolution propagates ${damage} without a model-plan diagnostic`, async t => {
+  const f = await fixture(t);
+  if (damage === "missing trigger") f.store.database.exec("DROP TRIGGER pending_authority_channel_update");
+  else f.store.database.prepare("DELETE FROM channel_pending_authority_versions WHERE scope='channel' AND owner_id=?").run(f.channel.id);
+  await assert.rejects(f.select(f.answer, f.patch()), /channel_pending_authority\.(?:schema_conflict|unavailable)/u);
+  assert.deepEqual(f.store.listChannelExecutionProposals({ channelId: f.channel.id }), []);
+  assert.deepEqual(f.store.listRuns({ channelId: f.channel.id }), []);
+  assert.deepEqual(f.store.listChannelIntentDecisions({ sourceItemId: f.answer.id }), []);
+  assert.equal(f.store.getChannelPendingOperationResolution(f.decision.id), undefined);
+});
+
+for (const action of ["reply", "no_reply"]) test(`authority drift does not turn unrelated ${action} into an execution blocker`, async t => {
+  const f = await fixture(t);
+  f.store.updateChannel(f.channel.id, { allowedTools: ["read"] }, "2026-10-27T09:00:01.000Z");
+  const result = await f.select(f.answer, { action, reason: "Unrelated or declining text does not resume the pending operation" });
+  assert.ok(["continue", "no_reply"].includes(result.action));
+  assert.deepEqual(f.store.listChannelExecutionProposals({ channelId: f.channel.id }), []);
+  assert.deepEqual(f.store.listRuns({ channelId: f.channel.id }), []);
 });
 
 test("a question replaced during the model request cannot revive its old draft", async t => {

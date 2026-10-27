@@ -30,6 +30,12 @@ const blockers = {
     zh: "本次操作规划未通过格式或来源校验，未启动任何队友、工具或任务。无需重新列出本来没有的文件，也无需增加权限；可重试本次请求。",
     en: "The operation plan failed schema or source validation. No teammate, tool or task was started. No extra file inputs or permissions are needed; retry the request.",
   },
+  channel_pending_operation_authority_changed: {
+    key: "channel-pending-authority-blocker",
+    reason: "The pending operation's frozen authority no longer matches the effective channel, participant, workspace or sandbox policy. No plan or execution was admitted; restoring permissions does not resume it.",
+    zh: "等待确认期间，频道、队友、工作范围或沙盒权限已变化，原待执行操作已过期，未启动任何队友、工具或任务。补充回答或恢复原权限都不会自动继续；如仍需执行，请按当前权限发起新的任务。",
+    en: "Channel, participant, workspace or sandbox authorization changed while confirmation was pending. The original operation has expired; no teammate, tool or task was started. Answering or restoring permissions will not resume it. If execution is still needed, create a new task under the current permissions.",
+  },
 } as const;
 type BlockerCode = keyof typeof blockers;
 const capabilityCode = "operation_binding_host_capability_unavailable" as const;

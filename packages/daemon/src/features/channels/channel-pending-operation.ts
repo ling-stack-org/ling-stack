@@ -11,26 +11,39 @@ import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-pr
 import { assertChannelOperationWorkspacePath } from "./channel-operation-bindings.js";
 import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 
+function withoutUpdateTime<T extends { readonly updatedAt: string }>(value: T): Omit<T, "updatedAt"> {
+  const { updatedAt: _updatedAt, ...authority } = value;
+  return authority;
+}
+
 /** A proposal identity, not permission to execute. No provider credentials enter this snapshot. */
 export function channelPendingAuthorityFingerprint(store: RunStore, channelId: string, sandbox: unknown): string {
   const channel = store.getChannel(channelId);
   if (!channel || channel.status !== "active") throw new Error("channel_pending_operation.channel_unavailable");
   const settings = store.getWorkspaceSettings();
   const { updatedAt: _protocolUpdatedAt, ...protocol } = resolveEffectiveChannelCollaborationProtocol({ store, channel }).protocol;
+  const participants = [...listEffectiveChannelAiTeammateEntries(store, channel)]
+    .sort((a, b) => a.teammate.id.localeCompare(b.teammate.id));
+  const executor = store.getAiTeammate(LING_AGENT_EXECUTOR_ID);
+  const approval = withoutUpdateTime(store.getApprovalPolicy());
+  // Read after any lazy default initialization. Persisted epochs, not a caller's
+  // clock or equal restored values, preserve revocation across Store reopen.
+  const authorityVersions = store.getChannelPendingAuthorityVersions({ workspaceId: channel.workspaceId, channelId,
+    participantIds: [...participants.map(entry => entry.teammate.id), ...(executor ? [executor.id] : [])] });
   const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
     : value && typeof value === "object" ? Object.fromEntries(Object.entries(value)
       .filter(([, item]) => item !== undefined).sort(([a], [b]) => a.localeCompare(b))
       .map(([key, item]) => [key, canonical(item)])) : value;
   return createHash("sha256").update(JSON.stringify(canonical({
+    authorityVersions,
     channel: { id: channel.id, status: channel.status, boundPath: channel.boundPath,
-      authorityRevision: channel.updatedAt,
       workspaceBinding: channel.workspaceBinding, defaultProviderPresetId: channel.defaultProviderPresetId,
       defaultTeammateId: channel.defaultTeammateId, allowedTools: channel.allowedTools, runtimePolicy: channel.runtimePolicy },
     protocol,
-    participants: [...listEffectiveChannelAiTeammateEntries(store, channel)].sort((a, b) => a.teammate.id.localeCompare(b.teammate.id)),
-    executor: store.getAiTeammate(LING_AGENT_EXECUTOR_ID),
+    participants: participants.map(entry => ({ ...entry, teammate: withoutUpdateTime(entry.teammate) })),
+    executor: executor && withoutUpdateTime(executor),
     permissions: { authorization: settings.defaultAuthorizationMode, access: settings.defaultWorkspaceAccessMode,
-      mode: settings.defaultPermissionMode, preset: settings.defaultPermissionPreset, approval: store.getApprovalPolicy() },
+      mode: settings.defaultPermissionMode, preset: settings.defaultPermissionPreset, approval },
     sandbox,
   }))).digest("hex");
 }
@@ -59,6 +72,21 @@ export function channelPendingOperationForAnswer(store: RunStore, sourceItemId: 
   const decision = continuation && store.getChannelIntentDecision(continuation.anchor.clarificationDecisionId);
   const pending = decision?.clarification?.pendingOperation;
   return continuation && decision && pending ? { continuation, decision, pending } : undefined;
+}
+
+export class ChannelPendingOperationAuthorityChangedError extends Error {
+  constructor() { super("channel_pending_operation.authority_changed"); }
+}
+
+/** Restoring the same policy values does not restore the frozen authority revision. */
+export function assertChannelPendingOperationAuthority(input: {
+  readonly store: RunStore; readonly channelId: string; readonly pending: ChannelIntentPendingOperationV1; readonly sandbox?: unknown;
+}): void {
+  const channel = input.store.getChannel(input.channelId);
+  if (!channel || channel.status !== "active"
+    || input.pending.authorityFingerprint !== channelPendingAuthorityFingerprint(input.store, input.channelId, input.sandbox)) {
+    throw new ChannelPendingOperationAuthorityChangedError();
+  }
 }
 
 export interface ChannelPendingScopePatch {
@@ -104,8 +132,8 @@ export function applyChannelPendingAnswerPatch(input: {
     || pending.fingerprint !== channelPendingOperationFingerprintV1(pending)
     || pending.sourceRevision !== continuation.source.revision || patch.answerItemId !== answer.itemId
     || pending.sourceAssignmentId !== assignment?.id || pending.sourceAssignmentRevision !== assignment.revision
-    || patch.answerRevision !== answer.revision || pending.authorityFingerprint !== channelPendingAuthorityFingerprint(
-      input.store, decision.channelId, input.sandbox)) throw new Error("channel_pending_operation.stale_patch");
+    || patch.answerRevision !== answer.revision) throw new Error("channel_pending_operation.stale_patch");
+  assertChannelPendingOperationAuthority({ store: input.store, channelId: decision.channelId, pending, sandbox: input.sandbox });
   if (patch.patches.length !== pending.slots.length || new Set(patch.patches.map(item => item.operationId)).size !== patch.patches.length
     || patch.patches.some(item => !pending.slots.some(slot => slot.operationId === item.operationId && slot.field === item.field))) {
     throw new Error("channel_pending_operation.slot_mismatch");

@@ -31,7 +31,8 @@ import { ChannelIntentDiagnosticPersistenceError, createChannelIntentDiagnostics
 import { publishChannelOperationBlocker, recoverChannelOperationBlocker,
   type ChannelOperationBlockedResult } from "./channel-operation-blocker.js";
 import { channelOperationContinuationContext, channelOperationVisibleSources } from "./channel-operation-sources.js";
-import { applyChannelPendingAnswerPatch, channelPendingOperationForAnswer, freezeChannelPendingOperation,
+import { applyChannelPendingAnswerPatch, assertChannelPendingOperationAuthority, ChannelPendingOperationAuthorityChangedError,
+  channelPendingOperationForAnswer, freezeChannelPendingOperation,
   parseChannelPendingAnswerPatch, type ChannelPendingAnswerPatch } from "./channel-pending-operation.js";
 import { formatServerCatalogMessage } from "@ling-stack/localization";
 import { PiRunnerAdapter } from "@ling-stack/runner-pi";
@@ -412,9 +413,18 @@ function applyModelIntentOutput(input: ChannelIntentSelectorInput, output: Chann
   if (output.action === "resolve_pending") return resolvePendingModelIntent(input, output);
   // Once a complete Host-bound draft exists, an answer may not replace it with
   // another graph. Cancellation/unrelated text still follows reply/clarify.
-  if ((output.action === "execute" || output.action === "workflow_proposal")
-    && channelPendingOperationForAnswer(input.store, input.sourceMessage.id)) {
-    return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
+  if (output.action === "execute" || output.action === "workflow_proposal") {
+    const context = channelPendingOperationForAnswer(input.store, input.sourceMessage.id);
+    if (context) {
+      try {
+        assertChannelPendingOperationAuthority({ store: input.store, channelId: context.decision.channelId,
+          pending: context.pending, sandbox: input.config?.sandbox });
+      } catch (error) {
+        if (!(error instanceof ChannelPendingOperationAuthorityChangedError)) throw error;
+        return publishChannelOperationBlocker(input, "channel_pending_operation_authority_changed");
+      }
+      return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
+    }
   }
   if (output.action === "reply") {
     return createReplyIntentResult(input, output.reason, "model_policy");
@@ -578,6 +588,9 @@ function resolvePendingModelIntent(input: ChannelIntentSelectorInput, output: Ch
     if (!proposal) throw new Error("channel_pending_operation.invalid_publication");
     return recoverExistingProposalLineage(input, proposal);
   } catch (error) {
+    if (error instanceof ChannelPendingOperationAuthorityChangedError) {
+      return publishChannelOperationBlocker(input, "channel_pending_operation_authority_changed");
+    }
     if (!isPendingOperationValidationError(error)) throw error;
     return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
   }

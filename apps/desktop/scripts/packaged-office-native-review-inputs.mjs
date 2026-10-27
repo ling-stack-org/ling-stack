@@ -104,6 +104,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   // Explicit pending-operation closure; listing these inputs grants no approval.
   "packages/core/src/channel-pending-operation.ts",
   "packages/core/src/storage/sqlite/channel-pending-operation-migration.ts",
+  "packages/core/src/storage/sqlite/channel-pending-authority.ts",
   "packages/daemon/src/features/channels/channel-pending-operation.ts",
   // Host-issued channel dependency scope; listing alone grants no approval.
   "packages/daemon/src/features/channels/channel-command-input-policy.ts",

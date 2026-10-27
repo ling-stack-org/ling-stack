@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import {
   DEFAULT_WORKSPACE_ID,
+  LING_AGENT_ID,
   approvalSideEffectFingerprintV1,
   createApprovalResumeBasisV1,
   createSqliteRunStore,
@@ -2342,6 +2343,20 @@ test("sqlite channel workspace migration self-heals old channel and task columns
 
     const database = new DatabaseSync(databasePath);
     try {
+      // This fixture models an older database, before authority migration 192.
+      // A current authority trigger correctly refuses dropping a guarded column.
+      assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=192").get().name, "add_channel_pending_authority_versions");
+      const authorityTriggers = ["workspace", "channel", "participant", "approval_policies", "teammate_channel_memberships",
+        "channel_collaboration_protocols", "channel_council_policies", "ai_councils", "ai_council_members", "settings"]
+        .flatMap(scope => ["insert", "update", "delete"].map(operation => `pending_authority_${scope}_${operation}`));
+      for (const name of authorityTriggers) {
+        const trigger = database.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?").get(name);
+        assert.ok(trigger?.sql.includes("channel_pending_authority_versions"));
+        database.exec(`DROP TRIGGER ${name}`);
+      }
+      database.exec("DROP TABLE channel_pending_authority_versions; DELETE FROM schema_migrations WHERE version=192");
+      assert.equal(database.prepare("SELECT name FROM sqlite_master WHERE name='channel_pending_authority_versions'").get(), undefined);
+      assert.equal(database.prepare("SELECT version FROM schema_migrations WHERE version=192").get(), undefined);
       database.exec(`
         ALTER TABLE channels DROP COLUMN default_teammate_id;
         ALTER TABLE tasks DROP COLUMN assignee_teammate_id;
@@ -2384,6 +2399,12 @@ test("sqlite channel workspace migration self-heals old channel and task columns
       assert.equal(store.getChannel(channel.id).defaultTeammateId, "engineer");
       assert.equal(store.getTask(task.id).assigneeTeammateId, "engineer");
       assert.equal(getChannelItemViewFixture(store, message.id).body, "Migration should keep channel chat writable.");
+      assert.equal(store.database.prepare("SELECT name FROM schema_migrations WHERE version=192").get().name, "add_channel_pending_authority_versions");
+      const authorityInput = { workspaceId: DEFAULT_WORKSPACE_ID, channelId: channel.id, participantIds: [LING_AGENT_ID] };
+      const beforeAuthority = store.getChannelPendingAuthorityVersions(authorityInput);
+      store.updateChannel(channel.id, { allowedTools: ["read"] }, now);
+      assert.equal(store.getChannelPendingAuthorityVersions(authorityInput).channelRevision, beforeAuthority.channelRevision + 1);
+      assert.deepEqual(store.getChannel(channel.id).allowedTools, ["read"]);
     } finally {
       store.close();
     }

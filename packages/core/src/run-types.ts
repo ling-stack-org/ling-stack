@@ -2298,6 +2298,7 @@ export interface RunStore extends NativeExecutionStore, HarnessProjectionStore, 
   getChannelIntentDecision(id: string): ChannelIntentDecision | undefined;
   listChannelIntentDecisions(options?: ListChannelIntentDecisionsOptions): ChannelIntentDecision[];
   getChannelPendingOperationResolution(pendingDecisionId: string): import("./channel-pending-operation.js").ChannelPendingOperationResolution | undefined;
+  getChannelPendingAuthorityVersions(input: import("./channel-pending-operation.js").GetChannelPendingAuthorityVersionsInput): import("./channel-pending-operation.js").ChannelPendingAuthorityVersions;
   /** One synchronous Host transaction for resolution, proposal and decision; no OS effects. */
   resolveChannelPendingOperation(input: import("./channel-pending-operation.js").ResolveChannelPendingOperationInput,
     publish: () => ChannelIntentDecision, now: string): import("./channel-pending-operation.js").ChannelPendingOperationResolved;

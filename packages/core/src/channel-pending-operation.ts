@@ -34,3 +34,17 @@ export interface ChannelPendingOperationResolved {
   readonly decision: ChannelIntentDecision;
   readonly replayed: boolean;
 }
+
+export interface GetChannelPendingAuthorityVersionsInput {
+  readonly workspaceId: string;
+  readonly channelId: string;
+  /** Actual effective channel participants, including the coordinator; not labels or aliases. */
+  readonly participantIds: readonly string[];
+}
+
+/** Durable policy lineage, separate from timestamps and current configuration equality. */
+export interface ChannelPendingAuthorityVersions {
+  readonly workspaceRevision: number;
+  readonly channelRevision: number;
+  readonly participants: readonly { readonly participantId: string; readonly revision: number }[];
+}
