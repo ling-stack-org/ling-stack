@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { defaultProviderTemplates, executeExternalWorkAction, toRuntimeAttemptFence } from "@ling-stack/core";
 import type { AiTeammate, RunSession, RunStore, TeammateDirectMessage, TeammateDirectThread } from "@ling-stack/core";
 import type { DaemonContext } from "../context.js";
+import { daemonRequestIsAuthorized } from "./request-auth.js";
 import { HttpError } from "../errors.js";
 import { reconcileTeammateDirectRun } from "../features/teammates/direct-message-lifecycle.js";
 import { createHarnessFeatureSnapshot } from "../features/harness/index.js";
@@ -429,19 +430,7 @@ export async function routeRequest(
   if (config.authToken) {
     const pathname = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`).pathname;
     if (pathname !== "/health") {
-      const authorization = request.headers.authorization ?? "";
-      const expected = `Bearer ${config.authToken}`;
-      const provided = typeof authorization === "string" ? authorization : "";
-      let tokenMatches = false;
-      if (provided.length === expected.length) {
-        // Constant-time-ish compare; length equality checked first.
-        let difference = 0;
-        for (let index = 0; index < expected.length; index += 1) {
-          difference |= provided.charCodeAt(index) ^ expected.charCodeAt(index);
-        }
-        tokenMatches = difference === 0;
-      }
-      if (!tokenMatches) {
+      if (!daemonRequestIsAuthorized(config.authToken, request.headers.authorization)) {
         writeJson(response, 401, { error: "unauthorized", message: "A valid bearer token is required for non-loopback access." });
         return;
       }

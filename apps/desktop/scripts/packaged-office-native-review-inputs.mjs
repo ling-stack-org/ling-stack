@@ -83,6 +83,20 @@ export const PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS = Object.freeze([
 ]);
 
 export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
+  // Shared HTTP/upgrade authentication; this entry does not approve new bytes.
+  "packages/daemon/src/server/request-auth.ts",
+  // Explicit current-main feature closure; content review and QA binding remain separate gates.
+  "packages/contracts/src/artifacts.ts",
+  "packages/contracts/src/diagnostics.ts",
+  "packages/contracts/src/im-destinations.ts",
+  "packages/contracts/src/marketplace.ts",
+  "packages/contracts/src/notifications.ts",
+  "packages/daemon/src/features/diagnostics/routes.ts",
+  "packages/daemon/src/features/im-destinations/registry.ts",
+  "packages/daemon/src/features/im-destinations/routes.ts",
+  "packages/daemon/src/features/notifications/hub.ts",
+  "packages/daemon/src/features/notifications/routes.ts",
+  "packages/daemon/src/features/skills/marketplace-route.ts",
   // Explicit pending-operation closure; listing these inputs grants no approval.
   "packages/core/src/channel-pending-operation.ts",
   "packages/core/src/storage/sqlite/channel-pending-operation-migration.ts",

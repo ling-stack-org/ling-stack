@@ -39,37 +39,25 @@ export const HTML_INTERACTIVE_MAX_BYTES = 2 * 1024 * 1024;
  * for in-frame interactivity, but the opaque origin must not be able to reach
  * the daemon, the network, or form endpoints.
  */
-export const HTML_INTERACTIVE_CSP = "connect-src 'none'; form-action 'none'; base-uri 'none'";
+export const HTML_INTERACTIVE_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'";
 
 /**
- * Attach the offline CSP to a scanned document. Always injects: skipping on a
- * content substring match would let a document smuggle the policy text and
- * opt out of enforcement. Repeated injection only repeats the same strict
- * directive, which CSP combines restrictively.
+ * Keep all authored bytes inside a second opaque-origin srcdoc frame. CSP on
+ * a document does not prohibit that document navigating itself; frame-src on
+ * its trusted parent does. srcdoc remains allowed and inherits that policy,
+ * while network navigations (including script and meta-refresh) are denied.
+ *
+ * Both policies precede all authored bytes, even malformed/premature head tags.
+ * The attribute is encoded rather than parsing untrusted HTML or trusting an
+ * existing policy. Repeated wrapping cannot relax the inherited restrictions.
  */
 export function injectInteractiveHtmlCsp(html: string): string {
   const meta = '<meta http-equiv="Content-Security-Policy" content="' + HTML_INTERACTIVE_CSP + '">';
-  const headEnd = findTagEnd(html, "head");
-  if (headEnd !== undefined) return html.slice(0, headEnd) + meta + html.slice(headEnd);
-  const htmlEnd = findTagEnd(html, "html");
-  if (htmlEnd !== undefined) return html.slice(0, htmlEnd) + "<head>" + meta + "</head>" + html.slice(htmlEnd);
-  return meta + html;
-}
-
-/** Linear scan for the closing ">" of an opening tag; no regex backtracking. */
-function findTagEnd(html: string, tag: string): number | undefined {
-  const lower = html.toLowerCase();
-  let search = 0;
-  for (;;) {
-    const start = lower.indexOf("<" + tag, search);
-    if (start === -1) return undefined;
-    const next = lower[start + 1 + tag.length];
-    if (next === ">" || next === " " || next === "\t" || next === "\n" || next === "\r" || next === "\f") {
-      const end = lower.indexOf(">", start + 1);
-      return end === -1 ? undefined : end + 1;
-    }
-    search = start + 1;
-  }
+  const source = ("<!doctype html>" + meta + html)
+    .replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  return "<!doctype html><html><head>" + meta
+    + "<style>html,body{height:100%;margin:0}iframe{display:block;width:100%;height:100%;border:0}</style>"
+    + '</head><body><iframe sandbox="allow-scripts" title="Interactive content" srcdoc="' + source + '"></iframe></body></html>';
 }
 
 export interface PreviewHtmlInteractive {

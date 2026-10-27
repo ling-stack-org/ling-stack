@@ -34,6 +34,7 @@ import { isDaemonObservationPausedForWorkspace, liveDaemonObservation, shouldDef
 import { deriveChannelTasks } from "../../lib/channel-artifacts.js";
 import { mergeConversationItems, mergeChannelUserInputPage, projectChannelConversationItemPage, type ChannelConversationMessagePage } from "../../lib/channel-conversation-items.js";
 import { createConversationReadEpoch } from "../../lib/conversation-read-epoch.js";
+import { channelConversationScopeKey } from "../../shared/conversation/stream-error-ownership.js";
 import { isUserInputAnchor } from "@ling-stack/conversation-ui-core";
 import type { ConversationReasoningSummaryRecord, TurnContextAssignment, UserInputTranscriptItemV1 } from "@ling-stack/contracts";
 import { channelMessagesEqual } from "../../lib/channel-message-equality.js";
@@ -635,6 +636,7 @@ export function useWorkspaceDomain(input: {
 
     const readOwner = JSON.stringify([cwd, channelId, threadId ?? ""]);
     if (readOwner !== channelReadOwnerRef.current) return;
+    const feedbackIdentity = channelConversationScopeKey({ workspaceCwd: cwd, channelId, branchRootThreadId: threadId });
     const guardKey = `messages:${cwd}:${channelId}`;
     const token = loadGuard.next(guardKey);
     const readTicket = channelReadEpochRef.current.begin(readOwner);
@@ -644,7 +646,7 @@ export function useWorkspaceDomain(input: {
     }
     try {
       if (!options?.silent) {
-        clearScopedFeedback("composer", channelId);
+        clearScopedFeedback("composer", feedbackIdentity);
         setError(undefined);
       }
       const response = await listChannelConversationItems(cwd, channelId, {
@@ -680,7 +682,7 @@ export function useWorkspaceDomain(input: {
     } catch (caught) {
       if (!loadGuard.isCurrent(guardKey, token) || !channelReadEpochRef.current.isCurrent(readTicket) || !isSelectedChannelConversation(channelId, threadId)) return;
       if (!options?.silent) {
-        reportScopedFeedback("composer", channelId, "load", caught);
+        reportScopedFeedback("composer", feedbackIdentity, "load", caught, cwd);
       }
     } finally {
       if (loadGuard.isCurrent(guardKey, token) && channelReadEpochRef.current.isCurrent(readTicket) && isSelectedChannelConversation(channelId, threadId)) {
@@ -699,13 +701,14 @@ export function useWorkspaceDomain(input: {
 
     const readOwner = JSON.stringify([cwd, channelId, threadId ?? ""]);
     if (readOwner !== channelReadOwnerRef.current) return;
+    const feedbackIdentity = channelConversationScopeKey({ workspaceCwd: cwd, channelId, branchRootThreadId: threadId });
     const guardKey = `olderMessages:${cwd}:${channelId}`;
     const token = loadGuard.next(guardKey);
     const readTicket = channelReadEpochRef.current.begin(readOwner, "page");
     const requestedBeforeSequence = channelItemsBeforeSequence;
     setChannelMessagesLoadingOlder(true);
     try {
-      clearScopedFeedback("composer", channelId);
+      clearScopedFeedback("composer", feedbackIdentity);
       setError(undefined);
       const response = await listChannelConversationItems(cwd, channelId, {
         limit: channelMessageOlderLimit,
@@ -739,7 +742,7 @@ export function useWorkspaceDomain(input: {
       setChannelItemsBeforeSequence(page.nextBeforeSequence);
     } catch (caught) {
       if (!loadGuard.isCurrent(guardKey, token) || !channelReadEpochRef.current.isCurrent(readTicket) || !isSelectedChannelConversation(channelId, threadId)) return;
-      reportScopedFeedback("composer", channelId, "load", caught);
+      reportScopedFeedback("composer", feedbackIdentity, "load", caught, cwd);
     } finally {
       if (loadGuard.isCurrent(guardKey, token) && channelReadEpochRef.current.isCurrent(readTicket) && isSelectedChannelConversation(channelId, threadId)) {
         setChannelMessagesLoadingOlder(false);

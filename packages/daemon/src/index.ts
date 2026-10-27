@@ -302,6 +302,7 @@ export function createDaemonServer(
     secretResolver: baseSecretResolver,
   });
   notificationHub.setDeliverSink(async (record) => {
+    await imDestinations.ensureLoaded();
     const destinations = imDestinations.list().filter((destination) => destination.enabled);
     if (destinations.length === 0) return;
     const message = {

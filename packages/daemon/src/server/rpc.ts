@@ -4,6 +4,7 @@ import { DEFAULT_WORKSPACE_ID, type ControlPlaneDomain, type ControlPlaneEvent, 
 import type { ControlPlaneSubscribeResult } from "@ling-stack/contracts";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { DaemonContext } from "../context.js";
+import { daemonRequestIsAuthorized } from "./request-auth.js";
 import { maybeScheduleRunTerminalReport } from "../features/channels/terminal-report-coordinator.js";
 import { ensureRunCancelled } from "../features/runs/cancellation.js";
 import { HttpError } from "../errors.js";
@@ -63,6 +64,10 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
     }
     if (!context.config.transports.localWebSocketRpc) {
       rejectUpgrade(socket, 404, "WebSocket RPC transport is disabled");
+      return;
+    }
+    if (!daemonRequestIsAuthorized(context.config.authToken, request.headers.authorization)) {
+      rejectUpgrade(socket, 401, "A valid bearer token is required for WebSocket RPC access.");
       return;
     }
     if (!url.searchParams.get("cwd")) {
@@ -518,7 +523,7 @@ function createRpcRunExecutionSink(input: {
 
 function rejectUpgrade(socket: Duplex, statusCode: number, message: string): void {
   socket.write([
-    `HTTP/1.1 ${statusCode} ${statusCode === 400 ? "Bad Request" : "Not Found"}`,
+    `HTTP/1.1 ${statusCode} ${statusCode === 401 ? "Unauthorized" : statusCode === 400 ? "Bad Request" : "Not Found"}`,
     "Connection: close",
     "Content-Type: text/plain; charset=utf-8",
     `Content-Length: ${Buffer.byteLength(message)}`,

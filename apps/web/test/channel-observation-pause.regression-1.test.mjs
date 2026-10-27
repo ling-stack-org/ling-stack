@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
+import vm from "node:vm";
 import { LingDaemonError, LingDaemonTransportError } from "@ling-stack/api-client";
+import { channelConversationScopeKey } from "../src/shared/conversation/stream-error-ownership.ts";
 import { catalogConsumerHarness } from "./support/catalog-consumer-harness.mjs";
 import { catalogHookPort } from "./support/catalog-hook-port.mjs";
 
@@ -10,6 +13,24 @@ import { catalogHookPort } from "./support/catalog-hook-port.mjs";
 const cwd = "/isolated/r03-channel";
 const workspacePath = "domains/workspace/use-workspace-domain.ts";
 const actionsPath = "app/use-channel-actions-controller.ts";
+const feedbackPath = "features/workspace/useChannelFeedbackController.ts";
+// Execute the actual view's selection and JSX dismiss callback verbatim. This
+// focused consumer test does not mount the rest of the workspace or claim GUI QA.
+const viewSource = await readFile(new URL("../src/features/workspace/WorkspaceClientView.tsx", import.meta.url), "utf8");
+const selectionStart = viewSource.indexOf("  const activeWorkspaceCwd = cwd.trim();");
+const selectionEnd = viewSource.indexOf("  const selectedTaskError =", selectionStart);
+const dismissMarker = "      onDismissSendError={";
+const dismissStart = viewSource.indexOf(dismissMarker);
+const dismissEnd = viewSource.indexOf("\n      onDragOver=", dismissStart);
+assert.ok(selectionStart >= 0 && selectionEnd > selectionStart && dismissStart >= 0 && dismissEnd > dismissStart);
+assert.equal(viewSource.indexOf(dismissMarker, dismissStart + 1), -1);
+const dismissCallback = viewSource.slice(dismissStart + dismissMarker.length, dismissEnd).trim().slice(0, -1);
+const consumeComposerFeedback = vm.runInNewContext(stripTypeScriptTypes(`(input) => {
+  const { cwd, selectedChannelId, selectedChannelBranchRootThreadId, channelFeedbackEntries,
+    dismissSendError, onClearChannelFeedback } = input;
+  ${viewSource.slice(selectionStart, selectionEnd)}
+  return { error: selectedComposerError, dismiss: ${dismissCallback} };
+}`, { mode: "transform" }), { channelConversationScopeKey });
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const transport = () => new LingDaemonTransportError("fetch", new TypeError("Failed to fetch"));
 function envelope(threadId = "root", body = "original") {
@@ -25,7 +46,7 @@ function envelope(threadId = "root", body = "original") {
 }
 
 async function fixture(t, kind, paused = false) {
-  const port = catalogHookPort(), calls = [], feedback = [], pendingKeys = new Map(), state = { messages: [], items: [], accepted: 0 };
+  const port = catalogHookPort(), feedbackPort = catalogHookPort(), calls = [], feedback = [], pendingKeys = new Map(), state = { messages: [], items: [], accepted: 0 };
   let apiOverride, stream, input;
   const observation = { paused, epoch: 1, workspaceCwd: cwd, baseUrl: "http://127.0.0.1:17928" };
   const apiPort = async (name, ...args) => {
@@ -74,24 +95,29 @@ async function fixture(t, kind, paused = false) {
       { anchor, replace: key => `const { ${names.join(", ")} } = globalThis[${JSON.stringify(key)}].ports.api;` }];
   }
   transforms["lib/use-latest-request.ts"] = [{ anchor: 'import { useRef } from "react";', replace: key => `const { useRef } = globalThis[${JSON.stringify(key)}].ports.hooks;` }];
+  transforms[feedbackPath] = [{ anchor: 'import { useCallback, useMemo, useState } from "react";',
+    replace: key => `const { useCallback, useMemo, useState } = globalThis[${JSON.stringify(key)}].ports.feedbackHooks;` }];
   transforms[actionsPath].push(
     { anchor: 'import { readSseResponse } from "../sse.js";', replace: key => `const { readSseResponse } = globalThis[${JSON.stringify(key)}].ports;` },
     { anchor: 'import { submissionLookupJournal } from "../shared/conversation/conversation-submission-journal.js";', replace: key => `const submissionLookupJournal = globalThis[${JSON.stringify(key)}].ports.journal;` },
   );
   const names = new Set(Object.values(transforms).flat().filter(seam => seam.anchor.includes("/api.js")).flatMap(seam =>
     seam.anchor.slice(seam.anchor.indexOf("{") + 1, seam.anchor.indexOf("}")).split(",").map(name => name.trim()).filter(Boolean)));
-  const h = await catalogConsumerHarness(t, { exports: { [workspacePath]: ["useWorkspaceDomain"], [actionsPath]: ["useChannelActionsController"] }, transforms,
-    ports: { hooks: port.hooks, api: Object.fromEntries([...names].map(name => [name, (...args) => apiPort(name, ...args)])),
+  const h = await catalogConsumerHarness(t, { exports: { [workspacePath]: ["useWorkspaceDomain"], [actionsPath]: ["useChannelActionsController"],
+    [feedbackPath]: ["useChannelFeedbackController"] }, transforms,
+    ports: { hooks: port.hooks, feedbackHooks: feedbackPort.hooks, api: Object.fromEntries([...names].map(name => [name, (...args) => apiPort(name, ...args)])),
       readSseResponse: async (_response, receive) => stream?.(receive), journal: {
         read: owner => pendingKeys.get(JSON.stringify(owner)), begin: (owner, key) => pendingKeys.set(JSON.stringify(owner), key),
         finish() {}, forget: owner => pendingKeys.delete(JSON.stringify(owner)),
       } } });
-  const noop = () => {};
+  const feedbackController = () => feedbackPort.render(h.module.useChannelFeedbackController);
+  const reportFeedback = entry => { feedback.push(entry); feedbackController().report(entry); };
+  const clearFeedback = (...args) => feedbackController().clear(...args);
   input = kind === "workspace" ? { cwd, initialWorkspaceCwd: cwd, selectedChannelBranchId: "", translate: value => value,
-    clearFeedback: noop, reportFeedback: entry => feedback.push(entry) } : {
+    clearFeedback, reportFeedback } : {
     form: { cwd }, selectedChannelId: "channel", selectedChannelMessageThreadId: undefined,
-    channels: [], providers: [], providerTemplates: [], channelDecisions: [], clearFeedback: noop,
-    reportFeedback: entry => feedback.push(entry), setChannelMessages: update => { state.messages = typeof update === "function" ? update(state.messages) : update; },
+    channels: [], providers: [], providerTemplates: [], channelDecisions: [], clearFeedback,
+    reportFeedback, setChannelMessages: update => { state.messages = typeof update === "function" ? update(state.messages) : update; },
     setChannelConversationItems: update => { state.items = typeof update === "function" ? update(state.items) : update; },
     ...Object.fromEntries(["refreshChannelMessages", "refreshChannelExecutionProposals", "refreshChannelIntentDecisions", "refreshUsedMemoryAudit",
       "refreshChannelMessageRouteDecisions", "refreshChannelFiles", "refreshChannelActivity", "refreshRuns", "refreshRuntimeState"].map(name => [name, async () => { calls.push({ name }); }])),
@@ -99,8 +125,13 @@ async function fixture(t, kind, paused = false) {
   const render = () => port.render(h.module[kind === "workspace" ? "useWorkspaceDomain" : "useChannelActionsController"], { ...input, observation: { ...observation } });
   render();
   if (kind === "workspace") { render().actions.setSelectedChannelId("channel"); render(); }
-  t.after(() => port.unmount());
-  return { render, calls, feedback, pendingKeys, state, observation,
+  t.after(() => { port.unmount(); feedbackPort.unmount(); });
+  return { render, calls, feedback, feedbackController, pendingKeys, state, observation,
+    consume({ workspaceCwd = input.cwd ?? input.form.cwd, channelId = "channel", branchRootThreadId } = {}) {
+      return consumeComposerFeedback({ cwd: workspaceCwd, selectedChannelId: channelId,
+        selectedChannelBranchRootThreadId: branchRootThreadId, channelFeedbackEntries: feedbackController().entries,
+        dismissSendError() {}, onClearChannelFeedback: clearFeedback });
+    },
     io(value) { apiOverride = value; }, stream(value) { stream = value; },
     change(value) { input = { ...input, ...value }; return render(); },
     pause(paused = true, workspaceCwd = cwd) { Object.assign(observation, { paused, workspaceCwd, epoch: observation.epoch + 1 }); render(); },
@@ -108,6 +139,98 @@ async function fixture(t, kind, paused = false) {
       requestAiReply: false, onMessageAccepted() { state.accepted++; } }); },
   };
 }
+
+function selectTranscriptOwner(f, threadId) {
+  if (!threadId) { f.change({ selectedChannelBranchId: "" }); return; }
+  f.render().actions.setChannelBranches([{ id: `owner-${threadId}`, channelId: "channel", rootThreadId: threadId, status: "active" }]);
+  f.change({ selectedChannelBranchId: `owner-${threadId}` });
+}
+
+for (const action of ["refreshChannelMessages", "loadOlderChannelMessages"]) {
+  for (const threadId of [undefined, "branch-a"]) {
+    test(`transcript load feedback: ${action} ${threadId ?? "root"} reaches the real view owner and dismisses it`, async t => {
+      const f = await fixture(t, "workspace"); selectTranscriptOwner(f, threadId);
+      if (action === "loadOlderChannelMessages") await f.render().actions.refreshChannelMessages("channel", threadId);
+      const message = `${action} ${threadId ?? "root"} denied`;
+      f.io(name => name === "listChannelConversationItems" ? Promise.reject(new Error(message)) : undefined);
+      await f.render().actions[action]("channel", threadId);
+      assert.equal(f.consume({ branchRootThreadId: threadId }).error, message);
+      assert.deepEqual(f.feedbackController().entries, [{ workspaceCwd: cwd, surface: "composer",
+        identity: channelConversationScopeKey({ workspaceCwd: cwd, channelId: "channel", branchRootThreadId: threadId }), scope: "load", message }]);
+      assert.equal(f.consume({ branchRootThreadId: threadId ? undefined : "branch-a" }).error, "");
+      assert.equal(f.consume({ workspaceCwd: "/foreign", branchRootThreadId: threadId }).error, "");
+      assert.equal(f.consume({ channelId: "foreign", branchRootThreadId: threadId }).error, "");
+      f.consume({ branchRootThreadId: threadId }).dismiss();
+      assert.equal(f.consume({ branchRootThreadId: threadId }).error, ""); assert.deepEqual(f.feedbackController().entries, []);
+    });
+    test(`transcript load feedback: ${action} ${threadId ?? "root"} clears its own retry error before awaiting`, async t => {
+      const f = await fixture(t, "workspace"); selectTranscriptOwner(f, threadId);
+      if (action === "loadOlderChannelMessages") await f.render().actions.refreshChannelMessages("channel", threadId);
+      f.io(name => name === "listChannelConversationItems" ? Promise.reject(new Error("retry me")) : undefined);
+      await f.render().actions[action]("channel", threadId);
+      assert.equal(f.consume({ branchRootThreadId: threadId }).error, "retry me");
+      const pending = deferred(); f.io(name => name === "listChannelConversationItems" ? pending.promise : undefined);
+      const retry = f.render().actions[action]("channel", threadId);
+      assert.equal(f.consume({ branchRootThreadId: threadId }).error, "");
+      pending.resolve(envelope(threadId)); await retry; assert.deepEqual(f.feedbackController().entries, []);
+    });
+  }
+}
+
+test("transcript load feedback: root and sibling branch errors stay isolated on dismiss and retry", async t => {
+  const f = await fixture(t, "workspace");
+  for (const threadId of [undefined, "branch-a", "branch-b"]) {
+    selectTranscriptOwner(f, threadId);
+    f.io(name => name === "listChannelConversationItems" ? Promise.reject(new Error(threadId ?? "root")) : undefined);
+    await f.render().actions.refreshChannelMessages("channel", threadId);
+  }
+  assert.equal(f.consume().error, "root"); assert.equal(f.consume({ branchRootThreadId: "branch-a" }).error, "branch-a");
+  assert.equal(f.consume({ branchRootThreadId: "branch-b" }).error, "branch-b");
+  f.consume({ branchRootThreadId: "branch-a" }).dismiss();
+  assert.equal(f.consume().error, "root"); assert.equal(f.consume({ branchRootThreadId: "branch-b" }).error, "branch-b");
+  f.io(() => undefined); await f.render().actions.refreshChannelMessages("channel", "branch-b");
+  assert.equal(f.consume({ branchRootThreadId: "branch-b" }).error, ""); assert.equal(f.consume().error, "root");
+  assert.equal(f.feedbackController().entries.length, 1);
+});
+
+for (const action of ["refreshChannelMessages", "loadOlderChannelMessages"]) {
+  test(`transcript load feedback: late ${action} failures cannot publish after branch away-and-back`, async t => {
+    const f = await fixture(t, "workspace");
+    if (action === "loadOlderChannelMessages") await f.render().actions.refreshChannelMessages("channel");
+    const pending = deferred(); f.io(name => name === "listChannelConversationItems" ? pending.promise : undefined);
+    const read = f.render().actions[action]("channel"); selectTranscriptOwner(f, "branch-a"); selectTranscriptOwner(f);
+    pending.reject(new Error("stale root denial")); await read;
+    assert.equal(f.consume().error, ""); assert.deepEqual(f.feedbackController().entries, []);
+  });
+  test(`transcript load feedback: late ${action} failures cannot publish across workspaces`, async t => {
+    const f = await fixture(t, "workspace");
+    if (action === "loadOlderChannelMessages") await f.render().actions.refreshChannelMessages("channel");
+    const pending = deferred(); f.io(name => name === "listChannelConversationItems" ? pending.promise : undefined);
+    const read = f.render().actions[action]("channel"); f.change({ cwd: "/foreign" });
+    pending.reject(new Error("stale workspace denial")); await read;
+    assert.equal(f.consume().error, ""); assert.equal(f.consume({ workspaceCwd: cwd }).error, ""); assert.deepEqual(f.feedbackController().entries, []);
+  });
+}
+
+test("transcript load feedback: topic IDs do not borrow the root or branch composer owner", async t => {
+  const f = await fixture(t, "workspace"); await f.render().actions.refreshChannelMessages("channel");
+  f.io(name => name === "listChannelConversationItems" ? Promise.reject(new Error("root failure")) : undefined);
+  await f.render().actions.refreshChannelMessages("channel"); const calls = f.calls.length;
+  await f.render().actions.refreshChannelMessages("channel", "topic"); await f.render().actions.loadOlderChannelMessages("channel", "topic");
+  assert.equal(f.calls.length, calls); assert.equal(f.consume().error, "root failure");
+  assert.equal(f.consume({ branchRootThreadId: "topic" }).error, "");
+});
+
+test("transcript load feedback: silent refresh does not clear or replace the current composer error", async t => {
+  const f = await fixture(t, "workspace");
+  f.io(name => name === "listChannelConversationItems" ? Promise.reject(new Error("visible failure")) : undefined);
+  await f.render().actions.refreshChannelMessages("channel");
+  f.io(() => undefined); await f.render().actions.refreshChannelMessages("channel", undefined, { silent: true });
+  assert.equal(f.consume().error, "visible failure");
+  f.io(name => name === "listChannelConversationItems" ? Promise.reject(new Error("silent failure")) : undefined);
+  await f.render().actions.refreshChannelMessages("channel", undefined, { silent: true });
+  assert.equal(f.consume().error, "visible failure"); assert.equal(f.feedbackController().entries.length, 1);
+});
 
 test("channel root/panels/sidebar/memory reads do not start while the same owned Host is paused", async t => {
   const f = await fixture(t, "workspace", true), actions = f.render().actions;

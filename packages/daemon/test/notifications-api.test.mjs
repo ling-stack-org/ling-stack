@@ -6,19 +6,36 @@ import test from "node:test";
 import { createDaemonServer } from "../dist/index.js";
 
 async function withDaemon(fn) {
-  const cwd = await mkdtemp(join(tmpdir(), "ling-notifications-api-"));
-  const home = await mkdtemp(join(tmpdir(), "ling-notifications-home-"));
-  process.env.LING_STACK_HOME = home;
-  process.env.LING_NOTIFICATIONS_POLL_WAIT_MS = "800";
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd });
+  const previousHome = process.env.LING_STACK_HOME;
+  const previousPollWait = process.env.LING_NOTIFICATIONS_POLL_WAIT_MS;
+  let cwd, home, daemon, failure;
   try {
+    cwd = await mkdtemp(join(tmpdir(), "ling-notifications-api-"));
+    home = await mkdtemp(join(tmpdir(), "ling-notifications-home-"));
+    process.env.LING_STACK_HOME = home;
+    process.env.LING_NOTIFICATIONS_POLL_WAIT_MS = "800";
+    daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd });
     await daemon.start();
     const port = daemon.server.address().port;
     await fn(`http://127.0.0.1:${port}`, cwd);
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    await daemon.stop().catch(() => {});
-    await rm(cwd, { recursive: true, force: true }).catch(() => {});
-    await rm(home, { recursive: true, force: true }).catch(() => {});
+    const cleanupErrors = [];
+    try { await daemon?.stop(); } catch (error) { cleanupErrors.push(error); }
+    if (previousHome === undefined) delete process.env.LING_STACK_HOME;
+    else process.env.LING_STACK_HOME = previousHome;
+    if (previousPollWait === undefined) delete process.env.LING_NOTIFICATIONS_POLL_WAIT_MS;
+    else process.env.LING_NOTIFICATIONS_POLL_WAIT_MS = previousPollWait;
+    for (const path of [cwd, home]) {
+      if (path) {
+        try { await rm(path, { recursive: true, force: true }); }
+        catch (error) { cleanupErrors.push(error); }
+      }
+    }
+    if (cleanupErrors.length) throw new AggregateError(failure ? [failure, ...cleanupErrors] : cleanupErrors,
+      "Notification fixture cleanup failed", { cause: failure ?? cleanupErrors[0] });
   }
 }
 

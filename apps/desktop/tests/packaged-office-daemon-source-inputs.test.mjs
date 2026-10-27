@@ -18,6 +18,26 @@ const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.me
 const workspaceNames = ["browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"];
 const reviewedLeaf = "packages/core/src/original-office-host-bridge.ts";
 const compiledLeaf = "packages/core/dist/original-office-host-bridge.js";
+const currentMainFeatureClosureInputs = [
+  "packages/daemon/src/server/request-auth.ts",
+  "packages/contracts/src/artifacts.ts",
+  "packages/contracts/src/diagnostics.ts",
+  "packages/contracts/src/im-destinations.ts",
+  "packages/contracts/src/marketplace.ts",
+  "packages/contracts/src/notifications.ts",
+  "packages/daemon/src/features/diagnostics/routes.ts",
+  "packages/daemon/src/features/im-destinations/registry.ts",
+  "packages/daemon/src/features/im-destinations/routes.ts",
+  "packages/daemon/src/features/notifications/hub.ts",
+  "packages/daemon/src/features/notifications/routes.ts",
+  "packages/daemon/src/features/skills/marketplace-route.ts",
+];
+test("Office fixed closure pins current-main notification, diagnostics and marketplace authored inputs", () => {
+  for (const path of currentMainFeatureClosureInputs) {
+    assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.filter(input => input === path).length,
+      1, `current-main authored input must occur exactly once: ${path}`);
+  }
+});
 test("Office fixed closure pins the shared Host workflow prompt projector", () => {
   assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(
     "packages/daemon/src/features/channels/workflow-step-prompt.ts"));
@@ -391,7 +411,8 @@ const newAuthoredTypeOnlyInputs = ["packages/contracts/src/harness-evaluation-qa
   "packages/contracts/src/harness-human-evaluation-read.ts", "packages/core/src/harness/human-evaluation-read.ts",
   "packages/core/src/run-terminal-intent-types.ts", ...gracefulTreeTypeOnlyInputs];
 const reviewedNativeInputs = ["apps/desktop/scripts/build-human-evaluation-helper.mjs", "apps/desktop/scripts/native/human-evaluation-darwin.swift"];
-const newAuthoredRequiredInputs = [...newAuthoredRuntimeLeaves, ...newAuthoredTypeOnlyInputs, ...reviewedNativeInputs];
+const newAuthoredRequiredInputs = [...newAuthoredRuntimeLeaves, ...newAuthoredTypeOnlyInputs,
+  ...reviewedNativeInputs, ...currentMainFeatureClosureInputs];
 const staleSentinel = "__LING_EXPLICIT_STALE_DIST_RED__";
 const authoredSentinel = "__LING_EXPLICIT_REVIEWED_AUTHORED_SOURCE_GREEN__";
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
