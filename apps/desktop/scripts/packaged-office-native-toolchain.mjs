@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const OFFICE_NATIVE_HEADER_NAMES = Object.freeze([
@@ -46,7 +46,7 @@ export function observeOfficeNativeToolchain() {
   if (Object.hasOwn(process.env, "DEVELOPER_DIR")) environment.DEVELOPER_DIR = absolutePath(process.env.DEVELOPER_DIR);
   const compilerPath = absolutePath(command("/usr/bin/xcrun", ["--find", "clang++"], environment));
   const sdkRoot = absolutePath(command("/usr/bin/xcrun", ["--sdk", "macosx", "--show-sdk-path"], environment));
-  const headerRoot = absolutePath(process.env.LING_OFFICE_NODE_HEADERS);
+  const headerRoot = absolutePath(process.env.LING_OFFICE_NODE_HEADERS ?? resolve(dirname(process.execPath), "../include/node"));
   const compilerVersion = command(compilerPath, ["--version"], environment);
   requireToolchain(compilerVersion.length > 0 && compilerVersion.length <= 4096);
   const sdkBytes = bytes(join(sdkRoot, "SDKSettings.json"), 8 * 1024 * 1024);

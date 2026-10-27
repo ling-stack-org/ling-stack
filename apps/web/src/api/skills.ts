@@ -51,6 +51,10 @@ import type {
   SkillSourceSyncApplyResponse,
   SkillSourceSyncCheckUpdatesResponse,
   SkillSourceSyncPreviewResponse,
+  SharedSkillSourceScanRequest,
+  SharedSkillSourceScanResponse,
+  SharedSkillSourcePublishRequest,
+  SharedSkillSourcePublishResponse,
   SkillSourceSyncPublishRequest,
   SkillSourceSyncPublishResponse,
   SkillSourceSyncRefreshResponse,
@@ -113,6 +117,14 @@ export async function updateSkillSourceUpgradePolicy(cwd: string, input: SkillSo
 
 export async function previewGstackSkillSourceSync(cwd: string, input: SkillSourceSyncRequest = {}): Promise<SkillSourceSyncPreviewResponse> {
   return daemonClient.previewGstackSkillSourceSync(cwd, input);
+}
+
+export async function previewSharedSkillSources(cwd: string, input: SharedSkillSourceScanRequest = {}): Promise<SharedSkillSourceScanResponse> {
+  return daemonClient.previewSharedSkillSources(cwd, input);
+}
+
+export async function publishSharedSkillSources(cwd: string, input: SharedSkillSourcePublishRequest): Promise<SharedSkillSourcePublishResponse> {
+  return daemonClient.publishSharedSkillSources(cwd, input);
 }
 
 export async function applyGstackSkillSourceSync(cwd: string): Promise<SkillSourceSyncApplyResponse> {

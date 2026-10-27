@@ -61,7 +61,10 @@ export type SkillSourceWarningCode =
   | "missing_metadata"
   | "drifted_upstream"
   | "missing_upstream"
-  | "orphaned_snapshot";
+  | "orphaned_snapshot"
+  | "skill_id_conflict"
+  | "duplicate_source"
+  | "unsafe_path";
 export type SkillSourceSyncRecordState =
   | "attachable"
   | "unchanged"

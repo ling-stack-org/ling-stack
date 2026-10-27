@@ -41,15 +41,18 @@ export async function prepareSkillSourcePublication(store: RunStore, records: re
       }
       const id = createSkillSourceSnapshotId();
       const artifacts: CreateSkillSourceArtifactInput[] = [];
-      if (publishArtifacts && record.sourcePath && record.state !== "unchanged") {
+      if (record.sourcePath && record.state !== "unchanged") {
         const sourceRoot = await realpath(dirname(record.sourcePath));
-        const artifactsRoot = await realpath(store.paths.artifactsDir);
-        const stageRoot = join(artifactsRoot, "skill-source");
-        await mkdir(stageRoot, { recursive: true });
-        if (await realpath(stageRoot) !== stageRoot) throw new HttpError(409, "skill_source_artifact_path_escape", "Artifact root contains a symlink");
-        const directory = join(stageRoot, id);
-        await mkdir(directory);
-        directories.set(id, directory);
+        let artifactsRoot: string | undefined;
+        if (publishArtifacts) {
+          artifactsRoot = await realpath(store.paths.artifactsDir);
+          const stageRoot = join(artifactsRoot, "skill-source");
+          await mkdir(stageRoot, { recursive: true });
+          if (await realpath(stageRoot) !== stageRoot) throw new HttpError(409, "skill_source_artifact_path_escape", "Artifact root contains a symlink");
+          const directory = join(stageRoot, id);
+          await mkdir(directory);
+          directories.set(id, directory);
+        }
         const files = [{ path: "SKILL.md", kind: "other" as const,
           checksum: record.sourceChecksum, sizeBytes: record.sourceSizeBytes }, ...record.referencedFiles];
         for (const file of files) {
@@ -89,14 +92,16 @@ export async function prepareSkillSourcePublication(store: RunStore, records: re
           if (file.path === "SKILL.md" && bytes.toString("utf8") !== record.snapshotPreview.rawSkillMarkdown) {
             throw new HttpError(409, "skill_source_incomplete", "Refusing to publish truncated source instructions");
           }
-          const extension = extname(file.path);
-          const name = basename(file.path, extension).replace(/[^a-zA-Z0-9._-]/g, "-") || "source";
-          const storageRef = ["skill-source", id, `${artifacts.length}-${checksum.slice(7, 39)}-${name}${extension}`].join("/");
-          await writeFile(resolve(artifactsRoot, storageRef), bytes, { flag: "wx" });
-          artifacts.push({ snapshotId: id, path: file.path, kind: file.kind, checksum, sizeBytes: bytes.length,
-            storageRef, mediaType: mediaType(extension),
-            reviewStatus: file.kind === "script" || file.kind === "asset" ? "reviewed" : "published",
-            includedInRuntime: file.kind === "reference" || file.kind === "agent-metadata" });
+          if (artifactsRoot) {
+            const extension = extname(file.path);
+            const name = basename(file.path, extension).replace(/[^a-zA-Z0-9._-]/g, "-") || "source";
+            const storageRef = ["skill-source", id, `${artifacts.length}-${checksum.slice(7, 39)}-${name}${extension}`].join("/");
+            await writeFile(resolve(artifactsRoot, storageRef), bytes, { flag: "wx" });
+            artifacts.push({ snapshotId: id, path: file.path, kind: file.kind, checksum, sizeBytes: bytes.length,
+              storageRef, mediaType: mediaType(extension),
+              reviewStatus: file.kind === "script" || file.kind === "asset" ? "reviewed" : "published",
+              includedInRuntime: file.kind === "reference" || file.kind === "agent-metadata" });
+          }
         }
       }
       prepared.push({ snapshot: { ...record.snapshotPreview, id },

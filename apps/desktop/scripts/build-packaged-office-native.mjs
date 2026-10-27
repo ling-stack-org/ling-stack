@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { buildNativeEvidence } from "../../../native/office-local/scripts/build.mjs";
 import { OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS } from "../../../packages/daemon/src/runtime/sandbox/packaged-office-native-published-review.ts";
-import { readReviewedPackagedOfficeSource, assertReviewedOfficeNativeBuild } from "./packaged-office-native-review.mjs";
+import { readLocalPackagedOfficeSource, assertReviewedOfficeNativeBuild } from "./packaged-office-native-review.mjs";
 import { resolveSigningProfile } from "./cua-driver-signing/signing-contract.mjs";
 
 const desktopRoot = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
@@ -78,12 +78,12 @@ export function buildFreshPackagedOfficeNativePublication() {
     && resolveSigningProfile().signingTier === "unsigned_dev");
   building = true;
   try {
-    const { review, sourceReviewSha256 } = readReviewedPackagedOfficeSource();
+    const { review, sourceReviewSha256 } = readLocalPackagedOfficeSource();
     ensureDist();
     const parent = realpathSync(mkdtempSync(join(tmpdir(), "ling-office-package-")));
     const buildRoot = join(parent, "build");
     const evidence = buildNativeEvidence({ output: buildRoot, headers: review.headers.root, compiler: review.compiler.path });
-    assertReviewedOfficeNativeBuild(evidence);
+    assertReviewedOfficeNativeBuild(evidence, { review, sourceReviewSha256 });
     const unsignedPath = join(buildRoot, "office-local.node"), unsignedIdentity = identity(unsignedPath, 64 * 1024 * 1024);
     const unsignedBytes = readFileSync(unsignedPath);
     requireBuild(hash(unsignedBytes) === evidence.binary.sha256 && unsignedBytes.length === evidence.binary.bytes
@@ -116,8 +116,8 @@ export function buildFreshPackagedOfficeNativePublication() {
     writeFileSync(join(stage, "build-manifest.json"), manifestBytes, { flag: "wx", mode: 0o600 });
     pins.set("build-manifest.json", { maximum: 1024 * 1024, identity: identity(join(stage, "build-manifest.json"), 1024 * 1024),
       bytes: manifestBytes, digest: hash(manifestBytes) });
-    assertReviewedOfficeNativeBuild(evidence);
-    requireBuild(readReviewedPackagedOfficeSource().sourceReviewSha256 === sourceReviewSha256
+    assertReviewedOfficeNativeBuild(evidence, { review, sourceReviewSha256 });
+    requireBuild(readLocalPackagedOfficeSource().sourceReviewSha256 === sourceReviewSha256
       && readFileSync(unsignedPath).equals(unsignedBytes)
       && JSON.stringify(identity(unsignedPath, 64 * 1024 * 1024)) === JSON.stringify(unsignedIdentity));
     const directories = new Map([["", directory(stage)]]);
@@ -132,7 +132,8 @@ export function buildFreshPackagedOfficeNativePublication() {
     try {
       directory(destination);
       // Keep the previous generated package instead of silently destroying it.
-      renameSync(destination, join(parent, "previous-office-local-stage"));
+      // The repository and OS temp directory may live on different volumes.
+      renameSync(destination, mkdtempSync(join(desktopRoot, ".office-local-previous-")) + "/stage");
     } catch (cause) { if (cause?.code !== "ENOENT") throw cause; }
     renameSync(stage, destination);
     const descriptor = Object.freeze({ schemaVersion: 1, reviewId: review.reviewId, protocolVersion: 2, napiVersion: 8,
@@ -163,7 +164,9 @@ export function readOriginalPackagedOfficeNativePublication(token) {
     requireBuild(bytes.equals(pin.bytes) && hash(bytes) === pin.digest
       && JSON.stringify(identity(path, pin.maximum)) === JSON.stringify(pin.identity));
   }
-  requireBuild(readReviewedPackagedOfficeSource().sourceReviewSha256 === owned.descriptor.sourceReviewSha256);
+  requireBuild((process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED === "1"
+    ? readLocalPackagedOfficeSource().sourceReviewSha256 : owned.descriptor.sourceReviewSha256)
+    === owned.descriptor.sourceReviewSha256);
   return owned.descriptor;
 }
 

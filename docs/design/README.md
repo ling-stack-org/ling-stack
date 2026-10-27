@@ -2,7 +2,8 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-10-17 (bundled GStack navigation; other delivery states retain their owners)
+Last verified: 2026-10-27 (external shared skill-source contract and plan; bundled GStack
+navigation from 2026-10-17; other delivery states retain their owners)
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -84,6 +85,8 @@ retains the detailed implementation brief and historical checkpoint.
 - [Skill Editing And Revision](skill-editing-and-revision.md)
 - [Skill Library And AI Evolution](skill-library-height-and-ai-evolution-lifecycle.md)
 - [Skill Source Sync](skill-source-sync-simplification-p15.md)
+- [External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md)
+- [External Agent Skill Discovery Implementation Plan](external-agent-skill-discovery-implementation-plan.md)
 - [Bundled GStack Client Contract](gstack-bundled-client-upgrade.md)
 - [Bundled GStack Client Implementation Plan](gstack-bundled-client-upgrade-implementation-plan.md)
 - [Bundled GStack Acceptance Matrix](gstack-bundled-client-acceptance-matrix.md)

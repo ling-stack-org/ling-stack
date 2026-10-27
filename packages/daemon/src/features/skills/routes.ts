@@ -13,7 +13,9 @@ import {
   createProcedureObservationInputFromJob,
   DEFAULT_WORKSPACE_ID,
   previewGstackSkillSourceSync,
+  resolveSharedAgentsSkillSourceRoots,
   resolveSkillSourceRoots,
+  SHARED_AGENT_SKILL_PACK_ID,
   isExplicitObservationJob,
   procedureObservationHasTerminalStatus,
   procedureObservationHasJobKey,
@@ -79,6 +81,8 @@ import {
   parseSkillImportDraftOptimizationPreviewRequest,
   parseSkillImportDraftRequest,
   parseSkillOptimizationPreviewRequest,
+  parseSharedSkillSourcePublishRequest,
+  parseSharedSkillSourceScanRequest,
   parseSkillSourceSnapshotRollbackRequest,
   parseSkillSourceSyncPublishRequest,
   parseSkillSourceSyncRequest,
@@ -90,6 +94,7 @@ import {
   readOptionalSkillCandidateStatusQuery,
   readOptionalSkillUsageEventKindQuery,
   type ParsedCreateSkillCandidateRequest,
+  type ParsedSharedSkillSourceScanRequest,
 } from "./schemas.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { handleSkillHardDelete } from "./hard-delete-route.js";
@@ -287,6 +292,51 @@ export async function handleSkillRoute(
         selectedSkillIds: input.selectedSkillIds,
         allowNewSkills: input.allowNewSkills,
         publishArtifacts: input.publishArtifacts,
+        now,
+      });
+      writeJson(response, 200, { cwd, publishedAt: now, preview, skills: result.skills, snapshots: result.snapshots, artifacts: result.artifacts });
+      return;
+    }
+
+    // Shared `.agents/skills` scan: explicitly triggered, auto-detected roots only, and
+    // deliberately separate from the P16 managed official-source endpoints above.
+    if (url.pathname === "/skills/sync/shared/preview") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/sync/shared/preview` });
+        return;
+      }
+      const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+      const input = parseSharedSkillSourceScanRequest(body);
+      const scannedAt = new Date().toISOString();
+      const preview = await buildSharedAgentsSkillSourceSyncPreview(cwd, store, input, scannedAt);
+      writeJson(response, 200, { cwd, scannedAt, preview });
+      return;
+    }
+
+    if (url.pathname === "/skills/sync/shared/publish") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/sync/shared/publish` });
+        return;
+      }
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseSharedSkillSourcePublishRequest(body);
+      const now = new Date().toISOString();
+      const preview = await buildSharedAgentsSkillSourceSyncPreview(cwd, store, input, now);
+      const result = await publishGstackSkillSourceSync({
+        store,
+        controlPlaneEvents,
+        cwd,
+        preview,
+        selectedSkillIds: input.selectedSkillIds,
+        allowNewSkills: input.allowNewSkills,
+        publishArtifacts: input.publishArtifacts,
+        enforceAutoSafePolicy: false,
+        pack: {
+          source: "skill-directory",
+          packId: SHARED_AGENT_SKILL_PACK_ID,
+          name: "Shared .agents skills",
+          description: "Skills confirmed from the shared .agents/skills directories.",
+        },
         now,
       });
       writeJson(response, 200, { cwd, publishedAt: now, preview, skills: result.skills, snapshots: result.snapshots, artifacts: result.artifacts });
@@ -1387,6 +1437,8 @@ async function buildGstackSkillSourceSyncPreview(
     roots,
     registrySkills: listEffectiveSkillRegistryEntries(store),
     snapshots: store.listSkillSourceSnapshots({ includeArchived: true }),
+    // Shared-folder snapshots belong to a separate contract and must never surface here.
+    excludedSnapshotPackIds: [SHARED_AGENT_SKILL_PACK_ID],
     includeSkillIds: input.includeSkillIds,
     excludeSkillIds: input.excludeSkillIds,
     generatedAt,
@@ -1403,6 +1455,9 @@ async function buildManagedOfficialGstackSkillSourceSyncPreview(
     roots: [root],
     registrySkills: listEffectiveSkillRegistryEntries(store),
     snapshots: store.listSkillSourceSnapshots({ includeArchived: true }),
+    // The official revision only owns snapshots under its immutable cache checkout.
+    // Shared/legacy snapshots must never turn an official sync into "unavailable".
+    snapshotSourceRoots: [root],
     generatedAt,
   });
   const unavailable = preview.records.filter((record) => record.state === "missing" || record.state === "orphaned");
@@ -1410,6 +1465,30 @@ async function buildManagedOfficialGstackSkillSourceSyncPreview(
     throw new HttpError(409, "gstack_source_sync_unavailable", `Local gstack sources are unavailable: ${unavailable.map((record) => record.skillId).join(", ")}`);
   }
   return preview;
+}
+
+async function buildSharedAgentsSkillSourceSyncPreview(
+  cwd: string,
+  store: SkillRouteStore,
+  input: ParsedSharedSkillSourceScanRequest,
+  generatedAt = new Date().toISOString(),
+): Promise<SkillSourceSyncPreviewReport> {
+  const roots = await resolveSharedAgentsSkillSourceRoots({
+    workspaceRoot: cwd,
+    includeProjectRoot: input.includeProjectRoot,
+    includeUserRoot: input.includeUserRoot,
+  });
+  return previewGstackSkillSourceSync({
+    roots,
+    registrySkills: listEffectiveSkillRegistryEntries(store),
+    snapshots: store.listSkillSourceSnapshots({ includeArchived: true }),
+    snapshotPackIds: [SHARED_AGENT_SKILL_PACK_ID],
+    allowManagedSkillIdMatching: false,
+    includeSkillIds: input.includeSkillIds,
+    excludeSkillIds: input.excludeSkillIds,
+    generatedAt,
+    maxSourceBytes: input.maxSourceBytes,
+  });
 }
 
 async function publishGstackSkillSourceSync(input: {
@@ -1421,16 +1500,40 @@ async function publishGstackSkillSourceSync(input: {
   readonly allowNewSkills: boolean;
   readonly publishArtifacts: boolean;
   readonly trusted?: boolean;
+  /** Explicitly confirmed publishes (shared directories) bypass the auto-safe automation whitelist. */
+  readonly enforceAutoSafePolicy?: boolean;
+  readonly pack?: {
+    readonly source: SkillPackSource;
+    readonly packId: string;
+    readonly name: string;
+    readonly description: string;
+  };
   readonly now: string;
 }): Promise<{ readonly skills: readonly SkillRegistryEntry[]; readonly snapshots: readonly SkillSourceSnapshot[]; readonly artifacts: readonly SkillSourceArtifact[] }> {
+  const pack = input.pack ?? {
+    source: "gstack" as const,
+    packId: "gstack-source-sync",
+    name: "GStack source sync",
+    description: "Source-backed gstack skills published through explicit source sync.",
+  };
   const selectedSkillIds = uniqueStrings(input.selectedSkillIds);
-  const recordsBySkillId = new Map(input.preview.records.map((record) => [record.skillId, record]));
+  const recordsBySkillId = new Map<string, SkillSourceSyncPreviewRecord>();
+  const duplicateSkillIds = new Set<string>();
+  for (const record of input.preview.records) {
+    if (recordsBySkillId.has(record.skillId)) duplicateSkillIds.add(record.skillId);
+    else recordsBySkillId.set(record.skillId, record);
+  }
+  const ambiguousSelections = selectedSkillIds.filter((skillId) => duplicateSkillIds.has(skillId));
+  if (ambiguousSelections.length > 0) {
+    throw new HttpError(409, "skill_source_sync_not_publishable", `Selected records have ambiguous source roots: ${ambiguousSelections.map((skillId) => `${skillId}:blocked`).join(", ")}`);
+  }
   const missingSelections = selectedSkillIds.filter((skillId) => !recordsBySkillId.has(skillId));
   if (missingSelections.length > 0) {
     throw new HttpError(400, "skill_source_sync_selection_not_found", `Selected skill source records were not found: ${missingSelections.join(", ")}`);
   }
   const selectedRecords = selectedSkillIds.map((skillId) => recordsBySkillId.get(skillId)).filter((record): record is SkillSourceSyncPreviewRecord => Boolean(record));
-  const nonPublishable = selectedRecords.filter((record) => record.state === "missing" || record.state === "orphaned" || (!input.trusted && record.state === "blocked"));
+  const nonPublishable = selectedRecords.filter((record) => record.state === "missing" || record.state === "orphaned" ||
+    (!input.trusted && (record.state === "blocked" || (pack.packId === SHARED_AGENT_SKILL_PACK_ID && record.state === "unchanged"))));
   if (nonPublishable.length > 0) {
     throw new HttpError(409, "skill_source_sync_not_publishable", `Selected records are not publishable: ${nonPublishable.map((record) => `${record.skillId}:${record.state}`).join(", ")}`);
   }
@@ -1443,7 +1546,7 @@ async function publishGstackSkillSourceSync(input: {
     throw new HttpError(409, "skill_source_sync_new_skills_require_confirmation", `New skills require allowNewSkills=true: ${newRecords.map((record) => record.skillId).join(", ")}`);
   }
   const policy = input.store.getSkillSourceUpgradePolicy(input.now);
-  if (!input.trusted && policy.mode === "auto-safe") {
+  if (!input.trusted && input.enforceAutoSafePolicy !== false && policy.mode === "auto-safe") {
     const unsafe = selectedRecords.filter((record) => !isAutoSafeSkillSourceRecord(record, policy.allowNewSkills, policy.approvedRootIds));
     if (unsafe.length > 0) {
       throw new HttpError(409, "skill_source_sync_auto_safe_rejected", `auto-safe rejected records with unapproved roots, warnings, semantic risk, new skills, or artifact review requirements: ${unsafe.map((record) => record.skillId).join(", ")}`);
@@ -1451,11 +1554,11 @@ async function publishGstackSkillSourceSync(input: {
   }
 
   const newSkills: CreateSkillImportDraftInput | undefined = newRecords.length > 0 ? {
-    source: "gstack",
-    packId: "gstack-source-sync",
-    name: "GStack source sync",
+    source: pack.source,
+    packId: pack.packId,
+    name: pack.name,
     version: input.preview.upstreamVersions[0],
-    description: "Source-backed gstack skills published through explicit source sync.",
+    description: pack.description,
     definitions: newRecords.map((record) => {
       if (!record.definitionPreview) {
         throw new HttpError(409, "skill_source_sync_missing_definition", `No normalized skill definition preview is available for ${record.skillId}.`);

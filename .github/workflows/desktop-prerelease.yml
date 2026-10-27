@@ -249,7 +249,8 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$DESKTOP_TARGET" == "macos-arm64" ]]; then
-            NODE_OPTIONS="--import=$GITHUB_WORKSPACE/scripts/release/desktop-package-diagnostics.mjs" \
+            LING_PACKAGED_RELEASE_REVIEW_REQUIRED=1 \
+              NODE_OPTIONS="--import=$GITHUB_WORKSPACE/scripts/release/desktop-package-diagnostics.mjs" \
               corepack pnpm --filter @ling-stack/desktop package:mac
           else
             corepack pnpm --filter @ling-stack/desktop package:win
