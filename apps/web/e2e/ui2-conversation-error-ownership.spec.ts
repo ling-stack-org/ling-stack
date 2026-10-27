@@ -43,6 +43,8 @@ test("T13-P.9EF.B Conversation releases the generic AppShell error contract", as
   expect(domainSource).not.toContain("setErrorMessage");
   expect(readHookCall(appShellSource, "useConversationDomain")).not.toContain("setErrorMessage");
   expect(domainSource).toContain("useConversationErrorOwner");
+  expect(domainSource).toContain("shouldReportConversationStreamError");
+  expect(domainSource).toContain("hasAssistantReply: Boolean(event.assistantMessage)");
   expect(domainSource).toContain('surface: "thread"');
   expect(domainSource).toContain('scope: "stream"');
   expect(conversationHomeSource).toContain("shouldCommit");
