@@ -41,10 +41,14 @@ export const HTML_INTERACTIVE_MAX_BYTES = 2 * 1024 * 1024;
  */
 export const HTML_INTERACTIVE_CSP = "connect-src 'none'; form-action 'none'; base-uri 'none'";
 
-/** Attach the offline CSP to a scanned document, idempotently. */
+/**
+ * Attach the offline CSP to a scanned document. Always injects: skipping on a
+ * content substring match would let a document smuggle the policy text and
+ * opt out of enforcement. Repeated injection only repeats the same strict
+ * directive, which CSP combines restrictively.
+ */
 export function injectInteractiveHtmlCsp(html: string): string {
   const meta = '<meta http-equiv="Content-Security-Policy" content="' + HTML_INTERACTIVE_CSP + '">';
-  if (html.includes(HTML_INTERACTIVE_CSP)) return html;
   const headEnd = findTagEnd(html, "head");
   if (headEnd !== undefined) return html.slice(0, headEnd) + meta + html.slice(headEnd);
   const htmlEnd = findTagEnd(html, "html");

@@ -64,7 +64,9 @@ test("interactive html preview carries the offline CSP so scripts cannot reach t
   assert.ok(withHtmlOnly.includes("<head>" + cspMeta + "</head>"));
   const bare = injectInteractiveHtmlCsp("<script>1+1</script>");
   assert.ok(bare.startsWith(cspMeta));
-  assert.equal(injectInteractiveHtmlCsp(withHead), withHead, "injection is idempotent");
+  const doubled = injectInteractiveHtmlCsp(withHead);
+  assert.notEqual(doubled, withHead, "never skips injection based on document content");
+  assert.equal(doubled.split("Content-Security-Policy").length, 3, "repeated injection stacks the same strict policy");
   assert.match(HTML_INTERACTIVE_CSP, /connect-src 'none'/u);
   assert.match(HTML_INTERACTIVE_CSP, /form-action 'none'/u);
 });
