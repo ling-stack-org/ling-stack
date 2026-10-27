@@ -45,11 +45,27 @@ export const HTML_INTERACTIVE_CSP = "connect-src 'none'; form-action 'none'; bas
 export function injectInteractiveHtmlCsp(html: string): string {
   const meta = '<meta http-equiv="Content-Security-Policy" content="' + HTML_INTERACTIVE_CSP + '">';
   if (html.includes(HTML_INTERACTIVE_CSP)) return html;
-  const headOpen = /<head(?:\s[^>]*)?>/iu.exec(html);
-  if (headOpen) return html.slice(0, headOpen.index + headOpen[0].length) + meta + html.slice(headOpen.index + headOpen[0].length);
-  const htmlOpen = /<html(?:\s[^>]*)?>/iu.exec(html);
-  if (htmlOpen) return html.slice(0, htmlOpen.index + htmlOpen[0].length) + "<head>" + meta + "</head>" + html.slice(htmlOpen.index + htmlOpen[0].length);
+  const headEnd = findTagEnd(html, "head");
+  if (headEnd !== undefined) return html.slice(0, headEnd) + meta + html.slice(headEnd);
+  const htmlEnd = findTagEnd(html, "html");
+  if (htmlEnd !== undefined) return html.slice(0, htmlEnd) + "<head>" + meta + "</head>" + html.slice(htmlEnd);
   return meta + html;
+}
+
+/** Linear scan for the closing ">" of an opening tag; no regex backtracking. */
+function findTagEnd(html: string, tag: string): number | undefined {
+  const lower = html.toLowerCase();
+  let search = 0;
+  for (;;) {
+    const start = lower.indexOf("<" + tag, search);
+    if (start === -1) return undefined;
+    const next = lower[start + 1 + tag.length];
+    if (next === ">" || next === " " || next === "\t" || next === "\n" || next === "\r" || next === "\f") {
+      const end = lower.indexOf(">", start + 1);
+      return end === -1 ? undefined : end + 1;
+    }
+    search = start + 1;
+  }
 }
 
 export interface PreviewHtmlInteractive {
