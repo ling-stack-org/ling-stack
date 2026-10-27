@@ -44,7 +44,9 @@
 - 通知：原始 RED 3 fail/5 pass → 定向 8/8；后继双隔离组合 29/29。
   后续补上测试 fixture 的提前清理登记和环境恢复；当前通知、市场与故障注入
   组合 59/59、零 fail/cancel/skip、实际 exit 0，其中纯 VM 为 27 项。
-  fixture 修复的独立闭合审查仍须单独完成，不冒充 Daemon 全量或 GUI 验收。
+  fixture 独立闭合审查已完成，旧 N1 与市场临时目录清理发现可关闭；既有
+  governance 同时 body/close 失败可能只保留 close 错误的诊断限制仍保留。
+  不冒充 Daemon 全量或 GUI 验收，也不因此关闭下述数据库事故。
 
 Office 固定输入清单从 1625 补为 1637：十个新 runtime 可达输入、一个显式
 type-only diagnostics contract，以及共享鉴权 helper。列表包含不等于内容批准。
@@ -76,3 +78,11 @@ LING_STACK_HOME 防护。原失败及影响限制在本地
 本人认证、P3 剩余矩阵、最终 PR/main 核验均不因单测通过而完成。
 
 CI 按用户要求不启用或 dispatch；不正式发布、不做 Windows、不升级全局 gstack。
+
+## 远端备份的脱敏检查
+
+checkpoint 首次普通 push 被拦截，原因是市场 URL 拒绝测试中两项带
+`user:password` 的保留 `.test` 主机样例，不是真实凭据。仅在仓库既有
+`.gstack-redact-allowlist` 登记扫描器匹配的两项精确原文；不改测试躲模式，
+不加通配、不禁用或跳过 hook。直接调用原扫描器验证：样例 HIGH 从 2 到 0，
+另一个未登记的合成凭据仍触发 HIGH；实际 push 结果由远端读回另行确认。

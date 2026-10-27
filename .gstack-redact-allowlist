@@ -2,3 +2,10 @@
 # packages/daemon/test/codex-login.test.mjs:102 asserts that this URL is rejected.
 # Preserve its exact appearance in immutable full-regression logs; no pattern wildcard.
 https://user:pass@auth.openai.com
+
+# Negative marketplace URL-validation fixtures, not usable credentials.
+# skills-marketplace-fetch.test.mjs rejects these reserved .test hosts before
+# sending credentials; the second span is the literal source template, not a port.
+# Exact scanner spans only; no wildcard, global skip, or runtime/test rewrite.
+https://user:password@preview.a11.test
+https://user:password@preview.a11.test:${fixture.port}
