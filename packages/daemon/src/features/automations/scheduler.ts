@@ -11,6 +11,7 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import type { StartupStateRegistry } from "../../startup/state.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
+import type { NotificationHub } from "../notifications/hub.js";
 import type { ComputerUseProjectionRegistry } from "../computer-use/registry.js";
 import { createDetachedRunExecutionSink, executeRunRequest } from "../runs/orchestrator.js";
 import type { NativeRunDispatcher } from "../runs/native-run-dispatcher.js";
@@ -69,6 +70,7 @@ export class AutomationSchedulerRegistry {
     private readonly controlPlaneEvents: ControlPlaneEventHub,
     private readonly startupState?: StartupStateRegistry,
     private readonly nativeRunDispatcher?: NativeRunDispatcher,
+    private readonly notificationHub?: NotificationHub,
   ) {}
 
   start(cwd: string): { readonly scheduler: AutomationSchedulerState; readonly duplicate: boolean } {
@@ -311,6 +313,7 @@ export class AutomationSchedulerRegistry {
           scheduledFor,
           idempotencyKey: `automation:${automationId}:schedule:${scheduledFor}`,
         },
+        notificationHub: this.notificationHub,
         startRun: async (runRequest, hooks) =>
           await executeRunRequest(
             runRequest,

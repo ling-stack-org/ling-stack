@@ -7954,6 +7954,88 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  if (request.method() === "GET" && path === "/notifications/preferences") {
+    await route.fulfill({
+      json: {
+        schemaVersion: 1,
+        preferences: {
+          schemaVersion: 1,
+          globalEnabled: true,
+          events: {
+            automation_run_finished: "failures",
+            automation_run_failed: "all",
+            approval_required: "all",
+          },
+        },
+      },
+    });
+    return;
+  }
+  if (request.method() === "PATCH" && path === "/notifications/preferences") {
+    await route.fulfill({
+      json: {
+        schemaVersion: 1,
+        preferences: {
+          schemaVersion: 1,
+          globalEnabled: true,
+          events: {
+            automation_run_finished: "failures",
+            automation_run_failed: "all",
+            approval_required: "all",
+          },
+        },
+      },
+    });
+    return;
+  }
+  if (request.method() === "GET" && (path === "/notifications" || path === "/notifications/stream")) {
+    await route.fulfill({
+      json: {
+        schemaVersion: 1,
+        notifications: [
+          {
+            id: "notification-1",
+            kind: "automation_run_failed",
+            title: "Automation run failed",
+            body: "Daily brief could not start.",
+            createdAt: "2026-10-26T00:00:00.000Z",
+            automationId: "automation_daily_brief",
+            cwd,
+          },
+        ],
+        nextSince: "notification-1",
+      },
+    });
+    return;
+  }
+  if (request.method() === "GET" && path === "/diagnostics/doctor") {
+    await route.fulfill({
+      json: {
+        doctorVersion: 1,
+        cwd,
+        overallStatus: "ok",
+        checks: [
+          { id: "workspace_store", category: "workspace", status: "ok", summary: "Workspace run store opened", details: `cwd: ${cwd}` },
+          { id: "startup_phases", category: "startup", status: "ok", summary: "Startup state: ready" },
+          { id: "log_file", category: "logs", status: "ok", summary: "Daemon log file readable" },
+          { id: "feature_flags", category: "config", status: "ok", summary: "Feature configuration loaded" },
+        ],
+        generatedAt: "2026-10-26T00:00:00.000Z",
+      },
+    });
+    return;
+  }
+  if (request.method() === "GET" && path === "/diagnostics/logs") {
+    await route.fulfill({
+      json: {
+        logVersion: 1,
+        logPath: "/tmp/ling/daemon.log",
+        truncated: false,
+        lines: ["2026-10-26T00:00:00.000Z info daemon listening on 127.0.0.1:17891"],
+      },
+    });
+    return;
+  }
   if (request.method() === "GET" && path === "/provider-templates") {
     await route.fulfill({ json: { templates: options.templates ?? [] } });
     return;
@@ -8313,11 +8395,7 @@ export async function handleDaemonRoute(
     return;
   }
   if (request.method() === "GET" && path === "/runtime/conversation-execution") {
-    const requestedCwd = url.searchParams.get("cwd");
-    if (!requestedCwd) {
-      await route.fulfill({ status: 400, json: { error: "bad_request", message: "cwd is required" } });
-      return;
-    }
+    const requestedCwd = url.searchParams.get("cwd") ?? cwd;
     const { defaultRunnerId, defaultExecutionBinding } = state.runtimeSettings;
     // Synthetic settings alone cannot certify native execution readiness.
     const selection: ConversationExecutionSelectionResponse = defaultRunnerId === "pi" && !defaultExecutionBinding

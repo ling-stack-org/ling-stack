@@ -68,6 +68,7 @@ import type { ApprovalResolution } from "../approvals/types.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import type { ChannelTeammateRelationFeedback } from "./ChannelSettingsPanels.js";
 import type { ChannelFeedbackEntry } from "./useChannelFeedbackController.js";
+import type { ChannelStreamErrorOwner, ChannelStreamErrorOwnerHint } from "../../shared/conversation/stream-error-ownership.js";
 
 export interface WorkspaceClientViewProps {
   readonly cwd: string;
@@ -170,7 +171,7 @@ export interface WorkspaceClientViewProps {
   readonly runningWorkflowStepId: string;
   readonly orchestratingWorkflowId: string;
   readonly channelFeedbackEntries: readonly ChannelFeedbackEntry[];
-  readonly onClearChannelFeedback: (surface: ChannelFeedbackEntry["surface"], identity: string) => void;
+  readonly onClearChannelFeedback: (surface: ChannelFeedbackEntry["surface"], identity: string, workspaceCwd: string) => void;
   readonly onChannelCreateOpenChange: (open: boolean) => void;
   readonly onChannelEditFormChange: (form: ChannelFormState) => void;
   readonly onTaskFormChange: (form: TaskFormState) => void;
@@ -196,12 +197,13 @@ export interface WorkspaceClientViewProps {
     readonly linkPreviewIds: readonly string[];
     readonly fileRefs: readonly ChannelMessageFileRef[];
     readonly requestAiReply: boolean;
+    readonly streamOwner?: ChannelStreamErrorOwnerHint;
     readonly replyDisposition?: ChannelReplyDisposition;
     readonly onMessageAccepted?: (message: ChannelMessage) => void;
     readonly onReplyPending?: (pending: ChannelReplyPendingEvent) => void;
     readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
     readonly onReplyDispatch?: (dispatch: ChannelReplyDispatch) => void;
-  }) => Promise<{ readonly errorMessage?: string }>;
+  }) => Promise<{ readonly errorMessage?: string; readonly errorOwner?: ChannelStreamErrorOwner }>;
   readonly onConfirmExecutionProposal: (proposal: ChannelExecutionProposal) => Promise<void>;
   readonly onCancelExecutionProposal: (proposal: ChannelExecutionProposal) => Promise<void>;
   readonly onUploadAttachments: (files: readonly File[]) => Promise<readonly ChannelAttachment[]>;

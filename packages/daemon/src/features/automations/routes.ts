@@ -32,6 +32,7 @@ import type { AutomationSchedulerRegistry } from "./scheduler.js";
 import { buildAutomationContext } from "./context.js";
 import { assertAutomationRecurrence } from "./recurrence.js";
 import { runAutomation, type StartAutomationRunExecution } from "./run.js";
+import type { NotificationHub } from "../notifications/hub.js";
 import {
   parseAutomationRunCancelRequest,
   parseAutomationRunRequest,
@@ -268,6 +269,7 @@ export async function handleAutomationItem(
   route: AutomationRoute,
   startRun: StartAutomationRunExecution,
   schedulerRegistry: AutomationSchedulerRegistry,
+  notificationHub?: NotificationHub,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = requireCwd(url);
@@ -345,6 +347,7 @@ export async function handleAutomationItem(
         storeRegistry,
         request: parseAutomationRunRequest(body),
         startRun,
+        notificationHub,
       });
       writeJson(response, 202, { ...result, run: projectPublicRunSession(result.run, store) });
       return;

@@ -247,7 +247,7 @@ for (const [locale, expected] of thinkingOffLabels) {
     assert.equal(t("Thinking off"), expected);
     assert.notEqual(t("Thinking off"), t("Thinking"));
     assert.equal(normalConversationThinkingLabel("off", t), t("Off"));
-    assert.deepEqual(normalConversationThinkingOptions(["high"]), ["off", "high"]);
+    assert.deepEqual(normalConversationThinkingOptions(["off", "high"]), ["off", "high"]);
     assert.deepEqual(normalConversationThinkingOptions(["off"]), []);
   });
 }

@@ -172,6 +172,14 @@ for (const [action, endpoint, errorState] of [["refreshChannelRunArtifacts", "li
   });
 }
 
+test("a channel panel load failure carries the captured workspace identity", async t => {
+  const f = await fixture(t, "workspace");
+  f.io(name => name === "listTasks" ? Promise.reject(new Error("HTTP 403 task list denied")) : undefined);
+  await f.render().actions.refreshTasks("channel");
+  assert.deepEqual(f.feedback.at(-1), { workspaceCwd: cwd, surface: "task", identity: "channel",
+    scope: "load", message: "HTTP 403 task list denied" });
+});
+
 for (const threadId of [undefined, "topic", "branch"]) {
   test(`paused ${threadId ?? "root"} submissions do not POST or change their lookup journal`, async t => {
     const f = await fixture(t, "actions", true);
@@ -222,11 +230,54 @@ test("accepted channel EOF during drain performs no final refresh and never inve
 });
 
 for (const error of [new Error("HTTP 403 denied"), new TypeError("Failed to fetch")]) {
-  test(`accepted channel ${error.name} remains visible during drain`, async t => {
+  test(`accepted channel ${error.name} propagates to its caller during drain without a duplicate feedback owner`, async t => {
     const f = await fixture(t, "actions");
     f.stream(receive => { receive({ event: "ready", data: JSON.stringify(envelope()) }); f.pause(); throw error; });
-    await assert.rejects(f.send(), error); assert.equal(f.feedback.at(-1).message, error.message);
+    await assert.rejects(f.send(), error);
+    // The composer/topic caller owns thrown errors. The controller must not
+    // also create a workspace-level copy of the same business failure.
+    assert.deepEqual(f.feedback, []);
+    assert.equal(f.state.accepted, 1);
     assert.deepEqual(f.calls.map(call => call.name), ["streamChannelTurn"]);
+  });
+}
+
+for (const hasAssistantReply of [false, true]) {
+  test(`a channel terminal error retains its ${hasAssistantReply ? "assistant" : "composer"} owner when later stream parsing fails`, async t => {
+    const f = await fixture(t, "actions");
+    f.stream(receive => {
+      const data = envelope();
+      if (hasAssistantReply) data.assistantItems = [{ ...data.userItem, id: "assistant", sequence: 2,
+        kind: "assistant_message", actorType: "ai_teammate", actorId: "qa", status: "failed" }];
+      receive({ event: "ready", data: JSON.stringify(data) });
+      receive({ event: "error", data: JSON.stringify({ ...data, error: "Host rejected the effect" }) });
+      throw new Error("later stream parser failure");
+    });
+    assert.deepEqual(await f.send(), { errorMessage: "Host rejected the effect",
+      errorOwner: hasAssistantReply ? "assistant-reply" : "channel-composer" });
+    assert.equal(f.state.accepted, 1);
+    assert.equal(f.pendingKeys.size, 0);
+    assert.equal(f.calls.filter(call => call.name === "streamChannelTurn").length, 1);
+    assert.equal(f.calls.filter(call => call.name === "getConversationSubmission").length, 0);
+    assert.deepEqual(f.feedback, []);
+  });
+}
+
+for (const laterError of [new Error("later stream parser failure"), transport()]) {
+  test(`a terminal business error during drain survives later ${laterError.name} without a reconciliation read`, async t => {
+    const f = await fixture(t, "actions");
+    f.stream(receive => {
+      const data = envelope();
+      receive({ event: "ready", data: JSON.stringify(data) });
+      receive({ event: "error", data: JSON.stringify({ ...data, error: "Host rejected the effect" }) });
+      f.pause();
+      throw laterError;
+    });
+    assert.deepEqual(await f.send(), { errorMessage: "Host rejected the effect", errorOwner: "channel-composer" });
+    assert.deepEqual(f.calls.map(call => call.name), ["streamChannelTurn"]);
+    assert.equal(f.state.accepted, 1);
+    assert.equal(f.pendingKeys.size, 0);
+    assert.deepEqual(f.feedback, []);
   });
 }
 

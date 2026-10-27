@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { join } from "node:path";
 import { createServer, type Server } from "node:http";
 import {
   listBuiltinSkillPackExtensions,
@@ -9,6 +10,8 @@ import {
   type RunStore,
 } from "@ling-stack/core";
 import { createPiRunner, getPiRunnerExtension } from "@ling-stack/runner-pi";
+import { NotificationHub } from "./features/notifications/hub.js";
+import { ImDestinationRegistry } from "./features/im-destinations/registry.js";
 import {
   listBuiltinProviderExtensions,
 } from "@ling-stack/providers";
@@ -290,6 +293,24 @@ export function createDaemonServer(
       ?? createLazyCuaDriverLeaseClientFactory(desktopBridgeToken),
   });
   const controlPlaneEvents = new ControlPlaneEventHub();
+  const notificationHub = new NotificationHub({
+    journalPath: join(defaultStoragePaths.user.rootDir, "notifications", "journal.json"),
+    preferencesPath: join(defaultStoragePaths.user.rootDir, "notifications", "preferences.json"),
+  });
+  const imDestinations = new ImDestinationRegistry({
+    storePath: join(defaultStoragePaths.user.rootDir, "notifications", "im-destinations.json"),
+    secretResolver: baseSecretResolver,
+  });
+  notificationHub.setDeliverSink(async (record) => {
+    const destinations = imDestinations.list().filter((destination) => destination.enabled);
+    if (destinations.length === 0) return;
+    const message = {
+      title: record.title,
+      bodyMarkdown: record.body,
+      severity: record.kind === "automation_run_failed" ? ("danger" as const) : ("info" as const),
+    };
+    await Promise.allSettled(destinations.map((destination) => imDestinations.dispatch(destination, message)));
+  });
   const startupState = new StartupStateRegistry();
   const computerUsePreviews = new ComputerUseProjectionRegistry(dependencies.computerUseProjectionOptions);
   const hostCapabilityBridge = new HostCapabilityBridgeController();
@@ -565,6 +586,7 @@ export function createDaemonServer(
     controlPlaneEvents,
     startupState,
     nativeRunDispatcher,
+    notificationHub,
   );
   startupOptionalWarmups = new StartupOptionalWarmupCoordinator({
     startupState,
@@ -816,6 +838,8 @@ export function createDaemonServer(
     backgroundSchedulers,
     automationSchedulers,
     controlPlaneEvents,
+    notificationHub,
+    imDestinations,
     providerStartupRefresh,
     providerImportPreflight,
     startupState,
@@ -1034,6 +1058,11 @@ export function createDaemonServer(
     start: async () => {
       if (harnessShuttingDown) throw new Error("runtime_shutting_down");
       cuaDriverActivationCoordinator.resetForDaemonStart();
+      if (!isLoopbackHost(resolvedConfig.host) && !resolvedConfig.authToken) {
+        throw new Error(
+          "daemon_bind_refused: non-loopback binds require an auth token (set LING_STACK_AUTH_TOKEN or config.authToken).",
+        );
+      }
       await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
         server.listen(resolvedConfig.port, resolvedConfig.host, () => {
@@ -1187,6 +1216,10 @@ async function settleHarnessLifetimes(lifetimes: readonly Promise<unknown>[]): P
   const settled = await Promise.allSettled(lifetimes);
   const failures = settled.filter((result): result is PromiseRejectedResult => result.status === "rejected").map(result => result.reason as unknown);
   if (failures.length) throw new AggregateError(failures, "harness_owned_lifetime_settle_failed");
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
 }
 
 function readChromeBrowserExtensionIds(value: string | undefined): readonly string[] {

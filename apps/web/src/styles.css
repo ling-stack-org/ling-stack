@@ -117,3 +117,12 @@
 @import "./styles/app/macos-titlebar.css";
 
 @import "./styles/shared/work-summary.css";
+
+.artifact-preview-interactive-frame {
+  display: block;
+  width: 100%;
+  min-height: 320px;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md, 10px);
+  background: #fff;
+}

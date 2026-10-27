@@ -93,7 +93,7 @@ export const settingsSectionGroups: readonly SettingsSectionGroupDefinition[] = 
     heading: "Maintenance",
     items: [
       { id: "archived-items", label: "Archived items", icon: Archive },
-      { id: "startup-diagnostics", label: "Startup and diagnostics", pending: true, icon: Database },
+      { id: "startup-diagnostics", label: "Startup and diagnostics", icon: Database },
     ],
   },
 ];

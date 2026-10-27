@@ -322,6 +322,9 @@ function artifactPreviewCanRender(preview: PreviewContentResponse): boolean {
   if (preview.kind === "image") {
     return Boolean(preview.imageUrl);
   }
+  if (preview.kind === "html_interactive") {
+    return Boolean(preview.htmlInteractive);
+  }
   return preview.text !== undefined;
 }
 
@@ -367,6 +370,9 @@ function previewKindLabel(kind: PreviewContentKind): string {
   }
   if (kind === "office") {
     return "Office";
+  }
+  if (kind === "html_interactive") {
+    return "Interactive";
   }
   return "Unsupported";
 }

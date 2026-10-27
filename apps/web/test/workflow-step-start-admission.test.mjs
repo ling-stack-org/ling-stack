@@ -2,11 +2,21 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
-import test from "node:test";
+import test, { after } from "node:test";
 import vm from "node:vm";
+import { catalogConsumerHarness } from "./support/catalog-consumer-harness.mjs";
 
 import { parseChannelWorkflowStepStartResponse } from "../../../packages/contracts/dist/index.js";
 import { streamRun } from "../src/sse.ts";
+
+// Execute the real observation predicates used by the extracted run callback;
+// these tests leave observation live and exercise workflow admission, not a
+// duplicate implementation of the Host-pause policy.
+const observationHarness = await catalogConsumerHarness({ after }, { exports: {
+  "shared/conversation/observation/daemon-observation.tsx": [
+    "isDaemonObservationPausedForWorkspace", "DaemonObservationDeferredError", "liveDaemonObservation",
+  ],
+} });
 
 const controllerPath = new URL("../src/app/use-channel-workflow-controller.ts", import.meta.url);
 const controllerSource = readFileSync(controllerPath, "utf8");
@@ -252,6 +262,9 @@ test("ordinary SSE ready and event frames retain their existing stream behavior"
 function runsDomainStreamFixture(streamRunImplementation) {
   const state = { errors: [], healthRefreshes: 0, loadRuns: 0, refreshRuns: 0 };
   const run = vm.runInNewContext(streamRequestCode, {
+    isDaemonObservationPausedForWorkspace: observationHarness.module.isDaemonObservationPausedForWorkspace,
+    DaemonObservationDeferredError: observationHarness.module.DaemonObservationDeferredError,
+    observationRef: { current: observationHarness.module.liveDaemonObservation },
     input: {
       confirmFullAccessRunIfNeeded: async (body) => body,
       setSelectedWorkUnitDetail: () => {},

@@ -42,6 +42,7 @@ import { useI18n } from "../../i18n.js";
 import { recoverSubmissionReceipt, submissionWasRejected, UnconfirmedConversationSubmissionError } from "../../shared/conversation/conversation-submission-recovery.js";
 import { submissionLookupJournal } from "../../shared/conversation/conversation-submission-journal.js";
 import { validatePrivateSubmissionReceipt } from "../../shared/conversation/submission-receipt-scope.js";
+import { shouldReportConversationStreamError } from "../../shared/conversation/stream-error-ownership.js";
 import { privateSubmissionDraftMatches, type PrivateSubmissionDraft } from "./teammate-private-submission-draft.js";
 import { hasPendingPrivateGuidance, submitPrivateGuidance } from "./teammate-private-guidance.js";
 import { useTeammateDirectStopController } from "./useTeammateDirectStopController.js";
@@ -1316,7 +1317,16 @@ export function TeammateWorkspace({
           const nextMessages = [data.message, data.aiReply].filter((message): message is TeammateDirectMessage => Boolean(message));
           if (nextMessages.length > 0) publishStreamMessages(current => upsertDirectMessages(current, nextMessages));
           setSending(false);
-          if (data.error) workspaceRequestOwner.reportError(operation, data.error);
+          // A failed AI reply owns its provider error. The feed renders the
+          // error beside that persisted message, so repeating it in the
+          // workspace-level banner creates two competing copies of the same
+          // failure. Keep the workspace error only for transport failures
+          // where the daemon did not return a reply record to anchor it to.
+          if (shouldReportConversationStreamError({ error: data.error, hasAssistantReply: Boolean(data.aiReply) })) {
+            workspaceRequestOwner.reportError(operation, data.error);
+          } else if (data.error) {
+            workspaceRequestOwner.clearError(operation);
+          }
         }
       });
       if (streamFailed) return;

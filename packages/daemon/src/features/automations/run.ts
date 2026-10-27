@@ -12,6 +12,7 @@ import {
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { isPathInsideRoot } from "../../shared/path.js";
+import type { NotificationHub } from "../notifications/hub.js";
 import type { RunRequest } from "../runs/schemas.js";
 import { createAutomationContextArtifact } from "./artifacts.js";
 import { buildAutomationContext, type AutomationContextBuildResult } from "./context.js";
@@ -33,6 +34,7 @@ export interface RunAutomationInput {
   readonly storeRegistry: RunStoreRegistry;
   readonly request: AutomationRunRequest;
   readonly startRun: StartAutomationRunExecution;
+  readonly notificationHub?: NotificationHub;
 }
 
 export interface RunAutomationResult {
@@ -166,6 +168,7 @@ export async function runAutomation(input: RunAutomationInput): Promise<RunAutom
         },
         completedAt,
       );
+      void emitAutomationRunNotification(input, automation, terminalRun, status, completedAt);
     },
   });
 
@@ -180,6 +183,7 @@ export async function runAutomation(input: RunAutomationInput): Promise<RunAutom
       },
       failedAt,
     ) ?? automationRun;
+    void emitAutomationRunNotification(input, automation, undefined, "failed", failedAt);
   } else if (!linkedRunId) {
     applyRunReady(runId);
   }
@@ -195,14 +199,46 @@ export async function runAutomation(input: RunAutomationInput): Promise<RunAutom
   };
 }
 
+/**
+ * Journal (and, per preferences, deliver) a notification when an automation
+ * run reaches a terminal state. Failures inside the notification hub never
+ * affect run bookkeeping.
+ */
+async function emitAutomationRunNotification(
+  input: RunAutomationInput,
+  automation: AutomationDefinition,
+  terminalRun: RunSession | undefined,
+  status: AutomationRunStatus,
+  completedAt: string,
+): Promise<void> {
+  const hub = input.notificationHub;
+  if (!hub) return;
+  try {
+    const failed = status === "failed";
+    await hub.emit({
+      kind: failed ? "automation_run_failed" : "automation_run_finished",
+      title: failed ? "Automation run failed" : "Automation run finished",
+      body: failed
+        ? `${automation.title} run ${terminalRun?.errorMessage ? `failed: ${terminalRun.errorMessage}` : "could not start."}`
+        : `${automation.title} completed successfully.`,
+      automationId: automation.id,
+      automationLabel: automation.title,
+      runId: terminalRun?.id,
+      cwd: input.cwd,
+      at: new Date(completedAt),
+    });
+  } catch {
+    // Notification journaling must never break run completion.
+  }
+}
+
 async function runHeartbeatAutomation(input: RunAutomationInput & {
   readonly store: RunStore;
   readonly automation: AutomationDefinition;
   readonly automationRun: AutomationRun;
   readonly thread: NonNullable<ReturnType<RunStore["getLingThread"]>>;
   readonly now: string;
-}): Promise<RunAutomationResult> {
-  const targetThreadId = input.automation.targetThreadId ?? input.automation.target.threadId;
+}): Promise<RunAutomationResult> {  const targetThreadId = input.automation.targetThreadId ?? input.automation.target.threadId;
   if (!targetThreadId) {
     throw new HttpError(409, "heartbeat_thread_required", "对话自动化需要选择一个可唤醒的对话。");
   }

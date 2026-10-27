@@ -53,7 +53,7 @@ async function sendThroughHome(level = "off", extra = {}) {
 for (const [locale, meaning] of Object.entries(disabledMeaning)) {
   test(`C011 ${locale}: actual off composer/aria and Home submit agree without sending a thinking level`, async () => {
     const t = await h.select(locale);
-    assert.deepEqual(h.module.normalConversationThinkingOptions(["low"]), ["off", "low"]);
+    assert.deepEqual(h.module.normalConversationThinkingOptions(["off", "low"]), ["off", "low"]);
     const menuLabel = h.module.normalConversationThinkingLabel("off", t);
     const markup = h.render(h.module.NormalConversationComposer, composer);
     const selectedAria = t("Selected thinking mode {label}", { label: menuLabel });

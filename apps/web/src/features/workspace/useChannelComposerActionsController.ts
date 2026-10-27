@@ -64,6 +64,7 @@ import {
   type OptimisticChannelGuidance,
 } from "./channel-optimistic-guidance.js";
 import { findMentionsInText, mergeMentions } from "./channelMentionText.js";
+import type { ChannelStreamErrorOwner } from "../../shared/conversation/stream-error-ownership.js";
 
 interface ChannelComposerActionsInput {
   readonly cwd: string;
@@ -128,12 +129,13 @@ interface ChannelComposerActionsInput {
     readonly linkPreviewIds: readonly string[];
     readonly fileRefs: readonly ChannelMessageFileRef[];
     readonly requestAiReply: boolean;
+    readonly streamOwner?: "channel-composer";
     readonly replyDisposition?: ChannelReplyDisposition;
     readonly onMessageAccepted?: (message: ChannelMessage) => void;
     readonly onReplyPending?: (pending: ChannelReplyPendingEvent) => void;
     readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
     readonly onReplyDispatch?: (dispatch: ChannelReplyDispatch) => void;
-  }) => Promise<{ readonly errorMessage?: string }>;
+  }) => Promise<{ readonly errorMessage?: string; readonly errorOwner?: ChannelStreamErrorOwner }>;
   readonly isComposerCurrent: (ownerKey: string) => boolean;
   readonly composerSnapshots: ChannelComposerSnapshotController;
   readonly onCancelActiveReply: (target: ChannelGuidanceTarget) => void;
@@ -603,6 +605,7 @@ export function useChannelComposerActionsController({
         linkPreviewIds: linkPreviews.map((preview) => preview.id),
         fileRefs,
         requestAiReply: shouldRequestAi,
+        streamOwner: "channel-composer",
         ...(replyDisposition ? { replyDisposition } : {}),
         onMessageAccepted: (message) => {
           acceptedSourceMessageId = message.id;
@@ -673,6 +676,11 @@ export function useChannelComposerActionsController({
       }
       setPendingChannelSendPreview((current) => current?.id === pendingSendPreviewId ? undefined : current);
       if (sendResult.errorMessage) {
+        if (sendResult.errorOwner === "assistant-reply") {
+          setSendState("idle");
+          setSendError("");
+          return;
+        }
         if (acceptedSourceMessageId) {
           setSendState("idle");
           setSendError("");

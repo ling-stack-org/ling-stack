@@ -219,6 +219,7 @@ type WorkspaceFeedbackSurface = "workspace" | "composer" | "task" | "workflow" |
 type WorkspaceFeedbackScope = "load" | "mutation" | "stream";
 
 interface WorkspaceFeedbackEntry {
+  readonly workspaceCwd: string;
   readonly surface: WorkspaceFeedbackSurface;
   readonly identity: string;
   readonly scope: WorkspaceFeedbackScope;
@@ -232,7 +233,7 @@ export function useWorkspaceDomain(input: {
   readonly selectedChannelBranchId: string;
   readonly translate: (value: string) => string;
   readonly reportFeedback: (entry: WorkspaceFeedbackEntry) => void;
-  readonly clearFeedback: (surface: WorkspaceFeedbackSurface, identity: string) => void;
+  readonly clearFeedback: (surface: WorkspaceFeedbackSurface, identity: string, workspaceCwd: string) => void;
   readonly onChannelMessagesLoaded?: (channelId: string, messages: readonly ChannelMessage[]) => void;
 }): WorkspaceController {
   const [channels, setChannels] = useState<readonly Channel[]>([]);
@@ -436,13 +437,13 @@ export function useWorkspaceDomain(input: {
       const message = caught instanceof Error ? caught.message : String(caught);
       const error: DomainError = { scope: "load", message };
       setError(current => isOwnerCurrent() ? error : current);
-      input.reportFeedback({ surface, identity: channelId, scope: "load", message });
+      input.reportFeedback({ workspaceCwd: cwd.trim(), surface, identity: channelId, scope: "load", message });
     }
     return { isCurrent, isOwnerCurrent, publish, publishOwned, report };
   }
 
   function clearScopedFeedback(surface: WorkspaceFeedbackSurface, identity: string): void {
-    input.clearFeedback(surface, identity);
+    input.clearFeedback(surface, identity, input.cwd.trim());
   }
 
   function reportScopedFeedback(
@@ -455,7 +456,7 @@ export function useWorkspaceDomain(input: {
     if (deferObservationError(caught, cwd)) return;
     const message = caught instanceof Error ? caught.message : String(caught);
     setError({ scope, message });
-    input.reportFeedback({ surface, identity, scope, message });
+    input.reportFeedback({ workspaceCwd: input.cwd.trim(), surface, identity, scope, message });
   }
 
   async function refreshChannels(cwd = input.cwd): Promise<void> {
