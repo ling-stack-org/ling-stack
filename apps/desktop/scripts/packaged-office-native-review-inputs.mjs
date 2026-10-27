@@ -85,6 +85,10 @@ export const PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS = Object.freeze([
 export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   // Shared HTTP/upgrade authentication; this entry does not approve new bytes.
   "packages/daemon/src/server/request-auth.ts",
+  // Explicit managed-engine runtime closure; listing alone grants no approval.
+  "packages/contracts/src/engine-lifecycle.ts",
+  "packages/daemon/src/features/execution-engines/engine-scanner.ts",
+  "packages/daemon/src/features/execution-engines/managed-engine-installer.ts",
   // Explicit current-main feature closure; content review and QA binding remain separate gates.
   "packages/contracts/src/artifacts.ts",
   "packages/contracts/src/diagnostics.ts",
