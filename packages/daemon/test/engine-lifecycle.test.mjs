@@ -64,7 +64,7 @@ async function packTarball(files) {
 
 function registryFetch(metadata, tarball) {
   return async (url) => {
-    if (url.includes("registry.npmjs.org") && url.endsWith(".tgz")) {
+    if (new URL(String(url)).hostname === "registry.npmjs.org" && String(url).endsWith(".tgz")) {
       return new Response(tarball.bytes, { status: 200 });
     }
     return new Response(JSON.stringify(metadata), { status: 200 });

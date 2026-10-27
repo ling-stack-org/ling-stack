@@ -154,9 +154,9 @@ const capabilities: LingDesktopCapabilities = {
     revoke: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessRevoke),
   },
   executionEngines: {
-    discoverEngines: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEnginesDiscover),
-    installEngine: (engineId: ExternalExecutionEngineId) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEnginesInstall, engineId),
-    installEngineStatus: (engineId: ExternalExecutionEngineId) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEnginesInstallStatus, engineId),
+    discover: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEnginesDiscover),
+    install: (engineId: ExternalExecutionEngineId) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEnginesInstall, engineId),
+    installStatus: (engineId: ExternalExecutionEngineId) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEnginesInstallStatus, engineId),
     listProfiles: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEnginesList),
     getProfile: (engineId) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineProfileGet, engineId),
     saveProfile: (engineId, request) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineProfileSave, engineId, request),
