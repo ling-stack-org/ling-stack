@@ -87,6 +87,28 @@ test("a real exited child cannot authorize scratch cleanup while a selection hol
   assert.equal(lock.scratchPath, join(options.root, "runs", scratch));
 });
 
+// Regression: candidate handoff precedes selection and must survive real SIGTERM.
+test("a real pre-selection timeout retains the recovered candidate despite confirmed group drain", async t => {
+  const options = await fixture(t);
+  const script = `const fs = require('fs'), path = require('path');
+    const scratch = path.dirname(process.env.TMPDIR);
+    fs.writeFileSync(path.join(scratch, '.retain-recovered-executable.json'),
+      JSON.stringify({scope:'fixture-recovered-candidate'}), {flag:'wx',mode:0o600});
+    fs.writeFileSync(path.join(scratch, 'only-candidate'), 'fixture');
+    setInterval(() => {}, 1000);`;
+  await assert.rejects(runManagedNode({ ...options, args: ["-e", script], timeoutMs: 500 }), /scratch_retained_for_review/);
+  const [scratch] = await readdir(join(options.root, "runs"));
+  assert.ok(scratch);
+  assert.equal(await readFile(join(options.root, "runs", scratch, "only-candidate"), "utf8"), "fixture");
+  const receipt = JSON.parse(await readFile(join(options.root, "last-run.json")));
+  assert.equal(receipt.reason, "deadline_exceeded");
+  assert.equal(receipt.settlement.directChild.closed, true);
+  assert.equal(receipt.settlement.directChild.signal, "SIGTERM");
+  assert.deepEqual(receipt.settlement.processGroup, { status: "absent" });
+  assert.equal(receipt.outputSettlement, "settled");
+  assert.notEqual(receipt.leaseDisposition, "released");
+});
+
 test("a timed-out child and oversized output are terminal failures, not successful retries", async t => {
   const options = await fixture(t);
   const timedOut = await runManagedNode({ ...options, args: ["-e", "setInterval(() => {}, 1000)"], timeoutMs: 150 });

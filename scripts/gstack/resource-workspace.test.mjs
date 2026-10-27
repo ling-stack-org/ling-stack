@@ -123,6 +123,23 @@ test("the recovery gate accessor validates the workspace before returning its fi
   await assert.rejects(resourceWorkspace.resourceRecoveryGatePath(root), /mount_identity_mismatch/);
 });
 
+// Regression: QA recovery candidate must survive cancellation before selection.
+test("an independent handoff hold vetoes release in every unknown-node shape", async t => {
+  for (const kind of ["file", "directory", "dangling-symlink"]) await t.test(kind, async t => {
+    const { root, parent, acquire } = await workspace(t, { localOnly: true });
+    const lease = await acquire(), hold = join(lease.scratchPath, ".retain-recovered-executable.json");
+    if (kind === "file") await writeFile(hold, "unreleased candidate", { flag: "wx", mode: 0o600 });
+    if (kind === "directory") await mkdir(hold, { mode: 0o700 });
+    if (kind === "dangling-symlink") await symlink(join(parent, "missing"), hold);
+    const before = await lstat(hold);
+    await assert.rejects(lease.release(), /scratch_retained_for_review/);
+    assert.equal((await lstat(hold)).ino, before.ino);
+    assert.equal((await requireResourceLease(lease.env)).root, root);
+    await rm(hold, { recursive: kind === "directory", force: false });
+    await lease.release();
+  });
+});
+
 test("any unknown recovery-gate node refuses acquisition without deleting it or creating scratch", async t => {
   for (const kind of ["file", "directory", "dangling-symlink"]) await t.test(kind, async t => {
     const { root, parent, acquire } = await workspace(t, { localOnly: true });

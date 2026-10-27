@@ -7,6 +7,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 const GiB = 1024 ** 3;
 export const RESOURCE_LIMITS = Object.freeze({ budgetBytes: 12 * GiB, minFreeBytes: 20 * GiB });
 export const RESOURCE_REVIEW_HOLD_NAME = ".retain-for-review.json";
+export const RESOURCE_HANDOFF_HOLD_NAME = ".retain-recovered-executable.json";
 const marker = ".gstack-resource-workspace.json";
 const lockName = ".heavy-operation.json";
 const lockPath = record => join(record.storageMode === "local-bounded" ? record.localParentPath : record.mountPath,
@@ -247,9 +248,13 @@ export async function acquireResourceLease(root, { additionalBytes = 0 } = {}) {
         // Process settlement cannot prove an external pointer was restored.
         // Any node at this fixed marker blocks cleanup; never parse an unknown
         // marker into permission to remove it or its referenced scratch.
-        const hold = await lstat(join(scratchPath, RESOURCE_REVIEW_HOLD_NAME))
-          .catch(error => { if (error.code === "ENOENT") return null; throw error; });
-        if (hold) throw new Error("gstack_resource_scratch_retained_for_review");
+        // Candidate custody and external selection are independent lifetimes.
+        // Neither owner can clear the other owner's hold by restoring a pointer.
+        for (const name of [RESOURCE_REVIEW_HOLD_NAME, RESOURCE_HANDOFF_HOLD_NAME]) {
+          const hold = await lstat(join(scratchPath, name))
+            .catch(error => { if (error.code === "ENOENT") return null; throw error; });
+          if (hold) throw new Error("gstack_resource_scratch_retained_for_review");
+        }
         await rm(scratchPath, { recursive: true, force: true });
         await handle.close();
         await rm(path);
