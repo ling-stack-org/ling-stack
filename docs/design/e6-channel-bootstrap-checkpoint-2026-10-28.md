@@ -91,7 +91,9 @@ combination passed 87/87, exit 0. This is not yet a fresh-package pass. Evidence
 `output/e6-20260928/channel-policy-single-native-failure-20261028.md`.
 Complete the repaired single-file/revocation/recovery/final ownership cases.
 Remote main `37413fe2` (#604) is now integrated locally at `49121df7`;
-this merge has not yet been pushed. The 55 catalog conflicts were limited to
+this merge and the lifecycle repair have been pushed (saved checkpoint
+`5a8a7a6b`; deadline/input follow-ups are saved and pushed as `afd55a9a`).
+The 55 catalog conflicts were limited to
 `sourceRevision`; merged messages/source hashes were checked against all three
 Git stages and the revision recalculated. Catalog check, Contracts/localization
 builds, API/Daemon/Web typechecks and Desktop typecheck passed. The new manager
