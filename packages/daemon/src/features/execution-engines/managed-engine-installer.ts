@@ -1,0 +1,170 @@
+/** Managed engine downloads (managed-lifecycle P1): pinned npm package → verified binary. */
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { getManagedEnginePackage, type ExternalExecutionEngineId, type ManagedEnginePackage } from "@ling-stack/contracts";
+import type { LingStackUserConfigPaths } from "@ling-stack/core";
+import { probeEngineInstallation } from "./installation-probe.js";
+
+export class ManagedInstallError extends Error {
+  readonly code = "managed_install_failed";
+  constructor(message: string) {
+    super(message);
+    this.name = "ManagedInstallError";
+  }
+}
+
+export interface ManagedInstallResult {
+  readonly engineId: ExternalExecutionEngineId;
+  readonly version: string;
+  readonly executablePath: string;
+  readonly integrity: string;
+  readonly installedAt: string;
+}
+
+interface PlatformTarget {
+  readonly platformKey: string;
+  readonly targetTriple: string;
+}
+
+function resolvePlatformTarget(platform: NodeJS.Platform, arch: string): PlatformTarget {
+  const key = `${platform}-${arch}`;
+  const triples: Record<string, string> = {
+    "darwin-arm64": "aarch64-apple-darwin",
+    "darwin-x64": "x86_64-apple-darwin",
+    "linux-x64": "x86_64-unknown-linux-musl",
+    "linux-arm64": "aarch64-unknown-linux-musl",
+    "win32-x64": "x86_64-pc-windows-msvc",
+    "win32-arm64": "aarch64-pc-windows-msvc",
+  };
+  const targetTriple = triples[key];
+  if (!targetTriple) throw new ManagedInstallError(`managed_install_unsupported_platform:${key}`);
+  return { platformKey: key, targetTriple };
+}
+
+function tarballName(packageName: string, version: string): string {
+  return `${packageName.split("/").pop()}-${version}.tgz`;
+}
+
+async function fetchJson(fetchImpl: typeof fetch, url: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  const response = await fetchImpl(url, { signal });
+  if (!response.ok) throw new ManagedInstallError(`managed_install_registry_http_${response.status}`);
+  return await response.json() as Record<string, unknown>;
+}
+
+function readDist(metadata: Record<string, unknown>): { tarball: string; integrity: string } {
+  const dist = metadata.dist;
+  if (!dist || typeof dist !== "object") throw new ManagedInstallError("managed_install_registry_metadata_invalid");
+  const record = dist as Record<string, unknown>;
+  if (typeof record.tarball !== "string" || typeof record.integrity !== "string" || !record.integrity.startsWith("sha512-")) {
+    throw new ManagedInstallError("managed_install_registry_metadata_invalid");
+  }
+  return { tarball: record.tarball, integrity: record.integrity };
+}
+
+async function extractTarball(tarball: string, targetDir: string, spawnImpl: typeof spawn): Promise<void> {
+  await mkdir(targetDir, { recursive: true });
+  await new Promise<void>((resolve, reject) => {
+    const child = spawnImpl("tar", ["-xzf", tarball, "-C", targetDir], { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
+    child.once("error", reject);
+    child.once("exit", (code) => (code === 0 ? resolve() : reject(new ManagedInstallError(`managed_install_extract_failed:${stderr.slice(0, 200)}`))));
+  });
+}
+
+export interface InstallManagedEngineOptions {
+  readonly signal?: AbortSignal;
+  readonly fetchImpl?: typeof fetch;
+  readonly spawnImpl?: typeof spawn;
+  readonly platform?: NodeJS.Platform;
+  readonly arch?: string;
+  readonly now?: () => Date;
+}
+
+/** Download, verify and install the pinned engine package under the user root. */
+export async function installManagedEngine(
+  engineId: ExternalExecutionEngineId,
+  userPaths: Pick<LingStackUserConfigPaths, "rootDir">,
+  options: InstallManagedEngineOptions = {},
+): Promise<ManagedInstallResult> {
+  const pkg = getManagedEnginePackage(engineId);
+  if (!pkg?.installable || !pkg.install) throw new ManagedInstallError(`managed_install_unsupported_engine:${engineId}`);
+  const platform = options.platform ?? process.platform;
+  const arch = options.arch ?? process.arch;
+  const target = resolvePlatformTarget(platform, arch);
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const spawnImpl = options.spawnImpl ?? spawn;
+  const now = options.now ?? (() => new Date());
+
+  const binaryPackage = pkg.install.binaryPackageName(target.platformKey);
+  const binaryVersion = pkg.install.binaryVersion(pkg.pinnedVersion, target.platformKey);
+  const metadata = await fetchJson(fetchImpl, `https://registry.npmjs.org/${binaryPackage}/${binaryVersion}`, options.signal);
+  const dist = readDist(metadata);
+
+  const root = await mkdtemp(join(tmpdir(), "ling-engine-install-"));
+  try {
+    const tarballPath = join(root, tarballName(binaryPackage, binaryVersion));
+    const response = await fetchImpl(dist.tarball, { signal: options.signal });
+    if (!response.ok) throw new ManagedInstallError(`managed_install_download_http_${response.status}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    const digest = `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
+    if (digest !== dist.integrity) throw new ManagedInstallError("managed_install_integrity_mismatch");
+    await writeFile(tarballPath, bytes);
+
+    const extractDir = join(root, "extract");
+    await extractTarball(tarballPath, extractDir, spawnImpl);
+
+    const relativeBinary = pkg.install.binaryPath(target.targetTriple);
+    const binary = join(extractDir, relativeBinary);
+    await access(binary, constants.X_OK).catch(async () => {
+      if (platform !== "win32") await chmod(binary, 0o755);
+    });
+
+    const installRoot = join(userPaths.rootDir, "engines", engineId, pkg.pinnedVersion);
+    const parent = dirname(installRoot);
+    await mkdir(parent, { recursive: true });
+    const marker = join(installRoot, ".ling-managed.json");
+    let executablePath = join(installRoot, relativeBinary);
+    let alreadyInstalled = false;
+    try {
+      const existing = JSON.parse(await readFile(marker, "utf8")) as Record<string, unknown>;
+      alreadyInstalled = existing.integrity === dist.integrity;
+    } catch {
+      alreadyInstalled = false;
+    }
+    if (!alreadyInstalled) {
+      const staged = join(parent, `.staging-${pkg.pinnedVersion}-${process.pid}`);
+      await rm(staged, { recursive: true, force: true });
+      await rename(extractDir, staged);
+      await rm(installRoot, { recursive: true, force: true });
+      await rename(staged, installRoot);
+      await writeFile(marker, JSON.stringify({
+        engineId, packageName: binaryPackage, version: pkg.pinnedVersion,
+        binaryVersion, platformKey: target.platformKey, integrity: dist.integrity, installedAt: now().toISOString(),
+      }, null, 2) + "\n");
+    }
+
+    const probe = await probeEngineInstallation(discoveryProfileFor(pkg, executablePath), { signal: options.signal, timeoutMs: 5000 });
+    if (probe.status !== "installed") throw new ManagedInstallError(`managed_install_probe_failed:${probe.status}`);
+    return { engineId, version: pkg.pinnedVersion, executablePath, integrity: dist.integrity, installedAt: now().toISOString() };
+  } finally {
+    await rm(root, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+function discoveryProfileFor(pkg: ManagedEnginePackage, executablePath: string) {
+  return {
+    schemaVersion: 1 as const,
+    id: `managed:${pkg.engineId}`,
+    revision: 0,
+    status: "configured" as const,
+    configuration: { engineId: pkg.engineId, executablePath, authProfileId: "managed" },
+    configurationFingerprint: "managed",
+    updatedAt: new Date(0).toISOString(),
+  };
+}

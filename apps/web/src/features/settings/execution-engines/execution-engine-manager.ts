@@ -1,12 +1,12 @@
 import type { ExecutionEngineManagementClient } from "@ling-stack/api-client";
 import type {
-  ExecutionEngineConnectionProbe, ExecutionEngineLoginMethod, ExecutionEngineLoginOperation,
-  ExecutionEngineProfile, ExecutionEngineProfileConfiguration, ExternalExecutionEngineId,
+  EngineDiscoveryReport, ExecutionEngineConnectionProbe, ExecutionEngineLoginMethod, ExecutionEngineLoginOperation,
+  ExecutionEngineProfile, ExecutionEngineProfileConfiguration, ExternalExecutionEngineId, ManagedInstallStatus,
 } from "@ling-stack/contracts";
 
 export type EngineManagementApi = Pick<ExecutionEngineManagementClient,
   "listProfiles" | "getProfile" | "saveProfile" | "saveProfileWithSecret" | "disconnectProfile" | "probeConnection"
-  | "startLogin" | "getLogin" | "cancelLogin">;
+  | "startLogin" | "getLogin" | "cancelLogin" | "discover" | "install" | "installStatus">;
 
 export type EngineManagementTransport =
   | { readonly kind: "desktop"; readonly api: EngineManagementApi }
@@ -23,6 +23,8 @@ export interface EngineProfileEditor {
 export interface EngineManagementState {
   readonly phase: "loading" | "ready" | "authorization_required" | "unavailable" | "error";
   readonly profiles: readonly ExecutionEngineProfile[];
+  readonly discovery?: EngineDiscoveryReport;
+  readonly installs: Readonly<Partial<Record<ExternalExecutionEngineId, ManagedInstallStatus>>>
   readonly editor?: EngineProfileEditor;
   readonly busy: Readonly<Partial<Record<ExternalExecutionEngineId, "save" | "reload" | "probe" | "disconnect">>>;
   readonly probes: Readonly<Partial<Record<ExternalExecutionEngineId, ExecutionEngineConnectionProbe>>>;
@@ -35,7 +37,7 @@ export interface EngineManagementState {
 export class ExecutionEngineManager {
   readonly transport: EngineManagementTransport;
   readonly #listeners = new Set<() => void>();
-  #state: EngineManagementState = { phase: "loading", profiles: [], busy: {}, probes: {}, errors: {} };
+  #state: EngineManagementState = { phase: "loading", profiles: [], installs: {}, busy: {}, probes: {}, errors: {} };
   #loadRevision = 0;
   #scope = 0;
   #revalidation?: Promise<void>;
@@ -65,6 +67,7 @@ export class ExecutionEngineManager {
           && profile.revision === probe.profileRevision && profile.configurationFingerprint === probe.configurationFingerprint;
       }));
       this.publish({ phase: "ready", profiles, probes, error: undefined });
+      void this.discover();
     } catch (error) {
       if (revision !== this.#loadRevision || scope !== this.#scope) return;
       const code = engineManagementErrorCode(error);
@@ -80,6 +83,41 @@ export class ExecutionEngineManager {
     this.#revalidation = pending;
     try { await pending; }
     finally { if (this.#revalidation === pending) this.#revalidation = undefined; }
+  }
+
+  /** Read-only discovery of existing engine installations on the host. */
+  async discover(): Promise<void> {
+    if (this.#state.phase !== "ready" || this.transport.kind === "unavailable") return;
+    try {
+      const discovery = await this.transport.api.discover();
+      this.publish({ discovery });
+    } catch {
+      // Discovery is best-effort; the manual path stays available without it.
+    }
+  }
+
+  /** Managed install of the pinned engine package, then open the prefilled profile draft. */
+  async installEngine(engineId: ExternalExecutionEngineId): Promise<void> {
+    if (this.#state.phase !== "ready" || this.transport.kind === "unavailable" || this.#state.busy[engineId]) return;
+    const publish = (install: ManagedInstallStatus): void => {
+      this.publish({ installs: { ...this.#state.installs, [engineId]: install } });
+    };
+    try {
+      publish((await this.transport.api.install(engineId)).install);
+      let current = this.#state.installs[engineId];
+      while (current && (current.phase === "downloading" || current.phase === "verifying")) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        publish((await this.transport.api.installStatus(engineId)).install);
+        current = this.#state.installs[engineId];
+      }
+      if (current?.phase === "installed" && current.executablePath) {
+        this.edit(engineId);
+        this.updateDraft({ executablePath: current.executablePath });
+      }
+    } catch (error) {
+      const code = engineManagementErrorCode(error);
+      this.publish({ installs: { ...this.#state.installs, [engineId]: { engineId, phase: "failed", error: code, updatedAt: new Date().toISOString() } }, errors: { ...this.#state.errors, [engineId]: code } });
+    }
   }
 
   edit(engineId: ExternalExecutionEngineId): void {
