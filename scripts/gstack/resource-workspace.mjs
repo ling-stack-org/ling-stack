@@ -11,6 +11,7 @@ const marker = ".gstack-resource-workspace.json";
 const lockName = ".heavy-operation.json";
 const lockPath = record => join(record.storageMode === "local-bounded" ? record.localParentPath : record.mountPath,
   `.ling-gstack-${record.target}${lockName}`);
+const recoveryGatePath = record => join(dirname(lockPath(record)), `.ling-gstack-${record.target}.recovery-operation.json`);
 export const within = (root, path) => {
   const suffix = relative(root, path);
   return !suffix || !isAbsolute(suffix) && suffix !== ".." && !suffix.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`);
@@ -193,10 +194,23 @@ export async function resourceCheckpoint(root, additionalBytes = 0) {
   return { usedBytes, freeBytes, additionalBytes };
 }
 
+export async function resourceRecoveryGatePath(root) {
+  return recoveryGatePath(await openResourceWorkspace(root));
+}
+
+async function assertNoRecoveryGate(record) {
+  // Any node, including an unknown receipt or dangling symlink, is a veto.
+  // Only the recovery owner may retire its gate; normal admission never does.
+  const gate = await lstat(recoveryGatePath(record))
+    .catch(error => { if (error.code === "ENOENT") return null; throw error; });
+  if (gate) throw new Error("gstack_resource_recovery_in_progress");
+}
+
 export async function acquireResourceLease(root, { additionalBytes = 0 } = {}) {
   const record = await openResourceWorkspace(root);
   root = record.root;
   const path = lockPath(record);
+  await assertNoRecoveryGate(record);
   let handle;
   try { handle = await open(path, "wx", 0o600); }
   catch (error) { if (error.code === "EEXIST") throw new Error("gstack_resource_workspace_busy; inspect owner before stale-lock recovery"); throw error; }
@@ -204,6 +218,9 @@ export async function acquireResourceLease(root, { additionalBytes = 0 } = {}) {
   const scratchPath = join(root, "runs", token);
   let released = false;
   try {
+    // Close the precheck/open race before any budget walk or scratch creation.
+    // A recovery beginning after this check still encounters our heavy lock.
+    await assertNoRecoveryGate(record);
     if ((await readdir(join(root, "runs"))).length) throw new Error("gstack_resource_scratch_requires_review");
     await resourceCheckpoint(root, additionalBytes);
     await handle.writeFile(`${JSON.stringify({ token, pid: process.pid, root, scratchPath })}\n`);

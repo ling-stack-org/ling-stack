@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import fsPromises, { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { acquireResourceLease, assertResourceBudget, initResourceWorkspace,
-  managedResourceWrite, openResourceWorkspace } from "./resource-workspace.mjs";
+  managedResourceWrite, openResourceWorkspace, requireResourceLease } from "./resource-workspace.mjs";
+import * as resourceWorkspace from "./resource-workspace.mjs";
 
 test("capacity admission reserves the complete copy and free-space floor, never clone savings", () => {
   const limits = { budgetBytes: 100, minFreeBytes: 200 };
@@ -16,7 +18,7 @@ test("capacity admission reserves the complete copy and free-space floor, never 
   }
 });
 
-async function workspace(t) {
+async function workspace(t, { localOnly = false } = {}) {
   const parent = await realpath(await mkdtemp(join(tmpdir(), "gstack-governance-test-")));
   const leases = [];
   t.after(async () => {
@@ -24,7 +26,7 @@ async function workspace(t) {
     await rm(parent, { recursive: true, force: true });
   });
   const root = join(parent, "managed");
-  await initResourceWorkspace(process.env.LING_GSTACK_TEST_MOUNT
+  await initResourceWorkspace(process.env.LING_GSTACK_TEST_MOUNT && !localOnly
     ? { root, mountPath: process.env.LING_GSTACK_TEST_MOUNT } : { root, storageMode: "local-bounded" });
   return { root, parent, async acquire(options) {
     const lease = await acquireResourceLease(root, options);
@@ -103,4 +105,105 @@ test("a persistent external-consumer hold prevents scratch and lease removal unt
   }
   await lease.release();
   assert.deepEqual(await readdir(join(root, "runs")), []);
+});
+
+test("the recovery gate accessor validates the workspace before returning its fixed sibling path", async t => {
+  const { root, parent } = await workspace(t, { localOnly: true });
+  assert.equal(typeof resourceWorkspace.resourceRecoveryGatePath, "function");
+  assert.equal(await resourceWorkspace.resourceRecoveryGatePath(root),
+    join(parent, `.ling-gstack-${process.platform}-${process.arch}.recovery-operation.json`));
+  const sibling = join(parent, "alternate");
+  await initResourceWorkspace({ root: sibling, storageMode: "local-bounded" });
+  assert.equal(await resourceWorkspace.resourceRecoveryGatePath(sibling), await resourceWorkspace.resourceRecoveryGatePath(root));
+  await assert.rejects(resourceWorkspace.resourceRecoveryGatePath(join(parent, "missing")), /ENOENT/);
+  const receiptPath = join(root, ".gstack-resource-workspace.json");
+  const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
+  receipt.target = "foreign-target";
+  await writeFile(receiptPath, JSON.stringify(receipt));
+  await assert.rejects(resourceWorkspace.resourceRecoveryGatePath(root), /mount_identity_mismatch/);
+});
+
+test("any unknown recovery-gate node refuses acquisition without deleting it or creating scratch", async t => {
+  for (const kind of ["file", "directory", "dangling-symlink"]) await t.test(kind, async t => {
+    const { root, parent, acquire } = await workspace(t, { localOnly: true });
+    const gate = join(parent, `.ling-gstack-${process.platform}-${process.arch}.recovery-operation.json`);
+    if (kind === "file") await writeFile(gate, "unknown recovery owner", { flag: "wx", mode: 0o600 });
+    else if (kind === "directory") await mkdir(gate);
+    else await symlink(join(parent, "missing-gate-target"), gate);
+    const before = await lstat(gate);
+    const heavy = join(parent, `.ling-gstack-${process.platform}-${process.arch}.heavy-operation.json`);
+    const originalOpen = fsPromises.open;
+    let opened = 0;
+    const mocked = t.mock.method(fsPromises, "open", async (path, ...args) => {
+      if (path === heavy) opened += 1;
+      return originalOpen(path, ...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(acquire(), /gstack_resource_recovery_in_progress/);
+    } finally {
+      mocked.mock.restore();
+      syncBuiltinESMExports();
+    }
+    assert.equal(opened, 0);
+    const after = await lstat(gate);
+    assert.equal(after.dev, before.dev);
+    assert.equal(after.ino, before.ino);
+    assert.equal(after.mode, before.mode);
+    if (kind === "file") assert.equal(await readFile(gate, "utf8"), "unknown recovery owner");
+    assert.deepEqual(await readdir(join(root, "runs")), []);
+    await assert.rejects(lstat(heavy), /ENOENT/);
+  });
+});
+
+test("a recovery gate cannot replace or revoke a live normal lease", async t => {
+  const { root, parent, acquire } = await workspace(t, { localOnly: true });
+  const lease = await acquire();
+  const heavy = join(parent, `.ling-gstack-${process.platform}-${process.arch}.heavy-operation.json`);
+  const before = await readFile(heavy, "utf8");
+  const gate = join(parent, `.ling-gstack-${process.platform}-${process.arch}.recovery-operation.json`);
+  await writeFile(gate, "unknown recovery owner", { flag: "wx", mode: 0o600 });
+  await assert.rejects(acquireResourceLease(root), /gstack_resource_recovery_in_progress/);
+  assert.equal(await readFile(heavy, "utf8"), before);
+  assert.equal((await requireResourceLease(lease.env)).token, lease.env.LING_GSTACK_RESOURCE_TOKEN);
+  await lease.release();
+  assert.equal(await readFile(gate, "utf8"), "unknown recovery owner");
+  await assert.rejects(acquire(), /gstack_resource_recovery_in_progress/);
+  assert.deepEqual(await readdir(join(root, "runs")), []);
+});
+
+test("a recovery gate inserted across the real heavy-lock open boundary stops admission before scratch", async t => {
+  const { root, parent, acquire } = await workspace(t, { localOnly: true });
+  const heavy = join(parent, `.ling-gstack-${process.platform}-${process.arch}.heavy-operation.json`);
+  const gate = join(parent, `.ling-gstack-${process.platform}-${process.arch}.recovery-operation.json`);
+  const originalOpen = fsPromises.open;
+  const originalStatfs = fsPromises.statfs;
+  let opened = 0, budgetWalks = 0;
+  // Force the exact filesystem interleaving, without adding a production hook:
+  // the first gate check has passed, and the exclusive heavy lock really opens.
+  const mocked = t.mock.method(fsPromises, "open", async (path, ...args) => {
+    const handle = await originalOpen(path, ...args);
+    if (path === heavy) {
+      opened += 1;
+      await writeFile(gate, "recovery acquired during normal open", { flag: "wx", mode: 0o600 });
+    }
+    return handle;
+  });
+  const mockedStatfs = t.mock.method(fsPromises, "statfs", async (path, ...args) => {
+    if (path === root) budgetWalks += 1;
+    return originalStatfs(path, ...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(acquire(), /gstack_resource_recovery_in_progress/);
+  } finally {
+    mocked.mock.restore();
+    mockedStatfs.mock.restore();
+    syncBuiltinESMExports();
+  }
+  assert.equal(opened, 1);
+  assert.equal(budgetWalks, 0);
+  assert.equal(await readFile(gate, "utf8"), "recovery acquired during normal open");
+  assert.deepEqual(await readdir(join(root, "runs")), []);
+  await assert.rejects(lstat(heavy), /ENOENT/);
 });
