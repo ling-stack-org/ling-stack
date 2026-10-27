@@ -34,7 +34,7 @@ export function ExecutionEnginesSettingsPage({ cwd }: { readonly cwd: string }):
   const login = useSyncExternalStore(loginController.subscribe, loginController.getSnapshot);
   const [code, setCode] = useState("");
   const returnFocusRef = useRef<HTMLElement | null>(null);
-  useEffect(() => { void manager.load().then(() => manager.discover()); return () => { manager.detach(); void loginController.cancel(); }; }, [manager]);
+  useEffect(() => { void manager.load(); return () => { manager.detach(); void loginController.cancel(); }; }, [manager]);
   useEffect(() => {
     const revalidate = () => {
       if (document.visibilityState === "visible" && !loginController.getSnapshot()) void manager.revalidate();
@@ -182,8 +182,7 @@ function EngineDiscoveryActions({ engineId, manager }: {
     <div className="engine-discovery-actions">
       {candidate?.status === "detected" && candidate.executablePath ? (
         <Button size="sm" variant="ghost" leadingIcon={<PlugZap />} disabled={busy} onClick={() => {
-          manager.edit(engineId);
-          manager.updateDraft({ executablePath: candidate.executablePath! });
+          manager.edit(engineId, candidate.executablePath);
         }}>{t("Use detected {version}", { version: candidate.version ?? "" })}</Button>
       ) : null}
       {pkg?.installable ? (
