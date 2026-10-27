@@ -200,6 +200,75 @@ test("T13-P.9EF.C a late private workspace load error stays with its teammate", 
   expect(runtimeErrors).toEqual([]);
 });
 
+test("T13-P.9EF.C a provider failure stays on its private reply", async ({ page }) => {
+  await prepareSurface(page);
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = createTeammateState();
+  await mockDaemon(page, state);
+  await page.route(/\/teammates\/teammate_designer\/direct-messages\/stream(?:\?.*)?$/u, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.fallback();
+      return;
+    }
+    const requestBody = await route.request().postDataJSON() as Record<string, unknown>;
+    const threadId = "tdthread_teammate_designer";
+    const message = {
+      id: `tdmsg_${state.teammateDirectMessages.length + 1}`,
+      workspaceId: "workspace_default",
+      threadId,
+      teammateId: "teammate_designer",
+      authorType: "local-user",
+      authorId: "local-user",
+      body: typeof requestBody.body === "string" ? requestBody.body : "",
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-10-26T00:10:00.000Z",
+      updatedAt: "2026-10-26T00:10:00.000Z",
+    };
+    const aiReply = {
+      id: `tdmsg_${state.teammateDirectMessages.length + 2}`,
+      workspaceId: "workspace_default",
+      threadId,
+      teammateId: "teammate_designer",
+      authorType: "ai-teammate",
+      authorId: "teammate_designer",
+      body: "AI teammate is blocked: Provider message ended with an error.",
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "failed",
+      errorMessage: "Provider message ended with an error.",
+      createdAt: "2026-10-26T00:10:01.000Z",
+      updatedAt: "2026-10-26T00:10:01.000Z",
+    };
+    state.teammateDirectMessages.push(message, aiReply);
+    const events = [
+      { event: "accepted", data: { message } },
+      { event: "error", data: { message, aiReply, error: "Provider message ended with an error." } },
+    ];
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: events.map((event) => `event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`).join(""),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
+    .getByRole("button", { name: "Ling Designer" }).click();
+  await expect(page.getByRole("heading", { name: "Ling Designer", level: 1 })).toBeVisible();
+  await page.getByPlaceholder("Message this AI teammate privately").fill("Trigger provider failure");
+  await page.getByPlaceholder("Message this AI teammate privately").press("Enter");
+
+  const privateFeed = page.getByLabel("Private message feed", { exact: true });
+  await expect(privateFeed.getByText("AI teammate is blocked: Provider message ended with an error.", { exact: true })).toBeVisible();
+  await expect(page.locator(".teammate-workspace.chat-mode > .inline-error")).toHaveCount(0);
+  await expect(page.locator('.ling-ui-toast[data-tone="error"]')).toHaveCount(0);
+  expect(runtimeErrors).toEqual([]);
+});
+
 test("T13-P.9EF.C create failure remains in its draft progress flow", async ({ page }) => {
   await prepareSurface(page);
   const runtimeErrors = collectRuntimeErrors(page);

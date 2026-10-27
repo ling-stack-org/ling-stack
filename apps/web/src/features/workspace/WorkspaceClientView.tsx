@@ -204,6 +204,7 @@ import { useChannelThreadReplyController } from "./useChannelThreadReplyControll
 import { useChannelComposerInputController } from "./useChannelComposerInputController.js";
 import { useChannelComposerSnapshotController } from "./useChannelComposerSnapshotController.js";
 import type { ChannelFeedbackEntry } from "./useChannelFeedbackController.js";
+import { channelConversationScopeKey } from "../../shared/conversation/stream-error-ownership.js";
 import { useChannelMessageFeedAssembly } from "./useChannelMessageFeedAssembly.js";
 import { useChannelConversationBlockInteractions } from "./useChannelConversationBlockInteractions.js";
 import { useChannelWorkspaceFeedback } from "./useChannelWorkspaceFeedback.js";
@@ -486,21 +487,28 @@ export function WorkspaceClientView({
   const panelNavigation = useChannelPanelNavigation(Boolean(selectedTaskId));
   const { createTaskOpen, setCreateTaskOpen, sidePanelView, setSidePanelView, sidePanelOpen, setSidePanelOpen, channelSettingsPageOpen, setChannelSettingsPageOpen, channelEnvironmentPageOpen, setChannelEnvironmentPageOpen, channelMoreOpen, setChannelMoreOpen, progressPopoverOpen, setProgressPopoverOpen, workspaceSettingsOpen, setWorkspaceSettingsOpen, teammateManagerOpen, setTeammateManagerOpen } = panelNavigation;
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
-  const channelFeedbackByKey = useMemo(
-    () => new Map(channelFeedbackEntries.map((entry) => [`${entry.surface}:${entry.identity}`, entry.message] as const)),
-    [channelFeedbackEntries],
+  const activeWorkspaceCwd = cwd.trim();
+  const channelFeedbackMessage = (surface: ChannelFeedbackEntry["surface"], identity: string): string => (
+    [...channelFeedbackEntries].reverse().find((entry) =>
+      entry.workspaceCwd === activeWorkspaceCwd && entry.surface === surface && entry.identity === identity
+    )?.message ?? ""
   );
-  const channelFeedbackMessage = (surface: ChannelFeedbackEntry["surface"], identity: string): string =>
-    channelFeedbackByKey.get(`${surface}:${identity}`) ?? "";
-  const selectedComposerError = channelFeedbackMessage("composer", selectedChannelId);
+  const selectedComposerError = channelFeedbackMessage(
+    "composer",
+    channelConversationScopeKey({
+      workspaceCwd: activeWorkspaceCwd,
+      channelId: selectedChannelId,
+      branchRootThreadId: selectedChannelBranchRootThreadId,
+    }),
+  );
   const selectedTaskError = channelFeedbackMessage("task", selectedTaskId || selectedChannelId);
   const selectedProtocolError = channelFeedbackMessage("protocol", selectedChannelId);
   const selectedDockError = channelFeedbackMessage("dock", selectedChannelId);
   const workflowErrors = useMemo(() => Object.fromEntries(
     channelFeedbackEntries
-      .filter((entry) => entry.surface === "workflow")
+      .filter((entry) => entry.workspaceCwd === activeWorkspaceCwd && entry.surface === "workflow")
       .map((entry) => [entry.identity, entry.message]),
-  ), [channelFeedbackEntries]);
+  ), [activeWorkspaceCwd, channelFeedbackEntries]);
   const channelComposerOwnerKey = JSON.stringify([cwd.trim(), selectedChannelId, selectedChannelBranchRootThreadId ?? "root"]);
   const channelComposerOwnerRef = useRef({ key: channelComposerOwnerKey });
   if (channelComposerOwnerRef.current.key !== channelComposerOwnerKey) channelComposerOwnerRef.current = { key: channelComposerOwnerKey };
@@ -2526,7 +2534,7 @@ export function WorkspaceClientView({
       try {
         const threadId = await ensureChannelGoalThreadId();
         const body = t("Continue working toward goal: {objective}", { objective: activeChannelGoal.objective });
-        await onSendMessage({
+        const result = await onSendMessage({
           threadId,
           body,
           mentions: [],
@@ -2535,6 +2543,10 @@ export function WorkspaceClientView({
           fileRefs: [],
           requestAiReply: true,
         });
+        if (result.errorMessage) {
+          if (result.errorOwner === "assistant-reply") return;
+          throw new Error(result.errorMessage);
+        }
         showComposerFeedback("success", t("Goal continuation queued"));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -2700,7 +2712,7 @@ export function WorkspaceClientView({
       const body = action === "accept"
         ? `${t("Implement accepted plan: {title}", { title: canonicalPlan.title })}\n\n${canonicalPlan.bodyMarkdown}`
         : `${t("Refine this plan before implementation: {title}", { title: canonicalPlan.title })}\n\n${canonicalPlan.bodyMarkdown}`;
-      await onSendMessage({
+      const result = await onSendMessage({
         threadId,
         body,
         mentions: [],
@@ -2709,6 +2721,10 @@ export function WorkspaceClientView({
         fileRefs: [],
         requestAiReply: action === "refine",
       });
+      if (result.errorMessage) {
+        if (result.errorOwner === "assistant-reply") return;
+        throw new Error(result.errorMessage);
+      }
       showComposerFeedback("success", action === "accept" ? t("Implementation task queued") : t("Plan refinement queued"));
     } catch (error) {
       showComposerFeedback("error", error instanceof Error ? error.message : String(error));
@@ -3076,7 +3092,15 @@ export function WorkspaceClientView({
       onCommitSlashCommand={commitSlashCommand}
       onDismissSendError={() => {
         dismissSendError();
-        onClearChannelFeedback("composer", selectedChannelId);
+        onClearChannelFeedback(
+          "composer",
+          channelConversationScopeKey({
+            workspaceCwd: activeWorkspaceCwd,
+            channelId: selectedChannelId,
+            branchRootThreadId: selectedChannelBranchRootThreadId,
+          }),
+          activeWorkspaceCwd,
+        );
       }}
       onDragOver={handleComposerDragOver}
       onDragLeave={handleComposerDragLeave}
@@ -3248,7 +3272,7 @@ export function WorkspaceClientView({
     }
     setChannelRenameName(selectedChannel.name);
     setChannelRenameError("");
-    onClearChannelFeedback("workspace", selectedChannel.id);
+    onClearChannelFeedback("workspace", selectedChannel.id, activeWorkspaceCwd);
     setChannelRenameOpen(true);
     setChannelMoreOpen(false);
     setConversationDetailOverlay(undefined);
@@ -3264,7 +3288,7 @@ export function WorkspaceClientView({
       return;
     }
     setChannelRenameError("");
-    onClearChannelFeedback("workspace", selectedChannelId);
+    onClearChannelFeedback("workspace", selectedChannelId, activeWorkspaceCwd);
     setChannelRenameOpen(false);
   }
 
@@ -3820,7 +3844,7 @@ export function WorkspaceClientView({
       <ChannelWorkspaceOverlays
         rename={channelRenameOpen ? {
           value: channelRenameName, currentName: selectedChannel?.name ?? "", saving: channelRenameSaving,
-          error: channelRenameError, onValueChange: (value) => { setChannelRenameName(value); setChannelRenameError(""); onClearChannelFeedback("workspace", selectedChannelId); },
+          error: channelRenameError, onValueChange: (value) => { setChannelRenameName(value); setChannelRenameError(""); onClearChannelFeedback("workspace", selectedChannelId, activeWorkspaceCwd); },
           onSubmit: (event) => void submitChannelRename(event), onClose: closeChannelRenameDialog, returnFocusRef: channelMoreButtonRef,
         } : undefined}
         commit={environmentCommitDialogOpen ? {
@@ -3982,6 +4006,8 @@ export function WorkspaceClientView({
             usedMemoryEvents,
             draft: threadReplyController.draft,
             pending: threadReplyController.pending,
+            loadError: threadReplyController.loadError,
+            sendError: threadReplyController.sendError,
             error: threadReplyController.error,
             onDraftChange: threadReplyController.changeDraft,
             onSend: () => void threadReplyController.sendReply(),

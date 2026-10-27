@@ -1353,12 +1353,12 @@ export function AppShell(): React.JSX.Element {
     setChannelEditForm,
     setChannelWorkflows,
     setChannelWorkflowSteps,
-    reportTaskError: (identity, message) => channelFeedback.report({ surface: "task", identity, scope: "mutation", message }),
-    clearTaskError: (identity) => channelFeedback.clear("task", identity),
-    reportWorkflowError: (identity, message) => channelFeedback.report({ surface: "workflow", identity, scope: "mutation", message }),
-    clearWorkflowError: (identity) => channelFeedback.clear("workflow", identity),
-    reportWorkspaceError: (identity, message) => channelFeedback.report({ surface: "workspace", identity, scope: "mutation", message }),
-    clearWorkspaceError: (identity) => channelFeedback.clear("workspace", identity),
+    reportTaskError: (identity, message) => channelFeedback.report({ workspaceCwd: form.cwd.trim(), surface: "task", identity, scope: "mutation", message }),
+    clearTaskError: (identity) => channelFeedback.clear("task", identity, form.cwd.trim()),
+    reportWorkflowError: (identity, message) => channelFeedback.report({ workspaceCwd: form.cwd.trim(), surface: "workflow", identity, scope: "mutation", message }),
+    clearWorkflowError: (identity) => channelFeedback.clear("workflow", identity, form.cwd.trim()),
+    reportWorkspaceError: (identity, message) => channelFeedback.report({ workspaceCwd: form.cwd.trim(), surface: "workspace", identity, scope: "mutation", message }),
+    clearWorkspaceError: (identity) => channelFeedback.clear("workspace", identity, form.cwd.trim()),
     patchWorkspaceSettings,
     t,
     buildRerunRequest,
@@ -1696,6 +1696,7 @@ export function AppShell(): React.JSX.Element {
     providers,
     providerTemplates,
     selectedChannelId,
+    selectedChannelBranchRootThreadId,
     activeSidebarTarget,
     channelDecisions,
     setActiveView,
@@ -1765,8 +1766,8 @@ export function AppShell(): React.JSX.Element {
     setChannelWorkflowSteps,
     setSelectedTaskId,
     setTasks,
-    reportWorkflowError: (identity, message, scope = "mutation") => channelFeedback.report({ surface: "workflow", identity, scope, message }),
-    clearWorkflowError: (identity) => channelFeedback.clear("workflow", identity),
+    reportWorkflowError: (identity, message, scope = "mutation") => channelFeedback.report({ workspaceCwd: form.cwd.trim(), surface: "workflow", identity, scope, message }),
+    clearWorkflowError: (identity) => channelFeedback.clear("workflow", identity, form.cwd.trim()),
     createChannelWorkflowFromTemplate,
     orchestrateChannelWorkflow,
     cancelChannelWorkflow,
@@ -3435,15 +3436,15 @@ export function AppShell(): React.JSX.Element {
           defaultProviderId={workspaceDefaultProviderPresetId}
           teammates={localTeammates}
           creating={channelsLoading}
-          errorMessage={channelFeedback.message("create-dialog", "draft") ?? ""}
+          errorMessage={channelFeedback.message("create-dialog", "draft", form.cwd.trim()) ?? ""}
           onFormChange={(nextForm) => {
-            channelFeedback.clear("create-dialog", "draft");
+            channelFeedback.clear("create-dialog", "draft", form.cwd.trim());
             setChannelForm(nextForm);
           }}
           onCreateChannel={saveChannel}
           onOpenProviders={() => openSettingsWorkspaceTool("providers")}
           onClose={() => {
-            channelFeedback.clear("create-dialog", "draft");
+            channelFeedback.clear("create-dialog", "draft", form.cwd.trim());
             setChannelCreateOpen(false);
           }}
         />

@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
   schedule:
     # Daily full Linux/macOS regression at 11:17 Asia/Shanghai (03:17 UTC).
@@ -10,9 +10,9 @@ on:
     - cron: "17 3 * * *"
 
 concurrency:
-  # Unrelated labels must neither cancel validation nor replace its check result.
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'full-ci' && github.run_id || 'validation' }}
-  cancel-in-progress: ${{ github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'full-ci' }}
+  # Label handling lives in full-ci-label.yml so the latest CI run on every head always publishes the required gate.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -23,7 +23,6 @@ env:
 jobs:
   scope:
     name: Determine CI scope
-    if: github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'full-ci'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -60,7 +59,7 @@ jobs:
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FORCE_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') || (github.event.action == 'labeled' && github.event.label.name == 'full-ci') }}
+          FORCE_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
@@ -578,28 +577,25 @@ jobs:
           path: ${{ runner.temp }}/macos-bootstrap-diagnostic.json
 
   quality:
-    name: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'full-ci' && 'CI label event (no validation)' || 'Typecheck, unit tests, and Web build' }}
+    name: Typecheck, unit tests, and Web build
     needs: [scope, common-fast, dependency-policy, build, typecheck, unit-tests, daemon-tests, daemon-linux-contracts, restricted-command-macos]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Check out quality policy without retained credentials
-        if: github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'full-ci'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 1
           persist-credentials: false
 
       - name: Set up Node.js
-        if: github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'full-ci'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22.22.1
 
       - name: Require every applicable CI lane to pass
         env:
-          IGNORED_LABEL_EVENT: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'full-ci' }}
           EXECUTION_TIER: ${{ needs.scope.outputs.execution-tier }}
           SCOPE_MODE: ${{ needs.scope.outputs.mode }}
           SCOPE_RESULT: ${{ needs.scope.result }}
@@ -615,8 +611,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${IGNORED_LABEL_EVENT:-false}" == "true" ]]; then
-            echo "Unrelated label event; no validation check result is replaced."
-            exit 0
-          fi
           node scripts/ci/execution-policy.mjs --check-quality

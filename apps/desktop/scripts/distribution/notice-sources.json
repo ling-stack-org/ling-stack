@@ -17,7 +17,7 @@
       "revision": "abe508e1b89912adde45528136c3221eb69acdd7",
       "provenance": {
         "url": "https://registry.npmjs.org/-/npm/v1/attestations/@earendil-works%2fchord@1.1.0",
-        "sha256": "9f15372b9571057d2016dfbe2fb8735964bde2e83af17af7899dacc0af5e1747",
+        "sha256": "9f9770339335f07dbd62dd101f70265c4a39ec0865e8a82d83310d028236d14f",
         "statement": {
           "_type": "https://in-toto.io/Statement/v1",
           "subject": [
@@ -98,7 +98,7 @@
       "revision": "abe508e1b89912adde45528136c3221eb69acdd7",
       "provenance": {
         "url": "https://registry.npmjs.org/-/npm/v1/attestations/@earendil-works%2fpi-agent-core@1.1.0",
-        "sha256": "4ac1f881d923a3df674601432f93442e45754e0e8bcf28824b0f4861ab5fe2e6",
+        "sha256": "3078ca1ac466367cbf7697156c5463e0f9063e38a0621624a71ed6221b68854e",
         "statement": {
           "_type": "https://in-toto.io/Statement/v1",
           "subject": [
@@ -179,7 +179,7 @@
       "revision": "abe508e1b89912adde45528136c3221eb69acdd7",
       "provenance": {
         "url": "https://registry.npmjs.org/-/npm/v1/attestations/@earendil-works%2fpi-ai@1.1.0",
-        "sha256": "45224808c32d7855e0ad4758009ea14b86ec248efe9188dd75aa37e78d2c1d8a",
+        "sha256": "fbecd2d3ad992391f68b937ffaf7b711c2c8269a3a9b53bd5caa6c382ceb3178",
         "statement": {
           "_type": "https://in-toto.io/Statement/v1",
           "subject": [
@@ -260,7 +260,7 @@
       "revision": "abe508e1b89912adde45528136c3221eb69acdd7",
       "provenance": {
         "url": "https://registry.npmjs.org/-/npm/v1/attestations/@earendil-works%2fpi-codemode@1.1.0",
-        "sha256": "c894532153760f30363bc780b9f9e8d1d0fe49c0b4fbd2434f36f84e591b0b28",
+        "sha256": "ecd3434708f19a164ccea4d06d415b2e0bfef88c64e7943bbc173393215ae20f",
         "statement": {
           "_type": "https://in-toto.io/Statement/v1",
           "subject": [
@@ -341,7 +341,7 @@
       "revision": "abe508e1b89912adde45528136c3221eb69acdd7",
       "provenance": {
         "url": "https://registry.npmjs.org/-/npm/v1/attestations/@earendil-works%2fpi-coding-agent@1.1.0",
-        "sha256": "43b231088cdfa5bbb69b36de8f1f4ef633effaa90ea80a48f3d307c3591ac114",
+        "sha256": "c1b6854698bc2e8e9b0f164482fe75d108a492bc811e17be8c4cab0028cba5a1",
         "statement": {
           "_type": "https://in-toto.io/Statement/v1",
           "subject": [
@@ -422,7 +422,7 @@
       "revision": "abe508e1b89912adde45528136c3221eb69acdd7",
       "provenance": {
         "url": "https://registry.npmjs.org/-/npm/v1/attestations/@earendil-works%2fpi-mcp@1.1.0",
-        "sha256": "2b4b73439e797ba425d2abd60ddb6e5c1338fb9a9348e39554ae08491b073653",
+        "sha256": "66ac090764af400a3c5d9e3b93dd2c9279d41945fcaf228a3c72de589009cb4e",
         "statement": {
           "_type": "https://in-toto.io/Statement/v1",
           "subject": [
@@ -503,7 +503,7 @@
       "revision": "abe508e1b89912adde45528136c3221eb69acdd7",
       "provenance": {
         "url": "https://registry.npmjs.org/-/npm/v1/attestations/@earendil-works%2fpi-telemetry@1.1.0",
-        "sha256": "00adf16c08fd7ac00f7136fd30180bbed8ac07158c497d648d67023f43ba3009",
+        "sha256": "86c9e11865f736203cc88606056434df9317748f2e7d7419df8f1548410dc53a",
         "statement": {
           "_type": "https://in-toto.io/Statement/v1",
           "subject": [
@@ -584,7 +584,7 @@
       "revision": "abe508e1b89912adde45528136c3221eb69acdd7",
       "provenance": {
         "url": "https://registry.npmjs.org/-/npm/v1/attestations/@earendil-works%2fpi-tui@1.1.0",
-        "sha256": "795cc189171c0b154ef234c4641ad4d01b5b97324ecb157af6e71c98cbb7fec1",
+        "sha256": "03195089c7b6184181ef5326e27008057730fc10d5e1338e797dd982ffdffed9",
         "statement": {
           "_type": "https://in-toto.io/Statement/v1",
           "subject": [
@@ -742,27 +742,27 @@
     },
     {
       "name": "@napi-rs/canvas-darwin-arm64",
-      "version": "1.0.11",
+      "version": "1.0.13",
       "license": "MIT",
       "registry": {
-        "url": "https://registry.npmjs.org/@napi-rs/canvas-darwin-arm64/1.0.11",
-        "sha256": "41ae658270486a3bcba4fa09cafa12d3b9dceefc98acd24077457f16097395fd",
-        "integrity": "sha512-J/JylWoJTG8OQqZaiqly4IODyAxNofUlZo0wtSBJtHk6AdymbdIkPynAM1JvQaZpPaG5h+msk9QuK8y4i1ooqw==",
-        "tarball": "https://registry.npmjs.org/@napi-rs/canvas-darwin-arm64/-/canvas-darwin-arm64-1.0.11.tgz",
+        "url": "https://registry.npmjs.org/@napi-rs/canvas-darwin-arm64/1.0.13",
+        "sha256": "418967df7f3bb2bab8874202a621b763cdddda9736aa270695a22854cce36aba",
+        "integrity": "sha512-6Y2djEetL8copxfNK6hg7oig/xqTwOchv19hBOm+zBNdKc/02Z3kjZN5wrLzv/l5O04/bAQS6I/AlQpwBlXgPg==",
+        "tarball": "https://registry.npmjs.org/@napi-rs/canvas-darwin-arm64/-/canvas-darwin-arm64-1.0.13.tgz",
         "gitHead": null
       },
       "repository": "Brooooooklyn/canvas",
-      "revision": "adce718ec8ff82f9e896875752fd621c46b1c04e",
+      "revision": "00a115d9903647f116daf86eccd2c6ba36128371",
       "provenance": {
-        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@napi-rs%2fcanvas-darwin-arm64@1.0.11",
-        "sha256": "0e95838398f5f0e909aab352af7f49166e78a9abe2af8dd15083c05b10decf6b",
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@napi-rs%2fcanvas-darwin-arm64@1.0.13",
+        "sha256": "0287de30c7ae77ed57b615643bd1deeda2da3bf0dcb13bacbb61955d03629b12",
         "statement": {
           "_type": "https://in-toto.io/Statement/v1",
           "subject": [
             {
-              "name": "pkg:npm/%40napi-rs/canvas-darwin-arm64@1.0.11",
+              "name": "pkg:npm/%40napi-rs/canvas-darwin-arm64@1.0.13",
               "digest": {
-                "sha512": "27f272956a094c6f0e42a65a8aa972e08383c80c4da1f525668d30b52049b4793a01dca66dd2243f29c033526f41a6693da1b987e9ac93d42e2bccb88b5a28ab"
+                "sha512": "e98d9d8c47ad2fc728a717cd2ba860ee88a0ff1a93c0e721bf5f6104e9becc135d29cff4d99de48d9379c2b2f3bff9793b4e3f6c0412e88fc0950a700655e03e"
               }
             }
           ],
@@ -788,7 +788,7 @@
                 {
                   "uri": "git+https://github.com/Brooooooklyn/canvas@refs/heads/main",
                   "digest": {
-                    "gitCommit": "adce718ec8ff82f9e896875752fd621c46b1c04e"
+                    "gitCommit": "00a115d9903647f116daf86eccd2c6ba36128371"
                   }
                 }
               ]
@@ -798,7 +798,7 @@
                 "id": "https://github.com/actions/runner/github-hosted"
               },
               "metadata": {
-                "invocationId": "https://github.com/Brooooooklyn/canvas/actions/runs/38052370120/attempts/1"
+                "invocationId": "https://github.com/Brooooooklyn/canvas/actions/runs/39557302531/attempts/1"
               }
             }
           }
@@ -807,17 +807,17 @@
       },
       "sourcePackage": {
         "path": "npm/darwin-arm64/package.json",
-        "url": "https://raw.githubusercontent.com/Brooooooklyn/canvas/adce718ec8ff82f9e896875752fd621c46b1c04e/npm/darwin-arm64/package.json",
-        "sha256": "0a65e28ddce39049e9ed431c5a7a39f2158194ac2f318ec73cd30bbbbbc25c46",
-        "gitBlob": "be37168598ec8cec1422d1a954ddb10c0cff635d",
-        "contentBase64": "ewogICJuYW1lIjogIkBuYXBpLXJzL2NhbnZhcy1kYXJ3aW4tYXJtNjQiLAogICJ2ZXJzaW9uIjogIjEuMC4xMSIsCiAgIm9zIjogWwogICAgImRhcndpbiIKICBdLAogICJjcHUiOiBbCiAgICAiYXJtNjQiCiAgXSwKICAibWFpbiI6ICJza2lhLmRhcndpbi1hcm02NC5ub2RlIiwKICAiZmlsZXMiOiBbCiAgICAic2tpYS5kYXJ3aW4tYXJtNjQubm9kZSIsCiAgICAic2JvbS5jZHguanNvbiIKICBdLAogICJkZXNjcmlwdGlvbiI6ICJDYW52YXMgZm9yIE5vZGUuanMgd2l0aCBza2lhIGJhY2tlbmQiLAogICJrZXl3b3JkcyI6IFsKICAgICJuYXBpLXJzIiwKICAgICJOQVBJIiwKICAgICJOLUFQSSIsCiAgICAiUnVzdCIsCiAgICAibm9kZS1hZGRvbiIsCiAgICAibm9kZS1hZGRvbi1hcGkiLAogICAgImNhbnZhcyIsCiAgICAiaW1hZ2UiLAogICAgInBkZiIsCiAgICAic3ZnIiwKICAgICJza2lhIgogIF0sCiAgImxpY2Vuc2UiOiAiTUlUIiwKICAiZW5naW5lcyI6IHsKICAgICJub2RlIjogIj49IDEwIgogIH0sCiAgInB1Ymxpc2hDb25maWciOiB7CiAgICAicmVnaXN0cnkiOiAiaHR0cHM6Ly9yZWdpc3RyeS5ucG1qcy5vcmcvIiwKICAgICJhY2Nlc3MiOiAicHVibGljIgogIH0sCiAgInJlcG9zaXRvcnkiOiB7CiAgICAidHlwZSI6ICJnaXQiLAogICAgInVybCI6ICJnaXQraHR0cHM6Ly9naXRodWIuY29tL0Jyb29vb29va2x5bi9jYW52YXMuZ2l0IgogIH0sCiAgImZ1bmRpbmciOiB7CiAgICAidHlwZSI6ICJnaXRodWIiLAogICAgInVybCI6ICJodHRwczovL2dpdGh1Yi5jb20vc3BvbnNvcnMvQnJvb29vb29rbHluIgogIH0KfQ=="
+        "url": "https://raw.githubusercontent.com/Brooooooklyn/canvas/00a115d9903647f116daf86eccd2c6ba36128371/npm/darwin-arm64/package.json",
+        "sha256": "3bf763839540dc6983423f4930791316b9b97f532c4f21f1a7835ed49cfe7568",
+        "gitBlob": "48934c3e2463b27111d743a69acd269f3f05b6e1",
+        "contentBase64": "ewogICJuYW1lIjogIkBuYXBpLXJzL2NhbnZhcy1kYXJ3aW4tYXJtNjQiLAogICJ2ZXJzaW9uIjogIjEuMC4xMyIsCiAgIm9zIjogWwogICAgImRhcndpbiIKICBdLAogICJjcHUiOiBbCiAgICAiYXJtNjQiCiAgXSwKICAibWFpbiI6ICJza2lhLmRhcndpbi1hcm02NC5ub2RlIiwKICAiZmlsZXMiOiBbCiAgICAic2tpYS5kYXJ3aW4tYXJtNjQubm9kZSIsCiAgICAic2JvbS5jZHguanNvbiIKICBdLAogICJkZXNjcmlwdGlvbiI6ICJDYW52YXMgZm9yIE5vZGUuanMgd2l0aCBza2lhIGJhY2tlbmQiLAogICJrZXl3b3JkcyI6IFsKICAgICJuYXBpLXJzIiwKICAgICJOQVBJIiwKICAgICJOLUFQSSIsCiAgICAiUnVzdCIsCiAgICAibm9kZS1hZGRvbiIsCiAgICAibm9kZS1hZGRvbi1hcGkiLAogICAgImNhbnZhcyIsCiAgICAiaW1hZ2UiLAogICAgInBkZiIsCiAgICAic3ZnIiwKICAgICJza2lhIgogIF0sCiAgImxpY2Vuc2UiOiAiTUlUIiwKICAiZW5naW5lcyI6IHsKICAgICJub2RlIjogIj49IDEwIgogIH0sCiAgInB1Ymxpc2hDb25maWciOiB7CiAgICAicmVnaXN0cnkiOiAiaHR0cHM6Ly9yZWdpc3RyeS5ucG1qcy5vcmcvIiwKICAgICJhY2Nlc3MiOiAicHVibGljIgogIH0sCiAgInJlcG9zaXRvcnkiOiB7CiAgICAidHlwZSI6ICJnaXQiLAogICAgInVybCI6ICJnaXQraHR0cHM6Ly9naXRodWIuY29tL0Jyb29vb29va2x5bi9jYW52YXMuZ2l0IgogIH0sCiAgImZ1bmRpbmciOiB7CiAgICAidHlwZSI6ICJnaXRodWIiLAogICAgInVybCI6ICJodHRwczovL2dpdGh1Yi5jb20vc3BvbnNvcnMvQnJvb29vb29rbHluIgogIH0KfQ=="
       },
       "licenseText": {
         "path": "LICENSE",
-        "url": "https://raw.githubusercontent.com/Brooooooklyn/canvas/adce718ec8ff82f9e896875752fd621c46b1c04e/LICENSE",
-        "sha256": "8802fecf9da4367bc23bcf20b21cc143785fc6c92b152f3fa7fbe6ce08d344d6",
-        "gitBlob": "e0024071be828a07166aef9825c50a1912f652ac",
-        "contentBase64": "TUlUIExpY2Vuc2UKCkNvcHlyaWdodCAoYykgMjAyMCBseW53ZWtsbUBnbWFpbC5jb20KClBlcm1pc3Npb24gaXMgaGVyZWJ5IGdyYW50ZWQsIGZyZWUgb2YgY2hhcmdlLCB0byBhbnkgcGVyc29uIG9idGFpbmluZyBhIGNvcHkKb2YgdGhpcyBzb2Z0d2FyZSBhbmQgYXNzb2NpYXRlZCBkb2N1bWVudGF0aW9uIGZpbGVzICh0aGUgIlNvZnR3YXJlIiksIHRvIGRlYWwKaW4gdGhlIFNvZnR3YXJlIHdpdGhvdXQgcmVzdHJpY3Rpb24sIGluY2x1ZGluZyB3aXRob3V0IGxpbWl0YXRpb24gdGhlIHJpZ2h0cwp0byB1c2UsIGNvcHksIG1vZGlmeSwgbWVyZ2UsIHB1Ymxpc2gsIGRpc3RyaWJ1dGUsIHN1YmxpY2Vuc2UsIGFuZC9vciBzZWxsCmNvcGllcyBvZiB0aGUgU29mdHdhcmUsIGFuZCB0byBwZXJtaXQgcGVyc29ucyB0byB3aG9tIHRoZSBTb2Z0d2FyZSBpcwpmdXJuaXNoZWQgdG8gZG8gc28sIHN1YmplY3QgdG8gdGhlIGZvbGxvd2luZyBjb25kaXRpb25zOgoKVGhlIGFib3ZlIGNvcHlyaWdodCBub3RpY2UgYW5kIHRoaXMgcGVybWlzc2lvbiBub3RpY2Ugc2hhbGwgYmUgaW5jbHVkZWQgaW4gYWxsCmNvcGllcyBvciBzdWJzdGFudGlhbCBwb3J0aW9ucyBvZiB0aGUgU29mdHdhcmUuCgpUSEUgU09GVFdBUkUgSVMgUFJPVklERUQgIkFTIElTIiwgV0lUSE9VVCBXQVJSQU5UWSBPRiBBTlkgS0lORCwgRVhQUkVTUyBPUgpJTVBMSUVELCBJTkNMVURJTkcgQlVUIE5PVCBMSU1JVEVEIFRPIFRIRSBXQVJSQU5USUVTIE9GIE1FUkNIQU5UQUJJTElUWSwKRklUTkVTUyBGT1IgQSBQQVJUSUNVTEFSIFBVUlBPU0UgQU5EIE5PTklORlJJTkdFTUVOVC4gSU4gTk8gRVZFTlQgU0hBTEwgVEhFCkFVVEhPUlMgT1IgQ09QWVJJR0hUIEhPTERFUlMgQkUgTElBQkxFIEZPUiBBTlkgQ0xBSU0sIERBTUFHRVMgT1IgT1RIRVIKTElBQklMSVRZLCBXSEVUSEVSIElOIEFOIEFDVElPTiBPRiBDT05UUkFDVCwgVE9SVCBPUiBPVEhFUldJU0UsIEFSSVNJTkcgRlJPTSwKT1VUIE9GIE9SIElOIENPTk5FQ1RJT04gV0lUSCBUSEUgU09GVFdBUkUgT1IgVEhFIFVTRSBPUiBPVEhFUiBERUFMSU5HUyBJTiBUSEUKU09GVFdBUkUuCg=="
+        "url": "https://raw.githubusercontent.com/Brooooooklyn/canvas/00a115d9903647f116daf86eccd2c6ba36128371/LICENSE",
+        "sha256": "0b8e3b4f0042f33677406344854c1dcce3a2878eb3a3f6baee58c6f5752655ce",
+        "gitBlob": "cad741fe3657a8688a2b701ffd3e194081ae4da2",
+        "contentBase64": "TUlUIExpY2Vuc2UKCkNvcHlyaWdodCAoYykgMjAyMCBseW53ZWtsbUBnbWFpbC5jb20KClBlcm1pc3Npb24gaXMgaGVyZWJ5IGdyYW50ZWQsIGZyZWUgb2YgY2hhcmdlLCB0byBhbnkgcGVyc29uIG9idGFpbmluZyBhIGNvcHkKb2YgdGhpcyBzb2Z0d2FyZSBhbmQgYXNzb2NpYXRlZCBkb2N1bWVudGF0aW9uIGZpbGVzICh0aGUgIlNvZnR3YXJlIiksIHRvIGRlYWwKaW4gdGhlIFNvZnR3YXJlIHdpdGhvdXQgcmVzdHJpY3Rpb24sIGluY2x1ZGluZyB3aXRob3V0IGxpbWl0YXRpb24gdGhlIHJpZ2h0cwp0byB1c2UsIGNvcHksIG1vZGlmeSwgbWVyZ2UsIHB1Ymxpc2gsIGRpc3RyaWJ1dGUsIHN1YmxpY2Vuc2UsIGFuZC9vciBzZWxsCmNvcGllcyBvZiB0aGUgU29mdHdhcmUsIGFuZCB0byBwZXJtaXQgcGVyc29ucyB0byB3aG9tIHRoZSBTb2Z0d2FyZSBpcwpmdXJuaXNoZWQgdG8gZG8gc28sIHN1YmplY3QgdG8gdGhlIGZvbGxvd2luZyBjb25kaXRpb25zOgoKVGhlIGFib3ZlIGNvcHlyaWdodCBub3RpY2UgYW5kIHRoaXMgcGVybWlzc2lvbiBub3RpY2Ugc2hhbGwgYmUgaW5jbHVkZWQgaW4gYWxsCmNvcGllcyBvciBzdWJzdGFudGlhbCBwb3J0aW9ucyBvZiB0aGUgU29mdHdhcmUuCgpUSEUgU09GVFdBUkUgSVMgUFJPVklERUQgIkFTIElTIiwgV0lUSE9VVCBXQVJSQU5UWSBPRiBBTlkgS0lORCwgRVhQUkVTUyBPUgpJTVBMSUVELCBJTkNMVURJTkcgQlVUIE5PVCBMSU1JVEVEIFRPIFRIRSBXQVJSQU5USUVTIE9GIE1FUkNIQU5UQUJJTElUWSwKRklUTkVTUyBGT1IgQSBQQVJUSUNVTEFSIFBVUlBPU0UgQU5EIE5PTklORlJJTkdFTUVOVC4gSU4gTk8gRVZFTlQgU0hBTEwgVEhFCkFVVEhPUlMgT1IgQ09QWVJJR0hUIEhPTERFUlMgQkUgTElBQkxFIEZPUiBBTlkgQ0xBSU0sIERBTUFHRVMgT1IgT1RIRVIKTElBQklMSVRZLCBXSEVUSEVSIElOIEFOIEFDVElPTiBPRiBDT05UUkFDVCwgVE9SVCBPUiBPVEhFUldJU0UsIEFSSVNJTkcgRlJPTSwKT1VUIE9GIE9SIElOIENPTk5FQ1RJT04gV0lUSCBUSEUgU09GVFdBUkUgT1IgVEhFIFVTRSBPUiBPVEhFUiBERUFMSU5HUyBJTiBUSEUKU09GVFdBUkUuCgotLS0KCnNyYy9zdmdfZG9jL2Jyb2tlbl9pbWFnZS5wbmcgaXMgQ2hyb21pdW0ncyBicm9rZW4taW1hZ2UgaWNvbgoodGhpcmRfcGFydHkvYmxpbmsvcHVibGljL2RlZmF1bHRfMTAwX3BlcmNlbnQvYmxpbmsvYnJva2VuX2ltYWdlLnBuZyksCnVzZWQgdW5kZXIgdGhlIENocm9taXVtIGxpY2Vuc2U6CgpDb3B5cmlnaHQgMjAxNSBUaGUgQ2hyb21pdW0gQXV0aG9ycwoKUmVkaXN0cmlidXRpb24gYW5kIHVzZSBpbiBzb3VyY2UgYW5kIGJpbmFyeSBmb3Jtcywgd2l0aCBvciB3aXRob3V0Cm1vZGlmaWNhdGlvbiwgYXJlIHBlcm1pdHRlZCBwcm92aWRlZCB0aGF0IHRoZSBmb2xsb3dpbmcgY29uZGl0aW9ucyBhcmUKbWV0OgoKICAgKiBSZWRpc3RyaWJ1dGlvbnMgb2Ygc291cmNlIGNvZGUgbXVzdCByZXRhaW4gdGhlIGFib3ZlIGNvcHlyaWdodApub3RpY2UsIHRoaXMgbGlzdCBvZiBjb25kaXRpb25zIGFuZCB0aGUgZm9sbG93aW5nIGRpc2NsYWltZXIuCiAgICogUmVkaXN0cmlidXRpb25zIGluIGJpbmFyeSBmb3JtIG11c3QgcmVwcm9kdWNlIHRoZSBhYm92ZQpjb3B5cmlnaHQgbm90aWNlLCB0aGlzIGxpc3Qgb2YgY29uZGl0aW9ucyBhbmQgdGhlIGZvbGxvd2luZyBkaXNjbGFpbWVyCmluIHRoZSBkb2N1bWVudGF0aW9uIGFuZC9vciBvdGhlciBtYXRlcmlhbHMgcHJvdmlkZWQgd2l0aCB0aGUKZGlzdHJpYnV0aW9uLgogICAqIE5laXRoZXIgdGhlIG5hbWUgb2YgR29vZ2xlIExMQyBub3IgdGhlIG5hbWVzIG9mIGl0cwpjb250cmlidXRvcnMgbWF5IGJlIHVzZWQgdG8gZW5kb3JzZSBvciBwcm9tb3RlIHByb2R1Y3RzIGRlcml2ZWQgZnJvbQp0aGlzIHNvZnR3YXJlIHdpdGhvdXQgc3BlY2lmaWMgcHJpb3Igd3JpdHRlbiBwZXJtaXNzaW9uLgoKVEhJUyBTT0ZUV0FSRSBJUyBQUk9WSURFRCBCWSBUSEUgQ09QWVJJR0hUIEhPTERFUlMgQU5EIENPTlRSSUJVVE9SUwoiQVMgSVMiIEFORCBBTlkgRVhQUkVTUyBPUiBJTVBMSUVEIFdBUlJBTlRJRVMsIElOQ0xVRElORywgQlVUIE5PVApMSU1JVEVEIFRPLCBUSEUgSU1QTElFRCBXQVJSQU5USUVTIE9GIE1FUkNIQU5UQUJJTElUWSBBTkQgRklUTkVTUyBGT1IKQSBQQVJUSUNVTEFSIFBVUlBPU0UgQVJFIERJU0NMQUlNRUQuIElOIE5PIEVWRU5UIFNIQUxMIFRIRSBDT1BZUklHSFQKT1dORVIgT1IgQ09OVFJJQlVUT1JTIEJFIExJQUJMRSBGT1IgQU5ZIERJUkVDVCwgSU5ESVJFQ1QsIElOQ0lERU5UQUwsClNQRUNJQUwsIEVYRU1QTEFSWSwgT1IgQ09OU0VRVUVOVElBTCBEQU1BR0VTIChJTkNMVURJTkcsIEJVVCBOT1QKTElNSVRFRCBUTywgUFJPQ1VSRU1FTlQgT0YgU1VCU1RJVFVURSBHT09EUyBPUiBTRVJWSUNFUzsgTE9TUyBPRiBVU0UsCkRBVEEsIE9SIFBST0ZJVFM7IE9SIEJVU0lORVNTIElOVEVSUlVQVElPTikgSE9XRVZFUiBDQVVTRUQgQU5EIE9OIEFOWQpUSEVPUlkgT0YgTElBQklMSVRZLCBXSEVUSEVSIElOIENPTlRSQUNULCBTVFJJQ1QgTElBQklMSVRZLCBPUiBUT1JUCihJTkNMVURJTkcgTkVHTElHRU5DRSBPUiBPVEhFUldJU0UpIEFSSVNJTkcgSU4gQU5ZIFdBWSBPVVQgT0YgVEhFIFVTRQpPRiBUSElTIFNPRlRXQVJFLCBFVkVOIElGIEFEVklTRUQgT0YgVEhFIFBPU1NJQklMSVRZIE9GIFNVQ0ggREFNQUdFLgo="
       },
       "scope": "Original notice restoration for the exact npm package revision only. Native/vendor and corresponding-source obligations are separate."
     },
@@ -853,27 +853,27 @@
     },
     {
       "name": "@napi-rs/canvas-win32-x64-msvc",
-      "version": "1.0.11",
+      "version": "1.0.13",
       "license": "MIT",
       "registry": {
-        "url": "https://registry.npmjs.org/@napi-rs/canvas-win32-x64-msvc/1.0.11",
-        "sha256": "ebb31781a0dffa416ad264aa6e4ee8941a5b35b290c2f9d158b32cc8777d901f",
-        "integrity": "sha512-DFYp/ZQRdKunI/LPc0UkRXG1vlNjJKOJf8O8Ctb8+wm2Nt2ELg9Eamc31D2VoakkfGo8L+z0Iejz6WtFbQwyGw==",
-        "tarball": "https://registry.npmjs.org/@napi-rs/canvas-win32-x64-msvc/-/canvas-win32-x64-msvc-1.0.11.tgz",
+        "url": "https://registry.npmjs.org/@napi-rs/canvas-win32-x64-msvc/1.0.13",
+        "sha256": "5d8041624ccc8cca4e843360dc1abae416a693484b948efd6b6869d5b43570c8",
+        "integrity": "sha512-DUlW3lZPz63kYsf8mxgyyZuevhlH0T3/BGP9l+NazhB0F1+gL6D4hqZdnhZpw24DlWmTpATDcyYSZlJOi+DdfQ==",
+        "tarball": "https://registry.npmjs.org/@napi-rs/canvas-win32-x64-msvc/-/canvas-win32-x64-msvc-1.0.13.tgz",
         "gitHead": null
       },
       "repository": "Brooooooklyn/canvas",
-      "revision": "adce718ec8ff82f9e896875752fd621c46b1c04e",
+      "revision": "00a115d9903647f116daf86eccd2c6ba36128371",
       "provenance": {
-        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@napi-rs%2fcanvas-win32-x64-msvc@1.0.11",
-        "sha256": "9c1724f8958596eea518052736c29e1c62d460a221d3268fe004b9a0c66ec2df",
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@napi-rs%2fcanvas-win32-x64-msvc@1.0.13",
+        "sha256": "6391bf7e0c9dbaea0cba51c74996e68c4a103f7fd49cafcf1a5668e778200a21",
         "statement": {
           "_type": "https://in-toto.io/Statement/v1",
           "subject": [
             {
-              "name": "pkg:npm/%40napi-rs/canvas-win32-x64-msvc@1.0.11",
+              "name": "pkg:npm/%40napi-rs/canvas-win32-x64-msvc@1.0.13",
               "digest": {
-                "sha512": "0c5629fd941174aba723f2cf7345244571b5be536324a3897fc3bc0ad6fcfb09b636dd842e0f446a6737d43d95a1a9247c6a3c2fecf421e8f3e96b456d0c321b"
+                "sha512": "0d4956de564fcfade462c7fc9b1832c99b9ebe1947d13dff0463fd97e35ace1074175fa02fa0f886a65d9e1669c36e03956993a404c373261266524e8be0dd7d"
               }
             }
           ],
@@ -899,7 +899,7 @@
                 {
                   "uri": "git+https://github.com/Brooooooklyn/canvas@refs/heads/main",
                   "digest": {
-                    "gitCommit": "adce718ec8ff82f9e896875752fd621c46b1c04e"
+                    "gitCommit": "00a115d9903647f116daf86eccd2c6ba36128371"
                   }
                 }
               ]
@@ -909,7 +909,7 @@
                 "id": "https://github.com/actions/runner/github-hosted"
               },
               "metadata": {
-                "invocationId": "https://github.com/Brooooooklyn/canvas/actions/runs/38052370120/attempts/1"
+                "invocationId": "https://github.com/Brooooooklyn/canvas/actions/runs/39557302531/attempts/1"
               }
             }
           }
@@ -918,124 +918,43 @@
       },
       "sourcePackage": {
         "path": "npm/win32-x64-msvc/package.json",
-        "url": "https://raw.githubusercontent.com/Brooooooklyn/canvas/adce718ec8ff82f9e896875752fd621c46b1c04e/npm/win32-x64-msvc/package.json",
-        "sha256": "dd3765d3af7cdbf22d61b0330a28efb695e453e899f527f52fc223d99f46b80c",
-        "gitBlob": "1a214efea60dfa666beb9778d1cee1a64f8edd5b",
-        "contentBase64": "ewogICJuYW1lIjogIkBuYXBpLXJzL2NhbnZhcy13aW4zMi14NjQtbXN2YyIsCiAgInZlcnNpb24iOiAiMS4wLjExIiwKICAib3MiOiBbCiAgICAid2luMzIiCiAgXSwKICAiY3B1IjogWwogICAgIng2NCIKICBdLAogICJtYWluIjogInNraWEud2luMzIteDY0LW1zdmMubm9kZSIsCiAgImZpbGVzIjogWwogICAgInNraWEud2luMzIteDY0LW1zdmMubm9kZSIsCiAgICAiaWN1ZHRsLmRhdCIsCiAgICAic2JvbS5jZHguanNvbiIKICBdLAogICJkZXNjcmlwdGlvbiI6ICJDYW52YXMgZm9yIE5vZGUuanMgd2l0aCBza2lhIGJhY2tlbmQiLAogICJrZXl3b3JkcyI6IFsKICAgICJuYXBpLXJzIiwKICAgICJOQVBJIiwKICAgICJOLUFQSSIsCiAgICAiUnVzdCIsCiAgICAibm9kZS1hZGRvbiIsCiAgICAibm9kZS1hZGRvbi1hcGkiLAogICAgImNhbnZhcyIsCiAgICAiaW1hZ2UiLAogICAgInBkZiIsCiAgICAic3ZnIiwKICAgICJza2lhIgogIF0sCiAgImxpY2Vuc2UiOiAiTUlUIiwKICAiZW5naW5lcyI6IHsKICAgICJub2RlIjogIj49IDEwIgogIH0sCiAgInB1Ymxpc2hDb25maWciOiB7CiAgICAicmVnaXN0cnkiOiAiaHR0cHM6Ly9yZWdpc3RyeS5ucG1qcy5vcmcvIiwKICAgICJhY2Nlc3MiOiAicHVibGljIgogIH0sCiAgInJlcG9zaXRvcnkiOiB7CiAgICAidHlwZSI6ICJnaXQiLAogICAgInVybCI6ICJnaXQraHR0cHM6Ly9naXRodWIuY29tL0Jyb29vb29va2x5bi9jYW52YXMuZ2l0IgogIH0sCiAgImZ1bmRpbmciOiB7CiAgICAidHlwZSI6ICJnaXRodWIiLAogICAgInVybCI6ICJodHRwczovL2dpdGh1Yi5jb20vc3BvbnNvcnMvQnJvb29vb29rbHluIgogIH0KfQ=="
+        "url": "https://raw.githubusercontent.com/Brooooooklyn/canvas/00a115d9903647f116daf86eccd2c6ba36128371/npm/win32-x64-msvc/package.json",
+        "sha256": "d481e710d8d0d35704ae417cc262af9c54a9ef2ecd10a12a8149dc03c0370221",
+        "gitBlob": "b8bd7b20d8b53d6fbebc7ef159f2f2fc9a666e90",
+        "contentBase64": "ewogICJuYW1lIjogIkBuYXBpLXJzL2NhbnZhcy13aW4zMi14NjQtbXN2YyIsCiAgInZlcnNpb24iOiAiMS4wLjEzIiwKICAib3MiOiBbCiAgICAid2luMzIiCiAgXSwKICAiY3B1IjogWwogICAgIng2NCIKICBdLAogICJtYWluIjogInNraWEud2luMzIteDY0LW1zdmMubm9kZSIsCiAgImZpbGVzIjogWwogICAgInNraWEud2luMzIteDY0LW1zdmMubm9kZSIsCiAgICAiaWN1ZHRsLmRhdCIsCiAgICAic2JvbS5jZHguanNvbiIKICBdLAogICJkZXNjcmlwdGlvbiI6ICJDYW52YXMgZm9yIE5vZGUuanMgd2l0aCBza2lhIGJhY2tlbmQiLAogICJrZXl3b3JkcyI6IFsKICAgICJuYXBpLXJzIiwKICAgICJOQVBJIiwKICAgICJOLUFQSSIsCiAgICAiUnVzdCIsCiAgICAibm9kZS1hZGRvbiIsCiAgICAibm9kZS1hZGRvbi1hcGkiLAogICAgImNhbnZhcyIsCiAgICAiaW1hZ2UiLAogICAgInBkZiIsCiAgICAic3ZnIiwKICAgICJza2lhIgogIF0sCiAgImxpY2Vuc2UiOiAiTUlUIiwKICAiZW5naW5lcyI6IHsKICAgICJub2RlIjogIj49IDEwIgogIH0sCiAgInB1Ymxpc2hDb25maWciOiB7CiAgICAicmVnaXN0cnkiOiAiaHR0cHM6Ly9yZWdpc3RyeS5ucG1qcy5vcmcvIiwKICAgICJhY2Nlc3MiOiAicHVibGljIgogIH0sCiAgInJlcG9zaXRvcnkiOiB7CiAgICAidHlwZSI6ICJnaXQiLAogICAgInVybCI6ICJnaXQraHR0cHM6Ly9naXRodWIuY29tL0Jyb29vb29va2x5bi9jYW52YXMuZ2l0IgogIH0sCiAgImZ1bmRpbmciOiB7CiAgICAidHlwZSI6ICJnaXRodWIiLAogICAgInVybCI6ICJodHRwczovL2dpdGh1Yi5jb20vc3BvbnNvcnMvQnJvb29vb29rbHluIgogIH0KfQ=="
       },
       "licenseText": {
         "path": "LICENSE",
-        "url": "https://raw.githubusercontent.com/Brooooooklyn/canvas/adce718ec8ff82f9e896875752fd621c46b1c04e/LICENSE",
-        "sha256": "8802fecf9da4367bc23bcf20b21cc143785fc6c92b152f3fa7fbe6ce08d344d6",
-        "gitBlob": "e0024071be828a07166aef9825c50a1912f652ac",
-        "contentBase64": "TUlUIExpY2Vuc2UKCkNvcHlyaWdodCAoYykgMjAyMCBseW53ZWtsbUBnbWFpbC5jb20KClBlcm1pc3Npb24gaXMgaGVyZWJ5IGdyYW50ZWQsIGZyZWUgb2YgY2hhcmdlLCB0byBhbnkgcGVyc29uIG9idGFpbmluZyBhIGNvcHkKb2YgdGhpcyBzb2Z0d2FyZSBhbmQgYXNzb2NpYXRlZCBkb2N1bWVudGF0aW9uIGZpbGVzICh0aGUgIlNvZnR3YXJlIiksIHRvIGRlYWwKaW4gdGhlIFNvZnR3YXJlIHdpdGhvdXQgcmVzdHJpY3Rpb24sIGluY2x1ZGluZyB3aXRob3V0IGxpbWl0YXRpb24gdGhlIHJpZ2h0cwp0byB1c2UsIGNvcHksIG1vZGlmeSwgbWVyZ2UsIHB1Ymxpc2gsIGRpc3RyaWJ1dGUsIHN1YmxpY2Vuc2UsIGFuZC9vciBzZWxsCmNvcGllcyBvZiB0aGUgU29mdHdhcmUsIGFuZCB0byBwZXJtaXQgcGVyc29ucyB0byB3aG9tIHRoZSBTb2Z0d2FyZSBpcwpmdXJuaXNoZWQgdG8gZG8gc28sIHN1YmplY3QgdG8gdGhlIGZvbGxvd2luZyBjb25kaXRpb25zOgoKVGhlIGFib3ZlIGNvcHlyaWdodCBub3RpY2UgYW5kIHRoaXMgcGVybWlzc2lvbiBub3RpY2Ugc2hhbGwgYmUgaW5jbHVkZWQgaW4gYWxsCmNvcGllcyBvciBzdWJzdGFudGlhbCBwb3J0aW9ucyBvZiB0aGUgU29mdHdhcmUuCgpUSEUgU09GVFdBUkUgSVMgUFJPVklERUQgIkFTIElTIiwgV0lUSE9VVCBXQVJSQU5UWSBPRiBBTlkgS0lORCwgRVhQUkVTUyBPUgpJTVBMSUVELCBJTkNMVURJTkcgQlVUIE5PVCBMSU1JVEVEIFRPIFRIRSBXQVJSQU5USUVTIE9GIE1FUkNIQU5UQUJJTElUWSwKRklUTkVTUyBGT1IgQSBQQVJUSUNVTEFSIFBVUlBPU0UgQU5EIE5PTklORlJJTkdFTUVOVC4gSU4gTk8gRVZFTlQgU0hBTEwgVEhFCkFVVEhPUlMgT1IgQ09QWVJJR0hUIEhPTERFUlMgQkUgTElBQkxFIEZPUiBBTlkgQ0xBSU0sIERBTUFHRVMgT1IgT1RIRVIKTElBQklMSVRZLCBXSEVUSEVSIElOIEFOIEFDVElPTiBPRiBDT05UUkFDVCwgVE9SVCBPUiBPVEhFUldJU0UsIEFSSVNJTkcgRlJPTSwKT1VUIE9GIE9SIElOIENPTk5FQ1RJT04gV0lUSCBUSEUgU09GVFdBUkUgT1IgVEhFIFVTRSBPUiBPVEhFUiBERUFMSU5HUyBJTiBUSEUKU09GVFdBUkUuCg=="
-      },
-      "scope": "Original notice restoration for the exact npm package revision only. Native/vendor and corresponding-source obligations are separate."
-    },
-    {
-      "name": "@napi-rs/keyring-darwin-arm64",
-      "version": "2.1.1",
-      "license": "MIT",
-      "registry": {
-        "url": "https://registry.npmjs.org/@napi-rs/keyring-darwin-arm64/2.1.1",
-        "sha256": "628b252671e886b136c50ed940bb04903e96367c4b69888a845c6abb94f0fb13",
-        "integrity": "sha512-H6uxAztj6GSDwnh/1JDHCtAqWvBTr+0+FGwOOw+rY568z7vFOqrJTTboePFuAnJSO7kNvq+yuyXJ9B5Ueco4yA==",
-        "tarball": "https://registry.npmjs.org/@napi-rs/keyring-darwin-arm64/-/keyring-darwin-arm64-2.1.1.tgz",
-        "gitHead": null
-      },
-      "repository": "Brooooooklyn/keyring-node",
-      "revision": "97aa4e0412a0ba8a0d47541cebe0474eea5efe02",
-      "provenance": {
-        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@napi-rs%2fkeyring-darwin-arm64@2.1.1",
-        "sha256": "f54ee4dd567a75b7b3726cb56952c8b7044c79db43721f1918c0b085cbd6e4d5",
-        "statement": {
-          "_type": "https://in-toto.io/Statement/v1",
-          "subject": [
-            {
-              "name": "pkg:npm/%40napi-rs/keyring-darwin-arm64@2.1.1",
-              "digest": {
-                "sha512": "1fabb1033b63e86483c2787fd490c70ad02a5af053afed3e146c0e3b0fab639ebccfbbc53aaac94d36e878f16e0272523bb90dbeafb2bb25c9f41e5479ca38c8"
-              }
-            }
-          ],
-          "predicateType": "https://slsa.dev/provenance/v1",
-          "predicate": {
-            "buildDefinition": {
-              "buildType": "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1",
-              "externalParameters": {
-                "workflow": {
-                  "ref": "refs/heads/main",
-                  "repository": "https://github.com/Brooooooklyn/keyring-node",
-                  "path": ".github/workflows/CI.yml"
-                }
-              },
-              "internalParameters": {
-                "github": {
-                  "event_name": "push",
-                  "repository_id": "606440306",
-                  "repository_owner_id": "3468483"
-                }
-              },
-              "resolvedDependencies": [
-                {
-                  "uri": "git+https://github.com/Brooooooklyn/keyring-node@refs/heads/main",
-                  "digest": {
-                    "gitCommit": "97aa4e0412a0ba8a0d47541cebe0474eea5efe02"
-                  }
-                }
-              ]
-            },
-            "runDetails": {
-              "builder": {
-                "id": "https://github.com/actions/runner/github-hosted"
-              },
-              "metadata": {
-                "invocationId": "https://github.com/Brooooooklyn/keyring-node/actions/runs/38060082893/attempts/1"
-              }
-            }
-          }
-        },
-        "verification": "Retrieved npm registry provenance statement; signature verification is not asserted by this collector."
-      },
-      "sourcePackage": {
-        "path": "package.json",
-        "url": "https://raw.githubusercontent.com/Brooooooklyn/keyring-node/97aa4e0412a0ba8a0d47541cebe0474eea5efe02/package.json",
-        "sha256": "a5f6bf41ed2776b104af50ada93c8957fa4fe1396740eee67c280b22fc554f45",
-        "gitBlob": "174f3cae473aa79f984d46e4bd8c3d1a2f6d0e49",
-        "contentBase64": "ewogICJuYW1lIjogIkBuYXBpLXJzL2tleXJpbmciLAogICJ2ZXJzaW9uIjogIjIuMS4xIiwKICAiZGVzY3JpcHRpb24iOiAiaHR0cHM6Ly9naXRodWIuY29tL2h3Y2hlbi9rZXlyaW5nLXJzIE5vZGUuanMgYmluZGluZyB2aWEgaHR0cHM6Ly9uYXBpLnJzIiwKICAibWFpbiI6ICJpbmRleC5qcyIsCiAgInJlcG9zaXRvcnkiOiAiaHR0cHM6Ly9naXRodWIuY29tL0Jyb29vb29va2x5bi9rZXlyaW5nLW5vZGUiLAogICJsaWNlbnNlIjogIk1JVCIsCiAgImtleXdvcmRzIjogWwogICAgIm5hcGktcnMiLAogICAgIk5BUEkiLAogICAgIk4tQVBJIiwKICAgICJSdXN0IiwKICAgICJub2RlLWFkZG9uIiwKICAgICJub2RlLWFkZG9uLWFwaSIKICBdLAogICJmaWxlcyI6IFsKICAgICJpbmRleC5kLnRzIiwKICAgICJpbmRleC5qcyIsCiAgICAia2V5dGFyLmpzIiwKICAgICJrZXl0YXIuZC50cyIKICBdLAogICJuYXBpIjogewogICAgImJpbmFyeU5hbWUiOiAia2V5cmluZyIsCiAgICAiY29uc3RFbnVtIjogZmFsc2UsCiAgICAidGFyZ2V0cyI6IFsKICAgICAgImFhcmNoNjQtYXBwbGUtZGFyd2luIiwKICAgICAgImFhcmNoNjQtdW5rbm93bi1saW51eC1nbnUiLAogICAgICAiYWFyY2g2NC11bmtub3duLWxpbnV4LW11c2wiLAogICAgICAiYWFyY2g2NC1wYy13aW5kb3dzLW1zdmMiLAogICAgICAieDg2XzY0LWFwcGxlLWRhcndpbiIsCiAgICAgICJ4ODZfNjQtcGMtd2luZG93cy1tc3ZjIiwKICAgICAgIng4Nl82NC11bmtub3duLWxpbnV4LWdudSIsCiAgICAgICJ4ODZfNjQtdW5rbm93bi1saW51eC1tdXNsIiwKICAgICAgIng4Nl82NC11bmtub3duLWZyZWVic2QiLAogICAgICAiaTY4Ni1wYy13aW5kb3dzLW1zdmMiLAogICAgICAiYXJtdjctdW5rbm93bi1saW51eC1nbnVlYWJpaGYiLAogICAgICAicmlzY3Y2NGdjLXVua25vd24tbGludXgtZ251IgogICAgXQogIH0sCiAgImVuZ2luZXMiOiB7CiAgICAibm9kZSI6ICI+PSAxMCIKICB9LAogICJwdWJsaXNoQ29uZmlnIjogewogICAgInJlZ2lzdHJ5IjogImh0dHBzOi8vcmVnaXN0cnkubnBtanMub3JnLyIsCiAgICAiYWNjZXNzIjogInB1YmxpYyIKICB9LAogICJzY3JpcHRzIjogewogICAgImFydGlmYWN0cyI6ICJuYXBpIGFydGlmYWN0cyIsCiAgICAiYnVpbGQiOiAibmFwaSBidWlsZCAtLXBsYXRmb3JtIC0tcmVsZWFzZSIsCiAgICAiYnVpbGQ6ZGVidWciOiAibmFwaSBidWlsZCAtLXBsYXRmb3JtIiwKICAgICJmb3JtYXQiOiAicnVuLXAgZm9ybWF0OnByZXR0aWVyIGZvcm1hdDpycyBmb3JtYXQ6dG9tbCIsCiAgICAiZm9ybWF0OnByZXR0aWVyIjogInByZXR0aWVyIC4gLXciLAogICAgImZvcm1hdDp0b21sIjogInRhcGxvIGZvcm1hdCIsCiAgICAiZm9ybWF0OnJzIjogImNhcmdvIGZtdCIsCiAgICAibGludCI6ICJveGxpbnQiLAogICAgInByZXB1Ymxpc2hPbmx5IjogIm5hcGkgcHJlcHVibGlzaCAtdCBucG0iLAogICAgInRlc3QiOiAiYXZhIC1zIiwKICAgICJwcmV2ZXJzaW9uIjogIm5hcGkgYnVpbGQgLS1wbGF0Zm9ybSAmJiBnaXQgYWRkIC4iLAogICAgInZlcnNpb24iOiAibmFwaSB2ZXJzaW9uIgogIH0sCiAgImRldkRlcGVuZGVuY2llcyI6IHsKICAgICJAbmFwaS1ycy9jbGkiOiAiXjMuOS4xIiwKICAgICJAb3hjLW5vZGUvY29yZSI6ICJeMC4xLjEiLAogICAgIkB0YXBsby9jbGkiOiAiXjAuNy4wIiwKICAgICJAdHlwZXMvbm9kZSI6ICJeMjYuNS4xIiwKICAgICJhdmEiOiAiXjguMC4xIiwKICAgICJjaGFsayI6ICJeNi4wLjAiLAogICAgImh1c2t5IjogIl45LjEuNyIsCiAgICAibGludC1zdGFnZWQiOiAiXjE3LjUuMSIsCiAgICAibnBtLXJ1bi1hbGwyIjogIl45LjAuMyIsCiAgICAib3hsaW50IjogIl4xLjgyLjAiLAogICAgInByZXR0aWVyIjogIl4zLjkuNiIsCiAgICAidHlwZXNjcmlwdCI6ICJeNy4wLjIiCiAgfSwKICAibGludC1zdGFnZWQiOiB7CiAgICAiKi5AKGpzfHRzfHRzeCkiOiBbCiAgICAgICJveGxpbnQgLS1maXgiCiAgICBdLAogICAgIiouQChqc3x0c3x0c3h8eW1sfHlhbWx8bWR8anNvbikiOiBbCiAgICAgICJwcmV0dGllciAtLXdyaXRlIgogICAgXSwKICAgICIqLnRvbWwiOiBbCiAgICAgICJ0YXBsbyBmb3JtYXQiCiAgICBdCiAgfSwKICAiYXZhIjogewogICAgIm5vZGVBcmd1bWVudHMiOiBbCiAgICAgICItLWltcG9ydCIsCiAgICAgICJAb3hjLW5vZGUvY29yZS9yZWdpc3RlciIKICAgIF0sCiAgICAiZXh0ZW5zaW9ucyI6IFsKICAgICAgInRzIgogICAgXSwKICAgICJ0aW1lb3V0IjogIjJtIiwKICAgICJ3b3JrZXJUaHJlYWRzIjogZmFsc2UsCiAgICAiZW52aXJvbm1lbnRWYXJpYWJsZXMiOiB7CiAgICAgICJUU19OT0RFX1BST0pFQ1QiOiAiLi90c2NvbmZpZy5qc29uIgogICAgfQogIH0sCiAgInByZXR0aWVyIjogewogICAgInByaW50V2lkdGgiOiAxMjAsCiAgICAic2VtaSI6IGZhbHNlLAogICAgInRyYWlsaW5nQ29tbWEiOiAiYWxsIiwKICAgICJzaW5nbGVRdW90ZSI6IHRydWUsCiAgICAiYXJyb3dQYXJlbnMiOiAiYWx3YXlzIgogIH0sCiAgInBhY2thZ2VNYW5hZ2VyIjogInlhcm5ANC4xOC4xIiwKICAiZnVuZGluZyI6IHsKICAgICJ0eXBlIjogImdpdGh1YiIsCiAgICAidXJsIjogImh0dHBzOi8vZ2l0aHViLmNvbS9zcG9uc29ycy9Ccm9vb29vb2tseW4iCiAgfQp9Cg=="
-      },
-      "licenseText": {
-        "path": "LICENSE",
-        "url": "https://raw.githubusercontent.com/Brooooooklyn/keyring-node/97aa4e0412a0ba8a0d47541cebe0474eea5efe02/LICENSE",
-        "sha256": "02965ed67e29f871a53f7a7afa593a0ddc8020f86ccce0faaf1aa59215b5269e",
-        "gitBlob": "6c7f56251cd1021ea295023d31221a5677772d55",
-        "contentBase64": "TUlUIExpY2Vuc2UKCkNvcHlyaWdodCAoYykgMjAyMCBOLUFQSSBmb3IgUnVzdAoKUGVybWlzc2lvbiBpcyBoZXJlYnkgZ3JhbnRlZCwgZnJlZSBvZiBjaGFyZ2UsIHRvIGFueSBwZXJzb24gb2J0YWluaW5nIGEgY29weQpvZiB0aGlzIHNvZnR3YXJlIGFuZCBhc3NvY2lhdGVkIGRvY3VtZW50YXRpb24gZmlsZXMgKHRoZSAiU29mdHdhcmUiKSwgdG8gZGVhbAppbiB0aGUgU29mdHdhcmUgd2l0aG91dCByZXN0cmljdGlvbiwgaW5jbHVkaW5nIHdpdGhvdXQgbGltaXRhdGlvbiB0aGUgcmlnaHRzCnRvIHVzZSwgY29weSwgbW9kaWZ5LCBtZXJnZSwgcHVibGlzaCwgZGlzdHJpYnV0ZSwgc3VibGljZW5zZSwgYW5kL29yIHNlbGwKY29waWVzIG9mIHRoZSBTb2Z0d2FyZSwgYW5kIHRvIHBlcm1pdCBwZXJzb25zIHRvIHdob20gdGhlIFNvZnR3YXJlIGlzCmZ1cm5pc2hlZCB0byBkbyBzbywgc3ViamVjdCB0byB0aGUgZm9sbG93aW5nIGNvbmRpdGlvbnM6CgpUaGUgYWJvdmUgY29weXJpZ2h0IG5vdGljZSBhbmQgdGhpcyBwZXJtaXNzaW9uIG5vdGljZSBzaGFsbCBiZSBpbmNsdWRlZCBpbiBhbGwKY29waWVzIG9yIHN1YnN0YW50aWFsIHBvcnRpb25zIG9mIHRoZSBTb2Z0d2FyZS4KClRIRSBTT0ZUV0FSRSBJUyBQUk9WSURFRCAiQVMgSVMiLCBXSVRIT1VUIFdBUlJBTlRZIE9GIEFOWSBLSU5ELCBFWFBSRVNTIE9SCklNUExJRUQsIElOQ0xVRElORyBCVVQgTk9UIExJTUlURUQgVE8gVEhFIFdBUlJBTlRJRVMgT0YgTUVSQ0hBTlRBQklMSVRZLApGSVRORVNTIEZPUiBBIFBBUlRJQ1VMQVIgUFVSUE9TRSBBTkQgTk9OSU5GUklOR0VNRU5ULiBJTiBOTyBFVkVOVCBTSEFMTCBUSEUKQVVUSE9SUyBPUiBDT1BZUklHSFQgSE9MREVSUyBCRSBMSUFCTEUgRk9SIEFOWSBDTEFJTSwgREFNQUdFUyBPUiBPVEhFUgpMSUFCSUxJVFksIFdIRVRIRVIgSU4gQU4gQUNUSU9OIE9GIENPTlRSQUNULCBUT1JUIE9SIE9USEVSV0lTRSwgQVJJU0lORyBGUk9NLApPVVQgT0YgT1IgSU4gQ09OTkVDVElPTiBXSVRIIFRIRSBTT0ZUV0FSRSBPUiBUSEUgVVNFIE9SIE9USEVSIERFQUxJTkdTIElOIFRIRQpTT0ZUV0FSRS4K"
+        "url": "https://raw.githubusercontent.com/Brooooooklyn/canvas/00a115d9903647f116daf86eccd2c6ba36128371/LICENSE",
+        "sha256": "0b8e3b4f0042f33677406344854c1dcce3a2878eb3a3f6baee58c6f5752655ce",
+        "gitBlob": "cad741fe3657a8688a2b701ffd3e194081ae4da2",
+        "contentBase64": "TUlUIExpY2Vuc2UKCkNvcHlyaWdodCAoYykgMjAyMCBseW53ZWtsbUBnbWFpbC5jb20KClBlcm1pc3Npb24gaXMgaGVyZWJ5IGdyYW50ZWQsIGZyZWUgb2YgY2hhcmdlLCB0byBhbnkgcGVyc29uIG9idGFpbmluZyBhIGNvcHkKb2YgdGhpcyBzb2Z0d2FyZSBhbmQgYXNzb2NpYXRlZCBkb2N1bWVudGF0aW9uIGZpbGVzICh0aGUgIlNvZnR3YXJlIiksIHRvIGRlYWwKaW4gdGhlIFNvZnR3YXJlIHdpdGhvdXQgcmVzdHJpY3Rpb24sIGluY2x1ZGluZyB3aXRob3V0IGxpbWl0YXRpb24gdGhlIHJpZ2h0cwp0byB1c2UsIGNvcHksIG1vZGlmeSwgbWVyZ2UsIHB1Ymxpc2gsIGRpc3RyaWJ1dGUsIHN1YmxpY2Vuc2UsIGFuZC9vciBzZWxsCmNvcGllcyBvZiB0aGUgU29mdHdhcmUsIGFuZCB0byBwZXJtaXQgcGVyc29ucyB0byB3aG9tIHRoZSBTb2Z0d2FyZSBpcwpmdXJuaXNoZWQgdG8gZG8gc28sIHN1YmplY3QgdG8gdGhlIGZvbGxvd2luZyBjb25kaXRpb25zOgoKVGhlIGFib3ZlIGNvcHlyaWdodCBub3RpY2UgYW5kIHRoaXMgcGVybWlzc2lvbiBub3RpY2Ugc2hhbGwgYmUgaW5jbHVkZWQgaW4gYWxsCmNvcGllcyBvciBzdWJzdGFudGlhbCBwb3J0aW9ucyBvZiB0aGUgU29mdHdhcmUuCgpUSEUgU09GVFdBUkUgSVMgUFJPVklERUQgIkFTIElTIiwgV0lUSE9VVCBXQVJSQU5UWSBPRiBBTlkgS0lORCwgRVhQUkVTUyBPUgpJTVBMSUVELCBJTkNMVURJTkcgQlVUIE5PVCBMSU1JVEVEIFRPIFRIRSBXQVJSQU5USUVTIE9GIE1FUkNIQU5UQUJJTElUWSwKRklUTkVTUyBGT1IgQSBQQVJUSUNVTEFSIFBVUlBPU0UgQU5EIE5PTklORlJJTkdFTUVOVC4gSU4gTk8gRVZFTlQgU0hBTEwgVEhFCkFVVEhPUlMgT1IgQ09QWVJJR0hUIEhPTERFUlMgQkUgTElBQkxFIEZPUiBBTlkgQ0xBSU0sIERBTUFHRVMgT1IgT1RIRVIKTElBQklMSVRZLCBXSEVUSEVSIElOIEFOIEFDVElPTiBPRiBDT05UUkFDVCwgVE9SVCBPUiBPVEhFUldJU0UsIEFSSVNJTkcgRlJPTSwKT1VUIE9GIE9SIElOIENPTk5FQ1RJT04gV0lUSCBUSEUgU09GVFdBUkUgT1IgVEhFIFVTRSBPUiBPVEhFUiBERUFMSU5HUyBJTiBUSEUKU09GVFdBUkUuCgotLS0KCnNyYy9zdmdfZG9jL2Jyb2tlbl9pbWFnZS5wbmcgaXMgQ2hyb21pdW0ncyBicm9rZW4taW1hZ2UgaWNvbgoodGhpcmRfcGFydHkvYmxpbmsvcHVibGljL2RlZmF1bHRfMTAwX3BlcmNlbnQvYmxpbmsvYnJva2VuX2ltYWdlLnBuZyksCnVzZWQgdW5kZXIgdGhlIENocm9taXVtIGxpY2Vuc2U6CgpDb3B5cmlnaHQgMjAxNSBUaGUgQ2hyb21pdW0gQXV0aG9ycwoKUmVkaXN0cmlidXRpb24gYW5kIHVzZSBpbiBzb3VyY2UgYW5kIGJpbmFyeSBmb3Jtcywgd2l0aCBvciB3aXRob3V0Cm1vZGlmaWNhdGlvbiwgYXJlIHBlcm1pdHRlZCBwcm92aWRlZCB0aGF0IHRoZSBmb2xsb3dpbmcgY29uZGl0aW9ucyBhcmUKbWV0OgoKICAgKiBSZWRpc3RyaWJ1dGlvbnMgb2Ygc291cmNlIGNvZGUgbXVzdCByZXRhaW4gdGhlIGFib3ZlIGNvcHlyaWdodApub3RpY2UsIHRoaXMgbGlzdCBvZiBjb25kaXRpb25zIGFuZCB0aGUgZm9sbG93aW5nIGRpc2NsYWltZXIuCiAgICogUmVkaXN0cmlidXRpb25zIGluIGJpbmFyeSBmb3JtIG11c3QgcmVwcm9kdWNlIHRoZSBhYm92ZQpjb3B5cmlnaHQgbm90aWNlLCB0aGlzIGxpc3Qgb2YgY29uZGl0aW9ucyBhbmQgdGhlIGZvbGxvd2luZyBkaXNjbGFpbWVyCmluIHRoZSBkb2N1bWVudGF0aW9uIGFuZC9vciBvdGhlciBtYXRlcmlhbHMgcHJvdmlkZWQgd2l0aCB0aGUKZGlzdHJpYnV0aW9uLgogICAqIE5laXRoZXIgdGhlIG5hbWUgb2YgR29vZ2xlIExMQyBub3IgdGhlIG5hbWVzIG9mIGl0cwpjb250cmlidXRvcnMgbWF5IGJlIHVzZWQgdG8gZW5kb3JzZSBvciBwcm9tb3RlIHByb2R1Y3RzIGRlcml2ZWQgZnJvbQp0aGlzIHNvZnR3YXJlIHdpdGhvdXQgc3BlY2lmaWMgcHJpb3Igd3JpdHRlbiBwZXJtaXNzaW9uLgoKVEhJUyBTT0ZUV0FSRSBJUyBQUk9WSURFRCBCWSBUSEUgQ09QWVJJR0hUIEhPTERFUlMgQU5EIENPTlRSSUJVVE9SUwoiQVMgSVMiIEFORCBBTlkgRVhQUkVTUyBPUiBJTVBMSUVEIFdBUlJBTlRJRVMsIElOQ0xVRElORywgQlVUIE5PVApMSU1JVEVEIFRPLCBUSEUgSU1QTElFRCBXQVJSQU5USUVTIE9GIE1FUkNIQU5UQUJJTElUWSBBTkQgRklUTkVTUyBGT1IKQSBQQVJUSUNVTEFSIFBVUlBPU0UgQVJFIERJU0NMQUlNRUQuIElOIE5PIEVWRU5UIFNIQUxMIFRIRSBDT1BZUklHSFQKT1dORVIgT1IgQ09OVFJJQlVUT1JTIEJFIExJQUJMRSBGT1IgQU5ZIERJUkVDVCwgSU5ESVJFQ1QsIElOQ0lERU5UQUwsClNQRUNJQUwsIEVYRU1QTEFSWSwgT1IgQ09OU0VRVUVOVElBTCBEQU1BR0VTIChJTkNMVURJTkcsIEJVVCBOT1QKTElNSVRFRCBUTywgUFJPQ1VSRU1FTlQgT0YgU1VCU1RJVFVURSBHT09EUyBPUiBTRVJWSUNFUzsgTE9TUyBPRiBVU0UsCkRBVEEsIE9SIFBST0ZJVFM7IE9SIEJVU0lORVNTIElOVEVSUlVQVElPTikgSE9XRVZFUiBDQVVTRUQgQU5EIE9OIEFOWQpUSEVPUlkgT0YgTElBQklMSVRZLCBXSEVUSEVSIElOIENPTlRSQUNULCBTVFJJQ1QgTElBQklMSVRZLCBPUiBUT1JUCihJTkNMVURJTkcgTkVHTElHRU5DRSBPUiBPVEhFUldJU0UpIEFSSVNJTkcgSU4gQU5ZIFdBWSBPVVQgT0YgVEhFIFVTRQpPRiBUSElTIFNPRlRXQVJFLCBFVkVOIElGIEFEVklTRUQgT0YgVEhFIFBPU1NJQklMSVRZIE9GIFNVQ0ggREFNQUdFLgo="
       },
       "scope": "Original notice restoration for the exact npm package revision only. Native/vendor and corresponding-source obligations are separate."
     },
     {
       "name": "@napi-rs/keyring-win32-x64-msvc",
-      "version": "2.1.1",
+      "version": "2.1.2",
       "license": "MIT",
       "registry": {
-        "url": "https://registry.npmjs.org/@napi-rs/keyring-win32-x64-msvc/2.1.1",
-        "sha256": "43ef490031d90fa06a5be40f0b72cea2675ca8de7e22d8dc647446ea3af38a6c",
-        "integrity": "sha512-DjRshMlsMdEyZTNpqfQYj60kDrCZLkl4y80U3w5WJQIj7ypToj02+A/hfJw/g68wzbSZ6uXhklyITQ1DABZAUg==",
-        "tarball": "https://registry.npmjs.org/@napi-rs/keyring-win32-x64-msvc/-/keyring-win32-x64-msvc-2.1.1.tgz",
+        "url": "https://registry.npmjs.org/@napi-rs/keyring-win32-x64-msvc/2.1.2",
+        "sha256": "eed5c7ab7f24f44585ef65ea1dd836c643e40e46f5af68af439a960aa658e69f",
+        "integrity": "sha512-yQtFdfuwqM0ezKlYO6r2n44in2LGzd4MC679Ddhvojip3t1hn+q/4I+gJU+cIJQVd5FAZSKNrK4tGfew3UTpAQ==",
+        "tarball": "https://registry.npmjs.org/@napi-rs/keyring-win32-x64-msvc/-/keyring-win32-x64-msvc-2.1.2.tgz",
         "gitHead": null
       },
       "repository": "Brooooooklyn/keyring-node",
-      "revision": "97aa4e0412a0ba8a0d47541cebe0474eea5efe02",
+      "revision": "52184fbebffeef8a061234f60f313c479b954f9f",
       "provenance": {
-        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@napi-rs%2fkeyring-win32-x64-msvc@2.1.1",
-        "sha256": "a041d616038a54b3372dd2fa8215ffb7a02b57a438d3d13d140f4fd625635bba",
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@napi-rs%2fkeyring-win32-x64-msvc@2.1.2",
+        "sha256": "5502638d8a8f89c13aece82cd268ac4485b789767f57d55bf7cd9c1c2ef72992",
         "statement": {
           "_type": "https://in-toto.io/Statement/v1",
           "subject": [
             {
-              "name": "pkg:npm/%40napi-rs/keyring-win32-x64-msvc@2.1.1",
+              "name": "pkg:npm/%40napi-rs/keyring-win32-x64-msvc@2.1.2",
               "digest": {
-                "sha512": "0e346c84c96c31d132653369a9f4188fad240eb0992e4978cbcd14df0e56250223ef2a53a23d36f80fe17c9c3f83af30cdb499eae5e1925c884d0d4300164052"
+                "sha512": "c90b4575fbb0a8cd1ecca9583baaf69f8e229f62c6cdde0c0baefd0dd86fa238a9dedd619feabfe08fa0254f9c20941577914065228dacae2d19f7b0dd44e901"
               }
             }
           ],
@@ -1061,7 +980,7 @@
                 {
                   "uri": "git+https://github.com/Brooooooklyn/keyring-node@refs/heads/main",
                   "digest": {
-                    "gitCommit": "97aa4e0412a0ba8a0d47541cebe0474eea5efe02"
+                    "gitCommit": "52184fbebffeef8a061234f60f313c479b954f9f"
                   }
                 }
               ]
@@ -1071,7 +990,7 @@
                 "id": "https://github.com/actions/runner/github-hosted"
               },
               "metadata": {
-                "invocationId": "https://github.com/Brooooooklyn/keyring-node/actions/runs/38060082893/attempts/1"
+                "invocationId": "https://github.com/Brooooooklyn/keyring-node/actions/runs/39222094685/attempts/1"
               }
             }
           }
@@ -1080,14 +999,14 @@
       },
       "sourcePackage": {
         "path": "package.json",
-        "url": "https://raw.githubusercontent.com/Brooooooklyn/keyring-node/97aa4e0412a0ba8a0d47541cebe0474eea5efe02/package.json",
-        "sha256": "a5f6bf41ed2776b104af50ada93c8957fa4fe1396740eee67c280b22fc554f45",
-        "gitBlob": "174f3cae473aa79f984d46e4bd8c3d1a2f6d0e49",
-        "contentBase64": "ewogICJuYW1lIjogIkBuYXBpLXJzL2tleXJpbmciLAogICJ2ZXJzaW9uIjogIjIuMS4xIiwKICAiZGVzY3JpcHRpb24iOiAiaHR0cHM6Ly9naXRodWIuY29tL2h3Y2hlbi9rZXlyaW5nLXJzIE5vZGUuanMgYmluZGluZyB2aWEgaHR0cHM6Ly9uYXBpLnJzIiwKICAibWFpbiI6ICJpbmRleC5qcyIsCiAgInJlcG9zaXRvcnkiOiAiaHR0cHM6Ly9naXRodWIuY29tL0Jyb29vb29va2x5bi9rZXlyaW5nLW5vZGUiLAogICJsaWNlbnNlIjogIk1JVCIsCiAgImtleXdvcmRzIjogWwogICAgIm5hcGktcnMiLAogICAgIk5BUEkiLAogICAgIk4tQVBJIiwKICAgICJSdXN0IiwKICAgICJub2RlLWFkZG9uIiwKICAgICJub2RlLWFkZG9uLWFwaSIKICBdLAogICJmaWxlcyI6IFsKICAgICJpbmRleC5kLnRzIiwKICAgICJpbmRleC5qcyIsCiAgICAia2V5dGFyLmpzIiwKICAgICJrZXl0YXIuZC50cyIKICBdLAogICJuYXBpIjogewogICAgImJpbmFyeU5hbWUiOiAia2V5cmluZyIsCiAgICAiY29uc3RFbnVtIjogZmFsc2UsCiAgICAidGFyZ2V0cyI6IFsKICAgICAgImFhcmNoNjQtYXBwbGUtZGFyd2luIiwKICAgICAgImFhcmNoNjQtdW5rbm93bi1saW51eC1nbnUiLAogICAgICAiYWFyY2g2NC11bmtub3duLWxpbnV4LW11c2wiLAogICAgICAiYWFyY2g2NC1wYy13aW5kb3dzLW1zdmMiLAogICAgICAieDg2XzY0LWFwcGxlLWRhcndpbiIsCiAgICAgICJ4ODZfNjQtcGMtd2luZG93cy1tc3ZjIiwKICAgICAgIng4Nl82NC11bmtub3duLWxpbnV4LWdudSIsCiAgICAgICJ4ODZfNjQtdW5rbm93bi1saW51eC1tdXNsIiwKICAgICAgIng4Nl82NC11bmtub3duLWZyZWVic2QiLAogICAgICAiaTY4Ni1wYy13aW5kb3dzLW1zdmMiLAogICAgICAiYXJtdjctdW5rbm93bi1saW51eC1nbnVlYWJpaGYiLAogICAgICAicmlzY3Y2NGdjLXVua25vd24tbGludXgtZ251IgogICAgXQogIH0sCiAgImVuZ2luZXMiOiB7CiAgICAibm9kZSI6ICI+PSAxMCIKICB9LAogICJwdWJsaXNoQ29uZmlnIjogewogICAgInJlZ2lzdHJ5IjogImh0dHBzOi8vcmVnaXN0cnkubnBtanMub3JnLyIsCiAgICAiYWNjZXNzIjogInB1YmxpYyIKICB9LAogICJzY3JpcHRzIjogewogICAgImFydGlmYWN0cyI6ICJuYXBpIGFydGlmYWN0cyIsCiAgICAiYnVpbGQiOiAibmFwaSBidWlsZCAtLXBsYXRmb3JtIC0tcmVsZWFzZSIsCiAgICAiYnVpbGQ6ZGVidWciOiAibmFwaSBidWlsZCAtLXBsYXRmb3JtIiwKICAgICJmb3JtYXQiOiAicnVuLXAgZm9ybWF0OnByZXR0aWVyIGZvcm1hdDpycyBmb3JtYXQ6dG9tbCIsCiAgICAiZm9ybWF0OnByZXR0aWVyIjogInByZXR0aWVyIC4gLXciLAogICAgImZvcm1hdDp0b21sIjogInRhcGxvIGZvcm1hdCIsCiAgICAiZm9ybWF0OnJzIjogImNhcmdvIGZtdCIsCiAgICAibGludCI6ICJveGxpbnQiLAogICAgInByZXB1Ymxpc2hPbmx5IjogIm5hcGkgcHJlcHVibGlzaCAtdCBucG0iLAogICAgInRlc3QiOiAiYXZhIC1zIiwKICAgICJwcmV2ZXJzaW9uIjogIm5hcGkgYnVpbGQgLS1wbGF0Zm9ybSAmJiBnaXQgYWRkIC4iLAogICAgInZlcnNpb24iOiAibmFwaSB2ZXJzaW9uIgogIH0sCiAgImRldkRlcGVuZGVuY2llcyI6IHsKICAgICJAbmFwaS1ycy9jbGkiOiAiXjMuOS4xIiwKICAgICJAb3hjLW5vZGUvY29yZSI6ICJeMC4xLjEiLAogICAgIkB0YXBsby9jbGkiOiAiXjAuNy4wIiwKICAgICJAdHlwZXMvbm9kZSI6ICJeMjYuNS4xIiwKICAgICJhdmEiOiAiXjguMC4xIiwKICAgICJjaGFsayI6ICJeNi4wLjAiLAogICAgImh1c2t5IjogIl45LjEuNyIsCiAgICAibGludC1zdGFnZWQiOiAiXjE3LjUuMSIsCiAgICAibnBtLXJ1bi1hbGwyIjogIl45LjAuMyIsCiAgICAib3hsaW50IjogIl4xLjgyLjAiLAogICAgInByZXR0aWVyIjogIl4zLjkuNiIsCiAgICAidHlwZXNjcmlwdCI6ICJeNy4wLjIiCiAgfSwKICAibGludC1zdGFnZWQiOiB7CiAgICAiKi5AKGpzfHRzfHRzeCkiOiBbCiAgICAgICJveGxpbnQgLS1maXgiCiAgICBdLAogICAgIiouQChqc3x0c3x0c3h8eW1sfHlhbWx8bWR8anNvbikiOiBbCiAgICAgICJwcmV0dGllciAtLXdyaXRlIgogICAgXSwKICAgICIqLnRvbWwiOiBbCiAgICAgICJ0YXBsbyBmb3JtYXQiCiAgICBdCiAgfSwKICAiYXZhIjogewogICAgIm5vZGVBcmd1bWVudHMiOiBbCiAgICAgICItLWltcG9ydCIsCiAgICAgICJAb3hjLW5vZGUvY29yZS9yZWdpc3RlciIKICAgIF0sCiAgICAiZXh0ZW5zaW9ucyI6IFsKICAgICAgInRzIgogICAgXSwKICAgICJ0aW1lb3V0IjogIjJtIiwKICAgICJ3b3JrZXJUaHJlYWRzIjogZmFsc2UsCiAgICAiZW52aXJvbm1lbnRWYXJpYWJsZXMiOiB7CiAgICAgICJUU19OT0RFX1BST0pFQ1QiOiAiLi90c2NvbmZpZy5qc29uIgogICAgfQogIH0sCiAgInByZXR0aWVyIjogewogICAgInByaW50V2lkdGgiOiAxMjAsCiAgICAic2VtaSI6IGZhbHNlLAogICAgInRyYWlsaW5nQ29tbWEiOiAiYWxsIiwKICAgICJzaW5nbGVRdW90ZSI6IHRydWUsCiAgICAiYXJyb3dQYXJlbnMiOiAiYWx3YXlzIgogIH0sCiAgInBhY2thZ2VNYW5hZ2VyIjogInlhcm5ANC4xOC4xIiwKICAiZnVuZGluZyI6IHsKICAgICJ0eXBlIjogImdpdGh1YiIsCiAgICAidXJsIjogImh0dHBzOi8vZ2l0aHViLmNvbS9zcG9uc29ycy9Ccm9vb29vb2tseW4iCiAgfQp9Cg=="
+        "url": "https://raw.githubusercontent.com/Brooooooklyn/keyring-node/52184fbebffeef8a061234f60f313c479b954f9f/package.json",
+        "sha256": "db749294e44efe4a86dcc0cbcb1c3021ad977d84f2a5237fba1ab7a287c369cb",
+        "gitBlob": "e8ff8de866c7cfbdb29b92d7615e09db8f6aab7b",
+        "contentBase64": "ewogICJuYW1lIjogIkBuYXBpLXJzL2tleXJpbmciLAogICJ2ZXJzaW9uIjogIjIuMS4yIiwKICAiZGVzY3JpcHRpb24iOiAiaHR0cHM6Ly9naXRodWIuY29tL2h3Y2hlbi9rZXlyaW5nLXJzIE5vZGUuanMgYmluZGluZyB2aWEgaHR0cHM6Ly9uYXBpLnJzIiwKICAibWFpbiI6ICJpbmRleC5qcyIsCiAgInJlcG9zaXRvcnkiOiAiaHR0cHM6Ly9naXRodWIuY29tL0Jyb29vb29va2x5bi9rZXlyaW5nLW5vZGUiLAogICJsaWNlbnNlIjogIk1JVCIsCiAgImtleXdvcmRzIjogWwogICAgIm5hcGktcnMiLAogICAgIk5BUEkiLAogICAgIk4tQVBJIiwKICAgICJSdXN0IiwKICAgICJub2RlLWFkZG9uIiwKICAgICJub2RlLWFkZG9uLWFwaSIKICBdLAogICJmaWxlcyI6IFsKICAgICJpbmRleC5kLnRzIiwKICAgICJpbmRleC5qcyIsCiAgICAia2V5dGFyLmpzIiwKICAgICJrZXl0YXIuZC50cyIKICBdLAogICJuYXBpIjogewogICAgImJpbmFyeU5hbWUiOiAia2V5cmluZyIsCiAgICAiY29uc3RFbnVtIjogZmFsc2UsCiAgICAidGFyZ2V0cyI6IFsKICAgICAgImFhcmNoNjQtYXBwbGUtZGFyd2luIiwKICAgICAgImFhcmNoNjQtdW5rbm93bi1saW51eC1nbnUiLAogICAgICAiYWFyY2g2NC11bmtub3duLWxpbnV4LW11c2wiLAogICAgICAiYWFyY2g2NC1wYy13aW5kb3dzLW1zdmMiLAogICAgICAieDg2XzY0LWFwcGxlLWRhcndpbiIsCiAgICAgICJ4ODZfNjQtcGMtd2luZG93cy1tc3ZjIiwKICAgICAgIng4Nl82NC11bmtub3duLWxpbnV4LWdudSIsCiAgICAgICJ4ODZfNjQtdW5rbm93bi1saW51eC1tdXNsIiwKICAgICAgIng4Nl82NC11bmtub3duLWZyZWVic2QiLAogICAgICAiaTY4Ni1wYy13aW5kb3dzLW1zdmMiLAogICAgICAiYXJtdjctdW5rbm93bi1saW51eC1nbnVlYWJpaGYiLAogICAgICAicmlzY3Y2NGdjLXVua25vd24tbGludXgtZ251IgogICAgXQogIH0sCiAgImVuZ2luZXMiOiB7CiAgICAibm9kZSI6ICI+PSAxMCIKICB9LAogICJwdWJsaXNoQ29uZmlnIjogewogICAgInJlZ2lzdHJ5IjogImh0dHBzOi8vcmVnaXN0cnkubnBtanMub3JnLyIsCiAgICAiYWNjZXNzIjogInB1YmxpYyIKICB9LAogICJzY3JpcHRzIjogewogICAgImFydGlmYWN0cyI6ICJuYXBpIGFydGlmYWN0cyIsCiAgICAiYnVpbGQiOiAibmFwaSBidWlsZCAtLXBsYXRmb3JtIC0tcmVsZWFzZSIsCiAgICAiYnVpbGQ6ZGVidWciOiAibmFwaSBidWlsZCAtLXBsYXRmb3JtIiwKICAgICJmb3JtYXQiOiAicnVuLXAgZm9ybWF0OnByZXR0aWVyIGZvcm1hdDpycyBmb3JtYXQ6dG9tbCIsCiAgICAiZm9ybWF0OnByZXR0aWVyIjogInByZXR0aWVyIC4gLXciLAogICAgImZvcm1hdDp0b21sIjogInRhcGxvIGZvcm1hdCIsCiAgICAiZm9ybWF0OnJzIjogImNhcmdvIGZtdCIsCiAgICAibGludCI6ICJveGxpbnQiLAogICAgImxpY2Vuc2VzIjogIm5vZGUgc2NyaXB0cy90aGlyZC1wYXJ0eS1saWNlbnNlcy5tanMiLAogICAgInByZXB1Ymxpc2hPbmx5IjogIm5hcGkgcHJlcHVibGlzaCAtdCBucG0iLAogICAgInRlc3QiOiAiYXZhIC1zIiwKICAgICJwcmV2ZXJzaW9uIjogIm5hcGkgYnVpbGQgLS1wbGF0Zm9ybSAmJiBnaXQgYWRkIC4iLAogICAgInZlcnNpb24iOiAibmFwaSB2ZXJzaW9uIgogIH0sCiAgImRldkRlcGVuZGVuY2llcyI6IHsKICAgICJAbmFwaS1ycy9jbGkiOiAiXjMuOS4xIiwKICAgICJAb3hjLW5vZGUvY29yZSI6ICJeMC4xLjEiLAogICAgIkB0YXBsby9jbGkiOiAiXjAuNy4wIiwKICAgICJAdHlwZXMvbm9kZSI6ICJeMjYuNS4xIiwKICAgICJhdmEiOiAiXjguMC4xIiwKICAgICJjaGFsayI6ICJeNi4wLjAiLAogICAgImh1c2t5IjogIl45LjEuNyIsCiAgICAibGludC1zdGFnZWQiOiAiXjE3LjUuMSIsCiAgICAibnBtLXJ1bi1hbGwyIjogIl45LjAuMyIsCiAgICAib3hsaW50IjogIl4xLjgyLjAiLAogICAgInByZXR0aWVyIjogIl4zLjkuNiIsCiAgICAidHlwZXNjcmlwdCI6ICJeNy4wLjIiCiAgfSwKICAibGludC1zdGFnZWQiOiB7CiAgICAiKi5AKGpzfHRzfHRzeCkiOiBbCiAgICAgICJveGxpbnQgLS1maXgiCiAgICBdLAogICAgIiouQChqc3x0c3x0c3h8eW1sfHlhbWx8bWR8anNvbikiOiBbCiAgICAgICJwcmV0dGllciAtLXdyaXRlIgogICAgXSwKICAgICIqLnRvbWwiOiBbCiAgICAgICJ0YXBsbyBmb3JtYXQiCiAgICBdCiAgfSwKICAiYXZhIjogewogICAgIm5vZGVBcmd1bWVudHMiOiBbCiAgICAgICItLWltcG9ydCIsCiAgICAgICJAb3hjLW5vZGUvY29yZS9yZWdpc3RlciIKICAgIF0sCiAgICAiZXh0ZW5zaW9ucyI6IFsKICAgICAgInRzIgogICAgXSwKICAgICJ0aW1lb3V0IjogIjJtIiwKICAgICJ3b3JrZXJUaHJlYWRzIjogZmFsc2UsCiAgICAiZW52aXJvbm1lbnRWYXJpYWJsZXMiOiB7CiAgICAgICJUU19OT0RFX1BST0pFQ1QiOiAiLi90c2NvbmZpZy5qc29uIgogICAgfQogIH0sCiAgInByZXR0aWVyIjogewogICAgInByaW50V2lkdGgiOiAxMjAsCiAgICAic2VtaSI6IGZhbHNlLAogICAgInRyYWlsaW5nQ29tbWEiOiAiYWxsIiwKICAgICJzaW5nbGVRdW90ZSI6IHRydWUsCiAgICAiYXJyb3dQYXJlbnMiOiAiYWx3YXlzIgogIH0sCiAgInBhY2thZ2VNYW5hZ2VyIjogInlhcm5ANC4xOC4xIiwKICAiZnVuZGluZyI6IHsKICAgICJ0eXBlIjogImdpdGh1YiIsCiAgICAidXJsIjogImh0dHBzOi8vZ2l0aHViLmNvbS9zcG9uc29ycy9Ccm9vb29vb2tseW4iCiAgfQp9Cg=="
       },
       "licenseText": {
         "path": "LICENSE",
-        "url": "https://raw.githubusercontent.com/Brooooooklyn/keyring-node/97aa4e0412a0ba8a0d47541cebe0474eea5efe02/LICENSE",
+        "url": "https://raw.githubusercontent.com/Brooooooklyn/keyring-node/52184fbebffeef8a061234f60f313c479b954f9f/LICENSE",
         "sha256": "02965ed67e29f871a53f7a7afa593a0ddc8020f86ccce0faaf1aa59215b5269e",
         "gitBlob": "6c7f56251cd1021ea295023d31221a5677772d55",
         "contentBase64": "TUlUIExpY2Vuc2UKCkNvcHlyaWdodCAoYykgMjAyMCBOLUFQSSBmb3IgUnVzdAoKUGVybWlzc2lvbiBpcyBoZXJlYnkgZ3JhbnRlZCwgZnJlZSBvZiBjaGFyZ2UsIHRvIGFueSBwZXJzb24gb2J0YWluaW5nIGEgY29weQpvZiB0aGlzIHNvZnR3YXJlIGFuZCBhc3NvY2lhdGVkIGRvY3VtZW50YXRpb24gZmlsZXMgKHRoZSAiU29mdHdhcmUiKSwgdG8gZGVhbAppbiB0aGUgU29mdHdhcmUgd2l0aG91dCByZXN0cmljdGlvbiwgaW5jbHVkaW5nIHdpdGhvdXQgbGltaXRhdGlvbiB0aGUgcmlnaHRzCnRvIHVzZSwgY29weSwgbW9kaWZ5LCBtZXJnZSwgcHVibGlzaCwgZGlzdHJpYnV0ZSwgc3VibGljZW5zZSwgYW5kL29yIHNlbGwKY29waWVzIG9mIHRoZSBTb2Z0d2FyZSwgYW5kIHRvIHBlcm1pdCBwZXJzb25zIHRvIHdob20gdGhlIFNvZnR3YXJlIGlzCmZ1cm5pc2hlZCB0byBkbyBzbywgc3ViamVjdCB0byB0aGUgZm9sbG93aW5nIGNvbmRpdGlvbnM6CgpUaGUgYWJvdmUgY29weXJpZ2h0IG5vdGljZSBhbmQgdGhpcyBwZXJtaXNzaW9uIG5vdGljZSBzaGFsbCBiZSBpbmNsdWRlZCBpbiBhbGwKY29waWVzIG9yIHN1YnN0YW50aWFsIHBvcnRpb25zIG9mIHRoZSBTb2Z0d2FyZS4KClRIRSBTT0ZUV0FSRSBJUyBQUk9WSURFRCAiQVMgSVMiLCBXSVRIT1VUIFdBUlJBTlRZIE9GIEFOWSBLSU5ELCBFWFBSRVNTIE9SCklNUExJRUQsIElOQ0xVRElORyBCVVQgTk9UIExJTUlURUQgVE8gVEhFIFdBUlJBTlRJRVMgT0YgTUVSQ0hBTlRBQklMSVRZLApGSVRORVNTIEZPUiBBIFBBUlRJQ1VMQVIgUFVSUE9TRSBBTkQgTk9OSU5GUklOR0VNRU5ULiBJTiBOTyBFVkVOVCBTSEFMTCBUSEUKQVVUSE9SUyBPUiBDT1BZUklHSFQgSE9MREVSUyBCRSBMSUFCTEUgRk9SIEFOWSBDTEFJTSwgREFNQUdFUyBPUiBPVEhFUgpMSUFCSUxJVFksIFdIRVRIRVIgSU4gQU4gQUNUSU9OIE9GIENPTlRSQUNULCBUT1JUIE9SIE9USEVSV0lTRSwgQVJJU0lORyBGUk9NLApPVVQgT0YgT1IgSU4gQ09OTkVDVElPTiBXSVRIIFRIRSBTT0ZUV0FSRSBPUiBUSEUgVVNFIE9SIE9USEVSIERFQUxJTkdTIElOIFRIRQpTT0ZUV0FSRS4K"
