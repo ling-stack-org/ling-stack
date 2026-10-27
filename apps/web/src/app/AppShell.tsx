@@ -1873,11 +1873,27 @@ export function AppShell(): React.JSX.Element {
   useShellErrorFeedback({ dismissToast, items: shellErrorFeedbackItems, showToast });
 
   useEffect(() => {
-    void refreshHealth();
     void refreshProviderTemplates();
     void refreshProviders();
     void refreshAiTeammates();
   }, []);
+
+  useEffect(() => {
+    // Retry invalidated startup reads from the next live observation. Once
+    // healthy, cwd changes must not reapply the Host's default workspace.
+    if (daemonObservation.paused || daemonHealthy === true) return;
+    void refreshHealth();
+  }, [daemonObservation.epoch, daemonObservation.paused]);
+
+  useEffect(() => {
+    const cwd = form.cwd.trim();
+    if (!cwd || daemonHealthy !== true || daemonObservation.paused || daemonObservation.workspaceCwd !== cwd) return;
+    // Health may change cwd before React commits the new observation. Hydrate
+    // guarded workspace reads from that committed owner, never the old render.
+    void refreshChannels(cwd);
+    void refreshAiCouncils(cwd);
+    void refreshUsedMemoryAudit(cwd);
+  }, [form.cwd, daemonHealthy, daemonObservation.epoch, daemonObservation.paused]);
 
   useEffect(() => {
     if (activeView === "workspace") {
@@ -2087,9 +2103,11 @@ export function AppShell(): React.JSX.Element {
   }, [approvals, selectedApprovalId]);
 
   async function refreshHealth(): Promise<void> {
+    const observationEpoch = daemonObservationRef.current.epoch;
     setDaemonHealthRefreshing(true);
     try {
       const health = await getDaemonHealth();
+      if (daemonObservationRef.current.epoch !== observationEpoch) return;
       setDaemonHealthy(health.ok);
       setDaemonFeatures(health.features ?? {
         channels: { autoRoute: false },
@@ -2106,7 +2124,7 @@ export function AppShell(): React.JSX.Element {
           if (savedWorkspaceCwd) {
             clearSavedWorkspaceCwd();
           }
-          if (form.cwd.trim() !== defaultWorkspaceCwd) {
+          if (daemonObservationRef.current.workspaceCwd !== defaultWorkspaceCwd) {
             updateWorkspaceCwd(defaultWorkspaceCwd);
           }
         } else {
@@ -2123,19 +2141,17 @@ export function AppShell(): React.JSX.Element {
         }
         void Promise.all([
           refreshProviders(defaultWorkspaceCwd),
-          refreshChannels(defaultWorkspaceCwd),
           refreshAiTeammates(defaultWorkspaceCwd),
-          refreshAiCouncils(defaultWorkspaceCwd),
           refreshMcp(defaultWorkspaceCwd),
           refreshRuns(defaultWorkspaceCwd),
           refreshApprovals(defaultWorkspaceCwd),
           refreshRuntimeState(defaultWorkspaceCwd),
-          refreshUsedMemoryAudit(defaultWorkspaceCwd),
           refreshWorkItems(defaultWorkspaceCwd),
           loadStartupStatus(defaultWorkspaceCwd),
         ]).catch(() => undefined);
       }
     } catch {
+      if (daemonObservationRef.current.epoch !== observationEpoch) return;
       setDaemonHealthy(false);
       setDaemonFeatures({
         channels: { autoRoute: false },
