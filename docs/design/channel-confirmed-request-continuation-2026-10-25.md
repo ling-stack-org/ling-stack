@@ -1,9 +1,23 @@
 # 频道待澄清请求的明确承接
 
-状态：原始明确承接实现的 145 项回归及独立差量审查通过；2026-10-27 的字段续接已实现、独审并保存，capture013 模型规划通过，真实 macOS 问答与执行验收仍未完成。不同增量的独审、规划和 GUI 结论不能互相替代。
+状态：原始明确承接实现的 145 项回归及独立差量审查通过；2026-10-27 的字段续接已实现、独审并保存，capture013 模型规划通过。f1357986 隔离包的特定字段续接、单次真实命令及正常 Quit 已通过；最新 main 组合包、产品 retry 和恢复矩阵仍未完成。不同增量的独审、规划和 GUI 结论不能互相替代。
 本设计补充 c01-path-reference-cwd-boundary-2026-10-25.md 的 R5，不替代 Continuity v2。
 
 ### 2026-10-27 最新验证覆盖
+
+真实 macOS 客户端已用内置 Computer Use 完成独立后继 module 案例：实际 @QA 请求、
+目录问题、回答、精确工具审批各一次；Host 核对仅新增依赖 scope 和回答来源，完整
+操作图及 required QA manifest 保留，只有一个 resolution/proposal/workflow/Run 和
+一次工具执行。真实 exit0/stdout 为 `PENDING_SCOPE_MODULE_GUI_OK_20261027 sum=16`，
+Run/workflow 均 succeeded；模块 JSON 的派生 hash 和本次回答 provenance 已核。
+正常 super+q 后 launcher 实际 exit0，Main code0/signalnull，Host/后代、端口和 QA DB
+句柄排空。这里只覆盖 f1357986/ASAR4325897f，不覆盖 f7f7bc75 最新组合包。
+
+原 fs-read 夹具未声明 input.json，真实 exit1/ENOENT 和 blocked 历史保持失败，不重试
+或改绿；项目范围仅捕获 literal import/require 模块闭包，任意 fs 数据读取须显式
+声明，未通过扩大权限修正测试。报告及真实截图见
+`output/e6-20260928/pending-scope-gui-failure-and-successor-20261027.md`。
+旧段落中“尚未 GUI”描述各自当时状态，以上为特定后继验收的最新覆盖。
 
 字段续接增量已在 `63ecdbb9`、`9afa5248`、`c965dda7` 实现并独审；
 `99b9ee2d` 已绑定其隔离 QA 打包输入并推送。真实模型 capture013 已通过：
@@ -19,7 +33,7 @@
 
 证据：`output/e6-20260928/pending-operation-real-model-wire-result-20261027.md`、
 `pending-operation-wire-fields-{verification,independent-review}-20261027.md`。
-下一门槛为新包实际确认、执行、产品 retry 与恢复，不重复已经通过的协议探针。
+下一门槛为最新组合包、产品 retry 与恢复，不重复已经通过的协议探针和后继 GUI 案例。
 新包前另修复了 Desktop 停 owned Host 后向死端点释放租约的退出时序；该增量独立
 验证，不能用规划协议结果替代客户端正常退出证明。
 
