@@ -16,25 +16,26 @@ export async function handleImDestinations(
   const registry = context.imDestinations;
   await registry.ensureLoaded();
 
+  if (url.pathname.endsWith("/test") && request.method === "POST") {
+    const destinationId = DESTINATION_PATH.exec(url.pathname.slice(0, -"/test".length))?.[1];
+    const destination = registry.list().find((item) => item.id === destinationId);
+    if (!destination) {
+      writeJson(response, 404, { error: "not_found", message: `Unknown IM destination: ${destinationId}` });
+      return;
+    }
+    const message: DestinationMessage = {
+      title: "Ling Stack test message",
+      bodyMarkdown: "Your IM destination is working.",
+      severity: "info",
+    };
+    const result = await registry.dispatch(destination, message);
+    writeJson(response, result.ok ? 200 : 502, result);
+    return;
+  }
+
   const destinationMatch = DESTINATION_PATH.exec(url.pathname);
   if (destinationMatch) {
     const id = destinationMatch[1];
-    if (url.pathname.endsWith("/test") && request.method === "POST") {
-      const destinationId = DESTINATION_PATH.exec(url.pathname.slice(0, -"/test".length))?.[1];
-      const destination = registry.list().find((item) => item.id === destinationId);
-      if (!destination) {
-        writeJson(response, 404, { error: "not_found", message: `Unknown IM destination: ${destinationId}` });
-        return;
-      }
-      const message: DestinationMessage = {
-        title: "Ling Stack test message",
-        bodyMarkdown: "Your IM destination is working.",
-        severity: "info",
-      };
-      const result = await registry.dispatch(destination, message);
-      writeJson(response, result.ok ? 200 : 502, result);
-      return;
-    }
     if (request.method === "DELETE") {
       const removed = await registry.remove(id);
       writeJson(response, removed ? 200 : 404, removed ? { ok: true } : { error: "not_found", message: `Unknown IM destination: ${id}` });

@@ -39,11 +39,10 @@ export async function handleSkillsMarketplaceInspect(
     return;
   }
 
-  const fetchImpl = context.webFetch;
-  if (!fetchImpl) {
-    writeJson(response, 503, { error: "web_fetch_unavailable", message: "Web fetch is not available in this runtime." });
-    return;
-  }
+  // Prefer the daemon-managed web fetch (egress audited); fall back to the
+  // global fetch when the runtime constructs none — the route itself enforces
+  // https, a timeout and a size cap regardless of which fetch runs.
+  const fetchImpl = context.webFetch ?? ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => fetch(input, init));
 
   try {
     const fetched = await fetchImpl(parsedIndexUrl.toString(), { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
