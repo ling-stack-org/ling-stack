@@ -4,6 +4,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
+
+/** Modern Canvas releases ship Cargo.lock and a supplier binary SBOM; older releases stay evidence-limited. */
+const MODERN_CANVAS_VERSIONS = ["1.0.11", "1.0.13"];
+const SUPPORTED_CANVAS_VERSIONS = ["0.1.80", ...MODERN_CANVAS_VERSIONS];
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
 function original(file) {
   const bytes = Buffer.from(file.contentBase64, "base64");
@@ -22,7 +26,7 @@ export function validateCanvasSourceMaterials(record, sourceBinding, metadata, s
     original(file);
     if (file.url !== `https://raw.githubusercontent.com/${record.repository}/${record.revision}/${file.path}`) throw new Error("distribution_canvas_source_origin_mismatch");
   }
-  if (!["LICENSE", "Cargo.toml", ".gitmodules", ...(record.version === "1.0.11" ? ["Cargo.lock"] : [])].every(path => record.files.some(file => file.path === path))) throw new Error("distribution_canvas_source_contract_missing");
+  if (!["LICENSE", "Cargo.toml", ".gitmodules", ...(MODERN_CANVAS_VERSIONS.includes(record.version) ? ["Cargo.lock"] : [])].every(path => record.files.some(file => file.path === path))) throw new Error("distribution_canvas_source_contract_missing");
   const deps = record.vendors.find(vendor => vendor.kind === "skia-source" && vendor.files.some(file => file.path === "DEPS"));
   if (!deps || deps.version !== record.skiaRevision) throw new Error("distribution_canvas_skia_deps_missing");
   const depsText = original(deps.files.find(file => file.path === "DEPS")).toString("utf8");
@@ -49,7 +53,7 @@ export function validateCanvasSourceMaterials(record, sourceBinding, metadata, s
       } else if (file.url !== crate.url) throw new Error("distribution_canvas_crate_notice_origin_mismatch");
     }
   }
-  if (record.version === "1.0.11") {
+  if (MODERN_CANVAS_VERSIONS.includes(record.version)) {
     if (!sbom || sbom.metadata?.component?.name !== metadata.name || sbom.metadata?.component?.version !== metadata.version
       || !sbom.components?.some(component => component.purl?.startsWith("pkg:cargo/") && component.hashes?.length)) throw new Error("distribution_canvas_supplier_sbom_missing_or_stale");
     for (const component of sbom.components ?? []) {
@@ -65,7 +69,7 @@ export function validateCanvasSourceMaterials(record, sourceBinding, metadata, s
 }
 
 export function collectCanvasMaterials({ metadata, nativeDirectory, sourceBinding }, add, components) {
-  if (metadata.name !== "@napi-rs/canvas" || !["0.1.80", "1.0.11"].includes(metadata.version) || !nativeDirectory) return undefined;
+  if (metadata.name !== "@napi-rs/canvas" || !SUPPORTED_CANVAS_VERSIONS.includes(metadata.version) || !nativeDirectory) return undefined;
   const manifest = JSON.parse(readFileSync(new URL("./vendor-notices/canvas-native-sources.json", import.meta.url)));
   const record = manifest.entries.find(entry => entry.version === metadata.version);
   const nativeMetadata = JSON.parse(readFileSync(join(nativeDirectory, "package.json")));
@@ -95,5 +99,5 @@ export function collectCanvasMaterials({ metadata, nativeDirectory, sourceBindin
     reason: "historical_native_rust_resolution_not_published",
     details: "Original Canvas source, fixed Skia source/vendor grants and source access are collected. The 0.1.80 supplier published neither Cargo.lock nor a binary SBOM; its historical Rust build graph cannot be reconstructed from public metadata. This collection does not claim a complete historical Rust dependency graph or a reproducible native build.",
   }] : [];
-  return { licenseFiles, historicalRustResolutionPublished: record.version === "1.0.11", limitations };
+  return { licenseFiles, historicalRustResolutionPublished: MODERN_CANVAS_VERSIONS.includes(record.version), limitations };
 }
