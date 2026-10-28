@@ -1,5 +1,8 @@
 .ling-ui-tooltip {
   z-index: var(--ling-z-tooltip);
+  /* Tooltip content is never hoverable (disableHoverableContent), so it must not
+     intercept pointer hit tests over its trigger. */
+  pointer-events: none;
   max-width: 240px;
   padding: var(--ling-space-2) var(--ling-space-4);
   border: 1px solid var(--ling-border-default);
