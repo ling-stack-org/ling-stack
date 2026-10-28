@@ -22,7 +22,7 @@ import type {
   CreateAutomationRequest,
   UpdateAutomationDraftRequest,
   UpdateAutomationRequest,
-} from "../types.js";
+} from "@ling-stack/contracts";
 import { daemonClient } from "./client.js";
 
 export async function listAutomations(cwd: string, options: AutomationListRequest = {}): Promise<AutomationListResponse> {

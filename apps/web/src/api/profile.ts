@@ -1,4 +1,4 @@
-import type { UpdateUserProfileRequest, UserProfileResponse } from "../types.js";
+import type { UpdateUserProfileRequest, UserProfileResponse } from "@ling-stack/contracts";
 import { daemonClient } from "./client.js";
 
 export async function getUserProfile(cwd: string): Promise<UserProfileResponse> {

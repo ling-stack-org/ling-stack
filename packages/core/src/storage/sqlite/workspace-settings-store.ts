@@ -53,8 +53,10 @@ export class SqliteWorkspaceSettingsStore {
       mediaGenerationDefaults: nullableUpdate(input.mediaGenerationDefaults, current.mediaGenerationDefaults),
       defaultAuthorizationMode: permissionDefaults.authorizationMode,
       defaultWorkspaceAccessMode: permissionDefaults.workspaceAccessMode,
-      defaultPermissionMode: permissionDefaults.permissionMode,
-      defaultPermissionPreset: permissionDefaults.permissionPreset,
+      ...(input.schemaVersion === 2 ? {} : {
+        defaultPermissionMode: permissionDefaults.permissionMode,
+        defaultPermissionPreset: permissionDefaults.permissionPreset,
+      }),
       channelNotifications: nullableUpdate(input.channelNotifications, current.channelNotifications),
       channelActivityViews: nullableUpdate(input.channelActivityViews, current.channelActivityViews),
       skillGovernancePolicy: input.skillGovernancePolicy === undefined
@@ -103,9 +105,17 @@ function parseOptionalReasoningSummaryMode(value: unknown): ReasoningSummaryMode
 
 function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSettings {
   const parsed = parseJsonObject(value);
-  const defaultPermissionMode = parseOptionalSessionPermissionMode(parsed.defaultPermissionMode) ?? "workspace_write";
-  const defaultPermissionPreset = parseOptionalPermissionPreset(parsed.defaultPermissionPreset) ?? "workspace_collaboration";
-  const legacySelection = authorizationAndAccessFromLegacyPermission(defaultPermissionMode, defaultPermissionPreset);
+  const parsedPermissionMode = parseOptionalSessionPermissionMode(parsed.defaultPermissionMode);
+  const parsedPermissionPreset = parseOptionalPermissionPreset(parsed.defaultPermissionPreset);
+  const legacyPermissionMode = parsedPermissionMode ?? "workspace_write";
+  const legacyPermissionPreset = parsedPermissionPreset ?? "workspace_collaboration";
+  const legacySelection = authorizationAndAccessFromLegacyPermission(legacyPermissionMode, legacyPermissionPreset);
+  const parsedAuthorizationMode = parseOptionalAuthorizationMode(parsed.defaultAuthorizationMode);
+  const parsedWorkspaceAccessMode = parseOptionalWorkspaceAccessMode(parsed.defaultWorkspaceAccessMode);
+  const authorizationMode = parsedAuthorizationMode ?? legacySelection.authorizationMode;
+  const workspaceAccessMode = parsedWorkspaceAccessMode ?? legacySelection.workspaceAccessMode;
+  const legacyProjection = legacyPermissionFromAuthorizationAndAccess(authorizationMode, workspaceAccessMode);
+  const hasCanonicalPermission = parsedAuthorizationMode !== undefined || parsedWorkspaceAccessMode !== undefined;
   const parsedTheme: WorkspaceSettings["theme"] =
     parsed.theme === "light" || parsed.theme === "dark" || parsed.theme === "system" ? parsed.theme : undefined;
   return omitUndefined({
@@ -118,10 +128,10 @@ function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSett
     defaultReasoningSummary: parseOptionalReasoningSummaryMode(parsed.defaultReasoningSummary),
     defaultProviderPresetId: typeof parsed.defaultProviderPresetId === "string" && parsed.defaultProviderPresetId.trim() ? parsed.defaultProviderPresetId : undefined,
     mediaGenerationDefaults: parseMediaGenerationDefaults(parsed.mediaGenerationDefaults),
-    defaultAuthorizationMode: parseOptionalAuthorizationMode(parsed.defaultAuthorizationMode) ?? legacySelection.authorizationMode,
-    defaultWorkspaceAccessMode: parseOptionalWorkspaceAccessMode(parsed.defaultWorkspaceAccessMode) ?? legacySelection.workspaceAccessMode,
-    defaultPermissionMode,
-    defaultPermissionPreset,
+    defaultAuthorizationMode: authorizationMode,
+    defaultWorkspaceAccessMode: workspaceAccessMode,
+    defaultPermissionMode: hasCanonicalPermission ? legacyProjection.permissionMode : legacyPermissionMode,
+    defaultPermissionPreset: hasCanonicalPermission ? legacyProjection.permissionPreset : legacyPermissionPreset,
     channelNotifications: parseOptionalStringRecord(parsed.channelNotifications),
     channelActivityViews: parseOptionalUnknownRecord(parsed.channelActivityViews),
     skillGovernancePolicy: parseSkillGovernancePolicy(parsed.skillGovernancePolicy) ?? DEFAULT_SKILL_GOVERNANCE_POLICY,

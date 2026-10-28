@@ -6,6 +6,7 @@ import type { MediaRuntimeHandle } from "./executor.js";
 import { getHostMediaOperation } from "./host-operation.js";
 import type { HostMediaReceiptProducer } from "./host-receipt-producer.js";
 import { collectMediaJobArtifacts, MediaArtifactCollectionError, type MediaArtifactCollectionResult } from "./artifact-collector.js";
+import { LEGACY_MEDIA_PROTOCOL_REMOVED_CODE, MediaWorkflowProtocolCompatibilityError } from "./workflows/media-protocol-contract.js";
 
 export function prepareProviderMediaReceipt(input: { readonly store: RunStore; readonly job: MediaJob;
   readonly localExecution: MediaLocalExecutionHandle; readonly supervised: MediaRuntimeHandle;
@@ -23,6 +24,7 @@ export function prepareProviderMediaReceipt(input: { readonly store: RunStore; r
 export function prepareWorkflowMediaReceipt(input: { readonly store: RunStore; readonly job: MediaJob;
   readonly localExecution: MediaLocalExecutionHandle; readonly supervised: MediaRuntimeHandle;
   readonly connection: MediaWorkflowConnection; readonly outputRules: readonly MediaWorkflowOutputRule[];
+  readonly allowLegacyProtocol?: boolean;
   readonly secretValues?: readonly (string | undefined)[] }): HostMediaReceiptProducer | undefined {
   const host = getHostMediaOperation(input.localExecution);
   if (!host) return undefined;
@@ -31,6 +33,12 @@ export function prepareWorkflowMediaReceipt(input: { readonly store: RunStore; r
   // submit. Unknown auto negotiation must not enter GET then late-prepare Core.
   if (variant !== "jobs_v1" && variant !== "prompt_legacy") {
     throw new MediaLocalExecutionAdmissionError("media_protocol_unprepared", "Check the workflow connection before captured execution.");
+  }
+  if (variant === "prompt_legacy" && input.allowLegacyProtocol !== true) {
+    throw new MediaWorkflowProtocolCompatibilityError(
+      LEGACY_MEDIA_PROTOCOL_REMOVED_CODE,
+      "当前 ComfyUI 仅提供历史 Prompt/History 协议；该协议只能读取已有任务，请切换到 Jobs API 后再创建新任务。",
+    );
   }
   try {
     return host.prepareReceipt({ ...input, childFence: toRuntimeAttemptFence(input.supervised.attempt),

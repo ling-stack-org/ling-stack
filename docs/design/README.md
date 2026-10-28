@@ -2,8 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-10-27 (external shared skill-source contract and plan; bundled GStack
-navigation from 2026-10-17; other delivery states retain their owners)
+Last verified: 2026-10-29 (business data/API compatibility hardening; other delivery states retain their owners)
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -25,6 +24,10 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 - [Platform Architecture](platform-architecture.md)
 - [Ling Framework](ling-framework.md)
 - [Contracts And API Client](contracts-api-client.md)
+- [Business Data And API Compatibility Cutover](business-data-api-compatibility-cutover.md)
+- [Business Data And API Compatibility Implementation Plan](business-data-api-compatibility-implementation-plan.md)
+- [Business Compatibility Boundary Hardening](business-compatibility-boundary-hardening.md)
+- [Business Compatibility Boundary Hardening Implementation Plan](business-compatibility-boundary-hardening-implementation-plan.md)
 - [Daemon API](../daemon-api.md)
 - [Architecture Decision Records](../adr/README.md)
 

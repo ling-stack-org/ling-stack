@@ -17,6 +17,7 @@ import type {
 } from "@ling-stack/contracts";
 import { isSupportedLocale } from "@ling-stack/localization";
 import type { RunnerRegistry } from "../../runtime/runners.js";
+import { assertPermissionContractVersion } from "../../shared/permission-contract.js";
 import {
   loadWorkspaceRuntimeSettingsWithSources,
   normalizeUserRuntimeDefaults,
@@ -177,7 +178,9 @@ export function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSet
     throw new Error("Workspace settings update must be a JSON object");
   }
   const record = value as Record<string, unknown>;
+  assertPermissionContractVersion(record);
   return {
+    ...(record.schemaVersion === 2 ? { schemaVersion: 2 as const } : {}),
     workspaceCwd: readNullableString(record.workspaceCwd, "workspaceCwd"),
     theme: readNullableTheme(record.theme),
     locale: readNullableLocale(record.locale),

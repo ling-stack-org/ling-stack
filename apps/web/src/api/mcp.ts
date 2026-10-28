@@ -1,12 +1,12 @@
 import type {
   McpServerCheckResponse,
-  McpServerFormState,
   McpServerListResponse,
   McpServerMutationResponse,
   McpServerStatusResponse,
   McpServerToolSyncResponse,
   McpToolListResponse,
-} from "../types.js";
+} from "@ling-stack/contracts";
+import type { McpServerFormState } from "../types.js";
 import { daemonClient } from "./client.js";
 import { mcpServerFormToPayload } from "./mcp-payloads.js";
 
