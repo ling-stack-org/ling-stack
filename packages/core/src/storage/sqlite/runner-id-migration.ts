@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
@@ -25,6 +26,11 @@ const jsonRunnerColumns: Readonly<Record<string, readonly string[]>> = {
   run_sessions: ["task_snapshot_json", "provider_snapshot_json", "request_snapshot_json"],
   channel_workflows: ["metadata_json"],
   channel_workflow_steps: ["metadata_json"],
+  conversation_context_snapshots: ["payload_json"],
+};
+
+const jsonFingerprintColumns: Readonly<Record<string, string>> = {
+  conversation_context_snapshots: "payload_fingerprint",
 };
 
 /**
@@ -54,7 +60,8 @@ export function applyRunnerIdMigration(input: RunnerIdMigrationInput): boolean {
       const available = tableColumns(input.database, table);
       for (const column of columns) {
         if (!available.has(column)) continue;
-        rewriteJsonColumn(input.database, table, column);
+        const fingerprintColumn = jsonFingerprintColumns[table];
+        rewriteJsonColumn(input.database, table, column, fingerprintColumn && available.has(fingerprintColumn) ? fingerprintColumn : undefined);
       }
     }
 
@@ -93,11 +100,14 @@ export function normalizeRunnerIdsInJson(value: unknown): { readonly value: unkn
   return { value: changed ? next : value, changed };
 }
 
-function rewriteJsonColumn(database: DatabaseSync, table: string, column: string): void {
+function rewriteJsonColumn(database: DatabaseSync, table: string, column: string, fingerprintColumn?: string): void {
+  const fingerprintSelection = fingerprintColumn ? `, ${quoteIdentifier(fingerprintColumn)} AS __migration_fingerprint` : "";
   const rows = database
-    .prepare(`SELECT rowid AS __migration_rowid, ${quoteIdentifier(column)} AS __migration_value FROM ${quoteIdentifier(table)} WHERE ${quoteIdentifier(column)} LIKE ?`)
+    .prepare(`SELECT rowid AS __migration_rowid, ${quoteIdentifier(column)} AS __migration_value${fingerprintSelection} FROM ${quoteIdentifier(table)} WHERE ${quoteIdentifier(column)} LIKE ?`)
     .all(`%${LEGACY_PI_RUNNER_ID}%`) as Array<Record<string, SQLOutputValue>>;
-  const update = database.prepare(`UPDATE ${quoteIdentifier(table)} SET ${quoteIdentifier(column)} = ? WHERE rowid = ?`);
+  const update = database.prepare(fingerprintColumn
+    ? `UPDATE ${quoteIdentifier(table)} SET ${quoteIdentifier(column)} = ?, ${quoteIdentifier(fingerprintColumn)} = ? WHERE rowid = ?`
+    : `UPDATE ${quoteIdentifier(table)} SET ${quoteIdentifier(column)} = ? WHERE rowid = ?`);
   for (const row of rows) {
     const raw = row.__migration_value;
     if (raw === null || raw === undefined) continue;
@@ -111,8 +121,25 @@ function rewriteJsonColumn(database: DatabaseSync, table: string, column: string
       throw new Error(`runner_id_migration_invalid_json:${table}.${column}`, { cause: error });
     }
     const normalized = normalizeRunnerIdsInJson(parsed);
-    if (normalized.changed) update.run(JSON.stringify(normalized.value), row.__migration_rowid);
+    if (!normalized.changed) continue;
+    let nextValue = normalized.value;
+    let nextFingerprint = row.__migration_fingerprint;
+    if (fingerprintColumn && isRecord(nextValue) && typeof nextValue.fingerprint === "string") {
+      const { fingerprint: _fingerprint, ...body } = nextValue;
+      const fingerprint = hashJson(body);
+      nextValue = { ...body, fingerprint };
+      nextFingerprint = fingerprint;
+    }
+    if (fingerprintColumn) {
+      update.run(JSON.stringify(nextValue), nextFingerprint ?? null, row.__migration_rowid);
+    } else {
+      update.run(JSON.stringify(nextValue), row.__migration_rowid);
+    }
   }
+}
+
+function hashJson(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
 }
 
 function isRunnerIdKey(key: string): boolean {
