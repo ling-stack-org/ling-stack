@@ -13,11 +13,14 @@ import type { SpreadsheetWorkbook } from "@ling-stack/contracts";
  */
 export function extractSpreadsheetSheetNamesSync(path: string, maxBytes: number): SpreadsheetWorkbook {
   const sizeBytes = statSync(path).size;
-  const bytes = readFileSync(path);
   const names: string[] = [];
-  if (sizeBytes <= maxBytes && bytes.length <= maxBytes) {
+  if (sizeBytes <= maxBytes) {
     try {
-      const files = unzipSync(bytes);
+      // Decompress only the workbook manifest entry — never every archive
+      // member — so a highly compressed bomb cannot exhaust daemon memory.
+      const files = unzipSync(readFileSync(path), {
+        filter: (file) => file.name === "xl/workbook.xml",
+      });
       const workbookXml = files["xl/workbook.xml"];
       if (workbookXml) {
         const xml = Buffer.from(workbookXml).toString("utf8");

@@ -19,8 +19,10 @@ export function ArtifactPreview({ preview, cwd }: ArtifactPreviewProps): React.J
   }
 
   if (preview.kind === "spreadsheet") {
+    // The windowed route resolves the ref path against the workspace root and
+    // enforces containment server-side, so any source with a known cwd works.
     const sourcePath = preview.ref.displayPath ?? preview.ref.label;
-    if (cwd && preview.ref.source === "workspace_file") {
+    if (cwd) {
       return <SpreadsheetGrid cwd={cwd} path={sourcePath} sheets={preview.spreadsheet?.sheets} />;
     }
     // Spreadsheet metadata without a workspace-relative source falls back to

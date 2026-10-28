@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 import ExcelJS from "exceljs";
 import { createDaemonServer } from "../dist/index.js";
@@ -74,8 +74,15 @@ test("spreadsheet preview is workspace-bound and serves windows", async () => {
     assert.equal(windowBody.sheetName, "Data");
     assert.deepEqual(windowBody.cells[0].map((cell) => cell.v), ["name", "qty"]);
 
-    const escape = await fetch(`${baseUrl}/previews/spreadsheet?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent("../../outside.xlsx")}`);
-    assert.equal(escape.status, 403);
+    // An existing file outside the workspace must be rejected by containment.
+    const outsidePath = join(tmpdir(), `ling-outside-${Date.now()}.xlsx`);
+    await workbook.xlsx.writeFile(outsidePath);
+    try {
+      const escape = await fetch(`${baseUrl}/previews/spreadsheet?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(`../${basename(outsidePath)}`)}`);
+      assert.equal(escape.status, 403);
+    } finally {
+      await rm(outsidePath, { force: true }).catch(() => {});
+    }
 
     const missing = await fetch(`${baseUrl}/previews/spreadsheet?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent("nope.xlsx")}`);
     assert.equal(missing.status, 400);

@@ -1,11 +1,13 @@
 import { statSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { resolve as resolvePath, isAbsolute } from "node:path";
+import { resolve as resolvePath, isAbsolute, relative as relativePath } from "node:path";
 import {
   parseDeliverableSpec,
   type DeliverableBuildResponse,
 } from "@ling-stack/contracts";
 import type { DaemonContext } from "../../context.js";
+import { allowLocalWorkspaceRequest } from "../../shared/local-workspace-access.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { buildDeliverable } from "./builders.js";
@@ -30,6 +32,11 @@ export async function handleDeliverablesBuild(
   }
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${context.config.host}:${context.config.port}`}`);
   const cwd = url.searchParams.get("cwd") ?? context.config.defaultWorkspaceCwd;
+  // Local origin + trusted workspace only: this route writes files, so a
+  // foreign page must never reach it on the wildcard-CORS loopback daemon.
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry: context.storeRegistry, cwd })) {
+    return;
+  }
   try {
     const body = await readJsonBody(request, Math.max(context.config.maxBodyBytes, MAX_SPEC_BYTES));
     const parsed = parseDeliverableSpec(body);
@@ -74,17 +81,33 @@ export async function handleSpreadsheetPreview(
     writeJson(response, 400, { error: "bad_request", message: "path query parameter is required" });
     return;
   }
-  // Workspace-bound: only serve files inside the workspace directory.
+  // Local origin + trusted workspace only: the wildcard-CORS loopback daemon
+  // must not serve workbook bytes to foreign pages or outside workspaces.
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry: context.storeRegistry, cwd })) {
+    return;
+  }
+  // Workspace-bound: resolve real paths (symlinks included) and require the
+  // target to stay inside the workspace via relative-path containment, which
+  // cannot be fooled by sibling directory string prefixes.
   const root = isAbsolute(cwd) ? resolvePath(cwd) : resolvePath(context.config.defaultWorkspaceCwd);
+  const resolvedRoot = realpathSync(root);
   const absolute = resolvePath(root, path);
-  if (!absolute.startsWith(root)) {
+  let realAbsolute: string;
+  try {
+    realAbsolute = realpathSync(absolute);
+  } catch {
+    writeJson(response, 400, { error: "bad_request", message: "Spreadsheet file does not exist." });
+    return;
+  }
+  const relative = relativePath(resolvedRoot, realAbsolute);
+  if (relative.startsWith("..") || isAbsolute(relative)) {
     writeJson(response, 403, { error: "forbidden", message: "Spreadsheet previews are workspace-bound." });
     return;
   }
   try {
     const sheetParam = url.searchParams.get("sheet");
     if (sheetParam === null) {
-      const extraction = await extractSpreadsheetWorkbook(absolute);
+      const extraction = await extractSpreadsheetWorkbook(realAbsolute);
       writeJson(response, 200, extraction.workbook);
       return;
     }
@@ -99,7 +122,7 @@ export async function handleSpreadsheetPreview(
       const parsed = Number.parseInt(raw, 10);
       return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
     };
-    const window = await extractSpreadsheetSheetWindow(absolute, sheetIndex, {
+    const window = await extractSpreadsheetSheetWindow(realAbsolute, sheetIndex, {
       rowStart: number("rowStart"),
       rowEnd: number("rowEnd"),
       colStart: number("colStart"),

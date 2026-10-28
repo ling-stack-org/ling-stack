@@ -111,8 +111,11 @@ export async function buildAttachmentPreview(input: BuildAttachmentPreviewInput)
 
 export async function buildWorkspaceFilePreview(input: BuildWorkspaceFilePreviewInput): Promise<PreviewContentResponse> {
   const maxBytes = normalizePreviewMaxBytes(input.maxBytes);
+  // Spreadsheets render through the windowed viewer; everything else keeps
+  // the textual classification. CSV stays textual until a CSV reader exists.
+  const isSpreadsheet = isSpreadsheetSource(input.displayPath) && extname(input.displayPath).toLowerCase() !== ".csv";
   const inferredKind = inferTextualPreviewKind(input.displayPath);
-  const kind = inferredKind === "unsupported" ? "plain_text" : inferredKind;
+  const kind: PreviewContentKind = isSpreadsheet ? "spreadsheet" : inferredKind === "unsupported" ? "plain_text" : inferredKind;
   const stats = statSync(input.contentPath);
   const ref: PreviewFileRef = {
     id: `workspace:${input.displayPath}`,
@@ -123,6 +126,17 @@ export async function buildWorkspaceFilePreview(input: BuildWorkspaceFilePreview
     sizeBytes: stats.size,
     previewable: true,
   };
+
+  if (kind === "spreadsheet") {
+    return {
+      ref,
+      kind,
+      spreadsheet: extractSpreadsheetSheetNamesSync(input.contentPath, Math.max(maxBytes, 8 * 1024 * 1024)),
+      truncated: false,
+      sizeBytes: stats.size,
+      redactionNotes: ["Preview is read-only and not included in AI context."],
+    };
+  }
 
   if (input.focusLine !== undefined && kind !== "image" && kind !== "pdf" && kind !== "office") {
     const window = await readWorkspaceTextLineWindow(input.contentPath, input.focusLine, maxBytes);
