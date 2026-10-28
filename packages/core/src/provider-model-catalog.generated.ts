@@ -3,12 +3,12 @@ import type { ProviderModelCatalogManifest, ProviderModelCatalogRecord } from ".
 
 export const providerModelCatalogManifest = {
   "schemaVersion": 1,
-  "version": "models.dev:e3be9366c06f",
+  "version": "models.dev:e65600616eed",
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
   "license": "MIT",
-  "generatedAt": "2026-10-25T11:47:19.856Z",
-  "updatedAt": "2026-10-23"
+  "generatedAt": "2026-10-28T08:44:05.174Z",
+  "updatedAt": "2026-10-26"
 } as const satisfies ProviderModelCatalogManifest;
 
 export const providerModelCatalogRecords = [
@@ -3892,6 +3892,32 @@ export const providerModelCatalogRecords = [
     "contextWindow": 1050000,
     "maxTokens": 128000,
     "updatedAt": "2026-09-29"
+  },
+  {
+    "providerId": "openai",
+    "id": "gpt-6.1-terra",
+    "displayName": "GPT-6.1 Terra",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "contextWindow": 1050000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-10-26"
   },
   {
     "providerId": "openai",
