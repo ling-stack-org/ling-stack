@@ -1,4 +1,5 @@
-import type { ProviderFormState, ProviderMutationRequest } from "../types.js";
+import type { ProviderFormState } from "../types.js";
+import type { ProviderMutationRequest } from "@ling-stack/contracts";
 import { normalizeMediaProviderCompat } from "@ling-stack/core/provider-media-normalization";
 import { splitCsv } from "./shared.js";
 

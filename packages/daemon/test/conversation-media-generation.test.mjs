@@ -48,7 +48,7 @@ import {
 
 const now = "2026-08-11T01:00:00.000Z";
 
-function publishReadyWorkflowConnection(store, connectionId, protocolVariant = "prompt_legacy") {
+function publishReadyWorkflowConnection(store, connectionId, protocolVariant = "jobs_v1") {
   const admission = store.beginMediaWorkflowConnectionCheck(connectionId);
   assert.ok(admission);
   const publication = store.commitMediaWorkflowConnectionCheck(admission.ticket, {
@@ -1474,7 +1474,7 @@ test("concurrent workflow dispatches share one ComfyUI submission and one work u
     assert.ok(connection && definition);
     fixture.store.updateMediaWorkflowConnection(connection.id, {
       baseUrl: comfy.url,
-      protocolVariant: "prompt_legacy",
+      protocolVariant: "jobs_v1",
     }, now);
     publishReadyWorkflowConnection(fixture.store, connection.id);
     const version = fixture.store.createMediaWorkflowVersion({
@@ -1646,6 +1646,7 @@ async function createFixture() {
     baseUrl: "http://127.0.0.1:8188",
     authMode: "none",
     networkPolicy: "trusted_private_network",
+    protocolVariant: "jobs_v1",
   }, now);
   store.updateMediaWorkflowConnection(connection.id, { status: "ready" }, now);
   const workflow = store.createMediaWorkflowDefinition({

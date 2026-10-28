@@ -79,10 +79,10 @@ if (!childCase) {
         bodies.push({ ...observation, body: text ? JSON.parse(text) : undefined });
         const url = new URL(observation.path, fixture.baseUrl), path = url.pathname;
         const submit = request.method === "POST" && path === "/api/prompt";
-        const history = path.startsWith("/api/history/");
+        const jobs = path.startsWith("/api/jobs/");
         const collect = path === "/api/view";
         const partialCollection = mode.startsWith("collect-second-");
-        const selected = (submit && mode.startsWith("submit-")) || (history && mode.startsWith("poll-"))
+        const selected = (submit && mode.startsWith("submit-")) || (jobs && mode.startsWith("poll-"))
           || (collect && mode.startsWith("collect-") && (!partialCollection || url.searchParams.get("filename") === "fixture-second.mp4"));
         if (selected && mode.endsWith("truncated")) {
           response.writeHead(200, { "content-type": collect ? "video/mp4" : "application/json", "content-length": "1000" });
@@ -93,12 +93,11 @@ if (!childCase) {
         if (selected && mode.endsWith("http-error")) return sendJson(response, 500, { error: "owned-upstream-failure" });
         if (path === "/api/object_info") return sendJson(response, 200, { CLIPTextEncode: {}, SaveVideo: {} });
         if (submit) return sendJson(response, 200, { prompt_id: "fixture-prompt-1" });
-        if (path.startsWith("/api/history_v2/")) return sendJson(response, 404, { error: "not_found" });
-        if (history) return sendJson(response, 200, { "fixture-prompt-1": {
-          status: { status_str: "success", completed: true },
+        if (jobs) return sendJson(response, 200, {
+          id: "fixture-prompt-1", status: "completed",
           outputs: { "9": { videos: [{ filename: "fixture.mp4", type: "output" },
             ...(partialCollection ? [{ filename: "fixture-second.mp4", type: "output" }] : [])] } },
-        } });
+        });
         if (collect) {
           response.writeHead(200, { "content-type": "video/mp4", "content-length": String(mediaBytes.length) });
           response.end(mediaBytes); return;
@@ -125,7 +124,7 @@ if (!childCase) {
       }
       const created = await api("/media-workflow-connections", {
         name: "A11 isolated public Comfy", authMode: "none", networkPolicy: "public_only",
-        protocolVariant: "prompt_legacy",
+        protocolVariant: "jobs_v1",
         baseUrl: childCase === "policy-private" ? `http://127.0.0.1:${fixture.port}` : fixture.baseUrl,
       });
       assert.equal(created.status, 201);
@@ -276,9 +275,9 @@ if (!childCase) {
           assert.equal(handle.poll_attempts, childCase.startsWith("collect-") ? 1 : 0,
             "settlement preserves the real submitted poll counter: failed first poll=0, terminal observation before collect=1");
           const recovery = JSON.parse(handle.recovery_json);
-          assert.equal(recovery.protocolVariant, "prompt_legacy"); assert.equal(recovery.workflowVersionId, versionId);
+          assert.equal(recovery.protocolVariant, "jobs_v1"); assert.equal(recovery.workflowVersionId, versionId);
           if (childCase.startsWith("collect-")) {
-            assert.equal(recovery.resultPayload.status.completed, true);
+            assert.equal(recovery.resultPayload.status, "completed");
             const downloads = fixture.requests.filter(item => new URL(item.path, fixture.baseUrl).pathname === "/api/view");
             assert.equal(downloads.length, partialCollection ? 2 : 1);
             if (partialCollection) assert.deepEqual(downloads.map(item => new URL(item.path, fixture.baseUrl).searchParams.get("filename")),

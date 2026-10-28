@@ -26,7 +26,7 @@ import type {
   UpdateMediaProjectRequest,
   UpdateMediaSceneRequest,
   UpdateMediaWorkflowConnectionRequest,
-} from "../types.js";
+} from "@ling-stack/contracts";
 import { daemonClient } from "./client.js";
 
 export function listMediaProjects(cwd: string): Promise<MediaProductionProjectListResponse> {

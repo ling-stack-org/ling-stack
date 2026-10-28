@@ -32,15 +32,10 @@ test("ComfyUI adapter writes the scene prompt to the semantic prompt field and c
       submittedGraph = JSON.parse(init.body).prompt;
       return jsonResponse({ prompt_id: "prompt_1" });
     }
-    if (parsed.pathname === "/api/history_v2/prompt_1") {
-      return jsonResponse({ error: "not_found" }, 404);
-    }
-    if (parsed.pathname === "/api/history/prompt_1") {
+    if (parsed.pathname === "/api/jobs/prompt_1") {
       return jsonResponse({
-        prompt_1: {
-          status: { status_str: "success", completed: true },
-          outputs: { "9": { videos: [{ filename: "scene.mp4", type: "output" }] } },
-        },
+        id: "prompt_1", status: "completed",
+        outputs: { "9": { videos: [{ filename: "scene.mp4", type: "output" }] } },
       });
     }
     if (parsed.pathname === "/api/view") {
@@ -51,7 +46,7 @@ test("ComfyUI adapter writes the scene prompt to the semantic prompt field and c
   const version = workflowVersion();
   const adapter = createComfyUiWorkflowAdapter({
     store: {},
-    connection: connection({ health: { ok: true, message: "ready", checkedAt: now, protocolVariant: "prompt_legacy" } }),
+    connection: connection({ protocolVariant: "jobs_v1", health: { ok: true, message: "ready", checkedAt: now, protocolVariant: "jobs_v1" } }),
     version,
     fetchImpl,
     resolveHostAddresses: async () => ["203.0.113.10"],

@@ -142,13 +142,11 @@ test(`actual captured Seedance submit/poll/download: ${fault}`, { timeout: 8000 
 });
 }
 
-for (const mode of ["jobs", "legacy-v2", "legacy-api-history", "legacy-history", "partial", "remote-failed"]) {
+for (const mode of ["jobs", "partial", "remote-failed"]) {
 test(`actual captured Comfy receipt chain: ${mode}`, { timeout: 8000 }, async t => {
   const f = await fixture(t, true), requests = [];
-  const protocolVariant = mode.startsWith("legacy") ? "prompt_legacy" : "jobs_v1";
-  const statusPath = mode === "legacy-api-history" ? "/api/history/exact-prompt"
-    : mode === "legacy-history" ? "/history/exact-prompt" : protocolVariant === "prompt_legacy"
-      ? "/api/history_v2/exact-prompt" : "/api/jobs/exact-prompt";
+  const protocolVariant = "jobs_v1";
+  const statusPath = "/api/jobs/exact-prompt";
   const bytes = Buffer.from("actual-comfy-output");
   const files = [{ filename: "chosen.png", type: "output" }, ...(mode === "partial" ? [{ filename: "second.png", type: "output" }] : [])];
   const upstream = createServer(async (request, response) => {
@@ -158,9 +156,7 @@ test(`actual captured Comfy receipt chain: ${mode}`, { timeout: 8000 }, async t 
       response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ prompt_id: "exact-prompt" }));
     } else if (request.url === statusPath) {
       const outputs = { "1": { images: files } };
-      const value = protocolVariant === "prompt_legacy"
-        ? { "exact-prompt": { status: { status_str: "success", completed: true }, outputs } }
-        : { id: "exact-prompt", status: mode === "remote-failed" ? "failed" : "completed", outputs };
+      const value = { id: "exact-prompt", status: mode === "remote-failed" ? "failed" : "completed", outputs };
       response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(value));
     } else if (request.url.startsWith("/api/view?")) {
       if (mode === "partial" && request.url.includes("second.png")) response.writeHead(500).end("synthetic second download failure");
