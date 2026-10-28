@@ -4611,4 +4611,9 @@ export const enUS = {
   "Automation run finished": "Automation run finished",
   "Automation run failed": "Automation run failed",
   "Approval required": "Approval required",
+  "Spreadsheet preview": "Spreadsheet preview",
+  "Loading spreadsheet...": "Loading spreadsheet...",
+  "Load more rows": "Load more rows",
+  "Row": "Row",
+  "Formulas are shown for reference and never evaluated.": "Formulas are shown for reference and never evaluated.",
 } as const satisfies Readonly<Record<string, string>>;
