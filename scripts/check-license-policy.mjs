@@ -35,6 +35,14 @@ const noticeRequiredLicenses = new Set([
   "Python-2.0",
 ]);
 
+// Reviewed exceptions: upstream publishes the MIT license text but the npm
+// metadata reports it in a form outside the allowed set. Each entry states
+// where the license text can be verified.
+const reviewedLicenseExceptions = new Map([
+  ["chainsaw", "MIT/X11 — upstream https://github.com/dominictarr/chainsaw (MIT, shipped in source)"],
+  ["buffers", "MIT — upstream https://github.com/dominictarr/buffers (MIT in README/source; npm metadata incomplete)"],
+]);
+
 const raw = execFileSync(
   "corepack",
   ["pnpm", "licenses", "list", "--json"],
@@ -54,6 +62,10 @@ for (const [license, packages] of Object.entries(report)) {
     if (allowedLicenses.has(license)) continue;
     if (license === "Unknown" && hasRecognizedMitLicense(dependency.paths ?? [])) {
       resolvedUnknown.push(dependency.name);
+      continue;
+    }
+    if (reviewedLicenseExceptions.has(dependency.name)) {
+      console.log(`Reviewed license exception applied: ${dependency.name} — ${reviewedLicenseExceptions.get(dependency.name)}`);
       continue;
     }
     failures.push(`${dependency.name}: ${license}`);
