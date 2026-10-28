@@ -88,3 +88,4 @@ export * from "./learning-reviews.js";
 export * from "./memory-derivatives.js";
 
 export * from "./memory-wiki.js";
+export * from "./deliverables.js";

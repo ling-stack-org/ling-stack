@@ -2,18 +2,40 @@ import { CodeBlock } from "../blocks/CodeBlock.js";
 import { CopyActionButton } from "../feedback/CopyActionButton.js";
 import { ImageCompareViewer } from "./ImageCompareViewer.js";
 import { MessageBodyRenderer } from "../blocks/MessageBodyRenderer.js";
+import { SpreadsheetGrid } from "./SpreadsheetGrid.js";
 import { useI18n } from "../../../i18n.js";
 import type { PreviewContentKind, PreviewContentResponse } from "../../../types.js";
 
 export interface ArtifactPreviewProps {
   readonly preview: PreviewContentResponse;
+  readonly cwd?: string;
 }
 
-export function ArtifactPreview({ preview }: ArtifactPreviewProps): React.JSX.Element {
+export function ArtifactPreview({ preview, cwd }: ArtifactPreviewProps): React.JSX.Element {
   const { t } = useI18n();
 
   if (preview.kind === "image" && preview.imageUrl) {
     return <ImageCompareViewer current={{ label: preview.ref.label, imageUrl: preview.imageUrl }} compare={preview.compare} />;
+  }
+
+  if (preview.kind === "spreadsheet") {
+    // The windowed route resolves the ref path against the workspace root and
+    // enforces containment server-side, so any source with a known cwd works.
+    const sourcePath = preview.ref.displayPath ?? preview.ref.label;
+    if (cwd) {
+      return <SpreadsheetGrid cwd={cwd} path={sourcePath} sheets={preview.spreadsheet?.sheets} />;
+    }
+    // Spreadsheet metadata without a workspace-relative source falls back to
+    // a text listing until the harness wires artifact-scoped windows.
+    if (preview.spreadsheet) {
+      return (
+        <div className="spreadsheet-grid spreadsheet-grid-note" data-ui2-spreadsheet-grid="true">
+          {(preview.spreadsheet.sheets ?? []).map((sheet) => (
+            <div key={sheet.index}>{sheet.name}</div>
+          ))}
+        </div>
+      );
+    }
   }
 
   if (preview.kind === "html_interactive" && preview.htmlInteractive) {
