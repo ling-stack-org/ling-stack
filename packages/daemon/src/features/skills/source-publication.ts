@@ -54,7 +54,11 @@ export async function prepareSkillSourcePublication(store: RunStore, records: re
           directories.set(id, directory);
         }
         const files = [{ path: "SKILL.md", kind: "other" as const,
-          checksum: record.sourceChecksum, sizeBytes: record.sourceSizeBytes }, ...record.referencedFiles];
+          checksum: record.sourceChecksum, sizeBytes: record.sourceSizeBytes },
+          // With artifact staging disabled, referenced files are neither read
+          // nor copied anywhere — skip their realpath/size/checksum/budget
+          // validation instead of rejecting publishArtifacts:false callers.
+          ...(publishArtifacts ? record.referencedFiles : [])];
         for (const file of files) {
           if (!file.checksum || file.sizeBytes === undefined) {
             throw new HttpError(409, "skill_source_artifact_unverified", `Unverified resource: ${file.path}`);
