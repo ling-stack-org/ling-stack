@@ -285,6 +285,8 @@ export interface MemoryRecallResult {
     readonly eligibleCount?: number;
     readonly excludedCount?: number;
     readonly traceId?: string;
+    readonly semanticCandidateCount?: number;
+    readonly semanticStatus?: string;
     readonly selectedMemoryIds: readonly string[];
     readonly scopeRejected?: boolean;
   };

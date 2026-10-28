@@ -749,3 +749,12 @@ flow, not part of the first v1 skeleton.
    recall as the default, and let customers install providers later.
 3. Should memory source excerpts be stored inline?
    Recommendation: store short excerpts plus source refs and hashes, not full source copies.
+
+## Optional derivatives and review entry
+
+The implemented optional LanceDB service and scoped rebuildable Wiki are owned by
+[Optional Memory Derivatives](memory-derived-views.md). Both preserve SQLite authority and
+local-first recall. Learning memory results can be inspected, approved at their original
+scope or archived directly in Experience review, through the existing memory review API.
+Pending candidates are never labelled active. The removed teammate Settings Memory tab
+remains absent.

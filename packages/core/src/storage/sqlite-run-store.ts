@@ -1,3 +1,7 @@
+import { SqliteMemoryWikiStore } from "./sqlite/memory-wiki-store.js";
+import type { MemoryWikiStore } from "../memory-wiki-types.js";
+import { SqliteMemoryDerivativeStore } from "./sqlite/memory-derivative-store.js";
+import type { MemoryDerivativeStore } from "../memory-derivative-types.js";
 import { SqliteLearningReviewStore } from "./sqlite/learning-review-store.js";
 import type { LearningReviewStore } from "../learning-review-types.js";
 import { drainSkillDefinitionRevisionNotices } from "./sqlite/skill-definition-revision-store.js";
@@ -764,6 +768,8 @@ export interface SqliteRunStoreOptions {
 export class SqliteRunStore implements RunStore {
   readonly paths: LingStackRuntimePaths;
   private readonly database: DatabaseSync;
+  private readonly memoryWiki: SqliteMemoryWikiStore;
+  private readonly memoryDerivatives: SqliteMemoryDerivativeStore;
   private readonly learningReviews: SqliteLearningReviewStore;
   private readonly legacyContinuityFixtureMode: boolean;
   private readonly automations: SqliteAutomationStore;
@@ -1189,6 +1195,8 @@ export class SqliteRunStore implements RunStore {
     });
     this.userProfile = new SqliteUserProfileStore({ database: this.database });
     this.workspaceSettings = new SqliteWorkspaceSettingsStore({ database: this.database });
+    this.memoryWiki = new SqliteMemoryWikiStore({ database: this.database });
+    this.memoryDerivatives = new SqliteMemoryDerivativeStore({ database: this.database });
     this.learningReviews = new SqliteLearningReviewStore({ database: this.database });
     this.skillRegistry = new SqliteSkillRegistryStore({ database: this.database });
     this.skillRegression = new SqliteSkillRegressionStore({ database: this.database });
@@ -3933,6 +3941,72 @@ export class SqliteRunStore implements RunStore {
 
   applyMemoryReviewAction(input: ApplyMemoryReviewActionInput, now: string): { readonly memory: MemoryObject; readonly action: MemoryReviewActionRecord } {
     return this.memoryReviews.applyMemoryReviewAction(input, now);
+  }
+
+  listMemoryWikiSources(...args: Parameters<MemoryWikiStore["listMemoryWikiSources"]>): ReturnType<MemoryWikiStore["listMemoryWikiSources"]> {
+    return this.memoryWiki.listMemoryWikiSources(...args);
+  }
+  listMemoryWikiDecisions(...args: Parameters<MemoryWikiStore["listMemoryWikiDecisions"]>): ReturnType<MemoryWikiStore["listMemoryWikiDecisions"]> {
+    return this.memoryWiki.listMemoryWikiDecisions(...args);
+  }
+
+  getMemoryWikiGeneration(...args: Parameters<MemoryWikiStore["getMemoryWikiGeneration"]>): ReturnType<MemoryWikiStore["getMemoryWikiGeneration"]> {
+    return this.memoryWiki.getMemoryWikiGeneration(...args);
+  }
+
+  beginMemoryWikiGeneration(...args: Parameters<MemoryWikiStore["beginMemoryWikiGeneration"]>): ReturnType<MemoryWikiStore["beginMemoryWikiGeneration"]> {
+    return this.memoryWiki.beginMemoryWikiGeneration(...args);
+  }
+
+  publishMemoryWikiGeneration(...args: Parameters<MemoryWikiStore["publishMemoryWikiGeneration"]>): ReturnType<MemoryWikiStore["publishMemoryWikiGeneration"]> {
+    return this.memoryWiki.publishMemoryWikiGeneration(...args);
+  }
+
+  getMemoryWikiHumanBlock(...args: Parameters<MemoryWikiStore["getMemoryWikiHumanBlock"]>): ReturnType<MemoryWikiStore["getMemoryWikiHumanBlock"]> {
+    return this.memoryWiki.getMemoryWikiHumanBlock(...args);
+  }
+
+  updateMemoryWikiHumanBlock(...args: Parameters<MemoryWikiStore["updateMemoryWikiHumanBlock"]>): ReturnType<MemoryWikiStore["updateMemoryWikiHumanBlock"]> {
+    return this.memoryWiki.updateMemoryWikiHumanBlock(...args);
+  }
+
+  getMemorySemanticPolicy(...args: Parameters<MemoryDerivativeStore["getMemorySemanticPolicy"]>): ReturnType<MemoryDerivativeStore["getMemorySemanticPolicy"]> {
+    return this.memoryDerivatives.getMemorySemanticPolicy(...args);
+  }
+
+  updateMemorySemanticPolicy(...args: Parameters<MemoryDerivativeStore["updateMemorySemanticPolicy"]>): ReturnType<MemoryDerivativeStore["updateMemorySemanticPolicy"]> {
+    return this.memoryDerivatives.updateMemorySemanticPolicy(...args);
+  }
+
+  listMemoryDerivativeSources(...args: Parameters<MemoryDerivativeStore["listMemoryDerivativeSources"]>): ReturnType<MemoryDerivativeStore["listMemoryDerivativeSources"]> {
+    return this.memoryDerivatives.listMemoryDerivativeSources(...args);
+  }
+
+  getMemoryDerivativeSource(...args: Parameters<MemoryDerivativeStore["getMemoryDerivativeSource"]>): ReturnType<MemoryDerivativeStore["getMemoryDerivativeSource"]> {
+    return this.memoryDerivatives.getMemoryDerivativeSource(...args);
+  }
+
+  listMemoryDerivativeChanges(...args: Parameters<MemoryDerivativeStore["listMemoryDerivativeChanges"]>): ReturnType<MemoryDerivativeStore["listMemoryDerivativeChanges"]> {
+    return this.memoryDerivatives.listMemoryDerivativeChanges(...args);
+  }
+
+  getMemoryDerivativeSequence(...args: Parameters<MemoryDerivativeStore["getMemoryDerivativeSequence"]>): ReturnType<MemoryDerivativeStore["getMemoryDerivativeSequence"]> {
+    return this.memoryDerivatives.getMemoryDerivativeSequence(...args);
+  }
+
+  getMemorySemanticGeneration(...args: Parameters<MemoryDerivativeStore["getMemorySemanticGeneration"]>): ReturnType<MemoryDerivativeStore["getMemorySemanticGeneration"]> {
+    return this.memoryDerivatives.getMemorySemanticGeneration(...args);
+  }
+
+  beginMemorySemanticGeneration(...args: Parameters<MemoryDerivativeStore["beginMemorySemanticGeneration"]>): ReturnType<MemoryDerivativeStore["beginMemorySemanticGeneration"]> {
+    return this.memoryDerivatives.beginMemorySemanticGeneration(...args);
+  }
+
+  advanceMemorySemanticGeneration(...args: Parameters<MemoryDerivativeStore["advanceMemorySemanticGeneration"]>): ReturnType<MemoryDerivativeStore["advanceMemorySemanticGeneration"]> {
+    return this.memoryDerivatives.advanceMemorySemanticGeneration(...args);
+  }
+  advanceMemorySemanticScan(...args: Parameters<MemoryDerivativeStore["advanceMemorySemanticScan"]>): ReturnType<MemoryDerivativeStore["advanceMemorySemanticScan"]> {
+    return this.memoryDerivatives.advanceMemorySemanticScan(...args);
   }
 
   recallMemory(input: MemoryRecallRequest): MemoryRecallResult {

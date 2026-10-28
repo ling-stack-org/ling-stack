@@ -119,3 +119,12 @@ A local controlled HTTP provider and real daemon/browser journey cover explicit 
 candidate review, application to the existing skill, history and restoring undo. This
 demonstrates transport and product flow, not real-model quality or execution of the learned
 procedure.
+
+Memory results now expose their title, body, source refs and exact owner directly in the
+shared result card. Explicit approve/archive calls the existing memory review action API;
+there is no automatic promotion or ownership change. Channel protocol/playbook results
+continue to point to the channel review queue. Read errors remain visible.
+
+Optional semantic retrieval configuration and scoped Wiki browsing share the existing
+Experience review disclosure. Their independent behavior and native distribution boundary
+are owned by [Optional Memory Derivatives](memory-derived-views.md).

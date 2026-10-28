@@ -5,6 +5,9 @@ import { useI18n } from "../../../i18n.js";
 import type { LearningReviewJob, SkillCandidate } from "../../../types.js";
 import { Button, Field, InlineFeedback, Select, Textarea } from "../../ui/index.js";
 import { useLearningReviews } from "./useLearningReviews.js";
+import { LearningMemoryCandidate } from "./LearningMemoryCandidate.js";
+import { MemoryRetrievalSettings } from "./MemoryRetrievalSettings.js";
+import { MemoryWikiDisclosure } from "./MemoryWikiBrowser.js";
 import "./learning-review.css";
 
 /** Closed conversation disclosures perform no reads and render no empty result cards. */
@@ -58,6 +61,8 @@ function LearningReviewPanelContent({ cwd, runId, decisionId, onReviewCandidate 
       </Button>
     </div>}
     {state.error ? <InlineFeedback tone="danger">{state.error}</InlineFeedback> : null}
+    {!runId && !decisionId ? <details><summary>{t("Memory retrieval settings")}</summary><MemoryRetrievalSettings cwd={cwd} /></details> : null}
+    <MemoryWikiDisclosure cwd={cwd} runId={runId} />
     <div aria-live="polite" aria-atomic="false" className="learning-review-jobs">
       {state.jobs.map(job => <LearningReviewResult key={job.id} cwd={cwd} job={job} busy={Boolean(state.busy)}
         onCancel={() => void state.cancel(job.id)} onReviewCandidate={onReviewCandidate} />)}
@@ -92,15 +97,22 @@ function LearningReviewResult({ cwd, job, busy, onCancel, onReviewCandidate }: {
 function LearningCandidate({ cwd, candidateId, onReviewCandidate }: {
   readonly cwd: string; readonly candidateId: string; readonly onReviewCandidate?: (id: string) => void;
 }): React.JSX.Element {
+  if (candidateId.startsWith("memory_")) return <LearningMemoryCandidate cwd={cwd} candidateId={candidateId} />;
+  return <LearningSkillCandidate cwd={cwd} candidateId={candidateId} onReviewCandidate={onReviewCandidate} />;
+}
+function LearningSkillCandidate({ cwd, candidateId, onReviewCandidate }: {
+  readonly cwd: string; readonly candidateId: string; readonly onReviewCandidate?: (id: string) => void;
+}): React.JSX.Element {
   const { t } = useI18n();
   const [candidate, setCandidate] = useState<SkillCandidate>();
-  // Non-skill results keep their own memory/protocol/playbook review surfaces.
+  const [isMemory, setIsMemory] = useState(false);
   useEffect(() => {
     let active = true;
-    void getSkillCandidate(cwd, candidateId).then(response => { if (active) setCandidate(response.candidate); }).catch(() => undefined);
+    void getSkillCandidate(cwd, candidateId).then(response => { if (active) setCandidate(response.candidate); }).catch(() => {if (active) setIsMemory(true);});
     return () => { active = false; };
   }, [cwd, candidateId]);
-  if (!candidate) return <p>{t("Review this result in Memory or the channel review queue.")} <code>{candidateId}</code></p>;
+  if (isMemory) return <LearningMemoryCandidate cwd={cwd} candidateId={candidateId} />;
+  if (!candidate) return <small>{t("Loading…")}</small>;
   return <div>
     <strong>{candidate.status === "published" ? t("Skill updated") : t("Skill awaiting review")}: {candidate.title}</strong>
     <p>{candidate.summary}</p>

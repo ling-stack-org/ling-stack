@@ -178,3 +178,7 @@ export * from "./normal-conversation-fork-types.js";
 export * from "./native-artifacts.js";
 
 export * from "./learning-review-types.js";
+
+export * from "./memory-derivative-types.js";
+
+export * from "./memory-wiki-types.js";

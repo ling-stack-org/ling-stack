@@ -1,3 +1,5 @@
+import { handleMemorySemanticRoute } from "../features/memory/semantic-routes.js";
+import { handleMemoryWikiRoute } from "../features/memory/wiki-routes.js";
 import { handleLearningReviewRoute } from "../features/learning/routes.js";
 import { handleWorkSummary } from "../features/work-summary/routes.js";
 import { handleConversationExecutionSelection } from "../runtime/conversation-execution-route.js";
@@ -1322,6 +1324,15 @@ export async function routeRequest(
 
   if (request.method === "GET" && url.pathname === "/state-transitions") {
     handleListStateTransitions(response, url, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/memory/semantic-policy") {
+    await handleMemorySemanticRoute({ request, response, url, config, getStore: cwd => storeRegistry.getStore(cwd) });
+    return;
+  }
+  if (url.pathname === "/memory/wiki" || url.pathname.startsWith("/memory/wiki/")) {
+    await handleMemoryWikiRoute({ request, response, url, config, getStore: cwd => storeRegistry.getStore(cwd) });
     return;
   }
 

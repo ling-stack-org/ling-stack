@@ -29,7 +29,7 @@ export interface TeammateMemorySnapshot {
   readonly policy: MemoryReviewPolicy;
   readonly inbox: readonly MemoryPromotionInboxItem[];
   readonly usedEvents: readonly UsedMemoryEvent[];
-  readonly vectorRetrieval: { readonly status: "not_installed"; readonly optional: true };
+  readonly vectorRetrieval: { readonly status: "not_installed" | "not_configured" | "rebuilding" | "ready" | "degraded" | "unavailable"; readonly optional: true };
 }
 
 export type TeammateMemoryDetail =

@@ -1,3 +1,5 @@
+import { applyMemoryWikiMigration } from "./memory-wiki-store.js";
+import { applyMemoryDerivativeMigration } from "./memory-derivative-migration.js";
 import { applyLearningReviewMigration } from "./learning-review-migration.js";
 import type { DatabaseSync } from "node:sqlite";
 import { normalizeChannelRuntimePolicy } from "../../workspace-types.js";
@@ -6013,4 +6015,6 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
   applyProcedureObservationJobMigration(context);
   applySkillDefinitionRevisionMigration(context);
   applyLearningReviewMigration(context);
+  applyMemoryDerivativeMigration(context);
+  applyMemoryWikiMigration(context);
 }

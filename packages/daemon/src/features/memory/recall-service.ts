@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { getMemorySemanticService } from "./semantic-registry.js";
 import {
   DEFAULT_WORKSPACE_ID, LING_AGENT_ID, isLingAgentTeammateId, createBuiltinAiTeammateId,
   type MemoryRecallRequest, type MemoryRecallResult, type RunStore,
@@ -55,9 +56,36 @@ export async function recallMemory(
   store: MemoryRecallStore, input: MemoryRecallRequest,
 ): Promise<MemoryRecallResult> {
   // Search/review are explicit local management operations, with their existing inspection semantics.
-  const resolved = input.intent === "search" || input.intent === "review" ? input : resolveAutomaticMemoryRecallScope(store, input);
-  const result: MemoryRecallResult = resolved ? store.recallMemory(resolved) : { request: input, memories: [], policyVersion: "ling-memory-scope-v1",
+  let resolved = input.intent === "search" || input.intent === "review" ? input : resolveAutomaticMemoryRecallScope(store, input);
+  let result: MemoryRecallResult = resolved ? store.recallMemory(resolved) : { request: input, memories: [], policyVersion: "ling-memory-scope-v1",
     audit: { strategy: "scan", candidateCount: 0, selectedMemoryIds: [], scopeRejected: true } };
+  const semantic = resolved ? getMemorySemanticService(store) : undefined;
+  if (resolved && semantic && semantic.status().status !== "not_configured") {
+    const matches = await semantic.search(resolved);
+    // Re-resolve ownership AND lexical content after asynchronous provider work.
+    const current = input.intent === "search" || input.intent === "review" ? input : resolveAutomaticMemoryRecallScope(store, input);
+    resolved = current;
+    result = current ? store.recallMemory(current) : recallMemoryWithoutSource(input);
+    if (current && matches.length > 0) {
+      const ranked = new Map<string, { item: MemoryRecallResult["memories"][number]; rank: number }>();
+      const currentMatches = semantic.revalidate(current, matches);
+      for (const list of [result.memories, currentMatches]) list.forEach((item, index) => {
+        const existing = ranked.get(item.memory.id);
+        ranked.set(item.memory.id, { item: existing?.item ?? item, rank: (existing?.rank ?? 0) + 1 / (60 + index + 1) });
+      });
+      const limit = Math.max(1, Math.min(20, Math.trunc(input.maxResults ?? 8)));
+      const memories = [...ranked.values()].sort((a, b) => {
+        // Exact ids/tags retain priority; incomparable raw provider scores are never added.
+        const exact = (item: typeof a) => item.item.memory.id.toLowerCase() === input.query.toLowerCase().trim() ||
+          item.item.memory.tags.some(tag => tag.toLowerCase() === input.query.toLowerCase().trim());
+        return Number(exact(b)) - Number(exact(a)) || b.rank - a.rank || a.item.memory.id.localeCompare(b.item.memory.id);
+      }).slice(0, limit).map(value => value.item);
+      result = { ...result, memories, policyVersion: `${result.policyVersion}+rrf-v1`,
+        audit: result.audit ? { ...result.audit, selectedMemoryIds: memories.map(item => item.memory.id) } : undefined };
+    }
+    if (result.audit) result = { ...result, audit: { ...result.audit, semanticCandidateCount: current ? matches.length : 0,
+      semanticStatus: semantic.status().status } };
+  }
   if (!store.appendControlPlaneEvent || !store.paths || !result.audit) return result;
   const traceId = `memory_recall_${randomUUID()}`;
   // Query text, excluded IDs and source content never enter the scope-selection audit.
@@ -67,4 +95,9 @@ export async function recallMemory(
     data: { ...result.audit, intent: input.intent, ...(resolved ? { runId: resolved.runId,
       taskId: resolved.taskId, teammateId: resolved.teammateId, channelId: resolved.channelId } : {}) } }, new Date().toISOString());
   return { ...result, audit: { ...result.audit, traceId } };
+}
+
+function recallMemoryWithoutSource(input: MemoryRecallRequest): MemoryRecallResult {
+  return { request: input, memories: [], policyVersion: "ling-memory-scope-v1",
+    audit: { strategy: "scan", candidateCount: 0, selectedMemoryIds: [], scopeRejected: true } };
 }

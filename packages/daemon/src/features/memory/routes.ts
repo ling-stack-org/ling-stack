@@ -1,3 +1,4 @@
+import { getMemorySemanticService } from "./semantic-registry.js";
 import { recallMemory } from "./recall-service.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -105,10 +106,7 @@ export async function handleMemoryCollection(
           tag: url.searchParams.get("tag") ?? undefined,
           limit: readOptionalIntegerQuery(url, "limit", 1),
         }),
-        vectorRetrieval: {
-          status: "not_installed",
-          optional: true,
-        },
+        vectorRetrieval: getMemorySemanticService(store)?.status() ?? { status: "not_configured", optional: true },
       });
       return;
     }

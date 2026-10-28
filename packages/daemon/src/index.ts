@@ -1,3 +1,5 @@
+import { MemorySemanticService } from "./features/memory/semantic-service.js";
+import { registerMemorySemanticService } from "./features/memory/semantic-registry.js";
 import { LearningReviewCoordinator } from "./features/learning/coordinator.js";
 import { flushSkillDefinitionRevisionNotices } from "./features/skills/revision-notices.js";
 import { randomBytes } from "node:crypto";
@@ -313,6 +315,7 @@ export function createDaemonServer(
   let userInputDeliveryWorker: UserInputDeliveryWorker | undefined;
   const answerDeliveryStores = new Set<RunStore>();
   const approvalRecoveryStores = new Set<RunStore>();
+  const memorySemanticServices = new Map<RunStore, MemorySemanticService>();
   let learningReviewCoordinator: LearningReviewCoordinator | undefined;
   let approvalRecoveryTimer: ReturnType<typeof setInterval> | undefined;
   let approvalAutoReviewRecoveryCoordinator: ApprovalAutoReviewRecoveryCoordinator | undefined;
@@ -387,6 +390,12 @@ export function createDaemonServer(
     }
     if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
     learningReviewCoordinator?.registerStore(store);
+    if (!memorySemanticServices.has(store)) {
+      const service = new MemorySemanticService({ store, secretResolver });
+      memorySemanticServices.set(store, service);
+      registerMemorySemanticService(store, service);
+      service.start();
+    }
     initializedOwnedStores.add(store);
     pendingOwnedStores.delete(store);
   };
@@ -970,6 +979,7 @@ export function createDaemonServer(
     },
     stop: async () => {
       learningReviewCoordinator?.beginShutdown();
+      for (const service of memorySemanticServices.values()) service.beginShutdown();
       humanEvaluations.close();
       storeRegistry.mediaLocalExecutions.beginShutdown();
       if (approvalRecoveryTimer) clearInterval(approvalRecoveryTimer);
@@ -1016,6 +1026,7 @@ export function createDaemonServer(
         await automationSchedulers.waitForIdle();
         await runEvaluationScheduler.waitForIdle();
         await learningReviewCoordinator?.drain();
+        await Promise.all([...memorySemanticServices.values()].map(service => service.drain()));
         await providerImportShutdown;
         await cuaDriverActivationCoordinator.shutdown();
         await activeRuns.waitForIdle();

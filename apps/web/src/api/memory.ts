@@ -20,8 +20,27 @@ import type {
   MemoryReviewPolicyUpdateRequest,
   UpdateMemoryObjectRequest,
   UsedMemoryListResponse,
+  MemoryObject,
+  MemorySemanticPolicyResponse,
+  MemorySemanticPolicyUpdate,
+  MemoryWikiScope,
 } from "../types.js";
 import { daemonClient } from "./client.js";
+
+export const getMemoryWiki = (cwd: string, scope: MemoryWikiScope) => daemonClient.getMemoryWiki(cwd, scope);
+export const compileMemoryWiki = (cwd: string, scope: MemoryWikiScope) => daemonClient.compileMemoryWiki(cwd, scope);
+export const exportMemoryWiki = (cwd: string, scope: MemoryWikiScope) => daemonClient.exportMemoryWiki(cwd, scope);
+export const updateMemoryWikiHumanBlock = (cwd: string, scope: MemoryWikiScope, input: {readonly expectedRevision: number; readonly text: string}) => daemonClient.updateMemoryWikiHumanBlock(cwd, scope, input);
+
+export function getMemoryObject(cwd: string, id: string): Promise<{readonly memory: MemoryObject}> {
+  return daemonClient.getMemoryObject(cwd, id);
+}
+export function getMemorySemanticPolicy(cwd: string): Promise<MemorySemanticPolicyResponse> {
+  return daemonClient.getMemorySemanticPolicy(cwd);
+}
+export function updateMemorySemanticPolicy(cwd: string, input: MemorySemanticPolicyUpdate): Promise<MemorySemanticPolicyResponse> {
+  return daemonClient.updateMemorySemanticPolicy(cwd, input);
+}
 
 export async function listMemoryObjects(cwd: string): Promise<MemoryListResponse> {
   return daemonClient.listMemoryObjects(cwd);

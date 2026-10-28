@@ -1,6 +1,6 @@
 # Ling 记忆与技能学习实施计划
 
-Status: implementing; isolated delivery branch; scoped recall, definition history, and bounded learning backend implemented; UI and optional derivatives in progress
+Status: source implemented; final review and release acceptance in progress
 Owner: memory, skill governance, and daemon runtime maintainers
 Last verified: 2026-10-29
 Document type: cross-feature implementation plan
@@ -210,9 +210,9 @@ flowchart TD
 | C | 观察治理 service、来源幂等、有限证据提炼和显式经验保存已接入；支持持久任务、三种会话 turn 和已确认决策 | 三种无 task turn 来源、决策确认／拒绝／替换、归属、候选原子提交、纠正到修订及 transport 测试通过 |
 | D | 默认关闭的持久作业、WorkUnit/Attempt、可调低预算、取消、前台让行和重启 fencing 已接入 | 定向测试及 daemon HTTP 验收已通过；真实模型质量／费用仍待实测 |
 | E | 定义 before/after 历史、CAS、幂等撤销、可恢复通知及运行定义快照已实现 | 前端历史、差异、确认撤销已接；真实浏览器纠正→审核→原技能修订→撤销及数据库内容恢复已通过 |
-| F | 已接统一回复 footer、run 详情、频道决策和 AI evolution 的按需学习面板 | 本地受控模型完成浏览器纠正闭环；三种会话来源服务测试通过，更多真实界面来源验收仍待补 |
-| G | 未开始 | LanceDB、真实 embedding 质量、故障降级 |
-| H | 未开始 | Wiki 编译、隔离浏览和导出 |
+| F | 已接统一回复 footer、run 详情、频道决策和 AI evolution 的按需学习面板 | 本地受控模型完成浏览器纠正闭环；三种会话来源服务测试通过，记忆候选原 scope 审核与归档入口已补齐，新增浏览器验收进行中 |
+| G | 可选 LanceDB、embedding transport、outbox／generation／分页恢复、五入口融合和设置界面已实现 | 原生 adapter 与 HTTP／数据策略／离线回退测试通过；本机真实 EmbeddingGemma 的独立校准和小型标注质量评测通过；原生跨平台 packaged 验收仍独立保留 |
+| H | 精确 scope Wiki、主题／来源／关联索引、报告、独立人工笔记与 Markdown 导出已实现 | 确定性、来源失效、并发 fencing、manifest 防篡改、删除派生重建及 API 验证通过；浏览器验收进行中 |
 
 推荐顺序为 A → B → C → D/E → F → G → H。D 与 E 可以在文件职责隔离后独立开发，主代理完成集成；本计划不要求启动多代理。
 

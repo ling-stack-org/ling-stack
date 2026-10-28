@@ -1,3 +1,5 @@
+import type { MemoryWikiStore } from "./memory-wiki-types.js";
+import type { MemoryDerivativeStore } from "./memory-derivative-types.js";
 import type { LearningReviewStore } from "./learning-review-types.js";
 import { randomUUID } from "node:crypto";
 import type { ApplyProposedPlanArtifactActionInput, ProposedPlanArtifactActionResult } from "./proposed-plan-mutation.js";
@@ -1553,7 +1555,7 @@ export interface ControlPlaneReplayWindowResult {
   readonly events: readonly ControlPlaneEvent[];
 }
 
-export interface RunStore extends LearningReviewStore, NativeExecutionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
+export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, LearningReviewStore, NativeExecutionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
   listApprovalPostCommitEffects(options?: {
     readonly approvalId?: string;
     readonly status?: import("./approval-postcommit-types.js").ApprovalPostCommitEffectStatus;

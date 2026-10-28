@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createDaemonServer} from '../dist/index.js';
+
+test('HTTP policy CAS, scoped Wiki compile/export/notes, stale sources and candidate review retain original ownership',async t=>{
+ const cwd=await mkdtemp(join(tmpdir(),'ling-memory-api-')),daemon=createDaemonServer({host:'127.0.0.1',port:0});await daemon.start();
+ t.after(async()=>{await daemon.stop();await rm(cwd,{recursive:true,force:true});});
+ const base=`http://127.0.0.1:${daemon.server.address().port}`,query=`?cwd=${encodeURIComponent(cwd)}`;
+ const call=async(path,method='GET',body)=>{const response=await fetch(`${base}${path}${query}`,{method,headers:{'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});return {status:response.status,body:await response.json()};};
+ assert.equal((await call('/memory/semantic-policy')).body.policy.mode,'off');
+ assert.equal((await call('/memory/semantic-policy','PUT',{mode:'off',expectedRevision:0})).status,200);
+ assert.equal((await call('/memory/semantic-policy','PUT',{mode:'off',expectedRevision:0})).status,409);
+ assert.equal((await call('/memory/semantic-policy','PUT',{mode:'lancedb',expectedRevision:1})).status,400);
+ const created=await call('/memory','POST',{scopeType:'workspace',ownerId:'workspace_default',title:'Reviewed fixture',body:'Confirmed receipt rule',sourceRefs:[{type:'manual',id:'source-note',label:'Confirmed note'}]});
+ assert.equal(created.status,201);const memory=created.body.memory;
+ assert.equal((await call('/memory/wiki')).body.status,'not_compiled');
+ const compiled=await call('/memory/wiki/compile','POST');assert.equal(compiled.body.status,'ready');assert.equal(compiled.body.pages[0].sourceId,memory.id);
+ assert.match((await call('/memory/wiki/export')).body.markdown,/Confirmed receipt rule/);
+ assert.equal((await call('/memory/wiki/human','PUT',{expectedRevision:0,text:'Keep this annotation'})).status,200);
+ assert.equal((await call('/memory/wiki/human','PUT',{expectedRevision:0,text:'Wrong window'})).status,409);
+ await call(`/memory/${memory.id}`,'PATCH',{enabled:false});const stale=await call('/memory/wiki');assert.equal(stale.body.status,'stale');assert.deepEqual(stale.body.pages,[]);
+ assert.equal((await call('/memory/wiki/export')).status,400);
+ assert.equal((await call('/memory/wiki/compile','POST')).body.human.text,'Keep this annotation');
+ const candidate=(await call('/memory','POST',{scopeType:'workspace',ownerId:'workspace_default',title:'Candidate',body:'Review me',reviewState:'candidate'})).body.memory;
+ const approved=await call(`/memory/${candidate.id}/review`,'POST',{action:'approve',actor:'local-user'});
+ assert.equal(approved.body.memory.reviewState,'active');assert.equal(approved.body.memory.ownerId,candidate.ownerId);
+ const archived=await call(`/memory/${candidate.id}/review`,'POST',{action:'archive',actor:'local-user'});assert.equal(archived.body.memory.reviewState,'archived');
+});
