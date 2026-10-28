@@ -85,10 +85,11 @@
 
 ### 实施
 
-1. 统计并迁移 `work_units`、`work_unit_attempts`、队友 runner id、工作流 JSON、prepared input 和历史请求快照中的 `pi-coding-agent`。
+1. 统计并迁移 `work_units`、`work_unit_attempts`、队友和 continuation runner id 等可变 scalar binding 中的 `pi-coding-agent`。
 2. 新记录统一写 `pi`。
-3. 迁移完成前保留只读 `normalizeStoredRunnerId`，但不在 runner selector 中展示 alias。
-4. 迁移后增加零旧 id 写入断言。
+3. 历史工作流 JSON、prepared input、请求快照和事件证据在读取 mapper 中投影为 `pi`，原始 JSON 和 fingerprint 不变。
+4. 迁移完成前保留只读 `normalizeStoredRunnerId`，但不在 runner selector 中展示 alias。
+5. 迁移后增加零旧 id 写入断言。
 
 ### 测试
 

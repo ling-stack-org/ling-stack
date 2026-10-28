@@ -55,7 +55,7 @@ test("runner JSON normalization only changes runner identity fields", () => {
   });
 });
 
-test("178 canonicalizes runner columns and historical snapshots", () => {
+test("178 canonicalizes mutable runner columns and preserves historical snapshots", () => {
   const database = fixture();
   try {
     const continuationBody = {
@@ -78,25 +78,22 @@ test("178 canonicalizes runner columns and historical snapshots", () => {
 
     assert.equal(applyRunnerIdMigration(input(database)), true);
     assert.deepEqual({ ...database.prepare("SELECT runner_id, requested_runner_id, effective_runner_id, request_json FROM work_units").get() }, {
-      runner_id: "pi", requested_runner_id: "pi", effective_runner_id: "pi", request_json: JSON.stringify({ runnerId: "pi", prompt: "keep" }),
+      runner_id: "pi", requested_runner_id: "pi", effective_runner_id: "pi", request_json: JSON.stringify({ runnerId: "pi-coding-agent", prompt: "keep" }),
     });
     assert.deepEqual({ ...database.prepare("SELECT runner_id, requested_runner_id, effective_runner_id FROM work_unit_attempts").get() }, {
       runner_id: "pi", requested_runner_id: null, effective_runner_id: "pi",
     });
     assert.equal(database.prepare("SELECT runner_id FROM ai_teammates").get().runner_id, "pi");
-    assert.equal(database.prepare("SELECT request_snapshot_json FROM run_sessions").get().request_snapshot_json, JSON.stringify({ execution: { effectiveRunnerId: "pi" } }));
-    assert.equal(database.prepare("SELECT metadata_json FROM channel_workflows").get().metadata_json, JSON.stringify({ requestedRunnerId: "pi" }));
+    assert.equal(database.prepare("SELECT request_snapshot_json FROM run_sessions").get().request_snapshot_json, JSON.stringify({ execution: { effectiveRunnerId: "pi-coding-agent" } }));
+    assert.equal(database.prepare("SELECT metadata_json FROM channel_workflows").get().metadata_json, JSON.stringify({ requestedRunnerId: "pi-coding-agent" }));
     assert.equal(database.prepare("SELECT metadata_json FROM channel_workflow_steps").get().metadata_json, JSON.stringify({ text: "pi-coding-agent" }));
     assert.equal(database.prepare("SELECT runner_id FROM runner_continuations").get().runner_id, "pi");
     const continuation = database.prepare("SELECT payload_json, payload_fingerprint FROM conversation_context_snapshots").get();
     const continuationPayload = JSON.parse(continuation.payload_json);
-    assert.equal(continuationPayload.executionPlan.runnerId, "pi");
-    assert.equal(continuationPayload.runnerExecutionInput.runnerId, "pi");
-    assert.equal(continuation.payload_fingerprint, hash({
-      executionPlan: { runnerId: "pi" },
-      runnerExecutionInput: { runnerId: "pi" },
-    }));
-    assert.equal(continuationPayload.fingerprint, continuation.payload_fingerprint);
+    assert.equal(continuationPayload.executionPlan.runnerId, "pi-coding-agent");
+    assert.equal(continuationPayload.runnerExecutionInput.runnerId, "pi-coding-agent");
+    assert.equal(continuation.payload_fingerprint, continuationFingerprint);
+    assert.equal(continuationPayload.fingerprint, continuationFingerprint);
     assert.equal(applyRunnerIdMigration(input(database)), false);
     assert.equal(database.prepare("SELECT count(*) AS count FROM schema_migrations WHERE version=?").get(RUNNER_ID_MIGRATION_VERSION).count, 1);
   } finally {
@@ -104,11 +101,26 @@ test("178 canonicalizes runner columns and historical snapshots", () => {
   }
 });
 
-test("178 rolls back scalar and JSON updates when a snapshot is malformed", () => {
+test("178 leaves malformed historical JSON untouched while canonicalizing scalar bindings", () => {
   const database = fixture();
   try {
     database.prepare("INSERT INTO work_units VALUES (?,?,?,?,?)").run("unit", "pi-coding-agent", null, null, '{"runnerId":"pi-coding-agent"');
-    assert.throws(() => applyRunnerIdMigration(input(database)), /runner_id_migration_invalid_json:work_units.request_json/u);
+    assert.equal(applyRunnerIdMigration(input(database)), true);
+    assert.equal(database.prepare("SELECT runner_id FROM work_units").get().runner_id, "pi");
+    assert.equal(database.prepare("SELECT request_json FROM work_units").get().request_json, '{"runnerId":"pi-coding-agent"');
+    assert.equal(database.prepare("SELECT count(*) AS count FROM schema_migrations WHERE version=?").get(RUNNER_ID_MIGRATION_VERSION).count, 1);
+  } finally {
+    database.close();
+  }
+});
+
+test("178 rolls back scalar updates when recording the marker fails", () => {
+  const database = fixture();
+  try {
+    database.prepare("INSERT INTO work_units VALUES (?,?,?,?,?)").run("unit", "pi-coding-agent", null, null, "{}");
+    assert.throws(() => applyRunnerIdMigration(input(database, {
+      recordMigration() { throw new Error("marker write failed"); },
+    })), /marker write failed/u);
     assert.equal(database.prepare("SELECT runner_id FROM work_units").get().runner_id, "pi-coding-agent");
     assert.equal(database.prepare("SELECT count(*) AS count FROM schema_migrations WHERE version=?").get(RUNNER_ID_MIGRATION_VERSION).count, 0);
   } finally {

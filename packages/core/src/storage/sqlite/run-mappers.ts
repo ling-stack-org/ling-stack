@@ -2,6 +2,7 @@ import type { SQLOutputValue } from "node:sqlite";
 import { isRunEventData, isRunEventType, type LingThreadRelationKindV2, type LingThreadSurfaceKindV2 } from "@ling-stack/contracts";
 import { conversationModeKinds, runContinuationReasons, type ConversationModeKind, type ConversationModeState, type GoalContinuationEvidenceDelta, type GoalContinuationStopReason, type GoalEvidenceRef, type GoalUsageSource, type LingThread, type LingThreadGoal, type LingThreadGoalCompletionActor, type LingThreadGoalStatus, type LingThreadKind, type LingThreadMetadata, type LingThreadStatus, type LingTurn, type LingTurnKind, type LingTurnRun, type LingTurnRunRole, type LingTurnStatus, type ProposedPlanArtifact, type ProposedPlanArtifactStatus, type RunContinuationReason, type RunEventEnvelope, type RunSession, type RunStatus } from "../../run-types.js";
 import { omitUndefined, parseJson, readNullableNumber, readNullableString, readNumber, readString } from "./helpers.js";
+import { normalizeRunnerIdsInSnapshot } from "../../runner-ids.js";
 
 export function mapLingThread(row: Record<string, SQLOutputValue>): LingThread {
   return omitUndefined({
@@ -216,9 +217,9 @@ export function mapRunSession(row: Record<string, SQLOutputValue>): RunSession {
     providerPresetId: readNullableString(row, "provider_preset_id"),
     providerName: readString(row, "provider_name"),
     providerModel: readString(row, "provider_model"),
-    taskSnapshot: parseJson(readString(row, "task_snapshot_json")),
-    providerSnapshot: parseJson(readString(row, "provider_snapshot_json")),
-    requestSnapshot: parseJson(readString(row, "request_snapshot_json")),
+    taskSnapshot: normalizeRunnerIdsInSnapshot(parseJson(readString(row, "task_snapshot_json"))),
+    providerSnapshot: normalizeRunnerIdsInSnapshot(parseJson(readString(row, "provider_snapshot_json"))),
+    requestSnapshot: normalizeRunnerIdsInSnapshot(parseJson(readString(row, "request_snapshot_json"))),
     eventLogPath: readString(row, "event_log_path"),
     threadId: readNullableString(row, "thread_id"),
     workUnitId: readNullableString(row, "work_unit_id"),
@@ -245,6 +246,7 @@ export function mapRunEvent(row: Record<string, SQLOutputValue>): RunEventEnvelo
   if (!isRunEventData(type, data)) {
     throw new Error(`Invalid run event payload from SQLite: ${type}`);
   }
+  const projectedData = normalizeRunnerIdsInSnapshot(data);
   return {
     id: readString(row, "id"),
     runId: readString(row, "run_id"),
@@ -254,7 +256,7 @@ export function mapRunEvent(row: Record<string, SQLOutputValue>): RunEventEnvelo
     // SQLite stores the envelope payload as JSON. The boundary check above
     // rejects malformed rows; the discriminated union is preserved for all
     // typed consumers after the dynamic type column has been read.
-    data,
+    data: projectedData,
   } as RunEventEnvelope;
 }
 
