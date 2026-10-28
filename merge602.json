@@ -1,5 +1,0 @@
-{
-  "message": "Repository rule violations found\n\nRequired status check \"Typecheck, unit tests, and Web build\" is expected.\n\n",
-  "documentation_url": "https://docs.github.com/rest/pulls/pulls#merge-a-pull-request",
-  "status": "405"
-}
