@@ -65,7 +65,7 @@ export interface ConversationTimelineDisclosureIntent {
   readonly nextExpanded: boolean;
 }
 
-export type ConversationTimelineLocateResult = "revealed" | "not_found" | "mount_failed";
+export type ConversationTimelineLocateResult = "revealed" | "not_found" | "mount_failed" | "cancelled";
 
 export interface ConversationTimelineItemLocator {
   /** Mount a reading row (or collapsed parent) without expanding disclosure. */
@@ -76,6 +76,7 @@ export interface ConversationTimelineItemLocator {
   readonly revealFirstMatchingItem: (
     itemIds: readonly string[],
     reveal: (target: HTMLElement) => void,
+    isCurrent?: () => boolean,
   ) => Promise<ConversationTimelineLocateResult>;
 }
 
@@ -227,7 +228,8 @@ export function ConversationTimeline({
         reveal(target);
         return "revealed";
       },
-      revealFirstMatchingItem: async (itemIds, reveal) => {
+      revealFirstMatchingItem: async (itemIds, reveal, isCurrent = () => true) => {
+        if (!isCurrent()) return "cancelled";
         let location = findFirstDisplayLocation(displayModelRef.current, itemIds);
         if (!location) {
           return "not_found";
@@ -235,6 +237,7 @@ export function ConversationTimeline({
         if (!location.visible) {
           revealDisclosurePath(location.disclosurePath);
           location = await waitForVisibleDisplayLocation(displayModelRef, itemIds);
+          if (!isCurrent()) return "cancelled";
           if (!location) return "mount_failed";
         }
         const itemIndex = displayModelRef.current.rows.findIndex((row) => row.rowKey === location?.rowKey);
@@ -243,6 +246,7 @@ export function ConversationTimeline({
           virtualizer.scrollToIndex(itemIndex, { align: "center" });
         }
         const target = await waitForTimelineRow(timelineRootRef, location.rowKey);
+        if (!isCurrent()) return "cancelled";
         if (!target) {
           return "mount_failed";
         }

@@ -1,0 +1,86 @@
+/* OpenClaw ChatPositionRail motion: 12px pitch, 8/12/16/24/32px ticks, 100ms ease. */
+[data-conversation-position-navigation] > [data-conversation-feed-viewport] .conversation-timeline-depth-0 {
+  padding-inline-start: 48px;
+}
+
+.conversation-position-rail {
+  position: absolute;
+  inset-inline-start: 2px;
+  top: 50%;
+  z-index: 4;
+  width: 44px;
+  height: var(--conversation-position-height);
+  transform: translateY(-50%);
+  animation: conversation-position-appear 240ms ease-out;
+}
+.conversation-position-rail[hidden] { display: none; }
+.conversation-position-rail__marks {
+  height: 100%;
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.conversation-position-rail__marks::-webkit-scrollbar { display: none; }
+.conversation-position-rail__marks > div { position: relative; }
+.conversation-position-rail__marks[data-overflow-top] { mask-image: linear-gradient(to bottom, transparent, black 24px); }
+.conversation-position-rail__marks[data-overflow-bottom] { mask-image: linear-gradient(to top, transparent, black 24px); }
+.conversation-position-rail__marks[data-overflow-top][data-overflow-bottom] { mask-image: linear-gradient(to bottom, transparent, black 24px, black calc(100% - 24px), transparent); }
+.conversation-position-rail__marker {
+  position: absolute;
+  inset-inline-start: 0;
+  display: flex;
+  align-items: center;
+  width: 44px;
+  height: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--ling-text-muted) 40%, transparent);
+  cursor: pointer;
+}
+.conversation-position-rail__marker[data-visible] { color: var(--ling-text-muted); }
+.conversation-position-rail__marker[aria-current="true"],
+.conversation-position-rail__marker[data-hover-distance="0"] { color: var(--ling-text-default); }
+.conversation-position-rail__marker:focus-visible { outline: 2px solid var(--ling-border-focus); outline-offset: 1px; }
+.conversation-position-rail__tick {
+  display: block;
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+  pointer-events: none;
+  transition: width 100ms ease, background-color 100ms ease;
+}
+.conversation-position-rail__marker[data-hover-distance="3"] .conversation-position-rail__tick { width: 12px; }
+.conversation-position-rail__marker[data-hover-distance="2"] .conversation-position-rail__tick { width: 16px; }
+.conversation-position-rail__marker[data-hover-distance="1"] .conversation-position-rail__tick { width: 24px; }
+.conversation-position-rail__marker[data-hover-distance="0"] .conversation-position-rail__tick { width: 32px; }
+.conversation-position-rail__preview {
+  position: absolute;
+  inset-inline-start: 44px;
+  width: 240px;
+  padding: 10px 12px;
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-elevated);
+  box-shadow: var(--ling-shadow-medium);
+  color: var(--ling-text-default);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.conversation-position-rail__identity { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; min-width: 0; }
+.conversation-position-rail__identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.conversation-position-rail__avatar { display: flex; flex: 0 0 22px; width: 22px; height: 22px; }
+.conversation-position-rail__avatar > * { width: 22px; height: 22px; min-width: 22px; border-radius: 50%; object-fit: cover; }
+.conversation-position-rail__copy { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-size: 12px; line-height: 18px; }
+.conversation-position-rail__error { position: absolute; inset-inline-start: 44px; bottom: 0; width: 240px; background: var(--ling-bg-elevated); padding: 8px; color: var(--ling-text-default); }
+@keyframes conversation-position-appear { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .conversation-position-rail { animation: none; }
+  .conversation-position-rail__tick { transition: none; }
+}
+@media (forced-colors: active) {
+  .conversation-position-rail__marker { color: ButtonText; }
+  .conversation-position-rail__marker[data-visible] { color: Highlight; }
+  .conversation-position-rail__preview { border: 1px solid CanvasText; }
+}

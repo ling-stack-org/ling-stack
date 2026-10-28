@@ -23,6 +23,7 @@ import type {
   RunIntervention,
   SessionPermissionMode,
   TerminalReportDto,
+  UserProfile,
   WorkspaceAccessMode,
 } from "../../types.js";
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
@@ -122,6 +123,7 @@ export interface ConversationHomeSendInput {
 }
 
 export interface ConversationHomeProps {
+  readonly userProfile?: UserProfile;
   readonly conversationTitle?: string;
   readonly initialDraft?: string;
   readonly initialMessages?: readonly ConversationHomeMessage[];
