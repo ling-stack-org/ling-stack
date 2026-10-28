@@ -1,0 +1,108 @@
+name: Translate catalogs for PR
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "apps/web/src/i18n/locales/en-US.ts"
+      - "apps/web/src/i18n/locales/zh-CN.ts"
+      - "packages/localization/catalogs/additional-source.json"
+      - "packages/localization/catalogs/additional-zh-CN.json"
+
+concurrency:
+  group: translate-pr-catalogs-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  translate:
+    # Only same-repository pull requests receive automated commits. Fork authors
+    # run `corepack pnpm --filter @ling-stack/localization catalog:translate`
+    # locally instead; never check out fork code with a write-capable token.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out pull request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.15.0
+
+      - name: Validate catalog App configuration
+        env:
+          MODEL_CATALOG_APP_CLIENT_ID: ${{ vars.MODEL_CATALOG_APP_CLIENT_ID }}
+          MODEL_CATALOG_APP_PRIVATE_KEY: ${{ secrets.MODEL_CATALOG_APP_PRIVATE_KEY }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createPrivateKey } from "node:crypto";
+          const clientId = process.env.MODEL_CATALOG_APP_CLIENT_ID;
+          if (!clientId || /\s/u.test(clientId)) {
+            console.error("::error::Set repository variable MODEL_CATALOG_APP_CLIENT_ID to the installed GitHub App's Client ID.");
+            process.exit(1);
+          }
+          try {
+            const key = createPrivateKey(process.env.MODEL_CATALOG_APP_PRIVATE_KEY ?? "");
+            if (key.asymmetricKeyType !== "rsa") throw new Error("Expected an RSA private key.");
+          } catch {
+            console.error("::error::Set repository secret MODEL_CATALOG_APP_PRIVATE_KEY to the installed GitHub App's PEM RSA private key. The App must be installed for this repository with Contents and Pull requests read/write permissions.");
+            process.exit(1);
+          }
+          NODE
+
+      - name: Create repository-scoped catalog App token
+        id: catalog-app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.MODEL_CATALOG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MODEL_CATALOG_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Import sources and translate missing catalogs
+        env:
+          GH_TOKEN: ${{ steps.catalog-app.outputs.token }}
+          APP_SLUG: ${{ steps.catalog-app.outputs.app-slug }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ] || [ -z "${APP_SLUG:-}" ]; then
+            echo "::error::Catalog App token or identity is missing; refusing to push. Check the App installation and repository permissions."
+            exit 1
+          fi
+          # Clear inherited helpers so git and gh both use this step's App token.
+          git() {
+            command git -c credential.helper= -c 'credential.helper=!gh auth git-credential' "$@"
+          }
+          if [ "$(git rev-parse HEAD)" != "$HEAD_SHA" ]; then
+            echo "::error::Checked-out commit no longer matches the pull request head; refusing to translate a stale ref."
+            exit 1
+          fi
+          node packages/localization/scripts/import-legacy-web-catalogs.mjs
+          node packages/localization/scripts/translate-catalogs.mjs
+          git add packages/localization/catalogs
+          if git diff --cached --quiet; then
+            echo "Catalogs are already current."
+            exit 0
+          fi
+          bot_id="$(gh api "users/${APP_SLUG}[bot]" --jq .id)"
+          if ! [[ "$bot_id" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Unable to resolve the catalog App bot identity; refusing to push."
+            exit 1
+          fi
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git commit -m "chore: translate catalogs for new source strings"
+          git push origin "HEAD:${HEAD_REF}"
