@@ -87,6 +87,27 @@ test("sqlite workspace settings persist default provider preset", async () => {
   }
 });
 
+test("sqlite v2 workspace settings stop persisting legacy permission fields", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workspace-permission-v2-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.updateWorkspaceSettings({ schemaVersion: 2, defaultAuthorizationMode: "ask", defaultWorkspaceAccessMode: "read_only" }, "2026-10-28T00:00:00.000Z");
+    const database = new DatabaseSync(store.paths.databasePath, { readOnly: true });
+    try {
+      const raw = JSON.parse(database.prepare("SELECT settings_json FROM workspace_settings WHERE workspace_id=?").get(DEFAULT_WORKSPACE_ID).settings_json);
+      assert.equal(raw.defaultAuthorizationMode, "ask");
+      assert.equal(raw.defaultWorkspaceAccessMode, "read_only");
+      assert.equal(Object.hasOwn(raw, "defaultPermissionMode"), false);
+      assert.equal(Object.hasOwn(raw, "defaultPermissionPreset"), false);
+    } finally {
+      database.close();
+    }
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite workspace settings persist Ling conversation tone", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workspace-ling-tone-"));
   const store = createSqliteRunStore(cwd);

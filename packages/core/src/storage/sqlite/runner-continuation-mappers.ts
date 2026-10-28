@@ -11,6 +11,7 @@ import {
   readNumber,
   readString,
 } from "./helpers.js";
+import { normalizeStoredRunnerId } from "./runtime-work-mappers.js";
 
 export function runnerContinuationSelectSql(whereClause: string): string {
   return `
@@ -63,7 +64,7 @@ export function mapRunnerContinuation(row: Record<string, SQLOutputValue>): Runn
     origin,
     strategy,
     state,
-    runnerId: readString(row, "runner_id"),
+    runnerId: normalizeStoredRunnerId(readString(row, "runner_id")) ?? readString(row, "runner_id"),
     runnerCapabilityRevision: readString(row, "runner_capability_revision"),
     contextViewId: readString(row, "context_view_id"),
     contextSnapshotArtifactId: readString(row, "context_snapshot_artifact_id"),

@@ -202,7 +202,7 @@ test("delegation migration has the release schema 154 identity", () => {
   assert.equal(typeof applyDelegationMigration, "function");
 });
 
-test("real schema153 upgrades through176 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
+test("real schema153 upgrades through178 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
   const f = await fileFixture(t, "full-schema");
   const first = f.own(createSqliteRunStore(f.cwd));
   const channel = first.handle.createChannel({ name: "Legacy", boundPath: f.cwd }, now);
@@ -216,9 +216,17 @@ test("real schema153 upgrades through176 preserving historical SQL/markers/rows 
   first.close();
   const path = resolveRuntimePaths(f.cwd).databasePath;
   const old = f.open(path);
-  // Reconstruct schema153 by removing exactly the later, row-free overlays.
+  // Reconstruct schema153 by removing exactly the later overlays.
   // Do not hide them from the baseline while leaving their markers installed.
-  old.handle.exec("DROP TABLE work_summary_pull_requests; DELETE FROM schema_migrations WHERE version=176");
+  old.handle.exec("DROP TABLE work_summary_pull_requests; DELETE FROM schema_migrations WHERE version IN (176,177,178)");
+  const workspaceSettings = old.handle.prepare("SELECT workspace_id, settings_json FROM workspace_settings").get();
+  if (workspaceSettings) {
+    const settings = JSON.parse(workspaceSettings.settings_json);
+    delete settings.defaultAuthorizationMode;
+    delete settings.defaultWorkspaceAccessMode;
+    old.handle.prepare("UPDATE workspace_settings SET settings_json=? WHERE workspace_id=?")
+      .run(JSON.stringify(settings), workspaceSettings.workspace_id);
+  }
   old.handle.exec(`DROP TRIGGER media_workflow_check_insert;
     DROP TRIGGER media_workflow_check_update;
     DROP TRIGGER media_workflow_check_delete;
@@ -306,8 +314,10 @@ test("real schema153 upgrades through176 preserving historical SQL/markers/rows 
   assert.deepEqual(directInterventionColumns.slice(0, oldDirectInterventionColumns.length), oldDirectInterventionColumns);
   assert.deepEqual(directInterventionColumns.slice(oldDirectInterventionColumns.length).map(column => column.name), ["source_attempt_id"]);
   assert.deepEqual(database.prepare("SELECT server_id, server_revision, tools_revision FROM mcp_authority_revisions ORDER BY server_id").all(), oldAuthorityRows);
-  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176) ORDER BY version").all(), oldMarkers);
+  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178) ORDER BY version").all(), oldMarkers);
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=176").get().name, "create_work_summary_pull_requests");
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=177").get().name, "canonicalize_workspace_permission_settings");
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=178").get().name, "canonicalize_pi_runner_ids");
   assert.deepEqual(database.prepare("PRAGMA table_info(work_summary_pull_requests)").all().map(column => column.name), ["url", "created_at"]);
   assert.equal(database.prepare("SELECT count(*) AS n FROM work_summary_pull_requests").get().n, 0);
   assert.deepEqual(database.prepare("SELECT version,name FROM schema_migrations WHERE version BETWEEN 169 AND 175 ORDER BY version").all()

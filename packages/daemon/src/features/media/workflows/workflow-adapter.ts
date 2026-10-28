@@ -16,6 +16,7 @@ import type {
 import { ComfyUiClient } from "./comfyui-client.js";
 import type { ComfyUiTerminalObservation } from "./comfyui-terminal-observation.js";
 import { materializeComfyWorkflowGraph } from "./comfyui-graph.js";
+import { assertCurrentMediaWorkflowProtocol } from "./media-protocol-contract.js";
 
 export interface MediaWorkflowExecutionRequest {
   readonly jobId: string;
@@ -56,6 +57,10 @@ export function createComfyUiWorkflowAdapter(input: {
     id: "comfyui",
     async submit(request) {
       try {
+        // The adapter is a new-task boundary. Historical Prompt/History
+        // handles are still accepted by poll/cancel/collection below, but a
+        // fresh submission must never select that protocol.
+        assertCurrentMediaWorkflowProtocol(input.connection);
         const protocolVariant = input.connection.health?.protocolVariant ??
           (input.connection.protocolVariant === "auto" ? (await client.inspect()).protocolVariant : input.connection.protocolVariant);
         const values = await materializeWorkflowArtifactInputs({

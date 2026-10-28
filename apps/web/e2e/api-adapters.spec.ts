@@ -44,14 +44,15 @@ test("run request builders preserve provider preset and legacy provider payloads
 
   const presetRequest = buildRunRequest(baseForm) as Record<string, unknown>;
   expect(presetRequest).toMatchObject({
+    schemaVersion: 2,
     cwd: "/repo",
     providerPresetId: "provider_chat",
     authorizationMode: "smart",
     workspaceAccessMode: "workspace_write",
-    permissionPreset: "workspace_collaboration",
-    permissionMode: "workspace_write",
     thinkingLevel: "medium",
   });
+  expect(presetRequest).not.toHaveProperty("permissionPreset");
+  expect(presetRequest).not.toHaveProperty("permissionMode");
   expect(presetRequest).not.toHaveProperty("provider");
 
   const legacyRequest = buildRunRequest({
@@ -103,6 +104,7 @@ test("task run requests preserve workspace cwd fallback and approval profile", (
   }) as Record<string, unknown>;
 
   expect(request).toMatchObject({
+    schemaVersion: 2,
     workspaceCwd: "/workspace",
     cwd: "/workspace",
     providerPresetId: "provider_chat",
@@ -110,9 +112,9 @@ test("task run requests preserve workspace cwd fallback and approval profile", (
     approvalProfile: { mode: "standard", risk: "medium", requiredForTools: ["bash"] },
     authorizationMode: "ask",
     workspaceAccessMode: "read_only",
-    permissionPreset: "read_only",
-    permissionMode: "ask_everything",
   });
+  expect(request).not.toHaveProperty("permissionPreset");
+  expect(request).not.toHaveProperty("permissionMode");
 });
 
 test("rerun request reconstructs provider preset payload from run snapshots", () => {
@@ -148,6 +150,7 @@ test("rerun request reconstructs provider preset payload from run snapshots", ()
   } satisfies RunSession;
 
   expect(buildRerunRequest(run)).toEqual({
+    schemaVersion: 2,
     workspaceCwd: "/workspace",
     cwd: "/repo",
     task: {
@@ -160,8 +163,6 @@ test("rerun request reconstructs provider preset payload from run snapshots", ()
     tools: ["read", "bash"],
     authorizationMode: "always",
     workspaceAccessMode: "full_access",
-    permissionPreset: "custom",
-    permissionMode: "balanced",
     thinkingLevel: "medium",
     lingConversationTone: "friendly",
     appendSystemPrompt: ["one", "two"],

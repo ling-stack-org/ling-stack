@@ -53,8 +53,10 @@ export class SqliteWorkspaceSettingsStore {
       mediaGenerationDefaults: nullableUpdate(input.mediaGenerationDefaults, current.mediaGenerationDefaults),
       defaultAuthorizationMode: permissionDefaults.authorizationMode,
       defaultWorkspaceAccessMode: permissionDefaults.workspaceAccessMode,
-      defaultPermissionMode: permissionDefaults.permissionMode,
-      defaultPermissionPreset: permissionDefaults.permissionPreset,
+      ...(input.schemaVersion === 2 ? {} : {
+        defaultPermissionMode: permissionDefaults.permissionMode,
+        defaultPermissionPreset: permissionDefaults.permissionPreset,
+      }),
       channelNotifications: nullableUpdate(input.channelNotifications, current.channelNotifications),
       channelActivityViews: nullableUpdate(input.channelActivityViews, current.channelActivityViews),
       skillGovernancePolicy: input.skillGovernancePolicy === undefined

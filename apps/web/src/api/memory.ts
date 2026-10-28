@@ -20,7 +20,7 @@ import type {
   MemoryReviewPolicyUpdateRequest,
   UpdateMemoryObjectRequest,
   UsedMemoryListResponse,
-} from "../types.js";
+} from "@ling-stack/contracts";
 import { daemonClient } from "./client.js";
 
 export async function listMemoryObjects(cwd: string): Promise<MemoryListResponse> {

@@ -22,6 +22,7 @@ import { mediaApprovalRecoveryBlocked } from "../approval-recovery-guard.js";
 import { selectInitialMediaSceneResult } from "../scene-result-selection.js";
 import { createComfyUiWorkflowAdapter } from "./workflow-adapter.js";
 import { requireConnection, requireDefinition, requireVersion, resolveMediaWorkflowSecret } from "./workflow-service.js";
+import { assertCurrentMediaWorkflowProtocol, LEGACY_MEDIA_PROTOCOL_REMOVED_CODE } from "./media-protocol-contract.js";
 import { assertMediaJobBusinessActive, cancelledMediaJobResult, settleLocallyCancelledMediaJob,
   updateActiveMediaJobStatus } from "../scene-cancellation.js";
 
@@ -179,9 +180,13 @@ async function runWorkflowMediaJobExecutionOwner(input: {
     if (connection.status !== "ready") {
       throw mediaExecutionError("invalid_request", "工作流连接尚未检查通过。");
     }
+    // A persisted external handle proves this is a historical continuation;
+    // only that path may still poll or collect legacy Prompt/History evidence.
+    const allowLegacyProtocol = Boolean(handle && !isPendingHandle(handle));
+    if (!allowLegacyProtocol) assertCurrentMediaWorkflowProtocol(connection);
     secretValue = resolveMediaWorkflowSecret(connection, input.secretResolver);
     receipt = prepareWorkflowMediaReceipt({ store, job, localExecution: input.localExecution, supervised, connection,
-      outputRules: version.outputRules, secretValues: [secretValue] });
+      outputRules: version.outputRules, allowLegacyProtocol, secretValues: [secretValue] });
     const adapter = createComfyUiWorkflowAdapter({ store, connection, version, apiKey: secretValue,
       // ComfyUiClient invokes this only after its awaited network-policy and
       // materialization work, immediately before the actual HTTP dispatch.
@@ -337,7 +342,8 @@ async function runWorkflowMediaJobExecutionOwner(input: {
       settleExecutionHandle(store, job.id, "failed", "media-workflow-failed-before-runtime-start");
       clearScheduled(input);
     }
-    return { statusCode: 400, body: { error: "media_workflow_failed", message, mediaJob: failed, artifacts: persistedArtifacts } };
+    return { statusCode: 400, body: { error: errorCode === LEGACY_MEDIA_PROTOCOL_REMOVED_CODE ? errorCode : "media_workflow_failed",
+      message, mediaJob: failed, artifacts: persistedArtifacts } };
   }
 }
 

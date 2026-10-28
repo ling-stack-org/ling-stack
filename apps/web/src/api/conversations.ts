@@ -4,9 +4,10 @@ import type {
   ConversationStreamRequest,
   EditConversationMessageRequest,
   EditConversationMessageResponse,
-} from "../types.js";
+} from "@ling-stack/contracts";
 import { daemonClient } from "./client.js";
-import type { ConversationSubmissionQuery, ConversationSubmissionReceipt } from "../types.js";
+import { authorizationAndAccessFromLegacyPermission } from "@ling-stack/core/session-permissions";
+import type { ConversationSubmissionQuery, ConversationSubmissionReceipt } from "@ling-stack/contracts";
 
 export function getConversationSubmission(cwd: string, query: ConversationSubmissionQuery): Promise<ConversationSubmissionReceipt> {
   return daemonClient.getConversationSubmission(cwd, query);
@@ -18,7 +19,14 @@ export async function getConversation(cwd: string, threadId: string): Promise<Co
 }
 
 export async function streamConversation(cwd: string, input: ConversationStreamRequest): Promise<Response> {
-  return daemonClient.streamConversation(cwd, input);
+  const legacy = authorizationAndAccessFromLegacyPermission(input.permissionMode, input.permissionPreset);
+  const { permissionMode: _permissionMode, permissionPreset: _permissionPreset, ...request } = input;
+  return daemonClient.streamConversation(cwd, {
+    ...request,
+    schemaVersion: 2,
+    authorizationMode: input.authorizationMode ?? legacy.authorizationMode,
+    workspaceAccessMode: input.workspaceAccessMode ?? legacy.workspaceAccessMode,
+  });
 }
 
 export async function editConversationMessage(cwd: string, input: EditConversationMessageRequest): Promise<EditConversationMessageResponse> {
