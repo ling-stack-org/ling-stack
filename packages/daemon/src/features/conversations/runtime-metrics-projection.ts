@@ -76,7 +76,9 @@ export function projectConversationRuntimeMetrics(input: {
         if (newerEvent(latestInvocation, event)) latestInvocation = event;
       } else if (event.type === "context_compaction_end") {
         // Compaction is a separate provider invocation, not an assistant message_end.
-        if (event.data.usage && validUsage(event.data.usage)) {
+        if (!event.data.usage || !validUsage(event.data.usage)) {
+          partial = true;
+        } else {
           const usage = event.data.usage;
           runHadUsage = true;
           usageCount++;

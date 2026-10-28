@@ -136,6 +136,25 @@ test("mixed native lifecycle gaps do not claim exact AI/tool totals", async t =>
   assert.equal(metrics.coverage, "partial");
 });
 
+test("normal detail reports partial coverage when successful compaction lacks usage", async t => {
+  const f = await fixture(t);
+  append(f, [
+    ["turn_start", {}], ["message_end", { role: "assistant", usage: usage(8, 12) }],
+    ["context_compaction_start", { reason: "threshold", policyVersion: "pi_sdk_lifecycle_v1" }],
+    ["context_compaction_end", { reason: "threshold", policyVersion: "pi_sdk_lifecycle_v1", outcome: "sdk_installed",
+      willRetry: false, estimatedTokensAfter: 22 }],
+  ]);
+  const status = f.store.getRun(f.run.id).status;
+  assert.equal(f.store.transitionRunStatus({ runId: f.run.id, expectedStatus: status,
+    event: status === "queued" ? "runner_started" : "runner_succeeded",
+    actor: "runner", now, startedAt: now }).ok, true);
+  if (status === "queued") assert.equal(f.store.transitionRunStatus({ runId: f.run.id, expectedStatus: "running",
+    event: "runner_succeeded", actor: "runner", now, endedAt: now }).ok, true);
+  const metrics = detail(f, "normal").runtimeMetrics;
+  assert.equal(metrics.totalTokens, 20);
+  assert.equal(metrics.coverage, "partial", "compaction tokens have no measurement");
+});
+
 test("normal detail includes compaction invocation usage but labels post-compaction context estimated", async t => {
   const f = await fixture(t);
   append(f, [
