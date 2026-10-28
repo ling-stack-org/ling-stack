@@ -28,6 +28,7 @@ export function SkillLibraryInspectorPanel({
   onPreviewOptimization,
   onArchiveSource,
   onRollbackSource,
+  onDefinitionChanged,
   t,
 }: {
   readonly skill: SkillRegistryEntry;
@@ -47,6 +48,7 @@ export function SkillLibraryInspectorPanel({
   readonly onPreviewOptimization: () => void;
   readonly onArchiveSource: () => void;
   readonly onRollbackSource: (snapshotId: string) => void;
+  readonly onDefinitionChanged?: () => Promise<void>;
   readonly t: SettingsTranslator;
 }): React.JSX.Element {
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -95,6 +97,7 @@ export function SkillLibraryInspectorPanel({
           onPreviewOptimization={onPreviewOptimization}
           onArchiveSource={onArchiveSource}
           onRollbackSource={onRollbackSource}
+          onDefinitionChanged={onDefinitionChanged}
           t={t}
         />
       </div>

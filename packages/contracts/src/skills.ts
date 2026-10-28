@@ -1465,6 +1465,7 @@ export interface SkillRevisionPreviewRequest {
 export interface SkillRevisionPublishRequest extends SkillRevisionPreviewRequest {
   readonly confirmAuthorityChanges?: boolean;
   readonly reason?: string;
+  readonly sourceCandidateId?: string;
 }
 
 export interface SkillRevisionPreview {

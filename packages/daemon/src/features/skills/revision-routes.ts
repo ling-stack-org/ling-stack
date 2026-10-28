@@ -128,6 +128,13 @@ export async function handleSkillRevisionRoute(input: {
     }
 
     const now = new Date().toISOString();
+    const sourceCandidateId = (request as SkillRevisionPublishRequest).sourceCandidateId;
+    const candidate = sourceCandidateId ? input.store.getSkillCandidate(sourceCandidateId) : undefined;
+    if (sourceCandidateId && (!candidate || candidate.status !== "approved_for_draft" ||
+      candidate.targetSkillId !== existing.id || candidate.proposedAction !== "update_existing")) {
+      writeJson(input.response, 409, { error: "skill_revision_invalid", message: "An approved correction for this skill is required." });
+      return;
+    }
     const draft = input.store.createSkillImportDraft({
       source: existing.source,
       ...(existing.sourcePath ? { sourcePath: existing.sourcePath } : {}),
@@ -150,6 +157,9 @@ export async function handleSkillRevisionRoute(input: {
       actor: "local-user",
       reason: (request as SkillRevisionPublishRequest).reason,
       validationStatus: "schema_checked",
+      sourceCandidateId,
+      reviewedCandidateId: sourceCandidateId,
+      sourceJobId: candidate?.sourceRefs.find(ref => ref.type === "learning-review")?.id,
     }, now);
     const revision = input.store.getSkillDefinitionRevision(skill.id);
     flushSkillDefinitionRevisionNotices(input.store, input.controlPlaneEvents, input.cwd);
@@ -203,7 +213,8 @@ function parseSkillRevisionRequest(value: unknown, publish: boolean): SkillRevis
   };
   return publish
     ? { expectedUpdatedAt, expectedRevisionId: readOptionalString(record, "expectedRevisionId"), definition,
-        reason: readOptionalString(record, "reason"), confirmAuthorityChanges: readOptionalBoolean(record, "confirmAuthorityChanges") }
+        reason: readOptionalString(record, "reason"), sourceCandidateId: readOptionalString(record, "sourceCandidateId"),
+        confirmAuthorityChanges: readOptionalBoolean(record, "confirmAuthorityChanges") }
     : { expectedUpdatedAt, expectedRevisionId: readOptionalString(record, "expectedRevisionId"), definition };
 }
 

@@ -41,6 +41,7 @@ export function SkillLibraryRegistrySection({
   onPreviewOptimization,
   onArchiveSource,
   onRollbackSource,
+  onDefinitionChanged,
   onImport,
   onNewDraft,
   onEditSkill,
@@ -66,6 +67,7 @@ export function SkillLibraryRegistrySection({
   readonly onPreviewOptimization: () => void;
   readonly onArchiveSource: (skillId: string) => void;
   readonly onRollbackSource: (snapshotId: string) => void;
+  readonly onDefinitionChanged?: () => Promise<void>;
   readonly onImport: () => void;
   readonly onNewDraft: () => void;
   readonly onEditSkill: (skill: SkillRegistryEntry) => void;
@@ -196,6 +198,7 @@ export function SkillLibraryRegistrySection({
             onPreviewOptimization={onPreviewOptimization}
             onArchiveSource={() => onArchiveSource(visibleSelectedSkill.id)}
             onRollbackSource={onRollbackSource}
+            onDefinitionChanged={onDefinitionChanged}
             t={t}
           />
         ) : null}

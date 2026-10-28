@@ -32,7 +32,7 @@ export async function handleLearningReviewRoute(input: {
         writeJson(response, 200, { cwd, policy }); return;
       }
     } else if (url.pathname === "/skills/learning-reviews") {
-      if (request.method === "GET") { writeJson(response, 200, { cwd, jobs: store.listLearningReviewJobs() }); return; }
+      if (request.method === "GET") { writeJson(response, 200, { cwd, jobs: store.listLearningReviewJobs(undefined, 50, url.searchParams.get("runId") ?? undefined) }); return; }
       if (request.method === "POST") {
         const body = await readJsonBody(request, input.config.maxBodyBytes);
         if (!isRecord(body) || typeof body.runId !== "string" || typeof body.providerPresetId !== "string" ||

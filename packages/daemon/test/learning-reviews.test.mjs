@@ -213,10 +213,16 @@ test("policy off while a model is running cancels the automatic job and rejects 
   assert.equal(f.store.listSkillCandidates().length, 0);
 });
 
-test("daemon HTTP save runs the bounded model request and retains a reviewable candidate across API reads", async t => {
+test("daemon HTTP correction completes model, review, revision history and safe undo without replacing skill ownership", async t => {
   const { createSqliteRunStore } = await import("@ling-stack/core");
   const { createDaemonServer } = await import("../dist/index.js");
-  const f = await learningFixture(t); let requests = 0;
+  const f = await learningFixture(t, { selectedSkillId: "amber" }); let requests = 0;
+  const originalDefinition = { id: "amber", name: "Amber", summary: "Reconcile receipts", roleAffinity: ["engineer"],
+    promptFragments: ["Read receipt total."], requiredTools: ["read"], requiredProviderCapabilities: ["chat"],
+    approvalProfile: { mode: "none" }, stateEffects: [] };
+  const imported = f.store.createSkillImportDraft({ source: "custom", sourcePath: "receipt/skills.json", name: "Amber pack",
+    definitions: [{ definition: originalDefinition }] }, clock());
+  const original = f.store.publishSkillImportDraft(imported.id, clock())[0];
   const upstream = createServer(async (req, res) => {
     let body = ""; for await (const chunk of req) body += chunk;
     assert.equal(JSON.parse(body).max_tokens, 1024);
@@ -240,7 +246,7 @@ test("daemon HTTP save runs the bounded model request and retains a reviewable c
     body: JSON.stringify({ mode: "off", expectedRevision: 0, limits: { perRequestOutputTokens: 1024 } }) });
   assert.equal(policyResponse.status, 200);
   const response = await fetch(`${base}/skills/learning-reviews${query}`, { method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ runId: f.run.id, providerPresetId: provider.id }) });
+    body: JSON.stringify({ runId: f.run.id, providerPresetId: provider.id, correction: "Also verify the ledger sum." }) });
   assert.equal(response.status, 202, await response.clone().text());
   const queued = (await response.json()).job;
   let job;
@@ -253,7 +259,52 @@ test("daemon HTTP save runs the bounded model request and retains a reviewable c
   const candidate = f.store.getSkillCandidate(job.candidateIds[0]);
   assert.equal(candidate.status, "pending");
   const repeat = await fetch(`${base}/skills/learning-reviews${query}`, { method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ runId: f.run.id, providerPresetId: provider.id }) });
+    body: JSON.stringify({ runId: f.run.id, providerPresetId: provider.id, correction: "Also verify the ledger sum." }) });
   assert.equal((await repeat.json()).job.id, queued.id);
   assert.equal(requests, 1);
+  const post = async (path, body) => fetch(`${base}${path}${query}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const revisionRequest = { expectedUpdatedAt: original.updatedAt, sourceCandidateId: candidate.id, definition: candidate.definition.skillDefinition };
+  assert.equal((await post(`/skills/${original.id}/revisions`, revisionRequest)).status, 409, "pending is not approval");
+  assert.equal((await post(`/skill-candidates/${candidate.id}/review`, { action: "approve_for_draft", reason: "Reviewed the source evidence" })).status, 200);
+  assert.equal((await post(`/skill-candidates/${candidate.id}/draft`, {})).status, 409, "a correction cannot create an unrelated imported skill");
+  f.database.exec("CREATE TRIGGER fail_candidate_publish BEFORE UPDATE ON skill_candidates WHEN new.status = 'published' BEGIN SELECT RAISE(ABORT, 'synthetic candidate publication failure'); END");
+  assert.equal((await post(`/skills/${original.id}/revisions`, revisionRequest)).status, 400);
+  assert.deepEqual(f.store.getSkillRegistryEntry(original.id).definition, original.definition);
+  assert.equal(f.store.listSkillDefinitionRevisions(original.id).length, 1);
+  assert.equal(f.store.getSkillCandidate(candidate.id).status, "approved_for_draft");
+  f.database.exec("DROP TRIGGER fail_candidate_publish");
+  const appliedResponse = await post(`/skills/${original.id}/revisions`, revisionRequest);
+  assert.equal(appliedResponse.status, 200, await appliedResponse.clone().text());
+  const applied = await appliedResponse.json();
+  assert.equal(applied.revision.sourceCandidateId, candidate.id); assert.equal(applied.revision.sourceJobId, queued.id);
+  assert.equal(applied.revision.validationStatus, "schema_checked");
+  assert.equal(f.store.getSkillCandidate(candidate.id).status, "published");
+  for (const field of ["id", "source", "sourcePath", "packId", "visibility"]) assert.deepEqual(applied.skill[field], original[field]);
+  assert.deepEqual(applied.skill.definition.requiredTools, original.definition.requiredTools);
+  const history = await (await fetch(`${base}/skills/${original.id}/revisions${query}`)).json();
+  assert.equal(history.revisions[0].id, applied.revision.id);
+  const undoResponse = await post(`/skills/${original.id}/revision-undo`, { revisionId: applied.revision.id, expectedUpdatedAt: applied.skill.updatedAt });
+  assert.equal(undoResponse.status, 200, await undoResponse.clone().text());
+  const undo = await undoResponse.json(); assert.deepEqual(undo.skill.definition, original.definition);
+  assert.equal(undo.revision.undoOfRevisionId, applied.revision.id);
+  assert.equal((await post(`/skills/${original.id}/revisions`, revisionRequest)).status, 409, "a repeated apply cannot consume a published candidate twice");
+});
+
+test("an intervening definition edit rejects a learned correction even with a fresh editor timestamp", async t => {
+  const f = await learningFixture(t, { selectedSkillId: "amber" });
+  const definition = { id: "amber", name: "Amber", summary: "Original", roleAffinity: ["engineer"], promptFragments: ["Read receipt."],
+    requiredTools: ["read"], requiredProviderCapabilities: ["chat"], approvalProfile: { mode: "none" }, stateEffects: [] };
+  const initial = f.store.createSkillImportDraft({ source: "custom", name: "Amber", definitions: [{ definition }] }, clock());
+  f.store.publishSkillImportDraft(initial.id, clock());
+  const { job, fence } = f.claim(f.enqueue("explicit", captureLearningEvidence(f.store, f.run.id, "Also verify the sum.")));
+  const result = commitLearningDraft({ store: f.store, job, fence, draft: f.draft, hub: f.hub });
+  const candidate = f.store.applySkillCandidateReviewAction({ candidateId: result.candidateIds[0], actor: "user", action: "approve_for_draft" }, clock()).candidate;
+  const before = f.store.getSkillRegistryEntry("amber");
+  const manual = f.store.createSkillImportDraft({ source: "custom", name: "Amber", definitions: [{ definition: { ...definition, summary: "Later user edit" } }] }, clock());
+  const current = f.store.publishSkillRevisionDraft({ draftId: manual.id, skillId: "amber", expectedUpdatedAt: before.updatedAt }, clock());
+  const proposed = f.store.createSkillImportDraft({ source: "custom", name: "Amber", definitions: [{ definition: candidate.definition.skillDefinition }] }, clock());
+  assert.throws(() => f.store.publishSkillRevisionDraft({ draftId: proposed.id, skillId: "amber", expectedUpdatedAt: current.updatedAt,
+    sourceCandidateId: candidate.id, reviewedCandidateId: candidate.id }, clock()), error => error.code === "skill_revision_conflict");
+  assert.equal(f.store.getSkillRegistryEntry("amber").definition.summary, "Later user edit");
+  assert.equal(f.store.getSkillCandidate(candidate.id).status, "approved_for_draft");
 });

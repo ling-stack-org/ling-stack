@@ -544,6 +544,7 @@ function renderTimelineDisplayRow(
       {footer ? <>
         <ConversationTimelineResponseFiles response={footer} depth={row.depth} cwd={context.cwd} onOpenReview={context.onOpenReview} />
         <ConversationTimelineResponseFooter response={footer}
+          cwd={context.cwd}
           scopeKind={row.depth === 1 ? "child" : context.scopeKind}
           renderActions={row.depth === 0 ? context.renderResponseActions : undefined} />
       </> : null}

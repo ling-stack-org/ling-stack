@@ -94,4 +94,17 @@ validated by replay. Definition history and user-approved application/undo are o
 Focused coverage lives in `packages/daemon/test/learning-reviews.test.mjs`, including a
 local HTTP provider fixture and daemon API round trip. It establishes dispatch, fencing,
 budget and transaction behavior; it does not measure real model quality, cost, or platform
-packaging. Provider-quality evaluation and the UI review journey remain separate gates.
+packaging. Provider-quality evaluation remains a separate gate.
+
+The run diagnostics and unified settled-response footer provide a lazy Experience review
+disclosure. Closed disclosures do not read or poll. Settings → Skills → AI evolution
+uses the same component for policy, queue, cancellation and candidate review. Run-filtered
+listing applies the source filter before the result limit. Pending results remain labelled
+as awaiting review. Candidate steps, checks and original bounded evidence are inspectable;
+non-skill results keep their existing memory/channel review surfaces. Definition changes
+and undo use the skill editor and inspector described in the revision contract.
+
+A local controlled HTTP provider and real daemon/browser journey cover explicit correction,
+candidate review, application to the existing skill, history and restoring undo. This
+demonstrates transport and product flow, not real-model quality or execution of the learned
+procedure.

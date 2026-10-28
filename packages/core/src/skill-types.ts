@@ -860,6 +860,8 @@ export interface PublishSkillRevisionDraftInput {
   readonly reason?: string;
   readonly sourceJobId?: string;
   readonly sourceCandidateId?: string;
+  /** Apply this approved correction atomically with its definition revision. */
+  readonly reviewedCandidateId?: string;
   readonly validationStatus?: import("@ling-stack/contracts").SkillDefinitionValidationStatus;
 }
 

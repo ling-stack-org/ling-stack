@@ -12,6 +12,8 @@ import { useSkillEditorController } from "./useSkillEditorController.js";
 import { useSkillImportController } from "./useSkillImportController.js";
 import { useSkillLibraryActionsController } from "./useSkillLibraryActionsController.js";
 import { useSkillLibraryDataController } from "./useSkillLibraryDataController.js";
+import { isEvolvedSkillEntry } from "./skill-editor-utils.js";
+import { LearningReviewDisclosure } from "../../shared/components/learning/LearningReviewPanel.js";
 
 export function SkillLibrarySettingsPanel({
   cwd,
@@ -40,12 +42,15 @@ export function SkillLibrarySettingsPanel({
     onSuccess: (message) => showToast({ message, scope: "skill:editor", tone: "success" }),
     onCompleted: async ({ skills, candidateId, mode }) => {
       await data.refresh();
-      if (candidateId || mode === "candidate") {
+      if (mode === "revision" && skills[0]) {
+        const evolved = isEvolvedSkillEntry(skills[0]);
+        data.changeSection(evolved ? "evolution" : "mine");
+        if (evolved) data.setEvolutionView("generated");
+        data.setSelectedSkillId(skills[0].id);
+      } else if (candidateId || mode === "candidate") {
         data.changeSection("evolution");
         data.setEvolutionView("generated");
         data.setSelectedSkillId(skills[0]?.id ?? "");
-      } else if (mode === "revision" && skills[0]) {
-        data.setSelectedSkillId(skills[0].id);
       } else {
         data.changeSection("mine");
         data.setSelectedSkillId(skills[0]?.id ?? "");
@@ -77,6 +82,7 @@ export function SkillLibrarySettingsPanel({
     onPreviewOptimization: actions.previewSelectedSkillOptimization,
     onArchiveSource: actions.archiveSourceSnapshot,
     onRollbackSource: actions.rollbackSelectedSkillSource,
+    onDefinitionChanged: async () => { await data.refresh(); },
     t,
   } as const;
 
@@ -98,6 +104,7 @@ export function SkillLibrarySettingsPanel({
 
       {data.loadError ? <InlineFeedback tone="danger">{data.loadError}</InlineFeedback> : null}
       {actions.registryError ? <InlineFeedback tone="danger">{actions.registryError}</InlineFeedback> : null}
+      {data.activeSubsection === "evolution" ? <LearningReviewDisclosure cwd={cwd} onReviewCandidate={actions.adoptCandidate} /> : null}
 
       {data.activeSubsection === "evolution" ? (
         <SkillEvolutionSection
@@ -146,6 +153,7 @@ export function SkillLibrarySettingsPanel({
         error={skillEditor.error}
         conflict={skillEditor.conflict}
         preview={skillEditor.preview}
+        beforeDefinition={skillEditor.skill?.definition}
         authorityConfirmation={skillEditor.authorityConfirmation}
         discardConfirmation={skillEditor.discardConfirmation}
         onFormChange={skillEditor.setForm}

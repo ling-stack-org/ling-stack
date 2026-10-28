@@ -64,10 +64,10 @@ export class SqliteLearningReviewStore implements LearningReviewStore {
       .get(id, DEFAULT_WORKSPACE_ID);
     return row ? JSON.parse(String(row.record_json)) as LearningReviewJob : undefined;
   }
-  listLearningReviewJobs(status?: LearningReviewJob["status"], limit = 50): LearningReviewJob[] {
+  listLearningReviewJobs(status?: LearningReviewJob["status"], limit = 50, runId?: string): LearningReviewJob[] {
     if (!Number.isFinite(limit)) throw new Error("learning_limit_invalid");
-    return this.context.database.prepare(`SELECT record_json FROM learning_review_jobs WHERE workspace_id = ?${status ? " AND status = ?" : ""}
-      ORDER BY created_at ${status ? "ASC" : "DESC"}, rowid ${status ? "ASC" : "DESC"} LIMIT ?`).all(DEFAULT_WORKSPACE_ID, ...(status ? [status] : []), Math.max(1, Math.min(100, Math.trunc(limit))))
+    return this.context.database.prepare(`SELECT record_json FROM learning_review_jobs WHERE workspace_id = ?${status ? " AND status = ?" : ""}${runId ? " AND json_extract(record_json, '$.evidence.runId') = ?" : ""}
+      ORDER BY created_at ${status ? "ASC" : "DESC"}, rowid ${status ? "ASC" : "DESC"} LIMIT ?`).all(DEFAULT_WORKSPACE_ID, ...(status ? [status] : []), ...(runId ? [runId] : []), Math.max(1, Math.min(100, Math.trunc(limit))))
       .map(row => JSON.parse(String(row.record_json)) as LearningReviewJob);
   }
   claimLearningReviewJob(id: string, fence: RuntimeAttemptFenceV1, now: string): LearningReviewJob | undefined {

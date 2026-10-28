@@ -735,6 +735,10 @@ export async function handleSkillRoute(
           writeJson(response, 409, { error: "skill_candidate_not_publishable", message: `Skill candidate is not ready to publish: ${candidateBeforePublish.status}` });
           return;
         }
+        if (candidateBeforePublish?.proposedAction === "update_existing") {
+          writeJson(response, 409, { error: "skill_candidate_requires_revision", message: "Apply this correction through the target skill revision endpoint." });
+          return;
+        }
         const skills = store.publishSkillImportDraft(route.draftId, now);
         if (candidateId) {
           const publishedEvents = store.listSkillUsageEvents({ candidateId, kind: "published", limit: 500 });
@@ -992,6 +996,10 @@ export async function handleSkillRoute(
         const candidate = store.getSkillCandidate(route.candidateId);
         if (!candidate) {
           writeJson(response, 404, { error: "skill_candidate_not_found", message: `Skill candidate not found: ${route.candidateId}` });
+          return;
+        }
+        if (candidate.proposedAction === "update_existing") {
+          writeJson(response, 409, { error: "skill_candidate_requires_revision", message: "Review this correction in the target skill editor." });
           return;
         }
         const body = await readOptionalJsonBody(request, config.maxBodyBytes);

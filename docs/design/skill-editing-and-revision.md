@@ -105,7 +105,6 @@ It must not open a second modal.
 
 ## Non-Goals
 
-- User-visible version history or rollback.
 - Editing built-in, gstack, workspace-owned, or archived skills.
 - Updating the original imported file or source directory.
 - Changing skill ids, ownership, visibility, role affinity, or state effects.
@@ -145,6 +144,15 @@ Definition history and a durable revision-notice outbox commit with the owning s
 update. The daemon transfers notices and acknowledgments atomically into the replayable
 control-plane event stream, then publishes live notifications. Startup and the existing
 recovery sweep retry pending notices; a process failure cannot silently lose the change.
+
+The skill inspector exposes definition history and an explicit restoring-diff confirmation.
+The editor shows before/after changes. A reviewed `update_existing` learning candidate
+opens the original skill in this editor and publishes through the revision endpoint with
+`sourceCandidateId`. The server checks the successful learning job and the definition
+revision captured during extraction; later edits invalidate the candidate even if the
+editor has a fresh timestamp. Definition, history, candidate publication and notice are
+one transaction. Generic candidate import rejects this action, so corrections cannot
+silently become a second skill. Existing identity, ownership and authority are retained.
 
 New prepared executions freeze the effective definition hash and available revision id
 alongside their existing source context and actual Runner input. Run and WorkUnit request
