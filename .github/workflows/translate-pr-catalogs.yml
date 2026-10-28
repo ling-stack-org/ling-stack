@@ -32,6 +32,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10.0.0
+          run_install: false
+
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
@@ -43,7 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           corepack enable
-          corepack pnpm install --frozen-lockfile --prefer-offline
+          corepack pnpm install --frozen-lockfile --prefer-offline --ignore-scripts
 
       - name: Validate catalog App configuration
         env:

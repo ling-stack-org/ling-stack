@@ -83,9 +83,14 @@ test("both workflows keep built-in permissions read-only and scope the App token
 test("translation runs before staging, staging before the no-diff exit, push only after a diff", () => {
   for (const [name, workflow] of [["pr", prWorkflow], ["sync", syncWorkflow]]) {
     // The importer resolves the workspace typescript dependency; fresh runners
-    // must install locked dependencies before it can run.
-    const installAt = workflow.indexOf("corepack pnpm install --frozen-lockfile");
+    // must install locked dependencies before it can run. pnpm/action-setup must
+    // precede setup-node's pnpm cache resolution, and lifecycle scripts stay
+    // disabled so checked-out code cannot persist shims via the install.
+    const pnpmSetupAt = workflow.indexOf("uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413");
+    const nodeSetupAt = workflow.indexOf("uses: actions/setup-node@");
+    const installAt = workflow.indexOf("corepack pnpm install --frozen-lockfile --prefer-offline --ignore-scripts");
     const importAt = workflow.indexOf("import-legacy-web-catalogs.mjs");
+    assert.ok(pnpmSetupAt !== -1 && pnpmSetupAt < nodeSetupAt, `${name}: set up pnpm before the setup-node cache`);
     assert.ok(installAt !== -1 && installAt < importAt, `${name}: install locked dependencies before importing sources`);
     const translateAt = workflow.indexOf("node packages/localization/scripts/translate-catalogs.mjs");
     const addAt = workflow.indexOf("git add packages/localization/catalogs");
