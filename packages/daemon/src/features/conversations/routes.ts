@@ -33,6 +33,7 @@ import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
+import { assertPermissionContractVersion } from "../../shared/permission-contract.js";
 import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 import { isRecord, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { persistConversationAttachment, CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES } from "../channels/attachments.js";
@@ -667,6 +668,7 @@ function parseConversationStreamRequest(value: unknown): ConversationStreamReque
   if (!isRecord(value)) {
     throw new Error("Conversation request must be a JSON object.");
   }
+  assertPermissionContractVersion(value);
   const message = readString(value, "message").trim();
   const attachmentIds = readOptionalStringArray(value, "attachmentIds") ?? [];
   const fileRefs = readOptionalChannelMessageFileRefs(value, "fileRefs") ?? [];
@@ -680,6 +682,7 @@ function parseConversationStreamRequest(value: unknown): ConversationStreamReque
   const executionBinding = value.executionBinding === undefined ? undefined : parseExecutionBindingRequest(value.executionBinding);
   if (executionBinding && providerPresetId) throw new Error("Choose an execution binding or a provider preset.");
   return {
+    ...(value.schemaVersion === 2 ? { schemaVersion: 2 as const } : {}),
     threadId: readOptionalString(value, "threadId")?.trim() || undefined,
     message,
     attachmentIds: normalizeStringList(attachmentIds),

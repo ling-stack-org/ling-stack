@@ -144,7 +144,10 @@ async function createOwnedUpstream() {
     const submission = request.method === "POST" &&
       (path.endsWith("/contents/generations/tasks") || path === "/api/prompt");
     const providerPoll = request.method === "GET" && path.includes("/contents/generations/tasks/");
-    const comfyPoll = request.method === "GET" && path.startsWith("/api/history/");
+    const comfyJobsPoll = request.method === "GET" && path.startsWith("/api/jobs/");
+    const comfyHistoryPoll = request.method === "GET" && path.startsWith("/api/history/");
+    const comfyPoll = comfyJobsPoll || comfyHistoryPoll;
+    const remoteCancel = request.method === "POST" && path.startsWith("/api/jobs/") && path.endsWith("/cancel");
     const collection = request.method === "GET" && (path.startsWith("/generated/") || path === "/api/view");
     let operationId = providerPoll || comfyPoll ? decodeURIComponent(path.split("/").at(-1))
       : collection ? path === "/api/view" ? url.searchParams.get("filename")?.replace(/\.mp4$/u, "")
@@ -155,7 +158,7 @@ async function createOwnedUpstream() {
       if (armed && targetOperationId === undefined) targetOperationId = operationId;
     }
     requests.push({ method: request.method, path, operationId, submission, poll: providerPoll || comfyPoll,
-      collection, body: bodyText ? JSON.parse(bodyText) : undefined });
+      remoteCancel, collection, body: bodyText ? JSON.parse(bodyText) : undefined });
     const selectedStage = armStage === "submit" ? submission : armStage === "collect" ? collection : providerPoll || comfyPoll;
     if (selectedStage && armed && operationId === targetOperationId) {
       if (collection) {
@@ -175,13 +178,18 @@ async function createOwnedUpstream() {
       if (armFailure) return sendJson(response, 500, { error: "owned_late_response_failure" });
     }
     if (path === "/api/object_info") return sendJson(response, 200, { CLIPTextEncode: {}, SaveVideo: {} });
+    if (remoteCancel) return sendJson(response, 200, { ok: true });
     if (submission) return sendJson(response, 200, path === "/api/prompt"
       ? { prompt_id: operationId } : { id: operationId, status: "queued" });
     if (path.startsWith("/api/history_v2/")) return sendJson(response, 404, { error: "not_found" });
     if (providerPoll && operations.has(operationId)) return sendJson(response, 200, {
       id: operationId, status: "succeeded", content: { video_url: `${baseUrl}/generated/${operationId}.mp4` },
     });
-    if (comfyPoll && operations.has(operationId)) return sendJson(response, 200, { [operationId]: {
+    if (comfyJobsPoll && operations.has(operationId)) return sendJson(response, 200, {
+      id: operationId, status: "completed",
+      outputs: { "9": { videos: [{ filename: `${operationId}.mp4`, type: "output" }] } },
+    });
+    if (comfyHistoryPoll && operations.has(operationId)) return sendJson(response, 200, { [operationId]: {
       status: { status_str: "success", completed: true },
       outputs: { "9": { videos: [{ filename: `${operationId}.mp4`, type: "output" }] } },
     } });
@@ -277,7 +285,7 @@ async function prepareProject(fixture, kind) {
   }
   const connection = assertResponse(await api("/media-workflow-connections", {
     name: "A19 owned Comfy", authMode: "none", networkPolicy: "trusted_private_network",
-    protocolVariant: "prompt_legacy", baseUrl: upstream.baseUrl,
+    protocolVariant: "jobs_v1", baseUrl: upstream.baseUrl,
   }), 201, "create legal private-network Comfy connection").connection;
   const checked = assertResponse(await api(`/media-workflow-connections/${connection.id}/check`, {}),
     200, "real Comfy check");
@@ -387,8 +395,8 @@ for (const kind of ["provider", "workflow"]) {
         assert.equal(operationRequests.filter(item => item.submission).length, 1, "no implicit resubmission");
         assert.equal(operationRequests.filter(item => item.poll).length, 1, "no successor poll after accepted cancellation");
         assert.equal(operationRequests.filter(item => item.collection).length, 0, "no late collection request after accepted cancellation");
-        assert.ok(operationRequests.every(item => item.method === "GET" || item.submission),
-          "unknown legacy/Seedance remote cancel cannot manufacture or replay a remote-stop request");
+        assert.ok(operationRequests.every(item => item.method === "GET" || item.submission || item.remoteCancel),
+          "a cancellation may issue at most the protocol-owned remote stop request");
         assertResponse(await fixture.api(`/media-scene-runs/${started.mediaSceneRun.id}/cancel`, {}),
           409, "repeated public cancellation does not revive or resubmit the scene");
         assert.ok(terminalStatuses.has(fixture.store.getMediaJob(mediaJobId).status));
@@ -565,7 +573,8 @@ for (const kind of ["provider", "workflow"]) {
         const calls = fixture.upstream.requests.filter(item => item.operationId === operationId);
         assert.equal(calls.filter(item => item.submission).length, 1, "repair cannot resubmit");
         assert.equal(calls.filter(item => item.poll || item.collection).length, 0, "repair cannot restart polling or collection");
-        assert.ok(calls.every(item => item.submission), "repair cannot issue a remote cancel or any other operation request");
+        assert.ok(calls.every(item => item.submission || item.remoteCancel),
+          "repair cannot issue a second remote cancel or any other operation request");
         const finalLineage = readLineage(fixture.store, mediaJobId);
         const finalHandle = fixture.store.getMediaJobExecutionHandle(mediaJobId);
         const finalSlots = fixture.store.listRuntimeSemaphoreSlots({ workUnitId: original.unit.id })
@@ -631,9 +640,9 @@ async function createCapturedCase(t, kind) {
     project = store.createMediaProject({ name: "A19 internal receipt association", defaultProviderPresetId: provider.id }, at);
   } else {
     const connection = store.createMediaWorkflowConnection({ name: "A19 captured owned Comfy", baseUrl: upstream.baseUrl,
-      authMode: "none", networkPolicy: "trusted_private_network", protocolVariant: "prompt_legacy" }, at);
+      authMode: "none", networkPolicy: "trusted_private_network", protocolVariant: "jobs_v1" }, at);
     store.updateMediaWorkflowConnection(connection.id, { status: "ready", health: {
-      ok: true, message: "Owned loopback fixture only", checkedAt: at, protocolVariant: "prompt_legacy",
+      ok: true, message: "Owned loopback fixture only", checkedAt: at, protocolVariant: "jobs_v1",
     } }, at);
     const definition = store.createMediaWorkflowDefinition({ connectionId: connection.id, name: "A19 internal receipt graph" }, at);
     const version = store.createMediaWorkflowVersion({ workflowDefinitionId: definition.id, sourceDigest: "a19-internal-fixture",

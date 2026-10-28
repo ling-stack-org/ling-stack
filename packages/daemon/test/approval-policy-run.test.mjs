@@ -3943,7 +3943,7 @@ test("media production keeps direct Seedance scenes and ComfyUI workflow scenes 
       baseUrl: comfy.url,
       authMode: "none",
       networkPolicy: "trusted_private_network",
-      protocolVariant: "auto",
+      protocolVariant: "jobs_v1",
     });
     const checked = await postJson(`${daemon.url}/media-workflow-connections/${encodeURIComponent(connection.connection.id)}/check?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(checked.connection.status, "ready");
@@ -4025,7 +4025,7 @@ test("ComfyUI workflow polling resumes from the persisted execution handle after
       baseUrl: comfy.url,
       authMode: "none",
       networkPolicy: "trusted_private_network",
-      protocolVariant: "prompt_legacy",
+      protocolVariant: "jobs_v1",
     });
     await postJson(`${daemon.url}/media-workflow-connections/${encodeURIComponent(connection.connection.id)}/check?cwd=${encodeURIComponent(cwd)}`, {});
     const imported = await postJson(`${daemon.url}/media-workflows/import?cwd=${encodeURIComponent(cwd)}`, {
@@ -6311,6 +6311,16 @@ async function startMockComfyUiServer(options = {}) {
           status: { status_str: "success", completed: true },
           outputs: { "9": { videos: [{ filename: `${operationId}.mp4`, type: "output" }] } },
         },
+      }));
+      return;
+    }
+    if (request.method === "GET" && url.pathname.startsWith("/api/jobs/")) {
+      const operationId = decodeURIComponent(url.pathname.slice("/api/jobs/".length));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        id: operationId,
+        status: completed ? "completed" : "running",
+        outputs: completed ? { "9": { videos: [{ filename: `${operationId}.mp4`, type: "output" }] } } : {},
       }));
       return;
     }

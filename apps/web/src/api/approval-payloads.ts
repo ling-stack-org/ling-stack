@@ -1,4 +1,5 @@
-import type { ApprovalPolicyFormState, UpdateApprovalPolicyRequest } from "../types.js";
+import type { ApprovalPolicyFormState } from "../types.js";
+import type { UpdateApprovalPolicyRequest } from "@ling-stack/contracts";
 import { splitLines } from "./shared.js";
 
 export function approvalPolicyFormToPayload(form: ApprovalPolicyFormState): UpdateApprovalPolicyRequest {
