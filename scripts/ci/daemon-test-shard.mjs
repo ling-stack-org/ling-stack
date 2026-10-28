@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,6 +6,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../packages/daemon");
+
+// These real native lifecycle fixtures have short observation windows. Keep
+// their original exclusive execution before starting other test workers.
+const exclusiveTestFiles = new Set([
+  "test/acp-kimi-host-read.test.mjs",
+  "test/acp-kimi-host-terminal.test.mjs",
+]);
 
 /**
  * Return daemon test files in a stable order. The caller passes these paths to
@@ -93,6 +100,62 @@ function parseArgs(argv) {
   return parsed;
 }
 
+async function runWorker(files, { shard, worker, cwd, temporaryDirectory, stdio }) {
+  const isolation = await createDaemonShardIsolation(`${shard}-worker-${worker}`, temporaryDirectory);
+  const started = performance.now();
+  try {
+    const env = {
+      ...process.env,
+      LING_STACK_HOME: isolation.home,
+      LING_STACK_DEFAULT_WORKSPACE_CWD: isolation.workspace,
+    };
+    // This is a new test coordinator even when invoked by a runner contract test.
+    delete env.NODE_TEST_CONTEXT;
+    const status = await new Promise((resolveStatus, reject) => {
+      const child = spawn(process.execPath, ["--test", "--test-concurrency=1", ...files], {
+        cwd,
+        env,
+        stdio,
+      });
+      child.once("error", reject);
+      child.once("close", (code) => resolveStatus(code ?? 1));
+    });
+    console.log(`Daemon shard ${shard}, worker ${worker}: ${files.length} files, exit ${status}, ${((performance.now() - started) / 1000).toFixed(1)}s.`);
+    return status;
+  } finally {
+    await rm(isolation.root, { recursive: true, force: true });
+  }
+}
+
+/** Keep files serial within each isolated worker, without adding hosted jobs. */
+export async function runDaemonTestFiles(files, {
+  concurrency = 1, shard = 0, cwd = packageRoot, temporaryDirectory = tmpdir(), stdio = "inherit",
+} = {}) {
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new RangeError("concurrency must be a positive integer");
+  }
+  const uniqueFiles = [...new Set(files)];
+  if (uniqueFiles.length === 0) return 0;
+  const exclusive = concurrency > 1 ? uniqueFiles.filter(file => exclusiveTestFiles.has(file)).sort() : [];
+  const parallel = uniqueFiles.filter(file => !exclusive.includes(file));
+  const results = [];
+  if (exclusive.length > 0) {
+    results.push(...await Promise.allSettled([runWorker(exclusive, {
+      shard, worker: "exclusive", cwd, temporaryDirectory, stdio,
+    })]));
+  }
+  const workers = parallel.length > 0
+    ? assignTestShards(parallel, Math.min(concurrency, parallel.length)) : [];
+  // Wait for all workers even after a failure so their evidence and cleanup
+  // complete before this process reports the aggregate result.
+  results.push(...await Promise.allSettled(workers.map((bucket, worker) => runWorker(bucket.files, {
+    shard, worker, cwd, temporaryDirectory, stdio,
+  }))));
+  const error = results.find(result => result.status === "rejected");
+  if (error) throw error.reason;
+  return results.some(result => result.value !== 0) ? 1 : 0;
+}
+
 async function runShard() {
   const args = parseArgs(process.argv.slice(2));
   const shard = Number(args.shard ?? 0);
@@ -103,25 +166,9 @@ async function runShard() {
 
   const files = await discoverDaemonTestFiles(args["test-directory"] ?? join(packageRoot, "test"));
   const bucket = assignTestShards(files, shardCount)[shard];
-  console.log(`Daemon shard ${shard + 1}/${shardCount}: ${bucket.files.length} files, weight ${bucket.weight}.`);
-  if (bucket.files.length === 0) return 0;
-
-  const isolation = await createDaemonShardIsolation(shard);
-  try {
-    const result = spawnSync(process.execPath, ["--test", "--test-concurrency=1", ...bucket.files], {
-      cwd: packageRoot,
-      env: {
-        ...process.env,
-        LING_STACK_HOME: isolation.home,
-        LING_STACK_DEFAULT_WORKSPACE_CWD: isolation.workspace,
-      },
-      stdio: "inherit",
-    });
-    if (result.error) throw result.error;
-    return result.status ?? 1;
-  } finally {
-    await rm(isolation.root, { recursive: true, force: true });
-  }
+  const concurrency = Number(args.concurrency ?? 1);
+  console.log(`Daemon shard ${shard + 1}/${shardCount}: ${bucket.files.length} files, weight ${bucket.weight}, concurrency ${concurrency}.`);
+  return runDaemonTestFiles(bucket.files, { shard, concurrency });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

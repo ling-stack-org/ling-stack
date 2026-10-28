@@ -417,7 +417,10 @@ jobs:
           corepack pnpm --filter @ling-stack/daemon build:image-sanitizer
 
       - name: Run isolated daemon shard
-        run: node scripts/ci/daemon-test-shard.mjs --shard=${{ matrix.shard }} --shard-count=4
+        # Each worker retains serial file execution and its own home/workspace.
+        # Short native lifecycle fixtures retain exclusive execution first.
+        # Reuse the same four macOS jobs instead of adding more queued runners.
+        run: node scripts/ci/daemon-test-shard.mjs --shard=${{ matrix.shard }} --shard-count=4 --concurrency=2
 
       - name: Collect fixed OS bootstrap source for review only
         if: always()
