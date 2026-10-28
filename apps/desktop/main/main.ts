@@ -169,6 +169,8 @@ let desktopDaemonAutomaticRecoveryUsed = false;
 let officeDriverRuntime: OfficeDriverRuntime | undefined;
 let hostCapabilityRuntime: HostCapabilityRuntime | undefined;
 let computerUse: ComputerUsePreviewCoordinator | undefined;
+// Process-scoped so window recreation keeps the 24-hour throttle and per-release deduplication.
+let desktopUpdateNotification: { check(): Promise<void> } | undefined;
 const desktopNavigationIntents = new DesktopNavigationIntentStore();
 const desktopRendererThemeStore = new DesktopRendererThemeStore(
   builtInDesktopRendererThemeInput(nativeTheme.shouldUseDarkColors ? "dark" : "light"),
@@ -709,7 +711,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
   logStartup("main_window.loaded");
   // Check in the background after the owner window is ready; network failures never block startup.
   if (mainWindow && !mainWindow.isDestroyed() && app.isPackaged && !smokeHeadless) {
-    void createDesktopUpdateNotification({
+    desktopUpdateNotification ??= createDesktopUpdateNotification({
       packaged: app.isPackaged && !smokeHeadless,
       currentVersion: app.getVersion(),
       locale: app.getLocale(),
@@ -718,7 +720,8 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
       onError: (error) => logStartup("desktop.update_check_failed", {
         error: error instanceof Error ? error.message : String(error),
       }),
-    }).check();
+    });
+    void desktopUpdateNotification.check();
   }
   if (fakeComputerUseMode || realCaptureSmokeMode || fixedComputerUseConversationId) {
     computerUse.reportSelectedConversation(fixedComputerUseConversationId ?? smokeComputerUseProjection.conversationId);
