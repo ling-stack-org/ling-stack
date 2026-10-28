@@ -29,9 +29,17 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22.15.0
+          cache: pnpm
 
       - name: Check automation PR selection safety
         run: node --test scripts/ci/automation-pr.test.mjs
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile --prefer-offline
 
       - name: Validate catalog App configuration
         env:

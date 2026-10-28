@@ -82,7 +82,11 @@ test("both workflows keep built-in permissions read-only and scope the App token
 
 test("translation runs before staging, staging before the no-diff exit, push only after a diff", () => {
   for (const [name, workflow] of [["pr", prWorkflow], ["sync", syncWorkflow]]) {
+    // The importer resolves the workspace typescript dependency; fresh runners
+    // must install locked dependencies before it can run.
+    const installAt = workflow.indexOf("corepack pnpm install --frozen-lockfile");
     const importAt = workflow.indexOf("import-legacy-web-catalogs.mjs");
+    assert.ok(installAt !== -1 && installAt < importAt, `${name}: install locked dependencies before importing sources`);
     const translateAt = workflow.indexOf("node packages/localization/scripts/translate-catalogs.mjs");
     const addAt = workflow.indexOf("git add packages/localization/catalogs");
     const quietAt = workflow.indexOf("git diff --cached --quiet");
