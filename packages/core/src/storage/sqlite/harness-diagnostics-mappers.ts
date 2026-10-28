@@ -13,6 +13,7 @@ import {
 } from "@ling-stack/contracts";
 import { assertRecoveryDiscoveryId, assertRecoveryDiscoveryTimestamp } from "./recovery-discovery-validation.js";
 import { HarnessDiagnosticsStoreError } from "./harness-diagnostics-validation.js";
+import { normalizeRunnerId } from "../../runner-ids.js";
 
 type Row = Record<string, SQLOutputValue>;
 
@@ -76,7 +77,7 @@ export function mapHarnessDiagnostic(row: Row): HarnessDiagnosticRecordV1 {
       targetAttemptId: optionalIdentity(row, "target_attempt_id"),
       origin: enumeration(row, "origin", RUNNER_CONTINUATION_ORIGINS),
       strategy: enumeration(row, "strategy", RUNNER_CONTINUATION_STRATEGIES),
-      runnerId: identity(row, "runner_id"),
+      runnerId: normalizeRunnerId(identity(row, "runner_id")) ?? identity(row, "runner_id"),
       generation: integer(row, "generation"),
       failureCode: optionalEnumeration(row, "failure_code", RUNNER_CONTINUATION_FAILURE_CODES),
       failureDetailArtifactId: optionalIdentity(row, "failure_detail_artifact_id"),

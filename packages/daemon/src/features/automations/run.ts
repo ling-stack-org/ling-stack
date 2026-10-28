@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { resolve as resolvePath } from "node:path";
 import {
   DEFAULT_WORKSPACE_ID,
+  normalizeRunnerId,
   type AutomationDefinition,
   type AutomationRun,
   type AutomationRunStatus,
@@ -386,7 +387,7 @@ function buildHeartbeatRunRequest(input: {
     providerPresetId: input.providerPresetId,
     provider: input.inlineProvider,
     teammateId: readSnapshotString(input.requestSnapshot, "teammateId") ?? input.sourceRun.teammateId,
-    runnerId: readSnapshotString(input.requestSnapshot, "runnerId"),
+    runnerId: normalizeRunnerId(readSnapshotString(input.requestSnapshot, "runnerId")),
     requestedSkillId: readSnapshotString(input.requestSnapshot, "requestedSkillId") ?? input.sourceRun.selectedSkillId,
     skipProviderPreflight: readSnapshotBoolean(input.requestSnapshot, "skipProviderPreflight") ?? false,
     idempotencyKey: `automation-heartbeat:${input.automationRun.id}`,

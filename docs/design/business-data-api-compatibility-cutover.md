@@ -1,5 +1,8 @@
 # 业务数据与 API 历史兼容收口设计
 
+> 维护说明：runner 历史证据和 continuation 指纹的边界由
+> [业务兼容边界加固设计](./business-compatibility-boundary-hardening.md)补充约束；该加固文档优先于本文早期的迁移草案。
+
 ## 目的
 
 本设计处理 Ling Stack 中仍在生产路径上的历史业务数据和 API 兼容逻辑。目标是让新代码只使用一套规范合同，同时保留足够的历史读取、恢复和审计能力，避免删除旧字段后导致已有工作区、会话、运行记录或媒体证据无法读取。
@@ -20,6 +23,8 @@
 ### Runner
 
 规范 Pi runner id 是 `pi`。`pi-coding-agent` 只代表历史别名。新记录只写 `pi`，历史记录在迁移完成前可以通过只读别名解析。
+
+工作单元、attempt、队友和 continuation 的可变 scalar binding 可以在版本化迁移中写成 `pi`；run/runtime/control-plane/channel 的历史 JSON、准备输入和证据快照保留原始字节与 fingerprint，由读取 mapper 投影成 `pi`。迁移不能为了展示规范 ID 重写不可变证据。
 
 ### Media evidence
 
@@ -60,7 +65,7 @@ Daemon wire types 的唯一归属是 `@ling-stack/contracts`，请求和响应�
 4. 写入迁移标记，重复启动不得重复改写。
 5. 旧字段在这一阶段仍可读，但不作为新值来源。
 
-Runner 记录使用独立迁移切片，不能把 runner alias 的改写和权限设置迁移绑在同一事务中。
+Runner 记录使用独立迁移切片，不能把 runner alias 的改写和权限设置迁移绑在同一事务中。该迁移只处理可变 scalar binding；不可变 JSON 和 evidence 不在迁移里改写。
 
 ### C. API cutover
 
@@ -96,7 +101,7 @@ Web request builders、settings controller、automation、teammate direct messag
 
 1. 旧 workspace settings fixture 迁移后只增加规范字段，迁移重复执行无变化。
 2. 新 API 请求成功，旧 API 写入请求得到稳定迁移错误。
-3. 旧 runner 记录、历史 continuation 和 replay 仍可读取，新的记录只保存 `pi`。
+3. 旧 runner 记录、历史 continuation 和 replay 仍可读取；新的可变 binding 只保存 `pi`，历史 JSON 的原始 fingerprint 不变。
 4. legacy ComfyUI evidence 可读，新媒体任务不会生成 legacy protocol。
 5. Web API production source 不再直接依赖 DTO 兼容转出口；剩余 Web-only 表单状态不属于 daemon DTO。
 6. 主题历史记录升级或进入可操作的修复状态，不能丢失（独立客户端切片，不作为本 PR 的交付项）。
