@@ -3,6 +3,7 @@ import type { SecretResolver } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
+import { HttpError } from "../../errors.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { buildEffectiveConfigResponse, parseWorkspaceSettingsUpdate } from "./effective-config.js";
@@ -45,8 +46,8 @@ export async function handleWorkspaceSettings(
     }
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workspace settings` });
   } catch (error) {
-    writeJson(response, 400, {
-      error: "bad_request",
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }
@@ -74,8 +75,8 @@ export async function handleEffectiveConfig(
     const store = storeRegistry.getStore(cwd);
     writeJson(response, 200, await buildEffectiveConfigResponse({ cwd, store, runnerRegistry }));
   } catch (error) {
-    writeJson(response, 400, {
-      error: "bad_request",
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }

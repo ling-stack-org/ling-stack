@@ -60,7 +60,7 @@ import type {
   SkillUsageEventKind,
   SkillUsageEventListResponse,
   SkillUsageStatsListResponse,
-} from "../types.js";
+} from "@ling-stack/contracts";
 import { daemonClient } from "./client.js";
 import type { LearningReviewCreateRequest, LearningReviewPolicyUpdateRequest, SkillDefinitionUndoRequest } from "../types.js";
 

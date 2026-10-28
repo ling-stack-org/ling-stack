@@ -24,7 +24,7 @@ import type {
   MemorySemanticPolicyResponse,
   MemorySemanticPolicyUpdate,
   MemoryWikiScope,
-} from "../types.js";
+} from "@ling-stack/contracts";
 import { daemonClient } from "./client.js";
 
 export const getMemoryWiki = (cwd: string, scope: MemoryWikiScope) => daemonClient.getMemoryWiki(cwd, scope);

@@ -7,6 +7,8 @@ import type { LearningReviewStore } from "../learning-review-types.js";
 import { drainSkillDefinitionRevisionNotices } from "./sqlite/skill-definition-revision-store.js";
 import { SqliteWorkSummaryStore } from "./sqlite/work-summary-store.js";
 import { applyWorkSummaryMigration } from "./sqlite/work-summary-migration.js";
+import { applyWorkspacePermissionMigration } from "./sqlite/workspace-permission-migration.js";
+import { applyRunnerIdMigration } from "./sqlite/runner-id-migration.js";
 import { existsSync } from "node:fs";
 import { writeMemoryWithSearchIndex } from "./sqlite/memory-search-index.js";
 import { publishNormalRunNarration } from "./sqlite/normal-run-narration-publication.js";
@@ -1522,6 +1524,18 @@ export class SqliteRunStore implements RunStore {
           database: this.database,
           hasMigration: (version) => this.hasMigration(version),
           hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
+          hasTable: (tableName) => this.hasTable(tableName),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
+        applyWorkspacePermissionMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          hasTable: (tableName) => this.hasTable(tableName),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
+        applyRunnerIdMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
           hasTable: (tableName) => this.hasTable(tableName),
           recordMigration: (version, name) => this.recordMigration(version, name),
         });

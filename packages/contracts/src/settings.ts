@@ -45,6 +45,8 @@ export interface WorkspaceSettings {
 }
 
 export interface UpdateWorkspaceSettingsRequest {
+  /** v2 writes only accept the independent authorization/access axes. */
+  readonly schemaVersion?: 2;
   readonly workspaceCwd?: string | null;
   readonly theme?: "light" | "dark" | "system" | null;
   readonly locale?: InterfaceLocale | null;
