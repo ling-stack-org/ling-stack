@@ -8,7 +8,7 @@ import { useLearningReviews } from "./useLearningReviews.js";
 import "./learning-review.css";
 
 /** Closed conversation disclosures perform no reads and render no empty result cards. */
-export function LearningReviewDisclosure(props: { readonly cwd: string; readonly runId?: string;
+export function LearningReviewDisclosure(props: { readonly cwd: string; readonly runId?: string; readonly decisionId?: string;
   readonly onReviewCandidate?: (id: string) => void }): React.JSX.Element {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -18,16 +18,16 @@ export function LearningReviewDisclosure(props: { readonly cwd: string; readonly
   </details>;
 }
 
-export function LearningReviewPanel(props: { readonly cwd: string; readonly runId?: string;
+export function LearningReviewPanel(props: { readonly cwd: string; readonly runId?: string; readonly decisionId?: string;
   readonly onReviewCandidate?: (id: string) => void }): React.JSX.Element {
-  return <LearningReviewPanelContent key={`${props.cwd}:${props.runId ?? "workspace"}`} {...props} />;
+  return <LearningReviewPanelContent key={`${props.cwd}:${props.runId ?? props.decisionId ?? "workspace"}`} {...props} />;
 }
 
-function LearningReviewPanelContent({ cwd, runId, onReviewCandidate }: {
-  readonly cwd: string; readonly runId?: string; readonly onReviewCandidate?: (id: string) => void;
+function LearningReviewPanelContent({ cwd, runId, decisionId, onReviewCandidate }: {
+  readonly cwd: string; readonly runId?: string; readonly decisionId?: string; readonly onReviewCandidate?: (id: string) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
-  const state = useLearningReviews(cwd, runId);
+  const state = useLearningReviews(cwd, runId, decisionId);
   const [correction, setCorrection] = useState("");
   return <section className="learning-review-panel" aria-label={t("Experience review")}>
     <header className="learning-review-toolbar">
@@ -42,13 +42,13 @@ function LearningReviewPanelContent({ cwd, runId, onReviewCandidate }: {
       </Select>
     </Field>
     {state.policy && state.providers.length === 0 ? <InlineFeedback tone="info">{t("Configure a chat provider without reasoning to save experience.")}</InlineFeedback> : null}
-    {runId ? <>
-      <Field label={t("Correction for the selected skill (optional)")}>
+    {runId || decisionId ? <>
+      {runId ? <Field label={t("Correction for the selected skill (optional)")}>
         <Textarea rows={2} maxLength={4000} value={correction} disabled={Boolean(state.busy)} onChange={event => setCorrection(event.target.value)} />
-      </Field>
+      </Field> : null}
       <Button size="sm" variant="primary" leadingIcon={<Save size={14} />} disabled={!state.policy || !state.sourceAvailable || !state.providerId || Boolean(state.busy)}
         loading={state.busy === "save"} onClick={() => void state.save(correction)}>{t("Save experience")}</Button>
-      <small>{t("Uses the selected run evidence and one bounded model review. A correction requires a skill used in that run.")}</small>
+      <small>{decisionId ? t("Uses only the selected confirmed decision and one bounded model review.") : t("Uses the selected run evidence and one bounded model review. A correction requires a skill used in that run.")}</small>
       {state.policy && !state.sourceAvailable ? <InlineFeedback tone="info">{t("This source has no completed task evidence available for learning.")}</InlineFeedback> : null}
     </> : <div className="learning-review-toolbar">
       <span>{state.policy?.mode === "propose" ? t("Automatic proposals enabled") : t("Automatic learning is off")}</span>
@@ -78,7 +78,7 @@ function LearningReviewResult({ cwd, job, busy, onCancel, onReviewCandidate }: {
     <div className="learning-review-toolbar"><strong>{label}</strong>
       {pending ? <Button size="sm" variant="ghost" disabled={busy} onClick={onCancel}>{t("Cancel")}</Button> : null}
     </div>
-    <small>{t("Run")}: {job.evidence.runId}</small>
+    <small>{job.evidence.decisionId ? t("Decision") : t("Run")}: {job.evidence.decisionId ?? job.evidence.runId}</small>
     {job.candidateIds.map(id => <LearningCandidate key={id} cwd={cwd} candidateId={id} onReviewCandidate={onReviewCandidate} />)}
     <details><summary>{t("Review evidence")}</summary>
       <p>{t("Extracted from recorded evidence; not verified by a new execution.")}</p>

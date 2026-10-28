@@ -13,6 +13,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { useI18n, type Translate } from "../../i18n.js";
+import { LearningReviewDisclosure } from "../../shared/components/learning/LearningReviewPanel.js";
 import { SupportedLocaleOptions } from "../../i18n/SupportedLocaleOptions.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { correctChannelTurnContext, getChannelTurnContext } from "../../api.js";
@@ -230,6 +231,7 @@ export function ChannelInspector({
               <span>
                 <strong>{decision.title}</strong>
                 <small>{decision.status} · {decision.decision}</small>
+                {decision.status === "active" && decision.createdBy === "local-user" ? <LearningReviewDisclosure cwd={cwd} decisionId={decision.id} /> : null}
               </span>
             </div>
           )}

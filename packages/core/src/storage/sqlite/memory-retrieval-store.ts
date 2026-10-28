@@ -43,6 +43,15 @@ export class SqliteMemoryRetrievalStore {
     const queryTerms = tokenizeMemoryQuery([input.query.slice(0, 8_192), ...requestedTags].join(" "));
     const memories: MemoryRecallResult["memories"][number][] = [];
     let candidateCount = 0;
+    const now = new Date().toISOString();
+    const eligible = memoryRecallPredicate(input, workspaceId, now);
+    const scoped = memoryRecallPredicate({ ...input, intent: "review", includeDisabled: true,
+      includePrivate: true, includeSecretAdjacent: true }, workspaceId, now);
+    const counts = this.context.database.prepare(`SELECT count(*) AS total,
+      coalesce(sum(CASE WHEN ${eligible.clause} THEN 1 ELSE 0 END), 0) AS eligible
+      FROM memory_objects WHERE ${scoped.clause}`).get(...eligible.params, ...scoped.params)!;
+    const eligibleCount = Number(counts.eligible);
+    const excludedCount = Number(counts.total) - eligibleCount;
     let strategy: "fts5" | "scan" = "scan";
     // Only an explicitly empty query browses recent memory; a non-matching token is not "show all".
     if (queryTerms.length > 0 || requestedTags.size > 0 || input.query.trim().length === 0) {
@@ -73,7 +82,7 @@ export class SqliteMemoryRetrievalStore {
       request: { ...input, workspaceId },
       memories,
       policyVersion: MEMORY_RECALL_POLICY_VERSION,
-      audit: { strategy, candidateCount, selectedMemoryIds: memories.map(item => item.memory.id) },
+      audit: { strategy, candidateCount, eligibleCount, excludedCount, selectedMemoryIds: memories.map(item => item.memory.id) },
     };
   }
 

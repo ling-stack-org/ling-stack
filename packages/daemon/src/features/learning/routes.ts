@@ -5,7 +5,7 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { isRecord } from "../../shared/validation.js";
-import { captureLearningEvidence } from "./evidence.js";
+import { captureDecisionLearningEvidence, captureLearningEvidence } from "./evidence.js";
 import type { LearningReviewCoordinator } from "./coordinator.js";
 
 export async function handleLearningReviewRoute(input: {
@@ -32,16 +32,18 @@ export async function handleLearningReviewRoute(input: {
         writeJson(response, 200, { cwd, policy }); return;
       }
     } else if (url.pathname === "/skills/learning-reviews") {
-      if (request.method === "GET") { writeJson(response, 200, { cwd, jobs: store.listLearningReviewJobs(undefined, 50, url.searchParams.get("runId") ?? undefined) }); return; }
+      if (request.method === "GET") { writeJson(response, 200, { cwd, jobs: store.listLearningReviewJobs(undefined, 50, url.searchParams.get("runId") ?? undefined, url.searchParams.get("decisionId") ?? undefined) }); return; }
       if (request.method === "POST") {
         const body = await readJsonBody(request, input.config.maxBodyBytes);
-        if (!isRecord(body) || typeof body.runId !== "string" || typeof body.providerPresetId !== "string" ||
+        if (!isRecord(body) || (typeof body.runId !== "string" && typeof body.decisionId !== "string") ||
+          (body.runId !== undefined && body.decisionId !== undefined) || typeof body.providerPresetId !== "string" ||
           (body.correction !== undefined && (typeof body.correction !== "string" || body.correction.length > 4000))) throw new Error("learning_request_invalid");
         const preset = store.getProviderPreset(body.providerPresetId);
         if (!preset?.enabled || !preset.capabilities.includes("chat")) throw new Error("learning_provider_unavailable");
         const governance = store.getWorkspaceSettings().skillGovernancePolicy;
         if (governance.generationMode === "off" || governance.recordingMode !== "user_initiated") throw new Error("learning_generation_disabled");
-        const evidence = captureLearningEvidence(store, body.runId, body.correction as string | undefined);
+        const evidence = typeof body.decisionId === "string" ? captureDecisionLearningEvidence(store, body.decisionId) :
+          captureLearningEvidence(store, body.runId as string, body.correction as string | undefined);
         if (body.correction && !evidence.selectedSkillId) throw new Error("learning_correction_skill_missing");
         const job = store.enqueueLearningReview({ mode: "explicit", evidence, providerPresetId: body.providerPresetId }, new Date().toISOString());
         input.coordinator?.wake(store);

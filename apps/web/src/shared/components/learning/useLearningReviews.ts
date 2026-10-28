@@ -4,7 +4,7 @@ import { cancelLearningReview, createLearningReview, getLearningReviewPolicy, li
 import type { LearningReviewJob, LearningReviewPolicy, ProviderPreset } from "../../../types.js";
 
 /** The caller keys the view by workspace/source; late reads cannot repaint another source. */
-export function useLearningReviews(cwd: string, runId?: string) {
+export function useLearningReviews(cwd: string, runId?: string, decisionId?: string) {
   const [jobs, setJobs] = useState<readonly LearningReviewJob[]>([]);
   const [policy, setPolicy] = useState<LearningReviewPolicy>();
   const [providers, setProviders] = useState<readonly ProviderPreset[]>([]);
@@ -19,21 +19,21 @@ export function useLearningReviews(cwd: string, runId?: string) {
     const revision = ++generation.current;
     try {
       const [reviews, configuration, available, sourceRun] = await Promise.all([
-        listLearningReviews(cwd, runId), getLearningReviewPolicy(cwd), listProviders(cwd),
+        listLearningReviews(cwd, runId, decisionId), getLearningReviewPolicy(cwd), listProviders(cwd),
         runId ? getRun(runId, cwd) : Promise.resolve(undefined),
       ]);
       if (!alive.current || revision !== generation.current) return;
       const supported = available.providers.filter(provider => provider.enabled && provider.capabilities.includes("chat") &&
         provider.api === "openai-completions" && Boolean(provider.baseUrl) && !provider.reasoning);
       setJobs(reviews.jobs); setPolicy(configuration.policy); setProviders(supported);
-      setSourceAvailable(!runId || Boolean(sourceRun?.taskId && ["succeeded", "failed", "cancelled"].includes(sourceRun.status)));
+      setSourceAvailable(!runId || Boolean(sourceRun && ["succeeded", "failed", "cancelled"].includes(sourceRun.status)));
       setProviderId(current => supported.some(provider => provider.id === current) ? current :
         supported.find(provider => provider.id === configuration.policy.providerPresetId)?.id ?? supported[0]?.id ?? "");
       setError("");
     } catch (caught) {
       if (alive.current && revision === generation.current) setError(caught instanceof Error ? caught.message : String(caught));
     }
-  }, [cwd, runId]);
+  }, [cwd, runId, decisionId]);
   useEffect(() => {
     alive.current = true; void load();
     return () => { alive.current = false; generation.current += 1; };
@@ -52,8 +52,8 @@ export function useLearningReviews(cwd: string, runId?: string) {
     finally { mutation.current = false; if (alive.current) setBusy(""); }
   }
   return { jobs, policy, providers, providerId, setProviderId, busy, error, sourceAvailable, refresh: load,
-    save: (correction: string) => runId && providerId ? act("save", () => createLearningReview(cwd, {
-      runId, providerPresetId: providerId, correction: correction.trim() || undefined,
+    save: (correction: string) => (runId || decisionId) && providerId ? act("save", () => createLearningReview(cwd, {
+      runId, decisionId, providerPresetId: providerId, correction: correction.trim() || undefined,
     })) : Promise.resolve(),
     cancel: (id: string) => act(id, () => cancelLearningReview(cwd, id)),
     setMode: (mode: "off" | "propose") => policy ? act("policy", () => updateLearningReviewPolicy(cwd, {

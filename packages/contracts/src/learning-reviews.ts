@@ -2,21 +2,24 @@ import type { RuntimeAttemptFenceV1 } from "./runtime.js";
 
 export interface LearningEvidenceItem {
   readonly id: string;
-  readonly kind: "task" | "tool_start" | "tool_end" | "run_end" | "correction";
+  readonly kind: "task" | "turn" | "decision" | "assistant_message" | "tool_start" | "tool_end" | "run_end" | "correction";
   readonly text: string;
   readonly verified: boolean;
 }
 export interface LearningEvidenceBundle {
   readonly schemaVersion: 1;
   readonly workspaceId: string;
-  readonly runId: string;
-  readonly taskId: string;
+  readonly runId?: string;
+  readonly taskId?: string;
+  readonly turnId?: string;
+  readonly turnUpdatedAt?: string;
+  readonly decisionId?: string;
   readonly channelId?: string;
   readonly teammateId?: string;
   readonly sourceAttemptId?: string;
   readonly selectedSkillId?: string;
   readonly selectedSkillRevisionId?: string;
-  readonly taskUpdatedAt: string;
+  readonly taskUpdatedAt?: string;
   readonly runStatus: "succeeded" | "failed" | "cancelled";
   readonly sourceUpdatedAt: string;
   readonly eventCount: number;
@@ -65,7 +68,9 @@ export interface LearningReviewJob {
   readonly updatedAt: string;
 }
 export interface LearningReviewCreateRequest {
-  readonly runId: string;
+  /** Exactly one source; decisions must be active and explicitly confirmed by the local user. */
+  readonly runId?: string;
+  readonly decisionId?: string;
   readonly providerPresetId: string;
   readonly correction?: string;
 }

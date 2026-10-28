@@ -440,5 +440,6 @@
   "Undo this change": "Undo this change",
   "No definition history yet": "No definition history yet",
   "Restore previous definition": "Restore previous definition",
-  "This creates a new revision. Newer edits cause a conflict and are preserved.": "This creates a new revision. Newer edits cause a conflict and are preserved."
+  "This creates a new revision. Newer edits cause a conflict and are preserved.": "This creates a new revision. Newer edits cause a conflict and are preserved.",
+  "Uses only the selected confirmed decision and one bounded model review.": "Uses only the selected confirmed decision and one bounded model review."
 }

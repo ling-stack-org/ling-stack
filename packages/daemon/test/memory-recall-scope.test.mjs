@@ -89,3 +89,17 @@ test("a run-only request derives verified task/channel/teammate lineage and reje
   assert.equal(resolveAutomaticMemoryRecallScope(f.store, { ...f.request, channelId: "other" }), undefined);
   assert.equal(resolveAutomaticMemoryRecallScope(f.store, { ...f.request, teammateId: "other" }), undefined);
 });
+
+test('durable selection audit contains aggregate exclusions and selected IDs, without query or rejected-source details',async()=>{
+ const events=[];
+ const f=fixture({paths:{cwd:'/synthetic'},appendControlPlaneEvent:(event)=>events.push(event),
+   recallMemory:input=>({request:input,memories:[],policyVersion:'fixture',audit:{strategy:'fts5',candidateCount:2,
+     eligibleCount:4,excludedCount:3,selectedMemoryIds:[]}})});
+ const result=await recallMemory(f.store,{...f.request,query:'private-query-text'});
+ assert.equal(events.length,1); assert.equal(result.audit.traceId,events[0].entityId);
+ assert.equal(events[0].action,'memory.recall_selected'); assert.equal(events[0].data.excludedCount,3);
+ assert.doesNotMatch(JSON.stringify(events),/private-query-text/);
+ await recallMemory(f.store,{...f.request,channelId:'hidden-owner-name',query:'hidden-title'});
+ assert.equal(events[1].data.scopeRejected,true);
+ assert.doesNotMatch(JSON.stringify(events[1]),/hidden-owner-name|hidden-title/);
+});

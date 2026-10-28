@@ -1,6 +1,6 @@
 {
   "locale": "en-US",
-  "sourceRevision": "b4e1f0a73d1a82227f8471da17dc91e05a50500d5f5b1757b00670df558385aa",
+  "sourceRevision": "b2266288ffda0de9677eb848c9baca93d7613c1bdfd865be0d9cd953897fed15",
   "sourceHashes": {
     "{action} (Enter)": "9472217728ec383f5dfdd37d2f84c381ed7b4546d115f6e3e536959810ef5af5",
     "{agent} wants to start task \"{task}\" and needs {permissions}.": "b87261e1f3ceaec90a862105f2885011d44b2722f9979327a3790af82a5dcdf1",
@@ -6592,6 +6592,7 @@
     "user_input.your_answer": "d0e869b777a6967931bd4373c58e06cb6298087670665671b42a402df024ce20",
     "Username": "e3b89e9d33f88e523083d8b4436adcc3726c89e97fd3179a2e102d765d1b16ed",
     "Users can start skill recording explicitly": "28f73f9dbbed3cd31d75674ed90ba6076a77d628d0cebb1e75e3ab1490800b7b",
+    "Uses only the selected confirmed decision and one bounded model review.": "56aeea47eef861624a34aad29d7f1e69e624211a334785fbb1982d35e49fbc4b",
     "Uses the selected run evidence and one bounded model review. A correction requires a skill used in that run.": "6aa3822374478dc0ac2aa19ec73f824925b3271745dba8665ff957843b8a3ceb",
     "Using {target}": "ec10ec6f68e3f7cd3f87ac82dcfdb9ef23c1f67d8edeb8d51e26092e36c5dcfa",
     "Using {tool}": "d6ec6589fbd0bc763cd0a648574778266330db0c46635e0176c5cbe835ae1b33",
@@ -13510,6 +13511,7 @@
     "user_input.your_answer": "Your answer",
     "Username": "Username",
     "Users can start skill recording explicitly": "Users can start skill recording explicitly",
+    "Uses only the selected confirmed decision and one bounded model review.": "Uses only the selected confirmed decision and one bounded model review.",
     "Uses the selected run evidence and one bounded model review. A correction requires a skill used in that run.": "Uses the selected run evidence and one bounded model review. A correction requires a skill used in that run.",
     "Using {target}": "Using {target}",
     "Using {tool}": "Using {tool}",

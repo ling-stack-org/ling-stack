@@ -205,12 +205,12 @@ flowchart TD
 
 | Slice | 实施状态 | 证据与剩余验收 |
 | --- | --- | --- |
-| A | 统一召回边界、真实 owner/membership/lineage 校验已接入 | 新 scope 测试、已有五入口回归；完整 considered/excluded/supplied 审计仍需补齐 |
+| A | 统一召回边界、真实 owner/membership/lineage 校验与资格／排除／选择审计已接入 | 核心资格排除计数、daemon 无结果／拒绝审计与现有 UsedMemoryEvent 分层测试通过；不将选择或供给当成模型实际采纳 |
 | B | FTS5 Unicode 二元组候选索引、事务更新、dirty 回退、重建已实现 | 索引／召回／审核定向测试、1k/10k 合成样例；跨平台 packaged FTS5 仍待实测 |
-| C | 观察治理 service、来源幂等、有限证据提炼和显式任务经验保存已接入 | 有限引用、候选原子提交、纠正到修订、局部 HTTP transport 测试；确认决策／turn 来源 adapter 待接 |
+| C | 观察治理 service、来源幂等、有限证据提炼和显式经验保存已接入；支持持久任务、三种会话 turn 和已确认决策 | 三种无 task turn 来源、决策确认／拒绝／替换、归属、候选原子提交、纠正到修订及 transport 测试通过 |
 | D | 默认关闭的持久作业、WorkUnit/Attempt、可调低预算、取消、前台让行和重启 fencing 已接入 | 定向测试及 daemon HTTP 验收已通过；真实模型质量／费用仍待实测 |
 | E | 定义 before/after 历史、CAS、幂等撤销、可恢复通知及运行定义快照已实现 | 前端历史、差异、确认撤销已接；真实浏览器纠正→审核→原技能修订→撤销及数据库内容恢复已通过 |
-| F | 已接统一回复 footer、run 详情和 AI evolution 的按需学习面板 | 本地受控模型完成浏览器闭环；普通无 task 对话来源和跨会话来源验收仍待补 |
+| F | 已接统一回复 footer、run 详情、频道决策和 AI evolution 的按需学习面板 | 本地受控模型完成浏览器纠正闭环；三种会话来源服务测试通过，更多真实界面来源验收仍待补 |
 | G | 未开始 | LanceDB、真实 embedding 质量、故障降级 |
 | H | 未开始 | Wiki 编译、隔离浏览和导出 |
 

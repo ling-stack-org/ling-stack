@@ -33,6 +33,6 @@ export function createScopedLearningCandidate(store: RunStore, job: LearningRevi
       ...draft.prerequisites.map(value => `Prerequisite: ${value}`), ...draft.steps.map(step => step.instruction),
       ...draft.checks.map(check => `Verify: ${check.check}; expected ${check.expected}`)] },
     reason: `Learning review ${job.id}; propose a scoped method for review`, createdBy: "ai-draft",
-    sourceRefs: [{ type: "run", id: job.evidence.runId, label: `Evidence ${job.evidence.digest}` }],
+    sourceRefs: [{ type: job.evidence.decisionId ? "channel_decision" : "run", id: job.evidence.decisionId ?? job.evidence.runId!, label: `Evidence ${job.evidence.digest}` }],
   }, now).id;
 }

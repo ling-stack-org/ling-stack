@@ -214,3 +214,21 @@ test("model recall shares authorized workspace/channel context without granting 
   assert.deepEqual(new Set(ids(f.recall({ intent: "review", teammateId: "agent_a", includePrivate: true, includeSecretAdjacent: true }))),
     new Set(["public", "channel_private", "workspace_private", "mine", "secret"]));
 });
+
+test('recall audit separates in-scope eligibility exclusions, retrieval candidates and selection without leaking rejected content', async t => {
+ const f=await fixture(t);
+ f.create('chosen',{title:'sentinel'}); f.create('unmatched');
+ f.create('pending',{title:'sentinel',reviewState:'candidate'});
+ f.create('secret',{title:'DO NOT EXPOSE',body:'hidden-sensitive',sensitivity:'secret-adjacent'});
+ f.create('expired',{title:'sentinel'}); f.health('expired',{validUntil:'2000-01-01T00:00:00Z'});
+ f.create('foreign',{ownerId:'other',title:'foreign-private-body'});
+ const result=f.recall();
+ assert.equal(result.audit.eligibleCount,2); assert.equal(result.audit.excludedCount,3);
+ assert.deepEqual(result.audit.selectedMemoryIds,['chosen']);
+ assert.ok(result.audit.candidateCount>=1); assert.ok(result.audit.candidateCount<=2);
+ assert.doesNotMatch(JSON.stringify(result.audit),/foreign|hidden-sensitive|DO NOT EXPOSE|pending|expired/);
+ assert.deepEqual(f.store.listUsedMemoryEvents(),[],'selection is not evidence of supplied context');
+ f.store.recordUsedMemoryEvent({memoryIds:['chosen'],intent:'channel-reply',channelId:'allowed',
+   recallQuery:'sentinel',policyVersion:result.policyVersion,responseId:'reply'},'2026-10-29T00:00:00Z');
+ assert.deepEqual(f.store.listUsedMemoryEvents()[0].memoryIds,['chosen']);
+});

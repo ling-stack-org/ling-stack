@@ -346,7 +346,10 @@ channel; task/run lineage must agree with its persisted owner. An unpersisted ta
 can receive verified shared context but cannot claim task-specific memory. Explicit local
 search/review keeps its management inspection semantics.
 
-Selection audit reports strategy, scoped candidate work and selected IDs. It carries no
+Selection audit reports strategy, scoped candidate work, eligibility/exclusion counts and
+selected IDs. The daemon persists `memory.recall_selected` control-plane events, including
+empty and rejected recalls. Exclusion counts are restricted to allowed owners; rejected
+lineage events contain no claimed owner, query text or source metadata. It carries no
 rejected title/body. `UsedMemoryEvent` records which sources were supplied to context;
 it does not prove that the model adopted or verified a remembered conclusion. Packaged
 runtime FTS5 availability and real embedding quality require separate acceptance.

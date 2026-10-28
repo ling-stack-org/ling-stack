@@ -440,5 +440,6 @@
   "Undo this change": "撤销此次改动",
   "No definition history yet": "暂无技能定义历史",
   "Restore previous definition": "恢复先前定义",
-  "This creates a new revision. Newer edits cause a conflict and are preserved.": "恢复会创建一个新版本。如果已有后续编辑，将提示冲突并保留后续编辑。"
+  "This creates a new revision. Newer edits cause a conflict and are preserved.": "恢复会创建一个新版本。如果已有后续编辑，将提示冲突并保留后续编辑。",
+  "Uses only the selected confirmed decision and one bounded model review.": "仅使用选定的已确认决策，进行一次有预算限制的经验提炼。"
 }

@@ -18,16 +18,27 @@ A policy change cancels queued/running automatic jobs. Skill generation/recordin
 remain additional gates.
 
 `POST /skills/learning-reviews?cwd=...` with `runId`, `providerPresetId` and optional
-`correction` explicitly enrolls one selected task. The daemon resolves task/channel/teammate
+`correction` explicitly enrolls one selected Run. The daemon resolves task/channel/teammate
 ownership and membership from the durable Run, never from a supplied scope. The first
-source adapter requires a persisted task and terminal Run. Failed/cancelled Runs are
+source adapter requires a terminal Run and either a persisted task or a durable terminal
+Turn linked to its owning non-archived thread. Normal, teammate-direct and channel reply
+Turns preserve their durable owners; a transient request task id never grants task scope.
+Failed/cancelled Runs are
 available only through explicit selection; their status is preserved and successful local
 steps need actual successful tool evidence. A correction requires a selected skill.
 
-Automatic enrollment considers only newly completed successful multi-step Runs after the
-policy's enablement time. It does not scan old conversations. Confirmed decision/turn
-sources remain a follow-up adapter; private conversation Runs without a persisted task
-are safely skipped by the current adapter.
+Alternatively `decisionId` selects one active channel decision created by `local-user`.
+Exactly one source is accepted. Unconfirmed AI drafts, rejected or superseded decisions
+are ineligible. Only the decision text is read; referenced conversations are not traversed.
+Decision evidence is not successful tool verification, so it can support knowledge candidates
+but cannot manufacture a verified procedure. Channel inspector decisions reuse the same UI.
+
+Automatic enrollment considers newly completed successful multi-step Runs and newly
+confirmed decisions after policy enablement. Each bounded sweep checks ten recent Runs
+and ten decisions in each of twenty recent channels; older items remain explicitly savable.
+It does not scan old conversations. A decision has no invented task/Run. Memory candidates
+use the existing task owner when available, otherwise the selected channel, teammate or Run.
+Source edits, rejection, archive and ownership/membership changes invalidate frozen evidence.
 
 The frozen evidence contains at most 64 items and less than 32 KiB. The current adapter
 uses a smaller 6,000-byte text window, redacts secrets, records omitted ranges, event count,
@@ -39,7 +50,7 @@ new execution. Missing results may produce `none`.
 ## Durable job and execution lifecycle
 
 Migration 179 adds `learning_review_policy` and `learning_review_jobs`. A unique
-workspace/source Run/source Attempt/evidence digest identifies one logical job across
+workspace/source identity/source Attempt/evidence digest identifies one logical job across
 manual and automatic enrollment. The job records policy revision, evidence, status,
 WorkUnit/Attempt fence, reserved budget and output candidate ids. A partial unique index
 permits one running review per workspace. Repeated enrollment returns the existing job.

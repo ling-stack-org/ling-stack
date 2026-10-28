@@ -7,7 +7,7 @@ import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { processProcedureObservationJobWithinTransaction } from "../skills/procedure-observation-service.js";
 import { runMemoryConsolidationJob } from "../memory/consolidation.js";
-import { captureLearningEvidence, learningEvidenceCurrent } from "./evidence.js";
+import { captureDecisionLearningEvidence, captureLearningEvidence, learningEvidenceCurrent } from "./evidence.js";
 import { executeLearningModel, prepareLearningModelRequest } from "./model.js";
 import { parseLearningDraft, type LearningDraft } from "./extractor.js";
 
@@ -39,9 +39,15 @@ export function commitLearningDraft(input: { readonly store: RunStore; readonly 
     let reason: string | undefined;
     if (draft.kind === "none") reason = draft.reason;
     else if (draft.kind === "memory") {
-      const sourceRefs = [{ type: "run-event" as const, id: draft.evidence.evidenceId, label: `Run ${job.evidence.runId}` }];
-      const consolidated = runMemoryConsolidationJob(store, { kind: "task_run_lesson", sourceKind: "task_run_summary",
-        confidence: "medium", candidate: { scopeType: "task", ownerId: job.evidence.taskId,
+      const evidence = job.evidence;
+      const sourceRefs = [{ type: evidence.decisionId ? "decision" as const : "run-event" as const,
+        id: evidence.decisionId ?? draft.evidence.evidenceId, label: `Evidence ${evidence.decisionId ?? evidence.runId}` }];
+      const scopeType = evidence.taskId ? "task" : evidence.channelId ? "channel" : evidence.teammateId ? "teammate" : "run";
+      const ownerId = evidence.taskId ?? evidence.channelId ?? evidence.teammateId ?? evidence.runId;
+      if (!ownerId) throw new Error("learning_source_scope_unavailable");
+      const consolidated = runMemoryConsolidationJob(store, { kind: evidence.decisionId ? "channel_decision_summary" : evidence.taskId ? "task_run_lesson" : "private_chat_summary",
+        sourceKind: evidence.decisionId ? "channel_decision" : evidence.taskId ? "task_run_summary" : "private_chat",
+        confidence: "medium", candidate: { scopeType, ownerId,
           title: draft.title, body: draft.body, sourceRefs, sensitivity: job.evidence.channelId ? "normal" : "private" } }, new Date().toISOString());
       ids.push(...consolidated.candidates.map(candidate => candidate.id));
       events.push(writer.appendControlPlaneEvent({ workspaceId: job.workspaceId, cwd: store.paths.cwd, domain: "memory",
@@ -129,6 +135,13 @@ export class LearningReviewCoordinator {
         if (evidence.items.filter(item => item.verified).length < 2) continue;
         store.enqueueLearningReview({ mode: "automatic", evidence, providerPresetId: policy.providerPresetId }, new Date().toISOString());
       } catch { /* Ineligible lineage or exhausted automatic quota is a safe skip. */ }
+    }
+    for (const channel of store.listChannels({ archived: false, limit: 20 })) {
+      for (const decision of store.listChannelDecisions({ channelId: channel.id, status: "active", limit: 10 })) {
+        if (!policy.updatedAt || decision.createdAt < policy.updatedAt || decision.createdBy !== "local-user") continue;
+        try { store.enqueueLearningReview({ mode: "automatic", evidence: captureDecisionLearningEvidence(store, decision.id),
+          providerPresetId: policy.providerPresetId }, new Date().toISOString()); } catch { /* Changed scope or quota. */ }
+      }
     }
   }
   private async process(store: RunStore, selected: LearningReviewJob, controller: AbortController): Promise<void> {

@@ -11,7 +11,7 @@ export interface LearningReviewStore {
   updateLearningReviewPolicy(input: LearningReviewPolicyUpdateRequest, now: string): LearningReviewPolicy;
   enqueueLearningReview(input: EnqueueLearningReviewInput, now: string): LearningReviewJob;
   getLearningReviewJob(id: string): LearningReviewJob | undefined;
-  listLearningReviewJobs(status?: LearningReviewJob["status"], limit?: number, runId?: string): LearningReviewJob[];
+  listLearningReviewJobs(status?: LearningReviewJob["status"], limit?: number, runId?: string, decisionId?: string): LearningReviewJob[];
   claimLearningReviewJob(id: string, fence: RuntimeAttemptFenceV1, now: string): LearningReviewJob | undefined;
   reserveLearningReviewModelRequest(id: string, fence: RuntimeAttemptFenceV1, inputTokens: number, now: string): LearningReviewJob;
   finishLearningReviewJob(id: string, fence: RuntimeAttemptFenceV1, status: "succeeded" | "failed" | "cancelled",

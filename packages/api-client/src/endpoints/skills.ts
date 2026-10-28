@@ -83,8 +83,8 @@ export const skillEndpoints = {
   async createLearningReview(this: LingDaemonEndpointContext, cwd: string, input: LearningReviewCreateRequest): Promise<LearningReviewJobResponse> {
     return this._post("/skills/learning-reviews", { cwd }, input);
   },
-  async listLearningReviews(this: LingDaemonEndpointContext, cwd: string, runId?: string): Promise<LearningReviewListResponse> {
-    return this._get("/skills/learning-reviews", { cwd, runId });
+  async listLearningReviews(this: LingDaemonEndpointContext, cwd: string, runId?: string, decisionId?: string): Promise<LearningReviewListResponse> {
+    return this._get("/skills/learning-reviews", { cwd, runId, decisionId });
   },
   async getLearningReview(this: LingDaemonEndpointContext, cwd: string, jobId: string): Promise<LearningReviewJobResponse> {
     return this._get(`/skills/learning-reviews/${encodeURIComponent(jobId)}`, { cwd });

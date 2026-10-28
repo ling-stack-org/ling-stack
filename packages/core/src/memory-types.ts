@@ -281,6 +281,10 @@ export interface MemoryRecallResult {
   readonly audit?: {
     readonly strategy: "fts5" | "scan";
     readonly candidateCount: number;
+    /** Counts only within allowed owners; excluded objects are never decoded or named. */
+    readonly eligibleCount?: number;
+    readonly excludedCount?: number;
+    readonly traceId?: string;
     readonly selectedMemoryIds: readonly string[];
     readonly scopeRejected?: boolean;
   };
