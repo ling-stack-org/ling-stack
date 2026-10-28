@@ -1,4 +1,4 @@
-name: Desktop prerelease
+name: Desktop candidate
 run-name: Desktop ${{ inputs.operation || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }} · ${{ inputs.release_tag || github.event.pull_request.head.sha }}
 
 on:
@@ -14,11 +14,11 @@ on:
         type: string
         required: true
       release_tag:
-        description: New prerelease tag matching VERSION (for example v0.1.2-alpha.2)
+        description: New release tag matching VERSION (for example v0.1.3)
         type: string
         required: true
       create_draft:
-        description: Create a Draft prerelease after BOTH builds pass (source must be on main)
+        description: Create a Draft release after BOTH builds pass (source must be on main)
         type: boolean
         default: false
   # Explicit maintainer opt-in permits inspecting a new workflow before landing it.
@@ -30,7 +30,7 @@ permissions:
 
 concurrency:
   # Unrelated label events must not replace a queued native package build.
-  group: desktop-prerelease-${{ inputs.release_tag || (contains(fromJSON('["desktop-package-inspect", "desktop-package-build"]'), github.event.label.name) && github.event.pull_request.number) || github.run_id }}
+  group: desktop-candidate-${{ inputs.release_tag || (contains(fromJSON('["desktop-package-inspect", "desktop-package-build"]'), github.event.label.name) && github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -51,7 +51,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22.22.1
-      - name: Validate immutable source and matching prerelease versions
+      - name: Validate immutable source and matching product versions
         id: candidate
         shell: bash
         env:

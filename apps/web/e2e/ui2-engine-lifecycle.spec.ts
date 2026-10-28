@@ -13,15 +13,13 @@ async function captureEvidence(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: `${evidenceDirectory}${name}` });
 }
 
-/** Sidebar tooltips intercept pointer hit tests; dispatch the click directly. */
 async function clickSettingsEntry(page: Page): Promise<void> {
-  await page.locator('button[aria-label="Settings"], button[aria-label="设置"]').waitFor({ state: "attached" });
-  await page.evaluate(() => {
-    const button = [...document.querySelectorAll("button")]
-      .find((candidate) => ["Settings", "设置"].includes(candidate.getAttribute("aria-label") ?? ""));
-    if (!(button instanceof HTMLElement)) throw new Error("settings entry not found");
-    button.click();
-  });
+  const settingsEntry = page.locator('button[aria-label="Settings"], button[aria-label="设置"]');
+  await settingsEntry.waitFor({ state: "attached" });
+  // A fresh fixture home shows the first-run dialog; dismiss it before real clicks work.
+  const skipFirstRun = page.getByRole("button", { name: /Skip for now|稍后再说/ }).first();
+  if (await skipFirstRun.isVisible().catch(() => false)) await skipFirstRun.click();
+  await settingsEntry.click();
 }
 
 test("engine settings discovers installed engines and offers managed install", async ({ page }) => {
