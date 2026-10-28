@@ -6483,4 +6483,5 @@ export const zhCN = {
   "End": "结束",
   "Automation run finished": "自动化运行完成",
   "Automation run failed": "自动化运行失败",
+  "Chinese draft smoke probe": "中国草案烟雾探测器",
 } as const satisfies Readonly<Record<string, string>>;

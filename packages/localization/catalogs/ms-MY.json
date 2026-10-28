@@ -1,6 +1,6 @@
 {
   "locale": "ms-MY",
-  "sourceRevision": "aab656282e8717e8d97044a7de3a8a8fe1375148356659313a7b8056c81cdf8a",
+  "sourceRevision": "fa57eb84f0f273488dd56d2584180e9418504623e9ce0fc9a6fd9de44e90edac",
   "sourceHashes": {
     "{action} (Enter)": "9472217728ec383f5dfdd37d2f84c381ed7b4546d115f6e3e536959810ef5af5",
     "{agent} wants to start task \"{task}\" and needs {permissions}.": "b87261e1f3ceaec90a862105f2885011d44b2722f9979327a3790af82a5dcdf1",
@@ -1139,6 +1139,7 @@
     "Checksum": "11c94bc7fb13afeb2b3fb16c1dbe9206dc09560f1b31420f2d46210ca4ded0a8",
     "Child instruction": "199b711ae2e972bbec1647d63c683f1d8c0204ce06bf634b6400cce3cef6c10d",
     "Chinese": "8a9779f421280dfc90a1178539800fb0f3b5244af428b6125703ef068307e24b",
+    "Chinese draft smoke probe": "6d2787ef104b2f21a82b2db615b630098b37c84929686fe22642f28a537c0039",
     "Choose a .ling-theme file.": "7a0823a874def48fa340e70284879c47f518cfbb8f7cfd82f65aceb09ae70a59",
     "Choose a changed file to inspect its diff.": "001a8ac90e5717925743422516ec40acf5ae94f63a1535496f74583037c6edaa",
     "Choose a channel in the app before configuring external work.": "90370e37401d3976ceb5c0a4aca44788b02cc92ee4b1e7e96340ff22306c2e67",
@@ -8023,6 +8024,7 @@
     "Checksum": "Checksum",
     "Child instruction": "Arahan anak",
     "Chinese": "cina",
+    "Chinese draft smoke probe": "Siasatan asap draf Cina",
     "Choose a .ling-theme file.": "Pilih fail .ling-theme.",
     "Choose a changed file to inspect its diff.": "Pilih fail yang diubah untuk memeriksa perbezaannya.",
     "Choose a channel in the app before configuring external work.": "Pilih saluran dalam apl sebelum mengkonfigurasi kerja luaran.",
