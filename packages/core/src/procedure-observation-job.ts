@@ -25,6 +25,8 @@ export interface ProcedureObservationJobInput {
   readonly teammateId?: string;
   readonly taskId?: string;
   readonly selectedSkillId?: string;
+  /** Daemon-owned provenance; never accepted from observation HTTP requests. */
+  readonly learningReviewJobId?: string;
   readonly terminalStatus?: ProcedureObservationJobTerminalStatus;
   readonly toolLabels?: readonly string[];
   readonly validationLabels?: readonly string[];
@@ -188,6 +190,7 @@ function sourceRefsFromJob(input: ProcedureObservationJobInput, jobKey: string):
   if (input.reviewActionId) {
     refs.push({ type: "decision", id: input.reviewActionId, label: "Review action" });
   }
+  if (input.learningReviewJobId) refs.push({ type: "learning-review", id: input.learningReviewJobId, label: "Learning review evidence" });
   if (input.selectedSkillId) {
     refs.push({ type: "skill", id: input.selectedSkillId, label: "Selected skill" });
   }

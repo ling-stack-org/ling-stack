@@ -1,3 +1,4 @@
+import { applyLearningReviewMigration } from "./learning-review-migration.js";
 import type { DatabaseSync } from "node:sqlite";
 import { normalizeChannelRuntimePolicy } from "../../workspace-types.js";
 import { stringifyJson } from "./helpers.js";
@@ -6011,4 +6012,5 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
   initializeMemorySearchIndex(database);
   applyProcedureObservationJobMigration(context);
   applySkillDefinitionRevisionMigration(context);
+  applyLearningReviewMigration(context);
 }

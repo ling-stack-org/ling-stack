@@ -10,6 +10,13 @@ export type MemoryRecallStore = Pick<RunStore, "recallMemory" | "getAiTeammate" 
 export function resolveAutomaticMemoryRecallScope(
   store: MemoryRecallStore, input: MemoryRecallRequest,
 ): MemoryRecallRequest | undefined {
+  const run = input.runId ? store.getRun(input.runId) : undefined;
+  if (input.runId && (!run || (input.taskId && input.taskId !== run.taskId) ||
+    (input.channelId && input.channelId !== run.channelId) ||
+    (input.teammateId && input.teammateId !== run.teammateId && !isLingAgentTeammateId(input.teammateId)))) return undefined;
+  // A durable Run supplies missing lineage. Explicit conflicting owners never widen access.
+  if (run) input = { ...input, taskId: input.taskId ?? run.taskId, channelId: input.channelId ?? run.channelId,
+    teammateId: input.teammateId ?? run.teammateId };
   const teammate = input.teammateId ? store.getAiTeammate(input.teammateId)
     ?? store.getAiTeammate(createBuiltinAiTeammateId(input.teammateId)) : undefined;
   const systemAgent = isLingAgentTeammateId(input.teammateId);
@@ -26,7 +33,6 @@ export function resolveAutomaticMemoryRecallScope(
   const task = input.taskId ? store.getTask(input.taskId) : undefined;
   if (task && (task.workspaceId !== workspaceId || task.channelId !== channel?.id ||
     (task.assigneeTeammateId && task.assigneeTeammateId !== teammate?.id && !systemAgent))) return undefined;
-  const run = input.runId ? store.getRun(input.runId) : undefined;
   if (input.runId && (!run || run.taskId !== task?.id || run.channelId !== channel?.id ||
     run.teammateId !== (teammate?.id ?? (systemAgent ? LING_AGENT_ID : undefined)))) return undefined;
   return { ...input, workspaceId, teammateId: teammate?.id ?? (systemAgent ? LING_AGENT_ID : undefined),

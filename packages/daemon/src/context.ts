@@ -1,3 +1,4 @@
+import type { LearningReviewCoordinator } from "./features/learning/coordinator.js";
 import type {
   McpServer,
   McpRuntimeStatusSnapshot,
@@ -211,6 +212,7 @@ export interface DaemonDependencies {
 }
 
 export interface DaemonContext {
+  readonly learningReviewCoordinator?: LearningReviewCoordinator;
   readonly config: ResolvedDaemonConfig;
   readonly runnerRegistry: RunnerRegistry;
   readonly extensionRegistry: LingExtensionRegistry;

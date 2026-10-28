@@ -11,7 +11,7 @@ import { listEffectiveSkillRegistryEntries } from "./registry.js";
 import type { ParsedCreateSkillCandidateRequest } from "./schemas.js";
 
 type SkillRouteStore = RunStore;
-interface DeferredCandidateEvents {
+export interface DeferredCandidateEvents {
   readonly events: ControlPlaneEvent[];
   readonly appendEvent: RunStore["appendControlPlaneEvent"];
   readonly workspaceId: string;
@@ -47,7 +47,7 @@ export function processProcedureObservationJob(input: {
   return result;
 }
 
-function processProcedureObservationJobWithinTransaction(input: {
+export function processProcedureObservationJobWithinTransaction(input: {
   readonly store: SkillRouteStore;
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly cwd: string;
@@ -165,6 +165,35 @@ function processProcedureObservationJobWithinTransaction(input: {
         generationDecision,
       },
     };
+  }
+
+  // A grounded correction targets the selected editable definition, but remains a pending draft.
+  const target = job.source === "user_correction" && job.selectedSkillId ? store.getSkillRegistryEntry(job.selectedSkillId) : undefined;
+  if (target && ["custom", "skill-directory", "agents-md"].includes(target.source) && target.reviewStatus === "published") {
+    const proposed = skillCandidateInputFromObservation(observation);
+    const withAnalysis = withDuplicateAnalysis({ ...proposed, targetSkillId: target.id, proposedAction: "update_existing" }, store);
+    if (withAnalysis.duplicateAnalysis.matchedCandidateIds.length > 0) {
+      const generationDecision = persistGenerationDecision(store, { observation, route, source: generationSource,
+        decision: "append_evidence", duplicateAnalysis: withAnalysis.duplicateAnalysis,
+        reason: "The correction overlaps an existing pending revision; evidence was retained for review.", now });
+      return { statusCode: 202, body: { cwd, jobKey: built.jobKey, observation, route, action: "evidence_recorded", generationDecision } };
+    }
+    const candidate = store.createSkillCandidate({ ...withAnalysis,
+      definition: { ...withAnalysis.definition, requiredTools: target.definition.requiredTools,
+        requiredProviderCapabilities: target.definition.requiredProviderCapabilities,
+        skillDefinition: { ...target.definition, summary: observation.summary,
+          promptFragments: [...observation.positiveTriggers.map(value => `Apply when: ${value}`),
+            ...observation.negativeTriggers.map(value => `Do not apply when: ${value}`),
+            ...observation.procedureSteps.map(step => step.instruction ?? step.title),
+            ...observation.validationSteps.map(step => `Validate: ${step.commandOrCheck ?? step.title}; expected: ${step.expectedResult ?? "inspect evidence"}`)] } },
+      reviewNotes: [...(withAnalysis.reviewNotes ?? []), `Proposed against definition revision ${store.getSkillDefinitionRevision(target.id)?.id ?? "unknown"}; not runtime validated.`],
+    }, now);
+    const generationDecision = persistGenerationDecision(store, { observation, route, source: generationSource,
+      decision: "create_skill_candidate", duplicateAnalysis: candidate.duplicateAnalysis,
+      createdCandidateId: candidate.id, reason: "Grounded correction proposed an editable skill revision; authority and bindings were preserved.", now });
+    appendSkillCandidateChangedEvent(store, controlPlaneEvents, cwd, "revision_proposed", candidate.id, candidate.status, committedEvents);
+    return { statusCode: 201, body: { cwd, jobKey: built.jobKey, reusedObservation: false, observation, route,
+      action: "revision_candidate_created", candidate, generationDecision } };
   }
 
   if (!explicitObservationJob) {

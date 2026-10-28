@@ -1,3 +1,4 @@
+import { LearningReviewCoordinator } from "./features/learning/coordinator.js";
 import { flushSkillDefinitionRevisionNotices } from "./features/skills/revision-notices.js";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
@@ -312,6 +313,7 @@ export function createDaemonServer(
   let userInputDeliveryWorker: UserInputDeliveryWorker | undefined;
   const answerDeliveryStores = new Set<RunStore>();
   const approvalRecoveryStores = new Set<RunStore>();
+  let learningReviewCoordinator: LearningReviewCoordinator | undefined;
   let approvalRecoveryTimer: ReturnType<typeof setInterval> | undefined;
   let approvalAutoReviewRecoveryCoordinator: ApprovalAutoReviewRecoveryCoordinator | undefined;
   let daemonRunnerRecoveryCoordinator: DaemonRunnerRecoveryCoordinator | undefined;
@@ -384,6 +386,7 @@ export function createDaemonServer(
       });
     }
     if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
+    learningReviewCoordinator?.registerStore(store);
     initializedOwnedStores.add(store);
     pendingOwnedStores.delete(store);
   };
@@ -723,7 +726,10 @@ export function createDaemonServer(
     getStore: () => storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
     events: controlPlaneEvents,
   });
+  learningReviewCoordinator = new LearningReviewCoordinator({ runtimeSupervisor, secretResolver, controlPlaneEvents });
+  for (const store of approvalRecoveryStores) learningReviewCoordinator.registerStore(store);
   const context: DaemonContext = {
+    learningReviewCoordinator,
     config: resolvedConfig,
     runnerRegistry,
     extensionRegistry,
@@ -963,6 +969,7 @@ export function createDaemonServer(
       }, () => daemon.stop());
     },
     stop: async () => {
+      learningReviewCoordinator?.beginShutdown();
       humanEvaluations.close();
       storeRegistry.mediaLocalExecutions.beginShutdown();
       if (approvalRecoveryTimer) clearInterval(approvalRecoveryTimer);
@@ -1008,6 +1015,7 @@ export function createDaemonServer(
         await userInputDeliveryWorker.close();
         await automationSchedulers.waitForIdle();
         await runEvaluationScheduler.waitForIdle();
+        await learningReviewCoordinator?.drain();
         await providerImportShutdown;
         await cuaDriverActivationCoordinator.shutdown();
         await activeRuns.waitForIdle();

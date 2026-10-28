@@ -1,3 +1,5 @@
+import type { LearningReviewCreateRequest, LearningReviewPolicyUpdateRequest, LearningReviewPolicyResponse,
+  LearningReviewJobResponse, LearningReviewListResponse } from "@ling-stack/contracts";
 import type {
   CandidateGenerationDecisionAction,
   CandidateGenerationDecisionListResponse,
@@ -72,6 +74,25 @@ import type {
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
 export const skillEndpoints = {
+  async getLearningReviewPolicy(this: LingDaemonEndpointContext, cwd: string): Promise<LearningReviewPolicyResponse> {
+    return this._get("/skills/learning-policy", { cwd });
+  },
+  async updateLearningReviewPolicy(this: LingDaemonEndpointContext, cwd: string, input: LearningReviewPolicyUpdateRequest): Promise<LearningReviewPolicyResponse> {
+    return this._put("/skills/learning-policy", { cwd }, input);
+  },
+  async createLearningReview(this: LingDaemonEndpointContext, cwd: string, input: LearningReviewCreateRequest): Promise<LearningReviewJobResponse> {
+    return this._post("/skills/learning-reviews", { cwd }, input);
+  },
+  async listLearningReviews(this: LingDaemonEndpointContext, cwd: string): Promise<LearningReviewListResponse> {
+    return this._get("/skills/learning-reviews", { cwd });
+  },
+  async getLearningReview(this: LingDaemonEndpointContext, cwd: string, jobId: string): Promise<LearningReviewJobResponse> {
+    return this._get(`/skills/learning-reviews/${encodeURIComponent(jobId)}`, { cwd });
+  },
+  async cancelLearningReview(this: LingDaemonEndpointContext, cwd: string, jobId: string): Promise<LearningReviewJobResponse> {
+    return this._post(`/skills/learning-reviews/${encodeURIComponent(jobId)}/cancel`, { cwd }, {});
+  },
+
   async getOfficialSkillSourceStatus(this: LingDaemonEndpointContext, cwd: string): Promise<OfficialSkillSourceStatusResponse> {
     return this._get("/skills/sync/gstack/status", { cwd });
   },

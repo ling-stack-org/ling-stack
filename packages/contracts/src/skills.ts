@@ -617,7 +617,8 @@ export type SkillCandidateSourceRefType =
   | "run-event"
   | "artifact"
   | "import"
-  | "observation-job";
+  | "observation-job"
+  | "learning-review";
 
 export interface SkillCandidateSourceRef {
   readonly type: SkillCandidateSourceRefType;
@@ -806,6 +807,8 @@ export interface ProcedureObservationRequest {
 export type ProcedureObservationJobTerminalStatus = "succeeded" | "failed" | "cancelled";
 
 export interface ProcedureObservationJobRequest {
+  readonly effectiveAttemptId?: string;
+  readonly evidenceVersion?: string;
   readonly id?: string;
   readonly workspaceId?: string;
   readonly source: ProcedureObservationSource;

@@ -1,6 +1,6 @@
 # Ling 记忆与技能学习实施计划
 
-Status: implementing; isolated delivery branch; S0/S1 code and focused tests in progress
+Status: implementing; isolated delivery branch; scoped recall, definition history, and bounded learning backend implemented; UI and optional derivatives in progress
 Owner: memory, skill governance, and daemon runtime maintainers
 Last verified: 2026-10-29
 Document type: cross-feature implementation plan
@@ -207,8 +207,8 @@ flowchart TD
 | --- | --- | --- |
 | A | 统一召回边界、真实 owner/membership/lineage 校验已接入 | 新 scope 测试、已有五入口回归；完整 considered/excluded/supplied 审计仍需补齐 |
 | B | FTS5 Unicode 二元组候选索引、事务更新、dirty 回退、重建已实现 | 索引／召回／审核定向测试、1k/10k 合成样例；跨平台 packaged FTS5 仍待实测 |
-| C | 观察治理 service、数据库级来源幂等和原子候选提交已实现 | 两独立 writer、超过 500 条、旧键迁移、失败回滚通过；真实有限证据提炼仍待完成 |
-| D | 未开始 | 默认关闭的学习作业、预算、恢复和 fencing |
+| C | 观察治理 service、来源幂等、有限证据提炼和显式任务经验保存已接入 | 有限引用、候选原子提交、纠正到修订、局部 HTTP transport 测试；确认决策／turn 来源 adapter 待接 |
+| D | 默认关闭的持久作业、WorkUnit/Attempt、可调低预算、取消、前台让行和重启 fencing 已接入 | 定向测试及 daemon HTTP 验收已通过；真实模型质量／费用仍待实测 |
 | E | 定义 before/after 历史、CAS、幂等撤销、可恢复通知及运行定义快照已实现 | 历史／撤销／通知恢复和冻结输入测试；前端历史与差异入口待接 |
 | F | 未开始 | 现有审核与统一会话展示 |
 | G | 未开始 | LanceDB、真实 embedding 质量、故障降级 |

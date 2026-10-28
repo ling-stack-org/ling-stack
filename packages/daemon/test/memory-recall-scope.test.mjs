@@ -80,3 +80,12 @@ test("explicit search/review retain existing local management inspection semanti
     assert.deepEqual(f.calls.at(-1), input);
   }
 });
+
+
+test("a run-only request derives verified task/channel/teammate lineage and rejects conflicting explicit owners", () => {
+  const f = fixture();
+  const scope = resolveAutomaticMemoryRecallScope(f.store, { runId: "run", query: "receipt", intent: "task-run" });
+  for (const key of ["taskId", "channelId", "teammateId"]) assert.equal(scope[key], f.request[key]);
+  assert.equal(resolveAutomaticMemoryRecallScope(f.store, { ...f.request, channelId: "other" }), undefined);
+  assert.equal(resolveAutomaticMemoryRecallScope(f.store, { ...f.request, teammateId: "other" }), undefined);
+});

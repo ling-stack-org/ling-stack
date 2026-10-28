@@ -1,3 +1,5 @@
+import { SqliteLearningReviewStore } from "./sqlite/learning-review-store.js";
+import type { LearningReviewStore } from "../learning-review-types.js";
 import { drainSkillDefinitionRevisionNotices } from "./sqlite/skill-definition-revision-store.js";
 import { SqliteWorkSummaryStore } from "./sqlite/work-summary-store.js";
 import { applyWorkSummaryMigration } from "./sqlite/work-summary-migration.js";
@@ -762,6 +764,7 @@ export interface SqliteRunStoreOptions {
 export class SqliteRunStore implements RunStore {
   readonly paths: LingStackRuntimePaths;
   private readonly database: DatabaseSync;
+  private readonly learningReviews: SqliteLearningReviewStore;
   private readonly legacyContinuityFixtureMode: boolean;
   private readonly automations: SqliteAutomationStore;
   private readonly providers: SqliteProviderStore;
@@ -1186,6 +1189,7 @@ export class SqliteRunStore implements RunStore {
     });
     this.userProfile = new SqliteUserProfileStore({ database: this.database });
     this.workspaceSettings = new SqliteWorkspaceSettingsStore({ database: this.database });
+    this.learningReviews = new SqliteLearningReviewStore({ database: this.database });
     this.skillRegistry = new SqliteSkillRegistryStore({ database: this.database });
     this.skillRegression = new SqliteSkillRegressionStore({ database: this.database });
     this.skillCandidates = new SqliteSkillCandidateStore({ database: this.database });
@@ -3695,6 +3699,42 @@ export class SqliteRunStore implements RunStore {
 
   publishSkillRevisionDraft(input: PublishSkillRevisionDraftInput, now: string): SkillRegistryEntry {
     return this.skillRegistry.publishSkillRevisionDraft(input, now);
+  }
+
+  getLearningReviewPolicy(...args: Parameters<LearningReviewStore["getLearningReviewPolicy"]>): ReturnType<LearningReviewStore["getLearningReviewPolicy"]> {
+    return this.learningReviews.getLearningReviewPolicy(...args);
+  }
+
+  updateLearningReviewPolicy(...args: Parameters<LearningReviewStore["updateLearningReviewPolicy"]>): ReturnType<LearningReviewStore["updateLearningReviewPolicy"]> {
+    return this.learningReviews.updateLearningReviewPolicy(...args);
+  }
+
+  enqueueLearningReview(...args: Parameters<LearningReviewStore["enqueueLearningReview"]>): ReturnType<LearningReviewStore["enqueueLearningReview"]> {
+    return this.learningReviews.enqueueLearningReview(...args);
+  }
+
+  getLearningReviewJob(...args: Parameters<LearningReviewStore["getLearningReviewJob"]>): ReturnType<LearningReviewStore["getLearningReviewJob"]> {
+    return this.learningReviews.getLearningReviewJob(...args);
+  }
+
+  listLearningReviewJobs(...args: Parameters<LearningReviewStore["listLearningReviewJobs"]>): ReturnType<LearningReviewStore["listLearningReviewJobs"]> {
+    return this.learningReviews.listLearningReviewJobs(...args);
+  }
+
+  claimLearningReviewJob(...args: Parameters<LearningReviewStore["claimLearningReviewJob"]>): ReturnType<LearningReviewStore["claimLearningReviewJob"]> {
+    return this.learningReviews.claimLearningReviewJob(...args);
+  }
+
+  reserveLearningReviewModelRequest(...args: Parameters<LearningReviewStore["reserveLearningReviewModelRequest"]>): ReturnType<LearningReviewStore["reserveLearningReviewModelRequest"]> {
+    return this.learningReviews.reserveLearningReviewModelRequest(...args);
+  }
+
+  finishLearningReviewJob(...args: Parameters<LearningReviewStore["finishLearningReviewJob"]>): ReturnType<LearningReviewStore["finishLearningReviewJob"]> {
+    return this.learningReviews.finishLearningReviewJob(...args);
+  }
+
+  cancelLearningReviewJob(...args: Parameters<LearningReviewStore["cancelLearningReviewJob"]>): ReturnType<LearningReviewStore["cancelLearningReviewJob"]> {
+    return this.learningReviews.cancelLearningReviewJob(...args);
   }
 
   listSkillDefinitionRevisions(skillId: string, limit?: number): SkillDefinitionRevision[] {
