@@ -85,6 +85,7 @@ export const zhCN = {
     "AI teammate workspace": "AI 协作工作区",
     "Conversation home": "对话首页",
     "Conversation page": "对话页面",
+    "Conversation status": "对话状态",
     "New conversation": "新建对话",
     "New conversation composer": "新建对话输入框",
     "Recent conversations": "最近对话",

@@ -5,6 +5,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   ComposerPermissionMenu,
+  ConversationBottomStatusStrip,
   ConversationComposerShell,
 } from "../dist/index.js";
 
@@ -56,6 +57,48 @@ test("conversation composer keeps canonical surface and density variants", () =>
   assert.match(html, /data-density="floating"/u);
   assert.match(html, /data-computer-use-obstacle="true"/u);
   assert.doesNotMatch(html, legacyComposerClasses);
+});
+
+test("bottom status is a standalone, centered row outside the composer box on all surfaces", () => {
+  for (const surface of ["channel", "normal_conversation", "teammate_direct"]) {
+    const html = renderComposer({
+      surface,
+      bottomStatusNode: createElement(ConversationBottomStatusStrip, {
+        ariaLabel: "Conversation status",
+        metrics: { aiRounds: 2, toolSteps: 3, recentReplyTokensPerSecond: 4, totalTokens: 100, inputTokens: 30, outputTokens: 60, cacheReadTokens: 10, cacheWriteTokens: 0, coverage: "complete", context: { measuredInputTokens: 40, capacityTokens: 80, estimatedTokens: null, basis: "measured" } },
+      }),
+    });
+    assert.match(html, new RegExp(`data-conversation-composer-frame="${surface}"`));
+    assert.match(html, /<\/section><div class="conversation-bottom-status-strip" role="status"/u);
+    assert.match(html, /2 rounds/u);
+    assert.match(html, /3 steps/u);
+    assert.match(html, /4\.0 tok\/s/u);
+    assert.match(html, /100 tokens/u);
+    assert.match(html, /25% cache hit/u);
+    assert.match(html, /Recent request context 50%/u);
+  }
+  const idle = renderComposer({
+    bottomStatusNode: createElement(ConversationBottomStatusStrip, {
+      ariaLabel: "Conversation status",
+    }),
+  });
+  assert.match(idle, /— rounds/u);
+  assert.match(idle, /— cache hit/u);
+  assert.match(idle, /Context —/u);
+  const partial = renderComposer({ bottomStatusNode: createElement(ConversationBottomStatusStrip, {
+    ariaLabel: "对话状态", locale: "zh-CN",
+    metrics: { aiRounds: null, toolSteps: 4, recentReplyTokensPerSecond: null, totalTokens: 30, inputTokens: null, outputTokens: 30, cacheReadTokens: 0, cacheWriteTokens: null, coverage: "partial", context: { measuredInputTokens: null, estimatedTokens: 180, capacityTokens: 600, basis: "estimated" } },
+  }) });
+  assert.match(partial, /— 轮 AI/u);
+  assert.match(partial, /4 步工具/u);
+  assert.match(partial, /— 缓存命中/u);
+  assert.match(partial, /压缩后上下文估算 30%/u);
+});
+
+test("bottom status styling is transparent and horizontally centered", async () => {
+  const css = await readFile(new URL("../dist/styles/composer/conversation-composer.css", import.meta.url), "utf8");
+  assert.match(css, /\.conversation-bottom-status-strip\s*\{[^}]*justify-content:\s*center;[^}]*background:\s*transparent;/su);
+  assert.match(css, /\.conversation-composer-frame\s*\{[^}]*gap:\s*8px;/su);
 });
 
 test("conversation composer permission menu preserves accessible package behavior", () => {

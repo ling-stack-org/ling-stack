@@ -209,6 +209,8 @@ export interface ConversationSupersessionTombstones {
 }
 
 export interface ConversationDetailResponse {
+  /** Owner-scoped metrics over effective linked runs, independent of transcript pagination. */
+  readonly runtimeMetrics?: import("./conversation-runtime-metrics.js").ConversationRuntimeMetrics;
   readonly cwd: string;
   readonly thread: LingThread;
   readonly turns: readonly LingTurn[];

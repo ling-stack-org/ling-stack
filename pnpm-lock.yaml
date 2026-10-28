@@ -351,6 +351,9 @@ importers:
 
   packages/conversation-ui-react:
     dependencies:
+      '@ling-stack/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@ling-stack/conversation-ui-core':
         specifier: workspace:*
         version: link:../conversation-ui-core

@@ -324,6 +324,7 @@ export function WorkspaceClientView({
   taskForm,
   channelMessages,
   channelConversationItems,
+  channelRuntimeMetrics,
   channelTurnContextAssignments,
   channelUserInputs,
   channelReasoningSummaries,
@@ -3039,6 +3040,7 @@ export function WorkspaceClientView({
   const channelComposer = (
     <ChannelComposer
       statusNode={channelActiveStatusStrip}
+      runtimeMetrics={channelRuntimeMetrics}
       guidanceModeActive={guidanceModeActive}
       replyTargetActive={Boolean(activeConversationTarget)}
       composerBusy={composerBusy}

@@ -83,6 +83,7 @@ export function ConversationHome({
   initialPermissionMode,
   initialPermissionPreset,
   detailContext,
+  runtimeMetrics,
   conversationIdentity,
   defaultProviderLabel,
   defaultProviderPresetId,
@@ -732,6 +733,7 @@ export function ConversationHome({
 
   const composerNode = (
     <NormalConversationComposer
+      runtimeMetrics={runtimeMetrics}
       draft={draft}
       inputRef={composerInputRef}
       inputParts={composerInputParts}

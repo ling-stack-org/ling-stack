@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { projectConversationUserInputs } from "./user-input-transcript.js";
+import { projectConversationRuntimeMetrics } from "./runtime-metrics-projection.js";
+import { listAllConversationTurns } from "./all-turns.js";
 import {
   DEFAULT_WORKSPACE_ID,
   LING_AGENT_ID,
@@ -478,6 +480,13 @@ export function buildConversationDetail(
     .map((link) => store.getRun(link.runId))
     .filter((run): run is RunSession => Boolean(run))
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const metricTurns = (options.includeSuperseded ? listAllConversationTurns(store, thread.id) :
+    filterSupersededLingTurns(listAllConversationTurns(store, thread.id), projection));
+  const metricRuns = metricTurns.flatMap((turn) => store.listLingTurnRuns(turn.id))
+    .filter((link) => options.includeSuperseded || !projection.supersededRunIds.has(link.runId))
+    .map((link) => store.getRun(link.runId))
+    .filter((run): run is RunSession => Boolean(run));
+  const runtimeMetrics = projectConversationRuntimeMetrics({ store, thread, turns: metricTurns, runs: metricRuns });
   const runtimeProjection = collectConversationRuntimeProjection(store, runs);
   const runByTurnId = new Map(runLinks.map((link) => [link.turnId, store.getRun(link.runId)]));
   const messages = turns.flatMap((turn) => {
@@ -569,6 +578,7 @@ export function buildConversationDetail(
     cwd,
     thread,
     turns,
+    runtimeMetrics,
     conversationItems,
     userInputs,
     supersessionTombstones: projectConversationSupersessionTombstones(projection),

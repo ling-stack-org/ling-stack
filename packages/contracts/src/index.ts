@@ -24,6 +24,7 @@ export * from "./execution-engines.js";
 export * from "./engine-lifecycle.js";
 export * from "./threads.js";
 export type * from "./conversations.js";
+export type * from "./conversation-runtime-metrics.js";
 export * from "./conversation-continuity.js";
 export * from "./channel-operation-bindings.js";
 export * from "./channel-command-goal.js";

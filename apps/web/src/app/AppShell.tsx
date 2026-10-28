@@ -350,6 +350,7 @@ export function AppShell(): React.JSX.Element {
     taskRunProviderId,
     channelMessages,
     channelConversationItems,
+    channelRuntimeMetrics,
     channelTurnContextAssignments,
     channelUserInputs,
     channelReasoningSummaries,
@@ -2558,6 +2559,7 @@ export function AppShell(): React.JSX.Element {
             taskForm={taskForm}
             channelMessages={channelMessages}
             channelConversationItems={channelConversationItems}
+            channelRuntimeMetrics={channelRuntimeMetrics}
             channelTurnContextAssignments={channelTurnContextAssignments}
             channelUserInputs={channelUserInputs}
             channelReasoningSummaries={channelReasoningSummaries}
@@ -2779,6 +2781,7 @@ export function AppShell(): React.JSX.Element {
                 <ConversationHome
                   executionSelectionRevision={JSON.stringify([settingsDomain.state.runtimeSettings?.updatedAt, approvalPolicy])}
                   conversationTitle={selectedConversationDetail?.thread.title ?? ""}
+                  runtimeMetrics={selectedConversationDetail?.runtimeMetrics}
                   initialMessages={selectedConversationMessages}
                   initialProjectPath={selectedConversationProjectPath}
                   initialProjectLabel={selectedConversationProjectLabel}
@@ -2883,8 +2886,12 @@ export function AppShell(): React.JSX.Element {
                           input.upsertMessage(homeMessageFromTranscript(event.assistantMessage));
                         }
                       },
-                      onDone: (event) => input.upsertMessage(homeMessageFromTranscript(event.assistantMessage)),
+                      onDone: (event) => {
+                        input.upsertMessage(homeMessageFromTranscript(event.assistantMessage));
+                        void refreshSelectedConversation(form.cwd.trim());
+                      },
                       onBlocked: (event) => {
+                        void refreshSelectedConversation(form.cwd.trim());
                         if (event.assistantMessage) {
                           input.upsertMessage(homeMessageFromTranscript(event.assistantMessage));
                         }
@@ -2892,7 +2899,10 @@ export function AppShell(): React.JSX.Element {
                           input.failMessage(event.error);
                         }
                       },
-                      onError: (message) => input.failMessage(message),
+                      onError: (message) => {
+                        input.failMessage(message);
+                        void refreshSelectedConversation(form.cwd.trim());
+                      },
                       onThreadBound: input.onThreadBound,
                       shouldCommit: input.shouldCommit,
                     });

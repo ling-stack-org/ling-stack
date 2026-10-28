@@ -138,9 +138,10 @@ export function useControlPlaneInvalidation(input: {
     }
     const conversationDomain = (["runs", "work_units", "approvals", "artifacts"] as const)
       .find((domain) => changed.has(domain));
-    if (conversationDomain && !input.selectedChannelId) {
-      trackRefresh(conversationDomain, "selected-conversation", input.refreshSelectedConversation(workspaceCwd));
-      if (input.selectedChannelId && !changed.has("runs")) {
+    if (conversationDomain) {
+      if (!input.selectedChannelId) {
+        trackRefresh(conversationDomain, "selected-conversation", input.refreshSelectedConversation(workspaceCwd));
+      } else if (!changed.has("runs") && !channelActivityOwnsSelectedRefreshes) {
         trackRefresh(
           conversationDomain,
           `channel-conversation:${input.selectedChannelId}`,

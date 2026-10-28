@@ -29,6 +29,7 @@ import {
   X,
 } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
+import type { ConversationRuntimeMetrics } from "@ling-stack/contracts";
 import {
   conversationAuthorizationModeMenuOptions,
   conversationPermissionPresetMenuOptions,
@@ -46,6 +47,7 @@ import {
   ComposerAuthorizationMenu,
   ComposerPermissionMenu,
   ConversationComposerShell,
+  ConversationBottomStatusStrip,
   ConversationGuidanceStrip,
   type ConversationGuidanceItem,
 } from "../../shared/conversation/index.js";
@@ -75,6 +77,7 @@ export interface ActiveMentionPicker {
 
 interface ChannelComposerProps {
   readonly statusNode: ReactNode;
+  readonly runtimeMetrics?: ConversationRuntimeMetrics;
   readonly guidanceModeActive: boolean;
   readonly replyTargetActive: boolean;
   readonly composerBusy: boolean;
@@ -177,6 +180,7 @@ export function ChannelComposer({
   mentionActiveIndex,
   mentionPicker,
   mentionPickerOptions,
+  runtimeMetrics,
   onAttachFiles,
   onCommitMention,
   onCommitSlashCommand,
@@ -246,7 +250,7 @@ export function ChannelComposer({
   submitTitle,
   value,
 }: ChannelComposerProps): React.JSX.Element {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
   const fileInputId = useId();
@@ -307,6 +311,11 @@ export function ChannelComposer({
       ariaLabel={t("Channel composer")}
       leftToolsAriaLabel={t("Message tools")}
       statusNode={statusNode}
+      bottomStatusNode={<ConversationBottomStatusStrip
+        ariaLabel={t("Conversation status")}
+        metrics={runtimeMetrics}
+        locale={locale}
+      />}
       guidanceNode={(goal || goalLoading || goalError || runGuidanceItems.length > 0 || runGuidanceError || runGuidanceLoading) ? (
         <>
           {goal ? (

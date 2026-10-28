@@ -93,14 +93,23 @@
   color: var(--ling-text-default);
 }
 
-.conversation-home [data-conversation-composer][data-surface="normal_conversation"] {
+.conversation-home [data-conversation-composer-frame="normal_conversation"] {
   width: min(710px, 100%);
-  margin-top: 38px;
+  margin: 38px auto 0;
+}
+
+.conversation-home [data-conversation-composer][data-surface="normal_conversation"] {
+  width: 100%;
+  margin-top: 0;
   padding: var(--ling-space-4);
   border: 1px solid var(--ling-border-default);
   border-radius: var(--ling-radius-lg);
   background: var(--ling-bg-composer);
   box-shadow: var(--ling-shadow-medium);
+}
+
+.normal-conversation-page [data-conversation-composer-frame="normal_conversation"] {
+  width: 100%;
 }
 
 .normal-conversation-page [data-conversation-composer][data-surface="normal_conversation"] {
