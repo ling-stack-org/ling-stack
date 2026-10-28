@@ -11,18 +11,18 @@ export const desktopTargets = Object.freeze({
   "windows-x64": ["windows-x64-setup.exe"],
 });
 
-export function prereleaseVersion(tag) {
-  if (typeof tag !== "string" || tag.length > 128) throw new Error("Invalid prerelease tag");
-  const match = /^v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))$/u.exec(tag);
-  if (!match || match[2].split(".").some(part => /^\d+$/u.test(part) && part.length > 1 && part.startsWith("0"))) {
-    throw new Error("Use an immutable SemVer prerelease tag, such as v0.1.2-alpha.2");
+export function releaseVersion(tag) {
+  if (typeof tag !== "string" || tag.length > 128) throw new Error("Invalid release tag");
+  const match = /^v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?)$/u.exec(tag);
+  if (!match || match[2]?.split(".").some(part => /^\d+$/u.test(part) && part.length > 1 && part.startsWith("0"))) {
+    throw new Error("Use a new immutable SemVer release tag, such as v0.1.3");
   }
   return match[1];
 }
 
 export function validateCandidate({ sha, tag, versionFile, rootVersion, desktopVersion }) {
   if (!/^[a-f0-9]{40}$/u.test(sha ?? "")) throw new Error("Source must be a complete lowercase commit SHA");
-  const version = prereleaseVersion(tag);
+  const version = releaseVersion(tag);
   if ([versionFile, rootVersion, desktopVersion].some(value => value !== version)) {
     throw new Error("Release tag, VERSION, root package and Desktop package versions must match");
   }
@@ -45,7 +45,7 @@ export async function readCandidate({ root = repositoryRoot, sha, tag, requireMa
   if (requireMain) {
     git(["merge-base", "--is-ancestor", sha, "refs/remotes/origin/main"], root);
     // Published tags and even earlier source-only tags are never repointed.
-    if (git(["tag", "--list", tag], root)) throw new Error("Tag already exists; choose a new prerelease version");
+    if (git(["tag", "--list", tag], root)) throw new Error("Tag already exists; choose a new release version");
   }
   return candidate;
 }
@@ -176,7 +176,7 @@ export async function assembleRelease({ candidate, inputRoot, outputRoot }) {
   const combined = { ...candidate, targets: manifests };
   await writeFile(join(outputRoot, "release-manifest.json"), JSON.stringify(combined, null, 2) + "\n", { flag: "wx" });
   await writeFile(join(outputRoot, "release-notes.md"), [
-    `Unsigned development prerelease built from \`${candidate.sourceSha}\`.`, "",
+    `Unsigned development candidate built from \`${candidate.sourceSha}\`.`, "",
     "- macOS: Apple Silicon arm64; ad-hoc signed, without Developer ID or notarization.",
     "- Windows: x64; without Authenticode publisher signing.",
     "- Installation, model, Office and Computer Use acceptance must be recorded before publication.",
