@@ -4611,4 +4611,5 @@ export const enUS = {
   "Automation run finished": "Automation run finished",
   "Automation run failed": "Automation run failed",
   "Approval required": "Approval required",
+  "Chinese draft smoke probe": "Chinese draft smoke probe",
 } as const satisfies Readonly<Record<string, string>>;
