@@ -1,0 +1,130 @@
+name: Sync translation catalogs
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 3 * * *"
+
+concurrency:
+  group: translation-catalog-sync
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    # Keep App-backed synchronization on reviewed main only.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.15.0
+          cache: pnpm
+
+      - name: Check automation PR selection safety
+        run: node --test scripts/ci/automation-pr.test.mjs
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile --prefer-offline --ignore-scripts
+
+      - name: Validate catalog App configuration
+        env:
+          MODEL_CATALOG_APP_CLIENT_ID: ${{ vars.MODEL_CATALOG_APP_CLIENT_ID }}
+          MODEL_CATALOG_APP_PRIVATE_KEY: ${{ secrets.MODEL_CATALOG_APP_PRIVATE_KEY }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createPrivateKey } from "node:crypto";
+          const clientId = process.env.MODEL_CATALOG_APP_CLIENT_ID;
+          if (!clientId || /\s/u.test(clientId)) {
+            console.error("::error::Set repository variable MODEL_CATALOG_APP_CLIENT_ID to the installed GitHub App's Client ID.");
+            process.exit(1);
+          }
+          try {
+            const key = createPrivateKey(process.env.MODEL_CATALOG_APP_PRIVATE_KEY ?? "");
+            if (key.asymmetricKeyType !== "rsa") throw new Error("Expected an RSA private key.");
+          } catch {
+            console.error("::error::Set repository secret MODEL_CATALOG_APP_PRIVATE_KEY to the installed GitHub App's PEM RSA private key. The App must be installed for this repository with Contents and Pull requests read/write permissions.");
+            process.exit(1);
+          }
+          NODE
+
+      - name: Create repository-scoped catalog App token
+        id: catalog-app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.MODEL_CATALOG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MODEL_CATALOG_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Refresh translated catalog data
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.catalog-app.outputs.token }}
+          APP_SLUG: ${{ steps.catalog-app.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ] || [ -z "${APP_SLUG:-}" ]; then
+            echo "::error::Catalog App token or identity is missing; refusing to push or create a PR. Check the App installation and repository permissions."
+            exit 1
+          fi
+          # Clear inherited helpers so git and gh both use this step's App token.
+          git() {
+            command git -c credential.helper= -c 'credential.helper=!gh auth git-credential' "$@"
+          }
+          branch="automation/translation-catalogs"
+          git fetch origin main "$branch" || git fetch origin main
+          git checkout -B "$branch" origin/main
+          node packages/localization/scripts/import-legacy-web-catalogs.mjs
+          node packages/localization/scripts/translate-catalogs.mjs
+          git add packages/localization/catalogs
+          if git diff --cached --quiet; then
+            echo "Catalogs are already current."
+            exit 0
+          fi
+          bot_id="$(gh api "users/${APP_SLUG}[bot]" --jq .id)"
+          if ! [[ "$bot_id" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Unable to resolve the catalog App bot identity; refusing to push."
+            exit 1
+          fi
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git commit -m "chore: refresh translation catalogs"
+          git push --force-with-lease origin "HEAD:$branch"
+          pull_requests_json="$(gh pr list --state open --head "$branch" --base main --limit 2 --json number,state,headRefName,baseRefName,isCrossRepository,author)"
+          pull_request="$(printf '%s' "$pull_requests_json" | node scripts/ci/automation-pr.mjs "$branch" "$APP_SLUG")"
+          if [ -n "$pull_request" ]; then
+            gh pr edit "$pull_request" --title "chore: refresh translation catalogs" --body "Automated catalog refresh for changed source strings. This PR changes machine-translated locale data only and must pass the catalog completeness check before merge."
+          else
+            gh pr create --base main --head "$branch" --title "chore: refresh translation catalogs" --body "Automated catalog refresh for changed source strings. This PR changes machine-translated locale data only and must pass the catalog completeness check before merge."
+            pull_requests_json="$(gh pr list --state open --head "$branch" --base main --limit 2 --json number,state,headRefName,baseRefName,isCrossRepository,author)"
+            pull_request="$(printf '%s' "$pull_requests_json" | node scripts/ci/automation-pr.mjs "$branch" "$APP_SLUG")"
+            if [ -z "$pull_request" ]; then
+              echo "::error::The translation PR was created but could not be selected safely."
+              exit 1
+            fi
+          fi
+          head_commit="$(git rev-parse HEAD)"
+          gh pr merge "$pull_request" --auto --squash --match-head-commit "$head_commit"
