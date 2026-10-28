@@ -37,10 +37,17 @@ test("PR workflow triggers only on true source files and never on its own output
     "packages/localization/catalogs/additional-source.json",
     "packages/localization/catalogs/additional-zh-CN.json",
   ]) assert.ok(prWorkflow.includes(`- "${source}"`), `workflow must watch ${source}`);
-  // The bot commits only packages/localization/catalogs/*.json; if any of those
-  // paths were watched, a bot push would retrigger the workflow forever.
+  // The bot commits only packages/localization/catalogs/*.json and drafted
+  // zh-CN sources. Catalog JSON stays unwatched; a drafted zh-CN.ts does
+  // retrigger one synchronize run, which must converge through the no-diff exit.
   assert.doesNotMatch(prWorkflow, /- "packages\/localization\/catalogs\/[^a]/u);
-  assert.match(prWorkflow, /git add packages\/localization\/catalogs\n/u);
+  assert.match(prWorkflow, /git add apps\/web\/src\/i18n\/locales\/zh-CN\.ts packages\/localization\/catalogs\n/u);
+});
+
+test("PR workflow reports drafted zh-CN keys without failing when commenting is unavailable", () => {
+  assert.match(prWorkflow, /gh pr comment "\$HEAD_REF"/u);
+  assert.match(prWorkflow, /if ! gh pr comment/u);
+  assert.match(prWorkflow, /::warning::Could not post the zh-CN draft review comment/u);
 });
 
 test("PR workflow is guarded to same-repository heads and re-checks the head before pushing", () => {
@@ -82,6 +89,11 @@ test("both workflows keep built-in permissions read-only and scope the App token
 
 test("translation runs before staging, staging before the no-diff exit, push only after a diff", () => {
   for (const [name, workflow] of [["pr", prWorkflow], ["sync", syncWorkflow]]) {
+    // Chinese drafts are filled before the import so catalogs never fall back
+    // to English source text for missing zh-CN keys.
+    const draftAt = workflow.indexOf("node packages/localization/scripts/draft-missing-chinese.mjs");
+    const importPos = workflow.indexOf("import-legacy-web-catalogs.mjs");
+    assert.ok(draftAt !== -1 && draftAt < importPos, `${name}: draft missing Chinese before importing sources`);
     // The importer resolves the workspace typescript dependency; fresh runners
     // must install locked dependencies before it can run. pnpm/action-setup must
     // precede setup-node's pnpm cache resolution, and lifecycle scripts stay
@@ -93,7 +105,7 @@ test("translation runs before staging, staging before the no-diff exit, push onl
     assert.ok(pnpmSetupAt !== -1 && pnpmSetupAt < nodeSetupAt, `${name}: set up pnpm before the setup-node cache`);
     assert.ok(installAt !== -1 && installAt < importAt, `${name}: install locked dependencies before importing sources`);
     const translateAt = workflow.indexOf("node packages/localization/scripts/translate-catalogs.mjs");
-    const addAt = workflow.indexOf("git add packages/localization/catalogs");
+    const addAt = workflow.indexOf("git add apps/web/src/i18n/locales/zh-CN.ts packages/localization/catalogs");
     const quietAt = workflow.indexOf("git diff --cached --quiet");
     const pushAt = workflow.indexOf("git push");
     assert.ok(importAt !== -1 && translateAt > importAt, `${name}: translate after import`);

@@ -138,11 +138,15 @@ if (english.duplicates.length > 0) {
 if (chinese.duplicates.length > 0) {
   failures.push(`zh-CN has duplicate keys: ${chinese.duplicates.slice(0, 20).join(", ")}`);
 }
+// Gaps between the English and Chinese sources are informational: the
+// translate-pr-catalogs workflow drafts machine-translated zh-CN entries and
+// commits them to the pull request, so a missing Chinese string no longer
+// blocks CI. Duplicates above remain hard failures.
 if (missingChinese.length > 0) {
-  failures.push(`zh-CN is missing literal translation keys: ${missingChinese.slice(0, 40).join(", ")}`);
+  console.log(`zh-CN is missing literal translation keys (automation drafts them): ${missingChinese.slice(0, 40).join(", ")}`);
 }
 if (englishOnlyKeys.length > 0) {
-  failures.push(`en-US has keys missing from zh-CN: ${englishOnlyKeys.slice(0, 40).join(", ")}`);
+  console.log(`en-US has keys missing from zh-CN (automation drafts them): ${englishOnlyKeys.slice(0, 40).join(", ")}`);
 }
 
 console.log(`i18n audit: en-US=${english.keys.size}, zh-CN=${chinese.keys.size}, literalKeys=${literalTranslations.keys.size}, dynamicCalls=${literalTranslations.dynamicCalls.length}`);
