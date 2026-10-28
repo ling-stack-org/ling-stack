@@ -1692,6 +1692,8 @@ export class SqliteRunStore implements RunStore {
             applyMigration({
               database: this.database,
               hasMigration: (version) => this.hasMigration(version),
+              hasTable: (tableName) => this.hasTable(tableName),
+              hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
               recordMigration: (version, name) => this.recordMigration(version, name),
             });
           }
