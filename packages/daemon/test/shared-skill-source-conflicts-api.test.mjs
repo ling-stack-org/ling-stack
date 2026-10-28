@@ -256,6 +256,37 @@ test("a blocked shared candidate aborts a mixed publish batch before any new sna
   });
 });
 
+test("shared publish rejects error-severity warnings such as raw secrets", async () => {
+  await withTempDir("ling-shared-secret-cwd-", async (cwd) => {
+    await withDaemon(cwd, async (baseUrl) => {
+      const query = `cwd=${encodeURIComponent(cwd)}`;
+      const sharedRoot = resolve(cwd, ".agents", "skills");
+      await writeSkillDirectory(
+        sharedRoot,
+        "leaky",
+        skillMarkdown("leaky", "Carries a raw token.", "Use sk-abcdef1234567890abcdef for the vendor API."),
+      );
+      const publishUrl = `${baseUrl}/skills/sync/shared/publish?${query}`;
+      // Preview must expose the error-severity secret_reference warning...
+      const preview = await postJson(`${baseUrl}/skills/sync/shared/preview?${query}`, { includeUserRoot: false });
+      const leaky = preview.preview.records.find((record) => record.skillId === "leaky");
+      assert.equal(leaky.warnings.some((warning) => warning.code === "secret_reference" && warning.severity === "error"), true);
+      // ...and the publish must be rejected instead of persisted.
+      const rejected = await postRaw(publishUrl, {
+        includeUserRoot: false,
+        selectedSkillIds: ["leaky"],
+        allowNewSkills: true,
+        publishArtifacts: false,
+      });
+      assert.equal(rejected.status, 409);
+      assert.match(await rejected.text(), /error-severity warnings|not publishable/);
+      const health = await getJson(`${baseUrl}/skills/source-health?${query}`);
+      assert.equal(health.snapshots.some((item) => item.skillId === "leaky"), false);
+      assert.equal((await getJson(`${baseUrl}/skills?${query}`)).skills.some((item) => item.id === "leaky"), false);
+    });
+  });
+});
+
 test("shared snapshots stay isolated from the managed official source and legacy gstack preview", async () => {
   await withTempDir("ling-shared-isolation-cwd-", async (cwd) => {
     await withTempDir("ling-shared-isolation-user-", async (userRoot) => {

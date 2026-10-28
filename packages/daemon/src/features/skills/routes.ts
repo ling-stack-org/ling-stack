@@ -1541,6 +1541,13 @@ async function publishGstackSkillSourceSync(input: {
   if (semanticErrors.length > 0) {
     throw new HttpError(409, "skill_source_sync_semantic_error", `Selected records have semantic error drift: ${semanticErrors.map((record) => record.skillId).join(", ")}`);
   }
+  // Error-severity source warnings (raw secrets, unsafe paths) must block
+  // publication outright: shared publication disables the auto-safe policy,
+  // so this is the only gate that still sees them.
+  const errorWarnings = input.trusted ? [] : selectedRecords.filter((record) => record.warnings.some((warning) => warning.severity === "error"));
+  if (errorWarnings.length > 0) {
+    throw new HttpError(409, "skill_source_sync_error_warning", `Selected records have error-severity warnings: ${errorWarnings.map((record) => record.skillId).join(", ")}`);
+  }
   const newRecords = selectedRecords.filter((record) => record.state === "new");
   if (newRecords.length > 0 && !input.trusted && !input.allowNewSkills) {
     throw new HttpError(409, "skill_source_sync_new_skills_require_confirmation", `New skills require allowNewSkills=true: ${newRecords.map((record) => record.skillId).join(", ")}`);
