@@ -97,9 +97,10 @@ jobs:
           branch="automation/translation-catalogs"
           git fetch origin main "$branch" || git fetch origin main
           git checkout -B "$branch" origin/main
+          node packages/localization/scripts/draft-missing-chinese.mjs
           node packages/localization/scripts/import-legacy-web-catalogs.mjs
           node packages/localization/scripts/translate-catalogs.mjs
-          git add packages/localization/catalogs
+          git add apps/web/src/i18n/locales/zh-CN.ts packages/localization/catalogs
           if git diff --cached --quiet; then
             echo "Catalogs are already current."
             exit 0

@@ -22,3 +22,11 @@
 - 不修改 `provider-model-catalog-pr.mjs`、`sync-provider-model-catalog.yml`、`ci.yml`。
 - 不新增 GitHub App 或 secret；复用 `MODEL_CATALOG_APP_CLIENT_ID` / `MODEL_CATALOG_APP_PRIVATE_KEY`。
 - 提交作者身份使用仓库约定（gansx）。
+
+## 修订切片（2026-10-28，zh-CN 草稿自动补齐）
+
+1. 抽取 `google-translate.mjs`、`web-locale-sources.mjs` 共享模块，两个既有脚本复用。
+2. 新增 `draft-missing-chinese.mjs` + `test/draft-missing-chinese.test.mjs`（无网络桩、幂等、占位符/空值 fail-closed）。
+3. 两个工作流加草稿步骤并扩大提交范围；PR 工作流加草稿清单评论（失败降级警告）。
+4. `check-i18n.mjs` 缺口降级为信息输出。
+5. `translation-workflows.test.mjs` 增加草稿顺序、提交范围、评论降级断言。
