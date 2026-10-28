@@ -625,7 +625,7 @@ async function handleChannelWorkflowStepStart(
   const store = storeRegistry.getStore(cwd);
   const body = await readJsonBody(request, config.maxBodyBytes);
   const input = parseChannelWorkflowStepStartRequest(body);
-  const started = prepareWorkflowStepStart(store, workflowStepId, input, cwd, validateRunRequest, secretResolver);
+  const started = await prepareWorkflowStepStart(store, workflowStepId, input, cwd, validateRunRequest, secretResolver);
   if (started.kind === "blocked") {
     writeJson(response, 200, {
       workflow: store.getChannelWorkflow(started.workflowId),
@@ -672,14 +672,14 @@ export type PreparedWorkflowStepStart =
   | { readonly kind: "blocked"; readonly workflowId: string; readonly blocker: string }
   | { readonly kind: "error"; readonly statusCode: number; readonly code: string; readonly message: string };
 
-export function prepareWorkflowStepStart(
+export async function prepareWorkflowStepStart(
   store: RunStore,
   workflowStepId: string,
   input: ChannelWorkflowStepStartRequest,
   cwd: string,
   validateRunRequest: ValidateWorkflowStepRunRequest,
   secretResolver?: SecretResolver,
-): PreparedWorkflowStepStart {
+): Promise<PreparedWorkflowStepStart> {
   const step = store.getChannelWorkflowStep(workflowStepId);
   if (!step) {
     return { kind: "error", statusCode: 404, code: "workflow_step_not_found", message: `Channel workflow step not found: ${workflowStepId}` };
@@ -807,7 +807,7 @@ export function prepareWorkflowStepStart(
   }
   const workflowSteps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
   const memoryRecallQuery = `${workflow.objective}\n${step.title}\n${input.taskPrompt ?? step.prompt}`;
-  const memoryRecall = store.recallMemory({
+  const memoryRecall = await recallMemory(store, {
     teammateId: assigneeTeammateId,
     channelId: channel.id,
     intent: "task-run",
@@ -1143,3 +1143,4 @@ function formatHandoffStepPrompt(handoff: ChannelHandoff): string {
     "Use the visible channel Brief, active decisions, and linked context summary before starting work.",
   ].join("\n");
 }
+import { recallMemory } from "../memory/recall-service.js";

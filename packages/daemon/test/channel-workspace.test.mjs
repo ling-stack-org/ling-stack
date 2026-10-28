@@ -6382,7 +6382,7 @@ test("proposal provider preflight blocks missing workspace default and freezes c
     assert.equal(unavailable.blocker.providerPresetId, "provider_workspace");
     assert.equal(unavailable.blocker.owner, "workspace");
 
-    const override = prepareWorkflowStepStart(
+    const override = await prepareWorkflowStepStart(
       store,
       engineerStep.id,
       { mode: "create_and_run_task", providerPresetId: "provider_workspace_repaired" },
@@ -6404,7 +6404,7 @@ test("proposal provider preflight blocks missing workspace default and freezes c
     } = qaStep.metadata;
     store.database.prepare("UPDATE channel_workflow_steps SET metadata_json = ? WHERE id = ?")
       .run(JSON.stringify(qaMetadataWithoutBinding), qaStep.id);
-    const missingBinding = prepareWorkflowStepStart(
+    const missingBinding = await prepareWorkflowStepStart(
       store,
       qaStep.id,
       { mode: "create_and_run_task" },

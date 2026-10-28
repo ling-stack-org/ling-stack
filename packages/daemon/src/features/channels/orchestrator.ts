@@ -217,7 +217,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
       }
     }
 
-    const started = prepareWorkflowStepStart(
+    const started = await prepareWorkflowStepStart(
       input.store,
       latestCandidate.id,
       {
@@ -578,7 +578,7 @@ export async function retryChannelWorkflowStep(input: RetryWorkflowStepInput): P
     };
   }
 
-  const started = prepareWorkflowStepStart(
+  const started = await prepareWorkflowStepStart(
     input.store,
     step.id,
     {

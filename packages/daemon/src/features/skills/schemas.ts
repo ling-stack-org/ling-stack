@@ -175,6 +175,8 @@ export function parseProcedureObservationJobRequest(value: unknown): ProcedureOb
     source: readProcedureObservationSource(value, "source"),
     signals: readProcedureObservationSignals(value.signals),
     runId: readOptionalString(value, "runId"),
+    effectiveAttemptId: readOptionalString(value, "effectiveAttemptId"),
+    evidenceVersion: readOptionalString(value, "evidenceVersion"),
     messageId: readOptionalString(value, "messageId"),
     reviewActionId: readOptionalString(value, "reviewActionId"),
     channelId: readOptionalString(value, "channelId"),

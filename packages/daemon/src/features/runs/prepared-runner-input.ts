@@ -75,8 +75,10 @@ export function restorePreparedRunnerOptions(
 /** Frozen text is not an entitlement to expired/revoked/foreign Memory. No fresh selection. */
 export function assertPreparedRunnerMemoryCurrent(store: RunStore, request: RunRequest, payload: PreparedRunnerInput): void {
   const ids = payload.usedMemory?.memoryIds ?? [];
-  const eligible = store.getEligibleMemoryIdsForRecall({ teammateId: request.teammateId, channelId: request.task.channelId,
-    taskId: request.task.id, intent: "task-run", query: "" }, ids);
+  if (ids.length === 0) return;
+  const scope = resolveAutomaticMemoryRecallScope(store, { teammateId: request.teammateId, channelId: request.task.channelId,
+    taskId: request.task.id, intent: "task-run", query: "" });
+  const eligible = scope ? store.getEligibleMemoryIdsForRecall(scope, ids) : [];
   if (eligible.length !== ids.length) throw new HttpError(409, "prepared_memory_unavailable", "A prepared Memory source is no longer eligible.");
 }
 export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRunOptions, "cwd" | "task">): PreparedRunnerInput {
@@ -149,3 +151,4 @@ function requiredRuntimeToolFeaturesRemainAvailable(
   return (["requestPermissions", "unifiedExec", "shellSnapshot"] as const)
     .every((feature) => frozen?.[feature] !== true || current?.[feature] === true);
 }
+import { resolveAutomaticMemoryRecallScope } from "../memory/recall-service.js";

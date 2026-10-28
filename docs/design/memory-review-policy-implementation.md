@@ -24,12 +24,10 @@ used-memory audit provide part of MRP.6.
   response bodies.
 - Make stale, disabled, private and superseded memory exclusion observable.
 
-### Review Surface Decision
+### Review Surface Decision (Closed)
 
-- Decide whether workspace-level review needs a dedicated center or remains embedded in
-  existing memory, channel and teammate surfaces.
-- Do not create a global queue unless it provides actions that local ownership surfaces
-  cannot provide.
+- Workspace review remains embedded in the existing memory, channel and teammate ownership
+  surfaces. The learning/index work does not introduce a separate global review center.
 - Keep normal/empty health states quiet and technical fields folded.
 
 ### Lifecycle Reconciliation

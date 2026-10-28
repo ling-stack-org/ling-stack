@@ -2663,6 +2663,8 @@ export interface RunStore extends NativeExecutionStore, DelegationQueryStore, Ha
   ): { readonly candidate: SkillCandidate; readonly action: SkillCandidateReviewRecord };
   markSkillCandidatePublished(candidateId: string, now: string): SkillCandidate;
   createProcedureObservation(input: CreateProcedureObservationInput, now: string): ProcedureObservation;
+  getProcedureObservationByJobKey(jobKey: string, workspaceId?: string): ProcedureObservation | undefined;
+  withProcedureObservationJobTransaction<T>(mutate: (events: Pick<RunStore, "appendControlPlaneEvent">) => T): T;
   listProcedureObservations(options?: ListProcedureObservationsOptions): ProcedureObservation[];
   listProcedureObservationClusters(options?: ListProcedureObservationClustersOptions): ProcedureObservationCluster[];
   getProcedureObservationCluster(id: string, workspaceId?: string): ProcedureObservationCluster | undefined;
@@ -3228,6 +3230,8 @@ export type SkillCandidateStoreFacet = RunStoreFacet<
 
 export type ProcedureObservationStoreFacet = RunStoreFacet<
   | "createProcedureObservation"
+  | "getProcedureObservationByJobKey"
+  | "withProcedureObservationJobTransaction"
   | "listProcedureObservations"
   | "createCandidateGenerationDecision"
   | "listCandidateGenerationDecisions"

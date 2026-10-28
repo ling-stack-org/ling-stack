@@ -315,7 +315,9 @@ cross-agent or public-channel leakage.
 
 ```text
 query text
-  -> lexical search over titles/tags/source labels
+  -> daemon resolves durable workspace/teammate/channel/task/run ownership
+  -> SQLite scope, review, sensitivity and health eligibility
+  -> local FTS5 candidate narrowing over titles/body/tags/source labels/IDs
   -> optional retrieval provider search over active scoped memory chunks
   -> optional retrieval provider rerank
   -> provenance and policy filter
@@ -325,6 +327,29 @@ query text
 The first implementation uses lexical search plus source filters. Vector search should
 only appear through a configured retrieval provider when memory volume and fuzzy lookup
 needs make keyword search insufficient.
+
+Local recall uses the `ling-memory-v1-lexical-v3` policy. Its rebuildable FTS5 index
+contains encoded Unicode character bigrams, retaining Chinese fragments and identifier
+substrings; lexical scoring still owns ordering. MATCH expressions use generated tokens
+and bound parameters. Eligibility precedes ranking and result limits. Empty browse is
+explicit, and unsupported indexing retains the complete scoped streaming fallback.
+
+Source writes and index refresh share a transaction. SQLite triggers mark direct writes
+dirty; reads include those eligible dirty rows until refresh, so delayed indexing cannot
+hide new knowledge or resurrect revoked facts. Index schema versions rebuild on open;
+recall itself is read-only. Usage only changes `lastUsedAt`, not knowledge `updatedAt`.
+
+The daemon shares one async recall service across private chat, channel replies, task
+runs, workflow steps and manual queries. Automatic callers cannot grant scopes using an
+unverified owner ID or inspection flags. Non-system teammates must belong to the selected
+channel; task/run lineage must agree with its persisted owner. An unpersisted task request
+can receive verified shared context but cannot claim task-specific memory. Explicit local
+search/review keeps its management inspection semantics.
+
+Selection audit reports strategy, scoped candidate work and selected IDs. It carries no
+rejected title/body. `UsedMemoryEvent` records which sources were supplied to context;
+it does not prove that the model adopted or verified a remembered conclusion. Packaged
+runtime FTS5 availability and real embedding quality require separate acceptance.
 
 Good embedding candidates:
 

@@ -93,6 +93,7 @@ import { prepareRunSkillSource } from "./skill-source-context.js";
 import { withGstackHostContext } from "./gstack-host-context.js";
 import { restorePackagedSkillContext } from "../skills/packaged-runtime.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
+import { recallMemory } from "../memory/recall-service.js";
 import { listBundledPackageDescriptors } from "../plugins/source-index.js";
 import { createManagedPluginRuntimeSnapshot } from "../plugins/runtime-injection.js";
 import { isBundledEmbeddedCuaDriverSelected } from "../plugins/cua-driver-runtime-mode.js";
@@ -599,7 +600,7 @@ async function executeAdmittedRunRequest(
     let mcpToolAccess = resolveMcpToolAccessForRun(runStore, secretResolver, runRequest, (teammateId) =>
       resolveAiTeammateReference(runStore, teammateId)?.id);
     mcpTools = createPiRunnerMcpToolDefinitions(mcpToolAccess);
-    memoryRecall = frozenExecution || runRequest.skipMemoryRecall ? undefined : store.recallMemory({
+    memoryRecall = frozenExecution || runRequest.skipMemoryRecall ? undefined : await recallMemory(store, {
       teammateId: runRequest.teammateId,
       channelId: runRequest.task.channelId,
       taskId: runRequest.task.id,

@@ -70,6 +70,17 @@ External product patterns are references, not runtime dependencies:
 
 ## Current Baseline
 
+Observation jobs use the shared daemon `procedure-observation-service`, rather than an
+internal HTTP call. The source key includes workspace, source identity, channel/teammate/task,
+effective Attempt and evidence version. Its SQLite `(workspace_id, job_key)` primary key
+replaces recent-list deduplication. Legacy keys migrate as links to existing observations;
+unversioned replays reuse them only when ownership agrees.
+
+Observation, pending candidate, generation decision and durable control-plane event commit
+under one writer transaction. Live notifications follow commit; restart uses the existing
+event replay. Concurrent writers/retries return the same logical observation. This shared
+service does not itself perform model extraction or enable background model consumption.
+
 Already implemented in Ling:
 
 - `SkillDefinition`, `SkillPack`, `SkillRegistryEntry`, `SkillImportDraft`, and

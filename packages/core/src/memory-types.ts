@@ -277,6 +277,13 @@ export interface MemoryRecallResult {
   readonly request: MemoryRecallRequest;
   readonly memories: readonly RecalledMemory[];
   readonly policyVersion: string;
+  /** Selection evidence only; actual context supply is recorded separately in UsedMemoryEvent. */
+  readonly audit?: {
+    readonly strategy: "fts5" | "scan";
+    readonly candidateCount: number;
+    readonly selectedMemoryIds: readonly string[];
+    readonly scopeRejected?: boolean;
+  };
 }
 
 export interface UsedMemoryEvent {

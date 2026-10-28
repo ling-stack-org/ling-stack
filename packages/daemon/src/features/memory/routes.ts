@@ -716,11 +716,12 @@ export async function handleMemoryRecall(
 
   try {
     const body = await readJsonBody(request, config.maxBodyBytes);
-    const result = storeRegistry.getStore(cwd).recallMemory(parseMemoryRecallRequest(body));
+    const result = await recallMemory(storeRegistry.getStore(cwd), parseMemoryRecallRequest(body));
     writeJson(response, 200, {
       cwd,
       memories: result.memories,
       policyVersion: result.policyVersion,
+      audit: result.audit,
     });
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
@@ -757,3 +758,4 @@ export function handleListUsedMemoryEvents(response: ServerResponse, url: URL, s
     });
   }
 }
+import { recallMemory } from "./recall-service.js";

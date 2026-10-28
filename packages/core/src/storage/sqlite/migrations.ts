@@ -27,6 +27,8 @@ import { applyTeammateDirectSubmissionMigration } from "./teammate-direct-submis
 import { applyHostAttemptCompletionMigration } from "./host-attempt-completion-migration.js";
 import { applyHostAttemptEffectCoverageMigration } from "./host-attempt-effect-coverage-migration.js";
 import { applyTeammateDirectInterventionFenceMigration } from "./teammate-direct-intervention-fence-migration.js";
+import { initializeMemorySearchIndex } from "./memory-search-index.js";
+import { applyProcedureObservationJobMigration } from "./procedure-observation-job-migration.js";
 
 export interface SqliteRunStoreMigrationContext {
   readonly database: DatabaseSync;
@@ -6005,4 +6007,6 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
   applyHostAttemptCompletionMigration(context);
   applyHostAttemptEffectCoverageMigration(context);
   applyTeammateDirectInterventionFenceMigration(context);
+  initializeMemorySearchIndex(database);
+  applyProcedureObservationJobMigration(context);
 }

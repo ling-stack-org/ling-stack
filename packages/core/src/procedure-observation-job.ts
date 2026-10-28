@@ -17,6 +17,8 @@ export interface ProcedureObservationJobInput {
   readonly source: ProcedureObservationSource;
   readonly signals: readonly ProcedureObservationSignal[];
   readonly runId?: string;
+  readonly effectiveAttemptId?: string;
+  readonly evidenceVersion?: string;
   readonly messageId?: string;
   readonly reviewActionId?: string;
   readonly channelId?: string;
@@ -47,6 +49,7 @@ export type SkillRecordingObservationInput = Omit<
 
 export interface ProcedureObservationJobBuildResult {
   readonly jobKey: string;
+  readonly legacyJobKey?: string;
   readonly observationInput: CreateProcedureObservationInput;
 }
 
@@ -61,6 +64,17 @@ export function createProcedureObservationJobFromRecording(input: SkillRecording
 }
 
 export function createProcedureObservationJobKey(input: ProcedureObservationJobInput): string {
+  const payload = JSON.stringify([
+    "v2", input.workspaceId ?? DEFAULT_WORKSPACE_ID, input.source,
+    input.runId ?? input.messageId ?? input.reviewActionId ?? input.id ?? "manual",
+    input.channelId ?? null, input.teammateId ?? null, input.taskId ?? null,
+    input.effectiveAttemptId ?? null, input.evidenceVersion ?? null,
+    input.destinationHint ?? inferDestinationHint(input), normalizeSignaturePart(input.normalizedGoal),
+  ]);
+  return `observation_job_${createHash("sha256").update(payload).digest("hex").slice(0, 24)}`;
+}
+
+function legacyProcedureObservationJobKey(input: ProcedureObservationJobInput): string {
   const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
   const sourceId = input.runId ?? input.messageId ?? input.reviewActionId ?? input.id ?? "manual";
   const payload = [
@@ -85,6 +99,8 @@ export function createProcedureObservationInputFromJob(input: ProcedureObservati
   const sourceRefs = sourceRefsFromJob(input, jobKey);
   return {
     jobKey,
+    ...(input.effectiveAttemptId === undefined && input.evidenceVersion === undefined
+      ? { legacyJobKey: legacyProcedureObservationJobKey(input) } : {}),
     observationInput: {
       id: input.id,
       workspaceId,

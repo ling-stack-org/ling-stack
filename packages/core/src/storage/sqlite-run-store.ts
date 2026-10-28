@@ -1,6 +1,7 @@
 import { SqliteWorkSummaryStore } from "./sqlite/work-summary-store.js";
 import { applyWorkSummaryMigration } from "./sqlite/work-summary-migration.js";
 import { existsSync } from "node:fs";
+import { writeMemoryWithSearchIndex } from "./sqlite/memory-search-index.js";
 import { publishNormalRunNarration } from "./sqlite/normal-run-narration-publication.js";
 import { isCurrentRunExecutionOwner } from "./sqlite/run-execution-admission.js";
 import { SqliteTeammateDirectMessageRuntimeStore } from "./sqlite/teammate-direct-message-runtime-store.js";
@@ -3732,6 +3733,17 @@ export class SqliteRunStore implements RunStore {
     return this.procedureObservations.createProcedureObservation(input, now);
   }
 
+  getProcedureObservationByJobKey(jobKey: string, workspaceId?: string): ProcedureObservation | undefined {
+    return this.procedureObservations.getProcedureObservationByJobKey(jobKey, workspaceId);
+  }
+
+  withProcedureObservationJobTransaction<T>(mutate: (events: Pick<RunStore, "appendControlPlaneEvent">) => T): T {
+    if (Object.prototype.toString.call(mutate) === "[object AsyncFunction]") throw new TypeError("Procedure observation commits must be synchronous");
+    return this.procedureObservations.withProcedureObservationJobTransaction(() => mutate({
+      appendControlPlaneEvent: (input, now) => this.controlPlane.appendControlPlaneEventWithinTransaction(input, now),
+    }));
+  }
+
   listProcedureObservations(options: ListProcedureObservationsOptions = {}): ProcedureObservation[] {
     return this.procedureObservations.listProcedureObservations(options);
   }
@@ -3812,7 +3824,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   createMemoryObject(input: CreateMemoryObjectInput, now: string): MemoryObject {
-    return this.memoryObjects.createMemoryObject(input, now);
+    return writeMemoryWithSearchIndex(this.database, () => this.memoryObjects.createMemoryObject(input, now));
   }
 
   getMemoryObject(id: string): MemoryObject | undefined {
@@ -3824,7 +3836,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   updateMemoryObject(id: string, input: MemoryObjectUpdateInput, now: string): MemoryObject | undefined {
-    return this.memoryObjects.updateMemoryObject(id, input, now);
+    return writeMemoryWithSearchIndex(this.database, () => this.memoryObjects.updateMemoryObject(id, input, now));
   }
 
   getMemorySelfImprovingMetadata(memoryId: string): MemorySelfImprovingMetadata | undefined {
