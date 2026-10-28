@@ -264,7 +264,7 @@ test("shared publish rejects error-severity warnings such as raw secrets", async
       await writeSkillDirectory(
         sharedRoot,
         "leaky",
-        skillMarkdown("leaky", "Carries a raw token.", "Use sk-abcdef1234567890abcdef for the vendor API."),
+        skillMarkdown("leaky", "Carries a raw token.", "Use sk-fake-abcdef1234567890 for the vendor API."),
       );
       const publishUrl = `${baseUrl}/skills/sync/shared/publish?${query}`;
       // Preview must expose the error-severity secret_reference warning...
