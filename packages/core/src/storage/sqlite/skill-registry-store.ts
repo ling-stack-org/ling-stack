@@ -21,6 +21,8 @@ import {
   type SkillHardDeleteResult,
   type SkillCompiledRuntimeViewRecord,
   type SkillDefinition,
+  type SkillDefinitionRevision,
+  type SkillDefinitionUndoRequest,
   type SkillRegistryEntry,
   type SkillSourceArtifact,
   type SkillSourceSnapshot,
@@ -37,9 +39,23 @@ import { officialSkillSourceSubscriptionSelectSql, skillCompiledRuntimeViewSelec
 import type { SqliteStoreContext } from "./store-context.js";
 import { rollbackSkillSourceSnapshot } from "./skill-source-rollback.js";
 import { publishSkillSourceBatch } from "./skill-source-publication.js";
+import { completeNewSkillDefinitionRevision, getSkillDefinitionRevision, listSkillDefinitionRevisions,
+  nextSkillDefinitionTimestamp, undoSkillDefinitionRevision } from "./skill-definition-revision-store.js";
 
 export class SqliteSkillRegistryStore {
   constructor(private readonly context: SqliteStoreContext) {}
+
+  listSkillDefinitionRevisions(skillId: string, limit?: number): SkillDefinitionRevision[] {
+    return listSkillDefinitionRevisions(this.context, skillId, limit);
+  }
+
+  getSkillDefinitionRevision(skillId: string, revisionId?: string): SkillDefinitionRevision | undefined {
+    return getSkillDefinitionRevision(this.context, skillId, revisionId);
+  }
+
+  undoSkillDefinitionRevision(skillId: string, input: SkillDefinitionUndoRequest, now: string) {
+    return undoSkillDefinitionRevision(this.context, id => this.getSkillRegistryEntry(id), skillId, input, now);
+  }
 
   listSkillRegistryEntries(options: ListSkillRegistryOptions = {}): SkillRegistryEntry[] {
     const conditions = ["workspace_id = ?"];
@@ -703,6 +719,11 @@ export class SqliteSkillRegistryStore {
       if (existing.updatedAt !== input.expectedUpdatedAt) {
         throw new SkillRevisionStoreError("skill_revision_conflict", "Skill changed after the editor was opened");
       }
+      const previousRevision = getSkillDefinitionRevision(this.context, input.skillId);
+      if (input.expectedRevisionId !== undefined && previousRevision?.id !== input.expectedRevisionId) {
+        throw new SkillRevisionStoreError("skill_revision_conflict", "Skill definition revision changed after the editor was opened");
+      }
+      const updatedAt = nextSkillDefinitionTimestamp(now, existing.updatedAt);
       const result = this.context.database
         .prepare(`
           UPDATE skill_definitions
@@ -711,7 +732,7 @@ export class SqliteSkillRegistryStore {
         `)
         .run(
           stringifyJson(withoutLegacySkillWorkflowPhase(draft.definitions[0].definition)),
-          now,
+          updatedAt,
           DEFAULT_WORKSPACE_ID,
           input.skillId,
           input.expectedUpdatedAt,
@@ -721,7 +742,8 @@ export class SqliteSkillRegistryStore {
       }
       this.context.database
         .prepare("UPDATE skill_import_drafts SET updated_at = ? WHERE workspace_id = ? AND id = ?")
-        .run(now, DEFAULT_WORKSPACE_ID, input.draftId);
+        .run(updatedAt, DEFAULT_WORKSPACE_ID, input.draftId);
+      completeNewSkillDefinitionRevision(this.context, input, previousRevision?.id);
       this.context.database.exec("COMMIT");
     } catch (error) {
       this.context.database.exec("ROLLBACK");

@@ -188,6 +188,49 @@ test("skill revision rejects read-only sources and preserves AI candidate lineag
   }
 });
 
+test("definition history API exposes reviewable differences and conflict-safe idempotent undo", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-definition-undo-api-"));
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 });
+  await daemon.start();
+  const baseUrl = `http://127.0.0.1:${daemon.server.address().port}`;
+  const query = `?cwd=${encodeURIComponent(cwd)}`;
+  try {
+    const original = await publishImportedSkill(baseUrl, cwd, { id: "history-api", name: "Receipt method",
+      summary: "Original receipt method", promptFragments: ["Compare receipt totals."], requiredTools: ["read"],
+      requiredProviderCapabilities: ["chat"], approvalProfile: { mode: "none" } });
+    const url = `${baseUrl}/skills/${original.id}`;
+    const initial = await getJson(`${url}/revisions${query}`);
+    const changed = await postJson(`${url}/revisions${query}`, { ...revisionBody(original),
+      expectedRevisionId: initial.revisions[0].id, reason: "A verified receipt correction",
+      definition: { ...revisionBody(original).definition, summary: "Corrected receipt method" } });
+    assert.equal(changed.revision.beforeDefinition.summary, original.definition.summary);
+    assert.equal(changed.revision.afterDefinition.summary, "Corrected receipt method");
+    assert.equal(changed.revision.validationStatus, "schema_checked");
+    assert.equal(changed.revision.reason, "A verified receipt correction");
+    const history = await getJson(`${url}/revisions${query}`);
+    assert.equal(history.revisions[0].id, changed.revision.id);
+    const request = { revisionId: changed.revision.id, expectedUpdatedAt: changed.skill.updatedAt };
+    const undone = await postJson(`${url}/revision-undo${query}`, request);
+    assert.deepEqual(undone.skill.definition, original.definition);
+    assert.equal(undone.skill.sourcePath, original.sourcePath);
+    assert.equal(undone.revision.kind, "undo");
+    assert.equal(undone.revision.undoOfRevisionId, changed.revision.id);
+    const repeated = await postJson(`${url}/revision-undo${query}`, request);
+    assert.equal(repeated.reused, true); assert.equal(repeated.revision.id, undone.revision.id);
+    const next = await postJson(`${url}/revisions${query}`, { ...revisionBody(undone.skill),
+      definition: { ...revisionBody(undone.skill).definition, summary: "Next correction" } });
+    const latest = await postJson(`${url}/revisions${query}`, { ...revisionBody(next.skill),
+      definition: { ...revisionBody(next.skill).definition, summary: "Later deliberate edit" } });
+    const conflict = await postJsonResponse(`${url}/revision-undo${query}`, {
+      revisionId: next.revision.id, expectedUpdatedAt: latest.skill.updatedAt });
+    assert.equal(conflict.status, 409); assert.equal((await conflict.json()).error, "skill_revision_conflict");
+    const stale = await postJsonResponse(`${url}/revisions${query}`, { ...revisionBody(latest.skill),
+      expectedRevisionId: next.revision.id });
+    assert.equal(stale.status, 409);
+    assert.equal((await getJson(`${url}/revisions${query}`)).revisions[0].afterDefinition.summary, "Later deliberate edit");
+  } finally { await daemon.stop(); await rm(cwd, { recursive: true, force: true }); }
+});
+
 async function publishImportedSkill(baseUrl, cwd, definition, source = "custom") {
   const draft = await postJson(`${baseUrl}/skills/import-draft?cwd=${encodeURIComponent(cwd)}`, {
     source,

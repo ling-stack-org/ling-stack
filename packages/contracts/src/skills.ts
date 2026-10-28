@@ -1455,11 +1455,13 @@ export interface SkillRevisionAuthorityDiff {
 
 export interface SkillRevisionPreviewRequest {
   readonly expectedUpdatedAt: string;
+  readonly expectedRevisionId?: string;
   readonly definition: SkillEditableDefinition;
 }
 
 export interface SkillRevisionPublishRequest extends SkillRevisionPreviewRequest {
   readonly confirmAuthorityChanges?: boolean;
+  readonly reason?: string;
 }
 
 export interface SkillRevisionPreview {
@@ -1480,6 +1482,47 @@ export interface SkillRevisionPublishResponse {
   readonly cwd: string;
   readonly draftId: string;
   readonly skill: SkillRegistryEntry;
+  readonly revision?: SkillDefinitionRevision;
+}
+
+export type SkillDefinitionValidationStatus = "not_run" | "schema_checked" | "evidence_checked" | "replayed";
+
+export interface SkillDefinitionRevision {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly skillId: string;
+  readonly revision: number;
+  readonly baseRevisionId?: string;
+  readonly beforeDefinition?: SkillDefinition;
+  readonly afterDefinition: SkillDefinition;
+  readonly kind: "baseline" | "create" | "edit" | "undo";
+  readonly actor: string;
+  readonly reason: string;
+  readonly sourceJobId?: string;
+  readonly sourceCandidateId?: string;
+  readonly validationStatus: SkillDefinitionValidationStatus;
+  readonly undoOfRevisionId?: string;
+  readonly createdAt: string;
+}
+
+export interface SkillDefinitionHistoryResponse {
+  readonly cwd: string;
+  readonly skillId: string;
+  readonly revisions: readonly SkillDefinitionRevision[];
+}
+
+export interface SkillDefinitionUndoRequest {
+  readonly revisionId: string;
+  readonly expectedUpdatedAt: string;
+  readonly reason?: string;
+  readonly confirmAuthorityChanges?: boolean;
+}
+
+export interface SkillDefinitionUndoResponse {
+  readonly cwd: string;
+  readonly skill: SkillRegistryEntry;
+  readonly revision: SkillDefinitionRevision;
+  readonly reused: boolean;
 }
 
 export interface SkillHardDeleteResponse {

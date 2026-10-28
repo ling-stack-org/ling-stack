@@ -266,11 +266,14 @@ export function parseLingThreadRoute(
 
 export type SkillRoute =
   | { readonly kind: "draft"; readonly draftId: string; readonly action?: "publish" }
-  | { readonly kind: "skill"; readonly skillId: string; readonly action?: "corrections" | "hard-delete" | "source" | "source-archive" | "source-rollback" | "source-artifacts" | "optimization-preview" | "compiled-views" | "compiled-view-archive" | "revision-preview" | "revisions"; readonly viewId?: string }
+  | { readonly kind: "skill"; readonly skillId: string; readonly action?: "corrections" | "hard-delete" | "source" | "source-archive" | "source-rollback" | "source-artifacts" | "optimization-preview" | "compiled-views" | "compiled-view-archive" | "revision-preview" | "revisions" | "revision-undo"; readonly viewId?: string }
   | { readonly kind: "candidate"; readonly candidateId: string; readonly action?: "review" | "draft" };
 
 export function parseSkillRoute(pathname: string): SkillRoute | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 3 && segments[0] === "skills" && segments[2] === "revision-undo") {
+    return { kind: "skill", skillId: segments[1], action: "revision-undo" };
+  }
   if (segments.length === 2 && segments[0] === "skill-candidates" && segments[1] !== "observe") {
     return { kind: "candidate", candidateId: segments[1] };
   }

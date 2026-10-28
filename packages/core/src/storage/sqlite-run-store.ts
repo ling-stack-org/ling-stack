@@ -1,3 +1,4 @@
+import { drainSkillDefinitionRevisionNotices } from "./sqlite/skill-definition-revision-store.js";
 import { SqliteWorkSummaryStore } from "./sqlite/work-summary-store.js";
 import { applyWorkSummaryMigration } from "./sqlite/work-summary-migration.js";
 import { existsSync } from "node:fs";
@@ -249,6 +250,8 @@ import {
   type ListSkillRegistryOptions,
   type ListSkillSourceSnapshotOptions,
   type PublishSkillRevisionDraftInput,
+  type SkillDefinitionRevision,
+  type SkillDefinitionUndoRequest,
   type SkillCompiledRuntimeViewRecord,
   type SkillHardDeleteResult,
   type SkillImportDraft,
@@ -3692,6 +3695,23 @@ export class SqliteRunStore implements RunStore {
 
   publishSkillRevisionDraft(input: PublishSkillRevisionDraftInput, now: string): SkillRegistryEntry {
     return this.skillRegistry.publishSkillRevisionDraft(input, now);
+  }
+
+  listSkillDefinitionRevisions(skillId: string, limit?: number): SkillDefinitionRevision[] {
+    return this.skillRegistry.listSkillDefinitionRevisions(skillId, limit);
+  }
+
+  drainSkillDefinitionRevisionNotices(cwd: string, now: string, limit?: number): ControlPlaneEvent[] {
+    return drainSkillDefinitionRevisionNotices({ database: this.database }, cwd, now,
+      (input, at) => this.controlPlane.appendControlPlaneEventWithinTransaction(input, at), limit);
+  }
+
+  getSkillDefinitionRevision(skillId: string, revisionId?: string): SkillDefinitionRevision | undefined {
+    return this.skillRegistry.getSkillDefinitionRevision(skillId, revisionId);
+  }
+
+  undoSkillDefinitionRevision(skillId: string, input: SkillDefinitionUndoRequest, now: string) {
+    return this.skillRegistry.undoSkillDefinitionRevision(skillId, input, now);
   }
 
   archiveSkillRegistryEntry(id: string, now: string): SkillRegistryEntry | undefined {

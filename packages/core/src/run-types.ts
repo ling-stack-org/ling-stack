@@ -467,6 +467,8 @@ import type {
   ListSkillRegistryOptions,
   ListSkillSourceSnapshotOptions,
   PublishSkillRevisionDraftInput,
+  SkillDefinitionRevision,
+  SkillDefinitionUndoRequest,
   SkillCompiledRuntimeViewRecord,
   SkillHardDeleteResult,
   SkillImportDraft,
@@ -2651,6 +2653,12 @@ export interface RunStore extends NativeExecutionStore, DelegationQueryStore, Ha
   getSkillImportDraft(id: string): SkillImportDraft | undefined;
   publishSkillImportDraft(id: string, now: string): SkillRegistryEntry[];
   publishSkillRevisionDraft(input: PublishSkillRevisionDraftInput, now: string): SkillRegistryEntry;
+  listSkillDefinitionRevisions(skillId: string, limit?: number): SkillDefinitionRevision[];
+  drainSkillDefinitionRevisionNotices(cwd: string, now: string, limit?: number): ControlPlaneEvent[];
+  getSkillDefinitionRevision(skillId: string, revisionId?: string): SkillDefinitionRevision | undefined;
+  undoSkillDefinitionRevision(skillId: string, input: SkillDefinitionUndoRequest, now: string): {
+    readonly skill: SkillRegistryEntry; readonly revision: SkillDefinitionRevision; readonly reused: boolean;
+  };
   archiveSkillRegistryEntry(id: string, now: string): SkillRegistryEntry | undefined;
   hardDeleteSkillRegistryEntry(id: string): SkillHardDeleteResult;
   createSkillCandidate(input: CreateSkillCandidateInput, now: string): SkillCandidate;
@@ -3215,6 +3223,10 @@ export type SkillRegistryStoreFacet = RunStoreFacet<
   | "getSkillImportDraft"
   | "publishSkillImportDraft"
   | "publishSkillRevisionDraft"
+  | "listSkillDefinitionRevisions"
+  | "drainSkillDefinitionRevisionNotices"
+  | "getSkillDefinitionRevision"
+  | "undoSkillDefinitionRevision"
   | "archiveSkillRegistryEntry"
   | "hardDeleteSkillRegistryEntry"
 >;

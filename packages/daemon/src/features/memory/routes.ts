@@ -1,3 +1,4 @@
+import { recallMemory } from "./recall-service.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
@@ -758,4 +759,3 @@ export function handleListUsedMemoryEvents(response: ServerResponse, url: URL, s
     });
   }
 }
-import { recallMemory } from "./recall-service.js";

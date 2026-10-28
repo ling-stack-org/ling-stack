@@ -47,6 +47,9 @@ import type {
   SkillRevisionPreviewResponse,
   SkillRevisionPublishRequest,
   SkillRevisionPublishResponse,
+  SkillDefinitionHistoryResponse,
+  SkillDefinitionUndoRequest,
+  SkillDefinitionUndoResponse,
   SkillSourceHealthResponse,
   SkillSourceArtifactListResponse,
   SkillSourceSnapshotArchiveResponse,
@@ -396,6 +399,15 @@ export const skillEndpoints = {
     input: SkillRevisionPublishRequest,
   ): Promise<SkillRevisionPublishResponse> {
     return this._post(`/skills/${encodeURIComponent(skillId)}/revisions`, { cwd }, input);
+  },
+
+  async getSkillDefinitionHistory(this: LingDaemonEndpointContext, cwd: string, skillId: string): Promise<SkillDefinitionHistoryResponse> {
+    return this._get(`/skills/${encodeURIComponent(skillId)}/revisions`, { cwd });
+  },
+
+  async undoSkillDefinitionRevision(this: LingDaemonEndpointContext, cwd: string, skillId: string,
+    input: SkillDefinitionUndoRequest): Promise<SkillDefinitionUndoResponse> {
+    return this._post(`/skills/${encodeURIComponent(skillId)}/revision-undo`, { cwd }, input);
   },
 
   async getSkillImportDraft(this: LingDaemonEndpointContext, cwd: string, draftId: string): Promise<SkillImportDraftResponse> {

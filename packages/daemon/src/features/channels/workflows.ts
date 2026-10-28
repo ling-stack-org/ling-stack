@@ -1,3 +1,4 @@
+import { recallMemory } from "../memory/recall-service.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   DEFAULT_WORKSPACE_ID,
@@ -1143,4 +1144,3 @@ function formatHandoffStepPrompt(handoff: ChannelHandoff): string {
     "Use the visible channel Brief, active decisions, and linked context summary before starting work.",
   ].join("\n");
 }
-import { recallMemory } from "../memory/recall-service.js";

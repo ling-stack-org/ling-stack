@@ -29,6 +29,7 @@ import { applyHostAttemptEffectCoverageMigration } from "./host-attempt-effect-c
 import { applyTeammateDirectInterventionFenceMigration } from "./teammate-direct-intervention-fence-migration.js";
 import { initializeMemorySearchIndex } from "./memory-search-index.js";
 import { applyProcedureObservationJobMigration } from "./procedure-observation-job-migration.js";
+import { applySkillDefinitionRevisionMigration } from "./skill-definition-revision-migration.js";
 
 export interface SqliteRunStoreMigrationContext {
   readonly database: DatabaseSync;
@@ -6009,4 +6010,5 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
   applyTeammateDirectInterventionFenceMigration(context);
   initializeMemorySearchIndex(database);
   applyProcedureObservationJobMigration(context);
+  applySkillDefinitionRevisionMigration(context);
 }

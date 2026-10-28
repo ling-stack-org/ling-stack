@@ -1,6 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
-  DEFAULT_WORKSPACE_ID,
   providerCapabilities,
   readOnlyRunTools,
   riskyRunTools,
@@ -26,7 +25,7 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
-import { appendControlPlaneEvent } from "../control-plane/events.js";
+import { flushSkillDefinitionRevisionNotices } from "./revision-notices.js";
 import { listEffectiveSkillRegistryEntries } from "./registry.js";
 import { skillPermissionWarnings } from "./schemas.js";
 
@@ -63,8 +62,16 @@ export async function handleSkillRevisionRoute(input: {
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly cwd: string;
   readonly skillId: string;
-  readonly action: "revision-preview" | "revisions";
+  readonly action: "revision-preview" | "revisions" | "revision-undo";
 }): Promise<void> {
+  if (input.action === "revisions" && input.request.method === "GET") {
+    const skill = input.store.getSkillRegistryEntry(input.skillId)
+      ?? listEffectiveSkillRegistryEntries(input.store).find(entry => entry.id === input.skillId);
+    if (!skill) { writeJson(input.response, 404, { error: "skill_not_found" }); return; }
+    writeJson(input.response, 200, { cwd: input.cwd, skillId: skill.id,
+      revisions: input.store.listSkillDefinitionRevisions(skill.id) });
+    return;
+  }
   if (input.request.method !== "POST") {
     writeJson(input.response, 405, {
       error: "method_not_allowed",
@@ -76,8 +83,21 @@ export async function handleSkillRevisionRoute(input: {
   try {
     const existing = requireEditableSkill(input.store, input.skillId);
     const body = await readJsonBody(input.request, input.config.maxBodyBytes);
+    if (input.action === "revision-undo") {
+      const record = readRecord(body, "Undo request must be a JSON object");
+      const result = input.store.undoSkillDefinitionRevision(existing.id, {
+        revisionId: readRequiredString(record, "revisionId"),
+        expectedUpdatedAt: readRequiredString(record, "expectedUpdatedAt"),
+        reason: readOptionalString(record, "reason"),
+        confirmAuthorityChanges: readOptionalBoolean(record, "confirmAuthorityChanges"),
+      }, new Date().toISOString());
+      flushSkillDefinitionRevisionNotices(input.store, input.controlPlaneEvents, input.cwd);
+      writeJson(input.response, 200, { cwd: input.cwd, ...result });
+      return;
+    }
     const request = parseSkillRevisionRequest(body, input.action === "revisions");
-    if (existing.updatedAt !== request.expectedUpdatedAt) {
+    if (existing.updatedAt !== request.expectedUpdatedAt || (request.expectedRevisionId !== undefined
+      && input.store.getSkillDefinitionRevision(existing.id)?.id !== request.expectedRevisionId)) {
       writeJson(input.response, 409, {
         error: "skill_revision_conflict",
         message: "Skill changed after the editor was opened.",
@@ -126,23 +146,17 @@ export async function handleSkillRevisionRoute(input: {
       draftId: draft.id,
       skillId: existing.id,
       expectedUpdatedAt: request.expectedUpdatedAt,
+      expectedRevisionId: request.expectedRevisionId,
+      actor: "local-user",
+      reason: (request as SkillRevisionPublishRequest).reason,
+      validationStatus: "schema_checked",
     }, now);
-    appendControlPlaneEvent(input.store, input.controlPlaneEvents, {
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      cwd: input.cwd,
-      domain: "skills",
-      entityType: "registry",
-      entityId: skill.id,
-      action: "skill.registry_changed",
-      data: {
-        changeType: "revision",
-        skillId: skill.id,
-      },
-    });
-    writeJson(input.response, 200, { cwd: input.cwd, draftId: draft.id, skill });
+    const revision = input.store.getSkillDefinitionRevision(skill.id);
+    flushSkillDefinitionRevisionNotices(input.store, input.controlPlaneEvents, input.cwd);
+    writeJson(input.response, 200, { cwd: input.cwd, draftId: draft.id, skill, revision });
   } catch (error) {
     if (error instanceof SkillRevisionStoreError) {
-      writeJson(input.response, error.code === "skill_revision_conflict" ? 409 : 400, {
+      writeJson(input.response, ["skill_revision_conflict", "skill_revision_confirmation_required"].includes(error.code) ? 409 : 400, {
         error: error.code,
         message: error.message,
       });
@@ -188,8 +202,9 @@ function parseSkillRevisionRequest(value: unknown, publish: boolean): SkillRevis
     approvalProfile: readApprovalProfile(definitionRecord.approvalProfile),
   };
   return publish
-    ? { expectedUpdatedAt, definition, confirmAuthorityChanges: readOptionalBoolean(record, "confirmAuthorityChanges") }
-    : { expectedUpdatedAt, definition };
+    ? { expectedUpdatedAt, expectedRevisionId: readOptionalString(record, "expectedRevisionId"), definition,
+        reason: readOptionalString(record, "reason"), confirmAuthorityChanges: readOptionalBoolean(record, "confirmAuthorityChanges") }
+    : { expectedUpdatedAt, expectedRevisionId: readOptionalString(record, "expectedRevisionId"), definition };
 }
 
 function buildSkillRevisionPreview(existing: SkillRegistryEntry, editable: SkillEditableDefinition): SkillRevisionPreview {
@@ -290,6 +305,10 @@ function readRequiredString(record: Record<string, unknown>, key: string): strin
     throw new SkillRevisionRequestError(400, "skill_revision_invalid", `${key} must be a non-empty string`);
   }
   return value.trim();
+}
+
+function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
+  return record[key] === undefined ? undefined : readRequiredString(record, key);
 }
 
 function readOptionalBoolean(record: Record<string, unknown>, key: string): boolean | undefined {

@@ -1,3 +1,4 @@
+import { flushSkillDefinitionRevisionNotices } from "./revision-notices.js";
 import {
   routeFromObservation,
   processProcedureObservationJob,
@@ -697,7 +698,7 @@ export async function handleSkillRoute(
       return;
     }
 
-    if (route.kind === "skill" && (route.action === "revision-preview" || route.action === "revisions")) {
+    if (route.kind === "skill" && (route.action === "revision-preview" || route.action === "revisions" || route.action === "revision-undo")) {
       await handleSkillRevisionRoute({
         request,
         response,
@@ -1018,6 +1019,9 @@ export async function handleSkillRoute(
       error: error instanceof HttpError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
+  } finally {
+    const store = storeRegistry.getInitializedStore(cwd);
+    if (store) flushSkillDefinitionRevisionNotices(store, controlPlaneEvents, cwd);
   }
 }
 

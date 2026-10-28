@@ -155,6 +155,8 @@ import { prepareNormalConversationExecution, readNormalConversationPreparedExecu
 import {
   assertPreparedRunnerMemoryCurrent,
   capturePreparedRunnerInput,
+  captureSkillDefinitionSnapshot,
+  type SkillDefinitionRuntimeSnapshot,
 } from "./prepared-runner-input.js";
 import {
   rebuildExistingRunRequest,
@@ -484,6 +486,7 @@ async function executeAdmittedRunRequest(
   let memoryRecall: ReturnType<RunStore["recallMemory"]> | undefined;
   let selectedSkill: ReturnType<typeof getEffectiveTeammateSkill> | undefined;
   let selectedSkillSourceContext: SkillSourceRuntimeContext | undefined;
+  let selectedSkillDefinitionSnapshot: SkillDefinitionRuntimeSnapshot | undefined;
   let selectedSkillSourcePrompt: string | undefined;
   let runtimeApprovalProfile: SkillApprovalProfile | undefined;
   let effectivePolicySnapshot: EffectiveRunPolicySnapshot | undefined;
@@ -588,6 +591,8 @@ async function executeAdmittedRunRequest(
     const skillTeammate = runRequest.teammateId ? resolveAiTeammateReference(store, runRequest.teammateId) : undefined;
     const skillProviderPreset = runRequest.providerPresetId ? store.getProviderPreset(runRequest.providerPresetId) : undefined;
     selectedSkill = resolveCurrentRunSkill(store, runRequest);
+    selectedSkillDefinitionSnapshot = frozenExecution?.skillDefinitionSnapshot
+      ?? (!frozenExecution && selectedSkill ? captureSkillDefinitionSnapshot(store, selectedSkill.skill) : undefined);
     if (frozenExecution) {
       selectedSkillSourceContext = restorePackagedSkillContext(frozenExecution.skillSourceContext, selectedSkill?.skillId);
     } else if (selectedSkill) {
@@ -750,7 +755,7 @@ async function executeAdmittedRunRequest(
     } else if (!existingContinuation) {
       preparedExecution = await prepareNormalConversationExecution({ store, request: runRequest,
         runnerId: runnerResolution.effectiveRunnerId, adapter: runnerResolution.runner.adapter, options: runnerRequest,
-        usedMemory, skillSourceContext: selectedSkillSourceContext, assertCurrent: assertPreparationCurrent });
+        usedMemory, skillSourceContext: selectedSkillSourceContext, skillDefinitionSnapshot: selectedSkillDefinitionSnapshot, assertCurrent: assertPreparationCurrent });
     }
     let executionInput = answerPrepared?.execution ?? existingRunnerExecution ?? preparedExecution?.payload;
     if (!existingContinuation && !answerDispatch && !executionInput && runnerResolution.runner.adapter instanceof PiRunnerAdapter) {
@@ -759,7 +764,8 @@ async function executeAdmittedRunRequest(
       const preparedInput = await runnerResolution.runner.adapter.prepareTaskInput(runnerRequest);
       assertPreparationCurrent();
       executionInput = capturePreparedRunnerInput({ runnerId: runnerResolution.effectiveRunnerId,
-        options: runnerRequest, preparedInput, usedMemory, skillSourceContext: selectedSkillSourceContext });
+        options: runnerRequest, preparedInput, usedMemory, skillSourceContext: selectedSkillSourceContext,
+        skillDefinitionSnapshot: selectedSkillDefinitionSnapshot });
     }
     const refreshPreparedExecution = (): void => {
       if (!executionInput) return;
@@ -792,6 +798,7 @@ async function executeAdmittedRunRequest(
       resolvedSecretValues = [resolvedProvider.apiKey, ...Object.values(resolvedProvider.headers ?? {})];
       selectedSkillSourceContext = restorePackagedSkillContext(executionInput.skillSourceContext, selectedSkill?.skillId);
       usedMemory = executionInput.usedMemory;
+      selectedSkillDefinitionSnapshot = executionInput.skillDefinitionSnapshot;
       durableRunRequest = { ...durableRunRequest, runnerExecutionInput: executionInput,
         ...(preparedExecution ? { normalConversationPreparedExecutionRef: preparedExecution.ref } : {}) };
       assertPreparationCurrent();
@@ -942,6 +949,7 @@ async function executeAdmittedRunRequest(
           runtimeToolFeatures,
           selectedSkillId: selectedSkill?.skillId,
           skillSourceContext: selectedSkillSourceContext,
+          skillDefinitionSnapshot: selectedSkillDefinitionSnapshot,
           mcpToolAccess,
         },
         now: createdAt,
@@ -1036,6 +1044,7 @@ async function executeAdmittedRunRequest(
           runtimeToolFeatures,
           selectedSkillId: selectedSkill?.skillId,
           skillSourceContext: selectedSkillSourceContext,
+          skillDefinitionSnapshot: selectedSkillDefinitionSnapshot,
           mcpToolAccess,
           managedPluginRuntime,
         },
@@ -1365,6 +1374,7 @@ async function executeAdmittedRunRequest(
         teammateId: run.teammateId,
         selectedSkillId: run.selectedSkillId,
         skillSourceContext: selectedSkillSourceContext,
+          skillDefinitionSnapshot: selectedSkillDefinitionSnapshot,
         parentRunId: run.parentRunId,
         interventionId: run.interventionId,
         continuationReason: run.continuationReason,

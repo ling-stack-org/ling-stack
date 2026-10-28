@@ -1,3 +1,4 @@
+import { flushSkillDefinitionRevisionNotices } from "./features/skills/revision-notices.js";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { createServer, type Server } from "node:http";
@@ -347,6 +348,7 @@ export function createDaemonServer(
     store.recoverStaleRuns(recoveryNow);
     store.recoverStaleChannelWorkflows(recoveryNow);
     dependencies.initializeBundledSkills?.(store);
+    flushSkillDefinitionRevisionNotices(store, controlPlaneEvents, cwd);
     // A process may have crossed the shell side-effect boundary before the
     // daemon disappeared. Expired executing claims are never retried; they
     // become explicit unknown outcomes before any recovery dispatch runs.
@@ -912,6 +914,7 @@ export function createDaemonServer(
         };
         const recoverApprovals = () => {
           for (const store of approvalRecoveryStores) {
+            flushSkillDefinitionRevisionNotices(store, controlPlaneEvents, store.paths.cwd);
             if (typeof store.listApprovalPostCommitEffects !== "function") continue;
             try {
               recoverApprovalPostCommitStore({
