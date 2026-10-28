@@ -114,7 +114,7 @@ function DockWorkspaceResourcePreview({ cwd, target }: { readonly cwd: string; r
         data-workspace-capability-target={capabilityTarget}
         data-workspace-viewer-kind="artifact"
       >
-        <ArtifactPreview preview={preview} />
+        <ArtifactPreview preview={preview} cwd={cwd} />
       </article>
     );
   }
@@ -130,7 +130,7 @@ function DockWorkspaceResourcePreview({ cwd, target }: { readonly cwd: string; r
         data-workspace-capability-target={capabilityTarget}
         data-workspace-viewer-kind="file"
       >
-        <ArtifactPreview preview={preview} />
+        <ArtifactPreview preview={preview} cwd={cwd} />
       </article>
     );
   }

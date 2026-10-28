@@ -16,6 +16,7 @@ import { HTML_INTERACTIVE_MAX_BYTES, HTML_INTERACTIVE_SANDBOX, injectInteractive
 import { defaultLingMaterializationBudgets } from "../channels/materialization/budgets.js";
 import { officeExtractorV1 } from "../channels/materialization/extractors/office.js";
 import { pdfExtractorV1 } from "../channels/materialization/extractors/pdf.js";
+import { extractSpreadsheetSheetNamesSync } from "../deliverables/spreadsheet-manifest.js";
 
 const DEFAULT_PREVIEW_BYTES = 64 * 1024;
 const MAX_PREVIEW_BYTES = 64 * 1024;
@@ -110,8 +111,11 @@ export async function buildAttachmentPreview(input: BuildAttachmentPreviewInput)
 
 export async function buildWorkspaceFilePreview(input: BuildWorkspaceFilePreviewInput): Promise<PreviewContentResponse> {
   const maxBytes = normalizePreviewMaxBytes(input.maxBytes);
+  // Spreadsheets render through the windowed viewer; everything else keeps
+  // the textual classification. CSV stays textual until a CSV reader exists.
+  const isSpreadsheet = isSpreadsheetSource(input.displayPath) && extname(input.displayPath).toLowerCase() !== ".csv";
   const inferredKind = inferTextualPreviewKind(input.displayPath);
-  const kind = inferredKind === "unsupported" ? "plain_text" : inferredKind;
+  const kind: PreviewContentKind = isSpreadsheet ? "spreadsheet" : inferredKind === "unsupported" ? "plain_text" : inferredKind;
   const stats = statSync(input.contentPath);
   const ref: PreviewFileRef = {
     id: `workspace:${input.displayPath}`,
@@ -122,6 +126,17 @@ export async function buildWorkspaceFilePreview(input: BuildWorkspaceFilePreview
     sizeBytes: stats.size,
     previewable: true,
   };
+
+  if (kind === "spreadsheet") {
+    return {
+      ref,
+      kind,
+      spreadsheet: extractSpreadsheetSheetNamesSync(input.contentPath, Math.max(maxBytes, 8 * 1024 * 1024)),
+      truncated: false,
+      sizeBytes: stats.size,
+      redactionNotes: ["Preview is read-only and not included in AI context."],
+    };
+  }
 
   if (input.focusLine !== undefined && kind !== "image" && kind !== "pdf" && kind !== "office") {
     const window = await readWorkspaceTextLineWindow(input.contentPath, input.focusLine, maxBytes);
@@ -251,6 +266,20 @@ function buildPreviewResponse(input: {
       ref: input.ref,
       kind: "image",
       imageUrl: input.imageUrl,
+      truncated: false,
+      sizeBytes,
+      redactionNotes: ["Preview is read-only and not included in AI context."],
+    };
+  }
+
+  if (input.kind === "spreadsheet") {
+    // Names only; cell contents stream through the windowed route so a large
+    // workbook never crosses the wire whole.
+    const workbook = extractSpreadsheetSheetNamesSync(input.contentPath, Math.max(input.maxBytes, 8 * 1024 * 1024));
+    return {
+      ref: input.ref,
+      kind: "spreadsheet",
+      spreadsheet: workbook,
       truncated: false,
       sizeBytes,
       redactionNotes: ["Preview is read-only and not included in AI context."],
@@ -429,9 +458,19 @@ function formatJsonPreview(text: string): string {
   }
 }
 
+function isSpreadsheetSource(fileName: string, contentType?: string): boolean {
+  const lowerType = contentType?.toLowerCase() ?? "";
+  if (lowerType.includes("spreadsheetml") || lowerType.includes("vnd.ms-excel") || lowerType.includes("text/csv")) return true;
+  const extension = extname(fileName).toLowerCase();
+  return [".xlsx", ".xlsm", ".csv"].includes(extension);
+}
+
 function inferArtifactPreviewKind(artifact: RunArtifact): PreviewContentKind {
   if (isInteractiveHtmlSource(artifact.path, artifact.contentType)) {
     return "html_interactive";
+  }
+  if (isSpreadsheetSource(artifact.path, artifact.contentType)) {
+    return "spreadsheet";
   }
   if (artifact.type === "markdown") {
     return "markdown_text";
@@ -466,6 +505,9 @@ function inferAttachmentPreviewKind(attachment: ChannelAttachment | Conversation
   }
   if (isInteractiveHtmlSource(attachment.fileName, attachment.contentType)) {
     return "html_interactive";
+  }
+  if (isSpreadsheetSource(attachment.fileName, attachment.contentType)) {
+    return "spreadsheet";
   }
   return inferTextualPreviewKind(attachment.fileName, attachment.contentType);
 }
