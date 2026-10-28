@@ -417,7 +417,7 @@ P0-D 依赖 P0-A；P0-G 最后执行。
 当前无条件要求 selection。
 
 **最快恢复（复用现有已验证 bundle，仅本地）。** 如果本机已有完整的 managed gstack bundle
-（例如 `/Volumes/qinshan/ling-gstack-managed-darwin-arm64/artifacts/native/executable-client/gstack`），
+（例如 `${GSTACK_BUNDLE_ROOT}` 指向的本地 bundle），
 不需要重跑数 GiB 的 native/resource 构建：`readExecutableBundle` 会按当前 `upstream-lock.json`
 重新验证 manifest、target、browser 与 receipt，然后可直接写出 selection。
 
@@ -425,7 +425,8 @@ P0-D 依赖 P0-A；P0-G 最后执行。
 node --input-type=module -e '
 import { readExecutableBundle } from "./scripts/gstack/executable-bundle.mjs";
 import { mkdirSync, writeFileSync } from "node:fs";
-const root = "/Volumes/qinshan/ling-gstack-managed-darwin-arm64/artifacts/native/executable-client/gstack";
+const root = process.env.GSTACK_BUNDLE_ROOT;
+if (!root) throw new Error("Set GSTACK_BUNDLE_ROOT to the local bundle directory");
 const bundle = await readExecutableBundle(root);
 mkdirSync(".ling-stack/build", { recursive: true });
 writeFileSync(".ling-stack/build/gstack-desktop-selection.json",
@@ -468,7 +469,7 @@ L1/L2 发布证据。正式发布必须在 workflow 中从锁定上游重新生�
 **可执行命令（在仓库根目录，替换 `<EXTERNAL_VOLUME>`）：**
 
 ```bash
-export MOUNT="/Volumes/<EXTERNAL_VOLUME>"
+export MOUNT="${EXTERNAL_VOLUME:?Set EXTERNAL_VOLUME to an external mount path}"
 export WS="$MOUNT/ling-gstack-candidate-$(date +%Y%m%d%H%M%S)"
 mkdir -p .ling-stack/build
 
