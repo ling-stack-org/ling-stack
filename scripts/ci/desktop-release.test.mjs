@@ -4,11 +4,11 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { assembleRelease, collectTarget, desktopTargets, fileRecord, prereleaseVersion, readCandidate, validateCandidate } from "../release/desktop-release.mjs";
+import { assembleRelease, collectTarget, desktopTargets, fileRecord, releaseVersion, readCandidate, validateCandidate } from "../release/desktop-release.mjs";
 import { createDesktopDraft, verifyAssembledRelease } from "../release/create-desktop-draft.mjs";
 
-const input = { sha: "a".repeat(40), tag: "v0.1.2-alpha.2", versionFile: "0.1.2-alpha.2",
-  rootVersion: "0.1.2-alpha.2", desktopVersion: "0.1.2-alpha.2" };
+const input = { sha: "a".repeat(40), tag: "v0.1.3", versionFile: "0.1.3",
+  rootVersion: "0.1.3", desktopVersion: "0.1.3" };
 const candidate = validateCandidate(input);
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "ling-desktop-release-"));
@@ -37,7 +37,7 @@ async function draftFixture(t, mode = "success") {
       const file = assets[Number(args[1].split("/").at(-1)) - 1];
       return JSON.stringify({ state: "uploaded", size: file.sizeBytes, digest: `sha256:${mode === "wrong-digest" ? "0".repeat(64) : file.sha256}` });
     }
-    if (args[1] === "view") return JSON.stringify({ isDraft: true, isPrerelease: true, targetCommitish: candidate.sourceSha,
+    if (args[1] === "view") return JSON.stringify({ isDraft: true, isPrerelease: mode === "unexpected-prerelease", targetCommitish: candidate.sourceSha,
       url: "https://github.com/example/ling-stack/releases/test-draft", assets: assets.map((file, index) => ({ name: file.name,
         apiUrl: `https://api.github.com/repos/${repository}/releases/assets/${index + 1}` })) });
     return "";
@@ -51,16 +51,16 @@ test("Draft creation uploads both platforms, verifies remote bytes and never pub
   assert.equal(result.published, false);
   assert.equal(result.assetCount, 14);
   const create = f.calls.find(args => args[1] === "create");
-  assert.ok(create.includes("--draft") && create.includes("--prerelease") && create.includes(candidate.sourceSha));
+  assert.ok(create.includes("--draft") && !create.includes("--prerelease") && create.includes(candidate.sourceSha));
   assert.ok(f.calls.every(args => !args.includes("--clobber") && !args.includes("delete") && !args.includes("edit")));
 });
 
-for (const mode of ["existing-tag", "existing-release", "api-error", "wrong-digest", "tag-race"]) {
+for (const mode of ["existing-tag", "existing-release", "api-error", "wrong-digest", "tag-race", "unexpected-prerelease"]) {
   test(`Draft creation fails safely on ${mode}`, async t => {
     const f = await draftFixture(t, mode);
     await assert.rejects(createDesktopDraft(f.draft));
     const created = f.calls.some(args => args[1] === "create");
-    assert.equal(created, mode === "wrong-digest" || mode === "tag-race");
+    assert.equal(created, mode === "wrong-digest" || mode === "tag-race" || mode === "unexpected-prerelease");
     assert.ok(f.calls.every(args => !args.includes("--clobber") && !args.includes("delete")));
   });
 }
@@ -72,10 +72,11 @@ test("assembled checksum corruption is rejected before any GitHub call", async t
   assert.equal(f.calls.length, 0);
 });
 
-test("unsigned release rejects stable, malformed and shell-shaped tags", () => {
-  assert.equal(prereleaseVersion("v0.1.2-rc.1"), "0.1.2-rc.1");
-  for (const tag of ["v0.1.2", "0.1.2-alpha.2", "v01.1.2-alpha.2", "v0.1.2-alpha.02", "v0.1.2-alpha.2+build", "v0.1.2-alpha.2\nother", "$(touch invalid)", "../../release"]) {
-    assert.throws(() => prereleaseVersion(tag), /prerelease/u);
+test("release accepts numeric and historical prerelease tags, rejecting malformed or shell-shaped tags", () => {
+  assert.equal(releaseVersion("v0.1.3"), "0.1.3");
+  assert.equal(releaseVersion("v0.1.2-alpha.1"), "0.1.2-alpha.1");
+  for (const tag of ["0.1.3", "v01.1.3", "v0.1.2-alpha.02", "v0.1.3+build", "v0.1.3\nother", "$(touch invalid)", "../../release"]) {
+    assert.throws(() => releaseVersion(tag), /release tag/u);
   }
   for (const sha of ["main", "a".repeat(7), "A".repeat(40), "a".repeat(40) + "\n"]) {
     assert.throws(() => validateCandidate({ ...input, sha }), /complete lowercase/u);
@@ -179,7 +180,7 @@ for (const mutation of ["different-source", "different-version", "changed-archiv
     const path = join(f.combined, "desktop-windows-x64.json");
     const manifest = JSON.parse(await readFile(path, "utf8"));
     if (mutation === "different-source") manifest.sourceSha = "b".repeat(40);
-    if (mutation === "different-version") manifest.version = "0.1.2-alpha.3";
+    if (mutation === "different-version") manifest.version = "0.1.4";
     if (mutation === "path-traversal") manifest.artifacts[0].name = "../outside.exe";
     if (mutation === "missing-evidence") manifest.evidence = [];
     await writeFile(path, JSON.stringify(manifest));

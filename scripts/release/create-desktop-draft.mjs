@@ -38,12 +38,12 @@ export async function createDesktopDraft({ candidate, outputRoot, repository, gh
   let created = false;
   try {
     await gh(["release", "create", candidate.tag, "--repo", repository, "--target", candidate.sourceSha,
-      "--draft", "--prerelease", "--title", `Ling Stack ${candidate.tag}`, "--notes-file", join(outputRoot, "release-notes.md")]);
+      "--draft", "--title", `Ling Stack ${candidate.tag}`, "--notes-file", join(outputRoot, "release-notes.md")]);
     created = true;
     await gh(["release", "upload", candidate.tag, "--repo", repository, ...assets.map(file => join(outputRoot, file.name))]);
     const release = JSON.parse(await gh(["release", "view", candidate.tag, "--repo", repository,
       "--json", "isDraft,isPrerelease,targetCommitish,assets,url"]));
-    if (!release.isDraft || !release.isPrerelease || release.targetCommitish !== candidate.sourceSha
+    if (!release.isDraft || release.isPrerelease !== false || release.targetCommitish !== candidate.sourceSha
       || release.assets.length !== assets.length) throw new Error("Draft identity or uploaded asset count mismatch");
     for (const file of assets) {
       const remote = release.assets.find(asset => asset.name === file.name);

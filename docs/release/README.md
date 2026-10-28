@@ -12,15 +12,15 @@ Code and workflow anchors: `package.json`, `apps/desktop/package.json`,
 | Class | Purpose | Current status |
 | --- | --- | --- |
 | Public source snapshot | Review and source-based development | Allowed after the open-source readiness checklist passes |
-| Alpha GitHub tag | Named prerelease source baseline | Initial target: `v0.1.2-alpha.1`; [published Releases](https://github.com/ling-stack-org/ling-stack/releases) record publication status |
+| Alpha GitHub tag | Named historical prerelease source baseline | `v0.1.2-alpha.1` has been published; [published Releases](https://github.com/ling-stack-org/ling-stack/releases) record publication status |
 | Local Desktop development candidate | Engineering checks on a platform host | See the [Mac and Windows packaging checklist](development-packages.md); macOS currently requires an independent Office source review record |
 | Public Desktop binary | End-user installation | Blocked by signing, platform, notice, and clean-machine gates |
-| Stable release | Supported product line | Not defined yet |
+| Numeric product version | Source and potential GitHub Release identity | Current version `0.1.3`, intended tag `v0.1.3`; publication remains subject to applicable gates |
 
 Making the repository public is not permission to publish an unsigned Desktop artifact.
 
-For the maintainer-triggered native build and Draft prerelease workflow, see
-[GitHub Actions desktop prereleases](github-actions.md). Draft creation preserves
+For the maintainer-triggered native build and Draft release workflow, see
+[GitHub Actions desktop candidates](github-actions.md). Draft creation preserves
 the development-only signing and acceptance boundaries described here.
 
 ## Versioning
@@ -28,22 +28,23 @@ the development-only signing and acceptance boundaries described here.
 Future releases use Semantic Versioning. Before `1.0.0`, incompatible product or API
 changes may occur in minor releases but must still be documented.
 
-- The current product version is `0.1.2-alpha.1`; its source prerelease identifier is
-  `v0.1.2-alpha.1`. Tags and Releases are created explicitly after maintainer review.
+- The current product version is `0.1.3`; the next release tag is `v0.1.3`.
+  The already-published `v0.1.2-alpha.1` remains historical and immutable. Tags and Releases
+  are created explicitly after maintainer review and applicable release gates.
 - Release tags must point to reviewed commits on `main`.
 - `VERSION`, root, and Desktop package versions must match the approved tag.
 - Internal workspace packages still using `0.0.0` have a development sentinel, not the
   product release number.
 - Integration components such as the Chrome Extension and Browser Host have independent
   compatibility versions; do not rewrite them merely to match the product release tag.
-- Do not create or move a release tag to repair an artifact. Publish a new prerelease.
+- Do not create or move a release tag to repair an artifact. Advance to a new product version and tag.
 
 ### Release Naming
 
-- Use `v<product-version>` for every new release tag: `v0.1.2-alpha.2`,
-  `v0.1.2-beta.1`, `v0.1.2-rc.1`, or `v0.1.2` for a stable release only after its gates pass.
+- Use `v<product-version>` for every new release tag: this version is `v0.1.3`.
+  Older prerelease tags retain their original meaning; numeric naming by itself does not close release gates.
 - Use `Ling Stack <tag>` as the GitHub Release title, for example
-  `Ling Stack v0.1.2-alpha.2`.
+  `Ling Stack v0.1.3`.
 - Do not include a platform, `dev` prefix, date, commit hash, or packaging recipe
   revision in the tag or title. Record the full source commit, date, development-only
   status, verification scope, and known limits in the release notes and evidence.
@@ -54,7 +55,7 @@ changes may occur in minor releases but must still be documented.
   commits require different product versions and Releases.
 - Check the remote tag before publication. An existing published tag is never
   overwritten or reused for a different commit. A new candidate advances the
-  prerelease number and matching product versions before building.
+  product version and matching version files before building.
 - Keep historical platform/date/SHA tags and immutable release assets unchanged.
   The published `desktop-dev-0.1.2-alpha.1-20261013-dfb61ac` tag is a legacy
   naming exception; it must not be renamed or mapped onto the existing
@@ -74,11 +75,14 @@ changes may occur in minor releases but must still be documented.
    The current maintainer preparation scope defers branch-protection and private
    vulnerability-reporting verification; record their status separately from local checks.
 7. Review third-party source licensing and trademark/name/logo authority.
-8. Create an annotated prerelease tag and GitHub prerelease with source archives only.
+8. After applicable gates pass, create the reviewed tag and GitHub Release with verified assets; a Draft alone is not publication.
 9. Verify the published tag and source archive checksums from a clean checkout.
 
 No automatic release-on-push workflow exists. Publishing a GitHub Release remains an
-explicit maintainer action.
+explicit maintainer action. A `v0.1.3` Release eligible for GitHub's
+`/repos/ling-stack-org/ling-stack/releases/latest` requires publication in that repository
+with `draft=false` and `prerelease=false` after the applicable gates; numeric naming and
+an unsigned Draft do not establish release readiness.
 
 ## Current Preparation Evidence
 
