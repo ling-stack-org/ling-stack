@@ -1,6 +1,6 @@
 # 翻译目录自动化方案
 
-日期：2026-10-28。状态：**方案已定稿，待实施**。
+日期：2026-10-28。状态：**已实施（#608），zh-CN 草稿自动补齐为 2026-10-28 修订。**
 
 来源：用户评审对话（翻译流水线是否可做成仓库 CI/workflow，参照模型目录同步任务）。本文落定后，翻译目录自动化的实施与验收以本文为准。
 
@@ -73,3 +73,24 @@
 - 不改变 `catalog:check` 的任何判定标准。
 - 不为 fork PR 提供自动写回；fork 作者仍按 CONTRIBUTING 指引本地运行 `catalog:translate`。
 - 不重构 `provider-model-catalog-pr.mjs` 等既有自动化脚本。
+
+---
+
+## 7. 修订（2026-10-28）：zh-CN 缺失草稿自动补齐
+
+### 背景修订
+
+原方案假设 en-US/zh-CN 均由人认真撰写，因此 `check:i18n` 对"en 有 zh 无"硬失败。实际工作流中两种源文案都由 agent 生成，缺 zh 属疏忽而非态度，与其余 53 个语言的机翻兜底行为不一致。
+
+### 修订内容
+
+1. 新增 `packages/localization/scripts/draft-missing-chinese.mjs`：找出"英文源有、中文源无"的 key（TS 字典与 additional JSON 两个容器都覆盖），经同一 Google 端点机翻 zh-CN 草稿，做与主翻译相同的占位符/受保护 token/非空校验，然后写回**真实源文件**（TS 字典 key 追加到 `zh-CN.ts` 根部；additional-only key 写入 `additional-zh-CN.json`）。草稿进入源文件后，import、parity 检查、PR 评审都按正常内容对待。
+2. 两个工作流在 import 之前先跑草稿脚本；提交范围扩大到 `zh-CN.ts` 与 catalogs。机器人推 zh-CN.ts 会再触发一次 synchronize，该次运行经无 diff 出口收敛，不构成循环。
+3. PR 工作流在推送后尝试用 `gh pr comment` 列出本次机翻草稿的 key 清单，供人工润色；评论权限不可用时降级为警告，不影响主流程。
+4. `check:i18n` 的 en/zh 缺口（`englishOnlyKeys`、`missingChinese`）从硬失败降为信息输出；重复 key 仍为硬失败。
+5. 共享模块抽取：`google-translate.mjs`（端点调用）、`web-locale-sources.mjs`（TS 字典与 additional 解析），`translate-catalogs.mjs` / `import-legacy-web-catalogs.mjs` 改为复用，行为不变。
+
+### 明确不做的
+
+- 不处理"只有中文没有英文"的方向（en 缺失时 import 回退为 key 原文，历史上即如此）。
+- 不给机翻草稿加永久标记；可见性靠 bot commit 与 PR 评论。
