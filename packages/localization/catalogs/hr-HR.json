@@ -1,6 +1,6 @@
 {
   "locale": "hr-HR",
-  "sourceRevision": "aab656282e8717e8d97044a7de3a8a8fe1375148356659313a7b8056c81cdf8a",
+  "sourceRevision": "5fd46100fd422fb6cd217ad5c03d76aa81c823923c695e74ed2bbd5d1cc49e48",
   "sourceHashes": {
     "{action} (Enter)": "9472217728ec383f5dfdd37d2f84c381ed7b4546d115f6e3e536959810ef5af5",
     "{agent} wants to start task \"{task}\" and needs {permissions}.": "b87261e1f3ceaec90a862105f2885011d44b2722f9979327a3790af82a5dcdf1",
@@ -1496,6 +1496,7 @@
     "Conversation page": "17e720bcc771d47260a7e1941dec6c077810cac47524225492443b8605bbd404",
     "Conversation saved to recent conversations.": "ac5afe5df564851bb123be3d870884dbf4813e251256e7f529e1798d297d68d8",
     "Conversation shortcuts": "cf080be37ec5f103d4451d0d666681f0098001446e9b3d32c25df15d799bfc48",
+    "Conversation status": "ade62c7be1024a375eb00df563d2f9cef464564eaca278d1b677202fc17c1a6b",
     "Conversation tone source": "c684d649ac94c572fb7867e4df62ca88d9a5816aacaa95a5e584128ace4a1840",
     "Conversation tone storage": "33a34a627c9c0351f88a996d0e9f23ecbab6edf25398395f60f39168c6b14f91",
     "Conversation tools": "ce8cfbb518115445c46e30ca9c452146026189fb03032d92d2514b41b89c412d",
@@ -8380,6 +8381,7 @@
     "Conversation page": "Stranica za razgovor",
     "Conversation saved to recent conversations.": "Razgovor je spremljen u nedavne razgovore.",
     "Conversation shortcuts": "Prečaci za razgovor",
+    "Conversation status": "Status razgovora",
     "Conversation tone source": "Izvor tona razgovora",
     "Conversation tone storage": "Pohranjivanje tonova razgovora",
     "Conversation tools": "Alati za razgovor",
