@@ -1,8 +1,8 @@
-# GitHub Actions 桌面开发预发布
+# GitHub Actions 桌面候选构建
 
-工作流是 [Desktop prerelease](../../.github/workflows/desktop-prerelease.yml)。它固定一个完整源码 SHA，
+工作流是 [Desktop candidate](../../.github/workflows/desktop-prerelease.yml)（沿用原工作流文件路径）。它固定一个完整源码 SHA，
 分别在原生 macOS arm64、Windows x64 runner 上构建，默认仅生成 **Actions artifacts**。
-手动选择 `create_draft=true` 时，才会在两平台都成功后汇总为一个 **Draft prerelease**。
+手动选择 `create_draft=true` 时，才会在两平台都成功后汇总为一个 **Draft release**，不强制标记 prerelease。
 macOS 使用 ad-hoc 签名，不含 Developer ID 或公证；Windows 不含 Authenticode 发行者签名。
 两种开发包都不需要先购买代码签名证书。
 
@@ -32,18 +32,23 @@ TestSavant 模型保留完整推理功能，权重在首次扫描时从官方固
 
 ## 每次发版
 
+发布目标仓库固定为 `ling-stack-org/ling-stack`：必须在该仓库运行工作流、创建 Draft 并最终发布
+`v0.1.3`。当前本地 checkout 的 `origin` 指向 `tianxiaochannel-oss88/ling-stack`；在那里
+创建的 Release 不会被 Desktop 配置的 `ling-stack-org/ling-stack` 更新检查发现。
+发布前核对目标仓库中的源码 SHA 和 tag，历史 `v0.1.2-alpha.1` 不复用或移动。
+
 1. 在发布 PR 中将根 `VERSION`、根 `package.json`、Desktop `package.json` 的版本改为相同的
-   SemVer 预发布版本，例如 `0.1.2-alpha.2`，完成审查和测试后合入主分支。
-2. 选取已审查的完整 40 位 commit SHA；新 tag 使用 `v<版本>`，例如 `v0.1.2-alpha.2`。
+   SemVer 产品版本，本次为 `0.1.3`，完成审查和测试后合入主分支。
+2. 选取已审查的完整 40 位 commit SHA；新 tag 使用 `v<版本>`，本次为 `v0.1.3`。
    不使用移动分支作为源码输入，不复用已有 tag 或 Release。
-3. 在 GitHub **Actions → Desktop prerelease → Run workflow** 中选择：
+3. 在 `ling-stack-org/ling-stack` 的 GitHub **Actions → Desktop candidate → Run workflow** 中选择：
 
    | 输入 | 值 |
    | --- | --- |
    | Workflow ref | `main` |
    | `operation` | 先 `inspect`，解决阻断后再 `build` |
    | `source_sha` | 已合入 main 的完整源码 SHA |
-   | `release_tag` | 与上述三个版本文件一致的新预发布 tag |
+   | `release_tag` | 与上述三个版本文件一致的新 release tag，例如 `v0.1.3` |
    | `create_draft` | `false` 仅保留候选 artifact；`true` 在两平台成功后创建 Draft |
 
 4. 下载并检查本次生成的安装包、每平台验证 JSON、分发材料压缩包和 `checksums.txt`。
@@ -55,16 +60,19 @@ TestSavant 模型保留完整推理功能，权重在首次扫描时从官方固
    两端还会在私有缓存中验证随包 CLI 的真实浏览器首次下载、页面交互、停止及缓存重启，
    保存 `browser-acquisition-smoke.json`。零请求缓存检查和不可用代理重启属于受控网络模拟，
    不代表操作系统断网或完整 GUI、模型、Office 验收。
-6. 维护者核对 Draft 内容与证据后手动发布，或明确授权代理发布。
-   工作流不会自动取消 Draft、标记 stable、重写 tag 或覆盖已有资产。
+6. 维护者核对 Draft 内容与证据、完成适用的签名与发行门禁后，再决定是否手动发布。
+   工作流不会自动取消 Draft、完成签名或验收、发布 Release、重写 tag 或覆盖已有资产。
+   只有发布在 `ling-stack-org/ling-stack`、`draft=false` 且 `prerelease=false` 的合格 Release，
+   才有机会被 GitHub `/repos/ling-stack-org/ling-stack/releases/latest` 返回；Draft 或 prerelease 均不会出现。
+   本工作流的 unsigned 开发候选和 Draft 本身不证明具备正式发布资格。
 
 命令行也可以触发，示例中的 SHA 和版本必须替换为本次真实输入：
 
 ```bash
-gh workflow run desktop-prerelease.yml --ref main \
+gh workflow run desktop-prerelease.yml --repo ling-stack-org/ling-stack --ref main \
   -f operation=inspect \
   -f source_sha=REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA \
-  -f release_tag=v0.1.2-alpha.2 \
+  -f release_tag=v0.1.3 \
   -F create_draft=false
 ```
 
@@ -83,4 +91,4 @@ gh workflow run desktop-prerelease.yml --ref main \
 - Draft 创建后上传或摘要校验失败，会保留未发布 Draft 并让 job 失败。
   先检查该 Draft，选用新版本/新 tag 重试；脚本不会自动删除或覆盖残留资产。
 - 所有正常分发仍须满足 [第三方声明边界](../../THIRD_PARTY_NOTICES.md#binary-distribution-boundary)。
-  无证书开发预发布与正式签名/公证验收分别记录。
+  无证书开发候选与正式签名/公证验收分别记录。
