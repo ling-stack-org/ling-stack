@@ -1439,10 +1439,6 @@ async function buildGstackSkillSourceSyncPreview(
     snapshots: store.listSkillSourceSnapshots({ includeArchived: true }),
     // Shared-folder snapshots belong to a separate contract and must never surface here.
     excludedSnapshotPackIds: [SHARED_AGENT_SKILL_PACK_ID],
-    // Pack-owned history wins over path scoping: a gstack skill previously
-    // published from a local (non-cache) source keeps its active snapshot,
-    // so an official apply cannot re-publish it without an expectation.
-    snapshotPackIds: ["gstack-source-sync"],
     includeSkillIds: input.includeSkillIds,
     excludeSkillIds: input.excludeSkillIds,
     generatedAt,
