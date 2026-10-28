@@ -271,7 +271,7 @@ export function ArtifactPreviewDrawer({
               {actionError}
             </InlineFeedback>
           ) : null}
-          {preview && !previewUnavailable ? <ArtifactPreview preview={preview} /> : null}
+          {preview && !previewUnavailable ? <ArtifactPreview preview={preview} cwd={request?.cwd} /> : null}
         </div>
 
         {preview?.redactionNotes.length ? (
@@ -324,6 +324,9 @@ function artifactPreviewCanRender(preview: PreviewContentResponse): boolean {
   }
   if (preview.kind === "html_interactive") {
     return Boolean(preview.htmlInteractive);
+  }
+  if (preview.kind === "spreadsheet") {
+    return Boolean(preview.spreadsheet);
   }
   return preview.text !== undefined;
 }
