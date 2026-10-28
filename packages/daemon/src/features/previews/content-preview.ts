@@ -16,7 +16,7 @@ import { HTML_INTERACTIVE_MAX_BYTES, HTML_INTERACTIVE_SANDBOX, injectInteractive
 import { defaultLingMaterializationBudgets } from "../channels/materialization/budgets.js";
 import { officeExtractorV1 } from "../channels/materialization/extractors/office.js";
 import { pdfExtractorV1 } from "../channels/materialization/extractors/pdf.js";
-import { extractSpreadsheetSheetNamesSync } from "../deliverables/spreadsheet-extract.js";
+import { extractSpreadsheetSheetNamesSync } from "../deliverables/spreadsheet-manifest.js";
 
 const DEFAULT_PREVIEW_BYTES = 64 * 1024;
 const MAX_PREVIEW_BYTES = 64 * 1024;

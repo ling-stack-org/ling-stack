@@ -1,0 +1,14 @@
+[
+  {
+    "sha": "a6decc01292738011dd07868ac58c23797349f9a",
+    "filename": "packages/core/src/provider-model-catalog.generated.ts",
+    "status": "modified",
+    "additions": 29,
+    "deletions": 3,
+    "changes": 32,
+    "blob_url": "https://github.com/ling-stack-org/ling-stack/blob/772ad4f703e18c1316979616f9c60ffb4c1bc678/packages%2Fcore%2Fsrc%2Fprovider-model-catalog.generated.ts",
+    "raw_url": "https://github.com/ling-stack-org/ling-stack/raw/772ad4f703e18c1316979616f9c60ffb4c1bc678/packages%2Fcore%2Fsrc%2Fprovider-model-catalog.generated.ts",
+    "contents_url": "https://api.github.com/repos/ling-stack-org/ling-stack/contents/packages%2Fcore%2Fsrc%2Fprovider-model-catalog.generated.ts?ref=772ad4f703e18c1316979616f9c60ffb4c1bc678",
+    "patch": "@@ -3,12 +3,12 @@ import type { ProviderModelCatalogManifest, ProviderModelCatalogRecord } from \".\n \n export const providerModelCatalogManifest = {\n   \"schemaVersion\": 1,\n-  \"version\": \"models.dev:e3be9366c06f\",\n+  \"version\": \"models.dev:e65600616eed\",\n   \"source\": \"models.dev\",\n   \"sourceUrl\": \"https://models.dev/api.json\",\n   \"license\": \"MIT\",\n-  \"generatedAt\": \"2026-10-25T11:47:19.856Z\",\n-  \"updatedAt\": \"2026-10-23\"\n+  \"generatedAt\": \"2026-10-27T08:02:00.180Z\",\n+  \"updatedAt\": \"2026-10-26\"\n } as const satisfies ProviderModelCatalogManifest;\n \n export const providerModelCatalogRecords = [\n@@ -3893,6 +3893,32 @@ export const providerModelCatalogRecords = [\n     \"maxTokens\": 128000,\n     \"updatedAt\": \"2026-09-29\"\n   },\n+  {\n+    \"providerId\": \"openai\",\n+    \"id\": \"gpt-6.1-terra\",\n+    \"displayName\": \"GPT-6.1 Terra\",\n+    \"input\": [\n+      \"text\",\n+      \"image\"\n+    ],\n+    \"capabilities\": [\n+      \"chat\",\n+      \"tool_call\",\n+      \"reasoning\",\n+      \"vision\"\n+    ],\n+    \"thinkingModes\": [\n+      \"off\",\n+      \"low\",\n+      \"medium\",\n+      \"high\",\n+      \"xhigh\",\n+      \"max\"\n+    ],\n+    \"contextWindow\": 1050000,\n+    \"maxTokens\": 128000,\n+    \"updatedAt\": \"2026-10-26\"\n+  },\n   {\n     \"providerId\": \"openai\",\n     \"id\": \"gpt-daybreak-blue-latest\","
+  }
+]

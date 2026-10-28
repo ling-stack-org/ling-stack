@@ -1,7 +1,5 @@
 import { statSync } from "node:fs";
-import { readFileSync } from "node:fs";
 import ExcelJS from "exceljs";
-import { unzipSync } from "fflate";
 import type {
   SpreadsheetCell,
   SpreadsheetSheetMeta,
@@ -17,44 +15,6 @@ export interface SpreadsheetExtraction {
   readonly sizeBytes: number;
 }
 
-/**
- * Synchronous sheet-name extraction for preview envelopes: reads only the zip
- * entry xl/workbook.xml so a preview never pays for a full ExcelJS parse.
- * Row/column counts are discovered authoritatively by the windowed route.
- */
-export function extractSpreadsheetSheetNamesSync(path: string, maxBytes: number): SpreadsheetWorkbook {
-  const sizeBytes = statSync(path).size;
-  const bytes = readFileSync(path);
-  const names: string[] = [];
-  if (sizeBytes <= maxBytes && bytes.length <= maxBytes) {
-    try {
-      const files = unzipSync(bytes);
-      const workbookXml = files["xl/workbook.xml"];
-      if (workbookXml) {
-        const xml = Buffer.from(workbookXml).toString("utf8");
-        for (const match of xml.matchAll(/<sheet[^>]*\bname="([^"]+)"/gu)) {
-          names.push(decodeXmlEntities(match[1]));
-          if (names.length >= 100) break;
-        }
-      }
-    } catch {
-      // Not a readable zip: fall through to an empty listing.
-    }
-  }
-  return {
-    schemaVersion: 1,
-    sheets: names.map((name, index) => ({ index, name, rowCount: 0, colCount: 0 })),
-  };
-}
-
-function decodeXmlEntities(value: string): string {
-  return value
-    .replace(/&lt;/gu, "<")
-    .replace(/&gt;/gu, ">")
-    .replace(/&quot;/gu, "\"")
-    .replace(/&apos;/gu, "'")
-    .replace(/&amp;/gu, "&");
-}
 
 /**
  * Read workbook sheet metadata (names + bounds). Cell contents are fetched
