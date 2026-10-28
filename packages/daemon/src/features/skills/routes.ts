@@ -1439,6 +1439,10 @@ async function buildGstackSkillSourceSyncPreview(
     snapshots: store.listSkillSourceSnapshots({ includeArchived: true }),
     // Shared-folder snapshots belong to a separate contract and must never surface here.
     excludedSnapshotPackIds: [SHARED_AGENT_SKILL_PACK_ID],
+    // Pack-owned history wins over path scoping: a gstack skill previously
+    // published from a local (non-cache) source keeps its active snapshot,
+    // so an official apply cannot re-publish it without an expectation.
+    snapshotPackIds: ["gstack-source-sync"],
     includeSkillIds: input.includeSkillIds,
     excludeSkillIds: input.excludeSkillIds,
     generatedAt,
@@ -1543,8 +1547,13 @@ async function publishGstackSkillSourceSync(input: {
   }
   // Error-severity source warnings (raw secrets, unsafe paths) must block
   // publication outright: shared publication disables the auto-safe policy,
-  // so this is the only gate that still sees them.
-  const errorWarnings = input.trusted ? [] : selectedRecords.filter((record) => record.warnings.some((warning) => warning.severity === "error"));
+  // so this is the only gate that still sees them. Unchanged records write
+  // nothing — referenced-file-only edits leave SKILL.md checksums intact —
+  // so they keep flowing to the explicit unchanged-selection rejection.
+  const errorWarnings = input.trusted
+    ? []
+    : selectedRecords.filter((record) => record.state !== "unchanged"
+      && record.warnings.some((warning) => warning.severity === "error"));
   if (errorWarnings.length > 0) {
     throw new HttpError(409, "skill_source_sync_error_warning", `Selected records have error-severity warnings: ${errorWarnings.map((record) => record.skillId).join(", ")}`);
   }
