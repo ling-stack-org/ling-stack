@@ -3135,6 +3135,8 @@ export const enUS = {
     "Automation heartbeat": "Heartbeat",
     "Worktree": "Worktree",
     "Conversation": "Conversation",
+    "Conversation status": "Conversation status",
+    "Sending": "Sending",
     "Ling Agent": "Ling Agent",
     "Current workspace": "Current workspace",
     "Select conversation": "Select conversation",
@@ -4611,4 +4613,5 @@ export const enUS = {
   "Automation run finished": "Automation run finished",
   "Automation run failed": "Automation run failed",
   "Approval required": "Approval required",
+  "Translation automation smoke probe": "Translation automation smoke probe",
 } as const satisfies Readonly<Record<string, string>>;

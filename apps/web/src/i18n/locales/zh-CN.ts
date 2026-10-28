@@ -4678,6 +4678,8 @@ export const zhCN = {
     "Automation heartbeat": "心跳",
     "Worktree": "工作树",
     "Conversation": "对话",
+    "Conversation status": "对话状态",
+    "Sending": "发送中",
     "Ling Agent": "Ling 助手",
     "Current workspace": "当前工作区",
     "Select conversation": "选择对话",
@@ -6483,4 +6485,5 @@ export const zhCN = {
   "End": "结束",
   "Automation run finished": "自动化运行完成",
   "Automation run failed": "自动化运行失败",
+  "Translation automation smoke probe": "翻译自动化冒烟探针",
 } as const satisfies Readonly<Record<string, string>>;
