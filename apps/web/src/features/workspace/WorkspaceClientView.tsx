@@ -81,7 +81,8 @@ import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
 import { loadPreviewContent, type PreviewRequest } from "../../lib/previews.js";
 
 
-import { inferPermissionPreset, permissionModeForPreset } from "../../lib/session-permissions.js";
+import { inferPermissionPreset, workspaceAccessModeForPermissionPreset } from "../../lib/session-permissions.js";
+import { useConversationPermissionSelection } from "../../shared/conversation/conversation-permission-selection.js";
 import {
   channelFormPersistenceKey,
   channelToForm,
@@ -462,8 +463,10 @@ export function WorkspaceClientView({
   onSelectTask,
   onCheckThenRunTask,
   onRunTask,
-  onAuthorizationModeChange,
-  onPermissionModeChange,
+  permissionSelectionOwnerKey,
+  onPermissionSelectionChange,
+  onConfirmFullAccessSelection,
+  onOpenSandboxSettings,
   onCancelActiveRun,
   onOpenRun,
   onOpenApprovals,
@@ -2111,7 +2114,7 @@ export function WorkspaceClientView({
       onCreateTaskFromContextSummary={onCreateTaskFromContextSummary}
       onCheckThenRunTask={onCheckThenRunTask}
       onRunTask={onRunTask}
-      onPermissionModeChange={onPermissionModeChange}
+      onOpenSandboxSettings={onOpenSandboxSettings}
       onCancelActiveRun={onCancelActiveRun}
       onOpenRun={openRunInPanel}
       onOpenApprovals={onOpenApprovals}
@@ -3037,6 +3040,16 @@ export function WorkspaceClientView({
   }
 
   const channelComposerPermissionLocked = guidanceModeActive || sendState === "sending" || composerBusy || Boolean(runGuidanceSubmitting) || isCancellingRun;
+  const selectChannelAuthorizationMode = useConversationPermissionSelection({
+    ownerKey: permissionSelectionOwnerKey,
+    authorizationMode,
+    workspaceAccessMode: workspaceAccessModeForPermissionPreset(channelComposerPermissionPreset),
+    defaultWorkspaceAccessMode: workspaceSettings?.defaultWorkspaceAccessMode ?? "workspace_write",
+    disabled: channelComposerPermissionLocked,
+    confirmFullAccess: onConfirmFullAccessSelection,
+    onChange: onPermissionSelectionChange,
+    onError: (error) => setSendError(error instanceof Error ? error.message : String(error)),
+  });
   const channelComposer = (
     <ChannelComposer
       statusNode={channelActiveStatusStrip}
@@ -3113,8 +3126,7 @@ export function WorkspaceClientView({
       onInputPasteFiles={handleComposerPasteFiles}
       onInputSelect={updateMentionPicker}
       onInsertMentionTrigger={insertMentionTrigger}
-      onAuthorizationModeChange={onAuthorizationModeChange}
-      onPermissionPresetChange={(preset) => onPermissionModeChange(permissionModeForPreset(preset))}
+      onAuthorizationModeChange={selectChannelAuthorizationMode}
       onTogglePlanMode={toggleChannelPlanModeFromComposer}
       onRevealPlanModeChip={() => setChannelPlanModeChipVisible(true)}
       onClosePlanModeChip={closeChannelPlanModeChip}

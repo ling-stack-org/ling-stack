@@ -55,7 +55,10 @@ export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProp
   const terminalPresence = useConversationPanelPresence(terminalOpen, false);
   const terminalSession = useWorkspaceTerminalSession(cwd.trim());
   const composerController = useTeammatePrivateComposerController({
-    identityKey: teammate.id,
+    identityKey: props.permissionSelectionOwnerKey,
+    defaultWorkspaceAccessMode: props.defaultWorkspaceAccessMode,
+    permissionLocked: privateComposerSending || props.hasDirectRuntimeActivity || Boolean(props.directGuidanceSubmitting),
+    onPermissionError: props.onPermissionError,
     authorizationMode,
     messageDraft: props.messageDraft,
     onComposerKeyDown,

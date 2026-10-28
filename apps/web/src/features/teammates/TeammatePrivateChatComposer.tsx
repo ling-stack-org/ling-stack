@@ -1,16 +1,11 @@
 import { CircleAlert, FileText, Plus, Send, SlidersHorizontal, Square } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
-  conversationAuthorizationModeMenuOptions,
-  conversationPermissionPresetMenuOptions,
-} from "../../lib/session-permissions.js";
-import {
   ComposerFileReferenceToken,
   ComposerPendingAssetStrip,
 } from "../../shared/components/index.js";
 import {
-  ComposerAuthorizationMenu,
-  ComposerPermissionMenu,
+  ConversationPermissionControl,
   ConversationComposerShell,
   ConversationGuidanceStrip,
   ConversationStatusStrip,
@@ -274,23 +269,13 @@ export function TeammatePrivateChatComposer({
                 }}
               />
             </label>
-            <ComposerAuthorizationMenu
-              mode={controller.selectedAuthorizationMode}
-              options={conversationAuthorizationModeMenuOptions(t)}
-              disabled={permissionLocked}
-              disabledReason={t("Authorization is locked while the private reply is running.")}
-              selectedModeLabel={t("Selected authorization mode {label}")}
-              menuLabel={t("Authorization mode")}
-              onModeChange={controller.handleAuthorizationModeChange}
-            />
-            <ComposerPermissionMenu
-              preset={controller.selectedPermissionPreset}
-              options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}
+            <ConversationPermissionControl
+              authorizationMode={controller.selectedAuthorizationMode}
+              permissionPreset={controller.selectedPermissionPreset}
+              fullAccessConfirmed={fullAccessConfirmed}
               disabled={permissionLocked}
               disabledReason={t("Permission is locked while the private reply is running.")}
-              selectedPermissionLabel={t("Selected permission preset {label}")}
-              menuLabel={t("Permission preset")}
-              onPresetChange={controller.handlePermissionPresetChange}
+              onAuthorizationModeChange={controller.handleAuthorizationModeChange}
             />
           </>
         )}

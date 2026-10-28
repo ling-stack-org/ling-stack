@@ -2806,37 +2806,21 @@ export function AppShell(): React.JSX.Element {
             onSelectTask={setSelectedTaskId}
             onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
             onRunTask={(task) => void runPersistedTask(task)}
-            onAuthorizationModeChange={(authorizationMode) => {
+            permissionSelectionOwnerKey={JSON.stringify(channelConversationFullAccessScope)}
+            onConfirmFullAccessSelection={() => fullAccessConfirmation.request(channelConversationFullAccessScope)}
+            onPermissionSelectionChange={({ authorizationMode, workspaceAccessMode }) => {
               setForm((current) => {
-                const legacy = authorizationAndAccessToLegacyPermission(authorizationMode, current.workspaceAccessMode);
+                const legacy = authorizationAndAccessToLegacyPermission(authorizationMode, workspaceAccessMode);
                 return {
                   ...current,
                   authorizationMode,
+                  workspaceAccessMode,
                   permissionMode: legacy.permissionMode,
                   permissionPreset: legacy.permissionPreset,
                 };
               });
             }}
-            onPermissionModeChange={async (permissionMode) => {
-              if (permissionMode === "full_access") {
-                const confirmation = await fullAccessConfirmation.request(channelConversationFullAccessScope);
-                if (!confirmation) return;
-              }
-              setForm((current) => {
-              const workspaceAccessMode = workspaceAccessModeForPermissionPreset(permissionMode === "full_access"
-                ? "full_access"
-                : permissionMode === "ask_everything"
-                  ? "read_only"
-                  : "workspace_collaboration");
-              const legacy = authorizationAndAccessToLegacyPermission(current.authorizationMode, workspaceAccessMode);
-              return {
-                ...current,
-                workspaceAccessMode,
-                permissionMode: legacy.permissionMode,
-                permissionPreset: legacy.permissionPreset,
-              };
-              });
-            }}
+            onOpenSandboxSettings={() => openSettingsSection("approval-strategy")}
             onCancelActiveRun={(targetRun) => void cancelRunOrWorkUnit(targetRun)}
             onOpenRun={(runId) => void openRunFromWorkspace(runId)}
             onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
@@ -3042,6 +3026,7 @@ export function AppShell(): React.JSX.Element {
                 fullAccessConfirmed={fullAccessConfirmation.isConfirmed(teammateConversationFullAccessScope)}
                 onConfirmFullAccess={() => fullAccessConfirmation.request(teammateConversationFullAccessScope)}
                 onConfirmFullAccessSelection={() => fullAccessConfirmation.request(teammateConversationFullAccessScope)}
+                permissionSelectionOwnerKey={JSON.stringify(teammateConversationFullAccessScope)}
                 defaultPermissionMode={workspaceSettings?.defaultPermissionMode}
                 defaultPermissionPreset={workspaceSettings?.defaultPermissionPreset}
                 workspacePolicy={approvalPolicy}

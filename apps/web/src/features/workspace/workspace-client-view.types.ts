@@ -46,6 +46,7 @@ import type {
   RunArtifact,
   RunSession,
   PermissionPreset,
+  PermissionConfirmation,
   SessionPermissionMode,
   StateTransitionEvent,
   Task,
@@ -244,8 +245,10 @@ export interface WorkspaceClientViewProps {
   readonly onSelectTask: (taskId: string) => void;
   readonly onCheckThenRunTask: (task: Task) => void;
   readonly onRunTask: (task: Task) => void;
-  readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
-  readonly onPermissionModeChange: (mode: SessionPermissionMode) => void;
+  readonly permissionSelectionOwnerKey: string;
+  readonly onPermissionSelectionChange: (selection: import("../../shared/conversation/conversation-permission-selection.js").CompactPermissionSelection) => void;
+  readonly onConfirmFullAccessSelection: () => Promise<PermissionConfirmation | undefined>;
+  readonly onOpenSandboxSettings: () => void;
   readonly onCancelActiveRun: (run?: RunSession) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApprovals: (runId?: string) => void;

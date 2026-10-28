@@ -277,8 +277,8 @@ test("workspace task run sends the selected session permission mode", async ({ p
   await openTaskFromAttentionQueue(page, "Inspect workspace");
   const taskDetail = page.locator("article.task-detail");
   await taskDetail.getByText("Permissions", { exact: true }).click();
-  await expect(taskDetail.getByRole("radiogroup", { name: "Permission preset" })).toBeVisible();
-  await taskDetail.getByRole("radio", { name: "Workspace write" }).click();
+  await expect(taskDetail.getByRole("radiogroup", { name: "Permission preset" })).toHaveCount(0);
+  await expect(taskDetail.getByRole("button", { name: "Sandbox settings", exact: true })).toBeVisible();
   await taskDetail.getByRole("button", { name: "Run", exact: true }).click();
 
   await expect.poll(() => {
@@ -325,21 +325,23 @@ test("workspace full access task run requires confirmation and sends confirmatio
   await openTaskFromAttentionQueue(page, "Inspect workspace");
   const taskDetail = page.locator("article.task-detail");
   await taskDetail.getByText("Permissions", { exact: true }).click();
-  await taskDetail.getByRole("radio", { name: "Full access" }).click();
+  const permissionTrigger = page.getByLabel("Channel composer", { exact: true }).getByRole("button", { name: /Selected permission preset/ });
+  await permissionTrigger.click();
+  await page.getByRole("menuitemradio", { name: "Full access permissions", exact: true }).click();
   const selectionSheet = page.getByRole("dialog", { name: "Confirm full access" });
   await expect(selectionSheet).toBeVisible();
   await selectionSheet.getByRole("button", { name: "Cancel" }).last().click();
   await expect(selectionSheet).toHaveCount(0);
-  const previousAccess = taskDetail.getByRole("radio", { name: "Workspace write" });
-  await expect(previousAccess).toHaveAttribute("aria-checked", "true");
-  await expect(previousAccess).toBeFocused();
+  await expect(permissionTrigger).toHaveText("Help me approve");
+  await expect(permissionTrigger).toBeFocused();
   expect(state.runs).toHaveLength(0);
 
-  await taskDetail.getByRole("radio", { name: "Full access" }).click();
+  await permissionTrigger.click();
+  await page.getByRole("menuitemradio", { name: "Full access permissions", exact: true }).click();
   await expect(selectionSheet).toBeVisible();
   await expect(selectionSheet).toHaveClass(/ling-ui-dialog-content/u);
   await selectionSheet.getByRole("button", { name: "Start with full access" }).click();
-  await expect(taskDetail.getByRole("radio", { name: "Full access" })).toHaveAttribute("aria-checked", "true");
+  await expect(permissionTrigger).toHaveAccessibleName(/Full access · Confirmed for this conversation/);
   await taskDetail.getByRole("button", { name: "Run", exact: true }).click();
   await expect(selectionSheet).toHaveCount(0);
 

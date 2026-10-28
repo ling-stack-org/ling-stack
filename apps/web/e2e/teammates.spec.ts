@@ -1292,12 +1292,12 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(privateToolbar.getByRole("button", { name: "Private attachments: 1" })).toBeVisible();
 
   const privateComposer = page.locator(".teammate-direct-composer");
-  await privateComposer.getByRole("button", { name: /Selected permission preset Workspace write/ }).click();
-  await page.getByRole("menuitemradio", { name: /Read only/ }).click();
+  await privateComposer.getByRole("button", { name: /Selected permission preset/ }).click();
+  await page.getByRole("menuitemradio", { name: "Request approval", exact: true }).click();
   await page.getByPlaceholder("Message this AI teammate privately").fill("Please refine the private workspace acceptance criteria.");
   await page.getByPlaceholder("Message this AI teammate privately").press("Enter");
-  await expect.poll(() => state.lastTeammateDirectMessageRequest?.authorizationMode).toBe("smart");
-  await expect.poll(() => state.lastTeammateDirectMessageRequest?.workspaceAccessMode).toBe("read_only");
+  await expect.poll(() => state.lastTeammateDirectMessageRequest?.authorizationMode).toBe("ask");
+  await expect.poll(() => state.lastTeammateDirectMessageRequest?.workspaceAccessMode).toBe("workspace_write");
   await expect(page.getByText("Please refine the private workspace acceptance criteria.")).toBeVisible();
   await expect(privateFeed.getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
   const privateMessageRow = page.locator(".teammate-message-row").filter({ hasText: "Please refine the private workspace acceptance criteria." });

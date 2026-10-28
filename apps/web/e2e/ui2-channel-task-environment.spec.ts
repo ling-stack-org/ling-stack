@@ -97,11 +97,9 @@ test("channel task detail uses the UI 2.0 inspector contract", async ({ page }) 
   await expect(task.locator(".ling-ui-inspector-section")).toHaveCount(2);
   await expect(task.locator(".ling-ui-segmented-control")).not.toBeVisible();
   await task.getByText("Permissions", { exact: true }).click();
-  await expect(task.locator(".ling-ui-segmented-control")).toBeVisible();
-  await expect(task.getByRole("radio")).toHaveCount(4);
-  for (const label of ["Read only", "Workspace write", "Full access", "Custom"]) {
-    await expect(task.getByRole("radio", { name: label })).toBeVisible();
-  }
+  await expect(task.locator(".ling-ui-segmented-control")).toHaveCount(0);
+  await expect(task.getByRole("radio")).toHaveCount(0);
+  await expect(task.getByRole("button", { name: "Sandbox settings", exact: true })).toBeVisible();
   await expect(task.getByRole("button", { name: "Run", exact: true })).toHaveClass(/ling-ui-button/u);
   await expect(task.locator(".ling-ui-inline-feedback[data-tone='danger']")).toBeVisible();
 

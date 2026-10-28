@@ -138,6 +138,9 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly attachmentCleanupFailures?: readonly import("../../shared/components/composer-pending-assets.js").AttachmentCleanupFailure[];
   readonly onRetryAttachmentCleanup?: (localId: string) => void | Promise<void>;
   readonly authorizationMode: AuthorizationMode;
+  readonly permissionSelectionOwnerKey: string;
+  readonly defaultWorkspaceAccessMode: WorkspaceAccessMode;
+  readonly onPermissionError: (error: unknown) => void;
   readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
   readonly workspaceAccessMode: WorkspaceAccessMode;
   readonly onWorkspaceAccessModeChange: (mode: WorkspaceAccessMode) => void;

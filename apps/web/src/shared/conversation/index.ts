@@ -221,3 +221,4 @@ export type {
   ConversationStatus,
   ConversationSurface,
 } from "./tokens/conversation-types.js";
+export { ConversationPermissionControl } from "./ConversationPermissionControl.js";

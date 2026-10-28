@@ -190,6 +190,7 @@ export function TeammateWorkspace({
   fullAccessConfirmed = false,
   onConfirmFullAccess,
   onConfirmFullAccessSelection,
+  permissionSelectionOwnerKey,
   defaultPermissionMode,
   defaultPermissionPreset,
   workspacePolicy,
@@ -236,6 +237,7 @@ export function TeammateWorkspace({
   readonly fullAccessConfirmed?: boolean;
   readonly onConfirmFullAccess?: () => Promise<PermissionConfirmation | undefined>;
   readonly onConfirmFullAccessSelection?: () => Promise<PermissionConfirmation | undefined>;
+  readonly permissionSelectionOwnerKey?: string;
   readonly defaultPermissionMode?: SessionPermissionMode;
   readonly defaultPermissionPreset?: PermissionPreset;
   readonly workspacePolicy?: ApprovalPolicy;
@@ -1892,6 +1894,9 @@ export function TeammateWorkspace({
           attachmentCleanupFailures={privateAttachmentUploads.cleanupFailures}
           onRetryAttachmentCleanup={privateAttachmentUploads.retryCleanup}
           authorizationMode={selectedAuthorizationMode}
+          permissionSelectionOwnerKey={permissionSelectionOwnerKey ?? workspaceMessageIdentity}
+          defaultWorkspaceAccessMode={resolveWorkspaceAccessMode(defaultWorkspaceAccessMode, defaultPermissionMode, defaultPermissionPreset)}
+          onPermissionError={(error) => workspaceRequestOwner.reportImmediate("runtime", error instanceof Error ? error.message : String(error))}
           onAuthorizationModeChange={setSelectedAuthorizationMode}
           workspaceAccessMode={selectedWorkspaceAccessMode}
           onWorkspaceAccessModeChange={setSelectedWorkspaceAccessMode}

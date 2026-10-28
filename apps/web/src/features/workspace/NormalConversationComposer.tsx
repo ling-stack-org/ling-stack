@@ -4,6 +4,7 @@ import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash
 import { useI18n } from "../../i18n.js";
 import {
   ConversationComposerShell,
+  ConversationPermissionControl,
   ConversationStatusStrip,
   TokenizedComposerInput,
   type TokenizedComposerInputHandle,
@@ -20,7 +21,6 @@ import { appendDictation, voiceErrorMessage } from "../../shared/conversation/vo
 import type { AuthorizationMode, ConversationAttachment, PermissionPreset, ProviderThinkingMode } from "../../types.js";
 import { normalConversationModelLabel } from "./normal-conversation-composer-options.js";
 import { ConversationModelControl } from "./ConversationModelControl.js";
-import { ConversationPermissionControl } from "./ConversationPermissionControl.js";
 import type { ConversationHomeModelOption } from "./normal-conversation-types.js";
 
 export interface NormalConversationComposerProps {
