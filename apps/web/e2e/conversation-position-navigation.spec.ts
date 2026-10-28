@@ -159,10 +159,11 @@ test("collapsed process navigation yields to a newer jump and reconciles removed
   await rail.locator("button[tabindex='0']").focus();
   await page.keyboard.press("Home");
   await page.evaluate(() => window.positionHarness.removeFirst());
-  await expect(rail.getByRole("button", { name: /^Message 1 of 120:/ })).toBeAttached();
   await expect(rail.locator("button[tabindex='0']")).toHaveCount(1);
+  await expect(rail.locator("button[tabindex='0']")).toHaveAttribute("aria-label", /of 120:/);
   await rail.locator("button[tabindex='0']").focus();
   await page.keyboard.press("Home");
+  await expect(rail.getByRole("button", { name: /^Message 1 of 120:/ })).toBeFocused();
   await page.evaluate(() => window.positionHarness.failNext());
   await rail.locator("button[tabindex='0']").click();
   await expect(rail.getByRole("status")).toContainText("Source unavailable");

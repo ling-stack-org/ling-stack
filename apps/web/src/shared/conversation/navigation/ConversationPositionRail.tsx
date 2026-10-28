@@ -26,6 +26,7 @@ export function ConversationPositionRail({ items, scrollRef, locatorRef, identit
   const marksRef = useRef<HTMLDivElement>(null);
   const markerRefs = useRef(new Map<string, HTMLButtonElement>());
   const navigationSequence = useRef(0);
+  const focusFrame = useRef<number | undefined>(undefined);
   const [scrollTop, setScrollTop] = useState(0);
   const [hoveredId, setHoveredId] = useState<string>();
   const [focusedId, setFocusedId] = useState<string>();
@@ -42,12 +43,15 @@ export function ConversationPositionRail({ items, scrollRef, locatorRef, identit
   const start = Math.max(0, Math.floor(effectiveScrollTop / positionMarkerHeight) - 4);
   const end = Math.min(markers.length, Math.ceil((effectiveScrollTop + geometry.height) / positionMarkerHeight) + 4);
   const indexes = new Set(Array.from({ length: Math.max(0, end - start) }, (_, index) => start + index));
-  for (const id of [currentFocusedId, currentHoveredId, tabStopId]) {
+  for (const id of [currentFocusedId, currentHoveredId, tabStopId, geometry.activeId]) {
     const index = indexById.get(id ?? "") ?? -1;
     if (index >= 0) indexes.add(index);
   }
 
-  useEffect(() => () => { navigationSequence.current += 1; }, []);
+  useEffect(() => () => {
+    navigationSequence.current += 1;
+    if (focusFrame.current !== undefined) cancelAnimationFrame(focusFrame.current);
+  }, []);
   useEffect(() => {
     if (focusedId && !indexById.has(focusedId)) setFocusedId(undefined);
     if (hoveredId && !indexById.has(hoveredId)) setHoveredId(undefined);
@@ -60,9 +64,13 @@ export function ConversationPositionRail({ items, scrollRef, locatorRef, identit
     setFocusedId(undefined);
   }, [geometry.visible, scrollRef]);
   useEffect(() => {
-    const index = indexById.get(currentFocusedId ?? geometry.activeId ?? "") ?? -1;
     const scroller = marksRef.current;
-    if (!scroller || index < 0 || currentHoveredId) return;
+    if (!scroller) return;
+    // Virtual rows can unmount the destination without dispatching a blur event.
+    const focusedInside = scroller.contains(document.activeElement);
+    if (!focusedInside && currentFocusedId) setFocusedId(undefined);
+    const index = indexById.get((focusedInside ? currentFocusedId : undefined) ?? geometry.activeId ?? "") ?? -1;
+    if (index < 0 || currentHoveredId) return;
     const top = index * positionMarkerHeight;
     if (top < scroller.scrollTop || top + positionMarkerHeight > scroller.scrollTop + geometry.height) {
       scroller.scrollTop = Math.max(0, top - geometry.height / 2);
@@ -70,6 +78,7 @@ export function ConversationPositionRail({ items, scrollRef, locatorRef, identit
   }, [geometry.activeId, geometry.height, currentFocusedId, currentHoveredId, indexById]);
 
   async function navigate(index: number) {
+    cancelMarkerFocus();
     const marker = markers[index];
     const feed = scrollRef.current;
     const locator = locatorRef.current;
@@ -100,7 +109,16 @@ export function ConversationPositionRail({ items, scrollRef, locatorRef, identit
     if (!marker) return;
     setFocusedId(marker.id);
     setDismissed(false);
-    requestAnimationFrame(() => markerRefs.current.get(marker.id)?.focus({ preventScroll: true }));
+    cancelMarkerFocus();
+    focusFrame.current = requestAnimationFrame(() => {
+      focusFrame.current = undefined;
+      markerRefs.current.get(marker.id)?.focus({ preventScroll: true });
+    });
+  }
+
+  function cancelMarkerFocus() {
+    if (focusFrame.current !== undefined) cancelAnimationFrame(focusFrame.current);
+    focusFrame.current = undefined;
   }
 
   if (!geometry.frame) return null;
@@ -113,6 +131,7 @@ export function ConversationPositionRail({ items, scrollRef, locatorRef, identit
       onKeyDown={event => {
         if (event.key !== "Escape") return;
         event.preventDefault(); event.stopPropagation();
+        cancelMarkerFocus();
         setDismissed(true); setHoveredId(undefined);
         scrollRef.current?.focus({ preventScroll: true });
       }}>
