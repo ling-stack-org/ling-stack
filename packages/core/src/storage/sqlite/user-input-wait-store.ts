@@ -8,6 +8,7 @@ import { assertUserInputQuiescence } from "./user-input-wait-evidence.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteControlPlaneStore } from "./control-plane-store.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { normalizeRunnerIdsInSnapshot, normalizeRunnerId } from "../../runner-ids.js";
 
 type WaitPorts = UserInputSourcePorts & Pick<RunStore,
   "getTask" | "transitionRunStatus" | "transitionTaskStatus" | "transitionWorkUnitStatus" | "updateWorkUnitAttemptStatus"
@@ -29,14 +30,15 @@ export class SqliteUserInputWaitStore {
     }
     try {
       const request = mapUserInputRequest(row);
-      const checkpoint = JSON.parse(String(row.wait_checkpoint_json)) as UserInputYieldCheckpoint;
+      const storedCheckpoint = JSON.parse(String(row.wait_checkpoint_json)) as UserInputYieldCheckpoint;
+      const checkpoint = normalizeRunnerIdsInSnapshot(storedCheckpoint) as UserInputYieldCheckpoint;
       if (!checkpoint || checkpoint.schemaVersion !== 1 || checkpoint.requestId !== requestId
         || checkpoint.requestVersion !== request.requestVersion || checkpoint.taskId !== request.source.taskBinding.taskId
         || !checkpoint.quiescence || checkpoint.quiescence.kind !== "runner_quiesced"
         || !Number.isSafeInteger(checkpoint.quiescence.lastRunEventSeq) || checkpoint.quiescence.lastRunEventSeq < 0
         || typeof checkpoint.quiescence.runnerId !== "string" || !checkpoint.quiescence.runnerId
         || userInputHash(checkpoint.source) !== userInputHash(request.source)
-        || userInputHash(checkpoint) !== row.wait_checkpoint_fingerprint
+        || userInputHash(storedCheckpoint) !== row.wait_checkpoint_fingerprint
         || !Number.isSafeInteger(row.wait_revision) || Number(row.wait_revision) < 1
         || !["waiting", "resuming", "resumed", "cancelled", "blocked"].includes(String(row.wait_status))) {
         throw new UserInputStoreError("invalid_record");
@@ -79,10 +81,11 @@ export class SqliteUserInputWaitStore {
       const run = this.ports.getRun(source.runId)!;
       const task = this.ports.getTask(run.taskId);
       const attempt = this.ports.getWorkUnitAttempt(source.fence.attemptId)!;
+      const canonicalQuiescence = { ...input.quiescence, runnerId: normalizeRunnerId(input.quiescence.runnerId) ?? input.quiescence.runnerId };
       if (userInputHash(source) !== userInputHash(request.source)
         || (source.taskBinding.kind === "stored_task" && (!task || task.status !== "running" || task.currentRunId !== run.id))
-        || attempt.runnerId !== input.quiescence.runnerId
-        || userInputTimestamp(input.quiescence.stoppedAt) < userInputTimestamp(request.createdAt)) throw new UserInputStoreError("source_conflict");
+        || attempt.runnerId !== canonicalQuiescence.runnerId
+        || userInputTimestamp(canonicalQuiescence.stoppedAt) < userInputTimestamp(request.createdAt)) throw new UserInputStoreError("source_conflict");
       if (source.workflowStepId) {
         const step = this.ports.getChannelWorkflowStep(source.workflowStepId)!;
         const workflow = this.ports.getChannelWorkflow(step.workflowId);
@@ -90,11 +93,11 @@ export class SqliteUserInputWaitStore {
       }
       if (database.prepare(`SELECT 1 FROM user_input_requests WHERE workspace_id=? AND source_attempt_id=?
         AND wait_status IN ('waiting','resuming') LIMIT 1`).get(DEFAULT_WORKSPACE_ID, source.fence.attemptId)) throw new UserInputStoreError("wait_conflict");
-      assertUserInputQuiescence(database, run.id, input.quiescence, now, source.fence);
+      assertUserInputQuiescence(database, run.id, canonicalQuiescence, now, source.fence);
       const checkpoint: UserInputYieldCheckpoint = {
         schemaVersion: 1, requestId: request.requestId, requestVersion: request.requestVersion, source,
-        taskId: run.taskId, quiescence: { kind: "runner_quiesced", runnerId: input.quiescence.runnerId,
-          stoppedAt: input.quiescence.stoppedAt, lastRunEventSeq: input.quiescence.lastRunEventSeq }, committedAt: now,
+        taskId: run.taskId, quiescence: { kind: "runner_quiesced", runnerId: canonicalQuiescence.runnerId,
+          stoppedAt: canonicalQuiescence.stoppedAt, lastRunEventSeq: canonicalQuiescence.lastRunEventSeq }, committedAt: now,
       };
       const stored = database.prepare(`UPDATE user_input_requests SET wait_status='waiting', wait_revision=1,
         wait_checkpoint_json=?, wait_checkpoint_fingerprint=?, updated_at=?

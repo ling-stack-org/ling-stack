@@ -32,6 +32,7 @@ import {
   readNumber,
   readString,
 } from "./helpers.js";
+import { normalizeRunnerId, normalizeRunnerIdsInSnapshot } from "../../runner-ids.js";
 
 export function mapWorkItem(row: Record<string, SQLOutputValue>, dependencyIds: readonly string[], now?: string): WorkItem {
   const claim = mapWorkItemClaim(row, now);
@@ -110,7 +111,7 @@ export function mapWorkUnit(row: Record<string, SQLOutputValue>): WorkUnit {
     activeAttemptId: readNullableString(row, "active_attempt_id"),
     createdByClientId: readNullableString(row, "created_by_client_id"),
     createdByActor: readString(row, "created_by_actor") as WorkUnit["createdByActor"],
-    request: parseJson(readString(row, "request_json")),
+    request: normalizeRunnerIdsInSnapshot(parseJson(readString(row, "request_json"))),
     timeoutPolicy: parseRuntimeTimeoutPolicy(readString(row, "timeout_policy_json")),
     linkedRunId: readNullableString(row, "linked_run_id"),
     linkedMessageId: readNullableString(row, "linked_message_id"),
@@ -165,7 +166,7 @@ export function mapRuntimeEvent(row: Record<string, SQLOutputValue>): RuntimeEve
     ts: readString(row, "ts"),
     type: readString(row, "type") as RuntimeEventType,
     actor: readString(row, "actor") as RuntimeEvent["actor"],
-    data: parseJson(readString(row, "data_json")),
+    data: normalizeRunnerIdsInSnapshot(parseJson(readString(row, "data_json"))),
   });
 }
 
@@ -212,7 +213,7 @@ export function mapResourceLease(row: Record<string, SQLOutputValue>): ResourceL
 }
 
 export function normalizeStoredRunnerId(value: string | undefined): string | undefined {
-  return value === "pi-coding-agent" ? "pi" : value;
+  return normalizeRunnerId(value);
 }
 
 function mapWorkItemClaim(row: Record<string, SQLOutputValue>, now?: string): WorkItemClaim | undefined {

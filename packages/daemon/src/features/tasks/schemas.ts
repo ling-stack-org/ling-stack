@@ -6,6 +6,7 @@ import {
   sessionPermissionModes,
   taskStatuses,
   workspaceAccessModes,
+  normalizeRunnerId,
   type AuthorizationMode,
   type CreateTaskInput,
   type PermissionConfirmation,
@@ -19,6 +20,7 @@ import {
   type WorkspaceAccessMode,
 } from "@ling-stack/core";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
+import { assertPermissionContractVersion } from "../../shared/permission-contract.js";
 import { isRecord, readNullableString, readOptionalBoolean, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 
 export interface TaskRunRequest {
@@ -80,6 +82,7 @@ export function parseTaskRunRequest(value: unknown): TaskRunRequest {
   if (!isRecord(value)) {
     throw new Error("Task run request must be a JSON object");
   }
+  assertPermissionContractVersion(value);
   const permissionPreset = readOptionalPermissionPreset(value, "permissionPreset");
   const authorizationMode = readOptionalAuthorizationMode(value, "authorizationMode");
   const workspaceAccessMode = readOptionalWorkspaceAccessMode(value, "workspaceAccessMode");
@@ -89,7 +92,7 @@ export function parseTaskRunRequest(value: unknown): TaskRunRequest {
     : resolvePermissionMode(permissionPreset, rawPermissionMode);
   return {
     providerPresetId: readString(value, "providerPresetId"),
-    runnerId: readOptionalString(value, "runnerId"),
+    runnerId: normalizeRunnerId(readOptionalString(value, "runnerId")),
     requestedSkillId: readOptionalString(value, "requestedSkillId"),
     skillOptimizationMode: readOptionalSkillOptimizationMode(value, "skillOptimizationMode"),
     skipProviderPreflight: readOptionalBoolean(value, "skipProviderPreflight") ?? false,
