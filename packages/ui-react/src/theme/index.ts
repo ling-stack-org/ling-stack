@@ -18,6 +18,10 @@ export * from "./import/validate-package-index.js";
 export * from "./import/inspect-zip-central-directory.js";
 export * from "./import/theme-image-validation.js";
 export * from "./import/parse-theme-package-bytes.js";
+export * from "./background/background-model.js";
+export * from "./background/background-port.js";
+export * from "./background/inspect-background-image.js";
+export * from "./background/background-material.js";
 
 import { builtInThemeManifests } from "./built-ins/index.js";
 

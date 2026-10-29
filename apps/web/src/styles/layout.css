@@ -1,7 +1,7 @@
 /* Strict Web console shell. Desktop keeps its macOS glass treatment in the shell layer. */
 body {
-  background: var(--app-bg);
-  color: var(--text);
+  background: var(--ling-bg-app);
+  color: var(--ling-text-default);
 }
 
 .app-shell {
@@ -10,7 +10,7 @@ body {
   min-height: 100vh;
   padding: 0;
   gap: 0;
-  background: var(--app-bg);
+  background: var(--ling-bg-app);
 }
 
 .left-nav,
@@ -20,11 +20,11 @@ body {
 .inspector,
 .client-window,
 .context-panel-card {
-  border: 1px solid var(--border);
-  background: var(--surface-panel);
-  box-shadow: none;
-  backdrop-filter: var(--material-blur);
-  -webkit-backdrop-filter: var(--material-blur);
+  border: 1px solid var(--ling-surface-border-subtle);
+  background: var(--ling-bg-panel);
+  box-shadow: var(--ling-surface-shadow-shell);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .health,
@@ -34,7 +34,7 @@ body {
 .primary-button,
 .status-badge,
 .event-count {
-  border-radius: var(--radius-md);
+  border-radius: var(--ling-radius-md);
 }
 
 .health,
@@ -43,19 +43,19 @@ body {
 .secondary-button,
 .status-badge,
 .event-count {
-  border-color: var(--border);
-  background: var(--surface-panel-strong);
+  border-color: var(--ling-border-default);
+  background: var(--ling-bg-elevated);
 }
 
 .primary-button {
-  border-color: var(--accent-border);
-  background: var(--accent);
-  color: var(--window-bg);
+  border-color: var(--ling-border-focus);
+  background: var(--ling-action-accent);
+  color: var(--ling-bg-app);
   box-shadow: none;
 }
 
 .secondary-button {
-  color: var(--text);
+  color: var(--ling-text-default);
 }
 
 .user-profile-avatar {
@@ -73,7 +73,7 @@ body {
   border-bottom: 0;
   border-left: 0;
   border-radius: 0;
-  background: var(--surface-panel);
+  background: var(--ling-bg-panel);
 }
 
 .workspace:not(.workspace-client-surface):not(.workspace-plugins-surface):not(.workspace-provider-surface):where(:not(.workspace-automations-surface):not(.workspace-teammates-surface):not(.workspace-teammate-private-surface):not(.workspace-generation-surface)) {
@@ -86,7 +86,7 @@ body {
   min-height: 100vh;
   border: 0;
   border-radius: 0;
-  background: var(--surface-panel);
+  background: var(--ling-bg-panel);
   box-shadow: none;
 }
 
@@ -98,13 +98,13 @@ body {
   max-width: 100%;
   margin-top: 7px;
   padding: 3px 4px 3px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-subtle);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-lg);
+  background: var(--ling-bg-subtle);
 }
 
 .channel-path-field span {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   font-weight: 720;
   white-space: nowrap;
@@ -115,17 +115,17 @@ body {
   height: 26px;
   padding: 0 8px;
   border: 0;
-  border-radius: var(--radius-md);
-  background: var(--surface-panel-strong);
-  color: var(--text);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-default);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
-  box-shadow: inset 0 1px 0 var(--hairline);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ling-border-default) 32%, transparent);
 }
 
 .channel-path-field input:focus {
   outline: 0;
-  box-shadow: inset 0 0 0 1px var(--accent-border);
+  box-shadow: inset 0 0 0 1px var(--ling-border-focus);
 }
 
 .used-memory-summary {
@@ -133,10 +133,10 @@ body {
   gap: 6px;
   width: min(100%, 520px);
   padding: 8px 10px;
-  border: 1px solid var(--info-border);
+  border: 1px solid var(--ling-status-info-border);
   border-radius: 7px;
-  background: color-mix(in srgb, var(--info-soft) 34%, var(--surface-panel-strong));
-  color: var(--text);
+  background: color-mix(in srgb, var(--ling-status-info-bg) 34%, var(--ling-bg-elevated));
+  color: var(--ling-text-default);
 }
 
 .used-memory-summary.compact {
@@ -173,7 +173,7 @@ body {
 
 .used-memory-summary.inline li small,
 .used-memory-summary.inline .used-memory-overflow {
-  color: var(--text-soft);
+  color: var(--ling-text-soft);
   font-size: 10px;
   line-height: 1.35;
 }
@@ -186,7 +186,7 @@ body {
 }
 
 .used-memory-summary-label small {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 10px;
   font-weight: 560;
 }
@@ -204,14 +204,14 @@ body {
 }
 
 .used-memory-summary-head strong {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 11px;
 }
 
 .used-memory-summary-head small,
 .used-memory-summary li small,
 .used-memory-overflow {
-  color: var(--text-soft);
+  color: var(--ling-text-soft);
   font-size: 10px;
 }
 
@@ -231,16 +231,16 @@ body {
   max-width: 100%;
   gap: 5px;
   padding: 3px 6px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 6px;
-  background: var(--surface-panel);
+  background: var(--ling-bg-panel);
 }
 
 .used-memory-summary li span {
   min-width: 0;
   max-width: 180px;
   overflow: hidden;
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 11px;
   font-weight: 720;
   text-overflow: ellipsis;
@@ -261,7 +261,7 @@ body {
   align-items: center;
   gap: 8px;
   max-width: 100%;
-  color: var(--text-soft);
+  color: var(--ling-text-soft);
   cursor: pointer;
   font-size: 11px;
   font-weight: 680;
@@ -281,14 +281,14 @@ body {
 }
 
 .used-memory-summary.footer summary small {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 10px;
   font-weight: 560;
 }
 
 .used-memory-summary.footer summary::after {
   content: ">";
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 10px;
   transform: rotate(0deg);
   transition: transform var(--ling-motion-fast) var(--ling-ease-standard);
@@ -328,7 +328,7 @@ body {
 .used-memory-summary.footer li small,
 .used-memory-summary.footer .used-memory-overflow,
 .used-memory-summary.footer .used-memory-recall-query {
-  color: var(--text-soft);
+  color: var(--ling-text-soft);
   font-size: 10px;
   line-height: 1.35;
 }
@@ -339,19 +339,19 @@ body {
   gap: 8px;
   min-height: 92px;
   grid-column: 1 / -1;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 13px;
 }
 
 .conversation-empty-state {
   min-height: 320px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 8px;
-  background: var(--surface-panel);
+  background: var(--ling-bg-panel);
 }
 
 .conversation-empty-state svg {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
 }
 
 .runtime-policy-summary {
@@ -361,13 +361,13 @@ body {
 }
 
 .runtime-policy-summary strong {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 13px;
   line-height: 18px;
 }
 
 .runtime-policy-summary small {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   line-height: 15px;
 }
@@ -382,18 +382,18 @@ body {
   display: grid;
   gap: 4px;
   padding: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 7px;
-  background: var(--surface-panel);
+  background: var(--ling-bg-panel);
 }
 
 .runtime-kpi-grid span {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
 }
 
 .runtime-kpi-grid strong {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 18px;
 }
 

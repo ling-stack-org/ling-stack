@@ -13,6 +13,7 @@ const legacyFeedbackBudgets = new Map([
 ]);
 
 const feedbackTimerBudgets = new Map([
+  ["apps/web/src/features/settings/InterfaceBackgroundSettings.tsx", 0],
   ["apps/web/src/features/workspace/useChannelComposerDraftController.ts", 0],
   ["apps/web/src/features/mcp/McpToolsPage.tsx", 0],
   ["apps/web/src/features/providers/ProviderSettings.tsx", 0],

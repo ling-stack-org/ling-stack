@@ -32,6 +32,7 @@ export function mountReadingFixture(messageCount = 36) {
   function render() {
     root.render(<I18nProvider><ThemeProvider><LingUiProvider><NormalConversationFeed
       messages={messages} visibleMessages={messages} runById={new Map()}
+      userProfile={{ schemaVersion: 1, displayName: "Local Operator", createdAt: "2026-10-14T00:00:00Z", updatedAt: "2026-10-14T00:00:00Z" }}
       composerGateApprovals={[]} generatedMedia={[]} workspaceCwd="/p2-fixture"
       searchActive={searchActive} editSaving={false} replacementRetryError=""
       onCancelMessageEdit={noop} onEditMessage={noop} onSaveMessage={noop}

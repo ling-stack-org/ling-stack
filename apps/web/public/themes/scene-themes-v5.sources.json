@@ -1,0 +1,133 @@
+{
+  "version": "scene-themes-v5",
+  "artwork": "Existing airy forest and summer manga illustrations, and user-selected valley-overlook game artwork. No new image generation or composited scene objects.",
+  "retrievedAt": "2026-10-28",
+  "processing": "Breeze replaces the forest photograph with an existing StockCake illustration, cropped without upscaling. Ocean and Night source/export records are retained from v4.",
+  "designIntent": {
+    "ocean": "Existing long-haired adult woman in floral swimwear integrated with the beach, ocean and clouds, on the right; seafoam shell, warm-white composer and coral controls. The previous Nami reference is not used.",
+    "night": "User confirmed the mountain valley overlooking scene: mecha on the left, layered valley and clouds on the right. Warm graphite reading panels, copper sunset controls; no independent character layer.",
+    "breeze": "WorkBuddy reference direction: open blue sky framed by forest foliage, sage sidebar and selection, milk-white Composer and green controls. Existing illustration, no brand or mascot copying."
+  },
+  "assets": [
+    {
+      "themeId": "ling-breeze",
+      "source": {
+        "title": "Serene Anime Meadow",
+        "page": "https://stockcake.com/de/i/ruhige-anime-wiese_2277689_1361523",
+        "direct": "https://images.stockcake.com/public/6/9/2/692b62a7-4235-43cf-9a58-4c8e13dfd81f/serene-anime-meadow-stockcake.jpg",
+        "author": "StockCake",
+        "license": "CC0 1.0 / Public Domain (as declared by source)",
+        "licensePage": "https://stockcake.com/info/license",
+        "sourceSha256": "ec74897ea5fd218adc64282531c4579414d471666711c272055343f9c5e7f2fa",
+        "sourceBytes": 245234,
+        "sourceSize": [
+          1024,
+          1024
+        ],
+        "aiGeneratedAtSource": true,
+        "newImageGenerationInThisChange": false
+      },
+      "exports": [
+        {
+          "path": "apps/web/public/themes/ling-breeze/forest-sky-v2.webp",
+          "bytes": 137964,
+          "size": [
+            1024,
+            576
+          ],
+          "sha256": "ca4c0a23f0b32e9cfba62671e86eeb7b4ce1814659341f67b8ffabee2f7f522c"
+        },
+        {
+          "path": "apps/web/public/themes/ling-breeze/forest-sky-v2-thumb.webp",
+          "bytes": 40962,
+          "size": [
+            640,
+            360
+          ],
+          "sha256": "c3ff1c7a454ff31801fa44ca6cb54cd4a6ad6fd1293e0893240cb9e1aa422280"
+        }
+      ],
+      "processing": "cwebp -q 94 -m 6 -crop 0 96 1024 576 source.jpg -o forest-sky-v2.webp; cwebp -q 88 -m 6 -resize 640 360 forest-sky-v2.webp -o forest-sky-v2-thumb.webp. One continuous scene; native 1024px width, crop y=96..672, no upscaling, retouching, compositing or new generation. Not a native HD/4K master."
+    },
+    {
+      "themeId": "ling-ocean",
+      "source": {
+        "title": "Anime Beach Sunset",
+        "page": "https://stockcake.com/i/anime-beach-sunset_4306699_1909957/",
+        "direct": "https://images.stockcake.com/public/8/a/7/8a762f0f-bafb-4d8c-b200-faaef645f976/anime-beach-sunset-stockcake.jpg",
+        "author": "StockCake",
+        "license": "CC0 1.0 / Public Domain (as declared by source)",
+        "licensePage": "https://stockcake.com/info/license",
+        "sourceSha256": "2e382a1439f209cfb45be420ae3961ac23dd6dcdacaf3b982782e6db4125364c",
+        "sourceSize": [
+          1344,
+          768
+        ],
+        "aiGeneratedAtSource": true,
+        "newImageGenerationInThisChange": false
+      },
+      "exports": [
+        {
+          "path": "apps/web/public/themes/ling-ocean/summer-manga-v1.webp",
+          "bytes": 254744,
+          "size": [
+            1344,
+            756
+          ],
+          "sha256": "3659d740d93148726d74b9366ec15b5e773e0cd599de8aad8f4bb67ab9ef91d7"
+        },
+        {
+          "path": "apps/web/public/themes/ling-ocean/summer-manga-v1-thumb.webp",
+          "bytes": 56296,
+          "size": [
+            640,
+            360
+          ],
+          "sha256": "53e0554e3beab7907a1fb3c7959a1e29072361f0aed35003c17e7c5ef93a2e41"
+        }
+      ],
+      "processing": "Native 1344x768 source, crop y=6..762 to 1344x756 without upscaling; main WebP quality 92, thumbnail 640x360 quality 86. Original source is not a 4K image."
+    },
+    {
+      "themeId": "ling-night",
+      "source": {
+        "title": "Titanfall 2 Deluxe Edition valley-overlook promotional artwork",
+        "page": "https://stash.games/games/titanfall-2-deluxe-edition",
+        "direct": "https://images.igdb.com/igdb/image/upload/t_1080p_2x/sc828n.jpg",
+        "host": "IGDB image CDN",
+        "rightsHolder": "Titanfall artwork rights remain with the original rights holders (Respawn Entertainment / Electronic Arts).",
+        "license": "Copyrighted game artwork; public redistribution permission not established.",
+        "publicationStatus": "User-selected local theme implementation only. Public source/binary redistribution clearance remains open.",
+        "sourceSha256": "eed4a0d06d2abf5669eb67678d27f0fafe36963d026b476f7a56d3f2c3dee61a",
+        "sourceBytes": 550448,
+        "sourceSize": [
+          3840,
+          2160
+        ],
+        "resolutionQualification": "Downloaded CDN dimensions, not independently verified native master resolution.",
+        "newImageGenerationInThisChange": false
+      },
+      "exports": [
+        {
+          "path": "apps/web/public/themes/ling-night/valley-overlook-v1.webp",
+          "bytes": 724910,
+          "size": [
+            3840,
+            2160
+          ],
+          "sha256": "0d23b59b7a0c63640bbf193374bb3c6189bd2f267df7a5fbcad9145d9fcf14d4"
+        },
+        {
+          "path": "apps/web/public/themes/ling-night/valley-overlook-v1-thumb.webp",
+          "bytes": 46522,
+          "size": [
+            640,
+            360
+          ],
+          "sha256": "ec71b8d0bd0f4514db034d1713e5d4203b9a11b09a4857d9242b746ea34c5a78"
+        }
+      ],
+      "processing": "cwebp -q 94 -m 6 source.jpg -o valley-overlook-v1.webp; cwebp -q 88 -m 6 -resize 640 360 source.jpg -o valley-overlook-v1-thumb.webp. Whole image, no crop, no upscaling, no overlays."
+    }
+  ]
+}

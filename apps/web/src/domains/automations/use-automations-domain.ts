@@ -124,8 +124,10 @@ export function useAutomationsDomain(input: {
   cwdRef.current = input.cwd.trim();
 
   useEffect(() => {
-    if (selectedAutomationId && automations.some((automation) => automation.id === selectedAutomationId)) return;
-    setSelectedAutomationId(automations[0]?.id ?? "");
+    // Opening the automation workspace starts with the list only. Keep the
+    // inspector closed until the user explicitly selects an automation.
+    if (!selectedAutomationId || automations.some((automation) => automation.id === selectedAutomationId)) return;
+    setSelectedAutomationId("");
   }, [automations, selectedAutomationId]);
 
   useEffect(() => {

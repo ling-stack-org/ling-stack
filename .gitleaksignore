@@ -91,3 +91,9 @@ de71ccccd55f21e909cb597347bcc6e1f81103e3:packages/daemon/test/media-native-trans
 32834956f98c5b379f9c572257fe4f1069813932:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1484
 32834956f98c5b379f9c572257fe4f1069813932:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:861
 32834956f98c5b379f9c572257fe4f1069813932:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:972
+
+# Local CI-log debug artifacts accidentally committed and removed in 003b0afb;
+# the flagged strings are in-repo test idempotency-key fixtures echoed by the
+# daemon shard log, not credentials (reviewed 2026-10-29, gitleaks v8.30.1).
+98218ae6fd093c12d537720a51b628733f417db0:shard2-log.txt:generic-api-key:12276
+98218ae6fd093c12d537720a51b628733f417db0:shard2-log.txt:generic-api-key:12276

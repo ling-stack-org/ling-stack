@@ -1,0 +1,32 @@
+{
+  "status": "historical-superseded",
+  "currentSourceManifest": "photographic-scenes-v2.sources.json",
+  "generation": {
+    "mode": "built-in imagegen",
+    "model": "not exposed by tool",
+    "date": "2026-10-27",
+    "style": "AI-generated photographic-style; not real photography"
+  },
+  "prompts": [
+    {
+      "key": "forest",
+      "prompt": "Use case: photorealistic-natural. Asset type: a finished desktop application wallpaper, wide landscape 16:9, high resolution. Create a refined photographic-style scene of a real broadleaf forest in early morning: weathered trunks, moss, delicate fern detail, soft mist, a quiet narrow footpath receding into the distance toward the right. Natural warm daylight filtered gently through leaves, sage green and warm ivory atmosphere, believable photographic texture and depth. Composition for an existing productivity application: left 25 percent and central 45 percent calm and low contrast with natural mist and soft distant foliage; most interesting trees, path and subtle sunlit leaves toward right and edges. The picture remains a coherent full scene, not a gradient placeholder. Understated editorial landscape photography, realistic restrained color grading, fine details, not excessive blur. No people, robots, characters, animals, buildings, typography, logos, watermark, UI, collage, illustration, vector shapes, 3D render, neon green, harsh sun shafts across center, oversharpening or HDR."
+    },
+    {
+      "key": "ocean",
+      "prompt": "Use case: photorealistic-natural. Asset type: a finished desktop application wallpaper, wide landscape 16:9, high resolution. Create a refined photographic-style coastal landscape on a quiet clear morning: pale limestone headland near the right lower edge, soft blue Mediterranean-like sea, distant low islands fading naturally in the haze, open powder-blue sky and a tiny faraway sailboat. Believable weathered stone texture, delicate coastal grasses only on far right, natural atmospheric perspective and gentle daylight. Composition for an existing productivity application: left 25 percent and central 45 percent are quiet uninterrupted sky and sea with soft tonal changes; primary interest at right and outer edges. Horizon subtle, no dramatic center reflection, no busy foreground. Sophisticated restrained travel editorial photography, airy, fresh, peaceful, real material detail, no oversaturation. No people, robots, large boats, cartoon, vector art, CGI, illustration, text, logo, watermark, UI, collage, HDR or artificial heavy blur."
+    },
+    {
+      "key": "night",
+      "prompt": "Use case: photorealistic-natural. Asset type: a finished desktop application wallpaper, wide landscape 16:9, high resolution. Create a sophisticated photographic-style cozy rainy-night window scene from a quiet interior. Real raindrops and gentle water trails on dark window glass, a dim exterior garden and a few distant naturally out-of-focus city lights in slate blue, subtle dark wood windowsill along the very bottom, a small tasteful shaded lamp entirely at the far right edge casting a restrained amber glow on nearby wood. Believable glass, droplets, soft fabric lamp shade and warm wood texture, intimate quiet editorial interior photography. Composition for an existing productivity application: left 25 percent and central 45 percent dark, low contrast and uncluttered, subtle droplet detail, no bright lights behind central text; right edge carries the warm focal light. No window mullion or heavy frame bisecting the main center. Natural photographic exposure and depth, refined charcoal and muted warm amber palette. No people, robots, characters, books with text, UI, logo, watermark, illustration, vector shapes, 3D render, neon lighting, oversaturated colors, fake HDR or collage."
+    }
+  ],
+  "refinements": [
+    {
+      "key": "night-v2",
+      "input": "exec-e7d04609-9905-4df8-ae6f-c9e010a89b02.png",
+      "output": "exec-19c9cf1f-8077-424e-bf10-7b0b83b6c639.png",
+      "prompt": "Use case: precise-object-edit. Edit this rainy-night photographic-style desktop wallpaper. Change only the lamp placement and adjacent wood: make the complete small shaded table lamp visible within the image, centered horizontally at 81% of image width, in the right-hand fifth, with its shade top at about 32% of image height and lamp base resting on the existing windowsill at about 84% height. Its entire shade must stay within the central 84% of the canvas so a 3:2 center crop still includes it. Keep the small plant naturally beside the lamp. Preserve the existing wide 16:9 composition, realistic rain glass and droplets, distant dim garden and city lights, dark quiet left and central region, charcoal/slate night atmosphere, warm restrained amber lighting and photographic textures. No large lamp or bright light in central 65% of image; no new people, no text, logo, watermark, UI, illustration or vector art. Keep the scene believable and spatially coherent, with the lamp physically on the sill."
+    }
+  ]
+}

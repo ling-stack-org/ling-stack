@@ -414,19 +414,19 @@
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  border: 1px solid var(--conversation-code-border);
+  border: 1px solid var(--ling-border-default);
   border-radius: var(--ling-radius-md);
-  color: var(--conversation-code-text);
-  background: var(--conversation-code-bg);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-code);
 }
 
 .right-dock-code-preview figcaption {
   display: block;
   min-width: 0;
   min-height: 34px;
-  border-bottom: 1px solid var(--conversation-code-border);
-  color: var(--conversation-code-muted);
-  background: var(--conversation-code-bg-hover);
+  border-bottom: 1px solid var(--ling-border-default);
+  color: var(--ling-text-muted);
+  background: var(--ling-bg-subtle);
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
   font-size: 10px;
 }
@@ -454,7 +454,7 @@
 }
 
 .right-dock-code-preview-toggle:hover {
-  background: color-mix(in srgb, var(--conversation-code-text) 5%, transparent);
+  background: color-mix(in srgb, var(--ling-text-default) 5%, transparent);
 }
 
 .right-dock-code-preview-toggle:focus-visible {
@@ -494,8 +494,8 @@
   max-height: 560px;
   margin: 0;
   overflow: auto;
-  color: var(--conversation-code-text);
-  background: var(--conversation-code-bg);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-code);
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
   line-height: 1.48;
@@ -515,14 +515,14 @@
 .right-dock-code-mark,
 .right-dock-code-note-mark {
   padding-inline: var(--ling-space-2);
-  color: var(--conversation-code-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   text-align: right;
   user-select: none;
 }
 
 .right-dock-code-mark {
-  border-right: 1px solid var(--conversation-code-border);
+  border-right: 1px solid var(--ling-border-default);
   text-align: center;
 }
 
@@ -540,22 +540,22 @@
 }
 
 .right-dock-code-line.add {
-  border-left-color: var(--conversation-diff-add);
-  color: var(--conversation-code-text);
-  background: color-mix(in srgb, var(--conversation-diff-add) 13%, var(--conversation-code-bg));
+  border-left-color: var(--ling-status-success);
+  color: var(--ling-text-default);
+  background: color-mix(in srgb, var(--ling-status-success) 13%, var(--ling-bg-code));
 }
 
 .right-dock-code-line.delete {
-  border-left-color: var(--conversation-diff-remove);
-  color: var(--conversation-code-text);
-  background: color-mix(in srgb, var(--conversation-diff-remove) 12%, var(--conversation-code-bg));
+  border-left-color: var(--ling-status-danger);
+  color: var(--ling-text-default);
+  background: color-mix(in srgb, var(--ling-status-danger) 12%, var(--ling-bg-code));
 }
 
 .right-dock-code-line.add .right-dock-code-number,
-.right-dock-code-line.add .right-dock-code-mark { color: var(--conversation-diff-add); }
+.right-dock-code-line.add .right-dock-code-mark { color: var(--ling-status-success); }
 
 .right-dock-code-line.delete .right-dock-code-number,
-.right-dock-code-line.delete .right-dock-code-mark { color: var(--conversation-diff-remove); }
+.right-dock-code-line.delete .right-dock-code-mark { color: var(--ling-status-danger); }
 
 .right-dock-code-line.hunk,
 .right-dock-code-line.meta,
@@ -564,7 +564,7 @@
 
 .right-dock-code-line.hunk,
 .right-dock-code-line.meta {
-  background: color-mix(in srgb, var(--ling-status-info) 8%, var(--conversation-code-bg));
+  background: color-mix(in srgb, var(--ling-status-info) 8%, var(--ling-bg-code));
 }
 
 .right-dock-code-line.has-note .right-dock-code-note-mark,
@@ -585,9 +585,9 @@
   align-items: center;
   gap: var(--ling-space-3);
   padding: var(--ling-space-3) var(--ling-space-4);
-  border-block: 1px solid var(--conversation-code-border);
-  color: var(--conversation-code-muted);
-  background: var(--conversation-code-bg-hover);
+  border-block: 1px solid var(--ling-border-default);
+  color: var(--ling-text-muted);
+  background: var(--ling-bg-subtle);
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
   font-size: 10px;
   white-space: nowrap;
@@ -601,8 +601,8 @@
   padding: 0;
   border: 0;
   border-radius: var(--ling-radius-sm);
-  color: var(--conversation-code-muted);
-  background: color-mix(in srgb, var(--conversation-code-border) 42%, transparent);
+  color: var(--ling-text-muted);
+  background: color-mix(in srgb, var(--ling-border-default) 42%, transparent);
 }
 
 .right-dock-inline-note {
@@ -657,8 +657,8 @@
 
 .right-dock-code-truncated {
   padding: var(--ling-space-3);
-  border-top: 1px solid var(--conversation-code-border);
-  color: var(--conversation-code-muted);
+  border-top: 1px solid var(--ling-border-default);
+  color: var(--ling-text-muted);
   font-size: 10px;
 }
 

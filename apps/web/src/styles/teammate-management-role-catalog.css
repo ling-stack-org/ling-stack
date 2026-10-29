@@ -135,7 +135,7 @@
   align-items: center;
   gap: var(--ling-space-4);
   padding: var(--ling-space-3) 0;
-  border-bottom: 1px solid var(--ling-border-subtle);
+  border-bottom: 1px solid var(--ling-border-default);
 }
 
 .teammate-role-skill-copy {

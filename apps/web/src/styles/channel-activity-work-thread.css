@@ -13,8 +13,8 @@
   display: grid;
   gap: 6px;
   padding: 7px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-panel);
+  border-bottom: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-panel);
 }
 
 .channel-work-thread-tree-head {
@@ -22,7 +22,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   font-weight: 760;
   text-transform: uppercase;
@@ -64,8 +64,8 @@
 }
 
 .channel-work-thread-row-shell.selected {
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--ling-action-accent) 30%, transparent);
+  background: color-mix(in srgb, var(--ling-action-accent) 8%, transparent);
 }
 
 .channel-work-thread-row {
@@ -76,16 +76,16 @@
   max-width: 100%;
   min-height: 34px;
   padding: 5px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 7px;
-  background: var(--surface-panel-strong);
-  color: var(--text);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-default);
   cursor: pointer;
 }
 
 .channel-work-thread-row.selected {
-  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface-panel-strong));
+  border-color: color-mix(in srgb, var(--ling-action-accent) 36%, var(--ling-border-default));
+  background: color-mix(in srgb, var(--ling-action-accent) 10%, var(--ling-bg-elevated));
 }
 
 .channel-work-thread-row-main {
@@ -109,7 +109,7 @@
 }
 
 .channel-work-thread-row-main small {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 10px;
 }
 
@@ -120,9 +120,9 @@
   gap: 8px;
   min-width: 0;
   padding: 7px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 8px;
-  background: var(--surface-panel-strong);
+  background: var(--ling-bg-elevated);
 }
 
 .activity-view-control {
@@ -139,16 +139,16 @@
   gap: 6px;
   min-width: 0;
   width: 100%;
-  border-color: var(--border);
-  background: var(--surface-panel-strong);
-  color: var(--text-muted);
+  border-color: var(--ling-border-default);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-muted);
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
 .activity-view-select span {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 11px;
   font-weight: 780;
   white-space: nowrap;
@@ -169,10 +169,10 @@
   min-width: 0;
   height: 34px;
   padding: 0 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 7px;
-  background: var(--surface-panel-strong);
-  color: var(--text-muted);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-muted);
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -196,7 +196,7 @@
   border: 0;
   outline: 0;
   background: transparent;
-  color: var(--text);
+  color: var(--ling-text-default);
   font-size: 12px;
 }
 
@@ -208,10 +208,10 @@
   min-width: 0;
   min-height: 34px;
   padding: 0 9px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 7px;
-  background: var(--surface-panel-strong);
-  color: var(--text-muted);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-muted);
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -222,9 +222,9 @@
 
 .activity-filter-toggle.active,
 .activity-filter-toggle:hover {
-  border-color: var(--border-strong);
-  background: var(--surface-selected);
-  color: var(--text-strong);
+  border-color: var(--ling-border-strong);
+  background: var(--ling-action-selection);
+  color: var(--ling-text-strong);
 }
 
 .activity-filter-toggle small {
@@ -244,7 +244,7 @@
   gap: 7px;
   min-width: 0;
   padding-top: 7px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--ling-border-default);
 }
 
 .activity-filter-group {
@@ -261,10 +261,10 @@
   gap: 5px;
   min-height: 28px;
   padding: 0 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 7px;
-  background: var(--surface-panel);
-  color: var(--text-muted);
+  background: var(--ling-bg-panel);
+  color: var(--ling-text-muted);
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -274,8 +274,8 @@
 }
 
 .activity-filter-chip:hover {
-  border-color: var(--border-strong);
-  background: var(--surface-hover);
+  border-color: var(--ling-border-strong);
+  background: var(--ling-bg-subtle);
 }
 
 .activity-filter-chip small {
@@ -285,15 +285,15 @@
 }
 
 .activity-filter-chip.active {
-  border-color: var(--border-strong);
-  background: var(--surface-subtle);
-  color: var(--text-strong);
+  border-color: var(--ling-border-strong);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-strong);
 }
 
 .activity-filter-chip.attention.active {
-  border-color: var(--warning-border);
-  background: var(--surface-subtle);
-  color: var(--warning);
+  border-color: var(--ling-status-warning-border);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-status-warning);
 }
 
 .activity-clear-filter {
@@ -314,10 +314,10 @@
   min-width: 0;
   padding: 12px;
   overflow-y: auto;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 8px;
-  background: var(--surface-panel-strong);
-  box-shadow: var(--shadow-panel);
+  background: var(--ling-bg-elevated);
+  box-shadow: var(--ling-surface-shadow-shell);
 }
 
 .activity-drilldown-header {
@@ -353,7 +353,7 @@
 .activity-drilldown-title p,
 .activity-drilldown-section p {
   margin: 0;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -361,7 +361,7 @@
 
 .activity-drilldown-title small,
 .activity-drilldown-related small {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   font-weight: 760;
 }
@@ -380,10 +380,10 @@
   max-width: 100%;
   min-height: 24px;
   padding: 0 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 7px;
-  background: var(--surface-panel);
-  color: var(--text);
+  background: var(--ling-bg-panel);
+  color: var(--ling-text-default);
   font-size: 11px;
   font-weight: 700;
   overflow-wrap: anywhere;
@@ -406,9 +406,9 @@
   gap: 8px;
   min-width: 0;
   padding: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 8px;
-  background: var(--surface-panel);
+  background: var(--ling-bg-panel);
 }
 
 .activity-drilldown-disclosure summary {
@@ -417,7 +417,7 @@
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
-  color: var(--text);
+  color: var(--ling-text-default);
   cursor: pointer;
   font-size: 12px;
   font-weight: 780;
@@ -436,8 +436,8 @@
   width: 18px;
   height: 18px;
   border-radius: 999px;
-  background: var(--surface-subtle);
-  color: var(--text-muted);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-muted);
   font-size: 12px;
   font-weight: 820;
 }
@@ -459,8 +459,8 @@
   min-height: 18px;
   padding: 0 6px;
   border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  background: var(--ling-action-selection);
+  color: var(--ling-action-accent-hover);
   font-size: 10px;
   font-weight: 780;
 }
@@ -492,18 +492,18 @@
   gap: 6px;
   min-height: 30px;
   padding: 0 9px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 7px;
-  background: var(--surface-panel);
-  color: var(--text-muted);
+  background: var(--ling-bg-panel);
+  color: var(--ling-text-muted);
   font-size: 11px;
   font-weight: 760;
 }
 
 .activity-triage-action-picker button.active {
-  border-color: var(--accent-border);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  border-color: var(--ling-border-focus);
+  background: var(--ling-action-selection);
+  color: var(--ling-action-accent-hover);
 }
 
 .activity-triage-description {
@@ -534,22 +534,22 @@
   gap: 8px;
   min-width: 0;
   padding: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 8px;
-  background: var(--surface-panel);
+  background: var(--ling-bg-panel);
   font-size: 12px;
 }
 
 .activity-triage-error {
-  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
-  background: var(--danger-soft);
-  color: var(--danger);
+  border-color: color-mix(in srgb, var(--ling-status-danger) 35%, var(--ling-border-default));
+  background: var(--ling-status-danger-bg);
+  color: var(--ling-status-danger);
 }
 
 .activity-triage-result {
-  border-color: var(--accent-border);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  border-color: var(--ling-border-focus);
+  background: var(--ling-action-selection);
+  color: var(--ling-action-accent-hover);
 }
 
 .activity-triage-error span,
@@ -580,7 +580,7 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 13px;
   font-weight: 760;
   overflow-wrap: anywhere;

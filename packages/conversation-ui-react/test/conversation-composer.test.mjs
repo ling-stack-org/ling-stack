@@ -120,7 +120,7 @@ test("conversation package owns composer visuals through semantic Ling tokens", 
   assert.match(index, /composer\/conversation-composer\.css/u);
   assert.match(composer, /\.conversation-composer/u);
   assert.match(composer, /var\(--ling-bg-composer\)/u);
-  assert.match(composer, /\.conversation-composer:focus-within\s*\{[^}]*box-shadow:\s*inset 0 0 0 1px var\(--ling-border-focus\)/su);
+  assert.match(composer, /\.conversation-composer:focus-within\s*\{[^}]*box-shadow:\s*var\(--ling-composer-focus-shadow\)/su);
   assert.doesNotMatch(composer, /\.conversation-composer:focus-within\s*\{[^}]*box-shadow:\s*0 0 0 [23]px/su);
   assert.match(composer, /\.conversation-composer-input-zone/u);
   assert.match(composer, /\.conversation-composer-toolbar/u);

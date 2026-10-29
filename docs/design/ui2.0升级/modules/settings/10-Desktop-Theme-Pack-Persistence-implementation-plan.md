@@ -1,8 +1,8 @@
-# Desktop Theme Pack Persistence Release Plan
+# Desktop Theme Pack Persistence Release Plan（已停用）
 
-Status: implementation complete; packaged verification partial
+Status: retired by the 2026-10-23 official-only theme decision; historical implementation reference only
 Owner: Theme system, Desktop and release maintainers
-Last verified: 2026-08-03
+Last verified: 2026-08-03；当前产品不再提供主题包导入、修复或 Theme Studio 入口
 Document type: protected platform implementation plan
 
 ## Owning Contracts
@@ -14,6 +14,8 @@ Document type: protected platform implementation plan
 - [Desktop Release Checklist](../../release/01-Desktop跨平台发布验收清单.md)
 
 ## Current Boundary
+
+当前产品决策已改为只提供官方内置主题。本计划描述的 `.ling-theme` 原生发布、重导入、删除和修复不再是产品能力；仅保留历史兼容参考，不能作为当前开发依据。
 
 Theme package parsing, validation, Web storage, Desktop native repository, journaled
 publish/delete/reimport, startup bootstrap, first-frame resolution, IPC capabilities and

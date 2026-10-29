@@ -2991,6 +2991,7 @@ export function WorkspaceClientView({
     teammateOptions,
     t,
     timelineItemLocatorRef: conversationTimelineItemLocatorRef,
+    onTimelineLocateIntent: messageFeedState.onLocateIntent,
     timelineScrollRef: messageFeedState.scrollRef,
     timelineViewRetainKeys: messageFeedState.viewRetainKeys,
     onTimelineDisclosureIntent: messageFeedState.onDisclosureIntent,

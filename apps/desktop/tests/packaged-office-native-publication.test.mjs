@@ -136,6 +136,10 @@ test("Office recovery discovery validation remains an explicit packaging source 
 
 /** Disposable, explicitly synthetic compiler/signature fixture. It never approves product sources. */
 async function fixture(t, { portable = false } = {}) {
+  const prior = process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
+  process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = "1";
+  t.after(() => { if (prior === undefined) delete process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
+    else process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = prior; });
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-office-publication-test-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const scripts = join(root, "apps/desktop/scripts"), nativeRoot = join(root, "native/office-local");
