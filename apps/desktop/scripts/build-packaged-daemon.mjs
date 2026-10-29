@@ -175,7 +175,9 @@ async function bundleOriginalDaemon(prepareOriginals) {
 
 async function buildOriginalDaemonBundle(codesignReceipt, officeReceipt, sourceInputs) {
   requireBundle(Boolean(officeReceipt) === Boolean(sourceInputs));
-  const gstackIdentity = await preparePackagedGstackBuild({ required: Boolean(officeReceipt) });
+  const gstackIdentity = await preparePackagedGstackBuild({
+    required: Boolean(officeReceipt) && process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED === "1",
+  });
   const gstack = packagedGstackIdentityPlugin({ identity: gstackIdentity, sourceInputs });
   const definitions = [
     {

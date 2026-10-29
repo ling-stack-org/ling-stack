@@ -15,6 +15,12 @@ migration evidence, and artifact-backed storage lives in
 Skill source health, optional optimization previews, and core-plus-lazy-reference
 runtime views are specified in [Skill Context Optimization](skill-context-optimization.md).
 
+Local shared `.agents/skills` discovery is a separate product contract:
+[External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md). It
+reuses the scanner/classifier below but keeps its own explicit publish surface and never
+feeds the official source flow. Candidate roots described under "Source Discovery" are
+compatibility/diagnostic inputs, not the product path for local folders.
+
 ## Summary
 
 Ling already has a durable skill registry and Effective Skill checks. The current
@@ -178,6 +184,12 @@ detected global Codex skill root
 Discovery must not assume a personal absolute path. A local install can be symlinked,
 vendored, or generated. The sync layer should persist resolved paths only in workspace
 state, not in public docs or templates.
+
+Compatibility note: routine official acquisition uses the P16 managed cache, so this
+candidate-root list is retained for diagnostics and the legacy preview/publish APIs. It is
+not the product discovery path. Local shared folders are handled by
+[External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md), which
+uses fixed `.agents/skills` roots and its own explicit confirmation flow.
 
 Supported source shapes:
 

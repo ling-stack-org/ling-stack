@@ -1347,6 +1347,8 @@ export async function routeRequest(
     url.pathname === "/skills/sync/gstack/publish" ||
     url.pathname === "/skills/sync/gstack/refresh" ||
     url.pathname === "/skills/sync/gstack/check-updates" ||
+    url.pathname === "/skills/sync/shared/preview" ||
+    url.pathname === "/skills/sync/shared/publish" ||
     url.pathname === "/skills/source-upgrade-policy" ||
     url.pathname.startsWith("/skills/source-artifacts/") ||
     url.pathname === "/skills/suggestions" ||

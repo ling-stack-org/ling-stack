@@ -2,7 +2,7 @@
 
 Status: current planning index
 Owner: repository maintainers
-Last verified: 2026-10-19 (Native Execution Engines row); 2026-10-17 (P2 and bundled GStack rows); other work retains its owning plan's verification date
+Last verified: 2026-10-27 (external shared skill-source decision row); 2026-10-19 (Native Execution Engines row); 2026-10-17 (P2 and bundled GStack rows); other work retains its owning plan's verification date
 Document type: governance index
 
 ## Purpose
@@ -56,6 +56,7 @@ counts, screenshots, hashes and run diaries belong in CI or Release artifacts.
 
 | Work | Decision required |
 |---|---|
+| [External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md) | Approve the **Local skill folders** section, fixed `.agents/skills` scope, client-local ignore, and the P16 boundary guards before the UI slice is accepted; implementation plan tracks remaining gates |
 | [Core Tools Runtime Boundary](core-tools-runtime-boundary-implementation-plan.md) | Approve removal of built-in tools from Plugin presentation while preserving approval and diagnostics ownership |
 | [Mobile Remote Access](mobile-remote-access-implementation-plan.md) | Mobile remains outside current acceptance until explicitly reopened after security review |
 | [Work Board Reopening](ui2.0升级/modules/14-Work-Board-implementation-plan.md) | Reopen only after workspace projection and fresh browser acceptance |

@@ -59,6 +59,14 @@ export async function packageMacosWithOffice() {
               throw new Error("packaged_human_qa_selection_changed");
             }
             const config = selectPackagedOfficeBuildLane(originalConfig, process.env);
+            config.extraResources = [...(config.extraResources ?? []),
+              { from: resolve(desktopRoot, "dist/office-local"), to: "office-local" }];
+            // Resolve lifecycle hooks from this application, independent of caller cwd.
+            for (const hook of ["afterPack", "afterSign", "artifactBuildCompleted"]) {
+              if (typeof config[hook] === "string" && config[hook].startsWith("./scripts/")) {
+                config[hook] = resolve(desktopRoot, config[hook]);
+              }
+            }
             if (config.mac.sign !== undefined || config.mac.identity !== "-") {
               throw new Error("packaged_office_native_default_signer_required");
             }
