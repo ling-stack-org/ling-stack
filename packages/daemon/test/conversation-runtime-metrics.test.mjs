@@ -6,6 +6,8 @@ import { buildConversationDetail } from "../dist/features/conversations/routes.j
 import { buildTeammateDirectTranscript } from "../dist/features/teammates/direct-transcript.js";
 import { listChannelConversationItems } from "../dist/features/channels/channel-conversation-api.js";
 
+import { projectConversationRuntimeMetrics } from "../dist/features/conversations/runtime-metrics-projection.js";
+
 const usage = (input, output, cacheRead = 0, cacheWrite = 0) => ({
   input, output, cacheRead, cacheWrite, totalTokens: input + output + cacheRead + cacheWrite,
 });
@@ -145,6 +147,7 @@ test("mixed native lifecycle gaps do not claim exact AI/tool totals", async t =>
   assert.equal(metrics.toolSteps, null);
   assert.equal(metrics.totalTokens, 10);
   assert.equal(metrics.coverage, "partial");
+  assert.equal(metrics.aiRounds, null, "a run without turn_start cannot establish round count");
 });
 
 test("normal detail reports partial coverage when successful compaction lacks usage", async t => {
@@ -180,4 +183,44 @@ test("normal detail includes compaction invocation usage but labels post-compact
   assert.equal(metrics.context.basis, "estimated");
   assert.equal(metrics.context.estimatedTokens, 22);
   assert.equal(metrics.context.measuredInputTokens, null);
+});
+
+function tiedRunMetrics({ native = false, sameCreationTime = false } = {}) {
+  const thread = { id: "thread", kind: "conversation", workspaceId: "workspace" };
+  const ids = sameCreationTime ? ["a-old", "z-new"] : ["z-old", "a-new"];
+  const runs = ids.map((id, index) => ({
+    id, threadId: thread.id, status: "succeeded",
+    createdAt: `2026-10-28T00:00:0${sameCreationTime ? 0 : index}.000Z`,
+    providerSnapshot: { contextWindow: 100 },
+  }));
+  const events = new Map(runs.map((run, index) => [run.id, native && index === 1 ? [{
+    runId: run.id, seq: 1, ts: "2026-10-28T00:00:03.000Z", type: "turn_end", data: {},
+  }] : [
+    { runId: run.id, seq: 1, ts: "2026-10-28T00:00:02.000Z", type: "turn_start", data: {} },
+    { runId: run.id, seq: 2, ts: "2026-10-28T00:00:03.000Z", type: "message_end",
+      data: { role: "assistant", usage: usage(index ? 80 : 40, index ? 20 : 10) } },
+  ]]));
+  return projectConversationRuntimeMetrics({
+    thread, runs,
+    turns: ids.map((id) => ({ id, threadId: thread.id, workspaceId: thread.workspaceId })),
+    store: {
+      listLingTurnRuns: (id) => [{ runId: id }],
+      listEvents: (id, { afterSeq }) => events.get(id).filter((event) => event.seq > afterSeq),
+    },
+  });
+}
+
+for (const sameCreationTime of [false, true]) {
+  test(`equal event timestamps select latest run context and throughput (creation tie: ${sameCreationTime})`, () => {
+    const metrics = tiedRunMetrics({ sameCreationTime });
+    assert.equal(metrics.context.measuredInputTokens, 80);
+    assert.equal(metrics.recentReplyTokensPerSecond, 20);
+  });
+}
+
+test("native turn_end without turn_start cannot establish exact AI round count", () => {
+  const metrics = tiedRunMetrics({ native: true });
+  assert.equal(metrics.aiRounds, null);
+  assert.equal(metrics.context.basis, "unavailable");
+  assert.equal(metrics.coverage, "partial");
 });

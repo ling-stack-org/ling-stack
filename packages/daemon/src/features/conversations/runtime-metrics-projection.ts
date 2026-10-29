@@ -30,10 +30,13 @@ export function projectConversationRuntimeMetrics(input: {
   }).map((run) => [run.id, run])).values()]
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
 
+  const runOrder = new Map(runs.map((run, index) => [run.id, index]));
+
   let rounds = 0;
   let tools = 0;
   let hasEvent = false;
   let lifecycleComplete = true;
+  let roundEvidenceComplete = true;
   let partial = input.enumerationMayBeTruncated === true || linkedRunIds.size > runs.length;
   let usageCount = 0;
   let inputTokens = 0;
@@ -41,7 +44,7 @@ export function projectConversationRuntimeMetrics(input: {
   let cacheReadTokens = 0;
   let cacheWriteTokens = 0;
   let totalTokens = 0;
-  let recentReply: { readonly ts: string; readonly rate: number } | undefined;
+  let recentReply: { readonly ts: string; readonly runId: string; readonly seq: number; readonly rate: number } | undefined;
   let latestMeasured: { readonly ts: string; readonly runId: string; readonly seq: number; readonly tokens: number; readonly capacity: number | null } | undefined;
   let latestEstimated: { readonly ts: string; readonly runId: string; readonly seq: number; readonly tokens: number; readonly capacity: number | null } | undefined;
   let latestCapacity: number | null = null;
@@ -59,6 +62,7 @@ export function projectConversationRuntimeMetrics(input: {
     let runHadEvents = false;
     let runHadUsage = false;
     let runHadLifecycle = false;
+    let runHadRoundStart = false;
     let latestEventInRun: RunEventEnvelope | undefined;
     forEachRunEvent(store, run.id, (event) => {
       latestEventInRun = event;
@@ -66,7 +70,8 @@ export function projectConversationRuntimeMetrics(input: {
       runHadEvents = true;
       if (event.type === "turn_start") {
         runHadLifecycle = true;
-        if (newerEvent(latestInvocation, event)) latestInvocation = event;
+        runHadRoundStart = true;
+        if (newerEvent(latestInvocation, event, runOrder)) latestInvocation = event;
         rounds++;
         startedAt = event.ts;
       } else if (event.type === "turn_end") {
@@ -75,7 +80,7 @@ export function projectConversationRuntimeMetrics(input: {
         runHadLifecycle = true;
         tools++;
       } else if (event.type === "context_compaction_start") {
-        if (newerEvent(latestInvocation, event)) latestInvocation = event;
+        if (newerEvent(latestInvocation, event, runOrder)) latestInvocation = event;
       } else if (event.type === "context_compaction_end") {
         // Compaction is a separate provider invocation, not an assistant message_end.
         if (!event.data.usage || !validUsage(event.data.usage)) {
@@ -92,7 +97,7 @@ export function projectConversationRuntimeMetrics(input: {
         }
         if (event.data.outcome === "sdk_installed") {
           const estimate = tokenCount(event.data.estimatedTokensAfter);
-          if (estimate !== undefined && newerEvent(latestEstimated, event)) {
+          if (estimate !== undefined && newerEvent(latestEstimated, event, runOrder)) {
             latestEstimated = { ts: event.ts, runId: event.runId, seq: event.seq, tokens: estimate, capacity };
           }
         }
@@ -110,11 +115,11 @@ export function projectConversationRuntimeMetrics(input: {
           totalTokens += usage.totalTokens;
           // Pi usage.input excludes cache-read and cache-write input classes.
           const measuredInput = usage.input + usage.cacheRead + usage.cacheWrite;
-          if (newerEvent(latestMeasured, event)) latestMeasured = { ts: event.ts, runId: event.runId, seq: event.seq, tokens: measuredInput, capacity };
+          if (newerEvent(latestMeasured, event, runOrder)) latestMeasured = { ts: event.ts, runId: event.runId, seq: event.seq, tokens: measuredInput, capacity };
           const elapsedMs = startedAt ? Date.parse(event.ts) - Date.parse(startedAt) : NaN;
           if (elapsedMs > 0 && usage.output > 0 && Number.isFinite(elapsedMs)) {
-            if (!recentReply || event.ts > recentReply.ts) {
-              recentReply = { ts: event.ts, rate: Math.round(usage.output / (elapsedMs / 1000) * 10) / 10 };
+            if (newerEvent(recentReply, event, runOrder)) {
+              recentReply = { ts: event.ts, runId: event.runId, seq: event.seq, rate: Math.round(usage.output / (elapsedMs / 1000) * 10) / 10 };
             }
           }
         }
@@ -125,11 +130,15 @@ export function projectConversationRuntimeMetrics(input: {
       !["succeeded", "failed", "cancelled"].includes(run.status)) partial = true;
     // A newer run without a usable measurement must invalidate context evidence
     // from an older provider invocation; it cannot be carried forward.
-    if (runHadEvents && !runHadUsage && latestEventInRun && newerEvent(latestInvocation, latestEventInRun)) {
+    if (runHadEvents && !runHadUsage && latestEventInRun && newerEvent(latestInvocation, latestEventInRun, runOrder)) {
       latestInvocation = latestEventInRun;
     }
     if (!runHadLifecycle) {
       lifecycleComplete = false;
+      if (runHadEvents) partial = true;
+    }
+    if (!runHadRoundStart) {
+      roundEvidenceComplete = false;
       if (runHadEvents) partial = true;
     }
   }
@@ -137,14 +146,14 @@ export function projectConversationRuntimeMetrics(input: {
   const estimated = latestEstimated as { readonly ts: string; readonly runId: string; readonly seq: number; readonly tokens: number; readonly capacity: number | null } | undefined;
   // A newer invocation invalidates the previous request's context evidence;
   // subsequent tool/turn-end lifecycle events do not.
-  const useMeasured = measured && (!estimated || !newerEvent(measured, estimated)) &&
-    (!latestInvocation || !newerEvent(measured, latestInvocation));
+  const useMeasured = measured && (!estimated || !newerEvent(measured, estimated, runOrder)) &&
+    (!latestInvocation || !newerEvent(measured, latestInvocation, runOrder));
   const context = useMeasured ? {
     measuredInputTokens: measured.tokens,
     capacityTokens: measured.capacity,
     estimatedTokens: null,
     basis: "measured" as const,
-  } : estimated && (!latestInvocation || !newerEvent(estimated, latestInvocation)) ? {
+  } : estimated && (!latestInvocation || !newerEvent(estimated, latestInvocation, runOrder)) ? {
     measuredInputTokens: null,
     capacityTokens: estimated.capacity,
     estimatedTokens: estimated.tokens,
@@ -156,7 +165,7 @@ export function projectConversationRuntimeMetrics(input: {
     basis: "unavailable" as const,
   };
   return {
-    aiRounds: lifecycleComplete && linkedRunIds.size === runs.length ? rounds : null,
+    aiRounds: lifecycleComplete && roundEvidenceComplete && linkedRunIds.size === runs.length ? rounds : null,
     toolSteps: lifecycleComplete && linkedRunIds.size === runs.length ? tools : null,
     inputTokens: usageCount ? inputTokens : null,
     outputTokens: usageCount ? outputTokens : null,
@@ -172,8 +181,11 @@ export function projectConversationRuntimeMetrics(input: {
 function newerEvent(
   prior: { readonly ts: string; readonly runId: string; readonly seq: number } | undefined,
   next: { readonly ts: string; readonly runId: string; readonly seq: number },
+  runOrder: ReadonlyMap<string, number>,
 ): boolean {
-  return !prior || next.ts > prior.ts || (next.ts === prior.ts && next.runId === prior.runId && next.seq > prior.seq);
+  if (!prior || next.ts !== prior.ts) return !prior || next.ts > prior.ts;
+  if (next.runId === prior.runId) return next.seq > prior.seq;
+  return (runOrder.get(next.runId) ?? -1) > (runOrder.get(prior.runId) ?? -1);
 }
 
 function forEachRunEvent(store: RunStore, runId: string, consume: (event: RunEventEnvelope) => void): void {
