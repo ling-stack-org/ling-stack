@@ -20,9 +20,9 @@ export function SceneArtwork({ scene, className, compact = false, position }: Sc
     observer.observe(ref.current); return () => observer.disconnect();
   }, [positioned]);
   const cropWidth = Math.min(1600, 900 * aspect), cropHeight = Math.min(900, 1600 / aspect);
-  const viewBox = position ? `${(1600 - cropWidth) * position.x / 100} ${(900 - cropHeight) * position.y / 100} ${cropWidth} ${cropHeight}`
-    : compact && scene === "farbound-journey" ? "0 250 1600 650" : "0 0 1600 900";
   const asset = sceneAssets[scene];
+  const viewBox = position ? `${(1600 - cropWidth) * position.x / 100} ${(900 - cropHeight) * position.y / 100} ${cropWidth} ${cropHeight}`
+    : compact ? asset.thumbnailViewBox ?? "0 0 1600 900" : "0 0 1600 900";
   return (
     <svg
       ref={ref}
@@ -50,21 +50,24 @@ export function SceneArtwork({ scene, className, compact = false, position }: Sc
 // Stable scene IDs preserve saved theme/profile selections; each scene is one
 // complete image. Cards use a small export of that same source, never a second
 // drawing or a separately positioned mascot.
-const sceneAssets: Record<LingBuiltInSceneId, { background: string; thumbnail: string }> = {
+const sceneAssets: Record<LingBuiltInSceneId, { background: string; thumbnail: string; thumbnailViewBox?: string }> = {
   "forest-breeze": {
-    background: "/themes/ling-breeze/forest-morning-v1.webp",
-    thumbnail: "/themes/ling-breeze/forest-morning-v1-thumb.webp",
+    background: "/themes/ling-breeze/forest-clearing-v1.webp",
+    thumbnail: "/themes/ling-breeze/forest-clearing-v1-thumb.webp",
   },
   "ocean-drift": {
-    background: "/themes/ling-ocean/salt-coast-v1.webp",
-    thumbnail: "/themes/ling-ocean/salt-coast-v1-thumb.webp",
+    background: "/themes/ling-ocean/summer-manga-v1.webp",
+    thumbnail: "/themes/ling-ocean/summer-manga-v1-thumb.webp",
+    thumbnailViewBox: "0 0 1600 420",
   },
   "midnight-aurora": {
-    background: "/themes/ling-night/rain-window-v2.webp",
-    thumbnail: "/themes/ling-night/rain-window-v2-thumb.webp",
+    background: "/themes/ling-night/valley-overlook-v1.webp",
+    thumbnail: "/themes/ling-night/valley-overlook-v1-thumb.webp",
+    thumbnailViewBox: "0 0 1600 360",
   },
   "farbound-journey": {
     background: "/themes/ling-journey/ling-journey-v4-depth-dark.webp",
     thumbnail: "/themes/ling-journey/ling-journey-v4-depth-dark.webp",
+    thumbnailViewBox: "0 250 1600 650",
   },
 };

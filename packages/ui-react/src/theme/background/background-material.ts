@@ -17,28 +17,23 @@ export function backgroundRecipe(opacity: number = BACKGROUND_OPACITY.default) {
   };
 }
 
-/** The open workspace carries only strong display text; content surfaces remain opaque. */
+/** Canvas tint follows visibility; display text and content protect themselves locally. */
 export function resolveBackgroundWorkspaceAlpha(input: {
-  app: string; panel: string; foreground: string; opacity: number;
+  app: string; panel: string; opacity: number; baseAlpha?: number;
 }): number {
-  if (![input.app, input.panel, input.foreground].every(isCompilerHex)) return 1;
-  const recipe = backgroundRecipe(input.opacity);
-  for (let step = 0; step <= 100; step++) {
-    const alpha = step / 100;
-    const backgrounds = ["#000000", "#ffffff"].map(image => mixHex(mixHex(image, input.app, recipe.scrim), input.panel, alpha));
-    if (backgrounds.every(background => contrastRatio(input.foreground, background) >= 4.5)) return alpha;
-  }
-  return 1;
+  if (![input.app, input.panel].every(isCompilerHex)) return 1;
+  return materialAlpha(input.baseAlpha, 0) * backgroundRecipe(input.opacity).scrim;
 }
 
 /** Unknown color syntax stays opaque; tokens are never rewritten to improve visibility. */
 export function resolveBackgroundPanelAlpha(input: {
   app: string; panel: string; opacity: number;
+  minimumAlpha?: number;
   foregrounds: readonly { color: string; minimum: number }[];
 }): number {
   if (![input.app, input.panel, ...input.foregrounds.map(item => item.color)].every(isCompilerHex)) return 1;
   const recipe = backgroundRecipe(input.opacity);
-  for (let step = Math.round(recipe.panel * 100); step <= 100; step++) {
+  for (let step = Math.ceil(Math.max(recipe.panel, materialAlpha(input.minimumAlpha, 0)) * 100); step <= 100; step++) {
     const alpha = step / 100;
     const backgrounds = ["#000000", "#ffffff"].map(image => mixHex(mixHex(image, input.app, recipe.scrim), input.panel, alpha));
     if (input.foregrounds.every(({ color, minimum }) => backgrounds.every(background => contrastRatio(color, background) >= minimum))) return alpha;
@@ -47,7 +42,11 @@ export function resolveBackgroundPanelAlpha(input: {
 }
 
 /** Navigation chrome is a structural surface; interaction states carry local text protection. */
-export function resolveBackgroundSidebarAlpha(input: { app: string; sidebar: string }): number {
+export function resolveBackgroundSidebarAlpha(input: { app: string; sidebar: string; minimumAlpha?: number }): number {
   if (![input.app, input.sidebar].every(isCompilerHex)) return 1;
-  return backgroundRecipe().sidebar;
+  return materialAlpha(input.minimumAlpha, backgroundRecipe().sidebar);
+}
+
+function materialAlpha(value: number | undefined, fallback: number): number {
+  return value === undefined || !Number.isFinite(value) ? fallback : Math.max(0, Math.min(1, value));
 }

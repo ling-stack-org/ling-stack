@@ -2,16 +2,16 @@
 
 状态：产品与技术合同；内置场景主题和自定义媒体背景进入实施；平台放行仍按独立门槛执行。  
 Owner: theme and presentation delivery track  
-Last verified: 2026-10-26  
+Last verified: 2026-10-28 (当前场景与组件所有权同步)
 Document type: product and interaction contract  
 Code and test anchors: `packages/ui-react/src/theme/built-ins/`、`packages/ui-react/src/theme-scene/`、`apps/web/src/shared/ui/background/`、`apps/web/e2e/full-window-background.spec.ts`  
 关联：[UI 视觉适配实施方案](ling-journey-ui-adaptation-implementation-plan.md)、[实施方案](full-window-theme-background-implementation-plan.md)、[验收矩阵](full-window-theme-background-acceptance-matrix.md)、[主题系统](ui2.0升级/themes/README.md)、[Ling Core IP 设计合同](ling-core-ip-design.md)。
 
 ## 1. 产品方向
 
-Ling 的主题是官方策展的完整视觉场景，不是“一个颜色主题再让用户自己找图搭配”。默认主题列表提供经典浅色、经典深色，以及五个官方场景主题。所有场景主题共享同一个 Ling Core IP；主题只改变它的材质、道具、姿态和所处场景，不创建五个互不相干的角色。每个场景主题同时定义：
+Ling 的主题是官方策展的完整视觉场景。默认主题列表提供经典浅色、经典深色和四个官方场景主题。当前场景采用已确认的整合图片，新 Core IP 与启动动画暂停，保留原 Logo。每个场景主题同时定义：
 
-- 背景插画、首页主视觉和角落装饰；
+- 背景图片与同源缩略图；
 - 左侧栏、按钮、选中态、焦点和状态色；
 - 面板材质、遮罩和可读性策略；
 - 主题列表中的场景缩略图。
@@ -30,11 +30,10 @@ Ling 不提供主题包导入入口，也不提供 Theme Studio / Quick Theme �
 |---|---|---|---|
 | `ling-light` | Light | 高密度经典浅色工作区 | 纯色表面，无场景插画 |
 | `ling-dark` | Dark | 高密度经典深色工作区 | 纯色表面，无场景插画 |
-| `ling-breeze` | Light | 有风、植物、轻快绿色 | 远景树层、近景植物、路径、Breeze Ling、角落枝叶 |
-| `ling-ocean` | Light | 海风、天空、蓝色水面 | 天空、云、海面、波浪、纸船、Ocean Ling |
-| `ling-night` | Dark | 星夜、极光、安静深色 | 星空、极光、山层、月亮、Night Ling |
-| `ling-sakura` | Light | 春日、花瓣、柔和粉白 | 花枝、石台、飘落花瓣、Sakura Ling |
-| `ling-ember` | Light | 日落、暖橙、收束推进 | 暮色丘陵、光路、草叶、Ember Ling |
+| `ling-breeze` | Light | 林间晨光 | 整合自然实拍图、对应缩略图 |
+| `ling-ocean` | Light | 夏日海滩漫画 | 整合海滩插画、暖白浅青表面与珊瑚强调 |
+| `ling-night` | Dark | 山谷机甲眺望 | 已确认山谷图、石墨表面与铜金强调 |
+| `ling-journey` | Dark | 远行问剑 | 整合静态母图、墨蓝表面与暖金强调 |
 
 主题 ID 是工程标识，不是展示分支。Feature 不根据主题 ID 写样式；共享 presentation 层只消费 manifest 中的 scene、tokens 和 profile。
 
@@ -42,22 +41,22 @@ Ling 不提供主题包导入入口，也不提供 Theme Studio / Quick Theme �
 
 | 层 | 所有者 | 内容 | 边界 |
 |---|---|---|---|
-| Theme Pack | `ui-react` built-ins | 语义 token、scene metadata、profile 选择 | 不改变布局、组件结构、Logo、图标、业务文案或状态机 |
-| Core IP | `docs/design/ling-core-ip-design.md` 与应用内资产 | 统一角色轮廓、脸部、比例、材质变体和使用边界 | 不替代 Logo，不承担业务状态，不引入第三方 IP |
-| Scene artwork | 应用代码 | 一个共享全窗场景、首页角落装饰和 Core IP | 不读取用户路径、不执行包内资源、不为每个面板复制播放器 |
+| Theme Pack 与组件外观 | `ui-react` built-ins / 共享 CSS | 完整语义 token、批准的组件参数、scene metadata、profile 选择 | 不改变控件高度、命中区域、布局、结构、Logo、图标、文案或状态机 |
+| Core IP | 原设计合同与历史资产 | 当前暂停的新 IP 方案 | 不作为新主题必做项，不替代原 Logo |
+| Scene artwork | 应用代码 | 一个共享全窗整合图片/视频层与同源缩略图 | 不读取任意用户路径、不执行包内资源、不单独叠加人物、不为每个面板复制播放器 |
 | Presentation Profile | 应用代码 | 面板透明度、遮罩、安全区和可读性 | 不由主题传入任意 CSS、坐标、opacity 或 selector |
 | 自定义背景 | 用户偏好和受管仓库 | 本地静态图片或视频壁纸 | 显式覆盖官方场景；清除后回到主题默认画面 |
 | 局部反馈 | `ui-react` 与业务状态 | 卡片柔光、拖放边界、一次边缘微光 | 不宣称验证、保存或上传成功 |
 
-组件级视觉不在本合同中重复定义，由 [Ling 远行问剑 UI 视觉适配实施方案](ling-journey-ui-adaptation-implementation-plan.md) 拥有 L0–L4 材质、Shell、Composer、通用控件、Overlay、设置页和交互状态合同。本合同只定义背景、透明度、保护表面和回退边界。
+所有主题和新模块的组件级视觉由[共享组件主题合同](component-theme-presentation.md)拥有，包括参数默认值、扩展方式、Shell、Composer、通用控件、Overlay、状态和验收。Journey 原方案保留特定主题与历史边界；本合同拥有背景、透明度、保护表面和回退规则。
 
-官方场景使用应用内受管插画资源或矢量场景。它可以包含植物、山、水、天空、极光、花瓣、丘陵和统一 Ling Core IP，但不能包含可读文字、第三方 IP、伪控件、Logo 替换、水印或远程资源。
+官方场景使用应用内受管图片或矢量资源，登记来源、许可证与分发边界；不包含伪控件、水印、Logo 替换或运行时远程资源，不用背景角色表达业务状态。素材边界由资源合同和来源记录管理。
 
 ## 5. 主题选择器
 
 主题列表直接展示“场景缩略图”：
 
-- 场景主题使用与全窗背景一致的矢量场景缩略图；
+- 场景主题使用与全窗背景同源的缩略图；
 - 经典浅色/深色继续使用简洁色板；
 - 选中、悬停、键盘焦点和 disabled 状态沿用现有语义；
 - 不展示导入、重新导入、删除、修复、创建主题等操作；
@@ -86,7 +85,10 @@ Ling 不提供主题包导入入口，也不提供 Theme Studio / Quick Theme �
 - UI 文案使用“背景可见度”；内部遮罩为 `1 - opacity`。
 - 旧三档数据迁移为：subtle 45%、balanced 60%、strong 75%。
 - 1180px 以下隐藏装饰背景；1180–1280px 将高于 60% 的可见度收敛到 60%。
-- 主画布材质按当前可见度计算，正文、代码、输入、表格、审批和受保护路由继续使用不透明语义表面。
+- 开放主画布染色 alpha = 当前主题 ambient 基准 × (1 − 有效可见度)，图片总曝光随可见度严格增加；宽窗首页 100% 时不再叠加主画布蒙层。禁止整屏对比度 solver 在提高可见度时反向加浓。首页裸露标题用语义底色的局部字形 halo 保护，背景保持透明；正文、代码、输入、表格、审批、窗口控件和受保护路由继续使用各自阅读保护表面。
+- 设置小预览展示草稿请求的 20%–100% 可见度，不套用当前窗口的 60% 上限；中央场景保持通透，示意内容条和侧面板保留材质，避免无文字的整块保护层抵消滑块效果。实际应用页仍受上述窗口/表面策略限制，阅读保护局限于承载文字的组件。调整参数即提示未应用，应用后持久化；取消恢复已保存参数。
+- 背景操作共用横向按钮区，空间不足时换行。当前参数与推荐 profile 一致时隐藏“使用推荐设置”；可见度、焦点或暂停偏离推荐值才显示，恢复推荐仍需应用后保存。
+- 保存/恢复默认成功通过唯一全局成功 Toast 短暂确认，沿用共享默认 3 秒、悬停/焦点暂停及稳定 scope 去重；背景区不保留常驻“背景已保存”状态或独立计时器。失败继续在原操作区持续展示。
 
 滑杆只改变视觉强度，不改变主题 token、执行业务状态或背景文件。
 
@@ -112,14 +114,28 @@ Ling 不提供主题包导入入口，也不提供 Theme Studio / Quick Theme �
 - 文件进入有效目标显示 focus 色边界和 5% 强调色底；
 - 放下非空文件后，最近边缘出现一段 56px × 2px 微光，沿边缘移动约 13px，在 180ms 内淡出；
 - 减少动态效果时取消跟随和移动微光，保留静态边界、焦点和业务状态；
-- 不使用圆形波纹、全局流体光标、按钮吸附、正文折射、持续闪电或装饰性高频循环。
+- 默认不使用圆形波纹、全局流体光标、按钮吸附、正文折射、持续闪电或装饰性高频循环；唯一例外是 `ling-journey` 的主题作用域剑光光迹，见 9.1。
+
+### 9.1 主题作用域的剑光光迹（`ling-journey` 唯一例外）
+
+`ling-journey`（场景 `farbound-journey`）允许一条全局指针光迹，作为"剑光掠过纸面"的主题语言。这条光迹属于主题资产，不是产品级动效：其他主题、默认主题和无场景主题都不启用，也不提供开关。
+
+- 实现：`apps/web/src/shared/ui/background/sword-light/` 的自研 WebGL2 光迹，采用标准 GPU stable-fluids 管线（沿指针段的力与染料散播、速度自对流、散度、Jacobi 压力迭代、压力梯度投射、MacCormack 染料对流、六级 mip bloom、指数色调映射合成），不引入第三方组件代码；
+- 形态约束：核心是细长亮线加独立宽而薄的光晕，头部紧贴指针收成小圆点、尾端自然收细；染料注入按通道饱和，任何手感参数都不允许让头部堆成白楔或让亮斑越过光标；指针跟随用临界阻尼弹簧解析解，保证帧率无关且不过冲；
+- 挂载点：共享背景层 `WorkspaceBackgroundLayer`，条件 `scene === "farbound-journey"`，位于 scrim 之上、应用表面之下，`pointer-events: none`、`aria-hidden`，不参与命中测试和焦点顺序；
+- 配色：主光 `#c49a63`（`action.accent`），副光 `#9a7448`（`action.accentPressed`）；开发环境实测是 alpha 叠加（`mix-blend-mode: screen` 被祖先隔离层吃掉，声明保留但不作为语义依赖），画布 alpha 跟随亮度、未点亮像素完全透明；暖金只作为细线光迹，不形成大面积橙色渐变，不进入业务状态色；
+- 减少动态效果：`prefers-reduced-motion: reduce` 时不挂载组件（不是挂载后停用发射），与视频壁纸的"不自动播放"同义；
+- 生命周期：页面隐藏时随 `motion.visible` 卸载；窗口窄于 1180px、forced-colors、减少透明度时随背景层整体 `display: none`；组件只在指针进入、移动或点击后按需启动 RAF，`linger` 静默后自行清屏并停止动画循环；
+- 能力回退：WebGL2 或 `EXT_color_buffer_float` 不可用时组件静默退出，保留静态母图，不写错误状态、不改偏好；
+- 性能：`devicePixelRatio` 上限 2，`IntersectionObserver` 在不可见时暂停；
+- 边界：光迹不读取页面内容、不写业务状态、不修改 token；卡片、按钮、正文和弹层不叠加第二套光效；用户上传自定义图片或视频壁纸时主题仍然生效，但官方静态母图被替换。
 
 ## 10. 可读性与回退
 
 背景永远不能牺牲工作可读性：
 
 - 正文及小字至少 4.5:1，大字和有意义非文本边界至少 3:1；
-- 设置、诊断、审批、media-canvas、弹窗、正文、代码块和输入框保持实底；普通管理页保持实底，自动化工作区作为管理路由中的显式环境层例外，允许透出背景但不让正文、表格和弹层参与透明合成；
+- 设置、诊断、审批、media-canvas、弹窗、正文、代码块和输入框保持阅读保护表面；插件、自动化、队友等普通工作区壳层允许背景，表格内容与卡片保持可读，布局轨道透明。新增模块通过共享 policy 分类，不能自行遮挡全窗背景；
 - 图片/视频只作为环境氛围，不承担业务状态；
 - 颜色无法可靠解析、资源未就绪、forced-colors、减少透明度或窗口过窄时回退到清晰 token-only surface；
 - 主题切换保留页面、焦点、滚动、草稿和 execution binding，不触发新的 Run。
@@ -128,8 +144,8 @@ Ling 不提供主题包导入入口，也不提供 Theme Studio / Quick Theme �
 
 | 阶段 | 交付 | 放行条件 |
 |---|---|---|
-| S0 | Ling Core IP turnaround 与五主题变体表 | 轮廓、脸部、比例、材质和五主题一致性通过设计审核 |
-| S1 | 官方场景主题模型、五套场景、主题缩略图、移除导入/生成入口 | 内置主题验证、主题选择、首页和侧栏截图、相关回归通过 |
+| S0 | 新 Core IP 与启动动画 | 当前暂停，保留原 Logo；不阻挡主题接入 |
+| S1 | 六套内置主题、四套场景、缩略图与组件参数；移除导入/生成入口 | 内置验证、共享组件与全部主题/状态适配、首页/会话/管理页/浮层截图通过；美术确认单独记录 |
 | S2 | 自定义静态图片背景迁移到连续可见度 | 旧数据迁移、Web/Desktop 存储、预览、清除和恢复通过 |
 | S3 | 本地 MP4/WebM 动态壁纸 | 格式/大小/时长验证、播放/暂停/reduced-motion、资源释放和性能预算通过 |
 | S4 | 平台验收 | macOS arm64/x64、Windows 签名包、原生拖放、性能和可读性验收关闭 |

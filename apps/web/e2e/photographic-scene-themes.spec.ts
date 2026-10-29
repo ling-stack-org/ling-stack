@@ -9,6 +9,11 @@ import { openEngineeringChannel } from './support/test-helpers';
 const themes = ['ling-breeze', 'ling-ocean', 'ling-night'] as const;
 type PhotoTheme = typeof themes[number];
 const evidenceDirectory = process.env.LING_PHOTO_THEME_EVIDENCE;
+const sceneExports = {
+  'ling-breeze': { file: 'forest-clearing-v1.webp', width: 1672, height: 941 },
+  'ling-ocean': { file: 'summer-manga-v1.webp', width: 1344, height: 756 },
+  'ling-night': { file: 'valley-overlook-v1.webp', width: 3840, height: 2160 },
+} as const;
 
 async function prepare(page: Page, themeId: PhotoTheme, surface?: 'normal' | 'private' | 'channel') {
   await page.addInitScript(id => {
@@ -38,6 +43,19 @@ async function prepare(page: Page, themeId: PhotoTheme, surface?: 'normal' | 'pr
     state.conversationItems = state.conversationItems?.filter(item => item.kind !== 'terminal_report');
   }
   await mockDaemon(page, state);
+  // The base daemon fixture excludes the automation feature. Supply its real
+  // empty-list response shapes so this visual check never falls through to a
+  // running daemon or mistakes a fixture 404 for an application error.
+  await page.route('http://127.0.0.1:17891/**', route => {
+    const url = new URL(route.request().url());
+    const cwd = url.searchParams.get('cwd') ?? '';
+    if (route.request().method() !== 'GET') return route.fallback();
+    if (url.pathname === '/automations') return route.fulfill({ json: { cwd, automations: [], templates: [] } });
+    if (url.pathname === '/automation-drafts') return route.fulfill({ json: { cwd, drafts: [], templates: [] } });
+    if (url.pathname === '/automation-runs') return route.fulfill({ json: { cwd, automationRuns: [] } });
+    if (url.pathname === '/automations/scheduler') return route.fulfill({ json: { cwd, schedulers: [] } });
+    return route.fallback();
+  });
   await page.route('**/runtime/conversation-execution**', route => route.fulfill({ json: { cwd: new URL(route.request().url()).searchParams.get('cwd') ?? '', status: 'not_selected', defaultRunnerId: 'pi' } }));
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('data-ui-theme', themeId);
@@ -62,33 +80,63 @@ async function capture(page: Page, info: TestInfo, name: string) {
 function errors(page: Page) {
   const failures: string[] = [];
   page.on('pageerror', error => failures.push(error.message));
-  page.on('console', message => { if (message.type() === 'error') failures.push(message.text()); });
+  page.on('console', message => { if (message.type() === 'error') failures.push(`${message.text()} [${message.location().url}]`); });
   return failures;
 }
 
 for (const theme of themes) {
-  test(`${theme}: photographic home, semantic legacy UI, management and protected surfaces`, async ({ page }, info) => {
+  test(`${theme}: scene home, semantic legacy UI, management and protected surfaces`, async ({ page }, info) => {
     const failures = errors(page);
     await prepare(page, theme);
     const scene = page.locator('[data-background-layer] svg');
     await expect(scene).toBeVisible();
     const asset = await scene.locator('image').getAttribute('href');
-    expect(asset).toMatch(new RegExp(`^/themes/${theme}/.+-v[12].webp$`));
+    const expected = sceneExports[theme];
+    expect(asset).toBe(`/themes/${theme}/${expected.file}`);
     const decoded = await page.evaluate(async path => {
       const image = new Image(); image.src = path!; await image.decode();
       return { width: image.naturalWidth, height: image.naturalHeight };
     }, asset);
-    expect(decoded.width).toBeGreaterThanOrEqual(1600);
-    expect(decoded.height).toBeGreaterThanOrEqual(900);
+    // Match each actual source export; do not upscale a smaller source just to
+    // satisfy a generic "HD" assertion. Ocean's source is natively 1344x768.
+    expect(decoded).toEqual({ width: expected.width, height: expected.height });
     await expect(scene.locator('path, circle, ellipse')).toHaveCount(0);
     await expect(page.locator('[data-background-layer] video')).toHaveCount(0);
     const aliases = await page.evaluate(() => {
       const style = getComputedStyle(document.documentElement);
-      return [['--text', '--ling-text-default'], ['--accent', '--ling-action-accent'],
-        ['--conversation-code-bg', '--ling-bg-code'], ['--surface-panel', '--ling-bg-panel']]
+      return [['--ling-text-default', '--ling-text-default'], ['--ling-action-accent', '--ling-action-accent'],
+        ['--ling-bg-code', '--ling-bg-code'], ['--ling-bg-panel', '--ling-bg-panel']]
         .map(([legacy, semantic]) => ({ legacy, actual: style.getPropertyValue(legacy).trim(), expected: style.getPropertyValue(semantic).trim() }));
     });
     for (const alias of aliases) expect(alias.actual, alias.legacy).toBe(alias.expected);
+    if (theme === 'ling-breeze') {
+      const palette = await page.evaluate(() => {
+        const style = getComputedStyle(document.documentElement);
+        return ['--ling-action-accent', '--ling-bg-sidebar', '--ling-bg-composer', '--ling-action-selection']
+          .map(name => style.getPropertyValue(name).trim());
+      });
+      expect(palette).toEqual(['#347b44', '#e3eee5', '#fffefb', '#c7dfc8']);
+    }
+    if (theme === 'ling-ocean') {
+      const palette = await page.evaluate(() => {
+        const style = getComputedStyle(document.documentElement);
+        return ['--ling-action-accent', '--ling-bg-sidebar', '--ling-bg-composer', '--ling-action-selection']
+          .map(name => style.getPropertyValue(name).trim());
+      });
+      expect(palette).toEqual(['#b44536', '#e1f1f1', '#fffdf9', '#fce3d9']);
+    }
+    if (theme === 'ling-night') {
+      // Check the rendered CSS matches the selected scene's warm metal palette,
+      // including actual composer paint rather than only registry values.
+      const palette = await page.evaluate(() => {
+        const style = getComputedStyle(document.documentElement);
+        return ['--ling-action-accent', '--ling-bg-sidebar', '--ling-bg-composer', '--ling-action-selection']
+          .map(name => style.getPropertyValue(name).trim());
+      });
+      expect(palette).toEqual(['#e7b38b', '#262328', '#29262a', '#514039']);
+      expect(await page.getByLabel('New conversation composer', { exact: true }).evaluate(element => getComputedStyle(element).backgroundColor))
+        .toBe('rgb(41, 38, 42)');
+    }
     const home = await capture(page, info, `${theme}-home`);
     const composer = page.getByLabel('New conversation composer', { exact: true });
     await composer.getByRole('textbox').fill('Theme preview draft');

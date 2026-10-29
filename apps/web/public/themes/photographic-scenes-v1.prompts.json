@@ -1,4 +1,6 @@
 {
+  "status": "historical-superseded",
+  "currentSourceManifest": "photographic-scenes-v2.sources.json",
   "generation": {
     "mode": "built-in imagegen",
     "model": "not exposed by tool",

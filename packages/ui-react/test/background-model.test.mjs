@@ -5,6 +5,29 @@ import { INITIAL_BACKGROUND, parseBackgroundPreference, parseBackgroundAsset, in
   backgroundOpacityFromStrength, backgroundPayloadDigest, backgroundVideoMimeType, verifyBackgroundCommit,
   backgroundOutputDimensions, backgroundThemeProfile, commitBackgroundPreference, backgroundSurfaceOpacity } from '../dist/theme/index.js';
 const chunk=(type,bytes)=>Buffer.concat([Buffer.from([0,0,0,bytes.length]),Buffer.from(type),bytes,Buffer.alloc(4)]);
+
+test('component material baselines participate without bypassing contrast protection', async () => {
+ const {ThemeRegistry, backgroundRecipe} = await import('../dist/theme/index.js');
+ const {mixHex, contrastRatio} = await import('../dist/theme/compiler/color-utils.js');
+ for (const {manifest: theme} of new ThemeRegistry().list()) {
+  const {background, text} = theme.tokens;
+  for (const minimumAlpha of [0, .24, .72, .98, 1]) {
+   const input = {app: background.app, panel: background.panel, opacity: .6, minimumAlpha};
+   const panel = resolveBackgroundPanelAlpha({...input, foregrounds: [{color: text.default, minimum: 4.5}]});
+   assert.ok(panel >= minimumAlpha, `${theme.id}: content material floor`);
+   for (const image of ['#000000', '#ffffff']) {
+    const base = mixHex(image, background.app, backgroundRecipe(.6).scrim);
+    assert.ok(contrastRatio(text.default, mixHex(base, background.panel, panel)) >= 4.5);
+   }
+  }
+ }
+ const input = {app: '#1f1f1f', sidebar: '#282725'};
+ assert.equal(resolveBackgroundSidebarAlpha({...input, minimumAlpha: .8}), .8);
+ assert.equal(resolveBackgroundSidebarAlpha({...input, minimumAlpha: NaN}), .68);
+ assert.equal(resolveBackgroundSidebarAlpha({...input, minimumAlpha: -1}), 0);
+ assert.equal(resolveBackgroundSidebarAlpha({...input, minimumAlpha: 2}), 1);
+ assert.equal(resolveBackgroundSidebarAlpha({...input, sidebar: 'unknown', minimumAlpha: .8}), 1);
+});
 function png(w=10,h=10,extra=[]) { const ihdr=Buffer.alloc(13); ihdr.writeUInt32BE(w); ihdr.writeUInt32BE(h,4); return Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),chunk('IHDR',ihdr),...extra,chunk('IDAT',Buffer.from([1])),chunk('IEND',Buffer.alloc(0))]); }
 function jpeg(w=10,h=10) {
  const sof=Buffer.from([0xff,0xc0,0,11,8,(h>>8)&0xff,h&0xff,(w>>8)&0xff,w&0xff,3,1,0x11,0]);
@@ -76,21 +99,31 @@ test('BG-06 sidebar structure keeps equal photo exposure while interaction state
  assert.equal(resolveBackgroundSidebarAlpha({app:'rgb(0 0 0)',sidebar:'#000000'}),1);
 });
 
-test('BG-06 open workspace exposes the photograph while strong display text stays readable',async()=>{
- const {lingLightTheme,lingDarkTheme,backgroundRecipe}=await import('../dist/theme/index.js');
- const {mixHex,contrastRatio}=await import('../dist/theme/compiler/color-utils.js');
- for(const theme of [lingLightTheme,lingDarkTheme]) {
-  const alpha=resolveBackgroundWorkspaceAlpha({app:theme.tokens.background.app,panel:theme.tokens.background.panel,foreground:theme.tokens.text.strong,opacity:.6});
-  const panelAlpha=resolveBackgroundPanelAlpha({app:theme.tokens.background.app,panel:theme.tokens.background.panel,opacity:.6,foregrounds:[{color:theme.tokens.text.strong,minimum:4.5}]});
-  assert.ok(alpha<panelAlpha,`${theme.id} workspace must remain more transparent than a content panel`);
-  for(const image of ['#000000','#ffffff']) {
-   const composite=mixHex(mixHex(image,theme.tokens.background.app,backgroundRecipe(.6).scrim),theme.tokens.background.panel,alpha);
-   assert.ok(contrastRatio(theme.tokens.text.strong,composite)>=4.5,`${theme.id}/balanced/workspace`);
+test('BG-06 every theme increases total canvas exposure across the full range and opens at 100%',async()=>{
+ const {ThemeRegistry,backgroundRecipe}=await import('../dist/theme/index.js');
+ const {contrastRatio}=await import('../dist/theme/compiler/color-utils.js');
+ for(const {manifest:theme} of new ThemeRegistry().list()) {
+  const input={app:theme.tokens.background.app,panel:theme.tokens.background.panel};
+  // Each value recomputes the material; holding alpha fixed hides the old cancellation bug.
+  for(const baseAlpha of [0,.08,.12,.24,1]) {
+   let previous=0;
+   for(let percent=20;percent<=100;percent++) {
+    const opacity=percent/100,recipe=backgroundRecipe(opacity);
+    const alpha=resolveBackgroundWorkspaceAlpha({...input,opacity,baseAlpha});
+    const exposure=(1-recipe.scrim)*(1-alpha);
+    assert.ok(alpha>=0&&alpha<=1,`${theme.id}/${percent}: bounded tint`);
+    assert.ok(exposure>previous,`${theme.id}/${percent}: total exposure must increase`);
+    previous=exposure;
+   }
+   assert.equal(previous,1,`${theme.id}: no extra canvas veil at 100%`);
   }
-  const exposure=[.45,.6,.75].map(opacity=>(1-backgroundRecipe(opacity).scrim)*(1-alpha));
-  assert.ok(exposure[0]<exposure[1]&&exposure[1]<exposure[2],`${theme.id} visibility strengths must remain distinct`);
+  assert.ok(contrastRatio(theme.tokens.text.strong,theme.tokens.background.app)>=4.5,`${theme.id}: local title halo`);
  }
- assert.equal(resolveBackgroundWorkspaceAlpha({app:'rgb(0 0 0)',panel:'#000000',foreground:'#ffffff',opacity:.6}),1);
+ const input={app:'#ffffff',panel:'#ffffff',opacity:.6};
+ assert.equal(resolveBackgroundWorkspaceAlpha({...input,baseAlpha:NaN}),0);
+ assert.equal(resolveBackgroundWorkspaceAlpha({...input,baseAlpha:-1}),0);
+ assert.equal(resolveBackgroundWorkspaceAlpha({...input,baseAlpha:2}),.4);
+ assert.equal(resolveBackgroundWorkspaceAlpha({...input,app:'rgb(0 0 0)'}),1);
  assert.equal(backgroundOpacityFromStrength('balanced'),.6);
 });
 

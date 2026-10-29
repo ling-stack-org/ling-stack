@@ -13,7 +13,7 @@ Related: [本轮阅读/播放/构图合同与最新证据](theme-background-hard
 
 主题设置现在只展示官方内置主题，不再展示主题包导入、创建、修复、重新导入、删除或预览操作。历史 local-import / local-generated manifests 不进入运行时 registry；历史 fixed selection 按颜色模式回退到官方浅色或深色主题，已有本地数据不删除。
 
-主题列表包含 6 套官方主题：`ling-light`、`ling-dark`、`ling-breeze`、`ling-ocean`、`ling-night`、`ling-journey`。三套早期场景主题继续使用应用内矢量 `SceneArtwork`；`ling-journey` 的缩略图和全窗都使用同一张整合静态母图。人物、黑烟、红色区域、云海和雾带都在图片内，运行时不存在官方 video 或 rider SVG 叠加。内置场景主题的浅色/深色首帧映射覆盖全部内置 ID，刷新后不会再先绘制浅色底。
+主题列表包含 6 套官方主题：`ling-light`、`ling-dark`、`ling-breeze`、`ling-ocean`、`ling-night`、`ling-journey`。Breeze 使用实拍林间晨光；Night 于 2026-10-28 采用用户选定的 Titanfall 2 山谷眺望整图（3840×2160 下载像素），同步暖石墨与夕照铜金 UI；Ocean 于 2026-10-27 换成完整夏日漫画插画，并更换参考角色，适配浅青侧栏、暖白输入框及珊瑚操作色。全窗、同源缩略图和 UI 已完成本机专项验证，Night 背景已由用户确认，整体 UI 最终视觉复核及发布门槛仍开放，见[最新设计方向](scene-theme-refinement-directions.md)、[专项验证记录](photographic-scene-themes-validation.md)和 [v4 场景来源清单](../../apps/web/public/themes/scene-themes-v4.sources.json)。`ling-journey` 的缩略图和全窗都使用同一张整合静态母图；人物、黑烟、红色区域、云海和雾带都在图片内，运行时不存在官方 video 或 rider SVG 叠加。内置场景主题的浅色/深色首帧映射覆盖全部内置 ID，刷新后不会再先绘制浅色底。
 
 无自定义媒体时，场景主题在普通工作区、顶部栏、左侧栏和主画布连续透出；保护路由继续实底。场景主题的 accent、focus、selection、sidebar、按钮和状态色使用同色系 tokens。正文、代码、输入、表格、审批、设置、诊断和弹层继续使用不透明语义表面。
 
@@ -44,7 +44,7 @@ Related: [本轮阅读/播放/构图合同与最新证据](theme-background-hard
 
 Journey UI 证据目录：`.ling-stack/acceptance/ui-browser/2026-10-27/journey-ui/`。两份 JSON 记录了主题 ID、surface、背景源、透明度、视口、computed styles、overflow 和 console/page errors；截图覆盖首页、compact rail、Composer focus/selected/error、普通会话、right dock、Popover、Menu、Dialog、Toast、设置实底、forced-colors、reduced-transparency、窄窗口和 Ling Dark 对比。
 
-当前视觉证据位于 `.ling-stack/acceptance/scene-theme-background/`：
+以下为历史初版视觉证据，不能作为当前照片/漫画版的美术定稿证据。当前版本以[专项记录](photographic-scene-themes-validation.md)为准。历史目录 `.ling-stack/acceptance/scene-theme-background/`：
 
 - `official-scene-theme-picker.png`：官方 5 套主题，三套场景缩略图，无导入/创建入口；
 - `ling-breeze-home.png`：绿色植物场景、角色、路径和树层；

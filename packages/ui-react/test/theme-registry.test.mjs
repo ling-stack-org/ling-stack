@@ -34,6 +34,22 @@ test("built-in themes are independent complete manifests with fixed and system r
   assert.equal(registry.resolve({ mode: "fixed", themeId: "ling-journey" }, "light").manifest.scene?.id, "farbound-journey");
 });
 
+test("scene themes retain readable secondary text on paper/code and all accent states", async () => {
+  const { contrastRatio } = await import('../dist/theme/compiler/color-utils.js');
+  const registry = new ThemeRegistry();
+  for (const themeId of ['ling-breeze', 'ling-ocean', 'ling-night']) {
+    const { tokens } = registry.resolve({ mode: 'fixed', themeId }, 'light').manifest;
+    for (const foreground of ['strong', 'default', 'muted', 'soft', 'link']) {
+      for (const surface of ['panel', 'code', 'composer']) {
+        assert.ok(contrastRatio(tokens.text[foreground], tokens.background[surface]) >= 4.5, `${themeId}/${foreground}/${surface}`);
+      }
+    }
+    for (const state of ['accent', 'accentHover', 'accentPressed']) {
+      assert.ok(contrastRatio(tokens.action.accentForeground, tokens.action[state]) >= 4.5, `${themeId}/${state}`);
+    }
+  }
+});
+
 test("registry validates imported themes, protects built-ins, and falls back without rewriting selection", () => {
   const registry = new ThemeRegistry();
   const imported = importedTheme("quiet-ocean");
