@@ -1,3 +1,89 @@
+.conversation-composer-frame {
+  display: grid;
+  min-width: 0;
+  width: 100%;
+  gap: 8px;
+}
+
+.conversation-bottom-status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 0 8px;
+  color: var(--ling-text-muted);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  text-align: center;
+}
+
+.conversation-bottom-status-group {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.conversation-bottom-status-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.conversation-bottom-status-trigger:hover,
+.conversation-bottom-status-trigger:focus-visible {
+  color: var(--ling-text-default);
+}
+
+.conversation-bottom-status-trigger:focus-visible {
+  outline: 2px solid var(--ling-border-focus);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.conversation-bottom-status-detail {
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  display: grid;
+  width: max-content;
+  min-width: 160px;
+  max-width: min(260px, calc(100vw - 32px));
+  gap: 4px;
+  padding: 10px 12px;
+  transform: translateX(-50%);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-elevated);
+  box-shadow: var(--ling-shadow-medium);
+  text-align: left;
+  pointer-events: none;
+}
+
+.conversation-bottom-status-meter {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: conic-gradient(var(--ling-border-focus) var(--conversation-context-progress), var(--ling-border-default) 0);
+  mask: radial-gradient(farthest-side, transparent 55%, var(--ling-text-default) 60%);
+}
+
 .conversation-composer {
   position: relative;
   box-sizing: border-box;

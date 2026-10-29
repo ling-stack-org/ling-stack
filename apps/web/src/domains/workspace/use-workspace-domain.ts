@@ -34,7 +34,7 @@ import { deriveChannelTasks } from "../../lib/channel-artifacts.js";
 import { mergeConversationItems, mergeChannelUserInputPage, projectChannelConversationItemPage, type ChannelConversationMessagePage } from "../../lib/channel-conversation-items.js";
 import { createConversationReadEpoch } from "../../lib/conversation-read-epoch.js";
 import { isUserInputAnchor } from "@ling-stack/conversation-ui-core";
-import type { ConversationReasoningSummaryRecord, TurnContextAssignment, UserInputTranscriptItemV1 } from "@ling-stack/contracts";
+import type { ConversationReasoningSummaryRecord, ConversationRuntimeMetrics, TurnContextAssignment, UserInputTranscriptItemV1 } from "@ling-stack/contracts";
 import { channelMessagesEqual } from "../../lib/channel-message-equality.js";
 import { liveNarrationWorkflowIds, mergeWorkflowNarration, mergeWorkflowStepReadModels } from "../../lib/workflow-narration-refresh.js";
 import {
@@ -112,6 +112,7 @@ export interface WorkspaceState {
   readonly taskRunProviderId: string;
   readonly channelMessages: readonly ChannelMessage[];
   readonly channelConversationItems: readonly ConversationItemV1[];
+  readonly channelRuntimeMetrics?: ConversationRuntimeMetrics;
   readonly channelTurnContextAssignments: readonly TurnContextAssignment[];
   readonly channelUserInputs: readonly UserInputTranscriptItemV1[];
   readonly channelReasoningSummaries: readonly ConversationReasoningSummaryRecord[];
@@ -256,6 +257,7 @@ export function useWorkspaceDomain(input: {
   const [taskRunProviderId, setTaskRunProviderId] = useState("");
   const [channelMessages, setChannelMessages] = useState<readonly ChannelMessage[]>([]);
   const [channelConversationItems, setChannelConversationItems] = useState<readonly ConversationItemV1[]>([]);
+  const [channelRuntimeMetricsState, setChannelRuntimeMetricsState] = useState<{ owner: string; metrics?: ConversationRuntimeMetrics }>({ owner: "" });
   const [channelTurnContextAssignmentState, setChannelTurnContextAssignmentState] = useState<{
     owner: string;
     assignments: readonly TurnContextAssignment[];
@@ -329,6 +331,7 @@ export function useWorkspaceDomain(input: {
   selectedChannelIdRef.current = selectedChannelId;
   selectedChannelMessageThreadIdRef.current = selectedChannelMessageThreadId;
   const channelReadOwner = JSON.stringify([input.cwd.trim(), selectedChannelId, selectedChannelMessageThreadId ?? ""]);
+  const channelRuntimeMetrics = channelRuntimeMetricsState.owner === channelReadOwner ? channelRuntimeMetricsState.metrics : undefined;
   if (channelReadOwnerRef.current !== channelReadOwner) {
     channelReadOwnerRef.current = channelReadOwner;
     channelReadEpochRef.current.invalidate();
@@ -520,6 +523,7 @@ export function useWorkspaceDomain(input: {
     if (!cwd || !channelId) {
       setChannelMessages([]);
       setChannelConversationItems([]);
+      setChannelRuntimeMetricsState({ owner: channelReadOwnerRef.current });
       setChannelTurnContextAssignmentState({ owner: channelReadOwnerRef.current, assignments: [] });
       channelReadEpochRef.current.invalidate();
       channelInputPageRef.current = undefined;
@@ -565,6 +569,7 @@ export function useWorkspaceDomain(input: {
       setChannelReasoningSummaryState({ owner: readOwner, items: hydrated.reasoningSummaries });
       setChannelContextCompactionState({ owner: readOwner, items: hydrated.contextCompactions ?? [] });
       setChannelConversationRefreshToken(current => current + 1);
+      setChannelRuntimeMetricsState({ owner: readOwner, metrics: response.runtimeMetrics });
       const messagesChanged = !channelMessagesEqual(channelMessages, page.messages);
       setChannelMessages((current) => channelMessagesEqual(current, page.messages) ? current : page.messages);
       const visibleIds = new Set(page.conversationItems.map(item => item.id));
@@ -623,6 +628,7 @@ export function useWorkspaceDomain(input: {
       setChannelUserInputState({ owner: readOwner, items: hydrated.userInputs ?? [] });
       setChannelReasoningSummaryState({ owner: readOwner, items: hydrated.reasoningSummaries });
       setChannelContextCompactionState({ owner: readOwner, items: hydrated.contextCompactions ?? [] });
+      setChannelRuntimeMetricsState({ owner: readOwner, metrics: response.runtimeMetrics });
       setChannelMessages((current) => mergeChannelMessages(page.messages, current));
       setChannelConversationItems((current) => {
         const visibleIds = new Set([...current, ...page.conversationItems].map(item => item.id));
@@ -1192,6 +1198,7 @@ export function useWorkspaceDomain(input: {
       taskRunProviderId,
       channelMessages,
       channelConversationItems,
+      channelRuntimeMetrics,
       channelTurnContextAssignments: channelTurnContextAssignmentState.owner === channelReadOwner
         ? channelTurnContextAssignmentState.assignments
         : [],

@@ -1,9 +1,11 @@
 import { type DragEvent, type KeyboardEvent, type ReactNode, type Ref, useRef } from "react";
 import { ArrowUp, CircleAlert, FileText, Mic, MicOff, Plus, RotateCcw, SlidersHorizontal, Square } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
+import type { ConversationRuntimeMetrics } from "@ling-stack/contracts";
 import { useI18n } from "../../i18n.js";
 import {
   ConversationComposerShell,
+  ConversationBottomStatusStrip,
   ConversationStatusStrip,
   TokenizedComposerInput,
   type TokenizedComposerInputHandle,
@@ -25,6 +27,7 @@ import type { ConversationHomeModelOption } from "./normal-conversation-types.js
 
 export interface NormalConversationComposerProps {
   readonly draft: string;
+  readonly runtimeMetrics?: ConversationRuntimeMetrics;
   readonly inputRef: Ref<TokenizedComposerInputHandle>;
   readonly inputParts: TokenizedComposerInputProps["parts"];
   readonly slashPicker?: ActiveSlashCommandPicker;
@@ -77,6 +80,7 @@ export function NormalConversationComposer({
   dragActive,
   dropFeedback,
   draft,
+  runtimeMetrics,
   inputParts,
   inputRef,
   modelOptions,
@@ -147,6 +151,12 @@ export function NormalConversationComposer({
       toolbarClassName="conversation-home-toolbar normal-conversation-composer-toolbar"
       leftToolsClassName="conversation-home-tools normal-conversation-composer-tools"
       rightToolsClassName="conversation-home-right-tools normal-conversation-composer-actions"
+      bottomStatusNode={<ConversationBottomStatusStrip
+        ariaLabel={t("Conversation status")}
+        translate={t}
+        metrics={runtimeMetrics}
+        locale={locale}
+      />}
       statusNode={!modelReady && !activeRun ? (
         <ConversationStatusStrip
           className="conversation-composer-status-strip normal-conversation-model-status attention"
