@@ -359,6 +359,35 @@ The client should preserve the current Web behavior:
   projection can remain a prototype, but the stable `ConversationTranscript` wire shape
   belongs in `packages/contracts`.
 
+## Compatibility Boundary
+
+Compatibility code is removed only when the canonical contract has replaced every
+production caller and a migration has handled persisted records. The current media jobs
+surface meets that bar: `MediaJobsPage` consumes `MediaJobsDomainState` and
+`MediaJobsDomainActions` directly, and `MediaJobFormState` emits only structured `input`
+fields. The former page-prop bridge and the unmounted JSON `inputText` form path are no
+longer part of the Web API boundary.
+
+The following paths remain intentional compatibility boundaries and require a separate
+cutover before removal:
+
+- SQLite continuity imports and migrations, which read old tables once and validate the
+  canonical v2 topology before dropping those tables.
+- `permissionMode`/`permissionPreset` projections alongside
+  `authorizationMode`/`workspaceAccessMode`, because existing workspace settings,
+  snapshots, and clients still carry both shapes.
+- External media protocols such as legacy ComfyUI evidence remain readable because old
+  configuration and completed jobs are historical facts. Persisted runner bindings have
+  a separate versioned cutover (SQLite migration 177): mutable operational rows are
+  canonicalized to `pi`, while immutable Run snapshots retain their original bytes and
+  normalize only at the read projection.
+- The Web DTO re-export layer in `apps/web/src/types.ts` and legacy browser theme storage,
+  until all clients and stored records have completed their versioned migration.
+
+Each future removal must include a versioned data migration or client cutover, a fixture
+for the old shape, a canonical-path test, and an explicit check that no production caller
+still reaches the compatibility branch.
+
 ## Non-Goals
 
 - No daemon route redesign.

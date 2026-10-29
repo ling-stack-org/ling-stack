@@ -686,7 +686,6 @@ function watchRuntime(page: Page): { readonly expectClean: () => void } {
 async function expectAggregateAndDeadSelectorsReleased(): Promise<void> {
   const aggregateFiles = [
     fileURLToPath(new URL("../src/styles/components.css", import.meta.url)),
-    fileURLToPath(new URL("../src/styles/strict-console.css", import.meta.url)),
   ];
   const aggregateSelectors = [
     ".conversation-message-row",

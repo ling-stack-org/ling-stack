@@ -95,6 +95,19 @@ only when its description is complete and its claimed validation has actually ru
 - Preserve Chinese and English product coverage together.
 - Do not weaken, skip, or delete tests merely to make a contribution pass.
 
+### UI Components, Modules And Themes
+
+- Read the [Design System](docs/design/ling-design-system.md) and
+  [Shared Component Theme Contract](docs/design/component-theme-presentation.md)
+  before adding UI. A new module's design must include its shared components,
+  appearance tokens/defaults, background surface policy and acceptance states.
+- Reuse shared primitives. New shared components provide semantic appearance
+  parameters and usable defaults; themes override parameters, while feature CSS
+  owns layout. Do not branch on a theme ID or overwrite shared component paint.
+- Check all built-in themes for readability and layout, then exercise the affected
+  states and theme switching. Include current screenshots; distinguish token
+  integration, behavior verification and visual approval.
+
 ## Validation
 
 For documentation-only changes:

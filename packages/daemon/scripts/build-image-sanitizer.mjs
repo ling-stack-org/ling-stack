@@ -68,6 +68,7 @@ await sources(join(native, "src"), "src/");
 await sources(join(native, "vendor"), "vendor/");
 await writeFile(join(output, "THIRD_PARTY_LICENSES.txt"), notices);
 const metadata = { schema: "ling.image-sanitizer.build.v1", protocol: "ling.image-sanitizer.v1", version: "0.1.0",
+  capabilities: ["background-v1"],
   platform: `${process.platform}-${process.arch}`, target, executable,
   digestStage: "before-desktop-signing",
   dependencies,

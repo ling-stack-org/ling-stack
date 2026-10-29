@@ -4,14 +4,14 @@
   z-index: 60;
   display: flex;
   justify-content: flex-end;
-  background: var(--conversation-drawer-overlay-bg);
+  background: var(--ling-bg-overlay);
 }
 
 .artifact-preview-lightbox {
   align-items: center;
   justify-content: center;
   padding: 20px;
-  background: var(--conversation-overlay-bg);
+  background: var(--ling-bg-overlay);
 }
 
 .artifact-preview-panel {
@@ -20,18 +20,18 @@
   width: min(560px, 100vw);
   height: 100%;
   min-width: 0;
-  border-left: 1px solid var(--conversation-border);
-  background: var(--conversation-bg);
-  box-shadow: var(--conversation-drawer-shadow);
+  border-left: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-panel);
+  box-shadow: var(--ling-shadow-overlay);
   animation: conversation-settle-in var(--ling-motion-standard) var(--ling-ease-enter) both;
 }
 
 .artifact-preview-lightbox .artifact-preview-panel {
   width: min(920px, calc(100vw - 40px));
   height: min(760px, calc(100vh - 40px));
-  border: 1px solid var(--conversation-border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 8px;
-  box-shadow: var(--conversation-preview-shadow);
+  box-shadow: var(--ling-shadow-overlay);
 }
 
 .artifact-preview-head,
@@ -42,7 +42,7 @@
   gap: 10px;
   min-width: 0;
   padding: 12px;
-  border-bottom: 1px solid var(--conversation-border);
+  border-bottom: 1px solid var(--ling-border-default);
 }
 
 .artifact-preview-head > div {
@@ -53,7 +53,7 @@
 
 .artifact-preview-head strong {
   overflow: hidden;
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -61,7 +61,7 @@
 
 .artifact-preview-head small,
 .artifact-preview-notes small {
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   line-height: 1.35;
 }
@@ -86,10 +86,10 @@
   gap: 8px;
   min-width: 0;
   padding: 6px 8px;
-  border: 1px solid var(--conversation-border);
-  border-radius: var(--radius-md);
-  background: var(--conversation-bg);
-  color: var(--conversation-text-muted);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-panel);
+  color: var(--ling-text-muted);
   font-size: 11px;
   font-weight: 760;
 }
@@ -106,10 +106,10 @@
   margin: 0;
   padding: 10px;
   overflow: auto;
-  border: 1px solid var(--conversation-border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 7px;
-  background: var(--conversation-bg-muted);
-  color: var(--conversation-text);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-default);
   font: inherit;
   font-size: 12px;
   line-height: 1.55;
@@ -125,27 +125,27 @@
   gap: 8px;
   min-width: 0;
   padding: 10px;
-  border: 1px solid var(--conversation-border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 7px;
-  background: var(--conversation-bg-muted);
-  color: var(--conversation-text-muted);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-muted);
   font-size: 12px;
   font-weight: 700;
 }
 
 .artifact-preview-error {
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
-  color: var(--conversation-status-danger);
+  border-color: var(--ling-status-danger-border);
+  background: var(--ling-status-danger-bg);
+  color: var(--ling-status-danger);
 }
 
 .artifact-preview-image-frame {
   display: grid;
   place-items: center;
   min-width: 0;
-  border: 1px solid var(--conversation-border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 7px;
-  background: var(--conversation-bg-muted);
+  background: var(--ling-bg-subtle);
   overflow: hidden;
 }
 
@@ -176,10 +176,10 @@
   gap: 5px;
   min-height: 28px;
   padding: 4px 8px;
-  border: 1px solid var(--conversation-border);
-  border-radius: var(--radius-md);
-  background: var(--conversation-bg);
-  color: var(--conversation-text-muted);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-panel);
+  color: var(--ling-text-muted);
   font-size: 11px;
   font-weight: 760;
   cursor: pointer;
@@ -188,9 +188,9 @@
 .image-compare-toolbar button.active,
 .image-compare-toolbar button:hover,
 .image-compare-toolbar button:focus-visible {
-  border-color: var(--conversation-focus-ring);
-  background: var(--conversation-active-bg);
-  color: var(--conversation-text-strong);
+  border-color: var(--ling-border-focus);
+  background: var(--ling-action-selection);
+  color: var(--ling-text-strong);
 }
 
 .image-compare-frame,
@@ -199,9 +199,9 @@
   min-width: 0;
   min-height: 280px;
   margin: 0;
-  border: 1px solid var(--conversation-border);
-  border-radius: var(--radius-md);
-  background: var(--conversation-bg-muted);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-subtle);
   overflow: hidden;
 }
 
@@ -222,8 +222,8 @@
 
 .image-compare-frame figcaption {
   padding: 6px 8px;
-  border-top: 1px solid var(--conversation-border);
-  color: var(--conversation-text-muted);
+  border-top: 1px solid var(--ling-border-default);
+  color: var(--ling-text-muted);
   font-size: 11px;
   font-weight: 760;
 }
@@ -266,8 +266,8 @@
   bottom: 0;
   z-index: 2;
   width: 2px;
-  background: var(--conversation-focus-ring);
-  box-shadow: 0 0 0 1px var(--conversation-bg);
+  background: var(--ling-border-focus);
+  box-shadow: 0 0 0 1px var(--ling-bg-panel);
 }
 
 .image-compare-slider-control {
@@ -275,7 +275,7 @@
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   font-weight: 760;
 }
@@ -295,13 +295,13 @@
   display: grid;
   gap: 4px;
   padding: 10px 12px;
-  border-top: 1px solid var(--conversation-border);
-  background: var(--conversation-bg-muted);
+  border-top: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-subtle);
 }
 
 .artifact-preview-actions {
   justify-content: flex-end;
-  border-top: 1px solid var(--conversation-border);
+  border-top: 1px solid var(--ling-border-default);
   border-bottom: 0;
 }
 

@@ -8,7 +8,7 @@
   grid-template-columns: var(--conversation-message-avatar-size) minmax(0, 1fr);
   align-items: start;
   gap: var(--ling-space-5);
-  color: var(--conversation-text, var(--ling-text-default));
+  color: var(--ling-text-default);
 }
 
 [data-conversation-message-row].message-bubble-inline {
@@ -66,10 +66,10 @@
   align-content: start;
   gap: var(--ling-space-3);
   padding: var(--ling-space-5);
-  border: 1px solid var(--conversation-border, var(--ling-border-default));
+  border: 1px solid var(--ling-border-default);
   border-radius: var(--ling-radius-lg);
-  color: var(--conversation-text, var(--ling-text-default));
-  background: var(--conversation-bg, var(--ling-bg-panel));
+  color: var(--ling-text-default);
+  background: var(--ling-bg-panel);
   box-shadow: var(--ling-shadow-low);
   transition:
     border-color var(--ling-motion-standard) var(--ling-ease-standard),
@@ -117,7 +117,7 @@
 .message-own-identity strong {
   min-width: 0;
   overflow: hidden;
-  color: var(--conversation-text-strong, var(--ling-text-strong));
+  color: var(--ling-text-strong);
   font-size: var(--ling-font-sm);
   font-weight: 650;
   line-height: var(--ling-line-sm);
@@ -130,7 +130,7 @@
 .message-row-own-identity time,
 .message-own-identity time,
 .message-row-own-status {
-  color: var(--conversation-text-soft, var(--ling-text-soft));
+  color: var(--ling-text-soft);
   font-size: var(--ling-font-xs);
   line-height: var(--ling-line-xs);
 }
@@ -178,7 +178,7 @@
 [data-conversation-message-row].message-bubble-chat > .message-content .message-body-renderer,
 [data-conversation-message-row].message-bubble-chat > .message-content .message-body-paragraph,
 [data-conversation-message-row].message-bubble-chat > .message-content .message-body-list {
-  color: var(--conversation-text, var(--ling-text-default));
+  color: var(--ling-text-default);
 }
 
 [data-conversation-message-row].message-bubble-chat.message-bubble-peer > .message-content {
@@ -187,19 +187,20 @@
 }
 
 [data-conversation-message-row].message-bubble-chat.message-bubble-own > .message-content {
-  background: var(--conversation-bg-muted, var(--ling-bg-subtle));
+  background: var(--ling-message-own-bg);
+  box-shadow: var(--ling-message-own-shadow);
 }
 
 /* The document lane leaves Agent narrative and typed facts unboxed. User
    messages keep their own bubble below; neither treatment changes identity,
    timeline ownership or the separate message-action row. */
 [data-conversation-message-row].message-bubble-document > .message-content {
-  width: 100%;
+  width: var(--conversation-document-width, 100%);
   max-width: min(100%, 760px);
-  padding: 0;
+  padding: var(--conversation-document-padding, 0);
   border: 0;
-  border-radius: 0;
-  background: transparent;
+  border-radius: var(--conversation-document-radius, 0);
+  background: var(--conversation-document-background, transparent);
   box-shadow: none;
 }
 
@@ -228,8 +229,9 @@
   width: fit-content;
   max-width: min(76%, var(--conversation-message-max-width));
   padding: var(--ling-space-5) var(--ling-space-6);
-  border-radius: calc(var(--ling-radius-lg) * 2);
-  background: var(--conversation-bg-muted, var(--ling-bg-subtle));
+  border-radius: var(--ling-message-radius);
+  background: var(--ling-message-own-bg);
+  box-shadow: var(--ling-message-own-shadow);
 }
 
 [data-conversation-message-row].message-bubble-document.message-bubble-own > :where(img, .avatar-initial, .user-profile-avatar) {
@@ -278,7 +280,7 @@
 }
 
 .message-row-peer-status {
-  color: var(--conversation-text-soft, var(--ling-text-soft));
+  color: var(--ling-text-soft);
   font-size: var(--ling-font-xs);
   line-height: var(--ling-line-xs);
 }
@@ -309,7 +311,7 @@
 }
 
 [data-conversation-message-row].message-bubble-pending > .message-content {
-  color: var(--conversation-text-strong, var(--ling-text-strong));
+  color: var(--ling-text-strong);
 }
 
 .message-body-with-spinner {
@@ -318,7 +320,7 @@
 
 .message-pending-spinner {
   flex: 0 0 auto;
-  color: var(--conversation-text-muted, var(--ling-text-muted));
+  color: var(--ling-text-muted);
   animation: ling-conversation-message-spin 900ms var(--ling-ease-linear) infinite;
 }
 

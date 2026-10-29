@@ -33,12 +33,12 @@
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
 }
 
 .conversation-work-cell-details-state.failed {
-  color: var(--conversation-status-danger);
+  color: var(--ling-status-danger);
 }
 
 .conversation-work-cell-details-state span {
@@ -70,7 +70,7 @@
   display: grid;
   gap: 3px;
   min-width: 0;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
 }
 
 .conversation-timeline-activity-main {
@@ -111,7 +111,7 @@
 .conversation-timeline-activity-copy strong {
   min-width: 0;
   overflow: hidden;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   font-weight: 450;
   line-height: 18px;
@@ -124,7 +124,7 @@
 .conversation-timeline-detail-meta {
   min-width: 0;
   overflow: hidden;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   line-height: 16px;
   text-overflow: ellipsis;
@@ -140,7 +140,7 @@
   align-items: center;
   justify-content: center;
   width: 14px;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 14px;
   line-height: 1;
   opacity: 0;
@@ -160,25 +160,25 @@
 
 button.conversation-timeline-activity-main:not(:disabled):hover,
 button.conversation-timeline-activity-main:not(:disabled):focus-visible {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
 }
 
 button.conversation-timeline-activity-main:not(:disabled):hover .conversation-timeline-activity-copy strong,
 button.conversation-timeline-activity-main:not(:disabled):focus-visible .conversation-timeline-activity-copy strong {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
 }
 
 .conversation-timeline-activity.status-failed .conversation-timeline-activity-main > svg,
 .conversation-timeline-activity.status-blocked .conversation-timeline-activity-main > svg {
-  color: var(--danger);
+  color: var(--ling-status-danger);
 }
 
 .conversation-timeline-activity.status-partially_succeeded .conversation-timeline-activity-main > svg {
-  color: var(--conversation-status-waiting);
+  color: var(--ling-status-warning);
 }
 
 .conversation-timeline-activity.kind-approval:is(.status-waiting, .status-pending) .conversation-timeline-activity-main > svg {
-  color: var(--conversation-status-waiting);
+  color: var(--ling-status-warning);
 }
 
 .conversation-timeline-activity-detail {
@@ -206,10 +206,10 @@ button.conversation-timeline-activity-main:not(:disabled):focus-visible .convers
   min-width: 0;
   overflow-x: auto;
   padding: 6px 8px;
-  border: 1px solid var(--conversation-code-border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 6px;
-  background: var(--conversation-code-bg);
-  color: var(--conversation-code-text);
+  background: var(--ling-bg-code);
+  color: var(--ling-text-default);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   line-height: 1.45;
@@ -224,7 +224,7 @@ button.conversation-timeline-activity-main:not(:disabled):focus-visible .convers
 
 .conversation-timeline-rich-detail {
   min-width: 0;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -249,10 +249,10 @@ button.conversation-timeline-activity-main:not(:disabled):focus-visible .convers
   max-width: 100%;
   overflow-x: auto;
   padding: 5px 7px;
-  border: 1px solid var(--conversation-code-border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 6px;
-  background: var(--conversation-code-bg);
-  color: var(--conversation-code-text);
+  background: var(--ling-bg-code);
+  color: var(--ling-text-default);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   line-height: 1.45;
@@ -286,7 +286,7 @@ button.conversation-timeline-activity-main:not(:disabled):focus-visible .convers
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
 }
 
@@ -299,7 +299,7 @@ button.conversation-timeline-activity-main:not(:disabled):focus-visible .convers
 
 .conversation-timeline-file-ref-icon {
   flex: 0 0 auto;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 13px;
   line-height: 1;
 }
@@ -314,7 +314,7 @@ button.conversation-timeline-activity-main:not(:disabled):focus-visible .convers
   padding: 1px 0;
   border: 0;
   background: transparent;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 18px;
   text-align: left;
@@ -326,7 +326,7 @@ button.conversation-timeline-file-ref {
 
 .conversation-timeline-file-ref:hover,
 .conversation-timeline-file-ref:focus-visible {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -340,7 +340,7 @@ button.conversation-timeline-file-ref {
 
 .conversation-timeline-file-ref small {
   flex: 0 0 auto;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 11px;
 }
@@ -350,21 +350,21 @@ button.conversation-timeline-file-ref {
   gap: 3px;
   margin: 0;
   padding-left: 18px;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 18px;
 }
 
 .conversation-timeline-plan-steps li[data-step-status="completed"] {
-  color: var(--success);
+  color: var(--ling-status-success);
 }
 
 .conversation-timeline-plan-steps li[data-step-status="blocked"] {
-  color: var(--danger);
+  color: var(--ling-status-danger);
 }
 
 .conversation-timeline-detail-empty {
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
 }
 
@@ -372,7 +372,7 @@ button.conversation-timeline-file-ref {
   display: grid;
   gap: 8px;
   max-width: min(720px, 100%);
-  color: var(--conversation-text-soft);
+  color: var(--ling-text-soft);
   font-size: 12px;
 }
 
@@ -395,11 +395,11 @@ button.conversation-timeline-file-ref {
 
 .conversation-timeline-diagnostic-detail dt,
 .conversation-timeline-diagnostic-detail small {
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
 }
 
 .conversation-timeline-diagnostic-detail dd {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
   overflow-wrap: anywhere;
 }
 
@@ -437,7 +437,7 @@ button.conversation-timeline-file-ref {
   gap: 4px;
   min-width: 0;
   padding: 2px 0 2px 8px;
-  border-left: 1px solid color-mix(in srgb, var(--conversation-border) 60%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--ling-border-default) 60%, transparent);
 }
 
 .conversation-timeline-sub-agent-head {
@@ -474,7 +474,7 @@ button.conversation-timeline-file-ref {
 .conversation-timeline-sub-agent-head strong {
   min-width: 0;
   overflow: hidden;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -482,7 +482,7 @@ button.conversation-timeline-file-ref {
 
 .conversation-timeline-sub-agent-head:not(:disabled):is(:hover, :focus-visible),
 .conversation-timeline-sub-agent-head:not(:disabled):is(:hover, :focus-visible) strong {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
 }
 
 .conversation-timeline-sub-agent-status {
@@ -491,7 +491,7 @@ button.conversation-timeline-file-ref {
   gap: 4px;
   min-width: 0;
   overflow: hidden;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -513,7 +513,7 @@ button.conversation-timeline-file-ref {
 
 .conversation-timeline-sub-agent.lifecycle-blocked,
 .conversation-timeline-sub-agent.lifecycle-errored {
-  border-left-color: var(--conversation-status-danger);
+  border-left-color: var(--ling-status-danger);
 }
 
 .conversation-work-cell-active-stream[data-activity-density="dense"],
@@ -530,7 +530,7 @@ button.conversation-timeline-file-ref {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
 }
 
@@ -590,8 +590,8 @@ button.conversation-timeline-file-ref {
   height: 18px;
   border: 0;
   border-radius: 999px;
-  background: var(--conversation-bg-subtle);
-  color: var(--conversation-text);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-default);
   font-size: 9px;
   font-weight: 650;
   line-height: 1;
@@ -607,8 +607,8 @@ button.conversation-timeline-file-ref {
 }
 
 .conversation-work-cell-agent-avatar > .avatar-initial {
-  background: var(--conversation-bg-subtle);
-  color: var(--conversation-text);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-default);
 }
 
 .conversation-work-cell-agent-span-copy {
@@ -625,7 +625,7 @@ button.conversation-timeline-file-ref {
   flex: 0 0 auto;
   max-width: 160px;
   overflow: hidden;
-  color: var(--info);
+  color: var(--ling-status-info);
   font-size: 12px;
   line-height: 16px;
   text-overflow: ellipsis;
@@ -636,7 +636,7 @@ button.conversation-timeline-file-ref {
   flex: 0 0 auto;
   max-width: 124px;
   overflow: hidden;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -704,7 +704,7 @@ button.conversation-timeline-file-ref {
   justify-content: center;
   width: 16px;
   height: 16px;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
 }
 
 .conversation-work-cell-row-icon svg {
@@ -716,11 +716,11 @@ button.conversation-timeline-file-ref {
 .conversation-work-cell.active[data-work-cell-activity="running"] .conversation-work-cell-evidence-summary span {
   background: linear-gradient(
     90deg,
-    var(--conversation-text-strong) 0%,
-    var(--conversation-text-strong) 45%,
-    var(--conversation-active-shimmer) 50%,
-    var(--conversation-text-strong) 55%,
-    var(--conversation-text-strong) 100%
+    var(--ling-text-strong) 0%,
+    var(--ling-text-strong) 45%,
+    var(--ling-text-muted) 50%,
+    var(--ling-text-strong) 55%,
+    var(--ling-text-strong) 100%
   );
   background-size: 300% 100%;
   -webkit-background-clip: text;
@@ -751,7 +751,7 @@ button.conversation-timeline-file-ref {
   display: block;
   max-width: 100%;
   overflow: hidden;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   font-weight: 400;
   line-height: 18px;
@@ -771,15 +771,15 @@ button.conversation-timeline-file-ref {
 }
 
 .conversation-work-cell-change-stat .add {
-  color: var(--success);
+  color: var(--ling-status-success);
 }
 
 .conversation-work-cell-change-stat .delete {
-  color: var(--danger);
+  color: var(--ling-status-danger);
 }
 
 .conversation-work-cell-row.note .conversation-work-cell-row-copy strong {
-  color: var(--conversation-text);
+  color: var(--ling-text-default);
   font-size: 13px;
   font-weight: 550;
   line-height: 1.52;
@@ -788,24 +788,24 @@ button.conversation-timeline-file-ref {
 
 .conversation-work-cell-row-main:hover .conversation-work-cell-row-copy strong,
 .conversation-work-cell-row-main:focus-visible .conversation-work-cell-row-copy strong {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
 }
 
 .conversation-work-cell-row-main:hover .conversation-work-cell-row-icon,
 .conversation-work-cell-row-main:focus-visible .conversation-work-cell-row-icon {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
 }
 
 .conversation-work-cell-row.note .conversation-work-cell-row-main:hover .conversation-work-cell-row-copy strong,
 .conversation-work-cell-row.note .conversation-work-cell-row-main:focus-visible .conversation-work-cell-row-copy strong {
-  color: var(--conversation-text);
+  color: var(--ling-text-default);
 }
 
 .conversation-work-cell-row-copy small {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 16px;
   text-overflow: ellipsis;
@@ -817,7 +817,7 @@ button.conversation-timeline-file-ref {
   align-items: center;
   justify-content: center;
   width: 16px;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   opacity: 0;
   visibility: hidden;
   transition:
@@ -858,14 +858,14 @@ button.conversation-timeline-file-ref {
 .conversation-work-cell-row-detail small,
 .conversation-work-cell-group header small,
 .conversation-work-cell-evidence-links small {
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
 .conversation-work-cell-rich-description {
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   font-weight: 400;
   line-height: 1.35;
@@ -886,7 +886,7 @@ button.conversation-timeline-file-ref {
   padding: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
@@ -909,13 +909,13 @@ button.conversation-timeline-file-ref {
   min-width: 0;
   margin-top: 4px;
   overflow: hidden;
-  border: 1px solid var(--conversation-code-border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 6px;
-  background: var(--conversation-code-bg);
+  background: var(--ling-bg-code);
 }
 
 .conversation-work-cell-change-preview-file + .conversation-work-cell-change-preview-file {
-  border-top: 1px solid var(--conversation-code-border);
+  border-top: 1px solid var(--ling-border-default);
 }
 
 .conversation-work-cell-change-preview-file-head {
@@ -925,15 +925,15 @@ button.conversation-timeline-file-ref {
   gap: 8px;
   min-width: 0;
   padding: 5px 8px;
-  border-bottom: 1px solid var(--conversation-code-border);
-  color: var(--conversation-code-muted);
+  border-bottom: 1px solid var(--ling-border-default);
+  color: var(--ling-text-muted);
   font-size: 11px;
 }
 
 .conversation-work-cell-change-preview-file-head code {
   min-width: 0;
   overflow: hidden;
-  color: var(--conversation-code-text);
+  color: var(--ling-text-default);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -982,10 +982,10 @@ button.conversation-timeline-file-ref {
   max-width: min(640px, 100%);
   overflow: visible;
   padding: 7px 8px;
-  border: 1px solid var(--conversation-code-border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 8px;
-  background: var(--conversation-code-bg);
-  color: var(--conversation-code-text);
+  background: var(--ling-bg-code);
+  color: var(--ling-text-default);
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -999,7 +999,7 @@ button.conversation-timeline-file-ref {
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  color: var(--conversation-code-text);
+  color: var(--ling-text-default);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   line-height: 16px;
@@ -1026,7 +1026,7 @@ button.conversation-timeline-file-ref {
   width: 100%;
   max-width: min(640px, 100%);
   overflow: visible;
-  color: var(--conversation-code-muted);
+  color: var(--ling-text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -1052,7 +1052,7 @@ button.conversation-timeline-file-ref {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 18px;
   text-align: left;
@@ -1077,7 +1077,7 @@ button.conversation-timeline-file-ref {
 
 .conversation-command-batch-header:hover,
 .conversation-command-batch-header:focus-visible {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
 }
 
 .conversation-command-batch-toggle {
@@ -1137,7 +1137,7 @@ button.conversation-timeline-file-ref {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 18px;
   text-align: left;
@@ -1156,7 +1156,7 @@ button.conversation-timeline-file-ref {
 
 .conversation-exploration-batch-header:hover,
 .conversation-exploration-batch-header:focus-visible {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
 }
 
 .conversation-exploration-batch-toggle {
@@ -1223,7 +1223,7 @@ button.conversation-timeline-file-ref {
 }
 
 .conversation-work-cell-group header strong {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
   font-size: 12px;
 }
 
@@ -1238,13 +1238,13 @@ button.conversation-timeline-file-ref {
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   text-decoration: none;
 }
 
 .conversation-work-cell-evidence-links a:hover {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
   background: transparent;
 }
 
@@ -1278,7 +1278,7 @@ button.conversation-timeline-file-ref {
 
 @keyframes conversation-locate-pulse {
   0% {
-    background: var(--conversation-locate-pulse-bg);
+    background: var(--ling-text-muted);
   }
 
   100% {
@@ -1297,7 +1297,7 @@ button.conversation-timeline-file-ref {
   .conversation-work-cell.active[data-work-cell-activity="running"] .conversation-work-cell-evidence-summary span {
     animation: none;
     background: none;
-    color: var(--conversation-text-strong);
+    color: var(--ling-text-strong);
   }
   .conversation-timeline-locate-pulse {
     animation: none;

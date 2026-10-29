@@ -40,6 +40,7 @@ Repository artwork, screenshots, and font provenance are tracked separately in t
 [asset provenance inventory](docs/maintenance/asset-provenance.md). Passing the dependency
 check does not establish the origin or publication rights of every media asset.
 
+### Scene theme backgrounds
 The locked Cua Driver source-build input carries its own
 [MIT license](apps/desktop/resources/providers/cua-driver/0.8.3-ling.1/LICENSE.md) and
 [third-party notices](apps/desktop/resources/providers/cua-driver/0.8.3-ling.1/THIRD_PARTY_NOTICES.md).

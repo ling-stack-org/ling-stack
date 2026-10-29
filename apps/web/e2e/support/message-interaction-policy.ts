@@ -17,7 +17,7 @@ export async function expectMessageInteractionPolicy(
   } else if (kind === "user") {
     const token = await row.evaluate(element => {
       const style = getComputedStyle(element);
-      const value = style.getPropertyValue("--conversation-bg-muted").trim() || style.getPropertyValue("--ling-bg-subtle").trim();
+      const value = style.getPropertyValue("--ling-bg-subtle").trim() || style.getPropertyValue("--ling-bg-subtle").trim();
       if (!value) throw new Error("User bubble must resolve its semantic surface token");
       const probe = document.createElement("span");
       probe.style.color = value;

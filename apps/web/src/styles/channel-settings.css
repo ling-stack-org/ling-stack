@@ -10,7 +10,7 @@
   height: 100%;
   overflow: hidden;
   color: var(--ling-text-default);
-  background: var(--ling-bg-canvas);
+  background: var(--ling-bg-app);
 }
 
 .channel-settings-refresh-button {

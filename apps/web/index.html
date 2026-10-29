@@ -20,6 +20,14 @@
           "--ling-native-selection", "--ling-native-scrollbar", "--ling-native-scrollbar-hover",
         ];
         const themeIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+        const builtInSchemes = {
+          "ling-breeze": "light",
+          "ling-dark": "dark",
+          "ling-journey": "dark",
+          "ling-light": "light",
+          "ling-night": "dark",
+          "ling-ocean": "light",
+        };
         const presentationIds = ["ling-standard", "ling-glass", "ling-immersive", "ling-illustrated"];
         const safeColor = (value) => /^(?:#[0-9a-f]{3,8}|rgba?\([0-9.,%/\s+-]+\)|hsla?\([0-9.degturnra%/,\s+-]+\)|color-mix\(in srgb,\s*#[0-9a-f]{3,8}\s*(?:[0-9.]+%)?,\s*#[0-9a-f]{3,8}\s*(?:[0-9.]+%)?\))$/i.test(value);
         const safeShadow = (value) => /^[0-9a-z#(),.%/\s+-]+$/i.test(value) && /\d/.test(value);
@@ -80,7 +88,7 @@
             ? systemScheme === "dark" ? selection.darkThemeId : selection.lightThemeId
             : selection.themeId;
           const storedSnapshot = safeSnapshot(parseJson("ling-stack.themeBootstrapSnapshot"), requestedThemeId);
-          const builtInScheme = requestedThemeId === "ling-dark" ? "dark" : requestedThemeId === "ling-light" ? "light" : undefined;
+          const builtInScheme = Object.hasOwn(builtInSchemes, requestedThemeId) ? builtInSchemes[requestedThemeId] : undefined;
           const desktopClient = Boolean(globalThis.lingDesktop);
           const firstPaint = validFirstPaintState(globalThis.lingDesktop?.themePackages?.firstPaint);
           const authority = firstPaint?.authorityComplete

@@ -1,5 +1,5 @@
 mod budget;
-use ling_image_sanitizer::{MAX_BYTES, MAX_PIXELS, sanitize};
+use ling_image_sanitizer::{MAX_BYTES, MAX_PIXELS, sanitize, sanitize_background};
 use std::io::{Read, Write};
 
 #[global_allocator]
@@ -25,6 +25,11 @@ fn main() {
 fn run() -> Result<(), i32> {
     let mut args = std::env::args_os().skip(1);
     let arg = args.next().and_then(|s| s.into_string().ok()).ok_or(2)?;
+    let background = match args.next() {
+        None => false,
+        Some(flag) if flag == "--background" => true,
+        _ => return Err(2),
+    };
     if args.next().is_some()
         || arg.is_empty()
         || arg.len() > 8
@@ -45,6 +50,11 @@ fn run() -> Result<(), i32> {
     if input.len() > MAX_BYTES {
         return Err(4);
     }
-    let output = sanitize(&input, max_pixels).map_err(|e| e.code())?;
+    let output = if background {
+        sanitize_background(&input, max_pixels)
+    } else {
+        sanitize(&input, max_pixels)
+    }
+    .map_err(|e| e.code())?;
     std::io::stdout().lock().write_all(&output).map_err(|_| 2)
 }

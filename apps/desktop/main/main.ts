@@ -72,6 +72,8 @@ import { DesktopMobileAccessClient } from "./mobile-access/client.js";
 import { OfficeDriverRuntime, resolveOfficeDriverExecutablePath } from "./office-driver/runtime.js";
 import { HostCapabilityRuntime } from "./host-capabilities/runtime.js";
 import { DesktopThemePackageRepository } from "./theme-packages/theme-package-repository.js";
+import { DesktopBackgroundRepository } from "./backgrounds/background-repository.js";
+import { registerBackgroundIpc } from "./backgrounds/background-ipc.js";
 import { DesktopNavigationIntentStore } from "./navigation-intent.js";
 import { openDesktopOwnerWindow } from "./owner-window.js";
 import { DesktopPreferenceStore } from "./preferences.js";
@@ -161,6 +163,8 @@ let smokeProjectionSource: "daemon" | "fake" = "fake";
 let desktopBridgeToken: string | undefined;
 let unregisterIpc: (() => void) | undefined;
 let unregisterThemePackageIpc: (() => void) | undefined;
+let unregisterBackgroundIpc: (() => void) | undefined;
+let backgroundRepository: DesktopBackgroundRepository | undefined;
 let humanEvaluation: ReturnType<typeof createHumanEvaluationDesktopComposition> | undefined;
 let unregisterLockedControlPreview: (() => void) | undefined;
 let desktopRuntime: DesktopRuntime | undefined;
@@ -607,6 +611,13 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
   }
   const initializedThemePackages = await desktopThemePackageRepository.initialize();
   if (!initializedThemePackages.ok) throw new Error("desktop_theme_packages_initialize_failed");
+  if (!backgroundRepository) {
+    backgroundRepository = new DesktopBackgroundRepository(resolve(app.getPath("userData"), "backgrounds"), resources.imageSanitizerPath);
+    // A damaged optional preference must not prevent the rest of the application starting.
+    await backgroundRepository.initialize().catch(() => logStartup("background.initialize_failed"));
+  }
+  unregisterBackgroundIpc ??= registerBackgroundIpc({ repository: backgroundRepository,
+    getMainWindow: () => mainWindow ?? loadingMainWindow });
   humanEvaluation ??= createHumanEvaluationDesktopComposition({ daemonBaseUrl, bridgeToken,
     desktopInstanceId: desktopRuntime.desktopInstanceId, workspaceCwd: defaultWorkspaceCwd,
     resourcesRoot: resources.resourcesRoot, knownAppUrl: pathToFileURL(resources.webIndexPath).href,
@@ -2019,6 +2030,10 @@ async function shutdown(): Promise<void> {
   await attemptCleanup(() => macosTccRevocationCommandReader?.close());
 
   const activeUnregisterThemePackageIpc = unregisterThemePackageIpc;
+  await attemptCleanup(() => unregisterBackgroundIpc?.());
+  unregisterBackgroundIpc = undefined;
+  backgroundRepository?.dispose();
+  backgroundRepository = undefined;
   unregisterThemePackageIpc = undefined;
   await attemptCleanup(() => activeUnregisterThemePackageIpc?.());
 

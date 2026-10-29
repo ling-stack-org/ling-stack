@@ -14,20 +14,20 @@ for (const theme of ["light", "dark"] as const) {
       const message = page.locator('[data-conversation-timeline-kind="userMessage"]').filter({ hasText: "用户正文颜色。" });
       const paragraph = message.locator(".message-body-renderer > .message-body-paragraph").first();
       await expect(paragraph).toBeVisible();
-      await expectSemanticColor(paragraph, "--conversation-text-strong");
-      await expectSemanticColor(message.locator(".message-body-renderer > .message-body-list"), "--conversation-text-strong");
-      await expectSemanticColor(message.locator(".message-body-quote .message-body-paragraph").first(), "--conversation-text-soft");
-      await expectSemanticColor(message.locator(".message-body-quote .message-body-list"), "--conversation-text-soft");
+      await expectSemanticColor(paragraph, "--ling-text-strong");
+      await expectSemanticColor(message.locator(".message-body-renderer > .message-body-list"), "--ling-text-strong");
+      await expectSemanticColor(message.locator(".message-body-quote .message-body-paragraph").first(), "--ling-text-soft");
+      await expectSemanticColor(message.locator(".message-body-quote .message-body-list"), "--ling-text-soft");
       // The app's unlayered pre/code rule owns the incumbent code color.
       // Raising narration must not change that separate treatment.
-      await expectSemanticColor(message.locator(".message-inline-code"), "--text");
-      await expectSemanticColor(message.locator(".message-code-block code"), "--text");
-      await expectSemanticColor(message.locator(".message-code-block figcaption > span"), "--conversation-text-muted");
+      await expectSemanticColor(message.locator(".message-inline-code"), "--ling-text-default");
+      await expectSemanticColor(message.locator(".message-code-block code"), "--ling-text-default");
+      await expectSemanticColor(message.locator(".message-code-block figcaption > span"), "--ling-text-muted");
       await expandTimelineProcesses(page.locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]'));
       await page.mouse.move(0, 0);
-      await expectSemanticColor(page.locator('[data-conversation-timeline-kind="commandExecution"] .conversation-timeline-activity-main strong').first(), "--conversation-text-muted");
+      await expectSemanticColor(page.locator('[data-conversation-timeline-kind="commandExecution"] .conversation-timeline-activity-main strong').first(), "--ling-text-muted");
       await paragraph.hover();
-      await expectSemanticColor(paragraph, "--conversation-text-strong");
+      await expectSemanticColor(paragraph, "--ling-text-strong");
       await page.screenshot({ path: testInfo.outputPath(`fixture-user-message-${surface}-${theme}.png`) });
     });
   }
@@ -50,23 +50,23 @@ for (const theme of ["light", "dark"] as const) {
       if (teammate) await page.getByRole("button", { name: teammate.displayName, exact: true }).click();
       const narration = page.locator(".conversation-timeline-message.agentMessage .message-body-paragraph").first();
       await expect(narration).toBeVisible();
-      await expectSemanticColor(narration, "--conversation-text-strong");
+      await expectSemanticColor(narration, "--ling-text-strong");
       await expandTimelineProcesses(page.locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]'));
       const fact = page.locator(`[data-conversation-action-id="${command.id}"][data-conversation-timeline-kind="commandExecution"]`);
       const trigger = fact.locator("button.conversation-timeline-activity-main");
       await expect(trigger).toBeVisible();
       await page.mouse.move(0, 0);
-      await expectSemanticColor(trigger.locator("strong"), "--conversation-text-muted");
+      await expectSemanticColor(trigger.locator("strong"), "--ling-text-muted");
       await trigger.hover();
-      await expectSemanticColor(trigger.locator("strong"), "--conversation-text-strong");
+      await expectSemanticColor(trigger.locator("strong"), "--ling-text-strong");
       await page.mouse.move(0, 0);
       await page.keyboard.press("Tab");
       await trigger.focus();
-      await expectSemanticColor(trigger.locator("strong"), "--conversation-text-strong");
+      await expectSemanticColor(trigger.locator("strong"), "--ling-text-strong");
       await trigger.press("Enter");
       await expect(trigger).toHaveAttribute("aria-expanded", "true");
       await expect(narration).toBeVisible();
-      await expectSemanticColor(narration, "--conversation-text-strong");
+      await expectSemanticColor(narration, "--ling-text-strong");
     });
   }
 
@@ -82,9 +82,9 @@ for (const theme of ["light", "dark"] as const) {
     const child = timeline.locator(`[id="${groupId}"]`);
     const narration = child.locator('.conversation-timeline-message.agentMessage .message-body-paragraph').first();
     await expect(narration).toBeVisible();
-    await expectSemanticColor(narration, "--conversation-text-strong");
+    await expectSemanticColor(narration, "--ling-text-strong");
     await narration.hover();
-    await expectSemanticColor(narration, "--conversation-text-strong");
+    await expectSemanticColor(narration, "--ling-text-strong");
     await page.screenshot({ path: testInfo.outputPath(`fixture-child-narration-${theme}.png`) });
   });
 
@@ -103,17 +103,17 @@ for (const theme of ["light", "dark"] as const) {
     const icon = disclosure.locator(":scope > svg");
     await expect(disclosure).toBeVisible();
     await page.mouse.move(0, 0);
-    await expectSemanticColor(title, "--conversation-text-muted");
-    await expectSemanticColor(icon, "--conversation-text-muted");
+    await expectSemanticColor(title, "--ling-text-muted");
+    await expectSemanticColor(icon, "--ling-text-muted");
     await disclosure.hover();
-    await expectSemanticColor(title, "--conversation-text-strong");
-    await expectSemanticColor(icon, "--conversation-text-strong");
+    await expectSemanticColor(title, "--ling-text-strong");
+    await expectSemanticColor(icon, "--ling-text-strong");
     await page.mouse.move(0, 0);
     await page.keyboard.press("Tab");
     await disclosure.focus();
     await expect(disclosure).toBeFocused();
-    await expectSemanticColor(title, "--conversation-text-strong");
-    await expectSemanticColor(icon, "--conversation-text-strong");
+    await expectSemanticColor(title, "--ling-text-strong");
+    await expectSemanticColor(icon, "--ling-text-strong");
     const wasExpanded = await disclosure.getAttribute("aria-expanded");
     await disclosure.press("Enter");
     await expect(disclosure).toHaveAttribute("aria-expanded", wasExpanded === "true" ? "false" : "true");
@@ -122,9 +122,9 @@ for (const theme of ["light", "dark"] as const) {
   test(`transcript preserves quoted text and code colors in ${theme}`, async ({ page }) => {
     await openTranscript(page, theme, "正文结论。\n\n> 引用原文。\n>\n> - 引用条目。\n\n```text\nconst value = 1;\n```");
     const message = page.locator('.conversation-timeline-message.agentMessage').filter({ hasText: "正文结论。" });
-    await expectSemanticColor(message.locator('.message-body-paragraph').filter({ hasText: /^正文结论。$/u }), "--conversation-text-strong");
-    await expectSemanticColor(message.locator('.message-body-quote .message-body-paragraph').first(), "--conversation-text-soft");
-    await expectSemanticColor(message.locator('.message-body-quote .message-body-list'), "--conversation-text-soft");
+    await expectSemanticColor(message.locator('.message-body-paragraph').filter({ hasText: /^正文结论。$/u }), "--ling-text-strong");
+    await expectSemanticColor(message.locator('.message-body-quote .message-body-paragraph').first(), "--ling-text-soft");
+    await expectSemanticColor(message.locator('.message-body-quote .message-body-list'), "--ling-text-soft");
     await expect(message.locator(".message-code-block")).toContainText("const value = 1;");
   });
 }

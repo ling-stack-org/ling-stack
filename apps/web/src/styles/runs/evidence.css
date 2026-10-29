@@ -20,7 +20,7 @@
   align-items: center;
   min-height: var(--ling-control-sm);
   padding-inline: var(--ling-space-4);
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: var(--ling-radius-md);
   color: inherit;
   text-decoration: none;

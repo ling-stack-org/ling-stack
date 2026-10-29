@@ -670,17 +670,11 @@ export function AppShell(): React.JSX.Element {
   const {
     mediaJobs,
     mediaJobArtifacts,
-    mediaJobsLoading,
-    runningMediaJobId,
-    mediaJobForm,
     selectedMediaJobId,
   } = mediaDomain.state;
   const {
-    setMediaJobForm,
     setSelectedMediaJobId,
     refreshMediaJobs,
-    saveMediaJob,
-    executeMediaJob,
     resetForCwd: resetMediaForCwd,
   } = mediaDomain.actions;
   const mcpDomain = useMcpDomain({
@@ -3227,20 +3221,9 @@ export function AppShell(): React.JSX.Element {
                       <MediaJobsPage
                         cwd={form.cwd}
                         providers={providers}
-                        jobs={mediaJobs}
-                        artifactsByJob={mediaJobArtifacts}
-                        form={mediaJobForm}
-                        selectedJobId={selectedMediaJobId}
-                        isLoading={mediaJobsLoading}
-                        runningJobId={runningMediaJobId}
-                        approvals={approvals}
                         domainState={mediaDomain.state}
                         domainActions={mediaDomain.actions}
-                        onFormChange={setMediaJobForm}
-                        onRefresh={refreshMediaJobs}
-                        onCreate={saveMediaJob}
-                        onSelectJob={setSelectedMediaJobId}
-                        onRun={executeMediaJob}
+                        approvals={approvals}
                         onOpenProviders={() => openSettingsWorkspaceTool("providers", "generation")}
                         onOpenProviderRepair={(_providerPresetId, operation) => openSettingsWorkspaceTool(
                           "providers",
