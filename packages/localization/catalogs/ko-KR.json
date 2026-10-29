@@ -1,6 +1,6 @@
 {
   "locale": "ko-KR",
-  "sourceRevision": "c11cf94392d4026c00e616cb88a34076364f09fcb9cc2c69d28b0ecb08f1082e",
+  "sourceRevision": "886f7db0464d27ea85e656e389391d7d8a27dceefab94eb5b0efd552f8e33dda",
   "sourceHashes": {
     "{action} (Enter)": "9472217728ec383f5dfdd37d2f84c381ed7b4546d115f6e3e536959810ef5af5",
     "{agent} wants to start task \"{task}\" and needs {permissions}.": "b87261e1f3ceaec90a862105f2885011d44b2722f9979327a3790af82a5dcdf1",
@@ -1496,6 +1496,7 @@
     "Conversation page": "17e720bcc771d47260a7e1941dec6c077810cac47524225492443b8605bbd404",
     "Conversation saved to recent conversations.": "ac5afe5df564851bb123be3d870884dbf4813e251256e7f529e1798d297d68d8",
     "Conversation shortcuts": "cf080be37ec5f103d4451d0d666681f0098001446e9b3d32c25df15d799bfc48",
+    "Conversation status": "ade62c7be1024a375eb00df563d2f9cef464564eaca278d1b677202fc17c1a6b",
     "Conversation tone source": "c684d649ac94c572fb7867e4df62ca88d9a5816aacaa95a5e584128ace4a1840",
     "Conversation tone storage": "33a34a627c9c0351f88a996d0e9f23ecbab6edf25398395f60f39168c6b14f91",
     "Conversation tools": "ce8cfbb518115445c46e30ca9c452146026189fb03032d92d2514b41b89c412d",
@@ -8385,6 +8386,7 @@
     "Conversation page": "대화 페이지",
     "Conversation saved to recent conversations.": "최근 대화에 대화가 저장되었습니다.",
     "Conversation shortcuts": "대화 단축키",
+    "Conversation status": "대화 상태",
     "Conversation tone source": "대화음 소스",
     "Conversation tone storage": "대화음 저장",
     "Conversation tools": "대화 도구",
