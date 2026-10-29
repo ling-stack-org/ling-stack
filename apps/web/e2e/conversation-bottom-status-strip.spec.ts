@@ -58,7 +58,7 @@ for (const surface of surfaces) {
       await expect(composer).toBeVisible();
       await expect(status).toBeVisible();
       await expect(status).toContainText(locale === "zh-CN" ? "8 轮 AI" : "8 rounds");
-      await expect(status).toContainText(locale === "zh-CN" ? "12 步工具" : "12 steps");
+      await expect(status).toContainText(locale === "zh-CN" ? "12 步骤" : "12 steps");
       await expect(status).toContainText("15.5 tok/s");
       await expect(status).toContainText(locale === "zh-CN" ? "1,000 Token" : "1,000 tokens");
       await expect(status).toContainText(locale === "zh-CN" ? "22% 缓存命中" : "22% cache hit");
