@@ -46,7 +46,7 @@ test("duplicate pruning preserves mixed AppShell, client window, and Inspector c
   ]);
 
   expect(layoutCss).toMatch(
-    /\.app-shell\s*\{[^}]*grid-template-columns: 248px minmax\(0, 1fr\) 360px;[^}]*grid-template-rows: minmax\(0, 1fr\);[^}]*background: var\(--app-bg\);/su,
+    /\.app-shell\s*\{[^}]*grid-template-columns: 248px minmax\(0, 1fr\) 360px;[^}]*grid-template-rows: minmax\(0, 1fr\);[^}]*background: var\(--ling-bg-app\);/su,
   );
   expect(layoutCss).toMatch(
     /\.client-window\s*\{[^}]*display: grid;[^}]*grid-template-rows: auto minmax\(0, 1fr\);[^}]*min-height: 100vh;/su,

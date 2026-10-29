@@ -40,6 +40,7 @@ import {
   type WorkflowStepPolicy,
 } from "../../workspace-types.js";
 import { normalizeStoredRunnerId } from "./runtime-work-mappers.js";
+import { normalizeRunnerIdsInSnapshot } from "../../runner-ids.js";
 import {
   omitUndefined,
   parseJson,
@@ -359,7 +360,7 @@ function parseOptionalWorkflowGraphValue(value: unknown): ChannelWorkflowMetadat
   if (record.schemaVersion !== 1 || typeof record.id !== "string" || typeof record.name !== "string"
     || typeof record.entryNodeId !== "string" || !Array.isArray(record.nodes) || !Array.isArray(record.edges)
     || !record.termination || typeof record.termination !== "object" || Array.isArray(record.termination)) return undefined;
-  return value as NonNullable<ChannelWorkflowMetadata["workflowGraph"]>;
+  return normalizeRunnerIdsInSnapshot(value) as NonNullable<ChannelWorkflowMetadata["workflowGraph"]>;
 }
 
 function isStringArray(value: unknown): value is string[] {

@@ -8,7 +8,7 @@
   align-items: stretch;
   overflow: hidden;
   border: 1px solid var(--ling-action-accent);
-  border-radius: var(--ling-radius-md);
+  border-radius: var(--ling-control-radius);
   background: var(--ling-action-accent);
   box-shadow: var(--ling-shadow-low);
 }

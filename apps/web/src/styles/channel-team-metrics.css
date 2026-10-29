@@ -10,8 +10,8 @@
 }
 
 .channel-team-metrics-tile {
-  background: var(--surface-panel-muted);
-  border: 1px solid var(--border);
+  background: var(--ling-bg-subtle);
+  border: 1px solid var(--ling-border-default);
   border-radius: 8px;
   display: grid;
   gap: 6px;
@@ -20,12 +20,12 @@
 }
 
 .channel-team-metrics-tile span {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 13px;
 }
 
 .channel-team-metrics-tile strong {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 18px;
 }
 
@@ -61,8 +61,8 @@
 
 .channel-team-metrics-breakdown,
 .channel-team-metrics-agents {
-  background: var(--surface-panel-muted);
-  border: 1px solid var(--border);
+  background: var(--ling-bg-subtle);
+  border: 1px solid var(--ling-border-default);
   border-radius: 8px;
   display: grid;
   gap: 10px;
@@ -70,7 +70,7 @@
 }
 
 .channel-team-metrics-group-head {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   min-height: 20px;
 }
 
@@ -89,7 +89,7 @@
 
 .channel-team-metrics-stat dt,
 .channel-team-metrics-stat dd {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   margin: 0;
 }
 
@@ -107,7 +107,7 @@
 
 .channel-team-metrics-agent-row {
   align-items: center;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--ling-border-default);
   display: grid;
   gap: 10px;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -128,7 +128,7 @@
 }
 
 .channel-team-metrics-agent-row span {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 13px;
 }
 

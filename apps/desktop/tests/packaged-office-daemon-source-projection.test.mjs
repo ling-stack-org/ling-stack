@@ -16,6 +16,18 @@ const packageNames = ["browser-host", "contracts", "core", "daemon", "localizati
 const sourceError = /packaged_office_daemon_source_(input|export)_invalid/u;
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 
+test("local source projection snapshots changed authored inputs without modifying the approved review", async t => {
+  const f = await fixture(t);
+  writeFileSync(f.path("packages/core/src/index.ts"), 'export const value="local-worktree-source";\n');
+  const projection = f.localApi.createReviewedOfficeDaemonSourceInputs();
+  const result = await bundle(f, projection);
+  assert.match(result.outputFiles[0].text, /local-worktree-source/u);
+  projection.assertOriginalInputs(result);
+  assert.deepEqual(readFileSync(f.reviewPath), f.originalReviewBytes);
+  assert.match(projection.sourceReviewSha256, /^[a-f0-9]{64}$/u);
+  assert.notEqual(projection.sourceReviewSha256, hash(f.originalReviewBytes));
+});
+
 test("source projection uses real esbuild on nine reviewed source packages and never stale workspace dist", async t => {
   const f = await fixture(t);
   const projection = f.api.createReviewedOfficeDaemonSourceInputs();
@@ -448,6 +460,8 @@ async function fixture(t, options = {}) {
   for (const [path, value] of files) newFile(join(root, path), value);
   const scripts = join(root, "apps/desktop/scripts"), copiedHelper = join(scripts, "packaged-office-daemon-source-inputs.mjs");
   mkdirSync(scripts, { recursive: true }); copyFileSync(helperPath, copiedHelper);
+  copyFileSync(join(repositoryRoot, "apps/desktop/scripts/packaged-office-native-review-inputs.mjs"),
+    join(scripts, "packaged-office-native-review-inputs.mjs"));
   chmodSync(copiedHelper, 0o600);
   const reviewPath = join(root, "EXPLICIT-SYNTHETIC-REVIEW.json");
   const row = { packagingSha256: Object.fromEntries([...files].filter(([path]) => !path.includes("/dist/")
@@ -455,7 +469,10 @@ async function fixture(t, options = {}) {
   const originalReviewBytes = Buffer.from(JSON.stringify(row)); writeFileSync(reviewPath, originalReviewBytes, { mode: 0o600 });
   const reviewUrl = pathToFileURL(join(scripts, "packaged-office-native-review.mjs")).href;
   newFile(fileURLToPath(reviewUrl), "EXPLICIT TEST-ONLY REVIEW MODULE PLACEHOLDER\n");
+  const inputsUrl = pathToFileURL(join(scripts, "packaged-office-native-review-inputs.mjs")).href;
   const hook = registerHooks({ load(url, context, nextLoad) {
+    if (url === inputsUrl) return { format: "module", shortCircuit: true,
+      source: `export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze(${JSON.stringify(Object.keys(row.packagingSha256))});` };
     if (url !== reviewUrl) return nextLoad(url, context);
     return { format: "module", shortCircuit: true, source: `
       import {readFileSync} from "node:fs";
@@ -466,11 +483,26 @@ async function fixture(t, options = {}) {
         Object.freeze(review.packagingSha256);Object.freeze(review);
         return Object.freeze({review,sourceReviewSha256:createHash("sha256").update(bytes).digest("hex")});
       }
+      export function readLocalPackagedOfficeSource() {
+        const result=readReviewedPackagedOfficeSource();
+        const actual=readFileSync(${JSON.stringify(join(root, "packages/core/src/index.ts"))});
+        return Object.freeze({...result,sourceReviewSha256:createHash("sha256")
+          .update(result.sourceReviewSha256).update(actual).digest("hex")});
+      }
     ` };
   } });
   t.after(() => hook.deregister());
   const api = await import(pathToFileURL(copiedHelper).href);
-  return { root, api, reviewPath, originalReviewBytes, path: value => join(root, value) };
+  const releaseApi = Object.freeze({ createReviewedOfficeDaemonSourceInputs: () => {
+    const previous = process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
+    process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = "1";
+    try { return api.createReviewedOfficeDaemonSourceInputs(); }
+    finally {
+      if (previous === undefined) delete process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
+      else process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = previous;
+    }
+  } });
+  return { root, api: releaseApi, localApi: api, reviewPath, originalReviewBytes, path: value => join(root, value) };
 }
 
 async function bundle(f, projection, additionalPlugins = []) {

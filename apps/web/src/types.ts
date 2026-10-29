@@ -148,5 +148,4 @@ export interface MediaJobFormState {
   readonly watermark: "" | "true" | "false";
   readonly imageUrl: string;
   readonly maskUrl: string;
-  readonly inputText: string;
 }

@@ -57,21 +57,6 @@
   --conversation-message-max-width: 640px;
 }
 
-.normal-conversation-message-row > .message-content {
-  width: fit-content;
-  max-width: 100%;
-}
-
-.normal-conversation-message-row.ai-teammate > .message-content {
-  width: 100%;
-  max-width: 100%;
-}
-
-.normal-conversation-message-row.ai-teammate > .message-content > .message-body-shell,
-.normal-conversation-message-row.ai-teammate > .message-content > .message-body-renderer {
-  width: 100%;
-}
-
 .normal-conversation-message-error {
   margin-top: var(--ling-space-3);
 }
@@ -93,9 +78,14 @@
   color: var(--ling-text-default);
 }
 
-.conversation-home [data-conversation-composer][data-surface="normal_conversation"] {
+.conversation-home [data-conversation-composer-frame="normal_conversation"] {
   width: min(710px, 100%);
-  margin-top: 38px;
+  margin: 38px auto 0;
+}
+
+.conversation-home [data-conversation-composer][data-surface="normal_conversation"] {
+  width: 100%;
+  margin-top: 0;
   padding: var(--ling-space-4);
   border: 1px solid var(--ling-border-default);
   border-radius: var(--ling-radius-lg);
@@ -103,21 +93,14 @@
   box-shadow: var(--ling-shadow-medium);
 }
 
+.normal-conversation-page [data-conversation-composer-frame="normal_conversation"] {
+  width: 100%;
+}
+
 .normal-conversation-page [data-conversation-composer][data-surface="normal_conversation"] {
   width: 100%;
   margin-top: 0;
   padding: 8px;
-  border: 1px solid var(--ling-border-default);
-  border-radius: 12px;
-  background: var(--ling-bg-composer);
-  box-shadow: var(--ling-shadow-medium);
-}
-
-[data-conversation-composer][data-surface="normal_conversation"]:focus-within {
-  border-color: var(--ling-border-focus);
-  box-shadow:
-    inset 0 0 0 1px var(--ling-border-focus),
-    var(--ling-shadow-medium);
 }
 
 [data-conversation-composer][data-surface="normal_conversation"] .normal-conversation-composer-body {
@@ -147,7 +130,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--ling-space-5);
-  padding-top: var(--ling-space-2);
+  margin-top: var(--ling-space-3);
 }
 
 [data-conversation-composer][data-surface="normal_conversation"] .conversation-composer-left-tools,
@@ -160,6 +143,18 @@
 
 [data-conversation-composer][data-surface="normal_conversation"] .conversation-composer-right-tools {
   justify-content: flex-end;
+}
+
+[data-conversation-composer][data-surface="normal_conversation"] .conversation-composer-left-tools,
+[data-conversation-composer][data-surface="normal_conversation"] .conversation-composer-right-tools {
+  min-height: var(--ling-control-sm);
+}
+
+[data-conversation-composer][data-surface="normal_conversation"] .composer-tool-button,
+[data-conversation-composer][data-surface="normal_conversation"] .conversation-thinking-button,
+[data-conversation-composer][data-surface="normal_conversation"] .conversation-reasoning-summary-button,
+[data-conversation-composer][data-surface="normal_conversation"] .conversation-model-trigger {
+  border-radius: var(--ling-control-radius);
 }
 
 .conversation-thinking-button,
@@ -287,6 +282,11 @@
   border-color: var(--ling-action-accent);
   color: var(--ling-action-accent-fg);
   background: var(--ling-action-accent);
+}
+
+[data-conversation-composer][data-surface="normal_conversation"] .normal-conversation-send:focus-visible {
+  outline: 0;
+  box-shadow: var(--ling-focus-ring);
 }
 
 [data-conversation-composer][data-surface="normal_conversation"] .normal-conversation-send:hover:not(:disabled) {

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -5,6 +6,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   ComposerPermissionMenu,
+  ConversationBottomStatusStrip,
   ConversationComposerShell,
 } from "../dist/index.js";
 
@@ -58,6 +60,49 @@ test("conversation composer keeps canonical surface and density variants", () =>
   assert.doesNotMatch(html, legacyComposerClasses);
 });
 
+test("bottom status is a standalone, centered row outside the composer box on all surfaces", () => {
+  for (const surface of ["channel", "normal_conversation", "teammate_direct"]) {
+    const html = renderComposer({
+      surface,
+      bottomStatusNode: createElement(ConversationBottomStatusStrip, {
+        ariaLabel: "Conversation status",
+        metrics: { aiRounds: 2, toolSteps: 3, recentReplyTokensPerSecond: 4, totalTokens: 100, inputTokens: 30, outputTokens: 60, cacheReadTokens: 10, cacheWriteTokens: 0, coverage: "complete", context: { measuredInputTokens: 40, capacityTokens: 80, estimatedTokens: null, basis: "measured" } },
+      }),
+    });
+    assert.match(html, new RegExp(`data-conversation-composer-frame="${surface}"`));
+    assert.match(html, /<\/section><div class="conversation-bottom-status-strip" role="status"/u);
+    assert.match(html, /2 rounds/u);
+    assert.match(html, /3 steps/u);
+    assert.match(html, /4\.0 tok\/s/u);
+    assert.match(html, /100 tokens/u);
+    assert.match(html, /25% cache hit/u);
+    assert.match(html, /Recent request context 50%/u);
+  }
+  const idle = renderComposer({
+    bottomStatusNode: createElement(ConversationBottomStatusStrip, {
+      ariaLabel: "Conversation status",
+    }),
+  });
+  assert.match(idle, /— rounds/u);
+  assert.match(idle, /— cache hit/u);
+  assert.match(idle, /Context —/u);
+  const partial = renderComposer({ bottomStatusNode: createElement(ConversationBottomStatusStrip, {
+    ariaLabel: "对话状态", locale: "zh-CN",
+    translate: (key) => JSON.parse(readFileSync(new URL("../../localization/catalogs/zh-CN.json", import.meta.url), "utf8")).messages[key] ?? key,
+    metrics: { aiRounds: null, toolSteps: 4, recentReplyTokensPerSecond: null, totalTokens: 30, inputTokens: null, outputTokens: 30, cacheReadTokens: 0, cacheWriteTokens: null, coverage: "partial", context: { measuredInputTokens: null, estimatedTokens: 180, capacityTokens: 600, basis: "estimated" } },
+  }) });
+  assert.match(partial, /— 轮 AI/u);
+  assert.match(partial, /4 (?:步工具|步骤)/u);
+  assert.match(partial, /— 缓存命中/u);
+  assert.match(partial, /压缩后上下文估算 30%/u);
+});
+
+test("bottom status styling is transparent and horizontally centered", async () => {
+  const css = await readFile(new URL("../dist/styles/composer/conversation-composer.css", import.meta.url), "utf8");
+  assert.match(css, /\.conversation-bottom-status-strip\s*\{[^}]*justify-content:\s*center;[^}]*background:\s*transparent;/su);
+  assert.match(css, /\.conversation-composer-frame\s*\{[^}]*gap:\s*8px;/su);
+});
+
 test("conversation composer permission menu preserves accessible package behavior", () => {
   const html = renderComposer({
     leftToolsNode: createElement(ComposerPermissionMenu, {
@@ -77,7 +122,7 @@ test("conversation package owns composer visuals through semantic Ling tokens", 
   assert.match(index, /composer\/conversation-composer\.css/u);
   assert.match(composer, /\.conversation-composer/u);
   assert.match(composer, /var\(--ling-bg-composer\)/u);
-  assert.match(composer, /\.conversation-composer:focus-within\s*\{[^}]*box-shadow:\s*inset 0 0 0 1px var\(--ling-border-focus\)/su);
+  assert.match(composer, /\.conversation-composer:focus-within\s*\{[^}]*box-shadow:\s*var\(--ling-composer-focus-shadow\)/su);
   assert.doesNotMatch(composer, /\.conversation-composer:focus-within\s*\{[^}]*box-shadow:\s*0 0 0 [23]px/su);
   assert.match(composer, /\.conversation-composer-input-zone/u);
   assert.match(composer, /\.conversation-composer-toolbar/u);
@@ -93,3 +138,16 @@ test("conversation package owns composer visuals through semantic Ling tokens", 
   assert.doesNotMatch(composer, /\[data-theme/u);
   assert.doesNotMatch(composer, /--text-|--surface-|--accent(?:-|\))/u);
 });
+
+for (const locale of ["de-DE", "ja-JP"]) {
+  test(`bottom status uses catalog translations for ${locale}`, () => {
+    const { messages } = JSON.parse(readFileSync(new URL(`../../localization/catalogs/${locale}.json`, import.meta.url), "utf8"));
+    const html = renderComposer({ bottomStatusNode: createElement(ConversationBottomStatusStrip, {
+      ariaLabel: messages["Conversation status"], locale, translate: (key) => messages[key] ?? key,
+    }) });
+    assert.notEqual(messages["Runtime activity"], "Runtime activity");
+    assert.ok(html.includes(messages["Runtime activity"]));
+    assert.ok(html.includes(messages["rounds"]));
+    assert.doesNotMatch(html, /— rounds/u);
+  });
+}

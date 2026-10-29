@@ -4,12 +4,14 @@ import { SettingsSubnav } from "./SettingsSubnav.js";
 export function SkillLibraryNavigation({
   activeSection,
   currentUserCount,
+  localCount,
   evolutionCount,
   builtinCount,
   onSectionChange,
 }: {
   readonly activeSection: SkillLibrarySectionId;
   readonly currentUserCount: number;
+  readonly localCount: number | undefined;
   readonly evolutionCount: number;
   readonly builtinCount: number;
   readonly onSectionChange: (section: SkillLibrarySectionId) => void;
@@ -24,6 +26,11 @@ export function SkillLibraryNavigation({
           id: "mine",
           label: "My skills",
           badge: `${currentUserCount}`,
+        },
+        {
+          id: "local",
+          label: "Local skill folders",
+          ...(localCount !== undefined ? { badge: `${localCount}` } : {}),
         },
         {
           id: "evolution",

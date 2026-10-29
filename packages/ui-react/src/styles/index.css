@@ -1,8 +1,9 @@
 @layer ling.reset, ling.tokens.base, ling.tokens.theme, ling.tokens.client,
-  ling.legacy, ling.primitives, ling.conversation, ling.shell,
+  ling.primitives, ling.conversation, ling.shell,
   ling.features, ling.utilities;
 
 @import url("./foundation-tokens.css") layer(ling.tokens.base);
+@import url("./component-tokens.css") layer(ling.tokens.base);
 @import url("./themes/built-in-themes.css") layer(ling.tokens.theme);
 @import url("./controls/icon.css") layer(ling.primitives);
 @import url("./controls/button.css") layer(ling.primitives);
@@ -15,8 +16,12 @@
 @import url("./navigation/tabs-segmented.css") layer(ling.primitives);
 @import url("./navigation/collapsible.css") layer(ling.primitives);
 @import url("./theme/theme-picker.css") layer(ling.primitives);
+@import url("./theme/scene-artwork.css") layer(ling.primitives);
 @import url("./theme/theme-studio-preview.css") layer(ling.primitives);
+@import url("./brand/ling-core-mark.css") layer(ling.primitives);
 @import url("./feedback/status-feedback.css") layer(ling.primitives);
+@import url("./feedback/interaction-effects.css") layer(ling.primitives);
 @import url("./feedback/toast.css") layer(ling.primitives);
 @import url("./feedback/data-display.css") layer(ling.primitives);
 @import url("./desktop/compact-window.css") layer(ling.primitives);
+@import url("./surface-accessibility.css") layer(ling.utilities);

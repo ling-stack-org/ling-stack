@@ -8,13 +8,13 @@
 .work-summary-time { margin-bottom: 8px; }
 .work-summary-group { padding: 12px 0; border-bottom: 1px solid var(--ling-border-default); }
 .work-summary-session, .work-summary-change { width: 100%; padding: 6px 4px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; border-radius: 5px; }
-.work-summary-session:hover, .work-summary-change:hover { background: var(--ling-surface-hover); }
+.work-summary-session:hover, .work-summary-change:hover { background: var(--ling-bg-subtle); }
 .work-summary-session strong, .work-summary-commit > span, .work-summary-path small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .work-summary-session strong { flex: 1; font-size: 12px; font-weight: 550; }
 .work-summary-status { font-size: 10px; color: var(--ling-text-muted); white-space: nowrap; }
-.work-summary-status.status-running { color: var(--ling-accent); }
-.work-summary-status.status-failed, .work-summary-stats .delete { color: var(--ling-danger, #d46868); }
-.work-summary-stats .add { color: var(--ling-success, #459b71); }
+.work-summary-status.status-running { color: var(--ling-action-accent); }
+.work-summary-status.status-failed, .work-summary-stats .delete { color: var(--ling-status-danger); }
+.work-summary-stats .add { color: var(--ling-status-success); }
 .work-summary-workspace { margin: 4px 0 0 22px; }
 .work-summary-path { display: flex; align-items: baseline; gap: 8px; font-size: 11px; color: var(--ling-text-muted); }
 .work-summary-path > span { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

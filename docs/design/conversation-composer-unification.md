@@ -336,8 +336,8 @@ Shared shell tokens:
 
 | Token | Target |
 | --- | --- |
-| Background | `var(--surface-panel)` or a shared composer panel token |
-| Border | `1px solid var(--border)` |
+| Background | `var(--ling-bg-panel)` or a shared composer panel token |
+| Border | `1px solid var(--ling-border-default)` |
 | Radius | 18-20px for the outer shell |
 | Shadow | floating soft shadow from normal conversation composer |
 | Padding | 8-10px outer, consistent across surfaces |

@@ -49,7 +49,8 @@ export function ConversationTimelineMessageRenderer({
       }}
     />
   );
-  const renderedBody = renderChrome?.(item, body, presentation) ?? body;
+  const renderedBody = renderChrome?.(item, body, presentation)
+    ?? <div className="conversation-timeline-reading-body">{body}</div>;
   return (
     <div
       className={`conversation-timeline-message ${item.kind}`}

@@ -33,6 +33,8 @@ The broader daemon and registry evolution is covered by
 [GStack Skill Source Sync](gstack-skill-source-sync.md). First-run source onboarding,
 upstream drift upgrades, semantic migration evidence, and artifact-backed source storage
 are covered by [GStack Source Upgrade Lifecycle](gstack-source-upgrade-lifecycle.md).
+Explicit adoption of user-owned shared `.agents/skills` records is covered by
+[External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md).
 
 ## Model
 
@@ -403,6 +405,8 @@ membership, teammate bindings, channel attachments, or workflow permissions. See
 - Add the Effective Skills read model and blocked-reason UI.
 - Build richer UI controls for reviewing and managing memory content from the private
   workspace tabs. Memory availability itself remains always on for AI teammates.
-- Add importers for `AGENTS.md` and compatible skill directories.
+- Add importers for `AGENTS.md` shared instructions and persona files.
+- Ship explicit adoption for shared `.agents/skills` directories per
+  [External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md).
 - Compile workflow templates into durable workflow and workflow-step state machines; see
   [Multi-Agent Orchestrator](multi-agent-orchestrator.md).

@@ -11,6 +11,7 @@ import {
   runContinuationReasons,
   sessionPermissionModes,
   workspaceAccessModes,
+  normalizeRunnerId,
   type AuthorizationMode,
   type ChannelMessageFileRef,
   type PermissionConfirmation,
@@ -167,7 +168,7 @@ export function parseRunRequest(value: unknown): RunRequest {
   const workflowStepId = readOptionalString(value, "workflowStepId");
   const threadId = readOptionalString(value, "threadId");
   const turnId = readOptionalString(value, "turnId");
-  const requestedRunnerId = readOptionalString(value, "runnerId");
+  const requestedRunnerId = normalizeRunnerId(readOptionalString(value, "runnerId"));
   const boundRunnerId = executionBinding?.kind === "native_profile" ? executionBinding.engineId
     : executionBinding?.kind === "pi_provider" ? "pi" : undefined;
   if (boundRunnerId && requestedRunnerId !== undefined && requestedRunnerId !== boundRunnerId) {

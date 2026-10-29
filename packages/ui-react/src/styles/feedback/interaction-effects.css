@@ -1,0 +1,81 @@
+/* A bounded overlay: never clips the target's own menus, focus ring or content. */
+.ling-ui-file-drop-feedback {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: block;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.ling-ui-file-drop-feedback::before {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--ling-border-focus);
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--ling-action-accent) 5%, transparent);
+  opacity: 0;
+  content: "";
+  transition: opacity var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.ling-ui-file-drop-feedback[data-active="true"]::before { opacity: 1; }
+
+.ling-ui-file-drop-glint {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ling-ui-file-drop-glint[data-edge="top"],
+.ling-ui-file-drop-glint[data-edge="bottom"] {
+  left: var(--ling-drop-offset);
+  width: 56px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ling-border-focus) 72%, transparent), transparent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--ling-border-focus) 24%, transparent);
+  animation: ling-file-received-horizontal var(--ling-motion-standard) var(--ling-ease-standard) 1;
+}
+
+.ling-ui-file-drop-glint[data-edge="top"] { top: 0; }
+.ling-ui-file-drop-glint[data-edge="bottom"] { bottom: 0; }
+
+.ling-ui-file-drop-glint[data-edge="left"],
+.ling-ui-file-drop-glint[data-edge="right"] {
+  top: var(--ling-drop-offset);
+  width: 2px;
+  height: 56px;
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--ling-border-focus) 72%, transparent), transparent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--ling-border-focus) 24%, transparent);
+  animation: ling-file-received-vertical var(--ling-motion-standard) var(--ling-ease-standard) 1;
+}
+
+.ling-ui-file-drop-glint[data-edge="left"] { left: 0; }
+.ling-ui-file-drop-glint[data-edge="right"] { right: 0; }
+
+@keyframes ling-file-received-horizontal {
+  0% { opacity: 0; transform: translateX(-62%); }
+  24% { opacity: 0.82; }
+  100% { opacity: 0; transform: translateX(-38%); }
+}
+
+@keyframes ling-file-received-vertical {
+  0% { opacity: 0; transform: translateY(-62%); }
+  24% { opacity: 0.82; }
+  100% { opacity: 0; transform: translateY(-38%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ling-ui-file-drop-feedback::before { transition: none; }
+  .ling-ui-file-drop-glint { display: none; animation: none; }
+}
+
+@media (forced-colors: active) {
+  .ling-ui-file-drop-feedback::before {
+    border: 2px solid Highlight;
+    background: transparent;
+    forced-color-adjust: none;
+  }
+  .ling-ui-file-drop-glint { display: none; animation: none; }
+}

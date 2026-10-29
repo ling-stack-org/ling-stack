@@ -5,7 +5,7 @@
   min-height: 0;
   overflow: hidden;
   padding: 20px;
-  background: var(--app-bg);
+  background: var(--ling-bg-app);
 }
 
 .council-workspace-page {
@@ -38,10 +38,10 @@
   align-items: center;
   min-height: 22px;
   padding: 0 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 5px;
-  background: var(--surface-panel-strong);
-  color: var(--text-secondary);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-muted);
   font-size: 11px;
   font-weight: 650;
   line-height: 16px;
@@ -73,9 +73,9 @@
   min-width: 0;
   min-height: 0;
   padding: 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 8px;
-  background: var(--surface-panel);
+  background: var(--ling-bg-panel);
   overflow: hidden;
 }
 
@@ -102,7 +102,7 @@
 }
 
 .council-panel-title strong {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 14px;
   font-weight: 720;
   line-height: 20px;
@@ -110,7 +110,7 @@
 
 .council-panel-title small,
 .council-list-health-title-actions {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 18px;
 }
@@ -213,7 +213,7 @@
   left: 0;
   width: 3px;
   border-radius: 999px;
-  background: var(--text-strong);
+  background: var(--ling-text-strong);
   content: "";
 }
 
@@ -232,14 +232,14 @@
 }
 
 .council-list-health-identity strong {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 13px;
   font-weight: 720;
   line-height: 18px;
 }
 
 .council-list-health-identity small {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   line-height: 16px;
 }
@@ -256,7 +256,7 @@
   gap: 12px;
   min-height: 52px;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--ling-border-default);
 }
 
 .council-list-health-skeleton-row > span:first-child {
@@ -273,7 +273,7 @@
   gap: 7px 12px;
   min-width: 0;
   padding-bottom: 10px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--ling-border-default);
 }
 
 .council-detail-head > div:first-child {
@@ -285,7 +285,7 @@
 
 .council-detail-head strong {
   overflow: hidden;
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 16px;
   font-weight: 740;
   line-height: 22px;
@@ -315,7 +315,7 @@
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--text-soft);
+  color: var(--ling-text-soft);
   font-size: 11px;
   font-weight: 600;
   line-height: 16px;
@@ -326,14 +326,14 @@
   display: grid;
   min-width: 0;
   padding: 6px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 6px;
-  background: var(--surface-panel-strong);
+  background: var(--ling-bg-elevated);
 }
 
 .council-list-health-summary[data-health-state="partial"],
 .council-list-health-summary[data-health-state="attention"] {
-  border-color: var(--warning-border);
+  border-color: var(--ling-status-warning-border);
 }
 
 .council-list-health-summary-primary {
@@ -342,7 +342,7 @@
   align-items: center;
   gap: 10px;
   min-width: 0;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 18px;
 }
@@ -356,7 +356,7 @@
 }
 
 .council-list-health-summary-primary > time {
-  color: var(--text-soft);
+  color: var(--ling-text-soft);
   font-size: 11px;
 }
 
@@ -369,7 +369,7 @@
   gap: 4px;
   margin: 0;
   padding-inline-start: 18px;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 18px;
 }
@@ -423,9 +423,9 @@
   min-width: 0;
   min-height: 0;
   padding: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 8px;
-  background: var(--surface-panel);
+  background: var(--ling-bg-panel);
   overflow: hidden;
 }
 

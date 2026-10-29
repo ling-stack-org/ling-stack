@@ -129,7 +129,10 @@ export type SkillSourceWarningCode =
   | "missing_metadata"
   | "drifted_upstream"
   | "missing_upstream"
-  | "orphaned_snapshot";
+  | "orphaned_snapshot"
+  | "skill_id_conflict"
+  | "duplicate_source"
+  | "unsafe_path";
 
 export type SkillSourceSyncRecordState =
   | "attachable"
@@ -1306,6 +1309,39 @@ export interface SkillSourceSyncRefreshResponse {
 }
 
 export interface SkillSourceSyncPublishResponse {
+  readonly cwd: string;
+  readonly publishedAt: string;
+  readonly preview: SkillSourceSyncPreviewReport;
+  readonly skills: readonly SkillRegistryEntry[];
+  readonly snapshots: readonly SkillSourceSnapshot[];
+  readonly artifacts: readonly SkillSourceArtifact[];
+}
+
+/**
+ * Explicit user-triggered scan of the shared `.agents/skills` convention directories.
+ * Roots are auto-detected (project workspace and user home); no arbitrary path is accepted.
+ */
+export interface SharedSkillSourceScanRequest {
+  readonly includeProjectRoot?: boolean;
+  readonly includeUserRoot?: boolean;
+  readonly includeSkillIds?: readonly string[];
+  readonly excludeSkillIds?: readonly string[];
+  readonly maxSourceBytes?: number;
+}
+
+export interface SharedSkillSourcePublishRequest extends SharedSkillSourceScanRequest {
+  readonly selectedSkillIds: readonly string[];
+  readonly allowNewSkills?: boolean;
+  readonly publishArtifacts?: boolean;
+}
+
+export interface SharedSkillSourceScanResponse {
+  readonly cwd: string;
+  readonly scannedAt: string;
+  readonly preview: SkillSourceSyncPreviewReport;
+}
+
+export interface SharedSkillSourcePublishResponse {
   readonly cwd: string;
   readonly publishedAt: string;
   readonly preview: SkillSourceSyncPreviewReport;

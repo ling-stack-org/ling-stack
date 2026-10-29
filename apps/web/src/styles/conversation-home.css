@@ -3,7 +3,7 @@
   place-items: start center;
   min-height: 100%;
   padding: 126px 48px 72px;
-  background: var(--app-bg);
+  background: transparent;
 }
 
 .conversation-home-center {
@@ -11,40 +11,34 @@
   justify-items: center;
   width: min(710px, 100%);
   margin-top: clamp(44px, 6vh, 78px);
-  color: var(--text);
+  color: var(--ling-text-default);
 }
 
 .conversation-home-mark {
   display: grid;
   place-items: center;
-  width: 64px;
-  height: 64px;
-  margin-bottom: 12px;
+  width: 256px;
+  height: 150px;
+  margin-bottom: 2px;
   border: 0;
   background: transparent;
 }
 
-.conversation-home-mark img {
-  display: block;
-  width: 64px;
-  height: 64px;
-  object-fit: contain;
-}
-
 .conversation-home h1 {
   margin: 0;
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 28px;
   font-weight: 720;
   letter-spacing: 0;
   line-height: 38px;
   text-align: center;
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--ling-bg-app) 72%, transparent);
 }
 
 .conversation-home-center > p {
   max-width: 520px;
   margin: 6px 0 34px;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 19px;
   text-align: center;
@@ -66,24 +60,24 @@
   gap: 6px;
   height: 32px;
   padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface-panel);
-  color: var(--text-muted);
+  border: 1px solid var(--ling-shortcut-border);
+  border-radius: var(--ling-shortcut-radius);
+  background: var(--ling-shortcut-bg);
+  background-image: var(--ling-shortcut-finish);
+  box-shadow: var(--ling-shortcut-shadow);
+  color: var(--ling-text-muted);
   font-size: 13px;
   font-weight: 500;
 }
 
 .conversation-home-shortcuts button:hover,
 .conversation-home-shortcuts button:focus-visible {
-  background: var(--surface-hover);
-  color: var(--text-strong);
+  border-color: var(--ling-border-focus);
+  background-color: var(--ling-action-selection);
+  color: var(--ling-text-strong);
 }
 
-:root[data-theme="dark"] .conversation-home [data-conversation-composer][data-surface="normal_conversation"] {
-  box-shadow: var(--composer-ambient-shadow);
-}
-
-:root[data-theme="dark"] .conversation-home [data-conversation-composer][data-surface="normal_conversation"]:focus-within {
-  box-shadow: var(--composer-ambient-focus-shadow);
+.conversation-home-shortcuts button:focus-visible {
+  outline: 0;
+  box-shadow: var(--ling-focus-ring), var(--ling-shortcut-shadow);
 }

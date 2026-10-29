@@ -92,6 +92,25 @@ for (const surface of ["normal", "private", "channel"]) {
     assert.ok(Object.isFrozen(receipt.receipt));
   });
 }
+test("historical runner aliases project on read without invalidating the prepared input fingerprint", async t => {
+  const f = await fixture(t);
+  f.prepare(plan => {
+    const { fingerprint: _fingerprint, ...preparedWithoutFingerprint } = f.preparedInput;
+    const preparedBody = { ...preparedWithoutFingerprint, runnerId: "pi-coding-agent" };
+    const preparedInput = { ...preparedBody, fingerprint: hash(preparedBody) };
+    plan.runnerId = "pi-coding-agent";
+    plan.preparedInput = preparedInput;
+    plan.preparedInputFingerprint = preparedInput.fingerprint;
+    plan.runnerExecutionInput.runnerId = "pi-coding-agent";
+    plan.runnerExecutionInput.preparedInput = preparedInput;
+  });
+  const projected = f.store.getUserInputContinuationPreparation(f.thread.id, f.delivery.deliveryId, "execution").payload;
+  assert.equal(projected.runnerId, "pi");
+  assert.equal(projected.runnerExecutionInput.runnerId, "pi");
+  assert.equal(projected.preparedInput.runnerId, "pi");
+  assert.equal(projected.preparedInput.fingerprint, f.plan.preparedInput.fingerprint);
+  assert.doesNotThrow(() => f.admit());
+});
 test("first preparation wins and expired/replaced delivery workers cannot change it", async t => {
   const f = await fixture(t); f.prepare();
   const result = f.store.saveUserInputContinuationPreparation({ ...f.claimIdentity, stage: "request",

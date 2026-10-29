@@ -24,11 +24,11 @@
   gap: var(--ling-space-2);
   padding: var(--ling-space-3);
   overflow: auto;
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-md);
+  border: 1px solid var(--ling-overlay-border);
+  border-radius: var(--ling-overlay-radius);
   color: var(--ling-text-default);
-  background: var(--ling-bg-elevated);
-  box-shadow: var(--ling-shadow-overlay);
+  background: var(--ling-overlay-bg);
+  box-shadow: var(--ling-overlay-shadow);
 }
 
 [data-conversation-composer] .mention-suggestion {
@@ -88,7 +88,7 @@
   align-content: center;
   gap: var(--ling-space-3);
   border: 1px dashed var(--ling-border-focus);
-  border-radius: var(--ling-radius-md);
+  border-radius: var(--ling-composer-radius);
   color: var(--ling-text-strong);
   background: color-mix(in srgb, var(--ling-bg-elevated) 84%, var(--ling-action-selection));
   font-size: var(--ling-font-xs);
@@ -105,17 +105,27 @@
   place-items: center;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: var(--ling-radius-md);
+  border-radius: var(--ling-control-radius);
   color: var(--ling-text-muted);
   background: transparent;
   cursor: pointer;
 }
 
+@media (forced-colors: active) {
+  .normal-conversation-composer .composer-drop-hint {
+    border: 2px solid Highlight;
+    color: CanvasText;
+    background: Canvas;
+    forced-color-adjust: none;
+  }
+}
+
 [data-conversation-composer] .composer-attach-button:hover,
 [data-conversation-composer] .composer-attach-button:focus-within {
-  border-color: var(--ling-border-default);
+  border-color: var(--ling-border-focus);
   color: var(--ling-text-strong);
-  background: var(--ling-bg-subtle);
+  background: var(--ling-action-selection);
+  box-shadow: var(--ling-focus-ring);
 }
 
 [data-conversation-composer] .composer-attach-button[aria-disabled="true"] {
@@ -149,9 +159,9 @@
   gap: var(--ling-space-4);
   padding: 5px 34px 5px 5px;
   border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-md);
+  border-radius: var(--ling-card-radius);
   color: var(--ling-text-default);
-  background: var(--ling-bg-panel);
+  background: var(--ling-card-bg);
 }
 
 [data-conversation-composer] .composer-preview-card.image {

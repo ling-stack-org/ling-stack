@@ -324,6 +324,7 @@ export function WorkspaceClientView({
   taskForm,
   channelMessages,
   channelConversationItems,
+  channelRuntimeMetrics,
   channelTurnContextAssignments,
   channelUserInputs,
   channelReasoningSummaries,
@@ -2990,6 +2991,7 @@ export function WorkspaceClientView({
     teammateOptions,
     t,
     timelineItemLocatorRef: conversationTimelineItemLocatorRef,
+    onTimelineLocateIntent: messageFeedState.onLocateIntent,
     timelineScrollRef: messageFeedState.scrollRef,
     timelineViewRetainKeys: messageFeedState.viewRetainKeys,
     onTimelineDisclosureIntent: messageFeedState.onDisclosureIntent,
@@ -3039,6 +3041,7 @@ export function WorkspaceClientView({
   const channelComposer = (
     <ChannelComposer
       statusNode={channelActiveStatusStrip}
+      runtimeMetrics={channelRuntimeMetrics}
       guidanceModeActive={guidanceModeActive}
       replyTargetActive={Boolean(activeConversationTarget)}
       composerBusy={composerBusy}

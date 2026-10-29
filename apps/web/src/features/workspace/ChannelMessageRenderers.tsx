@@ -541,6 +541,7 @@ export interface ChannelMessageRenderersInput {
   readonly teammateOptions: readonly ChannelMention[];
   readonly t: (key: string, values?: Record<string, string | number>) => string;
   readonly timelineItemLocatorRef: MutableRefObject<ConversationTimelineItemLocator | null>;
+  readonly onTimelineLocateIntent: () => void;
   readonly timelineScrollRef: RefObject<HTMLDivElement | null>;
   readonly timelineViewRetainKeys: ConversationViewRetainKeys;
   readonly onTimelineDisclosureIntent: (intent: ConversationTimelineDisclosureIntent) => void;
@@ -1091,6 +1092,22 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         return renderMessageActivityItem(channelMessageToActivityItem(message), body, presentation.ownsIdentity);
       },
       itemLocatorRef: input.timelineItemLocatorRef,
+      onPositionNavigate: input.onTimelineLocateIntent,
+      positionIdentity: (item) => {
+        const message = item.itemId ? messageByTimelineItemId.get(`message:${item.kind === "userMessage" ? "user" : "agent"}:${item.itemId}`) : undefined;
+        if (message) return {
+          name: messageAuthorLabel(message, input.teammateOptions, input.t("Deleted teammate"), input.localUserDisplayName, input.allLocalTeammateById),
+          avatar: renderChannelMessageAvatar(message),
+        };
+        const teammate = input.allLocalTeammateById.get(item.participantId ?? "");
+        return item.kind === "userMessage" ? {
+          name: input.localUserDisplayName,
+          avatar: <UserProfileAvatar profile={input.userProfile} fallbackLabel={input.localUserDisplayName} />,
+        } : {
+          name: teammate?.displayName ?? input.t("Ling Agent"),
+          avatar: teammate ? <TeammateAvatarView teammate={teammate} cwd={input.cwd} compact /> : renderLingAgentAvatar(),
+        };
+      },
       virtualScrollRef: input.timelineScrollRef,
       viewStateRetainKeys: input.timelineViewRetainKeys,
       ariaLabel: input.t("Channel conversation transcript"),

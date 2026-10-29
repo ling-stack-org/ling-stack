@@ -1,3 +1,5 @@
+import { normalizeRunnerId } from "@ling-stack/core";
+
 export function matchSingleSegmentRoute(pathname: string, prefix: string): string | undefined {
   const routePrefix = `${prefix}/`;
   if (!pathname.startsWith(routePrefix)) {
@@ -13,7 +15,7 @@ export function matchSingleSegmentRoute(pathname: string, prefix: string): strin
 export function parseRunnerReadinessRoute(pathname: string): { readonly runnerId: string } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 3 && segments[0] === "runners" && segments[2] === "readiness") {
-    return { runnerId: segments[1] };
+    return { runnerId: normalizeRunnerId(segments[1]) ?? segments[1] };
   }
   return undefined;
 }

@@ -195,18 +195,6 @@
   width: 100%;
   margin: 10px 0 14px;
   padding: 8px;
-  border-color: var(--ling-border-default);
-  border-radius: var(--ling-radius-lg);
-  color: var(--ling-text-default);
-  background: var(--ling-bg-composer);
-  box-shadow: var(--ling-shadow-medium);
-}
-
-.teammate-workspace.chat-mode [data-conversation-composer][data-surface="teammate_direct"]:focus-within {
-  border-color: var(--ling-border-focus);
-  box-shadow:
-    inset 0 0 0 1px var(--ling-border-focus),
-    var(--ling-shadow-medium);
 }
 
 .teammate-workspace.chat-mode [data-conversation-composer][data-surface="teammate_direct"] .conversation-composer-input-zone,
@@ -233,5 +221,5 @@
   min-width: var(--ling-control-sm);
   height: var(--ling-control-sm);
   min-height: var(--ling-control-sm);
-  border-radius: var(--ling-radius-md);
+  border-radius: var(--ling-control-radius);
 }

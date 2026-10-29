@@ -1,3 +1,4 @@
+mod background;
 mod color;
 mod container;
 mod exif;
@@ -23,22 +24,38 @@ impl Error {
 }
 
 pub fn sanitize(input: &[u8], max_pixels: u64) -> Result<Vec<u8>> {
+    let (width, height, pixels) = decode(input, max_pixels, false)?;
+    encode_png(width, height, &pixels, MAX_BYTES)
+}
+
+/// Explicit wallpaper preset; the artifact sanitizer keeps its original dimensions and limits.
+pub fn sanitize_background(input: &[u8], max_pixels: u64) -> Result<Vec<u8>> {
+    let (width, height, pixels) = decode(input, max_pixels.min(16_000_000), true)?;
+    let (width, height, pixels) = background::resize(width, height, pixels);
+    encode_png(width, height, &pixels, 16 * 1024 * 1024)
+}
+
+fn decode(input: &[u8], max_pixels: u64, background: bool) -> Result<(u32, u32, Vec<u8>)> {
     if input.len() > MAX_BYTES || !(1..=MAX_PIXELS).contains(&max_pixels) {
         return Err(Error::Capacity);
     }
     let preflight = container::inspect(input, max_pixels)?;
+    if background
+        && (input.len() > 16 * 1024 * 1024 || preflight.width > 8192 || preflight.height > 8192)
+    {
+        return Err(Error::Capacity);
+    }
     let pixels = match preflight.kind {
         container::Kind::Png => decode_png(input, &preflight)?,
         container::Kind::Jpeg => decode_jpeg(input, &preflight)?,
         container::Kind::Webp => decode_webp(input, &preflight)?,
     };
-    let (width, height, pixels) = orient(
+    orient(
         pixels,
         preflight.width,
         preflight.height,
         preflight.orientation,
-    )?;
-    encode_png(width, height, &pixels, MAX_BYTES)
+    )
 }
 
 fn decode_png(input: &[u8], p: &container::Preflight) -> Result<Vec<u8>> {

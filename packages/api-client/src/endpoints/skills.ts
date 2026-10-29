@@ -52,6 +52,10 @@ import type {
   SkillDefinitionHistoryResponse,
   SkillDefinitionUndoRequest,
   SkillDefinitionUndoResponse,
+  SharedSkillSourcePublishRequest,
+  SharedSkillSourcePublishResponse,
+  SharedSkillSourceScanRequest,
+  SharedSkillSourceScanResponse,
   SkillSourceHealthResponse,
   SkillSourceArtifactListResponse,
   SkillSourceSnapshotArchiveResponse,
@@ -189,6 +193,22 @@ export const skillEndpoints = {
 
   async publishGstackSkillSourceSync(this: LingDaemonEndpointContext, cwd: string, input: SkillSourceSyncPublishRequest): Promise<SkillSourceSyncPublishResponse> {
     return this._post("/skills/sync/gstack/publish", { cwd }, input);
+  },
+
+  async previewSharedSkillSources(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    input: SharedSkillSourceScanRequest = {},
+  ): Promise<SharedSkillSourceScanResponse> {
+    return this._post("/skills/sync/shared/preview", { cwd }, input);
+  },
+
+  async publishSharedSkillSources(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    input: SharedSkillSourcePublishRequest,
+  ): Promise<SharedSkillSourcePublishResponse> {
+    return this._post("/skills/sync/shared/publish", { cwd }, input);
   },
 
   async listSkillUsageEvents(

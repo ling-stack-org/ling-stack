@@ -22,6 +22,8 @@ import { getChannelMessageView } from "./conversation-item-messages.js";
 import { buildConversationGeneratedMediaProjection } from "../media/conversation-projection.js";
 import { terminalReportIsEligibleForDisplay } from "./terminal-report-eligibility.js";
 import { projectConversationUserInputs } from "../conversations/user-input-transcript.js";
+import { projectConversationRuntimeMetrics } from "../conversations/runtime-metrics-projection.js";
+import { listAllConversationTurns } from "../conversations/all-turns.js";
 import { projectConversationReasoningSummaries } from "../conversations/reasoning-summary-projection.js";
 import { projectConversationContextCompactions } from "../conversations/context-compaction-projection.js";
 
@@ -54,11 +56,20 @@ export function listChannelConversationItems(input: {
   const runs = runLinks
     .map((link) => input.store.getRun(link.runId))
     .filter((run): run is RunSession => Boolean(run));
+  const channelThreads = input.store.listLingThreads({ kind: "channel_discussion", channelId: input.channel.id, includeArchived: true, limit: 500 })
+    .filter((thread) => thread.workspaceId === input.thread.workspaceId && thread.channelId === input.channel.id);
+  const allTurns = channelThreads.flatMap((thread) => readAllChannelTurns(input.store, thread.id, input.channel.id,
+    input.replyDispatchCoordinator));
+  const allRuns = allTurns.flatMap((turn) => input.store.listLingTurnRuns(turn.id))
+    .map((link) => input.store.getRun(link.runId))
+    .filter((run): run is RunSession => Boolean(run));
   return {
     cwd: input.cwd,
     channelId: input.channel.id,
     thread: input.thread,
     turns,
+    runtimeMetrics: projectConversationRuntimeMetrics({ store: input.store, thread: input.thread, channelThreads, turns: allTurns, runs: allRuns,
+      enumerationMayBeTruncated: channelThreads.length === 500 }),
     items: visibleItems,
     turnContextAssignments: turns.flatMap((turn) => {
       const assignment = input.store.getEffectiveTurnContextAssignment(turn.id);
@@ -87,6 +98,25 @@ export function listChannelConversationItems(input: {
     hasMore: page.nextBeforeSequence !== undefined,
     ...(page.nextBeforeSequence !== undefined ? { nextBeforeSequence: page.nextBeforeSequence } : {}),
   };
+}
+
+function readAllChannelTurns(store: RunStore, threadId: string, channelId: string,
+  replyDispatchCoordinator?: ChannelReplyDispatchCoordinator): LingTurn[] {
+  // An effective channel item is the publication boundary for public metrics;
+  // unanchored/internal Turns are excluded, even if their Run shares this thread.
+  const visibleTurnIds = new Set<string>();
+  let beforeSequence = Number.MAX_SAFE_INTEGER;
+  for (;;) {
+    const page = store.listConversationItemsPage({ threadId, beforeSequence, effectiveOnly: true, limit: 500 });
+    for (const item of filterVisibleTimelineItems({ store, channelId, items: page.items, replyDispatchCoordinator })) {
+      if (item.channelId === channelId && item.turnId && item.visibility !== "operator") visibleTurnIds.add(item.turnId);
+    }
+    if (page.nextBeforeSequence === undefined) break;
+    if (page.nextBeforeSequence >= beforeSequence) throw new Error(`Channel item cursor did not advance: ${threadId}`);
+    beforeSequence = page.nextBeforeSequence;
+  }
+  return listAllConversationTurns(store, threadId).filter((turn) =>
+    visibleTurnIds.has(turn.id) && turn.threadId === threadId && turn.channelId === channelId && turn.status !== "superseded");
 }
 
 export function buildChannelConversationTurnResponse(input: {

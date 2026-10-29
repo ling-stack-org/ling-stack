@@ -11,7 +11,6 @@ export function mediaJobFormToPayload(form: MediaJobFormState): CreateMediaJobRe
 }
 
 export function mediaJobFormInputToPayload(form: MediaJobFormState): Record<string, unknown> | undefined {
-  const legacyInput = parseMediaInput(form.inputText);
   const structuredInput: Record<string, unknown> = {};
   if (form.operation === "image_generate") {
     assignTrimmedString(structuredInput, "size", form.size);
@@ -26,20 +25,7 @@ export function mediaJobFormInputToPayload(form: MediaJobFormState): Record<stri
     assignTrimmedString(structuredInput, "imageUrl", form.imageUrl);
     assignTrimmedString(structuredInput, "maskUrl", form.maskUrl);
   }
-  const input = { ...legacyInput, ...structuredInput };
-  return Object.keys(input).length > 0 ? input : undefined;
-}
-
-export function parseMediaInput(inputText: string): Record<string, unknown> | undefined {
-  const trimmed = inputText.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  const parsed = JSON.parse(trimmed) as unknown;
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error("Generation task input must be a JSON object.");
-  }
-  return parsed as Record<string, unknown>;
+  return Object.keys(structuredInput).length > 0 ? structuredInput : undefined;
 }
 
 function assignTrimmedString(target: Record<string, unknown>, key: string, value: string | undefined): void {

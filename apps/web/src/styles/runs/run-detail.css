@@ -5,7 +5,7 @@
   gap: var(--ling-space-5);
   min-width: 0;
   padding: var(--ling-space-5) var(--ling-space-6);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--ling-border-default);
 }
 
 .runs-detail-heading {
@@ -43,8 +43,8 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   min-width: 0;
   gap: 1px;
-  border: 1px solid var(--border);
-  background: var(--border);
+  border: 1px solid var(--ling-border-default);
+  background: var(--ling-border-default);
 }
 
 .runs-harness-diagnostics {
@@ -86,7 +86,7 @@
 .runs-summary-grid > *,
 .runs-summary-status {
   min-width: 0;
-  background: var(--surface-panel);
+  background: var(--ling-bg-panel);
 }
 
 .runs-summary-grid > .meta-row {
@@ -151,8 +151,8 @@
   display: grid;
   grid-template-columns: 110px minmax(0, 1fr);
   gap: 1px;
-  border: 1px solid var(--border);
-  background: var(--border);
+  border: 1px solid var(--ling-border-default);
+  background: var(--ling-border-default);
 }
 
 .runs-session-files span,
@@ -160,7 +160,7 @@
   min-width: 0;
   padding: var(--ling-space-4);
   overflow-wrap: anywhere;
-  background: var(--surface-panel);
+  background: var(--ling-bg-panel);
 }
 
 @media (max-width: 1320px) {

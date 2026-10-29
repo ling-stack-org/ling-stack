@@ -11,35 +11,36 @@ const webDirectory = fileURLToPath(new URL("../", import.meta.url));
 const helperPath = fileURLToPath(new URL("../src/shared/ui/public-asset-url.ts", import.meta.url));
 const avatarSourcePath = new URL("../src/features/teammates/default-teammate-avatars.ts", import.meta.url);
 const emptyStateSourcePath = new URL("../src/features/workspace/NormalConversationEmptyState.tsx", import.meta.url);
-const logoSourcePath = new URL("../src/shared/components/LingStackLogo.tsx", import.meta.url);
 
 test("public image sources use the trusted build-base helper", async () => {
-  const [helperSource, avatarSource, emptyStateSource, logoSource] = await Promise.all([
+  const [helperSource, avatarSource, emptyStateSource] = await Promise.all([
     readFile(helperPath, "utf8"),
     readFile(avatarSourcePath, "utf8"),
     readFile(emptyStateSourcePath, "utf8"),
-    readFile(logoSourcePath, "utf8"),
   ]);
 
   expect(helperSource).toContain("import.meta.env.BASE_URL");
   expect(helperSource).toContain("assertLocalPublicAssetPath(assetPath)");
   expect(avatarSource).toContain("publicAssetUrl(`${AVATAR_BASE_PATH}/${fileName}`)");
   expect(avatarSource).not.toContain('AVATAR_BASE_PATH = "/avatars');
-  expect(emptyStateSource).toContain("<LingStackLogo size={64}");
-  expect(logoSource).toContain("publicAssetUrl(`icons/${file}`)");
+  expect(emptyStateSource).toContain("<LingCoreMark");
+  expect(emptyStateSource).toContain('publicAssetUrl("brand/ling-core-ip.webp")');
   expect(emptyStateSource).not.toContain('src="/icons/');
 });
 
-test("Web dev renders the conversation mark from the origin public directory", async ({ page }) => {
+test("Web dev renders the Ling ink-wash mark with live nodes", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "en-US"));
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  await page.route("**/runtime/conversation-execution**", (route) => route.fulfill({
+    json: { cwd: "", status: "not_selected", defaultRunnerId: "pi" },
+  }));
   await page.goto("/");
 
-  const mark = page.getByLabel("Conversation home").locator(".conversation-home-mark img");
+  const mark = page.getByLabel("Conversation home").locator(".conversation-home-mark .ling-core-mark");
   await expect(mark).toBeVisible();
-  await expect(mark).toHaveAttribute("src", "/icons/ling-mark-compact.svg");
-  const response = await page.request.get(new URL(await mark.getAttribute("src") ?? "", page.url()).href);
-  expect(response.ok()).toBe(true);
+  await expect(mark).toHaveAttribute("data-state", "idle");
+  await expect(mark.locator(".ling-core-mark-orb")).toHaveCount(3);
+  await expect(mark.locator(".ling-core-mark-artwork")).toHaveAttribute("src", "/brand/ling-core-ip.webp");
 });
 
 for (const theme of ["light", "dark"] as const) {
@@ -57,17 +58,19 @@ for (const theme of ["light", "dark"] as const) {
           localStorage.setItem("ling-stack.themeBootstrapSelection", selection);
         }, theme);
         await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+        await page.route("**/runtime/conversation-execution**", (route) => route.fulfill({
+          json: { cwd: "", status: "not_selected", defaultRunnerId: "pi" },
+        }));
         await page.goto("/");
         await expect(page.locator("html")).toHaveAttribute("data-ui-theme", `ling-${theme}`);
-        const mark = page.locator(".conversation-home-mark img");
+        const mark = page.locator(".conversation-home-mark .ling-core-mark");
         await expect(mark).toBeVisible();
-        await expect.poll(() => mark.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
-        const geometry = await mark.evaluate((img: HTMLImageElement) => {
-          const rect = img.getBoundingClientRect();
-          const parent = getComputedStyle(img.parentElement!);
+        const geometry = await mark.evaluate((svg: SVGSVGElement) => {
+          const rect = svg.getBoundingClientRect();
+          const parent = getComputedStyle(svg.parentElement!);
           return { width: rect.width, height: rect.height, radius: parent.borderRadius, overflow: parent.overflow };
         });
-        expect(geometry).toEqual({ width: 64, height: 64, radius: "0px", overflow: "visible" });
+        expect(geometry).toEqual({ width: 256, height: 150, radius: "0px", overflow: "visible" });
         await expect(page.locator('link[rel="icon"][type="image/svg+xml"]')).toHaveAttribute("href", "./favicon.svg");
         const favicon = await page.request.get("/favicon.svg");
         expect(favicon.ok()).toBe(true);
@@ -94,10 +97,13 @@ test("Vite build bases resolve public images for Web and Electron file documents
 
     const avatarPath = "avatars/teammates/engineer.png" as const;
     const iconPath = "icons/ling-mark-compact.svg" as const;
+    const coreIpPath = "brand/ling-core-ip.webp" as const;
     expect(webModule.publicAssetUrl(avatarPath)).toBe("/avatars/teammates/engineer.png");
     expect(webModule.publicAssetUrl(iconPath)).toBe("/icons/ling-mark-compact.svg");
+    expect(webModule.publicAssetUrl(coreIpPath)).toBe("/brand/ling-core-ip.webp");
     expect(fileModule.publicAssetUrl(avatarPath)).toBe("./avatars/teammates/engineer.png");
     expect(fileModule.publicAssetUrl(iconPath)).toBe("./icons/ling-mark-compact.svg");
+    expect(fileModule.publicAssetUrl(coreIpPath)).toBe("./brand/ling-core-ip.webp");
 
     expect(new URL(
       webModule.publicAssetUrl(avatarPath),

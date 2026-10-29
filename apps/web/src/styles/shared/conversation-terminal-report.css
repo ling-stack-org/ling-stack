@@ -3,7 +3,7 @@
   gap: 8px;
   min-width: 0;
   padding: 8px 0 2px;
-  color: var(--conversation-text);
+  color: var(--ling-text-default);
 }
 
 .terminal-report-summary {
@@ -29,7 +29,7 @@
 
 .terminal-report-summary:focus-visible .terminal-report-outcome-copy strong {
   text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--conversation-text-muted) 55%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--ling-text-muted) 55%, transparent);
   text-underline-offset: 3px;
 }
 
@@ -57,7 +57,7 @@
 }
 
 .terminal-report-row-rich-description {
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: inherit;
   font-weight: 400;
   line-height: inherit;
@@ -79,7 +79,7 @@
   justify-content: center;
   width: 16px;
   height: 20px;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   opacity: 0;
   transition:
     opacity var(--ling-motion-fast) var(--ling-ease-standard),
@@ -132,14 +132,14 @@
 
 .terminal-report-participants strong,
 .terminal-report-participant-copy > strong {
-  color: var(--info, #2563eb);
+  color: var(--ling-status-info);
   font-weight: 600;
 }
 
 .terminal-report-participant-rich-description {
   display: block;
   margin-top: 2px;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   font-weight: 400;
   line-height: 1.45;
@@ -154,7 +154,7 @@
 }
 
 .terminal-report-participant-separator {
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
 }
 
 .terminal-report-detail {
@@ -190,15 +190,15 @@
   align-items: center;
   justify-content: center;
   height: 18px;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
 }
 
 .terminal-report-row.tone-success .terminal-report-row-icon {
-  color: var(--success-strong, #27845d);
+  color: var(--ling-status-success);
 }
 
 .terminal-report-row.tone-failed .terminal-report-row-icon {
-  color: var(--danger-strong, #c34a4a);
+  color: var(--ling-status-danger);
 }
 
 .terminal-report-row-copy {
@@ -221,7 +221,7 @@
 .terminal-report-row-title small,
 .terminal-report-row-description,
 .terminal-report-row-rich-description {
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
 }
 
 .terminal-report-row-copy code,
@@ -243,7 +243,7 @@
   align-items: center;
   gap: 4px;
   width: fit-content;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   cursor: pointer;
   list-style: none;
 }
@@ -274,10 +274,10 @@
   max-height: 180px;
   overflow: auto;
   padding: 5px 7px;
-  border: 1px solid var(--conversation-code-border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 5px;
-  background: var(--conversation-code-bg);
-  color: var(--conversation-text-muted);
+  background: var(--ling-bg-code);
+  color: var(--ling-text-muted);
   font-size: 11px;
   line-height: 1.45;
   white-space: pre-wrap;
@@ -299,7 +299,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--info, #2563eb);
+  color: var(--ling-status-info);
   font: inherit;
   line-height: inherit;
   text-align: left;
@@ -328,7 +328,7 @@
 
 .terminal-report-file-reference:hover,
 .terminal-report-file-reference:focus-visible {
-  color: var(--accent-strong, #1d4ed8);
+  color: var(--ling-action-accent-hover);
   outline: none;
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -342,10 +342,10 @@
   width: max-content;
   max-width: min(420px, 70vw);
   padding: 5px 7px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--ling-border-default);
   border-radius: 5px;
-  background: var(--panel-strong, var(--conversation-bg));
-  color: var(--conversation-text-strong);
+  background: var(--panel-strong, var(--ling-bg-panel));
+  color: var(--ling-text-strong);
   box-shadow: 0 8px 24px rgba(17, 24, 39, 0.16);
   font-size: 11px;
   line-height: 1.4;
