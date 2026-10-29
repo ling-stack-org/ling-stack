@@ -6484,4 +6484,9 @@ export const zhCN = {
   "End": "结束",
   "Automation run finished": "自动化运行完成",
   "Automation run failed": "自动化运行失败",
+  "Spreadsheet preview": "表格预览",
+  "Loading spreadsheet...": "正在加载表格…",
+  "Load more rows": "加载更多行",
+  "Row": "行",
+  "Formulas are shown for reference and never evaluated.": "公式仅作展示，永不被求值。",
 } as const satisfies Readonly<Record<string, string>>;

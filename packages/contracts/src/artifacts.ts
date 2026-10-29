@@ -24,7 +24,10 @@ export type PreviewContentKind =
   | "pdf"
   | "office"
   | "html_interactive"
+  | "spreadsheet"
   | "unsupported";
+
+import type { SpreadsheetWorkbook } from "./deliverables.js";
 
 /**
  * Gen UI interactive HTML preview (ux-gap-roadmap-02). Rendered inside an
@@ -121,6 +124,7 @@ export interface PreviewContentResponse {
   readonly imageUrl?: string;
   readonly compare?: PreviewImageCompare;
   readonly htmlInteractive?: PreviewHtmlInteractive;
+  readonly spreadsheet?: SpreadsheetWorkbook;
   readonly truncated: boolean;
   readonly sizeBytes?: number;
   readonly redactionNotes: readonly string[];

@@ -4,9 +4,9 @@ import type {
   ApprovalCommandRuleMutationResponse,
   ApprovalListResponse,
   ApprovalMutationResponse,
-  ApprovalPolicyFormState,
   ApprovalPolicyResponse,
-} from "../types.js";
+} from "@ling-stack/contracts";
+import type { ApprovalPolicyFormState } from "../types.js";
 import { approvalPolicyFormToPayload } from "./approval-payloads.js";
 import { daemonClient } from "./client.js";
 

@@ -122,6 +122,8 @@ export interface ConversationTranscriptMessage {
 import type { ExecutionBindingRequest } from "./execution-engines.js";
 
 export interface ConversationStreamRequest {
+  /** v2 requests must omit legacy permissionMode/permissionPreset fields. */
+  readonly schemaVersion?: 2;
   readonly threadId?: string;
   readonly message: string;
   readonly attachmentIds?: readonly string[];

@@ -1,4 +1,4 @@
-import type { RunSession, ToolName } from "../types.js";
+import type { RunSession, ToolName } from "@ling-stack/contracts";
 
 export function splitCsv(value: string): string[] {
   return value

@@ -46,7 +46,7 @@ import type {
   ShellSnapshotResponse,
   UserInputAnswerSubmissionResponseV1,
   UserInputAnswerSubmissionV1,
-} from "../types.js";
+} from "@ling-stack/contracts";
 import { daemonClient } from "./client.js";
 
 export async function getRun(runId: string, cwd?: string): Promise<RunSession> {

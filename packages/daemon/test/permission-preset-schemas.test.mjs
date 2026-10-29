@@ -29,6 +29,42 @@ test("run schemas derive permission mode from non-custom presets", () => {
   assert.equal(taskRun.permissionMode, "ask_everything");
 });
 
+test("permission v2 rejects legacy fields before policy resolution", () => {
+  assert.throws(
+    () => parseRunRequest(runRequest({ schemaVersion: 2, authorizationMode: "smart", workspaceAccessMode: "workspace_write", permissionPreset: "custom" })),
+    error => error?.code === "legacy_permission_fields_removed" && error?.statusCode === 400,
+  );
+  const request = parseRunRequest(runRequest({ schemaVersion: 2, authorizationMode: "smart", workspaceAccessMode: "workspace_write" }));
+  assert.equal(request.schemaVersion, 2);
+  assert.equal(request.authorizationMode, "smart");
+  assert.equal(request.workspaceAccessMode, "workspace_write");
+  assert.equal(request.permissionPreset, undefined);
+  assert.equal(request.permissionMode, undefined);
+});
+
+test("task run schemas enforce the same v2 permission boundary", () => {
+  assert.throws(
+    () => parseTaskRunRequest({
+      schemaVersion: 2,
+      providerPresetId: "provider_openai",
+      authorizationMode: "smart",
+      workspaceAccessMode: "workspace_write",
+      permissionPreset: "custom",
+    }),
+    error => error?.code === "legacy_permission_fields_removed" && error?.statusCode === 400,
+  );
+  const request = parseTaskRunRequest({
+    schemaVersion: 2,
+    providerPresetId: "provider_openai",
+    authorizationMode: "smart",
+    workspaceAccessMode: "workspace_write",
+  });
+  assert.equal(request.authorizationMode, "smart");
+  assert.equal(request.workspaceAccessMode, "workspace_write");
+  assert.equal(request.permissionPreset, undefined);
+  assert.equal(request.permissionMode, undefined);
+});
+
 test("run schema accepts only provider-safe reasoning summary modes", () => {
   for (const mode of ["auto", "concise", "detailed", "none"]) {
     assert.equal(parseRunRequest(runRequest({ reasoningSummary: mode })).reasoningSummary, mode);

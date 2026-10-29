@@ -1,4 +1,5 @@
-import type { CreateMediaJobRequest, MediaJobFormState } from "../types.js";
+import type { MediaJobFormState } from "../types.js";
+import type { CreateMediaJobRequest } from "@ling-stack/contracts";
 
 export function mediaJobFormToPayload(form: MediaJobFormState): CreateMediaJobRequest {
   return {

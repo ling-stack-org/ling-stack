@@ -1,11 +1,11 @@
 import type {
   MediaJobArtifactListResponse,
   ConversationMediaGenerationTargetsResponse,
-  MediaJobFormState,
   MediaJobListResponse,
   MediaJobMutationResponse,
   PreviewContentResponse,
-} from "../types.js";
+} from "@ling-stack/contracts";
+import type { MediaJobFormState } from "../types.js";
 import { daemonClient } from "./client.js";
 import { mediaJobFormToPayload } from "./media-payloads.js";
 
