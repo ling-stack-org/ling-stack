@@ -6,6 +6,8 @@
 
 - [Skill Import Productization](./skill-import-productization.md)
 - [GStack Skill Source Sync](gstack-skill-source-sync.md)
+- [External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md) — the
+  **Local skill folders** review surface and its ownership rules.
 - [Settings Shell](./ui2.0升级/modules/settings/README.md)
 
 ## Summary
@@ -16,17 +18,22 @@ The existing `Built-in / Custom` filter exposes implementation provenance, but i
 not answer the user's primary question: which skills are mine to manage, and which are
 provided by Ling?
 
-The product surface is separated into two ownership views plus one governed evolution
-view:
+The product surface is separated into three ownership views plus one local-source review
+surface:
 
 - **My skills** is the default view and contains user-managed registry entries.
+- **Local skill folders** lists shared `.agents/skills` candidates and is the explicit
+  adoption boundary for user-owned local content. Nothing there is effective until the
+  user publishes a record.
 - **AI evolution** contains reusable skills and patterns discovered by Ling that still
   require explicit user review before they can affect the registry.
 - **Built-in skills** is a separate read-only view for Ling-provided definitions.
 
 Official source updates and health-diagnostic workflows are not part of the Skill Library
-navigation. AI evolution remains visible because it is the user approval boundary for
-generated skill candidates, observed reusable procedures, and playbook proposals.
+navigation. Local skill folders are, because they are a user decision surface rather than
+an official-source update. AI evolution remains visible because it is the user approval
+boundary for generated skill candidates, observed reusable procedures, and playbook
+proposals.
 
 ## Ownership Contract
 
@@ -65,8 +72,9 @@ list. The actual gstack capabilities remain the individual built-in skills.
 The Skill Library sub-navigation is:
 
 1. **My skills**
-2. **AI evolution**
-3. **Built-in skills**
+2. **Local skill folders**
+3. **AI evolution**
+4. **Built-in skills**
 
 Entering or reloading the Skill Library always opens **My skills**. The selected
 subsection is not stored in localStorage.
@@ -83,6 +91,31 @@ My skills is the management surface for all non-built-in entries.
 - Available actions: import, create draft, inspect, preview optimization, archive eligible
   entries, and manage source snapshots where already supported.
 - Table columns: status, skill, source, stage, bound teammates, actions.
+
+### Local Skill Folders
+
+Local skill folders is a review and adoption surface for the shared `.agents/skills`
+convention. It is not an ownership list: records become **My skills** entries only after
+an explicit publish.
+
+- Sources: `<workspace>/.agents/skills` and `~/.agents/skills`, auto-detected; the user
+  never supplies a path.
+- States: new, already-adopted shared entry missing its source snapshot, update available
+  (drift), up to date, blocked, source missing, and client-side ignored.
+- Actions: inspect, select records, **Publish selected** with confirmation (new skills
+  require `allowNewSkills` confirmation), **Ignore** / **Restore** (workspace-scoped
+  client state), and **Refresh**.
+- Publishing creates user-owned entries (`source: "skill-directory"`, pack
+  `shared-skill-source-sync`). It never binds a teammate, grants tools, changes approval
+  policy, or injects runtime context by itself.
+- Records resolving to a `builtin`, `gstack`, or `workspace`-owned skill, or to a user
+  entry created outside this flow, are blocked with `skill_id_conflict` and cannot be
+  published.
+- Absolute filesystem paths are never rendered; ignore state is presentation-only and is
+  not a security control.
+
+The full behavior and safety contract lives in
+[External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md).
 
 ### Built-in Skills
 
@@ -117,7 +150,12 @@ AI evolution is a governed review surface, not an automatically active skill lis
 
 ## Interaction Rules
 
-- Search is scoped to the active ownership view.
+- Search is scoped to the active ownership view. Local skill folders search covers the
+  merged shared roots and does not read the registry list.
+- Publishing from Local skill folders moves an entry into My skills; the surface itself
+  keeps showing the source state (up to date, update available, source missing).
+- Ignoring a local record is workspace-scoped client state: it hides the record and its
+  count, never deletes a skill or snapshot, and clears when the workspace data is cleared.
 - Default search covers skill name, description, required tools, and provider
   capabilities. Hidden provenance such as pack id, source paths, upstream paths, and
   checksums must not make every skill match a source name such as `gstack`.
@@ -142,8 +180,8 @@ This change reorganizes presentation only. It must not change:
 - source-sync publish semantics;
 - registry storage or daemon routes.
 
-Imported or synced skill content still cannot grant tools, credentials, provider access,
-approval bypasses, or external-send authority.
+Imported, synced, or adopted local skill content still cannot grant tools, credentials,
+provider access, approval bypasses, or external-send authority.
 
 ## Acceptance Criteria
 
@@ -153,7 +191,7 @@ approval bypasses, or external-send authority.
 - Archived and disabled user skills are not presented as dead filters because the current
   registry endpoint does not return them.
 - Built-in skills has no archive, disable, edit, copy, source archive, or rollback action.
-- Skill Library exposes My skills, AI evolution, and Built-in skills.
+- Skill Library exposes My skills, Local skill folders, AI evolution, and Built-in skills.
 - AI evolution restores the governed candidate-review flow without restoring official
   skill updates or skill health diagnostics.
 - Built-in skills contains the 55 bundled `gstack-default` entries without a redundant

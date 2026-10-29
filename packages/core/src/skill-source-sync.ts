@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { parseDocument } from "yaml";
 import { buildSkillSourceContextFindings } from "./skill-source-health.js";
 import { parseSkillFrontMatter, previewSkillSourceDefinition, splitMarkdownFrontMatter } from "./skill-source-definition.js";
@@ -44,6 +44,21 @@ export interface ResolveLocalGstackSkillSourceRootsInput {
   readonly volumeRoot?: string;
 }
 
+export interface ResolveSharedAgentsSkillSourceRootsInput {
+  readonly workspaceRoot?: string;
+  readonly homeDir?: string;
+  readonly includeProjectRoot?: boolean;
+  readonly includeUserRoot?: boolean;
+}
+
+export const SHARED_AGENTS_SKILL_SOURCE_ROOT_IDS = {
+  project: "shared-agents-workspace",
+  user: "shared-agents-user",
+} as const;
+
+/** Pack that owns skills adopted from the shared `.agents/skills` folders. */
+export const SHARED_AGENT_SKILL_PACK_ID = "shared-skill-source-sync";
+
 export interface PreviewGstackSkillSourceSyncInput {
   readonly roots: readonly SkillSourceScanRoot[];
   readonly registrySkills: readonly SkillRegistryEntry[];
@@ -52,6 +67,27 @@ export interface PreviewGstackSkillSourceSyncInput {
   readonly excludeSkillIds?: readonly string[];
   readonly generatedAt?: string;
   readonly maxSourceBytes?: number;
+  /**
+   * Restrict snapshot comparison to snapshots owned by these source roots.
+   * Ignored when `snapshotPackIds` is set.
+   */
+  readonly snapshotSourceRoots?: readonly SkillSourceScanRoot[];
+  /**
+   * Exact pack-owned snapshot history. When set, only published snapshots whose registry
+   * entry belongs to one of these packs participate; path scoping is skipped so adopted
+   * snapshots survive a deleted root. The shared preview should pass
+   * `[SHARED_AGENT_SKILL_PACK_ID]`; it is the default when `allowManagedSkillIdMatching`
+   * is `false`.
+   */
+  readonly snapshotPackIds?: readonly string[];
+  /** Ignore published snapshots whose registry entry belongs to one of these packs. */
+  readonly excludedSnapshotPackIds?: readonly string[];
+  /**
+   * Shared discovery must not attach to managed/builtin entries by natural name.
+   * `false` also enables the shared-surface rules: pack-scoped snapshot ownership,
+   * project-first duplicate-source blocking, and symlink/unsafe-path rejection.
+   */
+  readonly allowManagedSkillIdMatching?: boolean;
 }
 
 interface DiscoveredSkillSource {
@@ -134,6 +170,49 @@ export async function resolveSkillSourceRoots(input: ResolveSkillSourceRootsInpu
   return [...unique.values()];
 }
 
+/**
+ * Standard `.agents/skills` directories shared between agents rather than owned by Ling.
+ * Project-shared roots are workspace files; user-shared roots live under the user home.
+ * Both are auto-detected from known locations and never accept an arbitrary path, so the
+ * P16 official-source contract (managed cache, no local path discovery) stays untouched.
+ */
+export async function resolveSharedAgentsSkillSourceRoots(
+  input: ResolveSharedAgentsSkillSourceRootsInput = {},
+): Promise<SkillSourceScanRoot[]> {
+  const home = input.homeDir ?? homedir();
+  const candidates: SkillSourceScanRoot[] = [];
+  if (input.includeProjectRoot !== false && input.workspaceRoot) {
+    candidates.push({
+      id: SHARED_AGENTS_SKILL_SOURCE_ROOT_IDS.project,
+      rootPath: resolve(input.workspaceRoot, ".agents", "skills"),
+      sourceKind: "workspace-skill-directory",
+      label: "Project shared .agents skill root",
+    });
+  }
+  if (input.includeUserRoot !== false) {
+    candidates.push({
+      id: SHARED_AGENTS_SKILL_SOURCE_ROOT_IDS.user,
+      rootPath: resolve(home, ".agents", "skills"),
+      sourceKind: "workspace-skill-directory",
+      label: "User shared .agents skill root",
+    });
+  }
+  const unique = new Map<string, SkillSourceScanRoot>();
+  for (const candidate of candidates) {
+    const rootPath = resolve(candidate.rootPath);
+    if (!await isRealDirectory(rootPath)) {
+      continue;
+    }
+    // Symlinked roots are rejected above, so this also dedupes bind-mounted copies of the
+    // same physical directory while keeping the first (highest priority) candidate.
+    const identity = await realpath(rootPath).catch(() => rootPath);
+    if (!unique.has(identity)) {
+      unique.set(identity, { ...candidate, rootPath });
+    }
+  }
+  return [...unique.values()];
+}
+
 export async function resolveLocalGstackSkillSourceRoots(input: ResolveLocalGstackSkillSourceRootsInput = {}): Promise<SkillSourceScanRoot[]> {
   const home = input.homeDir ?? homedir();
   const repoRoots = input.gstackRepoRoots?.length
@@ -182,20 +261,60 @@ export async function previewGstackSkillSourceSync(input: PreviewGstackSkillSour
   const includeIds = input.includeSkillIds ? new Set(input.includeSkillIds) : undefined;
   const excludeIds = new Set(input.excludeSkillIds ?? []);
   const skillsById = new Map(input.registrySkills.map((skill) => [skill.id, skill]));
-  const publishedSnapshots = selectActiveSkillSourceSnapshots(input.snapshots ?? []);
+  const sharedSurface = input.allowManagedSkillIdMatching === false;
+  const excludedSnapshotPacks = new Set(input.excludedSnapshotPackIds ?? []);
+  const snapshotPackScope = new Set(
+    input.snapshotPackIds?.length
+      ? input.snapshotPackIds
+      : sharedSurface ? [SHARED_AGENT_SKILL_PACK_ID] : [],
+  );
+  const activeSnapshots = selectActiveSkillSourceSnapshots(input.snapshots ?? []);
+  // Pack-owned history wins over path scoping: an adopted snapshot must still be reported
+  // as `missing` after its root folder disappears, and legacy/gstack snapshots can never
+  // leak into the shared surface.
+  const publishedSnapshots = (snapshotPackScope.size
+    ? activeSnapshots.filter((snapshot) => snapshotPackScope.has(skillsById.get(snapshot.skillId)?.packId ?? ""))
+    : activeSnapshots.filter((snapshot) => !input.snapshotSourceRoots || input.snapshotSourceRoots.some((root) =>
+        snapshot.sourceKind === root.sourceKind && snapshot.sourcePath
+        && isPathInside(root.rootPath, snapshot.sourcePath))))
+    .filter((snapshot) => !excludedSnapshotPacks.size
+      || !excludedSnapshotPacks.has(skillsById.get(snapshot.skillId)?.packId ?? ""));
   const snapshotsBySkillId = new Map(publishedSnapshots.map((snapshot) => [snapshot.skillId, snapshot]));
   const records: SkillSourceSyncPreviewRecord[] = [];
 
+  const scannedRoots: { root: SkillSourceScanRoot; sources: readonly DiscoveredSkillSource[] }[] = [];
   for (const root of input.roots) {
-    for (const source of await scanSkillSourceRoot(root, maxSourceBytes)) {
+    scannedRoots.push({ root, sources: await scanSkillSourceRoot(root, maxSourceBytes, sharedSurface) });
+  }
+  // Shared adoption resolves identities by natural name, so a name offered by more than one
+  // root has no unambiguous provenance. Every contender is blocked until the duplicate is
+  // resolved on disk; the daemon additionally guards its own publish selection.
+  const contendersPerSkillId = new Map<string, number>();
+  for (const { sources } of scannedRoots) {
+    for (const source of sources) {
+      const skillId = resolveSkillIdForSource(source, skillsById);
+      if (isSkillIncluded(skillId, includeIds, excludeIds)) {
+        contendersPerSkillId.set(skillId, (contendersPerSkillId.get(skillId) ?? 0) + 1);
+      }
+    }
+  }
+
+  for (const { root, sources } of scannedRoots) {
+    for (const source of sources) {
       const skillId = resolveSkillIdForSource(source, skillsById);
       if (!isSkillIncluded(skillId, includeIds, excludeIds)) {
         continue;
       }
+      const duplicateSource = sharedSurface && (contendersPerSkillId.get(skillId) ?? 0) > 1;
       const existingSkill = skillsById.get(skillId);
-      const existingSnapshot = snapshotsBySkillId.get(skillId);
-      const state = classifyDiscoveredSource(source, existingSkill, existingSnapshot);
-      const definitionPreview = previewSkillSourceDefinition(skillId, source, existingSkill);
+      const conflictingSkill = input.allowManagedSkillIdMatching === false && existingSkill
+        && !(existingSkill.source === "skill-directory" && existingSkill.packId === SHARED_AGENT_SKILL_PACK_ID);
+      const blockedSource = duplicateSource || conflictingSkill;
+      const existingSnapshot = blockedSource ? undefined : snapshotsBySkillId.get(skillId);
+      const state = blockedSource ? "blocked" as const : classifyDiscoveredSource(source, existingSkill, existingSnapshot);
+      // Blocked records are never publishable, so they must not seed a definition preview
+      // (this also covers error-severity warnings such as `unsafe_path` or raw secrets).
+      const definitionPreview = state === "blocked" ? undefined : previewSkillSourceDefinition(skillId, source, existingSkill);
       const snapshotPreview = buildSnapshotPreview(skillId, source, state);
       const diff = existingSnapshot && snapshotPreview ? buildSourceSyncDiff(existingSnapshot, source, snapshotPreview) : [];
       const contextFindings = buildSkillSourceContextFindings({
@@ -206,13 +325,28 @@ export async function previewGstackSkillSourceSync(input: PreviewGstackSkillSour
         warnings: source.warnings,
         routingDescription: source.frontMatter.description ?? source.agentMetadata?.shortDescription,
       });
-      const semanticDiff = existingSnapshot
+      const semanticDiff = existingSnapshot && snapshotPreview
         ? diffSkillSourceSemanticProfiles(buildSkillSourceSemanticProfile({
             markdown: existingSnapshot.rawSkillMarkdown,
             sourceChecksum: existingSnapshot.sourceChecksum,
             referencedFiles: existingSnapshot.referencedFiles,
           }), source.semanticProfile)
         : [];
+      const warnings: SkillSourceWarning[] = [...source.warnings];
+      if (duplicateSource) {
+        warnings.push({
+          code: "duplicate_source",
+          severity: "error",
+          message: `${skillId} appears in more than one shared root; resolve the duplicate before adopting it.`,
+        });
+      }
+      if (conflictingSkill) {
+        warnings.push({
+          code: "skill_id_conflict",
+          severity: "error",
+          message: `${skillId} belongs to a skill outside the shared .agents source and cannot be replaced by this candidate.`,
+        });
+      }
       records.push({
         state,
         skillId,
@@ -227,7 +361,7 @@ export async function previewGstackSkillSourceSync(input: PreviewGstackSkillSour
         frontMatter: source.frontMatter,
         agentMetadata: source.agentMetadata,
         referencedFiles: source.referencedFiles,
-        warnings: source.warnings,
+        warnings,
         definitionPreview,
         snapshotPreview,
         existingSnapshotId: existingSnapshot?.id,
@@ -317,32 +451,91 @@ function hashedSkillSourceRootId(prefix: string, rootPath: string): string {
   return `${prefix}:${digest}`;
 }
 
-async function scanSkillSourceRoot(root: SkillSourceScanRoot, maxSourceBytes: number): Promise<DiscoveredSkillSource[]> {
+async function scanSkillSourceRoot(
+  root: SkillSourceScanRoot,
+  maxSourceBytes: number,
+  rejectUnsafePaths = false,
+): Promise<DiscoveredSkillSource[]> {
   const rootPath = resolve(root.rootPath);
   if (!await isDirectory(rootPath)) {
     return [];
   }
-  const directories = await listSkillDirectories(rootPath);
+  const resolvedRoot = { ...root, rootPath };
+  const rootSkillPath = join(rootPath, "SKILL.md");
+  const rootSkill = await lstatOrUndefined(rootSkillPath);
+  if (rootSkill) {
+    if (!rejectUnsafePaths) {
+      if (await isFile(rootSkillPath)) {
+        return [await readSkillSource(resolvedRoot, rootPath, rootSkillPath, maxSourceBytes)];
+      }
+      // Legacy surfaces keep scanning children when the root-level SKILL.md is not a file.
+    } else if (rootSkill.isSymbolicLink() || !rootSkill.isFile()) {
+      return [blockedUnsafeSource(resolvedRoot, rootPath)];
+    } else {
+      return [await readSkillSource(resolvedRoot, rootPath, rootSkillPath, maxSourceBytes)];
+    }
+  }
+  const entries = await readdir(rootPath, { withFileTypes: true });
   const sources: DiscoveredSkillSource[] = [];
-  for (const directoryPath of directories) {
-    const skillPath = join(directoryPath, "SKILL.md");
-    if (!await isFile(skillPath)) {
+  for (const entry of entries.filter((item) => !item.name.startsWith(".")).sort((a, b) => a.name.localeCompare(b.name))) {
+    const directoryPath = join(rootPath, entry.name);
+    if (entry.isSymbolicLink()) {
+      if (rejectUnsafePaths) {
+        sources.push(blockedUnsafeSource(resolvedRoot, directoryPath));
+      }
       continue;
     }
-    sources.push(await readSkillSource({ ...root, rootPath }, directoryPath, skillPath, maxSourceBytes));
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const skillPath = join(directoryPath, "SKILL.md");
+    if (!rejectUnsafePaths) {
+      if (!await isFile(skillPath)) {
+        continue;
+      }
+      sources.push(await readSkillSource(resolvedRoot, directoryPath, skillPath, maxSourceBytes));
+      continue;
+    }
+    const info = await lstatOrUndefined(skillPath);
+    if (!info) {
+      continue;
+    }
+    if (info.isSymbolicLink() || !info.isFile()) {
+      sources.push(blockedUnsafeSource(resolvedRoot, directoryPath));
+      continue;
+    }
+    sources.push(await readSkillSource(resolvedRoot, directoryPath, skillPath, maxSourceBytes));
   }
   return sources;
 }
 
-async function listSkillDirectories(rootPath: string): Promise<string[]> {
-  if (await isFile(join(rootPath, "SKILL.md"))) {
-    return [rootPath];
-  }
-  const entries = await readdir(rootPath, { withFileTypes: true });
-  return entries
-    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
-    .map((entry) => join(rootPath, entry.name))
-    .sort();
+/**
+ * A blocked placeholder keeps symlinked or non-regular sources visible in the review
+ * surface without reading through the link. The error-severity `unsafe_path` warning makes
+ * the record `blocked`, so it can never be published.
+ */
+function blockedUnsafeSource(root: SkillSourceScanRoot, directoryPath: string): DiscoveredSkillSource {
+  const skillPath = join(directoryPath, "SKILL.md");
+  const emptyChecksum = checksumBytes(Buffer.alloc(0));
+  return {
+    root,
+    skillDirectoryPath: directoryPath,
+    skillDirectoryName: basename(directoryPath),
+    skillPath,
+    upstreamSkillPath: normalizeRelativePath(relative(root.rootPath, skillPath)),
+    markdown: "",
+    sourceChecksum: emptyChecksum,
+    sourceSizeBytes: 0,
+    frontMatter: {},
+    referencedFiles: [],
+    warnings: [{
+      code: "unsafe_path",
+      severity: "error",
+      message: "Skill sources must be regular files and directories inside the shared root; symbolic links and non-regular files are not adopted.",
+      location: "SKILL.md",
+    }],
+    semanticProfile: buildSkillSourceSemanticProfile({ markdown: "", sourceChecksum: emptyChecksum, referencedFiles: [] }),
+  };
 }
 
 async function readSkillSource(
@@ -938,6 +1131,11 @@ function buildSnapshotPreview(
   });
 }
 
+function isPathInside(root: string, candidate: string): boolean {
+  const rel = relative(resolve(root), resolve(candidate));
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
 function resolveSkillIdForSource(source: DiscoveredSkillSource, skillsById: ReadonlyMap<string, SkillRegistryEntry>): string {
   const rawCandidates = uniqueStringsPreserveOrder([
     source.frontMatter.name,
@@ -988,6 +1186,20 @@ async function isDirectory(path: string): Promise<boolean> {
     return (await stat(path)).isDirectory();
   } catch {
     return false;
+  }
+}
+
+/** Directory that is not itself a symbolic link or reparse point. */
+async function isRealDirectory(path: string): Promise<boolean> {
+  const info = await lstatOrUndefined(path);
+  return Boolean(info?.isDirectory());
+}
+
+async function lstatOrUndefined(path: string): Promise<Awaited<ReturnType<typeof lstat>> | undefined> {
+  try {
+    return await lstat(path);
+  } catch {
+    return undefined;
   }
 }
 

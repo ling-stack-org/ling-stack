@@ -90,6 +90,16 @@ test("symlink substitution and truncated snapshots cannot enter the published so
   assert.equal(f.store.listSkillSourceSnapshots({ includeArchived: true }).length, 0);
 });
 
+test("publishing without artifacts still verifies source bytes and rejects changed resources before commit", async t => {
+  const f = await fixture(t);
+  const preview = await f.preview();
+  await writeFile(join(f.rootPath, "gstack-review/references/checklist.md"), "# altered reference\n");
+  await assert.rejects(prepareSkillSourcePublication(f.store, preview.records, false), error =>
+    ["skill_source_artifact_budget_or_size", "skill_source_artifact_changed"].includes(error.code));
+  assert.deepEqual(await f.staged(), []);
+  assert.deepEqual(f.store.listSkillSourceSnapshots({ includeArchived: true }), []);
+});
+
 test("successful preparation does not activate source rows until explicit atomic publication", async t => {
   const f = await fixture(t);
   const preview = await f.preview();
