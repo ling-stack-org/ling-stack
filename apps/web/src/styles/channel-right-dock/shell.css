@@ -18,7 +18,7 @@
 }
 
 .task-workbench-window.with-channel-progress-popover > .task-workbench-main {
-  background: var(--surface-panel);
+  background: var(--ling-bg-panel);
 }
 
 .task-workbench-main.with-channel-side-panel {
@@ -122,7 +122,7 @@
   left: 50%;
   width: 1px;
   transform: translateX(-50%);
-  background: var(--border);
+  background: var(--ling-border-default);
   opacity: 0.75;
   transition:
     width var(--ling-motion-fast) var(--ling-ease-standard),
@@ -134,7 +134,7 @@
 .channel-side-panel-resize-handle:focus-visible::before,
 .task-workbench-main.is-resizing-channel-side-panel .channel-side-panel-resize-handle::before {
   width: 2px;
-  background: var(--accent-border);
+  background: var(--ling-border-focus);
   opacity: 1;
 }
 

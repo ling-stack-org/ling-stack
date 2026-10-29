@@ -17,9 +17,9 @@
 
 .conversation-composer-status-strip {
   margin-bottom: var(--ling-space-4);
-  border-color: var(--conversation-border);
+  border-color: var(--ling-border-default);
   border-radius: var(--ling-radius-md);
-  background: var(--conversation-bg);
+  background: var(--ling-bg-panel);
   box-shadow: none;
 }
 
@@ -29,36 +29,36 @@
 }
 
 .conversation-composer-status-strip .conversation-status-icon {
-  border-color: var(--conversation-border);
-  color: var(--conversation-text-strong);
-  background: var(--conversation-bg);
+  border-color: var(--ling-border-default);
+  color: var(--ling-text-strong);
+  background: var(--ling-bg-panel);
 }
 
 .conversation-composer-status-strip .conversation-status-title strong {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
 }
 
 .conversation-composer-status-strip .conversation-status-main p,
 .conversation-composer-status-strip .conversation-status-meta small {
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
 }
 
 .conversation-composer-status-strip .conversation-status-meta > span {
-  border-color: var(--conversation-border);
+  border-color: var(--ling-border-default);
   border-radius: var(--ling-radius-md);
-  background: var(--conversation-bg-muted);
+  background: var(--ling-bg-subtle);
 }
 
 .conversation-composer-status-strip .conversation-status-action {
-  border-color: var(--conversation-border);
+  border-color: var(--ling-border-default);
   border-radius: var(--ling-radius-md);
-  color: var(--conversation-text-strong);
-  background: var(--conversation-bg);
+  color: var(--ling-text-strong);
+  background: var(--ling-bg-panel);
   box-shadow: none;
 }
 
 .conversation-composer-status-strip .conversation-status-action:hover:not(:disabled) {
-  background: var(--conversation-bg-muted);
+  background: var(--ling-bg-subtle);
 }
 
 .conversation-status-icon {

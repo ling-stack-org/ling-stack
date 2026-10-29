@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { approvalPolicyFormToPayload } from "../src/api/approval-payloads.js";
 import { channelFormToPayload, channelFormToUpdatePayload, taskEditFormToPayload } from "../src/api/channel-payloads.js";
-import { mediaJobFormToPayload, parseMediaInput } from "../src/api/media-payloads.js";
+import { mediaJobFormToPayload } from "../src/api/media-payloads.js";
 import { mcpServerFormToPayload } from "../src/api/mcp-payloads.js";
 import { providerFormToPayload } from "../src/api/provider-payloads.js";
 import { buildRerunRequest, buildRunRequest, buildTaskRunRequest } from "../src/api/run-request-builders.js";
@@ -275,19 +275,16 @@ test("form payload adapters preserve daemon request boundary semantics", () => {
   });
 });
 
-test("media payload adapter requires object JSON input", () => {
+test("media payload adapter emits structured generation input", () => {
   expect(mediaJobFormToPayload({
     providerPresetId: "media_provider",
     operation: "image_generate",
     prompt: "A diagram",
-    inputText: "{\"size\":\"1024x1024\"}",
+    size: "1024x1024",
   })).toEqual({
     providerPresetId: "media_provider",
     operation: "image_generate",
     prompt: "A diagram",
     input: { size: "1024x1024" },
   });
-
-  expect(parseMediaInput("")).toBeUndefined();
-  expect(() => parseMediaInput("[1,2,3]")).toThrow("Generation task input must be a JSON object.");
 });

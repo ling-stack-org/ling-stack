@@ -3,6 +3,7 @@ import {
   LING_PRESENTATION_PROFILE_IDS,
   LING_THEME_CSS_VARIABLES,
   LING_THEME_SCHEMA_VERSION,
+  type LingBuiltInSceneId,
   type LingColorScheme,
   type LingPresentationProfileId,
   type LingThemeBootstrapSnapshot,
@@ -17,6 +18,7 @@ import { themeTokensToCssVariables } from "./token-map.js";
 
 const THEME_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const FAMILY_ID_PATTERN = THEME_ID_PATTERN;
+const BUILT_IN_SCENE_IDS: readonly LingBuiltInSceneId[] = ["forest-breeze", "ocean-drift", "midnight-aurora", "farbound-journey"];
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/u;
 const UNSAFE_CSS_PATTERN = /[;{}<>]|(?:url|var|env|attr|expression|image-set)\s*\(|@import/i;
 const SAFE_SHADOW_PATTERN = /^[0-9a-z#(),.%/\s+-]+$/i;
@@ -84,6 +86,7 @@ export function validateThemeManifest(
   validateDesktop(issues, value.desktop);
   validatePresentation(issues, value.presentation);
   validateArtwork(issues, value.artwork);
+  validateScene(issues, value.scene, effectiveSource);
   validateGeneration(issues, value.generation);
 
   if (issues.length > 0 || !id || !effectiveSource) {
@@ -257,6 +260,24 @@ function validateArtwork(issues: LingThemeValidationIssue[], value: unknown): vo
         for (const [ratio, image] of Object.entries(asset.variants)) validateArtworkPath(issues, image, `${base}.variants.${ratio}`);
       }
     }
+  }
+}
+
+function validateScene(issues: LingThemeValidationIssue[], value: unknown, source: LingThemeSource | undefined): void {
+  if (value === undefined) return;
+  if (source !== "built-in") {
+    issue(issues, "invalid-artwork", "scene", "Scene metadata is only supported for built-in themes.");
+    return;
+  }
+  if (!isRecord(value)) {
+    issue(issues, "invalid-artwork", "scene", "Scene metadata must be an object.");
+    return;
+  }
+  if (typeof value.id !== "string" || !BUILT_IN_SCENE_IDS.includes(value.id as LingBuiltInSceneId)) {
+    issue(issues, "invalid-artwork", "scene.id", "Scene id is not registered.");
+  }
+  for (const key of ["mascot", "corners"] as const) {
+    if (typeof value[key] !== "boolean") issue(issues, "invalid-artwork", `scene.${key}`, "Scene switches must be boolean.");
   }
 }
 

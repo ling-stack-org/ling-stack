@@ -137,3 +137,32 @@ test("continuous loading motion uses shared semantic duration tokens", async () 
   );
   assert.doesNotMatch(continuousOwners, /\b(?:900|1400|1800)ms\b/u);
 });
+
+test("Ling Core IP mark uses ambient motion tokens and stays static for reduced motion", async () => {
+  const index = await readFile(new URL("../dist/styles/index.css", import.meta.url), "utf8");
+  const foundations = await readFile(new URL("../dist/styles/foundation-tokens.css", import.meta.url), "utf8");
+  const mark = await readFile(new URL("../dist/styles/brand/ling-core-mark.css", import.meta.url), "utf8");
+
+  assert.match(index, /brand\/ling-core-mark\.css/u);
+  assert.match(foundations, /--ling-motion-ambient-breath:\s*5200ms/u);
+  assert.match(foundations, /--ling-motion-ambient-drift:\s*8400ms/u);
+  assert.match(mark, /prefers-reduced-motion:\s*no-preference/u);
+  assert.match(mark, /prefers-reduced-motion:\s*reduce/u);
+  assert.match(mark, /forced-colors:\s*active/u);
+  assert.match(mark, /--ling-orb-delay:\s*220ms/u);
+  assert.match(mark, /--ling-orb-delay:\s*1020ms/u);
+  assert.match(
+    mark,
+    /ling-core-mark-artwork-breathe\s+var\(--ling-motion-ambient-breath\)\s+var\(--ling-ease-standard\)[^;]*infinite\s+alternate/u,
+  );
+  assert.match(
+    mark,
+    /data-state="thinking"[^\n]*\s*\.ling-core-mark-artwork\s*\{[^}]*animation-name:\s*ling-core-mark-artwork-think/su,
+  );
+  assert.match(
+    mark,
+    /data-state="blocked"[^\n]*\s*\.ling-core-mark-orb,[\s\S]*?animation:\s*none;/u,
+  );
+  assert.doesNotMatch(mark, /#[0-9a-f]{3,8}\b|\b(?:rgb|hsl)a?\(/iu);
+  assert.doesNotMatch(mark, /animation:\s*[^;]*\ball\b/u);
+});

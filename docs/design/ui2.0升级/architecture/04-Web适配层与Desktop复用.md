@@ -6,8 +6,8 @@
 
 - re-export `@ling-stack/ui-react`；
 - 通过 `LingUiProvider` 提供翻译后的 dismiss、close 等默认 label；
-- 提供 ThemeSelection 存储、首帧 mirror、IndexedDB 主题资产和导入 adapter；
-- 提供 Theme Studio 草稿、Model Workbench capability 和 Media/Artwork job adapter；
+- 提供 ThemeSelection 存储、首帧 mirror 和用户自定义背景媒体仓库；
+- 提供 Model Workbench capability 和 Media/Artwork job adapter；
 - 连接 ThemeProvider 已设置的 `data-ui-theme`、`data-color-scheme` 和 semantic variables；
 - 为现有测试保留短期 compatibility exports。
 
@@ -38,11 +38,7 @@ Menu/Tooltip 已在 P4.1 接入共享 primitive。
 Desktop 直接使用 package 或复用 Web renderer。Desktop adapter 只处理窗口、系统菜单、
 通知、文件选择和 keychain callback，不改变共享组件语义。
 
-Theme 方面，Desktop adapter 最终负责 ThemeSelection 存储、`.ling-theme` 原生持久化、app data
-资产目录、Theme Studio 草稿、生成资产 staging 和首帧 bootstrap 注入。它不复制 ThemeRegistry、
-Presentation Profile、Compiler 或内置 Theme Pack。当前 P7C.1 只完成 Web IndexedDB；原生
-`appData/themes/<id>`、staging/atomic rename、typed IPC 和 packaged restart 由
-`DESKTOP-THEME-PACK-PERSISTENCE-001` 待做项实现。
+Theme 方面，Desktop adapter 负责官方 ThemeSelection 存储、用户自定义背景受管目录、首帧 bootstrap 注入和窗口材质 adapter。它不复制 ThemeRegistry、Presentation Profile、Compiler 或内置 Theme Pack，也不再把 `.ling-theme` 持久化、Theme Studio 草稿或生成资产 staging 作为当前产品能力。
 
 Desktop renderer 分为两类：
 
@@ -78,11 +74,9 @@ Web 和 Desktop 不能各自实现 Button、Dialog、Menu、Toast 或状态 badg
 先评估 token/slot；只有 OS 能力才能留在客户端 adapter。
 
 Web 和 Desktop 也不能各自维护 Theme Pack Schema、built-in palette 或 token mapping。
-平台只拥有 persistence、file import、模型/媒体任务连接和 window material adapter。
+平台只拥有 persistence、用户背景文件能力、模型/媒体任务连接和 window material adapter。
 
-Theme Studio 不直接读取 provider secret。Web/Desktop adapter 只暴露经过能力过滤的
-Planner/Artwork model option 和窄 job callback；API Key、Base URL 和 raw header 留在现有
-provider domain。
+已停用的 Theme Studio 不直接读取 provider secret。Web/Desktop adapter 只暴露经过能力过滤的模型/媒体 job callback；API Key、Base URL 和 raw header 留在现有 provider domain。
 
 Native recovery Dialog 是唯一允许不经过 React primitive 的视觉例外，因为 renderer 可能尚未
 启动。它仍必须使用 typed bilingual catalog、明确 Retry/Quit 主次序和平台键盘默认行为，不能

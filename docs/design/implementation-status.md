@@ -52,6 +52,10 @@ counts, screenshots, hashes and run diaries belong in CI or Release artifacts.
 | [Thread-First Work History](thread-first-work-history-implementation-plan.md) | V1/V2 storage, evidence, archive and fork foundations exist | Diagnostics UI placement and remaining V2 work close |
 | [Desktop Theme Persistence](ui2.0升级/modules/settings/10-Desktop-Theme-Pack-Persistence-implementation-plan.md) | Web, repository and Apple Silicon implementation exist | Intel macOS and Windows packaged gates pass |
 
+| [Shared Component Theme Presentation](component-theme-presentation-implementation-plan.md) | Local implementation complete: shared appearance ownership, Night/Ocean/Journey refinement, 85 UI + 26 conversation tests, Web build/lint and browser cases pass; current evidence is in [validation](component-theme-presentation-validation.md) | User art review; real daemon/model paths and signed Desktop acceptance remain unverified; no theme PR or merge in this round |
+| [Official Scene Themes And Custom Media Background](full-window-theme-background-implementation-plan.md) | Six built-in themes are implemented locally; custom PNG/JPEG/static WebP/MP4/WebM overrides remain local under the hardening contract | Final visual review, public-redistribution clearance, signed macOS/Windows packages, native drag/drop, resource budgets and assistive-technology gates remain open |
+| [Ling Journey UI Visual Adaptation](ling-journey-ui-adaptation-implementation-plan.md) | P0–P6 basic palette/background and functional checks exist; component refinement and shared conversation surface adaptation are local | Current local test/screenshot results and remaining Desktop acceptance boundaries are maintained in the hardening contract; no theme PR or merge in this round |
+
 ## Pending Product Reopening Or Architecture Decision
 
 | Work | Decision required |

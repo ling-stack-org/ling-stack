@@ -7,6 +7,7 @@
 - [UI 2.0 CSS Architecture](./ui2.0升级/architecture/03-CSS所有权与迁移规则.md)
 - [UI 2.0 Motion](./ui2.0升级/foundations/04-交互动效与无障碍.md)
 - [UI 2.0 Theme Packs](ui2.0升级/themes/README.md)
+- [Shared Component Theme And New Module Contract](component-theme-presentation.md)
 - [Model Workbench UI 2.0](./ui2.0升级/modules/09-Model-Workbench.md)
 - [Global Feedback Toast System](global-feedback-toast-system.md)
 
@@ -169,21 +170,41 @@ UI 2.0 实施以 [Toast 与 InlineFeedback](./ui2.0升级/components/02-浮层�
   loading labels, and fallback copy must not become visible while localization
   catalogs or the application tree are still loading; an accessible loading
   name may remain nonvisual.
-- Theme Packs may change semantic colors, surfaces, shadows, client material,
-  and approved local artwork. They must not change layout, typography scale,
-  control geometry, icons, Logo, navigation, or business behavior.
+- Theme Packs may change semantic colors, component corner radii, borders,
+  local shadows, approved materials and artwork. Control height, hit area,
+  typography scale, layout, icons, Logo, navigation and business behavior stay stable.
 - Feature CSS must not branch on a Theme Pack ID. Add or refine a semantic
   token when a component needs a visual distinction.
-- Imported themes are validated data and local assets only. They cannot ship
-  arbitrary CSS, JavaScript, remote resources, fonts, or brand replacements.
+- Only official built-in themes are currently selectable. Historical import/generated
+  data does not authorize a new entry point or arbitrary CSS, JavaScript, remote
+  resources, fonts or brand replacements.
 - `ling-light` and `ling-dark` must be checked on Settings, conversations,
   plugin/skill diagnostics, dialogs, menus, empty states, Web, macOS, and Windows.
 - The built-in Light shell uses a white main panel, warm `#e6e4df` Sidebar,
   `#d9d8d5` selection, `#deddda` hover and `#ededed` dividers. The built-in Dark
   shell preserves the same hierarchy with `#1f1f1f` main, `#282725` Sidebar,
   `#3a3936` selection, `#32312f` hover and `#41403d` dividers.
-- Imported Theme Packs remain authoritative for their semantic tokens. The
-  shell consumes tokens and must not branch on a built-in Theme Pack id.
+- Each theme owns its complete semantic token set. Shared component defaults fill
+  unspecified component appearance parameters; they do not inherit another theme's
+  manifest. The shell and features consume parameters without branching on theme IDs.
+
+## Themeable Components And New Modules
+
+The [Shared Component Theme Contract](component-theme-presentation.md) owns the
+implementation and review rules for all themes and modules, beyond the current
+Night/Ocean/Journey refinement.
+
+- Shared components own structure, states and default appearance. Themes override
+  approved parameters; pages own layout and domain behavior.
+- Use existing control, composer, navigation, card/row, overlay and message/code
+  parameters. New parameters need a shared default and one component consumer;
+  do not patch theme differences in feature selectors.
+- Module design must identify reused components, token ownership, background surface
+  classification and acceptance states. Content surfaces remain readable while
+  layout tracks allow the shared scene to continue across the workspace.
+- Validate all built-in themes and the changed interactive states. Record token
+  integration, behavior verification and visual approval separately; visual
+  distinctiveness is not proven by tests alone.
 
 ## Desktop Chrome
 

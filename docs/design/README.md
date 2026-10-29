@@ -19,6 +19,19 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 ## Product And Architecture
 
 - [Implementation Status](implementation-status.md)
+- [Official Scene Theme, Background And Interaction Motion Contract](theme-background-motion-contract.md)
+- [Ling Core IP Design Contract](ling-core-ip-design.md)
+- [Official Scene Theme And Custom Media Background Implementation Plan](full-window-theme-background-implementation-plan.md)
+- [Ling Journey UI Visual Adaptation Implementation Plan](ling-journey-ui-adaptation-implementation-plan.md)
+- [Official Scene Theme And Custom Media Background Acceptance Matrix](full-window-theme-background-acceptance-matrix.md)
+- [Official Scene Theme And Custom Media Background Validation](scene-theme-background-validation.md)
+- [Theme Reading Protection, Playback And Composition Plan](theme-background-hardening-plan.md)
+- [Shared Component Theme Presentation Contract](component-theme-presentation.md)
+- [Shared Component Unification And Three-Theme Refinement Plan](component-theme-presentation-implementation-plan.md)
+- [Shared Component And Theme Validation Evidence](component-theme-presentation-validation.md)
+- [Breeze, Ocean And Night Refinement Directions](scene-theme-refinement-directions.md)
+- [Photographic And Summer Manga Scene Theme Validation](photographic-scene-themes-validation.md)
+- [Full-Window Theme Background Research](full-window-theme-background-research.md)
 - [Product Design](../product-design.md)
 - [Architecture](../architecture.md)
 - [Platform Architecture](platform-architecture.md)
@@ -28,11 +41,13 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 - [Business Data And API Compatibility Implementation Plan](business-data-api-compatibility-implementation-plan.md)
 - [Business Compatibility Boundary Hardening](business-compatibility-boundary-hardening.md)
 - [Business Compatibility Boundary Hardening Implementation Plan](business-compatibility-boundary-hardening-implementation-plan.md)
+- [Business Data And API Compatibility Boundaries](business-data-api-compatibility.md)
 - [Daemon API](../daemon-api.md)
 - [Architecture Decision Records](../adr/README.md)
 
 ## Conversations And Channels
 
+- [Conversation Position Navigation](conversation-position-navigation.md)
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Conversation Experience And Test-Duration Contract](five-point-optimization-contract.md)
 - [Conversation Experience And Test-Duration Implementation Plan](five-point-optimization-implementation-plan.md)

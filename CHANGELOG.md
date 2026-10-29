@@ -10,6 +10,8 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ### Added
 
+- Conversation side navigation previews each sender's avatar, name and message
+  excerpt, and jumps through loaded history with mouse or keyboard controls.
 - Model reasoning controls support distinct `max` and `ultra` levels when the
   selected model declares them, and explain changes to a supported default when
   switching models.

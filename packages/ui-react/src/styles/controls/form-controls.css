@@ -4,11 +4,12 @@
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-md);
+  border: 1px solid var(--ling-control-border);
+  border-radius: var(--ling-control-radius);
   color: var(--ling-text-default);
-  background: var(--ling-bg-panel);
-  box-shadow: var(--ling-shadow-low);
+  background: var(--ling-control-bg);
+  background-image: var(--ling-control-finish);
+  box-shadow: var(--ling-control-shadow);
   font: inherit;
   font-size: var(--ling-font-sm);
   line-height: var(--ling-line-sm);
@@ -40,7 +41,7 @@
 .ling-ui-input:hover:not([data-disabled="true"]),
 .ling-ui-select:hover:not([data-disabled="true"]),
 .ling-ui-textarea:hover:not(:disabled) {
-  border-color: var(--ling-border-strong);
+  border-color: var(--ling-surface-border-emphasis);
 }
 
 .ling-ui-input:focus-within,
@@ -240,7 +241,7 @@
   border: 1px solid var(--ling-border-strong);
   border-radius: var(--ling-radius-sm);
   color: transparent;
-  background: var(--ling-bg-panel);
+  background: var(--ling-control-bg);
   transition: background-color var(--ling-motion-fast) var(--ling-ease-standard), border-color var(--ling-motion-fast) var(--ling-ease-standard), color var(--ling-motion-fast) var(--ling-ease-standard);
 }
 
@@ -257,8 +258,8 @@
 }
 
 .ling-ui-checkbox input:focus-visible + .ling-ui-checkbox-control {
-  outline: 2px solid var(--ling-border-focus);
-  outline-offset: 2px;
+  outline: 0;
+  box-shadow: var(--ling-focus-ring);
 }
 
 .ling-ui-checkbox[data-disabled="true"] {
@@ -303,7 +304,7 @@
   place-items: center;
   border: 1px solid var(--ling-border-strong);
   border-radius: 50%;
-  background: var(--ling-bg-panel);
+  background: var(--ling-control-bg);
   transition: background-color var(--ling-motion-fast) var(--ling-ease-standard), border-color var(--ling-motion-fast) var(--ling-ease-standard);
 }
 
@@ -323,8 +324,8 @@
 }
 
 .ling-ui-radio input:focus-visible + .ling-ui-radio-control {
-  outline: 2px solid var(--ling-border-focus);
-  outline-offset: 2px;
+  outline: 0;
+  box-shadow: var(--ling-focus-ring);
 }
 
 .ling-ui-radio[data-disabled="true"] {
