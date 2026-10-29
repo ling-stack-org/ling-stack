@@ -118,10 +118,9 @@ Run execution paths call `runner.runTask()` directly:
 - channel AI replies in `packages/daemon/src/features/channels/ai-replies.ts`,
 - teammate direct replies in `packages/daemon/src/features/teammates/direct-replies.ts`.
 
-Runtime records use a fixed `DEFAULT_RUNNER_ID = "pi-coding-agent"` for work units and
-attempts. The extension registry separately reports the Pi runner as `runnerId: "pi"`.
-That mismatch is harmless while only one backend exists, but it becomes ambiguous once
-runner selection exists.
+Runtime records now use the canonical `DEFAULT_RUNNER_ID = "pi"` for work units and
+attempts. `pi-coding-agent` remains a historical alias accepted only at compatibility
+boundaries; it is normalized before runner resolution and is not emitted by new writes.
 
 ## Goals
 
@@ -282,8 +281,19 @@ Keep the existing `runnerId` field during migration:
 - For new rows, write `runnerId` as the effective runner id for backward compatibility.
 - Prefer `effectiveRunnerId` in new code.
 - Treat existing `runnerId = "pi-coding-agent"` as `effectiveRunnerId = "pi"` when reading.
-- Do not rewrite old rows in a broad migration unless a schema migration is already
-  required.
+- Migration 178 (`canonicalize_pi_runner_ids`) rewrites the mutable operational
+  bindings in `ai_teammates`, `work_units`, `work_unit_attempts`, and
+  `runner_continuations` from `pi-coding-agent` to `pi` in one transaction. This is a
+  versioned cutover, so new writes do not perpetuate the alias.
+- Immutable Run snapshots keep their original JSON bytes for audit fidelity. Read
+  mappers normalize nested runner fields for current API consumers; the stored
+  evidence is not silently rewritten.
+- New Run snapshots, WorkUnit requests, and Run/runtime/control-plane events normalize
+  runner identity fields after secret redaction and before persistence. Ordinary
+  prompt text containing `pi-coding-agent` is preserved.
+- Control-plane idempotency compares the same canonical projection used by reads
+  and writes. Retrying an event with either alias must return the original event;
+  changing the runner to another engine or changing other payload fields is a conflict.
 
 ## Request and Teammate Configuration
 

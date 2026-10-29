@@ -47,6 +47,7 @@ import {
 } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import { ownsCancellationTransaction } from "./cancellation-transaction.js";
+import { normalizeRunnerIdsInSnapshot } from "../../runner-ids.js";
 
 export interface SqliteRuntimeWorkUnitStorePorts {
   readonly findStateTransitionByIdempotency: (
@@ -142,9 +143,9 @@ export class SqliteRuntimeWorkUnitStore {
         null,
         input.createdByClientId ?? null,
         input.createdByActor,
-        stringifyJson(mediaAdmission
+        stringifyJson(normalizeRunnerIdsInSnapshot(mediaAdmission
           ? redactConversationMediaWorkUnitRequest(this.context.database, input, mediaAdmission)
-          : redactSecrets(input.request)),
+          : redactSecrets(input.request))),
         stringifyJson(timeoutPolicy),
         input.linkedRunId ?? null,
         input.linkedMessageId ?? null,
@@ -725,7 +726,7 @@ export class SqliteRuntimeWorkUnitStore {
       ts: input.ts,
       type: input.type,
       actor: input.actor,
-      data: redactSecrets(input.data),
+      data: normalizeRunnerIdsInSnapshot(redactSecrets(input.data)),
     };
     const inserted = eventFields.attemptId
       ? this.context.database
