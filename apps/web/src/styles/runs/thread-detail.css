@@ -42,7 +42,7 @@
 
 .runs-subsection + .runs-subsection {
   padding-top: var(--ling-space-5);
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--ling-border-default);
 }
 
 .runs-subsection h3,

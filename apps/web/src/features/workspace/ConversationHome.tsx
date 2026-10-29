@@ -756,6 +756,7 @@ export function ConversationHome({
       canSend={!pendingAttachments.some(item => item.state !== "ready") && (guidancePending || (Boolean(activeReply) || activeModelReady) && Boolean(draft.trim() || readyAttachmentIds.length > 0 || composerFileRefs.length > 0))}
       notice={conversationErrorMessage || actionFeedback.message}
       dragActive={composerDropController.active}
+      dropFeedback={composerDropController.feedback}
       onDraftChange={(value, caret) => {
         setDraft(value);
         actionFeedback.clear("validation");

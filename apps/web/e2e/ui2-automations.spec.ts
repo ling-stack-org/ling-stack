@@ -30,6 +30,7 @@ test("AUTO-LIST/STATUS/INSPECT handles 100 rows, search, stale refresh, keyboard
   await openAutomations(page);
   const surface = page.locator("[data-automation-ui2-page]");
   await expect(surface.getByRole("tab")).toHaveCount(4);
+  await expect(surface.locator("[data-automation-inspector]")).toHaveCount(0);
   await expect(surface.getByRole("option", { name: "Automation 001" })).toBeVisible();
   const scrollRegion = surface.locator("[data-automation-scroll-region]");
   expect(await scrollRegion.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);

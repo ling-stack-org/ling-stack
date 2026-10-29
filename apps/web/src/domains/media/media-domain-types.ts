@@ -52,29 +52,3 @@ export interface MediaJobsDomainActions {
   readonly clearMediaError: (owner: MediaScopedErrorOwner) => void;
   readonly resetForCwd: () => void;
 }
-
-export interface MediaJobsDomainBridge {
-  readonly state: MediaJobsDomainState;
-  readonly actions: MediaJobsDomainActions;
-}
-
-export const mediaJobsDomainBridgeKey: unique symbol = Symbol.for("ling.media-jobs-domain-bridge");
-
-export type MediaJobArtifactsCompatMap = Readonly<Record<string, readonly RunArtifact[]>> & {
-  readonly [mediaJobsDomainBridgeKey]?: MediaJobsDomainBridge;
-};
-
-export function readMediaJobsDomainBridge(value: MediaJobArtifactsCompatMap): MediaJobsDomainBridge | undefined {
-  return value[mediaJobsDomainBridgeKey];
-}
-
-export function attachMediaJobsDomainBridge(
-  artifactsByJob: Readonly<Record<string, MediaJobArtifactState>>,
-  bridge: MediaJobsDomainBridge,
-): MediaJobArtifactsCompatMap {
-  const compat = Object.fromEntries(
-    Object.entries(artifactsByJob).map(([jobId, state]) => [jobId, state.artifacts]),
-  ) as Record<string, readonly RunArtifact[]>;
-  Object.defineProperty(compat, mediaJobsDomainBridgeKey, { enumerable: false, value: bridge });
-  return compat;
-}

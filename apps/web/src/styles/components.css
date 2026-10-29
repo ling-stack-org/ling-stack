@@ -41,7 +41,7 @@ h3,
 .channel-title-line h1,
 .approval-head strong,
 .runtime-kpi-grid strong{
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
 }
 
 p,
@@ -49,33 +49,33 @@ small,
 .workspace-head p,
 .channel-header p,
 .approval-main p {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
 }
 
 .panel,
 .inspector,
 .context-panel-card,
 .conversation-empty-state {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-panel);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-lg);
+  background: var(--ling-bg-panel);
   box-shadow:
-    inset 0 1px 0 var(--hairline),
-    var(--shadow-panel);
-  backdrop-filter: var(--material-blur);
-  -webkit-backdrop-filter: var(--material-blur);
+    inset 0 1px 0 color-mix(in srgb, var(--ling-border-default) 32%, transparent),
+    var(--ling-surface-shadow-shell);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .workspace-context-stack > .first-run-flow,
 .workspace-context-stack > .timeline,
 .workspace-context-stack > .context-panel-card {
-  background: var(--surface-panel);
+  background: var(--ling-bg-panel);
 }
 
 .client-window,
 .workspace-client-surface,
 .workspace:not(.workspace-client-surface):not(.workspace-provider-surface):where(:not(.workspace-generation-surface)) {
-  background: var(--window-bg);
+  background: var(--ling-bg-app);
 }
 
 .panel,
@@ -85,7 +85,7 @@ small,
 
 .panel-title {
   padding-bottom: 10px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--ling-border-default);
 }
 
 .primary-button,
@@ -94,7 +94,7 @@ small,
 .config-button,
 .sidebar-mini-action,
 .compact-button {
-  border-radius: var(--radius-md);
+  border-radius: var(--ling-radius-md);
 }
 
 
@@ -102,12 +102,12 @@ small,
 .secondary-button,
 .icon-button,
 .config-button{
-  box-shadow: var(--shadow-control);
+  box-shadow: var(--ling-control-shadow);
 }
 
 .primary-button {
-  border-color: var(--accent-border);
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  border-color: var(--ling-border-focus);
+  background: linear-gradient(180deg, var(--ling-action-accent), var(--ling-action-accent-hover));
   color: var(--ling-action-accent-fg);
 }
 
@@ -117,28 +117,28 @@ small,
 
 .secondary-button,
 .icon-button{
-  border: 1px solid var(--border);
-  background: var(--surface-panel-strong);
-  color: var(--text);
+  border: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-default);
 }
 
 .secondary-button:hover:not(:disabled),
 .icon-button:hover:not(:disabled){
-  border-color: var(--border-strong);
-  background: var(--surface-hover);
-  color: var(--text-strong);
+  border-color: var(--ling-border-strong);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-strong);
 }
 
 .secondary-button.active {
-  border-color: var(--accent-border);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  border-color: var(--ling-border-focus);
+  background: var(--ling-action-selection);
+  color: var(--ling-action-accent-hover);
 }
 
 .secondary-button.danger {
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
-  color: var(--danger);
+  border-color: var(--ling-status-danger-border);
+  background: var(--ling-status-danger-bg);
+  color: var(--ling-status-danger);
 }
 
 .primary-button:disabled,
@@ -150,17 +150,17 @@ small,
 .status-badge,
 .event-count {
   min-height: 22px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 999px;
-  background: var(--surface-panel-strong);
-  color: var(--text-muted);
-  box-shadow: inset 0 1px 0 var(--hairline);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-muted);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ling-border-default) 32%, transparent);
 }
 
 .health {
-  border-color: var(--border);
-  background: var(--surface-panel-strong);
-  color: var(--text-muted);
+  border-color: var(--ling-border-default);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-muted);
 }
 
 .status-badge.succeeded,
@@ -170,9 +170,9 @@ small,
 .status-badge.bound_path,
 .health.ok,
 .provider-run-notice.ok {
-  border-color: var(--success-border);
-  background: var(--success-soft);
-  color: var(--success);
+  border-color: var(--ling-status-success-border);
+  background: var(--ling-status-success-bg);
+  color: var(--ling-status-success);
 }
 
 .status-badge.running,
@@ -183,9 +183,9 @@ small,
 .status-badge.workspace,
 .status-badge.workflow_step,
 .provider-run-notice {
-  border-color: var(--warning-border);
-  background: var(--warning-soft);
-  color: var(--warning);
+  border-color: var(--ling-status-warning-border);
+  background: var(--ling-status-warning-bg);
+  color: var(--ling-status-warning);
 }
 
 .status-badge.failed,
@@ -193,58 +193,58 @@ small,
 .health.down,
 .inline-error,
 .provider-run-notice.bad {
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
-  color: var(--danger);
+  border-color: var(--ling-status-danger-border);
+  background: var(--ling-status-danger-bg);
+  color: var(--ling-status-danger);
 }
 
 .status-badge.archived,
 .status-badge.provider,
 .status-badge.media_job,
 .status-badge.approval {
-  border-color: var(--border);
-  background: var(--surface-subtle);
-  color: var(--text-muted);
+  border-color: var(--ling-border-default);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-muted);
 }
 
 .first-run-flow,
 .first-run-step,
 .runtime-kpi-grid div {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-panel-strong);
-  color: var(--text);
-  box-shadow: inset 0 1px 0 var(--hairline);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-lg);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-default);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ling-border-default) 32%, transparent);
 }
 
 .first-run-flow.ready,
 .first-run-step.ready {
-  border-color: var(--accent-border);
+  border-color: var(--ling-border-focus);
   background:
-    linear-gradient(90deg, var(--accent-soft), transparent 34%),
-    var(--surface-panel-strong);
+    linear-gradient(90deg, var(--ling-action-selection), transparent 34%),
+    var(--ling-bg-elevated);
   box-shadow:
-    inset 3px 0 0 var(--accent),
-    inset 0 1px 0 var(--hairline);
+    inset 3px 0 0 var(--ling-action-accent),
+    inset 0 1px 0 color-mix(in srgb, var(--ling-border-default) 32%, transparent);
 }
 
 .first-run-flow.active,
 .first-run-step.pending {
-  border-color: var(--warning-border);
-  background: var(--warning-soft);
-  color: var(--warning);
+  border-color: var(--ling-status-warning-border);
+  background: var(--ling-status-warning-bg);
+  color: var(--ling-status-warning);
 }
 
 .first-run-flow.attention,
 .first-run-step.attention {
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
-  color: var(--danger);
+  border-color: var(--ling-status-danger-border);
+  background: var(--ling-status-danger-bg);
+  color: var(--ling-status-danger);
 }
 
 .provider-run-notice,
 .inline-error {
-  border-radius: var(--radius-lg);
+  border-radius: var(--ling-radius-lg);
 }
 
 .compact-inline-error {
@@ -257,7 +257,7 @@ small,
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
 }
 
@@ -278,12 +278,12 @@ small,
   gap: 4px;
   min-width: 0;
   padding: 10px;
-  background: var(--conversation-code-bg);
-  color: var(--conversation-text-muted);
+  background: var(--ling-bg-code);
+  color: var(--ling-text-muted);
 }
 
 .message-deferred-body-shell strong {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
   font-size: 12px;
   font-weight: 760;
 }
@@ -304,42 +304,42 @@ small,
 }
 
 .code-token.comment {
-  color: var(--conversation-text-soft);
+  color: var(--ling-text-soft);
 }
 
 .code-token.string,
 .code-token.attribute {
-  color: var(--success);
+  color: var(--ling-status-success);
 }
 
 .code-token.keyword,
 .code-token.tag {
-  color: var(--info);
+  color: var(--ling-status-info);
 }
 
 .code-token.number {
-  color: var(--warning);
+  color: var(--ling-status-warning);
 }
 
 .code-token.property {
-  color: var(--info);
+  color: var(--ling-status-info);
 }
 
 .code-token.function {
-  color: var(--warning);
+  color: var(--ling-status-warning);
 }
 
 .code-token.punctuation {
-  color: var(--conversation-code-muted);
+  color: var(--ling-text-muted);
 }
 
 .message-code-expand {
   width: 100%;
   padding: 7px 10px;
   border: 0;
-  border-top: 1px solid var(--conversation-code-border);
-  background: var(--conversation-bg);
-  color: var(--conversation-text-muted);
+  border-top: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-panel);
+  color: var(--ling-text-muted);
   font-size: 11px;
   font-weight: 760;
   text-align: center;
@@ -348,7 +348,7 @@ small,
 
 .message-code-expand:hover,
 .message-code-expand:focus-visible {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
   outline: none;
 }
 
@@ -373,10 +373,10 @@ small,
   max-width: min(100%, 320px);
   min-height: 26px;
   padding: 3px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 7px;
-  background: var(--surface-panel);
-  color: var(--text-muted);
+  background: var(--ling-bg-panel);
+  color: var(--ling-text-muted);
   font-size: 12px;
   font-weight: 650;
   text-decoration: none;
@@ -387,9 +387,9 @@ small,
 }
 
 .conversation-attachment-chip:hover {
-  border-color: var(--accent-border);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  border-color: var(--ling-border-focus);
+  background: var(--ling-action-selection);
+  color: var(--ling-action-accent-hover);
 }
 
 .conversation-attachment-chip span {
@@ -411,18 +411,18 @@ small,
   justify-content: center;
   width: 28px;
   min-height: 26px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-left: 0;
   border-radius: 0 7px 7px 0;
-  background: var(--surface-panel);
-  color: var(--text-muted);
+  background: var(--ling-bg-panel);
+  color: var(--ling-text-muted);
 }
 
 .conversation-attachment-preview-button:hover,
 .conversation-attachment-preview-button:focus-visible {
-  border-color: var(--accent-border);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  border-color: var(--ling-border-focus);
+  background: var(--ling-action-selection);
+  color: var(--ling-action-accent-hover);
 }
 
 .file-ref-chip {
@@ -432,10 +432,10 @@ small,
   max-width: min(100%, 320px);
   min-height: 26px;
   padding: 3px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 7px;
-  background: var(--surface-panel);
-  color: var(--text-muted);
+  background: var(--ling-bg-panel);
+  color: var(--ling-text-muted);
   font-size: 12px;
   font-weight: 650;
 }
@@ -467,7 +467,7 @@ small,
 }
 
 .channel-route-inspect-grid dt {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 10px;
   font-weight: 760;
   line-height: 1.3;
@@ -476,7 +476,7 @@ small,
 .channel-route-inspect-grid dd {
   min-width: 0;
   margin: 0;
-  color: var(--text);
+  color: var(--ling-text-default);
   overflow-wrap: anywhere;
   font-size: 11px;
   line-height: 1.35;
@@ -489,7 +489,7 @@ small,
 }
 
 .channel-route-inspect-section > span {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 11px;
   font-weight: 760;
 }
@@ -515,12 +515,12 @@ small,
 }
 
 .channel-route-inspect-section li strong {
-  color: var(--text);
+  color: var(--ling-text-default);
   font-size: 11px;
 }
 
 .channel-route-inspect-section li small {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   line-height: 1.35;
 }
@@ -540,29 +540,18 @@ small,
 
 pre,
 code {
-  color: var(--text);
+  color: var(--ling-text-default);
 }
 
 .meta-list {
-  border: 1px solid var(--border);
-  background: var(--border);
+  border: 1px solid var(--ling-border-default);
+  background: var(--ling-border-default);
 }
 
 .meta-row {
-  background: var(--surface-panel-strong);
-  color: var(--text);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-default);
 }
 .right-panel {
-  background: var(--surface-sidebar);
-}
-
-:root[data-theme="dark"] .provider-run-notice.neutral {
-  border-color: var(--border);
-  background: var(--surface-panel-strong);
-  color: var(--text-muted);
-  box-shadow: none;
-}
-
-:root[data-theme="dark"] .provider-run-notice.neutral strong {
-  color: var(--text-strong);
+  background: var(--ling-bg-sidebar);
 }

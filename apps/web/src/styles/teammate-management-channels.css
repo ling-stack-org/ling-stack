@@ -179,7 +179,7 @@
 }
 
 .teammate-channel-summary small {
-  color: var(--ling-text-subtle);
+  color: var(--ling-text-soft);
   font-size: inherit;
   line-height: inherit;
 }

@@ -4572,7 +4572,7 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
     const styles = getComputedStyle(element);
     return {
       actual: styles.backgroundColor,
-      expected: resolveBackground("--conversation-code-bg"),
+      expected: resolveBackground("--ling-bg-code"),
     };
   })).toEqual({ actual: "rgb(247, 247, 247)", expected: "rgb(247, 247, 247)" });
 
@@ -4606,7 +4606,7 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
     const styles = getComputedStyle(element);
     return {
       actual: styles.backgroundColor,
-      expected: resolveBackground("--conversation-code-bg"),
+      expected: resolveBackground("--ling-bg-code"),
     };
   })).toEqual({ actual: "rgb(247, 247, 247)", expected: "rgb(247, 247, 247)" });
   await expect(message.locator(".message-code-block").filter({ hasText: "not actually a patch" })).toBeVisible();

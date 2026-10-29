@@ -21,9 +21,9 @@
 .runtime-diagnostics-panel .runtime-kpi-grid > div {
   min-width: 0;
   padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-panel);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-sm);
+  background: var(--ling-bg-panel);
   box-shadow: none;
 }
 
@@ -51,12 +51,12 @@
 }
 
 .runtime-diagnostics-panel .runtime-kpi-grid span {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
 }
 
 .runtime-diagnostics-panel .runtime-kpi-grid strong {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 18px;
 }
 
@@ -73,9 +73,9 @@
   gap: 8px;
   min-width: 0;
   padding: 9px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-panel);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-sm);
+  background: var(--ling-bg-panel);
 }
 
 .runtime-diagnostics-copy {
@@ -91,19 +91,19 @@
 }
 
 .runtime-diagnostics-copy strong {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 13px;
   line-height: 1.35;
 }
 
 .runtime-diagnostics-copy small {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 1.4;
 }
 
 .runtime-diagnostics-copy .error-text {
-  color: var(--danger);
+  color: var(--ling-status-danger);
 }
 
 .runtime-diagnostics-status {

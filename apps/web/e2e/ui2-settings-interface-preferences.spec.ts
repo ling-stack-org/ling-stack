@@ -49,7 +49,7 @@ test("Web preferences preserve system and fixed themes, languages, keyboard flow
   await expect(panel.getByRole("heading", { name: "Language" })).toBeVisible();
   await expect(panel.getByRole("heading", { name: "Interface preferences" })).toHaveCount(0);
   await expect(panel.getByRole("heading", { name: "Desktop" })).toHaveCount(0);
-  await expect(panel.getByRole("button", { name: "Import theme" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Import theme" })).toHaveCount(0);
   await expect(panel.getByText(/Theme Studio|Density/i)).toHaveCount(0);
 
   const followSystem = panel.getByRole("switch", { name: "Follow system" });
@@ -57,7 +57,7 @@ test("Web preferences preserve system and fixed themes, languages, keyboard flow
   const lightTheme = themePicker.getByRole("radio", { name: /Ling Light/ });
   const darkTheme = themePicker.getByRole("radio", { name: /Ling Dark/ });
   await expect(followSystem).toBeChecked();
-  await expect(themePicker.getByRole("radio")).toHaveCount(2);
+  await expect(themePicker.getByRole("radio")).toHaveCount(6);
   await expect(lightTheme).toHaveAttribute("data-active", "true");
   await expect(lightTheme).toHaveAttribute("aria-checked", "false");
   await expect(panel.locator(".settings-interface-theme-heading")).toContainText("Ling Light");
@@ -78,7 +78,7 @@ test("Web preferences preserve system and fixed themes, languages, keyboard flow
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-light");
 
   await lightTheme.focus();
-  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowLeft");
   await expect(darkTheme).toBeFocused();
   await page.keyboard.press("Space");
   await expect(darkTheme).toHaveAttribute("aria-checked", "true");
@@ -114,49 +114,36 @@ test("Web preferences preserve system and fixed themes, languages, keyboard flow
   expect(runtimeErrors).toEqual([]);
 });
 
-test("registered local themes stay selectable and expose P7C management actions", async ({ page }) => {
+test("legacy stored themes remain preserved but cannot restore retired picker actions", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareWebSurface(page, {
-    colorScheme: "dark",
-    height: 800,
-    locale: "en-US",
-    selection: { mode: "fixed", themeId: "ling-dark" },
-    width: 1280,
+    colorScheme: "dark", height: 800, locale: "en-US",
+    selection: { mode: "fixed", themeId: "ling-dark" }, width: 1280,
   });
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
   await page.goto("/favicon.png");
-
-  const manifest = longLocalThemeFixture();
+  const manifest = legacyStoredThemeFixture();
   await seedStoredTheme(page, manifest);
   await page.goto("/");
   const panel = await openInterfacePreferences(page);
   const picker = panel.getByRole("radiogroup", { name: "Theme packs" });
-  const localTheme = picker.getByRole("radio", { name: new RegExp(manifest.name) });
-  await expect(picker.getByRole("radio")).toHaveCount(3);
-  await expect(localTheme).toBeVisible();
-  await expect(localTheme).toContainText("Local theme");
-  await expect(panel.getByRole("button", { name: "Import theme" })).toBeVisible();
-  const actions = panel.getByRole("button", { name: new RegExp(`Theme actions for ${manifest.name}`) });
-  await actions.click();
-  await expect(page.getByRole("menuitem", { name: "Preview" })).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: "Reimport" })).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
-  await page.keyboard.press("Escape");
-
-  await localTheme.click();
-  await expect(localTheme).toHaveAttribute("aria-checked", "true");
-  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", manifest.id);
-  await expectLegacyAliasesToFollowThemePack(page, manifest);
-  await expect(panel.locator(".settings-interface-theme-heading")).toContainText(manifest.name);
-  const nameMetrics = await localTheme.locator("strong").first().evaluate((element) => ({
-    clientWidth: element.clientWidth,
-    scrollWidth: element.scrollWidth,
-  }));
-  expect(nameMetrics.scrollWidth).toBeGreaterThan(nameMetrics.clientWidth);
+  await expect(picker.getByRole("radio")).toHaveCount(6);
+  await expect(picker.getByRole("radio", { name: new RegExp(manifest.name) })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: /Import theme|Create theme|Theme actions for/u })).toHaveCount(0);
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
+  const stored = await page.evaluate(id => new Promise((resolve, reject) => {
+    const request = indexedDB.open("ling-stack-ui2");
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const database = request.result;
+      const get = database.transaction("themes").objectStore("themes").get(id);
+      get.onsuccess = () => { database.close(); resolve(get.result); };
+      get.onerror = () => { database.close(); reject(get.error); };
+    };
+  }), manifest.id);
+  expect(stored).toEqual(manifest);
   await expectNoHorizontalOverflow(panel);
-  await expectNoPageOverflow(page);
-  await captureEvidence(page, "1280x800-local-theme-long-name.png");
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -195,7 +182,7 @@ test("theme persistence failure rolls back atomically and reports one global plu
   await expect(page.locator('.ling-ui-toast[data-scope="theme:storage"]')).toContainText(
     "Theme preference could not be saved",
   );
-  await expect(panel.getByRole("status")).toContainText(
+  await expect(panel.locator("[data-ui2-interface-theme]").getByRole("status")).toContainText(
     "Theme preference could not be saved. The previous theme is still active.",
   );
   await expectNoPageOverflow(page);
@@ -339,7 +326,7 @@ async function expectSwitchCentersAligned(control: Locator): Promise<void> {
   expect(geometry.trackCenter).toBeCloseTo(geometry.rootCenter, 5);
 }
 
-function longLocalThemeFixture(): LingThemePackManifest {
+function legacyStoredThemeFixture(): LingThemePackManifest {
   const base = structuredClone(lingDarkTheme);
   return {
     ...base,
@@ -362,45 +349,10 @@ function longLocalThemeFixture(): LingThemePackManifest {
   };
 }
 
-async function expectLegacyAliasesToFollowThemePack(page: Page, manifest: LingThemePackManifest): Promise<void> {
-  const result = await page.evaluate(() => {
-    const resolveColor = (variable: string, property: "backgroundColor" | "color"): string => {
-      const probe = document.createElement("span");
-      probe.style[property] = `var(${variable})`;
-      document.body.append(probe);
-      const value = getComputedStyle(probe)[property];
-      probe.remove();
-      return value;
-    };
-    return {
-      appAlias: resolveColor("--app-bg", "backgroundColor"),
-      appToken: resolveColor("--ling-bg-app", "backgroundColor"),
-      panelAlias: resolveColor("--surface-panel", "backgroundColor"),
-      panelToken: resolveColor("--ling-bg-panel", "backgroundColor"),
-      textAlias: resolveColor("--text", "color"),
-      textToken: resolveColor("--ling-text-default", "color"),
-    };
-  });
-  expect(result.appAlias).toBe(result.appToken);
-  expect(result.panelAlias).toBe(result.panelToken);
-  expect(result.textAlias).toBe(result.textToken);
-  expect(result.appToken).toBe(hexToRgb(manifest.tokens.background.app));
-  expect(result.panelToken).toBe(hexToRgb(manifest.tokens.background.panel));
-  expect(result.textToken).toBe(hexToRgb(manifest.tokens.text.default));
-}
-
-function hexToRgb(value: string): string {
-  const normalized = value.replace(/^#/u, "");
-  const red = Number.parseInt(normalized.slice(0, 2), 16);
-  const green = Number.parseInt(normalized.slice(2, 4), 16);
-  const blue = Number.parseInt(normalized.slice(4, 6), 16);
-  return `rgb(${red}, ${green}, ${blue})`;
-}
-
 async function seedStoredTheme(page: Page, manifest: LingThemePackManifest): Promise<void> {
   await page.evaluate(async (storedManifest) => {
     await new Promise<void>((resolve, reject) => {
-      const request = indexedDB.open("ling-stack-ui2", 2);
+      const request = indexedDB.open("ling-stack-ui2");
       request.onupgradeneeded = () => {
         if (!request.result.objectStoreNames.contains("themes")) {
           request.result.createObjectStore("themes", { keyPath: "id" });

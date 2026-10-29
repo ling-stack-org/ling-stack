@@ -30,7 +30,6 @@
   max-width: var(--radix-popover-content-available-width);
   max-height: var(--radix-popover-content-available-height);
   padding: var(--ling-space-4);
-  border-radius: var(--ling-radius-lg);
 }
 
 .conversation-reasoning-panel {

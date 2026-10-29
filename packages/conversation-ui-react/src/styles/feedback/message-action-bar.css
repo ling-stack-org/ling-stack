@@ -50,7 +50,7 @@
   padding: 0;
   border: 1px solid transparent;
   border-radius: var(--ling-radius-md);
-  color: var(--conversation-text-muted, var(--ling-text-muted));
+  color: var(--ling-text-muted);
   background: transparent;
   box-shadow: none;
   font: inherit;
@@ -67,13 +67,13 @@
 .message-action-bar-action:hover:not(:disabled, [aria-disabled="true"]),
 .message-action-bar-action:focus-visible,
 .message-action-bar-action.selected {
-  border-color: var(--conversation-border, var(--ling-border-default));
-  color: var(--conversation-text-strong, var(--ling-text-strong));
+  border-color: var(--ling-border-default);
+  color: var(--ling-text-strong);
   background: var(--ling-bg-subtle);
 }
 
 .message-action-bar-action:focus-visible {
-  outline: 2px solid var(--conversation-focus-ring, var(--ling-border-focus));
+  outline: 2px solid var(--ling-border-focus);
   outline-offset: 1px;
 }
 

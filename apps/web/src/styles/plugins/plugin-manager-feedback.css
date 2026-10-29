@@ -21,13 +21,13 @@
 .plugin-manager-retained-copy {
   min-width: 0;
   overflow: hidden;
-  color: var(--ling-text-secondary);
+  color: var(--ling-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .plugin-table-action-failure {
-  color: var(--ling-text-danger);
+  color: var(--ling-status-danger);
 }
 
 .plugin-detail-action-failure [data-ling-inline-feedback-slot="detail"] {

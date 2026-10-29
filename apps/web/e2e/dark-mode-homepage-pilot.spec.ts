@@ -17,6 +17,9 @@ test("Ling Dark homepage uses one neutral surface hierarchy", async ({ page }, t
     localStorage.setItem("ling-stack.themeBootstrapPreference", "dark");
   });
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  await page.route("**/runtime/conversation-execution**", (route) => route.fulfill({
+    json: { cwd: "", status: "not_selected", defaultRunnerId: "pi" },
+  }));
   await page.goto("/");
 
   const root = page.locator("html");

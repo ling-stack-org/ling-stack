@@ -12,20 +12,19 @@ const webSourceDirectory = fileURLToPath(new URL("../src/", import.meta.url));
 const stylesDirectory = fileURLToPath(new URL("../src/styles/", import.meta.url));
 const statusActionRowUrl = new URL("../src/shared/components/StatusActionRow.tsx", import.meta.url);
 const componentBarrelUrl = new URL("../src/shared/components/index.ts", import.meta.url);
-const operationStatesUrl = new URL("../src/styles/operation-states.css", import.meta.url);
 
 test("StatusActionRow production owner and selector family stay deleted", async () => {
   await expect(access(statusActionRowUrl)).rejects.toMatchObject({ code: "ENOENT" });
 
-  const [componentBarrel, operationStates, productionFiles, styleFiles] = await Promise.all([
+  const [componentBarrel, styles, productionFiles, styleFiles] = await Promise.all([
     readFile(componentBarrelUrl, "utf8"),
-    readFile(operationStatesUrl, "utf8"),
+    readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
     collectFiles(webSourceDirectory, /\.(?:ts|tsx)$/u),
     collectFiles(stylesDirectory, /\.css$/u),
   ]);
 
   expect(componentBarrel).not.toContain("StatusActionRow");
-  expect(operationStates).not.toContain("status-action-row");
+  expect(styles).not.toContain("operation-states.css");
   expect(productionFiles.filter(({ content }) => content.includes("StatusActionRow"))).toEqual([]);
 
   const repairOwners = styleFiles
