@@ -16,6 +16,7 @@ import type { SkillRegistryEntry } from "../../types.js";
 import {
   boundTeammateNames,
   skillRegistryState,
+  skillSourceLabel,
   type SettingsTranslator,
   type TeammateSkillBindingSummary,
 } from "./skill-library-utils.js";
@@ -62,6 +63,7 @@ export function SkillLibraryTable({
           <TableRow>
             <TableHeaderCell>{t("Skill")}</TableHeaderCell>
             <TableHeaderCell>{t("Description")}</TableHeaderCell>
+            <TableHeaderCell>{t("Source")}</TableHeaderCell>
             <TableHeaderCell>{t("Bound teammates")}</TableHeaderCell>
             <TableHeaderCell>{t("Updated")}</TableHeaderCell>
             {variant !== "builtin" ? <TableHeaderCell aria-label={t("Skill actions")}>{t("Skill actions")}</TableHeaderCell> : null}
@@ -70,7 +72,7 @@ export function SkillLibraryTable({
         <TableBody>
           {entries.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={variant !== "builtin" ? 5 : 4}>
+              <TableCell colSpan={variant !== "builtin" ? 6 : 5}>
                 <EmptyState compact title={loading ? t("Loading skills...") : t("No skills match these filters")} />
               </TableCell>
             </TableRow>
@@ -103,6 +105,7 @@ export function SkillLibraryTable({
                 <TableCell className="settings-skill-summary-cell" title={entry.definition.summary || undefined}>
                   {entry.definition.summary || "-"}
                 </TableCell>
+                <TableCell className="settings-skill-source-cell">{skillSourceLabel(entry.source, t)}</TableCell>
                 <TableCell className="settings-skill-bound-cell">{boundTeammates.length > 0 ? boundTeammates.join(", ") : t("Unbound")}</TableCell>
                 <TableCell className="settings-skill-updated-cell">{formatKnownDateTime(entry.updatedAt, entry.source === "builtin" ? t("Built-in") : t("Unknown"))}</TableCell>
                 {variant !== "builtin" ? (

@@ -8,10 +8,12 @@ import { SkillEvolutionSection } from "./SkillEvolutionSection.js";
 import { SkillImportDialog } from "./SkillImportDialog.js";
 import { SkillLibraryNavigation } from "./SkillLibraryNavigation.js";
 import { SkillLibraryRegistrySection } from "./SkillLibraryRegistrySection.js";
+import { SharedSkillSourcesSection } from "./SharedSkillSourcesSection.js";
 import { useSkillEditorController } from "./useSkillEditorController.js";
 import { useSkillImportController } from "./useSkillImportController.js";
 import { useSkillLibraryActionsController } from "./useSkillLibraryActionsController.js";
 import { useSkillLibraryDataController } from "./useSkillLibraryDataController.js";
+import { useSharedSkillSourcesController } from "./useSharedSkillSourcesController.js";
 
 export function SkillLibrarySettingsPanel({
   cwd,
@@ -53,6 +55,15 @@ export function SkillLibrarySettingsPanel({
     },
   });
   const actions = useSkillLibraryActionsController({ data, editor: skillEditor, showToast, t });
+  const sharedSources = useSharedSkillSourcesController({
+    cwd,
+    active: data.activeSubsection === "local",
+    refreshToken,
+    onPublished: async () => {
+      await data.refresh();
+      showToast({ message: t("Selected skill sources published. Teammate bindings and runtime injection are unchanged."), scope: "skill:shared-source", tone: "success" });
+    },
+  });
 
   const commonRegistryProps = {
     skills: data.skills,
@@ -91,6 +102,7 @@ export function SkillLibrarySettingsPanel({
       <SkillLibraryNavigation
         activeSection={data.activeSubsection}
         currentUserCount={data.currentUserCount}
+        localCount={sharedSources.response ? sharedSources.actionableCount : undefined}
         evolutionCount={data.evolutionCount}
         builtinCount={data.ownershipPartition.builtin.length}
         onSectionChange={data.changeSection}
@@ -115,6 +127,8 @@ export function SkillLibrarySettingsPanel({
           onCreatePlaybookCandidate={actions.createPlaybookCandidate}
           onReviewPlaybookCandidate={actions.reviewPlaybook}
         />
+      ) : data.activeSubsection === "local" ? (
+        <SharedSkillSourcesSection controller={sharedSources} t={t} />
       ) : (
         <SkillLibraryRegistrySection
           {...commonRegistryProps}

@@ -103,9 +103,50 @@ export function readReviewedPackagedOfficeSource() {
   return Object.freeze({ review: freezeReview(review), sourceReviewSha256: hash(bytes) });
 }
 
+/** A local packaging observation, not the independently approved release review. */
+export function readLocalPackagedOfficeSource() {
+  if (process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED === "1") return readReviewedPackagedOfficeSource();
+  const bytes = bytesAt(reviewedSourcePath, sourceReviewMaximumBytes);
+  let approved;
+  try { approved = JSON.parse(bytes.toString("utf8")); }
+  catch (cause) { throw new Error("packaged_office_native_source_review_invalid", { cause }); }
+  if (approved.schemaVersion !== 2) return readReviewedPackagedOfficeSource();
+  exactKeys(approved, ["schemaVersion", "reviewId", "approval", "protocolVersion", "napiVersion",
+    "deploymentTarget", "sourceSha256", "packagingSha256", "toolchains", "headers", "runtime", "signing", "trust"]);
+  requireReview(approved.schemaVersion === 2 && approved.reviewId === "packaged_office_native_v1"
+    && approved.approval === "approved_source_and_packaging_review"
+    && approved.trust === "original_office_source_and_packaging_v1"
+    && approved.protocolVersion === 2 && approved.napiVersion === 8
+    && approved.deploymentTarget === "13.0");
+  exactKeys(approved.headers, ["selector", "environment", "sha256"]);
+  requireReview(approved.headers.selector === "local_environment_path"
+    && approved.headers.environment === "LING_OFFICE_NODE_HEADERS");
+  exactKeys(approved.headers.sha256, headerNames);
+  requireReview(headerNames.every(name => validHash(approved.headers.sha256[name])));
+  exactKeys(approved.packagingSha256, packagingPaths);
+  requireReview(packagingPaths.every(name => validHash(approved.packagingSha256[name])));
+  exactKeys(approved.sourceSha256, OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS);
+  const sourceSha256 = Object.fromEntries(OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS.map(name => {
+    const source = bytesAt(join(nativeRoot, name), 4 * 1024 * 1024);
+    return [name, hash(source)];
+  }));
+  requireReview(OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS.every(name =>
+    sourceSha256[name] === approved.sourceSha256[name]));
+  const observed = observeOfficeNativeToolchain();
+  exactKeys(observed.headers.sha256, headerNames);
+  requireReview(headerNames.every(name => validHash(observed.headers.sha256[name])));
+  const review = freezeReview({ ...approved, sourceSha256,
+    compiler: observed.compiler, sdk: observed.sdk, headers: observed.headers });
+  const packagingSha256 = Object.fromEntries(packagingPaths.map(name =>
+    [name, hash(bytesAt(join(repositoryRoot, name)))]));
+  const observationSha256 = hash(Buffer.from(JSON.stringify({ approvedReviewSha256: hash(bytes),
+    sourceSha256, packagingSha256, compiler: observed.compiler, sdk: observed.sdk, headers: observed.headers })));
+  return Object.freeze({ review, sourceReviewSha256: observationSha256 });
+}
+
 /** Validate facts from the original fresh builder; this does not mint a publication token. */
-export function assertReviewedOfficeNativeBuild(evidence) {
-  const { review } = readReviewedPackagedOfficeSource();
+export function assertReviewedOfficeNativeBuild(evidence, expected = readLocalPackagedOfficeSource()) {
+  const { review } = expected;
   requireReview(evidence?.schemaVersion === 2 && evidence.addon === "office-local"
     && evidence.protocolVersion === review.protocolVersion && evidence.napiVersion === review.napiVersion
     && evidence.deploymentTarget === review.deploymentTarget && evidence.platform === review.runtime.platform

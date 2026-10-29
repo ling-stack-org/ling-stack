@@ -5,6 +5,9 @@
 - [Skill Source Sync Simplification P15](skill-source-sync-simplification-p15.md)
 - [GStack Skill Source Sync](gstack-skill-source-sync.md)
 - [GStack Source Upgrade Lifecycle](gstack-source-upgrade-lifecycle.md)
+- [External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md) —
+  separate contract for local shared `.agents/skills` discovery; this document remains
+  authoritative only for the managed official source.
 - [Settings Shell](./ui2.0升级/modules/settings/README.md)
 
 ## Status
@@ -14,7 +17,7 @@ preview and trusted explicit publish path supersede P15's persisted local-checko
 connection as the normal source-sync mechanism.
 
 Owner: Skill source sync
-Last verified: 2026-08-03
+Last verified: 2026-10-27 (external shared-source boundary; official behavior unchanged)
 
 ## Summary
 
@@ -66,6 +69,27 @@ Manual custom skills remain explicit: users create a skill or import Markdown th
 existing My Skills workflow. A future enterprise/offline source integration can be a
 separate, explicitly configured source type; it must not weaken this official-source
 contract.
+
+### External Shared Skill Sources Are A Separate Contract
+
+Local `.agents/skills` discovery and adoption are governed by
+[External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md), not by
+this document. The two flows share scanner and snapshot machinery but no trust decision,
+policy row, or user intent. Boundary rules:
+
+- The official flow never scans `~/.agents/skills`, workspace `.agents/skills`,
+  `~/.codex/skills`, or a user-selected checkout. Shared discovery never feeds official
+  refresh or apply.
+- Official endpoints stay `/skills/sync/gstack/*`; shared endpoints are
+  `/skills/sync/shared/*`. A shared publish never refreshes the managed cache, writes an
+  official subscription, or creates a `gstack` registry entry.
+- Shared adoption cannot target an official or built-in skill: a same-named local record
+  is `blocked` (`skill_id_conflict`) and cannot attach a source snapshot. Shared preview
+  also scopes drift/missing comparison to shared-root snapshots, so official snapshots
+  never appear as shared `missing`/`drifted`.
+- `auto-safe` remains an official-automation concept. Shared publishing has no automatic
+  entry point; its explicit user-triggered publish bypasses the auto-safe whitelist so a
+  human confirmation is never rejected by an automation policy that does not apply.
 
 ## Managed Source Contract
 
@@ -197,7 +221,9 @@ capabilities until their callers are removed, but they are not part of this user
   after the explicit user action.
 - No registry marketplace or arbitrary remote URL field.
 - No pull, update, or installation of a user's existing gstack/Codex checkout.
-- No support for local custom skill auto-discovery in the official-source flow.
+- No support for local custom skill auto-discovery in the official-source flow. Local
+  shared `.agents/skills` adoption is a separate, explicit contract
+  ([External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md)).
 - No changes to skill execution, teammate bindings, snapshot history, or deletion rules.
 
 ## Acceptance

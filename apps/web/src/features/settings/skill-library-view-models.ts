@@ -1,6 +1,6 @@
 import type { SkillRegistryEntry } from "../../types.js";
 
-export type SkillLibrarySectionId = "mine" | "evolution" | "builtin";
+export type SkillLibrarySectionId = "mine" | "local" | "evolution" | "builtin";
 export type SkillOwnership = "user" | "evolved" | "builtin";
 export type SkillEvolutionViewId = "pending" | "generated" | "ignored";
 export type BuiltinSkillBindingFilter = "all" | "bound" | "unbound";
