@@ -3,7 +3,6 @@
 @import "./styles/base.css";
 @import "./styles/navigation.css";
 @import "./styles/page-shells.css";
-@import "./styles/operation-states.css";
 @import "./styles/shared/artifact-row.css";
 @import "./styles/shared/overlay-scroll-area.css";
 @import "./styles/workspace.css";
@@ -80,7 +79,6 @@
 @import "./styles/conversation-panels.css";
 @import "./styles/creation-dialogs.css";
 @import "./styles/channel-team-metrics.css";
-@import "./styles/strict-console.css";
 @import "./styles/channel-activity-work-thread.css";
 @import "./styles/channel-activity-controls.css";
 @import "./styles/teammate-management-shell.css";
@@ -118,6 +116,7 @@
 
 @import "./styles/shared/work-summary.css";
 @import "./styles/theme-background.css";
+@import "./styles/shared/workspace-navigation-appearance.css";
 
 .artifact-preview-interactive-frame {
   display: block;

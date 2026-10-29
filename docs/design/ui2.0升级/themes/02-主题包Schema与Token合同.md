@@ -6,7 +6,7 @@
 
 ## Implementation Status
 
-经典主题的 schema、complete token map 和 runtime validator 已实现。`scene` metadata、三套官方场景主题、连续背景可见度和自定义媒体背景按[实施方案](../../full-window-theme-background-implementation-plan.md)进入当前交付。
+经典主题与四套官方场景主题的 schema、complete token map 和 runtime validator 已实现。当前组件参数合同见[共享组件外观](../../component-theme-presentation.md)，背景与原生发布按[背景合同](../../theme-background-hardening-plan.md)分层验收。
 
 ## Package Shape
 
@@ -101,6 +101,12 @@ export interface LingThemeTokens {
 
 主题包必须提供完整 token set。注册器不从另一主题填补缺失字段。正文、muted text、focus、status 和 accentForeground 必须通过对比度检查。
 
+## Component Appearance Parameters
+
+`component-tokens.css` 提供组件默认值，官方 `built-in-themes.css` 集中覆写圆角、边界、局部阴影、工具栏和消息等参数。共享组件只消费这些值；未覆写的组件参数沿用共享默认值。
+
+它们是应用代码拥有的展示合同，不是 `LingThemeTokens` / `LING_THEME_CSS_VARIABLES` 中新增的 JSON 字段。主题作者不能任意追加 manifest 字段或注入 CSS。若未来需要持久化/导入可配置的组件参数，必须单独设计并同步类型、校验、映射、bootstrap 和回退测试；当前没有开放该能力。
+
 ## Desktop Tokens
 
 ```ts
@@ -123,8 +129,7 @@ export type LingBuiltInSceneId =
   | "forest-breeze"
   | "ocean-drift"
   | "midnight-aurora"
-  | "sakura-bloom"
-  | "ember-dusk";
+  | "farbound-journey";
 
 export interface LingThemeScene {
   readonly id: LingBuiltInSceneId;
@@ -136,7 +141,7 @@ export interface LingThemeScene {
 - `scene` 只能出现在官方 built-in manifest。
 - scene ID 必须在应用注册的 renderer 中存在。
 - manifest 不能保存 SVG、CSS、图片路径、脚本、坐标、opacity、selector 或远程 URL。
-- scene renderer 负责全窗插画、主题缩略图、Ling Core IP 和角落装饰。
+- scene renderer 负责整合背景与对应缩略图；新 Core IP 和启动动画暂停，不单独叠加人物或替换原 Logo。
 - 经典 `ling-light` / `ling-dark` 不声明 scene。
 
 ## Presentation Selection
@@ -167,12 +172,12 @@ Theme Pack 只能选择注册表中存在的 Profile，不能提供 Profile defi
 ```text
 tokens.background.app              -> --ling-bg-app
 tokens.background.elevated         -> --ling-bg-elevated
-tokens.text.default                -> --ling-text
+tokens.text.default                -> --ling-text-default
 tokens.border.focus                -> --ling-border-focus
-tokens.action.accent               -> --ling-accent
-tokens.status.danger.foreground    -> --ling-danger
-tokens.status.danger.background    -> --ling-danger-soft
-tokens.status.danger.border        -> --ling-danger-border
+tokens.action.accent               -> --ling-action-accent
+tokens.status.danger.foreground    -> --ling-status-danger
+tokens.status.danger.background    -> --ling-status-danger-bg
+tokens.status.danger.border        -> --ling-status-danger-border
 ```
 
 变量映射由单一 runtime style owner 应用。Feature 不直接读取 manifest 或拼装变量名。

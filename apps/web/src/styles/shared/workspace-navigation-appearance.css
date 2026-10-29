@@ -1,0 +1,77 @@
+/* One appearance policy for expanded navigation, object rows and compact rail. */
+.app-shell .channel-left-drawer .sidebar-command-button {
+  border-radius: var(--ling-navigation-radius);
+  color: var(--ling-text-strong);
+  background: var(--ling-navigation-selected-bg);
+  background-image: var(--ling-navigation-selected-finish);
+  box-shadow: var(--ling-navigation-selected-shadow);
+}
+
+.app-shell .channel-left-drawer .sidebar-command-button:hover {
+  border-color: var(--ling-border-focus);
+}
+
+.app-shell .channel-left-drawer .sidebar-command-button:focus-visible {
+  outline: 0;
+  box-shadow: var(--ling-focus-ring), var(--ling-navigation-selected-shadow);
+}
+
+.app-shell :is(.channel-left-drawer .nav-item, .channel-left-drawer .sidebar-row-shell, .channel-left-drawer .sidebar-branch-row-shell, .sidebar-compact-rail .sidebar-compact-rail-action, .sidebar-compact-rail .primary-nav-compact .nav-item) {
+  position: relative;
+  border-radius: var(--ling-navigation-radius);
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell :is(.channel-left-drawer .nav-item, .channel-left-drawer .sidebar-row-shell, .channel-left-drawer .sidebar-branch-row-shell, .sidebar-compact-rail .sidebar-compact-rail-action, .sidebar-compact-rail .primary-nav-compact .nav-item):hover:not(:disabled, [aria-disabled="true"]) {
+  color: var(--ling-text-strong);
+  background: var(--ling-navigation-hover-bg);
+}
+
+.app-shell :is(.channel-left-drawer .nav-item.active, .channel-left-drawer .sidebar-row-shell.selected, .channel-left-drawer .sidebar-branch-row-shell.selected, .sidebar-compact-rail .sidebar-compact-rail-action.active, .sidebar-compact-rail .sidebar-compact-rail-action[aria-pressed="true"], .sidebar-compact-rail .primary-nav-compact .nav-item.active) {
+  color: var(--ling-text-strong);
+  background: var(--ling-navigation-selected-bg);
+  background-image: var(--ling-navigation-selected-finish);
+  box-shadow: var(--ling-navigation-selected-shadow);
+}
+
+.app-shell :is(.channel-left-drawer .nav-item.active, .channel-left-drawer .sidebar-row-shell.selected, .channel-left-drawer .sidebar-branch-row-shell.selected, .sidebar-compact-rail .sidebar-compact-rail-action.active, .sidebar-compact-rail .primary-nav-compact .nav-item.active)::after {
+  position: absolute;
+  top: var(--ling-navigation-marker-top);
+  bottom: var(--ling-navigation-marker-bottom);
+  inset-inline-start: var(--ling-navigation-marker-offset);
+  width: var(--ling-navigation-marker-width);
+  height: var(--ling-navigation-marker-height);
+  border-radius: var(--ling-navigation-marker-radius);
+  background: var(--ling-navigation-marker);
+  content: "";
+  pointer-events: none;
+  transform: var(--ling-navigation-marker-transform);
+}
+
+.app-shell :is(.channel-left-drawer .nav-item, .sidebar-compact-rail .sidebar-compact-rail-action, .sidebar-compact-rail .primary-nav-compact .nav-item):focus-visible,
+.app-shell :is(.channel-left-drawer .sidebar-row-shell, .channel-left-drawer .sidebar-branch-row-shell):focus-within {
+  outline: 0;
+  box-shadow: var(--ling-focus-ring);
+}
+
+@media (forced-colors: active) {
+  .app-shell .channel-left-drawer .sidebar-command-button {
+    border-color: ButtonText;
+  }
+
+  .app-shell .channel-left-drawer .sidebar-command-button:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+
+  .app-shell :is(.channel-left-drawer .nav-item.active, .channel-left-drawer .sidebar-row-shell.selected, .channel-left-drawer .sidebar-branch-row-shell.selected, .sidebar-compact-rail .sidebar-compact-rail-action.active, .sidebar-compact-rail .primary-nav-compact .nav-item.active) {
+    outline: 1px solid Highlight;
+  }
+}
+
+/* The row owns selection/focus paint; its label button stays transparent. */
+.app-shell .channel-left-drawer .sidebar-row-main.ling-ui-button {
+  background: transparent;
+  box-shadow: none;
+}

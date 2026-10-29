@@ -8,6 +8,7 @@
 - [AI 生成主题产品流程（历史停用）](../themes/07-AI生成主题产品流程.md)
 - [CSS 目标目录与加载顺序](../architecture/03-CSS所有权与迁移规则.md)
 - [主题注册表与运行时切换](../architecture/07-主题注册表与运行时切换.md)
+- [共享组件参数与新模块接入](../../component-theme-presentation.md)
 
 ## Ownership
 
@@ -15,7 +16,7 @@ Tokens 和内置 Theme Pack 由 `@ling-stack/ui-react` 定义。Web 现有 `base
 在迁移期只保留 reset、AppShell 必要布局和旧变量 alias，不再新增视觉 token。
 
 Theme Pack 是完整、独立的外观单元。`ling-light`、`ling-dark` 是经典内置主题，
-`ling-breeze`、`ling-ocean`、`ling-night` 是官方场景主题。它们不是同一主题内部的
+`ling-breeze`、`ling-ocean`、`ling-night`、`ling-journey` 是官方场景主题。它们不是同一主题内部的
 Light/Dark 双模式。`System` 只是根据 OS 外观解析 Theme Pack 的选择策略。
 
 ## Token Layers
@@ -27,6 +28,9 @@ Foundation tokens
 Theme Pack tokens
   background / text / border / action / status / shadow / native
 
+Shared component defaults + official appearance overrides
+  control / composer / navigation / shortcut / card / row / overlay / message / code
+
 Client surface tokens
   Web / Desktop window material and chrome
 
@@ -34,8 +38,10 @@ Presentation Profile recipes
   route artwork / approved surface composition / fixed decoration slots
 ```
 
-- Foundation tokens 对所有主题固定，主题不能改变 geometry。
+- Foundation 的字号、间距、控件高度、命中区域、图标、motion 和 z-index 保持固定。
+- 组件圆角、边框、局部阴影和材质是允许的外观参数；默认值在 `component-tokens.css`，官方主题在 `built-in-themes.css` 集中覆写，不改 foundation scale 本身。
 - Theme Pack 必须提供完整 semantic token set，不从其他主题继承。
+- 未声明的组件参数使用共享默认值；这与缺少必需 semantic manifest 字段是两回事。
 - Client surface 只增强窗口材质，不改变业务组件视觉语义。
 - Presentation Profile 只组合批准的 surface/artwork recipe，不覆盖 foundation geometry。
 
@@ -44,7 +50,7 @@ Presentation Profile recipes
 | Category | Tokens |
 |---|---|
 | Space | `2, 4, 6, 8, 12, 16, 20, 24, 32px` |
-| Radius | `4, 6, 8px` |
+| Radius | foundation scale 为 `4, 6, 8px`；组件参数可选择批准的主题圆角，不受统一 `8px` 上限约束 |
 | Font | `12, 13, 14, 16, 20px` |
 | Line height | `18, 20, 22, 24, 28px` |
 | Control height | `32, 36, 40px` |
@@ -93,12 +99,14 @@ Built-in token values 由
 
 ## CSS Variables
 
-- 共享组件只读 `--ling-*` semantic variables。
+- 共享组件只读 `--ling-*` semantic/component variables。
 - Feature CSS 不读 manifest，不识别 Theme Pack ID。
 - Feature CSS 不识别 Presentation Profile ID；只有共享 presentation layer 可以消费。
 - 遇到需要外观差异的领域 surface，先定义 semantic token，不写主题 selector。
-- 主题包不得覆盖 space、font、radius、motion、z-index 和 icon 尺寸 token。
+- 主题不得改写 foundation space、font、radius scale、motion、z-index 和 icon 尺寸；组件级 radius 由批准的组件参数控制。
 - Feature CSS 中主题颜色字面量目标为 `0`。
+
+精确参数、所有权和扩展步骤见[共享组件合同](../../component-theme-presentation.md)。组件参数目前是应用控制的 CSS 变量，并非 manifest 可任意追加的字段；扩展序列化协议必须同时修改 types、validator、映射与 bootstrap 测试。
 
 ## Built-In Themes
 

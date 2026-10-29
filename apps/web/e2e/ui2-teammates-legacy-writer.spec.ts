@@ -126,7 +126,7 @@ test.describe("T13-O.21 Teammates legacy writer release", () => {
     await expectUsesColorToken(
       surface.locator(".teammate-management-list-panel"),
       "backgroundColor",
-      "--surface-panel",
+      "--ling-bg-panel",
     );
     await expectUsesColorToken(
       surface.locator(".teammate-management-row").first().locator(".teammate-draft-copy strong"),

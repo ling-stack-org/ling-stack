@@ -146,7 +146,6 @@ test("Ling Core IP mark uses ambient motion tokens and stays static for reduced 
   assert.match(index, /brand\/ling-core-mark\.css/u);
   assert.match(foundations, /--ling-motion-ambient-breath:\s*5200ms/u);
   assert.match(foundations, /--ling-motion-ambient-drift:\s*8400ms/u);
-  assert.match(foundations, /--ling-motion-ambient-orbit:\s*24000ms/u);
   assert.match(mark, /prefers-reduced-motion:\s*no-preference/u);
   assert.match(mark, /prefers-reduced-motion:\s*reduce/u);
   assert.match(mark, /forced-colors:\s*active/u);

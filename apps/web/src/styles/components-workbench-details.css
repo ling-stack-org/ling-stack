@@ -1,22 +1,22 @@
 .conversation-block-action-menu {
   position: absolute;
   z-index: 8;
-  border: 1px solid var(--conversation-border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 8px;
-  background: var(--conversation-bg);
-  color: var(--conversation-text);
-  box-shadow: var(--shadow-panel);
+  background: var(--ling-bg-panel);
+  color: var(--ling-text-default);
+  box-shadow: var(--ling-surface-shadow-shell);
 }
 
 .conversation-block-action-menu strong {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
   font-size: 12px;
   font-weight: 700;
   line-height: 16px;
 }
 
 .conversation-block-action-menu small {
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   font-weight: 650;
   line-height: 14px;
@@ -40,7 +40,7 @@
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  color: var(--conversation-text);
+  color: var(--ling-text-default);
   font-size: 12px;
   font-weight: 650;
   text-align: left;
@@ -48,9 +48,9 @@
 
 .conversation-block-action-menu button:hover,
 .conversation-block-action-menu button:focus-visible {
-  border-color: var(--conversation-border);
-  background: var(--conversation-bg-muted);
-  color: var(--conversation-text-strong);
+  border-color: var(--ling-border-default);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-strong);
 }
 
 .thread-reply-panel {
@@ -60,9 +60,9 @@
   min-width: 0;
   min-height: 0;
   padding: 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 8px;
-  background: var(--surface-panel-strong);
+  background: var(--ling-bg-elevated);
 }
 
 .thread-reply-head,
@@ -79,7 +79,7 @@
 .thread-reply-head span {
   gap: 6px;
   min-width: 0;
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 13px;
 }
 
@@ -87,25 +87,25 @@
 .thread-empty-state {
   min-width: 0;
   padding: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 8px;
-  background: var(--surface-panel);
+  background: var(--ling-bg-panel);
 }
 
 .thread-root-message {
-  border-left: 3px solid var(--info);
+  border-left: 3px solid var(--ling-status-info);
 }
 
 .thread-root-message small {
   display: block;
   margin-bottom: 5px;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   font-weight: 720;
 }
 
 .thread-root-message p {
-  color: var(--text);
+  color: var(--ling-text-default);
   font-size: 12px;
   line-height: 1.48;
   white-space: pre-wrap;
@@ -120,7 +120,7 @@
 }
 
 .thread-empty-state {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   text-align: center;
 }
@@ -147,10 +147,10 @@
   gap: 8px;
   min-width: 0;
   padding: 8px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 8px;
-  background: var(--surface-panel-strong);
-  color: var(--text);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-default);
   font-size: 12px;
 }
 
@@ -169,7 +169,7 @@
   display: grid;
   gap: 10px;
   padding-bottom: 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--ling-border-default);
 }
 
 .channel-inspector-tabs {
@@ -180,18 +180,18 @@
 
 .channel-inspector-tabs button {
   min-height: 30px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 6px;
-  background: var(--surface-panel-strong);
-  color: var(--text-muted);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-muted);
   font-size: 12px;
   font-weight: 760;
 }
 
 .channel-inspector-tabs button.active {
-  border-color: var(--accent-border);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  border-color: var(--ling-border-focus);
+  background: var(--ling-action-selection);
+  color: var(--ling-action-accent-hover);
 }
 
 .runtime-protocol,
@@ -205,9 +205,9 @@
   display: grid;
   gap: 8px;
   padding: 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 8px;
-  background: var(--surface-panel-strong);
+  background: var(--ling-bg-elevated);
 }
 
 .protocol-row.compact {
@@ -274,9 +274,9 @@
   width: 100%;
   min-width: min(100%, 280px);
   padding: 9px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 7px;
-  background: var(--surface-panel);
+  background: var(--ling-bg-panel);
 }
 
 .workflow-final-summary > strong {
@@ -288,16 +288,16 @@
 }
 
 .work-history-branch-row.selected {
-  border-left-color: var(--accent);
+  border-left-color: var(--ling-action-accent);
 }
 
 .protocol-row strong {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 13px;
 }
 
 .protocol-row small {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -316,15 +316,7 @@
   flex-wrap: wrap;
 }
 
-.channel-create-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgb(15 23 42 / 28%);
-}
+
 
 .channel-create-dialog {
   display: grid;
@@ -333,10 +325,6 @@
   max-height: min(780px, calc(100dvh - 48px));
   overflow: auto;
   padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-panel);
-  box-shadow: var(--shadow-panel);
 }
 
 .channel-create-teammates {
@@ -357,16 +345,16 @@
   gap: 8px;
   min-height: 46px;
   padding: 7px 9px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-panel-strong);
-  color: var(--text);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-default);
   text-align: left;
 }
 
 .channel-create-teammate.selected {
-  border-color: var(--accent-border);
-  background: var(--accent-soft);
+  border-color: var(--ling-border-focus);
+  background: var(--ling-action-selection);
 }
 
 .channel-create-teammate span:not(.avatar-initial) {
@@ -383,13 +371,13 @@
 }
 
 .channel-create-teammate small {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
 }
 
 
 .danger-text {
-  color: var(--danger);
+  color: var(--ling-status-danger);
 }
 
 .channel-option-actions {
@@ -434,7 +422,7 @@
 .workspace-context-stack > .first-run-flow,
 .workspace-context-stack > .timeline {
   border-radius: 8px;
-  background: var(--surface-panel);
+  background: var(--ling-bg-panel);
 }
 
 .workspace-context-stack .first-run-steps {
@@ -464,28 +452,28 @@
   border-radius: 8px;
 }
 
-/* Final strict token guard: this file also contains older component rules above. */
+/* Workbench surface presentation. */
 .context-panel-card,
 .workspace-context-stack > .first-run-flow,
 .workspace-context-stack > .timeline,
 .workspace-context-stack > .context-panel-card {
-  border: 1px solid var(--border);
-  background: var(--surface-panel);
+  border: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-panel);
   box-shadow:
-    inset 0 1px 0 var(--hairline),
-    var(--shadow-panel);
+    inset 0 1px 0 color-mix(in srgb, var(--ling-border-default) 32%, transparent),
+    var(--ling-surface-shadow-shell);
 }
 
 .client-empty-state {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
 }
 
 .event-count,
 .status-badge {
-  border-color: var(--border);
-  background: var(--surface-panel-strong);
-  color: var(--text-muted);
-  box-shadow: inset 0 1px 0 var(--hairline);
+  border-color: var(--ling-border-default);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-muted);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ling-border-default) 32%, transparent);
 }
 
 .status-badge.succeeded,
@@ -493,9 +481,9 @@
 .status-badge.run,
 .status-badge.task,
 .status-badge.bound_path {
-  border-color: var(--success-border);
-  background: var(--success-soft);
-  color: var(--success);
+  border-color: var(--ling-status-success-border);
+  background: var(--ling-status-success-bg);
+  color: var(--ling-status-success);
 }
 
 .status-badge.running,
@@ -505,65 +493,79 @@
 .status-badge.channel,
 .status-badge.workspace,
 .status-badge.workflow_step {
-  border-color: var(--warning-border);
-  background: var(--warning-soft);
-  color: var(--warning);
+  border-color: var(--ling-status-warning-border);
+  background: var(--ling-status-warning-bg);
+  color: var(--ling-status-warning);
 }
 
 .status-badge.failed,
 .status-badge.cancelled {
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
-  color: var(--danger);
+  border-color: var(--ling-status-danger-border);
+  background: var(--ling-status-danger-bg);
+  color: var(--ling-status-danger);
 }
 
 .provider-run-notice.ok {
-  border-color: var(--success-border);
-  background: var(--success-soft);
-  color: var(--success);
+  border-color: var(--ling-status-success-border);
+  background: var(--ling-status-success-bg);
+  color: var(--ling-status-success);
+}
+
+.provider-run-notice.neutral {
+  border-color: var(--ling-border-default);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-muted);
+}
+
+.provider-run-notice.neutral strong {
+  color: var(--ling-text-strong);
+}
+
+.tool-row:hover {
+  border-color: var(--ling-border-strong);
+  background: var(--ling-bg-subtle);
 }
 
 .provider-run-notice,
 .tool-row,
 .persistence-line {
-  border-color: var(--border);
-  background: var(--surface-panel-strong);
-  color: var(--text);
+  border-color: var(--ling-border-default);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-default);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .tool-row code {
-  background: var(--surface-subtle);
-  color: var(--text);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-default);
 }
 
 .tool-row span,
 .muted,
 .persistence-line,
 .meta-row span {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
 }
 
 .meta-row strong {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
 }
 
 .meta-row code {
-  color: var(--text);
+  color: var(--ling-text-default);
+}
+
+.meta-list {
+  gap: 1px;
+  background: var(--ling-border-default);
+}
+
+.meta-row {
+  background: var(--ling-bg-panel);
 }
 
 .persistence-line svg {
-  color: var(--success);
+  color: var(--ling-status-success);
 }
-
-:root[data-theme="dark"] .provider-run-notice,
-:root[data-theme="dark"] .tool-row,
-:root[data-theme="dark"] .persistence-line {
-  background: var(--ling-bg-elevated);
-}
-
-:root[data-theme="dark"] .status-badge,
-:root[data-theme="dark"] .event-count {
-  background: var(--ling-bg-subtle);
-}
-
-/* Final responsive workbench overrides, kept last because legacy media rules above still exist. */

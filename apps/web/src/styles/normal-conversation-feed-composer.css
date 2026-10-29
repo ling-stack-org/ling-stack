@@ -82,28 +82,12 @@
   width: min(710px, 100%);
   margin-top: 38px;
   padding: 12px;
-  border: 1px solid var(--ling-surface-border-emphasis);
-  border-radius: 14px;
-  background: var(--ling-bg-composer);
-  box-shadow: var(--ling-surface-shadow-shell), 0 0 0 1px color-mix(in srgb, var(--ling-action-accent) 8%, transparent);
 }
 
 .normal-conversation-page [data-conversation-composer][data-surface="normal_conversation"] {
   width: 100%;
   margin-top: 0;
   padding: 8px;
-  border: 1px solid var(--ling-surface-border-emphasis);
-  border-radius: 14px;
-  background: var(--ling-bg-composer);
-  box-shadow: var(--ling-surface-shadow-shell);
-}
-
-[data-conversation-composer][data-surface="normal_conversation"]:focus-within {
-  border-color: var(--ling-border-focus);
-  box-shadow:
-    inset 0 0 0 1px var(--ling-border-focus),
-    var(--ling-focus-ring),
-    var(--ling-surface-shadow-shell);
 }
 
 [data-conversation-composer][data-surface="normal_conversation"] .normal-conversation-composer-body {
@@ -134,8 +118,6 @@
   align-items: center;
   gap: var(--ling-space-5);
   margin-top: var(--ling-space-3);
-  padding: var(--ling-space-2) var(--ling-space-2) 0;
-  border-top: 1px solid color-mix(in srgb, var(--ling-border-default) 70%, transparent);
 }
 
 [data-conversation-composer][data-surface="normal_conversation"] .conversation-composer-left-tools,

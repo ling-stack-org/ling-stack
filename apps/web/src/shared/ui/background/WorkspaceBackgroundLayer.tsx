@@ -5,9 +5,14 @@ import { useTheme } from "../../../theme.js";
 import { useBackground } from "./BackgroundProvider.js";
 import { BackgroundVideo } from "./BackgroundVideo.js";
 import { BackgroundPlaybackControl } from "./BackgroundPlaybackControl.js";
+import { SwordLightTrail } from "./sword-light/SwordLightTrail.js";
 
 export function useBackgroundMaterial(opacity: number) {
   const { resolved } = useTheme();
+  const [basis, setBasis] = useState(readMaterialBasis);
+  // Theme application is committed on the root before paint. Re-read after a
+  // switch so preview and workspace consume exactly the same CSS parameters.
+  useLayoutEffect(() => { setBasis(readMaterialBasis()); }, [resolved]);
   const tokens = resolved.manifest.tokens;
   const recipe = backgroundRecipe(opacity);
   const foregrounds = [tokens.text.default, tokens.text.muted, tokens.text.strong, tokens.text.link]
@@ -18,12 +23,21 @@ export function useBackgroundMaterial(opacity: number) {
     workspace: resolveBackgroundWorkspaceAlpha({
       app: tokens.background.app,
       panel: tokens.background.panel,
-      foreground: tokens.text.strong,
       opacity,
+      baseAlpha: basis.ambient,
     }),
-    panel: resolveBackgroundPanelAlpha({ app: tokens.background.app, panel: tokens.background.panel, opacity, foregrounds }),
-    sidebar: resolveBackgroundSidebarAlpha({ app: tokens.background.app, sidebar: tokens.background.sidebar }),
+    panel: resolveBackgroundPanelAlpha({ app: tokens.background.app, panel: tokens.background.panel, opacity, foregrounds, minimumAlpha: basis.content }),
+    sidebar: resolveBackgroundSidebarAlpha({ app: tokens.background.app, sidebar: tokens.background.sidebar, minimumAlpha: basis.shell }),
   };
+}
+
+function readMaterialBasis() {
+  const css = getComputedStyle(document.documentElement);
+  const read = (name: string, fallback: number) => {
+    const value = css.getPropertyValue(name).trim();
+    return value && Number.isFinite(Number(value)) ? Number(value) : fallback;
+  };
+  return { ambient: read("--ling-surface-ambient-alpha", 0), content: read("--ling-surface-content-alpha", 0), shell: read("--ling-surface-shell-alpha", 0.68) };
 }
 
 export function useEffectiveBackgroundOpacity(opacity: number): number {
@@ -45,6 +59,9 @@ export function WorkspaceBackgroundLayer(): React.JSX.Element {
   const material = useBackgroundMaterial(opacity);
   const active = Boolean(url || scene);
   const source = url ? mediaKind === "video" ? "local-video" : "local-image" : scene ? "theme-scene" : "theme-solid";
+  // Theme-scoped light trail: only the ink-wash journey scene opts in, and only
+  // while decoration is allowed. Contract: docs/design/theme-background-motion-contract.md section 9.
+  const glowCursor = scene === "farbound-journey" && motion.visible && !motion.reduced;
 
   useLayoutEffect(() => {
     const root = document.documentElement;
@@ -75,5 +92,6 @@ export function WorkspaceBackgroundLayer(): React.JSX.Element {
         ? <SceneArtwork scene={scene} position={position} />
         : null}
     <div className="workspace-background-scrim" />
+    {glowCursor ? <SwordLightTrail className="workspace-glow-cursor" color="#c49a63" secondaryColor="#9a7448" data-glow-cursor={scene} /> : null}
   </div>{url && mediaKind === "video" && presentation.visible ? <BackgroundPlaybackControl /> : null}</>;
 }

@@ -16,7 +16,7 @@
   border: 1px solid var(--ling-surface-border-subtle);
   border-radius: calc(var(--ling-control-radius) + 2px);
   background: color-mix(in srgb, var(--ling-bg-panel) 92%, transparent);
-  box-shadow: var(--ling-surface-shadow-shell);
+  box-shadow: var(--ling-control-shadow);
 }
 
 .ling-ui-tabs-trigger,

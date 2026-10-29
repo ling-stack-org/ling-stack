@@ -105,6 +105,183 @@ test('BG-H3 focus and visibility are per-theme, cancel/recommend are drafts and 
   await expect(page.locator('[data-background-focus="x"]')).toHaveValue('88');
 });
 
+test('BG-H3 recommendations follow edited parameters and actions occupy one row', async ({ page }) => {
+  await prepare(page); await settings(page);
+  const panel = page.locator('[data-background-settings]');
+  const recommend = panel.getByRole('button', { name: 'Use recommended settings', exact: true });
+  await expect(recommend).toHaveCount(0);
+  await expect(panel.locator('.background-actions')).toHaveCount(1);
+  await expect(panel.locator('[data-background-preview]')).toHaveAttribute('data-draft', 'false');
+
+  await panel.locator('[data-background-opacity]').press('End');
+  await expect(panel.locator('[role="status"]')).toContainText('Preview only');
+  await expect(panel.locator('[data-background-preview]')).toHaveAttribute('data-draft', 'true');
+  await expect(recommend).toBeVisible();
+  const boxes = await panel.locator('.background-actions button').evaluateAll(buttons => buttons.map(button => {
+    const box = button.getBoundingClientRect();
+    return { top: box.top, left: box.left, right: box.right };
+  }));
+  expect(boxes).toHaveLength(4);
+  for (const [index, box] of boxes.entries()) {
+    expect(Math.abs(box.top - boxes[0].top)).toBeLessThanOrEqual(1);
+    if (index) expect(box.left - boxes[index - 1].right).toBeGreaterThanOrEqual(7);
+  }
+  await recommend.click();
+  await expect(recommend).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Apply background', exact: true })).toHaveCount(0);
+  await expect(panel.locator('[data-background-preview]')).toHaveAttribute('data-draft', 'false');
+
+  await panel.locator('[data-background-focus="x"]').press('End');
+  await expect(recommend).toBeVisible();
+  await panel.getByRole('button', { name: 'Cancel preview', exact: true }).click();
+  await expect(recommend).toHaveCount(0);
+
+  // A media draft alone is not a deviation from the recommended profile.
+  await panel.locator('[data-background-file]').setInputFiles({ name: 'profile.mp4', mimeType: 'video/mp4', buffer: mp4 });
+  await expect(panel.locator('.background-preview video')).toBeVisible();
+  await expect(recommend).toHaveCount(0);
+  await panel.getByRole('button', { name: 'Pause · Background', exact: true }).click();
+  await expect(recommend).toBeVisible();
+  await recommend.click();
+  await expect(recommend).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Apply background', exact: true })).toBeVisible();
+  await panel.getByRole('button', { name: 'Cancel preview', exact: true }).click();
+});
+
+test('BG-H4 saves and clear use one expiring global success Toast without inline success state', async ({ page }, info) => {
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  await page.clock.install();
+  await prepare(page); await settings(page);
+  const panel = page.locator('[data-background-settings]');
+  const toast = page.locator('.ling-ui-toast[data-scope="settings:background:save"]');
+  const slider = panel.locator('[data-background-opacity]');
+  await slider.fill('80'); await apply(page);
+  await expect(toast).toHaveCount(1);
+  await expect(toast).toContainText('Background saved.');
+  await expect(toast).toHaveAttribute('data-tone', 'success');
+  await expect(panel.getByRole('status')).not.toContainText('Background saved.');
+  await expect(panel.locator('.ling-ui-toast')).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath('background-save-global-toast.png') });
+  await page.clock.runFor(2_400); await expect(toast).toBeVisible();
+  // A second result reuses the scope and gets the full shared lifetime.
+  await slider.fill('70'); await apply(page);
+  await expect(toast).toHaveCount(1);
+  await page.clock.runFor(2_400); await expect(toast).toBeVisible();
+  await page.clock.runFor(1_000); await expect(toast).toHaveCount(0);
+  await expect(slider).toHaveValue('70');
+  await panel.locator('[data-background-file]').setInputFiles({ name: 'toast.mp4', mimeType: 'video/mp4', buffer: mp4 });
+  await expect(panel.locator('[data-background-preview]')).toHaveAttribute('data-draft', 'true');
+  await apply(page);
+  await panel.getByRole('button', { name: 'Restore default background', exact: true }).click();
+  await expect(toast).toHaveCount(1);
+  await expect(page.locator('html')).toHaveAttribute('data-background-source', 'theme-scene');
+  await page.clock.runFor(3_400); await expect(toast).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath('background-save-toast-expired.png') });
+  expect(errors).toEqual([]);
+});
+
+test('BG-H4 a failed save dismisses old success and keeps local error until successful recovery', async ({ page }, info) => {
+  await page.clock.install();
+  await prepare(page); await settings(page);
+  const panel = page.locator('[data-background-settings]');
+  const toast = page.locator('.ling-ui-toast[data-scope="settings:background:save"]');
+  const slider = panel.locator('[data-background-opacity]');
+  await slider.fill('80'); await apply(page); await expect(toast).toBeVisible();
+  await page.evaluate(() => {
+    const put = IDBObjectStore.prototype.put;
+    Reflect.set(window, '__backgroundFeedbackPut', put);
+    IDBObjectStore.prototype.put = function(...args: Parameters<IDBObjectStore['put']>) {
+      if (this.name === 'background-settings') throw new DOMException('Controlled write failure', 'QuotaExceededError');
+      return put.apply(this, args);
+    };
+  });
+  await slider.fill('70'); await apply(page);
+  await expect(panel.getByRole('alert')).toBeVisible();
+  await page.clock.runFor(6_000);
+  await expect(toast).toHaveCount(0);
+  await expect(panel.getByRole('alert')).toBeVisible();
+  await expect(slider).toHaveValue('80');
+  await page.screenshot({ path: info.outputPath('background-save-persistent-error.png') });
+  await page.evaluate(() => { IDBObjectStore.prototype.put = Reflect.get(window, '__backgroundFeedbackPut'); });
+  await slider.fill('60'); await apply(page);
+  await expect(panel.getByRole('alert')).toHaveCount(0);
+  await expect(toast).toBeVisible();
+});
+
+for (const themeId of ['ling-breeze', 'ling-ocean', 'ling-night', 'ling-journey']) {
+  test(`BG-H3 ${themeId} previews the full range and persists visibility after apply`, async ({ page }, info) => {
+    await prepare(page); await settings(page);
+    await page.locator(`[data-theme-option-id="${themeId}"]`).click();
+    const exposure = () => page.evaluate(() => {
+      const scrim = Number(getComputedStyle(document.querySelector('.workspace-background-scrim')!).opacity);
+      const color = getComputedStyle(document.querySelector('.workspace')!).backgroundColor;
+      const match = color.match(/\/\s*([\d.]+)\)$/u) ?? color.match(/^rgba\(.+,\s*([\d.]+)\)$/u);
+      const tint = color === 'transparent' ? 0 : match ? Number(match[1]) : 1;
+      return (1 - scrim) * (1 - tint);
+    });
+    await back(page);
+    await expect(page.locator('.workspace-background-scrim')).toHaveCSS('opacity', '0.4');
+    const balancedExposure = await exposure();
+    expect(balancedExposure).toBeGreaterThan(.5);
+    expect(balancedExposure).toBeLessThanOrEqual(.6);
+    await page.screenshot({ path: info.outputPath(`${themeId}-visibility-60.png`) });
+    await settings(page);
+    await page.setViewportSize({ width: 1280, height: 960 });
+    const slider = page.locator('[data-background-opacity]');
+    const scrim = page.locator('.background-preview-scrim');
+    await slider.press('Home');
+    await expect(scrim).toHaveCSS('opacity', '0.8');
+    await slider.press('End');
+    await expect(slider).toHaveValue('100');
+    await expect(scrim).toHaveCSS('opacity', '0');
+    await expect(page.locator('.background-preview-shell > span').nth(1)).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await page.getByRole('button', { name: 'Apply background', exact: true }).click();
+    await back(page);
+    await expect(page.locator('.workspace-background-scrim')).toHaveCSS('opacity', '0.4');
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await expect(page.locator('.workspace-background-scrim')).toHaveCSS('opacity', '0');
+    expect(await exposure()).toBe(1);
+    expect(await exposure() - balancedExposure).toBeGreaterThan(.3);
+    const title = page.locator('.conversation-home h1');
+    await expect(title).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(title).toHaveCSS('-webkit-text-stroke-width', '2px');
+    await expect(title).toHaveCSS('paint-order', 'stroke');
+    await page.screenshot({ path: info.outputPath(`${themeId}-visibility-100.png`) });
+    await page.reload(); await settings(page);
+    await expect(slider).toHaveValue('100');
+    const recommend = page.getByRole('button', { name: 'Use recommended settings', exact: true });
+    await recommend.click();
+    await expect(slider).toHaveValue('60');
+    await expect(recommend).toHaveCount(0);
+    await page.getByRole('button', { name: 'Cancel preview', exact: true }).click();
+    await expect(slider).toHaveValue('100');
+    await expect(recommend).toBeVisible();
+  });
+}
+
+test('BG-H4 all six themes keep section padding, real card gaps and complete borders', async ({ page }, info) => {
+  await prepare(page); await settings(page);
+  for (const themeId of ['ling-light', 'ling-dark', 'ling-breeze', 'ling-ocean', 'ling-night', 'ling-journey']) {
+    await page.locator(`[data-theme-option-id="${themeId}"]`).click();
+    await expect(page.locator('html')).toHaveAttribute('data-ui-theme', themeId);
+    const cards = await page.locator('.settings-interface-section').evaluateAll(elements => elements.map(element => {
+      const box = element.getBoundingClientRect(), css = getComputedStyle(element);
+      const heading = element.querySelector('h2')!.getBoundingClientRect();
+      return { top: box.top, bottom: box.bottom, inset: heading.top - box.top,
+        padding: [css.paddingTop, css.paddingRight, css.paddingBottom, css.paddingLeft], border: css.borderBottomWidth };
+    }));
+    expect(cards).toHaveLength(3);
+    for (const [index, card] of cards.entries()) {
+      expect(card.padding).toEqual(['24px', '24px', '24px', '24px']);
+      expect(card.inset).toBeGreaterThanOrEqual(24);
+      expect(card.border).toBe('1px');
+      if (index) expect(card.top - cards[index - 1].bottom).toBe(16);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+    await page.screenshot({ path: info.outputPath(`${themeId}-settings-spacing.png`) });
+  }
+});
+
 test('BG-H2 a stalled decoder reloads once then keeps a still frame until explicit retry', async ({ page }) => {
   await page.clock.install();
   await prepare(page); await upload(page); await back(page);

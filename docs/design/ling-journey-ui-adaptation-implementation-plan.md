@@ -1,6 +1,6 @@
 # Ling 远行问剑 UI 视觉适配设计实施方案
 
-状态：P0–P6 已在本地工作树实施并完成 Chromium 视觉验收；Desktop 安装包验收仍待执行
+状态：P0–P6 基础配色、背景与功能检查已完成；2026-10-28 已清理 Composer 页面外观覆盖，完成共享组件与 Journey 精修的本机实现及验证，待用户美术复核。以[共享组件合同](component-theme-presentation.md)、[分段实施方案](component-theme-presentation-implementation-plan.md)和[验证记录](component-theme-presentation-validation.md)为当前增量依据；下文旧验收记录只证明旧版本。真实 daemon 离线；Desktop 安装包验收仍待执行。
 
 2026-10-27 后续加固：正文阅读保护、共享播放策略、每主题构图偏好与最新验收由[加固实施合同](theme-background-hardening-plan.md)接管。本文 P0–P6 的旧截图和测试数字保留为历史证据，不作为修改后源码的验收结果。
 
@@ -95,7 +95,6 @@ Code and test anchors：`packages/ui-react/src/styles/themes/built-in-themes.css
 --ling-surface-ambient-alpha
 --ling-surface-shell-alpha
 --ling-surface-content-alpha
---ling-surface-overlay-alpha
 --ling-surface-border-subtle
 --ling-surface-border-emphasis
 --ling-surface-shadow-shell

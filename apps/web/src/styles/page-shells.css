@@ -6,8 +6,8 @@
   min-width: 0;
   min-height: 92px;
   padding: 22px 32px 20px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-panel);
+  border-bottom: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-panel);
 }
 
 .page-action-header-copy {
@@ -18,7 +18,7 @@
 
 .page-action-header h1 {
   margin: 0;
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 26px;
   font-weight: 720;
   line-height: 32px;
@@ -28,7 +28,7 @@
 .page-action-header p {
   max-width: 720px;
   margin: 0;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 14px;
   line-height: 20px;
 }
@@ -38,7 +38,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 8px 12px;
-  color: var(--text-secondary);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 18px;
 }
@@ -55,7 +55,7 @@
   height: 3px;
   margin: 0 10px 2px 0;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--text-secondary) 34%, transparent);
+  background: color-mix(in srgb, var(--ling-text-muted) 34%, transparent);
 }
 
 .page-action-header-actions {

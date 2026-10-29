@@ -81,18 +81,20 @@ test('BG-01/03/04/05/06 official scene themes, thumbnails and custom override',a
  await expect(page.locator('html')).toHaveAttribute('data-ui-theme','ling-breeze');
  await expect(page.locator('html')).toHaveAttribute('data-background-source','theme-scene');
  await expect(page.locator('[data-background-layer] svg[data-scene="forest-breeze"]')).toBeVisible();
- expect(await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--ling-action-accent').trim())).toBe('#315c43');
+ expect(await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--ling-action-accent').trim())).toBe('#347b44');
  await sceneScreenshot(page,testInfo,'ling-breeze-home.png');
 
  await settings(page);await page.locator('[data-theme-option-id="ling-ocean"]').click();await page.getByRole('button',{name:'Back to app',exact:true}).click();
  await expect(page.locator('[data-background-layer] svg[data-scene="ocean-drift"]')).toBeVisible();
- expect(await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--ling-action-accent').trim())).toBe('#235e7c');
+ await expect(page.locator('[data-background-layer] svg[data-scene="ocean-drift"] image')).toHaveAttribute('href','/themes/ling-ocean/summer-manga-v1.webp');
+ expect(await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--ling-action-accent').trim())).toBe('#b44536');
  await sceneScreenshot(page,testInfo,'ling-ocean-home.png');
 
  await settings(page);await page.locator('[data-theme-option-id="ling-night"]').click();await page.getByRole('button',{name:'Back to app',exact:true}).click();
  await expect(page.locator('html')).toHaveAttribute('data-color-scheme','dark');
  await expect(page.locator('[data-background-layer] svg[data-scene="midnight-aurora"]')).toBeVisible();
- expect(await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--ling-action-accent').trim())).toBe('#dfb77b');
+ await expect(page.locator('[data-background-layer] svg[data-scene="midnight-aurora"] image')).toHaveAttribute('href','/themes/ling-night/valley-overlook-v1.webp');
+ expect(await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--ling-action-accent').trim())).toBe('#e7b38b');
  await sceneScreenshot(page,testInfo,'ling-night-home.png');
 
  await settings(page);await page.locator('[data-theme-option-id="ling-journey"]').click();await page.getByRole('button',{name:'Back to app',exact:true}).click();
@@ -261,7 +263,7 @@ test('BG-05/06/22 real 4K photo normalizes, opens home and keeps reading hierarc
   await setOpacity(page,value);await apply(page);
   await page.getByRole('button',{name:'Back to app'}).click();
   await expect(page.locator('.workspace-background-scrim')).toHaveCSS('opacity',String(scrim));
-  expect(await page.locator('.workspace').evaluate(element=>getComputedStyle(element).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
+  expect(await page.locator('html').evaluate(element=>getComputedStyle(element).getPropertyValue('--user-background-workspace'))).toBe('0%');
   await expect(page.locator('.conversation-home-identity')).toHaveCount(0);
   await expect(page.locator('.conversation-home h1')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
   await page.screenshot({path:testInfo.outputPath(`background-photo-dark-${label}.png`)});

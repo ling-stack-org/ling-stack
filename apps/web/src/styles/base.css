@@ -1,97 +1,11 @@
 :root {
-  color: var(--text-strong);
-  background: var(--app-bg);
+  color: var(--ling-text-strong);
+  background: var(--ling-bg-app);
   color-scheme: light;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: geometricPrecision;
-  --app-bg: #ffffff;
-  --window-bg: #ffffff;
-  --surface-sidebar: #e6e4df;
-  --surface-panel: #ffffff;
-  --surface-panel-strong: #ffffff;
-  --surface-subtle: #f5f5f5;
-  --surface-hover: #deddda;
-  --surface-selected: #d9d8d5;
-  --surface-pressed: #d0cfcc;
-  --surface-muted: var(--surface-subtle);
-  --text-strong: #191c1f;
-  --text: #353638;
-  --text-muted: #656568;
-  --text-soft: #868689;
-  --text-primary: var(--text-strong);
-  --text-secondary: var(--text-muted);
-  --border: #ededed;
-  --border-strong: #d0cfcc;
-  --border-subtle: var(--border);
-  --hairline: rgba(17, 17, 17, 0.04);
-  --accent: #111111;
-  --accent-strong: #111111;
-  --accent-soft: #f5f5f5;
-  --accent-border: #111111;
-  --success: #087443;
-  --success-soft: rgba(8, 116, 67, 0.08);
-  --success-border: rgba(8, 116, 67, 0.24);
-  --warning: #9a5b00;
-  --warning-soft: rgba(154, 91, 0, 0.08);
-  --warning-border: rgba(154, 91, 0, 0.24);
-  --danger: #b42318;
-  --danger-soft: #fff7f6;
-  --danger-border: rgba(180, 35, 24, 0.28);
-  --info: #1d4ed8;
-  --info-soft: #eff6ff;
-  --info-border: #bfdbfe;
-  --conversation-bg: var(--surface-panel);
-  --conversation-bg-muted: var(--surface-subtle);
-  --conversation-bg-subtle: #f0f0f0;
-  --conversation-text: var(--text);
-  --conversation-text-strong: var(--text-strong);
-  --conversation-text-muted: var(--text-muted);
-  --conversation-text-soft: var(--text-soft);
-  --conversation-border: var(--border);
-  --conversation-border-strong: var(--border-strong);
-  --conversation-focus-ring: var(--accent-border);
-  --conversation-active-bg: var(--accent-soft);
-  --conversation-status-running: var(--accent);
-  --conversation-status-success: var(--success);
-  --conversation-status-waiting: var(--warning);
-  --conversation-status-danger: var(--danger);
-  --conversation-code-bg: #f7f7f7;
-  --conversation-code-bg-hover: #f3f3f3;
-  --conversation-code-border: #dedede;
-  --conversation-code-border-hover: #c7c7c7;
-  --conversation-code-text: #151515;
-  --conversation-code-muted: #626262;
-  --conversation-diff-add: var(--success);
-  --conversation-diff-add-bg: var(--success-soft);
-  --conversation-diff-remove: var(--danger);
-  --conversation-diff-remove-bg: var(--danger-soft);
-  --conversation-agent-guide-line: var(--border);
-  --conversation-overlay-bg: rgba(17, 17, 17, 0.32);
-  --conversation-drawer-overlay-bg: rgba(15, 23, 42, 0.18);
-  --conversation-preview-shadow: 0 24px 70px rgba(17, 17, 17, 0.26);
-  --conversation-drawer-shadow: -18px 0 42px rgba(15, 23, 42, 0.16);
-  --conversation-active-shimmer: #8f8f8f;
-  --conversation-locate-pulse-bg: rgba(17, 17, 17, 0.08);
-  --radius-xs: 4px;
-  --radius-sm: 5px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --shadow-window: none;
-  --shadow-panel: none;
-  --shadow-control: none;
-  --composer-ambient-shadow:
-    0 24px 70px rgba(17, 17, 17, 0.10),
-    0 6px 20px rgba(17, 17, 17, 0.04),
-    inset 0 1px 0 rgba(255, 255, 255, 0.72);
-  --composer-ambient-focus-shadow:
-    0 0 0 1px var(--accent-border),
-    0 28px 76px rgba(17, 17, 17, 0.12),
-    0 7px 22px rgba(17, 17, 17, 0.05),
-    inset 0 1px 0 rgba(255, 255, 255, 0.78);
-  --material-blur: none;
-  --transition-fast: var(--ling-motion-fast) var(--ling-ease-standard);
 }
 
 .sr-only {
@@ -106,95 +20,6 @@
   border: 0;
 }
 
-:root[data-theme="dark"] {
-  color-scheme: dark;
-}
-
-/* Legacy feature styles consume the same semantic theme as shared controls. */
-:root[data-theme="dark"],
-:root[data-ui-theme="ling-breeze"],
-:root[data-ui-theme="ling-ocean"] {
-  color: var(--text-strong);
-  background: var(--app-bg);
-  --app-bg: var(--ling-bg-app);
-  --window-bg: var(--ling-bg-app);
-  --surface-sidebar: var(--ling-bg-sidebar);
-  --surface-panel: var(--ling-bg-panel);
-  --surface-panel-strong: var(--ling-bg-elevated);
-  --surface-subtle: var(--ling-bg-subtle);
-  --surface-hover: var(--ling-bg-subtle);
-  --surface-selected: var(--ling-action-selection);
-  --surface-pressed: var(--ling-bg-pressed);
-  --surface-muted: var(--ling-bg-subtle);
-  --text-strong: var(--ling-text-strong);
-  --text: var(--ling-text-default);
-  --text-muted: var(--ling-text-muted);
-  --text-soft: var(--ling-text-soft);
-  --text-primary: var(--ling-text-strong);
-  --text-secondary: var(--ling-text-muted);
-  --border: var(--ling-border-default);
-  --border-strong: var(--ling-border-strong);
-  --border-subtle: var(--ling-border-default);
-  --hairline: color-mix(in srgb, var(--ling-border-default) 32%, transparent);
-  --accent: var(--ling-action-accent);
-  --accent-strong: var(--ling-action-accent-hover);
-  --accent-soft: var(--ling-action-selection);
-  --accent-border: var(--ling-border-focus);
-  --success: var(--ling-status-success);
-  --success-soft: var(--ling-status-success-bg);
-  --success-border: var(--ling-status-success-border);
-  --warning: var(--ling-status-warning);
-  --warning-soft: var(--ling-status-warning-bg);
-  --warning-border: var(--ling-status-warning-border);
-  --danger: var(--ling-status-danger);
-  --danger-soft: var(--ling-status-danger-bg);
-  --danger-border: var(--ling-status-danger-border);
-  --info: var(--ling-status-info);
-  --info-soft: var(--ling-status-info-bg);
-  --info-border: var(--ling-status-info-border);
-  --conversation-bg: var(--ling-bg-panel);
-  --conversation-bg-muted: var(--ling-bg-subtle);
-  --conversation-bg-subtle: var(--ling-bg-subtle);
-  --conversation-text: var(--ling-text-default);
-  --conversation-text-strong: var(--ling-text-strong);
-  --conversation-text-muted: var(--ling-text-muted);
-  --conversation-text-soft: var(--ling-text-soft);
-  --conversation-border: var(--ling-border-default);
-  --conversation-border-strong: var(--ling-border-strong);
-  --conversation-focus-ring: var(--ling-border-focus);
-  --conversation-active-bg: var(--ling-action-selection);
-  --conversation-status-running: var(--ling-action-accent);
-  --conversation-status-success: var(--ling-status-success);
-  --conversation-status-waiting: var(--ling-status-warning);
-  --conversation-status-danger: var(--ling-status-danger);
-  --conversation-code-bg: var(--ling-bg-code);
-  --conversation-code-bg-hover: var(--ling-bg-subtle);
-  --conversation-code-border: var(--ling-border-default);
-  --conversation-code-border-hover: var(--ling-border-strong);
-  --conversation-code-text: var(--ling-text-default);
-  --conversation-code-muted: var(--ling-text-muted);
-  --conversation-diff-add: var(--ling-status-success);
-  --conversation-diff-add-bg: var(--ling-status-success-bg);
-  --conversation-diff-remove: var(--ling-status-danger);
-  --conversation-diff-remove-bg: var(--ling-status-danger-bg);
-  --conversation-agent-guide-line: var(--ling-border-default);
-  --conversation-overlay-bg: var(--ling-bg-overlay);
-  --conversation-drawer-overlay-bg: color-mix(in srgb, var(--ling-bg-overlay) 72%, transparent);
-  --conversation-preview-shadow: var(--ling-shadow-overlay);
-  --conversation-drawer-shadow: var(--ling-shadow-overlay);
-  --conversation-active-shimmer: var(--ling-text-muted);
-  --conversation-locate-pulse-bg: color-mix(in srgb, var(--ling-text-strong) 8%, transparent);
-}
-
-:root[data-theme="dark"] {
-  --composer-ambient-shadow:
-    0 10px 28px rgb(0 0 0 / 22%),
-    inset 0 1px 0 rgb(255 255 255 / 4%);
-  --composer-ambient-focus-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--ling-border-focus) 58%, transparent),
-    0 12px 30px rgb(0 0 0 / 24%);
-}
-
 * {
   box-sizing: border-box;
 }
@@ -203,14 +28,14 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background: var(--app-bg);
-  color: var(--text);
+  background: var(--ling-bg-app);
+  color: var(--ling-text-default);
 }
 
 [data-i18n-bootstrap] {
   position: fixed;
   inset: 0;
-  background: var(--app-bg);
+  background: var(--ling-bg-app);
 }
 
 button,
@@ -228,27 +53,27 @@ input:not([class*="ling-ui-"]),
 textarea:not([class*="ling-ui-"]),
 a:not([class*="ling-ui-"]) {
   transition:
-    background-color var(--transition-fast),
-    border-color var(--transition-fast),
-    box-shadow var(--transition-fast),
-    color var(--transition-fast),
-    opacity var(--transition-fast);
+    background-color var(--ling-motion-fast) var(--ling-ease-standard),
+    border-color var(--ling-motion-fast) var(--ling-ease-standard),
+    box-shadow var(--ling-motion-fast) var(--ling-ease-standard),
+    color var(--ling-motion-fast) var(--ling-ease-standard),
+    opacity var(--ling-motion-fast) var(--ling-ease-standard);
 }
 
 button:not([class*="ling-ui-"]):focus-visible,
 a:not([class*="ling-ui-"]):focus-visible {
-  outline: 2px solid var(--accent-border);
+  outline: 2px solid var(--ling-border-focus);
   outline-offset: 2px;
 }
 
 input:not([class*="ling-ui-"]):focus-visible,
 textarea:not([class*="ling-ui-"]):focus-visible {
   outline: 0;
-  box-shadow: inset 0 0 0 1px var(--accent-border);
+  box-shadow: inset 0 0 0 1px var(--ling-border-focus);
 }
 
 ::selection {
-  background: var(--accent-soft);
+  background: var(--ling-action-selection);
 }
 
 ::-webkit-scrollbar {
@@ -259,7 +84,7 @@ textarea:not([class*="ling-ui-"]):focus-visible {
 ::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--text-soft) 48%, transparent);
+  background: color-mix(in srgb, var(--ling-text-soft) 48%, transparent);
   background-clip: padding-box;
 }
 
@@ -291,20 +116,20 @@ textarea:not([class*="ling-ui-"]):focus-visible {
   gap: 6px;
   height: 30px;
   padding: 0 10px;
-  border: 1px solid var(--border);
-  background: var(--surface-panel-strong);
-  color: var(--text);
+  border: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-default);
   font-size: 12px;
 }
 
 .health.ok {
-  border-color: var(--success-border);
-  color: var(--success);
+  border-color: var(--ling-status-success-border);
+  color: var(--ling-status-success);
 }
 
 .health.down {
-  border-color: var(--danger-border);
-  color: var(--danger);
+  border-color: var(--ling-status-danger-border);
+  color: var(--ling-status-danger);
 }
 
 .icon-button {
@@ -312,7 +137,7 @@ textarea:not([class*="ling-ui-"]):focus-visible {
   place-items: center;
   width: 30px;
   height: 30px;
-  border: 1px solid var(--border);
-  background: var(--surface-panel-strong);
-  color: var(--text);
+  border: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-default);
 }

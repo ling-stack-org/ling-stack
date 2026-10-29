@@ -1,15 +1,16 @@
 import { ImagePlus } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { Button, Field, InlineFeedback, SceneArtwork, useFileDropFeedback, BACKGROUND_LIMITS, BACKGROUND_OPACITY,
+import { Button, Field, InlineFeedback, SceneArtwork, useFileDropFeedback, useLingToast, BACKGROUND_LIMITS, BACKGROUND_OPACITY,
   BACKGROUND_VIDEO_LIMITS, BackgroundError, backgroundVideoMimeType, backgroundThemeProfile, recommendedBackgroundProfile, type BackgroundImage } from "../../shared/ui/index.js";
 import { useI18n } from "../../i18n.js";
 import { useTheme } from "../../theme.js";
 import { useBackground } from "../../shared/ui/background/BackgroundProvider.js";
 import { readVideoBackgroundMetadata } from "../../shared/ui/background/prepare-background-image.js";
 import { BackgroundVideo } from "../../shared/ui/background/BackgroundVideo.js";
-import { useBackgroundMaterial, useEffectiveBackgroundOpacity } from "../../shared/ui/background/WorkspaceBackgroundLayer.js";
+import { useBackgroundMaterial } from "../../shared/ui/background/WorkspaceBackgroundLayer.js";
 
 interface Draft { image: BackgroundImage; url: string; leaseId: string; revision: number }
+const BACKGROUND_SAVE_TOAST_SCOPE = "settings:background:save";
 
 export function InterfaceBackgroundSettings(): React.JSX.Element {
   const { resolved } = useTheme();
@@ -18,6 +19,7 @@ export function InterfaceBackgroundSettings(): React.JSX.Element {
 
 function BackgroundSettingsEditor(): React.JSX.Element {
   const { t } = useI18n();
+  const { showToast, dismissToast } = useLingToast();
   const { resolved } = useTheme();
   const background = useBackground(), preference = background.snapshot.preference;
   const [draft, setDraft] = useState<Draft>();
@@ -26,7 +28,7 @@ function BackgroundSettingsEditor(): React.JSX.Element {
   const [paused, setPaused] = useState(background.profile.paused), [previewFailed, setPreviewFailed] = useState(false);
   const [previewRetry, setPreviewRetry] = useState(0);
   const [opacityRevision, setOpacityRevision] = useState(preference.revision);
-  const [processing, setProcessing] = useState(false), [failure, setFailure] = useState<string>(), [saved, setSaved] = useState(false);
+  const [processing, setProcessing] = useState(false), [failure, setFailure] = useState<string>();
   const input = useRef<HTMLInputElement>(null);
   const generation = useRef(0), lease = useRef<string | undefined>(undefined), handedOff = useRef<string | undefined>(undefined);
   const draftRef = useRef<Draft | undefined>(undefined), queue = useRef<Promise<void>>(Promise.resolve());
@@ -34,9 +36,13 @@ function BackgroundSettingsEditor(): React.JSX.Element {
   const editing = useRef(false);
   const busy = background.saving;
   const dirty = Boolean(draft) || opacity !== background.profile.opacity || focusX !== background.profile.focusX || focusY !== background.profile.focusY || paused !== background.profile.paused;
+  const recommended = recommendedBackgroundProfile();
+  const differsFromRecommended = opacity !== recommended.opacity || focusX !== recommended.focusX || focusY !== recommended.focusY || paused !== recommended.paused;
   const revision = draft?.revision ?? opacityRevision;
   const conflict = dirty && revision !== preference.revision;
-  const material = useBackgroundMaterial(useEffectiveBackgroundOpacity(opacity));
+  // Preview the requested profile, independent of the settings window's size.
+  // The actual workspace applies its own narrow-window and reading limits.
+  const material = useBackgroundMaterial(opacity);
   const currentKind = draft?.image.asset.kind ?? background.snapshot.image?.asset.kind;
   const currentUrl = draft?.url ?? background.url;
   const scene = resolved.manifest.scene?.id;
@@ -57,19 +63,19 @@ function BackgroundSettingsEditor(): React.JSX.Element {
   useEffect(() => {
     if (!editing.current) { resetProfile(); setOpacityRevision(preference.revision); }
   }, [background.profile.opacity, background.profile.focusX, background.profile.focusY, background.profile.paused, preference.revision]);
-  const beginEdit = () => { if (!dirty) setOpacityRevision(preference.revision); editing.current = true; setSaved(false); };
+  const beginEdit = () => { if (!dirty) setOpacityRevision(preference.revision); editing.current = true; };
 
   const cancel = () => {
     editing.current = false;
     dispose(); setDraft(undefined); setProcessing(false); resetProfile();
-    setOpacityRevision(preference.revision); setFailure(undefined); setSaved(false);
+    setOpacityRevision(preference.revision); setFailure(undefined);
   };
 
   const select = (files: FileList | null) => {
     if (!files?.length || busy) return;
     if (files.length !== 1) { setFailure("multiple"); return; }
     const file = files[0];
-    dispose(); setDraft(undefined); setSaved(false); setFailure(undefined);
+    dispose(); setDraft(undefined); setFailure(undefined);
     const likelyVideo = file.type.startsWith("video/") || /\.(?:mp4|m4v|webm)$/iu.test(file.name);
     const limit = likelyVideo ? BACKGROUND_VIDEO_LIMITS.bytes : BACKGROUND_LIMITS.bytes;
     if (!file.size || file.size > limit) { setFailure("capacity"); setProcessing(false); return; }
@@ -110,7 +116,7 @@ function BackgroundSettingsEditor(): React.JSX.Element {
   const drop = useFileDropFeedback({ blocked: busy || !background.ready, resetKey: String(preference.revision), onFiles: select });
 
   const apply = async (clear = false) => {
-    setFailure(undefined); setSaved(false);
+    setFailure(undefined); dismissToast(BACKGROUND_SAVE_TOAST_SCOPE);
     const candidate = draftRef.current;
     if (candidate) handedOff.current = candidate.leaseId;
     try {
@@ -128,7 +134,8 @@ function BackgroundSettingsEditor(): React.JSX.Element {
       if (mounted.current) {
         editing.current = false; dispose(); setDraft(undefined); setProcessing(false);
         const profile = backgroundThemeProfile(result, resolved.themeId);
-        setOpacity(profile.opacity); setFocusX(profile.focusX); setFocusY(profile.focusY); setPaused(profile.paused); setOpacityRevision(result.revision); setFailure(undefined); setSaved(true);
+        setOpacity(profile.opacity); setFocusX(profile.focusX); setFocusY(profile.focusY); setPaused(profile.paused); setOpacityRevision(result.revision); setFailure(undefined);
+        showToast({ message: t("background.saved"), scope: BACKGROUND_SAVE_TOAST_SCOPE, tone: "success" });
       }
     } catch (error) {
       if (mounted.current) {
@@ -152,7 +159,7 @@ function BackgroundSettingsEditor(): React.JSX.Element {
     <p className="background-description">{t("background.description")} {t("background.themeHint")}</p>
     <div className="background-editor" data-drop-active={drop.active || undefined} onDragOver={drop.onDragOver} onDragLeave={drop.onDragLeave} onDrop={drop.onDrop}>
       {drop.feedback}
-      <div className="background-preview" aria-hidden="true" data-background-preview data-draft={Boolean(draft)} style={{ "--background-focus-x": `${focusX}%`, "--background-focus-y": `${focusY}%`, "--preview-scrim": material.recipe.scrim, "--preview-workspace": `${material.workspace * 100}%`, "--preview-panel": `${material.panel * 100}%`, "--preview-sidebar": `${material.sidebar * 100}%` } as CSSProperties}>
+      <div className="background-preview" aria-hidden="true" data-background-preview data-draft={dirty} style={{ "--background-focus-x": `${focusX}%`, "--background-focus-y": `${focusY}%`, "--preview-scrim": material.recipe.scrim, "--preview-panel": `${material.panel * 100}%`, "--preview-sidebar": `${material.sidebar * 100}%` } as CSSProperties}>
         {currentUrl
           ? currentKind === "video"
             ? <BackgroundVideo key={`${currentUrl}:${previewRetry}:${background.retryToken}`} url={currentUrl}
@@ -180,7 +187,6 @@ function BackgroundSettingsEditor(): React.JSX.Element {
               onChange={event => {
                 beginEdit();
                 setOpacity(Number(event.currentTarget.value) / 100);
-                setSaved(false);
               }}
             />
             <span>{Math.round(opacity * 100)}%</span>
@@ -195,29 +201,27 @@ function BackgroundSettingsEditor(): React.JSX.Element {
               <span>{control.value}%</span>
             </div>
           </Field>)}
+        <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,.mp4,.m4v,.webm" hidden data-ling-control-native="true" data-background-file onChange={event => { select(event.target.files); event.target.value = ""; }} />
         <div className="background-actions">
-          <Button variant="secondary" disabled={busy || !background.ready} onClick={() => {
-            beginEdit(); const profile = recommendedBackgroundProfile();
-            setOpacity(profile.opacity); setFocusX(profile.focusX); setFocusY(profile.focusY); setPaused(profile.paused);
-          }}>{t("background.recommend")}</Button>
+          <Button variant="secondary" disabled={busy || !background.ready} onClick={() => input.current?.click()}>{t("background.choose")}</Button>
+          {dirty ? <><Button disabled={busy || processing || conflict || !background.ready} onClick={() => void apply()}>{busy ? t("background.saving") : t("background.apply")}</Button>
+            <Button variant="secondary" disabled={busy} onClick={cancel}>{t("background.cancel")}</Button></> : null}
+          {differsFromRecommended ? <Button variant="secondary" disabled={busy || !background.ready} onClick={() => {
+            beginEdit();
+            setOpacity(recommended.opacity); setFocusX(recommended.focusX); setFocusY(recommended.focusY); setPaused(recommended.paused);
+          }}>{t("background.recommend")}</Button> : null}
           {currentKind === "video" ? <Button variant="secondary" disabled={busy} onClick={() => {
             beginEdit(); setPaused(!previewPaused); background.requestMotionPlay(previewPaused);
           }}>{t(previewPaused ? "Resume" : "Pause")} · {t("background.title")}</Button> : null}
           {previewFailed || background.playbackFailed ? <Button variant="secondary" onClick={() => {
             setPreviewFailed(false); setPreviewRetry(value => value + 1); background.retryPlayback();
           }}>{t("background.retry")}</Button> : null}
-        </div>
-        {background.motion.reduced && !background.motionOverride && currentKind === "video" ? <p className="background-size-note">{t("background.reducedMotion")}</p> : null}
-        {previewFailed || background.playbackFailed ? <InlineFeedback tone="danger">{t("background.playbackError")}</InlineFeedback> : null}
-        <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,.mp4,.m4v,.webm" hidden data-ling-control-native="true" data-background-file onChange={event => { select(event.target.files); event.target.value = ""; }} />
-        <div className="background-actions">
-          <Button variant="secondary" disabled={busy || !background.ready} onClick={() => input.current?.click()}>{t("background.choose")}</Button>
-          {dirty ? <><Button disabled={busy || processing || conflict || !background.ready} onClick={() => void apply()}>{busy ? t("background.saving") : t("background.apply")}</Button>
-            <Button variant="secondary" disabled={busy} onClick={cancel}>{t("background.cancel")}</Button></> : null}
           {preference.selection.kind !== "none" ? <Button variant="secondary" disabled={busy || !background.ready} onClick={() => { dispose(); setDraft(undefined); setProcessing(false); void apply(true); }}>{t("background.clear")}</Button> : null}
           {!background.ready ? <Button variant="secondary" onClick={() => void background.refresh()}>{t("background.retry")}</Button> : null}
         </div>
-        <div role="status" aria-live="polite">{processing ? t("background.processing") : saved ? t("background.saved") : draft ? t("background.draft") : preference.selection.kind === "none" ? t("background.empty") : t("background.current")}</div>
+        {background.motion.reduced && !background.motionOverride && currentKind === "video" ? <p className="background-size-note">{t("background.reducedMotion")}</p> : null}
+        {previewFailed || background.playbackFailed ? <InlineFeedback tone="danger">{t("background.playbackError")}</InlineFeedback> : null}
+        <div role="status" aria-live="polite">{processing ? t("background.processing") : dirty ? t("background.draft") : preference.selection.kind === "none" ? t("background.empty") : t("background.current")}</div>
         {draft ? <p className="background-size-note">{t("background.optimized", { width: draft.image.asset.width, height: draft.image.asset.height })}</p> : null}
       </div>
     </div>

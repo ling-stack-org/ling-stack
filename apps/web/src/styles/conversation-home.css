@@ -11,7 +11,7 @@
   justify-items: center;
   width: min(710px, 100%);
   margin-top: clamp(44px, 6vh, 78px);
-  color: var(--text);
+  color: var(--ling-text-default);
 }
 
 .conversation-home-mark {
@@ -26,7 +26,7 @@
 
 .conversation-home h1 {
   margin: 0;
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 28px;
   font-weight: 720;
   letter-spacing: 0;
@@ -38,7 +38,7 @@
 .conversation-home-center > p {
   max-width: 520px;
   margin: 6px 0 34px;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 19px;
   text-align: center;
@@ -60,11 +60,12 @@
   gap: 6px;
   height: 32px;
   padding: 0 12px;
-  border: 1px solid var(--ling-surface-border-subtle);
-  border-radius: var(--ling-control-radius);
-  background: color-mix(in srgb, var(--ling-bg-panel) 88%, transparent);
-  box-shadow: var(--ling-surface-shadow-shell);
-  color: var(--text-muted);
+  border: 1px solid var(--ling-shortcut-border);
+  border-radius: var(--ling-shortcut-radius);
+  background: var(--ling-shortcut-bg);
+  background-image: var(--ling-shortcut-finish);
+  box-shadow: var(--ling-shortcut-shadow);
+  color: var(--ling-text-muted);
   font-size: 13px;
   font-weight: 500;
 }
@@ -72,14 +73,11 @@
 .conversation-home-shortcuts button:hover,
 .conversation-home-shortcuts button:focus-visible {
   border-color: var(--ling-border-focus);
-  background: var(--ling-action-selection);
+  background-color: var(--ling-action-selection);
   color: var(--ling-text-strong);
 }
 
-:root[data-theme="dark"] .conversation-home [data-conversation-composer][data-surface="normal_conversation"] {
-  box-shadow: var(--composer-ambient-shadow);
-}
-
-:root[data-theme="dark"] .conversation-home [data-conversation-composer][data-surface="normal_conversation"]:focus-within {
-  box-shadow: var(--composer-ambient-focus-shadow);
+.conversation-home-shortcuts button:focus-visible {
+  outline: 0;
+  box-shadow: var(--ling-focus-ring), var(--ling-shortcut-shadow);
 }

@@ -87,7 +87,7 @@
 .ling-ui-theme-option:hover:not(:disabled) {
   border-color: var(--ling-surface-border-emphasis);
   background: var(--ling-bg-subtle);
-  box-shadow: var(--ling-surface-shadow-shell);
+  box-shadow: var(--ling-card-shadow);
 }
 
 .ling-ui-theme-option:focus-visible {

@@ -7,9 +7,9 @@
   gap: var(--ling-space-4);
   margin-top: var(--ling-space-5);
   padding: var(--ling-space-5);
-  border: 1px solid color-mix(in srgb, var(--accent-border) 58%, var(--conversation-border));
+  border: 1px solid color-mix(in srgb, var(--ling-border-focus) 58%, var(--ling-border-default));
   border-radius: var(--ling-radius-lg);
-  background: color-mix(in srgb, var(--accent-soft) 34%, var(--conversation-bg));
+  background: color-mix(in srgb, var(--ling-action-selection) 34%, var(--ling-bg-panel));
 }
 
 .proposed-plan-head {
@@ -27,8 +27,8 @@
   width: 22px;
   height: 22px;
   border-radius: var(--ling-radius-md);
-  background: var(--surface-selected);
-  color: var(--accent);
+  background: var(--ling-action-selection);
+  color: var(--ling-action-accent);
 }
 
 .proposed-plan-head span:last-child {
@@ -46,13 +46,13 @@
 }
 
 .proposed-plan-head strong {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
   font-size: var(--ling-font-sm);
   font-weight: 720;
 }
 
 .proposed-plan-head small {
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
 }
 

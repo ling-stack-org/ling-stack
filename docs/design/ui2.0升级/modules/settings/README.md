@@ -2,7 +2,7 @@
 
 Status: active UI2 product contract
 Owner: Settings shell and feature owners
-Last verified: 2026-10-23
+Last verified: 2026-10-28
 Code anchors: `apps/web/src/features/settings/`, `apps/web/src/styles/settings-skill-library/`
 Test anchors: `apps/web/e2e/ui2-settings-shell.spec.ts`, `apps/web/e2e/settings.spec.ts`
 
@@ -28,6 +28,10 @@ Settings 是全屏管理边界，隐藏主 Sidebar，保留自身导航、返回
 整块模式说明；候选发布和绑定仍需人工审核的安全说明可以保留一句。
 
 主题区只展示官方内置主题，场景主题提供完整氛围缩略图。Theme Studio / Quick Theme 生成入口已停用；自定义背景通过独立背景区上传本地图片或 MP4/WebM，不属于 Theme Pack。
+
+界面偏好当前采用独立卡片：外观、背景、可用的 Desktop 偏好和语言共用 `settings-interface-preferences.css` 的唯一布局定义。卡片四周内边距为 `--ling-space-8`（24px），卡片间距为 `--ling-space-6`（16px），每张卡片保留完整边框。主题只改变材质、色彩和批准的组件参数，不能改变上述布局。连续分区的零间距、相邻区块内部补偿及末区删底边规则已废弃，必须在原定义处删除，不能用后置主题覆盖保留两套实现。
+
+背景保存/恢复默认成功由唯一全局 Toast 显示，使用稳定 scope 去重并沿用共享成功通知默认 3 秒的生命周期（悬停/焦点时按共享组件规则暂停）；不在背景编辑器另存成功布尔状态、常驻成功文案或增加独立反馈计时器。页面内保留媒体来源、处理/草稿状态以及需要处理的错误；失败不能误报成功。历史导入主题数据保留存储，但不得重新出现在选择器或恢复导入/管理入口。
 
 ### 外部工作与 MCP
 

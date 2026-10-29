@@ -7,8 +7,7 @@
   --ling-space-6: 16px;
   --ling-space-7: 20px;
   --ling-space-8: 24px;
-  --ling-space-9: 32px;
-  --ling-radius-sm: 4px;
+    --ling-radius-sm: 4px;
   --ling-radius-md: 6px;
   --ling-radius-lg: 8px;
   --ling-radius-pill: 999px;
@@ -17,7 +16,6 @@
   --ling-surface-ambient-alpha: 1;
   --ling-surface-shell-alpha: 1;
   --ling-surface-content-alpha: 1;
-  --ling-surface-overlay-alpha: 1;
   --ling-surface-border-subtle: var(--ling-border-default, currentColor);
   --ling-surface-border-emphasis: var(--ling-border-strong, currentColor);
   --ling-surface-shadow-shell: var(--ling-shadow-low, none);
@@ -31,9 +29,12 @@
   --ling-font-xs: 12px;
   --ling-font-sm: 13px;
   --ling-font-md: 14px;
+  --ling-font-lg: 16px;
+  --ling-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --ling-line-xs: 18px;
   --ling-line-sm: 20px;
   --ling-line-md: 22px;
+  --ling-line-lg: 24px;
   --ling-motion-instant: 0ms;
   --ling-motion-fast: 120ms;
   --ling-motion-standard: 180ms;
@@ -44,7 +45,6 @@
   --ling-motion-continuous-shimmer: 1400ms;
   --ling-motion-ambient-breath: 5200ms;
   --ling-motion-ambient-drift: 8400ms;
-  --ling-motion-ambient-orbit: 24000ms;
   --ling-ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --ling-ease-enter: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ling-ease-exit: cubic-bezier(0.4, 0, 1, 1);
