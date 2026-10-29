@@ -437,5 +437,16 @@
   "background.recommend": "Use recommended settings",
   "background.themeHint": "Visibility and focus are saved separately for each theme. Working pages soften the background.",
   "background.playbackError": "Video playback failed. A still background is shown. Try loading it again.",
-  "background.reducedMotion": "Your system reduces motion. The background stays still until you choose Resume."
+  "background.reducedMotion": "Your system reduces motion. The background stays still until you choose Resume.",
+  "Loaded tools": "Loaded tools",
+  "Called tools": "Called tools",
+  "Edited a file": "Edited a file",
+  "Edited files": "Edited files",
+  "Searched files": "Searched files",
+  "Ran commands": "Ran commands",
+  "Searched the web": "Searched the web",
+  "Conversation navigation": "Conversation navigation",
+  "Message {position} of {count}: {author}": "Message {position} of {count}: {author}",
+  "Message with attachments": "Message with attachments",
+  "Jump to message": "Jump to message"
 }

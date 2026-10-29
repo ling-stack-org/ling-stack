@@ -47,6 +47,7 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 
 ## Conversations And Channels
 
+- [Conversation Position Navigation](conversation-position-navigation.md)
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Conversation Experience And Test-Duration Contract](five-point-optimization-contract.md)
 - [Conversation Experience And Test-Duration Implementation Plan](five-point-optimization-implementation-plan.md)

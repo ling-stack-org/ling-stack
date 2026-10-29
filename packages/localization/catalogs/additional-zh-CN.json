@@ -437,5 +437,16 @@
   "background.recommend": "使用推荐设置",
   "background.themeHint": "可见度和焦点按主题分别保存，进入工作页面后背景会自动减弱。",
   "background.playbackError": "视频播放失败，已回退到静态背景。可以尝试重新加载。",
-  "background.reducedMotion": "系统已开启减少动态效果，背景保持静止；点击“恢复”可手动播放。"
+  "background.reducedMotion": "系统已开启减少动态效果，背景保持静止；点击“恢复”可手动播放。",
+  "Loaded tools": "加载了工具",
+  "Called tools": "调用了工具",
+  "Edited a file": "编辑了文件",
+  "Edited files": "编辑了多个文件",
+  "Searched files": "检索了文件",
+  "Ran commands": "运行了命令",
+  "Searched the web": "已搜索网页",
+  "Conversation navigation": "会话导航",
+  "Message {position} of {count}: {author}": "第 {position} 条消息，共 {count} 条：{author}",
+  "Message with attachments": "包含附件的消息",
+  "Jump to message": "跳转到消息"
 }

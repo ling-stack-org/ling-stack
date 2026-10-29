@@ -2771,6 +2771,7 @@ export function AppShell(): React.JSX.Element {
               />
               ) : (
                 <ConversationHome
+                  userProfile={userProfile}
                   executionSelectionRevision={JSON.stringify([settingsDomain.state.runtimeSettings?.updatedAt, approvalPolicy])}
                   conversationTitle={selectedConversationDetail?.thread.title ?? ""}
                   initialMessages={selectedConversationMessages}
