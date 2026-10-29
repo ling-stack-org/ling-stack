@@ -44,8 +44,12 @@ import { requestTimelineWorkspaceFileOpen } from "../../shared/conversation/time
 import { timelineMessageChromeOwnerIds } from "../../shared/conversation/timeline/timeline-message-chrome-owners.js";
 import { NormalConversationResponseActions } from "./NormalConversationResponseActions.js";
 import { useConversationReadingViewport } from "../../shared/conversation/blocks/use-conversation-reading-viewport.js";
+import { UserProfileAvatar } from "../../shared/components/index.js";
+import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
+import type { UserProfile } from "../../types.js";
 
 export interface NormalConversationFeedProps {
+  readonly userProfile?: UserProfile;
   readonly messages: readonly ConversationHomeMessage[];
   readonly visibleMessages: readonly ConversationHomeMessage[];
   readonly runById: ReadonlyMap<string, RunSession>;
@@ -71,6 +75,7 @@ export interface NormalConversationFeedProps {
 }
 
 export function NormalConversationFeed({
+  userProfile,
   detailContext,
   composerGateApprovals,
   editSaving,
@@ -214,6 +219,14 @@ export function NormalConversationFeed({
             cwd: projectPath?.trim() || workspaceCwd.trim(),
             virtualScrollRef: feedRef,
             itemLocatorRef: timelineItemLocatorRef,
+            onPositionNavigate: pauseTimelineAutoFollow,
+            positionIdentity: (item) => item.kind === "userMessage" ? {
+              name: userProfile?.displayName.trim() || t("You"),
+              avatar: <UserProfileAvatar profile={userProfile} fallbackLabel={t("You")} />,
+            } : {
+              name: t("Ling Agent"),
+              avatar: <TeammateAvatarView cwd={workspaceCwd} compact teammate={{ displayName: "Ling Agent", kind: "system_teammate", systemRole: "ling_agent" }} />,
+            },
             onDisclosureIntent: pauseTimelineAutoFollow,
             onOpenSourceRef: handleOpenTimelineSourceRef,
             onOpenNativeFile: (localFile) => onOpenReportFile({ path: localFile.path, line: localFile.line, localFile }),

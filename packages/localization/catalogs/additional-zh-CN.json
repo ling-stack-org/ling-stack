@@ -406,5 +406,9 @@
   "Edited files": "编辑了多个文件",
   "Searched files": "检索了文件",
   "Ran commands": "运行了命令",
-  "Searched the web": "已搜索网页"
+  "Searched the web": "已搜索网页",
+  "Conversation navigation": "会话导航",
+  "Message {position} of {count}: {author}": "第 {position} 条消息，共 {count} 条：{author}",
+  "Message with attachments": "包含附件的消息",
+  "Jump to message": "跳转到消息"
 }

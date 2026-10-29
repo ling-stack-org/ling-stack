@@ -406,5 +406,9 @@
   "Edited files": "Edited files",
   "Searched files": "Searched files",
   "Ran commands": "Ran commands",
-  "Searched the web": "Searched the web"
+  "Searched the web": "Searched the web",
+  "Conversation navigation": "Conversation navigation",
+  "Message {position} of {count}: {author}": "Message {position} of {count}: {author}",
+  "Message with attachments": "Message with attachments",
+  "Jump to message": "Jump to message"
 }
