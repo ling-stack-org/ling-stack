@@ -4,9 +4,9 @@
 
 2026-10-27 后续加固：正文阅读保护、共享播放策略、每主题构图偏好与最新验收由[加固实施合同](theme-background-hardening-plan.md)接管。本文 P0–P6 的旧截图和测试数字保留为历史证据，不作为修改后源码的验收结果。
 
-Owner：theme and presentation delivery track  
+Owner：theme and presentation delivery track\
 Last verified：2026-10-27
-Document type：UI visual design contract and staged implementation plan  
+Document type：UI visual design contract and staged implementation plan\
 关联：[远行问剑主题设计合同](ling-journey-theme-design.md)、[场景主题与背景实施方案](full-window-theme-background-implementation-plan.md)、[统一主题合同](theme-background-motion-contract.md)、[验收矩阵](full-window-theme-background-acceptance-matrix.md)
 
 Code and test anchors：`packages/ui-react/src/styles/themes/built-in-themes.css`、`packages/ui-react/src/styles/theme/`、`apps/web/src/styles/theme-background.css`、`apps/web/src/styles/conversation-home.css`、`apps/web/src/styles/shared/conversation-composer-slots.css`、`apps/web/src/app/AppPresentationSurfaceBridge.tsx`、`apps/web/e2e/full-window-background.spec.ts`

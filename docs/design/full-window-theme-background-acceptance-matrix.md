@@ -1,9 +1,9 @@
 # 官方场景主题与自定义媒体背景验收矩阵
 
-Status: acceptance specification；本机执行状态见后续验证报告  
-Owner: theme and presentation delivery track  
-Last verified: 2026-10-27  
-Document type: acceptance and platform gate specification  
+Status: acceptance specification；本机执行状态见后续验证报告\
+Owner: theme and presentation delivery track\
+Last verified: 2026-10-27\
+Document type: acceptance and platform gate specification\
 Code and test anchors: [实施方案](full-window-theme-background-implementation-plan.md)、[UI 视觉适配实施方案](ling-journey-ui-adaptation-implementation-plan.md)、[统一合同](theme-background-motion-contract.md)
 
 ## 1. 测试层
@@ -89,7 +89,7 @@ UI-01–UI-12 还必须保留：
 
 ## 4. 放行规则
 
-S1 放行要求 BG-01–BG-08、UI-01–UI-06、UI-10–UI-11、BG-21、BG-24 通过。  
-S2 放行要求 BG-09–BG-10、BG-15–BG-18、UI-07–UI-09、UI-12、BG-21–BG-22 通过。  
-S3 放行要求 BG-11–BG-20、BG-23 通过。  
+S1 放行要求 BG-01–BG-08、UI-01–UI-06、UI-10–UI-11、BG-21、BG-24 通过。\
+S2 放行要求 BG-09–BG-10、BG-15–BG-18、UI-07–UI-09、UI-12、BG-21–BG-22 通过。\
+S3 放行要求 BG-11–BG-20、BG-23 通过。\
 S4 只在目标签名安装包完成适用行后关闭；本机 Chromium 和 fixture 不能代替 macOS/Windows 放行。

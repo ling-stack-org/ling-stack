@@ -132,4 +132,3 @@ function watchErrors(page: Page) {
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
   return errors;
 }
-

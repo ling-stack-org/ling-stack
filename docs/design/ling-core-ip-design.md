@@ -1,9 +1,9 @@
 # Ling Core IP 设计合同
 
-Status: V1.2 水墨灵台心印已落地，等待视觉验收  
-Owner: theme and presentation delivery track  
-Last verified: 2026-10-24  
-Document type: product identity, motion and brand-mark contract  
+Status: V1.2 水墨灵台心印已落地，等待视觉验收\
+Owner: theme and presentation delivery track\
+Last verified: 2026-10-24\
+Document type: product identity, motion and brand-mark contract\
 Related: [官方场景主题、背景与交互动效统一设计方案](theme-background-motion-contract.md)、[官方场景主题与自定义媒体背景实施方案](full-window-theme-background-implementation-plan.md)
 
 ## 0. 当前原型状态

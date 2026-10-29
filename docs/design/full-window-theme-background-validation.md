@@ -2,11 +2,11 @@
 
 > 已被后续实现接管。本页中的分支 SHA、远端提交差距、三档设置和测试数字均为历史快照；当前行为与验证读取[阅读与播放加固合同](theme-background-hardening-plan.md)及[当前验证记录](scene-theme-background-validation.md)。
 
-Status: historical local implementation evidence for the superseded static-image P2; not evidence for official scene themes, MP4/WebM wallpapers, continuous opacity, or the official-only theme boundary  
-Owner: theme and presentation delivery track  
-Last verified: 2026-10-21；2026-10-23 起由[官方场景主题与自定义媒体背景实施方案](full-window-theme-background-implementation-plan.md)接管后续交付  
-Document type: implementation evidence and remaining acceptance gates  
-Source: `gansx/theme-background`，`912e3e8e835f68a0d62161e3d5694ce9f9f7c6cb` + 当前未提交改动；本轮完整文件摘要保存在本地 `.ling-stack/acceptance/theme-background-photo-refinement/source-snapshot.json`，前轮 P2 与圆形波纹证据保留为历史。当前 `origin/main` 为 `9be62fed`，本报告只证明所列源码快照，不代表已重新同步这 67 个提交。  
+Status: historical local implementation evidence for the superseded static-image P2; not evidence for official scene themes, MP4/WebM wallpapers, continuous opacity, or the official-only theme boundary\
+Owner: theme and presentation delivery track\
+Last verified: 2026-10-21；2026-10-23 起由[官方场景主题与自定义媒体背景实施方案](full-window-theme-background-implementation-plan.md)接管后续交付\
+Document type: implementation evidence and remaining acceptance gates\
+Source: `gansx/theme-background`，`912e3e8e835f68a0d62161e3d5694ce9f9f7c6cb` + 当前未提交改动；本轮完整文件摘要保存在本地 `.ling-stack/acceptance/theme-background-photo-refinement/source-snapshot.json`，前轮 P2 与圆形波纹证据保留为历史。当前 `origin/main` 为 `9be62fed`，本报告只证明所列源码快照，不代表已重新同步这 67 个提交。\
 Related: 当前[合同](theme-background-motion-contract.md)、[任务](full-window-theme-background-implementation-plan.md)、[矩阵](full-window-theme-background-acceptance-matrix.md)；本文件只保留旧 P2 证据
 
 ## 已交付行为

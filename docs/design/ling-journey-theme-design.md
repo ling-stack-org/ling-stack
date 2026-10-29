@@ -2,7 +2,7 @@
 
 状态：第一套官方静态场景主题；静态母图已接入真实浏览器，动态壁纸仅作为用户自定义能力保留
 
-Owner：theme and presentation delivery track  
+Owner：theme and presentation delivery track\
 关联：[UI 视觉适配实施方案](ling-journey-ui-adaptation-implementation-plan.md)、[官方场景主题与自定义媒体背景实施方案](full-window-theme-background-implementation-plan.md)、[统一合同](theme-background-motion-contract.md)、[主题系统](ui2.0升级/themes/README.md)
 
 ## 1. 主题定位

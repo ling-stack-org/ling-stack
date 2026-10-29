@@ -1,10 +1,10 @@
 # 官方场景主题与自定义媒体背景实施方案
 
-Status: active implementation plan  
-Owner: theme and presentation delivery track  
-Last verified: 2026-10-26  
-Document type: implementation plan and task split  
-Supersedes: 旧“整窗静态背景 P2”实施计划；长期行为由[统一合同](theme-background-motion-contract.md)、[Ling Core IP 设计合同](ling-core-ip-design.md)和 [UI 视觉适配实施方案](ling-journey-ui-adaptation-implementation-plan.md)共同拥有  
+Status: active implementation plan\
+Owner: theme and presentation delivery track\
+Last verified: 2026-10-26\
+Document type: implementation plan and task split\
+Supersedes: 旧“整窗静态背景 P2”实施计划；长期行为由[统一合同](theme-background-motion-contract.md)、[Ling Core IP 设计合同](ling-core-ip-design.md)和 [UI 视觉适配实施方案](ling-journey-ui-adaptation-implementation-plan.md)共同拥有\
 Code and test anchors: `packages/ui-react/src/theme/built-ins/`、`packages/ui-react/src/theme-scene/`、`packages/ui-react/src/theme-picker/`、`apps/web/src/shared/ui/background/`、`apps/desktop/main/backgrounds/`、`apps/web/e2e/full-window-background.spec.ts`
 
 ## 1. 本期目标

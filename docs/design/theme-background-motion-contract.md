@@ -1,10 +1,10 @@
 # 官方场景主题、背景与交互动效统一设计方案
 
-状态：产品与技术合同；内置场景主题和自定义媒体背景进入实施；平台放行仍按独立门槛执行。  
-Owner: theme and presentation delivery track  
+状态：产品与技术合同；内置场景主题和自定义媒体背景进入实施；平台放行仍按独立门槛执行。\
+Owner: theme and presentation delivery track\
 Last verified: 2026-10-28 (当前场景与组件所有权同步)
-Document type: product and interaction contract  
-Code and test anchors: `packages/ui-react/src/theme/built-ins/`、`packages/ui-react/src/theme-scene/`、`apps/web/src/shared/ui/background/`、`apps/web/e2e/full-window-background.spec.ts`  
+Document type: product and interaction contract\
+Code and test anchors: `packages/ui-react/src/theme/built-ins/`、`packages/ui-react/src/theme-scene/`、`apps/web/src/shared/ui/background/`、`apps/web/e2e/full-window-background.spec.ts`\
 关联：[UI 视觉适配实施方案](ling-journey-ui-adaptation-implementation-plan.md)、[实施方案](full-window-theme-background-implementation-plan.md)、[验收矩阵](full-window-theme-background-acceptance-matrix.md)、[主题系统](ui2.0升级/themes/README.md)、[Ling Core IP 设计合同](ling-core-ip-design.md)。
 
 ## 1. 产品方向

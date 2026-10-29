@@ -1,10 +1,10 @@
 # 官方场景主题与自定义媒体背景本机验证记录
 
 Status: S1–S3 implemented locally; reading/playback/profile hardening tracked in the current contract; Desktop release gates open
-Owner: theme and presentation delivery track  
+Owner: theme and presentation delivery track\
 Last verified: 2026-10-27
-Document type: implementation evidence and remaining acceptance gates  
-Source: `gansx/theme-background`，`790eb2d37a787ca52cf7511edf1d9fa9d45e9c83` + 当前未提交改动；代码和截图只证明各自的本机源码快照，不推断远端同步状态  
+Document type: implementation evidence and remaining acceptance gates\
+Source: `gansx/theme-background`，`790eb2d37a787ca52cf7511edf1d9fa9d45e9c83` + 当前未提交改动；代码和截图只证明各自的本机源码快照，不推断远端同步状态\
 Related: [本轮阅读/播放/构图合同与最新证据](theme-background-hardening-plan.md)、[统一合同](theme-background-motion-contract.md)、[实施方案](full-window-theme-background-implementation-plan.md)、[UI 视觉适配实施方案](ling-journey-ui-adaptation-implementation-plan.md)、[验收矩阵](full-window-theme-background-acceptance-matrix.md)
 
 > 2026-10-26 产品修订：`ling-journey` 暂时回到静态主题。人物、剑光、远方黑烟、红色裂隙/余烬、云海和雾带使用同一张 `ling-journey-v4-depth-dark.webp` 母图，运行时不创建官方 video，也不叠加 SVG rider；Ling Core IP 与启动动画仍暂停。用户自定义 MP4/WebM 能力保留，但不属于官方主题默认行为。
