@@ -16,6 +16,7 @@ import type { SqliteStoreContext } from "./store-context.js";
 import type { RuntimeAttemptFenceV1 } from "../../runtime-supervisor-types.js";
 import { runExecutionOwnerParameters, runExecutionOwnerSql } from "./run-execution-admission.js";
 import { afterCancellationCommit } from "./cancellation-transaction.js";
+import { normalizeRunnerIdsInSnapshot } from "../../runner-ids.js";
 
 type EventAdmission = { readonly kind: "host" | "audit" } | { readonly kind: "execution"; readonly sourceFence: RuntimeAttemptFenceV1 };
 
@@ -62,7 +63,7 @@ export class SqliteRunEventStore {
       throw new Error(`Run session not found: ${runId}`);
     }
 
-    const redactedData = normalizeLegacyEventPayload(type, redactSecrets(data));
+    const redactedData = normalizeLegacyEventPayload(type, normalizeRunnerIdsInSnapshot(redactSecrets(data)));
     if (!isRunEventData(type, redactedData)) {
       throw new Error(`Invalid run event payload for ${type}`);
     }
