@@ -197,6 +197,7 @@ export function TeammatePrivateChatComposer({
         ariaLabel={t("Private chat composer")}
         bottomStatusNode={<ConversationBottomStatusStrip
           ariaLabel={t("Conversation status")}
+        translate={t}
           metrics={runtimeMetrics}
           locale={locale}
         />}

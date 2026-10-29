@@ -6,6 +6,7 @@ export interface ConversationBottomStatusStripProps {
   readonly ariaLabel: string;
   readonly metrics?: ConversationRuntimeMetrics;
   readonly locale?: string;
+  readonly translate?: (key: string) => string;
 }
 
 const unavailable = "—";
@@ -37,22 +38,33 @@ function MetricDetails({ label, detailsLabel = "details", children, detail }: {
   );
 }
 
-export function ConversationBottomStatusStrip({ ariaLabel, metrics, locale = "en-US" }: ConversationBottomStatusStripProps): React.JSX.Element {
-  const zh = locale.startsWith("zh");
-  const labels = zh ? {
-    rounds: "轮 AI", steps: "步工具", tokens: "Token", cacheHit: "缓存命中", runtime: "运行活动",
-    tokenUsage: "Token 与缓存", contextUsage: "上下文", details: "详情", aiRounds: "AI 轮次",
-    toolSteps: "工具步骤", speed: "最近回复端到端输出速率（含工具耗时）", total: "总 Token",
-    input: "非缓存输入", output: "输出", cacheRead: "缓存读取", cacheWrite: "缓存写入",
-    coverage: "覆盖", unavailable: "未知", complete: "完整", partial: "部分", recentContext: "最近请求上下文",
-    estimatedContext: "压缩后上下文估算", context: "上下文", capacity: "容量", usage: "使用率",
-  } : {
-    rounds: "rounds", steps: "steps", tokens: "tokens", cacheHit: "cache hit", runtime: "Runtime activity",
-    tokenUsage: "Token and cache usage", contextUsage: "Context usage", details: "details", aiRounds: "AI rounds",
-    toolSteps: "Tool steps", speed: "Recent reply end-to-end output rate (including tool time)", total: "Total tokens",
-    input: "Uncached input", output: "Output", cacheRead: "Cache read", cacheWrite: "Cache write",
-    coverage: "Coverage", unavailable: "unavailable", complete: "complete", partial: "partial", recentContext: "Recent request context",
-    estimatedContext: "Estimated context after compaction", context: "Context", capacity: "Capacity", usage: "Usage",
+export function ConversationBottomStatusStrip({ ariaLabel, metrics, locale = "en-US", translate = (key) => key }: ConversationBottomStatusStripProps): React.JSX.Element {
+  const labels = {
+    rounds: translate("rounds"),
+    steps: translate("steps"),
+    tokens: translate("tokens"),
+    cacheHit: translate("cache hit"),
+    runtime: translate("Runtime activity"),
+    tokenUsage: translate("Token and cache usage"),
+    contextUsage: translate("Context usage"),
+    details: translate("details"),
+    aiRounds: translate("AI rounds"),
+    toolSteps: translate("Tool steps"),
+    speed: translate("Recent reply end-to-end output rate (including tool time)"),
+    total: translate("Total tokens"),
+    input: translate("Uncached input"),
+    output: translate("Output"),
+    cacheRead: translate("Cache read"),
+    cacheWrite: translate("Cache write"),
+    coverage: translate("Coverage"),
+    unavailable: translate("unavailable"),
+    complete: translate("complete"),
+    partial: translate("partial"),
+    recentContext: translate("Recent request context"),
+    estimatedContext: translate("Estimated context after compaction"),
+    context: translate("Context"),
+    capacity: translate("Capacity"),
+    usage: translate("Usage"),
   };
   const number = (value: number | null | undefined) => formatNumber(value, locale);
   // Pi input excludes cache reads/writes; all three classes must be measured before computing a hit rate.

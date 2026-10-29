@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -87,10 +88,11 @@ test("bottom status is a standalone, centered row outside the composer box on al
   assert.match(idle, /Context —/u);
   const partial = renderComposer({ bottomStatusNode: createElement(ConversationBottomStatusStrip, {
     ariaLabel: "对话状态", locale: "zh-CN",
+    translate: (key) => JSON.parse(readFileSync(new URL("../../localization/catalogs/zh-CN.json", import.meta.url), "utf8")).messages[key] ?? key,
     metrics: { aiRounds: null, toolSteps: 4, recentReplyTokensPerSecond: null, totalTokens: 30, inputTokens: null, outputTokens: 30, cacheReadTokens: 0, cacheWriteTokens: null, coverage: "partial", context: { measuredInputTokens: null, estimatedTokens: 180, capacityTokens: 600, basis: "estimated" } },
   }) });
   assert.match(partial, /— 轮 AI/u);
-  assert.match(partial, /4 步工具/u);
+  assert.match(partial, /4 (?:步工具|步骤)/u);
   assert.match(partial, /— 缓存命中/u);
   assert.match(partial, /压缩后上下文估算 30%/u);
 });
@@ -136,3 +138,16 @@ test("conversation package owns composer visuals through semantic Ling tokens", 
   assert.doesNotMatch(composer, /\[data-theme/u);
   assert.doesNotMatch(composer, /--text-|--surface-|--accent(?:-|\))/u);
 });
+
+for (const locale of ["de-DE", "ja-JP"]) {
+  test(`bottom status uses catalog translations for ${locale}`, () => {
+    const { messages } = JSON.parse(readFileSync(new URL(`../../localization/catalogs/${locale}.json`, import.meta.url), "utf8"));
+    const html = renderComposer({ bottomStatusNode: createElement(ConversationBottomStatusStrip, {
+      ariaLabel: messages["Conversation status"], locale, translate: (key) => messages[key] ?? key,
+    }) });
+    assert.notEqual(messages["Runtime activity"], "Runtime activity");
+    assert.ok(html.includes(messages["Runtime activity"]));
+    assert.ok(html.includes(messages["rounds"]));
+    assert.doesNotMatch(html, /— rounds/u);
+  });
+}

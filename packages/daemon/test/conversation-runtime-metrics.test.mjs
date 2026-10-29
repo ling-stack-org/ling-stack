@@ -29,7 +29,7 @@ function addRun(f, { thread, id, measured, native = false, teammateId = f.partic
     ...(channelId ? { channelId } : {}), teammateId, workUnitId: unit.id,
     providerName: "fixture", providerModel: "fixture", taskSnapshot: {}, providerSnapshot: {}, requestSnapshot: {}, createdAt: now });
   if (!native) f.store.appendEvent(run.id, "turn_start", {});
-  f.store.appendEvent(run.id, "message_end", { role: "assistant", usage: measured });
+  if (measured) f.store.appendEvent(run.id, "message_end", { role: "assistant", usage: measured });
   return { turn, run };
 }
 
@@ -121,6 +121,17 @@ test("private detail excludes superseded source turns from metrics", async t => 
     supersededResponseMessageIds: [], idempotencyKey: "metrics-private-superseded",
   }, now);
   assert.equal(detail(f, "private").runtimeMetrics.totalTokens, null);
+});
+
+test("latest native run without usage invalidates older context measurement", async t => {
+  const f = await fixture(t);
+  append(f, [["turn_start", {}], ["message_end", { role: "assistant", usage: usage(30, 10) }]]);
+  const latest = addRun(f, { thread: f.thread, id: "latest-native-no-usage", native: true });
+  f.store.appendEvent(latest.run.id, "assistant_text_delta", { text: "native output" });
+  const metrics = detail(f, "normal").runtimeMetrics;
+  assert.equal(metrics.context.measuredInputTokens, null);
+  assert.equal(metrics.context.basis, "unavailable");
+  assert.equal(metrics.coverage, "partial");
 });
 
 test("mixed native lifecycle gaps do not claim exact AI/tool totals", async t => {

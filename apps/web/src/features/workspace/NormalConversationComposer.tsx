@@ -153,6 +153,7 @@ export function NormalConversationComposer({
       rightToolsClassName="conversation-home-right-tools normal-conversation-composer-actions"
       bottomStatusNode={<ConversationBottomStatusStrip
         ariaLabel={t("Conversation status")}
+        translate={t}
         metrics={runtimeMetrics}
         locale={locale}
       />}

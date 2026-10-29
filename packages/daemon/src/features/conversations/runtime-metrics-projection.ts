@@ -59,7 +59,9 @@ export function projectConversationRuntimeMetrics(input: {
     let runHadEvents = false;
     let runHadUsage = false;
     let runHadLifecycle = false;
+    let latestEventInRun: RunEventEnvelope | undefined;
     forEachRunEvent(store, run.id, (event) => {
+      latestEventInRun = event;
       hasEvent = true;
       runHadEvents = true;
       if (event.type === "turn_start") {
@@ -121,6 +123,11 @@ export function projectConversationRuntimeMetrics(input: {
     });
     if (!runHadEvents || !runHadUsage ||
       !["succeeded", "failed", "cancelled"].includes(run.status)) partial = true;
+    // A newer run without a usable measurement must invalidate context evidence
+    // from an older provider invocation; it cannot be carried forward.
+    if (runHadEvents && !runHadUsage && latestEventInRun && newerEvent(latestInvocation, latestEventInRun)) {
+      latestInvocation = latestEventInRun;
+    }
     if (!runHadLifecycle) {
       lifecycleComplete = false;
       if (runHadEvents) partial = true;

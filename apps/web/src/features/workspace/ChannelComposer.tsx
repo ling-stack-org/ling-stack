@@ -313,6 +313,7 @@ export function ChannelComposer({
       statusNode={statusNode}
       bottomStatusNode={<ConversationBottomStatusStrip
         ariaLabel={t("Conversation status")}
+        translate={t}
         metrics={runtimeMetrics}
         locale={locale}
       />}
