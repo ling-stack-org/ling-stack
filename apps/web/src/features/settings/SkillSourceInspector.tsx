@@ -70,6 +70,18 @@ export function SkillSourceInspector({
         <span>{t("Review")}: {snapshot.reviewStatus}</span>
         <span>{t("Artifacts")}: {artifacts.length}</span>
       </div>
+      <section className="settings-skill-source-file-inventory" aria-label={t("Referenced files")}>
+        <h3>{t("Referenced files")}</h3>
+        {snapshot.referencedFiles.length > 0 ? (
+          <ul>
+            {snapshot.referencedFiles.map((file) => (
+              <li key={`${file.path}:${file.checksum ?? ""}`}>
+                <code>{file.path}</code> · {file.kind} · {file.sizeBytes === undefined ? t("Size unknown") : t("{size} bytes", { size: file.sizeBytes })} · {file.checksum ?? t("Checksum unavailable")} · {file.includedInSnapshot ? t("Included") : t("Deferred")}
+              </li>
+            ))}
+          </ul>
+        ) : <p>{t("No referenced files")}</p>}
+      </section>
       <div className="settings-skill-source-actions">
         {showPreviewAction ? (
           <Button

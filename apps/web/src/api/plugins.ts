@@ -19,7 +19,7 @@ import type {
   PluginPackageDetailResponse,
   PluginPackageValidationResponse,
   PluginSourceListResponse,
-} from "../types.js";
+} from "@ling-stack/contracts";
 import { daemonClient } from "./client.js";
 
 export async function listManagedPlugins(cwd: string): Promise<ManagedPluginListResponse> {

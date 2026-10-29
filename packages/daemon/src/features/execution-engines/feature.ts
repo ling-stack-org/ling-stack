@@ -1,10 +1,13 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { ExecutionEngineProfile, ExecutionEngineProbe, ExecutionEngineProbeMode, ExternalExecutionEngineId } from "@ling-stack/contracts";
+import type { ExecutionEngineProfile, ExecutionEngineProbe, ExecutionEngineProbeMode, ExternalExecutionEngineId, ManagedInstallPhase } from "@ling-stack/contracts";
+import { getManagedEnginePackage } from "@ling-stack/contracts";
 import { ExecutionEngineProfileStore, type LingStackUserConfigPaths, type SecretResolver } from "@ling-stack/core";
 import { EngineManagementAuthority, engineManagementCsrf } from "./authority.js";
 import { EngineManagementController } from "./controller.js";
 import { EngineProbeBusyError, probeEngineInstallation } from "./installation-probe.js";
+import { discoverEngines } from "./engine-scanner.js";
+import { installManagedEngine, ManagedInstallError } from "./managed-engine-installer.js";
 import { probeEngineConnection } from "./connection-probe.js";
 import { EngineLoginManager, type NativeLoginProcessOptions } from "./login-manager.js";
 import { createEngineSecretStore, withEngineSecretResolver, type EngineSecretStore } from "./engine-secret-store.js";
@@ -28,6 +31,8 @@ export interface EngineManagementFeatureOptions {
   readonly probe?: NativeProbeProcessOptions;
   readonly secretResolver?: SecretResolver;
   readonly secretStore?: EngineSecretStore;
+  /** Testing seam: overrides the managed download while keeping status transitions real. */
+  readonly lifecycle?: { readonly install?: typeof installManagedEngine };
   readonly runnerRegistry?: RunnerRegistry;
 }
 
@@ -40,6 +45,7 @@ export class EngineManagementFeature {
   private readonly probes = new Map<ExternalExecutionEngineId, { readonly controller: AbortController; readonly result: Promise<ExecutionEngineProbe> }>();
   private readonly logins: EngineLoginManager;
   private closing?: Promise<void>;
+  private readonly installs = new Map<ExternalExecutionEngineId, { readonly phase: ManagedInstallPhase; readonly error?: string; readonly executablePath?: string; readonly version?: string; readonly updatedAt: string }>();
   private readonly secretResolver: SecretResolver;
 
   constructor(private readonly options: EngineManagementFeatureOptions) {
@@ -64,6 +70,9 @@ export class EngineManagementFeature {
       logins: this.logins,
       secretStore,
       probe: (profile, signal, mode) => this.probe(profile, signal, mode),
+      discover: () => discoverEngines(),
+      install: (engineId, signal) => this.install(engineId, signal),
+      installStatus: (engineId) => this.installStatus(engineId),
       beforeProfileChange: (engineId) => this.logins.assertIdle(engineId),
       onProfileChanged: (engineId) => { this.probes.get(engineId)?.controller.abort(); this.logins.invalidate(engineId); },
     });
@@ -84,6 +93,36 @@ export class EngineManagementFeature {
       if (failed) throw failed.reason;
     });
     return this.closing;
+  }
+
+  private installStatus(engineId: ExternalExecutionEngineId) {
+    return this.installs.get(engineId) ?? { engineId, phase: "idle" as const, updatedAt: new Date(0).toISOString() };
+  }
+
+  private async install(engineId: ExternalExecutionEngineId, signal: AbortSignal) {
+    const pkg = getManagedEnginePackage(engineId);
+    if (!pkg?.installable) throw new ManagedInstallError(`managed_install_unsupported_engine:${engineId}`);
+    const existing = this.installs.get(engineId);
+    if (existing && (existing.phase === "downloading" || existing.phase === "verifying")) return existing;
+    const mark = (phase: ManagedInstallPhase, extra: Record<string, string | undefined> = {}) => {
+      const status = { engineId, phase, updatedAt: new Date().toISOString(), ...extra };
+      this.installs.set(engineId, status);
+      return status;
+    };
+    mark("downloading");
+    try {
+      const install = this.options.lifecycle?.install ?? installManagedEngine;
+      const result = await install(engineId, this.options.userPaths, { signal });
+      return mark("installed", { executablePath: result.executablePath, version: result.version });
+    } catch (error) {
+      if (signal.aborted) {
+        this.installs.delete(engineId);
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      mark("failed", { error: message });
+      throw error;
+    }
   }
 
   private probe(profile: ExecutionEngineProfile, signal: AbortSignal, mode: ExecutionEngineProbeMode): Promise<ExecutionEngineProbe> {

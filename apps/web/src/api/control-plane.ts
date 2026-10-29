@@ -4,7 +4,7 @@ import type {
   ControlPlaneEventsResponse,
   ControlPlaneSnapshotResponse,
   DaemonHealthResponse,
-} from "../types.js";
+} from "@ling-stack/contracts";
 import { daemonClient } from "./client.js";
 
 export async function getDaemonHealth(): Promise<DaemonHealthResponse> {

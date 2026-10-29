@@ -1,5 +1,5 @@
-import { type DragEvent, type KeyboardEvent, type ReactNode, type Ref } from "react";
-import { ArrowUp, CircleAlert, FileText, Plus, RotateCcw, SlidersHorizontal, Square } from "lucide-react";
+import { type DragEvent, type KeyboardEvent, type Ref, useRef } from "react";
+import { ArrowUp, CircleAlert, FileText, Mic, MicOff, Plus, RotateCcw, SlidersHorizontal, Square } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import { useI18n } from "../../i18n.js";
 import {
@@ -15,6 +15,8 @@ import {
   StatusIndicator,
 } from "../../shared/ui/index.js";
 import { ComposerPendingAssetStrip, type ActiveSlashCommandPicker, type PendingAttachmentItem } from "../../shared/components/index.js";
+import { useVoiceDictation } from "../../shared/conversation/use-voice-dictation.js";
+import { appendDictation, voiceErrorMessage } from "../../shared/conversation/voice-dictation-machine.js";
 import type { AuthorizationMode, ConversationAttachment, PermissionPreset, ProviderThinkingMode } from "../../types.js";
 import { normalConversationModelLabel } from "./normal-conversation-composer-options.js";
 import { ConversationModelControl } from "./ConversationModelControl.js";
@@ -45,7 +47,6 @@ export interface NormalConversationComposerProps {
   readonly canSend: boolean;
   readonly notice: string;
   readonly dragActive: boolean;
-  readonly dropFeedback?: ReactNode;
   readonly onDraftChange: (value: string, caret: number) => void;
   readonly onComposerKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
   readonly onComposerPasteFiles: (files: readonly File[]) => void;
@@ -73,7 +74,6 @@ export function NormalConversationComposer({
   defaultProviderLabel,
   defaultProviderPresetId,
   dragActive,
-  dropFeedback,
   draft,
   inputParts,
   inputRef,
@@ -112,11 +112,22 @@ export function NormalConversationComposer({
   slashPicker,
   stopping,
 }: NormalConversationComposerProps): React.JSX.Element {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const activeProviderPresetId = selectedProviderPresetId || defaultProviderPresetId;
   const activeModelOption = modelOptions.find((option) => option.id === activeProviderPresetId);
   const modelReady = Boolean(activeModelOption?.runnable ?? activeModelOption?.enabled);
   const activeModelLabel = activeModelOption ? normalConversationModelLabel(activeModelOption) : defaultProviderLabel;
+
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const voice = useVoiceDictation({
+    locale,
+    onTranscript: (text) => {
+      const next = appendDictation(draftRef.current, text);
+      onDraftChange(next, next.length);
+    },
+  });
+  const dictating = voice.status === "recording";
 
   const configurationLocked = sendBusy || activeRun || !scopeReady;
   const attachmentsLocked = sendBusy || !scopeReady;
@@ -151,12 +162,17 @@ export function NormalConversationComposer({
         />
       ) : null}
       dropZoneClassName={dragActive ? "active" : undefined}
-      dropZoneStyle={{ borderRadius: "var(--ling-radius-md)" }}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       inputNode={(
-        <div className="conversation-home-composer-body normal-conversation-composer-body">
+        <div className="conversation-home-composer-body normal-conversation-composer-body" data-dictating={dictating || undefined}>
+          {dictating ? (
+            <span className="composer-dictating-badge" role="status">
+              <Mic size={12} />
+              {t("Dictating")}{voice.interim ? ` · ${voice.interim}` : "…"}
+            </span>
+          ) : null}
           <TokenizedComposerInput
             ref={inputRef}
             readOnly={!scopeReady}
@@ -191,12 +207,9 @@ export function NormalConversationComposer({
           )}
         </div>
       ) : null}
-      dropHintNode={<>
-        {dropFeedback}
-        {dragActive ? (
-          <div className="composer-drop-hint"><FileText size={16} /><span>{t("Drop files to attach")}</span></div>
-        ) : null}
-      </>}
+      dropHintNode={dragActive ? (
+        <div className="composer-drop-hint"><FileText size={16} /><span>{t("Drop files to attach")}</span></div>
+      ) : null}
       previewNode={pendingAttachments.length > 0 || attachmentCleanupFailures.length > 0 ? (
         <ComposerPendingAssetStrip attachments={pendingAttachments} onRemoveAttachment={onRemoveAttachment}
           onRetryAttachment={onRetryAttachment} cleanupFailures={attachmentCleanupFailures} onRetryCleanup={onRetryAttachmentCleanup} />
@@ -225,6 +238,20 @@ export function NormalConversationComposer({
               }}
             />
           </label>
+          {voice.supported ? (
+            <button
+              type="button"
+              className={dictating ? "icon-button composer-tool-button composer-dictate-button dictating" : "icon-button composer-tool-button composer-dictate-button"}
+              aria-label={dictating ? t("Stop dictation") : t("Dictate message")}
+              aria-pressed={dictating}
+              data-dictating={dictating || undefined}
+              title={dictating ? t("Stop dictation") : t("Dictate message")}
+              disabled={attachmentsLocked && !dictating}
+              onClick={() => voice.toggle()}
+            >
+              {dictating ? <MicOff size={17} /> : <Mic size={17} />}
+            </button>
+          ) : null}
           <ConversationPermissionControl
             authorizationMode={authorizationMode}
             permissionPreset={permissionPreset}
@@ -264,9 +291,9 @@ export function NormalConversationComposer({
           />
         </>
       )}
-      feedbackNode={notice ? (
+      feedbackNode={(notice || voice.error) ? (
         <InlineFeedback className="conversation-home-notice normal-conversation-composer-feedback" tone="danger">
-          {notice}
+          {voice.error ? voiceErrorMessage(voice.error, t) : notice}
         </InlineFeedback>
       ) : null}
     />

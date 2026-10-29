@@ -2,6 +2,7 @@ import type { ExecutionEngineConnectionProbe, ExternalExecutionEngineId } from "
 import { ArrowRight, Cable, CircleHelp, KeyRound, LogIn, Pencil, PlugZap, Unplug } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { daemonBaseUrl } from "../../../api/client.js";
+import { getManagedEnginePackage } from "@ling-stack/contracts";
 import { useDesktopTitlebarPlacement } from "../../../app/DesktopTitlebarSurface.js";
 import { useI18n } from "../../../i18n.js";
 import { Button, Field, InlineFeedback, Input, Skeleton } from "../../../shared/ui/index.js";
@@ -33,7 +34,7 @@ export function ExecutionEnginesSettingsPage({ cwd }: { readonly cwd: string }):
   const login = useSyncExternalStore(loginController.subscribe, loginController.getSnapshot);
   const [code, setCode] = useState("");
   const returnFocusRef = useRef<HTMLElement | null>(null);
-  useEffect(() => { void manager.load(); return () => { manager.detach(); void loginController.cancel(); }; }, [manager]);
+  useEffect(() => { void manager.load().then(() => manager.discover()); return () => { manager.detach(); void loginController.cancel(); }; }, [manager]);
   useEffect(() => {
     const revalidate = () => {
       if (document.visibilityState === "visible" && !loginController.getSnapshot()) void manager.revalidate();
@@ -95,6 +96,7 @@ export function ExecutionEnginesSettingsPage({ cwd }: { readonly cwd: string }):
                     : profile?.status === "disconnected" ? <span>{t("Not connected")}</span> : null}
                 </div>
                 <div className="engine-settings-actions">
+                  {ready && !profile ? <EngineDiscoveryActions engineId={engine.id} manager={manager} /> : null}
                   {ready && !profile ? <EngineSetupGuide engineId={engine.id} /> : null}
                   {profile && loginMethod ? <Button size="sm" leadingIcon={loginMethod === "apiKey" ? <KeyRound /> : <LogIn />}
                     disabled={!ready || Boolean(busy) || Boolean(login)} onClick={(event) => {
@@ -150,4 +152,43 @@ function ProbeResult({ probe, engineId }: { readonly probe: ExecutionEngineConne
     <span className="engine-probe-result" role="status">{engineProbeMessage(outcome, t)}</span>
     {needsGuide ? <EngineSetupGuide engineId={engineId} /> : null}
   </div>;
+}
+
+function EngineDiscoveryActions({ engineId, manager }: {
+  readonly engineId: ExternalExecutionEngineId;
+  readonly manager: ExecutionEngineManager;
+}): React.JSX.Element | null {
+  const { t } = useI18n();
+  const state = useSyncExternalStore(manager.subscribe, manager.getSnapshot);
+  const candidate = state.discovery?.candidates.find((item) => item.engineId === engineId);
+  const install = state.installs[engineId];
+  const pkg = getManagedEnginePackage(engineId);
+  const busy = Boolean(state.busy[engineId]);
+  if (install && install.phase !== "idle") {
+    const label = install.phase === "downloading" ? t("Downloading...")
+      : install.phase === "verifying" ? t("Verifying...")
+      : install.phase === "installed" ? t("Installed")
+      : t("Install");
+    return (
+      <div className="engine-discovery-actions">
+        <Button size="sm" leadingIcon={<Cable />} disabled={install.phase === "downloading" || install.phase === "verifying"}
+          loading={install.phase === "downloading" || install.phase === "verifying"} loadingLabel={label}
+          onClick={() => void manager.installEngine(engineId)}>{label}</Button>
+        {install.phase === "failed" && install.error ? <EngineManagementError code={install.error} /> : null}
+      </div>
+    );
+  }
+  return (
+    <div className="engine-discovery-actions">
+      {candidate?.status === "detected" && candidate.executablePath ? (
+        <Button size="sm" variant="ghost" leadingIcon={<PlugZap />} disabled={busy} onClick={() => {
+          manager.edit(engineId);
+          manager.updateDraft({ executablePath: candidate.executablePath! });
+        }}>{t("Use detected {version}", { version: candidate.version ?? "" })}</Button>
+      ) : null}
+      {pkg?.installable ? (
+        <Button size="sm" leadingIcon={<Cable />} disabled={busy} onClick={() => void manager.installEngine(engineId)}>{t("Install")}</Button>
+      ) : candidate?.manualGuidance ? <span className="engine-discovery-guidance">{candidate.manualGuidance}</span> : null}
+    </div>
+  );
 }

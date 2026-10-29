@@ -71,6 +71,20 @@ export interface ParsedSkillSourceSyncPublishRequest extends ParsedSkillSourceSy
   readonly publishArtifacts: boolean;
 }
 
+export interface ParsedSharedSkillSourceScanRequest {
+  readonly includeProjectRoot?: boolean;
+  readonly includeUserRoot?: boolean;
+  readonly includeSkillIds?: readonly string[];
+  readonly excludeSkillIds?: readonly string[];
+  readonly maxSourceBytes?: number;
+}
+
+export interface ParsedSharedSkillSourcePublishRequest extends ParsedSharedSkillSourceScanRequest {
+  readonly selectedSkillIds: readonly string[];
+  readonly allowNewSkills: boolean;
+  readonly publishArtifacts: boolean;
+}
+
 export interface ParsedSkillSourceUpgradePolicyUpdateRequest {
   readonly mode?: SkillSourceUpgradeMode;
   readonly approvedRootIds?: readonly string[];
@@ -813,6 +827,42 @@ export function parseSkillSourceSyncPublishRequest(value: unknown): ParsedSkillS
   }
   return {
     ...parseSkillSourceSyncRequest(value),
+    selectedSkillIds,
+    allowNewSkills: readOptionalBoolean(value, "allowNewSkills") ?? false,
+    publishArtifacts: readOptionalBoolean(value, "publishArtifacts") ?? true,
+  };
+}
+
+export function parseSharedSkillSourceScanRequest(value: unknown): ParsedSharedSkillSourceScanRequest {
+  if (value === undefined) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    throw new Error("Shared skill source scan request must be a JSON object");
+  }
+  const maxSourceBytes = readOptionalNumber(value, "maxSourceBytes");
+  if (maxSourceBytes !== undefined && (!Number.isInteger(maxSourceBytes) || maxSourceBytes < 1)) {
+    throw new Error("maxSourceBytes must be a positive integer");
+  }
+  return {
+    includeProjectRoot: readOptionalBoolean(value, "includeProjectRoot"),
+    includeUserRoot: readOptionalBoolean(value, "includeUserRoot"),
+    includeSkillIds: readOptionalStringArray(value, "includeSkillIds"),
+    excludeSkillIds: readOptionalStringArray(value, "excludeSkillIds"),
+    maxSourceBytes,
+  };
+}
+
+export function parseSharedSkillSourcePublishRequest(value: unknown): ParsedSharedSkillSourcePublishRequest {
+  if (!isRecord(value)) {
+    throw new Error("Shared skill source publish request must be a JSON object");
+  }
+  const selectedSkillIds = readRequiredStringArray(value, "selectedSkillIds");
+  if (selectedSkillIds.length === 0) {
+    throw new Error("selectedSkillIds must include at least one skill id");
+  }
+  return {
+    ...parseSharedSkillSourceScanRequest(value),
     selectedSkillIds,
     allowNewSkills: readOptionalBoolean(value, "allowNewSkills") ?? false,
     publishArtifacts: readOptionalBoolean(value, "publishArtifacts") ?? true,

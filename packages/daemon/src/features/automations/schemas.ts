@@ -17,7 +17,7 @@ import type {
   SkillApprovalProfile,
   BuiltinAutomationTemplateId,
 } from "@ling-stack/core";
-import { readAutomationContextItemBudget, readOnlyRunTools } from "@ling-stack/core";
+import { normalizeRunnerId, readAutomationContextItemBudget, readOnlyRunTools } from "@ling-stack/core";
 import { isRecord, readNullableString, readOptionalBoolean, readOptionalNumber, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
 import { isSupportedAutomationRRule } from "./recurrence.js";
@@ -527,7 +527,7 @@ function parseOptionalAutomationExecutionPolicy(value: unknown): AutomationExecu
     providerPresetId: readOptionalString(value, "providerPresetId"),
     teammateId: readOptionalString(value, "teammateId"),
     requestedSkillId: readOptionalString(value, "requestedSkillId"),
-    runnerId: readOptionalString(value, "runnerId"),
+    runnerId: normalizeRunnerId(readOptionalString(value, "runnerId")),
     allowedTools: allowedTools === undefined ? undefined : parseRunTools(allowedTools),
     approvalProfile: parseOptionalApprovalProfile(value.approvalProfile),
     permissionMode: parseOptionalPermissionMode(readOptionalString(value, "permissionMode")),

@@ -25,6 +25,9 @@ export const DESKTOP_THEME_PACKAGE_IPC_CHANNELS = {
 
 export const DESKTOP_IPC_CHANNELS = {
   executionEnginesList: "ling-desktop:execution-engines:list",
+  executionEnginesDiscover: "ling-desktop:execution-engines:discover",
+  executionEnginesInstall: "ling-desktop:execution-engines:install",
+  executionEnginesInstallStatus: "ling-desktop:execution-engines:install-status",
   executionEngineProfileGet: "ling-desktop:execution-engines:profile-get",
   executionEngineProfileSave: "ling-desktop:execution-engines:profile-save",
   executionEngineProfileSecretSave: "ling-desktop:execution-engines:profile-secret-save",

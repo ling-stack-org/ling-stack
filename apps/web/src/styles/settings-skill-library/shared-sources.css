@@ -1,0 +1,56 @@
+.settings-shared-skills,
+.settings-shared-skills-list {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-4);
+}
+
+.settings-shared-skills-header,
+.settings-shared-skills-toolbar,
+.settings-shared-skills-card-head,
+.settings-shared-skills-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+}
+
+.settings-shared-skills-header h2 { margin: 0; }
+.settings-shared-skills-header p,
+.settings-shared-skills-card p { color: var(--ling-text-muted); }
+.settings-shared-skills-roots,
+.settings-shared-skills-toolbar > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ling-space-3);
+}
+.settings-shared-skills-roots span,
+.settings-shared-skills-status {
+  padding: 4px 8px;
+  border: 1px solid var(--ling-border-subtle);
+  border-radius: 999px;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+}
+.settings-shared-skills-list { max-height: var(--skill-library-content-max-height); overflow: auto; }
+.settings-shared-skills-card {
+  min-width: 0;
+  padding: var(--ling-space-4);
+  border: 1px solid var(--ling-border-subtle);
+  border-radius: var(--ling-radius-md);
+}
+.settings-shared-skills-card-title { display: grid; flex: 1; min-width: 0; gap: 4px; }
+.settings-shared-skills-card-title small { color: var(--ling-text-muted); overflow-wrap: anywhere; }
+.settings-shared-skills-card-actions { flex-wrap: wrap; justify-content: flex-end; }
+.settings-shared-skills-card-actions details { flex: 1 0 100%; min-width: 0; }
+.settings-shared-skills-card-actions summary { cursor: pointer; color: var(--ling-text-muted); }
+.settings-shared-skills-card-actions pre { max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.settings-shared-skills-file-inventory { margin-block: var(--ling-space-3); }
+.settings-shared-skills-file-inventory h4 { margin: 0 0 var(--ling-space-2); }
+.settings-shared-skills-file-inventory ul { margin: 0; padding-inline-start: var(--ling-space-5); }
+.settings-shared-skills-file-inventory li { overflow-wrap: anywhere; }
+.settings-shared-skills-new-confirm { display: flex; gap: var(--ling-space-3); align-items: center; }
+@media (max-width: 760px) {
+  .settings-shared-skills-header, .settings-shared-skills-toolbar { align-items: flex-start; flex-direction: column; }
+}

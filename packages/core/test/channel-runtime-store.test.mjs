@@ -87,6 +87,60 @@ test("sqlite workspace settings persist default provider preset", async () => {
   }
 });
 
+test("sqlite v2 workspace settings stop persisting legacy permission fields", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workspace-permission-v2-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.updateWorkspaceSettings({ schemaVersion: 2, defaultAuthorizationMode: "ask", defaultWorkspaceAccessMode: "read_only" }, "2026-10-28T00:00:00.000Z");
+    const database = new DatabaseSync(store.paths.databasePath, { readOnly: true });
+    try {
+      const raw = JSON.parse(database.prepare("SELECT settings_json FROM workspace_settings WHERE workspace_id=?").get(DEFAULT_WORKSPACE_ID).settings_json);
+      assert.equal(raw.defaultAuthorizationMode, "ask");
+      assert.equal(raw.defaultWorkspaceAccessMode, "read_only");
+      assert.equal(Object.hasOwn(raw, "defaultPermissionMode"), false);
+      assert.equal(Object.hasOwn(raw, "defaultPermissionPreset"), false);
+    } finally {
+      database.close();
+    }
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite v2 workspace settings reconstruct the legacy permission projection from canonical fields", async () => {
+  const cases = [
+    ["ask + read_only", "ask", "read_only", "ask_everything", "read_only"],
+    ["smart + workspace_write", "smart", "workspace_write", "workspace_write", "workspace_collaboration"],
+    ["always + full_access", "always", "full_access", "full_access", "full_access"],
+    ["mismatched axes", "ask", "workspace_write", "custom", "custom"],
+  ];
+
+  for (const [label, authorizationMode, workspaceAccessMode, expectedPermissionMode, expectedPermissionPreset] of cases) {
+    const cwd = await mkdtemp(resolve(tmpdir(), `ling-stack-workspace-permission-v2-${label.replaceAll(/[^a-z0-9]+/giu, "-")}-`));
+    let store = createSqliteRunStore(cwd);
+    try {
+      store.updateWorkspaceSettings({ schemaVersion: 2, defaultAuthorizationMode: authorizationMode, defaultWorkspaceAccessMode: workspaceAccessMode }, "2026-10-28T00:00:00.000Z");
+      store.close();
+      store = undefined;
+
+      const reopened = createSqliteRunStore(cwd);
+      try {
+        const settings = reopened.getWorkspaceSettings();
+        assert.equal(settings.defaultAuthorizationMode, authorizationMode, label);
+        assert.equal(settings.defaultWorkspaceAccessMode, workspaceAccessMode, label);
+        assert.equal(settings.defaultPermissionMode, expectedPermissionMode, label);
+        assert.equal(settings.defaultPermissionPreset, expectedPermissionPreset, label);
+      } finally {
+        reopened.close();
+      }
+    } finally {
+      store?.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }
+});
+
 test("sqlite workspace settings persist Ling conversation tone", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workspace-ling-tone-"));
   const store = createSqliteRunStore(cwd);

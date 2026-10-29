@@ -367,6 +367,11 @@ import { RunControlService } from "../run-control.js";
 import { allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
 import { handleStartupStatus } from "../startup/routes.js";
+import { handleDiagnosticsDoctor, handleDiagnosticsLogs } from "../features/diagnostics/routes.js";
+import { handleNotifications } from "../features/notifications/routes.js";
+import { handleImDestinations } from "../features/im-destinations/routes.js";
+import { handleSkillsMarketplaceInspect } from "../features/skills/marketplace-route.js";
+import { handleDeliverablesBuild, handleSpreadsheetPreview } from "../features/deliverables/routes.js";
 import { handleHumanEvaluationDesktopRoute } from "../features/harness/evaluations/human-evaluation-routes.js";
 
 export async function routeRequest(
@@ -408,6 +413,8 @@ export async function routeRequest(
     nativeRunDispatcher,
     cuaDriverActivationService,
     workspaceFileCapabilities,
+    notificationHub,
+    imDestinations,
   } = context;
   setCorsHeaders(response);
 
@@ -415,6 +422,30 @@ export async function routeRequest(
     response.writeHead(204);
     response.end();
     return;
+  }
+
+  // Cloud/self-host slice: non-loopback binds require a bearer token on every
+  // request. /health stays open so lifecycle probes keep working.
+  if (config.authToken) {
+    const pathname = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`).pathname;
+    if (pathname !== "/health") {
+      const authorization = request.headers.authorization ?? "";
+      const expected = `Bearer ${config.authToken}`;
+      const provided = typeof authorization === "string" ? authorization : "";
+      let tokenMatches = false;
+      if (provided.length === expected.length) {
+        // Constant-time-ish compare; length equality checked first.
+        let difference = 0;
+        for (let index = 0; index < expected.length; index += 1) {
+          difference |= provided.charCodeAt(index) ^ expected.charCodeAt(index);
+        }
+        tokenMatches = difference === 0;
+      }
+      if (!tokenMatches) {
+        writeJson(response, 401, { error: "unauthorized", message: "A valid bearer token is required for non-loopback access." });
+        return;
+      }
+    }
   }
 
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
@@ -631,6 +662,41 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/diagnostics/doctor") {
+    await handleDiagnosticsDoctor(request, response, context);
+    return;
+  }
+
+  if (url.pathname === "/diagnostics/logs") {
+    await handleDiagnosticsLogs(request, response, context);
+    return;
+  }
+
+  if (url.pathname === "/notifications" || url.pathname === "/notifications/preferences" || url.pathname === "/notifications/stream") {
+    await handleNotifications(request, response, context);
+    return;
+  }
+
+  if (url.pathname === "/im-destinations" || url.pathname.startsWith("/im-destinations/")) {
+    await handleImDestinations(request, response, context);
+    return;
+  }
+
+  if (url.pathname === "/skills/marketplace/inspect") {
+    await handleSkillsMarketplaceInspect(request, response, context);
+    return;
+  }
+
+  if (url.pathname === "/deliverables/build") {
+    await handleDeliverablesBuild(request, response, context);
+    return;
+  }
+
+  if (url.pathname === "/previews/spreadsheet") {
+    await handleSpreadsheetPreview(request, response, context);
+    return;
+  }
+
   if (url.pathname === "/config/effective") {
     await handleEffectiveConfig(request, response, config, storeRegistry, runnerRegistry);
     return;
@@ -782,6 +848,7 @@ export async function routeRequest(
             },
           )),
       automationSchedulers,
+      notificationHub,
     );
     return;
   }
@@ -1280,6 +1347,8 @@ export async function routeRequest(
     url.pathname === "/skills/sync/gstack/publish" ||
     url.pathname === "/skills/sync/gstack/refresh" ||
     url.pathname === "/skills/sync/gstack/check-updates" ||
+    url.pathname === "/skills/sync/shared/preview" ||
+    url.pathname === "/skills/sync/shared/publish" ||
     url.pathname === "/skills/source-upgrade-policy" ||
     url.pathname.startsWith("/skills/source-artifacts/") ||
     url.pathname === "/skills/suggestions" ||

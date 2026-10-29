@@ -1,4 +1,4 @@
-import type { ComputerUseRuntimeStatus, ExecutionEngineConnectionProbe, ExecutionEngineInstallationProbe, ExecutionEngineLoginMethod, ExecutionEngineLoginOperation, ExecutionEngineProfileListResponse, ExecutionEngineProfileResponse,
+import type { ComputerUseRuntimeStatus, EngineDiscoveryReport, ManagedInstallStatus, ExecutionEngineConnectionProbe, ExecutionEngineInstallationProbe, ExecutionEngineLoginMethod, ExecutionEngineLoginOperation, ExecutionEngineProfileListResponse, ExecutionEngineProfileResponse,
   ExternalExecutionEngineId, SaveExecutionEngineProfileRequest, SaveExecutionEngineSecretRequest } from "@ling-stack/contracts";
 
 export interface DesktopExecutionEngineCapabilities {
@@ -12,6 +12,9 @@ export interface DesktopExecutionEngineCapabilities {
   startLogin(engineId: ExternalExecutionEngineId, expectedRevision: number, method: ExecutionEngineLoginMethod): Promise<ExecutionEngineLoginOperation>;
   getLogin(engineId: ExternalExecutionEngineId, operationId: string): Promise<ExecutionEngineLoginOperation>;
   cancelLogin(engineId: ExternalExecutionEngineId, operationId: string): Promise<ExecutionEngineLoginOperation>;
+  discover(): Promise<EngineDiscoveryReport>;
+  install(engineId: ExternalExecutionEngineId): Promise<{ readonly install: ManagedInstallStatus }>;
+  installStatus(engineId: ExternalExecutionEngineId): Promise<{ readonly install: ManagedInstallStatus }>;
 }
 import {
   SUPPORTED_LOCALES,

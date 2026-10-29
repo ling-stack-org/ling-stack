@@ -11,7 +11,7 @@ import type {
   WorkspaceSnapshotPreview,
   SnapshotRestoreConfirmation,
   SnapshotRestoreRequest,
-} from "../types.js";
+} from "@ling-stack/contracts";
 import type {
   WorkspaceFileCapabilityPreviewRequest,
   WorkspaceFileCapabilityRequest,

@@ -9,12 +9,18 @@ Date: 2026-07-16
 - [Skill Import Productization](skill-import-productization.md)
 - [Skill Library Height And AI Evolution Lifecycle](skill-library-height-and-ai-evolution-lifecycle.md)
 - [Skill Library Ownership Separation](skill-library-ownership-separation.md)
+- [External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md)
 
 ## Summary
 
 Ling supports structured editing for manually created or imported skills and for skills
 published through AI evolution. Editing changes the normalized skill definition stored in
 Ling. It does not reopen, overwrite, or synchronize the original local file.
+
+For user-adopted shared `.agents/skills` entries, the same rule applies in the other
+direction: a later source refresh (an "update available" confirmation) replaces the source
+snapshot and provenance but leaves the edited `SkillDefinition` untouched. Source and
+definition can drift apart by design; the user decides when to reconcile them.
 
 Built-in, managed gstack, workspace-owned, and archived skills remain read-only. Skill
 identity, ownership, source provenance, teammate bindings, candidate lineage, and review

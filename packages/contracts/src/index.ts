@@ -9,6 +9,7 @@ export * from "./user-input-transcript.js";
 export * from "./user-input-event-position.js";
 export * from "./user-input-validation.js";
 export type * from "./artifacts.js";
+export { HTML_INTERACTIVE_CSP, HTML_INTERACTIVE_MAX_BYTES, HTML_INTERACTIVE_SANDBOX, injectInteractiveHtmlCsp, scanInteractiveHtml } from "./artifacts.js";
 export type * from "./runtime.js";
 export * from "./harness.js";
 export type * from "./harness-evaluation-qa.js";
@@ -20,6 +21,7 @@ export * from "./provider-diagnostics.js";
 export type * from "./runner-readiness.js";
 export * from "./runner-acceptance.js";
 export * from "./execution-engines.js";
+export * from "./engine-lifecycle.js";
 export * from "./threads.js";
 export type * from "./conversations.js";
 export * from "./conversation-continuity.js";
@@ -76,3 +78,8 @@ export { isCommittedRunNarrationV1, type CommittedRunNarrationV1 } from "./commi
 export type * from "./harness-diagnostics.js";
 
 export type * from "./work-summary.js";
+export type * from "./diagnostics.js";
+export * from "./notifications.js";
+export * from "./im-destinations.js";
+export * from "./marketplace.js";
+export * from "./deliverables.js";

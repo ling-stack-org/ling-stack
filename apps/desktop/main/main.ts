@@ -65,6 +65,7 @@ import {
 import type { DesktopStartupFailurePrompt } from "./startup-failure-recovery.js";
 import { loadOrCreateDesktopBridgeToken } from "./bridge-token.js";
 import { registerDesktopIpc } from "./ipc.js";
+import { createDesktopUpdateNotification } from "./update-notification.js";
 import { registerDesktopThemePackageIpc } from "./theme-packages/theme-package-ipc.js";
 import { createHumanEvaluationDesktopComposition } from "./human-evaluation/composition.js";
 import { DesktopMobileAccessClient } from "./mobile-access/client.js";
@@ -172,6 +173,8 @@ let desktopDaemonAutomaticRecoveryUsed = false;
 let officeDriverRuntime: OfficeDriverRuntime | undefined;
 let hostCapabilityRuntime: HostCapabilityRuntime | undefined;
 let computerUse: ComputerUsePreviewCoordinator | undefined;
+// Process-scoped so window recreation keeps the 24-hour throttle and per-release deduplication.
+let desktopUpdateNotification: { check(): Promise<void> } | undefined;
 const desktopNavigationIntents = new DesktopNavigationIntentStore();
 const desktopRendererThemeStore = new DesktopRendererThemeStore(
   builtInDesktopRendererThemeInput(nativeTheme.shouldUseDarkColors ? "dark" : "light"),
@@ -717,6 +720,20 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     throw error;
   }
   logStartup("main_window.loaded");
+  // Check in the background after the owner window is ready; network failures never block startup.
+  if (mainWindow && !mainWindow.isDestroyed() && app.isPackaged && !smokeHeadless) {
+    desktopUpdateNotification ??= createDesktopUpdateNotification({
+      packaged: app.isPackaged && !smokeHeadless,
+      currentVersion: app.getVersion(),
+      locale: app.getLocale(),
+      showMessageBox: (options) => dialog.showMessageBox(options),
+      openExternal: (url) => shell.openExternal(url),
+      onError: (error) => logStartup("desktop.update_check_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    });
+    void desktopUpdateNotification.check();
+  }
   if (fakeComputerUseMode || realCaptureSmokeMode || fixedComputerUseConversationId) {
     computerUse.reportSelectedConversation(fixedComputerUseConversationId ?? smokeComputerUseProjection.conversationId);
   }

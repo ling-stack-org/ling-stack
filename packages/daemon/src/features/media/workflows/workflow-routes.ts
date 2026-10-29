@@ -29,6 +29,10 @@ import {
   parseMediaWorkflowInputFields,
   parseMediaWorkflowOutputRules,
 } from "./workflow-request-parsers.js";
+import {
+  LEGACY_MEDIA_PROTOCOL_REMOVED_CODE,
+  MEDIA_PROTOCOL_UNPREPARED_CODE,
+} from "./media-protocol-contract.js";
 
 export type MediaWorkflowRoute =
   | { readonly resource: "connection"; readonly id: string; readonly action?: "check" }
@@ -257,6 +261,7 @@ async function handleWorkflowItem(
       store,
       definition,
       version,
+      connection: requireConnection(store, definition.connectionId),
       inputValues: readOptionalObject(body, "inputValues") ?? {},
       now: now(),
     });
@@ -352,7 +357,14 @@ function methodNotAllowed(response: ServerResponse, method: string | undefined, 
 }
 
 function writeWorkflowError(response: ServerResponse, error: unknown): void {
-  writeJson(response, 400, { error: "media_workflow_error", message: error instanceof Error ? error.message : String(error) });
+  const candidate = typeof error === "object" && error !== null && "code" in error
+    && typeof (error as { readonly code?: unknown }).code === "string"
+    ? (error as { readonly code: string }).code
+    : undefined;
+  const code = candidate === LEGACY_MEDIA_PROTOCOL_REMOVED_CODE || candidate === MEDIA_PROTOCOL_UNPREPARED_CODE
+    ? candidate
+    : "media_workflow_error";
+  writeJson(response, 400, { error: code, message: error instanceof Error ? error.message : String(error) });
 }
 
 function now(): string {
