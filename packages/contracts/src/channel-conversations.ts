@@ -56,6 +56,8 @@ export interface ChannelConversationItemDecoration {
 }
 
 export interface ChannelConversationItemPageResponse {
+  /** Whole-conversation metrics; stable regardless of which item page was requested. */
+  readonly runtimeMetrics?: import("./conversation-runtime-metrics.js").ConversationRuntimeMetrics;
   readonly cwd: string;
   readonly channelId: string;
   readonly thread: ChannelConversationThread;

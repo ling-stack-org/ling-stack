@@ -8,6 +8,7 @@ export { MathContent, MermaidBlock, type MermaidBlockLabels } from "./blocks/Ric
 export { ComposerAuthorizationMenu, type ComposerAuthorizationMenuProps } from "./composer/ComposerAuthorizationMenu.js";
 export { ComposerPermissionMenu, type ComposerPermissionMenuProps } from "./composer/ComposerPermissionMenu.js";
 export { ConversationComposerShell, type ConversationComposerDensity, type ConversationComposerShellProps, type ConversationComposerSurface } from "./composer/ConversationComposerShell.js";
+export { ConversationBottomStatusStrip, type ConversationBottomStatusStripProps } from "./composer/ConversationBottomStatusStrip.js";
 export { TokenizedComposerInput, type TokenizedComposerInputHandle, type TokenizedComposerInputProps } from "./composer/TokenizedComposerInput.js";
 export { ConversationGuidanceStrip, type ConversationGuidanceItem, type ConversationGuidanceStripProps } from "./feedback/ConversationGuidanceStrip.js";
 export { ConversationStatusStrip, type ConversationStatusAction, type ConversationStatusMetaItem, type ConversationStatusStripProps } from "./feedback/ConversationStatusStrip.js";

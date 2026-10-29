@@ -10,7 +10,7 @@ import {
 } from "@ling-stack/core";
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 import type { MemoryObject } from "@ling-stack/core";
-import type { ConversationExecutionSelectionResponse, ConversationGeneratedMedia, ConversationItemV1, ConversationReasoningSummaryRecord, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings, WorkUnitDetailResponse } from "@ling-stack/contracts";
+import type { ConversationExecutionSelectionResponse, ConversationGeneratedMedia, ConversationItemV1, ConversationReasoningSummaryRecord, ConversationRuntimeMetrics, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings, WorkUnitDetailResponse } from "@ling-stack/contracts";
 import { isSupportedLocale, type SupportedLocale } from "@ling-stack/localization";
 
 const configuredWorkspaceCwd = process.env.LING_PLAYWRIGHT_WORKSPACE_CWD;
@@ -63,6 +63,7 @@ const mockUpdateAiCouncilRequestKeys = new Set(["displayName", "description", "s
 const mockReplaceAiCouncilMemberKeys = new Set(["teammateId", "slotKey", "label", "position", "enabled"]);
 
 export interface MockState {
+  runtimeMetricsFixture?: ConversationRuntimeMetrics;
   providers: unknown[];
   providerSecrets: Record<string, string>;
   managedPlugins: MockManagedPlugin[];
@@ -7443,6 +7444,7 @@ export function buildMockConversationDetail(state: MockState, cwd: string, threa
     cwd,
     thread,
     turns,
+    runtimeMetrics: state.runtimeMetricsFixture,
     conversationItems: allConversationItems,
     userInputs: (state.userInputs ?? []).filter(record => allConversationItems.some(item => item.id === record.itemId)),
     supersessionTombstones: state.conversationSupersessionTombstonesByThreadId[thread.id] ?? {
@@ -10573,6 +10575,7 @@ export async function handleDaemonRoute(
             teammateId,
             thread,
             messages: pageMessages,
+            runtimeMetrics: state.runtimeMetricsFixture,
             timeline: buildMockTeammateDirectTimeline(state, teammateId),
             generatedMedia: mockConversationGeneratedMediaForRunIds(
               state,
@@ -12045,6 +12048,7 @@ export async function handleDaemonRoute(
         thread,
         turns: [...turnById.values()],
         items: pageItems,
+        runtimeMetrics: state.runtimeMetricsFixture,
         turnContextAssignments: [...turnById.keys()].flatMap((turnId) => {
           const context = state.channelTurnContexts[turnId];
           return isRecord(context) && isRecord(context.assignment) ? [context.assignment] : [];

@@ -1,5 +1,7 @@
 import type { ConversationDetailResponse, ConversationItemV1 } from "@ling-stack/contracts";
 import { projectConversationUserInputs } from "../conversations/user-input-transcript.js";
+import { projectConversationRuntimeMetrics } from "../conversations/runtime-metrics-projection.js";
+import { listAllConversationTurns } from "../conversations/all-turns.js";
 import type { LingTurn, RunSession, RunStore } from "@ling-stack/core";
 import { projectTerminalReportDto } from "../channels/terminal-report-routes.js";
 import {
@@ -35,7 +37,7 @@ export function buildTeammateDirectTranscript(
   const sourceItems = readPrivateItems(store, thread.id, teammateId, !options.includeSuperseded);
   // Item cursors, not the recent-turn page, own canonical history coverage.
   // Retain recent unanchored legacy turns as facts; never invent their items.
-  const turnsById = new Map(store.listLingTurns({ threadId: thread.id, limit: 500 }).map((turn) => [turn.id, turn]));
+  const turnsById = new Map(listAllConversationTurns(store, thread.id).map((turn) => [turn.id, turn]));
   for (const item of sourceItems) {
     if (!item.turnId || turnsById.has(item.turnId)) continue;
     const turn = store.getLingTurn(item.turnId);
@@ -64,6 +66,9 @@ export function buildTeammateDirectTranscript(
     return true;
   });
   const runs = [...runsById.values()].sort(byCreatedAt);
+  const visibleMetricTurnIds = new Set(sourceItems.flatMap((item) => item.turnId ? [item.turnId] : []));
+  const metricTurns = turns.filter((turn) => visibleMetricTurnIds.has(turn.id));
+  const metricRuns = runs.filter((run) => runLinks.some((link) => link.runId === run.id && visibleMetricTurnIds.has(link.turnId)));
   const reports = conversationItems.flatMap((item) => {
     if (item.kind !== "terminal_report") return [];
     const report = store.getTerminalReport(item.payload.reportId);
@@ -92,6 +97,7 @@ export function buildTeammateDirectTranscript(
     supersessionTombstones: projectConversationSupersessionTombstones(supersession),
     runLinks,
     runs: runs.map(projectTeammateDirectPublicRun),
+    runtimeMetrics: projectConversationRuntimeMetrics({ store, thread, turns: metricTurns, runs: metricRuns }),
     reasoningSummaries: projectConversationReasoningSummaries({
       store,
       thread,

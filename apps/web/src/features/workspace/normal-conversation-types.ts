@@ -1,4 +1,4 @@
-import type { ExecutionBindingRequest } from "@ling-stack/contracts";
+import type { ConversationRuntimeMetrics, ExecutionBindingRequest } from "@ling-stack/contracts";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import type {
   AuthorizationMode,
@@ -138,6 +138,7 @@ export interface ConversationHomeProps {
   readonly initialPermissionMode?: SessionPermissionMode;
   readonly initialPermissionPreset?: PermissionPreset;
   readonly detailContext?: ConversationHomeDetailContext;
+  readonly runtimeMetrics?: ConversationRuntimeMetrics;
   readonly conversationIdentity: string;
   readonly defaultProviderLabel: string;
   readonly defaultProviderPresetId: string;

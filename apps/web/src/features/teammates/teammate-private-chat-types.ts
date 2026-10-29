@@ -7,6 +7,7 @@ import type {
   UIEvent,
 } from "react";
 import type { ComposerInputPart, PendingAttachmentItem } from "../../shared/components/index.js";
+import type { ConversationRuntimeMetrics } from "@ling-stack/contracts";
 import type { ConversationTimelineItemLocator } from "../../shared/conversation/timeline/ConversationTimeline.js";
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import type {
@@ -67,6 +68,8 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly terminalReports: readonly TerminalReportDto[];
   readonly providerRecovered: boolean;
   readonly modelNotice?: TeammatePrivateModelNotice;
+  readonly composerModelLabel?: string;
+  readonly runtimeMetrics?: ConversationRuntimeMetrics;
   readonly privateAttachmentById: ReadonlyMap<string, TeammatePrivateAttachment>;
   readonly taskCreateBusyKeys: ReadonlySet<string>;
   readonly taskCreateErrors: Readonly<Record<string, string>>;

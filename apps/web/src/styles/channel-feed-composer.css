@@ -611,16 +611,19 @@
   }
 }
 
-.activity-shell [data-conversation-composer][data-surface="channel"] {
-  position: relative;
+.activity-shell [data-conversation-composer-frame="channel"] {
   flex: 0 0 auto;
   align-self: center;
   width: min(var(--channel-conversation-width), calc(100% - 48px));
   margin-bottom: 14px;
 }
 
-.activity-chat-main > [data-conversation-composer][data-surface="channel"] {
+.activity-chat-main > [data-conversation-composer-frame="channel"] {
   width: 100%;
+}
+
+.activity-shell [data-conversation-composer][data-surface="channel"] {
+  position: relative;
 }
 
 [data-conversation-composer][data-surface="channel"] {
