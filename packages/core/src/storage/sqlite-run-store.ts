@@ -2008,6 +2008,7 @@ export class SqliteRunStore implements RunStore {
   findLingThreadByOwner(input: {
     readonly kind: LingThreadKind;
     readonly surfaceKind?: LingThread["surfaceKind"];
+    readonly anchorItemId?: string;
     readonly taskId?: string;
     readonly workflowStepId?: string;
     readonly externalWorkId?: string;

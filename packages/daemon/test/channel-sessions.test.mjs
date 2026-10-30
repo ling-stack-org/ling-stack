@@ -221,6 +221,17 @@ test("read-only topic lookups never materialize a missing topic thread", async (
     now,
     readOnly: true,
   }).id, created.id);
+  for (let index = 0; index < 510; index += 1) {
+    store.createLingThread({ kind: "channel_discussion", channelId: channel.id,
+      surfaceKind: "channel_session", relationKind: "root", title: `Session ${index}`, objective: "Filler" }, `2026-10-30T${String(index % 24).padStart(2, "0")}:00:00.000Z`);
+  }
+  assert.equal(resolveChannelConversationThread({
+    store,
+    channel,
+    surface: { kind: "topic", anchorItemId: anchor.id },
+    now,
+    readOnly: true,
+  }).id, created.id);
 });
 
 test("legacy remote channel view exposes the default conversation without another session preview", async (t) => {
