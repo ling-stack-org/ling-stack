@@ -1,4 +1,5 @@
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
+import type { ConversationRuntimeMetrics } from "@ling-stack/contracts";
 import type { AiTeammateTemplate } from "@ling-stack/core/skill-types";
 import type { ChannelActivityTriageDraft, ChannelActivityTriageResult } from "../../lib/channel-activity-triage.js";
 import type {
@@ -86,6 +87,7 @@ export interface WorkspaceClientViewProps {
   readonly taskForm: TaskFormState;
   readonly channelMessages: readonly ChannelMessage[];
   readonly channelConversationItems: readonly ConversationItemV1[];
+  readonly channelRuntimeMetrics?: ConversationRuntimeMetrics;
   readonly channelTurnContextAssignments: readonly TurnContextAssignment[];
   readonly channelUserInputs: readonly UserInputTranscriptItemV1[];
   readonly channelReasoningSummaries: readonly import("../../types.js").ConversationReasoningSummaryRecord[];

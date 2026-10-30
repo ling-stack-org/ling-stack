@@ -21,7 +21,9 @@ import {
   MessageRow,
 } from "../../shared/conversation/index.js";
 import { IconButton, InlineFeedback } from "../../shared/ui/index.js";
-import type { ConversationGeneratedMedia, RunSession } from "../../types.js";
+import { UserProfileAvatar } from "../../shared/components/index.js";
+import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
+import type { ConversationGeneratedMedia, RunSession, UserProfile } from "../../types.js";
 import type {
   WorkspaceRightDockFileTarget,
   WorkspaceRightDockReviewTarget,
@@ -47,6 +49,7 @@ import { useConversationReadingViewport } from "../../shared/conversation/blocks
 import { conversationReadingScope } from "../../shared/conversation/view-store/conversation-reading-storage.js";
 
 export interface NormalConversationFeedProps {
+  readonly userProfile?: UserProfile;
   readonly messages: readonly ConversationHomeMessage[];
   readonly visibleMessages: readonly ConversationHomeMessage[];
   readonly runById: ReadonlyMap<string, RunSession>;
@@ -72,6 +75,7 @@ export interface NormalConversationFeedProps {
 }
 
 export function NormalConversationFeed({
+  userProfile,
   detailContext,
   composerGateApprovals,
   editSaving,
@@ -217,6 +221,14 @@ export function NormalConversationFeed({
             depth: 0,
             cwd: projectPath?.trim() || workspaceCwd.trim(),
             onSubmitUserInputAnswer: (command) => submitUserInputAnswer(projectPath?.trim() || workspaceCwd.trim(), command),
+            onPositionNavigate: pauseTimelineAutoFollow,
+            positionIdentity: (item) => item.kind === "userMessage" ? {
+              name: userProfile?.displayName.trim() || t("You"),
+              avatar: <UserProfileAvatar profile={userProfile} fallbackLabel={t("You")} />,
+            } : {
+              name: t("Ling Agent"),
+              avatar: <TeammateAvatarView cwd={workspaceCwd} compact teammate={{ displayName: "Ling Agent", kind: "system_teammate", systemRole: "ling_agent" }} />,
+            },
             virtualScrollRef: feedRef,
             itemLocatorRef: timelineItemLocatorRef,
             onDisclosureIntent: pauseTimelineAutoFollow,

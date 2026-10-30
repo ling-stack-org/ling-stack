@@ -1,9 +1,11 @@
-import { type DragEvent, type KeyboardEvent, type Ref, useRef } from "react";
+import { type DragEvent, type KeyboardEvent, type ReactNode, type Ref, useRef } from "react";
 import { ArrowUp, CircleAlert, FileText, Mic, MicOff, Plus, RotateCcw, SlidersHorizontal, Square } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
+import type { ConversationRuntimeMetrics } from "@ling-stack/contracts";
 import { useI18n } from "../../i18n.js";
 import {
   ConversationComposerShell,
+  ConversationBottomStatusStrip,
   ConversationPermissionControl,
   ConversationStatusStrip,
   TokenizedComposerInput,
@@ -25,6 +27,7 @@ import type { ConversationHomeModelOption } from "./normal-conversation-types.js
 
 export interface NormalConversationComposerProps {
   readonly draft: string;
+  readonly runtimeMetrics?: ConversationRuntimeMetrics;
   readonly inputRef: Ref<TokenizedComposerInputHandle>;
   readonly inputParts: TokenizedComposerInputProps["parts"];
   readonly slashPicker?: ActiveSlashCommandPicker;
@@ -47,6 +50,7 @@ export interface NormalConversationComposerProps {
   readonly canSend: boolean;
   readonly notice: string;
   readonly dragActive: boolean;
+  readonly dropFeedback?: ReactNode;
   readonly onDraftChange: (value: string, caret: number) => void;
   readonly onComposerKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
   readonly onComposerPasteFiles: (files: readonly File[]) => void;
@@ -74,7 +78,9 @@ export function NormalConversationComposer({
   defaultProviderLabel,
   defaultProviderPresetId,
   dragActive,
+  dropFeedback,
   draft,
+  runtimeMetrics,
   inputParts,
   inputRef,
   modelOptions,
@@ -145,6 +151,12 @@ export function NormalConversationComposer({
       toolbarClassName="conversation-home-toolbar normal-conversation-composer-toolbar"
       leftToolsClassName="conversation-home-tools normal-conversation-composer-tools"
       rightToolsClassName="conversation-home-right-tools normal-conversation-composer-actions"
+      bottomStatusNode={<ConversationBottomStatusStrip
+        ariaLabel={t("Conversation status")}
+        translate={t}
+        metrics={runtimeMetrics}
+        locale={locale}
+      />}
       statusNode={!modelReady && !activeRun ? (
         <ConversationStatusStrip
           className="conversation-composer-status-strip normal-conversation-model-status attention"
@@ -207,9 +219,10 @@ export function NormalConversationComposer({
           )}
         </div>
       ) : null}
-      dropHintNode={dragActive ? (
-        <div className="composer-drop-hint"><FileText size={16} /><span>{t("Drop files to attach")}</span></div>
-      ) : null}
+      dropHintNode={(dropFeedback || dragActive) ? <>
+        {dropFeedback}
+        {dragActive ? <div className="composer-drop-hint"><FileText size={16} /><span>{t("Drop files to attach")}</span></div> : null}
+      </> : null}
       previewNode={pendingAttachments.length > 0 || attachmentCleanupFailures.length > 0 ? (
         <ComposerPendingAssetStrip attachments={pendingAttachments} onRemoveAttachment={onRemoveAttachment}
           onRetryAttachment={onRetryAttachment} cleanupFailures={attachmentCleanupFailures} onRetryCleanup={onRetryAttachmentCleanup} />
