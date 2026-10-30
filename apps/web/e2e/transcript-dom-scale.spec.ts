@@ -59,7 +59,16 @@ for (const count of [10, 1_000, 10_000] as const) {
     const scrollOwners = await conversationPage.evaluate((root) => Array.from(root.querySelectorAll<HTMLElement>("*"))
       .filter((element) => /^(auto|scroll)$/u.test(getComputedStyle(element).overflowY)
         && element.scrollHeight > element.clientHeight + 1).map((element) => element.className));
-    expect(scrollOwners).toEqual([expect.stringContaining("normal-conversation-feed")]);
+    // Long histories also scroll their independent navigation marks, outside the feed.
+    expect(scrollOwners).toEqual(count === 10
+      ? [expect.stringContaining("normal-conversation-feed")]
+      : [expect.stringContaining("normal-conversation-feed"), "conversation-position-rail__marks"]);
+    if (count > 10) {
+      const rail = conversationPage.getByRole("complementary", { name: "Conversation navigation", exact: true });
+      await expect(rail).toBeVisible();
+      expect(await feed.locator(".conversation-position-rail").count()).toBe(0);
+      await expect(rail.locator(".conversation-position-rail__marks")).toHaveCSS("overflow-y", "auto");
+    }
     expect(errors).toEqual([]);
     await writeFile(testInfo.outputPath("simulation-dom-counts.json"), JSON.stringify({
       capturedAt: new Date().toISOString(), simulation: true, count, surface: "normal", samples, scrollOwners,

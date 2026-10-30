@@ -11,6 +11,7 @@ import { build } from "esbuild";
 
 const script = fileURLToPath(new URL("../scripts/build-packaged-daemon.mjs", import.meta.url));
 const sourceScript = fileURLToPath(new URL("../scripts/packaged-office-daemon-source-inputs.mjs", import.meta.url));
+const reviewInputsScript = fileURLToPath(new URL("../scripts/packaged-office-native-review-inputs.mjs", import.meta.url));
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 let fixtureNumber = 0;
 function newFile(path, bytes) { mkdirSync(dirname(path), { recursive: true, mode: 0o700 }); writeFileSync(path, bytes, { mode: 0o600 }); }
@@ -22,6 +23,7 @@ async function fixture(t) {
   const modulePath = join(root, "apps/desktop/scripts/build-packaged-daemon.mjs");
   mkdirSync(dirname(modulePath), { recursive: true }); copyFileSync(script, modulePath);
   copyFileSync(sourceScript, join(dirname(modulePath), "packaged-office-daemon-source-inputs.mjs"));
+  copyFileSync(reviewInputsScript, join(dirname(modulePath), "packaged-office-native-review-inputs.mjs"));
   const runtime = join(root, "packages/daemon/dist/runtime/sandbox");
   const sourceRuntime = join(root, "packages/daemon/src/runtime/sandbox");
   const codesignModule = join(sourceRuntime, "packaged-codesign-published-review.ts");
@@ -81,7 +83,9 @@ async function fixture(t) {
       export function readOriginalRestrictedCommandBuildPublication(receipt) {
         if (receipt !== state.codesignToken) throw new Error("synthetic_codesign_token_invalid"); return state.codesign;
       }`],
-    ["./packaged-office-native-review.mjs", bridge + "export function readReviewedPackagedOfficeSource() { return state.sourceReview; }"],
+    ["./packaged-office-native-review.mjs", bridge + `
+      export function readReviewedPackagedOfficeSource() { return state.sourceReview; }
+      export function readLocalPackagedOfficeSource() { throw new Error("synthetic_emitted_fixture_requires_release_review"); }`],
     // Gstack resource/identity validation has its own fixtures; keep these tests focused on Office output custody.
     ["./packaged-gstack-resources.mjs", `
       export async function preparePackagedGstackBuild() { return undefined; }
@@ -105,6 +109,11 @@ async function fixture(t) {
   delete process.env.LING_PACKAGED_CODESIGN_REVIEW_REQUIRED;
   t.after(() => { if (priorIntent === undefined) delete process.env.LING_PACKAGED_CODESIGN_REVIEW_REQUIRED;
     else process.env.LING_PACKAGED_CODESIGN_REVIEW_REQUIRED = priorIntent; });
+  // Exercise the real exact-reviewed source projection with the explicitly synthetic review above.
+  const priorReleaseIntent = process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
+  process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = "1";
+  t.after(() => { if (priorReleaseIntent === undefined) delete process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
+    else process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = priorReleaseIntent; });
   return { root, api: await import(url), state, publication, token, entry: sourceEntry, cliPath, officeModule, officeMarker, codesignModule, codesignMarker };
 }
 

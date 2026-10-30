@@ -503,7 +503,7 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
       collectTurnSource({ channel: input.channel, envelope }),
       ...collectMaterializedInputSources({ channel: input.channel, envelope }),
       ...projectedContext.sources,
-      ...collectActiveWorkSources({ store: input.store, channel: input.channel }),
+      ...collectActiveWorkSources({ store: input.store, channel: input.channel, threadId: projectedContext.projection.metadata.threadId }),
     ],
   });
   return buildContextPackFromContextView(view);
@@ -597,7 +597,7 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
       collectTurnSource({ channel: input.channel, envelope }),
       ...collectMaterializedInputSources({ channel: input.channel, envelope }),
       ...projectedContext.sources,
-      ...collectActiveWorkSources({ store: input.store, channel: input.channel }),
+      ...collectActiveWorkSources({ store: input.store, channel: input.channel, threadId: projectedContext.projection.metadata.threadId }),
     ],
   });
   return buildContextPackFromContextView(view);
@@ -667,7 +667,7 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
       collectTurnSource({ channel: input.channel, envelope }),
       ...collectMaterializedInputSources({ channel: input.channel, envelope }),
       ...projectedContext.sources,
-      ...collectActiveWorkSources({ store: input.store, channel: input.channel }),
+      ...collectActiveWorkSources({ store: input.store, channel: input.channel, threadId: projectedContext.projection.metadata.threadId }),
     ],
   });
   return buildContextPackFromContextView(view);

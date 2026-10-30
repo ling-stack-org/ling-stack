@@ -12,6 +12,7 @@ import type {
   ChannelWorkflowOrchestrationResponse,
 } from "@ling-stack/contracts";
 import {
+  ChannelSessionError,
   projectConversationItemToChannelMessage,
   type Channel,
   type ChannelExecutionProposal,
@@ -288,8 +289,8 @@ export async function handleChannelTurnStream(
       response.end();
       return;
     }
-    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
-      error: error instanceof HttpError ? error.code : "bad_request",
+    writeJson(response, error instanceof HttpError || error instanceof ChannelSessionError ? error.statusCode : 400, {
+      error: error instanceof HttpError || error instanceof ChannelSessionError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }
@@ -332,6 +333,7 @@ export async function handleChannelItemsCollection(
       store,
       channel,
       surface: readChannelConversationSurfaceQuery(url),
+      readOnly: true,
       now: new Date().toISOString(),
     });
     writeJson(response, 200, listChannelConversationItems({
@@ -344,8 +346,8 @@ export async function handleChannelItemsCollection(
       replyDispatchCoordinator,
     }));
   } catch (error) {
-    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
-      error: error instanceof HttpError ? error.code : "bad_request",
+    writeJson(response, error instanceof HttpError || error instanceof ChannelSessionError ? error.statusCode : 400, {
+      error: error instanceof HttpError || error instanceof ChannelSessionError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }
@@ -430,8 +432,8 @@ export async function handleChannelTurnsCollection(
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel turns` });
   } catch (error) {
-    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
-      error: error instanceof HttpError ? error.code : "bad_request",
+    writeJson(response, error instanceof HttpError || error instanceof ChannelSessionError ? error.statusCode : 400, {
+      error: error instanceof HttpError || error instanceof ChannelSessionError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }

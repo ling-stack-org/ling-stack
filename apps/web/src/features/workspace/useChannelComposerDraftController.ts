@@ -61,7 +61,7 @@ export interface ChannelComposerDraftController {
   readonly showComposerFeedback: (tone: ChannelComposerInlineFeedbackTone, message: string) => void;
 }
 
-export function useChannelComposerDraftController(channelId: string): ChannelComposerDraftController {
+export function useChannelComposerDraftController(conversationKey: string, feedbackScope: string): ChannelComposerDraftController {
   const { showToast } = useLingToast();
   const [messageDraft, setMessageDraftState] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<readonly PendingAttachmentItem<ChannelAttachment>[]>([]);
@@ -94,12 +94,12 @@ export function useChannelComposerDraftController(channelId: string): ChannelCom
       return;
     }
     setComposerFeedback(undefined);
-    showToast({ message, scope: `channel:${channelId || "unknown"}:composer`, tone });
-  }, [channelId, showToast]);
+    showToast({ message, scope: feedbackScope, tone });
+  }, [feedbackScope, showToast]);
 
   useEffect(() => {
     setComposerFeedback(undefined);
-  }, [channelId]);
+  }, [conversationKey]);
 
   const handleComposerResizePointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>): void => {
     if (event.pointerType === "mouse" && event.button !== 0) {

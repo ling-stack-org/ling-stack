@@ -413,8 +413,11 @@ test("channel branches follow archive restore and delete lifecycle", async () =>
     assert.equal(legacyBranch.rootThreadId, undefined);
     const repairedBranches = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches?cwd=${encodeURIComponent(cwd)}`);
     const repairedLegacy = repairedBranches.branches.find((item) => item.id === legacyBranch.id);
-    assert.ok(repairedLegacy?.rootThreadId);
-    assert.equal(store.getChannelBranch(legacyBranch.id).rootThreadId, repairedLegacy.rootThreadId);
+    assert.equal(repairedLegacy?.rootThreadId, undefined);
+    assert.equal(store.getChannelBranch(legacyBranch.id).rootThreadId, undefined);
+    const explicitRepair = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches/${encodeURIComponent(legacyBranch.id)}/repair?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.ok(explicitRepair.branch.rootThreadId);
+    assert.equal(store.getChannelBranch(legacyBranch.id).rootThreadId, explicitRepair.branch.rootThreadId);
 
     let listed = await getJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(listed.channels.some((item) => item.id === channel.id), true);
@@ -12379,7 +12382,7 @@ test("direct workspace initialization serializes concurrent first replies into o
   }
 });
 
-test("direct workspace handoff waits for initialization and remains the final binding", async () => {
+test("direct workspace handoff waits for initialization and remains the final binding", { timeout: ASYNC_SETTLE_TIMEOUT_MS }, async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-direct-workspace-handoff-race-"));
   const managedPath = resolve(cwd, "managed-worktree");
   await mkdir(managedPath, { recursive: true });
@@ -12435,14 +12438,22 @@ test("direct workspace handoff waits for initialization and remains the final bi
     });
     await createStarted;
 
+    // readJsonBody finishes and the handler queues the mutation in microtasks
+    // after "end". Cross that boundary before submitting the later reply;
+    // a fixed sleep does not establish that order on a busy CI runner.
+    const handoffQueued = new Promise((resolveQueued) => {
+      daemon.server.prependOnceListener("request", (request) => {
+        request.once("end", () => setImmediate(resolveQueued));
+      });
+    });
+    let handoffSettled = false;
     const handoff = postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace/handoff?cwd=${encodeURIComponent(cwd)}`, {
       mode: "local",
+    }).finally(() => {
+      handoffSettled = true;
     });
-    const earlyHandoff = await Promise.race([
-      handoff.then(() => "settled"),
-      new Promise((resolveWaiting) => setTimeout(() => resolveWaiting("waiting"), 50)),
-    ]);
-    assert.equal(earlyHandoff, "waiting");
+    await handoffQueued;
+    assert.equal(handoffSettled, false);
     let lateFactoryCalls = 0;
     const replyAfterHandoff = ensureDirectWorkspaceReady({
       store,
@@ -15755,6 +15766,7 @@ async function startDaemonForTest(runner, dependencies = {}, config = {}) {
   assert.ok(address && typeof address === "object");
   return {
     url: `http://127.0.0.1:${address.port}`,
+    server: daemon.server,
     close: () => daemon.stop(),
   };
 }

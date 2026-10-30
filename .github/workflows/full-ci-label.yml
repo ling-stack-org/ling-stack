@@ -34,5 +34,5 @@ jobs:
             echo "::error::The full-ci label cannot dispatch CI for a forked branch: workflow_dispatch requires a ref in this repository. Push a commit to rerun the pull request with full scope." >&2
             exit 1
           fi
-          gh workflow run ci.yml --ref "$HEAD_REF"
+          gh workflow run ci.yml --ref "$HEAD_REF" --repo "$GITHUB_REPOSITORY"
           printf 'Full CI dispatched for %s\n' "$HEAD_REF" >> "$GITHUB_STEP_SUMMARY"

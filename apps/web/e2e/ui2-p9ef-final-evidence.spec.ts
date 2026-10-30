@@ -286,7 +286,7 @@ test("P9EF-EVIDENCE-03 new draft ignores stale upload", async ({ page }) => {
   }, { times: 1 });
   await page.goto("/");
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   let home = page.getByLabel("Conversation home");
   await home.locator('input[type="file"]').setInputFiles({
     name: "stale-draft.txt",
@@ -294,7 +294,7 @@ test("P9EF-EVIDENCE-03 new draft ignores stale upload", async ({ page }) => {
     buffer: Buffer.from("stale draft upload", "utf8"),
   });
   await upload.started.promise;
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   home = page.getByLabel("Conversation home");
   const response = page.waitForResponse((item) => item.status() === 201 && item.url().includes("/conversations/attachments"));
   upload.release.resolve();
@@ -683,7 +683,7 @@ async function runRowMenuAction(page: Page, row: Locator, action: string): Promi
 async function openPluginManager(page: Page): Promise<void> {
   await page.goto("/");
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "Engineering" }).click();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
   await expect(page.locator(".settings-plugin-manager .plugin-table-row").first()).toBeVisible();
 }

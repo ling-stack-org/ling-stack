@@ -185,12 +185,13 @@ jobs:
           node --input-type=module <<'NODE'
           import { join } from "node:path";
           import { initResourceWorkspace } from "./scripts/gstack/resource-workspace.mjs";
-          import { runManagedNode } from "./scripts/gstack/run-managed.mjs";
+          import { managedNodeArguments, runManagedNode } from "./scripts/gstack/run-managed.mjs";
           const root = join(process.env.RUNNER_TEMP, "gstack-contract-fixtures");
           await initResourceWorkspace({ root, ciEphemeral: true });
+          const testFiles = ["scripts/gstack/collect-browser-archives.test.mjs", "scripts/gstack/browser-publication-pipeline.test.mjs",
+            "scripts/gstack/materialize-playwright-browser.test.mjs"];
           const result = await runManagedNode({ root, additionalBytes: 0,
-            args: ["--test", "scripts/gstack/collect-browser-archives.test.mjs", "scripts/gstack/browser-publication-pipeline.test.mjs",
-              "scripts/gstack/materialize-playwright-browser.test.mjs"] });
+            args: managedNodeArguments("test", testFiles) });
           if (result.exitCode !== 0) throw new Error(`gstack_browser_contracts_failed:${result.reason ?? result.exitCode}`);
           NODE
       - name: Inspect current distribution inputs without approving redistribution

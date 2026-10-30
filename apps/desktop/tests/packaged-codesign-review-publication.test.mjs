@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import childProcess from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { registerHooks, syncBuiltinESMExports } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -10,12 +11,14 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const desktopRoot = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
 const nativeRoot = resolve(desktopRoot, "../../native/sandbox");
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
-async function fixture(t) {
+async function fixture(t, { hostRelease } = {}) {
   const root = realpathSync(mkdtempSync("/private/tmp/ling-codesign-publication-test-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const scripts = join(root, "apps/desktop/scripts"), dist = join(root, "apps/desktop/dist");
   mkdirSync(scripts, { recursive: true }); mkdirSync(dist);
   const review = JSON.parse(readFileSync(join(nativeRoot, "reviewed-codesign-source-v1.json"), "utf8"));
+  const releaseMock = t.mock.method(os, "release", () => hostRelease ?? review.os.release);
+  t.after(() => { releaseMock.mock.restore(); syncBuiltinESMExports(); });
   const fixtureNative = join(root, "native/sandbox"); mkdirSync(fixtureNative, { recursive: true });
   for (const path of Object.keys(review.sourceSha256)) {
     const output = join(fixtureNative, path); mkdirSync(dirname(output), { recursive: true });
@@ -110,5 +113,44 @@ test("same-process original trusted build receipt (explicit synthetic builder, n
     assert.throws(() => f.api.buildFreshRestrictedCommandHelperPublication(), /build_review_invalid/u);
     assert.equal(f.counts().signingCalls, 0);
   });
+  await t.test("each exact reviewed OS builds a descriptor bound to just that tuple", async t => {
+    const current = JSON.parse(readFileSync(join(nativeRoot, "reviewed-codesign-source-v1.json"), "utf8"));
+    for (const selected of [current.os, ...current.additionalOs]) {
+      await t.test(selected.release, async t => {
+        const f = await fixture(t, { hostRelease: selected.release });
+        const token = f.api.buildFreshRestrictedCommandHelperPublication();
+        const descriptor = f.api.readOriginalRestrictedCommandBuildPublication(token);
+        assert.deepEqual(descriptor.os, selected);
+        assert.equal(descriptor.schemaVersion, 1);
+        assert.equal(descriptor.sourceReviewSha256, hash(readFileSync(f.reviewPath)));
+        assert.equal(Object.hasOwn(descriptor, "additionalOs"), false);
+      });
+    }
+  });
+  await t.test("an unknown OS fails before the fresh builder or normalizer runs", async t => {
+    const f = await fixture(t, { hostRelease: "99.0.0" });
+    assert.throws(() => f.api.buildFreshRestrictedCommandHelperPublication(), /package_build_invalid/u);
+    assert.deepEqual(f.counts(), { freshCalls: 1, signingCalls: 0 });
+    assert.equal(existsSync(f.stagedRoot), false);
+  });
+  await t.test("legacy single-OS source reviews keep their original descriptor contract", async t => {
+    const f = await fixture(t);
+    f.review.schemaVersion = 1;
+    delete f.review.additionalOs;
+    writeFileSync(f.reviewPath, JSON.stringify(f.review));
+    const token = f.api.buildFreshRestrictedCommandHelperPublication();
+    assert.deepEqual(f.api.readOriginalRestrictedCommandBuildPublication(token).os, f.review.os);
+  });
+  for (const mutation of ["duplicate", "unknown-field", "invalid-unselected"]) {
+    await t.test(`all OS rows are validated before selection: ${mutation}`, async t => {
+      const f = await fixture(t);
+      if (mutation === "duplicate") f.review.additionalOs = [{ ...f.review.os }];
+      if (mutation === "unknown-field") f.review.additionalOs[0].unknown = true;
+      if (mutation === "invalid-unselected") f.review.additionalOs[0].codesignSha256 = "invalid";
+      writeFileSync(f.reviewPath, JSON.stringify(f.review));
+      assert.throws(() => f.api.buildFreshRestrictedCommandHelperPublication(), /build_review_invalid/u);
+      assert.equal(f.counts().signingCalls, 0);
+    });
+  }
   t.diagnostic("The loader replaces only the native builder in a disposable fixture and the normalizer is explicitly mocked. It tests private same-process origin, source binding and read-back, not native compilation, a real signature, Host certification or packaged GUI.");
 });

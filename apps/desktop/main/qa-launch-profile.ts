@@ -20,6 +20,20 @@ export interface DesktopQaLaunchProfile {
   readonly daemonBaseUrl: "http://127.0.0.1:17928";
 }
 
+// Set only after early-entry package/profile validation and userData readback.
+// Main imports this same module instance; inherited environment is not policy.
+let initializedQaProfile: DesktopQaLaunchProfile | undefined;
+
+/** Owned QA must not replace the user's Chrome/Chromium native host registration. */
+export async function installDesktopBrowserHostForLaunch(input: {
+  readonly hostPath: string;
+  readonly installBrowserHost: (input: { readonly hostPath: string }) => Promise<unknown>;
+}): Promise<"registered" | "skipped_owned_qa"> {
+  if (initializedQaProfile) return "skipped_owned_qa";
+  await input.installBrowserHost({ hostPath: input.hostPath });
+  return "registered";
+}
+
 export interface DesktopQaLaunchOptions {
   readonly argv: readonly string[];
   readonly environment: NodeJS.ProcessEnv;
@@ -49,6 +63,7 @@ export function initializeDesktopQaLaunchProfile(options: DesktopQaLaunchOptions
   const qaPackage = isQaPackage(options.packageMetadata);
   if (!profileArgument) {
     if (qaPackage) throw new Error("desktop_qa_profile_required");
+    initializedQaProfile = undefined;
     return undefined;
   }
   if (!options.packaged || !qaPackage) throw new Error("desktop_qa_package_required");
@@ -78,6 +93,7 @@ export function initializeDesktopQaLaunchProfile(options: DesktopQaLaunchOptions
     options.setUserDataPath(profile.userDataDir);
     if (options.getUserDataPath() !== profile.userDataDir) throw new Error("invalid");
   } catch { throw new Error("desktop_qa_user_data_invalid"); }
+  initializedQaProfile = profile;
   return profile;
 }
 

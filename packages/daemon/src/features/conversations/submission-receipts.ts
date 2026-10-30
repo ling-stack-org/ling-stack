@@ -1,3 +1,4 @@
+import { findChannelDefaultConversationThread } from "../channels/conversation-thread-resolution.js";
 import { createHash } from "node:crypto";
 import type { ServerResponse } from "node:http";
 import type { RunStore } from "@ling-stack/core";
@@ -14,7 +15,7 @@ export function readConversationSubmission(store: RunStore, query: ConversationS
   const unknown: ConversationSubmissionReceipt = { cwd: store.paths.cwd, idempotencyKey: query.idempotencyKey, status: "unknown" };
   const thread = query.threadId ? store.getLingThread(query.threadId) : query.surface === "normal"
     ? store.getLingThread(normalSubmissionThreadId(store.paths.cwd, query.idempotencyKey))
-    : store.findLingThreadByOwner({ kind: "channel_discussion", channelId: query.channelId, surfaceKind: "channel_root" });
+    : findChannelDefaultConversationThread(store, query.channelId!);
   if (!thread) return unknown;
   if (query.surface === "normal" ? thread.kind !== "conversation" || Boolean(thread.channelId || thread.teammateId && thread.teammateId !== "ling_agent")
     : thread.kind !== "channel_discussion" || thread.channelId !== query.channelId) return unknown;

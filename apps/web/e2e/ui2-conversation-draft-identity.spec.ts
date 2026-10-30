@@ -143,13 +143,13 @@ test("T13-P.9EF.C a late draft success cannot populate the next new conversation
 
   await page.goto("/");
   const navigation = sidebar(page);
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const firstComposer = page.getByLabel("New conversation composer");
   await firstComposer.getByRole("textbox", { name: "Conversation message" }).fill("Old draft must stay isolated");
   await firstComposer.getByRole("button", { name: "Send" }).click();
   await requestStarted.promise;
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const nextComposer = page.getByLabel("New conversation composer");
   const nextInput = nextComposer.getByRole("textbox", { name: "Conversation message" });
   await expect(nextInput).toHaveAttribute("data-value", "");
@@ -192,12 +192,12 @@ test("T13-P.9EF.C a late draft failure cannot replace an existing thread owner",
     await route.fulfill({ status: 503, json: { error: "abandoned_draft_failed", message: staleFailure } });
   }, { times: 1 });
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const draftComposer = page.getByLabel("New conversation composer");
   await draftComposer.getByRole("textbox", { name: "Conversation message" }).fill("Fail this abandoned draft");
   await draftComposer.getByRole("button", { name: "Send" }).click();
   await requestStarted.promise;
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   await conversationRow(navigation, persistedThread.title).click();
   await expect(page.getByRole("heading", { name: persistedThread.title, level: 1 })).toBeVisible();
 
@@ -222,7 +222,7 @@ test("T13-P.9EF.C a late attachment success releases its preview and cannot ente
 
   await page.goto("/");
   const navigation = sidebar(page);
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const firstComposer = page.getByLabel("New conversation composer");
   await firstComposer.locator('input[type="file"]').setInputFiles({
     name: "old-draft-preview.png",
@@ -232,7 +232,7 @@ test("T13-P.9EF.C a late attachment success releases its preview and cannot ente
   await requestStarted.promise;
   await expect(firstComposer.getByLabel("Pending message assets")).toContainText("old-draft-preview.png");
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const nextComposer = page.getByLabel("New conversation composer");
   await expect(nextComposer.getByLabel("Pending message assets")).toHaveCount(0);
   await expect.poll(() => revokedPreviewCount(page)).toBe(1);
@@ -258,7 +258,7 @@ test("T13-P.9EF.C a late attachment failure stays with its abandoned draft", asy
 
   await page.goto("/");
   const navigation = sidebar(page);
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const firstComposer = page.getByLabel("New conversation composer");
   await firstComposer.locator('input[type="file"]').setInputFiles({
     name: "old-failed-preview.png",
@@ -267,7 +267,7 @@ test("T13-P.9EF.C a late attachment failure stays with its abandoned draft", asy
   });
   await requestStarted.promise;
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   releaseRequest.resolve();
   const nextComposer = page.getByLabel("New conversation composer");
   await expect.poll(() => revokedPreviewCount(page)).toBe(1);
@@ -304,7 +304,7 @@ test("T13-P.9EF.C selecting a loading thread removes the previous draft's late u
 
   await page.goto("/");
   const navigation = sidebar(page);
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const composer = page.getByLabel("New conversation composer");
   await expect(composer.locator('input[type="file"]')).toBeEnabled();
   await composer.locator('input[type="file"]').setInputFiles({
@@ -335,7 +335,7 @@ test("T13-P.9EF.C unmount deletes a ready unsent attachment", async ({ page }) =
   await mockDaemon(page, state);
   await page.goto("/");
   const navigation = sidebar(page);
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const composer = page.getByLabel("New conversation composer");
   await composer.locator('input[type="file"]').setInputFiles({
     name: "ready-before-unmount.png",
@@ -345,8 +345,8 @@ test("T13-P.9EF.C unmount deletes a ready unsent attachment", async ({ page }) =
   await expect.poll(() => state.conversationAttachments.length).toBe(1);
   await expect(composer.getByLabel("Pending message assets")).toContainText("ready-before-unmount.png");
 
-  await navigation.getByRole("button").filter({ hasText: "Engineering" }).first().click();
-  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Engineering conversation", level: 1 })).toBeVisible();
   await expect.poll(() => state.conversationAttachments.length).toBe(0);
   await expect.poll(() => revokedPreviewCount(page)).toBe(1);
 });
@@ -365,7 +365,7 @@ test("T13-P.9EF.C abandoned send cleans attachments and does not keep the next d
 
   await page.goto("/");
   const navigation = sidebar(page);
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const oldComposer = page.getByLabel("New conversation composer");
   await oldComposer.locator('input[type="file"]').setInputFiles({
     name: "abandoned-send.png",
@@ -378,7 +378,7 @@ test("T13-P.9EF.C abandoned send cleans attachments and does not keep the next d
   await streamStarted.promise;
   await expect(oldComposer.getByRole("button", { name: "Send" }).locator(".ling-ui-spinner")).toHaveCount(1);
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const nextComposer = page.getByLabel("New conversation composer");
   const nextInput = nextComposer.getByRole("textbox", { name: "Conversation message" });
   await nextInput.fill("The next draft stays independent");
@@ -405,7 +405,7 @@ test("T13-P.9EF.C a server-bound late send keeps its attachment after the draft 
 
   await page.goto("/");
   const navigation = sidebar(page);
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const oldComposer = page.getByLabel("New conversation composer");
   await oldComposer.locator('input[type="file"]').setInputFiles({
     name: "bound-late-send.png",
@@ -416,7 +416,7 @@ test("T13-P.9EF.C a server-bound late send keeps its attachment after the draft 
   await oldComposer.getByRole("textbox", { name: "Conversation message" }).fill("Bind this attachment safely");
   await oldComposer.getByRole("button", { name: "Send" }).click();
   await streamStarted.promise;
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
 
   releaseStream.resolve();
   await expect.poll(() => state.conversationAttachments[0]?.threadId).toMatch(/^thread_conversation_/u);

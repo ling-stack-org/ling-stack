@@ -1,6 +1,4 @@
-import type { MemoryWikiStore } from "./memory-wiki-types.js";
-import type { MemoryDerivativeStore } from "./memory-derivative-types.js";
-import type { LearningReviewStore } from "./learning-review-types.js";
+import type { ChannelSessionPage, ChannelSessionSummary, CreateChannelSessionInput, ListChannelSessionsOptions, UpdateChannelSessionRequest } from "./channel-session-types.js";
 import { randomUUID } from "node:crypto";
 import type { ApplyProposedPlanArtifactActionInput, ProposedPlanArtifactActionResult } from "./proposed-plan-mutation.js";
 import type { NativeExecutionStore } from "./native-execution-types.js";
@@ -470,8 +468,6 @@ import type {
   ListSkillRegistryOptions,
   ListSkillSourceSnapshotOptions,
   PublishSkillRevisionDraftInput,
-  SkillDefinitionRevision,
-  SkillDefinitionUndoRequest,
   SkillCompiledRuntimeViewRecord,
   SkillHardDeleteResult,
   SkillImportDraft,
@@ -1555,7 +1551,7 @@ export interface ControlPlaneReplayWindowResult {
   readonly events: readonly ControlPlaneEvent[];
 }
 
-export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, LearningReviewStore, NativeExecutionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
+export interface RunStore extends NativeExecutionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
   listApprovalPostCommitEffects(options?: {
     readonly approvalId?: string;
     readonly status?: import("./approval-postcommit-types.js").ApprovalPostCommitEffectStatus;
@@ -1695,6 +1691,7 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   findLingThreadByOwner(input: {
     readonly kind: LingThreadKind;
     readonly surfaceKind?: LingThread["surfaceKind"];
+    readonly anchorItemId?: string;
     readonly taskId?: string;
     readonly workflowStepId?: string;
     readonly externalWorkId?: string;
@@ -2035,6 +2032,11 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   updateUserProfile(input: UpdateUserProfileInput, now: string): UserProfile;
   getWorkspaceSettings(): WorkspaceSettings;
   updateWorkspaceSettings(input: UpdateWorkspaceSettingsInput, now: string): WorkspaceSettings;
+  createChannelSession(input: CreateChannelSessionInput, now: string): { session: ChannelSessionSummary; idempotentReplay: boolean };
+  repairChannelSessionDirectory(channelId: string, branchId: string, now: string): ChannelSessionSummary;
+  getChannelSession(channelId: string, threadId: string): ChannelSessionSummary | undefined;
+  listChannelSessions(channelId: string, options?: ListChannelSessionsOptions): ChannelSessionPage;
+  updateChannelSession(channelId: string, threadId: string, input: UpdateChannelSessionRequest, now: string): ChannelSessionSummary;
   createChannel(input: CreateChannelInput, now: string): Channel;
   getChannel(id: string): Channel | undefined;
   listChannels(options?: ListChannelsOptions): Channel[];
@@ -2656,12 +2658,6 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   getSkillImportDraft(id: string): SkillImportDraft | undefined;
   publishSkillImportDraft(id: string, now: string): SkillRegistryEntry[];
   publishSkillRevisionDraft(input: PublishSkillRevisionDraftInput, now: string): SkillRegistryEntry;
-  listSkillDefinitionRevisions(skillId: string, limit?: number): SkillDefinitionRevision[];
-  drainSkillDefinitionRevisionNotices(cwd: string, now: string, limit?: number): ControlPlaneEvent[];
-  getSkillDefinitionRevision(skillId: string, revisionId?: string): SkillDefinitionRevision | undefined;
-  undoSkillDefinitionRevision(skillId: string, input: SkillDefinitionUndoRequest, now: string): {
-    readonly skill: SkillRegistryEntry; readonly revision: SkillDefinitionRevision; readonly reused: boolean;
-  };
   archiveSkillRegistryEntry(id: string, now: string): SkillRegistryEntry | undefined;
   hardDeleteSkillRegistryEntry(id: string): SkillHardDeleteResult;
   createSkillCandidate(input: CreateSkillCandidateInput, now: string): SkillCandidate;
@@ -2674,8 +2670,6 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   ): { readonly candidate: SkillCandidate; readonly action: SkillCandidateReviewRecord };
   markSkillCandidatePublished(candidateId: string, now: string): SkillCandidate;
   createProcedureObservation(input: CreateProcedureObservationInput, now: string): ProcedureObservation;
-  getProcedureObservationByJobKey(jobKey: string, workspaceId?: string): ProcedureObservation | undefined;
-  withProcedureObservationJobTransaction<T>(mutate: (events: Pick<RunStore, "appendControlPlaneEvent">) => T): T;
   listProcedureObservations(options?: ListProcedureObservationsOptions): ProcedureObservation[];
   listProcedureObservationClusters(options?: ListProcedureObservationClustersOptions): ProcedureObservationCluster[];
   getProcedureObservationCluster(id: string, workspaceId?: string): ProcedureObservationCluster | undefined;
@@ -3226,10 +3220,6 @@ export type SkillRegistryStoreFacet = RunStoreFacet<
   | "getSkillImportDraft"
   | "publishSkillImportDraft"
   | "publishSkillRevisionDraft"
-  | "listSkillDefinitionRevisions"
-  | "drainSkillDefinitionRevisionNotices"
-  | "getSkillDefinitionRevision"
-  | "undoSkillDefinitionRevision"
   | "archiveSkillRegistryEntry"
   | "hardDeleteSkillRegistryEntry"
 >;
@@ -3245,8 +3235,6 @@ export type SkillCandidateStoreFacet = RunStoreFacet<
 
 export type ProcedureObservationStoreFacet = RunStoreFacet<
   | "createProcedureObservation"
-  | "getProcedureObservationByJobKey"
-  | "withProcedureObservationJobTransaction"
   | "listProcedureObservations"
   | "createCandidateGenerationDecision"
   | "listCandidateGenerationDecisions"

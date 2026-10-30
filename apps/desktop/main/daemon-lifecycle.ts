@@ -20,6 +20,9 @@ import {
 import { deriveMobileAccessManagementCapability } from "./mobile-access/authority.js";
 
 const DEFAULT_DAEMON_STARTUP_TIMEOUT_MS = 20_000;
+// Packaged startup verifies the complete bundled native/skill inputs before
+// publishing readiness or FD3 authority; observed starts take 32–52 seconds.
+const PACKAGED_DAEMON_STARTUP_TIMEOUT_MS = 120_000;
 
 export type DesktopDaemonLifecycleErrorCode =
   | "bridge_incompatible"
@@ -98,8 +101,13 @@ export class DesktopDaemonLifecycle {
   private readonly defaultWorkspaceCwd: string;
   private readonly cuaDriverFeatureFlags: CuaDriverFeatureFlags;
   private readonly bundledCuaDriverGateEnabled: boolean;
+  private readonly startupTimeoutMs: number;
   private child: ChildProcess | undefined;
-  private engineAuthority: { readonly child: ChildProcess; readonly result: Promise<ExecutionEngineHostAuthority | undefined> } | undefined;
+  private engineAuthority: {
+    readonly child: ChildProcess;
+    readonly channel: Readable | undefined;
+    readonly result: Promise<ExecutionEngineHostAuthority | undefined>;
+  } | undefined;
   private statusValue: DesktopDaemonStatus;
   private cuaDriverAuthorityTupleValue: DesktopDaemonCuaDriverAuthorityTuple | undefined;
   private cuaDriverAuthorityGeneration = 0;
@@ -111,6 +119,8 @@ export class DesktopDaemonLifecycle {
 
   constructor(private readonly options: DesktopDaemonLifecycleOptions) {
     this.fetchImpl = options.fetch ?? globalThis.fetch;
+    this.startupTimeoutMs = options.startupTimeoutMs
+      ?? (options.packaged ? PACKAGED_DAEMON_STARTUP_TIMEOUT_MS : DEFAULT_DAEMON_STARTUP_TIMEOUT_MS);
     this.defaultWorkspaceCwd = resolvePath(options.defaultWorkspaceCwd);
     this.cuaDriverFeatureFlags = options.cuaDriverFeatureFlags ?? resolveDesktopCuaDriverFeatureFlags();
     this.bundledCuaDriverGateEnabled = desktopBundledCuaDriverGateEnabled(
@@ -271,14 +281,19 @@ export class DesktopDaemonLifecycle {
       await this.stopChild(child);
       throw new Error("daemon_start_cancelled");
     }
-    this.options.onDiagnostic?.("daemon.spawned", { pid: child.pid ?? null, baseUrl: this.options.baseUrl });
+    this.options.onDiagnostic?.("daemon.spawned", {
+      pid: child.pid ?? null, baseUrl: this.options.baseUrl, startupTimeoutMs: this.startupTimeoutMs,
+    });
     this.child = child;
-    const channel = child.stdio?.[3];
+    const startupDeadline = Date.now() + this.startupTimeoutMs;
+    const pipe = child.stdio?.[3];
+    const channel = pipe instanceof Readable ? pipe : undefined;
     this.engineAuthority = {
       child,
-      result: channel instanceof Readable && child.pid
+      channel,
+      result: channel && child.pid
         ? readExecutionEngineHostAuthority({ channel, baseUrl: this.options.baseUrl, pid: child.pid,
-            timeoutMs: this.options.startupTimeoutMs ?? DEFAULT_DAEMON_STARTUP_TIMEOUT_MS }).catch(() => undefined)
+            timeoutMs: Math.max(0, startupDeadline - Date.now()) }).catch(() => undefined)
         : Promise.resolve(undefined),
     };
     let resolveChildExit: (exit: DesktopDaemonOwnedExit) => void = () => undefined;
@@ -294,7 +309,7 @@ export class DesktopDaemonLifecycle {
       childSpawnError = error;
       if (this.child === child) {
         this.child = undefined;
-        this.engineAuthority = undefined;
+        this.clearExecutionEngineAuthority();
         this.update({
           state: "disconnected",
           baseUrl: this.options.baseUrl,
@@ -316,7 +331,7 @@ export class DesktopDaemonLifecycle {
         return;
       }
       this.child = undefined;
-      this.engineAuthority = undefined;
+      this.clearExecutionEngineAuthority();
       this.clearCuaDriverAuthorityTuple();
       this.update({
         state: "disconnected",
@@ -341,11 +356,9 @@ export class DesktopDaemonLifecycle {
       resolveChildExit(exit);
     });
 
-    // Keep ordinary startup bounded. Callers that intentionally exercise a
-    // translated cold-start path may supply a larger budget without relaxing
-    // native product behavior.
-    const deadline = Date.now() + (this.options.startupTimeoutMs ?? DEFAULT_DAEMON_STARTUP_TIMEOUT_MS);
-    while (Date.now() < deadline) {
+    // Readiness and FD3 share the same bounded verification window. Neither
+    // readiness nor authority is granted merely because this budget is longer.
+    while (Date.now() < startupDeadline) {
       this.assertStartupCurrent(startupGeneration);
       const readiness = await Promise.race([
         this.probeDaemon().then((probe) => ({ kind: "probe" as const, probe })),
@@ -517,7 +530,7 @@ export class DesktopDaemonLifecycle {
     if (!pending) {
       const child = this.child;
       this.child = undefined;
-      this.engineAuthority = undefined;
+      this.clearExecutionEngineAuthority();
       pending = child ? this.stopChild(child) : Promise.resolve();
       this.stopOwnedDaemonPromise = pending;
       pending.then(
@@ -644,6 +657,14 @@ export class DesktopDaemonLifecycle {
   private clearCuaDriverAuthorityTuple(): void {
     this.cuaDriverAuthorityGeneration += 1;
     this.cuaDriverAuthorityTupleValue = undefined;
+  }
+
+  private clearExecutionEngineAuthority(): void {
+    const authority = this.engineAuthority;
+    this.engineAuthority = undefined;
+    // Release the pending reader immediately, including when startup is
+    // cancelled before the child has completed packaged verification.
+    authority?.channel?.destroy();
   }
 
   private async probeConfiguredPort(): Promise<DaemonPortProbeResult> {

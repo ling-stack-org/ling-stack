@@ -117,6 +117,15 @@ export default {
         }
       : {}),
   },
+  // Keep every Windows resource in the single archive that the release
+  // verifier extracts and compares. electron-builder otherwise moves
+  // pre-compressed media (.mp4/.webm) into NSIS-only File entries; those
+  // entries are installed at runtime but are absent from app-64.7z, making
+  // the immutable archive comparison report a false missing-resource failure.
+  nsis: {
+    ...baseBuild.nsis,
+    preCompressedFileExtensions: [],
+  },
 };
 
 function parsePackageHostAuthority(value) {

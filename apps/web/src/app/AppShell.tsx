@@ -1,3 +1,5 @@
+import { useChannelSessionsController } from "./use-channel-sessions-controller.js";
+import { channelSessionThreadId, isChannelSessionDraft } from "./channel-session-state.js";
 import { WorkSummaryProvider } from "../features/workspace/work-summary/WorkSummaryProvider.js";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -453,7 +455,18 @@ export function AppShell(): React.JSX.Element {
     ),
     [channelBranches, selectedChannelBranchId, selectedChannelId],
   );
-  const selectedChannelBranchRootThreadId = selectedChannelBranch?.rootThreadId;
+  const [channelUtilityRequest, setChannelUtilityRequest] = useState<{
+    readonly id: string; readonly cwd: string; readonly channelId: string; readonly action: "settings" | "rename";
+  }>();
+  const channelSessions = useChannelSessionsController({
+    cwd: form.cwd.trim(), channels, selectedChannelId, selection: selectedChannelBranchId,
+    branches: channelBranches, setSelection: setSelectedChannelBranchId,
+  });
+  const selectedChannelBranchRootThreadId = channelSessionThreadId(selectedChannelBranchId)
+    ?? selectedChannelBranch?.rootThreadId
+    ?? (isChannelSessionDraft(selectedChannelBranchId) ? selectedChannelBranchId : undefined);
+  const selectedChannelConversationRef = useRef({ cwd: form.cwd.trim(), channelId: selectedChannelId, threadId: selectedChannelBranchRootThreadId });
+  selectedChannelConversationRef.current = { cwd: form.cwd.trim(), channelId: selectedChannelId, threadId: channelSessions.threadId ?? selectedChannelBranchRootThreadId };
   const selectedChannelMessageThreadId = selectedChannelBranchId
     ? selectedChannelBranchRootThreadId ?? `missing-channel-branch-thread:${selectedChannelBranchId}`
     : undefined;
@@ -1073,7 +1086,7 @@ export function AppShell(): React.JSX.Element {
   }), [aiTeammates, channels, conversationThreads, form.cwd, sidebarRuns]);
   const sidebarObjectContexts = useSidebarObjectContexts(sidebarObjectContextSeeds);
   const sidebarChannelNotifications = useMemo(
-    () => buildSidebarChannelNotifications({
+    () => Object.fromEntries(Object.entries(buildSidebarChannelNotifications({
       approvals,
       channels,
       channelUnreadById,
@@ -1083,8 +1096,14 @@ export function AppShell(): React.JSX.Element {
       tasks,
       workUnits,
       workflowSteps: channelWorkflowSteps,
-    }),
-    [approvals, channelWorkflowSteps, channels, channelUnreadById, run, runs, selectedChannelId, tasks, workUnits, workspaceSettings?.channelNotifications],
+    })).map(([channelId, legacy]) => {
+      const page = channelSessions.pages[channelId];
+      if (!page) return [channelId, legacy];
+      const aggregate = page.aggregate;
+      return [channelId, { ...legacy, unread: channelSessions.unreadByChannel[channelId], count: aggregate.pendingApprovalCount || undefined,
+        primaryStatus: aggregate.waitingCount ? "waiting" : aggregate.failedCount ? "failed" : aggregate.runningCount ? "running" : undefined }];
+    })),
+    [approvals, channelWorkflowSteps, channels, channelUnreadById, run, runs, selectedChannelId, tasks, workUnits, workspaceSettings?.channelNotifications, channelSessions.pages, channelSessions.unreadByChannel],
   );
   const sidebarTeammateNotifications = useMemo(
     () => buildSidebarTeammateNotifications({
@@ -1235,9 +1254,11 @@ export function AppShell(): React.JSX.Element {
     channel: channels.find((item) => item.id === selectedChannelId),
     channelId: selectedChannelId,
     branchId: selectedChannelBranchId,
+    threadId: channelSessions.threadId && !isChannelSessionDraft(channelSessions.threadId) ? channelSessions.threadId : undefined,
+    draftId: isChannelSessionDraft(selectedChannelBranchId) ? channelSessions.drafts[selectedChannelId]?.key : undefined,
     workspaceCwd: form.cwd,
     policyRevision: currentFullAccessPolicyRevision,
-  }), [channels, currentFullAccessPolicyRevision, form.cwd, selectedChannelBranchId, selectedChannelId]);
+  }), [channels, currentFullAccessPolicyRevision, form.cwd, selectedChannelBranchId, selectedChannelId, channelSessions.threadId, channelSessions.drafts]);
   const teammateConversationFullAccessScope = useMemo(() => teammateFullAccessScope({
     workspaceCwd: form.cwd,
     teammateId: selectedAiTeammate?.id,
@@ -1261,7 +1282,7 @@ export function AppShell(): React.JSX.Element {
       return new Set<string>();
     }
     return new Set(
-      buildInlineApprovalViews(approvals, {
+      buildInlineApprovalViews(approvals.filter(approval => channelSessions.selectedSession?.pendingApprovalIds.includes(approval.id)), {
         owner: { kind: "channel", channelId: selectedChannelId },
         runs: sidebarRuns,
         tasks,
@@ -1269,7 +1290,7 @@ export function AppShell(): React.JSX.Element {
         workflowSteps: channelWorkflowSteps,
       }).map((item) => item.approval.id),
     );
-  }, [approvals, channelWorkflowSteps, selectedChannelId, sidebarRuns, tasks, workUnits]);
+  }, [approvals, channelWorkflowSteps, selectedChannelId, sidebarRuns, tasks, workUnits, channelSessions.selectedSession]);
   const channelTransitionEntityKey = useMemo(
     () => buildChannelTransitionEntities(selectedChannelId, tasks, channelRunsForArtifacts, channelWorkflows, channelWorkflowSteps)
       .map((item) => `${item.entityType}:${item.entityId}:${item.updatedAt}`)
@@ -1692,6 +1713,9 @@ export function AppShell(): React.JSX.Element {
     providerTemplates,
     selectedChannelId,
     selectedChannelBranchRootThreadId,
+    isSelectedChannelConversation: (channelId, threadId) => selectedChannelConversationRef.current.cwd === form.cwd.trim()
+      && selectedChannelConversationRef.current.channelId === channelId
+      && (selectedChannelConversationRef.current.threadId === threadId || (!selectedChannelConversationRef.current.threadId && channelSessions.pages[channelId]?.defaultSession?.id === threadId)),
     activeSidebarTarget,
     channelDecisions,
     setActiveView,
@@ -1960,7 +1984,7 @@ export function AppShell(): React.JSX.Element {
   }, [form.cwd]);
 
   useEffect(() => {
-    if (!selectedChannelBranchId) {
+    if (!selectedChannelBranchId || channelSessionThreadId(selectedChannelBranchId) || isChannelSessionDraft(selectedChannelBranchId)) {
       return;
     }
     if (channelsLoading) {
@@ -2437,6 +2461,26 @@ export function AppShell(): React.JSX.Element {
       <SidebarNavigation
         activeSidebarTarget={navigationActiveSidebarTarget}
         channels={channels}
+        channelSessions={channelSessions}
+        onChannelAction={(channelId, action) => {
+          clearSettingsWorkspaceToolView();
+          selectWorkspaceChannel(channelId);
+          channelSessions.restore(channelId);
+          setChannelUtilityRequest({ id: crypto.randomUUID(), cwd: form.cwd.trim(), channelId, action });
+          if (narrowViewport) setChannelSidebarOpen(false);
+        }}
+        onSelectChannelSession={(channelId, session) => {
+          clearSettingsWorkspaceToolView();
+          selectWorkspaceChannelBranch(channelId, `session:${session.id}`);
+          channelSessions.select(channelId, session);
+          if (narrowViewport) setChannelSidebarOpen(false);
+        }}
+        onNewChannelSession={(channelId) => {
+          clearSettingsWorkspaceToolView();
+          selectWorkspaceChannel(channelId);
+          channelSessions.openDraft(channelId);
+          if (narrowViewport) setChannelSidebarOpen(false);
+        }}
         channelBranches={channelBranches}
         selectedChannelBranchId={selectedChannelBranchId}
         teammates={aiTeammates}
@@ -2466,6 +2510,7 @@ export function AppShell(): React.JSX.Element {
         onSelectChannel={(channelId) => {
           clearSettingsWorkspaceToolView();
           selectWorkspaceChannel(channelId);
+          channelSessions.restore(channelId);
           if (narrowViewport) setChannelSidebarOpen(false);
         }}
         onSelectChannelBranch={(channelId, branchId) => {
@@ -2547,6 +2592,23 @@ export function AppShell(): React.JSX.Element {
             channels={channels}
             selectedChannelId={selectedChannelId}
             selectedChannelBranchRootThreadId={selectedChannelBranchRootThreadId}
+            channelUtilityRequest={channelUtilityRequest}
+            onChannelUtilityRequestHandled={id => setChannelUtilityRequest(current => current?.id === id ? undefined : current)}
+            channelSessionThreadId={channelSessions.threadId}
+            channelSession={channelSessions.selectedSession}
+            channelSessionTitle={channelSessions.selectedSession?.title ?? (isChannelSessionDraft(selectedChannelBranchId) ? t("New channel conversation") : t("Default conversation"))}
+            channelSessionDraft={isChannelSessionDraft(selectedChannelBranchId) ? {
+              title: channelSessions.drafts[selectedChannelId]?.title ?? "",
+              creating: Boolean(channelSessions.creating[channelSessions.drafts[selectedChannelId]?.id ?? ""]),
+              creationUnconfirmed: Boolean(channelSessions.drafts[selectedChannelId]?.creationUnconfirmed),
+              onRename: title => channelSessions.renameDraft(selectedChannelId, title),
+            } : undefined}
+            onUpdateChannelSession={channelSessions.selectedSession ? async patch => {
+              await channelSessions.update(selectedChannelId, channelSessions.selectedSession!.id, patch);
+            } : undefined}
+            channelComposerIdentity={channelSessions.composerIdentity}
+            onConversationViewed={() => { if (channelSessions.threadId) channelSessions.markRead(selectedChannelId, channelSessions.threadId); }}
+            onRestoreChannelSession={async () => { if (channelSessions.threadId) await channelSessions.update(selectedChannelId, channelSessions.threadId, { archived: false }); }}
             channelCreateOpen={channelCreateOpen}
             channelEditForm={channelEditForm}
             tasks={tasks}
@@ -2658,7 +2720,23 @@ export function AppShell(): React.JSX.Element {
             onSaveChannel={(formOverride) => selectedChannelId ? saveChannelEdit(selectedChannelId, formOverride) : undefined}
             onCreateTask={saveTask}
             onCreateTaskFromSlashCommand={createTaskFromSlashCommand}
-            onSendMessage={sendChannelMessage}
+            onSendMessage={async (message) => {
+              const sourceScope = channelConversationFullAccessScope;
+              if (form.workspaceAccessMode === "full_access") {
+                const confirmation = await fullAccessConfirmation.request(sourceScope);
+                if (!confirmation) throw new Error(t("Cancelled"));
+              }
+              // A topic reply already has its own resolved thread within this conversation.
+              if (message.streamOwner === "topic-thread" && message.threadId) return sendChannelMessage(message);
+              const result = await channelSessions.ensureThread(selectedChannelId, selectedChannelBranchId);
+              if (result.draftKey && result.draftKey === channelSessions.drafts[selectedChannelId]?.key) {
+                fullAccessConfirmation.bind(sourceScope, channelFullAccessScope({
+                  channel: channels.find(channel => channel.id === selectedChannelId), channelId: selectedChannelId,
+                  branchId: "", threadId: result.session.id, workspaceCwd: form.cwd, policyRevision: currentFullAccessPolicyRevision,
+                }));
+              }
+              return sendChannelMessage({ ...message, threadId: result.session.id });
+            }}
             onConfirmExecutionProposal={confirmChannelExecutionProposal}
             onCancelExecutionProposal={cancelChannelExecutionProposal}
             onUploadAttachments={(files) => uploadChannelFiles(files)}

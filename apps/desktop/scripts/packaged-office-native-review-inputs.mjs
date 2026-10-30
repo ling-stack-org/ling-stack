@@ -34,6 +34,10 @@
  * Human QA's two early-entry sources are explicit non-Office-build review inputs:
  * their inclusion pins the QA isolation code, not the entire generated Main graph.
  *
+ * Local service IPC is an explicit root. Its Main, preload and Web wiring are
+ * exact nonrecursive review inputs; pinning Main does not include its whole graph.
+ * Packaged daemon lifecycle is also an exact input for startup/FD3 cancellation.
+ *
  * A graph change requires an explicit review of this fixed list. It must not
  * silently discover, regenerate, approve, or refresh digests during a build.
  */
@@ -79,6 +83,7 @@ export const PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS = Object.freeze([
   "packages/daemon/src/runtime/sandbox/packaged-office-native-published-review.ts",
   "packages/daemon/src/runtime/sandbox/packaged-office-native-resources.ts",
   "packages/daemon/src/runtime/sandbox/protected-host-office-native-identity.ts",
+  "apps/desktop/main/local-services.ts",
 ]);
 
 export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
@@ -330,6 +335,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/core/src/run-progress-checkpoint-lineage.ts",
   "packages/core/src/run-progress-checkpoint-types.ts",
   "packages/core/src/run-types.ts",
+  "packages/core/src/runner-ids.ts",
   "packages/core/src/runtime-paths.ts",
   "packages/core/src/runtime-permissions.ts",
   "packages/core/src/runtime-supervisor-types.ts",
@@ -695,6 +701,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/channels/attachments.ts",
   "packages/daemon/src/features/channels/channel-context-inspect.ts",
   "packages/daemon/src/features/channels/channel-conversation-api.ts",
+  "packages/daemon/src/features/channels/conversation-runtime-metrics-scope.ts",
   "packages/daemon/src/features/channels/channel-intent-selector.ts",
   "packages/daemon/src/features/channels/file-request-content.ts",
   "packages/daemon/src/features/channels/channel-mention-materializer.ts",
@@ -860,6 +867,8 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/conversations/normal-execution-context-snapshots.ts",
   "packages/daemon/src/features/conversations/normal-narration-publication.ts",
   "packages/daemon/src/features/conversations/reasoning-summary-projection.ts",
+  "packages/daemon/src/features/conversations/all-turns.ts",
+  "packages/daemon/src/features/conversations/runtime-metrics-projection.ts",
   "packages/daemon/src/features/conversations/routes.ts",
   "packages/daemon/src/features/conversations/runtime-projection.ts",
   "packages/daemon/src/features/conversations/submission-receipts.ts",
@@ -1586,4 +1595,45 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "apps/desktop/scripts/distribution/LingShell.nsh",
   "scripts/gstack/testsavant-model-cache.mjs",
   "scripts/gstack/testsavant-model-pin.json",
+
+  // Explicit channel-session, inherited runtime and local-service closure inputs.
+  "apps/desktop/main/ipc.ts",
+  "apps/desktop/main/local-services.ts",
+  "apps/desktop/main/daemon-lifecycle.ts",
+  "apps/desktop/main/main.ts",
+  "apps/desktop/preload/main-window.ts",
+  "apps/desktop/shared/desktop-capabilities.ts",
+  "apps/desktop/shared/ipc-channels.ts",
+  "apps/desktop/shared/local-service-capabilities.ts",
+  "apps/web/src/api/client.ts",
+  "packages/contracts/src/artifacts.ts",
+  "packages/contracts/src/channel-sessions-validation.ts",
+  "packages/contracts/src/deliverables.ts",
+  "packages/contracts/src/engine-lifecycle.ts",
+  "packages/contracts/src/im-destinations.ts",
+  "packages/contracts/src/marketplace.ts",
+  "packages/contracts/src/notifications.ts",
+  "packages/core/src/channel-session-types.ts",
+  "packages/core/src/storage/sqlite/channel-session-admission.ts",
+  "packages/core/src/storage/sqlite/channel-session-lineage.ts",
+  "packages/core/src/storage/sqlite/channel-session-migration.ts",
+  "packages/core/src/storage/sqlite/channel-session-notification.ts",
+  "packages/core/src/storage/sqlite/channel-session-store.ts",
+  "packages/core/src/storage/sqlite/runner-id-migration.ts",
+  "packages/core/src/storage/sqlite/workspace-permission-migration.ts",
+  "packages/daemon/src/features/channels/session-routes.ts",
+  "packages/daemon/src/features/deliverables/builders.ts",
+  "packages/daemon/src/features/deliverables/routes.ts",
+  "packages/daemon/src/features/deliverables/spreadsheet-extract.ts",
+  "packages/daemon/src/features/deliverables/spreadsheet-manifest.ts",
+  "packages/daemon/src/features/diagnostics/routes.ts",
+  "packages/daemon/src/features/execution-engines/engine-scanner.ts",
+  "packages/daemon/src/features/execution-engines/managed-engine-installer.ts",
+  "packages/daemon/src/features/im-destinations/registry.ts",
+  "packages/daemon/src/features/im-destinations/routes.ts",
+  "packages/daemon/src/features/media/workflows/media-protocol-contract.ts",
+  "packages/daemon/src/features/notifications/hub.ts",
+  "packages/daemon/src/features/notifications/routes.ts",
+  "packages/daemon/src/features/skills/marketplace-route.ts",
+  "packages/daemon/src/shared/permission-contract.ts",
 ]);

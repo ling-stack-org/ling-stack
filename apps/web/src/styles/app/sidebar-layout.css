@@ -778,3 +778,53 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Channel containers keep independent conversation actions and status. */
+.sidebar-channel-container-row { display: flex; align-items: center; min-width: 0; }
+.sidebar-channel-container-row > .sidebar-row-shell { flex: 1; min-width: 0; }
+.sidebar-session-expand { width: 22px; min-width: 22px; padding: 2px; }
+.sidebar-session-unread { display: inline-block; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--ling-action-accent); }
+.sidebar-session-default { opacity: .6; flex: none; font-size: 10px; }
+.sidebar-session-all { display: block; border: 0; background: transparent; color: var(--ling-text-muted); padding: 7px 12px; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.sidebar-session-all:hover, .sidebar-session-all:focus-visible { color: var(--ling-text-strong); text-decoration: underline; }
+.sidebar-session-rename { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; }
+.sidebar-session-empty { display: block; padding: 6px 12px; font-size: 12px; opacity: .65; }
+.sidebar-session-status { font-size: 10px; opacity: .65; white-space: nowrap; }
+.channel-session-directory { display: flex; flex-direction: column; gap: 8px; min-height: 120px; max-height: 65vh; overflow: hidden; padding: 12px; }
+.channel-session-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.channel-session-results { min-height: 0; overflow-y: auto; }
+.channel-session-archived-actions { display: flex; align-items: center; gap: 6px; flex: none; font-size: 12px; color: var(--ling-text-muted); }
+.channel-session-directory .sidebar-branch-row-shell { display: flex; align-items: center; min-width: 0; padding: 4px; border-radius: 6px; }
+.channel-session-directory .sidebar-branch-row { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; padding: 6px; cursor: pointer; }
+.channel-session-directory .sidebar-branch-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.channel-session-directory .sidebar-row-tools { display: flex; }
+.channel-session-directory .sidebar-branch-row-shell.selected { background: var(--ling-navigation-selected-bg); }
+.channel-session-title-separator { opacity: .35; font-weight: 400; }
+.channel-session-title { font-size: .85em; font-weight: 500; }
+
+.channel-left-drawer .sidebar-channel-container-row > .sidebar-row-shell > .sidebar-row-tools { opacity: 1; pointer-events: auto; }
+
+.channel-left-drawer [data-session-id] .sidebar-branch-row { display: flex; align-items: center; gap: 6px; min-height: 30px; }
+.channel-left-drawer [data-session-id] .sidebar-branch-row > span:first-of-type { flex: 1; }
+.channel-left-drawer [data-session-id] .sidebar-branch-row > svg { flex: none; }
+
+.channel-session-heading { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
+.channel-session-heading h1 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.channel-session-heading > .ling-ui-icon-button { flex: none; }
+.channel-session-heading > .ling-ui-inline-feedback { flex-basis: 100%; }
+.channel-session-draft { display: grid; gap: 8px; padding: 16px; min-width: 0; }
+.channel-session-draft h2, .channel-session-draft p { margin: 0; }
+.channel-session-draft h2 { font-size: 16px; font-weight: 600; }
+.channel-session-draft p { color: var(--ling-text-muted); font-size: 13px; overflow-wrap: anywhere; }
+.channel-session-draft label { font-size: 13px; margin-block-start: 8px; }
+.sidebar-session-loading { display: grid; gap: 8px; padding-block-end: 8px; }
+.sidebar-session-diagnostics { margin: 6px; font-size: 12px; color: var(--ling-text-muted); overflow-wrap: anywhere; }
+.sidebar-session-diagnostics summary { cursor: pointer; }
+.sidebar-session-diagnostics ul { padding-inline-start: 16px; }
+.channel-left-drawer .channel-contains-selection { color: var(--ling-text-strong); }
+.channel-left-drawer [data-session-id] .sidebar-branch-row,
+.channel-left-drawer [data-session-draft] .sidebar-branch-row,
+.channel-session-directory .sidebar-branch-row { min-height: 32px; }
+.channel-left-drawer [data-session-draft] .sidebar-branch-row { display: flex; align-items: center; gap: 6px; }
+.channel-left-drawer [data-session-draft] .sidebar-branch-row > span { flex: 1; }
+.channel-left-drawer [data-session-draft] .sidebar-branch-row > svg { flex: none; }

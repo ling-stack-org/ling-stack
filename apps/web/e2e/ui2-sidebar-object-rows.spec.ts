@@ -34,7 +34,7 @@ test("UI 2.0 Sidebar object rows keep compact identity and actions in the expand
   await page.goto("/");
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "Engineering" }).click();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   const channel = navigation.getByRole("button", { name: "Engineering", exact: true });
   await page.mouse.move(720, 320);

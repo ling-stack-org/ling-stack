@@ -1428,8 +1428,24 @@ async function buildNativePublisher() {
   const buildRoot = await mkdtemp(join(tmpdir(), PRIVATE_BUILD_PREFIX));
   const outputPath = join(buildRoot, NATIVE_OUTPUT_NAME);
   const command = process.platform === "darwin" ? "/usr/bin/clang++" : "cl.exe";
+  const darwinSdk = process.platform === "darwin"
+    ? (await execFile("/usr/bin/xcrun", ["--sdk", "macosx", "--show-sdk-path"], {
+        env: { ...process.env, PATH: "/usr/bin:/bin:/usr/sbin:/sbin", SDKROOT: "" },
+        encoding: "utf8",
+        timeout: NATIVE_BUILD_TIMEOUT_MS,
+      })).stdout.trim()
+    : undefined;
+  if (process.platform === "darwin" && (!isAbsolute(darwinSdk) || resolve(darwinSdk) !== darwinSdk)) {
+    throw new CuaDriverAtomicPublishError(
+      "staging_publish_helper_build_failed",
+      "macOS SDK path is invalid",
+    );
+  }
   const args = process.platform === "darwin"
     ? [
+        "-isysroot",
+        darwinSdk,
+        "-mmacosx-version-min=13.0",
         "-std=c++17",
         "-O2",
         "-Wall",
@@ -1454,6 +1470,9 @@ async function buildNativePublisher() {
   try {
     await execFile(command, args, {
       cwd: buildRoot,
+      env: process.platform === "darwin"
+        ? { ...process.env, PATH: "/usr/bin:/bin:/usr/sbin:/sbin", SDKROOT: "" }
+        : process.env,
       maxBuffer: NATIVE_BUILD_OUTPUT_MAX_BYTES,
       timeout: NATIVE_BUILD_TIMEOUT_MS,
       windowsHide: true,

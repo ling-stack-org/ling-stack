@@ -276,7 +276,7 @@ test("WEB-REL-07 Plugin Manager representative surface", async ({ page }) => {
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "Engineering" }).click();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
   const surface = page.locator(".plugin-manager-page .settings-plugin-manager");
   await expect(surface.locator(".plugin-table-row").first()).toBeVisible();

@@ -1,16 +1,11 @@
-import { SqliteMemoryWikiStore } from "./sqlite/memory-wiki-store.js";
-import type { MemoryWikiStore } from "../memory-wiki-types.js";
-import { SqliteMemoryDerivativeStore } from "./sqlite/memory-derivative-store.js";
-import type { MemoryDerivativeStore } from "../memory-derivative-types.js";
-import { SqliteLearningReviewStore } from "./sqlite/learning-review-store.js";
-import type { LearningReviewStore } from "../learning-review-types.js";
-import { drainSkillDefinitionRevisionNotices } from "./sqlite/skill-definition-revision-store.js";
+import { applyChannelSessionMigration, CHANNEL_SESSION_MIGRATION_VERSION } from "./sqlite/channel-session-migration.js";
+import { SqliteChannelSessionStore } from "./sqlite/channel-session-store.js";
+import type { CreateChannelSessionInput, ListChannelSessionsOptions, UpdateChannelSessionRequest } from "../channel-session-types.js";
 import { SqliteWorkSummaryStore } from "./sqlite/work-summary-store.js";
 import { applyWorkSummaryMigration } from "./sqlite/work-summary-migration.js";
 import { applyWorkspacePermissionMigration } from "./sqlite/workspace-permission-migration.js";
 import { applyRunnerIdMigration } from "./sqlite/runner-id-migration.js";
 import { existsSync } from "node:fs";
-import { writeMemoryWithSearchIndex } from "./sqlite/memory-search-index.js";
 import { publishNormalRunNarration } from "./sqlite/normal-run-narration-publication.js";
 import { isCurrentRunExecutionOwner } from "./sqlite/run-execution-admission.js";
 import { SqliteTeammateDirectMessageRuntimeStore } from "./sqlite/teammate-direct-message-runtime-store.js";
@@ -258,8 +253,6 @@ import {
   type ListSkillRegistryOptions,
   type ListSkillSourceSnapshotOptions,
   type PublishSkillRevisionDraftInput,
-  type SkillDefinitionRevision,
-  type SkillDefinitionUndoRequest,
   type SkillCompiledRuntimeViewRecord,
   type SkillHardDeleteResult,
   type SkillImportDraft,
@@ -770,9 +763,6 @@ export interface SqliteRunStoreOptions {
 export class SqliteRunStore implements RunStore {
   readonly paths: LingStackRuntimePaths;
   private readonly database: DatabaseSync;
-  private readonly memoryWiki: SqliteMemoryWikiStore;
-  private readonly memoryDerivatives: SqliteMemoryDerivativeStore;
-  private readonly learningReviews: SqliteLearningReviewStore;
   private readonly legacyContinuityFixtureMode: boolean;
   private readonly automations: SqliteAutomationStore;
   private readonly providers: SqliteProviderStore;
@@ -877,6 +867,7 @@ export class SqliteRunStore implements RunStore {
   private readonly channelTeamPatterns: SqliteChannelTeamPatternStore;
   private readonly channelTeamSnapshots: SqliteChannelTeamSnapshotStore;
   private readonly channelCore: SqliteChannelCoreStore;
+  private readonly channelSessions: SqliteChannelSessionStore;
   private readonly externalWork: SqliteExternalWorkStore;
   private readonly externalWorkActions: SqliteExternalWorkActionStore;
   private readonly externalWorkCiTriage: SqliteExternalWorkCiTriageStore;
@@ -905,6 +896,9 @@ export class SqliteRunStore implements RunStore {
     this.conversationTurnIngest = new SqliteConversationTurnIngestStore(
       { database: this.database },
       this.conversationItems,
+      (threadId, body) => {
+        if (this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)) this.channelSessions.nameFromFirstMessage(threadId, body);
+      },
     );
     this.conversationContext = new SqliteConversationContextStore({ database: this.database });
     this.conversationAcceptedInput = new SqliteConversationAcceptedInputStore({ database: this.database }, this.conversationTurnIngest);
@@ -1197,9 +1191,6 @@ export class SqliteRunStore implements RunStore {
     });
     this.userProfile = new SqliteUserProfileStore({ database: this.database });
     this.workspaceSettings = new SqliteWorkspaceSettingsStore({ database: this.database });
-    this.memoryWiki = new SqliteMemoryWikiStore({ database: this.database });
-    this.memoryDerivatives = new SqliteMemoryDerivativeStore({ database: this.database });
-    this.learningReviews = new SqliteLearningReviewStore({ database: this.database });
     this.skillRegistry = new SqliteSkillRegistryStore({ database: this.database });
     this.skillRegression = new SqliteSkillRegressionStore({ database: this.database });
     this.skillCandidates = new SqliteSkillCandidateStore({ database: this.database });
@@ -1427,6 +1418,17 @@ export class SqliteRunStore implements RunStore {
       { database: this.database },
       { ensureLingAgentChannelMemberships: (now, channelId) => this.ensureLingAgentChannelMemberships(now, channelId) },
     );
+    this.channelSessions = new SqliteChannelSessionStore(this.database, {
+      createChannel: (input, now) => this.channelCore.createChannel(input, now),
+      getBranch: (id) => this.channelCore.getChannelBranch(id),
+      updateBranch: (id, input, now) => this.channelCore.updateChannelBranch(id, input, now),
+      deleteBranch: (id) => this.channelCore.deleteChannelBranch(id),
+      getChannel: (id) => this.channelCore.getChannel(id),
+      createLingThread: (input, now) => this.lingThreads.createLingThread(input, now),
+      getLingThread: (id) => this.lingThreads.getLingThread(id),
+      updateLingThread: (id, input, now) => this.lingThreads.updateLingThread(id, input, now),
+      createChannelBranch: (input, now) => this.channelCore.createChannelBranch(input, now),
+    });
     this.channelTeamEvidence = new SqliteChannelTeamEvidenceStore(
       { database: this.database },
       { assertChannelExists: (channelId) => this.assertChannelExists(channelId) },
@@ -1728,6 +1730,14 @@ export class SqliteRunStore implements RunStore {
             });
           }
         }
+        if (!options.deferContinuityV2MigrationForTest && !options.deferContinuityV2ReleaseMigrationsForTest) {
+          applyChannelSessionMigration({
+            database: this.database,
+            backupPath: `${this.paths.databasePath}.pre-channel-sessions-v${CHANNEL_SESSION_MIGRATION_VERSION}.backup`,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+        }
       });
     } catch (error) {
       this.database.close();
@@ -1998,6 +2008,7 @@ export class SqliteRunStore implements RunStore {
   findLingThreadByOwner(input: {
     readonly kind: LingThreadKind;
     readonly surfaceKind?: LingThread["surfaceKind"];
+    readonly anchorItemId?: string;
     readonly taskId?: string;
     readonly workflowStepId?: string;
     readonly externalWorkId?: string;
@@ -2028,7 +2039,8 @@ export class SqliteRunStore implements RunStore {
   }
 
   updateLingThread(threadId: string, input: UpdateLingThreadInput, now: string): LingThread | undefined {
-    return this.lingThreads.updateLingThread(threadId, input, now);
+    return this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)
+      ? this.channelSessions.updateThread(threadId, input, now) : this.lingThreads.updateLingThread(threadId, input, now);
   }
 
   getLingThreadConversationMode(threadId: string): ConversationModeState | undefined {
@@ -3355,8 +3367,19 @@ export class SqliteRunStore implements RunStore {
     return this.workspaceSettings.updateWorkspaceSettings(input, now);
   }
 
+  createChannelSession(input: CreateChannelSessionInput, now: string) { return this.channelSessions.create(input, now); }
+  repairChannelSessionDirectory(channelId: string, branchId: string, now: string) {
+    return this.channelSessions.repairDirectory(channelId, branchId, now);
+  }
+  getChannelSession(channelId: string, threadId: string) { return this.channelSessions.get(channelId, threadId); }
+  listChannelSessions(channelId: string, options?: ListChannelSessionsOptions) { return this.channelSessions.list(channelId, options); }
+  updateChannelSession(channelId: string, threadId: string, input: UpdateChannelSessionRequest, now: string) {
+    return this.channelSessions.update(channelId, threadId, input, now);
+  }
+
   createChannel(input: CreateChannelInput, now: string): Channel {
-    return this.channelCore.createChannel(input, now);
+    return this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)
+      ? this.channelSessions.createChannel(input, now) : this.channelCore.createChannel(input, now);
   }
 
   getChannel(id: string): Channel | undefined {
@@ -3376,7 +3399,8 @@ export class SqliteRunStore implements RunStore {
   }
 
   createChannelBranch(input: CreateChannelBranchInput, now: string): ChannelBranch {
-    return this.channelCore.createChannelBranch(input, now);
+    return this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)
+      ? this.channelSessions.registerDirectory(input, now) : this.channelCore.createChannelBranch(input, now);
   }
 
   getChannelBranch(id: string): ChannelBranch | undefined {
@@ -3388,11 +3412,13 @@ export class SqliteRunStore implements RunStore {
   }
 
   updateChannelBranch(id: string, input: ChannelBranchUpdateInput, now: string): ChannelBranch | undefined {
-    return this.channelCore.updateChannelBranch(id, input, now);
+    return this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)
+      ? this.channelSessions.updateLegacyBranch(id, input, now) : this.channelCore.updateChannelBranch(id, input, now);
   }
 
   deleteChannelBranch(id: string): boolean {
-    return this.channelCore.deleteChannelBranch(id);
+    return this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)
+      ? this.channelSessions.deleteLegacyBranch(id, new Date().toISOString()) : this.channelCore.deleteChannelBranch(id);
   }
 
   createChannelTeamEvidenceItem(input: CreateChannelTeamEvidenceItemInput, now: string): ChannelTeamEvidenceItem {
@@ -3723,59 +3749,6 @@ export class SqliteRunStore implements RunStore {
     return this.skillRegistry.publishSkillRevisionDraft(input, now);
   }
 
-  getLearningReviewPolicy(...args: Parameters<LearningReviewStore["getLearningReviewPolicy"]>): ReturnType<LearningReviewStore["getLearningReviewPolicy"]> {
-    return this.learningReviews.getLearningReviewPolicy(...args);
-  }
-
-  updateLearningReviewPolicy(...args: Parameters<LearningReviewStore["updateLearningReviewPolicy"]>): ReturnType<LearningReviewStore["updateLearningReviewPolicy"]> {
-    return this.learningReviews.updateLearningReviewPolicy(...args);
-  }
-
-  enqueueLearningReview(...args: Parameters<LearningReviewStore["enqueueLearningReview"]>): ReturnType<LearningReviewStore["enqueueLearningReview"]> {
-    return this.learningReviews.enqueueLearningReview(...args);
-  }
-
-  getLearningReviewJob(...args: Parameters<LearningReviewStore["getLearningReviewJob"]>): ReturnType<LearningReviewStore["getLearningReviewJob"]> {
-    return this.learningReviews.getLearningReviewJob(...args);
-  }
-
-  listLearningReviewJobs(...args: Parameters<LearningReviewStore["listLearningReviewJobs"]>): ReturnType<LearningReviewStore["listLearningReviewJobs"]> {
-    return this.learningReviews.listLearningReviewJobs(...args);
-  }
-
-  claimLearningReviewJob(...args: Parameters<LearningReviewStore["claimLearningReviewJob"]>): ReturnType<LearningReviewStore["claimLearningReviewJob"]> {
-    return this.learningReviews.claimLearningReviewJob(...args);
-  }
-
-  reserveLearningReviewModelRequest(...args: Parameters<LearningReviewStore["reserveLearningReviewModelRequest"]>): ReturnType<LearningReviewStore["reserveLearningReviewModelRequest"]> {
-    return this.learningReviews.reserveLearningReviewModelRequest(...args);
-  }
-
-  finishLearningReviewJob(...args: Parameters<LearningReviewStore["finishLearningReviewJob"]>): ReturnType<LearningReviewStore["finishLearningReviewJob"]> {
-    return this.learningReviews.finishLearningReviewJob(...args);
-  }
-
-  cancelLearningReviewJob(...args: Parameters<LearningReviewStore["cancelLearningReviewJob"]>): ReturnType<LearningReviewStore["cancelLearningReviewJob"]> {
-    return this.learningReviews.cancelLearningReviewJob(...args);
-  }
-
-  listSkillDefinitionRevisions(skillId: string, limit?: number): SkillDefinitionRevision[] {
-    return this.skillRegistry.listSkillDefinitionRevisions(skillId, limit);
-  }
-
-  drainSkillDefinitionRevisionNotices(cwd: string, now: string, limit?: number): ControlPlaneEvent[] {
-    return drainSkillDefinitionRevisionNotices({ database: this.database }, cwd, now,
-      (input, at) => this.controlPlane.appendControlPlaneEventWithinTransaction(input, at), limit);
-  }
-
-  getSkillDefinitionRevision(skillId: string, revisionId?: string): SkillDefinitionRevision | undefined {
-    return this.skillRegistry.getSkillDefinitionRevision(skillId, revisionId);
-  }
-
-  undoSkillDefinitionRevision(skillId: string, input: SkillDefinitionUndoRequest, now: string) {
-    return this.skillRegistry.undoSkillDefinitionRevision(skillId, input, now);
-  }
-
   archiveSkillRegistryEntry(id: string, now: string): SkillRegistryEntry | undefined {
     return this.skillRegistry.archiveSkillRegistryEntry(id, now);
   }
@@ -3813,17 +3786,6 @@ export class SqliteRunStore implements RunStore {
 
   createProcedureObservation(input: CreateProcedureObservationInput, now: string): ProcedureObservation {
     return this.procedureObservations.createProcedureObservation(input, now);
-  }
-
-  getProcedureObservationByJobKey(jobKey: string, workspaceId?: string): ProcedureObservation | undefined {
-    return this.procedureObservations.getProcedureObservationByJobKey(jobKey, workspaceId);
-  }
-
-  withProcedureObservationJobTransaction<T>(mutate: (events: Pick<RunStore, "appendControlPlaneEvent">) => T): T {
-    if (Object.prototype.toString.call(mutate) === "[object AsyncFunction]") throw new TypeError("Procedure observation commits must be synchronous");
-    return this.procedureObservations.withProcedureObservationJobTransaction(() => mutate({
-      appendControlPlaneEvent: (input, now) => this.controlPlane.appendControlPlaneEventWithinTransaction(input, now),
-    }));
   }
 
   listProcedureObservations(options: ListProcedureObservationsOptions = {}): ProcedureObservation[] {
@@ -3906,7 +3868,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   createMemoryObject(input: CreateMemoryObjectInput, now: string): MemoryObject {
-    return writeMemoryWithSearchIndex(this.database, () => this.memoryObjects.createMemoryObject(input, now));
+    return this.memoryObjects.createMemoryObject(input, now);
   }
 
   getMemoryObject(id: string): MemoryObject | undefined {
@@ -3918,7 +3880,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   updateMemoryObject(id: string, input: MemoryObjectUpdateInput, now: string): MemoryObject | undefined {
-    return writeMemoryWithSearchIndex(this.database, () => this.memoryObjects.updateMemoryObject(id, input, now));
+    return this.memoryObjects.updateMemoryObject(id, input, now);
   }
 
   getMemorySelfImprovingMetadata(memoryId: string): MemorySelfImprovingMetadata | undefined {
@@ -3955,72 +3917,6 @@ export class SqliteRunStore implements RunStore {
 
   applyMemoryReviewAction(input: ApplyMemoryReviewActionInput, now: string): { readonly memory: MemoryObject; readonly action: MemoryReviewActionRecord } {
     return this.memoryReviews.applyMemoryReviewAction(input, now);
-  }
-
-  listMemoryWikiSources(...args: Parameters<MemoryWikiStore["listMemoryWikiSources"]>): ReturnType<MemoryWikiStore["listMemoryWikiSources"]> {
-    return this.memoryWiki.listMemoryWikiSources(...args);
-  }
-  listMemoryWikiDecisions(...args: Parameters<MemoryWikiStore["listMemoryWikiDecisions"]>): ReturnType<MemoryWikiStore["listMemoryWikiDecisions"]> {
-    return this.memoryWiki.listMemoryWikiDecisions(...args);
-  }
-
-  getMemoryWikiGeneration(...args: Parameters<MemoryWikiStore["getMemoryWikiGeneration"]>): ReturnType<MemoryWikiStore["getMemoryWikiGeneration"]> {
-    return this.memoryWiki.getMemoryWikiGeneration(...args);
-  }
-
-  beginMemoryWikiGeneration(...args: Parameters<MemoryWikiStore["beginMemoryWikiGeneration"]>): ReturnType<MemoryWikiStore["beginMemoryWikiGeneration"]> {
-    return this.memoryWiki.beginMemoryWikiGeneration(...args);
-  }
-
-  publishMemoryWikiGeneration(...args: Parameters<MemoryWikiStore["publishMemoryWikiGeneration"]>): ReturnType<MemoryWikiStore["publishMemoryWikiGeneration"]> {
-    return this.memoryWiki.publishMemoryWikiGeneration(...args);
-  }
-
-  getMemoryWikiHumanBlock(...args: Parameters<MemoryWikiStore["getMemoryWikiHumanBlock"]>): ReturnType<MemoryWikiStore["getMemoryWikiHumanBlock"]> {
-    return this.memoryWiki.getMemoryWikiHumanBlock(...args);
-  }
-
-  updateMemoryWikiHumanBlock(...args: Parameters<MemoryWikiStore["updateMemoryWikiHumanBlock"]>): ReturnType<MemoryWikiStore["updateMemoryWikiHumanBlock"]> {
-    return this.memoryWiki.updateMemoryWikiHumanBlock(...args);
-  }
-
-  getMemorySemanticPolicy(...args: Parameters<MemoryDerivativeStore["getMemorySemanticPolicy"]>): ReturnType<MemoryDerivativeStore["getMemorySemanticPolicy"]> {
-    return this.memoryDerivatives.getMemorySemanticPolicy(...args);
-  }
-
-  updateMemorySemanticPolicy(...args: Parameters<MemoryDerivativeStore["updateMemorySemanticPolicy"]>): ReturnType<MemoryDerivativeStore["updateMemorySemanticPolicy"]> {
-    return this.memoryDerivatives.updateMemorySemanticPolicy(...args);
-  }
-
-  listMemoryDerivativeSources(...args: Parameters<MemoryDerivativeStore["listMemoryDerivativeSources"]>): ReturnType<MemoryDerivativeStore["listMemoryDerivativeSources"]> {
-    return this.memoryDerivatives.listMemoryDerivativeSources(...args);
-  }
-
-  getMemoryDerivativeSource(...args: Parameters<MemoryDerivativeStore["getMemoryDerivativeSource"]>): ReturnType<MemoryDerivativeStore["getMemoryDerivativeSource"]> {
-    return this.memoryDerivatives.getMemoryDerivativeSource(...args);
-  }
-
-  listMemoryDerivativeChanges(...args: Parameters<MemoryDerivativeStore["listMemoryDerivativeChanges"]>): ReturnType<MemoryDerivativeStore["listMemoryDerivativeChanges"]> {
-    return this.memoryDerivatives.listMemoryDerivativeChanges(...args);
-  }
-
-  getMemoryDerivativeSequence(...args: Parameters<MemoryDerivativeStore["getMemoryDerivativeSequence"]>): ReturnType<MemoryDerivativeStore["getMemoryDerivativeSequence"]> {
-    return this.memoryDerivatives.getMemoryDerivativeSequence(...args);
-  }
-
-  getMemorySemanticGeneration(...args: Parameters<MemoryDerivativeStore["getMemorySemanticGeneration"]>): ReturnType<MemoryDerivativeStore["getMemorySemanticGeneration"]> {
-    return this.memoryDerivatives.getMemorySemanticGeneration(...args);
-  }
-
-  beginMemorySemanticGeneration(...args: Parameters<MemoryDerivativeStore["beginMemorySemanticGeneration"]>): ReturnType<MemoryDerivativeStore["beginMemorySemanticGeneration"]> {
-    return this.memoryDerivatives.beginMemorySemanticGeneration(...args);
-  }
-
-  advanceMemorySemanticGeneration(...args: Parameters<MemoryDerivativeStore["advanceMemorySemanticGeneration"]>): ReturnType<MemoryDerivativeStore["advanceMemorySemanticGeneration"]> {
-    return this.memoryDerivatives.advanceMemorySemanticGeneration(...args);
-  }
-  advanceMemorySemanticScan(...args: Parameters<MemoryDerivativeStore["advanceMemorySemanticScan"]>): ReturnType<MemoryDerivativeStore["advanceMemorySemanticScan"]> {
-    return this.memoryDerivatives.advanceMemorySemanticScan(...args);
   }
 
   recallMemory(input: MemoryRecallRequest): MemoryRecallResult {

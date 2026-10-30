@@ -91,6 +91,18 @@ async function readComposerGeometry(page: Page, selector: string): Promise<{ bac
   });
 }
 
+async function expectSelectedDefaultChannelConversation(page: Page, channelName: string): Promise<void> {
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  const channel = navigation.locator(".sidebar-channel-group").filter({
+    has: page.getByRole("button", { name: channelName, exact: true }),
+  });
+  await expect(channel.locator(".channel-contains-selection")).toHaveCount(1);
+  await expect(channel.locator('.sidebar-branch-row-shell.selected[data-session-default="true"] .sidebar-branch-row'))
+    .toHaveAttribute("aria-current", "page");
+  await expect(navigation.locator(".sidebar-branch-row-shell.selected")).toHaveCount(1);
+  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: [] });
+}
+
 async function expectActionMenuItemAligned(menuItem: Locator, options: { readonly disabled?: boolean } = {}): Promise<void> {
   const alignment = await menuItem.evaluate((element) => {
     const buttonRect = element.getBoundingClientRect();
@@ -145,7 +157,7 @@ test("sidebar selection is exclusive and conversation sections stay below primar
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const primaryNav = navigation.locator(".primary-nav");
-  const newConversationButton = navigation.getByRole("button", { name: "New conversation" });
+  const newConversationButton = navigation.getByRole("button", { name: "New conversation", exact: true });
   await expect(newConversationButton).toBeVisible();
   const commandButtonWidth = await newConversationButton.evaluate((button) => Math.round(button.getBoundingClientRect().width));
   expect(commandButtonWidth).toBeGreaterThan(100);
@@ -175,8 +187,8 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   await expect(engineerAvatar).toBeVisible();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: [] });
 
-  await navigation.getByRole("button", { name: "Engineering" }).click();
-  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Engineering"] });
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
+  await expectSelectedDefaultChannelConversation(page, "Engineering");
   const channelComposer = page.getByLabel("Channel composer");
   await expect(channelComposer).toHaveClass(/conversation-composer/);
   await expect(channelComposer.getByRole("button", { name: /Selected permission preset/ })).toBeVisible();
@@ -188,11 +200,12 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   await expect(navigation).toHaveClass(/channel-left-drawer/);
   await expect(page.locator(".channel-sidebar-toolbar")).toBeHidden();
   await expect(page.locator(".channel-left-drawer .primary-nav")).toHaveCSS("border-bottom-width", "0px");
-  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Engineering"] });
+  await expectSelectedDefaultChannelConversation(page, "Engineering");
 
   await navigation.getByRole("button", { name: "Designer", exact: true }).click();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Designer"] });
   const selectedTeammateRow = page.locator('.channel-left-drawer .sidebar-row-shell.selected:has-text("Designer")');
+  await page.getByRole("heading", { name: "Designer", level: 1 }).hover();
   await expect(selectedTeammateRow).toHaveCSS("background-color", "rgb(217, 216, 213)");
   expect(await selectedTeammateRow.evaluate((row) => getComputedStyle(row, "::before").content)).toBe("none");
   await expect(page.getByRole("heading", { name: "Designer", level: 1 })).toBeVisible();
@@ -250,13 +263,13 @@ test("sidebar sections collapse locally and keep group action menus", async ({ p
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const recentConversationRow = navigation.getByRole("button", { name: "No recent conversations" });
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
   await expect(recentConversationRow).toBeVisible();
 
   await navigation.getByRole("button", { name: "Channels" }).click();
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toHaveCount(0);
   await navigation.getByRole("button", { name: "Channels" }).click();
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
 
   await navigation.getByRole("button", { name: "AI Teammates" }).click();
   await expect(navigation.getByRole("button", { name: "Designer", exact: true })).toHaveCount(0);
@@ -268,7 +281,7 @@ test("sidebar sections collapse locally and keep group action menus", async ({ p
   await navigation.getByRole("button", { name: "Recent conversations", exact: true }).click();
   await expect(recentConversationRow).toBeVisible();
 
-  await navigation.getByRole("button", { name: "Channel actions" }).click();
+  await navigation.getByRole("button", { name: "Channel actions", exact: true }).click();
   const newChannelMenuItem = page.getByRole("menuitem", { name: "New channel" });
   await expect(newChannelMenuItem).toBeVisible();
   await expectActionMenuItemAligned(newChannelMenuItem);
@@ -295,14 +308,11 @@ test("sidebar archive hides conversations and teammates without deleting data", 
   await page.goto("/");
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  const channelShell = navigation.locator(".sidebar-channel-group").filter({ hasText: "Engineering" }).locator(".sidebar-row-shell").first();
-  await channelShell.hover();
-  const channelArchiveButton = channelShell.getByRole("button", { name: "Archive channel" });
-  await expect(channelArchiveButton).toBeVisible();
-  await channelArchiveButton.click();
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toHaveCount(0);
+  await navigation.getByRole("button", { name: "Channel actions: Engineering", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Archive channel", exact: true }).click();
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toHaveCount(0);
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const home = page.getByLabel("Conversation home");
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Archive me");
   await home.getByRole("button", { name: "Send" }).click();
@@ -361,7 +371,7 @@ test("recent conversations only show records created from the conversation home"
   await expect(navigation.getByRole("button", { name: "No recent conversations" })).toBeVisible();
   await expect(navigation.locator(".sidebar-recent-row")).toHaveCount(0);
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const home = page.getByLabel("Conversation home");
   const homeComposer = home.locator(".conversation-composer");
   await expect(homeComposer).toHaveClass(/conversation-composer-surface-normal_conversation/);
@@ -459,11 +469,11 @@ test("recent conversations only show records created from the conversation home"
   await expect(recentRow).toBeVisible();
   await expect(recentRow).toContainText("Plan launch");
   await expect(navigation.locator(".sidebar-recent-row-shell").first()).toHaveClass(/selected/);
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
   await expect(navigation.locator('.sidebar-recent-row:has-text("Engineering")')).toHaveCount(0);
   await expect(navigation.locator('.sidebar-recent-row:has-text("Designer")')).toHaveCount(0);
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   await expect(home).toBeVisible();
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Second local conversation");
   await home.getByRole("button", { name: "Send" }).click();
@@ -572,7 +582,11 @@ test(`normal conversation virtualizes a long canonical timeline without adding a
         && element.scrollHeight > element.clientHeight + 1;
     })
     .map((element) => element.className));
-  expect(scrollOwners).toEqual([expect.stringContaining("normal-conversation-feed")]);
+  expect(scrollOwners).toEqual([expect.stringContaining("normal-conversation-feed"), "conversation-position-rail__marks"]);
+  const rail = conversationPage.getByRole("complementary", { name: "Conversation navigation", exact: true });
+  await expect(rail).toBeVisible();
+  expect(await feed.evaluate(element => element.querySelector(".conversation-position-rail"))).toBeNull();
+  await expect(rail.locator(".conversation-position-rail__marks")).toHaveCSS("overflow-y", "auto");
 
   await feed.evaluate((element) => {
     element.scrollTop = 0;
@@ -857,7 +871,7 @@ test("normal conversation queues approvals in its composer gate", async ({ page 
   await expect(pendingMessage).toContainText("Waiting for approval.");
   await expect(conversation.locator('[data-approval-presentation-owner="composer_gate"]')).toHaveCount(0);
   await expect(conversation.locator(".conversation-work-cell")).toHaveCount(0);
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   await expect(page.getByLabel("Conversation home")).toBeVisible();
   await recentRow.click();
   await expect(gate).toBeVisible();
@@ -1042,7 +1056,7 @@ test("normal conversation full access confirms before creating the run", async (
   await page.goto("/");
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const home = page.getByLabel("Conversation home");
   await expect(home.getByRole("button", { name: /Selected permission preset Full access/ })).toBeVisible();
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Inspect trusted files");
@@ -1082,7 +1096,7 @@ test("normal conversation composer sends and replays uploaded attachments", asyn
   await page.goto("/");
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const home = page.getByLabel("Conversation home");
   const homeComposer = home.locator(".conversation-composer");
   await expect(homeComposer).toHaveClass(/conversation-composer-surface-normal_conversation/);
@@ -1103,8 +1117,9 @@ test("normal conversation composer sends and replays uploaded attachments", asyn
   const conversationPage = page.getByLabel("Conversation page");
   await expect(conversationPage).toBeVisible();
   await expect(conversationPage.locator(".conversation-composer")).toHaveClass(/conversation-composer-surface-normal_conversation/);
+  const composerRadius = await conversationPage.evaluate(element => getComputedStyle(element).getPropertyValue("--ling-composer-radius").trim());
   await expect.poll(async () => readComposerGeometry(page, ".normal-conversation-page .conversation-composer")).toEqual(expect.objectContaining({
-    borderRadius: "12px",
+    borderRadius: composerRadius,
     inputHeight: 76,
     padding: "8px",
   }));
@@ -1750,7 +1765,7 @@ test("conversation home follows user language and shows thinking as off", async 
   await expect(home.getByRole("button", { name: "幻灯片" })).toBeVisible();
   await expect(home.getByRole("button", { name: "文档" })).toBeVisible();
   await expect(home.getByRole("button", { name: "表格" })).toBeVisible();
-  await expect(home.getByText("思考关闭")).toBeVisible();
+  await expect(home.getByRole("button", { name: "已选择模型 gpt-5.5 · 关闭", exact: true })).toBeVisible();
   await home.getByRole("textbox", { name: "对话内容" }).fill("你好");
   await home.getByRole("button", { name: "发送" }).click();
   const conversationPage = page.getByLabel("对话页面");
@@ -1779,7 +1794,7 @@ test("conversation home refreshes interface language and theme after workspace s
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   await expect(page.getByLabel("Conversation home").getByRole("heading", { name: "Ling Stack, make work easier.", level: 1 })).toBeVisible();
 
   state.workspaceSettings = {
@@ -1815,7 +1830,7 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(primaryNav.getByRole("button", { name: "Plugin Manager" })).toBeVisible();
   await expect(page.getByLabel("Run context")).toHaveCount(0);
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   await expect(page.getByLabel("Conversation home")).toBeVisible();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: [] });
 
@@ -1877,7 +1892,7 @@ test("conversation home uses plus as the single attachment entry and keeps slash
   await page.goto("/");
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
 
   const home = page.getByLabel("Conversation home");
   await expect(home).toBeVisible();
@@ -1906,7 +1921,7 @@ test("conversation home sends with workspace cwd without a folder picker", async
   await page.goto("/");
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
 
   const home = page.getByLabel("Conversation home");
   await expect(home).toBeVisible();
@@ -1994,7 +2009,7 @@ test("conversation home model picker uses the model workbench default without ch
   await expect(page.locator(".provider-row").getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
   await page.getByRole("button", { name: "Back to app" }).click();
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const home = page.getByLabel("Conversation home");
   await expect(home.getByRole("button", { name: "Selected model gemini-2.5-pro" })).toBeVisible();
   const modelTrigger = home.getByRole("button", { name: "Selected model gemini-2.5-pro" });
@@ -2033,7 +2048,7 @@ test("conversation home model picker uses the model workbench default without ch
   const conversationPage = page.getByLabel("Conversation page");
   await expect(conversationPage).toBeVisible();
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   await expect(home).toBeVisible();
   await expect(home.getByRole("button", { name: "Selected model gemini-2.5-pro" })).toBeVisible();
 

@@ -24,6 +24,7 @@ export const DESKTOP_THEME_PACKAGE_IPC_CHANNELS = {
 } as const satisfies Readonly<Record<DesktopThemePackageIpcChannelKey, string>>;
 
 export const DESKTOP_IPC_CHANNELS = {
+  localServiceRequest: "ling-desktop:local-service:request",
   executionEnginesList: "ling-desktop:execution-engines:list",
   executionEnginesDiscover: "ling-desktop:execution-engines:discover",
   executionEnginesInstall: "ling-desktop:execution-engines:install",

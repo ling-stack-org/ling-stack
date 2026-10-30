@@ -72,6 +72,7 @@ export * from "./channel-team-patterns.js";
 export * from "./channel-team-snapshot-harness.js";
 export * from "./state-machines.js";
 export * from "./channel-runtime-types.js";
+export * from "./channel-session-types.js";
 export * from "./runtime-supervisor-types.js";
 export * from "./runtime-trace-types.js";
 export * from "./runtime-trace-projection.js";

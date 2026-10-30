@@ -187,9 +187,15 @@ export async function handleLingThreadsCollection(
       });
       return;
     }
+    const threads = store.listLingThreads(listOptions).filter((thread) =>
+      // A newly created channel owns an empty default conversation. Keep that
+      // placeholder in the channel session directory, but omit it from the
+      // generic thread list until it has durable activity.
+      !(thread.surfaceKind === "channel_root" && thread.nextItemSequence === 1 && !thread.lastRunId)
+    );
     writeJson(response, 200, {
       cwd,
-      threads: store.listLingThreads(listOptions),
+      threads,
     });
   } catch (error) {
     writeLingThreadRouteError(response, error);

@@ -42,6 +42,7 @@ async function openSurface(page: Page, surface: "private" | "normal" | "channel"
   }).click();
   const composer = page.getByLabel(surface === "private" ? "Private chat composer" : surface === "channel" ? "Channel composer" : "New conversation composer", { exact: true });
   await expect(composer).toBeVisible();
+  await expect(composer.locator('input[type="file"]')).toBeEnabled();
   return { composer, state };
 }
 
@@ -136,7 +137,7 @@ test("channel root and branch own separate attachment drafts and late uploads ca
   await expect(composer.locator(".composer-preview-card")).toContainText("branch.txt");
   await expect(composer.getByRole("textbox")).toHaveAttribute("data-value", "This belongs to the branch");
   await capture(page, "branch-owned-attachment-draft");
-  await sidebar.getByRole("button", { name: "Engineering", exact: true }).click();
+  await sidebar.getByRole("list", { name: "Engineering Conversations", exact: true }).locator("[data-session-default=true] .sidebar-branch-row").click();
   await expect(composer.locator(".composer-preview-card").filter({ hasText: "root-ready.txt" })).toHaveClass(/ready/);
   await expect(composer.locator(".composer-preview-card").filter({ hasText: "root-late.txt" })).toHaveClass(/failed/);
   await expect(composer.locator(".composer-preview-card").filter({ hasText: "branch.txt" })).toHaveCount(0);

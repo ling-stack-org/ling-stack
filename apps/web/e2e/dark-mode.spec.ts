@@ -2,6 +2,7 @@ import { expect, type Page, test, type TestInfo } from "@playwright/test";
 import { createMockBundledEmbeddedCuaPlugin, mockDaemon } from "./support/mock-daemon";
 import { openWorkBoardFromInbox } from "./support/open-work-board";
 import { openPendingStartupDiagnostics } from "./support/pending-settings-sections";
+import type { AutomationDefinition } from "../src/types";
 import {
   createBaseState,
   createChatProvider,
@@ -35,13 +36,13 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page },
   });
   const state = createDarkThemeState();
   await mockDaemon(page, state);
-  await mockAutomationReadRoutes(page);
+  await mockAutomationReadRoutes(page, state);
   await page.goto("/");
 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
   await assertCanonicalThemeTokens(page);
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.locator(".client-window")).toBeVisible();
   await assertDarkPage(page, "channel workspace", [
     ".workspace-client-surface",
@@ -97,6 +98,9 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page },
 
   await navigation.getByRole("button", { name: "自动化" }).click();
   await expect(page.locator(".automations-inbox-page")).toBeVisible();
+  await expect(page.locator(".automation-execution-inspector")).toHaveCount(0);
+  await page.locator('[data-automation-id="automation_dark_mode"]').click();
+  await expect(page.locator(".automation-execution-inspector")).toContainText("深色主题自动化");
   await assertDarkPage(page, "automations", [
     ".workspace-automations-surface",
     ".automations-inbox-page",
@@ -126,16 +130,24 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page },
   ]);
   await captureDarkEvidence(page, testInfo, "06b-settings-interface-preferences");
 
-  await page.getByRole("button", { name: /创建主题|Create theme/ }).click();
-  await expect(page.locator("[data-ui2-theme-studio]")).toBeVisible();
-  await assertDarkPage(page, "quick theme studio", [
+  const themePicker = page.locator("[data-ui2-interface-theme]").getByRole("radiogroup", { name: /主题包|Theme packs/ });
+  await expect(themePicker.getByRole("radio")).toHaveCount(6);
+  for (const themeId of ["ling-breeze", "ling-dark", "ling-light", "ling-night", "ling-ocean", "ling-journey"]) {
+    await expect(themePicker.locator(`[data-theme-option-id="${themeId}"]`)).toBeVisible();
+  }
+  await expect(themePicker.locator('[data-theme-option-id="ling-dark"]')).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("button", { name: /创建主题|Create theme/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /导入主题|Import theme/ })).toHaveCount(0);
+  await expect(page.locator("[data-ui2-theme-studio]")).toHaveCount(0);
+  await expect(page.locator("[data-background-settings] [data-background-file]")).toBeEnabled();
+  await assertDarkPage(page, "built-in themes and workspace background", [
     ".settings-layout",
-    "[data-ui2-theme-studio]",
-    ".settings-theme-studio-input",
-    ".settings-theme-studio-preview",
+    "[data-ui2-interface-theme]",
+    '[data-ui2-interface-theme] [role="radiogroup"]',
+    "[data-background-settings]",
+    ".background-editor",
   ]);
-  await captureDarkEvidence(page, testInfo, "06c-settings-quick-theme-studio");
-  await page.getByRole("button", { name: /返回主题列表|Back to themes/ }).click();
+  await captureDarkEvidence(page, testInfo, "06c-settings-built-in-themes-and-background");
 
   await page.getByLabel("设置分组").getByRole("button", { name: /外部工作|External work/ }).click();
   await expect(page.locator("[data-ui2-external-work]")).toBeVisible();
@@ -489,12 +501,24 @@ function createDarkThemeState(): MockState {
   return state;
 }
 
-async function mockAutomationReadRoutes(page: Page): Promise<void> {
+async function mockAutomationReadRoutes(page: Page, state: MockState): Promise<void> {
+  const automation: AutomationDefinition = {
+    id: "automation_dark_mode", workspaceId: "workspace_default", channelId: "channel_engineering",
+    threadId: "thread_dark_automation", automationMode: "cron", title: "深色主题自动化", kind: "custom_prompt",
+    status: "enabled", trigger: { type: "manual" }, cwds: [cwd], executionEnvironment: "local",
+    target: { scope: "channel", workspaceId: "workspace_default", channelId: "channel_engineering", cwd },
+    promptTemplate: { templateVersion: 1, promptMarkdown: "检查频道工作。", contextSelectors: [] },
+    executionPolicy: {}, outputPolicy: { destinations: [{ type: "automation_thread" }], artifactFormat: "markdown" },
+    createdAt: "2026-06-24T00:00:00.000Z", updatedAt: "2026-06-24T00:00:00.000Z",
+  };
+  state.threads.push({ id: automation.threadId, workspaceId: automation.workspaceId, kind: "automation",
+    channelId: automation.channelId, title: automation.title, objective: automation.promptTemplate.promptMarkdown,
+    status: "open", createdAt: automation.createdAt, updatedAt: automation.updatedAt });
   await page.route("http://127.0.0.1:17891/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     if (request.method() === "GET" && url.pathname === "/automations") {
-      await route.fulfill({ json: { cwd, automations: [], templates: [] } });
+      await route.fulfill({ json: { cwd, automations: [automation], templates: [] } });
       return;
     }
     if (request.method() === "GET" && url.pathname === "/automation-drafts") {
@@ -514,7 +538,7 @@ async function mockAutomationReadRoutes(page: Page): Promise<void> {
             cwd,
             status: "running",
             startedAt: "2026-06-24T00:00:00.000Z",
-            automationCount: 0,
+            automationCount: 1,
             tickCount: 1,
             items: [],
           }],
@@ -552,9 +576,22 @@ async function readDarkSurfaces(page: Page, selectors: readonly string[]): Promi
   readonly maxChannel: number;
 }>> {
   return await page.evaluate((inputSelectors) => {
+    const context = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("CSS color conversion requires a 2D context");
+    const colors = new Map<string, number[]>();
+    function parseColor(value: string): number[] {
+      const cached = colors.get(value);
+      if (cached) return cached;
+      context!.clearRect(0, 0, 1, 1);
+      context!.fillStyle = value;
+      context!.fillRect(0, 0, 1, 1);
+      const [red, green, blue, alpha] = context!.getImageData(0, 0, 1, 1).data;
+      const channels = [red, green, blue, alpha / 255];
+      colors.set(value, channels);
+      return channels;
+    }
     function effectiveBackgroundColor(element: Element): number[] {
-      const color = getComputedStyle(element).backgroundColor;
-      const channels = color.match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+      const channels = parseColor(getComputedStyle(element).backgroundColor);
       const parentColor = element.parentElement ? effectiveBackgroundColor(element.parentElement) : [0, 0, 0];
       if (channels.length < 3) {
         return parentColor;
@@ -602,10 +639,19 @@ async function assertCanonicalThemeTokens(page: Page): Promise<void> {
 async function assertNoUnexpectedLargeSurfaceColors(page: Page, label: string): Promise<void> {
   const findings = await page.evaluate(() => {
     type Rgba = readonly [number, number, number, number];
+    const context = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("CSS color conversion requires a 2D context");
+    const colors = new Map<string, Rgba>();
     const parseColor = (value: string): Rgba | undefined => {
-      const channels = value.match(/\d+(?:\.\d+)?/g)?.map(Number);
-      if (!channels || channels.length < 3) return undefined;
-      return [channels[0] ?? 0, channels[1] ?? 0, channels[2] ?? 0, channels[3] ?? 1];
+      const cached = colors.get(value);
+      if (cached) return cached;
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = value;
+      context.fillRect(0, 0, 1, 1);
+      const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data;
+      const channels: Rgba = [red, green, blue, alpha / 255];
+      colors.set(value, channels);
+      return channels;
     };
     const composite = (foreground: Rgba, background: Rgba): Rgba => {
       const alpha = foreground[3] + background[3] * (1 - foreground[3]);
@@ -683,8 +729,22 @@ async function readTextSamples(page: Page, surfaceSelectors: readonly string[]):
   readonly text: string;
 }>> {
   return await page.evaluate((selectors) => {
+    const context = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("CSS color conversion requires a 2D context");
+    const colors = new Map<string, number[]>();
+    const parseColor = (value: string): number[] => {
+      const cached = colors.get(value);
+      if (cached) return cached;
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = value;
+      context.fillRect(0, 0, 1, 1);
+      const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data;
+      const channels = [red, green, blue, alpha / 255];
+      colors.set(value, channels);
+      return channels;
+    };
     const effectiveBackground = (element: Element): number[] => {
-      const channels = getComputedStyle(element).backgroundColor.match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+      const channels = parseColor(getComputedStyle(element).backgroundColor);
       const parent = element.parentElement ? effectiveBackground(element.parentElement) : [0, 0, 0];
       if (channels.length < 3) return parent;
       const alpha = channels[3] ?? 1;
@@ -705,7 +765,7 @@ async function readTextSamples(page: Page, surfaceSelectors: readonly string[]):
         })
         .slice(0, 4)
         .map((element) => {
-          const channels = getComputedStyle(element).color.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number) ?? [0, 0, 0];
+          const channels = parseColor(getComputedStyle(element).color).slice(0, 3);
           return {
             selector: surfaceSelector,
             maxChannel: Math.max(...channels),

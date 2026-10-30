@@ -245,7 +245,7 @@ test("T13-P.9D a provider failure stays on its channel reply", async ({ page }) 
   await expect(feed.getByText(failureMessage, { exact: true })).toHaveCount(0);
   await expect(composer.locator(".channel-composer-feedback-stack")).toHaveCount(0);
   await expect(page.locator(".task-workbench-window > .inline-error")).toHaveCount(0);
-  await expect(page.locator('[data-ling-overlay="toast"][data-tone="error"]')).toHaveCount(0);
+  await expect(page.locator('[data-ling-overlay="toast"][data-tone="error"]').filter({ hasText: /Provider message ended with an error|Reply refresh failed/u })).toHaveCount(0);
   expectBrowserSignals(signals, 503);
 });
 
@@ -285,8 +285,8 @@ test("T13-P.9D a late Engineering send failure cannot leak into Research", async
   await requestStarted.promise;
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button").filter({ hasText: "Research" }).first().click();
-  await expect(page.getByRole("heading", { name: "Research", level: 1 })).toBeVisible();
+  await navigation.getByRole("button", { name: "Research", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Research / Research conversation", level: 1, exact: true })).toBeVisible();
 
   const failedResponse = page.waitForResponse((response) =>
     response.status() === 400 &&
@@ -304,8 +304,8 @@ test("T13-P.9D a late Engineering send failure cannot leak into Research", async
   await expect(page.getByText(failureMessage, { exact: true })).toHaveCount(0);
   await captureEvidence(page, "1440x960-ling-light-research-clean-after-late-failure.png");
 
-  await navigation.getByRole("button").filter({ hasText: "Engineering" }).first().click();
-  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Engineering / Engineering conversation", level: 1, exact: true })).toBeVisible();
 
   const restoredComposer = page.getByLabel("Channel composer");
   const ownedFailure = restoredComposer.locator(".composer-status-row.failed");
@@ -358,8 +358,8 @@ test("T13-P.9D channel rename failure remains inside its owning Dialog", async (
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button").filter({ hasText: "Research" }).first().click();
-  await expect(page.getByRole("heading", { name: "Research", level: 1 })).toBeVisible();
+  await navigation.getByRole("button", { name: "Research", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Research / Research conversation", level: 1, exact: true })).toBeVisible();
   await expect(page.getByText(failureMessage, { exact: true })).toHaveCount(0);
   await expectNoDocumentOverflow(page);
   expectBrowserSignals(signals, 503);

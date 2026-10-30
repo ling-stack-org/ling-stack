@@ -81,6 +81,7 @@ import { FileLockedTaskContinuationPreferenceStore } from "./locked-task-continu
 import { DesktopRendererThemeStore } from "./renderer-theme-store.js";
 import { resolveDesktopResourcePaths } from "./resource-paths.js";
 import { resolveDesktopResourcesWithStartupRecovery } from "./resource-startup-recovery.js";
+import { installDesktopBrowserHostForLaunch } from "./qa-launch-profile.js";
 import { sendToLiveDesktopWindow } from "./safe-window-send.js";
 import { establishDesktopSingleInstanceAuthority } from "./single-instance.js";
 import {
@@ -327,8 +328,14 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     browserHostPath: resources.browserHostPath,
   });
   try {
-    await installBrowserHost({ hostPath: resources.browserHostPath });
-    logStartup("browser_host.registered", { packaged: app.isPackaged });
+    const registration = await installDesktopBrowserHostForLaunch({
+      hostPath: resources.browserHostPath,
+      installBrowserHost,
+    });
+    logStartup(registration === "registered" ? "browser_host.registered" : "browser_host.registration_skipped", {
+      packaged: app.isPackaged,
+      ...(registration === "skipped_owned_qa" ? { reason: "owned_synthetic_qa_profile" } : {}),
+    });
   } catch (error) {
     logStartup("browser_host.registration_unavailable", {
       packaged: app.isPackaged,
@@ -417,7 +424,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
           engineSupervisorPath: resources.engineSupervisorPath,
           imageSanitizerPath: resources.imageSanitizerPath,
           cuaDriverFeatureFlags: featureFlags,
-          ...(smokeHeadless && app.runningUnderARM64Translation ? { startupTimeoutMs: 60_000 } : {}),
+          ...(!app.isPackaged && smokeHeadless && app.runningUnderARM64Translation ? { startupTimeoutMs: 60_000 } : {}),
           onUnexpectedExit: (details) => {
             requestDesktopDaemonRecovery(details);
           },

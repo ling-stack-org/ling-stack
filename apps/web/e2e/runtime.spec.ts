@@ -916,7 +916,7 @@ test("fork lineage creates child thread in work history while channel page hides
   await expect(detail).toContainText("turn_fork_source");
   await expect(workList).toContainText(childThread?.title ?? "Fork");
 
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.locator(".channel-work-thread-tree")).toHaveCount(0);
   await expect(page.locator(".channel-left-drawer .sidebar-branch-list")).toHaveCount(0);
   await expect(page.getByText("Conversation branches")).toHaveCount(0);
@@ -1118,7 +1118,7 @@ test("fork and run starts an explicit child branch run from work history", async
 
   await expect(detail).toContainText("Forked from");
   await expect(detail).toContainText("thread_fork_run_source");
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.locator(".channel-work-thread-tree")).toHaveCount(0);
   await expect(page.locator(".channel-left-drawer .sidebar-branch-list")).toHaveCount(0);
   const workCell = page.locator('[data-conversation-timeline-activity][data-conversation-timeline-status="running"]')
@@ -1261,7 +1261,7 @@ test("run history archives restores pins and filters channel branches", async ({
   await expect(workList).toContainText("Visibility active branch");
   await expect(workList).toContainText("Visibility archived branch");
 
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.locator(".channel-work-thread-tree")).toHaveCount(0);
   await expect(page.locator(".channel-left-drawer .sidebar-branch-list")).toHaveCount(0);
 });

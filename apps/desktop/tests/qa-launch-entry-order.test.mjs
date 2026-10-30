@@ -35,6 +35,7 @@ async function fixture(t, { qa = true, profileArgument = true } = {}) {
   const before = JSON.stringify(process.env);
   const key = `__qaEntryOrderExplicitTestOnly${++sequence}`;
   const state = { mainImports: 0, setCalls: 0, userData: "/synthetic-daily-user-data", marker, appPath, scopeLogs: 0,
+    browserRegistrations: 0, registrationOutcome: undefined,
     app: { isPackaged: true, getAppPath: () => appPath, getPath: () => state.userData,
       setPath: (name, value) => { assert.equal(name, "userData"); state.setCalls++; state.userData = value; } },
     mainImported() {
@@ -70,7 +71,11 @@ async function fixture(t, { qa = true, profileArgument = true } = {}) {
   const loader = registerHooks({ resolve(specifier, context, nextResolve) {
     if (context.parentURL && new URL(context.parentURL).pathname === entry.pathname) {
       if (specifier === "electron") return { shortCircuit: true, url: shim("export const app = state.app;") };
-      if (specifier === "./main.js") return { shortCircuit: true, url: shim("state.mainImported(); export {};") };
+      if (specifier === "./main.js") return { shortCircuit: true, url: shim(`state.mainImported();
+        const policy = await import(${JSON.stringify(new URL("../dist/main/qa-launch-profile.js", import.meta.url).href)});
+        state.registrationOutcome = await policy.installDesktopBrowserHostForLaunch({
+          hostPath: "/synthetic-only/ling-browser-host", installBrowserHost: async () => { state.browserRegistrations++; }
+        }); export {};`) };
     }
     return nextResolve(specifier, context);
   } });
@@ -82,12 +87,16 @@ test("real emitted entry scopes actual process before dynamic Main evaluation", 
   const f = await fixture(t);
   await f.load();
   assert.equal(f.state.mainImports, 1);
+  assert.equal(f.state.browserRegistrations, 0);
+  assert.equal(f.state.registrationOutcome, "skipped_owned_qa");
 });
 
 test("real emitted normal entry preserves inherited configuration and userData", async t => {
   const f = await fixture(t, { qa: false, profileArgument: false });
   await f.load();
   assert.equal(f.state.mainImports, 1);
+  assert.equal(f.state.browserRegistrations, 1);
+  assert.equal(f.state.registrationOutcome, "registered");
 });
 
 test("QA package without profile never evaluates Main or falls back to daily profile", async t => {

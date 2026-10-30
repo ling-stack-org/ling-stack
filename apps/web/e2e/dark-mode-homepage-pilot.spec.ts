@@ -3,7 +3,7 @@ import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
 
 const surfaceSelectors = {
-  app: ".conversation-home",
+  app: "body",
   sidebar: ".channel-left-drawer",
   panel: ".conversation-home-shortcuts button",
   composer: '[data-conversation-composer="true"][data-surface="normal_conversation"]',
@@ -27,6 +27,7 @@ test("Ling Dark homepage uses one neutral surface hierarchy", async ({ page }, t
   await expect(root).toHaveAttribute("data-ui-theme", "ling-dark");
   await expect(root).toHaveAttribute("data-ui-surface", "home");
   await expect(page.getByLabel("对话首页")).toBeVisible();
+  await expect(page.locator(".conversation-home")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
 
   await assertSurfaceHierarchy(page);
   await assertTextContrast(page);
@@ -45,7 +46,7 @@ async function assertSurfaceHierarchy(page: Page): Promise<void> {
       sidebar: resolveCssColor(style.getPropertyValue("--ling-bg-sidebar")),
       panel: resolveCssColor(style.getPropertyValue("--ling-bg-panel")),
       composer: resolveCssColor(style.getPropertyValue("--ling-bg-composer")),
-      hover: resolveCssColor(style.getPropertyValue("--ling-bg-subtle")),
+      hover: resolveCssColor(style.getPropertyValue("--ling-action-selection")),
     };
 
     function resolveCssColor(value: string): string {
@@ -84,7 +85,7 @@ async function assertSurfaceHierarchy(page: Page): Promise<void> {
 
 async function assertTextContrast(page: Page): Promise<void> {
   const samples = await page.evaluate(() => [
-    { selector: ".conversation-home h1", surface: ".conversation-home" },
+    { selector: ".conversation-home h1", surface: "body" },
     { selector: ".conversation-home-shortcuts button", surface: ".conversation-home-shortcuts button" },
     { selector: ".channel-left-drawer .nav-item", surface: ".channel-left-drawer" },
   ].map(({ selector, surface }) => {
@@ -107,12 +108,21 @@ async function assertTextContrast(page: Page): Promise<void> {
 async function assertKeyboardFocus(page: Page): Promise<void> {
   const shortcut = page.locator(surfaceSelectors.panel).first();
   await shortcut.focus();
-  const shortcutFocus = await shortcut.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return { style: style.outlineStyle, width: Number.parseFloat(style.outlineWidth) };
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  await expect(shortcut).toBeFocused();
+  await expect(shortcut).toHaveCSS("color", await resolveTokenColor(page, "--ling-text-strong"));
+  const expectedFocusShadow = await shortcut.evaluate((element) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--ling-text-strong)";
+    probe.style.boxShadow = "var(--ling-focus-ring), var(--ling-shortcut-shadow)";
+    element.append(probe);
+    const shadow = getComputedStyle(probe).boxShadow;
+    probe.remove();
+    return shadow;
   });
-  expect(shortcutFocus.style).not.toBe("none");
-  expect(shortcutFocus.width).toBeGreaterThanOrEqual(2);
+  expect(expectedFocusShadow).not.toBe("none");
+  await expect(shortcut).toHaveCSS("box-shadow", expectedFocusShadow);
 
   const input = page.locator(`${surfaceSelectors.composer} .tokenized-composer-input`);
   await input.focus();

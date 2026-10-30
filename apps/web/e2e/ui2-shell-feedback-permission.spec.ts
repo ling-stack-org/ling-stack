@@ -54,7 +54,7 @@ test("full access confirmation preserves draft, focus, and permission evidence",
   await page.goto("/");
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const home = page.getByLabel("Conversation home");
   await expect(home.getByRole("button", { name: /Selected permission preset Full access/ })).toBeVisible();
   await expect(home.getByRole("button", { name: /Selected model gpt-5\.5/ })).toBeVisible();

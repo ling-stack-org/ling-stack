@@ -45,7 +45,7 @@ for (const fixture of [
     await page.mouse.move(0, 0);
     await captureEvidence(page, `${fixture.width}x${fixture.height}-ling-${fixture.theme}-teammate-toolbar.png`);
 
-    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation" }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation", exact: true }).click();
     const home = page.getByLabel("Conversation home");
     await home.getByRole("textbox", { name: "Conversation message" }).fill("Verify the shared conversation toolbar");
     await home.getByRole("button", { name: "Send" }).click();
