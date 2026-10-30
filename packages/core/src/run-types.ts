@@ -1,3 +1,4 @@
+import type { ChannelSessionPage, ChannelSessionSummary, CreateChannelSessionInput, ListChannelSessionsOptions, UpdateChannelSessionRequest } from "./channel-session-types.js";
 import { randomUUID } from "node:crypto";
 import type { ApplyProposedPlanArtifactActionInput, ProposedPlanArtifactActionResult } from "./proposed-plan-mutation.js";
 import type { NativeExecutionStore } from "./native-execution-types.js";
@@ -2030,6 +2031,11 @@ export interface RunStore extends NativeExecutionStore, DelegationQueryStore, Ha
   updateUserProfile(input: UpdateUserProfileInput, now: string): UserProfile;
   getWorkspaceSettings(): WorkspaceSettings;
   updateWorkspaceSettings(input: UpdateWorkspaceSettingsInput, now: string): WorkspaceSettings;
+  createChannelSession(input: CreateChannelSessionInput, now: string): { session: ChannelSessionSummary; idempotentReplay: boolean };
+  repairChannelSessionDirectory(channelId: string, branchId: string, now: string): ChannelSessionSummary;
+  getChannelSession(channelId: string, threadId: string): ChannelSessionSummary | undefined;
+  listChannelSessions(channelId: string, options?: ListChannelSessionsOptions): ChannelSessionPage;
+  updateChannelSession(channelId: string, threadId: string, input: UpdateChannelSessionRequest, now: string): ChannelSessionSummary;
   createChannel(input: CreateChannelInput, now: string): Channel;
   getChannel(id: string): Channel | undefined;
   listChannels(options?: ListChannelsOptions): Channel[];

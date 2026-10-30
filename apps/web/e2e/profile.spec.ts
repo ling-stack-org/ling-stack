@@ -141,7 +141,7 @@ test("workspace messages use the saved user profile identity", async ({ page }) 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   const message = page.locator(".channel-message-row.local-user").filter({ hasText: "Profile identity should render in this message." });
   await expect(message).toBeVisible();
   await expect(message).not.toContainText("Tian Xiao");

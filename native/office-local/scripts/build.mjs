@@ -45,7 +45,16 @@ export function buildNativeEvidence({ output, headers, compiler }) {
   if (!isAbsolute(compiler)) throw new Error("local_clang_required");
   compiler = realpathSync(compiler);
   if (!lstatSync(compiler).isFile()) throw new Error("local_clang_required");
-  const selectedSdk = spawnSync("/usr/bin/xcrun", ["--show-sdk-path"], { encoding: "utf8" });
+  const toolchainMarker = "/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang";
+  const markerIndex = compiler.indexOf(toolchainMarker);
+  if (markerIndex < 1) throw new Error("local_xcode_toolchain_required");
+  const developerDir = compiler.slice(0, markerIndex);
+  const toolchainEnvironment = {
+    PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+    DEVELOPER_DIR: developerDir,
+    SDKROOT: "",
+  };
+  const selectedSdk = spawnSync("/usr/bin/xcrun", ["--sdk", "macosx", "--show-sdk-path"], { env: toolchainEnvironment, encoding: "utf8" });
   if (selectedSdk.error || selectedSdk.status !== 0 || !isAbsolute(selectedSdk.stdout.trim())) throw new Error("local_macos_sdk_required");
   const sdk = realpathSync(selectedSdk.stdout.trim());
   mkdirSync(output, { mode: 0o700 });
@@ -56,7 +65,7 @@ export function buildNativeEvidence({ output, headers, compiler }) {
     "-undefined", "dynamic_lookup", "-mmacosx-version-min=13.0", "-arch", process.arch === "x64" ? "x86_64" : "arm64",
     "-I", headerRoot, join(moduleRoot, "src/runtime.cc"), join(moduleRoot, "src/publication.cc"), join(moduleRoot, "src/addon.cc"), "-o", binary];
   // Ambient build flags/loaders must not silently change the identity of this build.
-  const environment = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
+  const environment = toolchainEnvironment;
   const build = spawnSync(compiler, argv, { cwd: moduleRoot, env: environment, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
   writeNew(join(output, "build.log"), (build.stdout ?? "") + (build.stderr ?? ""));
   writeNew(join(output, "build.command.json"), JSON.stringify({ compiler, argv, environment, status: build.status,

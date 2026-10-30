@@ -249,7 +249,7 @@
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
-  z-index: 30;
+  z-index: calc(var(--ling-z-menu) + 1);
   display: grid;
   gap: 2px;
   width: 220px;

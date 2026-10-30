@@ -76,7 +76,7 @@ for (const fixture of [
 
     await page.goto("/");
     const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-    await navigation.getByRole("button", { name: "Engineering" }).click();
+    await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
     await expect(page.getByLabel("Channel composer")).toBeVisible();
     await expect(page.getByText("Synthetic scoped Provider failure", { exact: true })).toHaveCount(0);
 

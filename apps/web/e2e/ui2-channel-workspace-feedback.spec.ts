@@ -29,7 +29,9 @@ test("T13-P.8D composer feedback delegates transient tones to Toast and keeps er
   const source = await readFile(composerDraftControllerSourcePath, "utf8");
   expect(source).toContain('if (tone === "error")');
   expect(source).toContain("setComposerFeedback({ id: Date.now(), tone, message })");
-  expect(source).toContain('scope: `channel:${channelId || "unknown"}:composer`');
+  expect(source).toContain("showToast({ message, scope: feedbackScope, tone })");
+  const workspace = await readFile(workspaceClientSourcePath, "utf8");
+  expect(workspace).toContain('`channel:${selectedChannelId}:session:${channelComposerIdentity ?? selectedChannelBranchRootThreadId ?? "root"}:composer`');
   expect(source).toContain("setMessageDraftState(nextDraft)");
   expect(source).not.toMatch(/composerFeedbackTimeoutRef|setTimeout|setInterval|2_200/u);
 });
@@ -63,7 +65,7 @@ test("T13-P.8D composer info and success use global Toast while errors persist u
   await input.fill("/plan status");
   await expect(error).toHaveCount(0);
   await composer.getByRole("button", { name: "Apply command" }).click();
-  const composerToast = page.locator('[data-ling-overlay="toast"][data-scope="channel:channel_engineering:composer"]');
+  const composerToast = page.locator('[data-ling-overlay="toast"][data-scope="channel:channel_engineering:session:thread_channel_channel_engineering:composer"]');
   const infoToast = composerToast.filter({ hasText: "Plan Mode is on" });
   await expect(infoToast).toHaveCount(1);
   await expect(composer.locator(".composer-status-row.info")).toHaveCount(0);
@@ -242,9 +244,9 @@ test("T13-P.6-G keeps failures in Workspace Settings until the owning recovery c
   await expect(workspace.locator(".ling-ui-inline-feedback[data-tone='danger']"))
     .toContainText("Workspace path could not be opened.");
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button").filter({ hasText: "Research" }).first().click();
-  await expect(page.getByRole("heading", { name: "Research", level: 1 })).toBeVisible();
-  await navigation.getByRole("button").filter({ hasText: "Engineering" }).first().click();
+  await navigation.getByRole("button", { name: "Research", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Research / Research conversation", level: 1, exact: true })).toBeVisible();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   workspace = await openChannelWorkspaceSettings(page);
   await expect(workspace.locator(".ling-ui-inline-feedback[data-tone='danger']")).toHaveCount(0);
 

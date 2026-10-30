@@ -85,7 +85,7 @@ test("product language preference toggles Chinese and English UI labels", async 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
 
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
@@ -96,7 +96,7 @@ test("product language preference toggles Chinese and English UI labels", async 
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
   await expect(page.locator(".interface-settings-panel").getByRole("heading", { name: "外观" })).toBeVisible();
   await page.getByRole("button", { name: "返回应用" }).click();
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "收件箱" })).toHaveCount(0);
   await expect(page.getByLabel("频道动态")).toBeVisible();
@@ -116,7 +116,7 @@ test("product language preference toggles Chinese and English UI labels", async 
   await expect(page.locator(".task-toolbar-progress")).toHaveAttribute("aria-expanded", "false");
 
   await page.reload();
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
 
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "设置" }).click();
@@ -127,7 +127,7 @@ test("product language preference toggles Chinese and English UI labels", async 
   await page.getByRole("button", { name: "Back to app" }).click();
   await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Workspace" })).toHaveCount(0);
   await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Tasks" })).toHaveCount(0);
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.getByLabel("Channel activity")).toBeVisible();
   await openChannelChatTools(page);
   await expect(page.getByPlaceholder("Search activity")).toBeVisible();
@@ -161,7 +161,7 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await expect(page.getByText(/已启用 频道/)).toHaveCount(0);
   await expect(page.getByText("Daemon ready")).toHaveCount(0);
   await expect(page.getByText("本地服务已就绪")).toHaveCount(0);
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await page.getByRole("button", { name: "更多频道视图" }).click();
   await page.getByRole("menuitem", { name: "设置" }).click();
@@ -576,7 +576,7 @@ test("settings configuration entries open nested tools directly", async ({ page 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   const settingsSections = page.getByLabel("Settings sections");
@@ -714,7 +714,7 @@ test("shared select controls preserve native sizing and segmented authorization 
   expect(fieldHeight).toBeLessThanOrEqual(37);
 
   await page.getByRole("button", { name: "Back to app" }).click();
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await openChannelChatTools(page);
   const compactSelect = page.locator('select[aria-label="Saved views"]');
   await expect(compactSelect).toHaveClass(/ling-ui-select-native/);
@@ -916,7 +916,7 @@ test("settings external work status shows setup and explicit controls", async ({
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
@@ -960,7 +960,7 @@ test("settings external work token setup saves to daemon and clears the input", 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
   const panel = page.locator("[data-ui2-external-work]");
@@ -1006,7 +1006,7 @@ test("settings external work status renders invalid, missing, and Linear states"
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
   const panel = page.locator("[data-ui2-external-work]");

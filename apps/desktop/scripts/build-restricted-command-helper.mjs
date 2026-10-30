@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { cpSync, chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { tmpdir } from "node:os";
+import { release, tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildNativeEvidence } from "../../../native/sandbox/scripts/build.mjs";
 import { readReviewedCodesignSource, assertReviewedCodesignBuildManifest } from "./packaged-codesign-review-publication.mjs";
@@ -28,6 +28,11 @@ function fileIdentity(path) {
 export function buildFreshRestrictedCommandHelperPublication() {
   requireBuild(process.platform === "darwin" && process.arch === "arm64");
   const { review, sourceReviewSha256 } = readReviewedCodesignSource();
+  // Select only among fully reviewed exact tuples. The original Host still
+  // checks every selected fingerprint; a release match alone certifies nothing.
+  const hostRelease = release();
+  const os = [review.os, ...(review.additionalOs ?? [])].find((candidate) => candidate.release === hostRelease);
+  requireBuild(os !== undefined);
   const parent = mkdtempSync(join(tmpdir(), "ling-restricted-package-"));
   const build = join(parent, "build"), staged = join(desktopRoot, "dist", ".restricted-command-next");
   const destination = join(desktopRoot, "dist", "restricted-command");
@@ -62,7 +67,7 @@ export function buildFreshRestrictedCommandHelperPublication() {
       manifestSha256: hash(manifestBytes), helperVersion: manifest.helperVersion,
       unsignedBinarySha256: packagedManifest.binary.sha256, unsignedBinarySizeBytes: packagedManifest.binary.sizeBytes,
       sourceSha256: Object.freeze({ ...review.sourceSha256 }), runtime: Object.freeze({ ...review.runtime }),
-      os: Object.freeze({ ...review.os }), trust: review.trust });
+      os: Object.freeze({ ...os }), trust: review.trust });
     const token = Object.freeze({});
     publications.set(token, { descriptor, helperPath, manifestPath, helperIdentity: fileIdentity(helperPath),
       manifestIdentity: fileIdentity(manifestPath), normalizedBytes: Buffer.from(normalizedBytes), manifestBytes: Buffer.from(manifestBytes) });

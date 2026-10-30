@@ -1,3 +1,6 @@
+import { ChannelSessionNavigation } from "./ChannelSessionNavigation.js";
+import type { useChannelSessionsController } from "../../app/use-channel-sessions-controller.js";
+import type { ChannelSessionSummary } from "@ling-stack/contracts";
 import {
   useRef,
   useState,
@@ -53,6 +56,10 @@ export function SidebarNavigation({
   activeSidebarTarget,
   channels,
   channelBranches = [],
+  channelSessions,
+  onSelectChannelSession,
+  onNewChannelSession,
+  onChannelAction,
   selectedChannelBranchId = "",
   teammates,
   cwd,
@@ -86,6 +93,10 @@ export function SidebarNavigation({
 }: {
   readonly activeSidebarTarget: SidebarTarget;
   readonly channels: readonly Channel[];
+  readonly channelSessions?: ReturnType<typeof useChannelSessionsController>;
+  readonly onSelectChannelSession?: (channelId: string, session: ChannelSessionSummary) => void;
+  readonly onNewChannelSession?: (channelId: string) => void;
+  readonly onChannelAction?: (channelId: string, action: "settings" | "rename") => void;
   readonly channelBranches?: readonly ChannelBranch[];
   readonly selectedChannelBranchId?: string;
   readonly teammates: readonly AiTeammate[];
@@ -227,6 +238,16 @@ export function SidebarNavigation({
         ) : (
 	          channels.map((channel) => {
 	            const channelActive = activeSidebarTarget === channelSidebarTarget(channel.id);
+              if (channelSessions && onSelectChannelSession && onNewChannelSession) return <ChannelSessionNavigation
+                key={channel.id} channel={channel} cwd={cwd} active={channelActive}
+                status={renderSidebarNotification(channelNotifications[channel.id], sidebarStatusLabels, t("Conversation waiting"))} controller={channelSessions}
+                statusId={sidebarNotificationId(channelNotifications[channel.id])}
+                onSelectChannel={() => onSelectChannel(channel.id)}
+                onArchiveChannel={onArchiveChannel ? () => void onArchiveChannel(channel.id) : undefined}
+                onSelectSession={session => onSelectChannelSession(channel.id, session)}
+                onNewSession={() => onNewChannelSession(channel.id)}
+                onChannelAction={onChannelAction ? action => onChannelAction(channel.id, action) : undefined}
+              />;
 	            const draftOpen = branchDraftChannelId === channel.id;
 	            const branches = branchesByChannel.get(channel.id) ?? [];
 	            const channelAvatar = channelAvatarMeta(channel);
@@ -534,6 +555,7 @@ function renderSidebarNotification(
     readonly unread: string;
     readonly waiting: string;
   },
+  waitingWithoutApprovalLabel?: string,
 ): React.JSX.Element | null {
   if (!notification) {
     return null;
@@ -542,8 +564,12 @@ function renderSidebarNotification(
   if (notification.primaryStatus) {
     const accessibleLabel = notification.primaryStatus === "waiting" && (notification.count ?? 0) > 0
       ? labels.pendingApprovals(notification.count ?? 0)
-      : labels[notification.primaryStatus];
-    const label = notification.primaryStatus === "waiting" ? labels.waiting : accessibleLabel;
+      : notification.primaryStatus === "waiting"
+        ? waitingWithoutApprovalLabel ?? labels.waiting
+        : labels[notification.primaryStatus];
+    const label = notification.primaryStatus === "waiting" && (notification.count ?? 0) > 0
+      ? labels.waiting
+      : accessibleLabel;
     const tone = notification.primaryStatus === "failed"
       ? "danger"
       : notification.primaryStatus === "paused"

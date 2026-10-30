@@ -363,12 +363,12 @@ test("Runtime approval belongs to its channel composer and leaves other conversa
   const runtime = watchRuntime(page);
   await page.goto("/");
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  const engineeringButton = navigation.getByRole("button", { name: "Engineering" }).first();
+  const engineeringButton = navigation.getByRole("button", { name: "Engineering", exact: true }).first();
   const engineeringRow = navigation.locator(".sidebar-row-shell").filter({ hasText: "Engineering" }).first();
   await expect(engineeringRow).toHaveAttribute("data-sidebar-row-status", "waiting");
-  await expect(engineeringRow).toContainText("3 pending approvals");
+  await expect(engineeringRow.getByRole("status", { name: "3 pending approvals", exact: true })).toHaveText("Waiting for approval");
 
-  await navigation.getByRole("button", { name: "General" }).click();
+  await navigation.getByRole("button", { name: "General", exact: true }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await expect(page.getByRole("region", { name: "Allow this action?" })).toHaveCount(0);
   await expect(page.getByRole("dialog", { name: "Allow this action?" })).toHaveCount(0);
@@ -387,7 +387,7 @@ test("Runtime approval belongs to its channel composer and leaves other conversa
   await expect(page.locator(".approval-inline-strip")).toHaveCount(0);
   await captureEvidence(page, "1440x960-ling-light-runtime-approval-composer-gate.png");
 
-  await navigation.getByRole("button", { name: "General" }).click();
+  await navigation.getByRole("button", { name: "General", exact: true }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await engineeringButton.click();
   await gate.getByRole("button", { name: "Allow once" }).click();

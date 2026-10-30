@@ -6,12 +6,17 @@ open-source baseline onward.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and future
 release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-10-30
 
 ### Added
 
 - Conversation side navigation previews each sender's avatar, name and message
   excerpt, and jumps through loaded history with mouse or keyboard controls.
+- Channels now organize multiple independent conversations. Create, rename, archive
+  and restore conversations while keeping each conversation's history, drafts,
+  running work and approval confirmations separate; the original channel chat
+  remains available as the default conversation.
+
 - Model reasoning controls support distinct `max` and `ultra` levels when the
   selected model declares them, and explain changes to a supported default when
   switching models.
@@ -33,6 +38,9 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
   development-package instructions with a fresh workspace screenshot.
 
 ### Fixed
+
+- Notification, IM, diagnostics and startup services reject untrusted web origins;
+  the desktop accesses these local services through its trusted main window.
 
 - Source setup now documents and checks Rust/Cargo requirements, and doctor suggests
   the source CLI command when invoked through pnpm.

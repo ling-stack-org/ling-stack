@@ -413,8 +413,11 @@ test("channel branches follow archive restore and delete lifecycle", async () =>
     assert.equal(legacyBranch.rootThreadId, undefined);
     const repairedBranches = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches?cwd=${encodeURIComponent(cwd)}`);
     const repairedLegacy = repairedBranches.branches.find((item) => item.id === legacyBranch.id);
-    assert.ok(repairedLegacy?.rootThreadId);
-    assert.equal(store.getChannelBranch(legacyBranch.id).rootThreadId, repairedLegacy.rootThreadId);
+    assert.equal(repairedLegacy?.rootThreadId, undefined);
+    assert.equal(store.getChannelBranch(legacyBranch.id).rootThreadId, undefined);
+    const explicitRepair = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches/${encodeURIComponent(legacyBranch.id)}/repair?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.ok(explicitRepair.branch.rootThreadId);
+    assert.equal(store.getChannelBranch(legacyBranch.id).rootThreadId, explicitRepair.branch.rootThreadId);
 
     let listed = await getJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(listed.channels.some((item) => item.id === channel.id), true);

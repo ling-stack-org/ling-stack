@@ -1,13 +1,27 @@
 import type { ChannelConversationSurface } from "@ling-stack/contracts";
+import { HttpError } from "../../errors.js";
 import type { Channel, LingThread, RunStore } from "@ling-stack/core";
+
+/** The session directory is the authority when archived historical roots coexist. */
+export function findChannelDefaultConversationThread(
+  store: Pick<RunStore, "getChannel" | "listChannelSessions" | "getLingThread">, channelId: string,
+): LingThread | undefined {
+  if (!store.getChannel(channelId)) return undefined;
+  const root = store.listChannelSessions(channelId).defaultSession;
+  return root ? store.getLingThread(root.id) : undefined;
+}
 
 export function resolveChannelConversationThread(input: {
   readonly store: RunStore;
   readonly channel: Channel;
   readonly surface?: ChannelConversationSurface;
   readonly now: string;
+  readonly readOnly?: boolean;
 }): LingThread {
   if (!input.surface || input.surface.kind === "channel_root") {
+    const root = findChannelDefaultConversationThread(input.store, input.channel.id);
+    if (root) return root;
+    if (input.readOnly) throw new HttpError(409, "default_session_missing", "The channel default conversation requires repair.");
     return input.store.resolveOrCreateConversationThread({
       surfaceKind: "channel_root",
       channelId: input.channel.id,
@@ -19,10 +33,13 @@ export function resolveChannelConversationThread(input: {
   if (input.surface.kind === "thread") {
     const explicitThread = input.store.getLingThread(input.surface.threadId);
     if (!explicitThread) {
-      throw new Error(`Conversation thread not found: ${input.surface.threadId}`);
+      throw new HttpError(404, "conversation_thread_not_found", `Conversation thread not found: ${input.surface.threadId}`);
     }
-    if (explicitThread.channelId !== input.channel.id || explicitThread.archivedAt || explicitThread.status === "archived") {
-      throw new Error(`Conversation thread is not active in channel: ${input.surface.threadId}`);
+    if (explicitThread.channelId !== input.channel.id) {
+      throw new HttpError(404, "conversation_thread_not_found", `Conversation thread not found in channel: ${input.surface.threadId}`);
+    }
+    if (!input.readOnly && (explicitThread.archivedAt || explicitThread.status === "archived")) {
+      throw new HttpError(409, "conversation_thread_archived", `Conversation thread is archived: ${input.surface.threadId}`);
     }
     return explicitThread;
   }

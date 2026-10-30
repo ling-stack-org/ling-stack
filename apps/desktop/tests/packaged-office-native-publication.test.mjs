@@ -120,11 +120,18 @@ test("package-owned afterSign wrapper and all imported branches remain explicit 
   }
 });
 
-test("new admission and summary dependencies are pinned while Main graph remains outside Office scope", () => {
+test("new admission and summary dependencies and exact IPC wiring are pinned without rooting the Main graph", () => {
   for (const paths of [addedDependencyGroups.nativeAdmission, addedDependencyGroups.userInputAdmission, addedDependencyGroups.workSummary]) {
     for (const path of paths) assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path), path);
   }
-  assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes("apps/desktop/main/main.ts"), false);
+  assert.ok(PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS.includes("apps/desktop/main/local-services.ts"));
+  for (const path of ["apps/desktop/main/main.ts", "apps/desktop/main/ipc.ts",
+    "apps/desktop/preload/main-window.ts", "apps/desktop/shared/ipc-channels.ts",
+    "apps/desktop/shared/desktop-capabilities.ts", "apps/desktop/shared/local-service-capabilities.ts",
+    "apps/web/src/api/client.ts"]) {
+    assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path), path);
+    assert.equal(PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS.includes(path), false, path);
+  }
   assert.equal(new Set(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS).size,
     PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.length);
 });

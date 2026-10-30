@@ -1,3 +1,6 @@
+import { applyChannelSessionMigration, CHANNEL_SESSION_MIGRATION_VERSION } from "./sqlite/channel-session-migration.js";
+import { SqliteChannelSessionStore } from "./sqlite/channel-session-store.js";
+import type { CreateChannelSessionInput, ListChannelSessionsOptions, UpdateChannelSessionRequest } from "../channel-session-types.js";
 import { SqliteWorkSummaryStore } from "./sqlite/work-summary-store.js";
 import { applyWorkSummaryMigration } from "./sqlite/work-summary-migration.js";
 import { applyWorkspacePermissionMigration } from "./sqlite/workspace-permission-migration.js";
@@ -864,6 +867,7 @@ export class SqliteRunStore implements RunStore {
   private readonly channelTeamPatterns: SqliteChannelTeamPatternStore;
   private readonly channelTeamSnapshots: SqliteChannelTeamSnapshotStore;
   private readonly channelCore: SqliteChannelCoreStore;
+  private readonly channelSessions: SqliteChannelSessionStore;
   private readonly externalWork: SqliteExternalWorkStore;
   private readonly externalWorkActions: SqliteExternalWorkActionStore;
   private readonly externalWorkCiTriage: SqliteExternalWorkCiTriageStore;
@@ -892,6 +896,9 @@ export class SqliteRunStore implements RunStore {
     this.conversationTurnIngest = new SqliteConversationTurnIngestStore(
       { database: this.database },
       this.conversationItems,
+      (threadId, body) => {
+        if (this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)) this.channelSessions.nameFromFirstMessage(threadId, body);
+      },
     );
     this.conversationContext = new SqliteConversationContextStore({ database: this.database });
     this.conversationAcceptedInput = new SqliteConversationAcceptedInputStore({ database: this.database }, this.conversationTurnIngest);
@@ -1411,6 +1418,17 @@ export class SqliteRunStore implements RunStore {
       { database: this.database },
       { ensureLingAgentChannelMemberships: (now, channelId) => this.ensureLingAgentChannelMemberships(now, channelId) },
     );
+    this.channelSessions = new SqliteChannelSessionStore(this.database, {
+      createChannel: (input, now) => this.channelCore.createChannel(input, now),
+      getBranch: (id) => this.channelCore.getChannelBranch(id),
+      updateBranch: (id, input, now) => this.channelCore.updateChannelBranch(id, input, now),
+      deleteBranch: (id) => this.channelCore.deleteChannelBranch(id),
+      getChannel: (id) => this.channelCore.getChannel(id),
+      createLingThread: (input, now) => this.lingThreads.createLingThread(input, now),
+      getLingThread: (id) => this.lingThreads.getLingThread(id),
+      updateLingThread: (id, input, now) => this.lingThreads.updateLingThread(id, input, now),
+      createChannelBranch: (input, now) => this.channelCore.createChannelBranch(input, now),
+    });
     this.channelTeamEvidence = new SqliteChannelTeamEvidenceStore(
       { database: this.database },
       { assertChannelExists: (channelId) => this.assertChannelExists(channelId) },
@@ -1712,6 +1730,14 @@ export class SqliteRunStore implements RunStore {
             });
           }
         }
+        if (!options.deferContinuityV2MigrationForTest && !options.deferContinuityV2ReleaseMigrationsForTest) {
+          applyChannelSessionMigration({
+            database: this.database,
+            backupPath: `${this.paths.databasePath}.pre-channel-sessions-v${CHANNEL_SESSION_MIGRATION_VERSION}.backup`,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+        }
       });
     } catch (error) {
       this.database.close();
@@ -2012,7 +2038,8 @@ export class SqliteRunStore implements RunStore {
   }
 
   updateLingThread(threadId: string, input: UpdateLingThreadInput, now: string): LingThread | undefined {
-    return this.lingThreads.updateLingThread(threadId, input, now);
+    return this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)
+      ? this.channelSessions.updateThread(threadId, input, now) : this.lingThreads.updateLingThread(threadId, input, now);
   }
 
   getLingThreadConversationMode(threadId: string): ConversationModeState | undefined {
@@ -3339,8 +3366,19 @@ export class SqliteRunStore implements RunStore {
     return this.workspaceSettings.updateWorkspaceSettings(input, now);
   }
 
+  createChannelSession(input: CreateChannelSessionInput, now: string) { return this.channelSessions.create(input, now); }
+  repairChannelSessionDirectory(channelId: string, branchId: string, now: string) {
+    return this.channelSessions.repairDirectory(channelId, branchId, now);
+  }
+  getChannelSession(channelId: string, threadId: string) { return this.channelSessions.get(channelId, threadId); }
+  listChannelSessions(channelId: string, options?: ListChannelSessionsOptions) { return this.channelSessions.list(channelId, options); }
+  updateChannelSession(channelId: string, threadId: string, input: UpdateChannelSessionRequest, now: string) {
+    return this.channelSessions.update(channelId, threadId, input, now);
+  }
+
   createChannel(input: CreateChannelInput, now: string): Channel {
-    return this.channelCore.createChannel(input, now);
+    return this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)
+      ? this.channelSessions.createChannel(input, now) : this.channelCore.createChannel(input, now);
   }
 
   getChannel(id: string): Channel | undefined {
@@ -3360,7 +3398,8 @@ export class SqliteRunStore implements RunStore {
   }
 
   createChannelBranch(input: CreateChannelBranchInput, now: string): ChannelBranch {
-    return this.channelCore.createChannelBranch(input, now);
+    return this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)
+      ? this.channelSessions.registerDirectory(input, now) : this.channelCore.createChannelBranch(input, now);
   }
 
   getChannelBranch(id: string): ChannelBranch | undefined {
@@ -3372,11 +3411,13 @@ export class SqliteRunStore implements RunStore {
   }
 
   updateChannelBranch(id: string, input: ChannelBranchUpdateInput, now: string): ChannelBranch | undefined {
-    return this.channelCore.updateChannelBranch(id, input, now);
+    return this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)
+      ? this.channelSessions.updateLegacyBranch(id, input, now) : this.channelCore.updateChannelBranch(id, input, now);
   }
 
   deleteChannelBranch(id: string): boolean {
-    return this.channelCore.deleteChannelBranch(id);
+    return this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)
+      ? this.channelSessions.deleteLegacyBranch(id, new Date().toISOString()) : this.channelCore.deleteChannelBranch(id);
   }
 
   createChannelTeamEvidenceItem(input: CreateChannelTeamEvidenceItemInput, now: string): ChannelTeamEvidenceItem {

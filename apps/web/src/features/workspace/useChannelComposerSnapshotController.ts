@@ -1,3 +1,4 @@
+import { readChannelComposerDraft, writeChannelComposerDraft } from "./channel-composer-draft-storage.js";
 import { useCallback, useLayoutEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { PendingAttachmentItem } from "../../shared/components/index.js";
 import type { ChannelAttachment, ChannelMention } from "../../types.js";
@@ -7,6 +8,7 @@ import type { ChannelThreadReplySnapshot } from "./useChannelThreadReplyControll
 
 interface ChannelComposerSnapshotControllerInput {
   readonly ownerKey: string;
+  readonly storageOwnerKey?: string;
   readonly messageDraft: string;
   readonly setMessageDraft: Dispatch<SetStateAction<string>>;
   readonly pendingAttachments: readonly PendingAttachmentItem<ChannelAttachment>[];
@@ -66,6 +68,7 @@ export function useChannelComposerSnapshotController({
   pendingLinkPreviews,
   restoreThreadReplySnapshot,
   ownerKey,
+  storageOwnerKey = ownerKey,
   sendError,
   sendState,
   setMentionActiveIndex,
@@ -79,6 +82,9 @@ export function useChannelComposerSnapshotController({
   threadReplySnapshot,
 }: ChannelComposerSnapshotControllerInput): ChannelComposerSnapshotController {
   const previousOwnerKeyRef = useRef(ownerKey);
+  const hydratedRef = useRef(false);
+  const storageKeysRef = useRef(new Map<string, string>());
+  storageKeysRef.current.set(ownerKey, storageOwnerKey);
   const composerSnapshotsRef = useRef<Record<string, ChannelComposerSnapshot>>({});
   const latestSendIdsRef = useRef(new Map<string, string>());
   const onChannelSwitchRef = useRef(onChannelSwitch);
@@ -150,6 +156,7 @@ export function useChannelComposerSnapshotController({
       sendError: outcome?.errorMessage ?? "",
     };
     composerSnapshotsRef.current[sendOwnerKey] = settled;
+    writeChannelComposerDraft(storageKeysRef.current.get(sendOwnerKey) ?? sendOwnerKey, { ...settled });
     // A -> B -> A may reopen the same owner while its old request is still pending.
     if (visible) {
       latestSnapshotRef.current = settled;
@@ -191,21 +198,28 @@ export function useChannelComposerSnapshotController({
   ]);
 
   useLayoutEffect(() => {
-    latestSnapshotRef.current = readCurrentComposerSnapshot();
-  }, [readCurrentComposerSnapshot]);
-
-  useLayoutEffect(() => {
     const previousOwnerKey = previousOwnerKeyRef.current;
-    previousOwnerKeyRef.current = ownerKey;
-    if (previousOwnerKey === ownerKey) {
+    if (!hydratedRef.current || previousOwnerKey !== ownerKey) {
+      if (hydratedRef.current) {
+        const previous = latestSnapshotRef.current ?? readCurrentComposerSnapshot();
+        composerSnapshotsRef.current[previousOwnerKey] = previous;
+        writeChannelComposerDraft(storageKeysRef.current.get(previousOwnerKey) ?? previousOwnerKey, { ...previous });
+      }
+      previousOwnerKeyRef.current = ownerKey;
+      hydratedRef.current = true;
+      const restored = composerSnapshotsRef.current[ownerKey]
+        ?? readChannelComposerDraft<ChannelComposerSnapshot>(storageOwnerKey)
+        ?? emptyComposerSnapshot();
+      latestSnapshotRef.current = restored;
+      applyComposerSnapshot(restored);
+      if (previousOwnerKey !== ownerKey) onChannelSwitchRef.current();
       return;
     }
-    composerSnapshotsRef.current[previousOwnerKey] = latestSnapshotRef.current ?? readCurrentComposerSnapshot();
-    applyComposerSnapshot(
-      composerSnapshotsRef.current[ownerKey] ?? emptyComposerSnapshot(),
-    );
-    onChannelSwitchRef.current();
-  }, [applyComposerSnapshot, emptyComposerSnapshot, readCurrentComposerSnapshot, ownerKey]);
+    const current = readCurrentComposerSnapshot();
+    latestSnapshotRef.current = current;
+    composerSnapshotsRef.current[ownerKey] = current;
+    writeChannelComposerDraft(storageOwnerKey, { ...current });
+  }, [applyComposerSnapshot, emptyComposerSnapshot, readCurrentComposerSnapshot, ownerKey, storageOwnerKey]);
 
   return {
     beginSend,

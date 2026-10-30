@@ -17,7 +17,7 @@ async function openArchivedItemsSettings(page: Page): Promise<void> {
   await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
 }
 
-test("channel branch list shows real branches without default branch chrome", async ({ page }) => {
+test("channel sessions retain the default and named conversations through legacy archive and restore", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.channelBranches = [
@@ -47,30 +47,33 @@ test("channel branch list shows real branches without default branch chrome", as
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const engineeringGroup = navigation.locator(".sidebar-channel-group").filter({ hasText: "Engineering" });
-  const engineeringRow = navigation.getByRole("button", { name: "Engineering" });
+  const engineeringRow = navigation.getByRole("button", { name: "Engineering", exact: true });
   await expect(engineeringRow).toBeVisible();
 
   await engineeringRow.click();
   await expect(engineeringGroup.getByRole("button", { name: /Main branch/ })).toHaveCount(0);
-  await expect(navigation.locator(".sidebar-branch-list")).toHaveCount(0);
+  await expect(engineeringGroup.locator('[data-session-default="true"]')).toBeVisible();
+  await engineeringGroup.getByRole("button", { name: "Collapse conversations: Engineering", exact: true }).click();
+  await expect(engineeringGroup.locator(".sidebar-branch-list")).toHaveCount(0);
+  await engineeringGroup.getByRole("button", { name: "Expand conversations: Engineering", exact: true }).click();
+  await expect(engineeringGroup.locator('[data-session-default="true"]')).toBeVisible();
   await expect(navigation.getByRole("button", { name: "API cleanup" })).toHaveCount(0);
   await page.mouse.move(640, 120);
-  await expect.poll(async () => engineeringGroup.locator(".sidebar-row-tools").evaluate((node) => getComputedStyle(node).pointerEvents)).toBe("auto");
+  await expect.poll(async () => engineeringGroup.locator(".sidebar-channel-container-row .sidebar-row-tools").evaluate((node) => getComputedStyle(node).pointerEvents)).toBe("auto");
   await engineeringRow.hover();
-  await expect.poll(async () => engineeringGroup.locator(".sidebar-row-tools").evaluate((node) => getComputedStyle(node).pointerEvents)).toBe("auto");
-  await expect(engineeringGroup.getByRole("button", { name: "Create branch" })).toBeVisible();
-  await engineeringGroup.getByRole("button", { name: "Create branch" }).click();
-  await engineeringGroup.getByLabel("Branch name").fill("Quick split");
-  await engineeringGroup.locator("form.sidebar-branch-create-form").getByRole("button", { name: "Create branch" }).click();
+  await expect.poll(async () => engineeringGroup.locator(".sidebar-channel-container-row .sidebar-row-tools").evaluate((node) => getComputedStyle(node).pointerEvents)).toBe("auto");
+  await expect(engineeringGroup.getByRole("button", { name: "New conversation in Engineering", exact: true })).toBeVisible();
+  await engineeringGroup.getByRole("button", { name: "New conversation in Engineering", exact: true }).click();
+  await page.getByRole("textbox", { name: "Conversation name (optional)", exact: true }).fill("Quick split");
+  await channelComposerTextbox(page).fill("Branch-scoped message");
+  await page.locator(".channel-composer").getByRole("button", { name: "Send", exact: true }).click();
   await expect.poll(() => mockBranchStatus(state, "Quick split")).toBe("active");
-  await expect(navigation.getByRole("button", { name: "Quick split" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Quick split", exact: true })).toBeVisible();
   await expect(navigation.locator(".sidebar-branch-list")).toHaveCount(1);
   await expect(engineeringGroup.getByRole("button", { name: /Main branch/ })).toHaveCount(0);
   const quickSplitBranch = state.channelBranches.find((item) => isRecord(item) && item.name === "Quick split");
   expect(isRecord(quickSplitBranch) && typeof quickSplitBranch.rootThreadId === "string").toBe(true);
   const quickSplitRootThreadId = isRecord(quickSplitBranch) && typeof quickSplitBranch.rootThreadId === "string" ? quickSplitBranch.rootThreadId : "";
-  await channelComposerTextbox(page).fill("Branch-scoped message");
-  await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
   await expect.poll(() => state.lastChannelTurnRequest?.surface).toEqual({ kind: "thread", threadId: quickSplitRootThreadId });
 
   await openArchivedItemsSettings(page);
@@ -87,8 +90,8 @@ test("channel branch list shows real branches without default branch chrome", as
   await expect(archivedPanel).not.toContainText("Engineering / API cleanup");
   await expect(archivedPanel).toContainText("Engineering / Legacy split");
   await page.getByRole("button", { name: "Back to app" }).click();
-  await navigation.getByRole("button", { name: "Engineering" }).click();
-  await expect(navigation.getByRole("button", { name: "API cleanup" })).toBeVisible();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
+  await expect(navigation.getByRole("button", { name: "API cleanup", exact: true })).toBeVisible();
   await openArchivedItemsSettings(page);
 
   await archivedPanel.locator(".archived-item-row").filter({ hasText: "Engineering / Legacy split" }).getByRole("button", { name: "Delete" }).click();
@@ -100,9 +103,10 @@ test("channel branch list shows real branches without default branch chrome", as
 
   await page.getByRole("button", { name: "Back to app" }).click();
   await engineeringGroup.locator(".sidebar-row-main").click();
-  await engineeringGroup.getByRole("button", { name: "Archive channel" }).click();
+  await engineeringGroup.getByRole("button", { name: "Channel actions: Engineering", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Archive channel", exact: true }).click();
   await expect.poll(() => mockChannelStatus(state, "Engineering")).toBe("archived");
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toHaveCount(0);
 
   await openArchivedItemsSettings(page);
   await archivedSettings.getByRole("tab", { name: /Channels/ }).click();
@@ -131,15 +135,15 @@ test("channel sidebar menu keeps create action without bulk archive", async ({ p
   await page.goto("/");
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
-  await expect(navigation.getByRole("button", { name: "Design" })).toBeVisible();
-  await navigation.getByRole("button", { name: "Channel actions" }).click();
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Design", exact: true })).toBeVisible();
+  await navigation.getByRole("button", { name: "Channel actions", exact: true }).click();
   await expect(page.getByRole("menuitem", { name: "New channel" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Archive all channels" })).toHaveCount(0);
   await expect.poll(() => mockChannelStatus(state, "Engineering")).toBe("active");
   await expect.poll(() => mockChannelStatus(state, "Design")).toBe("active");
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
-  await expect(navigation.getByRole("button", { name: "Design" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Design", exact: true })).toBeVisible();
 });
 
 function mockChannelStatus(state: ReturnType<typeof createBaseState>, name: string): string | undefined {

@@ -1,3 +1,4 @@
+import { handleChannelSessions, handleChannelSessionDirectoryRepair } from "../features/channels/session-routes.js";
 import { handleWorkSummary } from "../features/work-summary/routes.js";
 import { handleConversationExecutionSelection } from "../runtime/conversation-execution-route.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -364,7 +365,7 @@ import {
   parseWorkUnitRoute,
 } from "./routes.js";
 import { RunControlService } from "../run-control.js";
-import { allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
+import { allowLocalServiceRequest, allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
 import { handleStartupStatus } from "../startup/routes.js";
 import { handleDiagnosticsDoctor, handleDiagnosticsLogs } from "../features/diagnostics/routes.js";
@@ -658,31 +659,37 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/startup/status" || url.pathname === "/startup/refresh") {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
     await handleStartupStatus(request, response, context);
     return;
   }
 
   if (url.pathname === "/diagnostics/doctor") {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
     await handleDiagnosticsDoctor(request, response, context);
     return;
   }
 
   if (url.pathname === "/diagnostics/logs") {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
     await handleDiagnosticsLogs(request, response, context);
     return;
   }
 
   if (url.pathname === "/notifications" || url.pathname === "/notifications/preferences" || url.pathname === "/notifications/stream") {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
     await handleNotifications(request, response, context);
     return;
   }
 
   if (url.pathname === "/im-destinations" || url.pathname.startsWith("/im-destinations/")) {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
     await handleImDestinations(request, response, context);
     return;
   }
 
   if (url.pathname === "/skills/marketplace/inspect") {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
     await handleSkillsMarketplaceInspect(request, response, context);
     return;
   }
@@ -2290,7 +2297,15 @@ export async function routeRequest(
       await handleChannelBrief(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
+    if (channelRoute.action === "sessions") {
+      await handleChannelSessions(request, response, config, storeRegistry, channelRoute.channelId, channelRoute.sessionId);
+      return;
+    }
     if (channelRoute.action === "branches") {
+      if (channelRoute.branchId && channelRoute.branchAction === "repair") {
+        await handleChannelSessionDirectoryRepair(request, response, config, storeRegistry, channelRoute.channelId, channelRoute.branchId);
+        return;
+      }
       if (channelRoute.branchId) {
         await handleChannelBranchItem(request, response, config, storeRegistry, channelRoute.channelId, channelRoute.branchId);
         return;

@@ -298,41 +298,48 @@ export class SqliteRuntimeWorkUnitStore {
       return result;
     }
 
-    const update = this.context.database
-      .prepare(`
-        UPDATE work_units
-        SET
-          status = ?,
-          active_attempt_id = ?,
-          updated_at = ?,
-          started_at = ?,
-          ended_at = ?,
-          last_event_at = ?,
-          last_heartbeat_at = ?,
-          error_code = ?,
-          error_message = ?
-        WHERE id = ?
-          AND status = ?
-          AND (? IS NULL OR active_attempt_id = ?)
-      `)
-      .run(
-        result.to,
-        input.activeAttemptId === undefined ? workUnit.activeAttemptId ?? null : input.activeAttemptId,
-        input.now,
-        input.startedAt ?? workUnit.startedAt ?? null,
-        input.endedAt === undefined ? workUnit.endedAt ?? null : input.endedAt,
-        input.lastEventAt ?? workUnit.lastEventAt ?? null,
-        input.lastHeartbeatAt ?? workUnit.lastHeartbeatAt ?? null,
-        input.errorCode === undefined ? workUnit.errorCode ?? null : input.errorCode,
-        input.errorMessage === undefined ? workUnit.errorMessage ?? null : input.errorMessage,
-        input.workUnitId,
-        result.from,
-        input.attemptId ?? null,
-        input.attemptId ?? null,
-      );
-    if (Number(update.changes) === 0) {
-      const current = this.getWorkUnit(input.workUnitId);
-      return { ok: false, code: "stale_transition", currentStatus: current?.status ?? workUnit.status };
+    try {
+      const update = this.context.database
+        .prepare(`
+          UPDATE work_units
+          SET
+            status = ?,
+            active_attempt_id = ?,
+            updated_at = ?,
+            started_at = ?,
+            ended_at = ?,
+            last_event_at = ?,
+            last_heartbeat_at = ?,
+            error_code = ?,
+            error_message = ?
+          WHERE id = ?
+            AND status = ?
+            AND (? IS NULL OR active_attempt_id = ?)
+        `)
+        .run(
+          result.to,
+          input.activeAttemptId === undefined ? workUnit.activeAttemptId ?? null : input.activeAttemptId,
+          input.now,
+          input.startedAt ?? workUnit.startedAt ?? null,
+          input.endedAt === undefined ? workUnit.endedAt ?? null : input.endedAt,
+          input.lastEventAt ?? workUnit.lastEventAt ?? null,
+          input.lastHeartbeatAt ?? workUnit.lastHeartbeatAt ?? null,
+          input.errorCode === undefined ? workUnit.errorCode ?? null : input.errorCode,
+          input.errorMessage === undefined ? workUnit.errorMessage ?? null : input.errorMessage,
+          input.workUnitId,
+          result.from,
+          input.attemptId ?? null,
+          input.attemptId ?? null,
+        );
+      if (Number(update.changes) === 0) {
+        const current = this.getWorkUnit(input.workUnitId);
+        return { ok: false, code: "stale_transition", currentStatus: current?.status ?? workUnit.status };
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === "channel_session_archived") {
+        return { ok: false, code: "terminal_state", currentStatus: workUnit.status };
+      }
+      throw error;
     }
 
     this.ports.recordStateTransitionEvent({

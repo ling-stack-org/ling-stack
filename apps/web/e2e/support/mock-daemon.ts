@@ -56,6 +56,8 @@ const defaultOfficialSkillSourceStatus = {
   },
 };
 
+const mockChannelSessionRequests = new WeakMap<MockState, Map<string, { payload: string; threadId: string }>>();
+
 const mockCreateAiCouncilRequestKeys = new Set(["displayName", "description", "routingPolicy", "members", "pinned"]);
 const mockCreateAiCouncilRoutingPolicyKeys = new Set(["defaultMode", "maxActiveMembers", "notes"]);
 const mockCloneAiCouncilRequestKeys = new Set(["displayName", "description", "pinned"]);
@@ -278,7 +280,7 @@ export interface MockLingThread {
   pinnedAt?: string;
   archivedAt?: string;
   archivedReason?: string;
-  surfaceKind?: "channel_root" | "topic" | "branch" | "direct" | "work";
+  surfaceKind?: "channel_root" | "channel_session" | "topic" | "branch" | "direct" | "work";
   relationKind?: "root" | "topic" | "branch";
   anchorItemId?: string;
   forkContextSnapshotId?: string;
@@ -1204,7 +1206,7 @@ export async function openEngineeringChannel(page: Page): Promise<void> {
     await showNavigation.click();
   }
   await expect(navigation).toBeVisible();
-  const engineeringChannel = navigation.getByRole("button", { name: "Engineering" }).first();
+  const engineeringChannel = navigation.getByRole("button", { name: "Engineering", exact: true }).first();
   await expect(engineeringChannel).toBeVisible();
   await engineeringChannel.click();
   await expect(channelMessageFeed).toBeVisible();
@@ -1253,6 +1255,7 @@ export async function readHorizontalOverflow(page: Page, selector: string): Prom
 export function createBaseState(options: { approvalStatus: "pending" | "expired" }): MockState {
   const run: MockRun = {
     id: "run_failed",
+    threadId: "thread_channel_channel_engineering",
     status: "failed",
     cwd,
     taskId: "task_inspect",
@@ -5474,6 +5477,7 @@ function mockChannelConversationThread(state: MockState, channelId: string, requ
       existing.nextItemSequence ??= 1;
       return existing;
     }
+    if (requestedThreadId === `thread_channel_${channelId}`) return ensureMockChannelRootThread(state, channelId);
     throw new Error(`Mock conversation thread not found: ${requestedThreadId}`);
   }
   return ensureMockChannelRootThread(state, channelId);
@@ -11606,6 +11610,84 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, channelId, metrics } });
     return;
   }
+  const channelSessionsMatch = /^\/channels\/([^/]+)\/sessions(?:\/([^/]+))?$/.exec(path);
+  if (channelSessionsMatch) {
+    const channelId = decodeURIComponent(channelSessionsMatch[1]);
+    const threadId = channelSessionsMatch[2] ? decodeURIComponent(channelSessionsMatch[2]) : "";
+    const channel = state.channels.find(item => isRecord(item) && item.id === channelId);
+    if (!isRecord(channel)) { await route.fulfill({ status: 404, json: { error: "channel_not_found" } }); return; }
+    const root = ensureMockChannelRootThread(state, channelId);
+    const branches = state.channelBranches.filter((item): item is Record<string, unknown> => isRecord(item) && item.channelId === channelId)
+      .map(branch => ensureMockChannelBranchRootThread(state, channel, branch));
+    const summary = (thread: MockLingThread, branch?: Record<string, unknown>) => {
+      const entries = mockChannelConversationEntries(state, channelId).filter(entry => entry.item.threadId === thread.id);
+      const itemIds = new Set(entries.map(entry => entry.item.id));
+      const turnIds = new Set(entries.map(entry => entry.turn.id));
+      const workflows = state.channelWorkflows.filter((workflow) => isRecord(workflow) && workflow.channelId === channelId && isRecord(workflow.metadata)
+        && (itemIds.has(workflow.metadata.sourceMessageId) || turnIds.has(String(workflow.metadata.sourceTurnId))));
+      const workflowIds = new Set(workflows.map(workflow => isRecord(workflow) ? workflow.id : ""));
+      const stepIds = new Set(state.channelWorkflowSteps.filter(step => isRecord(step) && workflowIds.has(step.workflowId)).map(step => isRecord(step) ? step.id : ""));
+      const ownedRuns = state.runs.filter(run => (!run.channelId || run.channelId === channelId) && (run.threadId === thread.id || stepIds.has(run.workflowStepId)));
+      const runIds = new Set(ownedRuns.map(run => run.id));
+      const activeRunIds = ownedRuns.filter(run => ["queued", "running", "waiting_for_approval", "paused"].includes(run.status)).map(run => run.id);
+      const pendingApprovalIds = [...new Set(state.approvals.filter(approval => isRecord(approval) && approval.status === "pending"
+        && (!approval.channelId || approval.channelId === channelId) && (runIds.has(String(approval.runId)) || stepIds.has(approval.workflowStepId))).map(approval => isRecord(approval) ? approval.id : ""))];
+      const runtimeState = pendingApprovalIds.length ? "waiting" : activeRunIds.length ? "running" : "idle";
+      return {
+      id: thread.id, channelId, title: thread.title, isDefault: thread.id === root.id,
+      surfaceKind: thread.surfaceKind, createdAt: thread.createdAt, activityAt: thread.createdAt,
+      ...(branch ? { legacyBranchId: branch.id } : {}),
+      ...(thread.archivedAt ? { archivedAt: thread.archivedAt } : {}),
+      latestNotificationRevision: state.channelMessages.filter(item => isRecord(item) && item.threadId === thread.id && item.kind === "ai_reply").length,
+      pendingApprovalCount: pendingApprovalIds.length, runtimeState, activeRunIds, pendingApprovalIds,
+    }; };
+    const all = [summary(root), ...branches.map(branch => summary(state.threads.find(thread => thread.id === branch.rootThreadId)!, branch))];
+    if (request.method() === "GET" && !threadId) {
+      const archived = url.searchParams.get("archived") === "true";
+      const q = (url.searchParams.get("q") ?? "").toLowerCase();
+      const limit = Number(url.searchParams.get("limit") ?? 50);
+      const offset = Number(url.searchParams.get("cursor") ?? 0);
+      const matches = all.filter(item => !item.isDefault && Boolean(item.archivedAt) === archived && item.title.toLowerCase().includes(q));
+      await route.fulfill({ json: { cwd, channelId, defaultSession: all[0], sessions: matches.slice(offset, offset + limit),
+        ...(offset + limit < matches.length ? { nextCursor: String(offset + limit) } : {}), diagnostics: [],
+        notificationWatermarks: all.filter(item => !item.archivedAt).map(item => ({ id: item.id, latestNotificationRevision: item.latestNotificationRevision })),
+        aggregate: { pendingApprovalCount: all.reduce((count, item) => count + item.pendingApprovalCount, 0),
+          runningCount: all.filter(item => item.runtimeState === "running").length,
+          waitingCount: all.filter(item => item.runtimeState === "waiting").length, failedCount: 0 } } }); return;
+    }
+    if (request.method() === "POST" && !threadId) {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const key = String(body.idempotencyKey ?? "");
+      const requestMap = mockChannelSessionRequests.get(state) ?? new Map(); mockChannelSessionRequests.set(state, requestMap);
+      const prior = requestMap.get(`${channelId}:${key}`);
+      if (prior) {
+        if (prior.payload !== JSON.stringify(body)) { await route.fulfill({ status: 409, json: { error: "session_creation_conflict" } }); return; }
+        await route.fulfill({ json: { session: all.find(item => item.id === prior.threadId), idempotentReplay: true } }); return;
+      }
+      const branch = createChannelBranchFromBody({ name: typeof body.title === "string" ? body.title : "New conversation" }, `channel_branch_${state.channelBranches.length + 1}`, channelId);
+      ensureMockChannelBranchRootThread(state, channel, branch);
+      const thread = state.threads.find(thread => thread.id === branch.rootThreadId)!;
+      thread.surfaceKind = "channel_session"; thread.relationKind = "root"; delete thread.parentThreadId;
+      state.channelBranches.unshift(branch);
+      requestMap.set(`${channelId}:${key}`, { payload: JSON.stringify(body), threadId: thread.id });
+      await route.fulfill({ status: 201, json: { session: summary(thread, branch), idempotentReplay: false } }); return;
+    }
+    const session = all.find(item => item.id === threadId);
+    if (!session) { await route.fulfill({ status: 404, json: { error: "channel_session_not_found" } }); return; }
+    if (request.method() === "GET") { await route.fulfill({ json: { session } }); return; }
+    if (request.method() === "PATCH") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      if (session.isDefault && body.archived === true) { await route.fulfill({ status: 409, json: { error: "default_session_required" } }); return; }
+      const thread = state.threads.find(thread => thread.id === threadId)!;
+      const branch = branches.find(branch => branch.rootThreadId === threadId);
+      if (typeof body.title === "string") { thread.title = body.title; if (branch) branch.name = body.title; }
+      if (typeof body.archived === "boolean") {
+        thread.archivedAt = body.archived ? new Date().toISOString() : undefined;
+        if (branch) { branch.status = body.archived ? "archived" : "active"; branch.archivedAt = thread.archivedAt; }
+      }
+      await route.fulfill({ json: { session: summary(thread, branch) } }); return;
+    }
+  }
   const channelBranchesMatch = /^\/channels\/([^/]+)\/branches(?:\/([^/]+))?$/.exec(path);
   if (channelBranchesMatch) {
     const channelId = decodeURIComponent(channelBranchesMatch[1]);
@@ -12729,11 +12811,15 @@ export async function handleDaemonRoute(
       return;
     }
     const body = await request.postDataJSON() as Record<string, unknown>;
+    const sourceRun = state.runs.find(run => run.id === handoff.sourceRunId)
+      ?? state.runs.find(run => handoff.sourceTaskId && run.taskId === handoff.sourceTaskId);
+    const sourceMessageId = handoff.sourceMessageId ?? sourceRun?.requestSnapshot.sourceMessageId;
     const workflow = {
       id: `workflow_${state.channelWorkflows.length + 1}`,
       workspaceId: "workspace_default",
       channelId: handoff.channelId,
       sourceHandoffId: handoff.id,
+      metadata: sourceMessageId ? { sourceMessageId } : undefined,
       title: typeof body.title === "string" ? body.title : `${String(handoff.reason ?? "Handoff")} workflow`,
       objective: typeof body.objective === "string" ? body.objective : String(handoff.expectedOutput ?? handoff.reason ?? ""),
       status: "draft",
@@ -12747,6 +12833,7 @@ export async function handleDaemonRoute(
       channelId: handoff.channelId,
       workflowId: workflow.id,
       sourceHandoffId: handoff.id,
+      metadata: sourceMessageId ? { sourceMessageId } : undefined,
       contextSummaryId: typeof body.contextSummaryId === "string" ? body.contextSummaryId : undefined,
       position: 1,
       title: typeof handoff.reason === "string" ? handoff.reason : "Complete handoff",

@@ -36,22 +36,31 @@ function sameSources(actual, expected) {
 /** A fixed reviewed source input, not a runtime config or automatic test-result approval. */
 export function readReviewedCodesignSource() {
   const bytes = fixedBytes(reviewedSourcePath, 32_768), review = JSON.parse(bytes.toString("utf8"));
-  exactKeys(review, ["schemaVersion", "reviewId", "approval", "target", "toolchain", "sourceSha256", "runtime", "os", "trust"]);
-  requirePublication(review.schemaVersion === 1 && review.reviewId === "packaged_codesign_original_host_v1"
+  const multipleOs = review.schemaVersion === 2;
+  exactKeys(review, ["schemaVersion", "reviewId", "approval", "target", "toolchain", "sourceSha256", "runtime", "os", "trust",
+    ...(multipleOs ? ["additionalOs"] : [])]);
+  requirePublication((review.schemaVersion === 1 || multipleOs) && review.reviewId === "packaged_codesign_original_host_v1"
     && review.approval === "approved_source_and_packaging_review"
     && review.target === "aarch64-apple-darwin" && review.toolchain === "1.97.1"
     && review.trust === "original_host_and_trusted_packaging_transform_v1");
   exactKeys(review.runtime, ["platform", "architecture", "electron", "node", "uv"]);
   requirePublication(review.runtime.platform === "darwin" && review.runtime.architecture === "arm64"
     && ["electron", "node", "uv"].every(key => typeof review.runtime[key] === "string" && /^\d+\.\d+\.\d+$/.test(review.runtime[key])));
-  exactKeys(review.os, ["release", "backendHelperVersion", "backendSha256", "codesignSha256", "templateSha256", "taskgatedBinding"]);
-  requirePublication(typeof review.os.release === "string" && /^\d+\.\d+\.\d+$/.test(review.os.release)
-    && review.os.backendHelperVersion?.startsWith("ling-seatbelt-v1:" + review.os.release + ":")
-    && validHash(review.os.backendHelperVersion.slice(("ling-seatbelt-v1:" + review.os.release + ":").length))
-    && ["backendSha256", "codesignSha256", "templateSha256"].every(key => validHash(review.os[key]))
-    && review.os.taskgatedBinding === "reviewed_xml_v1");
+  requirePublication(!multipleOs || (Array.isArray(review.additionalOs) && review.additionalOs.length >= 1 && review.additionalOs.length <= 8));
+  const releases = new Set();
+  for (const os of [review.os, ...(multipleOs ? review.additionalOs : [])]) {
+    exactKeys(os, ["release", "backendHelperVersion", "backendSha256", "codesignSha256", "templateSha256", "taskgatedBinding"]);
+    requirePublication(typeof os.release === "string" && /^\d+\.\d+\.\d+$/.test(os.release)
+      && !releases.has(os.release) && os.backendHelperVersion?.startsWith("ling-seatbelt-v1:" + os.release + ":")
+      && validHash(os.backendHelperVersion.slice(("ling-seatbelt-v1:" + os.release + ":").length))
+      && ["backendSha256", "codesignSha256", "templateSha256"].every(key => validHash(os[key]))
+      && os.taskgatedBinding === "reviewed_xml_v1");
+    releases.add(os.release);
+    Object.freeze(os);
+  }
+  if (multipleOs) Object.freeze(review.additionalOs);
   sameSources(review.sourceSha256, review.sourceSha256);
-  Object.freeze(review.sourceSha256); Object.freeze(review.runtime); Object.freeze(review.os);
+  Object.freeze(review.sourceSha256); Object.freeze(review.runtime);
   return Object.freeze({ review: Object.freeze(review), sourceReviewSha256: hash(bytes) });
 }
 /** The existing fresh native build must match the independently reviewed source closure. */

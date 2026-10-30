@@ -87,10 +87,6 @@
   width: 100%;
   margin-top: 0;
   padding: var(--ling-space-4);
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-lg);
-  background: var(--ling-bg-composer);
-  box-shadow: var(--ling-shadow-medium);
 }
 
 .normal-conversation-page [data-conversation-composer-frame="normal_conversation"] {

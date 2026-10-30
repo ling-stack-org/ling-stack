@@ -42,6 +42,7 @@ export function buildWorkflowProposalContextView(input: BuildWorkflowProposalCon
   const activeWorkSources = collectActiveWorkSources({
     store: input.store,
     channel: input.channel,
+    threadId: projectedContext.projection.metadata.threadId,
     limit: 8,
   });
   const materializedInputSources = collectMaterializedInputSources({ channel: input.channel, envelope });

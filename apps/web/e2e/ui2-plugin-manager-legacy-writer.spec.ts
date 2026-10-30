@@ -435,7 +435,7 @@ async function openPluginManager(page: Page): Promise<void> {
 
 async function openPluginManagerFromShell(page: Page): Promise<void> {
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "Engineering" }).click();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
   await expect(page.locator(".workspace.workspace-plugins-surface .settings-plugin-manager")).toBeVisible();
   await expect(page.locator(".plugin-table-row").first()).toBeVisible();

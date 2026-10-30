@@ -1,3 +1,4 @@
+import type { ChannelSessionSummary } from "@ling-stack/contracts";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import type { ConversationRuntimeMetrics } from "@ling-stack/contracts";
 import type { AiTeammateTemplate } from "@ling-stack/core";
@@ -80,6 +81,18 @@ export interface WorkspaceClientViewProps {
   readonly channels: readonly Channel[];
   readonly selectedChannelId: string;
   readonly selectedChannelBranchRootThreadId?: string;
+  readonly channelUtilityRequest?: {
+    readonly id: string; readonly cwd: string; readonly channelId: string; readonly action: "settings" | "rename";
+  };
+  readonly onChannelUtilityRequestHandled?: (id: string) => void;
+  readonly channelSessionThreadId?: string;
+  readonly channelSession?: ChannelSessionSummary;
+  readonly channelSessionTitle?: string;
+  readonly channelSessionDraft?: import("./ChannelSessionDraft.js").ChannelSessionDraftProps;
+  readonly onUpdateChannelSession?: (patch: import("@ling-stack/contracts").UpdateChannelSessionRequest) => Promise<void>;
+  readonly channelComposerIdentity?: string;
+  readonly onConversationViewed?: () => void;
+  readonly onRestoreChannelSession?: () => Promise<void>;
   readonly channelCreateOpen: boolean;
   readonly channelEditForm: ChannelFormState;
   readonly tasks: readonly Task[];

@@ -1,4 +1,6 @@
-import { useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { channelSessionThreadId, isChannelSessionDraft } from "../../app/channel-session-state.js";
+import { reconcileChannelSessionMessageCache } from "./channel-session-message-cache.js";
+import { useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
   getChannelCollaborationProtocol,
   getChannelBrief,
@@ -270,6 +272,10 @@ export function useWorkspaceDomain(input: {
   const [channelConversationRefreshToken, setChannelConversationRefreshToken] = useState(0);
   const [channelContextCompactionState, setChannelContextCompactionState] = useState<{ owner: string; items: readonly import("../../types.js").ConversationContextCompactionRecord[] }>({ owner: "", items: [] });
   const channelInputPageRef = useRef<ChannelConversationMessagePage | undefined>(undefined);
+  const channelMessageCacheRef = useRef(new Map<string, {
+    messages: readonly ChannelMessage[]; items: readonly ConversationItemV1[]; page?: ChannelConversationMessagePage;
+    generatedMedia: readonly ConversationGeneratedMedia[]; hasOlder: boolean; before?: number;
+  }>());
   const channelReadEpochRef = useRef(createConversationReadEpoch());
   const channelReadOwnerRef = useRef("");
   const [channelGeneratedMedia, setChannelGeneratedMedia] = useState<readonly ConversationGeneratedMedia[]>([]);
@@ -324,7 +330,7 @@ export function useWorkspaceDomain(input: {
     branch.status !== "archived"
   );
   const selectedChannelMessageThreadId = input.selectedChannelBranchId
-    ? selectedChannelBranch?.rootThreadId ?? `missing-channel-branch-thread:${input.selectedChannelBranchId}`
+    ? channelSessionThreadId(input.selectedChannelBranchId) ?? selectedChannelBranch?.rootThreadId ?? (isChannelSessionDraft(input.selectedChannelBranchId) ? input.selectedChannelBranchId : `missing-channel-branch-thread:${input.selectedChannelBranchId}`)
     : undefined;
   const selectedChannelIdRef = useRef(selectedChannelId);
   const selectedChannelMessageThreadIdRef = useRef(selectedChannelMessageThreadId);
@@ -332,11 +338,40 @@ export function useWorkspaceDomain(input: {
   selectedChannelMessageThreadIdRef.current = selectedChannelMessageThreadId;
   const channelReadOwner = JSON.stringify([input.cwd.trim(), selectedChannelId, selectedChannelMessageThreadId ?? ""]);
   const channelRuntimeMetrics = channelRuntimeMetricsState.owner === channelReadOwner ? channelRuntimeMetricsState.metrics : undefined;
-  if (channelReadOwnerRef.current !== channelReadOwner) {
+  const channelReadOwnerChanged = channelReadOwnerRef.current !== channelReadOwner;
+  if (channelReadOwnerChanged) {
+    if (channelReadOwnerRef.current) channelMessageCacheRef.current.set(channelReadOwnerRef.current, {
+      messages: channelMessages, items: channelConversationItems, page: channelInputPageRef.current,
+      generatedMedia: channelGeneratedMedia, hasOlder: channelMessagesHasOlder, before: channelItemsBeforeSequence,
+    });
     channelReadOwnerRef.current = channelReadOwner;
     channelReadEpochRef.current.invalidate();
-    channelInputPageRef.current = undefined;
+    channelInputPageRef.current = channelMessageCacheRef.current.get(channelReadOwner)?.page;
   }
+
+  useLayoutEffect(() => {
+    const cached = channelMessageCacheRef.current.get(channelReadOwner);
+    setChannelMessages(cached?.messages ?? []);
+    setChannelConversationItems(cached?.items ?? []);
+    setChannelGeneratedMedia(cached?.generatedMedia ?? []);
+    setChannelMessagesHasOlder(cached?.hasOlder ?? false);
+    setChannelItemsBeforeSequence(cached?.before);
+    setChannelMessagesLoadingOlder(false);
+    if (cached?.page) {
+      setChannelTurnContextAssignmentState({ owner: channelReadOwner, assignments: cached.page.turnContextAssignments });
+      setChannelUserInputState({ owner: channelReadOwner, items: cached.page.userInputs ?? [] });
+      setChannelReasoningSummaryState({ owner: channelReadOwner, items: cached.page.reasoningSummaries });
+      setChannelContextCompactionState({ owner: channelReadOwner, items: cached.page.contextCompactions ?? [] });
+    }
+  }, [channelReadOwner]);
+
+  useLayoutEffect(() => {
+    if (channelReadOwnerChanged) return;
+    channelMessageCacheRef.current.set(channelReadOwner, {
+      messages: channelMessages, items: channelConversationItems, page: channelInputPageRef.current,
+      generatedMedia: channelGeneratedMedia, hasOlder: channelMessagesHasOlder, before: channelItemsBeforeSequence,
+    });
+  }, [channelMessages, channelConversationItems, channelGeneratedMedia, channelMessagesHasOlder, channelItemsBeforeSequence]);
 
   function isSelectedChannelConversation(channelId: string, threadId?: string): boolean {
     return channelId === selectedChannelIdRef.current && threadId === selectedChannelMessageThreadIdRef.current;
@@ -520,7 +555,7 @@ export function useWorkspaceDomain(input: {
     options?: ChannelMessageRefreshOptions,
   ): Promise<void> {
     const cwd = input.cwd.trim();
-    if (!cwd || !channelId) {
+    if (!cwd || !channelId || (threadId && isChannelSessionDraft(threadId))) {
       setChannelMessages([]);
       setChannelConversationItems([]);
       setChannelRuntimeMetricsState({ owner: channelReadOwnerRef.current });
@@ -571,12 +606,13 @@ export function useWorkspaceDomain(input: {
       setChannelConversationRefreshToken(current => current + 1);
       setChannelRuntimeMetricsState({ owner: readOwner, metrics: response.runtimeMetrics });
       const messagesChanged = !channelMessagesEqual(channelMessages, page.messages);
-      setChannelMessages((current) => channelMessagesEqual(current, page.messages) ? current : page.messages);
-      const visibleIds = new Set(page.conversationItems.map(item => item.id));
-      setChannelConversationItems(hydrated.conversationItems.filter(item => visibleIds.has(item.id)));
-      setChannelGeneratedMedia(page.generatedMedia);
-      setChannelMessagesHasOlder(page.hasMore);
-      setChannelItemsBeforeSequence(page.nextBeforeSequence);
+      const cached = channelMessageCacheRef.current.get(readOwner);
+      const reconciled = reconcileChannelSessionMessageCache(cached, page, hydrated.conversationItems);
+      setChannelMessages(current => channelMessagesEqual(current, reconciled.messages) ? current : reconciled.messages);
+      setChannelConversationItems(reconciled.items);
+      setChannelGeneratedMedia(reconciled.generatedMedia);
+      setChannelMessagesHasOlder(reconciled.hasOlder);
+      setChannelItemsBeforeSequence(reconciled.before);
       if (messagesChanged) {
         input.onChannelMessagesLoaded?.(channelId, page.messages);
       }

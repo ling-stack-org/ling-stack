@@ -252,6 +252,13 @@ test("Council Workspace shows council health, members, and channel entry points"
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await page.getByRole("tab", { name: "Channel usage" }).click();
   await page.getByLabel("Channel usage").getByRole("button", { name: "Open channel in app" }).click();
-  await expect(navigation.locator(".sidebar-row-shell.selected")).toContainText("Engineering");
+  const selectedChannel = navigation.locator(".sidebar-channel-group").filter({
+    has: page.getByRole("button", { name: "Engineering", exact: true }),
+  });
+  await expect(selectedChannel.locator(".channel-contains-selection")).toHaveCount(1);
+  await expect(selectedChannel.locator('.sidebar-branch-row-shell.selected[data-session-default="true"] .sidebar-branch-row'))
+    .toHaveAttribute("aria-current", "page");
+  await expect(navigation.locator(".sidebar-branch-row-shell.selected")).toHaveCount(1);
+  await expect(navigation.locator(".sidebar-row-shell.selected")).toHaveCount(0);
   expect(state.teammateChannelMemberships).toHaveLength(originalChannelMembershipCount);
 });

@@ -32,10 +32,22 @@ function fixture() {
   return { input, handlers, event, frame, calls, client, reads: () => reads };
 }
 
-test("engine IPC exposes only profile and owned login operations, never the host authority", async () => {
+test("engine IPC exposes the exact profile, discovery, managed install and owned login routes, never the host authority", async () => {
   const f = fixture();
   const unregister = registerExecutionEngineIpc(f.input);
-  assert.equal(f.handlers.size, 10);
+  assert.deepEqual(new Set(f.handlers.keys()), new Set([
+    DESKTOP_IPC_CHANNELS.executionEnginesList,
+    DESKTOP_IPC_CHANNELS.executionEnginesDiscover,
+    DESKTOP_IPC_CHANNELS.executionEnginesInstall,
+    DESKTOP_IPC_CHANNELS.executionEnginesInstallStatus,
+    DESKTOP_IPC_CHANNELS.executionEngineProfileGet,
+    DESKTOP_IPC_CHANNELS.executionEngineProfileSave,
+    DESKTOP_IPC_CHANNELS.executionEngineProfileDisconnect,
+    DESKTOP_IPC_CHANNELS.executionEngineProfileSecretSave,
+    DESKTOP_IPC_CHANNELS.executionEngineProfileProbe,
+    DESKTOP_IPC_CHANNELS.executionEngineConnectionProbe,
+    ...loginRoutes.map(([channel]) => DESKTOP_IPC_CHANNELS[channel]),
+  ]));
   const configuration = { engineId: "codex-app-server", executablePath: "/fixture/codex", authProfileId: "native" };
   await f.handlers.get(DESKTOP_IPC_CHANNELS.executionEnginesList)(f.event);
   await f.handlers.get(DESKTOP_IPC_CHANNELS.executionEngineProfileGet)(f.event, "codex-app-server");

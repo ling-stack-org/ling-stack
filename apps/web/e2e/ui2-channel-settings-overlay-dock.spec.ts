@@ -343,6 +343,7 @@ test("channel approval gate, settings, and dock remain contained at 1280 in dark
   state.aiTeammates = [];
   state.aiCouncils = [];
   state.threads = [channelRootThread()];
+  state.runs = state.runs.map(run => ({ ...run, threadId: "thread_channel_main_channel_engineering" }));
   state.proposedPlans = [channelPlanFixture()];
   await mockDaemon(page, state);
   await page.route(/\/channels\/channel_engineering(?:\?.*)?$/u, async (route) => {

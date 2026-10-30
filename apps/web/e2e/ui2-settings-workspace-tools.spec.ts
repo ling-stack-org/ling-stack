@@ -35,7 +35,7 @@ test("Model embedded boundary preserves loading, empty, failure, and exact retur
 
   await page.goto("/");
   const appNavigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await appNavigation.getByRole("button", { name: "Engineering" }).click();
+  await appNavigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   const surface = await openWorkspaceTool(page, "Model Workbench", "providers");
   await expect(surface.getByText("Loading providers...", { exact: true })).toBeVisible();
@@ -53,7 +53,8 @@ test("Model embedded boundary preserves loading, empty, failure, and exact retur
 
   await page.getByLabel("Settings sections").getByRole("button", { name: "Back to app" }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
-  await expect(appNavigation.getByRole("button", { name: "Engineering" })).toHaveAttribute("aria-current", "page");
+  await expect(appNavigation.locator(".channel-contains-selection").getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
+  await expect(appNavigation.locator('[data-session-default="true"] .sidebar-branch-row')).toHaveAttribute("aria-current", "page");
   await expectNoPageOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });
