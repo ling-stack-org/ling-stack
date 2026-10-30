@@ -33,7 +33,8 @@ import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
-import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
+import { writeJson } from "../../shared/response.js";
+import { createSseRunExecutionSink } from "../runs/run-execution-sink.js";
 import { isRecord, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { persistConversationAttachment, CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES } from "../channels/attachments.js";
 import { parseChannelAttachmentRequest, readOptionalChannelMessageFileRefs } from "../channels/schemas.js";
@@ -192,6 +193,7 @@ export async function handleConversationStream(
     return;
   }
 
+  const transport = createSseRunExecutionSink(response);
   try {
     const input = parseConversationStreamRequest(await readJsonBody(request, config.maxBodyBytes));
     const store = storeRegistry.getStore(workspaceCwd);
@@ -216,23 +218,16 @@ export async function handleConversationStream(
     let assistantMessage = createAssistantTranscriptMessage(thread, turn, undefined, "", "running", now);
     let narration = new ConversationNarrationAccumulator();
     let runId = "";
-    let closed = false;
-
-    response.on("close", () => {
-      closed = true;
-    });
     const safeWrite = (event: string, data: unknown): void => {
-      if (!closed && !response.destroyed) {
-        writeSse(response, event, data);
-      }
+      transport.writeEvent(event, data);
     };
     const streamSink: RunExecutionSink = {
       kind: "sse",
       onClose(listener) {
-        response.on("close", listener);
+        transport.onClose(listener);
       },
       isClosed() {
-        return closed || response.destroyed;
+        return transport.isClosed();
       },
       writeReady(data) {
         const ready = data as { readonly runId?: unknown };
@@ -345,9 +340,7 @@ export async function handleConversationStream(
             error: finalAssistant.errorMessage || latestRun?.errorMessage || finalAssistant.content,
           });
         }
-        if (!closed) {
-          response.end();
-        }
+        transport.end();
       },
     };
 
@@ -363,14 +356,14 @@ export async function handleConversationStream(
       normalConversationContext: prepared.context,
       normalConversationAcceptedSnapshotId: prepared.acceptedSnapshotId,
     }), now);
-    writeSseHead(response);
-    safeWrite("ready", { thread, turn, userMessage, assistantMessage });
+    transport.writeReady({ thread, turn, userMessage, assistantMessage });
     await startRun(runRequest, streamSink);
   } catch (error) {
-    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+    transport.writeError(error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
+    transport.end();
   }
 }
 

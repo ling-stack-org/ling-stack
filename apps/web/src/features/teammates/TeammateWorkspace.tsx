@@ -112,6 +112,8 @@ import { TeammatePermissionsTab } from "./TeammatePermissionsTab.js";
 import { TeammateProfileTab } from "./TeammateProfileTab.js";
 import { TeammatePrivateChatSurface } from "./TeammatePrivateChatSurface.js";
 import { useConversationReadingViewport } from "../../shared/conversation/blocks/use-conversation-reading-viewport.js";
+import { conversationReadingScope } from "../../shared/conversation/view-store/conversation-reading-storage.js";
+import { daemonBaseUrl } from "../../api/client.js";
 import { TeammateRenameDialog } from "./TeammateRenameDialog.js";
 import { RuntimeApprovalComposerGate } from "../approvals/RuntimeApprovalComposerGate.js";
 import type { ApprovalResolution } from "../approvals/types.js";
@@ -625,6 +627,12 @@ export function TeammateWorkspace({
     searchActive: chatHeaderController.searchOpen,
     enabled: !loading && workspaceView === "chat",
     latestThresholdPx: 24,
+    readingScopeKey: conversationReadingScope(daemonBaseUrl, cwd, `teammate:${teammate.id}`, currentDirectWorkspace?.threadId),
+    onRestoreMissingAnchor: () => {
+      if (!hasMoreDirectMessages || !nextDirectBeforeMessageId || normalizedMessageSearchQuery) return false;
+      if (!loadingOlderDirectMessages) void loadOlderDirectMessages();
+      return true;
+    },
   });
   const {
     scrollRef: privateFeedRef,

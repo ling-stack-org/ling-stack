@@ -71,6 +71,7 @@ test("actual CLI passes the bounded selection to startup and rejects invalid pol
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
   const hook = join(cwd, "probe.mjs"), source = new URL("../src/cli.ts", import.meta.url).href;
   const bootstrap = new URL("../src/runtime/packaged-qa-harness-bootstrap.ts", import.meta.url).href;
+  const shutdown = new URL("../src/runtime/signal-shutdown.ts", import.meta.url).href;
   // A composition test of the real CLI, not a launched Daemon/GUI. Replace only
   // its side-effect boundaries; the production QA parser executes unchanged.
   writeFileSync(hook, `import { registerHooks } from 'node:module';
@@ -84,6 +85,7 @@ const modules = new Map([
 registerHooks({resolve(specifier,context,next){
  if(context.parentURL===${JSON.stringify(source)}) {
   if(specifier==='./runtime/packaged-qa-harness-bootstrap.js') return {shortCircuit:true,url:${JSON.stringify(bootstrap)}};
+  if(specifier==='./runtime/signal-shutdown.js') return {shortCircuit:true,url:${JSON.stringify(shutdown)}};
   if(modules.has(specifier)) return {shortCircuit:true,url:'data:text/javascript,'+encodeURIComponent(modules.get(specifier))};
  }
  return next(specifier,context);

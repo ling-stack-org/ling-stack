@@ -1521,6 +1521,7 @@ function createKimiTargetFixture(t, options = {}) {
     getProfileStore: () => profileStore,
     readWorkspaceSettings: () => fixtureNativePolicy("kimi-acp"),
     readAcceptanceEvidence: options.readAcceptanceEvidence ?? fixtureNativeAcceptance,
+    getHostFileNode: options.getHostFileNode,
     secretResolver,
     probeInstallation: async (candidate) => {
       probes.push(candidate);
@@ -1568,6 +1569,22 @@ function createKimiTargetFixture(t, options = {}) {
   });
   return fixture;
 }
+
+test("Kimi host-file runtime comes only from the trusted dispatcher getter and is copied for execution", async t => {
+  const hostPin = { path: "/host/runtime", sha256: "a".repeat(64), runtime: {
+    kind: "electron_node_v1", resources: [{ relativePath: "Info.plist", sha256: "b".repeat(64) }],
+  } };
+  const expected = structuredClone(hostPin);
+  const f = createKimiTargetFixture(t, { getHostFileNode: () => hostPin }), input = f.input();
+  input.runRequest.hostFileNode = { path: "/untrusted/model/runtime", sha256: "c".repeat(64) };
+  await f.dispatcher.dispatch(input);
+  hostPin.runtime.resources[0].sha256 = "d".repeat(64);
+  assert.deepEqual(f.executions[0].hostFileNode, expected);
+  const withoutHost = createKimiTargetFixture(t), missing = withoutHost.input();
+  missing.runRequest.hostFileNode = expected;
+  await withoutHost.dispatcher.dispatch(missing);
+  assert.equal(withoutHost.executions[0].hostFileNode, undefined);
+});
 
 
 test("concurrent native first requests create one turn and one execution after admission", async (t) => {

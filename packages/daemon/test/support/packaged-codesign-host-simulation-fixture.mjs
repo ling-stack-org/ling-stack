@@ -69,8 +69,14 @@ export const errno = (code, message = code) => Object.assign(new Error(message),
 export async function createCodesignHostSimulation(t, { electron = true, reviewedPublication = false } = {}) {
   // Finish dependency loading before builtin observers; new source modules still
   // execute their real code and capture their own Host snapshot after installation.
-  await Promise.all(["electron-node-resources.js", "macos-native-command.js", "macos-sandbox-backend.js", "protected-host-bootstrap-domain.js",
-    "protected-host-stage-paths.js"].map(path => import(moduleUrl("runtime/sandbox/" + path))));
+  const preloadedModules = ["electron-node-resources.js", "macos-native-command.js", "macos-sandbox-backend.js", "protected-host-bootstrap-domain.js",
+    "protected-host-stage-paths.js", "macos-seatbelt-profile.js", "protected-host-domain-paths.js", "protected-host-actor-domain.js",
+    "protected-host-original-entry-manifest.js", "protected-host-office-directory-window.js",
+    "../../features/office-documents/office-local-native-runtime.js", "../../features/runs/workflow-operation-snapshot.js",
+    "../../features/channels/channel-command-input-policy.js"];
+  await Promise.all(preloadedModules.map(path => import(moduleUrl("runtime/sandbox/" + path))));
+  const coreUrl = import.meta.resolve("@ling-stack/core");
+  await import(coreUrl);
   const originalHash = crypto.createHash;
   // Preload only the two real, query-isolated compiled source files. An original
   // readFileSync passthrough would still call our mocked openSync internally.
@@ -78,6 +84,8 @@ export async function createCodesignHostSimulation(t, { electron = true, reviewe
     "packaged-codesign-held-file.js", "packaged-codesign-native-protocol.js", "packaged-codesign-published-review.js",
     "protected-host-actor-inventory.js", "protected-host-staging.js"]
     .map(path => { const actual = join(dist, "runtime/sandbox", path); return [actual, fs.readFileSync(actual)]; }));
+  const resolvablePaths = new Set([...loaderBytes.keys(),
+    ...preloadedModules.map(path => join(dist, "runtime/sandbox", path))]);
   // The ESM loader has its own captured readFileSync, which still enters openSync.
   // Supply exact existing dist bytes through the supported loader hook instead
   // of allowing any real filesystem descriptor through the mechanism observer.
@@ -102,6 +110,19 @@ export async function createCodesignHostSimulation(t, { electron = true, reviewe
     // process-global canonical cache may borrow a previous fixture's observer.
     if (context.parentURL === bootstrapUrl && specifier === "./packaged-codesign-host-source.js") {
       return { url: sourceUrl, shortCircuit: true };
+    }
+    if (specifier === "@ling-stack/core" && context.parentURL?.startsWith("file:")
+      && resolvablePaths.has(fileURLToPath(context.parentURL))) {
+      return { url: coreUrl, shortCircuit: true };
+    }
+    // Node resolves file identity before entering load. Keep that lookup inside
+    // the exact preloaded module set, without routing loader stat calls through
+    // the virtual Host filesystem or permitting any real filesystem passthrough.
+    const candidate = specifier.startsWith("file:") ? new URL(specifier)
+      : (specifier.startsWith("./") || specifier.startsWith("../")) && context.parentURL?.startsWith("file:")
+        ? new URL(specifier, context.parentURL) : undefined;
+    if (candidate && resolvablePaths.has(fileURLToPath(candidate))) {
+      return { url: candidate.href, shortCircuit: true };
     }
     return nextResolve(specifier, context);
   }, load(url, context, nextLoad) {

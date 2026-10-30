@@ -15,7 +15,8 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
-import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
+import { writeJson } from "../../shared/response.js";
+import { createSseRunExecutionSink } from "../runs/run-execution-sink.js";
 import type { ActiveDirectReplyRegistry } from "./direct-reply-active-registry.js";
 import { assertDirectFileRefsWithinWorkspace, type DirectWorkspaceReady } from "./direct-workspace.js";
 import { parseTeammateDirectMessageRequest } from "./schemas.js";
@@ -261,6 +262,7 @@ export async function handleTeammateDirectMessageStream(
     return;
   }
 
+  const transport = createSseRunExecutionSink(response);
   try {
     const store = storeRegistry.getStore(cwd);
     const teammate = store.getAiTeammate(teammateId);
@@ -285,24 +287,18 @@ export async function handleTeammateDirectMessageStream(
     const now = new Date().toISOString();
     const { message, created } = acceptDirectSubmission(store, thread, messageInput, now);
     if (!created) {
-      writeSseHead(response);
-      writeSse(response, "accepted", { message });
-      response.end();
+      transport.writeEvent("accepted", { message });
+      transport.end();
       return;
     }
     const abortController = new AbortController();
     let registeredWorkUnitId: string | undefined;
-    let closed = false;
-    response.on("close", () => {
-      closed = true;
+    transport.onClose(() => {
       abortController.abort();
     });
     const safeWriteSse = (event: string, data: unknown): void => {
-      if (!closed && !response.destroyed) {
-        writeSse(response, event, data);
-      }
+      transport.writeEvent(event, data);
     };
-    writeSseHead(response);
     safeWriteSse("accepted", { message });
     try {
       await createAiReply({
@@ -358,18 +354,13 @@ export async function handleTeammateDirectMessageStream(
       if (registeredWorkUnitId) {
         activeDirectReplies?.delete(registeredWorkUnitId);
       }
-      if (!closed && !response.destroyed) {
-        response.end();
-      }
+      transport.end();
     }
   } catch (error) {
-    if (response.headersSent) {
-      response.end();
-      return;
-    }
-    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+    transport.writeError(error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
+    transport.end();
   }
 }

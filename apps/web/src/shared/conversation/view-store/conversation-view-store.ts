@@ -4,6 +4,8 @@ export interface ConversationDisclosureState {
   readonly expanded: boolean;
   readonly revisionKey: string;
   readonly touched: boolean;
+  /** Restored intent stays beneath live defaults until the user interacts here. */
+  readonly restoredExpanded?: boolean;
 }
 
 export interface ConversationCopyFeedbackState {
@@ -45,8 +47,13 @@ export interface ConversationViewStore {
   reconcileRetainedKeys(retainKeys: ConversationViewRetainKeys): void;
 }
 
-export function createConversationViewStore(surfaceId: string): ConversationViewStore {
-  return new ConversationViewStoreImpl(surfaceId);
+export interface ConversationDisclosurePersistence {
+  read(kind: ConversationDisclosureKind, id: string): boolean | undefined;
+  write(kind: ConversationDisclosureKind, id: string, expanded: boolean): void;
+}
+
+export function createConversationViewStore(surfaceId: string, persistence?: ConversationDisclosurePersistence): ConversationViewStore {
+  return new ConversationViewStoreImpl(surfaceId, persistence);
 }
 
 class ConversationViewStoreImpl implements ConversationViewStore {
@@ -60,9 +67,11 @@ class ConversationViewStoreImpl implements ConversationViewStore {
   };
 
   private readonly listeners = new Set<() => void>();
+  private readonly persistence?: ConversationDisclosurePersistence;
 
-  constructor(surfaceId: string) {
+  constructor(surfaceId: string, persistence?: ConversationDisclosurePersistence) {
     this.surfaceId = surfaceId;
+    this.persistence = persistence;
   }
 
   getSnapshot(): ConversationViewState {
@@ -83,12 +92,15 @@ class ConversationViewStoreImpl implements ConversationViewStore {
       return;
     }
     const next = new Map(map);
+    const saved = current ? current.restoredExpanded : this.persistence?.read(input.kind, input.id);
     next.set(input.id, {
-      expanded: input.preserveTouchedStateOnRevision && current?.touched
+      // A restored collapse cannot conceal a newly running/waiting/failed row.
+      expanded: saved !== undefined ? input.defaultExpanded || saved : input.preserveTouchedStateOnRevision && current?.touched
         ? current.expanded
         : input.defaultExpanded,
       revisionKey: input.revisionKey,
-      touched: input.preserveTouchedStateOnRevision ? current?.touched ?? false : false,
+      touched: saved !== undefined || (input.preserveTouchedStateOnRevision ? current?.touched ?? false : false),
+      ...(saved !== undefined ? { restoredExpanded: saved } : {}),
     });
     this.replaceDisclosureMap(input.kind, next);
   }
@@ -101,12 +113,13 @@ class ConversationViewStoreImpl implements ConversationViewStore {
       revisionKey: current?.revisionKey ?? "0",
       touched: true,
     };
-    if (current?.expanded === nextState.expanded && current.touched) {
+    if (current?.expanded === nextState.expanded && current.touched && current.restoredExpanded === undefined) {
       return;
     }
     const next = new Map(map);
     next.set(id, nextState);
     this.replaceDisclosureMap(kind, next);
+    this.persistence?.write(kind, id, expanded);
   }
 
   toggleDisclosure(kind: ConversationDisclosureKind, id: string): void {

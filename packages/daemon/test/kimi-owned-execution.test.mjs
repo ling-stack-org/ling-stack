@@ -1176,7 +1176,7 @@ test("owned Kimi waits for host worker settlement even when close loses its Atte
   const closed = Promise.withResolvers();
   const mock = t.mock.method(childProcess, "spawn", (...args) => {
     const child = originalSpawn(...args);
-    if (!args[1]?.some(value => typeof value === "string" && value.endsWith("/host-text-write-worker.js"))) return child;
+    if (!args[1]?.includes("--input-type=module") || !args[1].includes("--eval")) return child;
     workerStarted = true;
     const emit = child.emit.bind(child);
     child.emit = (name, ...values) => {

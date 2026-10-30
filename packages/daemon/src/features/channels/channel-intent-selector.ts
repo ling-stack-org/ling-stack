@@ -1025,10 +1025,10 @@ function createWorkflowProposal(
       .filter((roleKey): roleKey is AiTeammate["roleKey"] => Boolean(roleKey))
       .map((roleKey) => lingAgentFallbackRecommendation(roleKey, responseLanguage)),
   );
+  // Capability blockers remain selection facts; confirmation rechecks live authority.
   const riskSummary = [
     buildRiskSummary(reasonCode, responseLanguage),
     ...fallbackRecommendations,
-    ...(bindingBlocker ? [bindingBlocker.message] : []),
   ].join("\n\n");
   const requiredTools = execution
     ? requiredToolsForExecutionOperations(execution.operations)
@@ -1134,7 +1134,7 @@ function createSingleStepExecutableProposal(
     { tools: executableIntent.requiredTools.join(", "), target: executableIntent.targetLabel },
   );
   const riskSummary = blocker
-    ? `${localizedRiskSummary}\n\n${blocker.userMessage}`
+    ? localizedRiskSummary
     : fallbackSpecialistRoleKeys.length > 0
       ? `${localizedRiskSummary}\n\n${fallbackSpecialistRoleKeys.map((roleKey) => lingAgentFallbackRecommendation(roleKey, responseLanguage)).join("\n")}`
       : localizedRiskSummary;

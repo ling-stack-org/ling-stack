@@ -12,6 +12,7 @@ async function launchCli(t, extraEnv = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-cli-resource-bootstrap-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const source = new URL("../src/cli.ts", import.meta.url).href;
+  const shutdownSource = new URL("../src/runtime/signal-shutdown.ts", import.meta.url).href;
   const hook = join(cwd, "hook.mjs");
   const boundary = `
     import assert from 'node:assert/strict';
@@ -42,6 +43,9 @@ async function launchCli(t, extraEnv = {}) {
       "./runtime/sandbox/packaged-restricted-command-bootstrap.js", "./runtime/sandbox/packaged-office-native-bootstrap.js",
       "./features/skills/packaged-startup.js"])});
     registerHooks({resolve(specifier, context, next) {
+      if (context.parentURL === ${JSON.stringify(source)} && specifier === './runtime/signal-shutdown.js') {
+        return { shortCircuit: true, url: ${JSON.stringify(shutdownSource)} };
+      }
       if (context.parentURL === ${JSON.stringify(source)} && boundaries.has(specifier)) {
         return { shortCircuit: true, url: ${JSON.stringify(`data:text/javascript,${encodeURIComponent(boundary)}`)} };
       }

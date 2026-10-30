@@ -1,6 +1,6 @@
 # Channel startup and policy QA checkpoint
 
-Implementation tree: `/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack`.
+Implementation tree: `ling-e6-continuation/ling-stack`.
 Package currently available for policy QA: commit `3d5b0174`, ASAR
 `d87f3a7f1e3cfec7c46db3ec6e0edb1f2d21927543a2e3a8b44484f2143dd856`.
 This is not a full E6 completion or release record.

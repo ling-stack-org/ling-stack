@@ -1,20 +1,25 @@
 import { useEffect, useState } from "react";
 import { useI18n, type Translate } from "../../i18n.js";
-import type { ChannelExecutionProposal } from "../../types.js";
+import type { ChannelExecutionProposal, ToolName } from "../../types.js";
+import { Button } from "../../shared/ui/index.js";
 import { ConversationDecisionGate, type ConversationDecisionAction } from "../approvals/ConversationDecisionGate.js";
 
 export function ChannelExecutionProposalComposerGate({
+  allowedTools,
   assigneeLabel,
   errorMessage,
   proposal,
   onAllow,
   onDeny,
+  onOpenChannelSettings,
 }: {
+  readonly allowedTools: readonly ToolName[];
   readonly assigneeLabel: string;
   readonly errorMessage?: string;
   readonly proposal: ChannelExecutionProposal;
   readonly onAllow: (proposal: ChannelExecutionProposal) => Promise<void>;
   readonly onDeny: (proposal: ChannelExecutionProposal) => Promise<void>;
+  readonly onOpenChannelSettings: () => void;
 }): React.JSX.Element {
   const { locale, t } = useI18n();
   const [busyAction, setBusyAction] = useState<ConversationDecisionAction>();
@@ -22,11 +27,12 @@ export function ChannelExecutionProposalComposerGate({
   const [localError, setLocalError] = useState("");
   const permissionLabels = proposalPermissionLabels(proposal.requiredTools, t);
   const permissionText = new Intl.ListFormat(locale, { style: "short", type: "conjunction" }).format(permissionLabels);
+  const missingTools = proposal.requiredTools.filter(tool => !allowedTools.includes(tool));
   const description = t("{agent} wants to start task \"{task}\" and needs {permissions}.", {
     agent: assigneeLabel,
     task: proposal.title,
     permissions: permissionText,
-  });
+  }) + (missingTools.length ? ` ${t("Missing tools")}: ${missingTools.join(", ")}.` : "");
   const visibleError = localError || errorMessage || proposal.blocker?.message || proposal.errorMessage;
 
   useEffect(() => {
@@ -36,7 +42,7 @@ export function ChannelExecutionProposalComposerGate({
   }, [proposal.id, proposal.status, proposal.updatedAt]);
 
   async function decide(action: ConversationDecisionAction): Promise<void> {
-    if (busyAction) return;
+    if (busyAction || action === "allow" && missingTools.length > 0) return;
     setBusyAction(action);
     setAttemptedAction(action);
     setLocalError("");
@@ -55,6 +61,7 @@ export function ChannelExecutionProposalComposerGate({
 
   return (
     <ConversationDecisionGate
+      allowDisabled={missingTools.length > 0}
       allowLabel={t("Allow")}
       allowingLabel={t("Allowing")}
       attemptedAction={attemptedAction}
@@ -67,6 +74,11 @@ export function ChannelExecutionProposalComposerGate({
       description={description}
       errorMessage={visibleError}
       focusKey={`${proposal.id}:${proposal.updatedAt}`}
+      recoveryAction={missingTools.length > 0 ? (
+        <Button disabled={Boolean(busyAction)} variant="secondary" onClick={onOpenChannelSettings}>
+          {t("Channel settings")}
+        </Button>
+      ) : undefined}
       retryLabel={t("Retry")}
       surface="channel"
       title={t("Allow this task?")}

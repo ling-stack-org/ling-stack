@@ -28,7 +28,8 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
-import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
+import { writeJson } from "../../shared/response.js";
+import { createSseRunExecutionSink } from "../runs/run-execution-sink.js";
 import {
   routeChannelMessageReply,
   routeExplicitChannelMention,
@@ -131,6 +132,7 @@ export async function handleChannelTurnStream(
     return;
   }
 
+  const transport = createSseRunExecutionSink(response);
   try {
     const store = storeRegistry.getStore(cwd);
     const channel = store.getChannel(channelId);
@@ -167,14 +169,8 @@ export async function handleChannelTurnStream(
       message,
     );
 
-    let closed = false;
-    response.on("close", () => {
-      closed = true;
-    });
     const safeWriteSse = (event: string, data: unknown): void => {
-      if (!closed && !response.destroyed) {
-        writeSse(response, event, data);
-      }
+      transport.writeEvent(event, data);
     };
     const aiRepliesById = new Map<string, ChannelMessage>();
     const upsertAiReply = (aiReply: ChannelMessage): readonly ChannelMessage[] => {
@@ -182,8 +178,7 @@ export async function handleChannelTurnStream(
       return Array.from(aiRepliesById.values());
     };
 
-    writeSseHead(response);
-    safeWriteSse("ready", buildChannelConversationTurnResponse({
+    transport.writeReady(buildChannelConversationTurnResponse({
       store,
       userItemId: message.id,
     }));
@@ -279,19 +274,14 @@ export async function handleChannelTurnStream(
       });
     } finally {
       releaseMessageClassification();
-      if (!closed && !response.destroyed) {
-        response.end();
-      }
+      transport.end();
     }
   } catch (error) {
-    if (response.headersSent) {
-      response.end();
-      return;
-    }
-    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+    transport.writeError(error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
+    transport.end();
   }
 }
 

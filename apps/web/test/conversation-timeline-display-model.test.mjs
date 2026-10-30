@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import test, { after } from "node:test";
 import { createServer } from "vite";
-import { conversationTimelineSubAgentDisclosureKey } from "../src/shared/conversation/timeline/conversation-timeline-view-retain-keys.ts";
 
 const vite = await createServer({
   root: fileURLToPath(new URL("..", import.meta.url)),
@@ -12,6 +11,9 @@ const vite = await createServer({
 });
 const { projectConversationTimelineDisplayModel } = await vite.ssrLoadModule(
   "/src/shared/conversation/timeline/conversation-timeline-display-model.ts",
+);
+const { conversationTimelineSubAgentDisclosureKey } = await vite.ssrLoadModule(
+  "/src/shared/conversation/timeline/conversation-timeline-view-retain-keys.ts",
 );
 after(async () => vite.close());
 

@@ -78,7 +78,7 @@ export function CodeBlock({
     >
       <figcaption>
         <span>{normalizedLanguage}</span>
-        <small>{t("{count} lines", { count: stats.lines })} · {formatCodeSize(stats.characters)}</small>
+        <small>{t("{count} lines", { count: stats.lines })} · {formatCodeSize(stats.bytes)}</small>
         <CopyActionButton text={code} label={copyLabel ?? t("Copy code")} className="message-code-copy" />
       </figcaption>
       {bodyMounted ? (
@@ -146,12 +146,13 @@ function renderShikiHighlightedCode(
 
 interface CodeStats {
   readonly characters: number;
+  readonly bytes: number;
   readonly lines: number;
 }
 
 function codeStats(code: string): CodeStats {
   if (code.length === 0) {
-    return { characters: 0, lines: 0 };
+    return { characters: 0, bytes: 0, lines: 0 };
   }
   let lines = 1;
   for (let index = 0; index < code.length; index += 1) {
@@ -159,7 +160,7 @@ function codeStats(code: string): CodeStats {
       lines += 1;
     }
   }
-  return { characters: code.length, lines };
+  return { characters: code.length, bytes: new TextEncoder().encode(code).byteLength, lines };
 }
 
 function takeLines(code: string, count: number): string {
@@ -179,14 +180,14 @@ function takeLines(code: string, count: number): string {
   return code;
 }
 
-function formatCodeSize(characters: number): string {
-  if (characters < 1024) {
-    return `${characters} B`;
+function formatCodeSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
   }
-  if (characters < 1024 * 1024) {
-    return `${(characters / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
   }
-  return `${(characters / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function normalizeCodeLanguage(language?: string): string {

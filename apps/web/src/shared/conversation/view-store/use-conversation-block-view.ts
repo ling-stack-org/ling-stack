@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { selectDisclosureExpanded } from "./conversation-view-selectors.js";
 import { useOptionalConversationViewStore } from "./conversation-view-provider.js";
 
@@ -38,7 +38,7 @@ export function useConversationBlockView(input: {
     () => input.defaultExpanded,
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!store) {
       setLocalState((current) => (
         current.blockId === input.blockId && current.revisionKey === input.revisionKey

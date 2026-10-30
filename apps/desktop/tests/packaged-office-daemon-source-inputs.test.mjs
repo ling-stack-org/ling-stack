@@ -286,6 +286,8 @@ const gracefulTreeRuntimeInputs = [
   "packages/daemon/src/runtime/run-suspension-order.ts",
 ];
 const newAuthoredRuntimeLeaves = [
+  "packages/daemon/src/runtime/acp/host-text-write-worker.ts",
+  "packages/daemon/src/features/runs/run-execution-sink.ts",
   ...gracefulTreeRuntimeInputs,
   "packages/daemon/src/runtime/packaged-qa-harness-bootstrap.ts",
   "packages/daemon/src/runtime/workspace-runtime-owner.ts",

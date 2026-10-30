@@ -279,6 +279,9 @@ export function createDaemonServer(
     secretStore: engineSecretStore,
     secretResolver: baseSecretResolver,
     ...dependencies.engineManagement,
+    // Resolve at execution time, after the same original Supervisor is ready.
+    // Workspace settings and engine profiles cannot supply a Host runtime pin.
+    getHostFileNode: () => runtimeSupervisor.getSandboxFeatures().restrictedCommands?.executables.node,
   });
   const externalWorkFetch = dependencies.externalWorkFetch;
   const webFetch = dependencies.webFetch ?? dependencies.channelWebFetch;

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { ArrowDown, Copy, FileText, Pencil } from "lucide-react";
-import { attachmentContentUrl, submitUserInputAnswer } from "../../api.js";
+import { attachmentContentUrl, daemonBaseUrl, submitUserInputAnswer } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
@@ -44,6 +44,7 @@ import { requestTimelineWorkspaceFileOpen } from "../../shared/conversation/time
 import { timelineMessageChromeOwnerIds } from "../../shared/conversation/timeline/timeline-message-chrome-owners.js";
 import { NormalConversationResponseActions } from "./NormalConversationResponseActions.js";
 import { useConversationReadingViewport } from "../../shared/conversation/blocks/use-conversation-reading-viewport.js";
+import { conversationReadingScope } from "../../shared/conversation/view-store/conversation-reading-storage.js";
 
 export interface NormalConversationFeedProps {
   readonly messages: readonly ConversationHomeMessage[];
@@ -150,6 +151,7 @@ export function NormalConversationFeed({
   );
   const workspaceId = detailContext?.executionActions.find((action) => action.workspaceId.trim())?.workspaceId;
   const timelineThreadId = detailContext?.threadId ?? feedItems.find((item) => item.message.threadId)?.message.threadId;
+  const readingScopeKey = conversationReadingScope(daemonBaseUrl, projectPath?.trim() || workspaceCwd, "normal", timelineThreadId);
   const handleOpenTimelineSourceRef = useCallback(async (
     ref: import("@ling-stack/conversation-ui-core").ConversationOperationSourceRef,
     item?: import("@ling-stack/conversation-ui-core").ConversationTimelineItem,
@@ -180,6 +182,7 @@ export function NormalConversationFeed({
     revision: feedItems,
     contentKey: itemIdentityKey,
     searchActive,
+    readingScopeKey,
   });
 
   function toggleFeedback(messageId: string, feedback: "up" | "down"): void {
@@ -196,6 +199,7 @@ export function NormalConversationFeed({
   return (
     <ConversationTimelineFeed
       surfaceId={`normal:${timelineSnapshot.scope.threadId}`}
+      readingScopeKey={readingScopeKey}
       scrollRef={feedRef}
       frameClassName="normal-conversation-feed-frame"
       feedClassName="normal-conversation-feed"

@@ -1,11 +1,17 @@
 import { spawn } from "node:child_process";
 import { lstatSync, realpathSync, type BigIntStats } from "node:fs";
 import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { verifyElectronNodeResources } from "../sandbox/electron-node-resources.js";
+import { verifyRestrictedCommandBinaryPin, type RestrictedCommandExecutablePin } from "../sandbox/restricted-command-runtime.js";
 import type { HostTextRead } from "./host-text-read.js";
+import { runHostTextWriteWorker } from "./host-text-write-worker.js";
 
 interface Identity { readonly dev: string; readonly ino: string; readonly size: string; readonly mtime: string; readonly ctime: string }
 export interface HostTextWrite { assertUnchanged(): void }
+export interface HostTextWriteOptions {
+  /** Trusted Host bootstrap input, never from ACP or a workspace/model payload. */
+  readonly node?: RestrictedCommandExecutablePin;
+}
 export class HostTextWriteError extends Error {
   constructor(readonly outcome: "not_started" | "unknown") { super("host_file_write_failed"); }
 }
@@ -14,7 +20,8 @@ const identity = (info: BigIntStats): Identity => ({ dev: String(info.dev), ino:
   mtime: String(info.mtimeNs), ctime: String(info.ctimeNs) });
 
 /** Capture before claim; the OS-contained worker performs the mutation only after claim. */
-export function prepareBoundedHostWrite(path: string, signal: AbortSignal, baseline?: HostTextRead): { write(content: string): Promise<HostTextWrite> } {
+export function prepareBoundedHostWrite(path: string, signal: AbortSignal, baseline?: HostTextRead,
+  options: HostTextWriteOptions = {}): { write(content: string): Promise<HostTextWrite> } {
   signal.throwIfAborted();
   if (process.platform !== "darwin") throw new HostTextWriteError("not_started");
   const parent = dirname(path);
@@ -24,23 +31,29 @@ export function prepareBoundedHostWrite(path: string, signal: AbortSignal, basel
   const expected = target(path);
   // Validate the captured destination against the retained read, never adopt a newer baseline.
   baseline?.assertUnchanged();
-  const executable = realpathSync(process.execPath);
-  const worker = realpathSync(fileURLToPath(new URL("./host-text-write-worker.js", import.meta.url)));
+  const runtime = captureHostRuntime(options.node);
+  // Only this product-owned program is code. The requested path/content stay
+  // on stdin and cannot alter the program or choose a second executable.
+  const program = `(${runHostTextWriteWorker.toString()})()`;
   const literal = (value: string): string => `(literal ${JSON.stringify(value)})`;
   const ancestors = [parent];
   while (dirname(ancestors.at(-1)!) !== ancestors.at(-1)) ancestors.push(dirname(ancestors.at(-1)!));
   const profile = ["(version 1)", "(deny default)", "(allow process-exec)", "(allow sysctl-read)",
     "(allow file-read-metadata)", "(deny network*)", `(allow file-read-data ${ancestors.map(literal).join(" ")})`,
-    `(allow file-read* ${[executable, worker, "/dev/null", "/dev/urandom", "/dev/random"].map(literal).join(" ")}
+    `(allow file-read* ${[runtime.executable, "/dev/null", "/dev/urandom", "/dev/random"].map(literal).join(" ")}
       (subpath "/usr/lib") (subpath "/usr/share") (subpath "/System"))`,
+    ...runtime.readRoots.map(root => `(allow file-read* file-map-executable (subpath ${JSON.stringify(root)}))`),
     `(allow file-write* ${literal(path)} (literal "/dev/null"))`,
   ].join("\n");
   return { async write(content) {
     signal.throwIfAborted();
     const bytes = Buffer.from(content, "utf8");
     if (bytes.length > maxBytes || content.includes("\0") || bytes.toString("utf8") !== content) throw new HostTextWriteError("not_started");
-    const output = await writeWorker(["-p", profile, executable, worker], parent,
-      JSON.stringify({ path, parent: { dev: String(directory.dev), ino: String(directory.ino) }, expected, content }), signal);
+    runtime.assertCurrent();
+    signal.throwIfAborted();
+    const output = await writeWorker(["-p", profile, runtime.executable, "--input-type=module", "--eval", program], parent,
+      JSON.stringify({ path, parent: { dev: String(directory.dev), ino: String(directory.ino) }, expected, content }), signal,
+      runtime.electron);
     let value;
     try { value = JSON.parse(output); } catch { throw new HostTextWriteError("unknown"); }
     if (value?.outcome !== "succeeded") throw new HostTextWriteError(value?.outcome === "not_started" ? "not_started" : "unknown");
@@ -53,9 +66,34 @@ export function prepareBoundedHostWrite(path: string, signal: AbortSignal, basel
   } };
 }
 
-async function writeWorker(args: readonly string[], cwd: string, input: string, signal: AbortSignal): Promise<string> {
+function captureHostRuntime(input?: RestrictedCommandExecutablePin) {
+  const node = input ? structuredClone(input) : undefined;
+  const executable = realpathSync(process.execPath);
+  const original = lstatSync(executable, { bigint: true });
+  const electron = typeof process.versions.electron === "string";
+  const check = (): readonly string[] => {
+    try {
+      const current = lstatSync(executable, { bigint: true });
+      if (!current.isFile() || current.isSymbolicLink() || realpathSync(process.execPath) !== executable
+        || ["dev", "ino", "size", "mtimeNs", "ctimeNs", "mode", "uid", "gid", "nlink"]
+          .some(key => current[key as keyof BigIntStats] !== original[key as keyof BigIntStats])) throw new Error("changed");
+      if (node && verifyRestrictedCommandBinaryPin(node) !== executable) throw new Error("changed");
+      if (electron) {
+        if (!node?.runtime) throw new Error("missing_runtime");
+        return verifyElectronNodeResources(executable, node.runtime).readRoots;
+      }
+      if (node?.runtime) throw new Error("wrong_runtime");
+      return [];
+    } catch { throw new HostTextWriteError("not_started"); }
+  };
+  const readRoots = check();
+  return { executable, electron, readRoots, assertCurrent: () => { check(); } };
+}
+
+async function writeWorker(args: readonly string[], cwd: string, input: string, signal: AbortSignal, electron: boolean): Promise<string> {
   signal.throwIfAborted();
-  const child = spawn("/usr/bin/sandbox-exec", args, { cwd, env: { PATH: "/usr/bin:/bin", HOME: "/nonexistent" },
+  const child = spawn("/usr/bin/sandbox-exec", args, { cwd, env: { PATH: "/usr/bin:/bin", HOME: "/nonexistent",
+    ...(electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
     shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];

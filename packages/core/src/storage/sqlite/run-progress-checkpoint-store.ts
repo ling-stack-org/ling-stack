@@ -69,7 +69,7 @@ export class SqliteRunProgressCheckpointStore {
         assertRunProgressPayloadSecretFree(nextView);
         return { modelView: nextView, delegationInstructions: instructions,
           completedToolCallIds: validateRunProgressEffects(this.ports, run, events, existingView,
-            input.sourceFence, this.context.database) };
+            input.sourceFence, this.context.database, { allowClosedFailedBash: true }) };
       });
       const head = this.head(run.id);
       const checkpointSourceEventSeq = input.sourceEventSeq + (delegationInstructions.length ? 1 : 0);
@@ -260,7 +260,7 @@ export class SqliteRunProgressCheckpointStore {
     if (!events.some(event => event.seq === checkpoint.sourceEventSeq)) throw failure("checkpoint.source_watermark_changed");
     const ordinaryView = this.verifyInstructionView(run.id, payload.modelView);
     const ids = validateRunProgressEffects(this.ports, run, events.slice(0, checkpoint.sourceEventSeq),
-      ordinaryView, checkpoint.sourceFence, this.context.database);
+      ordinaryView, checkpoint.sourceFence, this.context.database, { allowClosedFailedBash: true });
     if (!isDeepStrictEqual(ids, payload.completedToolCallIds)) throw failure("checkpoint.snapshot_unavailable");
     return { kind: "verified", checkpoint, modelView: payload.modelView, witness: witness(checkpoint, head.revision) };
   }

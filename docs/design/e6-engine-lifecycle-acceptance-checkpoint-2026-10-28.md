@@ -1,7 +1,10 @@
 # Engine lifecycle acceptance checkpoint — 2026-10-28
 
 This is a source/checkpoint status, not a declaration of completed E6 or GUI.
-Use only `/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack`.
+The implementation has moved to `ling-design-parity/ling-stack` on the same
+`codex/e6-safe-continuation` branch. Current increments and QA input bindings are
+recorded in [the 2026-10-29 checkpoint](design-parity-implementation-checkpoint-2026-10-29.md);
+the evidence below remains the historical 2026-10-28 result.
 
 ## Saved repairs
 

@@ -2,7 +2,7 @@
 
 ## Scope and status
 
-Only `/Users/tianxiao/.codex/worktrees/ling-e6-continuation/ling-stack`, branch
+Only `ling-e6-continuation/ling-stack`, branch
 `codex/e6-safe-continuation`. Integrate main `4ca3f9de16903cdfb4b89322dfcbcf690a1ff861`
 into pre-merge `083b5148c7c405914d0332d55c99be133fab45ea`.
 Backup ref: `codex/e6-pre-main-20261026-083b5148`.

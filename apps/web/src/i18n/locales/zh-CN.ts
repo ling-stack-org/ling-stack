@@ -478,6 +478,8 @@ export const zhCN = {
     "Enabled servers are available for explicit teammate assignment.": "启用后可被 AI 队友授权使用。",
     "Run a local MCP process from this workspace.": "从当前工作区启动本地 MCP 进程。",
     "Command": "命令",
+    "Open full log": "打开完整日志",
+    "Full output is unavailable for this command.": "此命令的完整输出不可用。",
     "Arguments": "参数",
     "Working directory": "运行目录",
     "Optional": "可选",

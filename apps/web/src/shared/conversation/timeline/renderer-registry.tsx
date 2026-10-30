@@ -112,7 +112,7 @@ function renderPlanItem(item: ConversationTimelineItem, context: ConversationTim
 }
 
 function renderCommandItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "commandExecution" ? <ConversationTimelineCommandRenderer key={item.id} item={item} depth={context.depth} /> : null;
+  return item.kind === "commandExecution" ? <ConversationTimelineCommandRenderer key={item.id} item={item} depth={context.depth} onOpenSourceRef={context.onOpenSourceRef} /> : null;
 }
 
 function renderFileChangeItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {

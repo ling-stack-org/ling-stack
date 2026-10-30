@@ -2917,6 +2917,8 @@ export const enUS = {
     "Enabled servers are available for explicit teammate assignment.": "Enabled servers are available for explicit teammate assignment.",
     "Run a local MCP process from this workspace.": "Run a local MCP process from this workspace.",
     "Command": "Command",
+    "Open full log": "Open full log",
+    "Full output is unavailable for this command.": "Full output is unavailable for this command.",
     "Arguments": "Arguments",
     "Working directory": "Working directory",
     "Optional": "Optional",

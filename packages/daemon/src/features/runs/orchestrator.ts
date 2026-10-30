@@ -1,4 +1,3 @@
-import type { ServerResponse } from "node:http";
 import { isDeepStrictEqual } from "node:util";
 import {
   type ApprovalPolicy,
@@ -163,7 +162,8 @@ import {
 import { appendRuntimeProgressForRunEvent, syncWorkUnitForRunEvent } from "./work-units.js";
 import { approvalEventReflectsRunState } from "./approval-event-state.js";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
-import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
+import type { RunExecutionSink } from "./run-execution-sink.js";
+export { createDetachedRunExecutionSink, createSseRunExecutionSink, type RunExecutionSink } from "./run-execution-sink.js";
 import { prepareNormalConversationExecution, readNormalConversationPreparedExecution,
   restoreNormalConversationExecutionOptions, assertPreparedExecutionMemoryCurrent } from "../conversations/normal-conversation-prepared-execution.js";
 import {
@@ -276,84 +276,10 @@ export interface ExecuteRunRequestOptions {
   readonly nativeRunDispatcher?: NativeRunDispatcher;
 }
 
-export interface RunExecutionSink {
-  readonly kind: "sse" | "detached";
-  onClose(listener: () => void): void;
-  isClosed(): boolean;
-  writeReady(data: unknown): void;
-  writeEvent(event: string, data: unknown): void;
-  writeError(statusCode: number, body: unknown): void;
-  end(): void;
-}
-
 /** Pre-Run failures are terminal for this dispatch transport, not successful Runs. */
 function writeRunPreparationFailure(sink: RunExecutionSink, statusCode: number, body: unknown): void {
   try { sink.writeError(statusCode, body); }
   finally { sink.end(); }
-}
-
-export function createSseRunExecutionSink(response: ServerResponse): RunExecutionSink {
-  let closed = false;
-  let sseStarted = false;
-  const closeListeners: (() => void)[] = [];
-  response.on("close", () => {
-    closed = true;
-    for (const listener of closeListeners.splice(0)) {
-      listener();
-    }
-  });
-  const ensureSseStarted = (): void => {
-    if (!sseStarted) {
-      writeSseHead(response);
-      sseStarted = true;
-    }
-  };
-  return {
-    kind: "sse",
-    onClose(listener) {
-      closeListeners.push(listener);
-    },
-    isClosed() {
-      return closed;
-    },
-    writeReady(data) {
-      ensureSseStarted();
-      writeSse(response, "ready", data);
-    },
-    writeEvent(event, data) {
-      ensureSseStarted();
-      writeSse(response, event, data);
-    },
-    writeError(statusCode, body) {
-      if (closed || response.writableEnded) return;
-      if (!response.headersSent) {
-        writeJson(response, statusCode, body);
-      } else {
-        writeSse(response, "error", body);
-      }
-    },
-    end() {
-      if (!closed && !response.writableEnded) {
-        response.end();
-      }
-    },
-  };
-}
-
-export function createDetachedRunExecutionSink(): RunExecutionSink {
-  return {
-    kind: "detached",
-    onClose() {
-      // Detached continuation runs are daemon-owned and are not tied to a browser stream.
-    },
-    isClosed() {
-      return false;
-    },
-    writeReady() {},
-    writeEvent() {},
-    writeError() {},
-    end() {},
-  };
 }
 
 /** Track the whole request, including preflight before any durable Run exists. */

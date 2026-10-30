@@ -89,6 +89,9 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/contracts/src/engine-lifecycle.ts",
   "packages/daemon/src/features/execution-engines/engine-scanner.ts",
   "packages/daemon/src/features/execution-engines/managed-engine-installer.ts",
+  // Fixed inline write worker and shared bounded observer sink; listing grants no approval.
+  "packages/daemon/src/runtime/acp/host-text-write-worker.ts",
+  "packages/daemon/src/features/runs/run-execution-sink.ts",
   // Explicit current-main feature closure; content review and QA binding remain separate gates.
   "packages/contracts/src/artifacts.ts",
   "packages/contracts/src/diagnostics.ts",

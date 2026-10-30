@@ -19,6 +19,7 @@ export function mountReadingFixture(messageCount = 36) {
   document.body.append(container);
   const root = createRoot(container);
   let threadId = "p2-reading-thread";
+  let workspaceCwd = "/p2-fixture";
   let searchActive = false;
   let messages: readonly ConversationHomeMessage[] = Array.from({ length: messageCount }, (_, index) => ({
     id: `reading-message-${index}`,
@@ -32,7 +33,7 @@ export function mountReadingFixture(messageCount = 36) {
   function render() {
     root.render(<I18nProvider><ThemeProvider><LingUiProvider><NormalConversationFeed
       messages={messages} visibleMessages={messages} runById={new Map()}
-      composerGateApprovals={[]} generatedMedia={[]} workspaceCwd="/p2-fixture"
+      composerGateApprovals={[]} generatedMedia={[]} workspaceCwd={workspaceCwd}
       searchActive={searchActive} editSaving={false} replacementRetryError=""
       onCancelMessageEdit={noop} onEditMessage={noop} onSaveMessage={noop}
       onRetryReplacement={noop} onOpenFiles={noop} onOpenReportFile={noop} onOpenReview={noop}
@@ -72,6 +73,13 @@ export function mountReadingFixture(messageCount = 36) {
       searchActive = false;
       render();
     },
+    returnToThread: () => {
+      threadId = "p2-reading-thread";
+      messages = messages.map(message => ({ ...message, id: message.id.replace(/^other-/, ""), threadId }));
+      searchActive = false;
+      render();
+    },
+    workspace: (cwd: string) => { workspaceCwd = cwd; render(); },
     dispose: () => { root.unmount(); container.remove(); },
   };
 }

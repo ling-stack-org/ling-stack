@@ -189,6 +189,8 @@ import { useConversationSummaryLayout } from "./conversation-summary-layout.js";
 import { proposedPlanActionPayload } from "./proposed-plan-action-payload.js";
 import { useChannelBottomPanelResizeController } from "./useChannelBottomPanelResizeController.js";
 import { useChannelMessageFeed } from "./ChannelMessageFeed.js";
+import { conversationReadingScope } from "../../shared/conversation/view-store/conversation-reading-storage.js";
+import { daemonBaseUrl } from "../../api/client.js";
 import {
   LING_AGENT_AUTHOR_ID,
   createChannelMessageRenderers,
@@ -1472,7 +1474,10 @@ export function WorkspaceClientView({
     selectedChannelBranchRootThreadId,
     selectedChannelId,
   });
+  const channelReadingScopeKey = selectedChannelId ? conversationReadingScope(daemonBaseUrl, cwd, `channel:${selectedChannelId}`, activeWorkThreadId || "root") : undefined;
   const messageFeedState = useChannelMessageFeed({
+    readingScopeKey: channelReadingScopeKey,
+    itemLocatorRef: conversationTimelineItemLocatorRef,
     items: messageFeedItems,
     conversationWorkCellByWorkflowId,
     conversationWorkCellByThreadId,
@@ -3162,11 +3167,13 @@ export function WorkspaceClientView({
     />
   ) : selectedExecutionProposal ? (
     <ChannelExecutionProposalComposerGate
+      allowedTools={selectedChannel?.allowedTools ?? []}
       assigneeLabel={teammateLabel(selectedExecutionProposal.assigneeTeammateId, teammateOptions, t("Deleted teammate"))}
       errorMessage={workflowErrors[selectedExecutionProposal.id]}
       proposal={selectedExecutionProposal}
       onAllow={onConfirmExecutionProposal}
       onDeny={onCancelExecutionProposal}
+      onOpenChannelSettings={openChannelSettingsPage}
     />
   ) : channelComposer;
 
@@ -3967,6 +3974,7 @@ export function WorkspaceClientView({
           } : undefined}
           messageFeed={{
             surfaceId: `channel:${selectedChannel?.id ?? "none"}:${activeWorkThreadId || "root"}`,
+            readingScopeKey: channelReadingScopeKey,
             state: messageFeedState,
             ariaLabel: t("Channel message feed"),
             loading: channelMessagesLoading || channelProtocolLoading,

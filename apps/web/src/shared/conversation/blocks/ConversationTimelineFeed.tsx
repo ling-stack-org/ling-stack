@@ -11,6 +11,7 @@ import { ConversationViewProvider } from "../view-store/conversation-view-provid
 
 export interface ConversationTimelineFeedProps {
   readonly surfaceId: string;
+  readonly readingScopeKey?: string;
   readonly scrollRef: RefObject<HTMLDivElement | null>;
   readonly ariaLabel: string;
   readonly timelineId: string;
@@ -65,6 +66,7 @@ export function ConversationTimelineFeed({
   scrollRef,
   statusNode,
   surfaceId,
+  readingScopeKey,
   timelineId,
   timelineNode,
   title,
@@ -74,7 +76,7 @@ export function ConversationTimelineFeed({
   const resolvedFeedClassName = [feedClassName, empty ? emptyFeedClassName : ""].filter(Boolean).join(" ");
 
   return (
-    <ConversationViewProvider surfaceId={surfaceId}>
+    <ConversationViewProvider surfaceId={surfaceId} readingScopeKey={readingScopeKey}>
       <div className={frameClassName}>
         <ConversationFeed
           rootRef={scrollRef}

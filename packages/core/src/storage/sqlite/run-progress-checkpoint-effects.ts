@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { DatabaseSync } from "node:sqlite";
 import { isHostCommandPreparedV1, isHostCommandSettledV1 } from "@ling-stack/contracts";
@@ -34,7 +36,8 @@ export function runHasOrdinaryProgress(events: readonly RunEventEnvelope[]): boo
 
 /** Match the exact SDK pair to canonical tool facts and dedicated Host settlement. */
 export function validateRunProgressEffects(store: RunProgressEffectStore, run: RunSession,
-  events: readonly RunEventEnvelope[], modelView: readonly unknown[], sourceFence: RuntimeAttemptFenceV1, database: DatabaseSync): readonly string[] {
+  events: readonly RunEventEnvelope[], modelView: readonly unknown[], sourceFence: RuntimeAttemptFenceV1, database: DatabaseSync,
+  options: { readonly allowClosedFailedBash?: boolean } = {}): readonly string[] {
   const last = modelView.at(-1);
   if (modelView.length === 0 || modelView.length > 1000 || !record(last)) throw blocked();
   const first = modelView[0], prepared = readRunProgressFrozenExecution(run).preparedInput;
@@ -96,6 +99,8 @@ export function validateRunProgressEffects(store: RunProgressEffectStore, run: R
   assertNoUnsettledHostFacts(database, store, run.id, sourceFence.workUnitId);
   const commandPairs = new Set<string>(), preparedById = new Map<string, Extract<RunEventEnvelope, { type: "host_command_prepared" }>>();
   const settledById = new Map<string, Extract<RunEventEnvelope, { type: "host_command_settled" }>>();
+  const completedCommands = new Map<string, { prepared: Extract<RunEventEnvelope, { type: "host_command_prepared" }>;
+    settled: Extract<RunEventEnvelope, { type: "host_command_settled" }> }>();
   for (const event of events) {
     if (event.type === "host_command_prepared") {
       if (!isHostCommandPreparedV1(event.data) || preparedById.has(event.data.executionId)
@@ -117,6 +122,7 @@ export function validateRunProgressEffects(store: RunProgressEffectStore, run: R
       || !isDeepStrictEqual(prepared.data.source, toRuntimeAttemptFence(attempt))
       || prepared.seq <= start.seq || settled.seq <= prepared.seq || settled.seq >= end.seq
       || settled.data.outcome !== "completed" || settled.data.ownerCurrent !== true) throw blocked();
+    completedCommands.set(id, { prepared, settled });
   }
   let unsupportedFileEffect = false;
   for (const [id, end] of ends) {
@@ -126,7 +132,13 @@ export function validateRunProgressEffects(store: RunProgressEffectStore, run: R
       || call.name !== start.data.toolName || !isDeepStrictEqual(call.arguments, start.data.args)
       || result.toolName !== end.data.toolName || result.isError !== end.data.isError || !record(end.data.result)
       || !isDeepStrictEqual(result.content, end.data.result.content)) throw blocked();
-    if (end.data.isError && end.data.toolName !== "read") throw blocked();
+    if (end.data.isError && end.data.toolName !== "read") {
+      const command = completedCommands.get(id);
+      // The opt-in belongs only to ordinary checkpoints. Compaction retains its
+      // existing domain. Preserve the original error, never synthesize success.
+      if (!options.allowClosedFailedBash || end.data.toolName !== "bash" || !command
+        || !isClosedFailedBash(run, start.data.args, end, command.prepared, command.settled)) throw blocked();
+    }
     if (end.data.toolName === "bash") {
       if (!commandPairs.has(id)) throw blocked();
     } else if (["spawn_agent", "send_message", "wait_agent", "interrupt_agent", "resume_agent"].includes(end.data.toolName)) {
@@ -159,6 +171,37 @@ export function validateRunProgressEffects(store: RunProgressEffectStore, run: R
   // Unknown command/MCP/journal facts above take precedence over this precise capability diagnosis.
   if (unsupportedFileEffect) throw new RunProgressCheckpointError("checkpoint.effect_unjournaled");
   return [...ends.keys()];
+}
+
+/** A nonzero exit is a known result only when canonical output matches Host facts.
+ * Normal leader close does not prove descendant termination or rollback; the
+ * independent Host-operation unknown-outcome gate above must still reject it. */
+function isClosedFailedBash(run: RunSession, args: unknown,
+  end: Extract<RunEventEnvelope, { type: "tool_end" }>,
+  prepared: Extract<RunEventEnvelope, { type: "host_command_prepared" }>,
+  settled: Extract<RunEventEnvelope, { type: "host_command_settled" }>): boolean {
+  const result = end.data.result;
+  if (!record(args) || typeof args.command !== "string" || !args.command.trim() || !record(result)
+    || !record(result.details) || result.details.denied !== undefined || !record(result.details.unifiedExec)) return false;
+  const execution = result.details.unifiedExec;
+  const command = { kind: "shell", command: args.command, shell: "bash" };
+  if (execution.status !== "failed" || !Number.isSafeInteger(execution.exitCode) || (execution.exitCode as number) <= 0
+    || execution.timedOut !== false || execution.cancelled !== false || execution.signal !== undefined || execution.denied !== undefined
+    || execution.runId !== run.id || execution.taskId !== run.taskId || execution.toolCallId !== end.data.toolCallId
+    || !isDeepStrictEqual(execution.command, command)
+    || prepared.data.commandDigest !== createHash("sha256").update(JSON.stringify(command)).digest("hex")
+    || !isDeepStrictEqual(execution.processObservation, settled.data.observation)) return false;
+  if (args.cwd !== undefined && (typeof args.cwd !== "string" || !args.cwd.trim())) return false;
+  const cwd = resolve(run.cwd, typeof args.cwd === "string" ? args.cwd : ".");
+  const workspace = prepared.data.workspace;
+  if (typeof execution.cwd !== "string" || !isAbsolute(execution.cwd) || !isAbsolute(workspace.path)
+    || !isAbsolute(workspace.realPath) || !isAbsolute(prepared.data.cwd) || workspace.path !== resolve(run.cwd)) return false;
+  const suffix = relative(workspace.path, cwd);
+  if (suffix === ".." || suffix.startsWith(".." + sep) || isAbsolute(suffix)) return false;
+  // Use the persisted lexical/real workspace mapping, not today's filesystem.
+  // It accounts for macOS /var aliases. Unprovable nested symlink aliases fail closed.
+  const physicalCwd = resolve(workspace.realPath, suffix);
+  return prepared.data.cwd === physicalCwd && (resolve(execution.cwd) === cwd || resolve(execution.cwd) === physicalCwd);
 }
 
 /** Recovery revalidates historical A and current B facts without borrowing a live-only lookup. */

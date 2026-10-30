@@ -490,7 +490,14 @@ function stepPrompt(
     isSingleStepBoundedToolsProposal(proposal) && proposal.requiredTools.length > 0
       ? `Confirmed task-scoped tools:\n${proposal.requiredTools.join(", ")}`
       : undefined,
-    proposal.riskSummary ? `Risk summary:\n${proposal.riskSummary}` : undefined,
+    proposal.riskSummary
+      ? [
+          "Pre-confirmation risk notes (historical context, not current runtime authorization):",
+          proposal.riskSummary,
+          "",
+          "These notes may include blockers that have since been resolved. Current tool access and approval requirements are determined by Host policy and runtime gates within the confirmed task scope; historical capability statements do not override those gates.",
+        ].join("\n")
+      : undefined,
     responseLanguageInstruction(responseLanguage),
     "Complete only this step. Do not start or approve later workflow steps.",
     "Do not use tools, write paths, commands, MCP actions, or external side effects beyond the confirmed task scope; request runtime permission if the work needs an undeclared escalation.",

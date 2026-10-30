@@ -8045,6 +8045,13 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, settings: state.workspaceSettings } });
     return;
   }
+  if (request.method() === "GET" && path === "/workspace/work-summary") {
+    await route.fulfill({ json: {
+      cwd, sessions: [], workspaces: [], pullRequests: [], truncated: false,
+      checkedAt: "2026-10-29T00:00:00.000Z",
+    } });
+    return;
+  }
   if (request.method() === "POST" && path === "/workspace-files/capabilities") {
     const body = await request.postDataJSON() as unknown;
     const issued = issueMockWorkspaceFileCapability(state, body);

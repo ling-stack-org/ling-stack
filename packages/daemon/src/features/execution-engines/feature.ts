@@ -34,6 +34,7 @@ export interface EngineManagementFeatureOptions {
   /** Testing seam: overrides the managed download while keeping status transitions real. */
   readonly lifecycle?: { readonly install?: typeof installManagedEngine };
   readonly runnerRegistry?: RunnerRegistry;
+  readonly getHostFileNode?: ExecutionEngineRunTargetDispatcherOptions["getHostFileNode"];
 }
 
 export class EngineManagementFeature {
@@ -60,6 +61,7 @@ export class EngineManagementFeature {
     this.runTargetDispatcher = createExecutionEngineRunTargetDispatcher({
       getProfileStore: getStore,
       secretResolver: this.secretResolver,
+      getHostFileNode: options.getHostFileNode,
       readWorkspaceSettings: options.runnerRegistry ? store => loadWorkspaceRuntimeSettings(store, options.runnerRegistry!) : undefined,
       readAcceptanceEvidence: identity => acceptance.read(identity),
     } satisfies ExecutionEngineRunTargetDispatcherOptions);

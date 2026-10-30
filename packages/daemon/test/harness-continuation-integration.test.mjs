@@ -950,10 +950,11 @@ test("A21 real non-compacted worker crash blocks recovery without committed Host
   assert.equal(await readFile(fixture.source.markerPath, "utf8"), markerContents);
 });
 
-test("A21 real non-compacted worker crash restores the exact committed SDK and wire tool view once", async (t) => {
-  const fixture = await createA21CrashedDaemonRecoveryFixture(t);
+async function assertA21CommittedRecovery(t, commandExitCode) {
+  const fixture = await createA21CrashedDaemonRecoveryFixture(t, undefined, { commandExitCode });
   const sourceFacts = fixture.store.listEvents(fixture.source.runId);
-  const transport = await createA21LoopbackTransport(() => ({ content: "The original command completed once before restart." }));
+  const transport = await createA21LoopbackTransport(() => ({ content: commandExitCode
+    ? "The original command failed with exit 7 once before restart." : "The original command completed once before restart." }));
   t.after(() => transport.close());
   const runner = createA21RealPiRunner(transport);
   const errors = [];
@@ -995,6 +996,9 @@ test("A21 real non-compacted worker crash restores the exact committed SDK and w
   assert.equal(runner.contexts.length, 1);
   assert.equal(transport.requests.length, 1);
   assertA21ExactRecoveredToolProgress(fixture.source, runner.contexts[0], transport.requests[0].body);
+  const originalResult = runner.contexts[0].find(message => message.role === "toolResult" && message.toolCallId === fixture.source.toolCallId);
+  assert.equal(originalResult.isError, commandExitCode !== 0);
+  assert.equal(fixture.source.settlement.end.data.result.details.unifiedExec.exitCode, commandExitCode);
   const events = fixture.store.listEvents(fixture.source.runId);
   assert.deepEqual(events.filter(event => event.seq <= fixture.source.settlement.sourceEventSeq), sourceFacts);
   assert.equal(events.filter(event => event.type === "tool_start").length, 1);
@@ -1011,8 +1015,14 @@ test("A21 real non-compacted worker crash restores the exact committed SDK and w
   t.diagnostic(JSON.stringify({ sourceAttempt: fixture.source.attemptId, recoveryAttempt: runner.dispatches[0].attemptId,
     authorityTables: fixture.sourceAuthorityTables, sourceHighWater: fixture.source.settlement.sourceEventSeq,
     sourceRequestCount: fixture.source.requests.length, recoveryRequestCount: transport.requests.length,
-    recoveredToolResults: runner.contexts[0].filter(message => message.role === "toolResult").length, markerLines: 1 }));
-});
+    recoveredToolResults: runner.contexts[0].filter(message => message.role === "toolResult").length,
+    originalIsError: originalResult.isError, commandExitCode, markerLines: 1 }));
+}
+
+for (const commandExitCode of [0, 7]) {
+  test(`A21 real non-compacted worker crash restores the exact committed SDK and wire tool view once (exit ${commandExitCode})`,
+    t => assertA21CommittedRecovery(t, commandExitCode));
+}
 
 for (const toolBroker of ["off", "enforce"]) {
   test(`A21 real SDK write/edit remain live-capable with toolBroker ${toolBroker}`, async (t) => {
@@ -1980,7 +1990,7 @@ async function createDaemonRecoveryCoordinatorFixture(t, suffix, withCompaction 
 }
 
 /** Crash only a nonce/PID/path-verified owned worker after durable Host settlement. */
-async function createA21CrashedDaemonRecoveryFixture(t, checkpointFault) {
+async function createA21CrashedDaemonRecoveryFixture(t, checkpointFault, { commandExitCode = 0 } = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-a21-noncompacted-workspace-"));
   const ambient = await mkdtemp(join(tmpdir(), "ling-a21-noncompacted-ambient-"));
   const lingHome = join(ambient, "home");
@@ -1988,7 +1998,7 @@ async function createA21CrashedDaemonRecoveryFixture(t, checkpointFault) {
   const scriptPath = fileURLToPath(new URL("./support/noncompacted-recovery-crash-worker.mjs", import.meta.url));
   const nonce = randomUUID();
   const markerPath = join(cwd, "a21-effect-marker.txt");
-  const child = fork(scriptPath, [JSON.stringify({ cwd, markerPath, nonce, toolCallId: `a21-bash-${nonce}`, checkpointFault })],
+  const child = fork(scriptPath, [JSON.stringify({ cwd, markerPath, nonce, toolCallId: `a21-bash-${nonce}`, checkpointFault, commandExitCode })],
     { cwd, execArgv: [], stdio: ["ignore", "pipe", "pipe", "ipc"], env: {
       PATH: process.env.PATH ?? "/usr/bin:/bin",
       LING_STACK_HOME: lingHome,
@@ -2042,7 +2052,7 @@ async function createA21CrashedDaemonRecoveryFixture(t, checkpointFault) {
   let sourceAuthorityTables;
   try {
     assert.equal(observed.getRun(source.runId)?.status, "running");
-    assert.deepEqual(readA21SettledCommand(observed, source.runId, source.toolCallId), source.settlement,
+    assert.deepEqual(readA21SettledCommand(observed, source.runId, source.toolCallId, { commandExitCode }), source.settlement,
       "a second SQLite connection must read the actual completed dedicated journal and tool_end before crash");
     assert.equal(observed.listHostCommandWriteBlockers(cwd).length, 0);
     assert.equal(observed.getLatestRunCompactionStart(source.runId), undefined);

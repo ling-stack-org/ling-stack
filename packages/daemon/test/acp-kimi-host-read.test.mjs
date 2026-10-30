@@ -27,7 +27,7 @@ test("host Write waits for its actual worker reply within the unchanged executio
   const observations = [];
   childProcess.spawn = (...args) => {
     const child = originalSpawn(...args);
-    if (args[0] === "/usr/bin/sandbox-exec" && args[1].some(value => value.endsWith("/host-text-write-worker.js"))) {
+    if (args[0] === "/usr/bin/sandbox-exec" && args[1].includes("--input-type=module") && args[1].includes("--eval")) {
       assert.equal(worker, undefined);
       worker = child;
       observations.push({ phase: "worker_paused", at: performance.now() });

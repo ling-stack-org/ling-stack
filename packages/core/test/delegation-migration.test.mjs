@@ -7,6 +7,7 @@ import test from "node:test";
 import { RUN_EVALUATION_TASK_SCHEMA_OBJECTS } from "../dist/storage/sqlite/run-evaluation-task-migration.js";
 import { RUN_EVALUATION_QA_SCHEMA_OBJECTS } from "../dist/storage/sqlite/run-evaluation-qa-migration.js";
 import { removeQaOverlayForLegacyFixture } from "./support/evaluation-qa-migration-fixture.mjs";
+import { removePendingAuthorityOverlay, restorePreEmptyForkSnapshots } from "./support/legacy-schema-rollback.mjs";
 import { RUN_EVALUATION_HUMAN_SCHEMA_OBJECTS } from "../dist/storage/sqlite/run-evaluation-human-migration.js";
 import { createSqliteRunStore, resolveRuntimePaths } from "../dist/index.js";
 import {
@@ -254,7 +255,7 @@ test("delegation migration has the release schema 154 identity", () => {
   assert.equal(typeof applyDelegationMigration, "function");
 });
 
-test("real schema153 upgrades through189 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
+test("real schema153 upgrades through192 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
   const f = await fileFixture(t, "full-schema");
   const first = f.own(createSqliteRunStore(f.cwd));
   const channel = first.handle.createChannel({ name: "Legacy", boundPath: f.cwd }, now);
@@ -268,6 +269,13 @@ test("real schema153 upgrades through189 preserving historical SQL/markers/rows 
   first.close();
   const path = resolveRuntimePaths(f.cwd).databasePath;
   const old = f.open(path);
+  const pendingSidecar = row => row.name.startsWith("pending_authority_") || row.tbl_name === "channel_pending_authority_versions"
+    || row.tbl_name === "channel_pending_operation_resolutions";
+  const currentPendingSchema = schema(old.handle).filter(pendingSidecar);
+  removePendingAuthorityOverlay(old.handle);
+  assert.equal(old.handle.prepare("SELECT count(*) AS n FROM channel_pending_operation_resolutions").get().n, 0);
+  old.handle.exec("DROP TABLE channel_pending_operation_resolutions; DELETE FROM schema_migrations WHERE version=191");
+  restorePreEmptyForkSnapshots(old.handle);
   // Reconstruct schema153 by removing exactly the later, row-free overlays.
   // Do not hide them from the baseline while leaving their markers installed.
   removePost175HarnessOverlays(old.handle);
@@ -316,11 +324,17 @@ test("real schema153 upgrades through189 preserving historical SQL/markers/rows 
   const oldDirectInterventionColumns = old.handle.prepare("PRAGMA table_info(teammate_direct_reply_interventions)").all();
   const oldAuthorityRows = old.handle.prepare("SELECT * FROM mcp_authority_revisions ORDER BY server_id").all();
   const oldProvider = old.handle.prepare("SELECT * FROM provider_presets WHERE id=?").get(provider.id);
+  const oldSnapshotColumns = old.handle.prepare("PRAGMA table_info(conversation_context_snapshots)").all();
+  const oldSnapshots = old.handle.prepare("SELECT * FROM conversation_context_snapshots ORDER BY id").all();
   old.close();
   const reopened = f.own(createSqliteRunStore(f.cwd));
   reopened.close();
   const upgraded = f.open(path);
   const database = upgraded.handle;
+  assert.deepEqual(schema(database).filter(pendingSidecar), currentPendingSchema);
+  assert.deepEqual(database.prepare("PRAGMA table_info(conversation_context_snapshots)").all().map(column => ({ ...column })),
+    oldSnapshotColumns.map(column => ({ ...column, notnull: column.name === "segment_id" ? 0 : column.notnull })));
+  assert.deepEqual(database.prepare("SELECT * FROM conversation_context_snapshots ORDER BY id").all(), oldSnapshots);
   // Exclude exactly the newly owned overlays. Historical provider table/trigger
   // SQL and rows, like all other schema153 history, remain byte-for-byte checked.
   const providerOverlay = new Set(["provider_check_authorities", "provider_check_insert", "provider_check_update",
@@ -336,6 +350,7 @@ test("real schema153 upgrades through189 preserving historical SQL/markers/rows 
     "sqlite_autoindex_host_attempt_completions_1", "host_attempt_completion_immutable_identity",
     "host_attempt_completion_immutable_terminal"]);
   assert.deepEqual(schema(database).filter((row) => !row.tbl_name.startsWith("delegation_")
+    && !pendingSidecar(row) && row.name !== "conversation_context_snapshots"
     && !row.tbl_name.startsWith("native_") && row.tbl_name !== "work_summary_pull_requests"
     && !["run_terminal_intents", "run_suspensions", "run_suspension_stops", "run_suspension_root_activations", "run_suspension_root_starts",
       "run_suspension_delegated_activations", "run_suspension_delegated_starts", "run_final_settlements"].includes(row.tbl_name)
@@ -344,7 +359,7 @@ test("real schema153 upgrades through189 preserving historical SQL/markers/rows 
     && !providerOverlay.has(row.name) && !incidentProvenanceOverlay.has(row.name) && !evaluationTaskOverlay.has(row.name)
     && !conversationExperienceOverlay.has(row.name)
     && !progressAndWorkflowTables.has(row.tbl_name) && !workflowCheckTriggers.has(row.name)),
-  oldSchema.filter(row => !["mcp_authority_revisions", "ling_thread_proposed_plans", "teammate_direct_messages", "teammate_direct_reply_interventions"].includes(row.name)));
+  oldSchema.filter(row => !["mcp_authority_revisions", "ling_thread_proposed_plans", "teammate_direct_messages", "teammate_direct_reply_interventions", "conversation_context_snapshots"].includes(row.name)));
   const newAuthorityColumns = database.prepare("PRAGMA table_info(mcp_authority_revisions)").all();
   assert.deepEqual(newAuthorityColumns.slice(0, oldAuthorityColumns.length), oldAuthorityColumns);
   assert.deepEqual(newAuthorityColumns.slice(oldAuthorityColumns.length).map(column => column.name),
@@ -360,7 +375,12 @@ test("real schema153 upgrades through189 preserving historical SQL/markers/rows 
   assert.deepEqual(directInterventionColumns.slice(0, oldDirectInterventionColumns.length), oldDirectInterventionColumns);
   assert.deepEqual(directInterventionColumns.slice(oldDirectInterventionColumns.length).map(column => column.name), ["source_attempt_id"]);
   assert.deepEqual(database.prepare("SELECT server_id, server_revision, tools_revision FROM mcp_authority_revisions ORDER BY server_id").all(), oldAuthorityRows);
-  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189) ORDER BY version").all(), oldMarkers);
+  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192) ORDER BY version").all(), oldMarkers);
+  assert.deepEqual(database.prepare("SELECT version,name FROM schema_migrations WHERE version BETWEEN 190 AND 192 ORDER BY version").all().map(row => ({ ...row })), [
+    { version: 190, name: "conversation_empty_fork_boundary" },
+    { version: 191, name: "create_channel_pending_operation_resolutions" },
+    { version: 192, name: "add_channel_pending_authority_versions" },
+  ]);
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=188").get().name, "create_work_summary_pull_requests");
   assert.deepEqual(database.prepare("PRAGMA table_info(work_summary_pull_requests)").all().map(column => column.name), ["url", "created_at"]);
   assert.equal(database.prepare("SELECT count(*) n FROM work_summary_pull_requests").get().n, 0);
