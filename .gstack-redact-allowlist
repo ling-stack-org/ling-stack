@@ -14,3 +14,5 @@ https://user:password@preview.a11.test:${fixture.port}
 # used only to assert that conversation reading scopes strip URL auth/query data.
 # apps/web/test/conversation-reading-storage.test.mjs:18
 http://user:secret@localhost:4234/api?token=private#fragment
+https://user:password@preview.a11.test/index.json
+https://user:password@preview.a11.test:${fixture.port}/index.json
