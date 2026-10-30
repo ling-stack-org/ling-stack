@@ -3,7 +3,7 @@ import { HARNESS_PROJECTION_DOMAINS } from "../../harness/reliability.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { HARNESS_PROJECTION_EMPTY_DIGEST, harnessProjectionSources } from "./harness-reliability-schema.js";
 
-export const HARNESS_RELIABILITY_MIGRATION_VERSION = 177;
+export const HARNESS_RELIABILITY_MIGRATION_VERSION = 194;
 export const HARNESS_RELIABILITY_MIGRATION_NAME = "create_harness_reliability_checkpoints_and_retention";
 
 interface MigrationInput {

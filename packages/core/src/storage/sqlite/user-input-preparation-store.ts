@@ -7,6 +7,7 @@ import type { SqliteUserInputDeliveryStore } from "./user-input-delivery-store.j
 import type { UserInputSeedPorts } from "./user-input-continuation-records.js";
 import { readUserInputDelivery } from "./user-input-delivery-records.js";
 import { readUserInputContinuationSeed } from "./user-input-continuation-store.js";
+import { freezeUserInputSeed } from "./user-input-continuation-records.js";
 import { readSqliteSnapshot, readSqliteWithinTransaction } from "./read-snapshot.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { assertNonSensitiveUserInput, userInputHash, userInputTimestamp } from "./user-input-records.js";
@@ -29,7 +30,10 @@ export class SqliteUserInputPreparationStore {
     assertStage(stage);
     return readSqliteSnapshot(this.context.database, () => {
       const seed = this.seedWithinTransaction(threadId, deliveryId);
-      return seed ? this.readWithinTransaction(seed, stage) : undefined;
+      const value = seed ? this.readWithinTransaction(seed, stage) : undefined;
+      return value && stage === "execution"
+        ? freezeUserInputSeed({ ...value, payload: normalizeRunnerIdsInSnapshot(value.payload) }) as UserInputContinuationPreparation
+        : value;
     });
   }
 

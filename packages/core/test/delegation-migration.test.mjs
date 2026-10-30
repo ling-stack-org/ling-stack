@@ -210,7 +210,7 @@ function removePost175HarnessOverlays(database) {
     DROP TABLE delegation_budget_charges;
     DROP TABLE delegation_budget_reservations;
     DROP TABLE delegation_root_budgets;
-    DELETE FROM schema_migrations WHERE version IN (176,177,178,179,180,189,193);`);
+    DELETE FROM schema_migrations WHERE version IN (176,177,178,181,182,183,189,193,194,195,196);`);
 }
 
 /** Removes only the row-free post-153 overlays so this fixture is a genuine schema153 database. */

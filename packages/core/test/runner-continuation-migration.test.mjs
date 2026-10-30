@@ -29,7 +29,7 @@ test("runner continuation 135 reinstalls with its newer recovery indexes and rer
     assert.ok(database.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?").get(name));
     database.exec(`DROP INDEX ${name}`);
   }
-  database.exec("DELETE FROM schema_migrations WHERE version=180");
+  database.exec("DELETE FROM schema_migrations WHERE version=196");
   database.exec(`
     DROP TABLE run_compaction_checkpoints;
     DELETE FROM schema_migrations WHERE version = 140;
@@ -60,7 +60,7 @@ test("runner continuation 135 reinstalls with its newer recovery indexes and rer
   assert.ok(columns.has("claim_token"));
   assert.ok(columns.has("target_attempt_id"));
   assert.equal(database.prepare("PRAGMA foreign_key_check(runner_continuations)").all().length, 0);
-  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=180").get().name,
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=196").get().name,
     "create_harness_recovery_discovery_indexes_v1");
   for (const name of recoveryIndexes) assert.ok(database.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?").get(name));
   assert.equal(applyRunnerContinuationMigration(migrationInput(database)), false);

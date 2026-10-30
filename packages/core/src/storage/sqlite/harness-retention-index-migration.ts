@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
-export const HARNESS_RETENTION_INDEX_MIGRATION_VERSION = 179;
+export const HARNESS_RETENTION_INDEX_MIGRATION_VERSION = 195;
 const name = "create_harness_retention_due_cursor_index_v2";
 const index = "idx_harness_retention_due_v2";
 const sql = `CREATE INDEX ${index} ON harness_artifact_retention(retain_until,artifact_id) WHERE pruned_at IS NULL`;

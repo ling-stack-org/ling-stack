@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
-export const HARNESS_RECOVERY_INDEX_MIGRATION_VERSION = 180;
+export const HARNESS_RECOVERY_INDEX_MIGRATION_VERSION = 196;
 const migrationName = "create_harness_recovery_discovery_indexes_v1";
 const definitions = [
   ["idx_harness_delegation_charge_reservation", "delegation_budget_charges", "(reservation_id)"],

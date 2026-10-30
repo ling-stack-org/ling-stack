@@ -1580,12 +1580,14 @@ export class SqliteRunStore implements RunStore {
           hasTable: (tableName) => this.hasTable(tableName),
           recordMigration: (version, name) => this.recordMigration(version, name),
         });
-        applyWorkspacePermissionMigration({
-          database: this.database,
-          hasMigration: (version) => this.hasMigration(version),
-          hasTable: (tableName) => this.hasTable(tableName),
-          recordMigration: (version, name) => this.recordMigration(version, name),
-        });
+        if (!options.deferContinuityV2MigrationForTest) {
+          applyWorkspacePermissionMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            hasTable: (tableName) => this.hasTable(tableName),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+        }
         applyRunnerIdMigration({
           database: this.database,
           hasMigration: (version) => this.hasMigration(version),

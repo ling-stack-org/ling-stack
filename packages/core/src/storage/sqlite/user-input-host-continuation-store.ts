@@ -19,6 +19,7 @@ import { activateUserInputWorkflowAdmission, prepareUserInputWorkflowAdmission,
 import { isWorkflowStepStartOwnerV1, workflowStepStartOwnerMatches } from "../../workflow-step-start-owner.js";
 import { failUserInputStartupWithinTransaction, type UserInputStartupFailurePorts } from "./user-input-startup-failure.js";
 import { userInputTimestamp } from "./user-input-records.js";
+import { normalizeRunnerIdsInSnapshot } from "../../runner-ids.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { makeUserInputContinuationRecord, readUserInputContinuationRecord, insertUserInputContinuationRecord,
   userInputContinuationRef as ref, sameUserInputValue as same, requireUserInputRecordKeys, userInputEnvelopeKeys } from "./user-input-continuation-envelope.js";
@@ -81,7 +82,7 @@ export class SqliteUserInputHostContinuationStore {
       if (!prepared || !same(captured.executionRef, ref(prepared))) throw new UserInputStoreError("source_conflict");
       if (userInputTimestamp(now) < userInputTimestamp(prepared.createdAt)) throw new UserInputStoreError("delivery_conflict");
       if (this.readBinding(seed)) throw new UserInputStoreError("delivery_conflict");
-      const plan = prepared.payload as UserInputContinuationExecutionPlan, source = seed.source;
+      const plan = normalizeRunnerIdsInSnapshot(prepared.payload) as UserInputContinuationExecutionPlan, source = seed.source;
       if (captured.workflowStartOwner !== undefined && !source.workflowStepId
         || captured.effectivePolicySnapshot && source.workflowStepId && !captured.workflowStartOwner) {
         throw new UserInputStoreError("source_conflict");
@@ -220,7 +221,8 @@ export class SqliteUserInputHostContinuationStore {
       || binding.fence.attemptId === seed.source.fence.attemptId
       || userInputTimestamp(binding.createdAt) < userInputTimestamp(prepared.createdAt)) throw new UserInputStoreError("invalid_record");
     const run = this.ports.getRun(binding.runId), attempt = this.ports.getWorkUnitAttempt(binding.fence.attemptId);
-    const turn = this.ports.getLingTurnForRun(binding.runId), plan = prepared.payload as UserInputContinuationExecutionPlan, s = seed.source;
+    const turn = this.ports.getLingTurnForRun(binding.runId),
+      plan = normalizeRunnerIdsInSnapshot(prepared.payload) as UserInputContinuationExecutionPlan, s = seed.source;
     if (!run || !attempt || !same(toRuntimeAttemptFence(attempt), binding.fence) || attempt.runnerId !== plan.runnerId
       || attempt.providerPresetId !== plan.providerPresetId || !turn || turn.id !== s.turnId
       || !this.ports.listLingTurnRuns(s.turnId).some(link => link.runId === run.id && link.role === "resume")
@@ -238,14 +240,14 @@ export class SqliteUserInputHostContinuationStore {
   private requestSnapshot(seed: UserInputContinuationSeed, prepared: import("../../user-input-host-continuation-types.js").UserInputContinuationPreparation,
     policy?: import("../../session-permissions.js").EffectiveRunPolicySnapshot,
     workflowStartOwner?: import("../../workflow-step-start-owner.js").WorkflowStepStartOwnerV1) {
-    const plan = prepared.payload as UserInputContinuationExecutionPlan;
+    const plan = normalizeRunnerIdsInSnapshot(prepared.payload) as UserInputContinuationExecutionPlan;
     return { ...plan.runRequestSnapshot, runnerExecutionInput: plan.runnerExecutionInput,
       ...(policy ? { effectivePolicySnapshot: policy } : {}),
       ...(workflowStartOwner ? { workflowStartOwner } : {}),
       userInputContinuation: { seedRef: ref(seed), requestRef: prepared.parentRef, executionRef: ref(prepared) } };
   }
   private acceptance(seed: UserInputContinuationSeed, binding: UserInputContinuationBinding): UserInputRunnerAcceptance {
-    const plan = this.preparation.readWithinTransaction(seed, "execution")!.payload as UserInputContinuationExecutionPlan;
+    const plan = normalizeRunnerIdsInSnapshot(this.preparation.readWithinTransaction(seed, "execution")!.payload) as UserInputContinuationExecutionPlan;
     return { schemaVersion: 1, boundary: "pi-session-ready", runId: binding.runId, attemptId: binding.fence.attemptId,
       taskId: seed.source.taskBinding.taskId, preparedInputFingerprint: plan.preparedInputFingerprint };
   }
