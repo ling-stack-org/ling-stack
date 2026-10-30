@@ -9,3 +9,8 @@ https://user:pass@auth.openai.com
 # Exact scanner spans only; no wildcard, global skip, or runtime/test rewrite.
 https://user:password@preview.a11.test
 https://user:password@preview.a11.test:${fixture.port}
+
+# Negative URL-scope fixture; localhost credentials are intentionally invalid and
+# used only to assert that conversation reading scopes strip URL auth/query data.
+# apps/web/test/conversation-reading-storage.test.mjs:18
+http://user:secret@localhost:4234/api?token=private#fragment
