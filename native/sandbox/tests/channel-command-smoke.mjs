@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { readFileSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 import test from "node:test";
 import { nodeFunctionGoalCommand } from "../../../packages/contracts/dist/index.js";
 import { messageText, startRealPiChannelFixture, systemText } from "../../../packages/daemon/test/support/channel-operation-real-pi-fixture.mjs";
@@ -14,6 +14,7 @@ const owner = { kind: "host_default" };
 
 test("real Pi channel creates a module then performs the natural-language Node goal with atomic Host evidence and one report", { timeout: 60000 }, async t => {
   const cwd = await mkdtemp("/private/tmp/ling-native-channel-");
+  await writeFile(join(cwd, "package.json"), '{"type":"commonjs"}');
   const source = '创建 continuity-v2-proof.js，内容是导出 formatProof，然后运行 Node 调用 formatProof("7319") 验证。';
   const content = 'exports.formatProof = value => "proof:" + value;';
   const command = nodeFunctionGoalCommand({ modulePath: "continuity-v2-proof.js", invocation: 'formatProof("7319")' });
