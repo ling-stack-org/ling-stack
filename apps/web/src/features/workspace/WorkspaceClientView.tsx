@@ -654,9 +654,8 @@ export function WorkspaceClientView({
     [channelMessages, channelWorkCellDemoFixture, selectedChannelId, channelSessionThreadId],
   );
   const channelConversationItemsForDisplay = useMemo(
-    () => channelWorkCellDemoFixture
-      ? [...channelConversationItems, ...channelWorkCellDemoFixture.conversationItems]
-      : channelConversationItems.filter(item => !channelSessionThreadId || item.threadId === channelSessionThreadId),
+    () => [...channelConversationItems, ...(channelWorkCellDemoFixture?.conversationItems ?? [])]
+      .filter(item => !channelSessionThreadId || item.threadId === channelSessionThreadId),
     [channelConversationItems, channelWorkCellDemoFixture, channelSessionThreadId],
   );
   const visibleChannelMessageIds = useMemo(
