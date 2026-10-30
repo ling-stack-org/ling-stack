@@ -15,7 +15,7 @@ const later = "2026-10-17T00:01:00.000Z";
 const warningKey = "terminal_report.evidence.execution_unconfirmed";
 
 function assertBothUnconfirmed(text) {
-  assert.match(text, /(?:工具)?(?:進程|程序)(?:是否)?停止[^。；;]{0,14}(?:未確認|尚未確認|未獲確認)/u,
+  assert.match(text, /(?:工具)?(?:進程|程序|流程)(?:是否)?停止[^。；;]{0,14}(?:未確認|尚未確認|未獲確認)/u,
     "a stopped logical Run cannot substitute for an unconfirmed physical tool-process stop");
   assert.match(text, /(?:實際)?(?:影響|效果)[^。；;]{0,14}(?:未確認|尚未確認|未獲確認)/u);
   assert.match(text, /重試前[^。]{0,16}(?:核實|驗證)/u);
