@@ -33,6 +33,12 @@ export function resolveChannelConversationThread(input: {
   if (input.surface.kind === "thread") {
     const explicitThread = input.store.getLingThread(input.surface.threadId);
     if (!explicitThread) {
+      // An existing conversation item is a malformed thread selector and
+      // remains a client validation error; an unknown thread id is a not-found
+      // resource error for callers navigating an independent session.
+      if (input.store.getConversationItem(input.surface.threadId)) {
+        throw new Error(`Conversation thread not found: ${input.surface.threadId}`);
+      }
       throw new HttpError(404, "conversation_thread_not_found", `Conversation thread not found: ${input.surface.threadId}`);
     }
     if (explicitThread.channelId !== input.channel.id) {
