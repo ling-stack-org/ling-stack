@@ -24,6 +24,7 @@ import { sendToLiveDesktopWindow } from "./safe-window-send.js";
 import { registerExecutionEngineIpc } from "./execution-engines/ipc.js";
 import { createHostExecutionEngineClient } from "./execution-engines/client.js";
 import { registerLocalFileIpc } from "./local-files/ipc.js";
+import { registerLocalServiceIpc } from "./local-services.js";
 
 const MAX_HOST_OBSTACLES = 128;
 const MAX_DESKTOP_COORDINATE = 1_000_000;
@@ -61,6 +62,12 @@ export function registerDesktopIpc(input: {
     getClient: () => createHostExecutionEngineClient(input.executionEngines!.baseUrl, input.executionEngines!.getAuthority),
   }) : undefined;
   const navigationIntents = input.navigationIntents ?? new DesktopNavigationIntentStore();
+  const unregisterLocalServices = input.executionEngines ? registerLocalServiceIpc({
+    ipcMainImpl: desktopIpcMain,
+    getMainWindow: input.getMainWindow,
+    trustedDocumentUrl: input.executionEngines.trustedDocumentUrl,
+    baseUrl: input.executionEngines.baseUrl,
+  }) : undefined;
   const unregisterLocalFiles = input.executionEngines ? registerLocalFileIpc({
     ipcMainImpl: desktopIpcMain,
     getMainWindow: input.getMainWindow,
@@ -496,6 +503,7 @@ export function registerDesktopIpc(input: {
     );
   });
   return () => {
+    unregisterLocalServices?.();
     unregisterLocalFiles?.();
     unregisterExecutionEngines?.();
     unsubscribeStatus();

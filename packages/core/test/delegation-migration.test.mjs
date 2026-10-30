@@ -202,7 +202,7 @@ test("delegation migration has the release schema 154 identity", () => {
   assert.equal(typeof applyDelegationMigration, "function");
 });
 
-test("real schema153 upgrades through178 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
+test("real schema153 upgrades through181 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
   const f = await fileFixture(t, "full-schema");
   const first = f.own(createSqliteRunStore(f.cwd));
   const channel = first.handle.createChannel({ name: "Legacy", boundPath: f.cwd }, now);
@@ -218,6 +218,15 @@ test("real schema153 upgrades through178 preserving historical SQL/markers/rows 
   const old = f.open(path);
   // Reconstruct schema153 by removing exactly the later overlays.
   // Do not hide them from the baseline while leaving their markers installed.
+  for (const trigger of old.handle.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_channel_session_%'").all()) {
+    old.handle.exec(`DROP TRIGGER "${trigger.name}"`);
+  }
+  old.handle.exec(`DROP TABLE channel_session_requests; DROP TABLE channel_session_diagnostics;
+    DROP INDEX idx_channel_sessions_activity;
+    ALTER TABLE ling_threads DROP COLUMN session_activity_at;
+    ALTER TABLE ling_threads DROP COLUMN session_notification_revision;
+    ALTER TABLE ling_threads DROP COLUMN session_title_source;
+    DELETE FROM schema_migrations WHERE version IN (179,180,181);`);
   old.handle.exec("DROP TABLE work_summary_pull_requests; DELETE FROM schema_migrations WHERE version IN (176,177,178)");
   const workspaceSettings = old.handle.prepare("SELECT workspace_id, settings_json FROM workspace_settings").get();
   if (workspaceSettings) {
@@ -264,6 +273,8 @@ test("real schema153 upgrades through178 preserving historical SQL/markers/rows 
   assert.equal(old.handle.prepare("SELECT max(version) AS version FROM schema_migrations").get().version, 153);
   const oldSchema = schema(old.handle);
   const oldMarkers = old.handle.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
+  const oldThreadColumns = old.handle.prepare("PRAGMA table_info(ling_threads)").all();
+  const oldThreadRows = old.handle.prepare("SELECT * FROM ling_threads ORDER BY id").all();
   const oldRun = old.handle.prepare("SELECT * FROM run_sessions WHERE id='legacy-run'").get();
   const oldArtifact = old.handle.prepare("SELECT * FROM artifacts WHERE id='legacy-artifact'").get();
   const oldAuthorityColumns = old.handle.prepare("PRAGMA table_info(mcp_authority_revisions)").all();
@@ -294,11 +305,21 @@ test("real schema153 upgrades through178 preserving historical SQL/markers/rows 
   assert.deepEqual(schema(database).filter((row) => !row.tbl_name.startsWith("delegation_")
     && !row.tbl_name.startsWith("native_")
     && row.tbl_name !== "work_summary_pull_requests"
-    && !["mcp_authority_revisions", "ling_thread_proposed_plans", "teammate_direct_messages", "teammate_direct_reply_interventions"].includes(row.name)
+    && !row.tbl_name.startsWith("channel_session_") && !row.name.startsWith("trg_channel_session_")
+    && row.name !== "idx_channel_sessions_activity"
+    && !["mcp_authority_revisions", "ling_thread_proposed_plans", "teammate_direct_messages", "teammate_direct_reply_interventions", "ling_threads"].includes(row.name)
     && !providerOverlay.has(row.name) && !incidentProvenanceOverlay.has(row.name) && !evaluationTaskOverlay.has(row.name)
     && !conversationExperienceOverlay.has(row.name)
     && !progressAndWorkflowTables.has(row.tbl_name) && !workflowCheckTriggers.has(row.name)),
-  oldSchema.filter(row => !["mcp_authority_revisions", "ling_thread_proposed_plans", "teammate_direct_messages", "teammate_direct_reply_interventions"].includes(row.name)));
+  oldSchema.filter(row => !["mcp_authority_revisions", "ling_thread_proposed_plans", "teammate_direct_messages", "teammate_direct_reply_interventions", "ling_threads"].includes(row.name)));
+  const newThreadColumns = database.prepare("PRAGMA table_info(ling_threads)").all();
+  assert.deepEqual(newThreadColumns.slice(0, oldThreadColumns.length), oldThreadColumns);
+  assert.deepEqual(newThreadColumns.slice(oldThreadColumns.length).map(column => column.name),
+    ["session_title_source", "session_notification_revision", "session_activity_at"]);
+  assert.deepEqual(database.prepare(`SELECT ${oldThreadColumns.map(column => column.name).join(",")} FROM ling_threads ORDER BY id`).all(), oldThreadRows);
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=179").get().name, "channel_independent_sessions");
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=180").get().name, "channel_session_topic_ownership");
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=181").get().name, "channel_session_topic_notifications");
   const newAuthorityColumns = database.prepare("PRAGMA table_info(mcp_authority_revisions)").all();
   assert.deepEqual(newAuthorityColumns.slice(0, oldAuthorityColumns.length), oldAuthorityColumns);
   assert.deepEqual(newAuthorityColumns.slice(oldAuthorityColumns.length).map(column => column.name),
@@ -314,7 +335,7 @@ test("real schema153 upgrades through178 preserving historical SQL/markers/rows 
   assert.deepEqual(directInterventionColumns.slice(0, oldDirectInterventionColumns.length), oldDirectInterventionColumns);
   assert.deepEqual(directInterventionColumns.slice(oldDirectInterventionColumns.length).map(column => column.name), ["source_attempt_id"]);
   assert.deepEqual(database.prepare("SELECT server_id, server_revision, tools_revision FROM mcp_authority_revisions ORDER BY server_id").all(), oldAuthorityRows);
-  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178) ORDER BY version").all(), oldMarkers);
+  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181) ORDER BY version").all(), oldMarkers);
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=176").get().name, "create_work_summary_pull_requests");
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=177").get().name, "canonicalize_workspace_permission_settings");
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=178").get().name, "canonicalize_pi_runner_ids");

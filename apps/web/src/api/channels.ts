@@ -1,3 +1,4 @@
+import type { ChannelSessionListResponse, ChannelSessionMutationResponse, ListChannelSessionsOptions, CreateChannelSessionRequest, UpdateChannelSessionRequest } from "@ling-stack/contracts";
 import type {
   ChannelBriefMutationResponse,
   ChannelBriefResponse,
@@ -627,4 +628,17 @@ export async function updateTask(cwd: string, taskId: string, form: TaskEditForm
 
 export async function deleteTask(cwd: string, taskId: string): Promise<void> {
   await daemonClient.deleteTask(cwd, taskId);
+}
+
+export function listChannelSessions(cwd: string, channelId: string, options: ListChannelSessionsOptions = {}): Promise<ChannelSessionListResponse> {
+  return daemonClient.listChannelSessions(cwd, channelId, options);
+}
+export function createChannelSession(cwd: string, channelId: string, input: CreateChannelSessionRequest): Promise<ChannelSessionMutationResponse> {
+  return daemonClient.createChannelSession(cwd, channelId, input);
+}
+export function getChannelSession(cwd: string, channelId: string, threadId: string): Promise<ChannelSessionMutationResponse> {
+  return daemonClient.getChannelSession(cwd, channelId, threadId);
+}
+export function updateChannelSession(cwd: string, channelId: string, threadId: string, input: UpdateChannelSessionRequest): Promise<ChannelSessionMutationResponse> {
+  return daemonClient.updateChannelSession(cwd, channelId, threadId, input);
 }

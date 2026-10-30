@@ -70,7 +70,7 @@ test("UI 2.0 Input and Field keep external-work forms readable in dark compact d
   });
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await openSettingsSection(page, /External work/);
 
   const panel = page.locator("[data-ui2-external-work]");

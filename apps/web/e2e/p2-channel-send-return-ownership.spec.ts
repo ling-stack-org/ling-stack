@@ -78,11 +78,11 @@ for (const { outcome, newerDraft } of scenarios) {
       await lookupGate;
     }
     const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/ });
-    await navigation.getByRole("button").filter({ hasText: "Research" }).first().click();
-    await expect(page.getByRole("heading", { name: "Research", level: 1 })).toBeVisible();
+    await navigation.getByRole("button", { name: "Research", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Research / Research conversation", level: 1 })).toBeVisible();
     await expect(input).toHaveText("");
-    await navigation.getByRole("button").filter({ hasText: "Engineering" }).first().click();
-    await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
+    await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Engineering / Engineering conversation", level: 1 })).toBeVisible();
     if (newerDraft) await input.fill("Keep my newer unsent draft");
     if (outcome === "accepted") {
       await page.evaluate(() => window.dispatchEvent(new Event("p2-channel-release-result")));

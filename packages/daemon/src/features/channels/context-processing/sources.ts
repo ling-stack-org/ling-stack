@@ -28,7 +28,7 @@ import {
 } from "../conversation-item-messages.js";
 
 type ChannelContextConversationStore = ChannelStoreFacet & RunExecutionStoreFacet & Pick<RunStore, "getLingTurn"> & Partial<Pick<RunStore, "listConversationTurnSupersessions">>;
-type ChannelContextActiveWorkStore = ChannelStoreFacet & RunExecutionStoreFacet & ApprovalStoreFacet;
+type ChannelContextActiveWorkStore = ChannelStoreFacet & RunExecutionStoreFacet & ApprovalStoreFacet & Pick<RunStore, "getConversationItem" | "getLingTurn">;
 type WorkflowEvidenceStore = RunExecutionStoreFacet;
 
 export function collectTurnSource(input: {
@@ -239,11 +239,11 @@ export function listChannelContextMessages(input: {
   );
   const limit = input.limit ?? 8;
   const surface = resolveChannelConversationSurface(input.store, input.channelId, input.sourceMessage);
-  if (surface.kind === "branch") {
+  if (surface.kind === "branch" || surface.kind === "session") {
     return filterChannelContextSupersessions(input.store, input.channelId, listChannelMessageViews({
       store: input.store,
       channelId: input.channelId,
-      threadId: surface.rootThreadId,
+      threadId: surface.kind === "branch" ? surface.rootThreadId : surface.threadId,
       limit,
     })
       .filter((message) => message.id === input.sourceMessage.id || !historicalGuidanceMessageIds.has(message.id)));
@@ -343,15 +343,22 @@ export function collectSelectorConversationSources(input: {
 export function collectActiveWorkSources(input: {
   readonly store: ChannelContextActiveWorkStore;
   readonly channel: Channel;
+  readonly threadId: string;
   readonly limit?: number;
 }): readonly ChannelContextSource[] {
   const limit = input.limit ?? 8;
+  const messageBelongs = (id: string | undefined): boolean => Boolean(id
+    && input.store.getConversationItem(id)?.threadId === input.threadId);
   const proposals = input.store
     .listChannelExecutionProposals({ channelId: input.channel.id, limit: 50 })
+    .filter((proposal) => messageBelongs(proposal.sourceMessageId))
     .filter((proposal) => proposal.status === "draft" || proposal.status === "blocked")
     .slice(-limit);
   const workflows = input.store
     .listChannelWorkflows({ channelId: input.channel.id, limit: 50 })
+    .filter((workflow) => messageBelongs(workflow.metadata?.sourceMessageId)
+      || Boolean(workflow.metadata?.sourceTurnId
+        && input.store.getLingTurn(workflow.metadata.sourceTurnId)?.threadId === input.threadId))
     .filter((workflow) => ["draft", "ready", "running", "waiting_for_approval", "blocked", "failed"].includes(workflow.status))
     .slice(0, limit);
   const workflowSteps = workflows.flatMap((workflow) =>
@@ -360,15 +367,18 @@ export function collectActiveWorkSources(input: {
       .filter((step) => ["queued", "claimed", "waiting_for_approval", "running", "blocked", "failed"].includes(step.status))
       .slice(0, 8),
   );
+  const stepIds = new Set(workflowSteps.map((step) => step.id));
+  const linkedRunIds = new Set(proposals.flatMap((proposal) => proposal.linkedRunId ? [proposal.linkedRunId] : []));
   const runs = input.store
     .listRuns({ limit: 200 })
     .filter((run) => run.channelId === input.channel.id)
+    .filter((run) => run.threadId === input.threadId || linkedRunIds.has(run.id) || Boolean(run.workflowStepId && stepIds.has(run.workflowStepId)))
     .filter((run) => ["queued", "running", "waiting_for_approval", "failed"].includes(run.status))
     .slice(0, limit);
-  const approvals = [
+  const approvals = [...new Map([
     ...runs.flatMap((run) => input.store.listApprovalRequests({ runId: run.id, status: "pending", limit: 20 })),
     ...workflowSteps.flatMap((step) => input.store.listApprovalRequests({ workflowStepId: step.id, status: "pending", limit: 20 })),
-  ].slice(0, limit);
+  ].map((approval) => [approval.id, approval])).values()].slice(0, limit);
 
   const sources: ChannelContextSource[] = [];
   for (const proposal of proposals) {

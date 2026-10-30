@@ -14,7 +14,7 @@ import type {
   RemoteConversationMessageV1,
   RemoteConversationSummaryV1,
 } from "@ling-stack/contracts";
-import { listChannelBranchRootThreadIds } from "../channels/conversation-surface.js";
+import { findChannelDefaultConversationThread } from "../channels/conversation-thread-resolution.js";
 import { listChannelMessageViewsPage } from "../channels/conversation-item-messages.js";
 import {
   buildConversationSupersessionProjection,
@@ -110,13 +110,14 @@ export class ChannelRemoteConversationAdapter extends BaseRemoteConversationAdap
 
   open(conversationId: string, olderPageCursor: string | undefined, now: string): RemoteConversationPage {
     const channel = this.requireChannel(conversationId);
-    const page = listChannelMessageViewsPage({
+    const root = this.defaultThread(channel.id);
+    const page = root ? listChannelMessageViewsPage({
       store: this.options.store,
       channelId: channel.id,
-      excludeThreadIds: listChannelBranchRootThreadIds(this.options.store, channel.id),
+      threadId: root.id,
       ...(olderPageCursor ? { beforeMessageId: olderPageCursor } : {}),
       limit: 100,
-    });
+    }) : { messages: [], hasMore: false, nextBeforeMessageId: undefined };
     const visible = filterSupersededChannelMessages(page.messages, buildConversationSupersessionProjection(this.options.store, {
       surfaces: ["channel_root", "channel_branch", "topic_reply"],
       ownerId: channel.id,
@@ -135,13 +136,20 @@ export class ChannelRemoteConversationAdapter extends BaseRemoteConversationAdap
     if (!channel || channel.workspaceId !== this.options.workspaceId) {
       return false;
     }
-    return listChannelMessageViewsPage({ store: this.options.store, channelId: channel.id, limit: 100 }).messages
+    const root = this.defaultThread(channel.id);
+    if (!root) return false;
+    return listChannelMessageViewsPage({ store: this.options.store, channelId: channel.id, threadId: root.id, limit: 100 }).messages
       .some((message) => message.authorType !== "local-user" && message.status === "pending");
+  }
+
+  private defaultThread(channelId: string): LingThread | undefined {
+    return findChannelDefaultConversationThread(this.options.store, channelId);
   }
 
   private projectSummary(channel: Channel, now: string): RemoteConversationSummaryV1 {
     const readState = this.readState(channel.id, now);
-    const latest = listChannelMessageViewsPage({ store: this.options.store, channelId: channel.id, limit: 1 }).messages.at(-1);
+    const root = this.defaultThread(channel.id);
+    const latest = root ? listChannelMessageViewsPage({ store: this.options.store, channelId: channel.id, threadId: root.id, limit: 1 }).messages.at(-1) : undefined;
     return {
       workspaceId: this.options.workspaceId,
       conversationId: channel.id,

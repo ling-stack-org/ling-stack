@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "reviewId": "packaged_codesign_original_host_v1",
   "approval": "approved_source_and_packaging_review",
   "target": "aarch64-apple-darwin",
@@ -40,5 +40,15 @@
     "templateSha256": "12d57318f9c62af5c345d791d20b9af726b96093e12c7699cd5559f85e847784",
     "taskgatedBinding": "reviewed_xml_v1"
   },
-  "trust": "original_host_and_trusted_packaging_transform_v1"
+  "trust": "original_host_and_trusted_packaging_transform_v1",
+  "additionalOs": [
+    {
+      "release": "27.0.0",
+      "backendHelperVersion": "ling-seatbelt-v1:27.0.0:bdfc2354c683c8fb95a39e63fbc8610e9739b0256c89ab880564edefbe73a5ce",
+      "backendSha256": "58839ef01b4eef8aac0d2aa8f9d1c074ae45aafe3533965b030672450064acc8",
+      "codesignSha256": "d517c9be608ffd266ec106c685e880cda71abc94001450e36d2476016406dd1e",
+      "templateSha256": "12d57318f9c62af5c345d791d20b9af726b96093e12c7699cd5559f85e847784",
+      "taskgatedBinding": "reviewed_xml_v1"
+    }
+  ]
 }

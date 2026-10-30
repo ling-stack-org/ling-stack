@@ -244,10 +244,12 @@ export class SqliteTeammateAssociationStore {
     const update = this.context.database.prepare("UPDATE teammate_memory_scopes SET enabled = 1, updated_at = ? WHERE id = ?");
     // This is a read-modify-write transaction. Reserve the writer before reading
     // membership/scope state so another bootstrap cannot invalidate its WAL snapshot.
-    this.context.database.exec("BEGIN IMMEDIATE");
+    this.context.database.exec("SAVEPOINT teammate_default_memory_scopes");
     try {
+      // Reserve the writer before any read, including when called inside channel creation.
+      this.context.database.exec("UPDATE teammate_memory_scopes SET enabled = enabled WHERE 0");
       if (!this.ports.getAiTeammate(teammateId)) {
-        this.context.database.exec("COMMIT");
+        this.context.database.exec("RELEASE teammate_default_memory_scopes");
         return;
       }
       const channelIds = this.ports.hasTable("teammate_channel_memberships")
@@ -277,9 +279,9 @@ export class SqliteTeammateAssociationStore {
         }
         insert.run(createTeammateMemoryScopeId(), teammateId, scope.kind, scope.channelId ?? null, now, now);
       }
-      this.context.database.exec("COMMIT");
+      this.context.database.exec("RELEASE teammate_default_memory_scopes");
     } catch (error) {
-      this.context.database.exec("ROLLBACK");
+      this.context.database.exec("ROLLBACK TO teammate_default_memory_scopes; RELEASE teammate_default_memory_scopes");
       throw error;
     }
   }

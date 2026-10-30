@@ -25,7 +25,7 @@ test("macOS Home chrome owns a fixed layout row and keeps the collapsed compact 
   const trafficLightExclusion = chrome.locator(".desktop-window-traffic-light-exclusion");
   const sidebarToggle = page.locator(".desktop-window-sidebar-toggle");
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  const newConversation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation" });
+  const newConversation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation", exact: true });
 
   await expect(shell).toBeVisible();
   await expect(chrome).toHaveCount(1);
@@ -171,7 +171,7 @@ test("macOS normal-conversation and channel headers are draggable while their co
   await searchTrigger.click();
   await expect(normalHeader.getByRole("textbox", { name: "Search conversation messages" })).toBeFocused();
 
-  await navigation.getByRole("button", { name: "Engineering" }).click();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   const channelHeader = titlebarSurface.locator(".channel-header[data-desktop-window-drag-region='true']");
   const channelMenuTrigger = channelHeader.getByRole("button", { name: "More channel views" });
   await expectDragRegion(channelHeader);
@@ -280,6 +280,7 @@ test("macOS portal overlays subtract the underlying shell drag region", async ({
   await trigger.click();
   dialog = page.getByRole("dialog", { name: "New channel" });
   await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("textbox", { name: "Name", exact: true })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(trigger).toBeFocused();
@@ -379,8 +380,8 @@ test("macOS titlebar stays bounded at 1280x800 in dark mode", async ({ page }, t
     navigationRight: 292,
   });
 
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
-  await expect(page.locator("[data-desktop-window-titlebar-surface='true']").getByRole("heading", { name: "Engineering" })).toBeVisible();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
+  await expect(page.locator("[data-desktop-window-titlebar-surface='true']").getByRole("heading", { name: "Engineering / Engineering conversation", exact: true })).toBeVisible();
   const geometry = await page.evaluate(() => {
     const workspace = document.querySelector<HTMLElement>(".app-shell.desktop-macos > .workspace");
     return {
@@ -533,7 +534,7 @@ for (const host of [
     await expect(shell).not.toHaveClass(/channel-sidebar-collapsed/u);
     await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toBeVisible();
 
-    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
     const channelHeader = titlebarSurface.locator(".channel-header[data-desktop-window-drag-region='true']");
     await expect(channelHeader).toBeVisible();
     await expect(page.locator(".task-workbench-window > .channel-header")).toHaveCount(0);

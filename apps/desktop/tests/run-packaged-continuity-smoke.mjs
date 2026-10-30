@@ -355,13 +355,25 @@ async function request(baseUrl, path, init = {}) {
 }
 
 async function waitForHealth(baseUrl, session) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const response = await request(baseUrl, "/health");
-    if (response.status === 200 && response.body?.ok === true) {
-      await updateSessionProcessEvidence(session, response.body);
-      return response.body;
+  const attempts = Math.ceil(PACKAGED_STARTUP_BUDGET_MS / PACKAGED_STARTUP_POLL_MS);
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(1_000) });
+      const text = await response.text();
+      let body;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = undefined;
+      }
+      if (response.status === 200 && body?.ok === true) {
+        await updateSessionProcessEvidence(session, body);
+        return body;
+      }
+    } catch {
+      // The packaged daemon can be between Electron restarts during its cold start.
     }
-    await sleep(200);
+    await sleep(PACKAGED_STARTUP_POLL_MS);
   }
   throw new Error("packaged_daemon_health_timeout");
 }
@@ -550,9 +562,15 @@ async function seedPreReleaseMigrationFixture(cwd) {
   return { databasePath, channelId: channel.id, workflowId: workflow.id };
 }
 
+const PACKAGED_STARTUP_BUDGET_MS = 120_000;
+const PACKAGED_STARTUP_POLL_MS = 200;
+
 async function waitForPackagedStartupFailure(baseUrl, session) {
   let lastResponse;
-  for (let attempt = 0; attempt < 75; attempt += 1) {
+  // Packaged Desktop and its bundled daemon share a 120 second cold-start
+  // budget. The migration-failure case should exit early, but a valid cold
+  // start must not be mistaken for failure while the daemon is still readying.
+  for (let attempt = 0; attempt < Math.ceil(PACKAGED_STARTUP_BUDGET_MS / PACKAGED_STARTUP_POLL_MS); attempt += 1) {
     if (session.child.exitCode !== null) return { processExited: true, lastResponse };
     try {
       const response = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(250) });
@@ -570,7 +588,7 @@ async function waitForPackagedStartupFailure(baseUrl, session) {
     } catch (error) {
       if (error?.message === "packaged_migration_failure_not_observed") throw error;
     }
-    await sleep(200);
+    await sleep(PACKAGED_STARTUP_POLL_MS);
   }
   return { processExited: session.child.exitCode !== null, lastResponse };
 }

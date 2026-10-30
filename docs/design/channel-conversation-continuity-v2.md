@@ -15,6 +15,12 @@ context projection, rolling summaries, multi-agent recovery, and Channel Intent 
 
 ## Harness Integration Boundary
 
+The [channel sessions contract](channel-sessions-detailed-design.md) extends this continuity
+model with `channel_session` (`relationKind=root`) for an empty named conversation. It uses
+the same Thread/Turn/Item/segment and recovery authorities. It does not copy another
+conversation's history or use fork snapshots; real forks retain `branch` lineage.
+Canonical `LingThread.id` is the session ID, including the existing default channel root.
+
 The Ling product model and the execution harness are deliberately adjacent, not
 interchangeable. Adapters may translate between them, but neither side may silently
 become the other's authority:

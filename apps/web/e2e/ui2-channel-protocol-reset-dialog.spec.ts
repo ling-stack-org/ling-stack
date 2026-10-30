@@ -137,19 +137,20 @@ test("T13-P.6-F resets once through a busy-safe Dialog, restores focus, and emit
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
     .getByRole("button", { name: "Research", exact: true })
     .click();
-  await expect(page.getByRole("heading", { name: "Research", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Research / Research conversation", level: 1, exact: true })).toBeVisible();
   expect(resetRequests).toBe(0);
   const currentDock = page.getByRole("complementary", { name: "Channel workspace dock" });
   if (await currentDock.isVisible().catch(() => false)) {
     await currentDock.getByRole("button", { name: "Close" }).click();
   }
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).first().click();
-  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).first().click();
+  await expect(page.getByRole("heading", { name: "Engineering / Engineering conversation", level: 1, exact: true })).toBeVisible();
   const reopenedEditor = await openProtocolEditor(page);
   const reopenedTrigger = reopenedEditor.getByRole("button", { name: "Reset", exact: true });
 
   await reopenedTrigger.click();
   dialog = page.getByRole("dialog", { name: "Reset channel protocol?" });
+  await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(reopenedTrigger).toBeFocused();
@@ -242,9 +243,9 @@ test("T13-P.6-F production owner has no browser confirmation call", async () => 
 });
 
 async function openProtocolEditor(page: Page): Promise<Locator> {
-  const heading = page.getByRole("heading", { name: "Engineering", level: 1 });
+  const heading = page.getByRole("heading", { name: "Engineering / Engineering conversation", level: 1, exact: true });
   if (!(await heading.isVisible().catch(() => false))) {
-    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).first().click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).first().click();
   }
   await expect(heading).toBeVisible();
   await page.getByRole("toolbar", { name: "Workspace task toolbar" })

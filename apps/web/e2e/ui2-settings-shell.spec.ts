@@ -31,7 +31,7 @@ test("Settings shell owns navigation, embedded tools, and exact return at 1440x9
   await page.goto("/");
 
   const appNavigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await appNavigation.getByRole("button", { name: "Engineering" }).click();
+  await appNavigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await appNavigation.getByRole("button", { name: "Settings" }).click();
 
@@ -72,7 +72,8 @@ test("Settings shell owns navigation, embedded tools, and exact return at 1440x9
   await expect(content).toHaveAttribute("data-settings-content-state", "section");
   await settingsNavigation.getByRole("button", { name: "Back to app" }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
-  await expect(appNavigation.getByRole("button", { name: "Engineering" })).toHaveAttribute("aria-current", "page");
+  await expect(appNavigation.locator(".channel-contains-selection").getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
+  await expect(appNavigation.locator('[data-session-default="true"] .sidebar-branch-row')).toHaveAttribute("aria-current", "page");
   await expectNoDocumentOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });

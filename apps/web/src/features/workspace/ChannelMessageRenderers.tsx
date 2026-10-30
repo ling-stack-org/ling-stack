@@ -536,6 +536,7 @@ export interface ChannelMessageRenderersInput {
   readonly loadPreview: (request: PreviewRequest) => Promise<PreviewContentResponse>;
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly selectedChannelBranchRootThreadId: string | undefined;
+  readonly isDefaultChannelSession?: boolean;
   readonly selectedChannelId: string;
   readonly selectedChannelThreadId: string;
   readonly teammateOptions: readonly ChannelMention[];
@@ -579,7 +580,7 @@ export interface ChannelMessageRenderers {
 }
 
 export function createChannelMessageRenderers(input: ChannelMessageRenderersInput): ChannelMessageRenderers {
-  const channelSurface = input.selectedChannelBranchRootThreadId ? "channel_branch" : "channel_root";
+  const channelSurface = input.selectedChannelBranchRootThreadId && !input.isDefaultChannelSession ? "channel_branch" : "channel_root";
   const narrationItemIds = channelNarrationItemIds(input.channelConversationItems, {
     workspaceId: input.workspaceId,
     channelId: input.selectedChannelId,
@@ -947,7 +948,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
           turn,
           turn.sourceMessage.threadSurfaceKind === "topic"
             ? "topic"
-            : turn.sourceMessage.threadSurfaceKind === "branch" || channelSurface === "channel_branch"
+            : turn.sourceMessage.threadSurfaceKind === "branch" || turn.sourceMessage.threadSurfaceKind === "channel_session" || channelSurface === "channel_branch"
               ? "branch"
               : "channel_root",
           input.channelConversationItems,

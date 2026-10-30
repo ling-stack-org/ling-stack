@@ -52,12 +52,15 @@ export function channelFullAccessScope(input: {
   readonly channel: Channel | undefined;
   readonly channelId: string;
   readonly branchId: string;
+  readonly threadId?: string;
+  /** The creation idempotency key, never a reusable channel-wide draft ID. */
+  readonly draftId?: string;
   readonly workspaceCwd: string;
   readonly policyRevision: string;
 }): FullAccessConfirmationScope {
   return {
     workspaceCwd: resolveChannelFullAccessCwd(input.channel, input.workspaceCwd),
-    conversationId: channelFullAccessConversationId(input.channelId, input.branchId),
+    conversationId: channelFullAccessConversationId(input),
     policyRevision: input.policyRevision,
   };
 }
@@ -88,11 +91,12 @@ export function fullAccessRunScope(input: {
   const workspaceCwd = typeof request?.cwd === "string" && request.cwd.trim()
     ? request.cwd.trim()
     : input.fallbackWorkspaceCwd.trim();
+  const threadId = typeof request?.threadId === "string" ? request.threadId.trim() : "";
   const conversationId = channelId && channelId !== "workspace"
-    ? channelFullAccessConversationId(
-      channelId,
-      channelId === input.selectedChannelId ? input.selectedChannelBranchId : "",
-    )
+    ? threadId
+      ? channelFullAccessConversationId({ workspaceCwd: input.fallbackWorkspaceCwd, channelId, threadId, branchId: "" })
+      // Unowned legacy work must not borrow the currently selected conversation's grant.
+      : `channel-work-v2:${JSON.stringify([input.fallbackWorkspaceCwd.trim(), channelId, taskId || "unowned"])}`
     : `workspace-run:${taskId || "default"}`;
   return {
     workspaceCwd,
@@ -111,12 +115,18 @@ function resolveChannelFullAccessCwd(channel: Channel | undefined, workspaceCwd:
   return channel?.boundPath?.trim() || workspaceCwd.trim();
 }
 
-function channelFullAccessConversationId(channelId: string, branchId: string): string {
-  const normalizedChannelId = channelId.trim() || "none";
-  const normalizedBranchId = branchId.trim();
-  return normalizedBranchId
-    ? `channel:${normalizedChannelId}:branch:${normalizedBranchId}`
-    : `channel:${normalizedChannelId}:root`;
+function channelFullAccessConversationId(input: {
+  readonly workspaceCwd: string;
+  readonly channelId: string;
+  readonly branchId: string;
+  readonly threadId?: string;
+  readonly draftId?: string;
+}): string {
+  const owner = [input.workspaceCwd.trim(), input.channelId.trim() || "none"];
+  if (input.threadId?.trim()) return `channel-thread-v2:${JSON.stringify([...owner, input.threadId.trim()])}`;
+  if (input.draftId?.trim()) return `channel-draft-v2:${JSON.stringify([...owner, input.draftId.trim()])}`;
+  // During legacy navigation resolution this cannot match a canonical thread or an old v1 grant.
+  return `channel-unresolved-v2:${JSON.stringify([...owner, input.branchId.trim()])}`;
 }
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | undefined {

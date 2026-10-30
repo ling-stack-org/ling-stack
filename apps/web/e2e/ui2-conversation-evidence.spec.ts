@@ -80,7 +80,7 @@ test("Channel available web evidence uses the shared disclosure and keeps diagno
   await mockDaemon(page, state);
 
   await page.goto("/");
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
 
   const feed = page.getByLabel("Channel message feed");
   const availableRow = feed.locator(".channel-message-row").filter({ hasText: "Available web evidence for the focused owner." });

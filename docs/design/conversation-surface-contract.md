@@ -226,6 +226,12 @@ and current-tab save ownership remain unchanged.
 
 ## Purpose
 
+Channel conversation identity follows [频道下多会话](channel-sessions-detailed-design.md):
+the shared channel shell hosts the default `channel_root`, empty `channel_session` and
+lineage-bearing `branch` conversations. Transcript, drafts, pending sends, stop targets,
+confirmation and read positions belong to the canonical thread, while channel configuration
+remains shared. They consume the same renderer and existing Turn API.
+
 This document is the shared conversation UI contract after the first shared surface slice
 landed in PR #273.
 

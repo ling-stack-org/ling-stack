@@ -67,6 +67,18 @@ for (const surface of ["normal", "private", "channel"] as const) {
     if (teammate) await page.getByRole("button", { name: teammate.displayName, exact: true }).click();
     if (surface === "channel") await openEngineeringChannel(page);
 
+    if (surface !== "channel") {
+      for (const summary of ["Searched files · Ran commands", "Called tools · Edited files"]) {
+        const activity = page.getByRole("button", { name: new RegExp(`^${summary}\\. (Expand|Collapse) details$`, "u") });
+        await expect(activity).toHaveAttribute("aria-expanded", "false");
+        await activity.click();
+        await expect(activity).toHaveAttribute("aria-expanded", "true");
+        const groupId = await activity.getAttribute("aria-controls");
+        expect(groupId).toBeTruthy();
+        await expect(page.getByRole("group", { name: "Execution details", exact: true }).and(page.locator(`[id=${JSON.stringify(groupId)}]`))).toBeVisible();
+      }
+    }
+
     const command = page.locator('[data-conversation-action-id="compact-command"][data-conversation-timeline-kind="commandExecution"]');
     const commandHead = command.locator(".conversation-timeline-activity-main");
     await expect(commandHead).toContainText(commandText);

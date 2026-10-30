@@ -135,7 +135,8 @@ test("keeps the previous locale when workspace persistence fails", async ({ page
   await expect(productLanguage).toHaveValue("en-US");
   await expect(productLanguage).not.toBeDisabled();
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
-  await expect(page.getByRole("alert")).toContainText(englishCatalog.messages["settings.language.load_failed"]);
+  await expect(page.locator("[data-ui2-interface-preferences]").getByRole("alert"))
+    .toContainText(englishCatalog.messages["settings.language.load_failed"]);
   expect(state.workspaceSettings.locale).toBe("en-US");
   expect(runtimeErrors).toEqual([
     "console: Failed to load resource: the server responded with a status of 503 (Service Unavailable)",

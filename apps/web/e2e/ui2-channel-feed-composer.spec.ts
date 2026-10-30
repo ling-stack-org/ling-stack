@@ -184,7 +184,7 @@ test("channel composer keeps failed drafts and uses shared persistent feedback",
 
   await expect(page.getByLabel("Channel message feed").getByText("Retry this UI 2.0 message")).toBeVisible();
   await expect(input).toHaveAttribute("data-value", "");
-  const success = page.locator('[data-ling-overlay="toast"][data-scope="channel:channel_engineering:composer"]')
+  const success = page.locator('[data-ling-overlay="toast"][data-scope="channel:channel_engineering:session:thread_channel_channel_engineering:composer"]')
     .filter({ hasText: "Message sent" });
   await expect(success).toHaveCount(1);
   await expect(composer.locator('.composer-status-row.success[data-tone="success"]')).toHaveCount(0);

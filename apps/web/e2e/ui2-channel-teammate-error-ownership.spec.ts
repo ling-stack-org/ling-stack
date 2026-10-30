@@ -88,13 +88,13 @@ test("T13-P.9EF review 2 channel teammate failures persist and only same channel
   await expect(addError).toContainText(addFailure);
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button").filter({ hasText: "Research" }).first().click();
-  await expect(page.getByRole("heading", { name: "Research", level: 1 })).toBeVisible();
+  await navigation.getByRole("button", { name: "Research", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Research / Research conversation", level: 1, exact: true })).toBeVisible();
   manager = await openChannelTeammateManager(page);
   await expect(manager.locator("[data-channel-teammate-error]")).toHaveCount(0);
 
-  await navigation.getByRole("button").filter({ hasText: "Engineering" }).first().click();
-  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Engineering / Engineering conversation", level: 1, exact: true })).toBeVisible();
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
   await page.getByLabel("Channel settings navigation").getByRole("tab", { name: "Members" }).click();

@@ -259,7 +259,7 @@ async function preparePage(page: Page): Promise<void> {
 async function openPluginManager(page: Page, waitForRows = true): Promise<void> {
   await page.goto("/");
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "Engineering" }).click();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
   await expect(page.locator(".settings-plugin-manager")).toBeVisible();
   if (waitForRows) await expect(page.locator(".plugin-table-row").first()).toBeVisible();

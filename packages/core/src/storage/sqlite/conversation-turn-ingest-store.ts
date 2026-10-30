@@ -1,3 +1,4 @@
+import { assertChannelSessionThreadWritable } from "./channel-session-admission.js";
 import { randomUUID } from "node:crypto";
 import type { SQLOutputValue } from "node:sqlite";
 import type {
@@ -18,6 +19,7 @@ export class SqliteConversationTurnIngestStore {
   constructor(
     private readonly context: SqliteStoreContext,
     private readonly items: SqliteConversationItemStore,
+    private readonly onUserMessage?: (threadId: string, body: string) => void,
   ) {}
 
   appendUserTurn(input: AppendConversationUserTurnInput, now: string): AppendConversationUserTurnResult {
@@ -42,6 +44,7 @@ export class SqliteConversationTurnIngestStore {
       throw new Error(`Conversation turn input actor is not supported: ${actorType}`);
     }
     const createdByActor = actorType === "system" ? "system" : "local-user";
+    if (scope.channelId) assertChannelSessionThreadWritable(this.context.database, input.threadId);
     const replay = this.items.getConversationItemByIdempotencyKey(input.threadId, input.idempotencyKey);
       if (replay) {
         if (replay.kind !== "user_message" || !replay.turnId || replay.channelId !== input.channelId) {
@@ -99,9 +102,8 @@ export class SqliteConversationTurnIngestStore {
         };
       }
 
-      if (scope.archived) {
-        throw new Error(`Ling thread is archived: ${input.threadId}`);
-      }
+      if (scope.archived) throw new Error(`Ling thread is archived: ${input.threadId}`);
+
       if (input.sourceTurnId) {
         const source = this.context.database.prepare(`
           SELECT thread_id FROM ling_turns WHERE workspace_id = ? AND id = ?
@@ -227,6 +229,7 @@ export class SqliteConversationTurnIngestStore {
           sourceItemId: item.id,
         }),
       );
+      this.onUserMessage?.(input.threadId, input.payload.body);
       return {
         turnId,
         item,

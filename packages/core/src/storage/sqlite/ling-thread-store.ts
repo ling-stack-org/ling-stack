@@ -123,6 +123,7 @@ export class SqliteLingThreadStore {
   findLingThreadByOwner(input: {
     readonly kind: LingThreadKind;
     readonly surfaceKind?: LingThread["surfaceKind"];
+    readonly anchorItemId?: string;
     readonly taskId?: string;
     readonly workflowStepId?: string;
     readonly externalWorkId?: string;
@@ -135,6 +136,7 @@ export class SqliteLingThreadStore {
       clauses.push("surface_kind = ?");
       params.push(input.surfaceKind);
     }
+    appendNullableOwnerClause(clauses, params, "anchor_item_id", input.anchorItemId);
     appendNullableOwnerClause(clauses, params, "task_id", input.taskId);
     appendNullableOwnerClause(clauses, params, "workflow_step_id", input.workflowStepId);
     appendNullableOwnerClause(clauses, params, "external_work_id", input.externalWorkId);
