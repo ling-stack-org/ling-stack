@@ -13,7 +13,7 @@ import { assertNonSensitiveUserInput, userInputHash, userInputTimestamp } from "
 import { makeUserInputContinuationRecord, readUserInputContinuationRecord, insertUserInputContinuationRecord,
   userInputContinuationRef as ref, sameUserInputValue as same, isUserInputRecord as record,
   requireUserInputRecordKeys, userInputEnvelopeKeys } from "./user-input-continuation-envelope.js";
-import { normalizeStoredRunnerId } from "./runtime-work-mappers.js";
+import { normalizeRunnerIdsInSnapshot } from "../../runner-ids.js";
 
 /** Owns preparation only. No Run/Attempt creation, models, permission or applied writes. */
 export class SqliteUserInputPreparationStore {
@@ -93,30 +93,42 @@ function assertRequest(value: unknown, seed: UserInputContinuationSeed): asserts
 export function assertUserInputExecutionPlan(value: unknown, seed: UserInputContinuationSeed, request: unknown): asserts value is UserInputContinuationExecutionPlan {
   const keys = ["schemaVersion", "runnerId", "providerName", "providerModel", "providerPresetId", "selectedSkillId",
     "taskSnapshot", "providerSnapshot", "requestSnapshot", "runRequestSnapshot", "preparedInput", "preparedInputFingerprint", "runnerExecutionInput"];
-  if (!record(value) || value.schemaVersion !== 1 || Object.keys(value).some(key => !keys.includes(key))
-    || !["runnerId", "providerName", "providerModel", "preparedInputFingerprint"].every(key => typeof value[key] === "string" && value[key])
-    || normalizeStoredRunnerId(value.runnerId as string) !== value.runnerId
-    || !["providerPresetId", "selectedSkillId"].every(key => value[key] === undefined || typeof value[key] === "string" && value[key])
-    || !record(value.taskSnapshot) || !record(value.providerSnapshot) || !record(value.requestSnapshot)
-    || !record(value.runRequestSnapshot) || !record(value.preparedInput)
-    || !same(value.requestSnapshot, request) || !same(value.taskSnapshot, value.requestSnapshot.task)
-    || !same(value.taskSnapshot, value.runRequestSnapshot.task)
-    || value.providerSnapshot.provider !== value.providerName || value.providerSnapshot.model !== value.providerModel
-    || !same(value.runRequestSnapshot.runnerExecutionInput, value.runnerExecutionInput)
-    || value.preparedInput.taskId !== seed.source.taskBinding.taskId || value.preparedInput.fingerprint !== value.preparedInputFingerprint) {
+  const storedValue = value;
+  const normalizedValue = normalizeRunnerIdsInSnapshot(value);
+  const normalizedRequest = normalizeRunnerIdsInSnapshot(request);
+  if (!record(storedValue) || !record(normalizedValue) || !record(normalizedRequest)) {
     throw new UserInputStoreError("source_conflict");
   }
-  assertRequest(value.requestSnapshot, seed);
-  assertRequest(value.runRequestSnapshot, seed);
+  const plan = normalizedValue;
+  if (plan.schemaVersion !== 1 || Object.keys(storedValue).some(key => !keys.includes(key))
+    || !["runnerId", "providerName", "providerModel", "preparedInputFingerprint"].every(key => typeof plan[key] === "string" && plan[key])
+    || !["providerPresetId", "selectedSkillId"].every(key => plan[key] === undefined || typeof plan[key] === "string" && plan[key])
+    || !record(plan.taskSnapshot) || !record(plan.providerSnapshot) || !record(plan.requestSnapshot)
+    || !record(plan.preparedInput)
+    || !same(plan.requestSnapshot, normalizedRequest) || !same(plan.taskSnapshot, plan.requestSnapshot.task)
+    || (record(plan.runRequestSnapshot) && (!same(plan.taskSnapshot, plan.runRequestSnapshot.task)
+      || !same(plan.runRequestSnapshot.runnerExecutionInput, plan.runnerExecutionInput)))
+    || plan.providerSnapshot.provider !== plan.providerName || plan.providerSnapshot.model !== plan.providerModel
+    || plan.preparedInput.taskId !== seed.source.taskBinding.taskId || plan.preparedInput.fingerprint !== plan.preparedInputFingerprint) {
+    throw new UserInputStoreError("source_conflict");
+  }
+  assertRequest(plan.requestSnapshot, seed);
+  if (record(plan.runRequestSnapshot)) assertRequest(plan.runRequestSnapshot, seed);
   // The Core boundary validates shared identities, not Pi prompt/tool semantics.
   // A fingerprint-only plan cannot become the source of a second continuation.
-  const execution = value.runnerExecutionInput;
-  if (!record(execution) || execution.schemaVersion !== 1 || execution.runnerId !== value.runnerId
+  const execution = plan.runnerExecutionInput;
+  if (!record(execution) || execution.schemaVersion !== 1 || execution.runnerId !== plan.runnerId
     || typeof execution.toolHydrationEnabled !== "boolean" || !record(execution.input)
-    || execution.input.cwd !== seed.source.cwd || !same(execution.input.task, value.taskSnapshot)
-    || !same(execution.input.provider, value.providerSnapshot) || !same(execution.preparedInput, value.preparedInput)) {
+    || execution.input.cwd !== seed.source.cwd || !same(execution.input.task, plan.taskSnapshot)
+    || !same(execution.input.provider, plan.providerSnapshot) || !same(execution.preparedInput, plan.preparedInput)) {
     throw new UserInputStoreError("source_conflict");
   }
-  const { fingerprint, ...body } = value.preparedInput;
-  if (fingerprint !== userInputHash(body)) throw new UserInputStoreError("source_conflict");
+  // The stored prepared input is the fingerprint source of truth. A read
+  // projection may canonicalize runner IDs, but that must not change the
+  // historical hash or make a valid continuation look corrupted.
+  const storedPreparedInput = storedValue.preparedInput;
+  if (!record(storedPreparedInput)) throw new UserInputStoreError("source_conflict");
+  const { fingerprint: storedFingerprint, ...storedBody } = storedPreparedInput;
+  if (storedFingerprint !== storedValue.preparedInputFingerprint
+    || storedFingerprint !== userInputHash(storedBody)) throw new UserInputStoreError("source_conflict");
 }

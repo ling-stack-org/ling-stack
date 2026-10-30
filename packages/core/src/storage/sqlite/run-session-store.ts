@@ -27,6 +27,7 @@ import type { SqliteStoreContext } from "./store-context.js";
 import type { RuntimeAttemptFenceV1 } from "../../runtime-supervisor-types.js";
 import { isCurrentRunExecutionOwner, runExecutionOwnerParameters, runExecutionOwnerSql } from "./run-execution-admission.js";
 import { assertDelegationCompletionSatisfied } from "../../delegation-completion-barrier.js";
+import { normalizeRunnerIdsInSnapshot } from "../../runner-ids.js";
 
 export interface SqliteRunSessionStorePorts {
   readonly insertLingTurnRun: (turnId: string, runId: string, role: LingTurnRunRole, createdAt: string) => LingTurnRun;
@@ -83,9 +84,9 @@ export class SqliteRunSessionStore {
       const values = { ...input };
       return {
         values,
-        taskJson: stringifyJson(redactSecrets(values.taskSnapshot)),
-        providerJson: stringifyJson(redactSecrets(values.providerSnapshot)),
-        requestJson: stringifyJson(redactSecrets(values.requestSnapshot)),
+        taskJson: stringifyJson(normalizeRunnerIdsInSnapshot(redactSecrets(values.taskSnapshot))),
+        providerJson: stringifyJson(normalizeRunnerIdsInSnapshot(redactSecrets(values.providerSnapshot))),
+        requestJson: stringifyJson(normalizeRunnerIdsInSnapshot(redactSecrets(values.requestSnapshot))),
       };
     });
     const captured = prepared.values;

@@ -29,9 +29,9 @@ async function fixture(t) {
   return { db, input, apply: () => applyDelegationInstructionMigration(input) };
 }
 
-test("178 installs one immutable receipt schema and reopens idempotently", async t => {
+test("193 installs one immutable receipt schema and reopens idempotently", async t => {
   const f = await fixture(t);
-  assert.equal(DELEGATION_INSTRUCTION_MIGRATION_VERSION, 178);
+  assert.equal(DELEGATION_INSTRUCTION_MIGRATION_VERSION, 193);
   assert.equal(f.apply(), true);
   assert.equal(f.apply(), false);
   f.db.exec(`INSERT INTO run_sessions VALUES('run');
@@ -44,9 +44,9 @@ test("178 installs one immutable receipt schema and reopens idempotently", async
   assert.throws(() => f.db.exec("DELETE FROM delegation_instruction_receipts"), /immutable/u);
 });
 
-test("178 rejects conflicting markers and recorded missing schema", async t => {
+test("193 rejects conflicting markers and recorded missing schema", async t => {
   const f = await fixture(t);
-  f.db.prepare("INSERT INTO schema_migrations VALUES(?,?,?)").run(178, "another-owner", now);
+  f.db.prepare("INSERT INTO schema_migrations VALUES(?,?,?)").run(193, "another-owner", now);
   assert.throws(() => f.apply(), /marker_conflict/u);
   f.db.prepare("DELETE FROM schema_migrations").run();
   f.apply();
@@ -54,7 +54,7 @@ test("178 rejects conflicting markers and recorded missing schema", async t => {
   assert.throws(() => f.apply(), /schema_missing/u);
 });
 
-test("178 rejects altered trigger SQL and foreign rows", async t => {
+test("193 rejects altered trigger SQL and foreign rows", async t => {
   const f = await fixture(t);
   f.apply();
   f.db.exec(`DROP TRIGGER trg_delegation_instruction_receipts_no_update;
@@ -63,7 +63,7 @@ test("178 rejects altered trigger SQL and foreign rows", async t => {
   assert.throws(() => f.apply(), /schema_conflict/u);
 });
 
-test("178 rolls back schema objects when marker persistence fails", async t => {
+test("193 rolls back schema objects when marker persistence fails", async t => {
   const f = await fixture(t);
   assert.throws(() => applyDelegationInstructionMigration({
     ...f.input,

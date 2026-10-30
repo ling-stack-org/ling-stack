@@ -1,7 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
-export const DELEGATION_INSTRUCTION_MIGRATION_VERSION = 178;
+// Migration 178 is owned by the runner-id canonicalization cutover on main.
+// Keep this additive receipt schema on the next free version after the merged
+// migration head so both histories remain unambiguous at startup.
+export const DELEGATION_INSTRUCTION_MIGRATION_VERSION = 193;
 const name = "create_delegation_instruction_checkpoint_receipts_v1";
 const table = "delegation_instruction_receipts";
 const definitions = [{ name: table, type: "table", sql: `CREATE TABLE delegation_instruction_receipts (

@@ -31,6 +31,7 @@ import {
   type WorkUnitTransitionEvent,
 } from "../../state-machines.js";
 import { redactSecrets } from "../../redaction.js";
+import { normalizeRunnerIdsInSnapshot } from "../../runner-ids.js";
 import { assertRuntimeResourceRenewal } from "../../runtime-resource-renewal.js";
 import type { CreateOrReuseConversationMediaJobInput } from "../../media-generation-routing-types.js";
 import { redactConversationMediaWorkUnitRequest } from "./conversation-media-execution-admission.js";
@@ -146,9 +147,9 @@ export class SqliteRuntimeWorkUnitStore {
         null,
         input.createdByClientId ?? null,
         input.createdByActor,
-        stringifyJson(mediaAdmission
+        stringifyJson(normalizeRunnerIdsInSnapshot(mediaAdmission
           ? redactConversationMediaWorkUnitRequest(this.context.database, input, mediaAdmission)
-          : redactSecrets(input.request)),
+          : redactSecrets(input.request))),
         stringifyJson(timeoutPolicy),
         input.linkedRunId ?? null,
         input.linkedMessageId ?? null,
@@ -750,7 +751,7 @@ export class SqliteRuntimeWorkUnitStore {
       ts: input.ts,
       type: input.type,
       actor: input.actor,
-      data: redactSecrets(input.data),
+      data: normalizeRunnerIdsInSnapshot(redactSecrets(input.data)),
     };
     const inserted = eventFields.attemptId
       ? this.context.database
