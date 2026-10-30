@@ -32,7 +32,7 @@ function runQuality(overrides = {}) {
 test("PR transitions and full-ci labels trigger validation while full regression is daily", () => {
   assert.match(workflow, /types: \[opened, synchronize, reopened, ready_for_review, converted_to_draft\]/u);
   assert.match(labelWorkflow, /pull_request_target:\n    types: \[labeled\]/u);
-  assert.match(labelWorkflow, /gh workflow run ci\.yml --ref "\$HEAD_REF"/u);
+  assert.match(labelWorkflow, /gh workflow run ci\.yml --ref "\$HEAD_REF" --repo "\$GITHUB_REPOSITORY"/u);
   assert.match(workflow, /cron: "17 3 \* \* \*"/u);
   assert.doesNotMatch(workflow, /^  (?:push|paths|paths-ignore):/mu);
   assert.match(jobSource("scope"), /--event-file "\$GITHUB_EVENT_PATH"/u);
