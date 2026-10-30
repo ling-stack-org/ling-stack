@@ -31,6 +31,22 @@ export function assertNativeBinary(bytes, target, label) {
   } else throw new Error("Unsupported native target");
 }
 
+function describePayloadDifference(actual, expected, limit = 20) {
+  const actualByName = new Map(actual.map(entry => [entry.name, entry]));
+  const expectedByName = new Map(expected.map(entry => [entry.name, entry]));
+  const missing = expected.filter(entry => !actualByName.has(entry.name)).map(entry => entry.name).slice(0, limit);
+  const extra = actual.filter(entry => !expectedByName.has(entry.name)).map(entry => entry.name).slice(0, limit);
+  const changed = expected.filter(entry => {
+    const observed = actualByName.get(entry.name);
+    return observed && !isDeepStrictEqual(observed, entry);
+  }).map(entry => ({
+    name: entry.name,
+    expected: expectedByName.get(entry.name),
+    actual: actualByName.get(entry.name),
+  })).slice(0, limit);
+  return { expectedCount: expected.length, actualCount: actual.length, missing, extra, changed };
+}
+
 async function inspectApplication(app, candidate, target, expectedDistribution) {
   const mac = target === "macos-arm64";
   const resources = mac ? join(app, "Contents/Resources") : join(app, "resources");
@@ -103,7 +119,9 @@ export async function verifyDesktopPackage() {
       try {
         const app = await extractedApplicationPath(extracted.artifactRoot, target);
         const actual = await inspectApplication(app, candidate, target, distribution);
-        if (!isDeepStrictEqual(actual, baseline)) throw new Error("Final archive payload differs from the unpacked application");
+        if (!isDeepStrictEqual(actual, baseline)) {
+          throw new Error(`Final archive payload differs from the unpacked application: ${JSON.stringify(describePayloadDifference(actual, baseline))}`);
+        }
       } finally { await extracted.cleanup(); }
       if (!isDeepStrictEqual(await fileRecord(path), original)) throw new Error("Final archive changed during verification");
       archives.push(original);
