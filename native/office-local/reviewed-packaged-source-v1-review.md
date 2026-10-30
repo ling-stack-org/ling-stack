@@ -1,5 +1,8 @@
 # Scoped macOS Development Packaging Review
 
+Latest source/runtime rebinding: [2026-10-29 macOS development packaging review](../../docs/release/macos-source-review-2026-10-29.md).
+The dated reviews below retain their historical evidence and scope.
+
 Status: independently reviewed source prerequisite; final artifact acceptance separate
 Date: 2026-10-13
 Current reviewed source: `37bbdf6de05c691fa6949543657d04e84dd17342`, comprising main `5bf2659bd11925b0e12fb459febcfde5c18688a6`, PR #537 `51f46a9ea1b128ac9d94243dd571f823f9a18fab` and compatibility correction `921c240b`
