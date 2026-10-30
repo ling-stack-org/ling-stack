@@ -60,7 +60,7 @@ test("real Pi channel creates a module then performs the natural-language Node g
   assert.ok(created.autoStartedWorkflow, JSON.stringify(created));
   const participantIds = created.autoStartedWorkflow.workflowSteps.map(step => step.toParticipantId);
   const result = await daemon.assertWorkflowCompleted(created, {
-    files: [{ path: "continuity-v2-proof.js", content }], actionTypes: ["write", "bash"], participantIds, approvalCount: 2,
+    files: [{ path: "continuity-v2-proof.js", content }], actionTypes: ["write", "bash"], participantIds, approvalCount: 2, settleTimeoutMs: 30_000,
   });
   const action = result.actions.find(action => action.actionType === "bash");
   assert.equal(action.commandEvidence.command, command); assert.equal(action.commandEvidence.exitCode, 0);
