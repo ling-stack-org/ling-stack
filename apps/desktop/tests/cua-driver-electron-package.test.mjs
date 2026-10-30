@@ -72,6 +72,7 @@ test("Electron Builder config keeps external-only provider authority unchanged b
   assert.equal(config.asar, true);
   assert.equal(config.electronFuses.enableEmbeddedAsarIntegrityValidation, true);
   assert.equal(config.electronFuses.onlyLoadAppFromAsar, true);
+  assert.deepEqual(config.nsisPreCompressedFileExtensions, []);
   assert.equal(config.packageAuthority.providerExpected, false);
 });
 
@@ -492,6 +493,7 @@ async function inspectConfig(overrides) {
       winSign: config.win?.signtoolOptions?.sign ?? null,
       winSignExts: config.win?.signExts ?? [],
       asar: config.asar,
+      nsisPreCompressedFileExtensions: config.nsis?.preCompressedFileExtensions ?? null,
       electronFuses: config.electronFuses,
       packageAuthority: config.extraMetadata?.lingCuaDriverPackageAuthority,
     }));
