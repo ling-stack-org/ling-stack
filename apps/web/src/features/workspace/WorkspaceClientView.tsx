@@ -1451,6 +1451,9 @@ export function WorkspaceClientView({
     onLoadOlder: onLoadOlderChannelMessages,
   });
   useEffect(() => {
+    messageFeedState.switchConversation(channelComposerOwnerKey);
+  }, [channelComposerOwnerKey, messageFeedState.switchConversation]);
+  useEffect(() => {
     const markVisible = () => {
       const feed = messageFeedState.scrollRef.current;
       if (!channelMessagesLoading && feed && feed.scrollHeight - feed.scrollTop - feed.clientHeight < 64) onConversationViewed?.();

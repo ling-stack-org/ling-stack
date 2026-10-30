@@ -190,6 +190,39 @@ test("active work and pending approvals enter context only through persisted ses
   assert.ok(sources.every(source => !JSON.stringify(source).includes("sourceB")));
 });
 
+test("read-only topic lookups never materialize a missing topic thread", async (t) => {
+  const { store, channel } = await fixture(t);
+  const defaultSession = store.listChannelSessions(channel.id).defaultSession;
+  const anchor = appendChannelItemFixture(store, {
+    channelId: channel.id,
+    threadId: defaultSession.id,
+    authorType: "local-user",
+    body: "Topic anchor",
+  }, now);
+  const before = store.listLingThreads({ channelId: channel.id, includeArchived: true, limit: 100 }).length;
+  assert.throws(() => resolveChannelConversationThread({
+    store,
+    channel,
+    surface: { kind: "topic", anchorItemId: anchor.id },
+    now,
+    readOnly: true,
+  }), { code: "conversation_topic_not_found", statusCode: 404 });
+  assert.equal(store.listLingThreads({ channelId: channel.id, includeArchived: true, limit: 100 }).length, before);
+  const created = resolveChannelConversationThread({
+    store,
+    channel,
+    surface: { kind: "topic", anchorItemId: anchor.id },
+    now,
+  });
+  assert.equal(resolveChannelConversationThread({
+    store,
+    channel,
+    surface: { kind: "topic", anchorItemId: anchor.id },
+    now,
+    readOnly: true,
+  }).id, created.id);
+});
+
 test("legacy remote channel view exposes the default conversation without another session preview", async (t) => {
   const { store, channel, request, sessions } = await fixture(t);
   const a = (await request(sessions, "POST", { title: "A", idempotencyKey: "a" }, 201)).session;

@@ -54,6 +54,17 @@ export function resolveChannelConversationThread(input: {
   if (!anchor || anchor.channelId !== input.channel.id) {
     throw new Error(`Conversation topic anchor does not belong to channel: ${input.surface.anchorItemId}`);
   }
+  const existingTopic = input.store.listLingThreads({ channelId: input.channel.id, includeArchived: true, limit: 500 })
+    .find((thread) => thread.surfaceKind === "topic" && thread.anchorItemId === anchor.id);
+  if (existingTopic) {
+    if (!input.readOnly && (existingTopic.archivedAt || existingTopic.status === "archived")) {
+      throw new HttpError(409, "conversation_thread_archived", `Conversation thread is archived: ${existingTopic.id}`);
+    }
+    return existingTopic;
+  }
+  if (input.readOnly) {
+    throw new HttpError(404, "conversation_topic_not_found", `Conversation topic not found: ${anchor.id}`);
+  }
   return input.store.resolveOrCreateConversationThread({
     surfaceKind: "topic",
     channelId: input.channel.id,
