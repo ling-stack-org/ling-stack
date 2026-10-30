@@ -228,7 +228,7 @@ async function createOwnedUpstream() {
         const submit = method === "POST" && (url.pathname.endsWith("/contents/generations/tasks") || url.pathname === "/api/prompt");
         const collect = method === "GET" && (url.pathname.startsWith("/generated/") || url.pathname === "/api/view");
         return stage === "submit" ? submit : stage === "collect" ? collect
-          : method === "GET" && (url.pathname.includes("/contents/generations/tasks/") || url.pathname.startsWith("/api/history/"));
+          : method === "GET" && (url.pathname.includes("/contents/generations/tasks/") || url.pathname.startsWith("/api/jobs/") || url.pathname.startsWith("/api/history/"));
       } });
     },
     release: () => { released = true; release.resolve(); },
