@@ -1,7 +1,7 @@
 # H10 Delegation Writer 详细设计
 
 状态：设计冻结，已有分阶段实现候选，等待当前组合验证和真实客户端验收。
-范围：H10 root budget authority、delegation writer、reservation/settlement；以及必须预留的 H11/H12 接缝。  
+范围：H10 root budget authority、delegation writer、reservation/settlement；以及必须预留的 H11/H12 接缝。
 不代表：dynamic child 已启用、G19/G20 已通过、H11/H12 已完成，或 packaged macOS 已验收。
 
 ## 1. 结论

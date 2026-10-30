@@ -466,4 +466,3 @@ function isSqliteBusy(error: unknown): boolean {
   return typeof result === "number" && Number.isSafeInteger(result) && result > 0
     && ((result & 0xff) === 5 || (result & 0xff) === 6);
 }
-
