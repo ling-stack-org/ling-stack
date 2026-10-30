@@ -120,7 +120,7 @@ export async function verifyDesktopPackage() {
         const app = await extractedApplicationPath(extracted.artifactRoot, target);
         const actual = await inspectApplication(app, candidate, target, distribution);
         if (!isDeepStrictEqual(actual, baseline)) {
-          throw new Error(`Final archive payload differs from the unpacked application: ${JSON.stringify(describePayloadDifference(actual, baseline))}`);
+          throw new Error(`Final archive payload differs from the unpacked application: ${JSON.stringify(describePayloadDifference(actual.payload, baseline.payload))}`);
         }
       } finally { await extracted.cleanup(); }
       if (!isDeepStrictEqual(await fileRecord(path), original)) throw new Error("Final archive changed during verification");
