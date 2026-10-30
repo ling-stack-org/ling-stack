@@ -1377,7 +1377,7 @@
     "packages/runner-pi/src/types.ts": "a3b846298a7ff0f55843fa9bc492b73e15afa2c0155f406a8448a4de70ff07bd",
     "packages/runner-pi/src/user-input-request.ts": "1020fb10883eb7166d8b886337120a9fca5ddf8e69c99221f2a27aad8f2d7f4d",
     "packages/runner-pi/src/utils.ts": "c994399e7a85bb6feea3710f0b744aee717d9d48c8484cdd1573e3215eb3d0b1",
-    "pnpm-lock.yaml": "9f0629b30e0c3674d104f2b07c4bfb2b7c896e25e1a2d05a9bcdf4fa0cc0d159",
+    "pnpm-lock.yaml": "f8888021f9d124c5d5979857ab1fb8531f22a6c45095e23eed16147a72d59cad",
     "packages/browser-host/tsconfig.json": "ba10bae6415c98673a85ed99d9dc66da33bd0123c644b64856b44fa2a2dce053",
     "packages/contracts/tsconfig.json": "463f23957c8696dbce5c700e6bea9a925d360d9fb38e62f79ed8af7dcfabba47",
     "packages/core/tsconfig.json": "ba10bae6415c98673a85ed99d9dc66da33bd0123c644b64856b44fa2a2dce053",
