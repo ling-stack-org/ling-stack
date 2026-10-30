@@ -6,12 +6,19 @@
 - [Settings Shell](./ui2.0升级/modules/settings/README.md)
 - [Skill Capability Model And Library Simplification](skill-capability-model-and-library-simplification.md)
 - [GStack Skill Source Sync](gstack-skill-source-sync.md)
+- [External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md) —
+  separate contract for local shared `.agents/skills`; not part of the P15/P16 official
+  source workflow.
 
 ## Summary
 
 > Superseded for normal source acquisition by
 > [Managed Official Skill Source P16](managed-official-skill-source-p16.md). P15 remains
 > the historical record for collapsing the diagnostic UI into one sync action.
+>
+> Local shared `.agents/skills` discovery is also outside this document: it uses fixed
+> roots, an explicit per-record confirmation, and its own endpoints. See
+> [External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md).
 
 Source sync is a maintenance task, not a diagnostic console. The default flow is one
 action: `Sync updates`. It imports a previously connected official gstack checkout into

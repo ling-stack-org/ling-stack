@@ -1,4 +1,12 @@
-import type { ApprovalActionType, RunnerFallbackPolicy, RunnerFallbackReason, RunnerRequestSource } from "@ling-stack/core";
+import {
+  DEFAULT_RUNNER_ID,
+  LEGACY_PI_RUNNER_ID,
+  normalizeRunnerId,
+  type ApprovalActionType,
+  type RunnerFallbackPolicy,
+  type RunnerFallbackReason,
+  type RunnerRequestSource,
+} from "@ling-stack/core";
 import type {
   RunnerToolHydrationCapability,
   RunnerToolSideEffectClass,
@@ -18,8 +26,7 @@ export type {
   RunnerToolExecutionGateV1,
 } from "./runner-tool-conformance.js";
 
-export const DEFAULT_RUNNER_ID = "pi";
-export const LEGACY_PI_RUNNER_ID = "pi-coding-agent";
+export { DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, normalizeRunnerId } from "@ling-stack/core";
 
 export interface RegisteredRunner {
   readonly id: string;
@@ -129,13 +136,6 @@ export interface RunnerRegistry {
   get(id: string): RegisteredRunner | undefined;
   list(): readonly RegisteredRunner[];
   resolve(input?: RunnerResolutionInput): RunnerResolution;
-}
-
-export function normalizeRunnerId(id: string | undefined): string | undefined {
-  if (!id) {
-    return undefined;
-  }
-  return id === LEGACY_PI_RUNNER_ID ? DEFAULT_RUNNER_ID : id;
 }
 
 export function createRunnerRegistry(registrations: readonly RunnerRegistrationInput[], defaultRunnerId: string = DEFAULT_RUNNER_ID): RunnerRegistry {

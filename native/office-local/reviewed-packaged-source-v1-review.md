@@ -1,5 +1,8 @@
 # Scoped macOS Development Packaging Review
 
+Latest source/runtime rebinding: [2026-10-29 macOS development packaging review](../../docs/release/macos-source-review-2026-10-29.md).
+The dated reviews below retain their historical evidence and scope.
+
 Status: independently reviewed source prerequisite; final artifact acceptance separate
 Date: 2026-10-13
 Current reviewed source: `37bbdf6de05c691fa6949543657d04e84dd17342`, comprising main `5bf2659bd11925b0e12fb459febcfde5c18688a6`, PR #537 `51f46a9ea1b128ac9d94243dd571f823f9a18fab` and compatibility correction `921c240b`
@@ -21,6 +24,8 @@ The approved replacements are:
 | `pnpm-lock.yaml` | `2b411405825673eee46fd1e099def6944744e830cb5cd6b3fbf28db30b49c799` |
 
 The current fixed packaging aggregate is `21877f37a6bf4d6e5cce77d19deba032e53cb4b9b0f64dc23bcf0c8f2f037db2`. The unchanged Office native aggregate is `715c56bcc31a2f6fbf546e86c2a937702305675cd17e6f69136089f09a4b7c0f`. Both encode the fixed-order `[path, sha256]` pairs as JSON plus a newline. The original reader rejected the stale record before this explicit review; no build-time discovery, approval updater or guard bypass was added.
+
+The desktop license-material correction in PR #624 changes the fixed `pnpm-lock.yaml` input to `f8888021f9d124c5d5979857ab1fb8531f22a6c45095e23eed16147a72d59cad`. The change removes the legacy `exceljs -> unzipper -> binary -> buffers/chainsaw` notice gap and is covered by the distribution-material regression tests; the review record now binds that exact lockfile byte set.
 
 This is a compatible subset of the grouped dependency proposal: diff 9.0.0, docx 9.9.0 and OfficeParser 8.1.1 are retained, while Pi 0.84.4, the existing Expo 57 mobile manifest, Mermaid 11.17.2 and Undici 7.30.0 remain. Lockfile changes also include Express-owned transitive major updates, `content-disposition` 1.1.0 to 2.0.1 and `content-type` 1.0.5 to 2.1.0; the packaging reviewer checked their Express API smoke. They are not described as minor/patch-only updates. All seven security patches and their bindings remain intact.
 

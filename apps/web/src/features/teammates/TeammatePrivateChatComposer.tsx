@@ -7,6 +7,7 @@ import {
 import {
   ConversationPermissionControl,
   ConversationComposerShell,
+  ConversationBottomStatusStrip,
   ConversationGuidanceStrip,
   ConversationStatusStrip,
   isConversationGuidanceQueueVisible,
@@ -24,6 +25,8 @@ import type { TeammatePrivateComposerController } from "./useTeammatePrivateComp
 
 export type TeammatePrivateChatComposerProps = Pick<TeammatePrivateChatSurfaceProps,
   | "composerDragActive"
+  | "composerModelLabel"
+  | "runtimeMetrics"
   | "composerFileReferenceParts"
   | "composerFileReferenceTokens"
   | "composerInputParts"
@@ -68,6 +71,8 @@ export type TeammatePrivateChatComposerProps = Pick<TeammatePrivateChatSurfacePr
 
 export function TeammatePrivateChatComposer({
   composerDragActive,
+  composerModelLabel,
+  runtimeMetrics,
   composerFileReferenceParts,
   composerFileReferenceTokens,
   composerInputParts,
@@ -108,7 +113,7 @@ export function TeammatePrivateChatComposer({
   privateComposerSendingLabel,
   uploadingAttachments,
 }: TeammatePrivateChatComposerProps): React.JSX.Element {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const permissionLocked = privateComposerSending || hasDirectRuntimeActivity || Boolean(directGuidanceSubmitting);
   const visibleDirectInterventions = openDirectInterventions.filter((intervention) =>
     isConversationGuidanceQueueVisible(intervention.status)
@@ -185,6 +190,12 @@ export function TeammatePrivateChatComposer({
         density="docked"
         className="teammate-direct-composer"
         ariaLabel={t("Private chat composer")}
+        bottomStatusNode={<ConversationBottomStatusStrip
+          ariaLabel={t("Conversation status")}
+        translate={t}
+          metrics={runtimeMetrics}
+          locale={locale}
+        />}
         dropZoneClassName={composerDragActive ? "active" : undefined}
         onDragOver={onComposerDragOver}
         onDragLeave={onComposerDragLeave}

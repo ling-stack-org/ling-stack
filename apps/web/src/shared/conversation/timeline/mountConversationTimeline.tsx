@@ -3,7 +3,8 @@ import {
   fingerprintConversationTimeline,
   type TimelineSnapshot,
 } from "@ling-stack/conversation-ui-core";
-import { ConversationTimeline, type ConversationTimelineProps } from "./ConversationTimeline.js";
+import { ConversationTimeline, type ConversationTimelineItemLocator, type ConversationTimelineProps } from "./ConversationTimeline.js";
+import { ConversationPositionRail, type ConversationPositionRailProps } from "../navigation/ConversationPositionRail.js";
 import type { ConversationViewRetainKeys } from "../view-store/conversation-view-store.js";
 import {
   ConversationViewProvider,
@@ -14,6 +15,8 @@ import { collectConversationTimelineViewRetainKeys } from "./conversation-timeli
 import { LocalFilePreviewContext } from "../blocks/local-file-preview-context.js";
 
 export interface ConversationTimelineMountInput extends Omit<ConversationTimelineProps, "snapshot"> {
+  readonly positionIdentity?: ConversationPositionRailProps["identity"];
+  readonly onPositionNavigate?: () => void;
   readonly onOpenNativeFile?: NonNullable<React.ContextType<typeof LocalFilePreviewContext>>["openPreview"];
   readonly snapshot: TimelineSnapshot;
   /** Existing surface keys that must remain live beside typed Timeline keys. */
@@ -86,12 +89,28 @@ function ConversationTimelineMountRoot({
 
 function ConversationTimelineOwnedMount({
   viewStateRetainKeys,
+  positionIdentity,
+  onPositionNavigate,
   ...timelineProps
 }: ConversationTimelineMountInput): React.JSX.Element {
+  const fallbackLocatorRef = useRef<ConversationTimelineItemLocator | null>(null);
+  const locatorRef = timelineProps.itemLocatorRef ?? fallbackLocatorRef;
   const retainKeys = useMemo(
     () => collectConversationTimelineViewRetainKeys(timelineProps.snapshot.items, viewStateRetainKeys),
     [timelineProps.snapshot.items, viewStateRetainKeys],
   );
   useConversationViewReconciliation(retainKeys);
-  return <ConversationTimeline {...timelineProps} />;
+  return <>
+    <ConversationTimeline {...timelineProps} itemLocatorRef={locatorRef} />
+    {(timelineProps.depth ?? 0) === 0 && timelineProps.virtualScrollRef && positionIdentity && onPositionNavigate ? (
+      <ConversationPositionRail
+        key={[timelineProps.snapshot.scope.kind, timelineProps.snapshot.scope.threadId, timelineProps.snapshot.scope.anchorItemId].join(":")}
+        items={timelineProps.snapshot.items}
+        scrollRef={timelineProps.virtualScrollRef}
+        locatorRef={locatorRef}
+        identity={positionIdentity}
+        onNavigate={onPositionNavigate}
+      />
+    ) : null}
+  </>;
 }

@@ -1,4 +1,4 @@
-import type { ExecutionBindingRequest } from "@ling-stack/contracts";
+import type { ConversationRuntimeMetrics, ExecutionBindingRequest } from "@ling-stack/contracts";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import type {
   AuthorizationMode,
@@ -23,6 +23,7 @@ import type {
   RunIntervention,
   SessionPermissionMode,
   TerminalReportDto,
+  UserProfile,
   WorkspaceAccessMode,
 } from "../../types.js";
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
@@ -122,6 +123,7 @@ export interface ConversationHomeSendInput {
 }
 
 export interface ConversationHomeProps {
+  readonly userProfile?: UserProfile;
   readonly conversationTitle?: string;
   readonly initialDraft?: string;
   readonly initialMessages?: readonly ConversationHomeMessage[];
@@ -136,6 +138,7 @@ export interface ConversationHomeProps {
   readonly initialPermissionMode?: SessionPermissionMode;
   readonly initialPermissionPreset?: PermissionPreset;
   readonly detailContext?: ConversationHomeDetailContext;
+  readonly runtimeMetrics?: ConversationRuntimeMetrics;
   readonly conversationIdentity: string;
   readonly defaultProviderLabel: string;
   readonly defaultProviderPresetId: string;

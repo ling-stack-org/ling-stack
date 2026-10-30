@@ -11,6 +11,7 @@ import {
   runContinuationReasons,
   sessionPermissionModes,
   workspaceAccessModes,
+  normalizeRunnerId,
   type AuthorizationMode,
   type ChannelMessageFileRef,
   type PermissionConfirmation,
@@ -45,6 +46,7 @@ import type { UserInputContinuationContext } from "./user-input-continuation-con
 import type { NormalConversationContextSnapshot } from "../conversations/normal-conversation-context.js";
 import type { NativeResponsePreferences } from "../conversations/native-response-preferences.js";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
+import { assertPermissionContractVersion } from "../../shared/permission-contract.js";
 import {
   isRecord,
   readOptionalBoolean,
@@ -85,6 +87,7 @@ export interface RunRequest extends Omit<
   | "mediaGenerationTools"
   | "onMediaGenerationToolCall"
 > {
+  readonly schemaVersion?: 2;
   readonly workspaceCwd?: string;
   readonly providerPresetId?: string;
   readonly executionBinding?: ExecutionBindingRequest;
@@ -159,6 +162,7 @@ export function parseRunRequest(value: unknown): RunRequest {
   if (!isRecord(value)) {
     throw new Error("Run request must be a JSON object");
   }
+  assertPermissionContractVersion(value);
 
   const cwd = readString(value, "cwd");
   const workspaceCwd = readOptionalString(value, "workspaceCwd");
@@ -175,7 +179,7 @@ export function parseRunRequest(value: unknown): RunRequest {
   const workflowStepId = readOptionalString(value, "workflowStepId");
   const threadId = readOptionalString(value, "threadId");
   const turnId = readOptionalString(value, "turnId");
-  const requestedRunnerId = readOptionalString(value, "runnerId");
+  const requestedRunnerId = normalizeRunnerId(readOptionalString(value, "runnerId"));
   const boundRunnerId = executionBinding?.kind === "native_profile" ? executionBinding.engineId
     : executionBinding?.kind === "pi_provider" ? "pi" : undefined;
   if (boundRunnerId && requestedRunnerId !== undefined && requestedRunnerId !== boundRunnerId) {
@@ -211,6 +215,7 @@ export function parseRunRequest(value: unknown): RunRequest {
   }
 
   const runRequest: RunRequest = {
+    ...(value.schemaVersion === 2 ? { schemaVersion: 2 as const } : {}),
     cwd,
     workspaceCwd,
     providerPresetId,

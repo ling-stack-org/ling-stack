@@ -16,6 +16,7 @@ import type { RunArtifact } from "../../run-types.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { assertRecoveryDiscoveryId, assertRecoveryDiscoveryTimestamp } from "./recovery-discovery-validation.js";
 import { mapRunnerContinuation, runnerContinuationSelectSql } from "./runner-continuation-mappers.js";
+import { normalizeStoredRunnerId } from "./runtime-work-mappers.js";
 import type { SqliteRuntimeWorkUnitStore } from "./runtime-work-unit-store.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import { harnessArtifactOwnerHolder, syncHarnessArtifactOwnerPins } from "./harness-artifact-recovery-pins.js";
@@ -141,7 +142,7 @@ export class SqliteRunnerContinuationStore {
       continuation.origin,
       continuation.strategy,
       continuation.state,
-      continuation.runnerId,
+      normalizeStoredRunnerId(continuation.runnerId) ?? continuation.runnerId,
       continuation.runnerCapabilityRevision,
       continuation.contextViewId,
       continuation.contextSnapshotArtifactId,

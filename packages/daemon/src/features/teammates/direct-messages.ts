@@ -184,14 +184,16 @@ export async function handleTeammateDirectMessagesCollection(
         const messages = enrichTeammateDirectMessagesWithWebEvidence(store, visibleMessages
           .map((message) => projectTeammateDirectMessageRevisionMetadata(store, message))
           .map((message) => projectTeammateDirectMessageLifecycle(store, message)));
+        const timeline = buildTeammateDirectTranscript(store, teammateId, {
+          includeSuperseded: url.searchParams.get("includeSuperseded") === "true",
+        });
         return {
           cwd,
           teammateId,
           thread,
           messages,
-          timeline: buildTeammateDirectTranscript(store, teammateId, {
-            includeSuperseded: url.searchParams.get("includeSuperseded") === "true",
-          }),
+          timeline,
+          runtimeMetrics: timeline?.runtimeMetrics,
           generatedMedia: buildConversationGeneratedMediaProjection({
             store,
             runIds: collectTeammateDirectRunIds(store, messages, { teammateId, directThreadId: thread.id }),

@@ -51,7 +51,7 @@
 }
 
 .activity-shell .message-feed:focus-visible {
-  outline: 2px solid var(--conversation-focus-ring);
+  outline: 2px solid var(--ling-border-focus);
   outline-offset: -2px;
 }
 
@@ -512,11 +512,11 @@
   display: grid;
   width: min(280px, calc(100vw - 32px));
   padding: var(--ling-space-3);
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-md);
+  border: 1px solid var(--ling-overlay-border);
+  border-radius: var(--ling-overlay-radius);
   color: var(--ling-text-default);
-  background: var(--ling-bg-elevated);
-  box-shadow: var(--ling-shadow-overlay);
+  background: var(--ling-overlay-bg);
+  box-shadow: var(--ling-overlay-shadow);
 }
 
 [data-conversation-composer][data-surface="channel"] .composer-add-menu-row {
@@ -611,25 +611,24 @@
   }
 }
 
-.activity-shell [data-conversation-composer][data-surface="channel"] {
-  position: relative;
+.activity-shell [data-conversation-composer-frame="channel"] {
   flex: 0 0 auto;
   align-self: center;
   width: min(var(--channel-conversation-width), calc(100% - 48px));
   margin-bottom: 14px;
 }
 
-.activity-chat-main > [data-conversation-composer][data-surface="channel"] {
+.activity-chat-main > [data-conversation-composer-frame="channel"] {
   width: 100%;
+}
+
+.activity-shell [data-conversation-composer][data-surface="channel"] {
+  position: relative;
 }
 
 [data-conversation-composer][data-surface="channel"] {
   gap: 6px;
   padding: 8px;
-  border-color: var(--ling-border-default);
-  border-radius: var(--ling-radius-lg);
-  background: var(--ling-bg-composer);
-  box-shadow: var(--ling-shadow-medium);
 }
 
 .channel-guidance-target-selector {
@@ -657,13 +656,6 @@
     grid-template-columns: minmax(0, 1fr);
     gap: 6px;
   }
-}
-
-[data-conversation-composer][data-surface="channel"]:focus-within {
-  border-color: var(--ling-border-focus);
-  box-shadow:
-    inset 0 0 0 1px var(--ling-border-focus),
-    var(--ling-shadow-medium);
 }
 
 [data-conversation-composer][data-surface="channel"] .conversation-composer-toolbar {
@@ -712,7 +704,7 @@
   height: 32px;
   min-height: 32px;
   padding: 0;
-  border-radius: var(--ling-radius-md);
+  border-radius: var(--ling-control-radius);
 }
 
 @media (max-width: 760px) {

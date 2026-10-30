@@ -11,6 +11,13 @@ unsupported including animation, 4 capacity. Stderr contains fixed tokens only;
 the allocation limiter can exit 4 without stderr. I/O failure can terminate after
 a partial write; callers must reject all output unless the exit status is 0.
 
+Optional `--background` after the pixel limit selects the explicit wallpaper preset:
+input <=16 MiB, <=8192 per side, <=16 million pixels (also bounded by maxPixels).
+After orientation and color conversion it downsamples proportionally, without cropping
+or upscaling, to <=2560 per side and <=4 million pixels, then emits a <=16 MiB PNG.
+Area averaging preserves alpha through premultiplied sampling. The original single-argument
+artifact protocol retains its dimensions and limits. Unknown/extra arguments are rejected.
+
 The caller owns the 5-second monotonic deadline, AbortSignal, process termination,
 bounded pipes, waiting for close, executable selection and safe artifact
 publication. This helper contains no subprocess spawning or file/network reads.

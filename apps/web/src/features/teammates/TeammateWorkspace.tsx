@@ -15,6 +15,7 @@ import {
   Wrench,
 } from "lucide-react";
 import type { SkillPack } from "@ling-stack/core/skill-types";
+import type { ConversationRuntimeMetrics } from "@ling-stack/contracts";
 import {
   cancelTeammateDirectIntervention,
   createTeammateDirectLinkPreview,
@@ -52,6 +53,7 @@ import {
   useDesktopTitlebarPlacement,
 } from "../../app/DesktopTitlebarSurface.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
+import { providerCompactModelLabel } from "../../lib/providers.js";
 import { readSseResponse } from "../../sse.js";
 import { useFocusRevalidationToken } from "../../shared/hooks/use-focus-revalidation-token.js";
 import {
@@ -268,6 +270,7 @@ export function TeammateWorkspace({
   const [workspaceView, setWorkspaceView] = useState<TeammateWorkspaceView>("chat");
   const [activeTab, setActiveTab] = useState<TeammateWorkspaceTab>("profile");
   const [messages, setMessages] = useState<readonly TeammateDirectMessage[]>([]);
+  const [runtimeMetrics, setRuntimeMetrics] = useState<ConversationRuntimeMetrics>();
   const [generatedMedia, setGeneratedMedia] = useState<readonly ConversationGeneratedMedia[]>([]);
   const workspaceMessageIdentity = JSON.stringify([cwd.trim(), teammate.id]);
   const [messageSnapshotIdentity, setMessageSnapshotIdentity] = useState(workspaceMessageIdentity);
@@ -291,6 +294,7 @@ export function TeammateWorkspace({
   const [directWorkspace, setDirectWorkspace] = useState<DirectWorkspaceResponse | undefined>();
   const workspaceSnapshotCurrent = messageSnapshotIdentity === workspaceMessageIdentity;
   const currentMessages = workspaceSnapshotCurrent ? messages : emptyTeammateDirectMessages;
+  const currentRuntimeMetrics = workspaceSnapshotCurrent ? runtimeMetrics : undefined;
   const currentGeneratedMedia = workspaceSnapshotCurrent ? generatedMedia : emptyConversationGeneratedMedia;
   const currentDirectRuntime = workspaceSnapshotCurrent ? directRuntime : undefined;
   const currentDirectTimelineRuns = workspaceSnapshotCurrent ? directTimelineRuns : [];
@@ -822,6 +826,7 @@ export function TeammateWorkspace({
     setChatSummaryOpen(false);
     setChatTerminalOpen(false);
     setMessages([]);
+    setRuntimeMetrics(undefined);
     setGeneratedMedia([]);
     setMessageSnapshotIdentity(workspaceMessageIdentity);
     setHasMoreDirectMessages(false);
@@ -941,6 +946,7 @@ export function TeammateWorkspace({
       if (!observationReads.isCurrent(observationRead)) return;
       workspaceRequestOwner.commit(request, "conversation", () => {
         setMessages(directResponse.messages);
+        setRuntimeMetrics(directResponse.runtimeMetrics);
         setGeneratedMedia(directResponse.generatedMedia);
         setMessageSnapshotIdentity(JSON.stringify([workspaceCwd, request.teammateId]));
         setHasMoreDirectMessages(Boolean(directResponse.hasMore));
@@ -991,6 +997,7 @@ export function TeammateWorkspace({
         setMessages((current) => current.length > response.messages.length
           ? upsertDirectMessages(current, response.messages)
           : response.messages);
+        setRuntimeMetrics(response.runtimeMetrics);
         setGeneratedMedia((current) => mergeConversationGeneratedMedia(current, response.generatedMedia));
         setMessageSnapshotIdentity(JSON.stringify([workspaceCwd, request.teammateId]));
         setDirectTimelineRuns(response.cwd === workspaceCwd && privateTimelineResponseIsOwned(response, {
@@ -1027,6 +1034,7 @@ export function TeammateWorkspace({
         setMessages((current) => current.length > directResponse.messages.length
           ? upsertDirectMessages(current, directResponse.messages)
           : directResponse.messages);
+        setRuntimeMetrics(directResponse.runtimeMetrics);
         setGeneratedMedia(directResponse.generatedMedia);
         setMessageSnapshotIdentity(JSON.stringify([workspaceCwd, request.teammateId]));
         setHasMoreDirectMessages(Boolean(directResponse.hasMore));
@@ -1530,6 +1538,7 @@ export function TeammateWorkspace({
           if (!observationReads.isCurrent(observationRead)) return;
           workspaceRequestOwner.commit(request, "conversation", () => {
             setMessages(directMessagesResponse.messages);
+            setRuntimeMetrics(directMessagesResponse.runtimeMetrics);
             setGeneratedMedia(directMessagesResponse.generatedMedia);
             setMessageSnapshotIdentity(JSON.stringify([cwd.trim(), request.teammateId]));
           });
@@ -1830,6 +1839,8 @@ export function TeammateWorkspace({
           dockViewModel={privateDockViewModel}
           providerRecovered={providerRecovered}
           modelNotice={privateModelNotice}
+          composerModelLabel={provider ? providerCompactModelLabel(provider) : undefined}
+          runtimeMetrics={currentRuntimeMetrics}
           privateAttachmentById={privateAttachmentById}
           taskCreateBusyKeys={tasksController.busyKeys}
           taskCreateErrors={tasksController.messageErrors}

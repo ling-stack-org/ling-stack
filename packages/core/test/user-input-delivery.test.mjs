@@ -9,6 +9,7 @@ import test from "node:test";
 import { applyUserInputDeliveryMigration } from "../dist/storage/sqlite/user-input-delivery-migration.js";
 import { createSqliteRunStore, resolveRuntimePaths, DEFAULT_WORKSPACE_ID, toRuntimeAttemptFence } from "../dist/index.js";
 
+const migrationHasColumn=(database)=>(tableName,columnName)=>database.prepare("PRAGMA table_info("+tableName+")").all().some(row=>row.name===columnName);
 const now="2026-09-07T00:00:00.000Z", stopped="2026-09-07T00:00:01.000Z", yielded="2026-09-07T00:00:02.000Z";
 const claimedAt="2026-09-07T00:00:03.000Z", expiredAt="2026-09-07T00:00:04.000Z", retryAt="2026-09-07T00:00:05.000Z";
 const code=expected=>error=>error.code===expected;
@@ -40,6 +41,7 @@ test("migration extends an existing pending outbox without changing its accepted
     +"CREATE TABLE migrations(version INTEGER PRIMARY KEY,name TEXT NOT NULL);"
     +"INSERT INTO user_input_deliveries VALUES ('delivery','answer','unit','pending','2026-09-07T00:00:01.000Z')");
   const context={database,hasMigration:version=>!!database.prepare("SELECT 1 FROM migrations WHERE version=?").get(version),
+    hasColumn:migrationHasColumn(database),
     recordMigration:(version,name)=>database.prepare("INSERT INTO migrations VALUES (?,?)").run(version,name)};
   applyUserInputDeliveryMigration(context);
   const row=database.prepare("SELECT * FROM user_input_deliveries").get();
@@ -50,14 +52,14 @@ test("migration extends an existing pending outbox without changing its accepted
 test("failed migration rolls back columns and marker as one transaction",t=>{
   const database=new DatabaseSync(":memory:");t.after(()=>database.close());
   database.exec("CREATE TABLE user_input_deliveries(delivery_id TEXT PRIMARY KEY,answer_id TEXT NOT NULL,consumer_work_unit_id TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL);CREATE TABLE migrations(version INTEGER PRIMARY KEY,name TEXT NOT NULL)");
-  assert.throws(()=>applyUserInputDeliveryMigration({database,hasMigration:()=>false,recordMigration:()=>{throw new Error("migration commit refusal")}}),/migration commit refusal/);
+  assert.throws(()=>applyUserInputDeliveryMigration({database,hasMigration:()=>false,hasColumn:migrationHasColumn(database),recordMigration:()=>{throw new Error("migration commit refusal")}}),/migration commit refusal/);
   assert.ok(!database.prepare("PRAGMA table_info(user_input_deliveries)").all().some(row=>row.name==="claim_token"));
   assert.equal(database.prepare("SELECT COUNT(*) AS n FROM migrations").get().n,0);
 });
 test("migration COMMIT failure rolls back DDL and permits a clean retry",t=>{
   const database=new DatabaseSync(":memory:");t.after(()=>database.close());database.exec("PRAGMA foreign_keys=ON");
   database.exec("CREATE TABLE user_input_deliveries(delivery_id TEXT PRIMARY KEY,answer_id TEXT NOT NULL,consumer_work_unit_id TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL);CREATE TABLE parent(id INTEGER PRIMARY KEY);CREATE TABLE migrations(version INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)");
-  const context={database,hasMigration:()=>false,recordMigration:version=>database.prepare("INSERT INTO migrations VALUES (?)").run(version)};
+  const context={database,hasMigration:()=>false,hasColumn:migrationHasColumn(database),recordMigration:version=>database.prepare("INSERT INTO migrations VALUES (?)").run(version)};
   assert.throws(()=>applyUserInputDeliveryMigration(context),/FOREIGN KEY/);
   assert.ok(!database.prepare("PRAGMA table_info(user_input_deliveries)").all().some(row=>row.name==="claim_token"));
   database.exec("INSERT INTO parent VALUES (133)");applyUserInputDeliveryMigration(context);

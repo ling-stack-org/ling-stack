@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readdirSync, readSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { isBuiltin } from "node:module";
 import { fileURLToPath } from "node:url";
-import { readReviewedPackagedOfficeSource } from "./packaged-office-native-review.mjs";
+import { readLocalPackagedOfficeSource, readReviewedPackagedOfficeSource } from "./packaged-office-native-review.mjs";
+import { PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS } from "./packaged-office-native-review-inputs.mjs";
 
 const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
 const desktopRoot = resolve(repositoryRoot, "apps/desktop");
@@ -62,15 +63,34 @@ function capture(path, expectedHash, original) {
  * dist. Vendor resolution remains esbuild's responsibility and a separate gate.
  */
 export function createReviewedOfficeDaemonSourceInputs() {
-  const { review, sourceReviewSha256 } = readReviewedPackagedOfficeSource();
+  const releaseReview = process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED === "1";
+  const reviewed = releaseReview ? readReviewedPackagedOfficeSource() : readLocalPackagedOfficeSource();
+  const packagingAllowlist = releaseReview ? reviewed.review.packagingSha256 : Object.fromEntries(
+    [...PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS, ...packageNames.flatMap(name => {
+      const root = resolve(repositoryRoot, "packages", name, "src");
+      const entries = [];
+      function collect(directory) {
+        for (const item of readdirSync(directory, { withFileTypes: true })) {
+          const path = resolve(directory, item.name);
+          if (item.isDirectory()) collect(path);
+          else if (item.isFile() && /\.(?:ts|mts|cts|js|mjs|cjs|json)$/u.test(item.name)) {
+            entries.push(relative(repositoryRoot, path).split(sep).join("/"));
+          }
+        }
+      }
+      collect(root);
+      return entries;
+    })].map(name => [name, "local"]));
+  const sourceReviewSha256 = reviewed.sourceReviewSha256;
   const snapshots = new Map(), used = new Set(), packages = new Map();
   let totalBytes = 0, complete = false;
   function snapshot(path) {
     requireSource(!complete && isAbsolute(path) && resolve(path) === path && inside(path, repositoryRoot));
     const name = relative(repositoryRoot, path).split(sep).join("/");
-    requireSource(Object.hasOwn(review.packagingSha256, name));
+    requireSource(Object.hasOwn(packagingAllowlist, name));
     if (!snapshots.has(path)) {
-      const value = capture(path, review.packagingSha256[name]);
+      const expected = releaseReview ? reviewed.review.packagingSha256[name] : hash(readFileSync(path));
+      const value = capture(path, expected);
       totalBytes += value.bytes.length; requireSource(totalBytes <= maximumTotalBytes && snapshots.size < 2048);
       snapshots.set(path, value);
     }
@@ -96,7 +116,7 @@ export function createReviewedOfficeDaemonSourceInputs() {
   // Bind the complete reviewer-owned workspace snapshot before any native
   // builder or asynchronous resolver runs. Never adopt a same-bytes replacement
   // just because its first runtime load happens later in the bundle.
-  for (const name of Object.keys(review.packagingSha256)) {
+  for (const name of Object.keys(packagingAllowlist)) {
     if (!name.startsWith("packages/")) continue;
     const path = resolve(repositoryRoot, name);
     requireSource(packageName(path));
@@ -113,7 +133,7 @@ export function createReviewedOfficeDaemonSourceInputs() {
     const candidates = /\.(?:js|mjs|cjs)$/u.test(local)
       ? [stem + ".ts", stem + ".mts", stem + ".cts", local] : [local];
     const found = candidates.map(value => resolve(root, value)).filter(value =>
-      Object.hasOwn(review.packagingSha256, relative(repositoryRoot, value).split(sep).join("/")));
+      Object.hasOwn(packagingAllowlist, relative(repositoryRoot, value).split(sep).join("/")));
     requireSource(found.length === 1);
     return found[0];
   }
@@ -225,9 +245,10 @@ export function createReviewedOfficeDaemonSourceInputs() {
     }
     requireSource(observed.size === used.size && [...used].every(path => observed.has(path)));
     for (const [path, value] of snapshots) {
-      capture(path, hash(value.bytes), value.identity);
+      try { capture(path, hash(value.bytes), value.identity); }
+      catch (cause) { throw new Error(`packaged_office_daemon_source_input_invalid:${relative(repositoryRoot, path)}`, { cause }); }
     }
-    requireSource(readReviewedPackagedOfficeSource().sourceReviewSha256 === sourceReviewSha256);
+    if (releaseReview) requireSource(readReviewedPackagedOfficeSource().sourceReviewSha256 === sourceReviewSha256);
     complete = true;
   }
   return Object.freeze({ entryPoint: resolve(repositoryRoot, "packages/daemon/src/cli.ts"), plugin, loadSource,

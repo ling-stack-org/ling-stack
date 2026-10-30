@@ -10,6 +10,7 @@ import type {
 import type { ExternalSecretStore } from "../../../context.js";
 import { ComfyUiClient } from "./comfyui-client.js";
 import { analyzeComfyWorkflowGraph, validateComfyWorkflowMappings } from "./comfyui-graph.js";
+import { assertCurrentMediaWorkflowProtocol } from "./media-protocol-contract.js";
 export { checkMediaWorkflowConnection } from "./workflow-connection-check.js";
 
 export function publicMediaWorkflowConnection(
@@ -98,9 +99,11 @@ export function createMediaWorkflowTestJob(input: {
   readonly store: RunStore;
   readonly definition: MediaWorkflowDefinition;
   readonly version: MediaWorkflowVersion;
+  readonly connection: MediaWorkflowConnection;
   readonly inputValues: Record<string, unknown>;
   readonly now: string;
 }) {
+  assertCurrentMediaWorkflowProtocol(input.connection);
   if (!input.version.validation.ok) {
     throw new Error("工作流结构检查未通过，不能试运行。");
   }

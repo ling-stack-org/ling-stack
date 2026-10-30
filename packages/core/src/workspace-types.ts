@@ -515,6 +515,7 @@ export interface WorkspaceSettings {
 }
 
 export interface UpdateWorkspaceSettingsInput {
+  readonly schemaVersion?: 2;
   readonly workspaceCwd?: string | null;
   readonly theme?: "light" | "dark" | "system" | null;
   readonly locale?: InterfaceLocale | null;

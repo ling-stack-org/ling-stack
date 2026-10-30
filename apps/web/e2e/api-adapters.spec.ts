@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { approvalPolicyFormToPayload } from "../src/api/approval-payloads.js";
 import { channelFormToPayload, channelFormToUpdatePayload, taskEditFormToPayload } from "../src/api/channel-payloads.js";
-import { mediaJobFormToPayload, parseMediaInput } from "../src/api/media-payloads.js";
+import { mediaJobFormToPayload } from "../src/api/media-payloads.js";
 import { mcpServerFormToPayload } from "../src/api/mcp-payloads.js";
 import { providerFormToPayload } from "../src/api/provider-payloads.js";
 import { buildRerunRequest, buildRunRequest, buildTaskRunRequest } from "../src/api/run-request-builders.js";
@@ -44,14 +44,15 @@ test("run request builders preserve provider preset and legacy provider payloads
 
   const presetRequest = buildRunRequest(baseForm) as Record<string, unknown>;
   expect(presetRequest).toMatchObject({
+    schemaVersion: 2,
     cwd: "/repo",
     providerPresetId: "provider_chat",
     authorizationMode: "smart",
     workspaceAccessMode: "workspace_write",
-    permissionPreset: "workspace_collaboration",
-    permissionMode: "workspace_write",
     thinkingLevel: "medium",
   });
+  expect(presetRequest).not.toHaveProperty("permissionPreset");
+  expect(presetRequest).not.toHaveProperty("permissionMode");
   expect(presetRequest).not.toHaveProperty("provider");
 
   const legacyRequest = buildRunRequest({
@@ -103,6 +104,7 @@ test("task run requests preserve workspace cwd fallback and approval profile", (
   }) as Record<string, unknown>;
 
   expect(request).toMatchObject({
+    schemaVersion: 2,
     workspaceCwd: "/workspace",
     cwd: "/workspace",
     providerPresetId: "provider_chat",
@@ -110,9 +112,9 @@ test("task run requests preserve workspace cwd fallback and approval profile", (
     approvalProfile: { mode: "standard", risk: "medium", requiredForTools: ["bash"] },
     authorizationMode: "ask",
     workspaceAccessMode: "read_only",
-    permissionPreset: "read_only",
-    permissionMode: "ask_everything",
   });
+  expect(request).not.toHaveProperty("permissionPreset");
+  expect(request).not.toHaveProperty("permissionMode");
 });
 
 test("rerun request reconstructs provider preset payload from run snapshots", () => {
@@ -148,6 +150,7 @@ test("rerun request reconstructs provider preset payload from run snapshots", ()
   } satisfies RunSession;
 
   expect(buildRerunRequest(run)).toEqual({
+    schemaVersion: 2,
     workspaceCwd: "/workspace",
     cwd: "/repo",
     task: {
@@ -160,8 +163,6 @@ test("rerun request reconstructs provider preset payload from run snapshots", ()
     tools: ["read", "bash"],
     authorizationMode: "always",
     workspaceAccessMode: "full_access",
-    permissionPreset: "custom",
-    permissionMode: "balanced",
     thinkingLevel: "medium",
     lingConversationTone: "friendly",
     appendSystemPrompt: ["one", "two"],
@@ -274,19 +275,16 @@ test("form payload adapters preserve daemon request boundary semantics", () => {
   });
 });
 
-test("media payload adapter requires object JSON input", () => {
+test("media payload adapter emits structured generation input", () => {
   expect(mediaJobFormToPayload({
     providerPresetId: "media_provider",
     operation: "image_generate",
     prompt: "A diagram",
-    inputText: "{\"size\":\"1024x1024\"}",
+    size: "1024x1024",
   })).toEqual({
     providerPresetId: "media_provider",
     operation: "image_generate",
     prompt: "A diagram",
     input: { size: "1024x1024" },
   });
-
-  expect(parseMediaInput("")).toBeUndefined();
-  expect(() => parseMediaInput("[1,2,3]")).toThrow("Generation task input must be a JSON object.");
 });

@@ -65,12 +65,15 @@ import {
 import type { DesktopStartupFailurePrompt } from "./startup-failure-recovery.js";
 import { loadOrCreateDesktopBridgeToken } from "./bridge-token.js";
 import { registerDesktopIpc } from "./ipc.js";
+import { createDesktopUpdateNotification } from "./update-notification.js";
 import { registerDesktopThemePackageIpc } from "./theme-packages/theme-package-ipc.js";
 import { createHumanEvaluationDesktopComposition } from "./human-evaluation/composition.js";
 import { DesktopMobileAccessClient } from "./mobile-access/client.js";
 import { OfficeDriverRuntime, resolveOfficeDriverExecutablePath } from "./office-driver/runtime.js";
 import { HostCapabilityRuntime } from "./host-capabilities/runtime.js";
 import { DesktopThemePackageRepository } from "./theme-packages/theme-package-repository.js";
+import { DesktopBackgroundRepository } from "./backgrounds/background-repository.js";
+import { registerBackgroundIpc } from "./backgrounds/background-ipc.js";
 import { DesktopNavigationIntentStore } from "./navigation-intent.js";
 import { openDesktopOwnerWindow } from "./owner-window.js";
 import { DesktopPreferenceStore } from "./preferences.js";
@@ -160,6 +163,8 @@ let smokeProjectionSource: "daemon" | "fake" = "fake";
 let desktopBridgeToken: string | undefined;
 let unregisterIpc: (() => void) | undefined;
 let unregisterThemePackageIpc: (() => void) | undefined;
+let unregisterBackgroundIpc: (() => void) | undefined;
+let backgroundRepository: DesktopBackgroundRepository | undefined;
 let humanEvaluation: ReturnType<typeof createHumanEvaluationDesktopComposition> | undefined;
 let unregisterLockedControlPreview: (() => void) | undefined;
 let desktopRuntime: DesktopRuntime | undefined;
@@ -168,6 +173,8 @@ let desktopDaemonAutomaticRecoveryUsed = false;
 let officeDriverRuntime: OfficeDriverRuntime | undefined;
 let hostCapabilityRuntime: HostCapabilityRuntime | undefined;
 let computerUse: ComputerUsePreviewCoordinator | undefined;
+// Process-scoped so window recreation keeps the 24-hour throttle and per-release deduplication.
+let desktopUpdateNotification: { check(): Promise<void> } | undefined;
 const desktopNavigationIntents = new DesktopNavigationIntentStore();
 const desktopRendererThemeStore = new DesktopRendererThemeStore(
   builtInDesktopRendererThemeInput(nativeTheme.shouldUseDarkColors ? "dark" : "light"),
@@ -609,6 +616,13 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
   }
   const initializedThemePackages = await desktopThemePackageRepository.initialize();
   if (!initializedThemePackages.ok) throw new Error("desktop_theme_packages_initialize_failed");
+  if (!backgroundRepository) {
+    backgroundRepository = new DesktopBackgroundRepository(resolve(app.getPath("userData"), "backgrounds"), resources.imageSanitizerPath);
+    // A damaged optional preference must not prevent the rest of the application starting.
+    await backgroundRepository.initialize().catch(() => logStartup("background.initialize_failed"));
+  }
+  unregisterBackgroundIpc ??= registerBackgroundIpc({ repository: backgroundRepository,
+    getMainWindow: () => mainWindow ?? loadingMainWindow });
   humanEvaluation ??= createHumanEvaluationDesktopComposition({ daemonBaseUrl, bridgeToken,
     desktopInstanceId: desktopRuntime.desktopInstanceId, workspaceCwd: defaultWorkspaceCwd,
     resourcesRoot: resources.resourcesRoot, knownAppUrl: pathToFileURL(resources.webIndexPath).href,
@@ -711,6 +725,20 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     throw error;
   }
   logStartup("main_window.loaded");
+  // Check in the background after the owner window is ready; network failures never block startup.
+  if (mainWindow && !mainWindow.isDestroyed() && app.isPackaged && !smokeHeadless) {
+    desktopUpdateNotification ??= createDesktopUpdateNotification({
+      packaged: app.isPackaged && !smokeHeadless,
+      currentVersion: app.getVersion(),
+      locale: app.getLocale(),
+      showMessageBox: (options) => dialog.showMessageBox(options),
+      openExternal: (url) => shell.openExternal(url),
+      onError: (error) => logStartup("desktop.update_check_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    });
+    void desktopUpdateNotification.check();
+  }
   if (fakeComputerUseMode || realCaptureSmokeMode || fixedComputerUseConversationId) {
     computerUse.reportSelectedConversation(fixedComputerUseConversationId ?? smokeComputerUseProjection.conversationId);
   }
@@ -2016,6 +2044,10 @@ async function shutdown(): Promise<void> {
   await attemptCleanup(() => macosTccRevocationCommandReader?.close());
 
   const activeUnregisterThemePackageIpc = unregisterThemePackageIpc;
+  await attemptCleanup(() => unregisterBackgroundIpc?.());
+  unregisterBackgroundIpc = undefined;
+  backgroundRepository?.dispose();
+  backgroundRepository = undefined;
   unregisterThemePackageIpc = undefined;
   await attemptCleanup(() => activeUnregisterThemePackageIpc?.());
 

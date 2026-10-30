@@ -4,6 +4,7 @@ import {
 } from "../shared/ui/index.js";
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { useTheme } from "../theme.js";
+import { useBackground } from "../shared/ui/background/BackgroundProvider.js";
 import type { ViewId } from "./view-types.js";
 
 const profileRegistry = new PresentationProfileRegistry();
@@ -15,13 +16,21 @@ export function AppPresentationSurfaceBridge(props: {
   readonly hasSelectedTeammate: boolean;
 }): null {
   const { resolved } = useTheme();
+  const { url, setPresentation } = useBackground();
   const environment = usePresentationEnvironment();
   const surface = resolveAppPresentationSurface(props);
   const policy = useMemo(() => profileRegistry.resolveSurface(
     resolved.presentationProfileId,
     surface,
-    environment,
-  ), [environment, resolved.presentationProfileId, surface]);
+    {
+      ...environment,
+      // Ordinary workspaces are allowed to keep the selected scene visible.
+      // Settings, diagnostics, approvals and the media canvas remain opaque
+      // because they are dense or full-screen workflows.
+      ambientWorkspace: !["settings", "media", "runs", "threads", "approvals"].includes(props.activeView),
+      userBackground: Boolean(url || resolved.manifest.scene),
+    },
+  ), [environment, props.activeView, resolved.manifest.scene, resolved.presentationProfileId, surface, url]);
 
   useLayoutEffect(() => {
     const root = globalThis.document?.documentElement;
@@ -30,7 +39,8 @@ export function AppPresentationSurfaceBridge(props: {
     root.dataset.uiSurfaceRecipe = policy.surfaceRecipe;
     root.dataset.uiArtworkPolicy = policy.artwork;
     root.dataset.uiDecorationPolicy = policy.decorations ? "on" : "off";
-  }, [policy, surface]);
+    setPresentation({ surface, visible: policy.surfaceRecipe === "translucent" && policy.artwork !== "off" });
+  }, [policy, surface, setPresentation]);
 
   useEffect(() => () => {
     const root = globalThis.document?.documentElement;

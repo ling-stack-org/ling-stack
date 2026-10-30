@@ -15,7 +15,6 @@ import type {
   ChannelExecutionProposalListResponse,
   ChannelExecutionProposalMutationResponse,
   ChannelExecutionProposalWorkflowConfirmResponse,
-  ChannelFormState,
   ChannelHandoffListResponse,
   ChannelHandoffMutationResponse,
   ChannelLinkPreviewListResponse,
@@ -74,7 +73,6 @@ import type {
   CreateTaskChannelWorkflowStepStartRequest,
   ListChannelConversationItemsOptions,
   Task,
-  TaskEditFormState,
   TaskListResponse,
   TaskMutationResponse,
   TerminalReportListResponse,
@@ -92,7 +90,8 @@ import type {
   UpdateChannelRequest,
   CorrectChannelTurnContextRequest,
   CorrectChannelTurnContextResponse,
-} from "../types.js";
+} from "@ling-stack/contracts";
+import type { ChannelFormState, TaskEditFormState } from "../types.js";
 import { channelFormToPayload, channelFormToUpdatePayload, taskEditFormToPayload } from "./channel-payloads.js";
 import { daemonClient } from "./client.js";
 

@@ -3,12 +3,12 @@ import type { ProviderModelCatalogManifest, ProviderModelCatalogRecord } from ".
 
 export const providerModelCatalogManifest = {
   "schemaVersion": 1,
-  "version": "models.dev:e3be9366c06f",
+  "version": "models.dev:a089775f9be6",
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
   "license": "MIT",
-  "generatedAt": "2026-10-25T11:47:19.856Z",
-  "updatedAt": "2026-10-23"
+  "generatedAt": "2026-10-29T08:39:56.153Z",
+  "updatedAt": "2026-10-26"
 } as const satisfies ProviderModelCatalogManifest;
 
 export const providerModelCatalogRecords = [
@@ -1708,23 +1708,6 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "google",
-    "id": "gemini-3-pro-image-preview",
-    "displayName": "Nano Banana Pro",
-    "input": [
-      "text",
-      "image"
-    ],
-    "capabilities": [
-      "chat",
-      "reasoning",
-      "vision"
-    ],
-    "contextWindow": 131072,
-    "maxTokens": 32768,
-    "updatedAt": "2025-11-20"
-  },
-  {
-    "providerId": "google",
     "id": "gemini-3.1-flash-image",
     "displayName": "Nano Banana 2",
     "input": [
@@ -1743,27 +1726,6 @@ export const providerModelCatalogRecords = [
     "contextWindow": 131072,
     "maxTokens": 32768,
     "updatedAt": "2026-05-28"
-  },
-  {
-    "providerId": "google",
-    "id": "gemini-3.1-flash-image-preview",
-    "displayName": "Nano Banana 2",
-    "input": [
-      "text",
-      "image"
-    ],
-    "capabilities": [
-      "chat",
-      "reasoning",
-      "vision"
-    ],
-    "thinkingModes": [
-      "minimal",
-      "high"
-    ],
-    "contextWindow": 65536,
-    "maxTokens": 16384,
-    "updatedAt": "2026-02-26"
   },
   {
     "providerId": "google",
@@ -2435,6 +2397,28 @@ export const providerModelCatalogRecords = [
     "contextWindow": 256000,
     "maxTokens": 4096,
     "updatedAt": "2025-01-04"
+  },
+  {
+    "providerId": "mistral",
+    "id": "deepseek-v4-1-flash-1017",
+    "displayName": "DeepSeek V4.1 Flash 1017",
+    "input": [
+      "text"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning"
+    ],
+    "thinkingModes": [
+      "off",
+      "low",
+      "high",
+      "max"
+    ],
+    "contextWindow": 1048576,
+    "maxTokens": 128000,
+    "updatedAt": "2026-10-17"
   },
   {
     "providerId": "mistral",
@@ -3895,6 +3879,32 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "openai",
+    "id": "gpt-6.1-terra",
+    "displayName": "GPT-6.1 Terra",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "contextWindow": 1050000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-10-26"
+  },
+  {
+    "providerId": "openai",
     "id": "gpt-daybreak-blue-latest",
     "displayName": "Daybreak Blue",
     "input": [
@@ -3944,19 +3954,6 @@ export const providerModelCatalogRecords = [
     "contextWindow": 400000,
     "maxTokens": 128000,
     "updatedAt": "2026-08-07"
-  },
-  {
-    "providerId": "openai",
-    "id": "gpt-image-1",
-    "displayName": "gpt-image-1",
-    "input": [
-      "text",
-      "image"
-    ],
-    "capabilities": [
-      "vision"
-    ],
-    "updatedAt": "2025-04-24"
   },
   {
     "providerId": "openai",

@@ -35,8 +35,7 @@ interface SourceFile {
 }
 
 test("T13-O.32-D Plugin focused owner has no strict Dark blanket and uses only the public feedback slot", async () => {
-  const [strictCss, styles, pluginImports, feedbackCss, inlineFeedback, packageTest, productionSources, pluginStyleSources] = await Promise.all([
-    readRepositoryFile("apps/web/src/styles/strict-console.css"),
+  const [styles, pluginImports, feedbackCss, inlineFeedback, packageTest, productionSources, pluginStyleSources] = await Promise.all([
     readRepositoryFile("apps/web/src/styles.css"),
     readRepositoryFile("apps/web/src/styles/plugins.css"),
     readRepositoryFile("apps/web/src/styles/plugins/plugin-manager-feedback.css"),
@@ -46,18 +45,12 @@ test("T13-O.32-D Plugin focused owner has no strict Dark blanket and uses only t
     readSourceTree(pluginStylesDirectory),
   ]);
 
-  const strictSelectors = extractCssSelectors(strictCss);
-  const darkWorkspaceBlankets = strictSelectors.filter((selector) => (
-    selector.includes(':root[data-theme="dark"] .workspace')
-  ));
-  expect(darkWorkspaceBlankets, "strict must not restore generic Dark workspace blankets").toHaveLength(0);
-  expect(strictCss).not.toContain(":not(.workspace-plugins-surface)");
 
   const pluginRootOwners = findExactSelectorOwners(productionSources, ".workspace.workspace-plugins-surface");
   expect(pluginRootOwners).toEqual([
     "apps/web/src/styles/plugins/plugin-manager-shell.css",
   ]);
-  expectImportOrder(styles, ["./styles/plugins.css", "./styles/strict-console.css"]);
+  expectImportOrder(styles, ["./styles/plugins.css", "./styles/workspace-navigation-appearance.css"]);
   for (const focusedImport of [
     "plugin-manager-shell.css",
     "plugin-manager-toolbar.css",

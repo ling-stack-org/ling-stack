@@ -156,10 +156,9 @@ export function useControlPlaneInvalidation(input: {
       // The POST stream can disappear while execution continues. Recover the
       // global recent list too, even when a different surface is selected.
       trackRefresh(conversationDomain, "conversation-list", input.refreshConversationThreads(workspaceCwd, { throwOnError: true }));
-    }
-    if (conversationDomain && !input.selectedChannelId) {
-      trackRefresh(conversationDomain, "selected-conversation", input.refreshSelectedConversation(workspaceCwd, { throwOnError: true }));
-      if (input.selectedChannelId && !changed.has("runs")) {
+      if (!input.selectedChannelId) {
+        trackRefresh(conversationDomain, "selected-conversation", input.refreshSelectedConversation(workspaceCwd, { throwOnError: true }));
+      } else if (!changed.has("runs") && !channelActivityOwnsSelectedRefreshes) {
         trackRefresh(
           conversationDomain,
           `channel-conversation:${input.selectedChannelId}`,

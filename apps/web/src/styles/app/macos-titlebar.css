@@ -33,7 +33,7 @@
   bottom: 0;
   left: calc(var(--desktop-shell-sidebar-width) - 1px);
   width: 1px;
-  background: var(--border);
+  background: var(--ling-border-default);
   content: "";
   pointer-events: none;
 }
@@ -179,15 +179,15 @@
   min-height: var(--desktop-window-sidebar-toggle-size);
   padding: 0;
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--ling-radius-md);
   background: transparent;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
 }
 
 .app-shell.desktop-window-shell .desktop-window-sidebar-toggle:hover,
 .app-shell.desktop-window-shell .desktop-window-sidebar-toggle:focus-visible {
-  background: var(--surface-selected);
-  color: var(--text-strong);
+  background: var(--ling-action-selection);
+  color: var(--ling-text-strong);
 }
 
 .app-shell.desktop-window-shell .desktop-window-sidebar-toggle svg {
@@ -221,13 +221,13 @@
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
 }
 
 .app-shell.desktop-window-shell .desktop-window-control:hover,
 .app-shell.desktop-window-shell .desktop-window-control:focus-visible {
-  background: var(--surface-hover);
-  color: var(--text-strong);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-strong);
 }
 
 .app-shell.desktop-window-shell .desktop-window-close:hover,

@@ -30,6 +30,18 @@ test("workspace settings schema accepts exactly the shared locale registry", () 
   );
 });
 
+test("workspace settings v2 rejects legacy permission writes with a stable migration error", () => {
+  assert.throws(
+    () => parseWorkspaceSettingsUpdate({ schemaVersion: 2, defaultAuthorizationMode: "smart", defaultPermissionMode: "full_access" }),
+    error => error?.code === "legacy_permission_fields_removed" && error?.statusCode === 400,
+  );
+  const parsed = parseWorkspaceSettingsUpdate({ schemaVersion: 2, defaultAuthorizationMode: "ask" });
+  assert.equal(parsed.schemaVersion, 2);
+  assert.equal(parsed.defaultAuthorizationMode, "ask");
+  assert.equal(parsed.defaultPermissionMode, undefined);
+  assert.equal(parsed.defaultPermissionPreset, undefined);
+});
+
 test("effective config reports user defaults and workspace execution sources", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-effective-config-workspace-"));
   const userRoot = await mkdtemp(resolve(tmpdir(), "ling-stack-effective-config-user-"));

@@ -3,7 +3,6 @@
 @import "./styles/base.css";
 @import "./styles/navigation.css";
 @import "./styles/page-shells.css";
-@import "./styles/operation-states.css";
 @import "./styles/shared/artifact-row.css";
 @import "./styles/shared/overlay-scroll-area.css";
 @import "./styles/workspace.css";
@@ -80,7 +79,6 @@
 @import "./styles/conversation-panels.css";
 @import "./styles/creation-dialogs.css";
 @import "./styles/channel-team-metrics.css";
-@import "./styles/strict-console.css";
 @import "./styles/channel-activity-work-thread.css";
 @import "./styles/channel-activity-controls.css";
 @import "./styles/teammate-management-shell.css";
@@ -117,6 +115,8 @@
 @import "./styles/app/macos-titlebar.css";
 
 @import "./styles/shared/work-summary.css";
+@import "./styles/theme-background.css";
+@import "./styles/shared/workspace-navigation-appearance.css";
 
 .artifact-preview-interactive-frame {
   display: block;
@@ -125,4 +125,122 @@
   border: 1px solid var(--ling-border-default);
   border-radius: var(--ling-radius-md, 10px);
   background: #fff;
+}
+
+.spreadsheet-grid {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-3, 10px);
+}
+
+.spreadsheet-grid-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-4, 12px);
+  flex-wrap: wrap;
+}
+
+.spreadsheet-grid-page-button {
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-sm, 6px);
+  padding: 4px 10px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.spreadsheet-grid-page-info {
+  color: var(--ling-text-muted, #6b7280);
+  font-size: 12px;
+}
+
+.spreadsheet-grid-formula {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-2, 6px);
+  font-size: 12px;
+  color: var(--ling-text-muted, #6b7280);
+  overflow-wrap: anywhere;
+}
+
+.spreadsheet-grid-formula code {
+  padding: 1px 6px;
+  border: 1px solid var(--ling-border-default);
+  border-radius: 4px;
+}
+
+.spreadsheet-grid-scroll {
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-sm, 6px);
+}
+
+.spreadsheet-grid-table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.spreadsheet-grid-table th,
+.spreadsheet-grid-table td {
+  border: 1px solid var(--ling-border-default);
+  padding: 3px 8px;
+  min-width: 64px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.spreadsheet-grid-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--ling-surface-muted, rgba(127, 127, 127, 0.1));
+  z-index: 1;
+}
+
+.spreadsheet-grid-row-number,
+.spreadsheet-grid-corner {
+  background: var(--ling-surface-muted, rgba(127, 127, 127, 0.08));
+  color: var(--ling-text-muted, #6b7280);
+  min-width: 40px;
+  text-align: right;
+}
+
+.spreadsheet-grid-cell.selected {
+  outline: 2px solid var(--ling-color-info, #2563eb);
+  outline-offset: -2px;
+}
+
+.spreadsheet-grid-cell[data-has-formula="true"] {
+  font-style: italic;
+}
+
+.spreadsheet-grid-note {
+  color: var(--ling-text-muted, #6b7280);
+  font-size: 12px;
+}
+
+.spreadsheet-grid-tabs {
+  display: flex;
+  min-width: 0;
+  gap: var(--ling-space-2, 6px);
+  flex-wrap: wrap;
+}
+
+.spreadsheet-grid-tab {
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-sm, 6px);
+  padding: 3px 12px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.spreadsheet-grid-tab.active {
+  background: var(--ling-color-info, #2563eb);
+  color: #fff;
+  border-color: var(--ling-color-info, #2563eb);
 }

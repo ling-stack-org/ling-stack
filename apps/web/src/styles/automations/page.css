@@ -86,6 +86,10 @@
   border-top: 1px solid var(--ling-border-default);
 }
 
+.automation-ui2-main:not(.has-inspector) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 @media (max-width: 1100px) {
   .automation-ui2-header {
     padding-inline: var(--ling-space-6);

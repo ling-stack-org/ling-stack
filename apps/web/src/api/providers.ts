@@ -1,7 +1,6 @@
 import type {
   ProviderCheckResult,
   ProviderCapability,
-  ProviderFormState,
   ProviderKeychainSecretConfigureRequest,
   ProviderKeychainSecretDeleteRequest,
   ProviderKeychainSecretResponse,
@@ -12,7 +11,8 @@ import type {
   ProviderMutationResponse,
   ProviderSecretResponse,
   ProviderTemplateListResponse,
-} from "../types.js";
+} from "@ling-stack/contracts";
+import type { ProviderFormState } from "../types.js";
 import { daemonClient } from "./client.js";
 import { parseSecretHeaderRefsText, providerFormToPayload } from "./provider-payloads.js";
 

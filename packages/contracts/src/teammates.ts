@@ -526,6 +526,8 @@ export interface TeammateDirectThreadResponse {
 }
 
 export interface TeammateDirectMessageListResponse {
+  /** Whole private-thread runtime metrics, mirroring the canonical timeline. */
+  readonly runtimeMetrics?: import("./conversation-runtime-metrics.js").ConversationRuntimeMetrics;
   readonly cwd: string;
   readonly teammateId: string;
   readonly thread: TeammateDirectThread;

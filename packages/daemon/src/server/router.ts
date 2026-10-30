@@ -373,6 +373,7 @@ import { handleDiagnosticsDoctor, handleDiagnosticsLogs } from "../features/diag
 import { handleNotifications } from "../features/notifications/routes.js";
 import { handleImDestinations } from "../features/im-destinations/routes.js";
 import { handleSkillsMarketplaceInspect } from "../features/skills/marketplace-route.js";
+import { handleDeliverablesBuild, handleSpreadsheetPreview } from "../features/deliverables/routes.js";
 import { handleHumanEvaluationDesktopRoute } from "../features/harness/evaluations/human-evaluation-routes.js";
 
 export async function routeRequest(
@@ -673,6 +674,16 @@ export async function routeRequest(
 
   if (url.pathname === "/skills/marketplace/inspect") {
     await handleSkillsMarketplaceInspect(request, response, context);
+    return;
+  }
+
+  if (url.pathname === "/deliverables/build") {
+    await handleDeliverablesBuild(request, response, context);
+    return;
+  }
+
+  if (url.pathname === "/previews/spreadsheet") {
+    await handleSpreadsheetPreview(request, response, context);
     return;
   }
 
@@ -1332,6 +1343,8 @@ export async function routeRequest(
     url.pathname === "/skills/sync/gstack/publish" ||
     url.pathname === "/skills/sync/gstack/refresh" ||
     url.pathname === "/skills/sync/gstack/check-updates" ||
+    url.pathname === "/skills/sync/shared/preview" ||
+    url.pathname === "/skills/sync/shared/publish" ||
     url.pathname === "/skills/source-upgrade-policy" ||
     url.pathname.startsWith("/skills/source-artifacts/") ||
     url.pathname === "/skills/suggestions" ||

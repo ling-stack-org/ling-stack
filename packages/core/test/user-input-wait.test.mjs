@@ -360,6 +360,16 @@ test("yield atomically closes the physical run/attempt but keeps the logical wor
   assert.equal(events.some((event) => event.type === "work_unit_succeeded" || event.type === "work_unit_failed"), false);
 });
 
+test("legacy runner aliases are canonicalized when a new wait checkpoint is stored", async (t) => {
+  const f = await fixture(t);
+  f.db.prepare("UPDATE work_unit_attempts SET runner_id='pi' WHERE id=?").run(f.attempt.id);
+  f.input.quiescence = { ...f.input.quiescence, runnerId: "pi-coding-agent" };
+  const result = f.yield();
+  assert.equal(result.wait.checkpoint.quiescence.runnerId, "pi");
+  const row = f.db.prepare("SELECT wait_checkpoint_json FROM user_input_requests WHERE request_id=?").get(f.request.requestId);
+  assert.equal(JSON.parse(row.wait_checkpoint_json).quiescence.runnerId, "pi");
+});
+
 test("equivalent yield retry returns the original checkpoint and never publishes twice", async (t) => {
   const f = await fixture(t);
   const first = f.yield();

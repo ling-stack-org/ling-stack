@@ -48,6 +48,9 @@ export interface LingPresentationProfileDefinition {
 }
 
 export interface LingPresentationSurfaceContext {
+  readonly userBackground?: boolean;
+  /** Allow a named management workspace to keep the ambient scene visible. */
+  readonly ambientWorkspace?: boolean;
   readonly viewportWidth?: number;
   readonly reducedTransparency?: boolean;
   readonly forcedColors?: boolean;

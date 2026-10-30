@@ -1,6 +1,7 @@
 import type { SQLOutputValue } from "node:sqlite";
 import { type ControlPlaneDomain, type ControlPlaneEvent } from "../../run-types.js";
 import { omitUndefined, parseJsonObject, readNullableString, readNumber, readString } from "./helpers.js";
+import { normalizeRunnerIdsInSnapshot } from "../../runner-ids.js";
 
 export function mapControlPlaneEvent(row: Record<string, SQLOutputValue>): ControlPlaneEvent {
   return omitUndefined({
@@ -12,7 +13,7 @@ export function mapControlPlaneEvent(row: Record<string, SQLOutputValue>): Contr
     entityType: readString(row, "entity_type"),
     entityId: readString(row, "entity_id"),
     action: readString(row, "action"),
-    data: parseJsonObject(readString(row, "data_json")),
+    data: normalizeRunnerIdsInSnapshot(parseJsonObject(readString(row, "data_json"))),
     idempotencyKey: readNullableString(row, "idempotency_key"),
   });
 }

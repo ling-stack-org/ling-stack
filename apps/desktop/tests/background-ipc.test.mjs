@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { registerBackgroundIpc } from '../dist/main/backgrounds/background-ipc.js';
+import { BACKGROUND_CHANNELS } from '../dist/shared/background-capabilities.js';
+const success={ok:true,value:undefined};
+test('BG-13/23 exact payloads and live main-frame ownership; independent registration',async()=>{
+ const handlers=new Map([['execution-engines',()=>{}],['theme-packages',()=>{}]]),calls=[];
+ const ipc={handle:(key,callback)=>{if(handlers.has(key))throw Error('duplicate');handlers.set(key,callback)},removeHandler:key=>handlers.delete(key)};
+ const frame={url:'file:///app/index.html'},owner={id:1,mainFrame:frame,isDestroyed:()=>false,getURL:()=>frame.url};
+ const window={webContents:owner,isDestroyed:()=>false};const event={sender:owner,senderFrame:frame};
+ const repo={read:async()=>{calls.push('read')},prepare:async()=>{calls.push('prepare')},release:async()=>{calls.push('release')},commit:async()=>{calls.push('commit')}};
+ const dispose=registerBackgroundIpc({repository:repo,getMainWindow:()=>window,ipcMainImpl:ipc});
+ const invoke=(name,event,...args)=>handlers.get(BACKGROUND_CHANNELS[name])(event,...args);
+ assert.deepEqual(await invoke('read',event),success);
+ for(const bad of [{sender:{...owner,id:2},senderFrame:frame},{sender:owner,senderFrame:{...frame}},{}])assert.equal((await invoke('read',bad)).ok,false);
+ assert.equal((await invoke('read',event,{})).ok,false);
+ for(const request of [{requestId:'x',bytes:new Uint8Array([1]),fileName:'../a.png',mimeType:'image/png'}, {requestId:'x',bytes:new Uint8Array(16*1024*1024+1),fileName:'a.png',mimeType:'image/png'}, {requestId:'x',bytes:new Uint8Array([1]),fileName:'a.png',mimeType:'image/png',path:'/outside'}])assert.equal((await invoke('prepare',event,request)).ok,false);
+ assert.equal((await invoke('release',event,'../x')).ok,false);
+ assert.deepEqual(calls,['read']);dispose();assert.deepEqual([...handlers.keys()],['execution-engines','theme-packages']);
+});

@@ -83,7 +83,7 @@ for (const surface of ["normal", "private"] as const) {
         await expect.poll(() => row.locator(".message-body-paragraph").first().evaluate(element => {
           const style = getComputedStyle(element);
           const probe = document.createElement("span");
-          probe.style.color = "var(--conversation-text-strong)";
+          probe.style.color = "var(--ling-text-strong)";
           element.append(probe);
           const expected = getComputedStyle(probe).color;
           probe.remove();

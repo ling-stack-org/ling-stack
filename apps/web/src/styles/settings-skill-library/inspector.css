@@ -210,6 +210,16 @@
   white-space: nowrap;
 }
 
+.settings-skill-source-file-inventory {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-2);
+}
+
+.settings-skill-source-file-inventory h3 { margin: 0; font-size: var(--ling-font-sm); }
+.settings-skill-source-file-inventory ul { margin: 0; padding-inline-start: var(--ling-space-5); }
+.settings-skill-source-file-inventory li { overflow-wrap: anywhere; }
+
 .settings-skill-source-tags,
 .settings-skill-source-actions {
   display: flex;

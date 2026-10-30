@@ -5,6 +5,7 @@ import {
   isAuthorizationMode,
   isWorkspaceAccessMode,
   lingThreadKinds,
+  normalizeRunnerId,
   permissionPresets,
   ProposedPlanMutationError,
   redactSecrets,
@@ -1239,7 +1240,7 @@ function buildForkRunRunRequest(input: {
   if (!providerPresetId && !inlineProvider) {
     throw new HttpError(400, "fork_run_snapshot_unavailable", "Cannot fork and run because no reusable provider snapshot or providerPresetId is available.");
   }
-  const requestedRunnerId = readOptionalString(input.body, "runnerId")?.trim();
+  const requestedRunnerId = normalizeRunnerId(readOptionalString(input.body, "runnerId")?.trim());
   const taskId = deterministicForkRunTaskId(input.operationKey);
   return {
     workspaceCwd: readSnapshotString(requestSnapshot, "workspaceCwd") ?? sourceRun?.cwd ?? input.cwd,
@@ -1250,7 +1251,7 @@ function buildForkRunRunRequest(input: {
     workflowStepId: input.childThread.workflowStepId ?? sourceRun?.workflowStepId,
     threadId: input.childThread.id,
     turnId: input.childTurn.id,
-    runnerId: requestedRunnerId || readSnapshotString(requestSnapshot, "runnerId"),
+    runnerId: requestedRunnerId || normalizeRunnerId(readSnapshotString(requestSnapshot, "runnerId")),
     requestedSkillId: readSnapshotString(requestSnapshot, "requestedSkillId") ?? sourceRun?.selectedSkillId,
     skipProviderPreflight: readSnapshotBoolean(requestSnapshot, "skipProviderPreflight") ?? false,
     idempotencyKey: input.operationKey,
@@ -1615,7 +1616,7 @@ function buildLingThreadResumeContext(input: {
       sourceMessageId: normalInput?.turn.sourceItemId,
       createdByActor: normalInput ? "local-user" : undefined,
       teammateId: readSnapshotString(requestSnapshot, "teammateId") ?? sourceRun.teammateId,
-      runnerId: readSnapshotString(requestSnapshot, "runnerId"),
+      runnerId: normalizeRunnerId(readSnapshotString(requestSnapshot, "runnerId")),
       requestedSkillId: readSnapshotString(requestSnapshot, "requestedSkillId") ?? sourceRun.selectedSkillId,
       skipProviderPreflight: readSnapshotBoolean(requestSnapshot, "skipProviderPreflight") ?? false,
       idempotencyKey: normalInput?.idempotencyKey ?? idempotencyKey,

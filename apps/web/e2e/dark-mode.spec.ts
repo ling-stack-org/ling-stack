@@ -40,8 +40,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page },
 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
-  await assertDarkAliasConvergence(page);
-  await assertAliasesTrackRuntimeThemeTokens(page);
+  await assertCanonicalThemeTokens(page);
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   await expect(page.locator(".client-window")).toBeVisible();
   await assertDarkPage(page, "channel workspace", [
@@ -587,87 +586,17 @@ async function readDarkSurfaces(page: Page, selectors: readonly string[]): Promi
   }, selectors);
 }
 
-async function assertDarkAliasConvergence(page: Page): Promise<void> {
-  const pairs = [
-    ["--app-bg", "--ling-bg-app"],
-    ["--window-bg", "--ling-bg-app"],
-    ["--surface-sidebar", "--ling-bg-sidebar"],
-    ["--surface-panel", "--ling-bg-panel"],
-    ["--surface-panel-strong", "--ling-bg-elevated"],
-    ["--surface-subtle", "--ling-bg-subtle"],
-    ["--surface-hover", "--ling-bg-subtle"],
-    ["--surface-selected", "--ling-action-selection"],
-    ["--surface-pressed", "--ling-bg-pressed"],
-    ["--text-strong", "--ling-text-strong"],
-    ["--text", "--ling-text-default"],
-    ["--text-muted", "--ling-text-muted"],
-    ["--border", "--ling-border-default"],
-    ["--border-strong", "--ling-border-strong"],
-    ["--accent", "--ling-action-accent"],
-    ["--success-soft", "--ling-status-success-bg"],
-    ["--warning-soft", "--ling-status-warning-bg"],
-    ["--danger-soft", "--ling-status-danger-bg"],
-    ["--info-soft", "--ling-status-info-bg"],
+async function assertCanonicalThemeTokens(page: Page): Promise<void> {
+  const tokens = [
+    "--ling-bg-app", "--ling-bg-panel", "--ling-bg-elevated", "--ling-bg-subtle",
+    "--ling-text-strong", "--ling-text-default", "--ling-text-muted",
+    "--ling-border-default", "--ling-border-strong", "--ling-border-focus",
+    "--ling-action-accent", "--ling-action-selection",
+    "--ling-status-success-bg", "--ling-status-warning-bg",
+    "--ling-status-danger-bg", "--ling-status-info-bg",
   ] as const;
-
-  const values = await page.evaluate((variables) => {
-    const resolveColor = (variable: string): string => {
-      const probe = document.createElement("span");
-      probe.style.backgroundColor = `var(${variable})`;
-      document.body.append(probe);
-      const value = getComputedStyle(probe).backgroundColor;
-      probe.remove();
-      return value;
-    };
-    return variables.map(([alias, canonical]) => ({
-      alias,
-      canonical,
-      aliasValue: resolveColor(alias),
-      canonicalValue: resolveColor(canonical),
-    }));
-  }, pairs);
-
-  for (const value of values) {
-    expect(value.aliasValue, `${value.alias} should resolve through ${value.canonical}`).toBe(value.canonicalValue);
-  }
-}
-
-async function assertAliasesTrackRuntimeThemeTokens(page: Page): Promise<void> {
-  const values = await page.evaluate(() => {
-    const root = document.documentElement;
-    const overrides = [
-      ["--ling-bg-app", "#182431", "--app-bg"],
-      ["--ling-bg-panel", "#20303e", "--surface-panel"],
-      ["--ling-text-default", "#c5d2df", "--text"],
-    ] as const;
-    const previous = overrides.map(([canonical]) => [canonical, root.style.getPropertyValue(canonical)] as const);
-    const resolveColor = (variable: string, property: "backgroundColor" | "color"): string => {
-      const probe = document.createElement("span");
-      probe.style[property] = `var(${variable})`;
-      document.body.append(probe);
-      const value = getComputedStyle(probe)[property];
-      probe.remove();
-      return value;
-    };
-    try {
-      for (const [canonical, value] of overrides) root.style.setProperty(canonical, value);
-      return overrides.map(([canonical, , alias]) => ({
-        alias,
-        aliasValue: resolveColor(alias, alias === "--text" ? "color" : "backgroundColor"),
-        canonical,
-        canonicalValue: resolveColor(canonical, alias === "--text" ? "color" : "backgroundColor"),
-      }));
-    } finally {
-      for (const [canonical, value] of previous) {
-        if (value) root.style.setProperty(canonical, value);
-        else root.style.removeProperty(canonical);
-      }
-    }
-  });
-
-  for (const value of values) {
-    expect(value.aliasValue, `${value.alias} should remain a live binding to ${value.canonical}`).toBe(value.canonicalValue);
-  }
+  const values = await page.evaluate((names) => names.map((name) => ({ name, value: getComputedStyle(document.documentElement).getPropertyValue(name).trim() })), tokens);
+  for (const token of values) expect(token.value, `${token.name} must be defined by the active theme`).not.toBe("");
 }
 
 async function assertNoUnexpectedLargeSurfaceColors(page: Page, label: string): Promise<void> {

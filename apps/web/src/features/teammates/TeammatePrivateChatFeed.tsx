@@ -459,6 +459,14 @@ export function TeammatePrivateChatFeed({
             onSubmitUserInputAnswer: (command) => submitUserInputAnswer(cwd.trim(), command),
             virtualScrollRef: privateFeedRef,
             itemLocatorRef: timelineItemLocatorRef,
+            onPositionNavigate: onCancelPrivateFeedAutoFollow,
+            positionIdentity: (item) => item.kind === "userMessage" ? {
+              name: localUserDisplayName,
+              avatar: <UserProfileAvatar profile={userProfile} fallbackLabel={localUserDisplayName} />,
+            } : {
+              name: teammate.displayName,
+              avatar: <TeammateAvatarView teammate={teammate} cwd={cwd} compact />,
+            },
             onDisclosureIntent: onCancelPrivateFeedAutoFollow,
             onOpenSourceRef: handleOpenTimelineSourceRef,
             onOpenNativeFile: (localFile) => onOpenFiles({ path: localFile.path, line: localFile.line, localFile }),

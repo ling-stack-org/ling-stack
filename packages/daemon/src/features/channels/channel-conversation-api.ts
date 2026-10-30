@@ -22,6 +22,8 @@ import { getChannelMessageView } from "./conversation-item-messages.js";
 import { buildConversationGeneratedMediaProjection } from "../media/conversation-projection.js";
 import { terminalReportIsEligibleForDisplay } from "./terminal-report-eligibility.js";
 import { projectConversationUserInputs } from "../conversations/user-input-transcript.js";
+import { projectConversationRuntimeMetrics } from "../conversations/runtime-metrics-projection.js";
+import { listAllConversationTurns } from "../conversations/all-turns.js";
 import { projectConversationReasoningSummaries } from "../conversations/reasoning-summary-projection.js";
 import { projectConversationContextCompactions } from "../conversations/context-compaction-projection.js";
 import { projectPublicConversationItem, projectPublicLingThread, projectPublicLingTurn } from "../runs/public-execution-snapshots.js";
@@ -55,12 +57,20 @@ export function listChannelConversationItems(input: {
   const runs = runLinks
     .map((link) => input.store.getRun(link.runId))
     .filter((run): run is RunSession => Boolean(run));
+  const channelThreads = input.store.listLingThreads({ kind: "channel_discussion", channelId: input.channel.id, includeArchived: true, limit: 500 })
+    .filter((thread) => thread.workspaceId === input.thread.workspaceId && thread.channelId === input.channel.id);
+  const allTurns = channelThreads.flatMap((thread) => listAllConversationTurns(input.store, thread.id));
+  const allRuns = allTurns.flatMap((turn) => input.store.listLingTurnRuns(turn.id))
+    .map((link) => input.store.getRun(link.runId))
+    .filter((run): run is RunSession => Boolean(run));
   return {
     cwd: input.cwd,
     channelId: input.channel.id,
     thread: projectPublicLingThread(input.thread),
     turns: turns.map(turn => projectPublicLingTurn(turn, input.thread)),
     items: visibleItems.map(item => projectPublicConversationItem(item, input.thread, turns.find(turn => turn.id === item.turnId))),
+    runtimeMetrics: projectConversationRuntimeMetrics({ store: input.store, thread: input.thread, channelThreads, turns: allTurns, runs: allRuns,
+      enumerationMayBeTruncated: channelThreads.length === 500 }),
     turnContextAssignments: turns.flatMap((turn) => {
       const assignment = input.store.getEffectiveTurnContextAssignment(turn.id);
       return assignment ? [assignment] : [];

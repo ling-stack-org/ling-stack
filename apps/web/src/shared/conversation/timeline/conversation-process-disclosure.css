@@ -8,7 +8,7 @@
   padding: 5px 0;
   border: 0;
   background: transparent;
-  color: var(--conversation-text-muted, var(--ling-text-muted));
+  color: var(--ling-text-muted);
   font: inherit;
   font-size: 12px;
   min-height: 32px;
@@ -21,12 +21,12 @@
 .conversation-process-header.presentation-process[data-conversation-process-status="completed"] {
   width: 100%;
   padding-bottom: 10px;
-  border-bottom: 1px solid var(--conversation-border, var(--ling-border));
+  border-bottom: 1px solid var(--ling-border-default);
 }
 
 .conversation-process-header:hover,
 .conversation-process-header:focus-visible {
-  color: var(--conversation-text-strong, var(--ling-text-strong));
+  color: var(--ling-text-strong);
 }
 
 .conversation-process-header:focus-visible {

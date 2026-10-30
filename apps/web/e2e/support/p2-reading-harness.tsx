@@ -20,6 +20,7 @@ export function mountReadingFixture(messageCount = 36) {
   const root = createRoot(container);
   let threadId = "p2-reading-thread";
   let workspaceCwd = "/p2-fixture";
+  let workspaceCwd = "/p2-fixture";
   let searchActive = false;
   let messages: readonly ConversationHomeMessage[] = Array.from({ length: messageCount }, (_, index) => ({
     id: `reading-message-${index}`,
@@ -33,6 +34,7 @@ export function mountReadingFixture(messageCount = 36) {
   function render() {
     root.render(<I18nProvider><ThemeProvider><LingUiProvider><NormalConversationFeed
       messages={messages} visibleMessages={messages} runById={new Map()}
+      userProfile={{ schemaVersion: 1, displayName: "Local Operator", createdAt: "2026-10-14T00:00:00Z", updatedAt: "2026-10-14T00:00:00Z" }}
       composerGateApprovals={[]} generatedMedia={[]} workspaceCwd={workspaceCwd}
       searchActive={searchActive} editSaving={false} replacementRetryError=""
       onCancelMessageEdit={noop} onEditMessage={noop} onSaveMessage={noop}
@@ -73,6 +75,13 @@ export function mountReadingFixture(messageCount = 36) {
       searchActive = false;
       render();
     },
+    returnToThread: () => {
+      threadId = "p2-reading-thread";
+      messages = messages.map(message => ({ ...message, id: message.id.replace(/^other-/, ""), threadId }));
+      searchActive = false;
+      render();
+    },
+    workspace: (cwd: string) => { workspaceCwd = cwd; render(); },
     returnToThread: () => {
       threadId = "p2-reading-thread";
       messages = messages.map(message => ({ ...message, id: message.id.replace(/^other-/, ""), threadId }));

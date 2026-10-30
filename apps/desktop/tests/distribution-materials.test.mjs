@@ -43,6 +43,14 @@ test("pnpm package identity is checked in packages, not an importer or snapshot"
   assert.throws(() => lockedPackageKeys("snapshots:\n  foo@1.0.0:\n"), /packages_missing/u);
 });
 
+test("ExcelJS avoids the legacy unzipper chain that had no packaged notices", () => {
+  const manifest = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8"));
+  const lockfile = readFileSync(new URL("../../../pnpm-lock.yaml", import.meta.url), "utf8");
+  assert.equal(manifest.pnpm.overrides["exceljs>unzipper"], "0.11.2");
+  assert.match(lockfile, /exceljs@4\.4\.0:[\s\S]*?unzipper: 0\.11\.2/u);
+  assert.doesNotMatch(lockfile, /(?:binary|buffers|chainsaw)@0\.\d+\.\d+/u);
+});
+
 test("README fallback requires the full grant and disclaimer, never merely an MIT link", () => {
   assert.equal(hasCompleteReadmeGrant("MIT License: https://example.invalid/LICENSE"), false);
   assert.equal(hasCompleteReadmeGrant("Permission is hereby granted, free of charge, to any person. THE SOFTWARE IS PROVIDED AS IS WITHOUT WARRANTY OR LIABILITY"), true);

@@ -1,6 +1,6 @@
 {
   "name": "@ling-stack/desktop",
-  "version": "0.1.2-alpha.1",
+  "version": "0.1.3",
   "description": "Ling Stack desktop shell with shared Web UI and Computer Use picture-in-picture.",
   "license": "MIT",
   "author": "Ling Stack contributors",

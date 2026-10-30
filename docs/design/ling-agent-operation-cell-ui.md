@@ -611,24 +611,18 @@ The transcript should not accumulate one-off colors and spacing.
 
 Token families:
 
-- `--conversation-bg`
-- `--conversation-text`
-- `--conversation-muted`
-- `--conversation-border`
-- `--conversation-focus-ring`
-- `--conversation-active-bg`
-- `--conversation-success`
-- `--conversation-warning`
-- `--conversation-danger`
-- `--conversation-code-bg`
-- `--conversation-code-border`
-- `--conversation-diff-add-bg`
-- `--conversation-diff-remove-bg`
-- `--conversation-agent-line`
+- `--ling-bg-panel` / `--ling-bg-subtle`
+- `--ling-text-default` / `--ling-text-muted` / `--ling-text-soft`
+- `--ling-border-default` / `--ling-border-focus`
+- `--ling-action-selection` / `--ling-action-accent`
+- `--ling-status-success` / `--ling-status-warning` / `--ling-status-danger`
+- `--ling-bg-code` / `--ling-border-strong`
+- `--ling-status-success-bg` / `--ling-status-danger-bg`
+- `--ling-border-default` for agent guide lines
 
 Rules:
 
-- Component CSS uses conversation tokens, not ad hoc hex colors.
+- Component CSS consumes the shared `--ling-*` semantic tokens, not route-local aliases or ad hoc hex colors.
 - Status color tokens must pass contrast checks in light and dark modes.
 - Code and diff colors are part of the conversation token set, not a separate embedded
   IDE theme.

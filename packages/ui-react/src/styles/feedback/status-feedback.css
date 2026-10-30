@@ -75,8 +75,8 @@
   gap: var(--ling-space-1);
   min-width: 0;
   padding: var(--ling-space-4) var(--ling-space-5);
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-md);
+  border: 1px solid var(--ling-surface-border-subtle);
+  border-radius: var(--ling-control-radius);
   color: var(--ling-text-default);
   background: var(--ling-bg-subtle);
   font-size: var(--ling-font-xs);
