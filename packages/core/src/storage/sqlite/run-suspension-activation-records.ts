@@ -12,7 +12,7 @@ export function activationFail(code: string): never { throw new RunSuspensionAct
 
 export function readRootSuspensionActivationRecord(database: DatabaseSync, suspensionId: string): RootRunSuspensionActivationRecord | undefined {
   if (!database.prepare("SELECT 1 FROM sqlite_master WHERE name='run_suspension_root_activations' AND type='table'").get()) {
-    if (database.prepare("SELECT 1 FROM schema_migrations WHERE version=184").get()) activationFail("schema_missing");
+    if (database.prepare("SELECT 1 FROM schema_migrations WHERE version=198").get()) activationFail("schema_missing");
     return undefined;
   }
   const row = database.prepare("SELECT * FROM run_suspension_root_activations WHERE suspension_id=?").get(delegationId(suspensionId));

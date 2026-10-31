@@ -93,6 +93,7 @@ export function TaskDetailPanel({
   onCreateTaskFromContextSummary,
   onCheckThenRunTask,
   onRunTask,
+  onPermissionModeChange,
   onOpenSandboxSettings,
   onCancelActiveRun,
   onOpenRun,
@@ -132,6 +133,7 @@ export function TaskDetailPanel({
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
   readonly onCheckThenRunTask: (task: Task) => void;
   readonly onRunTask: (task: Task) => void;
+  readonly onPermissionModeChange: (mode: SessionPermissionMode) => void;
   readonly onOpenSandboxSettings: () => void;
   readonly onCancelActiveRun: (run?: RunSession) => void;
   readonly onOpenRun: (runId: string) => void;

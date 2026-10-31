@@ -55,7 +55,7 @@ for (const recursive of [0, 1]) {
   });
 }
 
-test("a recorded186 schema cannot silently reconstruct a missing replacement guard", t => {
+test("a recorded200 schema cannot silently reconstruct a missing replacement guard", t => {
   const f = fixture(t, 0);
   f.database.exec("DROP TRIGGER run_suspension_delegated_activations_no_replace");
   assert.throws(f.migration, /migration_schema_missing/u);

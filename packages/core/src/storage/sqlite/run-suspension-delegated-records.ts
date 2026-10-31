@@ -35,7 +35,7 @@ export interface DelegatedSuspensionParentStart {
 
 function hasTable(database: DatabaseSync, table: string): boolean {
   if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) return true;
-  if (database.prepare("SELECT 1 FROM schema_migrations WHERE version=186").get()) fail("schema_missing");
+  if (database.prepare("SELECT 1 FROM schema_migrations WHERE version=200").get()) fail("schema_missing");
   return false;
 }
 function within<T>(read: ReadScope, key: string, body: () => T): T {
@@ -286,7 +286,7 @@ export function hasDelegatedSuspensionActivatedTarget(database: DatabaseSync, so
     .get(source.runId, source.workUnitId, source.attemptId, source.runtimeInstanceId, source.fencingToken));
 }
 
-/** A pending186 target cannot be started or replaced by a generic writer. */
+/** A pending200 target cannot be started or replaced by a generic writer. */
 export function delegatedSuspensionStartAllowsAttempt(database: DatabaseSync, attemptId: string): boolean {
   if (!hasTable(database, activationTable)) return true;
   const row = database.prepare(`SELECT suspension_id FROM ${activationTable} WHERE target_attempt_id=?`).get(delegationId(attemptId));

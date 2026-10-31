@@ -22,7 +22,7 @@ export function rootSuspensionStartObservation(raw: unknown): RootRunSuspensionS
 /** Audit only. A stored ACK never recreates a dispatch capability after a crash. */
 export function readRootSuspensionStartRecord(database: DatabaseSync, suspensionId: string): RootRunSuspensionStartRecord | undefined {
   if (!database.prepare("SELECT 1 FROM sqlite_master WHERE name='run_suspension_root_starts' AND type='table'").get()) {
-    if (database.prepare("SELECT 1 FROM schema_migrations WHERE version=185").get()) startFail("schema_missing");
+    if (database.prepare("SELECT 1 FROM schema_migrations WHERE version=199").get()) startFail("schema_missing");
     return undefined;
   }
   const row = database.prepare("SELECT * FROM run_suspension_root_starts WHERE suspension_id=?").get(delegationId(suspensionId));
@@ -57,7 +57,7 @@ export function readRootSuspensionStartRecord(database: DatabaseSync, suspension
   return { artifactId: String(row.artifact_id), digest: String(row.digest), start: value as unknown as RootRunSuspensionStartV1 };
 }
 
-/** Non-184 Attempts retain their existing start contract; 184 targets require their original immutable185 ACK. */
+/** Non-184 Attempts retain their existing start contract; 184 targets require their original immutable199 ACK. */
 export function rootSuspensionStartAllowsAttempt(database: DatabaseSync, attemptId: string): boolean {
   if (!database.prepare("SELECT 1 FROM sqlite_master WHERE name='run_suspension_root_activations' AND type='table'").get()) return true;
   const row = database.prepare("SELECT suspension_id FROM run_suspension_root_activations WHERE target_attempt_id=?").get(attemptId);

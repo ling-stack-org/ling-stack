@@ -134,6 +134,7 @@ interface ChannelComposerProps {
   readonly onInputSelect: (value: string, caret: number) => void;
   readonly onInsertMentionTrigger: () => void;
   readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
+  readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
   readonly onTogglePlanMode: () => void;
   readonly onRevealPlanModeChip: () => void;
   readonly onClosePlanModeChip: () => void;
@@ -188,6 +189,7 @@ export function ChannelComposer({
   onInputSelect,
   onInsertMentionTrigger,
   onAuthorizationModeChange,
+  onPermissionPresetChange,
   onTogglePlanMode,
   onRevealPlanModeChip,
   onClosePlanModeChip,

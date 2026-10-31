@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
-export const RUN_FINAL_SETTLEMENT_MIGRATION_VERSION = 187;
+export const RUN_FINAL_SETTLEMENT_MIGRATION_VERSION = 201;
 const name = "create_host_run_final_settlements_v1";
 const definitions = [
   ["table", "run_final_settlements", `CREATE TABLE run_final_settlements (

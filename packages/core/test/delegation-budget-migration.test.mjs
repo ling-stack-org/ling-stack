@@ -46,7 +46,7 @@ test("main work-summary176 upgrades without replacing its marker or PR bindings"
   applyWorkSummaryMigration(f.input(f.db));
   assert.equal(f.apply(), true);
   assert.deepEqual(f.db.prepare("SELECT * FROM schema_migrations WHERE version=176").get(), old);
-  assert.equal(f.db.prepare("SELECT name FROM schema_migrations WHERE version=188").get().name, "create_work_summary_pull_requests");
+  assert.equal(f.db.prepare("SELECT name FROM schema_migrations WHERE version=197").get().name, "create_work_summary_pull_requests");
   assert.equal(f.db.prepare("SELECT name FROM schema_migrations WHERE version=189").get().name, DELEGATION_BUDGET_MIGRATION_NAME);
   assert.equal(f.db.prepare("SELECT count(*) n FROM work_summary_pull_requests").get().n, 1);
   assert.equal(f.reopen().apply(), false);
@@ -189,7 +189,7 @@ test("canonical work-summary migration rejects foreign markers and recorded miss
   for (const fault of ["canonical-owner", "unknown176-owner", "name-at-wrong-version", "missing-legacy", "changed-legacy"]) {
     await t.test(fault, async t => {
       const f = await fixture(t);
-      if (fault === "canonical-owner") f.db.prepare("INSERT INTO schema_migrations VALUES(188,?,?)").run("foreign-owner", now);
+      if (fault === "canonical-owner") f.db.prepare("INSERT INTO schema_migrations VALUES(197,?,?)").run("foreign-owner", now);
       else if (fault === "unknown176-owner") f.db.prepare("INSERT INTO schema_migrations VALUES(176,?,?)").run("foreign-owner", now);
       else if (fault === "name-at-wrong-version") f.db.prepare("INSERT INTO schema_migrations VALUES(190,?,?)").run("create_work_summary_pull_requests", now);
       else {
@@ -208,7 +208,7 @@ test("work-summary marker failure rolls back a fresh table and leaves caller tra
   const f = await fixture(t);
   assert.throws(() => applyWorkSummaryMigration({ ...f.input(f.db), recordMigration() { throw new Error("injected summary marker"); } }), /injected summary marker/);
   assert.equal(f.db.prepare("SELECT 1 FROM sqlite_master WHERE name='work_summary_pull_requests'").get(), undefined);
-  assert.equal(f.db.prepare("SELECT 1 FROM schema_migrations WHERE version=188").get(), undefined);
+  assert.equal(f.db.prepare("SELECT 1 FROM schema_migrations WHERE version=197").get(), undefined);
   f.db.exec("BEGIN IMMEDIATE; INSERT INTO run_sessions(id) VALUES('summary-caller-owned')");
   assert.throws(() => applyWorkSummaryMigration(f.input(f.db)), /cannot start a transaction/);
   assert.equal(f.db.isTransaction, true);

@@ -336,7 +336,6 @@ export function AppShell(): React.JSX.Element {
   } = useWorkspaceCommandController();
   const workspaceDomain = useWorkspaceDomain({
     cwd: form.cwd.trim(),
-    observation: daemonObservation,
     initialWorkspaceCwd,
     selectedChannelBranchId,
     translate: t,
@@ -1721,7 +1720,6 @@ export function AppShell(): React.JSX.Element {
     runActivityTriageAction,
   } = useChannelActionsController({
     form,
-    observation: daemonObservation,
     setForm,
     channels,
     channelForm,
@@ -1730,7 +1728,6 @@ export function AppShell(): React.JSX.Element {
     providers,
     providerTemplates,
     selectedChannelId,
-    selectedChannelMessageThreadId,
     selectedChannelBranchRootThreadId,
     isSelectedChannelConversation: (channelId, threadId) => selectedChannelConversationRef.current.cwd === form.cwd.trim()
       && selectedChannelConversationRef.current.channelId === channelId
@@ -2880,14 +2877,31 @@ export function AppShell(): React.JSX.Element {
             onSelectTask={setSelectedTaskId}
             onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
             onRunTask={(task) => void runPersistedTask(task)}
-            permissionSelectionOwnerKey={JSON.stringify(channelConversationFullAccessScope)}
-            onConfirmFullAccessSelection={() => fullAccessConfirmation.request(channelConversationFullAccessScope)}
-            onPermissionSelectionChange={({ authorizationMode, workspaceAccessMode }) => {
+            onAuthorizationModeChange={(authorizationMode) => {
               setForm((current) => {
-                const legacy = authorizationAndAccessToLegacyPermission(authorizationMode, workspaceAccessMode);
+                const legacy = authorizationAndAccessToLegacyPermission(authorizationMode, current.workspaceAccessMode);
                 return {
                   ...current,
                   authorizationMode,
+                  permissionMode: legacy.permissionMode,
+                  permissionPreset: legacy.permissionPreset,
+                };
+              });
+            }}
+            onPermissionModeChange={async (permissionMode) => {
+              if (permissionMode === "full_access") {
+                const confirmation = await fullAccessConfirmation.request(channelConversationFullAccessScope);
+                if (!confirmation) return;
+              }
+              setForm((current) => {
+                const workspaceAccessMode = workspaceAccessModeForPermissionPreset(permissionMode === "full_access"
+                  ? "full_access"
+                  : permissionMode === "ask_everything"
+                    ? "read_only"
+                    : "workspace_collaboration");
+                const legacy = authorizationAndAccessToLegacyPermission(current.authorizationMode, workspaceAccessMode);
+                return {
+                  ...current,
                   workspaceAccessMode,
                   permissionMode: legacy.permissionMode,
                   permissionPreset: legacy.permissionPreset,

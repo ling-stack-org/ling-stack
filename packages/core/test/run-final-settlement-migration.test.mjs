@@ -22,31 +22,31 @@ function insert(database, value, verb = "INSERT") {
   database.prepare(`${verb} INTO run_final_settlements (${Object.keys(value).join(",")}) VALUES (${Object.keys(value).map(() => "?").join(",")})`).run(...Object.values(value));
 }
 
-test("additive187 migration is fresh, replay-stable and preserves other markers", t => {
-  const f = fixture(t); f.database.prepare("INSERT INTO schema_migrations VALUES (?,?)").run(186, "previous");
+test("additive201 migration is fresh, replay-stable and preserves other markers", t => {
+  const f = fixture(t); f.database.prepare("INSERT INTO schema_migrations VALUES (?,?)").run(200, "previous");
   assert.equal(f.migrate(), true); const before = f.schema(), markers = f.database.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
   assert.equal(f.migrate(), false); assert.deepEqual(f.schema(), before);
   assert.deepEqual(f.database.prepare("SELECT * FROM schema_migrations ORDER BY version").all(), markers);
 });
 for (const failure of ["missing", "schema-drift", "marker-name", "marker-version", "marker-callback"])
-test(`additive187 rejects ${failure} without silent repair`, t => {
+test(`additive201 rejects ${failure} without silent repair`, t => {
   const f = fixture(t); f.migrate();
   if (failure === "missing") f.database.exec("DROP TRIGGER run_final_settlements_identity");
   if (failure === "schema-drift") f.database.exec("DROP INDEX idx_run_final_settlements_run; CREATE INDEX idx_run_final_settlements_run ON run_final_settlements(attempt_id)");
-  if (failure === "marker-name") f.database.exec("UPDATE schema_migrations SET name='foreign' WHERE version=187");
-  if (failure === "marker-version") f.database.exec("UPDATE schema_migrations SET version=999 WHERE version=187");
+  if (failure === "marker-name") f.database.exec("UPDATE schema_migrations SET name='foreign' WHERE version=201");
+  if (failure === "marker-version") f.database.exec("UPDATE schema_migrations SET version=999 WHERE version=201");
   if (failure === "marker-callback") f.input.hasMigration = () => false;
   const before = f.schema(), markers = f.database.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
   assert.throws(f.migrate, /migration_(?:schema|marker)/u);
   assert.deepEqual(f.schema(), before); assert.deepEqual(f.database.prepare("SELECT * FROM schema_migrations ORDER BY version").all(), markers);
 });
 for (const failure of ["record-throws", "record-missing"])
-test(`additive187 ${failure} rolls back all fresh schema`, t => {
+test(`additive201 ${failure} rolls back all fresh schema`, t => {
   const f = fixture(t), before = f.schema();
   f.input.recordMigration = () => { if (failure === "record-throws") throw new Error("injected-marker"); };
   assert.throws(f.migrate, /injected-marker|postcondition/u); assert.deepEqual(f.schema(), before); assert.equal(f.database.isTransaction, false);
 });
-for (const recursive of [0, 1]) test(`187 guards every immutable identity including crossed artifacts, recursive_triggers=${recursive}`, t => {
+for (const recursive of [0, 1]) test(`201 guards every immutable identity including crossed artifacts, recursive_triggers=${recursive}`, t => {
   const f = fixture(t, recursive); f.migrate(); const original = row("first"); insert(f.database, original);
   const before = f.database.prepare("SELECT * FROM run_final_settlements").all();
   for (const [column, value] of [["id", original.id], ["attempt_id", original.attempt_id], ["artifact_id", original.artifact_id],

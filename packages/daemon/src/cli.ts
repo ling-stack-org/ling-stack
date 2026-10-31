@@ -66,7 +66,7 @@ const stop = createDaemonSignalShutdown({
   onDraining: () => { shutdownReporter?.publish("draining"); },
   // A finite embedding observer may time out while real cleanup continues.
   // Signals await that original cleanup instead of permanently caching timeout.
-  stop: () => daemon.stop({ waitForOwnedDrain: true }),
+  stop: () => daemon.stop(),
   exit: code => { process.exit(code); },
   onBlocked: () => {
     blockedShutdownKeepAlive ??= setInterval(() => undefined, 60_000);

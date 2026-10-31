@@ -20,7 +20,7 @@ import { readRunFinalSettlementRecord } from "../dist/storage/sqlite/run-final-s
 
 const now = () => new Date().toISOString();
 
-for (const budget of [false, true]) test(`final-settlement recovery observes only the exact stopped source and184/185 target, budget=${budget}`, async t => {
+for (const budget of [false, true]) test(`final-settlement recovery observes only the exact stopped source and198/199 target, budget=${budget}`, async t => {
   const f = await fixture(t, { final: true, budget });
   const observe = () => f.writer.readStoppedFinalSettlementRecovery({ suspensionId: f.input.suspensionId, sourceFence: f.fence, now: now() });
   let before = f.snapshot(); assert.equal(observe().kind, "verified"); assert.deepEqual(f.snapshot(), before);
@@ -319,7 +319,7 @@ for (const drift of ["context", "policy", "head", "event_bytes", "event_tail", "
     const before = f.snapshot(); assert.throws(() => f.activate(changes)); assert.deepEqual(f.snapshot(), before);
   });
 
-for (const failure of ["prepare", "claim", "artifact", "pin", "audit"]) test(`${failure} fault rolls back queue, target, claim,184 receipt and all pin/audit writes`, async t => {
+for (const failure of ["prepare", "claim", "artifact", "pin", "audit"]) test(`${failure} fault rolls back queue, target, claim,198 receipt and all pin/audit writes`, async t => {
   const f = await fixture(t), db = f.store.database, before = f.snapshot();
   const target = failure === "prepare" ? [f.store.harnessCommits, "prepareContinuationAndAttemptWithinTransaction"]
     : failure === "claim" ? [f.store.runnerContinuations, "claimRunnerContinuationWithinTransaction"]
@@ -340,7 +340,7 @@ for (const failure of ["prepare", "claim", "artifact", "pin", "audit"]) test(`${
   assert.equal(f.activate().kind, "activated");
 });
 
-test("only valid184 exact current root successor receives admission/read scope; old source and a new pending suspension remain closed", async t => {
+test("only valid198 exact current root successor receives admission/read scope; old source and a new pending suspension remain closed", async t => {
   const f = await fixture(t), context = { database: f.store.database }, oldSource = { runId: "root", ...f.fence };
   assert.throws(() => assertNoRunSuspensionAdmission(context, "root"), /admission_closed/);
   assert.equal(hostAttemptReadScopeForSource(context.database, oldSource), "whole_run");
@@ -360,7 +360,7 @@ test("only valid184 exact current root successor receives admission/read scope; 
   assert.throws(() => assertNoRunSuspensionAdmission(context, "root"), /admission_closed/);
 });
 
-test("immutable184 and every activation replay/view/stop body remain pinned; corrupted original custody is not audit replay", async t => {
+test("immutable198 and every activation replay/view/stop body remain pinned; corrupted original custody is not audit replay", async t => {
   const f = await fixture(t), result = f.activate(), db = f.store.database;
   assert.throws(() => db.prepare("UPDATE run_suspension_root_activations SET digest=? WHERE suspension_id=?").run("b".repeat(64), f.input.suspensionId), /immutable/);
   const ids = db.prepare("SELECT artifact_id FROM harness_artifact_pins WHERE holder LIKE 'host:run_suspension_activation:%' AND released_at IS NULL").all().map(row => row.artifact_id);
@@ -436,7 +436,7 @@ test("tracked A→B→C preserves historical completion through physical and log
   assert.equal(f.store.getHostAttemptCompletion({ runId: "root", ...b }).effectCoverage, "pi_tracked_tools_v1");
 });
 
-test("only original prepared SDK observation atomically ACKs root185 and immutable replay never grants dispatch", async t => {
+test("only original prepared SDK observation atomically ACKs root199 and immutable replay never grants dispatch", async t => {
   const f = await fixture(t), activated = f.activate(), activation = activated.record;
   const input = f.startInput(activated), run = f.store.getRun("root"), result = f.writer.acknowledgeRootRunSuspensionStart(input);
   assert.equal(result.kind, "started"); assert.equal(result.attempt.status, "started");
@@ -521,7 +521,7 @@ test("a failed stored Task transition rolls back the ACK and all execution statu
   finally { f.store.transitionTaskStatus = original; }
 });
 
-test("setting started flags cannot grant model/spawn authority before the actual185 receipt", async t => {
+test("setting started flags cannot grant model/spawn authority before the actual199 receipt", async t => {
   const f = await fixture(t), activated = f.activate(), input = f.startInput(activated);
   f.start(); // Test-only corrupt flags, not the original SDK callback.
   const before = f.snapshot(), capture = f.captureToken({ ...f.capture, sourceFence: input.targetFence });
@@ -533,7 +533,7 @@ test("setting started flags cannot grant model/spawn authority before the actual
 });
 
 for (const mismatch of ["plain_json", "activationId", "runId", "continuationId", "taskId", "preparedInputFingerprint", "runnerId", "targetFence", "future", "old"])
-  test(`ACK rejects ${mismatch} observation without any start or185 fact`, async t => {
+  test(`ACK rejects ${mismatch} observation without any start or199 fact`, async t => {
     const f = await fixture(t), activated = f.activate(), input = f.startInput(activated);
     const observation = { schemaVersion: 1, kind: "run.suspension_start_observation.v1", activationId: activated.record.activation.id,
       runId: "root", targetFence: input.targetFence, continuationId: activated.continuation.id, taskId: f.store.getRun("root").taskId,
@@ -575,7 +575,7 @@ for (const drift of ["claim_owner", "claim_token", "revision", "expired_claim", 
     assert.deepEqual(f.snapshot(), before);
   });
 
-for (const failure of ["artifact", "receipt", "pin", "continuation", "unit", "audit"]) test(`${failure} fault atomically rolls back185 and every started status`, async t => {
+for (const failure of ["artifact", "receipt", "pin", "continuation", "unit", "audit"]) test(`${failure} fault atomically rolls back199 and every started status`, async t => {
   const f = await fixture(t), activated = f.activate(), input = f.startInput(activated), db = f.store.database, before = f.snapshot();
   const target = failure === "artifact" ? [f.store.artifacts, "createArtifactWithinTransaction"]
     : failure === "continuation" ? [f.store.runnerContinuations, "startRunnerContinuationWithinTransaction"]
@@ -596,7 +596,7 @@ for (const failure of ["artifact", "receipt", "pin", "continuation", "unit", "au
   assert.equal(f.writer.acknowledgeRootRunSuspensionStart(input).kind, "started");
 });
 
-test("additive185 migration is replay stable and an ACK record cannot be updated or silently lose schema", async t => {
+test("additive199 migration is replay stable and an ACK record cannot be updated or silently lose schema", async t => {
   const f = await fixture(t), input = f.startInput(f.activate()); f.writer.acknowledgeRootRunSuspensionStart(input);
   assert.throws(() => f.store.database.exec("UPDATE run_suspension_root_starts SET digest='a'"), /immutable/);
   const migration = { database: f.store.database, hasMigration: version => Boolean(f.store.database.prepare("SELECT 1 FROM schema_migrations WHERE version=?").get(version)),
@@ -612,7 +612,7 @@ test("close retires retained activation functions along with the original writer
   assert.throws(() => retainedGet(f.input.suspensionId), /authority_invalid/);
 });
 
-test("additive184 schema is replay-stable and rejects missing recorded authority objects", async t => {
+test("additive198 schema is replay-stable and rejects missing recorded authority objects", async t => {
   const f = await fixture(t), db = f.store.database;
   const migrate = () => applyRunSuspensionActivationMigration({ database: db,
     hasMigration: version => Boolean(db.prepare("SELECT 1 FROM schema_migrations WHERE version=?").get(version)),

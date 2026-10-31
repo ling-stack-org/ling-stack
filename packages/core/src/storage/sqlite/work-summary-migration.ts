@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
-export const WORK_SUMMARY_MIGRATION_VERSION = 188;
+export const WORK_SUMMARY_MIGRATION_VERSION = 197;
 const name = "create_work_summary_pull_requests";
 const tableSql = `CREATE TABLE work_summary_pull_requests (
   url TEXT PRIMARY KEY, created_at TEXT NOT NULL

@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
-export const RUN_SUSPENSION_ACTIVATION_MIGRATION_VERSION = 184;
+export const RUN_SUSPENSION_ACTIVATION_MIGRATION_VERSION = 198;
 const name = "create_host_root_suspension_activations_v1";
 const definitions = [
   ["table", "run_suspension_root_activations", `CREATE TABLE run_suspension_root_activations (
