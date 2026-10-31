@@ -220,7 +220,7 @@ export function NormalConversationFeed({
             snapshot: timelineSnapshot,
             depth: 0,
             cwd: projectPath?.trim() || workspaceCwd.trim(),
-            onSubmitUserInputAnswer: (command) => submitUserInputAnswer(projectPath?.trim() || workspaceCwd.trim(), command),
+            onSubmitUserInputAnswer: (command) => submitUserInputAnswer(workspaceCwd.trim(), command),
             onPositionNavigate: pauseTimelineAutoFollow,
             positionIdentity: (item) => item.kind === "userMessage" ? {
               name: userProfile?.displayName.trim() || t("You"),

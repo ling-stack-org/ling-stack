@@ -180,6 +180,11 @@ async function streamRunRpc(
   });
 }
 
+function isAbortError(cause: unknown): boolean {
+  return typeof cause === "object" && cause !== null
+    && "name" in cause && (cause as { readonly name?: unknown }).name === "AbortError";
+}
+
 export async function readSseResponse(response: Response, onMessage: (message: { readonly event: string; readonly data: string }) => void): Promise<void> {
   if (!response.body) {
     throw new Error("Response did not include a stream body.");
@@ -195,7 +200,7 @@ export async function readSseResponse(response: Response, onMessage: (message: {
     let chunk: ReadableStreamReadResult<Uint8Array>;
     try { chunk = await reader.read(); }
     catch (cause) {
-      if (cause instanceof Error && cause.name === "AbortError") throw cause;
+      if (isAbortError(cause)) throw cause;
       throw new LingDaemonTransportError("stream-read", cause);
     }
     const { done, value } = chunk;

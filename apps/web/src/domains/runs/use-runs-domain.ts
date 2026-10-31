@@ -138,9 +138,20 @@ export function useRunsDomain(input: {
       setLookupRunId(current => canCommit() ? runResult.id : current);
       if (runResult.workUnitId) {
         assertReadCurrent();
-        const detail = await getWorkUnit(cwd, runResult.workUnitId);
-        assertReadCurrent();
-        input.setSelectedWorkUnitDetail(detail);
+        try {
+          const detail = await getWorkUnit(cwd, runResult.workUnitId);
+          assertReadCurrent();
+          input.setSelectedWorkUnitDetail(detail);
+        } catch (caught) {
+          if (caught instanceof DaemonObservationDeferredError
+            || shouldDeferDaemonObservationError(caught, observationRef.current, cwd)) {
+            throw caught instanceof DaemonObservationDeferredError ? caught : new DaemonObservationDeferredError();
+          }
+          // Work-unit detail is optional enrichment. Keep the canonical Run/events/artifacts
+          // snapshot visible when that secondary endpoint is stale or temporarily unavailable.
+          assertReadCurrent();
+          input.setSelectedWorkUnitDetail(undefined);
+        }
       } else {
         assertReadCurrent();
         input.setSelectedWorkUnitDetail(undefined);

@@ -49,6 +49,11 @@ test("network retry reuses one idempotency key only while the normalized answer 
   assert.match(renderer, /\{failed \? t\("Retry"\) : t\("Send"\)\}/u);
 });
 
+test("normal conversation answers use the workspace store even when execution runs in a project path", async () => {
+  const normal = await source("../src/features/workspace/NormalConversationFeed.tsx");
+  assert.match(normal, /onSubmitUserInputAnswer:\s*\(command\) => submitUserInputAnswer\(workspaceCwd\.trim\(\), command\)/u);
+});
+
 test("normal, private, channel and topic adapters pass one callback into the shared Timeline", async () => {
   const adapters = await Promise.all([
     source("../src/features/workspace/NormalConversationFeed.tsx"),

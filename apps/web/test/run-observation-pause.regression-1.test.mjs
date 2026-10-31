@@ -103,12 +103,14 @@ for (const [label, failure, defer] of [["typed transport", transport(), true], [
   });
 }
 
-test("WorkUnit HTTP failures remain visible rather than catch-all clearing detail", async t => {
+test("WorkUnit HTTP failures keep the canonical Run snapshot and continue enrichment", async t => {
   const f = await fixture(t), failure = new Error("HTTP 403 WorkUnit denied");
   f.io(name => name === "getRun" ? run("with-unit", "unit") : name === "getWorkUnit" ? Promise.reject(failure) : undefined);
-  await assert.rejects(f.render().actions.loadRun("with-unit"), error => error === failure);
-  assert.equal(f.render().error?.message, failure.message); assert.deepEqual(f.details, []);
-  assert.equal(f.calls.some(call => call.name === "refreshRuntimeState"), false);
+  await f.render().actions.loadRun("with-unit");
+  assert.equal(f.render().error, undefined);
+  assert.equal(f.render().state.selectedRun.id, "with-unit");
+  assert.deepEqual(f.details, [undefined]);
+  assert.equal(f.calls.some(call => call.name === "refreshRuntimeState"), true);
 });
 
 test("a later selected Run owns publication even when the older ID's keyed request is still current", async t => {

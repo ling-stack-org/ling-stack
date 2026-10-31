@@ -47,6 +47,11 @@ export function daemonBaseUrlFromEnv(env: Record<string, string | undefined> = {
   return env.VITE_LING_STACK_DAEMON_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:17891";
 }
 
+function isAbortError(cause: unknown): boolean {
+  return typeof cause === "object" && cause !== null
+    && "name" in cause && (cause as { readonly name?: unknown }).name === "AbortError";
+}
+
 export class LingDaemonTransport implements LingDaemonEndpointContext {
   readonly baseUrl: string;
   readonly computerUseRouteToken: string | undefined;
@@ -71,7 +76,7 @@ export class LingDaemonTransport implements LingDaemonEndpointContext {
     try {
       return await this.fetchImpl(input, init);
     } catch (cause) {
-      if (cause instanceof Error && cause.name === "AbortError") throw cause;
+      if (isAbortError(cause)) throw cause;
       throw new LingDaemonTransportError("fetch", cause);
     }
   }
