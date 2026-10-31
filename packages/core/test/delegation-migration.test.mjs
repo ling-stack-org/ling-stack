@@ -7,7 +7,6 @@ import test from "node:test";
 import { RUN_EVALUATION_TASK_SCHEMA_OBJECTS } from "../dist/storage/sqlite/run-evaluation-task-migration.js";
 import { RUN_EVALUATION_QA_SCHEMA_OBJECTS } from "../dist/storage/sqlite/run-evaluation-qa-migration.js";
 import { removeQaOverlayForLegacyFixture } from "./support/evaluation-qa-migration-fixture.mjs";
-import { removePendingAuthorityOverlay, restorePreEmptyForkSnapshots } from "./support/legacy-schema-rollback.mjs";
 import { RUN_EVALUATION_HUMAN_SCHEMA_OBJECTS } from "../dist/storage/sqlite/run-evaluation-human-migration.js";
 import { createSqliteRunStore, resolveRuntimePaths } from "../dist/index.js";
 import {
@@ -156,61 +155,9 @@ function schema(database) {
   return database.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all();
 }
 
-const harnessReliabilityOverlay = new Set([
-  "harness_projection_checkpoints", "harness_projection_rows", "harness_artifact_retention",
-  "harness_artifact_pins", "harness_artifact_pin_events", "harness_artifact_gc_receipts",
-  "idx_harness_retention_due",
-  "idx_harness_work_units_discovery", "idx_harness_continuations_due", "idx_harness_continuations_scheduled_due",
-]);
-function isHarnessReliabilityOverlay(row) {
-  return harnessReliabilityOverlay.has(row.name)
-    || harnessReliabilityOverlay.has(row.tbl_name)
-    || ["trg_harness_epoch_", "trg_harness_projection_integrity_", "trg_harness_gc_receipts_",
-      "trg_harness_pin_events_", "trg_harness_pruned_artifact_"].some(prefix => row.name.startsWith(prefix));
-}
-
 /** Only removes the row-free overlay in this test's temporary full-schema database. */
 function removeDelegationOverlay(database) {
   database.exec("DROP TABLE delegation_messages; DROP TABLE delegation_steps; DELETE FROM schema_migrations WHERE version=154");
-}
-
-/** Remove the row-free post-175 sidecars before their referenced 154/161 tables. */
-function removePost175HarnessOverlays(database) {
-  assert.equal(database.prepare("SELECT count(*) n FROM work_summary_pull_requests").get().n, 0);
-  database.exec("DROP TABLE work_summary_pull_requests; DELETE FROM schema_migrations WHERE version=188");
-  assert.equal(database.prepare("SELECT count(*) n FROM run_final_settlements").get().n, 0);
-  database.exec("DROP TABLE run_final_settlements; DELETE FROM schema_migrations WHERE version=187");
-  assert.equal(database.prepare("SELECT count(*) n FROM run_suspension_delegated_starts").get().n, 0);
-  assert.equal(database.prepare("SELECT count(*) n FROM run_suspension_delegated_activations").get().n, 0);
-  database.exec("DROP TABLE run_suspension_delegated_starts; DROP TABLE run_suspension_delegated_activations; DELETE FROM schema_migrations WHERE version=186");
-  assert.equal(database.prepare("SELECT count(*) n FROM run_suspension_root_starts").get().n, 0);
-  database.exec("DROP TABLE run_suspension_root_starts; DELETE FROM schema_migrations WHERE version=185");
-  assert.equal(database.prepare("SELECT count(*) n FROM run_suspension_root_activations").get().n, 0);
-  database.exec("DROP TABLE run_suspension_root_activations; DELETE FROM schema_migrations WHERE version=184");
-  assert.equal(database.prepare("SELECT count(*) n FROM run_suspension_stops").get().n, 0);
-  database.exec("DROP TABLE run_suspension_stops; DELETE FROM schema_migrations WHERE version=183");
-  assert.equal(database.prepare("SELECT count(*) n FROM run_suspensions").get().n, 0);
-  database.exec("DROP TABLE run_suspensions; DELETE FROM schema_migrations WHERE version=182");
-  assert.equal(database.prepare("SELECT count(*) n FROM run_terminal_intents").get().n, 0);
-  database.exec("DROP TABLE run_terminal_intents; DELETE FROM schema_migrations WHERE version=181");
-  database.exec(`DROP INDEX IF EXISTS idx_harness_work_units_discovery;
-    DROP INDEX IF EXISTS idx_harness_continuations_due;
-    DROP INDEX IF EXISTS idx_harness_continuations_scheduled_due;`);
-  for (const row of database.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_harness_%'").all()) {
-    assert.match(row.name, /^[a-z0-9_]+$/u);
-    database.exec(`DROP TRIGGER ${row.name}`);
-  }
-  database.exec(`DROP TABLE delegation_instruction_receipts;
-    DROP TABLE harness_projection_rows;
-    DROP TABLE harness_artifact_pins;
-    DROP TABLE harness_artifact_pin_events;
-    DROP TABLE harness_artifact_gc_receipts;
-    DROP TABLE harness_artifact_retention;
-    DROP TABLE harness_projection_checkpoints;
-    DROP TABLE delegation_budget_charges;
-    DROP TABLE delegation_budget_reservations;
-    DROP TABLE delegation_root_budgets;
-    DELETE FROM schema_migrations WHERE version IN (176,177,178,181,182,183,189,193,194,195,196);`);
 }
 
 /** Removes only the row-free post-153 overlays so this fixture is a genuine schema153 database. */
@@ -249,13 +196,46 @@ function removePost168NativeExecutionOverlays(database) {
     DELETE FROM schema_migrations WHERE version IN (169,170,171,172,173,174,175);`);
 }
 
+const learningOverlayTables = new Set([
+  "procedure_observation_jobs", "skill_definition_revisions", "skill_definition_revision_notices",
+  "learning_review_policy", "learning_review_jobs", "memory_semantic_policy", "memory_semantic_generation",
+  "memory_derivative_revisions", "memory_derivative_outbox", "memory_wiki_generations", "memory_wiki_human_blocks",
+  "memory_search_index_state", "memory_search_dirty", "memory_search_fts_v1", "memory_search_fts_v1_data",
+  "memory_search_fts_v1_idx", "memory_search_fts_v1_content", "memory_search_fts_v1_docsize", "memory_search_fts_v1_config",
+]);
+const learningOverlayTriggers = new Set([
+  "skill_definition_history_create", "skill_definition_history_update", "skill_definition_history_notice",
+  "memory_derivative_insert", "memory_derivative_update", "memory_derivative_delete",
+  "memory_derivative_health_insert", "memory_derivative_health_update", "memory_derivative_health_delete",
+  "memory_search_insert", "memory_search_update", "memory_search_delete",
+]);
+
+/** Remove the actual empty learning overlays, including FTS shadow tables, before taking the old baseline. */
+function removePost178LearningOverlays(database) {
+  for (const trigger of database.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_channel_session_%'").all()) {
+    database.exec(`DROP TRIGGER "${trigger.name}"`);
+  }
+  database.exec(`DROP TABLE channel_session_requests; DROP TABLE channel_session_diagnostics;
+    DROP INDEX idx_channel_sessions_activity;
+    ALTER TABLE ling_threads DROP COLUMN session_activity_at;
+    ALTER TABLE ling_threads DROP COLUMN session_notification_revision;
+    ALTER TABLE ling_threads DROP COLUMN session_title_source;`);
+  for (const trigger of learningOverlayTriggers) database.exec(`DROP TRIGGER ${trigger}`);
+  // Drop the virtual table itself; SQLite owns removal of its shadow tables.
+  for (const table of learningOverlayTables) {
+    if (!table.startsWith("memory_search_fts_v1_")) database.exec(`DROP TABLE ${table}`);
+  }
+  database.exec("DELETE FROM schema_migrations WHERE version IN (179,180,181,184,185,186,187,188)");
+  assert.deepEqual(schema(database).filter(row => learningOverlayTables.has(row.tbl_name) || learningOverlayTriggers.has(row.name)), []);
+}
+
 test("delegation migration has the release schema 154 identity", () => {
   assert.equal(DELEGATION_MIGRATION_VERSION, 154);
   assert.equal(DELEGATION_MIGRATION_NAME, "create_delegation_tree_v1");
   assert.equal(typeof applyDelegationMigration, "function");
 });
 
-test("real schema153 upgrades through196 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
+test("real schema153 upgrades through188 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
   const f = await fileFixture(t, "full-schema");
   const first = f.own(createSqliteRunStore(f.cwd));
   const channel = first.handle.createChannel({ name: "Legacy", boundPath: f.cwd }, now);
@@ -269,16 +249,18 @@ test("real schema153 upgrades through196 preserving historical SQL/markers/rows 
   first.close();
   const path = resolveRuntimePaths(f.cwd).databasePath;
   const old = f.open(path);
-  const pendingSidecar = row => row.name.startsWith("pending_authority_") || row.tbl_name === "channel_pending_authority_versions"
-    || row.tbl_name === "channel_pending_operation_resolutions";
-  const currentPendingSchema = schema(old.handle).filter(pendingSidecar);
-  removePendingAuthorityOverlay(old.handle);
-  assert.equal(old.handle.prepare("SELECT count(*) AS n FROM channel_pending_operation_resolutions").get().n, 0);
-  old.handle.exec("DROP TABLE channel_pending_operation_resolutions; DELETE FROM schema_migrations WHERE version=191");
-  restorePreEmptyForkSnapshots(old.handle);
-  // Reconstruct schema153 by removing exactly the later, row-free overlays.
+  // Reconstruct schema153 by removing exactly the later overlays.
   // Do not hide them from the baseline while leaving their markers installed.
-  removePost175HarnessOverlays(old.handle);
+  removePost178LearningOverlays(old.handle);
+  old.handle.exec("DROP TABLE work_summary_pull_requests; DELETE FROM schema_migrations WHERE version IN (176,177,178)");
+  const workspaceSettings = old.handle.prepare("SELECT workspace_id, settings_json FROM workspace_settings").get();
+  if (workspaceSettings) {
+    const settings = JSON.parse(workspaceSettings.settings_json);
+    delete settings.defaultAuthorizationMode;
+    delete settings.defaultWorkspaceAccessMode;
+    old.handle.prepare("UPDATE workspace_settings SET settings_json=? WHERE workspace_id=?")
+      .run(JSON.stringify(settings), workspaceSettings.workspace_id);
+  }
   old.handle.exec(`DROP TRIGGER media_workflow_check_insert;
     DROP TRIGGER media_workflow_check_update;
     DROP TRIGGER media_workflow_check_delete;
@@ -324,17 +306,11 @@ test("real schema153 upgrades through196 preserving historical SQL/markers/rows 
   const oldDirectInterventionColumns = old.handle.prepare("PRAGMA table_info(teammate_direct_reply_interventions)").all();
   const oldAuthorityRows = old.handle.prepare("SELECT * FROM mcp_authority_revisions ORDER BY server_id").all();
   const oldProvider = old.handle.prepare("SELECT * FROM provider_presets WHERE id=?").get(provider.id);
-  const oldSnapshotColumns = old.handle.prepare("PRAGMA table_info(conversation_context_snapshots)").all();
-  const oldSnapshots = old.handle.prepare("SELECT * FROM conversation_context_snapshots ORDER BY id").all();
   old.close();
   const reopened = f.own(createSqliteRunStore(f.cwd));
   reopened.close();
   const upgraded = f.open(path);
   const database = upgraded.handle;
-  assert.deepEqual(schema(database).filter(pendingSidecar), currentPendingSchema);
-  assert.deepEqual(database.prepare("PRAGMA table_info(conversation_context_snapshots)").all().map(column => ({ ...column })),
-    oldSnapshotColumns.map(column => ({ ...column, notnull: column.name === "segment_id" ? 0 : column.notnull })));
-  assert.deepEqual(database.prepare("SELECT * FROM conversation_context_snapshots ORDER BY id").all(), oldSnapshots);
   // Exclude exactly the newly owned overlays. Historical provider table/trigger
   // SQL and rows, like all other schema153 history, remain byte-for-byte checked.
   const providerOverlay = new Set(["provider_check_authorities", "provider_check_insert", "provider_check_update",
@@ -350,16 +326,16 @@ test("real schema153 upgrades through196 preserving historical SQL/markers/rows 
     "sqlite_autoindex_host_attempt_completions_1", "host_attempt_completion_immutable_identity",
     "host_attempt_completion_immutable_terminal"]);
   assert.deepEqual(schema(database).filter((row) => !row.tbl_name.startsWith("delegation_")
-    && !pendingSidecar(row) && row.name !== "conversation_context_snapshots"
-    && !row.tbl_name.startsWith("native_") && row.tbl_name !== "work_summary_pull_requests"
-    && !["run_terminal_intents", "run_suspensions", "run_suspension_stops", "run_suspension_root_activations", "run_suspension_root_starts",
-      "run_suspension_delegated_activations", "run_suspension_delegated_starts", "run_final_settlements"].includes(row.tbl_name)
-    && !isHarnessReliabilityOverlay(row)
-    && !["mcp_authority_revisions", "ling_thread_proposed_plans", "teammate_direct_messages", "teammate_direct_reply_interventions"].includes(row.name)
+    && !row.tbl_name.startsWith("native_")
+    && row.tbl_name !== "work_summary_pull_requests"
+    && !row.tbl_name.startsWith("channel_session_") && !row.name.startsWith("trg_channel_session_")
+    && row.name !== "idx_channel_sessions_activity"
+    && !["mcp_authority_revisions", "ling_thread_proposed_plans", "teammate_direct_messages", "teammate_direct_reply_interventions", "ling_threads"].includes(row.name)
     && !providerOverlay.has(row.name) && !incidentProvenanceOverlay.has(row.name) && !evaluationTaskOverlay.has(row.name)
     && !conversationExperienceOverlay.has(row.name)
+    && !learningOverlayTables.has(row.tbl_name) && !learningOverlayTriggers.has(row.name)
     && !progressAndWorkflowTables.has(row.tbl_name) && !workflowCheckTriggers.has(row.name)),
-  oldSchema.filter(row => !["mcp_authority_revisions", "ling_thread_proposed_plans", "teammate_direct_messages", "teammate_direct_reply_interventions", "conversation_context_snapshots"].includes(row.name)));
+  oldSchema.filter(row => !["mcp_authority_revisions", "ling_thread_proposed_plans", "teammate_direct_messages", "teammate_direct_reply_interventions", "ling_threads"].includes(row.name)));
   const newAuthorityColumns = database.prepare("PRAGMA table_info(mcp_authority_revisions)").all();
   assert.deepEqual(newAuthorityColumns.slice(0, oldAuthorityColumns.length), oldAuthorityColumns);
   assert.deepEqual(newAuthorityColumns.slice(oldAuthorityColumns.length).map(column => column.name),
@@ -375,31 +351,26 @@ test("real schema153 upgrades through196 preserving historical SQL/markers/rows 
   assert.deepEqual(directInterventionColumns.slice(0, oldDirectInterventionColumns.length), oldDirectInterventionColumns);
   assert.deepEqual(directInterventionColumns.slice(oldDirectInterventionColumns.length).map(column => column.name), ["source_attempt_id"]);
   assert.deepEqual(database.prepare("SELECT server_id, server_revision, tools_revision FROM mcp_authority_revisions ORDER BY server_id").all(), oldAuthorityRows);
-  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196) ORDER BY version").all(), oldMarkers);
-  assert.deepEqual(database.prepare("SELECT version,name FROM schema_migrations WHERE version BETWEEN 190 AND 192 ORDER BY version").all().map(row => ({ ...row })), [
-    { version: 190, name: "conversation_empty_fork_boundary" },
-    { version: 191, name: "create_channel_pending_operation_resolutions" },
-    { version: 192, name: "add_channel_pending_authority_versions" },
+  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,184,185,186,187,188) ORDER BY version").all(), oldMarkers);
+  assert.deepEqual(database.prepare("SELECT version,name FROM schema_migrations WHERE version BETWEEN 179 AND 181 ORDER BY version").all()
+    .map(row => ({ version: row.version, name: row.name })), [
+    { version: 179, name: "channel_independent_sessions" },
+    { version: 180, name: "channel_session_topic_ownership" },
+    { version: 181, name: "channel_session_topic_notifications" },
   ]);
-  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=188").get().name, "create_work_summary_pull_requests");
+  assert.deepEqual(database.prepare("SELECT version,name FROM schema_migrations WHERE version BETWEEN 184 AND 188 ORDER BY version").all()
+    .map(row => ({ version: row.version, name: row.name })), [
+    { version: 184, name: "procedure_observation_unique_source_jobs" },
+    { version: 185, name: "immutable_skill_definition_revision_history" },
+    { version: 186, name: "bounded_learning_review_jobs_default_off" },
+    { version: 187, name: "optional_memory_derivative_outbox_and_generation" },
+    { version: 188, name: "rebuildable_scoped_memory_wiki" },
+  ]);
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=176").get().name, "create_work_summary_pull_requests");
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=177").get().name, "canonicalize_workspace_permission_settings");
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=178").get().name, "canonicalize_pi_runner_ids");
   assert.deepEqual(database.prepare("PRAGMA table_info(work_summary_pull_requests)").all().map(column => column.name), ["url", "created_at"]);
-  assert.equal(database.prepare("SELECT count(*) n FROM work_summary_pull_requests").get().n, 0);
-  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=189").get().name, "durable_delegation_budget_authority_v1");
-  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=181").get().name, "create_host_run_terminal_intents_v1");
-  assert.equal(database.prepare("SELECT count(*) n FROM run_terminal_intents").get().n, 0);
-  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=182").get().name, "create_host_run_suspensions_v1");
-  assert.equal(database.prepare("SELECT count(*) n FROM run_suspensions").get().n, 0);
-  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=183").get().name, "create_host_run_suspension_stop_provenance_v1");
-  assert.equal(database.prepare("SELECT count(*) n FROM run_suspension_stops").get().n, 0);
-  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=184").get().name, "create_host_root_suspension_activations_v1");
-  assert.equal(database.prepare("SELECT count(*) n FROM run_suspension_root_starts").get().n, 0);
-  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=185").get().name, "create_host_root_suspension_starts_v1");
-  assert.equal(database.prepare("SELECT count(*) n FROM run_suspension_root_activations").get().n, 0);
-  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=186").get().name, "create_host_delegated_suspension_activations_and_starts_v1");
-  assert.equal(database.prepare("SELECT count(*) n FROM run_suspension_delegated_activations").get().n, 0);
-  assert.equal(database.prepare("SELECT count(*) n FROM run_suspension_delegated_starts").get().n, 0);
-  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=187").get().name, "create_host_run_final_settlements_v1");
-  assert.equal(database.prepare("SELECT count(*) n FROM run_final_settlements").get().n, 0);
+  assert.equal(database.prepare("SELECT count(*) AS n FROM work_summary_pull_requests").get().n, 0);
   assert.deepEqual(database.prepare("SELECT version,name FROM schema_migrations WHERE version BETWEEN 169 AND 175 ORDER BY version").all()
     .map(row => ({ version: row.version, name: row.name })), [
     { version: 169, name: "native_execution_journal" },

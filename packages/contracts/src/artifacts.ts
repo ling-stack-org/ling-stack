@@ -38,6 +38,24 @@ export const HTML_INTERACTIVE_SANDBOX: readonly string[] = ["allow-scripts"];
 export const HTML_INTERACTIVE_MAX_BYTES = 2 * 1024 * 1024;
 
 /**
+ * Build the trusted outer document used to host an interactive HTML preview.
+ * The inner content stays in an opaque-origin sandboxed iframe and scripts are
+ * enabled only when the caller explicitly opts into them.
+ */
+export function createInteractiveHtmlPreviewDocument(html: string, title: string, allowScripts = false): string {
+  const escapeAttribute = (value: string): string => value.replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("'", "&#39;");
+  const resources = allowScripts ? HTML_INTERACTIVE_CSP
+    : HTML_INTERACTIVE_CSP.replace("script-src 'unsafe-inline'", "script-src 'none'");
+  const outerCsp = `${resources}; frame-src about:`;
+  return '<!doctype html><html><head><meta charset="utf-8">'
+    + '<meta http-equiv="Content-Security-Policy" content="' + outerCsp + '">'
+    + '<style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style>'
+    + '</head><body><iframe sandbox="' + (allowScripts ? "allow-scripts" : "") + '" title="' + escapeAttribute(title)
+    + '" srcdoc="' + escapeAttribute(injectInteractiveHtmlCsp(html)) + '"></iframe></body></html>';
+}
+
+/**
  * Interactive artifacts are documents, not network clients: scripts may run
  * for in-frame interactivity, but the opaque origin must not be able to reach
  * the daemon, the network, or form endpoints.

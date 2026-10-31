@@ -1,13 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { writeChannelSessionError } from "./session-routes.js";
 import {
   ChannelDecisionStatusConflictError,
   ChannelDecisionSupersessionConflictError,
-  createChannelBranchId,
   createChannelId,
-  type Channel,
-  type ChannelBranch,
   type ProposedPlanArtifactStatus,
-  type RunStore,
   type SecretResolver,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
@@ -49,7 +46,6 @@ import { validateChannelModelUpdate } from "./model-binding-validation.js";
 import { createInitialChannelWorkspaceBinding } from "./workspace.js";
 import { hydrateProposedPlanSourceStates } from "../runs/proposed-plan-source-state.js";
 import { assertRunnableConversationProvider } from "../providers/conversation-model-validation.js";
-import { buildChannelBranchOrigin } from "./channel-branch-origin.js";
 
 export async function handleChannelsCollection(
   request: IncomingMessage,
@@ -71,7 +67,6 @@ export async function handleChannelsCollection(
       const archived = readOptionalArchivedQuery(url);
       const channels = store.listChannels({ archived, limit: readOptionalIntegerQuery(url, "limit", 1) });
       const channelById = new Map(channels.map((channel) => [channel.id, channel]));
-      const now = new Date().toISOString();
       writeJson(response, 200, {
         cwd,
         channels,
@@ -81,8 +76,7 @@ export async function handleChannelsCollection(
             limit: 1000,
             archived: false,
           })
-            .filter((branch) => channelById.has(branch.channelId))
-            .map((branch) => ensureChannelBranchRootThread(store, channelById.get(branch.channelId), branch, now) ?? branch),
+            .filter((branch) => channelById.has(branch.channelId)),
       });
       return;
     }
@@ -274,7 +268,6 @@ export async function handleChannelBranchesCollection(
     }
 
     if (request.method === "GET") {
-      const now = new Date().toISOString();
       writeJson(response, 200, {
         cwd,
         channelId,
@@ -282,7 +275,7 @@ export async function handleChannelBranchesCollection(
           channelId,
           archived: readOptionalArchivedQuery(url),
           limit: readOptionalIntegerQuery(url, "limit", 1),
-        }).map((branch) => ensureChannelBranchRootThread(store, channel, branch, now) ?? branch),
+        }),
       });
       return;
     }
@@ -295,22 +288,19 @@ export async function handleChannelBranchesCollection(
       const body = await readJsonBody(request, config.maxBodyBytes);
       const input = parseCreateChannelBranchInput(body);
       const now = new Date().toISOString();
-      const branch = store.createChannelBranch({
-        ...input,
-        id: createChannelBranchId(),
-        channelId,
-        conversationThread: buildChannelBranchOrigin({ store, channel, name: input.name, now }),
-      }, now);
-      writeJson(response, 201, { branch });
+      const idempotencyKey = typeof body === "object" && body !== null && "idempotencyKey" in body
+        ? (body as { idempotencyKey?: unknown }).idempotencyKey : undefined;
+      if (idempotencyKey !== undefined && typeof idempotencyKey !== "string") throw new Error("idempotencyKey must be a string");
+      const result = store.createChannelSession({ channelId, title: input.name, legacy: true,
+        archived: input.status === "archived", ...(idempotencyKey !== undefined ? { idempotencyKey } : {}) }, now);
+      const branch = store.getChannelBranch(result.session.legacyBranchId!);
+      writeJson(response, result.idempotentReplay ? 200 : 201, { branch });
       return;
     }
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel branches` });
   } catch (error) {
-    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
-      error: error instanceof HttpError ? error.code : "bad_request",
-      message: error instanceof Error ? error.message : String(error),
-    });
+    writeChannelSessionError(response, error);
   }
 }
 
@@ -336,7 +326,7 @@ export async function handleChannelBranchItem(
       writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
       return;
     }
-    const branch = ensureChannelBranchRootThread(store, channel, store.getChannelBranch(branchId), new Date().toISOString());
+    const branch = store.getChannelBranch(branchId);
     if (!branch || branch.channelId !== channelId) {
       writeJson(response, 404, { error: "channel_branch_not_found", message: `Channel branch not found: ${branchId}` });
       return;
@@ -355,9 +345,6 @@ export async function handleChannelBranchItem(
         ...input,
         archivedAt: input.status === "archived" ? now : input.status === "active" ? null : undefined,
       }, now);
-      if (updated) {
-        syncChannelBranchRootThreadArchive(store, updated, now);
-      }
       writeJson(response, 200, { branch: updated });
       return;
     }
@@ -374,10 +361,7 @@ export async function handleChannelBranchItem(
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel branch` });
   } catch (error) {
-    writeJson(response, 400, {
-      error: "bad_request",
-      message: error instanceof Error ? error.message : String(error),
-    });
+    writeChannelSessionError(response, error);
   }
 }
 
@@ -479,61 +463,6 @@ const proposedPlanArtifactStatuses = [
   "superseded",
   "archived",
 ] as const satisfies readonly ProposedPlanArtifactStatus[];
-
-function ensureChannelBranchRootThread(
-  store: RunStore,
-  channel: Channel | undefined,
-  branch: ChannelBranch | undefined,
-  now: string,
-): ChannelBranch | undefined {
-  if (!channel || !branch) {
-    return branch;
-  }
-  if (branch.rootThreadId) {
-    const existingThread = store.getLingThread(branch.rootThreadId);
-    if (existingThread?.kind === "channel_discussion" && existingThread.channelId === channel.id) {
-      return branch;
-    }
-  }
-  const thread = createChannelBranchRootThread(store, channel, branch.name, now, branch.status, branch.archivedAt);
-  return store.updateChannelBranch(branch.id, { rootThreadId: thread.id }, now) ?? { ...branch, rootThreadId: thread.id };
-}
-
-function createChannelBranchRootThread(
-  store: RunStore,
-  channel: Channel,
-  branchName: string,
-  now: string,
-  branchStatus: ChannelBranch["status"],
-  archivedAt?: string,
-) {
-  const { thread } = store.resolveOrCreateConversationThread(buildChannelBranchOrigin({ store, channel, name: branchName, now }), now);
-  return branchStatus === "archived" ? store.updateLingThread(thread.id, {
-    archivedAt: archivedAt ?? now, archivedReason: "channel_branch_archived",
-  }, now) ?? thread : thread;
-}
-
-function syncChannelBranchRootThreadArchive(store: RunStore, branch: ChannelBranch, now: string): void {
-  if (!branch.rootThreadId) {
-    return;
-  }
-  const thread = store.getLingThread(branch.rootThreadId);
-  if (!thread || thread.kind !== "channel_discussion" || thread.channelId !== branch.channelId) {
-    return;
-  }
-  if (branch.status === "archived") {
-    store.updateLingThread(branch.rootThreadId, {
-      archivedAt: branch.archivedAt ?? now,
-      archivedReason: "channel_branch_archived",
-    }, now);
-    return;
-  }
-  store.updateLingThread(branch.rootThreadId, {
-    archivedAt: null,
-    archivedReason: null,
-    status: thread.status === "archived" ? "open" : thread.status,
-  }, now);
-}
 
 export async function handleChannelExecutionProposalItem(
   request: IncomingMessage,

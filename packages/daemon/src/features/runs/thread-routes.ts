@@ -51,7 +51,6 @@ import { buildConversationContextProjection } from "../channels/context-processi
 import { listExecutionActions } from "./execution-actions.js";
 import { hydrateProposedPlanSourceState, hydrateProposedPlanSourceStates } from "./proposed-plan-source-state.js";
 import { handleLingThreadHardDelete } from "./thread-hard-delete-route.js";
-import { isWorkflowExecutionThread, isWorkflowRunSession, projectPublicLingThread, projectPublicLingTurn, projectPublicRunSession } from "./public-execution-snapshots.js";
 import type { RunRequest } from "./schemas.js";
 import { prepareNormalConversationInput } from "../conversations/normal-conversation-input.js";
 import { saveNormalConversationPreparedRequest } from "../conversations/normal-conversation-prepared-request.js";
@@ -181,32 +180,22 @@ export async function handleLingThreadsCollection(
     };
     if (searchQuery) {
       const result = store.searchLingThreads({ ...listOptions, q: searchQuery });
-      // Search snippets are a transport too; private-only hits must not reveal membership.
-      const matches = result.matches.filter(match => {
-        const thread = result.threads.find(candidate => candidate.id === match.threadId);
-        if (!thread) return false;
-        if (match.field === "turn_instruction") {
-          const turn = match.turnId ? store.getLingTurn(match.turnId) : undefined;
-          return Boolean(turn && turn.threadId === thread.id && projectPublicLingTurn(turn, thread) === turn);
-        }
-        if (match.field === "task_prompt") {
-          const run = match.runId ? store.getRun(match.runId) : undefined;
-          return Boolean(run && run.threadId === thread.id && !isWorkflowRunSession(run, store));
-        }
-        return !isWorkflowExecutionThread(thread)
-          || (match.field !== "thread_objective" && match.field !== "metadata_summary");
-      });
-      const publicIds = new Set(matches.map(match => match.threadId));
       writeJson(response, 200, {
         cwd,
-        threads: result.threads.filter(thread => publicIds.has(thread.id)).map(projectPublicLingThread),
-        matches,
+        threads: result.threads,
+        matches: result.matches,
       });
       return;
     }
+    const threads = store.listLingThreads(listOptions).filter((thread) =>
+      // A newly created channel owns an empty default conversation. Keep that
+      // placeholder in the channel session directory, but omit it from the
+      // generic thread list until it has durable activity.
+      !(thread.surfaceKind === "channel_root" && thread.nextItemSequence === 1 && !thread.lastRunId)
+    );
     writeJson(response, 200, {
       cwd,
-      threads: store.listLingThreads(listOptions).map(projectPublicLingThread),
+      threads,
     });
   } catch (error) {
     writeLingThreadRouteError(response, error);
@@ -277,7 +266,7 @@ export function handleLingThreadItem(
     return;
   }
 
-  writeJson(response, 200, { cwd, thread: projectPublicLingThread(thread) });
+  writeJson(response, 200, { cwd, thread });
 }
 
 async function handleLingThreadMode(
@@ -583,7 +572,7 @@ async function handleLingThreadTurns(
       writeJson(response, 201, {
         cwd,
         threadId,
-        turn: projectPublicLingTurn(turn, thread),
+        turn,
         runLinks: store.listLingTurnRuns(turn.id),
       });
       return;
@@ -597,7 +586,7 @@ async function handleLingThreadTurns(
     writeJson(response, 200, {
       cwd,
       threadId,
-      turns: turns.map(turn => projectPublicLingTurn(turn, thread)),
+      turns,
       runLinks: turns.flatMap((turn) => store.listLingTurnRuns(turn.id)),
     });
   } catch (error) {
@@ -633,13 +622,9 @@ async function handleLingThreadResumePreview(
     const resume = buildLingThreadResumeContext({ store, thread, body, mode: "preview" });
     writeJson(response, 200, {
       cwd,
-      thread: projectPublicLingThread(thread),
-      sourceRun: projectPublicRunSession(resume.sourceRun, store),
-      context: isWorkflowExecutionThread(thread) || resume.sourceRun.workflowStepId
-        ? { ...resume.context, contextText: [
-          "Workflow execution context is private. Use Host workflow-step controls to continue.",
-          resume.context.instruction,
-        ].join("\n\n") } : resume.context,
+      thread,
+      sourceRun: resume.sourceRun,
+      context: resume.context,
     });
   } catch (error) {
     writeLingThreadRouteError(response, error);
@@ -686,7 +671,7 @@ async function handleLingThreadVisibilityMutation(
       kind: route.kind,
       now,
     });
-    writeJson(response, 200, { cwd, thread: projectPublicLingThread(updated) });
+    writeJson(response, 200, { cwd, thread: updated });
   } catch (error) {
     writeLingThreadRouteError(response, error);
   }
@@ -815,10 +800,10 @@ async function handleLingThreadFork(
     const fork = createLingThreadFork({ store, sourceThread, body, now: new Date().toISOString() });
     writeJson(response, fork.created ? 201 : 200, {
       cwd,
-      sourceThread: projectPublicLingThread(store.getLingThread(sourceThread.id) ?? sourceThread),
-      sourceTurn: projectPublicLingTurn(fork.sourceTurn, sourceThread),
-      sourceRun: projectPublicRunSession(fork.sourceRun, store),
-      childThread: projectPublicLingThread(fork.childThread),
+      sourceThread: store.getLingThread(sourceThread.id) ?? sourceThread,
+      sourceTurn: fork.sourceTurn,
+      sourceRun: fork.sourceRun,
+      childThread: fork.childThread,
       lineage: {
         parentThreadId: sourceThread.id,
         parentTurnId: fork.sourceTurn?.id,
@@ -868,11 +853,11 @@ async function handleLingThreadForkRun(
       const startError = serializeForkRunStartError(error);
       writeJson(response, 500, {
         cwd,
-        sourceThread: projectPublicLingThread(store.getLingThread(sourceThread.id) ?? sourceThread),
-        sourceTurn: projectPublicLingTurn(forkRun.sourceTurn, sourceThread),
-        sourceRun: projectPublicRunSession(forkRun.sourceRun, store),
-        childThread: projectPublicLingThread(store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread),
-        childTurn: projectPublicLingTurn(store.getLingTurn(forkRun.childTurn.id) ?? forkRun.childTurn, forkRun.childThread),
+        sourceThread: store.getLingThread(sourceThread.id) ?? sourceThread,
+        sourceTurn: forkRun.sourceTurn,
+        sourceRun: forkRun.sourceRun,
+        childThread: store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread,
+        childTurn: store.getLingTurn(forkRun.childTurn.id) ?? forkRun.childTurn,
         status: "run_failed",
         error: startError,
       });
@@ -881,11 +866,11 @@ async function handleLingThreadForkRun(
     if (!runId) {
       writeJson(response, 500, {
         cwd,
-        sourceThread: projectPublicLingThread(store.getLingThread(sourceThread.id) ?? sourceThread),
-        sourceTurn: projectPublicLingTurn(forkRun.sourceTurn, sourceThread),
-        sourceRun: projectPublicRunSession(forkRun.sourceRun, store),
-        childThread: projectPublicLingThread(store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread),
-        childTurn: projectPublicLingTurn(store.getLingTurn(forkRun.childTurn.id) ?? forkRun.childTurn, forkRun.childThread),
+        sourceThread: store.getLingThread(sourceThread.id) ?? sourceThread,
+        sourceTurn: forkRun.sourceTurn,
+        sourceRun: forkRun.sourceRun,
+        childThread: store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread,
+        childTurn: store.getLingTurn(forkRun.childTurn.id) ?? forkRun.childTurn,
         status: "run_failed",
         error: {
           code: "fork_run_start_failed",
@@ -896,12 +881,12 @@ async function handleLingThreadForkRun(
     }
     writeJson(response, 202, {
       cwd,
-      sourceThread: projectPublicLingThread(store.getLingThread(sourceThread.id) ?? sourceThread),
-      sourceTurn: projectPublicLingTurn(forkRun.sourceTurn, sourceThread),
-      sourceRun: projectPublicRunSession(forkRun.sourceRun, store),
-      childThread: projectPublicLingThread(store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread),
-      childTurn: projectPublicLingTurn(store.getLingTurn(forkRun.childTurn.id) ?? forkRun.childTurn, forkRun.childThread),
-      childRun: projectPublicRunSession(store.getRun(runId), store),
+      sourceThread: store.getLingThread(sourceThread.id) ?? sourceThread,
+      sourceTurn: forkRun.sourceTurn,
+      sourceRun: forkRun.sourceRun,
+      childThread: store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread,
+      childTurn: store.getLingTurn(forkRun.childTurn.id) ?? forkRun.childTurn,
+      childRun: store.getRun(runId),
       runId,
       status: "run_started",
     });
@@ -947,8 +932,8 @@ async function handleLingThreadResume(
     }
     writeJson(response, 202, {
       cwd,
-      thread: projectPublicLingThread(store.getLingThread(thread.id) ?? thread),
-      sourceRun: projectPublicRunSession(resume.sourceRun, store),
+      thread: store.getLingThread(thread.id) ?? thread,
+      sourceRun: resume.sourceRun,
       runId,
       continuationReason: "manual_resume",
     });
@@ -1448,7 +1433,7 @@ function buildLingThreadEvidence(store: RunStore, cwd: string, thread: LingThrea
       approvalIds.add(approval.id);
     }
     return {
-      run: projectPublicRunSession(run, store),
+      run,
       events: store.listEvents(run.id, { limit: 1000 }),
       approvals,
       artifacts: store.listArtifacts(run.id),
@@ -1461,7 +1446,7 @@ function buildLingThreadEvidence(store: RunStore, cwd: string, thread: LingThrea
   const transitions = collectThreadStateTransitions(store, thread, runs, approvalIds);
   return {
     cwd,
-    thread: projectPublicLingThread(thread),
+    thread,
     generatedAt: new Date().toISOString(),
     runs: evidenceRuns,
     actions,
@@ -1542,9 +1527,6 @@ function buildLingThreadResumeContext(input: {
 }): { readonly sourceRun: RunSession; readonly context: ResumeContextPreview; readonly runRequest: RunRequest } {
   const { store, thread, body } = input;
   const anchor = resolveThreadResumeAnchor(store, thread, body);
-  if (input.mode === "execute" && (isWorkflowExecutionThread(thread) || anchor.sourceRun.workflowStepId)) {
-    throw new HttpError(409, "workflow_step_resume_required", "Workflow execution must continue through Host workflow-step controls.");
-  }
   const warnings: string[] = [...anchor.warnings];
   const activeRun = thread.activeRunId ? store.getRun(thread.activeRunId) : undefined;
   if (activeRun && !isTerminalRunStatus(activeRun.status)) {

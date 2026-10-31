@@ -12,6 +12,7 @@ import type {
   ChannelWorkflowOrchestrationResponse,
 } from "@ling-stack/contracts";
 import {
+  ChannelSessionError,
   projectConversationItemToChannelMessage,
   type Channel,
   type ChannelExecutionProposal,
@@ -28,8 +29,7 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
-import { writeJson } from "../../shared/response.js";
-import { createSseRunExecutionSink } from "../runs/run-execution-sink.js";
+import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 import {
   routeChannelMessageReply,
   routeExplicitChannelMention,
@@ -132,7 +132,6 @@ export async function handleChannelTurnStream(
     return;
   }
 
-  const transport = createSseRunExecutionSink(response);
   try {
     const store = storeRegistry.getStore(cwd);
     const channel = store.getChannel(channelId);
@@ -169,8 +168,14 @@ export async function handleChannelTurnStream(
       message,
     );
 
+    let closed = false;
+    response.on("close", () => {
+      closed = true;
+    });
     const safeWriteSse = (event: string, data: unknown): void => {
-      transport.writeEvent(event, data);
+      if (!closed && !response.destroyed) {
+        writeSse(response, event, data);
+      }
     };
     const aiRepliesById = new Map<string, ChannelMessage>();
     const upsertAiReply = (aiReply: ChannelMessage): readonly ChannelMessage[] => {
@@ -178,7 +183,8 @@ export async function handleChannelTurnStream(
       return Array.from(aiRepliesById.values());
     };
 
-    transport.writeReady(buildChannelConversationTurnResponse({
+    writeSseHead(response);
+    safeWriteSse("ready", buildChannelConversationTurnResponse({
       store,
       userItemId: message.id,
     }));
@@ -274,14 +280,19 @@ export async function handleChannelTurnStream(
       });
     } finally {
       releaseMessageClassification();
-      transport.end();
+      if (!closed && !response.destroyed) {
+        response.end();
+      }
     }
   } catch (error) {
-    transport.writeError(error instanceof HttpError ? error.statusCode : 400, {
-      error: error instanceof HttpError ? error.code : "bad_request",
+    if (response.headersSent) {
+      response.end();
+      return;
+    }
+    writeJson(response, error instanceof HttpError || error instanceof ChannelSessionError ? error.statusCode : 400, {
+      error: error instanceof HttpError || error instanceof ChannelSessionError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
-    transport.end();
   }
 }
 
@@ -322,6 +333,7 @@ export async function handleChannelItemsCollection(
       store,
       channel,
       surface: readChannelConversationSurfaceQuery(url),
+      readOnly: true,
       now: new Date().toISOString(),
     });
     writeJson(response, 200, listChannelConversationItems({
@@ -334,8 +346,8 @@ export async function handleChannelItemsCollection(
       replyDispatchCoordinator,
     }));
   } catch (error) {
-    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
-      error: error instanceof HttpError ? error.code : "bad_request",
+    writeJson(response, error instanceof HttpError || error instanceof ChannelSessionError ? error.statusCode : 400, {
+      error: error instanceof HttpError || error instanceof ChannelSessionError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }
@@ -420,8 +432,8 @@ export async function handleChannelTurnsCollection(
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel turns` });
   } catch (error) {
-    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
-      error: error instanceof HttpError ? error.code : "bad_request",
+    writeJson(response, error instanceof HttpError || error instanceof ChannelSessionError ? error.statusCode : 400, {
+      error: error instanceof HttpError || error instanceof ChannelSessionError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }
@@ -522,10 +534,6 @@ function prepareConversationSummaryAssessment(
   const budget = resolveProviderContextBudget(providerPreset, "channel_reply", {
     store: input.store, secretResolver: input.routeDependencies.secretResolver,
   });
-  // Summary generation needs at least 1024 input tokens. A smaller real budget
-  // makes this maintenance job inapplicable, not the reply admissible: the
-  // final fully rendered reply still passes its own strict capacity gate.
-  if (budget.inputBudgetTokens < 1_024) return { status: "not_needed" };
   return assessConversationContextSummary({
     store: input.store,
     sourceItemId: input.sourceMessage.id,

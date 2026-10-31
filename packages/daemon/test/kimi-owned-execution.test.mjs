@@ -1131,17 +1131,51 @@ test("owned Kimi native cancellation clears its deadline before delayed close ob
   const f = await fixture(t, "hold");
   const options = f.makeOptions();
   const abort = new AbortController();
-  const result = await executeOwnedKimiPrompt({ ...options, signal: abort.signal, interruptGraceMs: 100,
-    onEvent: event => { if (event.type === "turn_start") abort.abort(); }, launch: (...args) => {
-      const child = options.launch(...args);
-      const emit = child.emit.bind(child);
-      child.emit = (name, ...values) => {
-        if (name !== "close") return emit(name, ...values);
-        setTimeout(() => emit(name, ...values), 250);
-        return true;
-      };
-      return child;
-    } });
+  let terminalSeen = false, releaseClose, restoreEmit;
+  let notifyClose;
+  const closeObserved = new Promise(resolve => { notifyClose = resolve; });
+  // IPC remains real; only the deadline/close clock is controlled. The test is
+  // about a terminal received before grace, rather than child scheduling speed.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let settled;
+  try {
+    const execution = executeOwnedKimiPrompt({ ...options, signal: abort.signal, interruptGraceMs: 100,
+      onEvent: event => {
+        if (event.data.nativeOutput?.terminal) terminalSeen = true;
+        if (event.type === "turn_start") abort.abort();
+      }, launch: (...args) => {
+        const child = options.launch(...args);
+        const originalEmit = child.emit;
+        restoreEmit = () => { child.emit = originalEmit; };
+        child.emit = function (name, ...values) {
+          if (name !== "close") return originalEmit.call(this, name, ...values);
+          let released = false;
+          releaseClose = () => {
+            if (released) return;
+            released = true;
+            originalEmit.call(child, name, ...values);
+          };
+          setTimeout(releaseClose, 250);
+          notifyClose();
+          return true;
+        };
+        return child;
+      } }).then(value => ({ value }), error => ({ error }));
+    await closeObserved;
+    assert.equal(terminalSeen, true, "native terminal must precede the delayed close");
+    // A stale 100ms cancel deadline must not turn the committed terminal into
+    // an execution failure while process reaping is still waiting for close.
+    t.mock.timers.tick(100);
+    await new Promise(resolve => setImmediate(resolve));
+    t.mock.timers.tick(150);
+    settled = await execution;
+  } finally {
+    restoreEmit?.();
+    releaseClose?.();
+    t.mock.timers.reset();
+  }
+  assert.equal(settled.error, undefined);
+  const result = settled.value;
   assert.equal(result.status, "cancelled");
   assert.equal(f.store.getNativeSubmission(result.submissionId).status, "cancelled");
 });
@@ -1176,7 +1210,7 @@ test("owned Kimi waits for host worker settlement even when close loses its Atte
   const closed = Promise.withResolvers();
   const mock = t.mock.method(childProcess, "spawn", (...args) => {
     const child = originalSpawn(...args);
-    if (!args[1]?.includes("--input-type=module") || !args[1].includes("--eval")) return child;
+    if (args[0] !== "/usr/bin/sandbox-exec" || !args[1]?.includes("--eval")) return child;
     workerStarted = true;
     const emit = child.emit.bind(child);
     child.emit = (name, ...values) => {

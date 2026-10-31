@@ -1,11 +1,7 @@
 import type { BigIntStats } from "node:fs";
 
-/**
- * A self-contained program serialized from trusted compiled product code.
- * Keep all runtime dependencies inside this function: the same program must
- * execute from the bundled CLI without a sidecar or package.json lookup.
- */
-export async function runHostTextWriteWorker(): Promise<void> {
+/** Self-contained so the same reviewed worker bytes travel inside the daemon bundle. */
+export async function executeHostTextWriteWorker(): Promise<void> {
   const { closeSync, constants, fstatSync, fsyncSync, ftruncateSync, lstatSync, openSync, readFileSync,
     realpathSync, writeSync } = await import("node:fs");
   const { basename, dirname, isAbsolute } = await import("node:path");

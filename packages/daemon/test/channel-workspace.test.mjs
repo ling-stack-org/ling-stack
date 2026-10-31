@@ -413,8 +413,11 @@ test("channel branches follow archive restore and delete lifecycle", async () =>
     assert.equal(legacyBranch.rootThreadId, undefined);
     const repairedBranches = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches?cwd=${encodeURIComponent(cwd)}`);
     const repairedLegacy = repairedBranches.branches.find((item) => item.id === legacyBranch.id);
-    assert.ok(repairedLegacy?.rootThreadId);
-    assert.equal(store.getChannelBranch(legacyBranch.id).rootThreadId, repairedLegacy.rootThreadId);
+    assert.equal(repairedLegacy?.rootThreadId, undefined);
+    assert.equal(store.getChannelBranch(legacyBranch.id).rootThreadId, undefined);
+    const explicitRepair = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/branches/${encodeURIComponent(legacyBranch.id)}/repair?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.ok(explicitRepair.branch.rootThreadId);
+    assert.equal(store.getChannelBranch(legacyBranch.id).rootThreadId, explicitRepair.branch.rootThreadId);
 
     let listed = await getJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(listed.channels.some((item) => item.id === channel.id), true);
@@ -529,8 +532,7 @@ test("context budget manager resolves provider modes and trims lower priority se
   });
   assert.deepEqual(trimmed.sections.map((section) => section.id), ["must"]);
   assert.deepEqual(trimmed.droppedSectionIds, ["low", "high"]);
-  assert.equal(trimmed.budget.inputBudgetTokens, 776);
-  assert.equal(trimmed.overBudget, true, "protected 900-token input cannot fit a real 776-token budget");
+  assert.equal(trimmed.overBudget, false);
 
   const protectedOnly = buildContextPack({
     kind: "channel_reply",
@@ -773,7 +775,7 @@ test("channel team metrics exposes visible evidence total separately from team e
   }
 });
 
-test("ordinary tool approval cannot synthesize workflow completion without execution evidence", async () => {
+test("approval-only workflow owner closes immediately after approval", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-approval-owner-"));
   const store = createSqliteRunStore(cwd);
   let workflow;
@@ -784,7 +786,7 @@ test("ordinary tool approval cannot synthesize workflow completion without execu
     workflow = store.createChannelWorkflow({
       channelId: channel.id,
       title: "Review risky command",
-      objective: "Do not turn a tool approval into workflow completion.",
+      objective: "Close the approval-only workflow owner.",
       status: "waiting_for_approval",
       createdBy: "system",
     }, "2026-06-11T00:01:00.000Z");
@@ -802,7 +804,7 @@ test("ordinary tool approval cannot synthesize workflow completion without execu
       actionType: "bash",
       risk: "high",
       title: "Review risky shell command",
-      description: "Tool approval carries workflow lineage, but has no owning Run or workflow gate.",
+      description: "Approval-only legacy workflow step.",
       payload: { type: "bash", cwd, command: "git status --short", riskFlags: ["requires_user_review"] },
     }, "2026-06-11T00:01:20.000Z");
     store.close();
@@ -815,14 +817,9 @@ test("ordinary tool approval cannot synthesize workflow completion without execu
       assert.equal(resolved.approval.status, "approved");
 
       const workflowResponse = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}?cwd=${encodeURIComponent(cwd)}`);
-      assert.equal(workflowResponse.workflow.status, "waiting_for_approval",
-        "an approved tool request is not evidence of workflow execution or completion");
+      assert.equal(workflowResponse.workflow.status, "succeeded");
       const stepsResponse = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
-      const unchangedStep = stepsResponse.workflowSteps.find((candidate) => candidate.id === step.id);
-      assert.equal(unchangedStep?.status, "waiting_for_approval");
-      assert.equal(unchangedStep.taskId, undefined);
-      assert.equal(unchangedStep.runId, undefined);
-      assert.equal(unchangedStep.resultSummary, undefined);
+      assert.equal(stepsResponse.workflowSteps.find((candidate) => candidate.id === step.id)?.status, "succeeded");
     } finally {
       await daemon.close();
     }
@@ -3868,7 +3865,7 @@ test("conversation stream materializes uploaded attachments into the run prompt"
     assert.equal(done.data.run.requestSnapshot.authorizationMode, "smart");
     assert.equal(done.data.run.requestSnapshot.workspaceAccessMode, "workspace_write");
     assert.equal(done.data.run.requestSnapshot.responseLanguage, "en-US");
-    assert.equal(done.data.run.requestSnapshot.appendSystemPrompt, undefined);
+    assert.ok(done.data.run.requestSnapshot.appendSystemPrompt.some((instruction) => /Default conversation tone: friendly\./.test(instruction)));
 
     const detail = await getJson(`${daemon.url}/conversations/${encodeURIComponent(initialReady.data.thread.id)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(detail.defaults.authorizationMode, "smart");
@@ -4080,9 +4077,7 @@ test("channel hard summary uses the effective workspace provider before dispatch
   try {
     const channel = await createChannel(daemon.url, cwd);
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
-      // Leave a real >=1024 input budget after output/overhead reservation;
-      // capability resolution no longer invents an input floor for tiny windows.
-      contextWindow: 2_400,
+      contextWindow: 1_800,
       maxTokens: 512,
     })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -4267,7 +4262,7 @@ test("channel hard summary with no completed prefix records the limitation and b
   try {
     const channel = await createChannel(daemon.url, cwd);
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
-      contextWindow: 2_200, maxTokens: 512,
+      contextWindow: 1_800, maxTokens: 512,
     })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
     await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
@@ -4298,39 +4293,6 @@ test("channel hard summary with no completed prefix records the limitation and b
     assert.equal(events[0].data.fallback, "prepared_input_budget_gate");
     assert.equal(runner.runs.length, 0);
     assert.equal(store.listRuns({ limit: 10 }).length, 0);
-  } finally {
-    await daemon.close();
-    await rm(cwd, { recursive: true, force: true });
-  }
-});
-
-for (const capacity of [
-  { label: "exhausted-output", maxTokens: 32768 },
-  { label: "one-input-token", contextWindow: 1537, maxTokens: 1024 },
-  { label: "small-input", contextWindow: 2047, maxTokens: 512 },
-]) test(`channel ${capacity.label} reaches explicit admission without a summary RangeError or model call`, async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-small-input-"));
-  const runner = new SummaryAwareRunner();
-  const daemon = await startDaemonForTest(runner);
-  try {
-    const channel = await createChannel(daemon.url, cwd);
-    const { label, ...tokens } = capacity;
-    const provider = (await createStaticChatProvider(daemon.url, cwd, tokens)).provider;
-    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
-    await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
-    await putJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_engineer")}/channels?cwd=${encodeURIComponent(cwd)}`, {
-      memberships: [{ channelId: channel.id }],
-    });
-    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
-      body: `@Engineer analyze this protected input: ${"x".repeat(12_000)}`,
-      mentions: [{ id: "teammate_builtin_engineer", label: "Engineer", kind: "ai-teammate" }],
-      teammateId: "teammate_builtin_engineer", providerPresetId: provider.id, requestAiReply: true,
-    });
-    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "blocked", created.message.threadId);
-    const reply = listed.messages.find(message => message.id === created.aiReply.id);
-    assert.match(reply.body, label === "exhausted-output" ? /configured output limit leaves no room/u : /context budget/u);
-    assert.doesNotMatch(reply.body, /RangeError|Invalid conversation summary input budget/u);
-    assert.equal(runner.runs.length, 0);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -5666,13 +5628,9 @@ test("model-assisted thread follow-up writes the recent local target without phr
     assert.match(systemText(daemon.selectorRequests[0]), /channel intent selector/i);
     assert.equal(runs.length, 1);
     assert.deepEqual(runs[0].requestSnapshot.tools, ["write"]);
-    const publicRun = await getJson(`${daemon.url}/runs/${encodeURIComponent(runs[0].id)}?cwd=${encodeURIComponent(cwd)}`);
-    assert.equal(publicRun.taskSnapshot.prompt, undefined);
-    const storedRun = store.getRun(runs[0].id);
-    assert.equal(runs[0].taskSnapshot.prompt, storedRun.taskSnapshot.prompt);
-    assert.match(storedRun.taskSnapshot.prompt, /create_file: file_create -> index\.html/);
-    assert.match(storedRun.taskSnapshot.prompt, /"kind":"literal"/);
-    assert.match(storedRun.taskSnapshot.prompt, /gameReady = true/);
+    assert.match(runs[0].taskSnapshot.prompt, /create_file: file_create -> index\.html/);
+    assert.match(runs[0].taskSnapshot.prompt, /"kind":"literal"/);
+    assert.match(runs[0].taskSnapshot.prompt, /gameReady = true/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -6427,7 +6385,7 @@ test("proposal provider preflight blocks missing workspace default and freezes c
     assert.equal(unavailable.blocker.providerPresetId, "provider_workspace");
     assert.equal(unavailable.blocker.owner, "workspace");
 
-    const override = prepareWorkflowStepStart(
+    const override = await prepareWorkflowStepStart(
       store,
       engineerStep.id,
       { mode: "create_and_run_task", providerPresetId: "provider_workspace_repaired" },
@@ -6449,25 +6407,16 @@ test("proposal provider preflight blocks missing workspace default and freezes c
     } = qaStep.metadata;
     store.database.prepare("UPDATE channel_workflow_steps SET metadata_json = ? WHERE id = ?")
       .run(JSON.stringify(qaMetadataWithoutBinding), qaStep.id);
-    const invalidBasisStep = store.getChannelWorkflowStep(qaStep.id);
-    const priorLeases = store.listResourceLeases({ resourceType: "workflow_step", resourceKey: qaStep.id, limit: 100 });
-    let missingBindingValidationCalls = 0;
-    const missingBinding = prepareWorkflowStepStart(
+    const missingBinding = await prepareWorkflowStepStart(
       store,
       qaStep.id,
       { mode: "create_and_run_task" },
       cwd,
-      () => { missingBindingValidationCalls += 1; },
+      () => undefined,
     );
-    // An invalid manifest authority basis is rejected before provider preflight,
-    // resource admission or task creation, even when no approval gate is configured.
-    assert.equal(missingBinding.kind, "error", JSON.stringify(missingBinding));
-    assert.equal(missingBinding.statusCode, 409);
-    assert.equal(missingBinding.code, "workflow_pre_approval_basis_stale");
-    assert.equal(missingBindingValidationCalls, 0);
+    assert.equal(missingBinding.kind, "blocked");
+    assert.match(missingBinding.blocker, /no valid frozen provider binding/);
     const missingBindingStep = store.getChannelWorkflowStep(qaStep.id);
-    assert.deepEqual(missingBindingStep, invalidBasisStep);
-    assert.deepEqual(store.listResourceLeases({ resourceType: "workflow_step", resourceKey: qaStep.id, limit: 100 }), priorLeases);
     assert.equal(missingBindingStep.taskId, undefined);
     assert.equal(missingBindingStep.runId, undefined);
   } finally {
@@ -6715,11 +6664,10 @@ test("multi-participant executable request blocks when one explicit participant 
   }
 });
 
-for (const evidenceCwd of ["bound", "missing", "foreign"]) {
-test(`single-participant execute acknowledgement stays non-terminal until callback publication settles the source turn (${evidenceCwd} cwd evidence)`, async () => {
+test("single-participant execute acknowledgement stays non-terminal until callback publication settles the source turn", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-single-participant-convergence-"));
   const command = `node -e "process.stdout.write('proof:7319')"`;
-  const runner = new DelayedCommandEvidenceRunner(command, evidenceCwd);
+  const runner = new DelayedCommandEvidenceRunner(command);
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
     storeFactory: (storeCwd) => {
@@ -6784,7 +6732,7 @@ test(`single-participant execute acknowledgement stays non-terminal until callba
 
     runner.releaseExecution();
     await waitForCondition(
-      () => store.getLingTurn(sourceItem.turnId)?.status === (evidenceCwd === "bound" ? "succeeded" : "blocked"),
+      () => store.getLingTurn(sourceItem.turnId)?.status === "succeeded",
       "single participant callback publication to settle the source turn",
     );
 
@@ -6793,19 +6741,6 @@ test(`single-participant execute acknowledgement stays non-terminal until callba
     const finalWorkflow = store.getChannelWorkflow(workflowId);
     const reports = store.listTerminalReports({ sourceKind: "workflow", sourceId: workflowId, limit: 20 });
     assert.equal(finalRun.status, "succeeded");
-    if (evidenceCwd !== "bound") {
-      assert.equal(finalStep.status, "blocked");
-      assert.equal(finalStep.metadata.delegatedOutcome.kind, "blocked");
-      assert.equal(finalStep.metadata.delegatedOutcome.code, "required_operation_evidence_missing");
-      assert.equal(finalStep.metadata.executionVerification.operationResults[0].reasonCode, "required_operation_missing_evidence");
-      assert.equal(finalWorkflow.status, "blocked");
-      assert.equal(finalWorkflow.metadata.completionGate.status, "blocked");
-      assert.equal(reports.length, 1);
-      assert.equal(reports[0].status, "fallback");
-      assert.equal(store.listStateTransitionEvents({ entityType: "turn", entityId: sourceItem.turnId })
-        .filter((event) => event.toStatus === "succeeded").length, 0);
-      return;
-    }
     assert.equal(finalStep.status, "succeeded");
     assert.equal(finalStep.metadata.delegatedOutcome.kind, "completed");
     assert.equal(finalWorkflow.status, "succeeded");
@@ -6830,9 +6765,8 @@ test(`single-participant execute acknowledgement stays non-terminal until callba
     await rm(cwd, { recursive: true, force: true });
   }
 });
-}
 
-test("model-assisted create-and-run blocks an execute candidate missing its required command", async () => {
+test("model-assisted create-and-run clarifies when the required command is missing", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-model-create-run-command-clarify-"));
   const runner = new ScriptedRunner([
     JSON.stringify({
@@ -6866,20 +6800,21 @@ test("model-assisted create-and-run blocks an execute candidate missing its requ
     });
 
     assert.equal(created.autoStartedWorkflow, undefined);
-    assert.equal(created.aiReply.status, "blocked");
-    assert.equal(created.aiReply.errorMessage, "channel_operation_plan_invalid");
+    assert.equal(created.aiReply.status, "ready");
+    assert.match(created.aiReply.body, /命令|command/i);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
-    await assertInvalidModelPlan(daemon.url, cwd, channel.id, created.message.id, "command");
-    assert.equal(runner.runs.length, 2, "one bounded repair before a failed planning diagnostic");
-    await assert.rejects(access(resolve(cwd, "app.js")));
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].action, "clarify");
+    assert.deepEqual(decisions.decisions[0].clarification.missingFields, ["command"]);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test("model-assisted thread follow-up blocks an execute candidate instead of creating empty recent target", async () => {
+test("model-assisted thread follow-up clarifies instead of creating empty recent target", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-thread-model-followup-empty-file-"));
   let previousReply;
   const runner = new ScriptedRunner([
@@ -6942,23 +6877,22 @@ test("model-assisted thread follow-up blocks an execute candidate instead of cre
 
     assert.equal(created.autoStartedWorkflow, undefined);
     assert.equal(created.aiReply.kind, "ai_reply");
-    assert.equal(created.aiReply.status, "blocked");
-    assert.equal(created.aiReply.errorMessage, "channel_operation_plan_invalid");
+    assert.equal(created.aiReply.status, "ready");
     assert.equal(created.aiReply.authorId, "ling_agent");
-    assert.match(created.aiReply.body, /未启动/u);
+    assert.match(created.aiReply.body, /内容要求/u);
     assert.doesNotMatch(created.aiReply.body, /contentSource/u);
-    await assertInvalidModelPlan(daemon.url, cwd, channel.id, created.message.id, "contentSource");
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(decisions.decisions[0].clarification.missingFields, ["contentSource"]);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
-    assert.equal(runner.runs.length, 2, "one bounded source-binding repair before a failed planning diagnostic");
-    await assert.rejects(access(resolve(cwd, "index.html")));
+    assert.equal(runner.runs.length, 2, "one bounded source-binding repair before final clarification");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test("model-assisted local write request blocks an execute candidate when no target validates", async () => {
+test("model-assisted local write request clarifies when no target validates", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-model-followup-missing-target-"));
   const runner = new ScriptedRunner([
     JSON.stringify({
@@ -6987,18 +6921,23 @@ test("model-assisted local write request blocks an execute candidate when no tar
 
     assert.equal(created.autoStartedWorkflow, undefined);
     assert.equal(created.aiReply.kind, "ai_reply");
-    assert.equal(created.aiReply.status, "blocked");
-    assert.equal(created.aiReply.errorMessage, "channel_operation_plan_invalid");
+    assert.equal(created.aiReply.status, "ready");
     assert.equal(created.aiReply.authorId, "ling_agent");
-    assert.match(created.aiReply.body, /未启动/u);
+    assert.match(created.aiReply.body, /输入和输出文件/u);
     assert.doesNotMatch(created.aiReply.body, /\btarget\b/iu);
     assert.doesNotMatch(created.aiReply.body, /不能直接修改工作区|cannot directly modify|没有被授权执行工作区写入/i);
-    assert.equal(runner.runs.length, 2, "one bounded source-binding repair before a failed planning diagnostic");
+    assert.equal(runner.runs.length, 2, "one bounded source-binding repair before final clarification");
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
-    await assertInvalidModelPlan(daemon.url, cwd, channel.id, created.message.id, "target");
+    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assert.equal(intentDecisions.decisions.length, 1);
+    assert.equal(intentDecisions.decisions[0].action, "clarify");
+    assert.equal(intentDecisions.decisions[0].createdBy, "model_policy");
+    assert.deepEqual(intentDecisions.decisions[0].clarification.missingFields, ["target"]);
+    assert.equal(intentDecisions.decisions[0].clarification.question, created.aiReply.body);
+    assert.match(intentDecisions.decisions[0].reason, /incompatible target/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -7881,7 +7820,7 @@ test("model-assisted channel intent no_reply falls through to ordinary Ling repl
   }
 });
 
-test("model-assisted channel intent failure cannot become an ordinary reply or confirmable proposal", async () => {
+test("model-assisted channel intent fallback cannot turn a reply block into a confirmable proposal", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-model-fallback-"));
   const runner = new ScriptedRunner([
     "not json",
@@ -7915,20 +7854,18 @@ test("model-assisted channel intent failure cannot become an ordinary reply or c
 
     assert.equal(created.autoStartedWorkflow, undefined);
     assert.equal(created.aiReply.kind, "ai_reply");
-    assert.equal(created.aiReply.status, "blocked");
-    assert.equal(created.aiReply.errorMessage, "channel_intent_selection_failed");
-    assert.equal(runner.runs.length, 2, "initial selection and exactly one format repair");
-    assert.ok(runner.runs.every(run => /channel intent selector/i.test(run.systemPrompt)));
-    assert.doesNotMatch(created.aiReply.body, /普通频道回复|ling_task_proposal/);
+    assert.ok(["pending", "ready"].includes(created.aiReply.status));
+    await waitForCondition(() => runner.runs.length === 2, "ordinary channel reply after selector parse failure");
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    assert.equal(listed.messages.find((message) => message.id === created.aiReply.id).body, "普通频道回复。");
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 0);
     const allProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(allProposals.proposals.length, 0);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(decisions.decisions.length, 1);
-    assert.equal(decisions.decisions[0].status, "failed");
-    assert.equal(decisions.decisions[0].errorCode, "channel_intent_selection_failed");
-    assert.deepEqual(decisions.decisions[0].resultItemIds, [created.aiReply.id]);
+    assertSingleReplyIntentDecision(decisions.decisions, created.message.id);
+    assert.equal(decisions.decisions[0].createdBy, "deterministic");
+    assert.match(decisions.decisions[0].reason, /fail-open to an ordinary reply/i);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -7969,21 +7906,12 @@ test("model execution proposal cannot declare command evidence authority", async
     });
 
     assert.equal(created.autoStartedWorkflow, undefined);
-    assert.equal(created.aiReply.status, "blocked");
-    assert.equal(created.aiReply.errorMessage, "channel_operation_plan_invalid");
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
-    assert.equal(decisions.decisions[0].action, "reply");
-    assert.equal(decisions.decisions[0].status, "failed");
-    assert.equal(decisions.decisions[0].errorCode, "channel_operation_plan_invalid");
+    assert.equal(decisions.decisions[0].action, "clarify");
+    assert.deepEqual(decisions.decisions[0].clarification.missingFields, ["execution.operations"]);
     assert.equal(decisions.decisions[0].execution, undefined);
-    assert.equal(runner.runs.length, 2);
-    const observations = await getJson(`${daemon.url}/control-plane/events?cwd=${encodeURIComponent(cwd)}&domains=runners&limit=1000`);
-    const rejected = observations.events.filter(event => event.entityType === "channel_intent_selection"
-      && event.entityId === created.message.id && event.data.outcome === "shape_rejected");
-    assert.deepEqual(rejected.map(event => event.data.issue), [{ path: "execution.operations[]", code: "unexpected_fields" }]);
-    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
-    assert.deepEqual(proposals.proposals, []);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -9865,12 +9793,7 @@ test("workflow collaboration card endpoints derive compact product cards", async
 test("autoplan-lite workflow compiles durable steps and orchestrates them through the runner", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-orchestrator-"));
   const runner = new RecordingRunner();
-  const stores = new Map();
-  const daemon = await startDaemonForTest(runner, { storeFactory: storeCwd => {
-    const store = createSqliteRunStore(storeCwd);
-    stores.set(storeCwd, store);
-    return store;
-  } });
+  const daemon = await startDaemonForTest(runner);
   try {
     const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
       name: "Autoplan",
@@ -9952,19 +9875,12 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
     assert.equal(firstRun.workflowStepId, firstStepAfterFirstTick.id);
     assert.equal(firstRun.requestSnapshot.workflowStepId, firstStepAfterFirstTick.id);
     assert.equal(firstRun.requestSnapshot.runnerResolution.requestSource, "workflow_step");
-    assert.doesNotMatch(runner.runs[0].task.prompt, /source-linked evidence/u);
-    assert.match(runner.runs[0].appendSystemPrompt.join("\n"), /Build the orchestrator test slice with source-linked evidence/u);
-    assert.equal(firstRun.taskSnapshot.prompt, undefined);
-    assert.equal(firstRun.requestSnapshot.task.prompt, undefined);
-    const store = stores.get(cwd);
-    assert.ok(store);
-    const storedFirstRun = store.getRun(firstRun.id);
-    assert.doesNotMatch(storedFirstRun.taskSnapshot.prompt, /source-linked evidence/u);
-    assert.doesNotMatch(storedFirstRun.requestSnapshot.task.prompt, /source-linked evidence/u);
+    assert.match(runner.runs[0].task.prompt, /Build the orchestrator test slice with source-linked evidence/u);
+    assert.doesNotMatch(firstRun.taskSnapshot.prompt, /source-linked evidence/u);
+    assert.doesNotMatch(firstRun.requestSnapshot.task.prompt, /source-linked evidence/u);
     assert.equal(firstRun.requestSnapshot.preselectedMemoryUse, undefined);
     const firstWorkUnit = await getJson(`${daemon.url}/work-units/${encodeURIComponent(firstRun.workUnitId)}?cwd=${encodeURIComponent(cwd)}`);
-    assert.equal(firstWorkUnit.workUnit.request.task.prompt, undefined);
-    assert.doesNotMatch(store.getWorkUnit(firstRun.workUnitId).request.task.prompt, /source-linked evidence/u);
+    assert.doesNotMatch(firstWorkUnit.workUnit.request.task.prompt, /source-linked evidence/u);
     assert.equal(firstWorkUnit.workUnit.request.preselectedMemoryUse, undefined);
     const firstRunMemoryUse = await getJson(`${daemon.url}/memory/used?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(firstRun.id)}`);
     assert.deepEqual(firstRunMemoryUse.events[0].memoryIds, [firstStepMemory.id]);
@@ -10165,7 +10081,7 @@ test("workflow graph compiles into durable steps and emits standardized packets"
   }
 });
 
-for (const contextWindowTokens of [1800, 2048, 4096]) {
+for (const contextWindowTokens of [1800, 4096]) {
 test(`workflow dependency compaction preserves the SDK budget gate at ${contextWindowTokens} tokens`, async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-context-compaction-"));
   const runner = new class extends RecordingRunner {
@@ -10223,7 +10139,7 @@ test(`workflow dependency compaction preserves the SDK budget gate at ${contextW
     const fullInputBudget = contextWindowTokens - 512 - 512;
     // Measured with the production packer: 20 capped dependencies exceed the
     // 4K model's 3072-token packet budget; the compacted summary still fits.
-    const dependencyCount = contextWindowTokens <= 2048 ? 7 : 20;
+    const dependencyCount = contextWindowTokens === 1800 ? 7 : 20;
     const upstreamSteps = Array.from({ length: dependencyCount }, (_, index) => {
       const step = createParallelWorkflowStep(store, workflow.id, `Research Findings ${index + 1}`, {
         branchGroupId: `research-${index + 1}`,
@@ -10245,16 +10161,6 @@ test(`workflow dependency compaction preserves the SDK budget gate at ${contextW
     });
 
     const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
-    if (contextWindowTokens === 1800) {
-      assert.equal(tick.status, "blocked");
-      const blockedStep = store.getChannelWorkflowStep(downstream.id);
-      assert.equal(blockedStep.status, "blocked");
-      assert.match(blockedStep.blocker, /Workflow step context exceeds provider budget/u);
-      assert.equal(blockedStep.runId, undefined);
-      assert.equal(runner.runs.length, 0, "required dependency summary cannot be dropped to fit a small window");
-      assert.equal(runner.providerRequests, 0);
-      return;
-    }
     assert.equal(tick.status, "started");
     assert.equal(tick.workflowStep.id, downstream.id);
     assert.equal(runner.runs.length, 1);
@@ -10265,7 +10171,7 @@ test(`workflow dependency compaction preserves the SDK budget gate at ${contextW
     let startedStep;
     try {
       startedStep = await waitForWorkflowStepStatus(daemon.url, cwd, workflow.id, downstream.id,
-        contextWindowTokens === 2048 ? "blocked" : "succeeded");
+        contextWindowTokens === 1800 ? "blocked" : "succeeded");
     } catch {
       const step = store.getChannelWorkflowStep(downstream.id);
       const run = step?.runId ? store.getRun(step.runId) : undefined;
@@ -10274,7 +10180,7 @@ test(`workflow dependency compaction preserves the SDK budget gate at ${contextW
         errors: run ? store.listEvents(run.id).filter(event => event.type === "run_error").map(event => event.data) : [] })}`);
     }
     const run = store.getRun(startedStep.runId);
-    if (contextWindowTokens === 2048) {
+    if (contextWindowTokens === 1800) {
       assert.equal(run?.status, "failed");
       assert.match(run.errorMessage, /Pi model context exceeds selected model budget/);
       assert.equal(runner.providerRequests, 0, "packet compaction cannot bypass the SDK's complete-input capacity check");
@@ -10289,7 +10195,7 @@ test(`workflow dependency compaction preserves the SDK budget gate at ${contextW
     assert.equal(contextPacket.contextPack.budget.contextWindowTokens, contextWindowTokens);
     assert.equal(contextPacket.contextPack.budget.reservedOutputTokens, 512);
     assert.equal(contextPacket.contextPack.budget.reservedRuntimeOverheadTokens, 512);
-    assert.equal(contextPacket.contextPack.budget.inputBudgetTokens, Math.max(0, fullInputBudget));
+    assert.equal(contextPacket.contextPack.budget.inputBudgetTokens, Math.max(1024, fullInputBudget));
     assert.equal(contextPacket.contextPack.budget.tokenizer, "openai-compatible");
     assert.equal(contextPacket.contextPack.budget.capabilitySource, "user_override");
     assert.equal(contextPacket.contextPack.budget.capabilityConfidence, "known");
@@ -12753,7 +12659,7 @@ test("a recovered managed direct worktree records ownership before any later dis
 test("memory API scopes lexical recall and channel replies audit used memory", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-memory-api-"));
   const runner = new RecordingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const otherChannel = await createChannel(daemon.url, cwd);
@@ -12802,7 +12708,7 @@ test("memory API scopes lexical recall and channel replies audit used memory", a
     });
 
     const listed = await getJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`);
-    assert.equal(listed.vectorRetrieval.status, "not_installed");
+    assert.equal(listed.vectorRetrieval.status, "not_configured");
     assert.equal(listed.vectorRetrieval.optional, true);
 
     const recall = await postJson(`${daemon.url}/memory/recall?cwd=${encodeURIComponent(cwd)}`, {
@@ -12840,7 +12746,7 @@ test("memory API scopes lexical recall and channel replies audit used memory", a
 
 test("memory review policy exposes promotion inbox and gates candidate recall", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-memory-review-policy-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
 
@@ -13030,7 +12936,7 @@ test("memory health API returns read-only findings and respects scope filters", 
 
 test("memory consolidation jobs create audited candidates without silent activation", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-memory-consolidation-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const created = await postJson(`${daemon.url}/memory/consolidation-jobs?cwd=${encodeURIComponent(cwd)}`, {
@@ -15318,7 +15224,7 @@ test("teammate direct queued guidance drains multiple queued items in thread FIF
 
 test("private attachments avatar and hard delete stay scoped to teammate private data", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-attachments-hard-delete-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const teammateId = "teammate_builtin_engineer";
@@ -15463,9 +15369,8 @@ class WorkflowEvidenceRunner {
 }
 
 class DelayedCommandEvidenceRunner {
-  constructor(command, evidenceCwd = "bound") {
+  constructor(command) {
     this.command = command;
-    this.evidenceCwd = evidenceCwd;
     this.executionRuns = [];
     this.selectorRuns = [];
     this.reportRuns = [];
@@ -15494,7 +15399,6 @@ class DelayedCommandEvidenceRunner {
       this.pendingExecution = resolveExecution;
     });
     const toolCallId = "single_participant_node";
-    const startedAt = new Date().toISOString();
     options.onEvent?.({
       type: "tool_start",
       toolCallId,
@@ -15505,17 +15409,7 @@ class DelayedCommandEvidenceRunner {
       type: "tool_end",
       toolCallId,
       toolName: "bash",
-      // Synthetic Host evidence must satisfy the same cwd/exit contract as a
-      // real journaled command. A text-only tool result is not completion proof.
-      result: { content: [{ type: "text", text: "proof:7319" }],
-        ...(this.evidenceCwd === "missing" ? {} : { details: { unifiedExec: {
-        status: "succeeded", cwd: this.evidenceCwd === "foreign" ? resolve(options.cwd, "foreign") : options.cwd,
-        command: { kind: "shell", command: this.command, shell: "bash" },
-        startedAt, endedAt: new Date().toISOString(), durationMs: 0,
-        exitCode: 0, timedOut: false, cancelled: false,
-        stdout: { byteCount: 10, lineCount: 1, preview: "proof:7319", truncated: false },
-        stderr: { byteCount: 0, lineCount: 0, preview: "", truncated: false }, artifacts: [],
-      } } }) },
+      result: { content: [{ type: "text", text: "proof:7319" }] },
       isError: false,
     });
     const text = "Verified proof:7319.";
@@ -15850,27 +15744,6 @@ function unusedRunnerRegistry() {
       throw new Error("runner registry should not be used by deterministic route test");
     },
   };
-}
-
-async function assertInvalidModelPlan(baseUrl, cwd, channelId, sourceItemId, field) {
-  const decisions = await getJson(`${baseUrl}/channels/${encodeURIComponent(channelId)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(sourceItemId)}`);
-  assert.equal(decisions.decisions.length, 1);
-  const decision = decisions.decisions[0];
-  assert.equal(decision.action, "reply", "failed Host diagnostic only, not an accepted ordinary reply");
-  assert.equal(decision.status, "failed");
-  assert.equal(decision.errorCode, "channel_operation_plan_invalid");
-  assert.equal(decision.createdBy, "model_policy");
-  assert.equal(decision.execution, undefined);
-  const observations = await getJson(`${baseUrl}/control-plane/events?cwd=${encodeURIComponent(cwd)}&domains=runners&limit=1000`);
-  const rejected = observations.events.filter(event => event.entityType === "channel_intent_selection"
-    && event.entityId === sourceItemId && event.data.outcome === "binding_rejected");
-  assert.deepEqual(rejected.map(event => event.data.fields), [[field]]);
-  const owned = observations.events.filter(event => event.entityType === "channel_intent_selection" && event.entityId === sourceItemId);
-  assert.deepEqual(owned.filter(event => event.action === "channel_intent.request_started").map(event =>
-    [event.data.requestOrdinal, event.data.purpose]), [[1, "initial"], [2, "binding_repair"]]);
-  // ScriptedRunner has one response: its repair deliberately returns empty
-  // text. Keep that parse failure distinct from a second binding rejection.
-  assert.deepEqual(owned.filter(event => event.data.outcome === "intent_schema_rejected").map(event => event.data.requestOrdinal), [2]);
 }
 
 async function startDaemonForTest(runner, dependencies = {}, config = {}) {

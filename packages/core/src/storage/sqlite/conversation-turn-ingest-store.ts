@@ -1,3 +1,4 @@
+import { assertChannelSessionThreadWritable } from "./channel-session-admission.js";
 import { randomUUID } from "node:crypto";
 import type { SQLOutputValue } from "node:sqlite";
 import type {
@@ -7,12 +8,6 @@ import type {
 } from "../../conversation-turn-ingest-types.js";
 import { isChannelTurnDispatchRequestV1 } from "../../conversation-turn-ingest-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
-import type { RunStore } from "../../run-types.js";
-import {
-  classifyWorkflowStepStartOwner,
-  workflowStepStartOwnerMatches,
-  type WorkflowStepStartReadStore,
-} from "../../workflow-step-start-owner.js";
 import { defaultRuntimeTimeoutPolicy } from "../../runtime-supervisor-types.js";
 import { parseJson, readNullableString, readString, stringifyJson } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
@@ -24,7 +19,7 @@ export class SqliteConversationTurnIngestStore {
   constructor(
     private readonly context: SqliteStoreContext,
     private readonly items: SqliteConversationItemStore,
-    private readonly workflowInputs?: WorkflowStepStartReadStore & Pick<RunStore, "getLingThread" | "getLingTurnForRun">,
+    private readonly onUserMessage?: (threadId: string, body: string) => void,
   ) {}
 
   appendUserTurn(input: AppendConversationUserTurnInput, now: string): AppendConversationUserTurnResult {
@@ -43,19 +38,20 @@ export class SqliteConversationTurnIngestStore {
     input: AppendConversationUserTurnInput,
     now: string,
   ): AppendConversationUserTurnResult {
-    const scope = this.resolveThreadScope(input, now);
+    const scope = this.resolveThreadScope(input);
     const actorType = input.actorType ?? "local_user";
     if (actorType !== "local_user" && actorType !== "system") {
       throw new Error(`Conversation turn input actor is not supported: ${actorType}`);
     }
     const createdByActor = actorType === "system" ? "system" : "local-user";
+    if (scope.channelId) assertChannelSessionThreadWritable(this.context.database, input.threadId);
     const replay = this.items.getConversationItemByIdempotencyKey(input.threadId, input.idempotencyKey);
       if (replay) {
         if (replay.kind !== "user_message" || !replay.turnId || replay.channelId !== input.channelId) {
           throw new Error(`Conversation turn idempotency key belongs to another input: ${input.idempotencyKey}`);
         }
         const replayTurn = this.context.database.prepare(`
-          SELECT thread_id, kind, channel_id, task_id, teammate_id, workflow_step_id, external_work_id, title, user_instruction,
+          SELECT thread_id, kind, channel_id, teammate_id, title, user_instruction,
                  source_item_id, source_turn_id, intervention_id, created_by_actor
           FROM ling_turns
           WHERE workspace_id = ? AND id = ?
@@ -76,10 +72,7 @@ export class SqliteConversationTurnIngestStore {
           || readString(replayTurn, "thread_id") !== input.threadId
           || readString(replayTurn, "kind") !== (input.turnKind ?? "initial_request")
           || readNullableString(replayTurn, "channel_id") !== scope.channelId
-          || readNullableString(replayTurn, "task_id") !== scope.taskId
           || readNullableString(replayTurn, "teammate_id") !== scope.teammateId
-          || readNullableString(replayTurn, "workflow_step_id") !== scope.workflowStepId
-          || readNullableString(replayTurn, "external_work_id") !== scope.externalWorkId
           || readNullableString(replayTurn, "source_turn_id") !== input.sourceTurnId
           || readNullableString(replayTurn, "intervention_id") !== input.interventionId
           || readString(replayTurn, "created_by_actor") !== createdByActor
@@ -109,12 +102,8 @@ export class SqliteConversationTurnIngestStore {
         };
       }
 
-      if (scope.archived) {
-        throw new Error(`Ling thread is archived: ${input.threadId}`);
-      }
-      if (scope.workflowStartPhase === "linked") {
-        throw new Error(`Workflow step input generation is already linked: ${input.workflowStepStart!.workflowStepId}`);
-      }
+      if (scope.archived) throw new Error(`Ling thread is archived: ${input.threadId}`);
+
       if (input.sourceTurnId) {
         const source = this.context.database.prepare(`
           SELECT thread_id FROM ling_turns WHERE workspace_id = ? AND id = ?
@@ -133,7 +122,7 @@ export class SqliteConversationTurnIngestStore {
           automation_id, source_item_id, source_turn_id, intervention_id,
           active_run_id, last_run_id, created_by_actor, created_at, updated_at,
           completed_at
-        ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?,
+        ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?,
           ?, NULL, NULL, ?, ?, ?, NULL)
       `).run(
         turnId,
@@ -143,10 +132,7 @@ export class SqliteConversationTurnIngestStore {
         input.title,
         input.userInstruction,
         scope.channelId ?? null,
-        scope.taskId ?? null,
         scope.teammateId ?? null,
-        scope.workflowStepId ?? null,
-        scope.externalWorkId ?? null,
         itemId,
         input.sourceTurnId ?? null,
         input.interventionId ?? null,
@@ -243,6 +229,7 @@ export class SqliteConversationTurnIngestStore {
           sourceItemId: item.id,
         }),
       );
+      this.onUserMessage?.(input.threadId, input.payload.body);
       return {
         turnId,
         item,
@@ -253,19 +240,15 @@ export class SqliteConversationTurnIngestStore {
   }
 
   /** Resolve authority from the durable Thread, never from a caller's visibility flag. */
-  private resolveThreadScope(input: AppendConversationUserTurnInput, now: string): {
+  private resolveThreadScope(input: AppendConversationUserTurnInput): {
     readonly channelId?: string;
-    readonly taskId?: string;
     readonly teammateId?: string;
-    readonly workflowStepId?: string;
-    readonly externalWorkId?: string;
     readonly visibility: "channel" | "thread_participants" | "agent_private";
     readonly visibilityOwnerId?: string;
     readonly archived: boolean;
-    readonly workflowStartPhase?: "preparing" | "linked";
   } {
     const thread = this.context.database.prepare(`
-      SELECT kind, channel_id, task_id, teammate_id, workflow_id, workflow_step_id, external_work_id, status, archived_at
+      SELECT kind, channel_id, teammate_id, status, archived_at
       FROM ling_threads WHERE workspace_id = ? AND id = ?
     `).get(DEFAULT_WORKSPACE_ID, input.threadId) as Record<string, SQLOutputValue> | undefined;
     if (!thread) throw new Error(`Ling thread not found: ${input.threadId}`);
@@ -273,12 +256,6 @@ export class SqliteConversationTurnIngestStore {
     const kind = readString(thread, "kind");
     const channelId = readNullableString(thread, "channel_id");
     const teammateId = readNullableString(thread, "teammate_id");
-    const generation = input.workflowStepStart ? this.resolveWorkflowInputGeneration(input, thread, now) : undefined;
-    const owners = {
-      taskId: generation?.taskId ?? readNullableString(thread, "task_id"),
-      workflowStepId: readNullableString(thread, "workflow_step_id"),
-      externalWorkId: readNullableString(thread, "external_work_id"),
-    };
     if (channelId !== input.channelId) {
       throw new Error(`Ling thread does not belong to channel: ${input.threadId}`);
     }
@@ -300,7 +277,6 @@ export class SqliteConversationTurnIngestStore {
         }
       }
       return {
-        ...owners,
         teammateId,
         archived,
         visibility: kind === "teammate_direct" ? "agent_private" : "thread_participants",
@@ -308,61 +284,7 @@ export class SqliteConversationTurnIngestStore {
       };
     }
     if (!channelId) throw new Error(`Conversation turn thread kind is not supported: ${kind}`);
-    return { ...owners, channelId, teammateId, visibility: "channel", archived,
-      ...(generation ? { workflowStartPhase: generation.phase } : {}) };
-  }
-
-  /** Retry Tasks own their Turn, not the stable workflow-step Thread's historical Task field. */
-  private resolveWorkflowInputGeneration(input: AppendConversationUserTurnInput,
-    thread: Record<string, SQLOutputValue>, now: string): { readonly taskId: string; readonly phase: "preparing" | "linked" } {
-    const expected = input.workflowStepStart!;
-    const store = this.workflowInputs;
-    const step = store?.getChannelWorkflowStep(expected.workflowStepId);
-    const workflow = step && store?.getChannelWorkflow(step.workflowId);
-    const task = store?.getTask(expected.taskId);
-    const ownership = step && store && classifyWorkflowStepStartOwner(store, step, now);
-    if (!store || !step || !workflow || !task || !ownership || ownership.status === "invalid"
-      || readString(thread, "kind") !== "workflow_step" || readString(thread, "status") === "cancelled"
-      || input.actorType !== "system" || input.actorId !== "workflow-dispatch" || input.dispatch
-      || readNullableString(thread, "workflow_id") !== expected.workflowId
-      || readNullableString(thread, "workflow_step_id") !== step.id
-      || readNullableString(thread, "channel_id") !== step.channelId
-      || readNullableString(thread, "teammate_id") !== step.toParticipantId
-      || step.workspaceId !== DEFAULT_WORKSPACE_ID || workflow.workspaceId !== DEFAULT_WORKSPACE_ID
-      || task.workspaceId !== DEFAULT_WORKSPACE_ID || expected.workflowId !== workflow.id
-      || workflow.id !== step.workflowId || workflow.channelId !== step.channelId
-      || step.taskId !== expected.taskId || expected.owner.taskId !== expected.taskId
-      || task.channelId !== step.channelId || task.assigneeTeammateId !== step.toParticipantId
-      || !["todo", "claimed", "running", "waiting_for_approval"].includes(task.status)
-      || !workflowStepStartOwnerMatches(ownership.owner, expected.owner)) {
-      throw new Error(`Workflow step input generation lineage is invalid: ${expected.workflowStepId}`);
-    }
-    const sourceId = step.metadata?.sourceMessageId ?? workflow.metadata?.sourceMessageId;
-    if (sourceId) {
-      const item = store.getConversationItem(sourceId);
-      const turn = item?.turnId ? store.getLingTurn(item.turnId) : undefined;
-      const parentThread = item ? store.getLingThread(item.threadId) : undefined;
-      if (!item || !turn || !parentThread || item.kind !== "user_message" || item.status !== "committed"
-        || item.visibility !== "channel" || item.channelId !== step.channelId || item.workspaceId !== DEFAULT_WORKSPACE_ID
-        || turn.workspaceId !== DEFAULT_WORKSPACE_ID || turn.threadId !== item.threadId || turn.sourceItemId !== item.id
-        || turn.channelId !== step.channelId || ["cancelled", "superseded"].includes(turn.status)
-        || parentThread.workspaceId !== DEFAULT_WORKSPACE_ID || parentThread.channelId !== step.channelId
-        || ["archived", "cancelled"].includes(parentThread.status) || Boolean(parentThread.archivedAt)
-        || step.metadata?.sourceMessageId !== undefined && step.metadata.sourceMessageId !== item.id
-        || workflow.metadata?.sourceMessageId !== undefined && workflow.metadata.sourceMessageId !== item.id
-        || workflow.metadata?.sourceTurnId !== undefined && workflow.metadata.sourceTurnId !== turn.id) {
-        throw new Error(`Workflow step source lineage is invalid: ${step.id}`);
-      }
-    } else if (workflow.metadata?.sourceTurnId !== undefined) {
-      throw new Error(`Workflow step source lineage is invalid: ${step.id}`);
-    }
-    if (expected.parentRunId) {
-      const previousTurn = store.getLingTurnForRun(expected.parentRunId);
-      if (!previousTurn || previousTurn.threadId !== input.threadId || previousTurn.id !== input.sourceTurnId) {
-        throw new Error(`Workflow step parent Run has no matching canonical Turn: ${expected.parentRunId}`);
-      }
-    }
-    return { taskId: task.id, phase: ownership.status };
+    return { channelId, teammateId, visibility: "channel", archived };
   }
 
   private requireMatchingDispatchWorkUnitId(

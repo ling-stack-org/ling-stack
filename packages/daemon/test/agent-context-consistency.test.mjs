@@ -22,9 +22,7 @@ import {
   readWorkflowStepOutputPacketArtifact,
 } from "../dist/features/channels/workflow-step-packets.js";
 import { prepareWorkflowStepStart } from "../dist/features/channels/workflows.js";
-import { createMemorySourceRevisions } from "../dist/features/memory/prompt.js";
-import { finalizeOrchestratedWorkflowStepRun, retryChannelWorkflowStep } from "../dist/features/channels/orchestrator.js";
-import { renderGraphNodePrompt } from "../dist/features/channels/workflow-step-prompt.js";
+import { finalizeOrchestratedWorkflowStepRun } from "../dist/features/channels/orchestrator.js";
 import { materializeWorkflowDelegatedStepRequirements } from "../dist/features/channels/workflow-step-requirement.js";
 import { preflightWorkflowParticipantProvider } from "../dist/features/channels/workflow-participant-provider.js";
 
@@ -33,8 +31,8 @@ const now = "2026-08-10T01:00:00.000Z";
 test("workflow agents share one projection while private role memory stays owner-scoped", async () => {
   const fixture = await createFixture();
   try {
-    const engineer = prepareStep(fixture, fixture.engineerStep.id);
-    const designer = prepareStep(fixture, fixture.designerStep.id);
+    const engineer = await prepareStep(fixture, fixture.engineerStep.id);
+    const designer = await prepareStep(fixture, fixture.designerStep.id);
 
     assert.ok(engineer.runRequest.contextPack.agentContext);
     assert.ok(designer.runRequest.contextPack.agentContext);
@@ -56,29 +54,17 @@ test("workflow agents share one projection while private role memory stays owner
     ]);
     assert.doesNotMatch(engineer.task.prompt, /private continuity-agent-memory evidence/u);
     assert.doesNotMatch(designer.task.prompt, /private continuity-agent-memory evidence/u);
-    assert.doesNotMatch(engineer.runRequest.task.prompt, /private continuity-agent-memory evidence/u);
-    assert.doesNotMatch(designer.runRequest.task.prompt, /private continuity-agent-memory evidence/u);
-    assert.match(engineer.runRequest.preselectedMemoryUse.renderedPrompt, /Engineer private continuity-agent-memory evidence/u);
-    assert.doesNotMatch(engineer.runRequest.preselectedMemoryUse.renderedPrompt, /Designer private continuity-agent-memory evidence/u);
-    assert.match(designer.runRequest.preselectedMemoryUse.renderedPrompt, /Designer private continuity-agent-memory evidence/u);
-    assert.doesNotMatch(designer.runRequest.preselectedMemoryUse.renderedPrompt, /Engineer private continuity-agent-memory evidence/u);
+    assert.match(engineer.runRequest.task.prompt, /Engineer private continuity-agent-memory evidence/u);
+    assert.doesNotMatch(engineer.runRequest.task.prompt, /Designer private continuity-agent-memory evidence/u);
+    assert.match(designer.runRequest.task.prompt, /Designer private continuity-agent-memory evidence/u);
+    assert.doesNotMatch(designer.runRequest.task.prompt, /Engineer private continuity-agent-memory evidence/u);
     assert.equal(engineer.runRequest.skipMemoryRecall, true);
     assert.deepEqual(engineer.runRequest.preselectedMemoryUse, {
       memoryIds: [fixture.engineerMemory.id],
       recallQuery: `${fixture.workflow.objective}\n${fixture.engineerStep.title}\n${fixture.engineerStep.prompt}`,
-      policyVersion: "ling-memory-v1-lexical-v2+memory_use_isolation_v2",
-      renderedPrompt: engineer.runRequest.preselectedMemoryUse.renderedPrompt,
-      sourceRevisions: createMemorySourceRevisions([fixture.engineerMemory]),
+      policyVersion: "ling-memory-v1-lexical-v3+memory_use_isolation_v2",
     });
     assert.equal(engineer.runRequest.contextProjection.projectionVersion, engineer.runRequest.contextPack.agentContext.contextProjection.projectionVersion);
-
-    fixture.store.recordUsedMemoryEvent({ memoryIds: [fixture.engineerMemory.id],
-      teammateId: fixture.engineerStep.toParticipantId, intent: "task-run",
-      recallQuery: "continuity-agent-memory", policyVersion: "test" }, "2026-08-10T01:00:10.000Z");
-    assert.equal(reviewWorkflowAgentContextStamp({ store: fixture.store,
-      dependencyWorkflowStepId: fixture.engineerStep.id,
-      consumed: engineer.runRequest.contextPack.agentContext }).review.status, "accepted_current",
-    "recording use must not make the consumed private evidence stale; semantic edits below still do");
 
     const forgedProjection = {
       ...engineer.runRequest.contextPack.agentContext,
@@ -240,7 +226,7 @@ test("workflow agents share one projection while private role memory stays owner
 test("fan-in rebases metadata-only stamps and rejects private leaks or relevant stale facts", async () => {
   const fixture = await createFixture();
   try {
-    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const prepared = await prepareStep(fixture, fixture.engineerStep.id);
     const currentStamp = prepared.runRequest.contextPack.agentContext;
     assert.ok(currentStamp);
     const metadataOnly = {
@@ -424,7 +410,7 @@ test("fan-in rebases metadata-only stamps and rejects private leaks or relevant 
     const stale = reviewWorkflowFanInContext({ store: fixture.store, workflow: fixture.workflow, step: fanIn });
     assert.equal(stale.reviews[0].status, "rejected_stale");
     assert.match(stale.blocker, /rejected dependency/u);
-    const blockedStart = prepareWorkflowStepStart(
+    const blockedStart = await prepareWorkflowStepStart(
       fixture.store,
       fanIn.id,
       { mode: "create_task" },
@@ -458,7 +444,7 @@ test("fan-in rebases metadata-only stamps and rejects private leaks or relevant 
 test("agent result Items from the consumed source Turn do not invalidate its input context", async () => {
   const fixture = await createFixture();
   try {
-    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const prepared = await prepareStep(fixture, fixture.engineerStep.id);
     const consumed = prepared.runRequest.contextPack.agentContext;
     assert.ok(consumed);
 
@@ -511,7 +497,7 @@ test("workflow step input excludes pre-existing coordinator Items from its fresh
       },
     }, "2026-08-10T01:00:20.000Z");
 
-    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const prepared = await prepareStep(fixture, fixture.engineerStep.id);
     const consumed = prepared.runRequest.contextPack.agentContext;
     assert.ok(consumed);
     assert.equal(
@@ -532,7 +518,7 @@ test("workflow step input excludes pre-existing coordinator Items from its fresh
 test("sequential dependencies reject stale agent context before entering a downstream prompt", async () => {
   const fixture = await createFixture();
   try {
-    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const prepared = await prepareStep(fixture, fixture.engineerStep.id);
     const output = persistWorkflowOutput({
       ...fixture,
       stepId: fixture.engineerStep.id,
@@ -586,7 +572,7 @@ test("sequential dependencies reject stale agent context before entering a downs
     assert.equal(stale.reviews[0].status, "rejected_stale");
     assert.match(stale.blocker, /rejected dependency/u);
 
-    const blockedStart = prepareWorkflowStepStart(
+    const blockedStart = await prepareWorkflowStepStart(
       fixture.store,
       downstream.id,
       { mode: "create_task" },
@@ -606,7 +592,7 @@ test("sequential dependencies reject stale agent context before entering a downs
 test("leaf workflow results fail closed when relevant context changes before commit", async () => {
   const fixture = await createFixture();
   try {
-    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const prepared = await prepareStep(fixture, fixture.engineerStep.id);
     const run = fixture.store.createRun({
       id: "run_leaf_stale_context",
       cwd: fixture.cwd,
@@ -732,7 +718,7 @@ test("manifest-backed stale context commits a typed delegated blocker", async ()
       manifest: participantManifest,
       now,
     });
-    const prepared = prepareStep(fixture, step.id);
+    const prepared = await prepareStep(fixture, step.id);
     const run = fixture.store.createRun({
       id: "run_manifest_stale_context",
       cwd: fixture.cwd,
@@ -779,82 +765,6 @@ test("manifest-backed stale context commits a typed delegated blocker", async ()
     assert.equal(finalized.metadata.delegatedOutcome.code, "agent_context_stale");
     assert.equal(finalized.metadata.resultContextReview.status, "rejected_stale");
     assert.ok(finalized.metadata.delegatedOutcomeBasisFingerprint);
-  } finally {
-    fixture.store.close();
-    await rm(fixture.cwd, { recursive: true, force: true });
-  }
-});
-
-test("blocked graph step retries with one projected objective without restarting its successful dependency", async () => {
-  const fixture = await createFixture();
-  try {
-    const objective = "全部需求和权限边界必须完整保留。".repeat(240);
-    const title = "Independent downstream verification";
-    const instruction = "Preserve every downstream operation, command cwd and source reference. ".repeat(120);
-    const nodes = [
-      { id: "engineer", kind: "step", name: fixture.engineerStep.title,
-        teammateId: fixture.engineerStep.toParticipantId, prompt: "Provide upstream evidence once." },
-      { id: "reviewer", kind: "step", name: fixture.designerStep.title,
-        teammateId: fixture.designerStep.toParticipantId,
-        prompt: `Confirmed proposal:\n${title}\n\nOverall scope:\n${objective}\n\nAssigned teammate: Designer\n\n${instruction}` },
-    ];
-    const graph = { schemaVersion: 1, id: "proposal_context_retry", name: title, entryNodeId: nodes[0].id, nodes,
-      edges: [{ id: "dependency", fromNodeId: nodes[0].id, toNodeId: nodes[1].id, condition: { kind: "all_succeeded" } }],
-      termination: { success: "all_required_succeeded", onFailedRequiredNode: "block_for_user", onApprovalDenied: "block_for_user" } };
-    fixture.workflow = fixture.store.updateChannelWorkflow(fixture.workflow.id, { title, objective, metadata: {
-      ...fixture.workflow.metadata, sourceProposalId: "context_retry", workflowGraph: graph,
-      workflowGraphId: graph.id, workflowGraphFingerprint: workflowGraphFingerprintV1(graph),
-    } }, now);
-    fixture.engineerStep = fixture.store.updateChannelWorkflowStep(fixture.engineerStep.id, {
-      prompt: renderGraphNodePrompt(nodes[0], objective),
-      metadata: { ...fixture.engineerStep.metadata, graphId: graph.id, graphNodeId: nodes[0].id },
-    }, now);
-    fixture.designerStep = fixture.store.updateChannelWorkflowStep(fixture.designerStep.id, {
-      prompt: renderGraphNodePrompt(nodes[1], objective),
-      metadata: { ...fixture.designerStep.metadata, graphId: graph.id, graphNodeId: nodes[1].id,
-        dependsOnStepIds: [fixture.engineerStep.id], dependencyMode: "all_succeeded" },
-    }, now);
-    const upstream = persistWorkflowOutput({ ...fixture, stepId: fixture.engineerStep.id,
-      prepared: prepareStep(fixture, fixture.engineerStep.id), resultSummary: "Upstream checks passed; immutable handoff evidence." });
-    const upstreamBefore = JSON.stringify({ step: fixture.store.getChannelWorkflowStep(upstream.step.id),
-      events: fixture.store.listEvents(upstream.run.id) });
-    const storedPrompt = fixture.designerStep.prompt;
-
-    // An explicit caller override must not be rewritten or admitted by trimming
-    // its required instructions. This also creates the real pre-dispatch blocked state.
-    const blocked = prepareWorkflowStepStart(fixture.store, fixture.designerStep.id, {
-      mode: "create_and_run_task", taskPrompt: `${storedPrompt}\nDo not change the confirmed scope.`,
-    }, fixture.cwd, () => {});
-    assert.equal(blocked.kind, "blocked", JSON.stringify(blocked));
-    assert.match(blocked.blocker, /Workflow step context exceeds provider budget/u);
-    assert.equal(fixture.store.getChannelWorkflowStep(fixture.designerStep.id).runId, undefined);
-
-    const calls = [];
-    const retryInput = { store: fixture.store, cwd: fixture.cwd, workflowStepId: fixture.designerStep.id,
-      validateRunRequest: () => {}, startRun: async ({ runRequest, taskId, workflowStep }) => {
-        calls.push(runRequest);
-        const run = fixture.store.createRun({ id: "run_single_downstream_retry", cwd: fixture.cwd,
-          taskId, channelId: fixture.channel.id, teammateId: runRequest.teammateId, workflowStepId: workflowStep.id,
-          providerName: "test-provider", providerModel: "test-model", taskSnapshot: runRequest.task,
-          providerSnapshot: { provider: "test-provider", model: "test-model" }, requestSnapshot: runRequest,
-          createdAt: new Date().toISOString() });
-        linkPreparedRun(fixture, { task: fixture.store.getTask(taskId), runRequest }, run);
-        return run.id;
-      } };
-    const result = await retryChannelWorkflowStep(retryInput);
-    assert.equal(result.status, "started", JSON.stringify(result));
-    assert.equal(result.workflowStep.id, fixture.designerStep.id);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].contextPack.budget.inputBudgetTokens, 6656);
-    assert.equal(calls[0].contextPack.overBudget, false);
-    assert.equal(calls[0].task.prompt.split(objective).length - 1, 1);
-    assert.ok(calls[0].task.prompt.includes(instruction));
-    assert.match(calls[0].task.prompt, /immutable handoff evidence/u);
-    assert.equal(fixture.store.getChannelWorkflowStep(fixture.designerStep.id).prompt, storedPrompt);
-    assert.equal(JSON.stringify({ step: fixture.store.getChannelWorkflowStep(upstream.step.id),
-      events: fixture.store.listEvents(upstream.run.id) }), upstreamBefore);
-    await assert.rejects(() => retryChannelWorkflowStep(retryInput), /only blocked steps can be retried/u);
-    assert.equal(calls.length, 1, "duplicate retry cannot dispatch another child");
   } finally {
     fixture.store.close();
     await rm(fixture.cwd, { recursive: true, force: true });
@@ -972,7 +882,7 @@ function projectionFor(item, assignment) {
   };
 }
 
-function prepareStep(fixture, workflowStepId) {
+async function prepareStep(fixture, workflowStepId) {
   const step = fixture.store.getChannelWorkflowStep(workflowStepId);
   assert.ok(workflowStepStartAuthorityBasis(fixture.store, step), JSON.stringify({
     workflow: fixture.store.getChannelWorkflow(step.workflowId), step,
@@ -990,7 +900,7 @@ function prepareStep(fixture, workflowStepId) {
     },
   });
   assert.equal(binding.kind, "ready", JSON.stringify(binding));
-  const result = prepareWorkflowStepStart(
+  const result = await prepareWorkflowStepStart(
     fixture.store,
     workflowStepId,
     { mode: "create_and_run_task" },

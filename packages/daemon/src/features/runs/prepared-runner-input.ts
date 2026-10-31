@@ -1,8 +1,9 @@
+import { createHash } from "node:crypto";
+import { resolveAutomaticMemoryRecallScope } from "../memory/recall-service.js";
 import { isDeepStrictEqual } from "node:util";
 import { isHostCapabilityToolDefinitionV1 } from "@ling-stack/contracts";
-import { redactSecrets, type RunStore, type SkillSourceRuntimeContext } from "@ling-stack/core";
-import { assertPreparedPiTaskInput, DELEGATION_TOOL_NAMES, readPreparedPiInput,
-  type PiRunnerPreparedInput, type PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import { redactSecrets, type RunStore, type SkillDefinition, type SkillSourceRuntimeContext } from "@ling-stack/core";
+import { assertPreparedPiTaskInput, readPreparedPiInput, type PiRunnerPreparedInput, type PiRunnerRunOptions } from "@ling-stack/runner-pi";
 import { HttpError } from "../../errors.js";
 import { isRecord } from "../../shared/validation.js";
 import type { RunRequest } from "./schemas.js";
@@ -11,6 +12,18 @@ import { inlineProviderDescriptor } from "../conversations/normal-conversation-p
 const inputKeys = ["cwd", "task", "provider", "tools", "mcpTools", "thinkingLevel", "reasoningSummary", "systemPrompt",
   "appendSystemPrompt", "agentDir", "runtimePaths", "runtimeToolFeatures", "mediaGenerationTools", "initialToolSurface", "hostCapabilityTools"] as const;
 type PreparedOptions = Omit<Pick<PiRunnerRunOptions, (typeof inputKeys)[number]>, "tools"> & { readonly tools?: RunRequest["tools"] };
+export interface SkillDefinitionRuntimeSnapshot {
+  readonly skillId: string;
+  readonly revisionId?: string;
+  readonly definitionHash: string;
+}
+
+export function captureSkillDefinitionSnapshot(store: RunStore, definition: SkillDefinition): SkillDefinitionRuntimeSnapshot {
+  const head = store.getSkillDefinitionRevision(definition.id);
+  return { skillId: definition.id, ...(head && isDeepStrictEqual(head.afterDefinition, definition) ? { revisionId: head.id } : {}),
+    definitionHash: `sha256:${createHash("sha256").update(JSON.stringify(definition)).digest("hex")}` };
+}
+
 export interface PreparedRunnerInput {
   readonly schemaVersion: 1;
   readonly runnerId: string;
@@ -19,6 +32,7 @@ export interface PreparedRunnerInput {
   readonly preparedInput: PiRunnerPreparedInput;
   readonly usedMemory?: RunRequest["preselectedMemoryUse"];
   readonly skillSourceContext?: SkillSourceRuntimeContext;
+  readonly skillDefinitionSnapshot?: SkillDefinitionRuntimeSnapshot;
 }
 
 /** Capture only model input and provenance. Never persist callbacks, secrets, leases or approvals. */
@@ -28,12 +42,13 @@ export function capturePreparedRunnerInput(input: {
   readonly preparedInput: PiRunnerPreparedInput;
   readonly usedMemory?: RunRequest["preselectedMemoryUse"];
   readonly skillSourceContext?: SkillSourceRuntimeContext;
+  readonly skillDefinitionSnapshot?: SkillDefinitionRuntimeSnapshot;
 }): PreparedRunnerInput {
   const options = Object.fromEntries(inputKeys.map((key) => [key, input.options[key]]));
   options.provider = inlineProviderDescriptor(input.options.provider);
   return readPreparedRunnerInput(json({ schemaVersion: 1, runnerId: input.runnerId, input: options,
     toolHydrationEnabled: input.options.initialToolSurface?.toolHydration ?? Boolean(input.options.onToolHydrationRequest),
-    preparedInput: input.preparedInput, usedMemory: input.usedMemory, skillSourceContext: input.skillSourceContext }), input.options);
+    preparedInput: input.preparedInput, usedMemory: input.usedMemory, skillSourceContext: input.skillSourceContext, skillDefinitionSnapshot: input.skillDefinitionSnapshot }), input.options);
 }
 
 /** Rebind credentials and current policy only after matching the frozen non-secret configuration. */
@@ -54,8 +69,6 @@ export function restorePreparedRunnerOptions(
   });
   if (payload.toolHydrationEnabled && !(current.initialToolSurface?.toolHydration ?? Boolean(current.onToolHydrationRequest)) ||
     payload.input.initialToolSurface?.userInput === true && current.initialToolSurface?.userInput !== true ||
-    payload.input.initialToolSurface?.delegation === true && current.initialToolSurface?.delegation !== true ||
-    (payload.input.initialToolSurface?.nativeFileCreate === true) !== (current.initialToolSurface?.nativeFileCreate === true) ||
     !requiredRuntimeToolFeaturesRemainAvailable(payload.input.runtimeToolFeatures, current.runtimeToolFeatures)) {
     throw new HttpError(409, "prepared_tool_capability_changed", "Prepared runtime tool capabilities changed.");
   }
@@ -78,19 +91,32 @@ export function restorePreparedRunnerOptions(
 /** Frozen text is not an entitlement to expired/revoked/foreign Memory. No fresh selection. */
 export function assertPreparedRunnerMemoryCurrent(store: RunStore, request: RunRequest, payload: PreparedRunnerInput): void {
   const ids = payload.usedMemory?.memoryIds ?? [];
-  const eligible = store.getEligibleMemoryIdsForRecall({ teammateId: request.teammateId, channelId: request.task.channelId,
-    taskId: request.task.id, intent: "task-run", query: "" }, ids);
+  if (ids.length === 0) return;
+  const scope = resolveAutomaticMemoryRecallScope(store, { teammateId: request.teammateId, channelId: request.task.channelId,
+    taskId: request.task.id, intent: "task-run", query: "" },
+  request.workflowStepId ? { workflowStepId: request.workflowStepId } : undefined);
+  const eligible = scope ? store.getEligibleMemoryIdsForRecall(scope, ids) : [];
   if (eligible.length !== ids.length) throw new HttpError(409, "prepared_memory_unavailable", "A prepared Memory source is no longer eligible.");
 }
 export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRunOptions, "cwd" | "task">): PreparedRunnerInput {
   if (!isRecord(value) || value.schemaVersion !== 1 || typeof value.runnerId !== "string" || !value.runnerId ||
     typeof value.toolHydrationEnabled !== "boolean" || !isRecord(value.input) ||
-    Object.keys(value).some((key) => !["schemaVersion", "runnerId", "input", "toolHydrationEnabled", "preparedInput", "usedMemory", "skillSourceContext"].includes(key)) ||
+    Object.keys(value).some((key) => !["schemaVersion", "runnerId", "input", "toolHydrationEnabled", "preparedInput", "usedMemory", "skillSourceContext", "skillDefinitionSnapshot"].includes(key)) ||
     Object.keys(value.input).some((key) => !(inputKeys as readonly string[]).includes(key)) ||
     value.input.cwd !== request.cwd || !isDeepStrictEqual(value.input.task, json(request.task)) ||
     !isRecord(value.input.provider) || "apiKey" in value.input.provider || "headers" in value.input.provider ||
     !isDeepStrictEqual(redactSecrets(value), value)) throw new Error("Invalid prepared execution payload");
   const prepared = readPreparedPiInput(value.preparedInput);
+  if (value.skillDefinitionSnapshot !== undefined) {
+    const snapshot = value.skillDefinitionSnapshot;
+    if (!isRecord(snapshot) || typeof snapshot.skillId !== "string" || !snapshot.skillId ||
+      typeof snapshot.definitionHash !== "string" || !/^sha256:[a-f0-9]{64}$/.test(snapshot.definitionHash) ||
+      (snapshot.revisionId !== undefined && (typeof snapshot.revisionId !== "string" || !snapshot.revisionId)) ||
+      Object.keys(snapshot).some(key => !["skillId", "revisionId", "definitionHash"].includes(key)) ||
+      (isRecord(value.skillSourceContext) && snapshot.skillId !== value.skillSourceContext.skillId)) {
+      throw new Error("Invalid prepared skill definition snapshot");
+    }
+  }
   if (value.skillSourceContext !== undefined) {
     const context = value.skillSourceContext;
     if (!isRecord(context) || typeof context.skillId !== "string" || !context.skillId || typeof context.loaded !== "boolean") {
@@ -109,24 +135,11 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
   }
   if (value.input.initialToolSurface !== undefined) {
     const surface = value.input.initialToolSurface;
-    if (!isRecord(surface) || Object.keys(surface).some(key => !["mediaGeneration", "toolHydration", "userInput", "delegation", "nativeFileCreate"].includes(key)) ||
+    if (!isRecord(surface) || Object.keys(surface).some(key => !["mediaGeneration", "toolHydration", "userInput"].includes(key)) ||
       Object.values(surface).some(selected => typeof selected !== "boolean") ||
-      surface.userInput !== undefined && prepared.tools.some(tool => tool.name === "request_user_input") !== surface.userInput ||
-      prepared.tools.filter(tool => (DELEGATION_TOOL_NAMES as readonly string[]).includes(tool.name)).length
-        !== (surface.delegation === true ? DELEGATION_TOOL_NAMES.length : 0)) {
+      surface.userInput !== undefined && prepared.tools.some(tool => tool.name === "request_user_input") !== surface.userInput) {
       throw new Error("Invalid prepared user-input tool surface");
     }
-  }
-  const write = prepared.tools.find(tool => tool.name === "write");
-  if (write) {
-    const rawParameters: unknown = write.parameters;
-    const parameters = isRecord(rawParameters) ? rawParameters : {};
-    const properties = isRecord(parameters.properties) ? parameters.properties : {};
-    const native = parameters.additionalProperties === false && parameters.anyOf === undefined
-      && isDeepStrictEqual(parameters.required, ["path", "content"])
-      && isDeepStrictEqual(Object.keys(properties).sort(), ["content", "path"]);
-    const selected = isRecord(value.input.initialToolSurface) && value.input.initialToolSurface.nativeFileCreate === true;
-    if (native !== selected) throw new Error("Invalid prepared native-create tool surface");
   }
   if (value.input.hostCapabilityTools !== undefined && (!Array.isArray(value.input.hostCapabilityTools) ||
     !value.input.hostCapabilityTools.every(isHostCapabilityToolDefinitionV1) ||

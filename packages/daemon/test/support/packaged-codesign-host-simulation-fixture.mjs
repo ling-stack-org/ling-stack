@@ -69,23 +69,25 @@ export const errno = (code, message = code) => Object.assign(new Error(message),
 export async function createCodesignHostSimulation(t, { electron = true, reviewedPublication = false } = {}) {
   // Finish dependency loading before builtin observers; new source modules still
   // execute their real code and capture their own Host snapshot after installation.
-  const preloadedModules = ["electron-node-resources.js", "macos-native-command.js", "macos-sandbox-backend.js", "protected-host-bootstrap-domain.js",
-    "protected-host-stage-paths.js", "macos-seatbelt-profile.js", "protected-host-domain-paths.js", "protected-host-actor-domain.js",
-    "protected-host-original-entry-manifest.js", "protected-host-office-directory-window.js",
-    "../../features/office-documents/office-local-native-runtime.js", "../../features/runs/workflow-operation-snapshot.js",
-    "../../features/channels/channel-command-input-policy.js"];
-  await Promise.all(preloadedModules.map(path => import(moduleUrl("runtime/sandbox/" + path))));
-  const coreUrl = import.meta.resolve("@ling-stack/core");
-  await import(coreUrl);
+  const preloadedModulePaths = ["electron-node-resources.js", "macos-native-command.js", "macos-sandbox-backend.js", "protected-host-bootstrap-domain.js",
+    "protected-host-stage-paths.js"];
+  await Promise.all(preloadedModulePaths.map(path => import(moduleUrl("runtime/sandbox/" + path))));
   const originalHash = crypto.createHash;
-  // Preload only the two real, query-isolated compiled source files. An original
+  // Preload the real, query-isolated compiled source files. An original
   // readFileSync passthrough would still call our mocked openSync internally.
   const loaderBytes = new Map(["packaged-codesign-host-source.js", "packaged-restricted-command-bootstrap.js",
     "packaged-codesign-held-file.js", "packaged-codesign-native-protocol.js", "packaged-codesign-published-review.js",
     "protected-host-actor-inventory.js", "protected-host-staging.js"]
     .map(path => { const actual = join(dist, "runtime/sandbox", path); return [actual, fs.readFileSync(actual)]; }));
-  const resolvablePaths = new Set([...loaderBytes.keys(),
-    ...preloadedModules.map(path => join(dist, "runtime/sandbox", path))]);
+  // Absolute query URLs and their fresh import edges still make Node's default
+  // resolver call realpathSync before load(), entering the virtual FS mock.
+  // Resolve only these exact, already-loaded dependencies and captured source
+  // paths without filesystem I/O. Unknown paths keep the strict virtual boundary.
+  const resolutionPaths = new Set([...loaderBytes.keys(), ...[...preloadedModulePaths,
+    "macos-seatbelt-profile.js", "protected-host-domain-paths.js", "protected-host-actor-domain.js",
+    "protected-host-original-entry-manifest.js", "protected-host-office-directory-window.js"]
+    .map(path => join(dist, "runtime/sandbox", path)), join(dist, "features/office-documents/office-local-native-runtime.js")]);
+  const coreUrl = import.meta.resolve("@ling-stack/core");
   // The ESM loader has its own captured readFileSync, which still enters openSync.
   // Supply exact existing dist bytes through the supported loader hook instead
   // of allowing any real filesystem descriptor through the mechanism observer.
@@ -112,17 +114,12 @@ export async function createCodesignHostSimulation(t, { electron = true, reviewe
       return { url: sourceUrl, shortCircuit: true };
     }
     if (specifier === "@ling-stack/core" && context.parentURL?.startsWith("file:")
-      && resolvablePaths.has(fileURLToPath(context.parentURL))) {
+      && resolutionPaths.has(fileURLToPath(context.parentURL))) {
       return { url: coreUrl, shortCircuit: true };
     }
-    // Node resolves file identity before entering load. Keep that lookup inside
-    // the exact preloaded module set, without routing loader stat calls through
-    // the virtual Host filesystem or permitting any real filesystem passthrough.
-    const candidate = specifier.startsWith("file:") ? new URL(specifier)
-      : (specifier.startsWith("./") || specifier.startsWith("../")) && context.parentURL?.startsWith("file:")
-        ? new URL(specifier, context.parentURL) : undefined;
-    if (candidate && resolvablePaths.has(fileURLToPath(candidate))) {
-      return { url: candidate.href, shortCircuit: true };
+    if (specifier.startsWith("file:") || specifier.startsWith("./") || specifier.startsWith("../")) {
+      const url = new URL(specifier, context.parentURL);
+      if (resolutionPaths.has(fileURLToPath(url))) return { url: url.href, shortCircuit: true };
     }
     return nextResolve(specifier, context);
   }, load(url, context, nextLoad) {
