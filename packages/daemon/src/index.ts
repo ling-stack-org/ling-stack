@@ -247,7 +247,8 @@ export interface DaemonServer {
   /** Trusted embedding only. Never serialize this object into health or browser responses. */
   readonly engineManagement: EngineManagementFeature["credentials"];
   start(): Promise<void>;
-  stop(): Promise<void>;
+  /** CLI observes the original physical drain, not a bounded media observation. */
+  stop(options?: { readonly waitForOwnedDrain?: boolean }): Promise<void>;
 }
 
 export function createDaemonServer(
@@ -976,7 +977,7 @@ export function createDaemonServer(
         });
       }, () => daemon.stop());
     },
-    stop: async () => {
+    stop: async (options) => {
       learningReviewCoordinator?.beginShutdown();
       for (const service of memorySemanticServices.values()) service.beginShutdown();
       humanEvaluations.close();
@@ -1033,7 +1034,9 @@ export function createDaemonServer(
           () => ({ ok: true as const }),
           (error: unknown) => ({ ok: false as const, error }),
         );
-        await storeRegistry.mediaLocalExecutions.waitForIdle();
+        await storeRegistry.mediaLocalExecutions.waitForIdle(
+          options?.waitForOwnedDrain === true ? undefined : 5_000,
+        );
         runtimeSupervisor.releaseAll();
         storeRegistry.closeAll();
         const engineShutdown = await engineManagementShutdown;
