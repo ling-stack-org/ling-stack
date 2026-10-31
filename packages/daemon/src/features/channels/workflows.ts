@@ -2,6 +2,7 @@ import { recallMemory } from "../memory/recall-service.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   DEFAULT_WORKSPACE_ID,
+  effectiveWorkflowPreGate,
   inspectWorkflowPreApproval,
   type ApprovalRequest,
   type ChannelWorkflow,
@@ -714,34 +715,40 @@ export async function prepareWorkflowStepStart(
   }
 
   const now = new Date().toISOString();
-  const overrideError = workflowPreApprovalStartOverrideError(step, channel, input,
-    inspectWorkflowPreApproval(store, step, now));
+  const initialPreApproval = inspectWorkflowPreApproval(store, step, now);
+  const overrideError = workflowPreApprovalStartOverrideError(step, channel, input, initialPreApproval);
   if (overrideError) return overrideError;
   const executionPermit = createWorkflowPreApprovalExecutionPermit(step, channel, input);
-  const preApproval = prepareWorkflowPreApproval(store, step, executionPermit, now);
-  if (preApproval.kind !== "continue") return preApproval;
-  // Resolving approval may have moved waiting -> running. Use that persisted CAS
-  // basis below, never the pre-resolution snapshot or the request's approved text.
-  const currentStep = store.getChannelWorkflowStep(workflowStepId);
-  const currentWorkflow = currentStep && store.getChannelWorkflow(currentStep.workflowId);
-  if (!currentStep || !currentWorkflow) {
-    return { kind: "error", statusCode: 409, code: "workflow_pre_approval_basis_stale", message: "Workflow changed during pre-approval admission." };
+  // Ungated starts retain their established admission path even when a
+  // manifest-backed step is malformed; the provider preflight below owns the
+  // user-facing blocked result for a missing frozen binding.
+  let preApprovalEvidence = initialPreApproval;
+  if (effectiveWorkflowPreGate(step, step.status, workflow.title)) {
+    const preApproval = prepareWorkflowPreApproval(store, step, executionPermit, now);
+    if (preApproval.kind !== "continue") return preApproval;
+    // Resolving approval may have moved waiting -> running. Use that persisted CAS
+    // basis below, never the pre-resolution snapshot or the request's approved text.
+    const currentStep = store.getChannelWorkflowStep(workflowStepId);
+    const currentWorkflow = currentStep && store.getChannelWorkflow(currentStep.workflowId);
+    if (!currentStep || !currentWorkflow) {
+      return { kind: "error", statusCode: 409, code: "workflow_pre_approval_basis_stale", message: "Workflow changed during pre-approval admission." };
+    }
+    preApprovalEvidence = inspectWorkflowPreApproval(store, currentStep, now, executionPermit);
+    if (preApprovalEvidence.status === "pending") {
+      return { kind: "waiting_for_approval", workflowId: currentWorkflow.id, approval: preApprovalEvidence.approval };
+    }
+    if (preApprovalEvidence.status === "blocked") {
+      return { kind: "blocked", workflowId: currentWorkflow.id,
+        blocker: preApprovalEvidence.approval.decisionReason ?? `Workflow step pre-approval ${preApprovalEvidence.code}.` };
+    }
+    if (preApprovalEvidence.status === "required" || preApprovalEvidence.status === "stale") {
+      return { kind: "error", statusCode: 409,
+        code: preApprovalEvidence.status === "stale" ? preApprovalEvidence.code : "workflow_pre_approval_required",
+        message: "Workflow pre-approval changed before execution preparation. Refresh the workflow and explicitly retry the current definition." };
+    }
+    step = currentStep;
+    workflow = currentWorkflow;
   }
-  const preApprovalEvidence = inspectWorkflowPreApproval(store, currentStep, now, executionPermit);
-  if (preApprovalEvidence.status === "pending") {
-    return { kind: "waiting_for_approval", workflowId: currentWorkflow.id, approval: preApprovalEvidence.approval };
-  }
-  if (preApprovalEvidence.status === "blocked") {
-    return { kind: "blocked", workflowId: currentWorkflow.id,
-      blocker: preApprovalEvidence.approval.decisionReason ?? `Workflow step pre-approval ${preApprovalEvidence.code}.` };
-  }
-  if (preApprovalEvidence.status === "required" || preApprovalEvidence.status === "stale") {
-    return { kind: "error", statusCode: 409,
-      code: preApprovalEvidence.status === "stale" ? preApprovalEvidence.code : "workflow_pre_approval_required",
-      message: "Workflow pre-approval changed before execution preparation. Refresh the workflow and explicitly retry the current definition." };
-  }
-  step = currentStep;
-  workflow = currentWorkflow;
   store.expireResourceLeases(now);
   const lease = store.acquireResourceLease({
     workspaceId: DEFAULT_WORKSPACE_ID,
