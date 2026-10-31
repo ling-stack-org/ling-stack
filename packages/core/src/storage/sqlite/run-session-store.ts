@@ -1,3 +1,4 @@
+import { assertChannelSessionThreadWritable } from "./channel-session-admission.js";
 import type { SQLOutputValue } from "node:sqlite";
 import type { CreateStateTransitionEventInput, StateTransitionEvent } from "../../channel-runtime-types.js";
 import { getRunEventLogPath, type LingStackRuntimePaths } from "../../runtime-paths.js";
@@ -92,6 +93,12 @@ export class SqliteRunSessionStore {
     const captured = prepared.values;
     this.ports.assertWorkspaceSnapshotFence?.(captured.cwd);
     this.assertCreationTransactionActive();
+    const sourceThreadId = captured.threadId ?? (captured.turnId
+      ? this.context.database.prepare("SELECT thread_id FROM ling_turns WHERE id = ?").get(captured.turnId)?.thread_id as string | undefined
+      : undefined);
+    if (sourceThreadId && this.context.database.prepare("SELECT channel_id FROM ling_threads WHERE id = ?").get(sourceThreadId)?.channel_id) {
+      assertChannelSessionThreadWritable(this.context.database, sourceThreadId);
+    }
     const eventLogPath = getRunEventLogPath(this.paths, captured.id);
     this.context.database
       .prepare(`
@@ -146,7 +153,7 @@ export class SqliteRunSessionStore {
         prepared.providerJson,
         prepared.requestJson,
         eventLogPath,
-        captured.threadId ?? null,
+        sourceThreadId ?? null,
         captured.workUnitId ?? null,
         captured.parentRunId ?? null,
         captured.interventionId ?? null,

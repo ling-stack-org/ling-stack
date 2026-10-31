@@ -1,3 +1,7 @@
+import { handleChannelSessions, handleChannelSessionDirectoryRepair } from "../features/channels/session-routes.js";
+import { handleMemorySemanticRoute } from "../features/memory/semantic-routes.js";
+import { handleMemoryWikiRoute } from "../features/memory/wiki-routes.js";
+import { handleLearningReviewRoute } from "../features/learning/routes.js";
 import { handleWorkSummary } from "../features/work-summary/routes.js";
 import { handleConversationExecutionSelection } from "../runtime/conversation-execution-route.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -366,7 +370,7 @@ import {
   parseWorkUnitRoute,
 } from "./routes.js";
 import { RunControlService } from "../run-control.js";
-import { allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
+import { allowLocalServiceRequest, allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
 import { handleStartupStatus } from "../startup/routes.js";
 import { handleDiagnosticsDoctor, handleDiagnosticsLogs } from "../features/diagnostics/routes.js";
@@ -647,32 +651,44 @@ export async function routeRequest(
     return;
   }
 
+
   if (url.pathname === "/startup/status" || url.pathname === "/startup/refresh") {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
     await handleStartupStatus(request, response, context);
     return;
   }
 
+
   if (url.pathname === "/diagnostics/doctor") {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
     await handleDiagnosticsDoctor(request, response, context);
     return;
   }
 
+
   if (url.pathname === "/diagnostics/logs") {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
     await handleDiagnosticsLogs(request, response, context);
     return;
   }
 
+
   if (url.pathname === "/notifications" || url.pathname === "/notifications/preferences" || url.pathname === "/notifications/stream") {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
     await handleNotifications(request, response, context);
     return;
   }
 
+
   if (url.pathname === "/im-destinations" || url.pathname.startsWith("/im-destinations/")) {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
     await handleImDestinations(request, response, context);
     return;
   }
 
+
   if (url.pathname === "/skills/marketplace/inspect") {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
     await handleSkillsMarketplaceInspect(request, response, context);
     return;
   }
@@ -1331,7 +1347,29 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/memory/semantic-policy") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleMemorySemanticRoute({ request, response, url, config, getStore: cwd => storeRegistry.getStore(cwd) });
+    return;
+  }
+  if (url.pathname === "/memory/wiki" || url.pathname.startsWith("/memory/wiki/")) {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleMemoryWikiRoute({ request, response, url, config, getStore: cwd => storeRegistry.getStore(cwd) });
+    return;
+  }
+
+  if (url.pathname === "/skills/learning-policy" || url.pathname === "/skills/learning-reviews" || url.pathname.startsWith("/skills/learning-reviews/")) {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleLearningReviewRoute({ request, response, url, config, getStore: cwd => storeRegistry.getStore(cwd),
+      coordinator: context.learningReviewCoordinator });
+    return;
+  }
+
   const skillRoute = parseSkillRoute(url.pathname);
+  if (skillRoute?.kind === "skill" && (skillRoute.action === "revision-undo"
+    || (skillRoute.action === "revisions" && request.method === "GET"))) {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+  }
   if (
     url.pathname === "/skills" ||
     url.pathname === "/skills/refresh" ||
@@ -1381,6 +1419,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/memory/recall") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
     await handleMemoryRecall(request, response, config, storeRegistry);
     return;
   }
@@ -2287,7 +2326,15 @@ export async function routeRequest(
       await handleChannelBrief(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
+    if (channelRoute.action === "sessions") {
+      await handleChannelSessions(request, response, config, storeRegistry, channelRoute.channelId, channelRoute.sessionId);
+      return;
+    }
     if (channelRoute.action === "branches") {
+      if (channelRoute.branchId && channelRoute.branchAction === "repair") {
+        await handleChannelSessionDirectoryRepair(request, response, config, storeRegistry, channelRoute.channelId, channelRoute.branchId);
+        return;
+      }
       if (channelRoute.branchId) {
         await handleChannelBranchItem(request, response, config, storeRegistry, channelRoute.channelId, channelRoute.branchId);
         return;

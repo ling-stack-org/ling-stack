@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -216,4 +216,39 @@ test("package metadata reader accepts its selected package and rejects missing, 
   }
   rmSync(path);
   assert.throws(() => readDesktopLaunchPackageMetadata(f.parent), /desktop_qa_package_metadata_invalid/u);
+});
+
+test("verified owned QA skips the browser installer while keeping the real OS HOME", async t => {
+  const qa = await import("../dist/main/qa-launch-profile.js?registration=qa");
+  const f = fixture(t);
+  qa.initializeDesktopQaLaunchProfile(f.options);
+  let calls = 0;
+  const manifest = join(f.parent, "must-not-register.json");
+  const result = await qa.installDesktopBrowserHostForLaunch({ hostPath: "/owned-qa/ling-browser-host",
+    installBrowserHost: async () => { calls++; writeFileSync(manifest, "unexpected"); } });
+  assert.equal(result, "skipped_owned_qa");
+  assert.equal(calls, 0);
+  assert.equal(existsSync(manifest), false);
+  assert.equal(f.environment.HOME, "/actual-os-home");
+});
+
+test("normal launch still calls the original browser installer with its original host path", async t => {
+  const qa = await import("../dist/main/qa-launch-profile.js?registration=normal");
+  const f = fixture(t);
+  f.environment.LING_DESKTOP_OWNED_QA_PROFILE = f.profile;
+  qa.initializeDesktopQaLaunchProfile({ ...f.options, argv: ["electron"], packageMetadata: { name: "ordinary" } });
+  const calls = [];
+  const manifest = join(f.parent, "normal-registration.json");
+  const result = await qa.installDesktopBrowserHostForLaunch({ hostPath: "/ordinary/ling-browser-host",
+    installBrowserHost: async input => { calls.push(input); writeFileSync(manifest, JSON.stringify(input)); } });
+  assert.equal(result, "registered");
+  assert.deepEqual(calls, [{ hostPath: "/ordinary/ling-browser-host" }]);
+  assert.deepEqual(JSON.parse(readFileSync(manifest, "utf8")), calls[0]);
+});
+
+test("Main routes startup browser registration through the verified QA policy", () => {
+  const source = readFileSync(new URL("../main/main.ts", import.meta.url), "utf8");
+  assert.ok(/await installDesktopBrowserHostForLaunch\(\{\s*hostPath: resources\.browserHostPath,\s*installBrowserHost,\s*\}\)/u.test(source),
+    "Main must use the QA-aware registration policy with the original installer");
+  assert.doesNotMatch(source, /await installBrowserHost\(/u);
 });

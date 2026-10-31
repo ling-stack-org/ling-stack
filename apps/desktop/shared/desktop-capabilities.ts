@@ -278,6 +278,7 @@ export interface ComputerUsePreviewPreferences {
 }
 
 export interface LingDesktopCapabilities {
+  readonly localServices?: import("./local-service-capabilities.js").DesktopLocalServiceCapabilities;
   readonly localFiles?: import("./local-file-capabilities.js").DesktopLocalFileCapabilities;
   readonly backgrounds?: import("./background-capabilities.js").DesktopBackgroundCapabilities;
   readonly humanEvaluation?: import("./human-evaluation-capabilities.js").DesktopHumanEvaluationCapabilities;

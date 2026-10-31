@@ -361,6 +361,7 @@ function mergeLingThreads(...groups: readonly (readonly LingThread[])[]): readon
 
 function isChannelDiscussionRootThread(thread: LingThread, channelId: string | undefined): boolean {
   return thread.kind === "channel_discussion" &&
+    (!("surfaceKind" in thread) || thread.surfaceKind === "channel_root") &&
     Boolean(channelId) &&
     thread.channelId === channelId &&
     !thread.parentThreadId &&

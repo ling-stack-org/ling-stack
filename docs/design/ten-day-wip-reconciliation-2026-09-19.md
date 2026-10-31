@@ -1623,14 +1623,14 @@ Daemon `build:ci` 与频道相关完整测试 **364/364** 通过。Daemon 全量
 `session-factory.ts` 的 `compaction.enabled` 改为 `true` 不能证明长任务中途安全压缩。
 真实 SDK 隔离生命周期测试本轮再跑 **16/16**，其中同时确认手动 compact 会中断活跃
 工具且不会自动续跑、overflow 仅有界重试、取消须覆盖独立摘要请求。
-H4 入口复核也确认 Pi 0.84.4 的 `tool_result` hook 替换 `content` 后，SDK 使用替换值
+H4 入口复核（历史 Pi 0.84.4）也确认 `tool_result` hook 替换 `content` 后，SDK 使用替换值
 形成后续 `tool_execution_end`；不能直接在现有 Hook 裁剪并把该事件仍称为完整 Host
 证据。下一切片要把完整原子事实与有界模型视图分离，再统一 read/search/exec/MCP/dynamic。
 这些链路收敛后才重新打包、验签、做 E6 20 个真实 GUI case 的四件套。
 
 ### 2026-09-27 E5/H2 接续：压缩生命周期的原子证据（未开启自动压缩）
 
-右侧私聊审批卡布局保持冻结；本切片没有修改 UI。Pi SDK 0.84.4 的
+右侧私聊审批卡布局保持冻结；本切片没有修改 UI。历史 Pi SDK 0.84.4 的
 `compaction_start/end` 与 assistant `message_end.usage` 已通过 Runner 白名单投影
 进入 typed RunEvent；Host 从当前执行 fence 填入 `attemptId`，SQLite 保存有序事件。
 公开事件仅包含触发原因、`sdk_installed/aborted/failed`、SDK 是否打算 retry、
@@ -1672,7 +1672,7 @@ H2 下一步是下一次模型请求前的独立 provider-dispatch fence、真�
 
 ### 2026-09-28 E5/H2 真实 SDK 切点反例
 
-此前把 threshold 压缩概括为“只在 `agent_end` 后”不准确。Pi 0.84.4 在每次
+此前把 threshold 压缩概括为“只在 `agent_end` 后”不准确。历史 Pi 0.84.4 在每次
 工具轮次与下一次 assistant 请求之间也尝试压缩；当最近工具结果大于保留窗口时，
 无法形成可用 cut point，才推迟到结束。真实 SDK fixture 用
 `keepRecentTokens=200` 复现最后一个工具执行前压缩，摘要请求后继续任务请求；

@@ -70,6 +70,17 @@ External product patterns are references, not runtime dependencies:
 
 ## Current Baseline
 
+Observation jobs use the shared daemon `procedure-observation-service`, rather than an
+internal HTTP call. The source key includes workspace, source identity, channel/teammate/task,
+effective Attempt and evidence version. Its SQLite `(workspace_id, job_key)` primary key
+replaces recent-list deduplication. Legacy keys migrate as links to existing observations;
+unversioned replays reuse them only when ownership agrees.
+
+Observation, pending candidate, generation decision and durable control-plane event commit
+under one writer transaction. Live notifications follow commit; restart uses the existing
+event replay. Concurrent writers/retries return the same logical observation. This shared
+service does not itself perform model extraction or enable background model consumption.
+
 Already implemented in Ling:
 
 - `SkillDefinition`, `SkillPack`, `SkillRegistryEntry`, `SkillImportDraft`, and
@@ -150,18 +161,15 @@ Already implemented in Ling:
 
 Current gaps:
 
-- No implemented runtime hook that automatically submits post-run observation jobs from
-  run completion or workflow fan-in. The daemon job path is policy-gated, but callers
-  still submit bounded observations explicitly.
+- Opt-in post-run learning is implemented by the [bounded learning runtime](learning-review-runtime.md).
+  Automatic workflow fan-in observation remains outside that adapter.
 - No implemented transcript-derived candidate generation from raw transcripts. Selected
   transcript snippets should become bounded observation jobs, not hidden transcript
   crawls.
-- No implemented automatic correction-to-update-candidate job yet. Correction telemetry
-  is recorded and surfaced through health; a reviewer can create an update candidate.
-- No implemented automatic observation-to-protocol-draft or observation-to-playbook-draft
-  creation yet. Channel/protocol/playbook clusters are surfaced for review; a reviewer can
-  manually convert a ready `channel_protocol` cluster into a protocol candidate and a
-  ready `playbook` cluster into a channel-local playbook candidate.
+- Explicit corrections can create pending `update_existing` candidates through bounded
+  learning; correction telemetry alone does not enroll a review job.
+- Bounded learning can propose channel protocol/playbook drafts. Standalone observation
+  clusters still require manual conversion; neither path applies or activates a draft.
 
 ## Product Rule
 

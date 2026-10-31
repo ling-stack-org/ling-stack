@@ -9,6 +9,7 @@ import {
 } from "@ling-stack/core";
 import { formatServerCatalogMessage } from "@ling-stack/localization";
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
+import { recallMemory } from "../memory/recall-service.js";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
@@ -219,7 +220,7 @@ async function completeAiChannelReply(input: {
     } catch (error) {
       observerBusError = error instanceof Error ? error.message : String(error);
     }
-    const memoryRecall = input.store.recallMemory({
+    const memoryRecall = await recallMemory(input.store, {
       teammateId: input.canonicalTeammateId,
       channelId: input.channel.id,
       intent: "channel-reply",

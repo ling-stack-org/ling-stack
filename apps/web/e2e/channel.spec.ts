@@ -104,6 +104,16 @@ function createLineagePlan(overrides: Partial<ProposedPlanArtifact>): ProposedPl
   };
 }
 
+// These legacy single-conversation fixtures explicitly record their source in the default session.
+function channelSourceMessage(id: string, body: string, linkedRunId?: string): Record<string, unknown> {
+  return {
+    id, body, linkedRunId, workspaceId: "workspace_default", channelId: "channel_engineering",
+    threadId: "thread_channel_channel_engineering", kind: "message", intent: "discuss",
+    authorType: "local-user", authorId: "local-user", mentions: [], attachmentIds: [], linkPreviewIds: [],
+    status: "ready", createdAt: "2026-05-22T00:00:00.000Z", updatedAt: "2026-05-22T00:00:00.000Z",
+  };
+}
+
 async function useEnglishLocale(page: Page): Promise<void> {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -659,7 +669,7 @@ test("channel team metrics stay in settings without a conversation expert summar
   };
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
 
   const feed = page.getByLabel("Channel message feed");
   await expect(feed.getByText("主回复保持干净，团队证据不重复展示。")).toBeVisible();
@@ -745,7 +755,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await expect(navigation.getByRole("button", { name: "Settings" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Profile" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Model Workbench" })).toHaveCount(0);
-  await navigation.getByRole("button", { name: "Engineering" }).click();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await expect.poll(async () => page.locator(".channel-left-drawer").evaluate((drawer) => {
     const fixedTop = drawer.querySelector(".sidebar-fixed-top");
@@ -754,13 +764,17 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
     return Math.round(drawer.getBoundingClientRect().width) === 292 && fixedTopOffset >= 10;
   })).toBe(true);
 
+  // Selection styling is measured independently of channel hover and focus feedback.
+  await page.getByRole("heading", { name: "Engineering", level: 1 }).click();
+  await page.mouse.move(1270, 710);
   const expanded = await page.evaluate(() => {
     const shell = document.querySelector(".app-shell");
     const leftDrawer = document.querySelector(".channel-left-drawer");
     const fixedTop = document.querySelector(".channel-left-drawer .sidebar-fixed-top");
     const scrollRegion = document.querySelector(".channel-left-drawer .sidebar-scroll-region");
     const bottom = document.querySelector(".channel-left-drawer .sidebar-bottom");
-    const selectedChannel = document.querySelector(".channel-left-drawer .sidebar-channel-group > .sidebar-row-shell.selected");
+    const selectedChannel = document.querySelector(".channel-left-drawer .sidebar-channel-container-row > .sidebar-row-shell.channel-contains-selection");
+    const selectedSession = document.querySelector('.channel-left-drawer [data-session-default="true"].selected');
     const primaryNav = document.querySelector(".channel-left-drawer .primary-nav");
     const firstSectionTitle = document.querySelector(".channel-left-drawer .sidebar-section-title");
     const settings = document.querySelector(".channel-left-drawer .config-button");
@@ -787,6 +801,8 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
       bottomTop: Math.round(bottom?.getBoundingClientRect().top ?? -1),
       selectedChannelText: selectedChannel?.textContent?.trim() ?? "",
       selectedChannelBackground: selectedChannel ? getComputedStyle(selectedChannel).backgroundColor : "",
+      selectedSessionText: selectedSession?.textContent?.trim() ?? "",
+      selectedSessionBackground: selectedSession ? getComputedStyle(selectedSession).backgroundColor : "",
       recentRowCount: recentRows.length,
       lastRecentText: lastRecent?.textContent?.trim() ?? "",
       lastRecentTop: Math.round(lastRecent?.getBoundingClientRect().top ?? -1),
@@ -814,7 +830,9 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   expect(expanded.lastRecentBottom).toBeLessThanOrEqual(expanded.scrollBottom + 1);
   expect(expanded.bottomBottomGap).toBeGreaterThanOrEqual(8);
   expect(expanded.selectedChannelText).toContain("Engineering");
-  expect(expanded.selectedChannelBackground).toBe("rgb(217, 216, 213)");
+  expect(expanded.selectedChannelBackground).toBe("rgba(0, 0, 0, 0)");
+  expect(expanded.selectedSessionText).toContain("Engineering conversation");
+  expect(expanded.selectedSessionBackground).toBe("rgb(217, 216, 213)");
   expect(expanded.primaryNavBorderBottom).toBe("0px");
   expect(expanded.sectionTitleColor).toBe("rgb(134, 134, 137)");
   expect(expanded.sectionTitleFontSize).toBe("10px");
@@ -1024,6 +1042,7 @@ test("progress popover shows active context source groups and opens source detai
   state.channelWorkflows = [
     {
       id: "workflow_sources",
+      metadata: { sourceMessageId: "msg_source_1" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Update conversation sources",
@@ -1071,13 +1090,11 @@ test("progress popover shows active context source groups and opens source detai
     .filter({ hasText: "Update conversation sources" });
   await expect(workflowEvent).toBeVisible();
   await expect(workflowEvent).toHaveAttribute("data-conversation-timeline-status", "running");
-  const activeMotion = await workflowEvent.evaluate((element) => {
-    const runningIcon = element.querySelector(".conversation-timeline-activity-main > svg");
-    return {
-      runningAnimation: runningIcon ? getComputedStyle(runningIcon).animationName : "",
-    };
-  });
-  expect(activeMotion.runningAnimation).toContain("conversation-active-spin");
+  // PR #585 moves liveness from the identifying icon to visible status text.
+  const activeLabel = workflowEvent.locator('.conversation-activity-label[data-activity-motion="running"]');
+  await expect(activeLabel).toHaveAttribute("data-activity-motion", "running");
+  await expect(activeLabel).toHaveCSS("animation-name", "conversation-activity-light");
+  await expect(workflowEvent.locator(".conversation-timeline-activity-main > svg")).toHaveCSS("animation-name", "none");
   await expect(page.locator('[data-conversation-timeline-kind="subAgentActivity"]')).toHaveCount(0);
   await expect(workflowEvent).toContainText("Engineer is working on Render source summary. 0 of 1 steps complete.");
 
@@ -1264,6 +1281,7 @@ test("channel environment surface shows read-only context and opens review", asy
   state.runs = [
     {
       id: "run_environment",
+      threadId: "thread_channel_channel_engineering",
       status: "succeeded",
       cwd,
       taskId: "task_environment",
@@ -1716,6 +1734,7 @@ test("channel environment labels review-only items as review instead of changes"
   state.runs = [
     {
       id: "run_environment_failed",
+      threadId: "thread_channel_channel_engineering",
       status: "failed",
       cwd,
       taskId: "task_environment_failed",
@@ -1853,9 +1872,11 @@ test("conversation motion respects reduced motion preference", async ({ page }) 
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "expired" });
+  state.channelMessages = [channelSourceMessage("message_source_workflow_motion", "Inspect the channel workflow progress.")];
   state.channelWorkflows = [
     {
       id: "workflow_motion",
+      metadata: { sourceMessageId: "message_source_workflow_motion" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Reduced motion workflow",
@@ -1934,11 +1955,11 @@ test("channel drawer does not flash legacy create labels in section headers", as
 
   const drawer = page.locator(".channel-left-drawer");
   await expect(drawer.getByRole("button", { name: "New channel" })).toHaveCount(0);
-  await expect(drawer.getByRole("button", { name: "Channel actions" })).toBeVisible();
+  await expect(drawer.getByRole("button", { name: "Channel actions", exact: true })).toBeVisible();
   await expect(drawer.locator(".sidebar-section-toggle small")).toHaveCount(0);
   await expect(drawer.getByText("Create", { exact: true })).toHaveCount(0);
-  await expect(drawer.locator(".sidebar-section:first-of-type .sidebar-section-action")).toHaveAttribute("data-icon-only", "true");
-  await drawer.getByRole("button", { name: "Channel actions" }).click();
+  await expect(drawer.locator('[data-sidebar-section="channels"] > .sidebar-section-title').getByRole("button", { name: "Channel actions", exact: true })).toHaveAttribute("data-icon-only", "true");
+  await drawer.getByRole("button", { name: "Channel actions", exact: true }).click();
   await expect(page.getByRole("menuitem", { name: "New channel" })).toBeVisible();
 });
 
@@ -1965,7 +1986,7 @@ test("empty channel drawer opens the new channel dialog", async ({ page }) => {
 
   await expect.poll(() => state.channels.some((channel) => isRecord(channel) && channel.name === "Launch Ops")).toBe(true);
   await expect(createChannelPanel).toHaveCount(0);
-  await expect(navigation.getByRole("button", { name: "Launch Ops" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Launch Ops", exact: true })).toBeVisible();
 });
 
 test("new channel dialog selects a project folder before create", async ({ page }) => {
@@ -1976,7 +1997,7 @@ test("new channel dialog selects a project folder before create", async ({ page 
   await page.goto("/");
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "Channel actions" }).click();
+  await navigation.getByRole("button", { name: "Channel actions", exact: true }).click();
   await page.getByRole("menuitem", { name: "New channel" }).click();
 
   const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
@@ -2014,7 +2035,7 @@ test("new channel dialog shows create failures inline", async ({ page }) => {
   await page.goto("/");
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "Channel actions" }).click();
+  await navigation.getByRole("button", { name: "Channel actions", exact: true }).click();
   await page.getByRole("menuitem", { name: "New channel" }).click();
 
   const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
@@ -2046,6 +2067,7 @@ test("channel drawer promotes pending approvals to one waiting status until reso
   });
   state.approvals.push({
     id: "approval_research",
+    runId: "run_research",
     channelId: "channel_research",
     actionType: "channel_message",
     risk: "low",
@@ -2056,6 +2078,8 @@ test("channel drawer promotes pending approvals to one waiting status until reso
     createdAt: "2026-05-22T00:02:00.000Z",
     expiresAt: "2099-01-01T00:01:00.000Z",
   });
+  state.runs.push({ ...state.runs[0], id: "run_research", taskId: undefined, channelId: "channel_research",
+    threadId: "thread_channel_channel_research", status: "waiting_for_approval" });
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -2070,7 +2094,8 @@ test("channel drawer promotes pending approvals to one waiting status until reso
   await expect(research.getByRole("status", { name: "1 pending approvals" })).toBeVisible();
 
   await research.locator(".sidebar-row-main").click();
-  await expect(research).toHaveClass(/selected/);
+  await expect(research).toHaveClass(/channel-contains-selection/);
+  await expect(drawer.locator('[data-session-id="thread_channel_channel_research"] [aria-current="page"]')).toHaveCount(1);
   await expect(research.locator(".channel-unread")).toHaveCount(0);
   await expect(research.locator('[data-sidebar-primary-status="waiting"]')).toHaveCount(1);
 });
@@ -2239,7 +2264,7 @@ test("channel runtime policy is visible while preferred specialist controls stay
   }).toEqual(["Engineering QA", "auto_route"]);
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "Channel actions" }).click();
+  await navigation.getByRole("button", { name: "Channel actions", exact: true }).click();
   await expect(page.getByRole("menuitem", { name: "New channel" })).toBeVisible();
   await page.getByRole("menuitem", { name: "New channel" }).click();
   const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
@@ -2272,8 +2297,8 @@ test("channel runtime policy is visible while preferred specialist controls stay
   expect(runtimePolicy.maxConcurrentRuns).toBe(1);
   expect(runtimePolicy.queueOnConflict).toBe(true);
   await expect(createChannelPanel).toHaveCount(0);
-  await expect(navigation.getByRole("button", { name: "Release" })).toBeVisible();
-  await navigation.getByRole("button", { name: "Release" }).click();
+  await expect(navigation.getByRole("button", { name: "Release", exact: true })).toBeVisible();
+  await navigation.getByRole("button", { name: "Release", exact: true }).click();
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
   const details = page.getByLabel("Channel management");
@@ -2316,7 +2341,7 @@ test("channel reply routing mode is not exposed in ordinary settings", async ({ 
   await expect(currentManagement.getByText("Ling Agent decides", { exact: true })).toHaveCount(0);
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "Channel actions" }).click();
+  await navigation.getByRole("button", { name: "Channel actions", exact: true }).click();
   await expect(page.getByRole("menuitem", { name: "New channel" })).toBeVisible();
   await page.getByRole("menuitem", { name: "New channel" }).click();
   const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
@@ -2508,6 +2533,12 @@ test("task proposal gate blocks only its owning channel and deny restores the Co
   });
   const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [createMockTeammate({ id: "ling_agent", displayName: "Ling Agent" })];
+  state.channelMessages = [{
+    id: "msg_channel_owned", workspaceId: "workspace_default", channelId: "channel_engineering",
+    kind: "message", intent: "discuss", authorType: "local-user", authorId: "tian",
+    body: "Review only the Engineering channel.", mentions: [], attachmentIds: [], linkPreviewIds: [], status: "ready",
+    createdAt: "2026-05-25T00:12:00.000Z", updatedAt: "2026-05-25T00:12:00.000Z",
+  }];
   state.channels.push({
     id: "channel_general",
     workspaceId: "workspace_default",
@@ -3011,7 +3042,7 @@ test("channel settings can add and remove teammates without preferred specialist
   const initialDefaultTeammateId = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering")?.defaultTeammateId;
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
 
   await page.getByRole("button", { name: "AI teammate management" }).click();
@@ -3474,7 +3505,7 @@ test("channel message feed shows usable web sources and keeps diagnostics in the
   ];
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
 
   const feed = page.getByLabel("Channel message feed");
   const sourcedReply = feed.locator(".channel-message-row").filter({ hasText: "Web-backed reply with source." });
@@ -3648,7 +3679,7 @@ test("conversation turn transcript omits web diagnostics without usable sources"
   ];
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
 
   const feed = page.getByLabel("Channel message feed");
   const reply = feed.locator('[data-conversation-timeline-kind="agentMessage"]').filter({ hasText: "Here is the AI news summary." });
@@ -3755,7 +3786,7 @@ test("channel more menu renames the selected channel", async ({ page }) => {
     return isRecord(channel) ? channel.name : "";
   }).toBe("v0.1 Smoke");
   await expect(page.getByRole("heading", { name: "v0.1 Smoke", level: 1 })).toBeVisible();
-  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "v0.1 Smoke" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "v0.1 Smoke", exact: true })).toBeVisible();
 });
 
 test("paused channels disable task run actions", async ({ page }) => {
@@ -4062,14 +4093,14 @@ test("channel composer snapshots restore draft assets and topic replies across c
   await expectSharedConversationRichBody(topicPanel);
   await topicPanel.getByLabel("Topic reply input").fill("Engineering topic reply draft");
 
-  await navigation.getByRole("button", { name: "Design" }).click();
+  await navigation.getByRole("button", { name: "Design", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Design", level: 1 })).toBeVisible();
   await expectComposerValue(composerInput, "");
   await expect(page.getByLabel("Pending message assets")).toHaveCount(0);
   await expect(page.getByLabel("Topic replies")).toHaveCount(0);
   await composerInput.fill("Design snapshot draft");
 
-  await navigation.getByRole("button", { name: "Engineering" }).click();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await expectComposerValue(composerInput, "Engineering snapshot draft https://example.com ");
   await expect(page.getByLabel("Pending message assets")).toContainText("snapshot.txt");
@@ -4077,7 +4108,7 @@ test("channel composer snapshots restore draft assets and topic replies across c
   await expect(topicPanel).toBeVisible();
   await expect(topicPanel.getByLabel("Topic reply input")).toHaveValue("Engineering topic reply draft");
 
-  await navigation.getByRole("button", { name: "Design" }).click();
+  await navigation.getByRole("button", { name: "Design", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Design", level: 1 })).toBeVisible();
   await expectComposerValue(composerInput, "Design snapshot draft");
 });
@@ -4329,7 +4360,7 @@ test("latest channel branch prompt reruns inside the same branch lane", async ({
   await mockDaemon(page, state);
   await page.goto("/");
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "Implementation branch" }).click();
+  await navigation.getByRole("button", { name: "Implementation branch", exact: true }).click();
 
   const feed = page.getByLabel("Channel message feed");
   const userRow = feed.locator(".channel-message-row.local-user");
@@ -4574,7 +4605,7 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
       actual: styles.backgroundColor,
       expected: resolveBackground("--ling-bg-code"),
     };
-  })).toEqual({ actual: "rgb(247, 247, 247)", expected: "rgb(247, 247, 247)" });
+  })).toEqual({ actual: "rgb(245, 246, 247)", expected: "rgb(245, 246, 247)" });
 
   const htmlInBashBlock = message.locator(".message-code-block").filter({ hasText: "<html" });
   await expect(htmlInBashBlock.getByText("bash")).toBeVisible();
@@ -4608,7 +4639,7 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
       actual: styles.backgroundColor,
       expected: resolveBackground("--ling-bg-code"),
     };
-  })).toEqual({ actual: "rgb(247, 247, 247)", expected: "rgb(247, 247, 247)" });
+  })).toEqual({ actual: "rgb(245, 246, 247)", expected: "rgb(245, 246, 247)" });
   await expect(message.locator(".message-code-block").filter({ hasText: "not actually a patch" })).toBeVisible();
   const unknownLanguageBlock = message.locator(".message-code-block").filter({ hasText: "plain fallback block" });
   await expect(unknownLanguageBlock.getByText("weirdlang")).toBeVisible();
@@ -4874,7 +4905,7 @@ test("channel composer applies plan mode session commands without creating slash
 
   await composerInput.fill("/plan status");
   await composer.getByRole("button", { name: "Apply command" }).click();
-  await expect(page.locator('[data-ling-overlay="toast"][data-scope="channel:channel_engineering:composer"]'))
+  await expect(page.locator('[data-ling-overlay="toast"][data-scope="channel:channel_engineering:session:thread_channel_channel_engineering:composer"]'))
     .toContainText("Plan Mode is off");
   await expect(composer).not.toContainText("Plan Mode is off");
   await expect.poll(planMode).toBe("default");
@@ -5953,7 +5984,8 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
     .filter({ hasText: "Refine channel workspace copy" });
   await expect(workflowEvent).toHaveCount(1);
   await expect(workflowEvent).toHaveAttribute("data-conversation-timeline-status", "running");
-  await expect(workflowEvent).toContainText("Working");
+  await expect(workflowEvent).toContainText("running");
+  await expect(workflowEvent.locator(".conversation-timeline-activity-main")).toHaveAttribute("aria-label", /Working/);
   await expect(timeline.locator('[data-conversation-timeline-kind="subAgentActivity"]')).toHaveCount(0);
   await expect(feed.locator(".conversation-work-cell")).toHaveCount(0);
   await expect(feed).not.toContainText("Agent branches");
@@ -6205,6 +6237,7 @@ test("completed workflow hides accepted proposal and leaves final result in defa
   state.channelWorkflows = [
     {
       id: "workflow_completed",
+      metadata: { sourceMessageId: "msg_create_readme" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Create /Users/example/ling-stack-test/README.md",
@@ -6366,6 +6399,7 @@ test("terminal workflow step suppresses stale running run surfaces", async ({ pa
   state.channelWorkflows = [
     {
       id: "workflow_stale_terminal",
+      metadata: { sourceMessageId: "msg_stale_running_workflow" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Create /Users/example/ling-stack-test/README.md",
@@ -6485,6 +6519,7 @@ test("workflow-only active transcript keeps one protocol fact while the latest s
   state.channelWorkflows = [
     {
       id: "workflow_r32_active_single",
+      metadata: { sourceMessageId: "msg_r32_active_single_request" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Create login.html",
@@ -6524,7 +6559,8 @@ test("workflow-only active transcript keeps one protocol fact while the latest s
     .filter({ hasText: "Create login.html" });
   await expect(workflowFact).toHaveCount(1);
   await expect(workflowFact).toHaveAttribute("data-conversation-timeline-status", "running");
-  await expect(workflowFact).toContainText("Working");
+  await expect(workflowFact).toContainText("running");
+  await expect(workflowFact.locator(".conversation-timeline-activity-main")).toHaveAttribute("aria-label", /Working/);
   await expect(workflowFact).toContainText("Read project structure");
   await expect(timeline).not.toContainText("Project structure inspected.");
   await expect(timeline.locator('[data-conversation-timeline-kind="subAgentActivity"]')).toHaveCount(0);
@@ -6656,6 +6692,7 @@ test("workflow-only completed transcript stays a protocol fact without invented 
   state.channelWorkflows = [
     {
       id: "workflow_r32_completed_single",
+      metadata: { sourceMessageId: "msg_r32_completed_single_request" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Create login.html",
@@ -6793,6 +6830,7 @@ test("workflow-only multi-agent transcript does not fabricate child Agent eviden
   state.channelWorkflows = [
     {
       id: "workflow_r32_parallel",
+      metadata: { sourceMessageId: "msg_r32_parallel_request" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Build login UI",
@@ -7270,6 +7308,7 @@ test("blocked workflow hides accepted proposal and leaves one protocol blocker i
   state.channelWorkflows = [
     {
       id: "workflow_blocked",
+      metadata: { sourceMessageId: "msg_blocked_readme" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Create README.md",
@@ -7365,6 +7404,7 @@ test("resolved approval-only workflow stays out of the conversation", async ({ p
   state.channelWorkflows = [
     {
       id: "workflow_approval_only_recovery",
+      metadata: { sourceMessageId: "msg_approval_only_recovery" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Review shell command",
@@ -7428,9 +7468,11 @@ test("progress popover owns workflow status while the right drawer avoids duplic
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
+  state.channelMessages = [channelSourceMessage("message_source_workflow_running_ui", "Inspect the channel workflow progress.")];
   state.channelWorkflows = [
     {
       id: "workflow_running_ui",
+      metadata: { sourceMessageId: "message_source_workflow_running_ui" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Ship workflow UI",
@@ -7442,6 +7484,7 @@ test("progress popover owns workflow status while the right drawer avoids duplic
     },
     {
       id: "workflow_blocked_ui",
+      metadata: { sourceMessageId: "message_source_workflow_running_ui" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Create README.md",
@@ -7822,6 +7865,7 @@ test("completed multi-agent disclosure excludes plan-only rows and preserves can
   state.channelWorkflows = [
     {
       id: "workflow_r31",
+      metadata: { sourceMessageId: "msg_r31_request" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "开始 workflow：产品策略分析登录页 smoke 的目标范围，仅输出结论。Smoke ID: single-product-20260615-2241。",
@@ -8287,6 +8331,7 @@ test("completed single-step workflow without action evidence stays a protocol ev
   state.channelWorkflows = [
     {
       id: "workflow_r31_single",
+      metadata: { sourceMessageId: "msg_r31_single_request" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "开始 workflow：让 QA 验证登录页 smoke 目标范围。Smoke ID: single-step-agent。",
@@ -8348,9 +8393,11 @@ test("progress surfaces fold completed workflow steps behind summaries", async (
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
+  state.channelMessages = [channelSourceMessage("message_source_workflow_current_blocked", "Inspect the channel workflow progress.")];
   state.channelWorkflows = [
     {
       id: "workflow_current_blocked",
+      metadata: { sourceMessageId: "message_source_workflow_current_blocked" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Current implementation",
@@ -8362,6 +8409,7 @@ test("progress surfaces fold completed workflow steps behind summaries", async (
     },
     {
       id: "workflow_completed_history",
+      metadata: { sourceMessageId: "message_source_workflow_current_blocked" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Completed docs review",
@@ -8373,6 +8421,7 @@ test("progress surfaces fold completed workflow steps behind summaries", async (
     },
     {
       id: "workflow_completed_older",
+      metadata: { sourceMessageId: "message_source_workflow_current_blocked" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Older completed review",
@@ -8480,9 +8529,11 @@ test("progress popover prefers daemon collaboration card payload", async ({ page
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
+  state.channelMessages = [channelSourceMessage("message_source_workflow_daemon_card_source", "Inspect the channel workflow progress.")];
   state.channelWorkflows = [
     {
       id: "workflow_daemon_card_source",
+      metadata: { sourceMessageId: "message_source_workflow_daemon_card_source" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Local fallback workflow title",
@@ -8533,9 +8584,11 @@ test("progress popover falls back to local collaboration card derivation", async
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
+  state.channelMessages = [channelSourceMessage("message_source_workflow_local_card_fallback", "Inspect the channel workflow progress.")];
   state.channelWorkflows = [
     {
       id: "workflow_local_card_fallback",
+      metadata: { sourceMessageId: "message_source_workflow_local_card_fallback" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Local fallback workflow title",
@@ -8755,9 +8808,22 @@ test("channel activity keeps the composer visible while the message feed scrolls
   await expect(page.locator(".activity-chat-layout")).toHaveCSS("padding-top", "0px");
   const panelBox = await page.locator(".task-list-panel.activity-tab-panel").boundingBox();
   const feedBox = await page.locator(".activity-shell .message-feed").boundingBox();
+  // The frame includes the status strip now rendered below the input box.
   const composerBox = await page.getByLabel("Channel composer").boundingBox();
+  const composerFrame = page.locator('[data-conversation-composer-frame="channel"]');
+  const composerFrameBox = await composerFrame.boundingBox();
+  const bottomStatus = composerFrame.locator("[data-conversation-bottom-status]");
+  await expect(bottomStatus).toBeVisible();
+  const bottomStatusBox = await bottomStatus.boundingBox();
+  expect(panelBox).not.toBeNull();
+  expect(composerBox).not.toBeNull();
+  expect(composerFrameBox).not.toBeNull();
+  expect(bottomStatusBox).not.toBeNull();
   expect(feedBox?.height ?? 0).toBeGreaterThan(180);
-  expect((composerBox?.y ?? 0) + (composerBox?.height ?? 0)).toBeGreaterThan((panelBox?.y ?? 0) + (panelBox?.height ?? 0) - 36);
+  expect(composerFrameBox!.y + composerFrameBox!.height).toBeGreaterThan(panelBox!.y + panelBox!.height - 36);
+  expect(composerFrameBox!.y + composerFrameBox!.height).toBeLessThanOrEqual(panelBox!.y + panelBox!.height);
+  expect(bottomStatusBox!.y).toBeGreaterThan(composerBox!.y + composerBox!.height);
+  expect(bottomStatusBox!.y + bottomStatusBox!.height).toBeLessThanOrEqual(composerFrameBox!.y + composerFrameBox!.height);
   await messageFeed.hover();
   await page.mouse.wheel(0, -1_200);
   await messageFeed.evaluate((element) => {
@@ -8765,6 +8831,8 @@ test("channel activity keeps the composer visible while the message feed scrolls
     element.dispatchEvent(new Event("scroll"));
   });
   await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: false });
+  await expect.poll(() => page.getByLabel("Channel composer").boundingBox()).toEqual(composerBox);
+  await expect.poll(() => composerFrame.boundingBox()).toEqual(composerFrameBox);
   await expect(latestButton).toBeVisible();
   await expect.poll(async () => {
     const latestButtonBox = await latestButton.boundingBox();
@@ -9199,7 +9267,7 @@ test("channel activity paginates long message history and virtualizes visible ro
     channelId: "channel_engineering",
     limit: 200,
     beforeSequence: undefined,
-    threadId: undefined,
+    threadId: "thread_channel_channel_engineering",
   });
 
   const renderedBefore = await page.locator(".activity-shell .message-feed .conversation-timeline-virtual-row").count();
@@ -9213,7 +9281,7 @@ test("channel activity paginates long message history and virtualizes visible ro
     element.scrollTop = 0;
     element.dispatchEvent(new Event("scroll"));
   });
-  await expect.poll(() => state.channelMessageQueries?.some((query) => query.beforeSequence === 2801 && query.threadId === undefined)).toBe(true);
+  await expect.poll(() => state.channelMessageQueries?.some((query) => query.beforeSequence === 2801 && query.threadId === "thread_channel_channel_engineering")).toBe(true);
   await expect(page.getByLabel("Channel message feed").getByText("Long channel message 2801")).toBeVisible();
   const renderedAfter = await page.locator(".activity-shell .message-feed .conversation-timeline-virtual-row").count();
   expect(renderedAfter).toBeLessThan(120);
@@ -9254,7 +9322,7 @@ test("channel composer preserves failed sends and can retry", async ({ page }) =
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByLabel("Channel message feed").getByText("Retryable channel message")).toBeVisible();
   await expectComposerValue(composerInput, "");
-  await expect(page.locator('[data-ling-overlay="toast"][data-scope="channel:channel_engineering:composer"]'))
+  await expect(page.locator('[data-ling-overlay="toast"][data-scope="channel:channel_engineering:session:thread_channel_channel_engineering:composer"]'))
     .toContainText("Message sent");
   await expect(composer.locator(".composer-status-row.success")).toHaveCount(0);
   await expect(page.getByLabel("Channel message feed")).not.toContainText("Message sent");
@@ -9395,10 +9463,22 @@ test("channel conversation turn shows thinking for empty pending ai replies", as
   const thinkingBlock = channelFeed.locator('[data-conversation-timeline-kind="agentMessage"][data-conversation-timeline-status="running"]');
   const thinkingMessage = thinkingBlock.getByText("正在思考...").last();
   await expect(thinkingMessage).toBeVisible();
-  await expect(thinkingMessage).toHaveCSS("font-size", "15px");
-  await expect(thinkingMessage).toHaveCSS("font-weight", "550");
-  await expect(thinkingMessage).toHaveCSS("color", "rgb(25, 28, 31)");
-  await expect(thinkingBlock.locator(".message-pending-spinner")).toHaveCSS("margin-top", "5px");
+  await expect(channelFeed.locator('[data-conversation-timeline-scope="channel_root"]')).toHaveCount(1);
+  await expect(thinkingMessage).toHaveCSS("font-size", "13px");
+  const mutedColor = await thinkingMessage.evaluate((element) => {
+    const sample = document.createElement("span");
+    sample.style.color = "var(--conversation-text-muted, var(--ling-text-muted))";
+    element.append(sample);
+    const color = getComputedStyle(sample).color;
+    sample.remove();
+    return color;
+  });
+  await expect(thinkingMessage).toHaveCSS("color", mutedColor);
+  await expect(thinkingMessage.locator("..")).toHaveClass("conversation-thinking-indicator");
+  await expect(thinkingMessage.locator("..")).toHaveAttribute("role", "status");
+  await expect(thinkingMessage).toHaveAttribute("data-activity-motion", "running");
+  await expect(thinkingMessage).toHaveCSS("animation-name", "conversation-activity-light");
+  await expect(thinkingBlock.locator(".message-pending-spinner")).toHaveCount(0);
   const timelineTailClearance = await channelFeed.locator('[data-conversation-timeline][data-conversation-timeline-depth="0"]').evaluate((timeline) => {
     const rows = Array.from(timeline.querySelectorAll<HTMLElement>("[data-conversation-focus-block]"));
     if (rows.length === 0) throw new Error("Thinking transcript must contain display rows");
@@ -9602,7 +9682,7 @@ test("channel review source stays in conversation instead of the legacy context 
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       targetType: "thread",
-      targetId: "thread_seed_context",
+      targetId: "thread_channel_channel_engineering",
       sourceMessageIds: [],
       decisionIds: [],
       summary: "Seed context summary for channel inspector deep-link.",
@@ -9647,6 +9727,8 @@ test("handoff activity starts workflows without restoring the legacy context dra
   });
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider()];
+  state.channelMessages = [channelSourceMessage("message_handoff_source", "Inspect the repo and report next steps.", state.runs[0].id)];
+  state.runs[0].requestSnapshot.sourceMessageId = "message_handoff_source";
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -9704,9 +9786,11 @@ test("workflow activity uses review source instead of the legacy context run sur
   });
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider()];
+  state.channelMessages = [channelSourceMessage("message_source_workflow_seed", "Inspect the channel workflow progress.")];
   state.channelWorkflows = [
     {
       id: "workflow_seed",
+      metadata: { sourceMessageId: "message_source_workflow_seed" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Seed workflow",
@@ -9749,6 +9833,7 @@ test("typed Timeline protocol actions mutate their owning records and hide when 
   state.channelDecisions = [
     {
       id: "decision_timeline_supersede",
+      sourceRunId: "run_failed",
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Supersede from Timeline",
@@ -9762,6 +9847,7 @@ test("typed Timeline protocol actions mutate their owning records and hide when 
     },
     {
       id: "decision_timeline_reject",
+      sourceRunId: "run_failed",
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Reject from Timeline",
@@ -9775,6 +9861,7 @@ test("typed Timeline protocol actions mutate their owning records and hide when 
     },
     {
       id: "decision_timeline_terminal",
+      sourceRunId: "run_failed",
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Terminal decision",
@@ -9787,9 +9874,11 @@ test("typed Timeline protocol actions mutate their owning records and hide when 
       updatedAt: "2026-05-25T00:30:02.000Z",
     },
   ];
+  state.channelMessages = [channelSourceMessage("message_source_workflow_timeline_lifecycle", "Inspect the channel workflow progress.")];
   state.channelWorkflows = [
     {
       id: "workflow_timeline_lifecycle",
+      metadata: { sourceMessageId: "message_source_workflow_timeline_lifecycle" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Timeline lifecycle workflow",
@@ -9801,6 +9890,7 @@ test("typed Timeline protocol actions mutate their owning records and hide when 
     },
     {
       id: "workflow_timeline_retry",
+      metadata: { sourceMessageId: "message_source_workflow_timeline_lifecycle" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Timeline retry workflow",
@@ -9812,6 +9902,7 @@ test("typed Timeline protocol actions mutate their owning records and hide when 
     },
     {
       id: "workflow_timeline_failure",
+      metadata: { sourceMessageId: "message_source_workflow_timeline_lifecycle" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Timeline failure workflow",
@@ -9823,6 +9914,7 @@ test("typed Timeline protocol actions mutate their owning records and hide when 
     },
     {
       id: "workflow_timeline_terminal",
+      metadata: { sourceMessageId: "message_source_workflow_timeline_lifecycle" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Terminal Timeline workflow",
@@ -10633,11 +10725,13 @@ test("control-plane snapshot-required subscribes before refresh and applies an e
   await expect.poll(() => page.evaluate(() =>
     (globalThis as typeof globalThis & { __snapshotHandoff: { urls: string[] } }).__snapshotHandoff.urls.length
   )).toBe(1);
+  // Publish the new snapshot before notifying the browser: its refresh can arrive
+  // before page.evaluate resolves back to this test process.
+  snapshotSeq = 8;
   await page.evaluate(() => {
     (globalThis as typeof globalThis & { __snapshotHandoff: { snapshotRequired: () => void } })
       .__snapshotHandoff.snapshotRequired();
   });
-  snapshotSeq = 8;
   await expect.poll(() => page.evaluate(() =>
     (globalThis as typeof globalThis & { __snapshotHandoff: { urls: string[] } }).__snapshotHandoff.urls.length
   )).toBe(2);
@@ -11327,6 +11421,8 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
       traceDetailRequests.push(request.url());
     }
   });
+  // The initiating conversation owns these execution lanes through durable source references.
+  state.channelMessages.push(...state.runs.map(run => channelSourceMessage(`source_${run.id}`, "Inspect the repo and report next steps.", run.id)));
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -11335,7 +11431,7 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   const timeline = channelRootTimeline(page);
   await expect(timeline).toHaveCount(1);
   await expect(feed.locator(".conversation-work-cell")).toHaveCount(0);
-  await expect(timeline.locator('[data-conversation-timeline-kind="userMessage"]')).toHaveCount(0);
+  await expect(timeline.locator('[data-conversation-timeline-kind="userMessage"]')).toHaveCount(state.runs.length);
 
   const process = timeline.locator('[data-conversation-process-header]');
   await expect(process).toHaveAttribute("aria-expanded", "false");
@@ -11501,6 +11597,8 @@ test("durable Ling turns drive conversation work cell title, status, and attempt
       ...mockRetryCommandAction("durable_retry_command", "thread_durable_turn", secondAttempt.id, "turn_durable_inspect", "node retry-once.cjs", "2026-05-25T00:13:00.000Z", 0),
     },
   ];
+  // The initiating conversation owns these execution lanes through durable source references.
+  state.channelMessages.push(...state.runs.map(run => channelSourceMessage(`source_${run.id}`, "Inspect the repo and report next steps.", run.id)));
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -11509,7 +11607,7 @@ test("durable Ling turns drive conversation work cell title, status, and attempt
   const timeline = channelRootTimeline(page);
   await expect(timeline).toHaveCount(1);
   await expect(feed.locator(".conversation-work-cell")).toHaveCount(0);
-  await expect(timeline.locator('[data-conversation-timeline-kind="userMessage"]')).toHaveCount(0);
+  await expect(timeline.locator('[data-conversation-timeline-kind="userMessage"]')).toHaveCount(state.runs.length);
   await expect(timeline).not.toContainText("First attempt failed before retry.");
   await expect(timeline).not.toContainText("echo old attempt evidence");
   await expect(timeline).not.toContainText("old-attempt.txt");
@@ -11544,6 +11642,8 @@ test("conversation work cell is hidden when Ling turn loading fails", async ({ p
   run.endedAt = "2026-05-25T00:22:00.000Z";
   run.updatedAt = "2026-05-25T00:22:00.000Z";
   state.failThreadTurnsForThreadIds = ["thread_turn_failure"];
+  // The initiating conversation owns these execution lanes through durable source references.
+  state.channelMessages.push(...state.runs.map(run => channelSourceMessage(`source_${run.id}`, "Inspect the repo and report next steps.", run.id)));
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -11638,6 +11738,8 @@ test("failed conversation work cell does not label terminal rows as working", as
     executedAt: run.startedAt,
     completedAt: run.endedAt,
   }];
+  // The initiating conversation owns these execution lanes through durable source references.
+  state.channelMessages.push(...state.runs.map(run => channelSourceMessage(`source_${run.id}`, "Inspect the repo and report next steps.", run.id)));
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -11741,6 +11843,8 @@ test("active conversation work cell stays sparse while runtime approval replaces
     createdAt: run.startedAt,
     updatedAt: run.startedAt,
   }];
+  // The initiating conversation owns these execution lanes through durable source references.
+  state.channelMessages.push(...state.runs.map(run => channelSourceMessage(`source_${run.id}`, "Inspect the repo and report next steps.", run.id)));
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -11843,6 +11947,8 @@ test("active command remains standalone and streams its bounded output expanded"
     updatedAt: run.updatedAt,
     executedAt: run.startedAt,
   }];
+  // The initiating conversation owns these execution lanes through durable source references.
+  state.channelMessages.push(...state.runs.map(run => channelSourceMessage(`source_${run.id}`, "Inspect the repo and report next steps.", run.id)));
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -11930,7 +12036,7 @@ test("Ling Agent session active run guidance queues follow-up from composer and 
   await composerInput.press("Enter");
 
   await expect.poll(() => state.runInterventions.length).toBe(1);
-  await expect(page.locator('[data-ling-overlay="toast"][data-scope="channel:channel_engineering:composer"]')).toHaveCount(0);
+  await expect(page.locator('[data-ling-overlay="toast"][data-scope="channel:channel_engineering:session:thread_channel_channel_engineering:composer"]')).toHaveCount(0);
   await expect(composer.locator(".composer-status-row.success")).toHaveCount(0);
   await expect(page.getByLabel("Run guidance")).toHaveCount(1);
   expect(state.runInterventions[0]).toMatchObject({
@@ -12470,6 +12576,7 @@ test("channel activity derives task run approval transition and workflow events"
   });
   state.runs.push({
     id: "run_design_timeline",
+    threadId: "thread_channel_channel_design",
     status: "succeeded",
     cwd,
     taskId: "task_design_timeline",
@@ -12501,6 +12608,7 @@ test("channel activity derives task run approval transition and workflow events"
   state.channelWorkflows = [
     {
       id: "workflow_activity",
+      metadata: { sourceMessageId: "msg_timeline" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Timeline workflow",
@@ -12633,12 +12741,12 @@ test("channel activity derives task run approval transition and workflow events"
   await openChannelChatTools(page);
   await invokeTimelineAction(runEventItem, "Show run in transcript");
   await expectConversationReviewSurface(page);
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await openChannelChatTools(page);
 
   await invokeTimelineAction(approvalEventItem, "Open approval");
   await expectApprovalDetailOverlay(page, "Approval expired");
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await openChannelChatTools(page);
 
   await invokeTimelineAction(workflowStepItem, "Review source");
@@ -12792,11 +12900,11 @@ test("channel activity derives task run approval transition and workflow events"
   await renameViewDialog.getByRole("textbox", { name: "Saved view name" }).fill("Run problems");
   await renameViewDialog.getByRole("button", { name: "Rename" }).click();
   await expect(savedViewOption("Run problems")).toHaveCount(1);
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Design" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Design", exact: true }).click();
   await openChannelChatTools(page);
   await expect(searchInput).toHaveValue("");
   await expect(savedViewOption("Run problems")).toHaveCount(0);
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await openChannelChatTools(page);
   await expect(savedViewOption("Run problems")).toHaveCount(1);
   await selectSavedView("Run problems");
@@ -12806,14 +12914,14 @@ test("channel activity derives task run approval transition and workflow events"
   await deleteViewDialog.getByRole("button", { name: "Delete view" }).click();
   await expect(savedViewOption("Run problems")).toHaveCount(0);
 
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Design" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Design", exact: true }).click();
   await openChannelChatTools(page);
   await expect(searchInput).toHaveValue("");
   await expect(activityFeed.getByText("Other channel task leak").first()).toBeVisible();
   await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
   await expect(page.getByText("No activity matches these filters")).toHaveCount(0);
 
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await openChannelChatTools(page);
   await expect(searchInput).toHaveValue("");
   await expect(activityFeed.getByText("Timeline source message")).toBeVisible();
@@ -12825,12 +12933,12 @@ test("channel activity derives task run approval transition and workflow events"
   await invokeTimelineAction(runEventItem, "Show run in transcript");
   await expectConversationReviewSurface(page);
 
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await openChannelChatTools(page);
   await invokeTimelineAction(approvalEventItem, "Open approval");
   await expectApprovalDetailOverlay(page, "Approval expired");
 
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await openChannelChatTools(page);
   await invokeTimelineAction(workflowStepItem, "Review source");
   await expectConversationReviewSurface(page);
@@ -12862,6 +12970,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   state.channelWorkflows = [
     {
       id: "workflow_triage",
+      metadata: { sourceMessageId: "msg_triage" },
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
       title: "Triage workflow",

@@ -5,6 +5,7 @@ import type { ConversationInteractionSurfaceKind, ConversationTimelineScopeKind 
 import { useI18n } from "../../../i18n.js";
 import { hasFinalTimelineResponseNarration, type ConversationTimelineResponse } from "./timeline-response-presentation.js";
 import { timelineResponseCopyText } from "./terminal-report-copy-text.js";
+import { LearningReviewDisclosure } from "../../components/learning/LearningReviewPanel.js";
 
 const surfaceByScope: Record<ConversationTimelineScopeKind, ConversationInteractionSurfaceKind> = {
   normal: "normal_conversation", private: "teammate_direct", channel_root: "channel_root",
@@ -14,10 +15,11 @@ const surfaceByScope: Record<ConversationTimelineScopeKind, ConversationInteract
 /** Surface actions receive the shared, privacy-filtered response copy projection. */
 export type ConversationTimelineResponseActionsRenderer = (response: ConversationTimelineResponse, copyText: string) => ReactNode;
 
-export function ConversationTimelineResponseFooter({ response, scopeKind = "normal", renderActions }: {
+export function ConversationTimelineResponseFooter({ response, scopeKind = "normal", renderActions, cwd }: {
   readonly response: ConversationTimelineResponse;
   readonly scopeKind?: ConversationTimelineScopeKind;
   readonly renderActions?: ConversationTimelineResponseActionsRenderer;
+  readonly cwd?: string;
 }): React.JSX.Element | null {
   const { t } = useI18n();
   if (!response.settled) return null;
@@ -27,7 +29,9 @@ export function ConversationTimelineResponseFooter({ response, scopeKind = "norm
     copiedLabel={t("Copied")}
     actions={[{ id: "copy-response", kind: "copy", label: t("Copy message"), icon: <Copy size={14} />, copyText }]}
   /> : null);
-  return actions ? <div className="conversation-timeline-response-footer" data-conversation-response-footer
+  const runIds = [...new Set(response.items.map(item => item.runId).filter((id): id is string => Boolean(id)))];
+  const runId = response.report?.runId ?? (runIds.length === 1 ? runIds[0] : undefined);
+  return actions || (cwd && runId) ? <div className="conversation-timeline-response-footer" data-conversation-response-footer
     data-conversation-response-id={response.id} data-conversation-turn-id={response.message?.turnId ?? response.report?.turnId}
-    data-conversation-action-owner>{actions}</div> : null;
+    data-conversation-action-owner>{actions}{cwd && runId ? <LearningReviewDisclosure key={`${cwd}:${runId}`} cwd={cwd} runId={runId} /> : null}</div> : null;
 }

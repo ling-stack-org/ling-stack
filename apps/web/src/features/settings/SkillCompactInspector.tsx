@@ -12,6 +12,7 @@ import { SkillSourceStatus, SkillTokenList } from "./SkillLibraryPrimitives.js";
 import { SkillSourceInspector } from "./SkillSourceInspector.js";
 import type { SettingsTranslator } from "./skill-library-utils.js";
 import { skillRegistryState } from "./skill-library-utils.js";
+import { SkillDefinitionHistory } from "../../shared/components/learning/SkillDefinitionHistory.js";
 
 export function SkillCompactInspector({
   skill,
@@ -30,6 +31,7 @@ export function SkillCompactInspector({
   onPreviewOptimization,
   onArchiveSource,
   onRollbackSource,
+  onDefinitionChanged,
   t,
 }: {
   readonly skill: SkillRegistryEntry;
@@ -48,6 +50,7 @@ export function SkillCompactInspector({
   readonly onPreviewOptimization: () => void;
   readonly onArchiveSource: () => void;
   readonly onRollbackSource: (snapshotId: string) => void;
+  readonly onDefinitionChanged?: () => Promise<void>;
   readonly t: SettingsTranslator;
 }): React.JSX.Element {
   const state = skillRegistryState(skill, t);
@@ -150,6 +153,7 @@ export function SkillCompactInspector({
         />
       </InspectorSection>
 
+      <SkillDefinitionHistory cwd={cwd} skill={skill} editable={editable && !readOnly} onChanged={onDefinitionChanged} />
       <small className="settings-skill-updated-line">{t("Updated {time}", { time: formatKnownDateTime(skill.updatedAt, t("Unknown")) })}</small>
     </div>
   );

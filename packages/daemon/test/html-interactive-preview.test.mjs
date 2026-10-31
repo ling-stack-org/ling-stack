@@ -32,7 +32,7 @@ test("self-contained HTML artifacts render as interactive previews", async () =>
   assert.ok(preview.htmlInteractive);
   assert.deepEqual(preview.htmlInteractive.sandbox, ["allow-scripts"]);
   assert.ok(preview.htmlInteractive.html.includes("onclick"));
-  assert.ok(preview.htmlInteractive.html.includes("connect-src 'none'"), "preview HTML carries the offline CSP");
+  assert.ok(preview.htmlInteractive.html.includes("connect-src 'none'"), "preview HTML carries the resource CSP");
   assert.equal(preview.ref.previewable, true);
 });
 

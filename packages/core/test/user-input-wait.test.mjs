@@ -269,7 +269,7 @@ test("two connections cancel one logical wait and preserve the first cancellatio
   } finally { other.close(); }
 });
 
-async function fixture(t, waitMode = "required", workflow = false, storedTask = true) {
+async function fixture(t, waitMode = "required", workflow = false, storedTask = true, channelSession = false) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-user-input-wait-"));
   const f = { cwd, store: createSqliteRunStore(cwd) };
   f.db = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
@@ -284,10 +284,11 @@ async function fixture(t, waitMode = "required", workflow = false, storedTask = 
     f.siblingStep = f.store.createChannelWorkflowStep({ workflowId: f.workflow.id, title: "Independent", prompt: "Continue independently",
       toParticipantId: "ling_agent", toParticipantLabel: "Ling", status: "running" }, now);
   }
-  f.thread = f.store.createLingThread({ kind: workflow ? "channel_discussion" : "conversation",
+  f.thread = channelSession ? f.store.getLingThread(f.store.createChannelSession({ channelId: f.channel.id,
+    title: "等待测试", idempotencyKey: "wait-session" }, now).session.id) : f.store.createLingThread({ kind: workflow ? "channel_discussion" : "conversation",
     ...(workflow ? { channelId: f.channel.id } : {}), title: "等待测试", objective: "暂停后继续原工作" }, now);
   f.turn = f.store.appendConversationUserTurn({
-    ...(workflow ? { channelId: f.channel.id } : {}),
+    ...(workflow || channelSession ? { channelId: f.channel.id } : {}),
     threadId: f.thread.id, title: "Build", userInstruction: "Build a project", idempotencyKey: "source",
     payload: { body: "Build a project", format: "markdown", mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [] },
   }, now);
@@ -302,7 +303,8 @@ async function fixture(t, waitMode = "required", workflow = false, storedTask = 
   f.fence = toRuntimeAttemptFence(f.attempt);
   f.run = f.store.createRun({
     id: "wait-run", cwd, taskId: f.task.id, threadId: f.thread.id, turnId: f.turn.turnId, workUnitId: f.unit.id,
-    ...(workflow ? { channelId: f.channel.id, workflowStepId: f.step.id } : {}),
+    ...(workflow || channelSession ? { channelId: f.channel.id } : {}),
+    ...(workflow ? { workflowStepId: f.step.id } : {}),
     providerName: "fixture", providerModel: "fixture", taskSnapshot: {}, providerSnapshot: {}, requestSnapshot: {}, createdAt: now,
   });
   f.store.transitionRunStatus({ runId: f.run.id, expectedStatus: "queued", event: "runner_started", actor: "runner", now });
@@ -792,3 +794,32 @@ test("old cleanup and heartbeat cannot touch a newer attempt's resources", async
   assert.equal(f.store.listResourceLeases({ ownerId: successor.id, status: "active" }).length, 1);
   assert.equal(f.store.listRuntimeSemaphoreSlots({ ownerId: successor.id, status: "active" }).length, 1);
 });
+
+test("a resolved channel input wait can archive while its physical source Run remains yielded", async (t) => {
+  const f = await fixture(t, "required", false, true, true);
+  f.yield();
+  assert.equal(f.store.getRun(f.run.id).status, "yielded");
+  assert.throws(() => f.store.updateChannelSession(f.channel.id, f.thread.id, { archived: true }, cancelledAt), { code: "session_has_active_work" });
+  const cancelled = cancelWait(f);
+  assert.equal(cancelled.wait.status, "cancelled");
+  assert.equal(f.store.getRun(f.run.id).status, "yielded");
+  assert.deepEqual(f.store.getChannelSession(f.channel.id, f.thread.id).activeRunIds, []);
+  assert.ok(f.store.updateChannelSession(f.channel.id, f.thread.id, { archived: true }, cancelledAt).archivedAt);
+});
+
+for (const waitStatus of ["waiting", "resuming", "blocked", "resumed"]) {
+  test(`channel archive uses durable input checkpoint ${waitStatus} even after logical work is terminal`, async (t) => {
+    const f = await fixture(t, "required", false, true, true);
+    f.yield();
+    // Checkpoint authority must survive disposable Thread/work projections.
+    f.db.prepare("UPDATE user_input_requests SET wait_status=? WHERE request_id=?").run(waitStatus, f.request.requestId);
+    f.db.prepare("UPDATE work_units SET status='succeeded', ended_at=? WHERE id=?").run(cancelledAt, f.unit.id);
+    f.db.prepare("UPDATE ling_threads SET status='succeeded' WHERE id=?").run(f.thread.id);
+    if (waitStatus === "resumed") {
+      assert.ok(f.store.updateChannelSession(f.channel.id, f.thread.id, { archived: true }, cancelledAt).archivedAt);
+    } else {
+      assert.equal(f.store.getChannelSession(f.channel.id, f.thread.id).runtimeState, waitStatus === "blocked" ? "blocked" : "waiting");
+      assert.throws(() => f.store.updateChannelSession(f.channel.id, f.thread.id, { archived: true }, cancelledAt), { code: "session_has_active_work" });
+    }
+  });
+}

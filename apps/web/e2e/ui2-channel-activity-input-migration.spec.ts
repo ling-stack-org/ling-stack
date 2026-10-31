@@ -191,6 +191,7 @@ function createTriageState() {
       channelId: "channel_engineering",
       title: "Activity input migration workflow",
       objective: "Exercise every Activity triage editor projection.",
+      metadata: { sourceMessageId: "msg_triage_input_migration" },
       status: "blocked",
       createdBy: "local-user",
       createdAt: "2026-05-25T00:05:00.000Z",

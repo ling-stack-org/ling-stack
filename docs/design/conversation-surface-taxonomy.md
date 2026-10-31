@@ -12,6 +12,14 @@ Related docs:
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
+- [频道下多会话](channel-sessions-detailed-design.md)
+
+> 2026-10-29 channel sessions increment: Channel is the shared configuration container.
+> Its `channel_root` remains the default conversation; a new empty named conversation uses
+> `channel_session` with `relationKind=root`, without parent or fork snapshot. `branch` is
+> reserved for actual or preserved imported fork lineage. `ChannelBranch` remains the
+> compatibility directory, mapping each named conversation to its canonical `LingThread.id`.
+> The detailed contract above owns creation, lifecycle, migration and client state boundaries.
 
 > v3.9.1 authority note: this document defines product vocabulary and surface ownership only.
 > Transcript item kinds, evidence ownership, renderer selection, batching, and completion
@@ -81,8 +89,9 @@ deterministic and is the same for initial load, SSE replay, resume and daemon re
 | Entry | Canonical thread | Anchor/fork record | Transcript scope |
 | --- | --- | --- | --- |
 | Channel root | one `LingThread(surfaceKind="channel_root")` owned by the channel | none | root turns/items only |
+| Empty channel session | one `LingThread(surfaceKind="channel_session", relationKind="root")` per registered named conversation | none | only that thread's turns/items; channel policy and approved shared material remain shared |
 | Topic reply | one `LingThread(surfaceKind="topic")` per promoted topic | `parentThreadId` + source `anchorItemId` | topic turns/items only; parent message is a reference |
-| Channel branch | one `LingThread(surfaceKind="branch")` per branch | `parentThreadId` + immutable `forkContextSnapshotId` | branch turns/items only |
+| Forked channel session | one `LingThread(surfaceKind="branch")` per actual fork or preserved imported lineage | actual forks require `parentThreadId` + immutable `forkContextSnapshotId`; imported records must not claim a real fork without evidence | branch turns/items only |
 | Normal conversation | one workspace-scoped `LingThread(surfaceKind="work")` | none | direct user/Agent turns |
 | Teammate private | one user/teammate-scoped `LingThread(surfaceKind="direct")` | none | direct pair only |
 | Child Agent | parent thread plus `ParticipantSpan` | parent item + participant/run/attempt | nested depth-1 items; no child thread |

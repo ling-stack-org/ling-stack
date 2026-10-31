@@ -105,6 +105,7 @@ import { prepareRunSkillSource } from "./skill-source-context.js";
 import { withGstackHostContext } from "./gstack-host-context.js";
 import { restorePackagedSkillContext } from "../skills/packaged-runtime.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
+import { recallMemory } from "../memory/recall-service.js";
 import { listBundledPackageDescriptors } from "../plugins/source-index.js";
 import { createManagedPluginRuntimeSnapshot } from "../plugins/runtime-injection.js";
 import { isBundledEmbeddedCuaDriverSelected } from "../plugins/cua-driver-runtime-mode.js";
@@ -169,6 +170,8 @@ import { prepareNormalConversationExecution, readNormalConversationPreparedExecu
 import {
   assertPreparedRunnerMemoryCurrent,
   capturePreparedRunnerInput,
+  captureSkillDefinitionSnapshot,
+  type SkillDefinitionRuntimeSnapshot,
 } from "./prepared-runner-input.js";
 import {
   rebuildExistingRunRequest,
@@ -474,6 +477,7 @@ async function executeAdmittedRunRequest(
   let memoryRecall: ReturnType<RunStore["recallMemory"]> | undefined;
   let selectedSkill: ReturnType<typeof getEffectiveTeammateSkill> | undefined;
   let selectedSkillSourceContext: SkillSourceRuntimeContext | undefined;
+  let selectedSkillDefinitionSnapshot: SkillDefinitionRuntimeSnapshot | undefined;
   let selectedSkillSourcePrompt: string | undefined;
   let runtimeApprovalProfile: SkillApprovalProfile | undefined;
   let effectivePolicySnapshot: EffectiveRunPolicySnapshot | undefined;
@@ -678,6 +682,8 @@ async function executeAdmittedRunRequest(
     const skillTeammate = runRequest.teammateId ? resolveAiTeammateReference(store, runRequest.teammateId) : undefined;
     const skillProviderPreset = runRequest.providerPresetId ? store.getProviderPreset(runRequest.providerPresetId) : undefined;
     selectedSkill = resolveCurrentRunSkill(store, runRequest);
+    selectedSkillDefinitionSnapshot = frozenExecution?.skillDefinitionSnapshot
+      ?? (!frozenExecution && selectedSkill ? captureSkillDefinitionSnapshot(store, selectedSkill.skill) : undefined);
     if (frozenExecution) {
       selectedSkillSourceContext = restorePackagedSkillContext(frozenExecution.skillSourceContext, selectedSkill?.skillId);
     } else if (selectedSkill) {
@@ -690,7 +696,7 @@ async function executeAdmittedRunRequest(
     let mcpToolAccess = resolveMcpToolAccessForRun(runStore, secretResolver, runRequest, (teammateId) =>
       resolveAiTeammateReference(runStore, teammateId)?.id);
     mcpTools = createPiRunnerMcpToolDefinitions(mcpToolAccess);
-    memoryRecall = frozenExecution || runRequest.skipMemoryRecall ? undefined : store.recallMemory({
+    memoryRecall = frozenExecution || runRequest.skipMemoryRecall ? undefined : await recallMemory(store, {
       teammateId: runRequest.teammateId,
       channelId: runRequest.task.channelId,
       taskId: runRequest.task.id,
@@ -851,7 +857,7 @@ async function executeAdmittedRunRequest(
     } else if (!delegatedExecution && !existingContinuation && !userInputContinuation) {
       preparedExecution = await prepareNormalConversationExecution({ store, request: runRequest,
         runnerId: runnerResolution.effectiveRunnerId, adapter: runnerResolution.runner.adapter, options: runnerRequest,
-        usedMemory, skillSourceContext: selectedSkillSourceContext, assertCurrent: assertPreparationCurrent });
+        usedMemory, skillSourceContext: selectedSkillSourceContext, skillDefinitionSnapshot: selectedSkillDefinitionSnapshot, assertCurrent: assertPreparationCurrent });
     }
     let executionInput = userInputPrepared?.execution ?? existingRunnerExecution ?? preparedExecution?.payload;
     if (!existingContinuation && !userInputContinuation && !executionInput && runnerResolution.runner.adapter instanceof PiRunnerAdapter) {
@@ -860,7 +866,8 @@ async function executeAdmittedRunRequest(
       const preparedInput = await runnerResolution.runner.adapter.prepareTaskInput(runnerRequest);
       assertPreparationCurrent();
       executionInput = capturePreparedRunnerInput({ runnerId: runnerResolution.effectiveRunnerId,
-        options: runnerRequest, preparedInput, usedMemory, skillSourceContext: selectedSkillSourceContext });
+        options: runnerRequest, preparedInput, usedMemory, skillSourceContext: selectedSkillSourceContext,
+        skillDefinitionSnapshot: selectedSkillDefinitionSnapshot });
     }
     const refreshPreparedExecution = (): void => {
       if (!executionInput) return;
@@ -900,6 +907,7 @@ async function executeAdmittedRunRequest(
       resolvedSecretValues = [resolvedProvider.apiKey, ...Object.values(resolvedProvider.headers ?? {})];
       selectedSkillSourceContext = restorePackagedSkillContext(executionInput.skillSourceContext, selectedSkill?.skillId);
       usedMemory = executionInput.usedMemory;
+      selectedSkillDefinitionSnapshot = executionInput.skillDefinitionSnapshot;
       durableRunRequest = { ...durableRunRequest, runnerExecutionInput: executionInput,
         ...(preparedExecution ? { normalConversationPreparedExecutionRef: preparedExecution.ref } : {}) };
       assertPreparationCurrent();
@@ -1076,6 +1084,7 @@ async function executeAdmittedRunRequest(
           runtimeToolFeatures,
           selectedSkillId: selectedSkill?.skillId,
           skillSourceContext: selectedSkillSourceContext,
+          skillDefinitionSnapshot: selectedSkillDefinitionSnapshot,
           mcpToolAccess,
         },
         now: createdAt,
@@ -1176,6 +1185,7 @@ async function executeAdmittedRunRequest(
           runtimeToolFeatures,
           selectedSkillId: selectedSkill?.skillId,
           skillSourceContext: selectedSkillSourceContext,
+          skillDefinitionSnapshot: selectedSkillDefinitionSnapshot,
           mcpToolAccess,
           managedPluginRuntime,
         },
@@ -1624,6 +1634,7 @@ async function executeAdmittedRunRequest(
         teammateId: run.teammateId,
         selectedSkillId: run.selectedSkillId,
         skillSourceContext: selectedSkillSourceContext,
+          skillDefinitionSnapshot: selectedSkillDefinitionSnapshot,
         parentRunId: run.parentRunId,
         interventionId: run.interventionId,
         continuationReason: run.continuationReason,

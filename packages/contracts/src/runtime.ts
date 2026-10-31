@@ -113,6 +113,7 @@ export interface RuntimeInstance {
 }
 
 export type WorkUnitKind =
+  | "learning_review"
   | "task_run"
   | "conversation_run"
   | "approval_review"

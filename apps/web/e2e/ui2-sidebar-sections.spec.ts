@@ -30,7 +30,7 @@ test("Sidebar sections preserve geometry while channels and teammates load", asy
   await expect(navigation.locator(".sidebar-section-skeleton-row")).toHaveCount(5);
   await captureEvidence(page, "1440x960-ling-light-loading.png");
 
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible({ timeout: 5_000 });
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toBeVisible({ timeout: 5_000 });
   await expect(navigation.getByRole("button", { name: "Designer", exact: true })).toBeVisible();
   await expect(navigation.locator(".sidebar-section-skeleton-row")).toHaveCount(0);
   const channelsToggle = navigation.getByRole("button", { name: "Channels" });

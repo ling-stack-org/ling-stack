@@ -36,15 +36,23 @@ export interface PreviewHtmlInteractive {
 `PreviewContentKind` gains `"html_interactive"`. `PreviewContentResponse`
 gains `htmlInteractive?: PreviewHtmlInteractive`.
 
-### 2. Rendering: iframe sandbox, zero trust
+### 2. Rendering: static by default, explicit script trust
 
-- Rendered in an `<iframe sandbox="allow-scripts">` (no `allow-same-origin`,
-  so the document gets a unique opaque origin — no cookie/storage/domain access
-  to Ling).
-- Daemon preview route serves the HTML from a dedicated endpoint with
-  `Content-Security-Policy: sandbox allow-scripts;` and
-  `Content-Type: text/html; sandbox=`-compatible headers, so even direct
-  navigation is defanged.
+- Opening a preview renders a static document with an empty `sandbox` and a
+  trusted outer document enforcing `script-src 'none'`. The outer frame also
+  restricts navigation of its inner document to `about:`.
+- “Run interactive preview” explicitly enables `allow-scripts` for that exact
+  document. The UI explains that scripts can contact external services. Stop,
+  closing or switching the preview, and any content change revoke this trust.
+  Neither frame gains `allow-same-origin`, cookie/storage access to Ling,
+  top navigation, popups, or form submission.
+- The resource CSP blocks HTTP subresources, fetch and nested frame loading;
+  it is **not a network sandbox**. Chromium can send WebRTC STUN packets despite
+  `connect-src 'none'`. Only the default script-disabled preview prevents this
+  automatic execution; explicitly trusted scripts may use browser networking.
+- The daemon returns scanned HTML as JSON preview data with an injected
+  resource CSP. The renderer creates the fixed outer document and sandbox;
+  preview JSON is never interpreted as a grant of browser permissions.
 - No `allow-top-navigation`, no `allow-popups` in V1.
 - Size cap (e.g. 2 MB) and a static sanity scan (reject `src=http*` remote
   scripts by default — offline-first, remote resources are a follow-up opt-in
@@ -73,8 +81,8 @@ registers an artifact with `contentType: text/html` and
 If a future need requires `allow-same-origin` (e.g. persisted interactive
 state), that is a *new* preview kind (`html_interactive_persisted`) behind an
 explicit authority grant — never silently added to the existing sandbox.
-Preview responses carry the `sandbox` array verbatim from the contract so the
-renderer always applies what the contract, not the renderer, allows.
+The renderer applies its fixed sandbox allowlist; it never grants extra
+permissions based on an arbitrary `sandbox` array in a preview response.
 
 ## Implementation plan
 
@@ -91,7 +99,9 @@ renderer always applies what the contract, not the renderer, allows.
 
 ## Acceptance
 
-- A run-produced HTML artifact renders interactively (click counter demo)
-  inside the right dock on web; screenshot evidence captured.
+- A run-produced HTML artifact renders statically until the user explicitly
+  enables interaction, then responds to the click counter demo. Stopping
+  restores a fresh static preview inside the right dock on web; screenshot
+  evidence is captured.
 - Attempting to load a remote script inside the artifact is blocked (test).
 - All existing preview suites remain green.

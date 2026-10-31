@@ -268,11 +268,14 @@ export function parseLingThreadRoute(
 
 export type SkillRoute =
   | { readonly kind: "draft"; readonly draftId: string; readonly action?: "publish" }
-  | { readonly kind: "skill"; readonly skillId: string; readonly action?: "corrections" | "hard-delete" | "source" | "source-archive" | "source-rollback" | "source-artifacts" | "optimization-preview" | "compiled-views" | "compiled-view-archive" | "revision-preview" | "revisions"; readonly viewId?: string }
+  | { readonly kind: "skill"; readonly skillId: string; readonly action?: "corrections" | "hard-delete" | "source" | "source-archive" | "source-rollback" | "source-artifacts" | "optimization-preview" | "compiled-views" | "compiled-view-archive" | "revision-preview" | "revisions" | "revision-undo"; readonly viewId?: string }
   | { readonly kind: "candidate"; readonly candidateId: string; readonly action?: "review" | "draft" };
 
 export function parseSkillRoute(pathname: string): SkillRoute | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 3 && segments[0] === "skills" && segments[2] === "revision-undo") {
+    return { kind: "skill", skillId: segments[1], action: "revision-undo" };
+  }
   if (segments.length === 2 && segments[0] === "skill-candidates" && segments[1] !== "observe") {
     return { kind: "candidate", candidateId: segments[1] };
   }
@@ -392,8 +395,10 @@ export function parseChannelRoute(
   pathname: string,
 ): {
   readonly channelId: string;
-  readonly action?: "brief" | "items" | "turns" | "turns-stream" | "turn-context" | "turn-context-correction" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "terminal-reports" | "team-experts" | "team-metrics" | "team-authority-ledger" | "team-patterns" | "team-snapshots" | "team-evaluations" | "workspace" | "protocol" | "playbooks" | "branches" | "council-policy" | "effective-council" | "proposed-plans";
+  readonly action?: "brief" | "items" | "turns" | "turns-stream" | "turn-context" | "turn-context-correction" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "terminal-reports" | "team-experts" | "team-metrics" | "team-authority-ledger" | "team-patterns" | "team-snapshots" | "team-evaluations" | "workspace" | "protocol" | "playbooks" | "branches" | "sessions" | "council-policy" | "effective-council" | "proposed-plans";
   readonly branchId?: string;
+  readonly sessionId?: string;
+  readonly branchAction?: "repair";
   readonly turnId?: string;
   readonly protocolAction?: "revert" | "drafts" | "apply-draft" | "candidates" | "review-candidate" | "candidate-from-cluster" | "canvas";
   readonly protocolDraftId?: string;
@@ -413,6 +418,9 @@ export function parseChannelRoute(
   if (segments.length === 3 && segments[0] === "channels" && segments[2] === "protocol") {
     return { channelId: segments[1], action: "protocol" };
   }
+  if ((segments.length === 3 || segments.length === 4) && segments[0] === "channels" && segments[2] === "sessions") {
+    return { channelId: segments[1], action: "sessions", ...(segments[3] ? { sessionId: segments[3] } : {}) };
+  }
   if (segments.length === 3 && segments[0] === "channels" && segments[2] === "branches") {
     return { channelId: segments[1], action: "branches" };
   }
@@ -430,6 +438,9 @@ export function parseChannelRoute(
   }
   if (segments.length === 6 && segments[0] === "channels" && segments[2] === "turns" && segments[4] === "context" && segments[5] === "corrections") {
     return { channelId: segments[1], action: "turn-context-correction", turnId: segments[3] };
+  }
+  if (segments.length === 5 && segments[0] === "channels" && segments[2] === "branches" && segments[4] === "repair") {
+    return { channelId: segments[1], action: "branches", branchId: segments[3], branchAction: "repair" };
   }
   if (segments.length === 4 && segments[0] === "channels" && segments[2] === "branches") {
     return { channelId: segments[1], action: "branches", branchId: segments[3] };

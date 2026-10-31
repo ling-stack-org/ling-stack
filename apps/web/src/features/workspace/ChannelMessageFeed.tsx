@@ -93,6 +93,7 @@ export interface ChannelMessageFeedState {
   readonly latestButtonVisible: boolean;
   readonly viewRetainKeys: ConversationViewRetainKeys;
   readonly reset: () => void;
+  readonly switchConversation: (ownerKey: string) => void;
   readonly scrollToLatest: () => void;
   readonly onScroll: (event: UIEvent<HTMLDivElement>) => void;
   readonly onUserScrollIntent: () => void;
@@ -140,6 +141,8 @@ export function useChannelMessageFeed({
   tailDependencyKey,
 }: UseChannelMessageFeedInput): ChannelMessageFeedState {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const conversationOwnerRef = useRef("");
+  const conversationAnchorsRef = useRef(new Map<string, { anchor?: MessageFeedAnchorSnapshot; pinned: boolean }>());
   const pinnedToLatestRef = useRef(true);
   const autoFollowUntilRef = useRef(0);
   const userScrollIntentRef = useRef(false);
@@ -321,6 +324,21 @@ export function useChannelMessageFeed({
       persistTimerRef.current = undefined;
     };
   }, [reset, persistReading]);
+
+  const switchConversation = useCallback((ownerKey: string): void => {
+    const previous = conversationOwnerRef.current;
+    if (previous === ownerKey) return;
+    if (previous) conversationAnchorsRef.current.set(previous, { anchor: visibleAnchorRef.current, pinned: pinnedToLatestRef.current });
+    conversationOwnerRef.current = ownerKey;
+    reset();
+    const saved = conversationAnchorsRef.current.get(ownerKey);
+    if (saved) {
+      visibleAnchorRef.current = saved.anchor;
+      pinnedToLatestRef.current = saved.pinned;
+      initialLatestPendingRef.current = saved.pinned;
+      setLatestButtonVisible(!saved.pinned);
+    }
+  }, [reset]);
 
   const scrollToLatest = useCallback((): void => {
     const feed = scrollRef.current;
@@ -660,6 +678,7 @@ export function useChannelMessageFeed({
 
   return {
     scrollRef,
+    switchConversation,
     latestButtonVisible,
     viewRetainKeys,
     reset,

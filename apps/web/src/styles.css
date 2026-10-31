@@ -118,6 +118,16 @@
 @import "./styles/theme-background.css";
 @import "./styles/shared/workspace-navigation-appearance.css";
 
+.artifact-preview-interactive-panel {
+  display: grid;
+  gap: var(--ling-space-3, 10px);
+}
+
+.artifact-preview-script-controls p {
+  margin: 0 0 var(--ling-space-2, 8px);
+  color: var(--ling-text-secondary);
+}
+
 .artifact-preview-interactive-frame {
   display: block;
   width: 100%;

@@ -150,6 +150,13 @@
   background: var(--ling-bg-panel);
 }
 
+/* Leave the center of factual rows available for disclosure clicks. */
+.activity-shell .message-feed-latest-button.ling-ui-button {
+  left: auto;
+  right: 12px;
+  transform: none;
+}
+
 .channel-feed-status-stack,
 .channel-composer-feedback-stack {
   display: grid;

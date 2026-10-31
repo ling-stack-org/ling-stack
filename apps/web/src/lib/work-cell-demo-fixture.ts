@@ -99,6 +99,7 @@ function channelWorkCellInteractiveDemoEnabled(): boolean {
 export function createChannelWorkCellDemoFixture(input: {
   readonly channelId: string;
   readonly cwd: string;
+  readonly rootThreadId?: string;
 }): ChannelWorkCellDemoFixture | undefined {
   const channelId = input.channelId.trim();
   if (!channelId) {
@@ -432,7 +433,7 @@ export function createChannelWorkCellDemoFixture(input: {
     id: terminalReportId,
     workspaceId,
     channelId,
-    threadId: sourceMessageId,
+    threadId: input.rootThreadId ?? sourceMessageId,
     turnId: sourceTurnId,
     sourceMessageId,
     source: { kind: "workflow", id: workflowId },
@@ -519,13 +520,13 @@ export function createChannelWorkCellDemoFixture(input: {
   };
 
   return {
-    channelMessages,
+    channelMessages: input.rootThreadId ? channelMessages.map(message => ({ ...message, threadId: input.rootThreadId })) : channelMessages,
     conversationItems: [{
       schemaVersion: 1,
       id: `result_terminal_report:${terminalReportId}`,
       workspaceId,
       channelId,
-      threadId: sourceMessageId,
+      threadId: input.rootThreadId ?? sourceMessageId,
       turnId: sourceTurnId,
       sequence: 1,
       kind: "terminal_report",

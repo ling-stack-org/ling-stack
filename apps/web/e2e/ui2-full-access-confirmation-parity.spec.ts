@@ -19,7 +19,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("channel permission selection confirms before changing the preset and run reuses that confirmation", async ({ page }) => {
+test("channel permission selection confirms its conversation while an unowned task needs a separate reusable confirmation", async ({ page }) => {
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createFullAccessState();
@@ -56,8 +56,17 @@ test("channel permission selection confirms before changing the preset and run r
   await openTaskFromAttentionQueue(page, "Inspect workspace");
   const runButton = page.locator("article.task-detail").getByRole("button", { name: "Run", exact: true });
   await runButton.click();
+  await expect(fullAccessDialog(page)).toHaveCount(1);
+  expect(state.runs).toHaveLength(0);
+  await fullAccessDialog(page).getByRole("button", { name: "Cancel", exact: true }).last().click();
   await expect(fullAccessDialog(page)).toHaveCount(0);
+  expect(state.runs).toHaveLength(0);
+  await expect(channelDraft).toHaveAttribute("data-value", "Keep this channel draft while starting the task");
+  await runButton.click();
+  await confirmFullAccessSelection(page);
   await expect.poll(() => state.runs.length).toBe(1);
+  expect(state.runs[0]?.requestSnapshot).toMatchObject({ task: { id: "task_inspect", channelId: "channel_engineering" } });
+  expect(isRecord(state.runs[0]?.requestSnapshot) ? state.runs[0].requestSnapshot.threadId : undefined).toBeUndefined();
   expect(readPermissionConfirmation(state.runs[0]?.requestSnapshot)).toMatchObject({
     confirmed: true,
     mode: "full_access",
@@ -83,7 +92,7 @@ test("normal conversation requires explicit confirmation and preserves the prese
   state.workspaceSettings.defaultWorkspaceAccessMode = "read_only";
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation", exact: true }).click();
 
   const home = page.getByLabel("Conversation home");
   const permissionTrigger = home.getByRole("button", { name: /Selected permission preset/ });
@@ -129,7 +138,7 @@ test("normal conversation requires explicit confirmation and preserves the prese
     reason: "user_confirmed_full_access",
   });
 
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation", exact: true }).click();
   const nextHome = page.getByLabel("Conversation home");
   const nextPermissionTrigger = nextHome.getByRole("button", { name: /Selected permission preset/ });
   await selectFullAccess(page, nextPermissionTrigger);
@@ -187,7 +196,7 @@ test("normal conversation confirms inherited full access on the first run", asyn
   };
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation", exact: true }).click();
 
   const home = page.getByLabel("Conversation home");
   const permissionTrigger = home.getByRole("button", { name: /Selected permission preset/ });
@@ -226,7 +235,7 @@ for (const fixture of [
     };
     await mockDaemon(page, state);
     await page.goto("/");
-    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation" }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation", exact: true }).click();
 
     const composer = page.getByLabel("New conversation composer");
     const trigger = composer.getByRole("button", { name: /Selected permission preset/ });
@@ -272,7 +281,7 @@ test("normal conversation distinguishes inherited always authorization from full
   state.workspaceSettings = { ...state.workspaceSettings, defaultAuthorizationMode: "always", defaultWorkspaceAccessMode: "read_only" };
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation", exact: true }).click();
   const composer = page.getByLabel("New conversation composer");
   const trigger = composer.getByRole("button", { name: /Selected permission preset/ });
   await expect(trigger).toHaveText("Always authorize");

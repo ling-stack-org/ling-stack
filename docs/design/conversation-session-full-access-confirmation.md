@@ -13,7 +13,9 @@
 - 普通对话中，用户在当前对话的权限菜单里主动选择 `full_access` 时先显示确认 Dialog；确认成功后才切换
   为 `always + full_access`，取消则保留原来的两项选择。后续发送不再叠加第二个确认 Dialog。
   由工作区默认值继承 `full_access` 时，首次真实运行仍显示确认 Dialog。
-- 频道以当前 channel conversation 为会话；切换频道或频道分支后重新确认。
+- 频道以 workspace、实际执行路径、channel ID、canonical thread ID 和策略版本组成 scope；
+  默认会话与每个具名会话独立确认。回到同一会话且路径/策略未变时复用该会话确认。
+  新会话草稿仅向同一创建 key 返回的 thread 转移同次确认；旧 root/branch scope 升级后不批量继承。
 - AI 队友私聊以当前 teammate direct conversation 为会话；切换队友后重新确认。
 - AI 队友私聊中，用户在当前对话的权限菜单里主动选择 `full_access` 时先显示确认 Dialog；
   确认成功后切换预设，后续发送不再叠加第二个确认 Dialog。
@@ -41,12 +43,13 @@
 以下任一变化都生成新的确认 scope：
 
 1. 新建或切换普通对话。
-2. 切换频道或频道分支。
+2. 切换到尚未确认的频道会话；已确认会话仍按其原有有效 scope 查找。
 3. 切换 AI 队友。
 4. workspace cwd 或频道实际执行路径改变。
 5. 默认 authorization/access/permission preset 变化。
 6. Approval Policy `updatedAt` 变化。
 普通对话首条消息从 draft 绑定到 thread 是同一会话的身份升级，不属于失效条件。
+频道草稿绑定同一创建 key 返回的 canonical thread 同理；详见[频道下多会话](channel-sessions-detailed-design.md)。
 页面刷新、renderer 重建和应用重开不再属于失效条件。
 
 ## Boundaries

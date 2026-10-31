@@ -1,4 +1,6 @@
 import type { CSSProperties, ReactNode, Ref } from "react";
+import type { ChannelSessionSummary, UpdateChannelSessionRequest } from "@ling-stack/contracts";
+import { ChannelSessionHeading } from "./ChannelSessionHeading.js";
 import { ArrowLeft, Command, Info, MoreHorizontal, PencilLine, SlidersHorizontal } from "lucide-react";
 import { DesktopTitlebarSurface } from "../../app/DesktopTitlebarSurface.js";
 import { useI18n } from "../../i18n.js";
@@ -6,6 +8,12 @@ import type { ChannelSidePanelView } from "./workspace-client-view.types.js";
 
 export interface ChannelWorkspaceHeaderProps {
   readonly channelName?: string;
+  readonly sessionTitle?: string;
+  readonly sessionStatusNode?: ReactNode;
+  readonly session?: ChannelSessionSummary;
+  readonly onUpdateSession?: (patch: UpdateChannelSessionRequest) => Promise<void>;
+  readonly sessionActionsDisabled?: boolean;
+  readonly sessionScope?: string;
   readonly channelSelected: boolean;
   readonly channelSettingsPageOpen: boolean;
   readonly channelEnvironmentPageOpen: boolean;
@@ -32,7 +40,7 @@ export interface ChannelWorkspaceHeaderProps {
 }
 
 export function ChannelWorkspaceHeader({
-  channelName, channelSelected, channelSettingsPageOpen, channelEnvironmentPageOpen, searchOpen,
+  channelName, sessionTitle, sessionStatusNode, session, onUpdateSession, sessionActionsDisabled, sessionScope, channelSelected, channelSettingsPageOpen, channelEnvironmentPageOpen, searchOpen,
   channelMoreOpen, channelMoreRef, channelMoreButtonRef, sidePanelOpen, sidePanelView,
   activityToolsOpen, style, searchNode, toolbarNode, summaryNode, onCloseSearch, setChannelMoreOpen,
   openChannelSettingsPage, closeChannelSettingsPage, openChannelEnvironmentPage, closeChannelEnvironmentPage,
@@ -74,7 +82,9 @@ export function ChannelWorkspaceHeader({
           ) : (
             <div className="channel-title-line">
               <span className="channel-title-icon" aria-hidden="true">#</span>
-              <h1>{channelName ?? "Engineering"}</h1>
+              <ChannelSessionHeading key={sessionScope} channelName={channelName ?? "Engineering"} title={sessionTitle}
+                session={session} onUpdate={onUpdateSession} disabled={sessionActionsDisabled} />
+              {sessionStatusNode}
               <div className="channel-more-wrap" ref={channelMoreRef}>
                 <button
                   ref={channelMoreButtonRef}

@@ -103,6 +103,16 @@ test("canonical root and topic replies use explicit LingThread topology", () => 
   assert.deepEqual(topicTargets.map((target) => target.activeReply.runId), [topicRun.id]);
 });
 
+test("durable session run IDs locate a work-thread reply when its source message is outside the loaded page", () => {
+  const own = run("own-run", "own-work", "teammate_designer", "separate-work-thread", "unloaded-source");
+  const other = run("other-run", "other-work", "teammate_engineer", "other-work-thread", "other-unloaded-source");
+  const targets = deriveChannelReplyGuidanceTargets({ channelId: "channel_main", conversationLineThreadId: "session-A",
+    conversationRunIds: new Set(["own-run"]), channelMessages: [], runs: [own, other],
+    workUnits: [workUnit("own-work", "channel_ai_reply"), workUnit("other-work", "channel_ai_reply")], teammateLabel });
+  assert.deepEqual(targets.map(target => target.activeReply.runId), ["own-run"]);
+  assert.equal(targets[0].activeReply.workUnitId, "own-work");
+});
+
 test("message targeting is derived only from mentions", () => {
   const engineerMention = { id: "teammate_engineer", label: "Engineer", kind: "ai-teammate" };
   const docsMention = { id: "teammate_docs", label: "Docs", kind: "ai-teammate" };

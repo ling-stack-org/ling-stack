@@ -737,6 +737,7 @@ function isWorkUnitStatus(value: string): value is WorkUnitStatus {
 
 function isWorkUnitKind(value: string): value is WorkUnitKind {
   return (
+    value === "learning_review" ||
     value === "task_run" ||
     value === "conversation_run" ||
     value === "approval_review" ||

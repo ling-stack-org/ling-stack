@@ -162,8 +162,8 @@ test("T13-P.9EF.B refresh failure stays with its thread and survives unrelated s
   await triggerFocusRevalidation(page);
   await expect(page.getByLabel("Conversation page").getByRole("alert")).toContainText(failureMessage);
 
-  await navigation.getByRole("button").filter({ hasText: "Engineering" }).first().click();
-  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Engineering / Engineering conversation", level: 1, exact: true })).toBeVisible();
   await expect(page.getByText(failureMessage, { exact: true })).toHaveCount(0);
 
   await openConversation(navigation, page, beta);

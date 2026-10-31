@@ -261,7 +261,7 @@ test.beforeEach(async ({ page }) => {
   }];
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Desktop bridge test" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Desktop bridge test", exact: true }).click();
   await expect.poll(async () => (await desktopControlSnapshot(page)).selectedConversationId).toBeTruthy();
   await expect.poll(async () => (await desktopControlSnapshot(page)).selectedDeckOwner).toEqual({
     surfaceKind: "channel",
@@ -325,7 +325,7 @@ test("keeps a session-only auto-show change and warns when Desktop cannot persis
   await toggle.uncheck();
 
   await expect(toggle).not.toBeChecked();
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.getByRole("region", { name: "Desktop", exact: true }).getByRole("status")).toContainText(
     "Changed for this session, but not saved. It may revert after restart.",
   );
 });
@@ -350,7 +350,7 @@ test("Open task intent leaves Settings, teammate, or a blank home and selects th
   await expect(page.locator(".normal-conversation-header")).toBeVisible();
   await expect.poll(async () => (await desktopControlSnapshot(page)).navigationAckCalls).toEqual([1, 2]);
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   await expect(page.getByLabel("Conversation home")).toBeVisible();
   await expect(page.locator(".normal-conversation-header")).toHaveCount(0);
   await emitDesktopNavigationIntent(page, 3, DESKTOP_BRIDGE_THREAD_ID);
@@ -999,7 +999,7 @@ async function emitDesktopNavigationIntent(
 }
 
 async function openDesktopBridgeChannel(page: Page): Promise<void> {
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Desktop bridge test" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Desktop bridge test", exact: true }).click();
   await expect(page.locator(".channel-header")).toBeVisible();
 }
 

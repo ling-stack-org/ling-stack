@@ -223,6 +223,8 @@ test("channel context message listing scopes topic replies to their source messa
 test("active work collector projects proposals workflows runs and approvals as metadata sources", () => {
   const channel = createChannel();
   const store = {
+    getConversationItem: (id) => id === "msg_current" ? { threadId: "thread_current" } : undefined,
+    getLingTurn: () => undefined,
     listChannelExecutionProposals: () => [{
       id: "proposal_1",
       workspaceId: "workspace_1",
@@ -289,7 +291,7 @@ test("active work collector projects proposals workflows runs and approvals as m
       : [],
   };
 
-  const sources = collectActiveWorkSources({ store, channel });
+  const sources = collectActiveWorkSources({ store, channel, threadId: "thread_current" });
 
   assert.deepEqual(sources.map((source) => source.id), [
     "active_work:proposal:proposal_1",
@@ -631,6 +633,7 @@ test("workflow proposal context view maps supported source refs for shaping evid
       objective: "Implement and verify.",
       status: "running",
       createdBy: "ling_agent",
+      metadata: { sourceMessageId: "msg_previous" },
     }],
     listChannelWorkflowSteps: () => [{
       id: "step_1",

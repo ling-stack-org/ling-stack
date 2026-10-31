@@ -14,8 +14,8 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(async ({ page }) => { expect(browserErrors.get(page)).toEqual([]); });
 
-async function interruptAfterAcceptance(page: Page, hold = false, terminalError = false) {
-    await page.addInitScript(({ hold, terminalError }) => {
+async function interruptAfterAcceptance(page: Page, hold = false) {
+    await page.addInitScript(({ hold }) => {
       localStorage.setItem("ling-stack.locale", "en-US");
       const originalFetch = window.fetch;
       window.fetch = async (...args) => {
@@ -25,26 +25,18 @@ async function interruptAfterAcceptance(page: Page, hold = false, terminalError 
         const blocks = (await response.text()).split("\n\n");
         const ready = blocks.find(block => block.startsWith("event: ready\n"));
         if (!ready) throw new Error("The recovery fixture did not accept a message");
-        const terminal = blocks.find(block => block.startsWith("event: done\n"));
-        if (terminalError && !terminal) throw new Error("The recovery fixture has no terminal reply");
         let delivered = false;
         return new Response(new ReadableStream<Uint8Array>({
           async pull(controller) {
             if (delivered) {
               if (hold) await new Promise<void>(resolve => window.addEventListener("p2-release-response", () => resolve(), { once: true }));
-              if (terminalError) {
-                const data = JSON.parse(terminal!.slice("event: done\ndata: ".length));
-                controller.enqueue(new TextEncoder().encode(`event: error\ndata: ${JSON.stringify({ ...data, error: "Controlled terminal error after acceptance" })}\n\n`));
-                controller.close();
-              } else {
-                controller.error(new TypeError("Controlled response loss after acceptance"));
-              }
+              controller.error(new TypeError("Controlled response loss after acceptance"));
             }
             else { delivered = true; controller.enqueue(new TextEncoder().encode(ready + "\n\n")); }
           },
         }, { highWaterMark: 0 }), { status: response.status, headers: response.headers });
       };
-    }, { hold, terminalError });
+    }, { hold });
 }
 
 function recoveryState() {
@@ -250,9 +242,35 @@ test(`${surface} unresolved receipt survives reload and reconciliation preserves
 }
 
 test("channel accepted terminal errors do not offer input replay", async ({ page }) => {
-  await interruptAfterAcceptance(page, false, true);
+  await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "en-US"));
   const state = recoveryState();
   await mockDaemon(page, state);
+  // Fail after accepting the user input and before an assistant reply exists.
+  // A persisted assistant failure has its own error owner in the message feed.
+  await page.route(/\/channels\/channel_engineering\/turns\/stream(?:\?.*)?$/, async route => {
+    const request = route.request().postDataJSON();
+    state.lastChannelTurnRequest = request;
+    const thread = state.threads.find(item => item.id === request.surface?.threadId)!;
+    expect(thread).toBeDefined();
+    const now = "2026-10-14T00:00:00.000Z";
+    const message = { id: "p2-accepted-terminal-input", workspaceId: "workspace_default", channelId: "channel_engineering",
+      threadId: thread.id, kind: "message", intent: "discuss", authorType: "local-user", authorId: "tian",
+      body: request.body, mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [], status: "ready", createdAt: now, updatedAt: now };
+    state.channelMessages.push(message);
+    const turn = { id: `turn_${message.id}`, workspaceId: "workspace_default", threadId: thread.id, channelId: message.channelId,
+      kind: "manual_followup", status: "failed", title: request.body, userInstruction: request.body,
+      sourceItemId: message.id, createdByActor: "local-user", createdAt: now, updatedAt: now, completedAt: now };
+    state.turns.push(turn);
+    const accepted = { thread, turn, decorations: [], userItem: { schemaVersion: 1, id: message.id, workspaceId: "workspace_default",
+      channelId: message.channelId, threadId: thread.id, turnId: turn.id, sequence: 1, kind: "user_message", status: "committed",
+      actorType: "local_user", actorId: "tian", visibility: "channel", payload: { body: request.body, format: "plain_text",
+        mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [] }, domainRefs: [], revision: 1,
+      createdAt: now, updatedAt: now, committedAt: now } };
+    await route.fulfill({ status: 200, contentType: "text/event-stream", body: [
+      `event: ready\ndata: ${JSON.stringify(accepted)}\n\n`,
+      `event: error\ndata: ${JSON.stringify({ ...accepted, error: "Controlled terminal error after acceptance" })}\n\n`,
+    ].join("") });
+  });
   let submissions = 0;
   page.on("request", request => { if (request.method() === "POST" && /\/turns\/stream/.test(request.url())) submissions++; });
   await page.goto("/");
@@ -268,7 +286,8 @@ test("channel accepted terminal errors do not offer input replay", async ({ page
   await expect(input).toHaveAttribute("data-value", "");
   await expect(page.getByLabel("Channel message feed", { exact: true }).getByText(body, { exact: true })).toHaveCount(1);
   expect(submissions).toBe(1);
-  expect(state.channelMessages).toHaveLength(2);
+  expect(state.channelMessages).toHaveLength(1);
+  expect(state.channelMessages).toEqual([expect.objectContaining({ kind: "message", body })]);
   await mkdir(evidenceDir, { recursive: true });
   await page.screenshot({ path: `${evidenceDir}channel-accepted-terminal-error.png`, animations: "disabled" });
 });
@@ -342,7 +361,7 @@ test(`branch recovers the accepted turn in its own thread without replay · ${ph
   expect(submissions).toBe(1);
   await mkdir(evidenceDir, { recursive: true });
   await page.screenshot({ path: `${evidenceDir}branch-${phase}-response-recovery.png`, animations: "disabled" });
-  await sidebar.getByRole("button", { name: "Engineering", exact: true }).click();
+  await sidebar.getByRole("list", { name: "Engineering Conversations", exact: true }).locator("[data-session-default=true] .sidebar-branch-row").click();
   await expect(feed).not.toContainText(body);
 });
 }

@@ -12,6 +12,7 @@ import { RuntimeSupervisor } from "../../../packages/daemon/dist/runtime/supervi
 import { ChannelTurnDispatchWorkerRegistry } from "../../../packages/daemon/dist/features/channels/channel-turn-dispatch-worker.js";
 import { appendChannelAssistantMessage } from "../../../packages/daemon/dist/features/channels/conversation-item-messages.js";
 import { handleChannelItemsCollection, handleChannelTurnStream } from "../../../packages/daemon/dist/features/channels/messages.js";
+import { handleChannelSessions } from "../../../packages/daemon/dist/features/channels/session-routes.js";
 import { handleConversationDetail, handleConversationStream } from "../../../packages/daemon/dist/features/conversations/routes.js";
 import { handleConversationSubmissionReceipt } from "../../../packages/daemon/dist/features/conversations/submission-receipts.js";
 import { handleLingThreadItem } from "../../../packages/daemon/dist/features/runs/thread-routes.js";
@@ -61,8 +62,9 @@ test(`${surface} ${theme} source HTTP and SQLite recover a lost first confirmati
     if (url.pathname === "/conversations/stream") void handleConversationStream(request, response, config, registry, runners, startRun);
     else if (url.pathname === "/conversation-submissions") handleConversationSubmissionReceipt(response, url, registry);
     else if (url.pathname.startsWith("/threads/")) void handleLingThreadItem(request, response, url, registry,
-      { kind: "proposed-plans", threadId: url.pathname.split("/")[2] });
+      { kind: url.pathname.endsWith("/goal") ? "goal" : "proposed-plans", threadId: url.pathname.split("/")[2] });
     else if (url.pathname.startsWith("/conversations/")) handleConversationDetail(response, url, registry, url.pathname.split("/")[2]);
+    else if (/\/channels\/[^/]+\/sessions(?:\/[^/]+)?$/.test(url.pathname)) void handleChannelSessions(request, response, config, registry, channel.id, url.pathname.split("/")[4]);
     else if (url.pathname.endsWith("/turns/stream")) void handleChannelTurnStream(request, response, config, registry, channel.id, undefined, worker);
     else void handleChannelItemsCollection(request, response, config, registry, channel.id);
   });
@@ -79,7 +81,7 @@ test(`${surface} ${theme} source HTTP and SQLite recover a lost first confirmati
     state.channels = [channel];
     state.providers = [createChatProvider({ id: "controlled-native-provider", lastCheck: { ok: true, checkedAt: "2026-10-14T00:00:00.000Z", summary: "No model call" } })];
     await mockDaemon(page, state);
-    await page.route(url => /^\/(conversation-submissions|conversations\/(?:stream|thread_[^/]+)|threads\/thread_[^/]+\/proposed-plans|channels\/[^/]+\/(?:turns\/stream|items))$/.test(url.pathname), async route => {
+    await page.route(url => /^\/(conversation-submissions|conversations\/(?:stream|thread_[^/]+)|threads\/thread_[^/]+\/(?:proposed-plans|goal)|channels\/[^/]+\/(?:turns\/stream|items|sessions(?:\/[^/]+)?))$/.test(url.pathname), async route => {
       const request = route.request(), url = new URL(request.url());
       const response = await fetch(`${base}${url.pathname}${url.search}`, { method: request.method(), headers: { "Content-Type": "application/json" }, body: request.postData() || undefined });
       await route.fulfill({ status: response.status, contentType: response.headers.get("content-type") || "application/json", body: await response.text() });

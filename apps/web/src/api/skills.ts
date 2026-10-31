@@ -66,6 +66,15 @@ import type {
   SkillUsageStatsListResponse,
 } from "@ling-stack/contracts";
 import { daemonClient } from "./client.js";
+import type { LearningReviewCreateRequest, LearningReviewPolicyUpdateRequest, SkillDefinitionUndoRequest } from "../types.js";
+
+export const getLearningReviewPolicy = (cwd: string) => daemonClient.getLearningReviewPolicy(cwd);
+export const updateLearningReviewPolicy = (cwd: string, input: LearningReviewPolicyUpdateRequest) => daemonClient.updateLearningReviewPolicy(cwd, input);
+export const createLearningReview = (cwd: string, input: LearningReviewCreateRequest) => daemonClient.createLearningReview(cwd, input);
+export const listLearningReviews = (cwd: string, runId?: string, decisionId?: string) => daemonClient.listLearningReviews(cwd, runId, decisionId);
+export const cancelLearningReview = (cwd: string, jobId: string) => daemonClient.cancelLearningReview(cwd, jobId);
+export const getSkillDefinitionHistory = (cwd: string, skillId: string) => daemonClient.getSkillDefinitionHistory(cwd, skillId);
+export const undoSkillDefinitionRevision = (cwd: string, skillId: string, input: SkillDefinitionUndoRequest) => daemonClient.undoSkillDefinitionRevision(cwd, skillId, input);
 
 export async function listSkills(cwd: string): Promise<SkillRegistryListResponse> {
   return daemonClient.listSkills(cwd);

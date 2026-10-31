@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { createLocalFileCapabilities } from "../shared/local-file-activation.js";
+import { readDesktopLocalServiceRequest } from "../shared/local-service-capabilities.js";
 import type { ExternalExecutionEngineId } from "@ling-stack/contracts";
 import type {
   ComputerUseHostLayout,
@@ -46,6 +47,9 @@ const capabilities: LingDesktopCapabilities = {
     prepare: request => ipcRenderer.invoke(BACKGROUND_CHANNELS.prepare, request),
     release: requestId => ipcRenderer.invoke(BACKGROUND_CHANNELS.release, requestId),
     commit: request => ipcRenderer.invoke(BACKGROUND_CHANNELS.commit, request),
+  },
+  localServices: {
+    request: async (request) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.localServiceRequest, readDesktopLocalServiceRequest(request)),
   },
   ...(platform === "macos" ? {
     humanEvaluation: {

@@ -1,4 +1,9 @@
 import type {
+  ChannelSessionListResponse,
+  ChannelSessionMutationResponse,
+  CreateChannelSessionRequest,
+  UpdateChannelSessionRequest,
+  ListChannelSessionsOptions,
   ChannelAttachmentListResponse,
   ChannelAttachmentMutationResponse,
   ChannelBriefMutationResponse,
@@ -136,6 +141,26 @@ export const channelEndpoints = {
       return this._patch(`/channels/${encodeURIComponent(channelId)}`, { cwd }, input);
     },
 
+  async listChannelSessions(this: LingDaemonEndpointContext, cwd: string, channelId: string,
+      options: ListChannelSessionsOptions = {}): Promise<ChannelSessionListResponse> {
+      return this._get(`/channels/${encodeURIComponent(channelId)}/sessions`, { cwd, ...options });
+    },
+
+  async createChannelSession(this: LingDaemonEndpointContext, cwd: string, channelId: string,
+      input: CreateChannelSessionRequest): Promise<ChannelSessionMutationResponse> {
+      return this._post(`/channels/${encodeURIComponent(channelId)}/sessions`, { cwd }, input);
+    },
+
+  async getChannelSession(this: LingDaemonEndpointContext, cwd: string, channelId: string,
+      threadId: string): Promise<ChannelSessionMutationResponse> {
+      return this._get(`/channels/${encodeURIComponent(channelId)}/sessions/${encodeURIComponent(threadId)}`, { cwd });
+    },
+
+  async updateChannelSession(this: LingDaemonEndpointContext, cwd: string, channelId: string,
+      threadId: string, input: UpdateChannelSessionRequest): Promise<ChannelSessionMutationResponse> {
+      return this._patch(`/channels/${encodeURIComponent(channelId)}/sessions/${encodeURIComponent(threadId)}`, { cwd }, input);
+    },
+
   async listChannelBranches(this: LingDaemonEndpointContext,
       cwd: string,
       channelId: string,
@@ -159,6 +184,10 @@ export const channelEndpoints = {
       input: UpdateChannelBranchRequest,
     ): Promise<ChannelBranchMutationResponse> {
       return this._patch(`/channels/${encodeURIComponent(channelId)}/branches/${encodeURIComponent(branchId)}`, { cwd }, input);
+    },
+
+  async repairChannelBranch(this: LingDaemonEndpointContext, cwd: string, channelId: string, branchId: string): Promise<ChannelBranchMutationResponse> {
+      return this._post(`/channels/${encodeURIComponent(channelId)}/branches/${encodeURIComponent(branchId)}/repair`, { cwd }, {});
     },
 
   async deleteChannelBranch(this: LingDaemonEndpointContext, cwd: string, channelId: string, branchId: string): Promise<void> {

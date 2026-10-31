@@ -340,9 +340,10 @@ function deterministicNoReplyReason(input: ChannelMessageRouteInput): string | u
 
 function defaultLingAgentReplyReason(input: ChannelMessageRouteInput): string {
   const surface = resolveChannelConversationSurface(input.store, input.channel.id, input.sourceMessage);
-  if (surface.kind === "branch") {
-    return "Ling Agent answered a channel branch message.";
+  if (surface.kind === "session") {
+    return "Ling Agent answered a channel conversation message.";
   }
+  if (surface.kind === "branch") return "Ling Agent answered a channel branch message.";
   return "Ling Agent answered a root channel message.";
 }
 

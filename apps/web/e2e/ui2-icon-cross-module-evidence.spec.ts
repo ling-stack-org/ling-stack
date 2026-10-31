@@ -232,7 +232,7 @@ async function openPluginManager(page: Page): Promise<Locator> {
   const backToApp = page.getByRole("button", { name: "Back to app" });
   if (await backToApp.isVisible().catch(() => false)) await backToApp.click();
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "Engineering" }).click();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
   const plugins = page.locator(".plugin-manager-page .settings-plugin-manager");
   await expect(plugins.locator(".plugin-table-row").first()).toBeVisible();

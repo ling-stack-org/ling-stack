@@ -156,13 +156,122 @@ test("stopping while the startup authority is in flight rejects its late result"
   const child = createFakeChild();
   const channel = new PassThrough();
   child.stdio = [null, null, null, channel];
-  const lifecycle = engineLifecycle(child);
+  const lifecycle = engineLifecycle(child, undefined, { packaged: true });
   await lifecycle.ensureStarted();
   const pending = lifecycle.getExecutionEngineAuthority();
   const rejected = assert.rejects(pending, /engine_host_authority_unavailable/);
   await lifecycle.stopOwnedDaemon();
   channel.end(JSON.stringify(engineAuthorityFixture(child.pid)));
   await rejected;
+});
+
+test("packaged validation may take 52 seconds before readiness and engine authority arrive", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  const child = createFakeChild();
+  const channel = new PassThrough();
+  child.stdio = [null, null, null, channel];
+  const spawned = deferred();
+  const readyAt = Date.now() + 52_000;
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:17991", daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd: "/tmp/ling-desktop-workspace", packaged: true,
+    fetch: async () => {
+      if (Date.now() < readyAt) throw new TypeError("verified resources are still loading");
+      return daemonHealth("/tmp/ling-desktop-workspace");
+    },
+    probePort: async () => "free",
+    spawnDaemon: () => { spawned.resolve(); return child; },
+  });
+  t.after(async () => { await lifecycle.stopOwnedDaemon(); channel.destroy(); });
+  const startup = lifecycle.ensureStarted();
+  startup.catch(() => undefined);
+  await spawned.promise;
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(21_000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(lifecycle.status.state, "starting");
+  assert.equal(channel.destroyed, false, "FD3 must survive the same packaged validation budget as readiness");
+  await assert.rejects(lifecycle.getExecutionEngineAuthority(), /engine_host_authority_unavailable/);
+  t.mock.timers.tick(31_000);
+  channel.end(JSON.stringify(engineAuthorityFixture(child.pid)));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await startup).ownedByDesktop, true);
+  assert.deepEqual(await lifecycle.getExecutionEngineAuthority(), engineAuthorityFixture(child.pid));
+  assert.deepEqual(child.killSignals, []);
+});
+
+test("ordinary development startup retains its 20 second deadline", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  const child = createFakeChild();
+  const spawned = deferred();
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:17991", daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd: "/tmp/ling-desktop-workspace",
+    fetch: async () => { throw new TypeError("not ready"); }, probePort: async () => "free",
+    spawnDaemon: () => { spawned.resolve(); return child; },
+  });
+  const rejected = assert.rejects(lifecycle.ensureStarted(), error => error?.code === "start_timeout");
+  await spawned.promise;
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(20_000);
+  await rejected;
+  assert.deepEqual(child.killSignals, ["SIGTERM"]);
+});
+
+for (const [label, options, budget] of [
+  ["packaged startup remains bounded at 120 seconds", { packaged: true }, 120_000],
+  ["an explicit startup deadline takes precedence for packaged startup", { packaged: true, startupTimeoutMs: 700 }, 700],
+]) {
+  test(label, async (t) => {
+    t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+    const child = createFakeChild();
+    const channel = new PassThrough();
+    child.stdio = [null, null, null, channel];
+    const spawned = deferred();
+    const lifecycle = new DesktopDaemonLifecycle({
+      baseUrl: "http://127.0.0.1:17991", daemonEntryPath: existingEntryPath,
+      defaultWorkspaceCwd: "/tmp/ling-desktop-workspace", ...options,
+      fetch: async () => { throw new TypeError("not ready"); }, probePort: async () => "free",
+      spawnDaemon: () => { spawned.resolve(); return child; },
+    });
+    t.after(async () => { await lifecycle.stopOwnedDaemon(); channel.destroy(); });
+    const rejected = assert.rejects(lifecycle.ensureStarted(), error => error?.code === "start_timeout");
+    await spawned.promise;
+    await new Promise(resolve => setImmediate(resolve));
+    t.mock.timers.tick(budget);
+    await rejected;
+    assert.equal(channel.destroyed, true);
+    assert.deepEqual(child.killSignals, ["SIGTERM"]);
+    await assert.rejects(lifecycle.getExecutionEngineAuthority(), /engine_host_authority_unavailable/);
+  });
+}
+
+test("stopping a packaged child immediately closes its pending authority and rejects late credentials", async (t) => {
+  const child = createFakeChild();
+  const channel = new PassThrough();
+  child.stdio = [null, null, null, channel];
+  t.after(() => channel.destroy());
+  const lifecycle = engineLifecycle(child, undefined, { packaged: true });
+  await lifecycle.ensureStarted();
+  const pending = lifecycle.getExecutionEngineAuthority();
+  const rejected = assert.rejects(pending, /engine_host_authority_unavailable/);
+  await lifecycle.stopOwnedDaemon();
+  assert.equal(channel.destroyed, true, "stop must release FD3 without waiting for the startup budget");
+  channel.end(JSON.stringify(engineAuthorityFixture(child.pid)));
+  await rejected;
+  await assert.rejects(lifecycle.getExecutionEngineAuthority(), /engine_host_authority_unavailable/);
+});
+
+test("a healthy packaged child with a foreign authority PID stays unauthorized", async (t) => {
+  const child = createFakeChild();
+  const channel = new PassThrough();
+  child.stdio = [null, null, null, channel];
+  const lifecycle = engineLifecycle(child, undefined, { packaged: true });
+  t.after(() => lifecycle.stopOwnedDaemon());
+  channel.end(JSON.stringify(engineAuthorityFixture(child.pid + 1)));
+  await lifecycle.ensureStarted();
+  await assert.rejects(lifecycle.getExecutionEngineAuthority(), /engine_host_authority_unavailable/);
+  assert.equal(channel.destroyed, true);
 });
 
 test("reusing an external daemon never grants engine management authority", async () => {
@@ -180,13 +289,14 @@ function engineAuthorityFixture(pid) {
     credentials: { capability: "fixture".repeat(7), csrfToken: "csrf".repeat(11) } };
 }
 
-function engineLifecycle(child, onSpawn = () => {}) {
+function engineLifecycle(child, onSpawn = () => {}, options = {}) {
   let probes = 0;
   return new DesktopDaemonLifecycle({
     baseUrl: "http://127.0.0.1:17991", daemonEntryPath: existingEntryPath,
     defaultWorkspaceCwd: "/tmp/ling-desktop-workspace", probePort: async () => "free",
     fetch: async () => ++probes === 1 ? Promise.reject(new TypeError("fetch failed")) : daemonHealth("/tmp/ling-desktop-workspace"),
     spawnDaemon: (input) => { onSpawn(input); return child; },
+    ...options,
   });
 }
 

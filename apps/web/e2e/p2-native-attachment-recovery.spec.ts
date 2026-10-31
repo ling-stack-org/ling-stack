@@ -77,6 +77,7 @@ for (const surface of ["normal", "channel", "private"] as const) {
       }).click();
       const composer = page.getByLabel(surface === "normal" ? "New conversation composer" : surface === "channel" ? "Channel composer" : "Private chat composer", { exact: true });
       const content = "Native attachment bytes remain intact";
+      await expect(composer.locator('input[type="file"]')).toBeEnabled();
       await composer.locator('input[type="file"]').setInputFiles([
         { name: "native-ready.txt", mimeType: "text/plain", buffer: Buffer.from(content) },
         { name: "native-empty.txt", mimeType: "text/plain", buffer: Buffer.alloc(0) },

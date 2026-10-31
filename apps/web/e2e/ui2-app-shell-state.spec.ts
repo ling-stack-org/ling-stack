@@ -37,14 +37,15 @@ test("AppShell returns from Settings to the exact view and selected channel with
   await expect(navigation.getByRole("button", { name: "Work Board" })).toHaveCount(0);
   await expect(navigation.locator(".primary-nav [aria-current='page']")).toHaveCount(0);
 
-  await navigation.getByRole("button", { name: "Engineering" }).click();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await expect(root).toHaveAttribute("data-ui-surface", "channel");
   await navigation.getByRole("button", { name: "Settings" }).click();
   await expect(root).toHaveAttribute("data-ui-surface", "settings");
   await page.getByRole("button", { name: "Back to app" }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toHaveAttribute("aria-current", "page");
+  await expect(navigation.locator(".channel-contains-selection").getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
+  await expect(navigation.locator('[data-session-default="true"] .sidebar-branch-row')).toHaveAttribute("aria-current", "page");
   await expect(root).toHaveAttribute("data-ui-surface", "channel");
   await expect(shell).toHaveAttribute("data-ui2-shell-state-marker", "preserved");
   await expectNoPageOverflow(page);
@@ -151,13 +152,13 @@ test("persistent Sidebar stays stable across every visible main navigation targe
     await expect(root).toHaveAttribute("data-ui-surface", "management");
     await navigation.getByRole("button", { name: "Automations" }).click();
     await expect(root).toHaveAttribute("data-ui-surface", "management");
-    await navigation.getByRole("button", { name: "Engineering" }).click();
+    await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
     await expect(root).toHaveAttribute("data-ui-surface", "channel");
     await navigation.getByRole("button", { name: "Designer", exact: true }).click();
     await expect(root).toHaveAttribute("data-ui-surface", "conversation");
     await navigation.getByRole("button", { name: "Open recent conversation 1" }).click();
     await expect(navigation.getByRole("button", { name: "Open recent conversation 1" })).toHaveAttribute("aria-current", "page");
-    await navigation.getByRole("button", { name: "New conversation" }).click();
+    await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
     await expect(root).toHaveAttribute("data-ui-surface", "home");
   }
 

@@ -1,11 +1,8 @@
-import { expect, test, type Page } from "@playwright/test";
-import { copyFile, mkdir, readdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
 
-const acceptanceDir = resolve(process.cwd(), "../..", ".ling-stack/acceptance/ling-core-mark");
-const themes = ["ling-light", "ling-dark", "ling-breeze", "ling-ocean", "ling-night"] as const;
+const themes = ["ling-light", "ling-dark", "ling-breeze", "ling-ocean", "ling-night", "ling-journey"] as const;
 
 async function openHome(page: Page): Promise<void> {
   page.on("pageerror", (error) => console.error("PAGE_ERROR", error.message));
@@ -34,68 +31,50 @@ async function selectTheme(page: Page, themeId: string): Promise<void> {
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", themeId);
 }
 
-test("Ling Core IP mark renders on the conversation home across themes and states", async ({ page, browser }, testInfo) => {
-  test.setTimeout(180_000);
-  await mkdir(acceptanceDir, { recursive: true });
-  await openHome(page);
-
-  const mark = page.locator(".conversation-home-mark .ling-core-mark");
+async function expectOriginalLogo(page: Page): Promise<Locator> {
+  const mark = page.locator(".conversation-home-mark > img");
+  await expect(mark).toHaveCount(1);
   await expect(mark).toBeVisible();
-  await expect(mark).toHaveAttribute("data-state", "idle");
-  await expect(mark.locator(".ling-core-mark-artwork")).toHaveCount(1);
-  await expect(mark.locator(".ling-core-mark-orb")).toHaveCount(3);
-  await expect(mark.locator(".ling-core-mark-overlay")).toHaveCount(1);
+  await expect(mark).toHaveAttribute("aria-hidden", "true");
+  await expect(mark).toHaveAttribute("alt", "");
+  await expect(mark).toHaveAttribute("src", /(?:^|\/)icons\/ling-mark-compact\.svg$/);
+  await expect.poll(() => mark.evaluate((element: HTMLImageElement) => {
+    const bounds = element.getBoundingClientRect();
+    return element.complete && element.naturalWidth > 0 && element.naturalHeight > 0
+      && bounds.width > 0 && bounds.height > 0;
+  })).toBe(true);
+  // theme-background-motion-contract: Core IP is paused; the original Logo remains.
+  await expect(page.locator(".conversation-home .ling-core-mark")).toHaveCount(0);
+  return mark;
+}
+
+test("original Ling Stack logo remains on the conversation home across themes and reduced motion", async ({ page, browser }, testInfo) => {
+  await openHome(page);
+  const mark = await expectOriginalLogo(page);
+  const originalSource = await mark.getAttribute("src") ?? "";
 
   for (const theme of themes) {
     await selectTheme(page, theme);
     await expect(page.locator(".conversation-home")).toBeVisible();
-    await expect(mark).toBeVisible();
-    await page.waitForTimeout(3200);
-    await mark.screenshot({ path: resolve(acceptanceDir, `${theme}-idle-mark.png`) });
-    await page.screenshot({ path: resolve(acceptanceDir, `${theme}-idle-home.png`) });
+    const themedMark = await expectOriginalLogo(page);
+    await expect(themedMark).toHaveAttribute("src", originalSource);
+    await themedMark.screenshot({ path: testInfo.outputPath(`${theme}-logo.png`) });
+    await page.screenshot({ path: testInfo.outputPath(`${theme}-home.png`), fullPage: true });
   }
-
-  const states = ["thinking", "receiving", "completed", "blocked"] as const;
-  for (const state of states) {
-    await mark.evaluate((element, next) => {
-      element.setAttribute("data-state", next);
-    }, state);
-    await page.waitForTimeout(320);
-    await page
-      .locator(".conversation-home-mark")
-      .screenshot({ path: resolve(acceptanceDir, `state-${state}-mark.png`) });
-  }
-  await mark.evaluate((element) => element.setAttribute("data-state", "idle"));
 
   const emulated = await browser.newContext({ reducedMotion: "reduce" });
-  const reducedPage = await emulated.newPage();
-  await openHome(reducedPage);
-  const reducedMark = reducedPage.locator(".conversation-home-mark .ling-core-mark");
-  await expect(reducedMark).toBeVisible();
-  const animationName = await reducedMark
-    .locator(".ling-core-mark-artwork")
-    .evaluate((element) => getComputedStyle(element).animationName);
-  expect(animationName).toBe("none");
-  await reducedMark.screenshot({ path: resolve(acceptanceDir, "reduced-motion-mark.png") });
-  await emulated.close();
-
-  const recording = await browser.newContext({
-    recordVideo: { dir: testInfo.outputPath("video"), size: { width: 1280, height: 800 } },
-    viewport: { width: 1280, height: 800 },
-  });
-  const videoPage = await recording.newPage();
-  await openHome(videoPage);
-  const videoMark = videoPage.locator(".conversation-home-mark .ling-core-mark");
-  await expect(videoMark).toBeVisible();
-  await videoPage.waitForTimeout(3200);
-  await videoMark.evaluate((element) => element.setAttribute("data-state", "thinking"));
-  await videoPage.waitForTimeout(2800);
-  await videoMark.evaluate((element) => element.setAttribute("data-state", "completed"));
-  await videoPage.waitForTimeout(1200);
-  await videoPage.close();
-  const videoFiles = await readdir(testInfo.outputPath("video"));
-  const recorded = videoFiles.find((file) => file.endsWith(".webm"));
-  expect(recorded).toBeTruthy();
-  await copyFile(testInfo.outputPath("video", recorded!), resolve(acceptanceDir, "ling-core-mark-motion.webm"));
-  await recording.close();
+  try {
+    const reducedPage = await emulated.newPage();
+    await openHome(reducedPage);
+    const reducedMark = await expectOriginalLogo(reducedPage);
+    await expect(reducedMark).toHaveAttribute("src", originalSource);
+    await expect(reducedMark).toHaveCSS("animation-name", "none");
+    await expect(reducedPage.locator(".conversation-home-mark")).toHaveCSS("animation-name", "none");
+    expect(await reducedPage.locator(".conversation-home-mark").evaluate((element) => element.getAnimations({ subtree: true }).length))
+      .toBe(0);
+    await reducedMark.screenshot({ path: testInfo.outputPath("reduced-motion-logo.png") });
+    await reducedPage.screenshot({ path: testInfo.outputPath("reduced-motion-home.png"), fullPage: true });
+  } finally {
+    await emulated.close();
+  }
 });

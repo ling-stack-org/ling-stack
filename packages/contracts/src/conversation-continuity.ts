@@ -37,6 +37,7 @@ export interface ConversationDomainRef {
 
 export const lingThreadSurfaceKindsV2 = [
   "channel_root",
+  "channel_session",
   "topic",
   "branch",
   "direct",
