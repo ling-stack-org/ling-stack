@@ -6,7 +6,7 @@ H2 原生长任务保存了六个有效压缩 checkpoint，随后 assistant stop
 Pi 原先丢弃 SDK retry lifecycle，并把错误原文替换成单一通用文案；因此旧 Run
 不能区分请求错误、超时、限流或其他失败。补诊断不能追溯生成旧历史中不存在的事实。
 
-本实现核对安装的 Pi SDK **0.84.4** 的 AgentSessionEvent、agent-session.js、
+本实现于历史核验时核对 Pi SDK **0.84.4** 的 AgentSessionEvent、agent-session.js；当前 runner-pi 已统一到 1.1.0。
 pi-ai error-body.js 和 retry.js，不重复研究已冻结的 Codex/UI 设计。
 
 ## 模块与事实来源

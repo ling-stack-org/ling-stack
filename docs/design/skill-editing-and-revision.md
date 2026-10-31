@@ -134,7 +134,7 @@ It must not open a second modal.
 `GET /skills/:skillId/revisions` returns immutable definition before/after images,
 monotonic revision ids, actor, reason, validation status and optional learning-job /
 candidate provenance. These records version `definition_json`; source snapshot rollback
-continues to version source bundles independently. Migration 180 captures only a current
+continues to version source bundles independently. Migration 185 captures only a current
 baseline for existing skills, because earlier before-images are unavailable.
 
 Preview and publication accept `expectedRevisionId` in addition to the compatible

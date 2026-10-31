@@ -432,7 +432,7 @@ Runner typed yield 最终证据见 Runner 交接 (`user-input-runner-yield-u2-ha
 
 ## 5. U2-P：真实 SDK 前置修复证据
 
-当前安装的 Pi SDK 为 0.84.3。`AgentSession.prompt()` 的 `_runAgentPrompt()` 会等待
+2026-09-07 历史核验使用的 Pi SDK 为 0.84.3。当前安装版本为 1.1.0；`AgentSession.prompt()` 的 `_runAgentPrompt()` 会等待
 `agent.prompt()` 与 post-run continuation，然后 `_emitAgentSettled()`；
 `abort()` await idle，而 `dispose()` 只是同步清理。实测正在执行工具的正常取消会等待清理，
 两项并行工具也要全部结束，因此本轮没有把 fire-and-forget abort 宣称为已复现的提前收尾 bug。

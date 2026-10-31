@@ -225,7 +225,7 @@ function removePost178LearningOverlays(database) {
   for (const table of learningOverlayTables) {
     if (!table.startsWith("memory_search_fts_v1_")) database.exec(`DROP TABLE ${table}`);
   }
-  database.exec("DELETE FROM schema_migrations WHERE version IN (179,180,181,182,183)");
+  database.exec("DELETE FROM schema_migrations WHERE version IN (179,180,181,184,185,186,187,188)");
   assert.deepEqual(schema(database).filter(row => learningOverlayTables.has(row.tbl_name) || learningOverlayTriggers.has(row.name)), []);
 }
 

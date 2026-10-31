@@ -514,7 +514,10 @@ Codex 设置提供四档：
 
 结论已经确认：推理摘要是可公开的模型摘要，不等于原始推理过程。UI 可以显示安全摘要，但不得把原始 chain-of-thought、流式 thinking 文本或 provider 私有 reasoning content 当作摘要展示。
 
-##### 2.2 Pi SDK 0.84.4 与 OpenAI Responses 行为
+##### 2.2 历史 Pi SDK 0.84.4 与 OpenAI Responses 行为
+
+本节记录 2026-09 的历史 SDK 行为核验；当前 `@earendil-works/pi-ai` 与
+`@earendil-works/pi-coding-agent` 已统一升级到 1.1.0。
 
 已确认：
 

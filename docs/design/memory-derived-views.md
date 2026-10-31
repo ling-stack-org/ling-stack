@@ -41,7 +41,7 @@ use. All five daemon recall paths use the same async boundary and resolve owners
 after waiting. Exact id/tag matches retain priority. Reciprocal rank fusion (`k=60`) combines
 rank positions without adding incomparable lexical and vector scores.
 
-Migration 182 adds policy/generation records, qualification revisions and a coalesced
+Migration 187 adds policy/generation records, qualification revisions and a coalesced
 transactional outbox. Usage timestamps do not trigger embeddings. A keyset full scan persists
 completed pages and then catches up on the outbox. Generation and policy CAS fence old
 builders. Transient failure backs off 30 seconds to 5 minutes; restart resumes the stored
@@ -82,7 +82,7 @@ memory provenance remains inspectable through its owning memory object. Arbitrar
 sourceRef labels/ids are not expanded into cross-owner backlink indexes. Related pages share
 a tag; that relationship does not assert that their conclusions agree.
 
-Migration 183 stores requested/published generations and human blocks. Compilation builds
+Migration 188 stores requested/published generations and human blocks. Compilation builds
 an immutable generation in a mode-0700 staging directory under the workspace state directory,
 writes a manifest and mode-0600 Markdown pages, then atomically renames the directory. SQLite
 publishes its pointer only after a second source fingerprint check and current-generation
@@ -138,8 +138,8 @@ copy of that historical schema; it is not evidence from a populated real-user me
 An earlier historical-schema diagnostic copy was rejected by migration 147 for an automation
 foreign-key orphan. That finding does not diagnose the current task's default developer
 database: the latter already contains this branch's old, unpublished feature migrations
-177–181, before main reserved 177/178 and the feature migrations moved to 179–183. That
+177–181 for channel sessions, before main reserved 177/178 and the feature migrations moved to 184–188. That
 development-only numbering collision is distinct from an upgrade of released main schema178;
-a genuine mainline178-to183 fixture preserves its settings, sources and existing history.
+a genuine mainline178-to188 fixture preserves its settings, sources and existing history.
 Neither diagnostic changes the released migration ledger or requires repairing live user
 data as part of this feature. The live source database was not modified during rehearsal.

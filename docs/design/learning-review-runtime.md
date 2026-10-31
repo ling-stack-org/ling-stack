@@ -57,7 +57,7 @@ new execution. Missing results may produce `none`.
 
 ## Durable job and execution lifecycle
 
-Migration 181 adds `learning_review_policy` and `learning_review_jobs`. A unique
+Migration 186 adds `learning_review_policy` and `learning_review_jobs`. A unique
 workspace/source identity/source Attempt/evidence digest identifies one logical job across
 manual and automatic enrollment. The job records policy revision, evidence, status,
 WorkUnit/Attempt fence, reserved budget and output candidate ids. A partial unique index
