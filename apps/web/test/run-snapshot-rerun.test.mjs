@@ -49,7 +49,7 @@ test("snapshot capability requires an explicit accepted objective and a provider
 
 test("ordinary rerun uses the user task, not old cached internal system hydration", () => {
   const source = run({ requestSnapshot: {
-    tools: ["read", "bash"], permissionMode: "standard", thinkingLevel: "high",
+    tools: ["read", "bash"], permissionMode: "balanced", thinkingLevel: "high",
     systemPrompt: "private-cached-body", appendSystemPrompt: ["private-cached-body"],
     runnerExecutionInput: { input: { prompt: "private-cached-body" } },
     preselectedMemoryUse: { renderedPrompt: "private-cached-body" },
@@ -60,7 +60,10 @@ test("ordinary rerun uses the user task, not old cached internal system hydratio
   assert.deepEqual(request.tools, ["read", "bash"]);
   assert.equal(request.providerPresetId, "provider_one");
   assert.equal(request.thinkingLevel, "high");
-  assert.equal(request.permissionMode, "standard");
+  assert.equal(request.schemaVersion, 2);
+  assert.equal(request.permissionMode, undefined);
+  assert.equal(request.authorizationMode, "smart");
+  assert.equal(request.workspaceAccessMode, "workspace_write");
   assert.doesNotMatch(JSON.stringify(request), /private-cached-body/u);
   assert.deepEqual(source, before);
 });

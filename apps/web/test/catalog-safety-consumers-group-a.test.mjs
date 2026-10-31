@@ -215,8 +215,8 @@ test("C008 Burmese default Inspect preserves no-file-modification intent through
   assert.ok(prompt.includes("ဖိုင်များကို မပြင်ဆင်ပါနှင့်"), "the actual default task content must say not to modify files");
   assert.equal(direct.task.prompt, prompt);
   assert.equal(taskRun.task.prompt, prompt);
-  assert.equal(direct.permissionMode, "ask_everything");
-  assert.equal(taskRun.permissionMode, "ask_everything");
+  assert.equal(direct.permissionMode, undefined);
+  assert.equal(taskRun.permissionMode, undefined);
 });
 
 test("C008 current initialization/reset/create source seams still carry the same translated default prompt", () => {
