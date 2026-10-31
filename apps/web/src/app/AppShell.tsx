@@ -336,6 +336,7 @@ export function AppShell(): React.JSX.Element {
   } = useWorkspaceCommandController();
   const workspaceDomain = useWorkspaceDomain({
     cwd: form.cwd.trim(),
+    observation: daemonObservation,
     initialWorkspaceCwd,
     selectedChannelBranchId,
     translate: t,
@@ -1719,6 +1720,7 @@ export function AppShell(): React.JSX.Element {
     createTaskFromContextSummary,
     runActivityTriageAction,
   } = useChannelActionsController({
+    observation: daemonObservation,
     form,
     setForm,
     channels,
