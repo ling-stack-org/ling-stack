@@ -20,8 +20,18 @@ export interface LearningReviewCoordinatorOptions {
   readonly extract?: (input: { readonly job: LearningReviewJob; readonly prompt: string; readonly signal: AbortSignal }) => Promise<LearningDraft>;
 }
 export function foregroundWorkActive(store: RunStore): boolean {
-  return (["claimed", "running"] as const).some(status => store.listWorkUnits({ status, limit: 100 })
-    .some(unit => unit.kind !== "learning_review"));
+  for (const status of ["claimed", "running"] as const) {
+    let after: { readonly createdAt: string; readonly id: string } | undefined;
+    while (true) {
+      const units = store.listWorkUnits({ status, limit: 500, after });
+      if (units.some(unit => unit.kind !== "learning_review")) return true;
+      if (units.length < 500) break;
+      const last = units.at(-1);
+      if (!last) break;
+      after = { createdAt: last.createdAt, id: last.id };
+    }
+  }
+  return false;
 }
 
 function learningGenerationAllowed(store: RunStore, job: LearningReviewJob): boolean {

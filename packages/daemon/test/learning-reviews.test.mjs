@@ -4,7 +4,7 @@ import test from "node:test";
 import { learningFixture } from "./support/learning-review-fixture.mjs";
 import { parseLearningDraft } from "../dist/features/learning/extractor.js";
 import { captureLearningEvidence, learningEvidenceCurrent } from "../dist/features/learning/evidence.js";
-import { LearningReviewCoordinator, commitLearningDraft } from "../dist/features/learning/coordinator.js";
+import { LearningReviewCoordinator, commitLearningDraft, foregroundWorkActive } from "../dist/features/learning/coordinator.js";
 import { executeLearningModel, prepareLearningModelRequest } from "../dist/features/learning/model.js";
 const clock = () => new Date().toISOString();
 
@@ -122,6 +122,23 @@ test("a concrete correction proposes an existing definition revision without cha
   assert.deepEqual(candidate.definition.skillDefinition.requiredTools, definition.requiredTools);
   assert.deepEqual(candidate.definition.skillDefinition.approvalProfile, definition.approvalProfile);
   assert.deepEqual(f.store.getSkillRegistryEntry(definition.id).definition, definition);
+});
+
+test("foreground scan paginates past newer learning units before allowing review", async t => {
+  const f = await learningFixture(t);
+  const foreground = f.store.createWorkUnit({ workspaceId: "workspace_default", kind: "task_run", ownerType: "run", ownerId: "foreground",
+    idempotencyKey: "foreground", status: "running", createdByActor: "user", request: {}, now: "2026-01-01T00:00:00.000Z" });
+  for (let index = 0; index < 500; index += 1) {
+    f.store.createWorkUnit({ workspaceId: "workspace_default", kind: "learning_review", ownerType: "learning_review", ownerId: `learning-${index}`,
+      idempotencyKey: `learning-${index}`, status: "running", createdByActor: "system", request: {},
+      now: new Date(Date.parse("2026-01-01T00:00:00.000Z") + (index + 1) * 1000).toISOString() });
+  }
+  const firstPage = f.store.listWorkUnits({ status: "running", limit: 500 });
+  assert.equal(firstPage.length, 500);
+  assert.equal(firstPage.some(unit => unit.id === foreground.id), false);
+  const secondPage = f.store.listWorkUnits({ status: "running", after: { createdAt: firstPage.at(-1).createdAt, id: firstPage.at(-1).id }, limit: 500 });
+  assert.deepEqual(secondPage.map(unit => unit.id), [foreground.id]);
+  assert.equal(foregroundWorkActive(f.store), true);
 });
 
 test("foreground work defers queued reviews and cancellation fences an uncooperative late model result", async t => {
