@@ -515,5 +515,6 @@
   "Jump to message": "跳转到消息",
   "Scripts can contact external services. Only run documents you trust.": "脚本可能连接外部服务。请仅运行你信任的文档。",
   "Run interactive preview": "运行交互预览",
-  "Stop interactive preview": "停止交互预览"
+  "Stop interactive preview": "停止交互预览",
+  "sourceRevision": "216ae0c956b838948d22e2a6efcf29275e2d5a9b16219e1171de0e0adb4b9d13"
 }

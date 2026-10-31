@@ -515,5 +515,6 @@
   "Jump to message": "Jump to message",
   "Scripts can contact external services. Only run documents you trust.": "Scripts can contact external services. Only run documents you trust.",
   "Run interactive preview": "Run interactive preview",
-  "Stop interactive preview": "Stop interactive preview"
+  "Stop interactive preview": "Stop interactive preview",
+  "sourceRevision": "216ae0c956b838948d22e2a6efcf29275e2d5a9b16219e1171de0e0adb4b9d13"
 }
