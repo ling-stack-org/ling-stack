@@ -9,12 +9,16 @@ import {
   type WorkflowStepFailurePolicy,
   type WorkflowStepGate,
   type WorkflowStepPolicy,
+  inspectWorkflowPreApproval,
+  createWorkflowPreGateExecutionPermit,
+  classifyWorkflowStepStartOwner,
+  workflowStepStartOwnerMatches,
+  type WorkflowStepStartOwnerV1,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import { assertNoUnsafeRequiredPause } from "../runs/user-input-cancellation-guard.js";
 import { isRecord } from "../../shared/validation.js";
 import type { ValidateWorkflowStepRunRequest, WorkflowStepRunRequest } from "./workflows.js";
-import { classifyWorkflowStepStartOwner, workflowStepStartOwnerMatches, type WorkflowStepStartOwnerV1 } from "@ling-stack/core";
 import {
   completeWorkflowIfStepsFinished,
   maybeCreateWorkflowTerminalCoordinatorReply,
@@ -231,6 +235,14 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
       input.validateRunRequest,
       input.secretResolver,
     );
+    if (started.kind === "waiting_for_approval") {
+      waitingApprovals.push({
+        workflowStep: input.store.getChannelWorkflowStep(latestCandidate.id) ?? latestCandidate,
+        approval: started.approval,
+      });
+      if (parallelStartBudget <= 1) break;
+      continue;
+    }
     if (started.kind === "blocked") {
       blockedResults.push({
         status: "blocked",
@@ -592,6 +604,14 @@ export async function retryChannelWorkflowStep(input: RetryWorkflowStepInput): P
     input.validateRunRequest,
     input.secretResolver,
   );
+  if (started.kind === "waiting_for_approval") {
+    return {
+      status: "waiting_for_approval",
+      workflow: input.store.getChannelWorkflow(started.workflowId) ?? workflow,
+      workflowStep: input.store.getChannelWorkflowStep(step.id) ?? step,
+      approval: started.approval,
+    };
+  }
   if (started.kind === "blocked") {
     return {
       status: "blocked",
@@ -1086,6 +1106,31 @@ function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): Workflo
   }
   for (const step of steps) {
     if (isApprovedPreStartStep(store, step)) continue;
+    if (step.status === "running" && step.metadata?.preStepApprovalId && !step.taskId && !step.runId) {
+      const channel = store.getChannel(step.channelId);
+      if (channel) {
+        const executionPermit = createWorkflowPreGateExecutionPermit({
+          mode: "create_and_run_task",
+          taskTitle: step.title, taskPrompt: step.prompt,
+          providerPresetId: step.metadata?.providerBinding?.providerPresetId ?? step.metadata?.providerPresetId ?? channel.defaultProviderPresetId,
+          runnerId: step.metadata?.requestedRunnerId,
+          assigneeTeammateId: step.toParticipantId,
+          skipProviderPreflight: false,
+        });
+        const admissionNow = new Date().toISOString();
+        const inspection = inspectWorkflowPreApproval(store, step, admissionNow, executionPermit);
+        if (inspection.status === "stale") {
+          // Let the canonical writer retire the stale pointer and preserve the audit row.
+          store.requestChannelWorkflowStepPreApproval({
+            workflowStepId: step.id,
+            expected: { status: step.status, taskId: step.taskId, runId: step.runId, updatedAt: step.updatedAt },
+            executionPermit,
+            now: admissionNow,
+          });
+          throw new HttpError(409, inspection.code, "Workflow pre-approval changed before execution preparation.");
+        }
+      }
+    }
     if (step.status === "running") {
       const now = new Date().toISOString();
       const ownership = classifyWorkflowStepStartOwner(store, step, now);

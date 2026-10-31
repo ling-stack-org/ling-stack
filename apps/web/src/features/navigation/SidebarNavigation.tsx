@@ -19,6 +19,7 @@ import {
 import { useI18n } from "../../i18n.js";
 import { sidebarObjectContextKey, type SidebarObjectContext } from "../../app/sidebar-object-context.js";
 import { Icon, IconButton, InlineFeedback, Input, StatusIndicator } from "../../shared/ui/index.js";
+import { isDaemonObservationPausedForWorkspace, useDaemonObservation } from "../../shared/conversation/observation/daemon-observation.js";
 import {
   channelSidebarTarget,
   teammateSidebarTarget,
@@ -130,11 +131,13 @@ export function SidebarNavigation({
   readonly channelDrawer?: boolean;
 }): React.JSX.Element {
   const { t } = useI18n();
+  const observationPaused = isDaemonObservationPausedForWorkspace(useDaemonObservation(), cwd);
   const sidebarStatusLabels = {
     failed: t("Failed"),
     paused: t("Paused"),
     pendingApprovals: (count: number) => t("{count} pending approvals", { count }),
     running: t("Running"),
+    stale: t("Stale snapshot"),
     unread: t("Unread"),
     waiting: t("Waiting for approval"),
   };
@@ -240,7 +243,7 @@ export function SidebarNavigation({
 	            const channelActive = activeSidebarTarget === channelSidebarTarget(channel.id);
               if (channelSessions && onSelectChannelSession && onNewChannelSession) return <ChannelSessionNavigation
                 key={channel.id} channel={channel} cwd={cwd} active={channelActive}
-                status={renderSidebarNotification(channelNotifications[channel.id], sidebarStatusLabels, t("Conversation waiting"))} controller={channelSessions}
+                status={renderSidebarNotification(channelNotifications[channel.id], sidebarStatusLabels, observationPaused, t("Conversation waiting"))} controller={channelSessions}
                 statusId={sidebarNotificationId(channelNotifications[channel.id])}
                 onSelectChannel={() => onSelectChannel(channel.id)}
                 onArchiveChannel={onArchiveChannel ? () => void onArchiveChannel(channel.id) : undefined}
@@ -259,7 +262,7 @@ export function SidebarNavigation({
 	                  icon={<span className={`sidebar-channel-avatar ${channelAvatar.tone}`} aria-hidden="true">{channelAvatar.label}</span>}
 	                  onSelect={() => onSelectChannel(channel.id)}
 	                  selected={channelActive}
-	                  status={renderSidebarNotification(channelNotifications[channel.id], sidebarStatusLabels)}
+	                  status={renderSidebarNotification(channelNotifications[channel.id], sidebarStatusLabels, observationPaused)}
 		                  statusId={sidebarNotificationId(channelNotifications[channel.id])}
 		                  tooltip={(
 		                    <SidebarObjectPreview
@@ -408,7 +411,7 @@ export function SidebarNavigation({
               icon={<TeammateAvatarView teammate={teammate} cwd={cwd} compact />}
               onSelect={() => onSelectTeammate(teammate.id)}
               selected={activeSidebarTarget === teammateSidebarTarget(teammate.id)}
-              status={renderSidebarNotification(teammateNotifications[teammate.id], sidebarStatusLabels)}
+              status={renderSidebarNotification(teammateNotifications[teammate.id], sidebarStatusLabels, observationPaused)}
               statusId={sidebarNotificationId(teammateNotifications[teammate.id])}
               tooltip={(
                 <SidebarObjectPreview
@@ -491,7 +494,7 @@ export function SidebarNavigation({
               )}
               tooltipClassName="sidebar-object-preview-tooltip"
               status={conversation.primaryStatus
-                ? renderSidebarNotification({ primaryStatus: conversation.primaryStatus }, sidebarStatusLabels)
+                ? renderSidebarNotification({ primaryStatus: conversation.primaryStatus }, sidebarStatusLabels, observationPaused)
                 : undefined}
               statusId={conversation.primaryStatus}
               actions={onArchiveRecentConversation ? (
@@ -552,9 +555,11 @@ function renderSidebarNotification(
     readonly paused: string;
     readonly pendingApprovals: (count: number) => string;
     readonly running: string;
+    readonly stale: string;
     readonly unread: string;
     readonly waiting: string;
   },
+  observationPaused: boolean,
   waitingWithoutApprovalLabel?: string,
 ): React.JSX.Element | null {
   if (!notification) {
@@ -562,15 +567,15 @@ function renderSidebarNotification(
   }
 
   if (notification.primaryStatus) {
-    const accessibleLabel = notification.primaryStatus === "waiting" && (notification.count ?? 0) > 0
+    const canonicalLabel = notification.primaryStatus === "waiting" && (notification.count ?? 0) > 0
       ? labels.pendingApprovals(notification.count ?? 0)
       : notification.primaryStatus === "waiting"
         ? waitingWithoutApprovalLabel ?? labels.waiting
         : labels[notification.primaryStatus];
-    const label = notification.primaryStatus === "waiting" && (notification.count ?? 0) > 0
-      ? labels.waiting
-      : accessibleLabel;
-    const tone = notification.primaryStatus === "failed"
+    const staleActivity = observationPaused && (notification.primaryStatus === "running" || notification.primaryStatus === "waiting");
+    const accessibleLabel = staleActivity ? `${labels.stale} · ${canonicalLabel}` : canonicalLabel;
+    const label = staleActivity ? accessibleLabel : notification.primaryStatus === "waiting" ? labels.waiting : accessibleLabel;
+    const tone = staleActivity ? "neutral" : notification.primaryStatus === "failed"
       ? "danger"
       : notification.primaryStatus === "paused"
         ? "neutral"
@@ -582,9 +587,11 @@ function renderSidebarNotification(
         aria-label={accessibleLabel}
         className="sidebar-object-status"
         compact={notification.primaryStatus !== "waiting"}
+        data-daemon-observation={staleActivity ? "paused" : undefined}
         data-sidebar-primary-status={notification.primaryStatus}
         label={label}
         role="status"
+        title={staleActivity ? accessibleLabel : undefined}
         tone={tone}
       />
     );

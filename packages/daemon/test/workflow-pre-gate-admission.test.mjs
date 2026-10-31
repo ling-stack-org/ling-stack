@@ -155,7 +155,7 @@ test("B013 second inspection rejects changed approval basis before lease, Provid
   };
   f.store.recallMemory = input => { observations.memoryRecalls += 1; return recallMemory(input); };
 
-  const result = prepareWorkflowStepStart(f.store, step.id, { mode: "create_and_run_task" }, f.cwd,
+  const result = await prepareWorkflowStepStart(f.store, step.id, { mode: "create_and_run_task" }, f.cwd,
     () => { observations.providerValidations += 1; });
   assert.equal(result.kind, "error", JSON.stringify(result));
   assert.equal(result.code, "workflow_pre_approval_basis_stale");
@@ -190,7 +190,7 @@ test("B013 approved preflight block retains its permit and Retry creates exactly
     idempotencyKey: `b013-preflight-retry:${step.id}`,
   };
 
-  const waiting = prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => {
+  const waiting = await prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => {
     throw new Error("validation must not run before explicit approval");
   });
   assert.equal(waiting.kind, "waiting_for_approval", JSON.stringify(waiting));
@@ -198,7 +198,7 @@ test("B013 approved preflight block retains its permit and Retry creates exactly
   const approved = f.store.approveApprovalRequest(waiting.approval.id, { resolvedBy: "local-user" }, new Date().toISOString());
   assert.equal(approved?.status, "approved");
 
-  const blocked = prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => {
+  const blocked = await prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => {
     throw new Error("B013 transient Provider preflight failure");
   });
   assert.equal(blocked.kind, "blocked", JSON.stringify(blocked));
@@ -213,7 +213,7 @@ test("B013 approved preflight block retains its permit and Retry creates exactly
   assert.deepEqual(f.store.listResourceLeases({ resourceType: "workflow_step", resourceKey: step.id, limit: 100 })
     .filter(lease => lease.status === "active"), []);
 
-  const retried = prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => {});
+  const retried = await prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => {});
   assert.equal(retried.kind, "ready", JSON.stringify(retried));
   const current = f.store.getChannelWorkflowStep(step.id);
   assert.equal(current.taskId, retried.task.id);
@@ -242,12 +242,12 @@ test("B013 changed definition after an approved preflight block retires stale au
     idempotencyKey: `b013-preflight-changed:${step.id}`,
   };
 
-  const waiting = prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => {
+  const waiting = await prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => {
     throw new Error("validation must not run before explicit approval");
   });
   assert.equal(waiting.kind, "waiting_for_approval", JSON.stringify(waiting));
   f.store.approveApprovalRequest(waiting.approval.id, { resolvedBy: "local-user" }, new Date().toISOString());
-  const blocked = prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => {
+  const blocked = await prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => {
     throw new Error("B013 transient Provider preflight failure");
   });
   assert.equal(blocked.kind, "blocked", JSON.stringify(blocked));
@@ -255,7 +255,7 @@ test("B013 changed definition after an approved preflight block retires stale au
   const changedPrompt = "Read the changed evidence after the blocked preflight";
   f.store.updateChannelWorkflowStep(step.id, { prompt: changedPrompt }, new Date(Date.now() + 1_000).toISOString());
   let validations = 0;
-  const retired = prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => { validations += 1; });
+  const retired = await prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => { validations += 1; });
   assert.equal(retired.kind, "error", JSON.stringify(retired));
   assert.equal(retired.code, "workflow_pre_approval_basis_stale");
   const retiredStep = f.store.getChannelWorkflowStep(step.id);
@@ -266,7 +266,7 @@ test("B013 changed definition after an approved preflight block retires stale au
   assert.equal(b013FactCounts(f.store).approval_requests, 1);
   assert.equal(b013FactCounts(f.store).tasks, 0);
 
-  const reapproval = prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => { validations += 1; });
+  const reapproval = await prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => { validations += 1; });
   assert.equal(reapproval.kind, "waiting_for_approval", JSON.stringify(reapproval));
   assert.notEqual(reapproval.approval.id, waiting.approval.id);
   assert.equal(b013FactCounts(f.store).approval_requests, 2);
@@ -282,14 +282,14 @@ test("B013 changed definition after an approved preflight block retires stale au
     "the old callback cannot unlock or mutate the successor approval cycle");
   f.store.approveApprovalRequest(reapproval.approval.id, { resolvedBy: "local-user" }, new Date().toISOString());
 
-  const ready = prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => { validations += 1; });
+  const ready = await prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => { validations += 1; });
   assert.equal(ready.kind, "ready", JSON.stringify(ready));
   assert.equal(ready.task.prompt, changedPrompt);
   assert.equal(validations, 1);
   assert.equal(b013FactCounts(f.store).tasks, 1);
   assert.equal(b013FactCounts(f.store).run_sessions, 0);
 
-  const repeated = prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => { validations += 1; });
+  const repeated = await prepareWorkflowStepStart(f.store, step.id, input, f.cwd, () => { validations += 1; });
   assert.notEqual(repeated.kind, "ready", "a consumed successor approval cannot prepare another Task");
   assert.equal(validations, 1, "duplicate Retry must stop before Provider validation");
   assert.equal(b013FactCounts(f.store).tasks, 1);
