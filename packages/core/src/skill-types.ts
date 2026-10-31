@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ApprovalActionType, ApprovalRisk } from "./approval-types.js";
 import type { RunTool } from "./approval-policy.js";
 import type { ProviderCapability } from "./provider-types.js";
+export type { SkillDefinitionRevision, SkillDefinitionValidationStatus, SkillDefinitionUndoRequest } from "@ling-stack/contracts";
 
 export type SkillPackSource = "builtin" | "gstack" | "workspace" | "skill-directory" | "agents-md" | "custom";
 export type SkillRegistryReviewStatus = "builtin" | "draft" | "published" | "disabled" | "archived";
@@ -857,11 +858,20 @@ export interface PublishSkillRevisionDraftInput {
   readonly draftId: string;
   readonly skillId: string;
   readonly expectedUpdatedAt: string;
+  readonly expectedRevisionId?: string;
+  readonly actor?: string;
+  readonly reason?: string;
+  readonly sourceJobId?: string;
+  readonly sourceCandidateId?: string;
+  /** Apply this approved correction atomically with its definition revision. */
+  readonly reviewedCandidateId?: string;
+  readonly validationStatus?: import("@ling-stack/contracts").SkillDefinitionValidationStatus;
 }
 
 export type SkillRevisionStoreErrorCode =
   | "skill_revision_draft_not_found"
   | "skill_revision_invalid"
+  | "skill_revision_confirmation_required"
   | "skill_revision_conflict";
 
 export class SkillRevisionStoreError extends Error {

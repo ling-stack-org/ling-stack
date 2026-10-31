@@ -348,7 +348,7 @@ function buildPreviewResponse(input: {
       truncated,
       sizeBytes,
       redactionNotes: [
-        "Interactive preview runs in a sandboxed frame and is not included in AI context.",
+        "HTML preview starts with scripts disabled. Explicitly trusted scripts may contact external services. Preview content is not included in AI context.",
         ...(truncated ? ["Preview truncated"] : []),
       ],
     };

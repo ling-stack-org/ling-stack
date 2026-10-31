@@ -9,7 +9,7 @@ export * from "./user-input-transcript.js";
 export * from "./user-input-event-position.js";
 export * from "./user-input-validation.js";
 export type * from "./artifacts.js";
-export { HTML_INTERACTIVE_CSP, HTML_INTERACTIVE_MAX_BYTES, HTML_INTERACTIVE_SANDBOX, injectInteractiveHtmlCsp, scanInteractiveHtml } from "./artifacts.js";
+export { HTML_INTERACTIVE_CSP, HTML_INTERACTIVE_MAX_BYTES, HTML_INTERACTIVE_SANDBOX, createInteractiveHtmlPreviewDocument, injectInteractiveHtmlCsp, scanInteractiveHtml } from "./artifacts.js";
 export type * from "./runtime.js";
 export * from "./harness.js";
 export type * from "./harness-evaluation-qa.js";
@@ -85,4 +85,10 @@ export type * from "./diagnostics.js";
 export * from "./notifications.js";
 export * from "./im-destinations.js";
 export * from "./marketplace.js";
+
+export * from "./learning-reviews.js";
+
+export * from "./memory-derivatives.js";
+
+export * from "./memory-wiki.js";
 export * from "./deliverables.js";

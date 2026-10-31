@@ -17,6 +17,7 @@ import { renderChannelContextView } from "../channels/context-processing/render.
 import { createProviderBackedImageVisionSummarizer } from "../channels/materialization/provider-vision.js";
 import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
+import { recallMemory } from "../memory/recall-service.js";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
 import {
@@ -161,7 +162,7 @@ export async function createAiTeammateDirectReply(input: {
       now,
       imageVisionSummarizer,
     });
-    const memoryRecall = input.store.recallMemory({
+    const memoryRecall = await recallMemory(input.store, {
       teammateId: input.teammate.id,
       intent: "private-chat",
       query: input.sourceMessage.body,

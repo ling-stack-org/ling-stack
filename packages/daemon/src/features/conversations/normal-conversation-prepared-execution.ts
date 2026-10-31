@@ -7,7 +7,7 @@ import type { RunRequest } from "../runs/schemas.js";
 import { readNormalConversationPreparedRequest } from "./normal-conversation-prepared-request.js";
 
 import { capturePreparedRunnerInput, readPreparedRunnerInput, assertPreparedRunnerMemoryCurrent,
-  type PreparedRunnerInput } from "../runs/prepared-runner-input.js";
+  type SkillDefinitionRuntimeSnapshot, type PreparedRunnerInput } from "../runs/prepared-runner-input.js";
 export { restorePreparedRunnerOptions as restoreNormalConversationExecutionOptions,
   assertPreparedRunnerMemoryCurrent as assertPreparedExecutionMemoryCurrent } from "../runs/prepared-runner-input.js";
 export type NormalConversationExecutionPayload = PreparedRunnerInput;
@@ -47,6 +47,7 @@ export async function prepareNormalConversationExecution(input: {
   readonly options: PiRunnerRunOptions;
   readonly usedMemory?: RunRequest["preselectedMemoryUse"];
   readonly skillSourceContext?: SkillSourceRuntimeContext;
+  readonly skillDefinitionSnapshot?: SkillDefinitionRuntimeSnapshot;
   readonly assertCurrent: () => void;
 }): Promise<NormalConversationPreparedExecution | undefined> {
   if (!input.request.normalConversationPreparedRequestRef) return undefined;

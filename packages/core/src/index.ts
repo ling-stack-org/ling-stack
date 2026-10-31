@@ -178,3 +178,9 @@ export * from "./conversation-narration-owner.js";
 export type { PublishNormalRunNarrationResult } from "./normal-run-narration-types.js";
 export * from "./normal-conversation-fork-types.js";
 export * from "./native-artifacts.js";
+
+export * from "./learning-review-types.js";
+
+export * from "./memory-derivative-types.js";
+
+export * from "./memory-wiki-types.js";

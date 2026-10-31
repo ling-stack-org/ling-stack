@@ -105,7 +105,7 @@ function channelMessageTimelineItem(
   streaming: boolean,
 ): ConversationTimelineItem {
   const role = message.authorType === "local-user" ? "user" : "agent";
-  return createConversationTimelineMessageItem({
+  const item = createConversationTimelineMessageItem({
     id: `message:${role}:${message.id}`,
     role,
     markdown: body,
@@ -119,6 +119,7 @@ function channelMessageTimelineItem(
     itemId: message.id,
     fileRefs: message.fileRefs,
   });
+  return { ...item, ...(message.linkedRunId ? { runId: message.linkedRunId } : {}) };
 }
 
 /**
@@ -418,6 +419,7 @@ function channelTurnTerminalReportTimelineItem(
     // ConversationTurnViewModel.id is a presentation-only grouping key. Recovery
     // and lineage must use the durable LingTurn id carried by the operation cell.
     turnId: turn.operationCell.turnId ?? turn.id,
+    runId: turn.operationCell.runIds.length === 1 ? turn.operationCell.runIds[0] : undefined,
     sourceRefs: [{ kind: "terminal_report", id: block.terminalReportId }],
     title: outcome?.title ?? turn.operationCell.title,
     description: outcome?.description,

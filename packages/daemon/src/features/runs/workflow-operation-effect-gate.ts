@@ -102,7 +102,7 @@ export function workflowOperationAuthorityRejection(input: {
     return blocked("operation_binding_input_invalid", error instanceof Error ? error.message : "Invalid file-effect input.");
   }
   for (const effect of effects) {
-    // Pi 0.84's native file tools strip an @ prefix, expand ~ and normalize
+    // Pi 1.1's native file tools strip an @ prefix, expand ~ and normalize
     // these Unicode spaces. A bound literal path must not change interpretation
     // between the Host gate and the actual tool. This is syntax, not authority.
     if (effect.path.startsWith("@") || effect.path === "~" || effect.path.startsWith("~/")

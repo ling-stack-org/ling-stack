@@ -44,6 +44,7 @@ export function SkillEvolutionSection({
   onPreviewOptimization,
   onArchiveSource,
   onRollbackSource,
+  onDefinitionChanged,
   onAdoptSkillCandidate,
   onReviewSkillCandidate,
   onCreateProtocolCandidate,
@@ -77,6 +78,7 @@ export function SkillEvolutionSection({
   readonly onPreviewOptimization: () => void;
   readonly onArchiveSource: (skillId: string) => void;
   readonly onRollbackSource: (snapshotId: string) => void;
+  readonly onDefinitionChanged?: () => Promise<void>;
   readonly onAdoptSkillCandidate: (candidateId: string) => void;
   readonly onReviewSkillCandidate: (candidateId: string, action: SkillCandidateReviewAction) => void;
   readonly onCreateProtocolCandidate: (cluster: ProcedureObservationCluster) => void;
@@ -136,6 +138,7 @@ export function SkillEvolutionSection({
             onPreviewOptimization={onPreviewOptimization}
             onArchiveSource={onArchiveSource}
             onRollbackSource={onRollbackSource}
+            onDefinitionChanged={onDefinitionChanged}
             onImport={() => undefined}
             onNewDraft={() => undefined}
             toolbarAfterSearch={viewControl}

@@ -119,11 +119,11 @@ by Ling. Expo 58 also required a native/module cohort different from the
 unchanged Expo 57 modules and React Native version in that PR.
 
 The dependency repair uses a separate worktree. It retains compatible upgrade
-candidates while keeping Mermaid 11, OfficeParser 7.8 and Pi 0.84, and the Expo
+candidates while keeping Mermaid 11, OfficeParser 7.8 and the then-current historical Pi 0.84 dependency snapshot, and the Expo
 57 / React 19.2.8 mobile cohort. Mobile explicitly pins React DOM 19.2.8 as a
 development-only peer so optional Expo tooling cannot resolve a mismatched React
 DOM 19.3 peer or add a web runtime dependency to the native-only mobile contract.
-The shared conversation React package explicitly pairs its React/React DOM 19.3
+That Pi 0.84 reference is historical; the current source tree pins both Pi packages to 1.1.0. The shared conversation React package explicitly pairs its React/React DOM 19.3
 development peers; the original dependency PR otherwise resolved a mismatched
 React 19.3 / React DOM 19.2.8 pair and crashed eight UI test files.
 Existing security overrides and patches remain unchanged. The major upgrades

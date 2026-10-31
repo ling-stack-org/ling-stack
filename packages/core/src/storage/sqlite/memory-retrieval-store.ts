@@ -14,19 +14,20 @@ import { stringifyJson } from "./helpers.js";
 import { mapMemoryObject, mapUsedMemoryEvent } from "./memory-mappers.js";
 import { memoryObjectSelectSql, memoryUsedEventSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { hasMemorySearchIndex, memorySearchMatch } from "./memory-search-index.js";
 
-const MEMORY_RECALL_POLICY_VERSION = "ling-memory-v1-lexical-v2";
+const MEMORY_RECALL_POLICY_VERSION = "ling-memory-v1-lexical-v3";
 
 export class SqliteMemoryRetrievalStore {
   constructor(private readonly context: SqliteStoreContext) {}
 
-  /** Same authority predicate as selection, but only test frozen IDs without decoding any body. */
+  /** Active-source predicate for frozen IDs, preserving the caller's private inspection filter. */
   getEligibleMemoryIdsForRecall(input: MemoryRecallRequest, memoryIds: readonly string[]): readonly string[] {
     if (memoryIds.length > 20 || memoryIds.some((id) => typeof id !== "string" || !id)) throw new RangeError("Invalid prepared memory IDs.");
     const ids = [...new Set(memoryIds)];
     if (ids.length === 0) return [];
-    const { clause, params } = memoryRecallPredicate({ ...input, intent: "task-run", includeDisabled: false,
-      includePrivate: false, includeSecretAdjacent: false }, input.workspaceId ?? DEFAULT_WORKSPACE_ID, new Date().toISOString());
+    const { clause, params } = memoryRecallPredicate({ ...input, includeDisabled: false,
+      includeSecretAdjacent: false }, input.workspaceId ?? DEFAULT_WORKSPACE_ID, new Date().toISOString());
     const rows = this.context.database.prepare(`SELECT id FROM memory_objects WHERE ${clause} AND id IN (${ids.map(() => "?").join(",")})`)
       .all(...params, ...ids);
     const eligible = new Set(rows.map((row) => String(row.id)));
@@ -41,14 +42,34 @@ export class SqliteMemoryRetrievalStore {
       .map((tag) => tag.slice(0, 256).trim().toLowerCase()).filter(Boolean));
     const queryTerms = tokenizeMemoryQuery([input.query.slice(0, 8_192), ...requestedTags].join(" "));
     const memories: MemoryRecallResult["memories"][number][] = [];
+    let candidateCount = 0;
+    const now = new Date().toISOString();
+    const eligible = memoryRecallPredicate(input, workspaceId, now);
+    const scoped = memoryRecallPredicate({ ...input, intent: "review", includeDisabled: true,
+      includePrivate: true, includeSecretAdjacent: true }, workspaceId, now);
+    const counts = this.context.database.prepare(`SELECT count(*) AS total,
+      coalesce(sum(CASE WHEN ${eligible.clause} THEN 1 ELSE 0 END), 0) AS eligible
+      FROM memory_objects WHERE ${scoped.clause}`).get(...eligible.params, ...scoped.params)!;
+    const eligibleCount = Number(counts.eligible);
+    const excludedCount = Number(counts.total) - eligibleCount;
+    let strategy: "fts5" | "scan" = "scan";
     // Only an explicitly empty query browses recent memory; a non-matching token is not "show all".
     if (queryTerms.length > 0 || requestedTags.size > 0 || input.query.trim().length === 0) {
       const { clause, params } = memoryRecallPredicate(input, workspaceId, new Date().toISOString());
       const browse = queryTerms.length === 0 && requestedTags.size === 0;
-      const query = `${memoryObjectSelectSql(`WHERE ${clause}`)} ORDER BY updated_at DESC, id DESC${browse ? " LIMIT ?" : ""}`;
+      const match = memorySearchMatch([...queryTerms, ...requestedTags]);
+      const indexed = !browse && match !== undefined && [...requestedTags].every(tag => Array.from(tag).length >= 2)
+        && hasMemorySearchIndex(this.context.database);
+      const candidateFilter = indexed ? ` AND rowid IN (
+        SELECT rowid FROM memory_search_fts_v1 WHERE memory_search_fts_v1 MATCH ?
+        UNION SELECT source_rowid FROM memory_search_dirty
+      )` : "";
+      if (indexed) { params.push(match!); strategy = "fts5"; }
+      const query = `${memoryObjectSelectSql(`WHERE ${clause}${candidateFilter}`)} ORDER BY updated_at DESC, id DESC${browse ? " LIMIT ?" : ""}`;
       // A single SQLite statement holds one snapshot. Scope/health filters precede body decoding.
       // Stream all eligible candidates and retain only top-k; never truncate the candidate universe by recency.
       for (const row of this.context.database.prepare(query).iterate(...params, ...(browse ? [maxResults] : []))) {
+        candidateCount++;
         const candidate = scoreMemoryForRecall(mapMemoryObject(row as Record<string, SQLOutputValue>), queryTerms, requestedTags);
         if (candidate.score <= 0) continue;
         if (memories.length === maxResults && compareRecalledMemory(candidate, memories.at(-1)!) >= 0) continue;
@@ -61,6 +82,7 @@ export class SqliteMemoryRetrievalStore {
       request: { ...input, workspaceId },
       memories,
       policyVersion: MEMORY_RECALL_POLICY_VERSION,
+      audit: { strategy, candidateCount, eligibleCount, excludedCount, selectedMemoryIds: memories.map(item => item.memory.id) },
     };
   }
 
@@ -116,8 +138,8 @@ export class SqliteMemoryRetrievalStore {
       );
     for (const memoryId of event.memoryIds) {
       this.context.database
-        .prepare("UPDATE memory_objects SET last_used_at = ?, updated_at = ? WHERE id = ?")
-        .run(now, now, memoryId);
+        .prepare("UPDATE memory_objects SET last_used_at = ? WHERE id = ? AND workspace_id = ?")
+        .run(now, memoryId, event.workspaceId);
     }
     return event;
   }
@@ -210,10 +232,10 @@ function memoryRecallPredicate(
     if (inspection) {
       clauses.push("sensitivity != 'private'");
     } else {
-      // Ownership was filtered above using Host-selected scopes. A shared workspace/channel
-      // record can be private without belonging to a teammate; this does not permit quoting
-      // it publicly or widen the selected channel/workspace. Inspection flags grant nothing.
-      const privateScopes = ["scope_type IN ('workspace', 'channel')"];
+      // Ownership was filtered above using Host-selected scopes. Private shared and
+      // task/run working records remain usable only in those exact owners. This
+      // does not permit public quoting or widen a scope. Inspection flags grant nothing.
+      const privateScopes = ["scope_type IN ('workspace', 'channel', 'task', 'run')"];
       if (input.teammateId) {
         privateScopes.push("(scope_type = 'teammate' AND owner_id = ?)");
         params.push(input.teammateId);
@@ -261,6 +283,10 @@ function scoreMemoryForRecall(
   let score = 0;
 
   for (const term of queryTerms) {
+    if (memory.id.toLowerCase() === term) {
+      score += 24;
+      matchedTerms.add(term);
+    }
     if (title.includes(term)) {
       score += 8;
       matchedTerms.add(term);

@@ -112,8 +112,11 @@ max_context_size = 16384
       setInterval(() => {}, 1000);
     `;
     }
-    const node = join(options.cwd, "fixture-node");
-    copyFileSync(process.execPath, node);
+    // Only the sandboxed ACP fixture needs its executable inside the operation root.
+    // A fresh binary copy can incur macOS launch checks before the version probe runs.
+    const nativeProcess = wrapped || args[0] === "acp";
+    const node = nativeProcess ? join(options.cwd, "fixture-node") : process.execPath;
+    if (nativeProcess) copyFileSync(process.execPath, node);
     const child = spawn(wrapped ? file : node, wrapped ? [...args.slice(0, 2), node, "-e", program] : ["-e", program],
       { ...options, stdio: ["pipe", "pipe", "pipe", "ipc"] });
     child.on("message", value => { observations.push(value); testOptions.onObservation?.(); });

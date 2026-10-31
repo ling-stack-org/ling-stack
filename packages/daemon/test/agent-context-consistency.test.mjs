@@ -31,8 +31,8 @@ const now = "2026-08-10T01:00:00.000Z";
 test("workflow agents share one projection while private role memory stays owner-scoped", async () => {
   const fixture = await createFixture();
   try {
-    const engineer = prepareStep(fixture, fixture.engineerStep.id);
-    const designer = prepareStep(fixture, fixture.designerStep.id);
+    const engineer = await prepareStep(fixture, fixture.engineerStep.id);
+    const designer = await prepareStep(fixture, fixture.designerStep.id);
 
     assert.ok(engineer.runRequest.contextPack.agentContext);
     assert.ok(designer.runRequest.contextPack.agentContext);
@@ -62,7 +62,7 @@ test("workflow agents share one projection while private role memory stays owner
     assert.deepEqual(engineer.runRequest.preselectedMemoryUse, {
       memoryIds: [fixture.engineerMemory.id],
       recallQuery: `${fixture.workflow.objective}\n${fixture.engineerStep.title}\n${fixture.engineerStep.prompt}`,
-      policyVersion: "ling-memory-v1-lexical-v2+memory_use_isolation_v2",
+      policyVersion: "ling-memory-v1-lexical-v3+memory_use_isolation_v2",
     });
     assert.equal(engineer.runRequest.contextProjection.projectionVersion, engineer.runRequest.contextPack.agentContext.contextProjection.projectionVersion);
 
@@ -226,7 +226,7 @@ test("workflow agents share one projection while private role memory stays owner
 test("fan-in rebases metadata-only stamps and rejects private leaks or relevant stale facts", async () => {
   const fixture = await createFixture();
   try {
-    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const prepared = await prepareStep(fixture, fixture.engineerStep.id);
     const currentStamp = prepared.runRequest.contextPack.agentContext;
     assert.ok(currentStamp);
     const metadataOnly = {
@@ -410,7 +410,7 @@ test("fan-in rebases metadata-only stamps and rejects private leaks or relevant 
     const stale = reviewWorkflowFanInContext({ store: fixture.store, workflow: fixture.workflow, step: fanIn });
     assert.equal(stale.reviews[0].status, "rejected_stale");
     assert.match(stale.blocker, /rejected dependency/u);
-    const blockedStart = prepareWorkflowStepStart(
+    const blockedStart = await prepareWorkflowStepStart(
       fixture.store,
       fanIn.id,
       { mode: "create_task" },
@@ -444,7 +444,7 @@ test("fan-in rebases metadata-only stamps and rejects private leaks or relevant 
 test("agent result Items from the consumed source Turn do not invalidate its input context", async () => {
   const fixture = await createFixture();
   try {
-    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const prepared = await prepareStep(fixture, fixture.engineerStep.id);
     const consumed = prepared.runRequest.contextPack.agentContext;
     assert.ok(consumed);
 
@@ -497,7 +497,7 @@ test("workflow step input excludes pre-existing coordinator Items from its fresh
       },
     }, "2026-08-10T01:00:20.000Z");
 
-    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const prepared = await prepareStep(fixture, fixture.engineerStep.id);
     const consumed = prepared.runRequest.contextPack.agentContext;
     assert.ok(consumed);
     assert.equal(
@@ -518,7 +518,7 @@ test("workflow step input excludes pre-existing coordinator Items from its fresh
 test("sequential dependencies reject stale agent context before entering a downstream prompt", async () => {
   const fixture = await createFixture();
   try {
-    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const prepared = await prepareStep(fixture, fixture.engineerStep.id);
     const output = persistWorkflowOutput({
       ...fixture,
       stepId: fixture.engineerStep.id,
@@ -572,7 +572,7 @@ test("sequential dependencies reject stale agent context before entering a downs
     assert.equal(stale.reviews[0].status, "rejected_stale");
     assert.match(stale.blocker, /rejected dependency/u);
 
-    const blockedStart = prepareWorkflowStepStart(
+    const blockedStart = await prepareWorkflowStepStart(
       fixture.store,
       downstream.id,
       { mode: "create_task" },
@@ -592,7 +592,7 @@ test("sequential dependencies reject stale agent context before entering a downs
 test("leaf workflow results fail closed when relevant context changes before commit", async () => {
   const fixture = await createFixture();
   try {
-    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const prepared = await prepareStep(fixture, fixture.engineerStep.id);
     const run = fixture.store.createRun({
       id: "run_leaf_stale_context",
       cwd: fixture.cwd,
@@ -718,7 +718,7 @@ test("manifest-backed stale context commits a typed delegated blocker", async ()
       manifest: participantManifest,
       now,
     });
-    const prepared = prepareStep(fixture, step.id);
+    const prepared = await prepareStep(fixture, step.id);
     const run = fixture.store.createRun({
       id: "run_manifest_stale_context",
       cwd: fixture.cwd,
@@ -882,7 +882,7 @@ function projectionFor(item, assignment) {
   };
 }
 
-function prepareStep(fixture, workflowStepId) {
+async function prepareStep(fixture, workflowStepId) {
   const step = fixture.store.getChannelWorkflowStep(workflowStepId);
   assert.ok(workflowStepStartAuthorityBasis(fixture.store, step), JSON.stringify({
     workflow: fixture.store.getChannelWorkflow(step.workflowId), step,
@@ -900,7 +900,7 @@ function prepareStep(fixture, workflowStepId) {
     },
   });
   assert.equal(binding.kind, "ready", JSON.stringify(binding));
-  const result = prepareWorkflowStepStart(
+  const result = await prepareWorkflowStepStart(
     fixture.store,
     workflowStepId,
     { mode: "create_and_run_task" },

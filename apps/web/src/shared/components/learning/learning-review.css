@@ -1,0 +1,19 @@
+.learning-review-panel, .learning-review-jobs, .learning-review-result, .skill-definition-history {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-3);
+}
+.learning-review-panel { padding: var(--ling-space-4); border: 1px solid var(--ling-border-default); border-radius: var(--ling-radius-md); }
+.learning-review-panel p, .learning-review-result p { margin: 0; }
+.learning-review-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--ling-space-3); }
+.learning-review-toolbar strong { display: inline-flex; align-items: center; gap: var(--ling-space-2); }
+.learning-review-result { padding: var(--ling-space-3); border-top: 1px solid var(--ling-border-default); }
+.learning-review-panel small, .skill-definition-history small { color: var(--ling-text-muted); }
+.learning-review-panel summary, .skill-definition-history summary { cursor: pointer; }
+.learning-review-panel pre, .skill-definition-history pre, .skill-definition-diff pre {
+  white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-height: 20rem; overflow: auto;
+}
+.skill-definition-diff { display: grid; gap: var(--ling-space-3); }
+.skill-definition-diff-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: var(--ling-space-3); }
+.skill-definition-diff-columns > div { min-width: 0; padding: var(--ling-space-3); border: 1px solid var(--ling-border-default); border-radius: var(--ling-radius-sm); }
+.skill-definition-diff-columns pre { margin-bottom: 0; }

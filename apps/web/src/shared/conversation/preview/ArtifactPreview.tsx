@@ -1,3 +1,5 @@
+import { HTML_INTERACTIVE_SANDBOX, createInteractiveHtmlPreviewDocument } from "@ling-stack/contracts";
+import { useState } from "react";
 import { CodeBlock } from "../blocks/CodeBlock.js";
 import { CopyActionButton } from "../feedback/CopyActionButton.js";
 import { ImageCompareViewer } from "./ImageCompareViewer.js";
@@ -40,11 +42,9 @@ export function ArtifactPreview({ preview, cwd }: ArtifactPreviewProps): React.J
 
   if (preview.kind === "html_interactive" && preview.htmlInteractive) {
     return (
-      <iframe
-        className="artifact-preview-interactive-frame"
-        data-ui2-artifact-interactive="true"
-        sandbox={preview.htmlInteractive.sandbox.join(" ")}
-        srcDoc={preview.htmlInteractive.html}
+      <InteractiveHtmlPreview
+        key={JSON.stringify([cwd, preview.ref.source, preview.ref.scope, preview.ref.id])}
+        html={preview.htmlInteractive.html}
         title={preview.ref.label}
       />
     );
@@ -73,6 +73,34 @@ export function ArtifactPreview({ preview, cwd }: ArtifactPreviewProps): React.J
     <div className="artifact-preview-empty">
       <strong>{previewKindLabel(preview.kind)}</strong>
       <span>{t("Preview unavailable")}</span>
+    </div>
+  );
+}
+
+function InteractiveHtmlPreview({ html, title }: { readonly html: string; readonly title: string }): React.JSX.Element {
+  const { t } = useI18n();
+  const [consent, setConsent] = useState({ html, trusted: false });
+  // Compare during render: an updated response must never execute using the
+  // previous document's consent, even before effects have a chance to run.
+  const allowScripts = consent.html === html && consent.trusted;
+  if (consent.html !== html) setConsent({ html, trusted: false });
+  return (
+    <div className="artifact-preview-interactive-panel">
+      <div className="artifact-preview-script-controls">
+        <p>{t("Scripts can contact external services. Only run documents you trust.")}</p>
+        <button type="button" className="button button-secondary"
+          onClick={() => setConsent({ html, trusted: !allowScripts })}>
+          {t(allowScripts ? "Stop interactive preview" : "Run interactive preview")}
+        </button>
+      </div>
+      <iframe
+        key={String(allowScripts)}
+        className="artifact-preview-interactive-frame"
+        data-ui2-artifact-interactive="true"
+        sandbox={allowScripts ? HTML_INTERACTIVE_SANDBOX.join(" ") : ""}
+        srcDoc={createInteractiveHtmlPreviewDocument(html, title, allowScripts)}
+        title={title}
+      />
     </div>
   );
 }

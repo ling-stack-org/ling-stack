@@ -216,15 +216,46 @@ export function ThemeProvider({ children }: { readonly children: ReactNode }): R
         const bootstrap = requireThemePackageResult(result);
         const descriptors = new Map(bootstrap.packages.map((item) => [item.themeId, item]));
         repositoryDescriptorsRef.current = descriptors;
+        const repairs: ThemePackageRepairItem[] = [];
         const knownManifests = new Map<string, LingThemePackManifest>();
         for (const descriptor of bootstrap.packages) {
           if (descriptor.manifest) knownManifests.set(descriptor.themeId, descriptor.manifest);
+          if (descriptor.health !== "ready" || !descriptor.manifest) {
+            repairs.push({
+              descriptor,
+              displayName: descriptor.manifest?.name ?? descriptor.themeId,
+              issueCode: descriptor.issueCode,
+              kind: "corrupt",
+              themeId: descriptor.themeId,
+            });
+            continue;
+          }
+          const installed = registryRef.current.install(
+            descriptor.manifest,
+            descriptor.manifest.source === "local-generated" ? "local-generated" : "local-import",
+            descriptor.installedAt,
+          );
+          if (!installed.ok) {
+            repairs.push({
+              descriptor: { ...descriptor, health: "corrupt", issueCode: "invalid_manifest" },
+              displayName: descriptor.manifest.name,
+              issueCode: "invalid_manifest",
+              kind: "corrupt",
+              themeId: descriptor.themeId,
+            });
+          }
         }
         if (repository.kind === "desktop") {
           for (const manifest of legacyManifests) {
             if ((manifest.source === "local-import" || manifest.source === "local-generated")
               && !descriptors.has(manifest.id)) {
               knownManifests.set(manifest.id, manifest);
+                repairs.push({
+                  displayName: manifest.name,
+                  issueCode: "legacy_browser_only",
+                  kind: "legacy-browser-only",
+                  themeId: manifest.id,
+                });
             }
           }
         }
@@ -241,7 +272,7 @@ export function ThemeProvider({ children }: { readonly children: ReactNode }): R
           applyTarget(repairedSelection, target, true);
           explicitSelectionRef.current = true;
         }
-        setThemePackageRepairs([]);
+        setThemePackageRepairs(Object.freeze(repairs));
         setRepositoryWarning(bootstrap.recoveryWarnings.length > 0 ? "cleanup-pending" : undefined);
       })
       .catch(() => {
@@ -515,7 +546,21 @@ function authorizeBootstrapSnapshot(
   systemScheme: LingColorScheme,
   snapshot: ReturnType<typeof readThemeBootstrapSnapshot>,
 ): ReturnType<typeof readThemeBootstrapSnapshot> {
-  return undefined;
+  if (!snapshot) return undefined;
+  const requestedThemeId = selection.mode === "fixed"
+    ? selection.themeId
+    : systemScheme === "dark"
+      ? selection.darkThemeId
+      : selection.lightThemeId;
+  if (snapshot.themeId !== requestedThemeId) return undefined;
+  if (requestedThemeId === "ling-light" || requestedThemeId === "ling-dark") return undefined;
+  const firstPaint = globalThis.window?.lingDesktop?.themePackages?.firstPaint;
+  if (!globalThis.window?.lingDesktop) return snapshot;
+  if (!firstPaint?.authorityComplete || !Array.isArray(firstPaint.readyThemes)) return undefined;
+  const authority = firstPaint.readyThemes.find((entry) => entry.themeId === requestedThemeId);
+  return authority && snapshot.packageChecksumSha256 === authority.packageChecksumSha256
+    ? snapshot
+    : undefined;
 }
 
 function readSystemTheme(): LingColorScheme {

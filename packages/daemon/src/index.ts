@@ -1,3 +1,7 @@
+import { MemorySemanticService } from "./features/memory/semantic-service.js";
+import { registerMemorySemanticService } from "./features/memory/semantic-registry.js";
+import { LearningReviewCoordinator } from "./features/learning/coordinator.js";
+import { flushSkillDefinitionRevisionNotices } from "./features/skills/revision-notices.js";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { createServer, type Server } from "node:http";
@@ -311,6 +315,8 @@ export function createDaemonServer(
   let userInputDeliveryWorker: UserInputDeliveryWorker | undefined;
   const answerDeliveryStores = new Set<RunStore>();
   const approvalRecoveryStores = new Set<RunStore>();
+  const memorySemanticServices = new Map<RunStore, MemorySemanticService>();
+  let learningReviewCoordinator: LearningReviewCoordinator | undefined;
   let approvalRecoveryTimer: ReturnType<typeof setInterval> | undefined;
   let approvalAutoReviewRecoveryCoordinator: ApprovalAutoReviewRecoveryCoordinator | undefined;
   let daemonRunnerRecoveryCoordinator: DaemonRunnerRecoveryCoordinator | undefined;
@@ -347,6 +353,7 @@ export function createDaemonServer(
     store.recoverStaleRuns(recoveryNow);
     store.recoverStaleChannelWorkflows(recoveryNow);
     dependencies.initializeBundledSkills?.(store);
+    flushSkillDefinitionRevisionNotices(store, controlPlaneEvents, cwd);
     // A process may have crossed the shell side-effect boundary before the
     // daemon disappeared. Expired executing claims are never retried; they
     // become explicit unknown outcomes before any recovery dispatch runs.
@@ -382,6 +389,13 @@ export function createDaemonServer(
       });
     }
     if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
+    learningReviewCoordinator?.registerStore(store);
+    if (!memorySemanticServices.has(store)) {
+      const service = new MemorySemanticService({ store, secretResolver });
+      memorySemanticServices.set(store, service);
+      registerMemorySemanticService(store, service);
+      service.start();
+    }
     initializedOwnedStores.add(store);
     pendingOwnedStores.delete(store);
   };
@@ -721,7 +735,10 @@ export function createDaemonServer(
     getStore: () => storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
     events: controlPlaneEvents,
   });
+  learningReviewCoordinator = new LearningReviewCoordinator({ runtimeSupervisor, secretResolver, controlPlaneEvents });
+  for (const store of approvalRecoveryStores) learningReviewCoordinator.registerStore(store);
   const context: DaemonContext = {
+    learningReviewCoordinator,
     config: resolvedConfig,
     runnerRegistry,
     extensionRegistry,
@@ -912,6 +929,7 @@ export function createDaemonServer(
         };
         const recoverApprovals = () => {
           for (const store of approvalRecoveryStores) {
+            flushSkillDefinitionRevisionNotices(store, controlPlaneEvents, store.paths.cwd);
             if (typeof store.listApprovalPostCommitEffects !== "function") continue;
             try {
               recoverApprovalPostCommitStore({
@@ -960,6 +978,8 @@ export function createDaemonServer(
       }, () => daemon.stop());
     },
     stop: async () => {
+      learningReviewCoordinator?.beginShutdown();
+      for (const service of memorySemanticServices.values()) service.beginShutdown();
       humanEvaluations.close();
       storeRegistry.mediaLocalExecutions.beginShutdown();
       if (approvalRecoveryTimer) clearInterval(approvalRecoveryTimer);
@@ -1005,6 +1025,8 @@ export function createDaemonServer(
         await userInputDeliveryWorker.close();
         await automationSchedulers.waitForIdle();
         await runEvaluationScheduler.waitForIdle();
+        await learningReviewCoordinator?.drain();
+        await Promise.all([...memorySemanticServices.values()].map(service => service.drain()));
         await providerImportShutdown;
         await cuaDriverActivationCoordinator.shutdown();
         await activeRuns.waitForIdle();

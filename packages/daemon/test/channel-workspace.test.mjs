@@ -6385,7 +6385,7 @@ test("proposal provider preflight blocks missing workspace default and freezes c
     assert.equal(unavailable.blocker.providerPresetId, "provider_workspace");
     assert.equal(unavailable.blocker.owner, "workspace");
 
-    const override = prepareWorkflowStepStart(
+    const override = await prepareWorkflowStepStart(
       store,
       engineerStep.id,
       { mode: "create_and_run_task", providerPresetId: "provider_workspace_repaired" },
@@ -6407,7 +6407,7 @@ test("proposal provider preflight blocks missing workspace default and freezes c
     } = qaStep.metadata;
     store.database.prepare("UPDATE channel_workflow_steps SET metadata_json = ? WHERE id = ?")
       .run(JSON.stringify(qaMetadataWithoutBinding), qaStep.id);
-    const missingBinding = prepareWorkflowStepStart(
+    const missingBinding = await prepareWorkflowStepStart(
       store,
       qaStep.id,
       { mode: "create_and_run_task" },
@@ -12659,7 +12659,7 @@ test("a recovered managed direct worktree records ownership before any later dis
 test("memory API scopes lexical recall and channel replies audit used memory", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-memory-api-"));
   const runner = new RecordingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const otherChannel = await createChannel(daemon.url, cwd);
@@ -12708,7 +12708,7 @@ test("memory API scopes lexical recall and channel replies audit used memory", a
     });
 
     const listed = await getJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`);
-    assert.equal(listed.vectorRetrieval.status, "not_installed");
+    assert.equal(listed.vectorRetrieval.status, "not_configured");
     assert.equal(listed.vectorRetrieval.optional, true);
 
     const recall = await postJson(`${daemon.url}/memory/recall?cwd=${encodeURIComponent(cwd)}`, {
@@ -12746,7 +12746,7 @@ test("memory API scopes lexical recall and channel replies audit used memory", a
 
 test("memory review policy exposes promotion inbox and gates candidate recall", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-memory-review-policy-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
 
@@ -12936,7 +12936,7 @@ test("memory health API returns read-only findings and respects scope filters", 
 
 test("memory consolidation jobs create audited candidates without silent activation", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-memory-consolidation-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const created = await postJson(`${daemon.url}/memory/consolidation-jobs?cwd=${encodeURIComponent(cwd)}`, {
@@ -15224,7 +15224,7 @@ test("teammate direct queued guidance drains multiple queued items in thread FIF
 
 test("private attachments avatar and hard delete stay scoped to teammate private data", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-attachments-hard-delete-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const teammateId = "teammate_builtin_engineer";

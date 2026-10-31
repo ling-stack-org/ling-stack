@@ -1,0 +1,39 @@
+{
+  "documents": [
+    {"id":"receipt","title":"Receipt accounting date","body":"Account for a purchase using the supplier's signed receipt date rather than the payment date."},
+    {"id":"stale","title":"Stale OHLCV recovery","body":"When the dashboard price stops advancing, inspect the market data writer and the newest database candle timestamp. A healthy HTTP endpoint alone is insufficient."},
+    {"id":"undo","title":"Concurrent skill definition undo","body":"Restoring a previous skill creates a new revision. Reject restoration if another edit occurred after the selected revision."},
+    {"id":"deploy","title":"Service release evidence","body":"Before declaring a deployment successful, compare the running process working directory, executable checksum and a real business request."},
+    {"id":"alpha","title":"Transparent image verification","body":"Verify that a PNG has a real alpha channel. A checkerboard painted into an RGB image does not provide transparency."},
+    {"id":"memory","title":"Private knowledge isolation","body":"A teammate's private knowledge may only be retrieved for that owner. Membership must be checked before channel knowledge is supplied."},
+    {"id":"dirty","title":"Preserve unrelated work","body":"When the primary checkout contains uncommitted changes, perform new work in an isolated sibling checkout and preserve the existing edits."},
+    {"id":"secret","title":"Credential materialization","body":"Resolve API credentials only when dispatching a request. Never persist credential values in task snapshots, generated documents or event logs."},
+    {"id":"backup","title":"Database backup procedure","body":"Create a consistent SQLite backup including committed WAL transactions. Rehearse migration and restoration on a separate copy before changing the original."},
+    {"id":"cancel","title":"Late attempt results","body":"A cancelled execution must remain cancelled. Fence delayed completion callbacks so an obsolete attempt cannot publish success."},
+    {"id":"bread","title":"Bread fermentation","body":"Allow dough to rise at room temperature until doubled before shaping and baking."},
+    {"id":"plant","title":"Balcony tomato care","body":"Tomatoes need sunlight, regular watering and well drained soil."},
+    {"id":"identifier","title":"TN001 device identity","body":"TN001 is the device identifier used in the DCS MQTT report.","tags":["TN001"]}
+  ],
+  "calibration": [
+    {"query":"采购入账看供应商签收时间还是付款时间","gold":"receipt"},
+    {"query":"旧执行完成消息晚到时如何防止状态被改回成功","gold":"cancel"},
+    {"query":"怎么养好阳台上的番茄","gold":"plant"},
+    {"query":"明天火星彩票会开什么数字","gold":null},
+    {"query":"请预测海王星国王的选举结果","gold":null}
+  ],
+  "evaluation": [
+    {"query":"买来的东西按哪一天记账","gold":"receipt"},
+    {"query":"行情页面数值不再变化但接口还正常该查哪里","gold":"stale"},
+    {"query":"别人又改过方法之后还能直接恢复之前的版本吗","gold":"undo"},
+    {"query":"上线后怎样确认实际跑的是刚发布的程序","gold":"deploy"},
+    {"query":"图片显示灰白格子就能说明背景可透出吗","gold":"alpha"},
+    {"query":"如何避免一个助手看到另一个助手的私有知识","gold":"memory"},
+    {"query":"主目录还有没提交的修改新任务应该在哪里做","gold":"dirty"},
+    {"query":"调用模型的口令可以写进任务存档方便恢复吗","gold":"secret"},
+    {"query":"升级本地数据文件之前如何准备可恢复的副本","gold":"backup"},
+    {"query":"用户停止执行后迟到的结果还能发布成功吗","gold":"cancel"},
+    {"query":"TN001","gold":"identifier"},
+    {"query":"月亮背面的龙会说哪种语言","gold":null},
+    {"query":"外星王国下任皇帝的生日是什么","gold":null}
+  ]
+}

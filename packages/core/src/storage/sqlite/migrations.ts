@@ -1,3 +1,6 @@
+import { applyMemoryWikiMigration } from "./memory-wiki-store.js";
+import { applyMemoryDerivativeMigration } from "./memory-derivative-migration.js";
+import { applyLearningReviewMigration } from "./learning-review-migration.js";
 import type { DatabaseSync } from "node:sqlite";
 import { normalizeChannelRuntimePolicy } from "../../workspace-types.js";
 import { stringifyJson } from "./helpers.js";
@@ -27,6 +30,9 @@ import { applyTeammateDirectSubmissionMigration } from "./teammate-direct-submis
 import { applyHostAttemptCompletionMigration } from "./host-attempt-completion-migration.js";
 import { applyHostAttemptEffectCoverageMigration } from "./host-attempt-effect-coverage-migration.js";
 import { applyTeammateDirectInterventionFenceMigration } from "./teammate-direct-intervention-fence-migration.js";
+import { initializeMemorySearchIndex } from "./memory-search-index.js";
+import { applyProcedureObservationJobMigration } from "./procedure-observation-job-migration.js";
+import { applySkillDefinitionRevisionMigration } from "./skill-definition-revision-migration.js";
 
 export interface SqliteRunStoreMigrationContext {
   readonly database: DatabaseSync;
@@ -6005,4 +6011,10 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
   applyHostAttemptCompletionMigration(context);
   applyHostAttemptEffectCoverageMigration(context);
   applyTeammateDirectInterventionFenceMigration(context);
+  initializeMemorySearchIndex(database);
+  applyProcedureObservationJobMigration(context);
+  applySkillDefinitionRevisionMigration(context);
+  applyLearningReviewMigration(context);
+  applyMemoryDerivativeMigration(context);
+  applyMemoryWikiMigration(context);
 }

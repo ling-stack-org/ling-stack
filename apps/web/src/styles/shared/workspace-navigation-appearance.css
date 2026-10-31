@@ -23,7 +23,7 @@
   box-shadow: none;
 }
 
-.app-shell :is(.channel-left-drawer .nav-item, .channel-left-drawer .sidebar-row-shell, .channel-left-drawer .sidebar-branch-row-shell, .sidebar-compact-rail .sidebar-compact-rail-action, .sidebar-compact-rail .primary-nav-compact .nav-item):hover:not(:disabled, [aria-disabled="true"]) {
+.app-shell :is(.channel-left-drawer .nav-item, .channel-left-drawer .sidebar-row-shell, .channel-left-drawer .sidebar-branch-row-shell, .sidebar-compact-rail .sidebar-compact-rail-action, .sidebar-compact-rail .primary-nav-compact .nav-item):hover:not(:disabled, [aria-disabled="true"], .active, .selected, [aria-pressed="true"]) {
   color: var(--ling-text-strong);
   background: var(--ling-navigation-hover-bg);
 }

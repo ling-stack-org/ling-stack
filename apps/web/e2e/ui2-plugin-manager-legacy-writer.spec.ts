@@ -50,7 +50,7 @@ test("T13-O.32-D Plugin focused owner has no strict Dark blanket and uses only t
   expect(pluginRootOwners).toEqual([
     "apps/web/src/styles/plugins/plugin-manager-shell.css",
   ]);
-  expectImportOrder(styles, ["./styles/plugins.css", "./styles/workspace-navigation-appearance.css"]);
+  expectImportOrder(styles, ["./styles/plugins.css", "./styles/shared/workspace-navigation-appearance.css"]);
   for (const focusedImport of [
     "plugin-manager-shell.css",
     "plugin-manager-toolbar.css",

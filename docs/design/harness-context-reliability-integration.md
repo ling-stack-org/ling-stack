@@ -21,7 +21,8 @@ D0/E1–E6、U/T/G/K 案例，不减少原 packaged 20 案及 U-01–U-10、S-01
 - conversation-summary-coordinator 已有结构化结果、source fence、摘要 checkpoint、预算策略。
   原 channels/messages 的 single-flight 包装返回 void，并吞结果和异常；H1-A 已提取为保留
   结果的独立模块，hard 调用方尚未消费结果形成预算门禁或公共观察状态。
-- runner-pi/adapter 使用 Pi 0.84.4、内存 Session，compaction.enabled=false。
+- 当前 runner-pi/adapter 使用 Pi 1.1.0、内存 Session，compaction.enabled=false。本文后文的 0.84.4
+  均是对应日期的历史 SDK 生命周期核验记录，不代表当前安装版本。
   SDK 手动 compact 首先 abort，不能直接对活跃执行调用它再假定自动续跑。
 - memory-retrieval-store 在 scope/相关性过滤前先取最近 500 条；中文整句按空格标点切词。
   已有 MemoryReview、verifyBeforeUse、self-improving validUntil/supersededBy 和作用域投影。
@@ -116,7 +117,7 @@ summary 重放后续动作。现有表以每轮最后的 RunEvent seq 表达后�
 
 ### 4.2 2026-09-27 SDK 边界复核后的实施约束
 
-安装的 Pi 0.84.4 在工具轮次之间调用 `_compactBeforeNextAssistantResponse`，
+历史核验的 Pi 0.84.4 在工具轮次之间调用 `_compactBeforeNextAssistantResponse`，
 并在 `agent_end` 后另做 threshold 检查。是否能中途压缩还取决于 SDK 能否在
 `keepRecentTokens` 内找到安全 cut point：最近工具结果过大时会推迟到结束，
 有切点时则会在下一次任务模型请求前压缩。真实 SDK 回归已覆盖两种情况；
@@ -264,7 +265,7 @@ prepared request 含 system/tools/reserved output 的 soft degraded / hard block
 
 ### 7.4 H2-A：真实 SDK 生命周期核验与停止通道（2026-09-08）
 
-安装版本为 `@earendil-works/pi-coding-agent` / `pi-ai` 0.84.4。测试使用真实
+历史核验安装的 `@earendil-works/pi-coding-agent` / `pi-ai` 版本为 0.84.4。测试使用真实
 AgentSession、SessionManager、provider SSE parser、内置 compactor、retry 与工具调度；
 仅替换每个 ModelRuntime 的传输为固定响应，凭据/资源/Session 为内存隔离，工具只向
 mkdtemp 目录追加标记。没有读取真实凭据、扫描用户资源或调用外部模型。
@@ -407,7 +408,7 @@ H2 checkpoint 的幂等键仍是 `(runId, attemptId, sourceEventSeq)`，但重�
 模型、事件序号及内容类型。权限指纹漂移、workspace 水位变化、未知副作用和摘要篡改
 均有反例测试；这些门禁不代表模型视图已经可恢复。
 
-真实 Pi 0.84.4 SDK 测试确认：`agent_end` 后自动压缩的模型视图最后仍可能是 assistant，
+历史 Pi 0.84.4 SDK 测试确认：`agent_end` 后自动压缩的模型视图最后仍可能是 assistant，
 新 Session 对该视图直接 `agent.continue()` 会以 `Cannot continue from message role: assistant`
 拒绝，且不会发模型请求。恢复设计须区分已完成回答的 Host 收尾与工具循环中断续接；
 不能把所有 committed checkpoint 简单塞进新 Session 后盲目 continue 或重发原 prompt。
