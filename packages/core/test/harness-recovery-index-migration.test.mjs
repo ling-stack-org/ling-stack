@@ -24,19 +24,19 @@ function fixture(t) {
 
 test("recovery indexes are additive, atomic and idempotent without rewriting domain rows", t => {
   const f = fixture(t), rows = f.database.prepare("SELECT * FROM work_units").all();
-  assert.equal(HARNESS_RECOVERY_INDEX_MIGRATION_VERSION, 180);
+  assert.equal(HARNESS_RECOVERY_INDEX_MIGRATION_VERSION, 196);
   assert.equal(applyHarnessRecoveryIndexMigration(f.input), true);
   assert.equal(applyHarnessRecoveryIndexMigration(f.input), false);
   assert.deepEqual(f.database.prepare("SELECT * FROM work_units").all(), rows);
   assert.equal(f.database.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name LIKE 'idx_harness_%'").get().n, 5);
-  assert.equal(f.database.prepare("SELECT name FROM schema_migrations WHERE version=180").get().name, migrationName);
+  assert.equal(f.database.prepare("SELECT name FROM schema_migrations WHERE version=196").get().name, migrationName);
 });
 
 test("all indexes and the marker roll back when recording fails", t => {
   const f = fixture(t), before = f.schema();
   assert.throws(() => applyHarnessRecoveryIndexMigration({ ...f.input, recordMigration() { throw new Error("record_fault"); } }), /record_fault/);
   assert.deepEqual(f.schema(), before);
-  assert.equal(f.input.hasMigration(180), false);
+  assert.equal(f.input.hasMigration(HARNESS_RECOVERY_INDEX_MIGRATION_VERSION), false);
   assert.equal(applyHarnessRecoveryIndexMigration(f.input), true);
 });
 
@@ -53,7 +53,7 @@ for (const kind of ["wrong_version", "wrong_name", "wrong_index", "conflicting_t
   test(`recovery migration refuses ${kind} without changing existing objects`, t => {
     const f = fixture(t);
     if (kind === "wrong_version") f.input.recordMigration(181, migrationName);
-    if (kind === "wrong_name") f.input.recordMigration(180, "foreign");
+    if (kind === "wrong_name") f.input.recordMigration(HARNESS_RECOVERY_INDEX_MIGRATION_VERSION, "foreign");
     if (kind === "wrong_index") f.database.exec(`CREATE INDEX ${indexNames[0]} ON delegation_budget_charges(id)`);
     if (kind === "conflicting_table") f.database.exec(`CREATE TABLE ${indexNames[0]}(id TEXT)`);
     const before = f.schema(), markers = f.database.prepare("SELECT * FROM schema_migrations").all();

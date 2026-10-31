@@ -365,7 +365,8 @@ test("immutable184 and every activation replay/view/stop body remain pinned; cor
   assert.throws(() => db.prepare("UPDATE run_suspension_root_activations SET digest=? WHERE suspension_id=?").run("b".repeat(64), f.input.suspensionId), /immutable/);
   const ids = db.prepare("SELECT artifact_id FROM harness_artifact_pins WHERE holder LIKE 'host:run_suspension_activation:%' AND released_at IS NULL").all().map(row => row.artifact_id);
   for (const id of [result.record.artifactId, f.input.replayArtifactId, f.stopped.receiptArtifactId, f.sealed.seal.modelViewArtifactId]) assert.ok(ids.includes(id));
-  for (const artifactId of ids) f.store.enrollHarnessArtifactRetention({ artifactId, retainUntil: now(), now: now() });
+  const retentionDeadline = now();
+  for (const artifactId of ids) f.store.enrollHarnessArtifactRetention({ artifactId, retainUntil: retentionDeadline, now: retentionDeadline });
   assert.deepEqual(f.store.collectHarnessArtifactBodies({ now: now() }).prunedArtifactIds, []);
   db.prepare("UPDATE artifacts SET sealed_payload_json=sealed_payload_json||' ' WHERE id=?").run(result.record.artifactId);
   const before = f.snapshot(); assert.throws(() => f.activate()); assert.deepEqual(f.snapshot(), before);

@@ -255,7 +255,7 @@ test("delegation migration has the release schema 154 identity", () => {
   assert.equal(typeof applyDelegationMigration, "function");
 });
 
-test("real schema153 upgrades through193 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
+test("real schema153 upgrades through196 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
   const f = await fileFixture(t, "full-schema");
   const first = f.own(createSqliteRunStore(f.cwd));
   const channel = first.handle.createChannel({ name: "Legacy", boundPath: f.cwd }, now);
@@ -375,7 +375,7 @@ test("real schema153 upgrades through193 preserving historical SQL/markers/rows 
   assert.deepEqual(directInterventionColumns.slice(0, oldDirectInterventionColumns.length), oldDirectInterventionColumns);
   assert.deepEqual(directInterventionColumns.slice(oldDirectInterventionColumns.length).map(column => column.name), ["source_attempt_id"]);
   assert.deepEqual(database.prepare("SELECT server_id, server_revision, tools_revision FROM mcp_authority_revisions ORDER BY server_id").all(), oldAuthorityRows);
-  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193) ORDER BY version").all(), oldMarkers);
+  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196) ORDER BY version").all(), oldMarkers);
   assert.deepEqual(database.prepare("SELECT version,name FROM schema_migrations WHERE version BETWEEN 190 AND 192 ORDER BY version").all().map(row => ({ ...row })), [
     { version: 190, name: "conversation_empty_fork_boundary" },
     { version: 191, name: "create_channel_pending_operation_resolutions" },
