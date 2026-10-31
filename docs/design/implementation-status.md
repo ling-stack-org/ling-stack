@@ -73,6 +73,7 @@ These are real gaps, but they must not be described as currently scheduled work.
 
 | Contract | Remaining boundary |
 |---|---|
+| Memory and Skill Learning release gates | Source implementation, review, CI and mainline merge are complete in PR #627; macOS/Windows packaged FTS/native acceptance and CPA monetary rate remain unverified. Native LanceDB remains outside default bundles; these are release follow-ups, not evidence that source behavior is incomplete. |
 | [Provider Hardening And Media Adapters](provider-hardening-and-media-adapter-completion.md) | Jimeng live generation and stored-artifact image-edit materialization |
 | [Two-Layer Configuration](two-layer-configuration.md) | Provider-profile cleanup and remaining Keychain migration, shared with [runtime inheritance](runtime-provider-secrets-inheritance.md) |
 | [Workspace State Storage](workspace-state-storage.md) | Opt-in rollout and remaining migration ownership |
