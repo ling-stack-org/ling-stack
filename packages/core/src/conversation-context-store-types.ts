@@ -108,7 +108,7 @@ export type CommitConversationContextSummaryResult =
 export interface CreateConversationContextSnapshotInput {
   readonly id?: string;
   readonly threadId: string;
-  readonly segmentId: string;
+  readonly segmentId?: string;
   readonly projectionVersion: string;
   readonly throughItemSequence: number;
   readonly summaryIds?: readonly string[];

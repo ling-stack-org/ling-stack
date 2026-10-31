@@ -4,6 +4,7 @@ import type { ControlPlaneEvent, LingTurnStatus } from "./run-types.js";
 import type { WorkflowCompletionEvaluationV1 } from "./workflow-completion-read-set.js";
 import type { NormalTerminalReportBasis } from "./normal-terminal-report-basis.js";
 import type { TerminalReport, TerminalReportEvidenceSnapshot } from "./terminal-report-types.js";
+import type { DelegationCompletionEvidenceV1 } from "./delegation-completion-evidence.js";
 
 export interface CommitWorkflowTerminalReportPublicationInput {
   readonly reportId: string;
@@ -11,6 +12,8 @@ export interface CommitWorkflowTerminalReportPublicationInput {
   readonly expectedEvidenceFingerprint: string;
   readonly expectedWorkflowId: string;
   readonly expectedCompletion?: WorkflowCompletionEvaluationV1;
+  /** Captured with the report input, never freshly substituted after synthesis. */
+  readonly expectedDelegationCompletion?: DelegationCompletionEvidenceV1;
   readonly expectedSourceTurn: {
     readonly id: string;
     readonly status: LingTurnStatus;

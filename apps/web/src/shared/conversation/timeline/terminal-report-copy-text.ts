@@ -4,26 +4,42 @@ import {
   type ConversationTimelineTerminalReportItem,
 } from "@ling-stack/conversation-ui-core";
 import type { ConversationTimelineResponse } from "./timeline-response-presentation.js";
+import { terminalReportFinalPresentation, terminalReportResultMeta } from "./terminal-report-fallback-summary.js";
 
-/** Copy the final fallback as well as commentary when no final model reply exists. */
+/** Copy the whole response plus only the report result actually presented beside it. */
 export function timelineResponseCopyText(response: ConversationTimelineResponse, hasFinalNarration: boolean): string {
   if (!response.settled) return "";
-  if (response.report && !hasFinalNarration) {
-    return joinBlocks([response.copyText, terminalReportCopyText(response.report)]);
-  }
-  return response.copyText || (response.report ? terminalReportCopyText(response.report) : "");
+  return joinBlocks([response.copyText, response.report ? terminalReportResultCopyText(response.report, hasFinalNarration) : ""]);
+}
+
+function terminalReportResultCopyText(input: ConversationTimelineTerminalReportItem, hasFinalNarration: boolean): string {
+  if (!isTerminalReport(input)) return "";
+  const presentation = terminalReportFinalPresentation(input, hasFinalNarration);
+  if (!presentation.visible) return "";
+  const { item, summary, corrections, verification, participants, artifacts, risks } = presentation;
+  return joinBlocks([
+    summary,
+    presentation.showStatus ? presentation.statusLabel : undefined,
+    ...corrections.map((correction) => joinBlocks([correction.correctedFact, terminalReportResultMeta(item, [correction.confidence]),
+      `Previously: ${correction.originalAssumption}`])),
+    ...verification.map((check) => joinBlocks([`${check.title} · ${terminalReportResultMeta(item, [check.status])}`, check.summary])),
+    ...participants.map((participant) => joinBlocks([`${participant.displayName} · ${terminalReportResultMeta(item, [participant.roleKey, participant.status])}`, participant.contribution])),
+    ...artifacts.map((artifact) => joinBlocks([artifact.title,
+      changeMeta(artifact.kind, artifact.addedLines, artifact.deletedLines), artifact.summary, artifact.path])),
+    ...risks.map((risk) => joinBlocks([risk.summary,
+      terminalReportResultMeta(item, [risk.severity, risk.status, risk.approvalDecision]), risk.nextAction])),
+  ]);
 }
 
 /**
- * Serialize this report's visible final result, never the surrounding response.
+ * Explicit full structured-report serialization, NOT ordinary response copy.
  * The caller owns report selection and validation. This projection deliberately
  * reads reference policy for filtering but never serializes its identity or labels.
  * It reads no sibling item, child transcript, or raw evidence field, and preserves
  * Markdown prose rather than flattening it.
  */
 export function terminalReportCopyText(input: ConversationTimelineTerminalReportItem): string {
-  if (input.status !== "succeeded" && input.status !== "partially_succeeded" && input.status !== "failed" &&
-    input.status !== "cancelled" && input.status !== "blocked") return "";
+  if (!isTerminalReport(input)) return "";
 
   const content = projectVisibleTerminalReportContent({
     language: input.language,
@@ -34,7 +50,7 @@ export function terminalReportCopyText(input: ConversationTimelineTerminalReport
   });
   const item = { ...content, title: content.outcome.title, summary: content.outcome.summary, corrections: content.outcome.corrections };
 
-  // Match TerminalReportDetail: a lone successful participant adds no detail.
+  // Full export retains all visible participants except a lone successful one.
   const participants = item.participants.length > 1 || item.participants.some((participant) => participant.status !== "completed")
     ? item.participants
     : [];
@@ -76,6 +92,11 @@ export function terminalReportCopyText(input: ConversationTimelineTerminalReport
       risk.nextAction,
     ))),
   ]);
+}
+
+function isTerminalReport(input: ConversationTimelineTerminalReportItem): boolean {
+  return input.status === "succeeded" || input.status === "partially_succeeded" || input.status === "failed" ||
+    input.status === "cancelled" || input.status === "blocked";
 }
 
 function joinBlocks(blocks: readonly (string | undefined)[]): string {

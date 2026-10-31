@@ -45,6 +45,7 @@ export async function queueNormalConversationGuidance(input: {
       fileRefs: input.draft.fileRefs.map((fileRef) => ({
         path: fileRef.path,
         ...(fileRef.label ? { label: fileRef.label } : {}),
+        ...(fileRef.source ? { source: fileRef.source } : {}),
         rootRelation: "unknown",
         kind: "unknown",
         materializationStatus: "not_loaded",

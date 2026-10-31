@@ -23,6 +23,7 @@ import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import type { NormalTerminalReportReadStore } from "../../normal-terminal-report-basis.js";
 import { commitNormalTerminalReportWithinTransaction } from "./normal-terminal-report-publication.js";
+import type { DelegationCompletionEvidenceV1 } from "../../delegation-completion-evidence.js";
 
 type PublicationItem = AppendConversationItemInput<"terminal_report">;
 
@@ -41,6 +42,7 @@ export interface SqliteTerminalReportPublicationStorePorts {
     | "listApprovalRequests"
     | "getArtifact"
     | "listArtifacts"
+    | "getDelegationCompletionEvidence"
   >;
   readonly getLingTurn: (id: string) => LingTurn | undefined;
   readonly getConversationItem: (id: string) => ConversationItemV1 | undefined;
@@ -120,12 +122,13 @@ export class SqliteTerminalReportPublicationStore {
     if (!outcomeMatchesTarget(report.report.outcome.status, targetStatus)) {
       return conflict("outcome_conflict");
     }
+    const steps = this.ports.listChannelWorkflowSteps(workflow.id);
+    let delegations: DelegationCompletionEvidenceV1;
     if (workflow.metadata?.requiredParticipantManifest) {
       const evaluation = input.expectedCompletion;
       if (!evaluation || evaluation.expectedReadSet.workflow.id !== workflow.id) {
         return conflict("stale_completion_basis");
       }
-      const steps = this.ports.listChannelWorkflowSteps(workflow.id);
       const actual = buildWorkflowCompletionExpectedReadSet({
         store: this.ports.completionReadStore,
         workflow,
@@ -138,7 +141,25 @@ export class SqliteTerminalReportPublicationStore {
         || workflow.metadata.completionGate?.basisFingerprint !== evaluation.gate.basisFingerprint) {
         return conflict("stale_completion_basis");
       }
+      delegations = actual.delegations;
+    } else {
+      delegations = this.ports.completionReadStore.getDelegationCompletionEvidence({
+        rootRunIds: [...new Set(steps.flatMap(step => step.runId ? [step.runId] : []))].sort(),
+      });
     }
+    // A legacy workflow without a participant manifest can still own dynamic
+    // work. Read its entire original subtree, not a count of projected batches.
+    const expectedDelegations = input.expectedDelegationCompletion;
+    const dynamic = delegations.steps.length > 0 || delegations.issues.length > 0
+      || Boolean(expectedDelegations?.steps.length || expectedDelegations?.issues.length)
+      || report.evidenceSnapshot.delegationCompletionFingerprint !== undefined;
+    if (dynamic && (!expectedDelegations
+      || delegations.fingerprint !== expectedDelegations.fingerprint
+      || JSON.stringify(delegations) !== JSON.stringify(expectedDelegations)
+      || report.evidenceSnapshot.delegationCompletionFingerprint !== delegations.fingerprint)) {
+      return conflict("stale_completion_basis");
+    }
+    if (targetStatus === "succeeded" && delegations.status !== "satisfied") return conflict("stale_completion_basis");
 
     if (!validPublicationItem(input.publicationItem, {
       report,

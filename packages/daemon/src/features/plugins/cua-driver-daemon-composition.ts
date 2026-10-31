@@ -158,16 +158,17 @@ export class CuaDriverDaemonActivationCoordinator {
   beginShutdown(): void {
     this.shutdownRequested = true;
     this.cancelRetirementProjectionRetry();
+    this.options.clientPool.beginShutdown();
   }
 
+  /** Called only after the owning Host has successfully drained accepted work. */
   async shutdown(): Promise<void> {
-    this.shutdownRequested = true;
-    this.cancelRetirementProjectionRetry();
-    await this.options.clientPool.closeAll();
+    this.beginShutdown();
+    await this.options.clientPool.closeAll({ afterHostDrain: true });
     await Promise.allSettled([...this.pending]);
-    // A reconcile that crossed the first closeAll boundary may have acquired a
-    // client before observing shutdown. The final pass guarantees zero residue.
-    await this.options.clientPool.closeAll();
+    // Observe reconciliation finalizers already in flight when admission closed,
+    // then finish any retirement bookkeeping they reached during that wait.
+    await this.options.clientPool.closeAll({ afterHostDrain: true });
   }
 
   private async closeAndReconcile(

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createGuardedMediaHttpTransport } from "../guarded-native-transport.js";
-import { toRuntimeAttemptFence, type MediaJob, type RunArtifact, type RunStore, type SecretResolver, type WorkUnit, type WorkUnitAttempt } from "@ling-stack/core";
+import { createRuntimeResourceRenewal, toRuntimeAttemptFence, type MediaJob, type RunArtifact, type RunStore, type SecretResolver, type WorkUnit, type WorkUnitAttempt } from "@ling-stack/core";
 import type { MediaExecutionHandle, MediaExecutionResult } from "@ling-stack/providers";
 import type { RunStoreRegistry } from "../../../runtime/store-registry.js";
 import { MediaLocalExecutionAdmissionError, type MediaLocalExecutionHandle } from "../../../runtime/media-local-executions.js";
@@ -442,12 +442,14 @@ function ensureSemaphore(
 }
 
 function recordHeartbeat(store: RunStore, supervised: MediaRuntimeHandle): void {
+  const ts = new Date().toISOString();
   store.recordRuntimeHeartbeat({
     workUnitId: supervised.workUnit.id,
     attemptId: supervised.attempt.id,
     runtimeInstanceId: supervised.attempt.runtimeInstanceId,
     fencingToken: supervised.attempt.fencingToken,
-    ts: new Date().toISOString(),
+    ts,
+    resourceExpiresAt: createRuntimeResourceRenewal(ts).expiresAt,
     source: "provider",
     detail: { phase: "workflow_tick" },
   });

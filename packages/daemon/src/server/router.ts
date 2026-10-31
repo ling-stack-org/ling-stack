@@ -8,6 +8,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { defaultProviderTemplates, executeExternalWorkAction, toRuntimeAttemptFence } from "@ling-stack/core";
 import type { AiTeammate, RunSession, RunStore, TeammateDirectMessage, TeammateDirectThread } from "@ling-stack/core";
 import type { DaemonContext } from "../context.js";
+import { daemonRequestIsAuthorized } from "./request-auth.js";
 import { HttpError } from "../errors.js";
 import { reconcileTeammateDirectRun } from "../features/teammates/direct-message-lifecycle.js";
 import { createHarnessFeatureSnapshot } from "../features/harness/index.js";
@@ -167,6 +168,7 @@ import { handleConversationAttachmentsCollection, handleConversationDetail, hand
 import { handleConversationSubmissionReceipt } from "../features/conversations/submission-receipts.js";
 import { startDetachedRunAndResolveReady } from "../features/runs/detached.js";
 import { handleConversationMessageEdit } from "../features/conversations/message-edits.js";
+import { handleUserInputAnswer } from "../features/conversations/user-input-answer-route.js";
 import { dispatchMediaJobExecution, handleRunMediaJob, syncMediaJobForApprovalDecision, type RunMediaJobHooks } from "../features/media/executor.js";
 import { publishConversationMediaProjectionChange } from "../features/media/conversation-events.js";
 import { handleConversationMediaGenerationTargets } from "../features/media/conversation-target-routes.js";
@@ -433,19 +435,7 @@ export async function routeRequest(
   if (config.authToken) {
     const pathname = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`).pathname;
     if (pathname !== "/health") {
-      const authorization = request.headers.authorization ?? "";
-      const expected = `Bearer ${config.authToken}`;
-      const provided = typeof authorization === "string" ? authorization : "";
-      let tokenMatches = false;
-      if (provided.length === expected.length) {
-        // Constant-time-ish compare; length equality checked first.
-        let difference = 0;
-        for (let index = 0; index < expected.length; index += 1) {
-          difference |= provided.charCodeAt(index) ^ expected.charCodeAt(index);
-        }
-        tokenMatches = difference === 0;
-      }
-      if (!tokenMatches) {
+      if (!daemonRequestIsAuthorized(config.authToken, request.headers.authorization)) {
         writeJson(response, 401, { error: "unauthorized", message: "A valid bearer token is required for non-loopback access." });
         return;
       }
@@ -996,7 +986,8 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/external-work/workflow/configure") {
-    await handleExternalWorkWorkflowConfigure(request, response, config, storeRegistry);
+    await handleExternalWorkWorkflowConfigure(request, response, config, storeRegistry,
+      runtimeSupervisor.getExternalWorkflowRequestRuntime());
     return;
   }
 
@@ -1218,6 +1209,11 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/user-input-answers") {
+    await handleUserInputAnswer(request, response, config, storeRegistry, (store) => userInputDeliveryWorker.wake(store));
+    return;
+  }
+
   if (url.pathname === "/conversation-submissions") {
     if (request.method !== "GET") {
       writeJson(response, 405, { error: "method_not_allowed", message: "Submission receipts are read-only" });
@@ -1293,7 +1289,7 @@ export async function routeRequest(
       storeRegistry,
       config.maxBodyBytes,
       userInputAnswerRoute,
-      (store) => userInputDeliveryWorker?.wake(store),
+      (store) => userInputDeliveryWorker.wake(store),
     );
     return;
   }
@@ -1914,6 +1910,7 @@ export async function routeRequest(
             computerUsePreviews,
             hostCapabilityBridge,
             nativeRunDispatcher,
+            enableUserInputPause: true,
           },
         ).then(resolveOnce, () => resolveOnce(undefined));
       });
@@ -2900,8 +2897,10 @@ export async function routeRequest(
           }
         },
         syncWorkflow: () => {
+          if (approval.payload.type !== "workflow_step") return;
           const result = syncWorkflowApprovalDecision(store, approval, now);
           if (result.status === "missing_owner") throw new Error("approval_workflow_owner_missing");
+          if (result.status === "stale_owner") throw new Error("approval_workflow_owner_stale");
         },
         syncMedia: () => syncMediaJobForApprovalDecision({
           cwd,

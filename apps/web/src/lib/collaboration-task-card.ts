@@ -46,7 +46,7 @@ export function buildCollaborationTaskCardModel(input: BuildCollaborationTaskCar
   const pendingApprovals = workflowApprovals.filter((approval) => approval.status === "pending");
   const blockedStep = orderedSteps.find((step) => step.status === "blocked");
   const failedStep = orderedSteps.find((step) => step.status === "failed");
-  const waitingStep = orderedSteps.find((step) => step.status === "waiting_for_approval");
+  const waitingStep = orderedSteps.find((step) => step.status === "waiting_for_approval" || step.status === "waiting_for_input");
   const activeStep = orderedSteps.find((step) => step.status === "running" || step.status === "claimed");
   const queuedStep = orderedSteps.find((step) => step.status === "queued");
   const focusStep = blockedStep ?? failedStep ?? waitingStep ?? activeStep ?? queuedStep;
@@ -110,7 +110,9 @@ function buildCollaborationBranches(input: {
       steps.find((step) => step.state === "blocked") ??
       steps.find((step) => step.state === "failed") ??
       steps.find((step) => step.state === "active") ??
-      steps.find((step) => step.state === "waiting" || step.state === "queued") ??
+      steps.find((step) => step.state === "waiting") ??
+      steps.find((step) => step.state === "queued") ??
+      steps.find((step) => step.state === "cancelled") ??
       steps.at(-1);
     const label = ownerLabels.length > 0
       ? input.t("{owner} branch", { owner: ownerLabels.slice(0, 2).join(", ") })
@@ -149,7 +151,8 @@ function collaborationTaskCardMode(
   if (workflow.status === "blocked" || steps.some((step) => step.status === "blocked")) {
     return "blocked";
   }
-  if (workflow.status === "waiting_for_approval" || pendingApprovals.length > 0 || steps.some((step) => step.status === "waiting_for_approval")) {
+  if (workflow.status === "waiting_for_approval" || workflow.status === "waiting_for_input" || pendingApprovals.length > 0
+    || steps.some((step) => step.status === "waiting_for_approval" || step.status === "waiting_for_input")) {
     return "waiting";
   }
   if (workflow.status === "draft" || workflow.status === "ready") {
@@ -178,7 +181,7 @@ function collaborationStepState(step: ChannelWorkflowStep): CollaborationTaskSte
   if (step.status === "running" || step.status === "claimed") {
     return "active";
   }
-  if (step.status === "waiting_for_approval") {
+  if (step.status === "waiting_for_approval" || step.status === "waiting_for_input") {
     return "waiting";
   }
   if (step.status === "blocked") {
@@ -245,7 +248,7 @@ function collaborationBranchState(steps: readonly CollaborationTaskCardStep[]): 
   if (steps.every((step) => step.state === "done")) {
     return "done";
   }
-  if (steps.every((step) => step.state === "cancelled")) {
+  if (steps.every((step) => step.state === "done" || step.state === "cancelled")) {
     return "cancelled";
   }
   return "waiting";

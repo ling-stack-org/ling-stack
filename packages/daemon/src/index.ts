@@ -67,7 +67,7 @@ import { RunEvaluationSchedulerRegistry } from "./features/harness/evaluations/s
 import {
   createDetachedRunExecutionSink,
   executeExistingRunContinuation,
-  executeUserInputAnswerContinuation,
+  executeUserInputContinuation,
 } from "./features/runs/orchestrator.js";
 import { resumePendingMediaJobExecutions, syncMediaJobForApprovalDecision } from "./features/media/executor.js";
 import { createNativeRunDispatcher } from "./features/runs/native-run-dispatcher.js";
@@ -609,7 +609,7 @@ export function createDaemonServer(
   userInputDeliveryWorker = new UserInputDeliveryWorker({
     activeRuns,
     runtimeSupervisor,
-    execute: (input) => executeUserInputAnswerContinuation(
+    execute: (input) => executeUserInputContinuation(
       input,
       createDetachedRunExecutionSink(),
       runnerRegistry,
@@ -623,7 +623,6 @@ export function createDaemonServer(
         startupState,
         computerUsePreviews,
         hostCapabilityBridge,
-        onRunReady: input.onRunReady,
         enableUserInputPause: true,
         afterRunTerminal: createUserInputWorkflowTerminalHook(channelTurnDispatchOptions),
       },

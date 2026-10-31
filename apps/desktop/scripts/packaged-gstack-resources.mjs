@@ -34,7 +34,7 @@ export function packagedGstackBuilderConfig() {
     { from: active.browser.root, to: "gstack-browser", filter: ["**/*"] }, ...retainedFiles];
   // FileMatcher expands macros in both paths. Authenticated paths must stay literal.
   if (extraResources.some(entry => [entry.from, entry.to].some(path => path.includes("${")))) {
-    throw new Error("packaged_gstack_resource_paths_must_be_literal");
+    throw new Error("packaged_gstack_builder_path_macro_unsupported");
   }
   return { extraResources,
     extraMetadata: { lingPackagedGstack: active.identity },

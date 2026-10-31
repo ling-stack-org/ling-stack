@@ -68,7 +68,8 @@ export function isUserInputTimelinePayload(value: unknown, kind: string, itemId:
     && (value.waitMode === "optional" || value.waitMode === "required")
     && Array.isArray(value.questions) && value.questions.every(q => isRecord(q) && nonempty(q.questionId)
       && typeof q.prompt === "string" && typeof q.required === "boolean" && typeof q.allowFreeText === "boolean"
-      && Array.isArray(q.options) && q.options.every(o => isRecord(o) && nonempty(o.optionId) && typeof o.label === "string"));
+      && Array.isArray(q.options) && q.options.every(o => isRecord(o) && nonempty(o.optionId) && typeof o.label === "string"))
+    && (value.answerAuthority === undefined || isAnswerAuthority(value.answerAuthority, value));
   return nonempty(value.answerId) && isRecord(value.delivery) && positive(value.delivery.revision)
     && ["pending", "claimed", "applied", "failed", "obsolete"].includes(String(value.delivery.status))
     && Array.isArray(value.answers) && value.answers.every(a => isRecord(a) && nonempty(a.questionId)
@@ -80,3 +81,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 function nonempty(value: unknown): boolean { return typeof value === "string" && value.trim().length > 0; }
 function positive(value: unknown): boolean { return typeof value === "number" && Number.isSafeInteger(value) && value > 0; }
+function isAnswerAuthority(value: unknown, request: Record<string, unknown>): boolean {
+  if (!isRecord(value) || request.status !== "pending") return false;
+  const source = request.source;
+  if (!isRecord(source)) return false;
+  return Object.keys(value).length === 9
+    && Object.keys(value).every(key => ["schemaVersion", "threadId", "runId", "attemptId", "participantId",
+      "requestId", "requestVersion", "statusRevision", "token"].includes(key))
+    && value.schemaVersion === 1 && value.threadId === source.threadId && value.runId === source.runId
+    && value.attemptId === source.attemptId && value.participantId === source.participantId
+    && value.requestId === request.requestId && value.requestVersion === request.requestVersion
+    && value.statusRevision === request.statusRevision && typeof value.token === "string"
+    && /^[a-f0-9]{64}$/u.test(value.token);
+}

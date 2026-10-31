@@ -46,13 +46,15 @@ export interface DaemonRunnerRecoveryResult {
  * Re-dispatches only fenced, daemon-owned Run continuations after startup.
  * SQLite remains the authority for activation; this class only discovers
  * eligible stale WorkUnits and prevents duplicate in-process dispatch. Channel
- * reply children belong to the channel dispatch recovery path instead.
+ * reply children belong to channel dispatch recovery; dynamic delegated children
+ * belong to their private registry, which preserves custody and budget binding.
  */
 export class DaemonRunnerRecoveryCoordinator {
   private readonly stores = new Set<RunStore>();
   private readonly dispatches = new WeakMap<RunStore, Set<string>>();
   private readonly discoverySweeps = new WeakMap<RunStore, StoreDiscoverySweeps>();
   private readonly scansInProgress = new WeakSet<RunStore>();
+  private readonly inFlight = new Set<Promise<unknown>>();
   private started = false;
   private shuttingDown = false;
   private scanTimer?: ReturnType<typeof setInterval>;
@@ -93,6 +95,11 @@ export class DaemonRunnerRecoveryCoordinator {
     this.started = false;
     if (this.scanTimer) clearInterval(this.scanTimer);
     this.scanTimer = undefined;
+  }
+
+  /** Admission closes synchronously; actual recovery callbacks retain Store ownership until settled. */
+  async waitForIdle(): Promise<void> {
+    while (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight]);
   }
 
   recoverStore(store: RunStore): DaemonRunnerRecoveryResult {
@@ -153,9 +160,7 @@ export class DaemonRunnerRecoveryCoordinator {
           preparedExecution: scheduled.execution,
         });
         dispatched += 1;
-        void completion.catch(() => undefined).finally(() => {
-          dispatches.delete(scheduled.run.id);
-        });
+        this.trackDispatch(completion, () => dispatches.delete(scheduled.run.id));
       } catch {
         dispatches.delete(scheduled.run.id);
         skipped += 1;
@@ -186,9 +191,7 @@ export class DaemonRunnerRecoveryCoordinator {
             idempotencyDiscriminator: "runtime-startup",
           });
           dispatched += 1;
-          void completion.catch(() => undefined).finally(() => {
-            dispatches.delete(run.id);
-          });
+          this.trackDispatch(completion, () => dispatches.delete(run.id));
         } catch {
           dispatches.delete(run.id);
           skipped += 1;
@@ -200,6 +203,14 @@ export class DaemonRunnerRecoveryCoordinator {
 
   private isShuttingDown(): boolean {
     return this.shuttingDown || this.options.activeRuns.isShuttingDown();
+  }
+
+  private trackDispatch(completion: Promise<unknown>, cleanup: () => void): void {
+    const owned = completion.then(() => undefined, () => undefined).finally(() => {
+      cleanup();
+      this.inFlight.delete(owned);
+    });
+    this.inFlight.add(owned);
   }
 
   private discoverySweepsFor(store: RunStore): StoreDiscoverySweeps {
@@ -288,6 +299,9 @@ export class DaemonRunnerRecoveryCoordinator {
 
 /** Scheduled and stale discovery share ownership, not their distinct Attempt eligibility. */
 function isDaemonOwnedRecoveryRun(store: RunStore, workUnit: WorkUnit, run: RunSession): boolean {
+  // A task_run shape is not recovery authority for a delegated child. Ordinary
+  // continuations have no OriginalDelegatedExecutionEntry or child budget port.
+  if (workUnit.ownerType === "delegation_step") return false;
   if (workUnit.kind !== "task_run" && workUnit.kind !== "conversation_run"
     && workUnit.kind !== "teammate_direct_reply") return false;
   if (workUnit.kind === "task_run") return true;

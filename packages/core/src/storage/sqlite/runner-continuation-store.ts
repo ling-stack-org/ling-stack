@@ -19,6 +19,7 @@ import { mapRunnerContinuation, runnerContinuationSelectSql } from "./runner-con
 import { normalizeStoredRunnerId } from "./runtime-work-mappers.js";
 import type { SqliteRuntimeWorkUnitStore } from "./runtime-work-unit-store.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { harnessArtifactOwnerHolder, syncHarnessArtifactOwnerPins } from "./harness-artifact-recovery-pins.js";
 
 interface RunnerContinuationStorePorts {
   readonly getArtifact: (id: string) => RunArtifact | undefined;
@@ -26,11 +27,13 @@ interface RunnerContinuationStorePorts {
 
 /** Durable continuation reads and fenced lease/state transitions. */
 export class SqliteRunnerContinuationStore {
+  readonly #rootSuspensionStartScope: object | undefined;
   constructor(
     private readonly context: SqliteStoreContext,
     private readonly runtimeWorkUnits: SqliteRuntimeWorkUnitStore,
     private readonly ports: RunnerContinuationStorePorts,
-  ) {}
+    rootSuspensionStartScope?: object,
+  ) { this.#rootSuspensionStartScope = rootSuspensionStartScope; }
 
   getRunnerContinuation(id: string): RunnerContinuationV1 | undefined {
     const row = this.context.database.prepare(runnerContinuationSelectSql("WHERE id = ?")).get(id);
@@ -52,6 +55,9 @@ export class SqliteRunnerContinuationStore {
     }
     const clauses: string[] = [];
     const params: (string | number)[] = [input.now, input.now];
+    // In scheduled-only scans COALESCE is exactly next_attempt_at. Expressing
+    // that equality lets SQLite seek the due-order index without a temp sort.
+    const dueColumn = input.scheduledOnly ? "next_attempt_at" : "COALESCE(next_attempt_at, created_at)";
     if (input.scheduledOnly) clauses.push("next_attempt_at IS NOT NULL");
     if (input.createdAtOrBefore !== undefined) {
       assertRecoveryDiscoveryTimestamp(input.createdAtOrBefore, "creation cutoff");
@@ -65,7 +71,7 @@ export class SqliteRunnerContinuationStore {
       assertRecoveryDiscoveryTimestamp(input.after.dueAt, "cursor due time");
       assertRecoveryDiscoveryTimestamp(input.after.createdAt, "cursor creation time");
       assertRecoveryDiscoveryId(input.after.id);
-      clauses.push("(COALESCE(next_attempt_at, created_at), created_at, id) > (?, ?, ?)");
+      clauses.push(`(${dueColumn}, created_at, id) > (?, ?, ?)`);
       params.push(input.after.dueAt, input.after.createdAt, input.after.id);
     }
     const discoveryClause = clauses.length > 0 ? `AND ${clauses.join(" AND ")}` : "";
@@ -73,10 +79,10 @@ export class SqliteRunnerContinuationStore {
     return this.context.database
       .prepare(`${runnerContinuationSelectSql(`
         WHERE state = 'prepared'
-          AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+          AND ${input.scheduledOnly ? "next_attempt_at <= ?" : "(next_attempt_at IS NULL OR next_attempt_at <= ?)"}
           AND (claim_owner IS NULL OR claim_expires_at IS NULL OR claim_expires_at <= ?)
           ${discoveryClause}
-      `)} ORDER BY COALESCE(next_attempt_at, created_at) ASC, created_at ASC, id ASC LIMIT ?`)
+      `)} ORDER BY ${dueColumn} ASC, created_at ASC, id ASC LIMIT ?`)
       .all(...params)
       .map((row) => mapRunnerContinuation(row as Record<string, SQLOutputValue>));
   }
@@ -156,6 +162,7 @@ export class SqliteRunnerContinuationStore {
     );
     const stored = this.getRunnerContinuation(continuation.id);
     if (!stored) throw new Error(`Failed to create runner continuation: ${continuation.id}`);
+    this.syncRecoveryPins(stored, continuation.updatedAt);
     return stored;
   }
 
@@ -204,12 +211,20 @@ export class SqliteRunnerContinuationStore {
       current.state,
       input.targetFence.attemptId,
     );
-    return Number(updated.changes) === 1 ? this.getRunnerContinuation(current.id) : undefined;
+    if (Number(updated.changes) !== 1) return undefined;
+    this.syncRecoveryPins({ ...current, state: "failed" }, input.now);
+    return this.getRunnerContinuation(current.id);
   }
 
   claimRunnerContinuation(input: ClaimRunnerContinuationInput): RunnerContinuationMutationResult {
     validateClaimInput(input);
-    return this.transaction(() => {
+    return this.transaction(() => this.claimRunnerContinuationWithinTransaction(input));
+  }
+
+  /** Caller owns the original multi-entity SQLite transaction; not exposed on the Host/public writer. */
+  claimRunnerContinuationWithinTransaction(input: ClaimRunnerContinuationInput): RunnerContinuationMutationResult {
+      validateClaimInput(input);
+      if (!this.context.database.isTransaction) throw new Error("Runner continuation claim requires its owning transaction.");
       const current = this.getRunnerContinuation(input.continuationId);
       if (!current) return { ok: false, code: "not_found" };
       const target = this.currentTargetAttempt(current);
@@ -254,15 +269,24 @@ export class SqliteRunnerContinuationStore {
         input.now,
       );
       if (Number(update.changes) !== 1) return this.classifyClaimFailure(input);
+      this.syncRecoveryPins(this.getRunnerContinuation(input.continuationId)!, input.now);
       return { ok: true, value: this.getRunnerContinuation(input.continuationId)!, replayed: false };
-    });
   }
 
   startRunnerContinuation(input: StartRunnerContinuationInput): RunnerContinuationMutationResult {
     validateExecutionMutationInput(input);
-    return this.transaction(() => {
+    return this.transaction(() => this.startRunnerContinuationWithinTransaction(input));
+  }
+
+  /** Joined coordinator only; the nominal constructor scope is never exposed by RunStore. */
+  startRunnerContinuationWithinTransaction(input: StartRunnerContinuationInput, scope?: object): RunnerContinuationMutationResult {
+    validateExecutionMutationInput(input);
+    if (!this.context.database.isTransaction) throw new Error("runner_continuation_transaction_required");
       const current = this.getRunnerContinuation(input.continuationId);
       if (!current) return { ok: false, code: "not_found" };
+      if (this.context.database.prepare("SELECT 1 FROM sqlite_master WHERE name='run_suspension_root_activations' AND type='table'").get()
+        && current.targetAttemptId && this.context.database.prepare("SELECT 1 FROM run_suspension_root_activations WHERE target_attempt_id=?").get(current.targetAttemptId)
+        && (!this.#rootSuspensionStartScope || scope !== this.#rootSuspensionStartScope)) return { ok: false, code: "invalid_transition" };
       if (!this.matchesLease(current, input) || !current.claimExpiresAt || current.claimExpiresAt <= input.now) {
         return { ok: false, code: "lease_mismatch" };
       }
@@ -301,8 +325,8 @@ export class SqliteRunnerContinuationStore {
         input.now,
       );
       if (Number(update.changes) !== 1) return { ok: false, code: "stale_revision" };
+      this.syncRecoveryPins(this.getRunnerContinuation(input.continuationId)!, input.now);
       return { ok: true, value: this.getRunnerContinuation(input.continuationId)!, replayed: false };
-    });
   }
 
   finishRunnerContinuation(input: FinishRunnerContinuationInput): RunnerContinuationMutationResult {
@@ -360,7 +384,25 @@ export class SqliteRunnerContinuationStore {
       input.now,
     );
     if (Number(update.changes) !== 1) return { ok: false, code: "stale_revision" };
-    return { ok: true, value: this.getRunnerContinuation(input.continuationId)!, replayed: false };
+    const stored = this.getRunnerContinuation(input.continuationId)!;
+    this.syncRecoveryPinsWithinTransaction(current, stored, input.now);
+    return { ok: true, value: stored, replayed: false };
+  }
+
+  /** Internal coordinator seam for reprepare; caller owns the exact authority CAS transaction. */
+  syncRecoveryPinsWithinTransaction(previous: RunnerContinuationV1, current: RunnerContinuationV1, now: string): void {
+    if (previous.id !== current.id || previous.runId !== current.runId) throw new Error("continuation.pin_owner_mismatch");
+    const previousIds = [previous.contextSnapshotArtifactId, ...(previous.failureDetailArtifactId ? [previous.failureDetailArtifactId] : [])];
+    const currentIds = [current.contextSnapshotArtifactId, ...(current.failureDetailArtifactId ? [current.failureDetailArtifactId] : [])];
+    syncHarnessArtifactOwnerPins(this.context.database, { holder: harnessArtifactOwnerHolder("continuation", current.id),
+      artifactIds: previousIds.filter(id => !currentIds.includes(id)), keep: false, now });
+    this.syncRecoveryPins(current, now);
+  }
+
+  private syncRecoveryPins(continuation: RunnerContinuationV1, now: string): void {
+    syncHarnessArtifactOwnerPins(this.context.database, { holder: harnessArtifactOwnerHolder("continuation", continuation.id),
+      artifactIds: [continuation.contextSnapshotArtifactId, ...(continuation.failureDetailArtifactId ? [continuation.failureDetailArtifactId] : [])],
+      keep: ["requested", "prepared", "claimed", "running", "recovery_pending"].includes(continuation.state), now });
   }
 
   private classifyClaimFailure(input: ClaimRunnerContinuationInput): RunnerContinuationMutationResult {

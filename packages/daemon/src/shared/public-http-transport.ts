@@ -32,7 +32,7 @@ export function isLocalOrPrivateHttpAddress(value: string): boolean {
   const family = isIP(host);
   if (family === 4) {
     const [a, b] = host.split(".").map(Number);
-    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) ||
+    return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
       (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
   }
   if (family !== 6) return true;
@@ -108,7 +108,15 @@ export async function preparePinnedPublicHttpRequest(
         // private scope makes a cloning intermediary fail closed at native send.
         try {
           const response = await sendScope.run(prepared, () => fetchImpl(url, boundInit));
+          // The native bridge has already consumed and verified the response;
+          // its successful disposal also aborts this private lifetime signal.
           if (enteredNative) return response;
+          // A sender can resolve headers in the same microtask as cancellation.
+          // Do not hand out (or strand) a body that arrived after the deadline.
+          if (signal.aborted) {
+            if (response.body) await responseWithCleanup(response, prepared.dispose).body!.cancel(signal.reason);
+            assertLive();
+          }
           if (!response.body) { await prepared.dispose(); return response; }
           return responseWithCleanup(response, prepared.dispose);
         } catch (error) { await prepared.dispose(); throw error; }

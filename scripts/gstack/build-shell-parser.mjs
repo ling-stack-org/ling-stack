@@ -1,46 +1,58 @@
 import { execFileSync } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { copyFile, mkdir, mkdtemp, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertNativeTarget } from "./build-native-runtime.mjs";
-import { bundleFile } from "./executable-bundle.mjs";
-import { requireResourceLease, resourceCheckpoint, within } from "./resource-workspace.mjs";
+import { managedResourceWrite, resourceCheckpoint } from "./resource-workspace.mjs";
+import { matchesNativeDependency } from "./runtime-dependency-audit.mjs";
 
-/** Build the exact checked-in Go module; never download an unpinned parser executable. */
+const source = fileURLToPath(new URL("./shell-ast/", import.meta.url));
+const inputs = ["main.go", "go.mod", "go.sum", "THIRD-PARTY-NOTICES"];
+const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+
+export function parserBuildEnvironment(lease, inherited = process.env) {
+  return { PATH: inherited.PATH, HOME: join(lease.scratchPath, "home"), TMPDIR: join(lease.scratchPath, "tmp"),
+    GOCACHE: join(lease.root, "cache/go-build"), GOMODCACHE: join(lease.root, "cache/go-modules"),
+    GOTOOLCHAIN: "local", GOPROXY: "https://proxy.golang.org", GOSUMDB: "sum.golang.org", CGO_ENABLED: "0" };
+}
+
 export async function buildShellParser({ outputPath, goCommand = "go" }) {
-  const lease = await requireResourceLease();
-  outputPath = resolve(outputPath);
-  if (dirname(outputPath) !== join(lease.root, "artifacts/report") && !within(lease.scratchPath, outputPath)) throw new Error("gstack_shell_parser_output_outside_workspace");
-  const scripts = dirname(fileURLToPath(import.meta.url)), source = join(scripts, "shell-ast");
-  const command = await realpath(isAbsolute(goCommand) ? goCommand : execFileSync(process.platform === "win32" ? "where.exe" : "which", [goCommand],
-    { encoding: "utf8" }).trim().split(/\r?\n/)[0]);
-  const env = { ...process.env, CGO_ENABLED: "0", GOTOOLCHAIN: "local", GOENV: "off", GOFLAGS: "", GOOS: process.platform === "win32" ? "windows" : "darwin", GOARCH: process.arch === "x64" ? "amd64" : "arm64" };
-  const version = execFileSync(command, ["version"], { env, encoding: "utf8" }).trim();
-  const minimum = /\ngo (\d+\.\d+\.\d+)\n/.exec(await readFile(join(source, "go.mod"), "utf8"))?.[1];
-  const actual = /\bgo(\d+\.\d+\.\d+)\b/.exec(version)?.[1];
-  const numbers = value => value?.split(".").reduce((n, x) => n * 1000 + Number(x), 0);
-  if (!actual || numbers(actual) < numbers(minimum)) throw new Error(`gstack_shell_parser_requires_go_${minimum}`);
-  const inputs = await Promise.all(["main.go", "go.mod", "go.sum", "THIRD-PARTY-NOTICES"].map(path => bundleFile(source, path)));
-  const work = await mkdtemp(join(lease.scratchPath, "tmp", "shell-parser-"));
+  const output = resolve(outputPath), lease = await managedResourceWrite(output, { kind: "source", additionalBytes: 512 * 1024 ** 2 });
+  const work = await mkdtemp(join(lease.scratchPath, "shell-parser-")), candidate = join(work, "candidate"), code = join(work, "code");
   try {
-    const outputs = [];
-    for (const pass of ["first", "second"]) {
-      const binary = join(work, `${pass}${process.platform === "win32" ? ".exe" : ""}`);
-      execFileSync(command, ["build", "-trimpath", "-buildvcs=false", "-mod=readonly", "-ldflags=-buildid=", "-o", binary, "."],
-        { cwd: source, env, timeout: 5 * 60_000, maxBuffer: 2 * 1024 ** 2 });
-      assertNativeTarget(await readFile(binary), { platform: process.platform, arch: process.arch });
-      outputs.push({ binary, ...(await bundleFile(work, `${pass}${process.platform === "win32" ? ".exe" : ""}`)) });
+    await mkdir(candidate); await mkdir(code);
+    const records = [];
+    for (const path of inputs) {
+      records.push({ path, checksum: digest(await readFile(join(source, path))) });
+      await copyFile(join(source, path), join(code, path));
+      if (digest(await readFile(join(code, path))) !== records.at(-1).checksum) {
+        throw new Error("gstack_shell_parser_build_copy_snapshot_changed");
+      }
     }
-    if (outputs[0].checksum !== outputs[1].checksum || outputs[0].sizeBytes !== outputs[1].sizeBytes) throw new Error("gstack_shell_parser_repeated_build_changed");
-    for (const expected of inputs) if (JSON.stringify(await bundleFile(source, expected.path)) !== JSON.stringify(expected)) throw new Error("gstack_shell_parser_source_changed");
-    const producer = await bundleFile(resolve(scripts, "../.."), "scripts/gstack/build-shell-parser.mjs");
-    const report = { schemaVersion: 1, releaseEligible: false, target: { platform: process.platform, arch: process.arch },
-      binding: "pinned-module-and-repeated-native-byte-identity", version, compiler: await bundleFile(dirname(command), command.slice(dirname(command).length + 1)),
-      inputs, producer, artifact: { checksum: outputs[0].checksum, sizeBytes: outputs[0].sizeBytes } };
-    await mkdir(dirname(outputPath), { recursive: true });
-    await copyFile(outputs[0].binary, outputPath, 1);
-    await writeFile(`${outputPath}.provenance.json`, `${JSON.stringify(report, null, 2)}\n`, { flag: "wx" });
+    const env = parserBuildEnvironment(lease);
+    const goVersion = execFileSync(goCommand, ["version"], { env, encoding: "utf8", timeout: 10000 }).trim();
+    execFileSync(goCommand, ["build", "-mod=readonly", "-trimpath", "-buildvcs=false", "-o", join(candidate, "shell-ast"), "."],
+      { cwd: code, env, encoding: "utf8", timeout: 180000, maxBuffer: 1024 ** 2 });
+    const target = { platform: process.platform, arch: process.arch };
+    if (!await matchesNativeDependency(join(candidate, "shell-ast"), target)) throw new Error("gstack_shell_parser_build_target_mismatch");
+    for (const record of records) if (digest(await readFile(join(source, record.path))) !== record.checksum
+      || digest(await readFile(join(code, record.path))) !== record.checksum) {
+      throw new Error("gstack_shell_parser_build_inputs_changed");
+    }
+    const receipt = { schemaVersion: 1, scope: "build-only-parse-helper-not-client-runtime", target, goVersion,
+      inputs: records, parserChecksum: digest(await readFile(join(candidate, "shell-ast"))) };
+    await writeFile(join(candidate, "parser-build.json"), `${JSON.stringify(receipt, null, 2)}\n`, { flag: "wx", mode: 0o600 });
     await resourceCheckpoint(lease.root);
-    return report;
+    await mkdir(dirname(output), { recursive: true });
+    await mkdir(output, { mode: 0o700 });
+    try { await rename(candidate, output); }
+    catch (error) { await rmdir(output).catch(() => {}); throw error; }
+    return receipt;
   } finally { await rm(work, { recursive: true, force: true }); }
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const [outputPath, goCommand, ...extra] = process.argv.slice(2);
+  if (!outputPath || extra.length) throw new Error("gstack_shell_parser_build_arguments_invalid");
+  console.log(JSON.stringify(await buildShellParser({ outputPath, goCommand })));
 }

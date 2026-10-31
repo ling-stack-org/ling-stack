@@ -12,6 +12,10 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../pack
 const exclusiveTestFiles = new Set([
   "test/acp-kimi-host-read.test.mjs",
   "test/acp-kimi-host-terminal.test.mjs",
+  // This file owns long-lived child lifecycle assertions; running it beside
+  // unrelated suites can make Node cancel pending tests when the parent
+  // event loop drains. Keep its proven serial execution isolated.
+  "test/delegation-production-tool-surface.test.mjs",
 ]);
 
 /**

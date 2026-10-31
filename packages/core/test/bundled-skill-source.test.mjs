@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -35,6 +37,97 @@ async function fixture(t) {
   await writeFile(join(root, "manifest.json"), JSON.stringify(manifest, null, 2));
   return { root, manifest, content };
 }
+
+async function manyFileFixture(t) {
+  const input = await fixture(t);
+  for (let index = 0; index < 24; index++) {
+    const path = `runtime/bin/dependency-${index}.txt`;
+    const bytes = `Authenticated resource ${index}.\n`;
+    await writeFile(join(input.root, path), bytes);
+    input.manifest.files.push({ path, checksum: checksum(bytes), sizeBytes: Buffer.byteLength(bytes) });
+  }
+  await writeFile(join(input.root, "manifest.json"), JSON.stringify(input.manifest));
+  return input;
+}
+
+function observeVerificationHandles({ afterOpen, beforeStat, afterClose } = {}) {
+  const original = fsPromises.open;
+  const state = { active: 0, maximum: 0, paths: [] };
+  fsPromises.open = async (...args) => {
+    const handle = await original(...args);
+    state.paths.push(args[0]);
+    state.maximum = Math.max(state.maximum, ++state.active);
+    afterOpen?.(state.paths.length);
+    return new Proxy(handle, { get(target, key) {
+      if (key === "close") return async () => {
+        try { return await target.close(); }
+        finally { state.active--; afterClose?.(args[0]); }
+      };
+      if (key === "stat" && beforeStat) return async () => {
+        await beforeStat(args[0]);
+        return target.stat();
+      };
+      const value = Reflect.get(target, key);
+      return typeof value === "function" ? value.bind(target) : value;
+    } });
+  };
+  syncBuiltinESMExports();
+  return { state, restore() { fsPromises.open = original; syncBuiltinESMExports(); } };
+}
+
+test("cold bundle preflight bounds parallel file handles and still verifies every manifest entry", async (t) => {
+  // Regression: packaged cold startup exhausted Desktop's 20s deadline while
+  // serially hashing the full dependency inventory; no timeout/hash guard is relaxed.
+  const { root, manifest } = await manyFileFixture(t);
+  const observation = observeVerificationHandles();
+  try {
+    const bundle = await verifyBundledSkillSource({ rootPath: root,
+      expectedUpstreamRevision: revision, expectedSkillIds: ["office-hours"] });
+    assert.equal(bundle.manifest.files.length, manifest.files.length);
+    assert.ok(observation.state.maximum > 1, "independent resources must not be preflighted serially");
+    assert.ok(observation.state.maximum <= 8, "preflight must keep a fixed descriptor/buffer budget");
+    assert.equal(observation.state.active, 0);
+    const canonicalRoot = await realpath(root);
+    assert.deepEqual(observation.state.paths.sort(), manifest.files.map(file => join(canonicalRoot, file.path)).sort());
+  } finally { observation.restore(); }
+});
+
+test("a parallel preflight failure drains opened resources before rejecting and publishes no source", async (t) => {
+  const { root } = await manyFileFixture(t);
+  const bytes = await readFile(join(root, "LICENSE"));
+  bytes[0] ^= 1; // Same length: fail checksum after the first handle has actually opened.
+  await writeFile(join(root, "LICENSE"), bytes);
+  let releaseSiblings;
+  const siblings = new Promise(resolve => { releaseSiblings = resolve; });
+  let firstClosed;
+  const failedHandleClosed = new Promise(resolve => { firstClosed = resolve; });
+  let allOpened;
+  const firstWaveOpened = new Promise(resolve => { allOpened = resolve; });
+  const observation = observeVerificationHandles({
+    afterOpen: count => { if (count === 8) allOpened(); },
+    beforeStat: path => path.endsWith("/LICENSE") ? firstWaveOpened : siblings,
+    afterClose: path => { if (path.endsWith("/LICENSE")) firstClosed(); },
+  });
+  let source;
+  let settled = false;
+  try {
+    const pending = assert.rejects(async () => {
+      source = await verifyBundledSkillSource({ rootPath: root,
+        expectedUpstreamRevision: revision, expectedSkillIds: ["office-hours"] });
+    }, { code: "bundle_resource_checksum_mismatch" }).finally(() => { settled = true; });
+    await failedHandleClosed;
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(observation.state.paths.length, 8, "failure must stop admission before opening a ninth file");
+    assert.equal(observation.state.active, 7);
+    assert.equal(settled, false, "failure must wait for the gated sibling handles to drain");
+    releaseSiblings();
+    await pending;
+    assert.equal(observation.state.paths.length, 8, "draining siblings must not resume admission after failure");
+    assert.equal(source, undefined);
+    assert.ok(observation.state.maximum <= 8);
+    assert.equal(observation.state.active, 0, "failure must not return while sibling handles are still open");
+  } finally { releaseSiblings(); observation.restore(); }
+});
 
 test("verified bundled sources retain complete long instructions and lazily readable chapters", async (t) => {
   const { root, content } = await fixture(t);

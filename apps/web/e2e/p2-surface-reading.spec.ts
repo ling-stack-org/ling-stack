@@ -159,7 +159,7 @@ test("private virtualized prepend retains the visible row instead of a height es
   }
 });
 
-async function openChannelFixture(page: Page, surface: "channel_root" | "branch") {
+async function openChannelFixture(page: Page, surface: "channel_root" | "branch", messageCount = 40) {
   await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "en-US"));
   const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = []; state.runs = []; state.tasks = []; state.approvals = [];
@@ -177,28 +177,80 @@ async function openChannelFixture(page: Page, surface: "channel_root" | "branch"
     state.channelBranches = [{ id: "p2-branch", workspaceId, channelId, rootThreadId: threadId,
       name: "P2 Branch", status: "active", createdAt: now, updatedAt: now }];
   }
-  const items = Array.from({ length: 40 }, (_, index) => ({
+  const items = Array.from({ length: messageCount }, (_, index) => ({
     schemaVersion: 1, workspaceId, channelId, threadId, turnId: `p2-turn-${index}`,
     id: `p2-channel-${index}`, sequence: index + 1, kind: "assistant_message",
     actorType: "teammate", actorId: "engineer", visibility: "channel", status: "committed", revision: 1,
-    domainRefs: [], createdAt: now, updatedAt: now, committedAt: now,
+    domainRefs: [], createdAt: new Date(Date.UTC(2026, 9, 14, 0, index)).toISOString(),
+    updatedAt: new Date(Date.UTC(2026, 9, 14, 0, index)).toISOString(), committedAt: now,
     payload: { body: `Reading history ${index}\n\n${"Stable channel reading position. ".repeat(20)}`,
       format: "markdown", deliveryStatus: "ready", mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [] },
   }));
   await mockDaemon(page, state);
   await page.route("**/channels/channel_engineering/items**", async route => {
-    const selected = new URL(route.request().url()).searchParams.get("threadId") ?? rootId;
+    const query = new URL(route.request().url()).searchParams;
+    const selected = query.get("threadId") ?? rootId;
     if (selected !== threadId) return route.fallback();
-    await route.fulfill({ json: { cwd, channelId, thread, items, turns: [], turnContextAssignments: [],
-      userInputs: [], decorations: [], generatedMedia: [], hasMore: false } });
+    const before = Number(query.get("beforeSequence") ?? Infinity);
+    const limit = Number(query.get("limit") ?? 200);
+    const eligible = items.filter(item => item.sequence < before);
+    const pageItems = eligible.slice(-limit);
+    const hasMore = eligible.length > pageItems.length;
+    await route.fulfill({ json: { cwd, channelId, thread, items: pageItems, turns: [], turnContextAssignments: [],
+      userInputs: [], decorations: [], generatedMedia: [], hasMore,
+      nextBeforeSequence: hasMore ? pageItems[0]?.sequence : undefined } });
   });
   await page.goto("/");
   await page.getByRole("complementary", { name: /Sidebar display/ })
     .getByRole("button", { name: surface === "branch" ? "P2 Branch" : "Engineering", exact: true }).click();
   const feed = page.getByLabel("Channel message feed", { exact: true });
-  await expect(feed.getByText(/Reading history 39\b/)).toBeAttached();
+  await expect(feed.getByText(new RegExp(`Reading history ${messageCount - 1}\\b`))).toBeAttached();
   await settleScroll(feed);
   return feed;
+}
+
+test("private saved reader loads older history after a page reload", async ({ page }) => {
+  const { feed } = await openPrivateFixture(page, 130);
+  await feed.evaluate(el => {
+    el.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -240 }));
+    el.scrollTop = 60;
+  });
+  await expect(feed.getByText(/Reading history 0\b/)).toBeAttached();
+  await settleScroll(feed);
+  await feed.evaluate(el => {
+    el.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+    el.scrollTop = 200;
+  });
+  await settleScroll(feed);
+  const before = await readAnchor(feed);
+  await page.reload();
+  const navigation = page.getByRole("complementary", { name: /Sidebar display/ });
+  await navigation.getByRole("button", { name: "P2 Reader", exact: true }).click();
+  await expect(feed).toBeVisible();
+  await expect.poll(async () => Math.abs(await anchorOffset(feed, before.key) - before.offset)).toBeLessThanOrEqual(2);
+});
+
+for (const surface of ["channel_root", "branch"] as const) {
+  test(`${surface} saved reader reloads an older page and retains row offset`, async ({ page }) => {
+    const feed = await openChannelFixture(page, surface, 240);
+    await feed.evaluate(el => {
+      el.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -240 }));
+      el.scrollTop = 60;
+    });
+    await expect(feed.getByText(/Reading history 0\b/)).toBeAttached();
+    await settleScroll(feed);
+    await feed.evaluate(el => {
+      el.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+      el.scrollTop = 200;
+    });
+    await settleScroll(feed);
+    const before = await readAnchor(feed);
+    await page.reload();
+    await page.getByRole("complementary", { name: /Sidebar display/ })
+      .getByRole("button", { name: surface === "branch" ? "P2 Branch" : "Engineering", exact: true }).click();
+    await expect(feed).toBeVisible();
+    await expect.poll(async () => Math.abs(await anchorOffset(feed, before.key) - before.offset)).toBeLessThanOrEqual(2);
+  });
 }
 
 for (const surface of ["channel_root", "branch"] as const) {
@@ -267,6 +319,12 @@ test("topic reader follows the tail, preserves reading reflow, and resumes expli
   await expect.poll(async () => Math.abs(await anchorOffset(feed, before.key) - before.offset)).toBeLessThanOrEqual(2);
   await mkdir(evidenceDir, { recursive: true });
   await page.screenshot({ path: `${evidenceDir}topic-reading-reflow.png`, animations: "disabled" });
+  await panel.getByRole("button", { name: "Close topic", exact: true }).click();
+  await expect(panel).toHaveCount(0);
+  await root.hover();
+  await root.getByRole("button", { name: "Reply in topic", exact: true }).click();
+  await expect(panel).toBeVisible();
+  await expect.poll(async () => Math.abs(await anchorOffset(feed, before.key) - before.offset)).toBeLessThanOrEqual(2);
   await panel.getByRole("button", { name: "Jump to latest message" }).click();
   await expect.poll(() => feed.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThanOrEqual(2);
   await panel.getByRole("button", { name: "Close topic", exact: true }).click();

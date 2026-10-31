@@ -13,6 +13,7 @@ import { parseRunRequest } from "../dist/features/runs/schemas.js";
 import { createDetachedRunExecutionSink, executeRunRequest } from "../dist/features/runs/orchestrator.js";
 import { createNativeRunDispatcher } from "../dist/features/runs/native-run-dispatcher.js";
 import { createExecutionEngineRunTargetDispatcher } from "../dist/features/execution-engines/run-target-dispatcher.js";
+import { createMemorySourceRevisions } from "../dist/features/memory/prompt.js";
 import { acpConfigurationFingerprint } from "../dist/runtime/acp/journaled-lifecycle.js";
 import { maybeStartNextRunInterventionContinuation } from "../dist/features/runs/interventions.js";
 import { fixtureNativeAcceptance, fixtureNativePolicy } from "./support/fixture-native-acceptance.mjs";
@@ -57,6 +58,7 @@ function createNativeWorkflowFixture(t, target, timeoutPolicy) {
   const runnerRegistry = createRunnerRegistry([
     { id: "pi", displayName: "Ling", status: "enabled", adapter },
     { id: "openclaw-acp", displayName: "OpenClaw", status: "enabled", adapter },
+    { id: "codex-app-server", displayName: "Codex", status: "enabled", adapter },
   ]);
   const storeRegistry = new RunStoreRegistry((root) => {
     const store = createSqliteRunStore(root);
@@ -70,7 +72,7 @@ function createNativeWorkflowFixture(t, target, timeoutPolicy) {
   patchWorkspaceRuntimeSettings(store, runnerRegistry, {
     schemaVersion: 2, confirmNativeMigration: true, expectedUpdatedAt: loadWorkspaceRuntimeSettings(store, runnerRegistry).updatedAt,
     defaultRunnerId: "pi",
-    allowedRunnerIds: ["pi", "openclaw-acp"],
+    allowedRunnerIds: ["pi", "openclaw-acp", "codex-app-server"],
   });
   const activeRuns = new ActiveRunRegistry();
   const runtimeSupervisor = new RuntimeSupervisor(resolveConfig({
@@ -113,6 +115,191 @@ function nativeWorkflowRequest(cwd, task, patch = {}) {
   // Internal workflow authority comes from Core, never from an HTTP payload parser.
   return { ...request, ...(patch.workflowStartOwner ? { workflowStartOwner: patch.workflowStartOwner } : {}) };
 }
+
+function nativeMemoryRequest(fixture, memory, patch = {}) {
+  const request = nativeWorkflowRequest(fixture.cwd, {
+    id: "task_native_memory", title: "Scoped Memory", prompt: "Follow the scoped Memory preference.",
+  }, { executionBinding: native, teammateId: memory.ownerId, skipMemoryRecall: true, idempotencyKey: "native-memory-once", ...patch });
+  return { ...request, preselectedMemoryUse: { memoryIds: [memory.id], recallQuery: "Scoped Memory",
+    policyVersion: "fixture-memory-policy", renderedPrompt: `Used memory:\n${memory.body}`,
+    sourceRevisions: createMemorySourceRevisions([memory]) } };
+}
+
+function acceptNativeMemoryInput(input, outcome = "completed") {
+  const now = new Date().toISOString();
+  const selection = { engineId: input.runRequest.executionBinding.engineId,
+    profileId: input.runRequest.executionBinding.profileId, profileRevision: input.runRequest.executionBinding.profileRevision,
+    profileFingerprint: "a".repeat(64), modelId: input.runRequest.executionBinding.nativeModelId,
+    configurationFingerprint: "b".repeat(64) };
+  const fence = { workUnitId: input.attempt.workUnitId, attemptId: input.attempt.id,
+    runtimeInstanceId: input.attempt.runtimeInstanceId, fencingToken: input.attempt.fencingToken };
+  const entry = input.store.reserveNativeExecution({ runId: input.run.id, generation: 1, fence, selection }, now);
+  const key = { submissionId: entry.submission.id, fence };
+  input.store.bindNativeExecutionSession({ ...key, nativeSessionId: "fixture-thread" }, now);
+  input.store.beginNativeSubmission(key, now);
+  input.store.acceptNativeSubmission({ ...key, nativeTurnId: "fixture-turn" }, now);
+  input.store.finishNativeSubmission({ ...key, outcome }, now);
+}
+
+test("native Memory hydrates private system input once without changing canonical task or turn", async t => {
+  const calls = [];
+  const fixture = createNativeWorkflowFixture(t, {
+    async assertAvailable(input) { calls.push(input.runRequest); },
+    async dispatch(input) { calls.push(input.runRequest); acceptNativeMemoryInput(input); return { status: "completed", events: [] }; },
+  });
+  const memory = fixture.store.createMemoryObject({ scopeType: "teammate", ownerId: "teammate_builtin_engineer",
+    title: "Scoped Memory", body: "NATIVE_PRIVATE_MEMORY_CANARY", sensitivity: "private", reviewState: "active" }, new Date().toISOString());
+  const request = nativeMemoryRequest(fixture, memory);
+  const recording = createRecordingSink();
+  const runId = await fixture.dispatcher.dispatch({ runRequest: request, sink: recording.sink, executionOptions: {} });
+  assert.ok(runId, JSON.stringify(recording.state.errors));
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.equal(call.appendSystemPrompt.filter(text => text.includes(memory.body)).length, 1);
+    assert.doesNotMatch(call.task.prompt, /NATIVE_PRIVATE_MEMORY_CANARY/);
+    assert.equal(call.preselectedMemoryUse, undefined);
+  }
+  const run = fixture.store.getRun(runId);
+  assert.equal(run.status, "succeeded");
+  assert.doesNotMatch(JSON.stringify(run.taskSnapshot), /NATIVE_PRIVATE_MEMORY_CANARY/);
+  assert.doesNotMatch(JSON.stringify(fixture.store.listLingTurns({ threadId: run.threadId, limit: 100 })), /NATIVE_PRIVATE_MEMORY_CANARY/);
+  assert.match(JSON.stringify(run.requestSnapshot.appendSystemPrompt), /NATIVE_PRIVATE_MEMORY_CANARY/);
+  assert.equal(run.requestSnapshot.preselectedMemoryUse, undefined);
+  const [used] = fixture.store.listUsedMemoryEvents({ runId });
+  assert.deepEqual(used.memoryIds, [memory.id]);
+  assert.equal(used.policyVersion, "fixture-memory-policy");
+  assert.doesNotMatch(JSON.stringify(used), /NATIVE_PRIVATE_MEMORY_CANARY|renderedPrompt|sourceRevisions|semanticHash/);
+  assert.equal(fixture.store.getMemoryObject(memory.id).updatedAt, memory.updatedAt);
+  const replay = await fixture.dispatcher.dispatch({ runRequest: request, sink: createRecordingSink().sink, executionOptions: {} });
+  assert.equal(replay, runId);
+  assert.equal(calls.length, 2);
+  assert.equal(fixture.store.listUsedMemoryEvents({ runId }).length, 1);
+});
+
+for (const change of ["revoke", "body"]) test(`native Memory ${change} during availability prevents execution`, async t => {
+  let memory, dispatched = 0;
+  const fixture = createNativeWorkflowFixture(t, {
+    async assertAvailable() {
+      await Promise.resolve();
+      fixture.store.updateMemoryObject(memory.id, change === "revoke" ? { enabled: false } : { body: "changed-after-selection" }, new Date().toISOString());
+    },
+    async dispatch() { dispatched++; return { status: "completed", events: [] }; },
+  });
+  memory = fixture.store.createMemoryObject({ scopeType: "teammate", ownerId: "teammate_builtin_engineer",
+    title: "Scoped Memory", body: "NATIVE_PRIVATE_MEMORY_CANARY", sensitivity: "private", reviewState: "active" }, new Date().toISOString());
+  const recording = createRecordingSink();
+  const id = await fixture.dispatcher.dispatch({ runRequest: nativeMemoryRequest(fixture, memory), sink: recording.sink, executionOptions: {} });
+  assert.equal(id, undefined);
+  assert.equal(dispatched, 0);
+  assert.equal(recording.state.errors[0].body.error, "prepared_memory_unavailable");
+  assert.equal(fixture.store.listUsedMemoryEvents().length, 0);
+});
+
+test("native Memory is rechecked at later Host authority boundaries and never counted before acceptance", async t => {
+  let memory;
+  const fixture = createNativeWorkflowFixture(t, { async dispatch(input) {
+    fixture.store.updateMemoryObject(memory.id, { enabled: false }, new Date().toISOString());
+    input.assertCurrentAuthority();
+    throw new Error("must not submit revoked memory");
+  } });
+  memory = fixture.store.createMemoryObject({ scopeType: "teammate", ownerId: "teammate_builtin_engineer",
+    title: "Scoped Memory", body: "NATIVE_PRIVATE_MEMORY_CANARY", sensitivity: "private", reviewState: "active" }, new Date().toISOString());
+  const id = await fixture.dispatcher.dispatch({ runRequest: nativeMemoryRequest(fixture, memory), sink: createRecordingSink().sink, executionOptions: {} });
+  assert.equal(fixture.store.getRun(id).status, "failed");
+  assert.equal(fixture.store.getRun(id).errorMessage, "A prepared Memory source is no longer eligible.");
+  assert.equal(fixture.store.listUsedMemoryEvents().length, 0);
+});
+
+test("native Memory automatic recall also remains role-private and counts an accepted failed turn", async t => {
+  const calls = [];
+  const fixture = createNativeWorkflowFixture(t, { async dispatch(input) {
+    calls.push(input.runRequest);
+    acceptNativeMemoryInput(input, "failed");
+    throw new Error("fixture native turn failed after acceptance");
+  } });
+  const memory = fixture.store.createMemoryObject({ scopeType: "teammate", ownerId: "teammate_builtin_engineer",
+    title: "Scoped Memory", body: "NATIVE_PRIVATE_MEMORY_CANARY", sensitivity: "private", reviewState: "active" }, new Date().toISOString());
+  const request = { ...nativeMemoryRequest(fixture, memory), preselectedMemoryUse: undefined, skipMemoryRecall: false };
+  const runId = await fixture.dispatcher.dispatch({ runRequest: request, sink: createRecordingSink().sink, executionOptions: {} });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].appendSystemPrompt.join("\n"), /NATIVE_PRIVATE_MEMORY_CANARY/);
+  assert.doesNotMatch(calls[0].task.prompt, /NATIVE_PRIVATE_MEMORY_CANARY/);
+  assert.equal(fixture.store.getRun(runId).status, "failed");
+  const [used] = fixture.store.listUsedMemoryEvents({ runId });
+  assert.deepEqual(used.memoryIds, [memory.id]);
+  assert.equal(used.policyVersion, "ling-memory-v1-lexical-v2");
+});
+
+test("native Memory usage by another consumer does not invalidate frozen semantic input", async t => {
+  let memory;
+  const fixture = createNativeWorkflowFixture(t, {
+    async assertAvailable() {
+      fixture.store.recordUsedMemoryEvent({ memoryIds: [memory.id], intent: "task-run", recallQuery: "other consumer",
+        teammateId: memory.ownerId, policyVersion: "fixture" }, new Date().toISOString());
+    },
+    async dispatch(input) { input.assertCurrentAuthority(); acceptNativeMemoryInput(input); return { status: "completed", events: [] }; },
+  });
+  memory = fixture.store.createMemoryObject({ scopeType: "teammate", ownerId: "teammate_builtin_engineer",
+    title: "Scoped Memory", body: "NATIVE_PRIVATE_MEMORY_CANARY", sensitivity: "private", reviewState: "active" }, new Date().toISOString());
+  const request = nativeMemoryRequest(fixture, memory);
+  fixture.store.recordUsedMemoryEvent({ memoryIds: [memory.id], intent: "task-run", recallQuery: "before dispatcher",
+    teammateId: memory.ownerId, policyVersion: "fixture" }, new Date().toISOString());
+  const runId = await fixture.dispatcher.dispatch({ runRequest: request, sink: createRecordingSink().sink, executionOptions: {} });
+  assert.ok(runId);
+  assert.equal(fixture.store.getRun(runId).status, "succeeded");
+  assert.equal(fixture.store.listUsedMemoryEvents({ runId }).length, 1);
+});
+
+test("native Memory body changed after selection but before dispatcher entry is rejected", async t => {
+  let preparations = 0;
+  const fixture = createNativeWorkflowFixture(t, {
+    async assertAvailable() { preparations++; }, async dispatch() { return { status: "completed", events: [] }; },
+  });
+  const memory = fixture.store.createMemoryObject({ scopeType: "teammate", ownerId: "teammate_builtin_engineer",
+    title: "Scoped Memory", body: "NATIVE_PRIVATE_MEMORY_CANARY", sensitivity: "private", reviewState: "active" }, new Date().toISOString());
+  const request = nativeMemoryRequest(fixture, memory);
+  fixture.store.updateMemoryObject(memory.id, { body: "new-current-body" }, new Date().toISOString());
+  const recording = createRecordingSink();
+  const id = await fixture.dispatcher.dispatch({ runRequest: request, sink: recording.sink, executionOptions: {} });
+  assert.equal(id, undefined);
+  assert.equal(preparations, 0);
+  assert.equal(recording.state.errors[0].body.error, "prepared_memory_unavailable");
+  assert.equal(fixture.store.listUsedMemoryEvents().length, 0);
+});
+
+test("native Memory rendered selection without exact source revisions is rejected", async t => {
+  let preparations = 0;
+  const fixture = createNativeWorkflowFixture(t, {
+    async assertAvailable() { preparations++; }, async dispatch() { return { status: "completed", events: [] }; },
+  });
+  const memory = fixture.store.createMemoryObject({ scopeType: "teammate", ownerId: "teammate_builtin_engineer",
+    title: "Scoped Memory", body: "NATIVE_PRIVATE_MEMORY_CANARY", sensitivity: "private", reviewState: "active" }, new Date().toISOString());
+  const request = nativeMemoryRequest(fixture, memory);
+  request.preselectedMemoryUse = { ...request.preselectedMemoryUse, sourceRevisions: undefined };
+  const recording = createRecordingSink();
+  const id = await fixture.dispatcher.dispatch({ runRequest: request, sink: recording.sink, executionOptions: {} });
+  assert.equal(id, undefined);
+  assert.equal(preparations, 0);
+  assert.equal(recording.state.errors[0].body.error, "prepared_memory_unavailable");
+});
+
+for (const invalid of ["no-prompt", "no-source"]) test(`native Memory ${invalid} is rejected before native preparation`, async t => {
+  let preparations = 0;
+  const fixture = createNativeWorkflowFixture(t, {
+    async assertAvailable() { preparations++; }, async dispatch() { throw new Error("invalid memory must not execute"); },
+  });
+  const memory = fixture.store.createMemoryObject({ scopeType: "teammate", ownerId: "teammate_builtin_engineer",
+    title: "Scoped Memory", body: "NATIVE_PRIVATE_MEMORY_CANARY", sensitivity: "private", reviewState: "active" }, new Date().toISOString());
+  const request = nativeMemoryRequest(fixture, memory);
+  request.preselectedMemoryUse = { ...request.preselectedMemoryUse,
+    ...(invalid === "no-prompt" ? { renderedPrompt: undefined } : { memoryIds: [] }) };
+  const recording = createRecordingSink();
+  const runId = await fixture.dispatcher.dispatch({ runRequest: request, sink: recording.sink, executionOptions: {} });
+  assert.equal(runId, undefined);
+  assert.equal(preparations, 0);
+  assert.equal(recording.state.errors[0].body.error, "native_memory_input_invalid");
+  assert.equal(fixture.store.listUsedMemoryEvents().length, 0);
+});
 
 test("run parsing preserves native engine/model ownership without requiring a Pi preset", () => {
   const parsed = parseRunRequest({ ...base, executionBinding: native });
@@ -528,8 +715,8 @@ function beginNativeWorkflow(fixture) {
 }
 
 test("native workflow without its captured start owner cannot invoke the target", async (t) => {
-  let calls = 0;
-  const fixture = createNativeWorkflowFixture(t, { async dispatch() {
+  let calls = 0, admissions = 0;
+  const fixture = createNativeWorkflowFixture(t, { async assertAvailable() { admissions++; }, async dispatch() {
     calls++;
     return { status: "completed", events: [] };
   } });
@@ -540,9 +727,52 @@ test("native workflow without its captured start owner cannot invoke the target"
     sink: recording.sink, executionOptions: {},
   });
   assert.equal(calls, 0);
+  assert.equal(admissions, 0, "missing workflow authority must reject before any native preflight");
   assert.equal(runId, undefined);
   assert.equal(recording.state.errors[0]?.statusCode, 409);
-  assert.equal(recording.state.errors[0]?.body.error, "workflow_start_owner_stale");
+  assert.equal(recording.state.errors[0]?.body.error, "workflow_start_owner_stale", JSON.stringify(recording.state.errors));
+  assert.equal(fixture.store.getChannelWorkflowStep(step.id).runId, undefined);
+  assert.deepEqual(fixture.store.listLingThreads({ workflowStepId: step.id, channelId: start.task.channelId }), [],
+    "missing authority must reject before creating any canonical source Thread");
+});
+
+test("native workflow revalidates its original owner after awaited availability before creating a Turn", async t => {
+  let calls = 0, admissions = 0;
+  let fixture, owner, stepId;
+  fixture = createNativeWorkflowFixture(t, {
+    async assertAvailable() {
+      admissions++;
+      await Promise.resolve();
+      fixture.store.releaseResourceLease(owner.leaseId, "workflow_step", stepId, new Date().toISOString());
+    },
+    async dispatch() { calls++; return { status: "completed", events: [] }; },
+  });
+  const { step, start } = beginNativeWorkflow(fixture);
+  owner = start.owner;
+  stepId = step.id;
+  const recording = createRecordingSink();
+  const runId = await fixture.dispatcher.dispatch({
+    runRequest: nativeWorkflowRequest(fixture.cwd, start.task, {
+      workflowStepId: step.id, workflowStartOwner: start.owner, teammateId: "teammate_builtin_engineer",
+    }), sink: recording.sink, executionOptions: {},
+  });
+  assert.equal(admissions, 1);
+  assert.equal(calls, 0);
+  assert.equal(runId, undefined);
+  assert.deepEqual(recording.state.errors.map(({ statusCode, body }) => ({ statusCode, error: body.error })),
+    [{ statusCode: 409, error: "workflow_start_owner_stale" }]);
+  assert.deepEqual(recording.state.ready, []);
+  const threads = fixture.store.listLingThreads({ workflowStepId: step.id, channelId: start.task.channelId });
+  assert.equal(threads.length, 1, "native availability uses its real preparation Thread");
+  const [thread] = threads;
+  assert.equal(thread.kind, "workflow_step");
+  assert.equal(thread.taskId, start.task.id);
+  assert.equal(thread.teammateId, "teammate_builtin_engineer");
+  assert.equal(thread.status, "failed");
+  assert.equal(thread.activeRunId, undefined);
+  assert.deepEqual(fixture.store.listLingTurns({ threadId: thread.id, limit: 100 }), []);
+  assert.deepEqual(fixture.store.listWorkUnits(), [], "the isolated Store has no admitted WorkUnit");
+  assert.deepEqual(fixture.store.listRuns(), [], "the isolated Store has no admitted Run");
   assert.equal(fixture.store.getChannelWorkflowStep(step.id).runId, undefined);
 });
 
@@ -1069,6 +1299,42 @@ test("native final submission rejects a profile changed during protocol preparat
   assert.equal(submitted, 0);
 });
 
+test("native Codex preserves private developer instructions apart from user input", async t => {
+  const f = createCodexTargetFixture(t);
+  const input = f.input();
+  input.runRequest.appendSystemPrompt = ["NATIVE_PRIVATE_MEMORY_CANARY"];
+  await f.dispatcher.dispatch(input);
+  assert.equal(f.executions[0].configuration.developerInstructions, "NATIVE_PRIVATE_MEMORY_CANARY");
+  assert.doesNotMatch(JSON.stringify(f.executions[0].input), /NATIVE_PRIVATE_MEMORY_CANARY/);
+});
+
+for (const create of [createCodexTargetFixture, createKimiTargetFixture, createOpenClawTargetFixture]) {
+  test(`${create.name} retains the outer Host authority check after native preparation`, async t => {
+    const f = create(t);
+    let revoked = false, submitted = 0;
+    const input = f.input();
+    input.assertCurrentAuthority = () => { if (revoked) throw Object.assign(new Error("Host Memory no longer current"), { code: "prepared_memory_unavailable" }); };
+    f.onExecute = async execution => {
+      await Promise.resolve();
+      revoked = true;
+      execution.assertCurrentAuthority();
+      submitted++;
+    };
+    await assert.rejects(f.dispatcher.dispatch(input), { code: "prepared_memory_unavailable" });
+    assert.equal(submitted, 0);
+  });
+}
+
+for (const create of [createKimiTargetFixture, createOpenClawTargetFixture]) {
+  test(`${create.name} rejects private Memory rather than lowering it to user input`, async t => {
+    const f = create(t);
+    const input = f.input();
+    input.runRequest.appendSystemPrompt = ["NATIVE_PRIVATE_MEMORY_CANARY"];
+    await assert.rejects(f.dispatcher.dispatch(input), { code: "native_execution_system_instructions_unsupported" });
+    assert.equal(f.executions.length, 0);
+  });
+}
+
 function createOpenClawTargetFixture(t, options = {}) {
   const root = mkdtempSync(join(tmpdir(), "ling-openclaw-target-"));
   const profileStore = new ExecutionEngineProfileStore(resolveUserConfigPaths({ userRootDir: root }));
@@ -1255,6 +1521,7 @@ function createKimiTargetFixture(t, options = {}) {
     getProfileStore: () => profileStore,
     readWorkspaceSettings: () => fixtureNativePolicy("kimi-acp"),
     readAcceptanceEvidence: options.readAcceptanceEvidence ?? fixtureNativeAcceptance,
+    getHostFileNode: options.getHostFileNode,
     secretResolver,
     probeInstallation: async (candidate) => {
       probes.push(candidate);
@@ -1302,6 +1569,22 @@ function createKimiTargetFixture(t, options = {}) {
   });
   return fixture;
 }
+
+test("Kimi host-file runtime comes only from the trusted dispatcher getter and is copied for execution", async t => {
+  const hostPin = { path: "/host/runtime", sha256: "a".repeat(64), runtime: {
+    kind: "electron_node_v1", resources: [{ relativePath: "Info.plist", sha256: "b".repeat(64) }],
+  } };
+  const expected = structuredClone(hostPin);
+  const f = createKimiTargetFixture(t, { getHostFileNode: () => hostPin }), input = f.input();
+  input.runRequest.hostFileNode = { path: "/untrusted/model/runtime", sha256: "c".repeat(64) };
+  await f.dispatcher.dispatch(input);
+  hostPin.runtime.resources[0].sha256 = "d".repeat(64);
+  assert.deepEqual(f.executions[0].hostFileNode, expected);
+  const withoutHost = createKimiTargetFixture(t), missing = withoutHost.input();
+  missing.runRequest.hostFileNode = expected;
+  await withoutHost.dispatcher.dispatch(missing);
+  assert.equal(withoutHost.executions[0].hostFileNode, undefined);
+});
 
 
 test("concurrent native first requests create one turn and one execution after admission", async (t) => {

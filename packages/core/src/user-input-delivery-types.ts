@@ -18,8 +18,14 @@ export interface UserInputDelivery {
   readonly lastErrorCode: UserInputDeliveryRetryCode | null;
 }
 export type UserInputDeliveryRetryCode = "receiver_unavailable" | "receiver_rejected" | "recoverable_failure";
+export interface UserInputDeliveryCursor {
+  readonly createdAt: string;
+  readonly deliveryId: string;
+}
 export interface ListDueUserInputDeliveries {
-  readonly threadId: string;
+  /** Optional thread scope for UI/audit callers. Daemon recovery scans the workspace outbox. */
+  readonly threadId?: string;
+  readonly after?: UserInputDeliveryCursor;
   readonly limit?: number;
 }
 export interface UserInputDeliveryDiscoveryCursor {

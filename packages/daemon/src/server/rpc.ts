@@ -4,6 +4,7 @@ import { DEFAULT_WORKSPACE_ID, type ControlPlaneDomain, type ControlPlaneEvent, 
 import type { ControlPlaneSubscribeResult } from "@ling-stack/contracts";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { DaemonContext } from "../context.js";
+import { daemonRequestIsAuthorized } from "./request-auth.js";
 import { maybeScheduleRunTerminalReport } from "../features/channels/terminal-report-coordinator.js";
 import { ensureRunCancelled } from "../features/runs/cancellation.js";
 import { HttpError } from "../errors.js";
@@ -24,6 +25,7 @@ import {
 } from "../features/control-plane/processors.js";
 import { executeRunRequest, type RunExecutionSink } from "../features/runs/orchestrator.js";
 import { parseRunRequest } from "../features/runs/schemas.js";
+import { projectPublicRunSession } from "../features/runs/public-execution-snapshots.js";
 import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation } from "../features/runs/interventions.js";
 import { RpcOutboundWriter, type RpcOutboundFrame } from "./rpc-outbound.js";
 
@@ -62,6 +64,10 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
     }
     if (!context.config.transports.localWebSocketRpc) {
       rejectUpgrade(socket, 404, "WebSocket RPC transport is disabled");
+      return;
+    }
+    if (!daemonRequestIsAuthorized(context.config.authToken, request.headers.authorization)) {
+      rejectUpgrade(socket, 401, "A valid bearer token is required for WebSocket RPC access.");
       return;
     }
     if (!url.searchParams.get("cwd")) {
@@ -337,7 +343,7 @@ class RpcConnection {
       throw rpcError(-32004, "run_not_found", "Run was not found in the active daemon stores.");
     }
     if (run.status === "cancelled") {
-      return { cancelled: true, active: false, run };
+      return { cancelled: true, active: false, run: projectPublicRunSession(run, store) };
     }
     if (run.status === "succeeded" || run.status === "failed") {
       throw rpcError(-32009, "run_not_cancellable", `Run ${runId} is already ${run.status}.`);
@@ -362,7 +368,7 @@ class RpcConnection {
     return {
       cancelled: true,
       active: !cancelled.inputWait && Boolean(activeRun),
-      run: store.getRun(runId),
+      run: projectPublicRunSession(store.getRun(runId), store),
       event: cancelled.event,
       ...(cancelled.inputWait ? { inputWait: cancelled.inputWait } : {}),
     };
@@ -517,7 +523,7 @@ function createRpcRunExecutionSink(input: {
 
 function rejectUpgrade(socket: Duplex, statusCode: number, message: string): void {
   socket.write([
-    `HTTP/1.1 ${statusCode} ${statusCode === 400 ? "Bad Request" : "Not Found"}`,
+    `HTTP/1.1 ${statusCode} ${statusCode === 401 ? "Unauthorized" : statusCode === 400 ? "Bad Request" : "Not Found"}`,
     "Connection: close",
     "Content-Type: text/plain; charset=utf-8",
     `Content-Length: ${Buffer.byteLength(message)}`,

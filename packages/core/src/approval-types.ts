@@ -44,6 +44,7 @@ export interface ApprovalCommandRuleProposal {
   readonly display: string;
   readonly fingerprint: string;
   readonly version: 1;
+  readonly cwd?: string;
 }
 
 export interface ApprovalCommandRule extends ApprovalCommandRuleProposal {
@@ -212,6 +213,8 @@ export type ApprovalPayload =
   | {
       readonly type: "workflow_step";
       readonly gateStage?: "pre" | "post";
+      /** Host-frozen start-cycle authority; never supplied by a workflow client. */
+      readonly preGateBasis?: import("./workflow-pre-gate.js").WorkflowPreGateBasisV1;
       readonly workflowId: string;
       readonly workflowStepId: string;
       readonly templateStepId?: string;
@@ -357,6 +360,7 @@ export const approvalActionTypes: readonly ApprovalActionType[] = [
   "provider_change",
   "workflow_step",
   "mcp_tool_call",
+  "host_capability",
   "runtime_permission_request",
 ];
 

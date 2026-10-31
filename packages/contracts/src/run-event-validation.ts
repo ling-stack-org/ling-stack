@@ -5,6 +5,7 @@ import { isRunProviderErrorDiagnostic, isRunProviderRetryEvidence } from "./prov
 const RUN_EVENT_TYPES = new Set<RunEventType>([
   "host_command_prepared",
   "host_command_settled",
+  "delegation_instruction_checkpointed",
   "run_created",
   "run_start",
   "turn_start",
@@ -55,6 +56,12 @@ export function isRunEventData<K extends RunEventType>(
 ): value is RunEventDataByType[K] {
   if (!isRecord(value)) return false;
   switch (type) {
+    case "delegation_instruction_checkpointed":
+      return value.schemaVersion === 1 && typeof value.attemptId === "string" && value.attemptId.length > 0
+        && Array.isArray(value.messageIds) && value.messageIds.length > 0 && value.messageIds.length <= 32
+        && value.messageIds.every(id => typeof id === "string" && id.length > 0)
+        && new Set(value.messageIds).size === value.messageIds.length
+        && typeof value.modelViewSha256 === "string" && /^[a-f0-9]{64}$/u.test(value.modelViewSha256);
     case "host_command_prepared": return isHostCommandPreparedV1(value);
     case "host_command_settled": return isHostCommandSettledV1(value);
     case "provider_retry": return isRunProviderRetryEvidence(value);

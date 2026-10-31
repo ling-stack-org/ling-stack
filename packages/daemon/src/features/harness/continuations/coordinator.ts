@@ -226,6 +226,8 @@ export function prepareExistingRunContinuationPlan(input: {
   readonly now: string;
   readonly idempotencyDiscriminator: string;
   readonly approvalEvidence?: readonly RunnerReplayApprovalEvidenceV1[];
+  /** Verified suspension closure may include exact descendant stop artifacts. */
+  readonly suspensionArtifactIds?: readonly string[];
 }): ExistingRunContinuationPlan {
   if (!input.run.contextViewId || input.run.workUnitId !== input.workUnit.id
     || input.sourceAttempt.workUnitId !== input.workUnit.id
@@ -268,7 +270,10 @@ export function prepareExistingRunContinuationPlan(input: {
     policySnapshot: input.policySnapshot,
     execution: input.execution,
     approvalEvidence: input.approvalEvidence,
-    artifactRefs: input.store.listArtifacts(input.run.id).map((artifact) => artifact.id),
+    artifactRefs: [...new Set([
+      ...input.store.listArtifacts(input.run.id).map((artifact) => artifact.id),
+      ...(input.suspensionArtifactIds ?? []),
+    ])],
   });
   const replayArtifact = createRunnerContinuationReplayArtifact({
     store: input.store,

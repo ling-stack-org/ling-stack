@@ -111,7 +111,7 @@ function projectMention(mention: ConversationMessageMentionV1): ChannelMention {
 function projectFileRef(ref: {
   readonly path: string;
   readonly label?: string;
-  readonly source?: "composer" | "explicit_text" | "api";
+  readonly source?: "composer" | "explicit_text" | "api" | "inferred_text";
   readonly line?: number;
 }): ChannelMessageFileRef {
   return {

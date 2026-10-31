@@ -11,7 +11,7 @@ export function createLingStackBashToolExtension(options: PiRunnerRunOptions): E
     pi.registerTool({
       name: "bash",
       label: "bash",
-      description: `${originalBash.description} For a simple low-risk command, you may propose a conservative argv prefix in prefix_rule so the user can allow similar commands in this workspace.`,
+      description: "Execute a shell command through the Ling Stack Host, which validates the working directory and returns stdout/stderr. In a confirmed workflow, the immutable operation selects the working directory; cwd must match it. If cwd is omitted, the Host uses that bound directory or the session workspace by default. Keep an exact command unchanged rather than adding cd to select its directory. Optionally provide a timeout in seconds. For a simple low-risk command, you may propose a conservative argv prefix in prefix_rule so the user can allow similar commands in this workspace.",
       parameters: createCommandRuleAwareBashParameters(originalBash.parameters),
       async execute(toolCallId, params, signal) {
         signal?.throwIfAborted();
@@ -42,6 +42,11 @@ function createCommandRuleAwareBashParameters(
     type: "object",
     properties: {
       ...properties,
+      cwd: {
+        type: "string",
+        minLength: 1,
+        description: "Optional command working directory, relative to the session workspace or absolute. The Host validates it; in a confirmed workflow it must match the immutable operation directory and does not grant additional access.",
+      },
       prefix_rule: {
         type: "array",
         items: { type: "string" },

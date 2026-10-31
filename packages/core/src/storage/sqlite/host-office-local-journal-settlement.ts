@@ -7,6 +7,7 @@ import {
 } from "./host-operation-journal-evidence.js";
 import type { OfficeJournalTicketState } from "./host-office-local-journal-gate.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { hostAttemptReadScopeForSource } from "./host-attempt-read-scope.js";
 
 interface OfficeSettlementPair {
   readonly parent: StoredHostOperation;
@@ -43,7 +44,8 @@ export function settleOfficeLocalJournalPair(context: SqliteStoreContext, pair: 
   const producerCandidate = candidate(producer, "office_local_binary_completed", producerSignature);
   // Prove all other reserved children before latching an intent. A pending child must
   // remain retryable with a later timestamp after its own facts have actually closed.
-  const children = readSourceHostOperations(database, parent.source).filter(row => row.parentOperationId === parent.operationId);
+  const children = readSourceHostOperations(database, parent.source,
+    hostAttemptReadScopeForSource(database, parent.source), settledAt).filter(row => row.parentOperationId === parent.operationId);
   for (const child of children) {
     if (child.operationId === producer.operationId) continue;
     if (!sameHostOperationSource(child.source, parent.source) || child.toolCallId !== parent.toolCallId

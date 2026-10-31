@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import test from "node:test";
@@ -9,22 +10,24 @@ import { createA11PublicHttpNetworkFixture } from "./support/a11-public-http-net
 const cases = ["dns", "headers", "body"];
 const childCase = process.env.LING_A11_PUBLIC_HTTP_DEADLINE_CASE;
 
-function assertIsolation() {
+function assertIsolation(environment = process.env) {
   for (const name of ["LING_STACK_HOME", "LING_STACK_DEFAULT_WORKSPACE_CWD"]) {
-    const value = process.env[name];
+    const value = environment[name];
     assert.ok(value && isAbsolute(value) && resolve(value) === value && value !== process.cwd() && value !== "/");
     assert.ok(statSync(value).isDirectory());
   }
 }
 
 async function runChild(caseName) {
-  assertIsolation();
-  const root = mkdtempSync(join(process.env.LING_STACK_HOME, `deadline-${caseName}-`));
+  const root = mkdtempSync(join(tmpdir(), `ling-a11-deadline-${caseName}-`));
   const home = join(root, "user"), workspace = join(root, "workspace");
   mkdirSync(home, { mode: 0o700 }); mkdirSync(workspace, { mode: 0o700 });
-  const environment = { ...process.env, LING_STACK_HOME: home, LING_STACK_DEFAULT_WORKSPACE_CWD: workspace,
+  const environment = { PATH: process.env.PATH, LANG: "C.UTF-8", TZ: "UTC",
+    LING_STACK_HOME: home, LING_STACK_DEFAULT_WORKSPACE_CWD: workspace,
     LING_A11_PUBLIC_HTTP_DEADLINE_CASE: caseName };
-  delete environment.NODE_TEST_CONTEXT;
+  // Match the API launcher: only the fresh child scope is consumed by product
+  // imports, and no daily credentials or Node test context are inherited.
+  assertIsolation(environment);
   const child = spawn(process.execPath,
     ["--test", "--test-name-pattern=^A11 public HTTP deadline fixture child ", import.meta.filename],
     { env: environment, stdio: ["ignore", "pipe", "pipe"] });

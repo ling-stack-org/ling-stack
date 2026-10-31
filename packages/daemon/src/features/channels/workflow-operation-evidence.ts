@@ -120,8 +120,10 @@ function verifyWorkflowStepExecutionOperationsInSnapshot(input: {
     return workflowActions.filter((action) => boundSteps.some((step) => action.runId === step.runId && action.workflowStepId === step.id));
   };
   const cwd = input.step.runId ? input.store.getRun(input.step.runId)?.cwd : undefined;
+  const actionCwd = (action: ExecutionAction): string | undefined =>
+    action.runId ? input.store.getRun(action.runId)?.cwd : undefined;
   const operationResults = ownedOperations.map((operation) =>
-    verifyOperation(operation, plan, actions, dependencyActions, cwd));
+    verifyOperation(operation, plan, actions, dependencyActions, cwd, actionCwd));
   const requiredResultIds = new Set(ownedOperations.filter((operation) => operation.required).map((operation) => operation.id));
   const requiredResults = operationResults.filter((result) => requiredResultIds.has(result.operationId));
   return {
@@ -141,6 +143,7 @@ function verifyOperation(
   actions: readonly ExecutionAction[],
   resolveDependencyActions: (operation: ChannelIntentExecutionOperationV1) => readonly ExecutionAction[],
   cwd: string | undefined,
+  resolveActionCwd: (action: ExecutionAction) => string | undefined,
 ): WorkflowStepExecutionVerificationV1["operationResults"][number] {
   const candidates = actions.filter((action) => actionMatchesOperation(action, operation, cwd));
   const successful = candidates.filter((action) => actionSucceededForOperation(action, operation));
@@ -154,7 +157,9 @@ function verifyOperation(
   if (dependencyIds.size > 0) {
     const dependencies = plan.operations.filter((candidate) => dependencyIds.has(candidate.id));
     const dependencyActionGroups = dependencies.map((dependency) =>
-      resolveDependencyActions(dependency).filter((action) => actionMatchesOperation(action, dependency, cwd) && actionSucceededForOperation(action, dependency)));
+      resolveDependencyActions(dependency).filter((action) =>
+        actionMatchesOperation(action, dependency, dependency.binding ? resolveActionCwd(action) : cwd)
+        && actionSucceededForOperation(action, dependency)));
     if (dependencyActionGroups.some((group) => group.length === 0)) {
       return {
         operationId: operation.id,
@@ -191,7 +196,9 @@ function actionMatchesOperation(
     return operation.targetKind === "command"
       && operation.commandMatchPolicy !== undefined
       && typeof actualCommand === "string"
-      && commandMatchesPolicy(actualCommand, operation.commandMatchPolicy);
+      && commandMatchesPolicy(actualCommand, operation.commandMatchPolicy)
+      && (!operation.binding || (cwd !== undefined && action.commandEvidence?.cwd !== undefined
+        && resolve(action.commandEvidence.cwd) === resolve(cwd, operation.binding.workingDirectory?.path ?? ".")));
   }
   const label = (operation.kind === "file_create" || operation.kind === "file_edit"
     ? operation.binding?.outputRefs[0]?.path : operation.binding?.inputRefs[0]?.path) ?? operation.targetRef.label?.trim();
@@ -218,6 +225,10 @@ function actionSucceededForOperation(action: ExecutionAction, operation: Channel
   const evidence = action.commandEvidence;
   return Boolean(evidence
     && evidence.exitCode === 0
+    // Legacy UI projection may infer exit0 from isError=false. Typed operation
+    // completion needs the explicit control flags supplied only by a fully
+    // parsed structured command result, never that display-only inference.
+    && (!operation.binding || (evidence.timedOut === false && evidence.cancelled === false))
     && evidence.timedOut !== true
     && evidence.cancelled !== true
     && !evidence.signal);

@@ -9,6 +9,7 @@ import {
 import { hostMediaOperationDomainIdentity, verifyHostMediaReceipt } from "./host-media-receipt-evidence.js";
 import { hostOfficeOperationDomainIdentity, verifyHostOfficeReceipt,
   type OfficeLocalJournalVerificationMode } from "./host-office-local-journal-evidence.js";
+import { assertHistoricalAttemptSource, type HostAttemptReadScope } from "./host-attempt-read-scope.js";
 
 export interface StoredHostOperation extends HostOperationRecord {
   readonly domainIdentityDigest?: string;
@@ -47,13 +48,20 @@ export function readHostOperation(database: DatabaseSync, id: string): StoredHos
   const row = database.prepare("SELECT * FROM host_operations WHERE operation_id=?").get(id);
   return row ? mapHostOperation(row) : undefined;
 }
-export function readSourceHostOperations(database: DatabaseSync, source: HostOperationSource): StoredHostOperation[] {
+export function readSourceHostOperations(database: DatabaseSync, source: HostOperationSource,
+  scope: HostAttemptReadScope = "whole_run", at = new Date().toISOString()): StoredHostOperation[] {
   assertHostOperationLineage(database, source);
   return database.prepare("SELECT * FROM host_operations WHERE run_id=? OR attempt_id=? ORDER BY admitted_at,operation_id")
-    .all(source.runId, source.attemptId).map(row => {
+    .all(source.runId, source.attemptId).flatMap(row => {
       const operation = mapHostOperation(row);
-      if (!sameHostOperationSource(operation.source, source)) return hostOperationFailure("host_operation_invalid_source");
-      return operation;
+      if (sameHostOperationSource(operation.source, source)) return [operation];
+      if (scope !== "exact_attempt") return hostOperationFailure("host_operation_invalid_source");
+      assertHistoricalAttemptSource(database, source, operation.source, at);
+      // Exclude only a reverified closed effect, not just a different attempt ID.
+      if (operation.phase !== "safe" || verifyHostOperationSafe(database, operation, at) !== operation.evidenceDigest) {
+        return hostOperationFailure("host_operation_evidence_invalid");
+      }
+      return [];
     });
 }
 function mapHostOperation(row: Record<string, SQLOutputValue>): StoredHostOperation {

@@ -20,6 +20,7 @@
     "test:image-sanitizer": "cargo test --locked --manifest-path native/image-sanitizer/Cargo.toml -- --test-threads=1"
   },
   "dependencies": {
+    "acorn": "8.19.0",
     "@agentclientprotocol/sdk": "1.9.0",
     "@anthropic-ai/sdk": "0.135.0",
     "@ling-stack/browser-host": "workspace:*",

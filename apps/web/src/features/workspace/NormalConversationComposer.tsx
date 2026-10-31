@@ -6,6 +6,7 @@ import { useI18n } from "../../i18n.js";
 import {
   ConversationComposerShell,
   ConversationBottomStatusStrip,
+  ConversationPermissionControl,
   ConversationStatusStrip,
   TokenizedComposerInput,
   type TokenizedComposerInputHandle,
@@ -22,7 +23,6 @@ import { appendDictation, voiceErrorMessage } from "../../shared/conversation/vo
 import type { AuthorizationMode, ConversationAttachment, PermissionPreset, ProviderThinkingMode } from "../../types.js";
 import { normalConversationModelLabel } from "./normal-conversation-composer-options.js";
 import { ConversationModelControl } from "./ConversationModelControl.js";
-import { ConversationPermissionControl } from "./ConversationPermissionControl.js";
 import type { ConversationHomeModelOption } from "./normal-conversation-types.js";
 
 export interface NormalConversationComposerProps {
@@ -221,9 +221,7 @@ export function NormalConversationComposer({
       ) : null}
       dropHintNode={(dropFeedback || dragActive) ? <>
         {dropFeedback}
-        {dragActive ? (
-          <div className="composer-drop-hint"><FileText size={16} /><span>{t("Drop files to attach")}</span></div>
-        ) : null}
+        {dragActive ? <div className="composer-drop-hint"><FileText size={16} /><span>{t("Drop files to attach")}</span></div> : null}
       </> : null}
       previewNode={pendingAttachments.length > 0 || attachmentCleanupFailures.length > 0 ? (
         <ComposerPendingAssetStrip attachments={pendingAttachments} onRemoveAttachment={onRemoveAttachment}

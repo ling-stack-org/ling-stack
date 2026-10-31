@@ -338,8 +338,15 @@ export interface RuntimeHeartbeat {
 
 export interface RecordRuntimeHeartbeatInput extends RuntimeAttemptFenceV1 {
   readonly ts: string;
+  /** Trusted Host deadline, renewed atomically with the heartbeat. */
+  readonly resourceExpiresAt: string;
   readonly source: RuntimeHeartbeat["source"];
   readonly detail?: unknown;
+}
+
+export interface RuntimeResourceRenewal {
+  readonly renewedAt: string;
+  readonly expiresAt: string;
 }
 
 export interface RuntimeSemaphoreSlot {

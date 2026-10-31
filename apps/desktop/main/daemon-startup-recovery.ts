@@ -39,6 +39,9 @@ export async function ensureDesktopDaemonWithStartupRecovery(input: {
       if (!input.allowInteractiveRecovery || !(error instanceof DesktopDaemonLifecycleError)) {
         throw error;
       }
+      // A retained original Host is not a recoverable startup failure; retry
+      // must not create a successor or offer a quit that discards stop proof.
+      if (error.code === "stop_blocked" || error.code === "stop_unconfirmed") throw error;
       if (error.code === "bridge_incompatible") {
         const decision = await input.prompt({
           baseUrl: error.baseUrl,

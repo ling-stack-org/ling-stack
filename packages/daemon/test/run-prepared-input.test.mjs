@@ -7,6 +7,7 @@ import { createSqliteRunStore } from "@ling-stack/core";
 import { PiRunnerAdapter } from "@ling-stack/runner-pi";
 import { executeRunRequest, createDetachedRunExecutionSink } from "../dist/features/runs/orchestrator.js";
 import { parseRunRequest } from "../dist/features/runs/schemas.js";
+import { createMemorySourceRevisions } from "../dist/features/memory/prompt.js";
 import { createRunnerRegistry } from "../dist/runtime/runners.js";
 import { RunStoreRegistry } from "../dist/runtime/store-registry.js";
 import { ActiveRunRegistry } from "../dist/runtime/active-runs.js";
@@ -56,6 +57,46 @@ async function fixture(t, surface = "normal") {
     f.runners, registry, active, supervisor, { resolve: () => ({ configured: false }) }, {});
   return f;
 }
+for (const change of ["unchanged", "before-entry", "during-prepare", "missing-revision", "usage-only"]) {
+  test(`preselected Pi Memory preserves source revision across ${change}`, async t => {
+    const f = await fixture(t, "channel");
+    const memory = f.store.createMemoryObject({ scopeType: "teammate", ownerId: f.request.teammateId,
+      title: "SOURCE_TASK", body: "PRESELECTED_PRIVATE_CANARY", sensitivity: "private", reviewState: "active" }, new Date().toISOString());
+    f.request = { ...f.request, skipMemoryRecall: true, preselectedMemoryUse: {
+      memoryIds: [memory.id], recallQuery: "SOURCE_TASK", policyVersion: "test-private-selection",
+      renderedPrompt: `Used memory:\n${memory.body}`,
+      ...(change !== "missing-revision" ? { sourceRevisions: createMemorySourceRevisions([memory]) } : {}),
+    } };
+    const mutate = () => f.store.updateMemoryObject(memory.id, { body: "Changed after selection." }, new Date().toISOString());
+    if (change === "before-entry") mutate();
+    if (change === "during-prepare") f.controls.afterPrepare = mutate;
+    if (change === "usage-only") f.controls.afterPrepare = () => f.store.recordUsedMemoryEvent({ memoryIds: [memory.id],
+      teammateId: f.request.teammateId, intent: "task-run", recallQuery: "SOURCE_TASK", policyVersion: "another-consumer" }, new Date().toISOString());
+    const runId = await f.dispatch();
+    if (["before-entry", "during-prepare", "missing-revision"].includes(change)) {
+      assert.equal(runId, undefined);
+      assert.equal(f.calls.length, 0, "stale or unbound private text must never reach the Runner");
+      assert.equal(f.store.listRuns().length, 0);
+      assert.equal(f.errors.at(-1)?.error, "prepared_memory_unavailable");
+      return;
+    }
+    assert.ok(runId, JSON.stringify(f.errors));
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.calls[0].appendSystemPrompt.filter(text => text.includes(memory.body)).length, 1);
+    const run = f.store.getRun(runId);
+    assert.doesNotMatch(run.taskSnapshot.prompt, /PRESELECTED_PRIVATE_CANARY/u);
+    assert.doesNotMatch(f.store.getLingTurnForRun(runId).userInstruction, /PRESELECTED_PRIVATE_CANARY/u);
+    assert.deepEqual(run.requestSnapshot.runnerExecutionInput.usedMemory, {
+      memoryIds: [memory.id], recallQuery: "SOURCE_TASK", policyVersion: "test-private-selection",
+    });
+    assert.equal(run.requestSnapshot.preselectedMemoryUse, undefined);
+    const used = f.store.listUsedMemoryEvents({ runId });
+    assert.equal(used.length, 1);
+    assert.deepEqual(used[0].memoryIds, [memory.id]);
+    assert.doesNotMatch(JSON.stringify(used), /PRESELECTED_PRIVATE_CANARY|sourceRevisions|renderedPrompt/u);
+  });
+}
+
 for (const surface of ["normal", "private", "channel"]) {
   test(`actual ${surface} Pi dispatch persists the full non-secret source input`, async t => {
     const f = await fixture(t, surface);

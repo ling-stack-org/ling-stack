@@ -33,6 +33,8 @@ WORKFLOW.md
 .playwright-cli/
 logs/
 output/
+# Node diagnostic reports can contain process credentials and local paths.
+/packages/daemon/report.*.json
 
 # system
 .DS_Store

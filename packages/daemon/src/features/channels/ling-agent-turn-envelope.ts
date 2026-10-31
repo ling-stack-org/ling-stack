@@ -398,6 +398,11 @@ function buildWorkspaceFileRefs(
   const refs: LingTurnWorkspaceFileRef[] = [];
   const seen = new Set<string>();
   for (const fileRef of messageFileRefs) {
+    // The composer can recognize command operands, code examples or future
+    // output paths for display. Only an explicit reference requests context
+    // materialization. Keep lexical tokens in the unchanged body, not in this
+    // file-loading lane, and do not stat them relative to the workspace root.
+    if (fileRef.source === "inferred_text") continue;
     if (refs.length >= MAX_FILE_REFS) {
       break;
     }

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { initializeDesktopQaLaunchProfile, readDesktopLaunchPackageMetadata } from "../dist/main/qa-launch-profile.js";
+import { readPackagedQaHarnessSelection } from "../../../packages/daemon/dist/runtime/packaged-qa-harness-bootstrap.js";
 
 const packageMarker = { schemaVersion: 1, purpose: "synthetic-human-evaluation", release: false };
 const packageMetadata = { name: "owned-qa", lingHumanQaPackage: packageMarker };
@@ -55,6 +56,73 @@ test("valid explicit packaged QA fixes scope and clears every non-OS/locale inhe
     LING_STACK_HOME: f.marker.lingHome, LING_STACK_DEFAULT_WORKSPACE_CWD: f.marker.workspaceCwd, LING_STACK_DAEMON_URL: "http://127.0.0.1:17928",
     LING_STACK_HARNESS_CONTINUATIONS_MODE: "enforce", LING_STACK_LOCAL_WS_RPC: "false" });
   assert.equal("humanConfirmation" in scope, false); assert.equal("authorization" in scope, false);
+});
+
+function delegationSelection(f, changes = {}) {
+  return { schemaVersion: 1, kind: "isolated-qa-delegation-selection", modelExecution: "host-authorized-budgeted", workspaceCwd: f.marker.workspaceCwd,
+    selectedWorkflowIds: ["workflow-qa-explicit"], maxDepth: 2,
+    rootBudget: { tokenBudget: 4096, wallTimeBudgetMs: 60000 }, ...changes };
+}
+
+test("only an explicit private QA selection enables bounded workflow delegation before Main", t => {
+  const f = fixture(t), selection = delegationSelection(f);
+  writeFileSync(join(f.profile, "qa-harness.json"), JSON.stringify(selection), { mode: 0o600 });
+  f.environment.LING_STACK_QA_HARNESS_SELECTION = "inherited-untrusted-value";
+  const scope = initializeDesktopQaLaunchProfile(f.options);
+  assert.equal(scope.synthetic, false, "combined bounded-model scope must not claim synthetic-only execution");
+  assert.equal(scope.modelExecution, "host-authorized-budgeted");
+  assert.equal(f.environment.LING_STACK_HARNESS_TOOL_BROKER_MODE, "enforce");
+  assert.equal(f.environment.LING_STACK_HARNESS_DELEGATIONS_MODE, "enforce");
+  assert.deepEqual(JSON.parse(f.environment.LING_STACK_QA_HARNESS_SELECTION), selection);
+  assert.equal(f.environment.LING_STACK_HARNESS_EVALUATIONS_MODE, undefined);
+  assert.equal(f.environment.OPENAI_API_KEY, undefined, "selection is not permission to inherit a credential");
+});
+
+test("Desktop private selection reaches the typed Daemon resolver without broadening the policy", t => {
+  const f = fixture(t), selection = delegationSelection(f);
+  writeFileSync(join(f.profile, "qa-harness.json"), JSON.stringify(selection), { mode: 0o600 });
+  initializeDesktopQaLaunchProfile(f.options);
+  // These two transport flags are added by the packaged Daemon launcher, not
+  // supplied by the workspace policy or inherited from the daily app process.
+  const harness = readPackagedQaHarnessSelection({ ...f.environment,
+    LING_STACK_PACKAGED_DESKTOP: "1", LING_STACK_PORT: "17928", LING_STACK_HOST: "127.0.0.1" });
+  assert.deepEqual(harness, { continuations: { mode: "enforce" }, toolBroker: { mode: "enforce" },
+    delegations: { mode: "enforce", maxDepth: selection.maxDepth, selectedWorkflowIds: selection.selectedWorkflowIds,
+      rootBudget: selection.rootBudget } });
+  assert.equal(Object.hasOwn(harness, "evaluations"), false);
+  assert.equal(Object.hasOwn(harness, "sandbox"), false);
+});
+
+for (const [label, changes] of [
+  ["foreign workspace", { workspaceCwd: "/daily" }],
+  ["empty workflow selection", { selectedWorkflowIds: [] }],
+  ["wildcard workflow", { selectedWorkflowIds: ["*"] }],
+  ["duplicate workflow", { selectedWorkflowIds: ["workflow-qa", "workflow-qa"] }],
+  ["unbounded token budget", { rootBudget: { wallTimeBudgetMs: 60000 } }],
+  ["missing deadline", { rootBudget: { tokenBudget: 4096 } }],
+  ["unpriced monetary budget", { rootBudget: { tokenBudget: 4096, wallTimeBudgetMs: 60000, costBudgetMicros: 1 } }],
+  ["extra permission", { fullAccess: true }],
+  ["depth escalation", { maxDepth: 17 }],
+  ["missing execution declaration", { modelExecution: undefined }],
+  ["synthetic-only execution declaration", { modelExecution: false }],
+]) test(`QA delegation selection rejects ${label} without mutating launch state`, t => {
+  const f = fixture(t), before = { ...f.environment };
+  writeFileSync(join(f.profile, "qa-harness.json"), JSON.stringify(delegationSelection(f, changes)), { mode: 0o600 });
+  assert.throws(() => initializeDesktopQaLaunchProfile(f.options), /desktop_qa_/u);
+  assert.deepEqual(f.environment, before); assert.equal(f.setCalls, 0);
+});
+
+for (const kind of ["public", "symlink", "hardlink"]) test(`QA selection rejects a ${kind} policy file before launch mutation`, t => {
+  const f = fixture(t), before = { ...f.environment }, path = join(f.profile, "qa-harness.json");
+  const text = JSON.stringify(delegationSelection(f));
+  if (kind === "symlink") {
+    const target = join(f.parent, "policy-target"); writeFileSync(target, text, { mode: 0o600 }); symlinkSync(target, path);
+  } else {
+    writeFileSync(path, text, { mode: kind === "public" ? 0o644 : 0o600 });
+    if (kind === "hardlink") linkSync(path, join(f.parent, "policy-alias"));
+  }
+  assert.throws(() => initializeDesktopQaLaunchProfile(f.options), /desktop_qa_/u);
+  assert.deepEqual(f.environment, before); assert.equal(f.setCalls, 0);
 });
 
 for (const [label, mutate] of [

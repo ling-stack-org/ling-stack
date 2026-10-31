@@ -6,7 +6,7 @@ import { parseDocument } from "yaml";
 import { buildSkillSourceContextFindings } from "./skill-source-health.js";
 import { parseSkillFrontMatter, previewSkillSourceDefinition, splitMarkdownFrontMatter } from "./skill-source-definition.js";
 import { selectActiveSkillSourceSnapshots } from "./skill-source-selection.js";
-import { collapseRepeatedCharacter, trimBoundaryCharacters } from "./string-boundaries.js";
+import { asciiLowercase, collapseRepeatedCharacter, trimBoundaryCharacters } from "./string-boundaries.js";
 import type {
   CreateSkillSourceSnapshotInput,
   SkillAgentMetadata,
@@ -967,7 +967,7 @@ function extractClaims(markdown: string, patterns: readonly RegExp[]): string[] 
 
 function extractMcpToolClaims(markdown: string): string[] {
   const claims: string[] = [];
-  const lowerMarkdown = markdown.toLowerCase();
+  const lowerMarkdown = asciiLowercase(markdown);
   for (let index = 0; index < markdown.length;) {
     const start = lowerMarkdown.indexOf("mcp__", index);
     if (start === -1) break;
@@ -989,7 +989,7 @@ function extractMcpToolClaims(markdown: string): string[] {
 function findFirstMcpToolLine(markdown: string): number | undefined {
   const claim = extractMcpToolClaims(markdown)[0];
   if (!claim) return undefined;
-  const index = markdown.toLowerCase().indexOf(claim);
+  const index = asciiLowercase(markdown).indexOf(claim);
   if (index === -1) return undefined;
   let line = 1;
   for (let cursor = 0; cursor < index; cursor += 1) {

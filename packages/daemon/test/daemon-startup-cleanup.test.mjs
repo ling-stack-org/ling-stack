@@ -43,7 +43,7 @@ async function fixture(t) {
   return { cwd, config, create, lockPath };
 }
 
-test("failed startup releases its listener but cannot release another process's runtime lock", { timeout: 15_000 }, async t => {
+test("unowned daemon construction is refused before listening and cannot release another process's runtime lock", { timeout: 15_000 }, async t => {
   const f = await fixture(t);
   const owner = f.create();
   await owner.start();
@@ -52,11 +52,14 @@ test("failed startup releases its listener but cannot release another process's 
     const moduleUrl = new URL("../dist/index.js", import.meta.url).href;
     const program = `
       const { createDaemonServer } = await import(${JSON.stringify(moduleUrl)});
-      const daemon = createDaemonServer(${JSON.stringify(f.config)});
+      let daemon;
       let failure;
-      try { await daemon.start(); } catch (error) { failure = error; }
-      const observation = { error: failure?.code, listeningAfterFailure: daemon.server.listening };
-      await daemon.stop();
+      try {
+        daemon = createDaemonServer(${JSON.stringify(f.config)});
+        await daemon.start();
+      } catch (error) { failure = error; }
+      const observation = { error: failure?.code, constructed: Boolean(daemon), listeningAfterFailure: daemon?.server.listening ?? false };
+      await daemon?.stop();
       process.stdout.write(JSON.stringify(observation));
     `;
     const child = await executeFile(process.execPath, ["--input-type=module", "-e", program], {
@@ -64,6 +67,7 @@ test("failed startup releases its listener but cannot release another process's 
     });
     const observation = JSON.parse(child.stdout);
     assert.equal(observation.error, "runtime_already_running");
+    assert.equal(observation.constructed, false, "ownership admission must precede constructor recovery, not merely start");
     assert.equal(observation.listeningAfterFailure, false, "start rejection must not leak a listening HTTP server");
     assert.equal(owner.server.listening, true);
     assert.equal(await readFile(f.lockPath, "utf8"), originalLock, "cleanup must preserve the live owner's exact lock");
@@ -98,13 +102,20 @@ test("a port bind failure cannot shut down the healthy listener already using th
   const f = await fixture(t);
   const owner = f.create();
   await owner.start();
-  const contender = createDaemonServer({ ...f.config, port: owner.server.address().port });
+  // Distinct workspace ownership isolates the listener collision from the
+  // earlier same-workspace constructor gate tested above.
+  const contenderCwd = await mkdtemp(join(tmpdir(), "ling-daemon-port-conflict-"));
+  let contender;
   try {
+    contender = createDaemonServer({ ...f.config, defaultWorkspaceCwd: contenderCwd, port: owner.server.address().port });
     await assert.rejects(contender.start(), error => error.code === "EADDRINUSE");
     assert.equal(contender.server.listening, false);
     assert.equal(owner.server.listening, true);
   } finally {
-    await contender.stop();
-    await owner.stop();
+    try { await contender?.stop(); }
+    finally {
+      await owner.stop();
+      await rm(contenderCwd, { recursive: true, force: true });
+    }
   }
 });

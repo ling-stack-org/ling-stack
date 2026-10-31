@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
+import { mkdir, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { Worker } from "node:worker_threads";
 import test from "node:test";
-import { createSqliteRunStore } from "../dist/index.js";
-import { userInputTranscriptFixture, claimedAt } from "./support/user-input-transcript-fixture.mjs";
+import { createSqliteRunStore, workflowStepStartAuthorityBasis, UserInputRunCreatedDeferredError } from "../dist/index.js";
+import { userInputTranscriptFixture, claimedAt, now } from "./support/user-input-transcript-fixture.mjs";
 
 const later = "2026-09-07T00:00:05.000Z";
 const hash = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -12,7 +14,20 @@ const ref = value => ({ id: value.id, fingerprint: value.fingerprint });
 const code = expected => error => error.code === expected;
 async function fixture(t, surface = "normal", options = {}) {
   const f = await userInputTranscriptFixture(t, { surface, ...options });
-  f.submit(); f.delivery = f.claim();
+  if (options.canonicalWorkflowOwner) {
+    assert.ok(f.step && f.storedTask, "canonical workflow continuation requires a stored Task and step");
+    f.storedTask = f.store.updateTask(f.storedTask.id, { assigneeTeammateId: f.participantId }, now);
+    const lease = f.store.acquireResourceLease({ workspaceId: f.channel.workspaceId,
+      resourceType: "workflow_step", resourceKey: f.step.id, ownerType: "workflow_step", ownerId: f.step.id,
+      acquiredAt: now, expiresAt: "2026-09-07T06:00:00.000Z" });
+    assert.ok(lease);
+    const step = f.store.getChannelWorkflowStep(f.step.id);
+    f.workflowStartOwner = { schemaVersion: 1, taskId: f.storedTask.id, leaseId: lease.id, phase: "linked",
+      authorityBasis: workflowStepStartAuthorityBasis(f.store, step) };
+    assert.ok(f.workflowStartOwner.authorityBasis);
+    f.store.updateChannelWorkflowStep(step.id, { metadata: { ...step.metadata, startOwner: f.workflowStartOwner } }, now);
+  }
+  f.submit(); f.delivery = f.claim({ leaseMs: 60_000 });
   f.seed = f.store.getUserInputContinuationSeed(f.thread.id, f.delivery.deliveryId);
   f.claimIdentity = { threadId: f.thread.id, deliveryId: f.delivery.deliveryId, expectedRevision: f.delivery.revision,
     ownerId: f.delivery.claim.ownerId, claimToken: f.delivery.claim.token };
@@ -27,35 +42,68 @@ async function fixture(t, surface = "normal", options = {}) {
   f.prepare = (adjust = () => {}) => {
     f.preparedRequest = f.store.saveUserInputContinuationPreparation({ ...f.claimIdentity, stage: "request",
       parentRef: ref(f.seed), payload: f.runRequest }, claimedAt).snapshot;
+    const runnerExecutionInput = { schemaVersion: 1, runnerId: "pi", toolHydrationEnabled: false,
+      input: { cwd: f.cwd, task: f.task, provider: { provider: "fixture", model: "fixture" }, tools: [] },
+      preparedInput: f.preparedInput };
     f.plan = { schemaVersion: 1, runnerId: "pi", providerName: "fixture", providerModel: "fixture",
       taskSnapshot: f.task, providerSnapshot: { provider: "fixture", model: "fixture" }, requestSnapshot: f.runRequest,
+      runRequestSnapshot: { ...f.runRequest, runnerExecutionInput },
       preparedInput: f.preparedInput, preparedInputFingerprint: f.preparedInput.fingerprint,
-      runnerExecutionInput: { schemaVersion: 1, runnerId: "pi", toolHydrationEnabled: false,
-        input: { cwd: f.cwd, task: f.task, provider: { provider: "fixture", model: "fixture" }, tools: [] },
-        preparedInput: f.preparedInput } };
+      runnerExecutionInput };
     adjust(f.plan);
     f.preparedExecution = f.store.saveUserInputContinuationPreparation({ ...f.claimIdentity, stage: "execution",
       parentRef: ref(f.preparedRequest), payload: f.plan }, claimedAt).snapshot;
     return f.preparedExecution;
   };
-  f.admit = () => f.store.admitUserInputContinuation({ ...f.claimIdentity,
-    executionRef: ref(f.preparedExecution), runtimeInstanceId: "receiver-runtime" }, claimedAt);
-  f.activate = binding => {
-    f.store.updateWorkUnitAttemptStatus({ ...binding.fence, status: "started", startedAt: claimedAt, now: claimedAt });
-    assert.equal(f.store.transitionWorkUnitStatus({ ...binding.fence, expectedStatus: "claimed", event: "runner_started",
-      actor: "runner", now: claimedAt }).ok, true);
-    assert.equal(f.store.transitionRunStatus({ runId: binding.runId, expectedStatus: "queued", event: "runner_started",
-      actor: "runner", now: claimedAt }).ok, true);
-    if (f.storedTask) assert.equal(f.store.transitionTaskStatus({ taskId: f.storedTask.id, expectedStatus: "claimed",
-      event: "start_run", actor: "system", currentRunId: binding.runId, now: claimedAt }).ok, true);
-    if (f.step) assert.equal(f.store.transitionChannelWorkflowStepStatus({ workflowStepId: f.step.id, expectedStatus: "claimed",
-      event: "start", actor: "system", runId: binding.runId, now: claimedAt }).ok, true);
-  };
-  f.ackInput = binding => ({ threadId: f.thread.id, deliveryId: f.delivery.deliveryId, bindingRef: ref(binding), sourceFence: binding.fence,
+  f.admit = (overrides = {}) => f.store.admitUserInputContinuation({ ...f.claimIdentity,
+    executionRef: ref(f.preparedExecution), runtimeInstanceId: "receiver-runtime", ...overrides }, claimedAt);
+  f.ackInput = (binding, claim = f.claimIdentity) => ({ threadId: f.thread.id, deliveryId: f.delivery.deliveryId,
+    bindingRef: ref(binding), sourceFence: binding.fence,
+    claim: { ownerId: claim.ownerId, claimToken: claim.claimToken },
     receipt: { schemaVersion: 1, boundary: "pi-session-ready", runId: binding.runId, attemptId: binding.fence.attemptId,
       taskId: f.run.taskId, preparedInputFingerprint: f.preparedInput.fingerprint } });
   return f;
 }
+
+test("canonical workflow admission starts the step once before receiver ACK", async t => {
+  const f = await fixture(t, "channel", { storedTask: true, workflow: true, canonicalWorkflowOwner: true });
+  f.prepare();
+  const binding = f.admit({ workflowStartOwner: f.workflowStartOwner });
+  const admitted = f.store.getChannelWorkflowStep(f.step.id);
+  assert.equal(admitted.status, "running");
+  assert.deepEqual(admitted.metadata.startOwner, binding.workflowStartOwner);
+  assert.notEqual(binding.workflowStartOwner.leaseId, f.workflowStartOwner.leaseId);
+  assert.equal(f.store.listResourceLeases({ resourceType: "workflow_step", resourceKey: f.step.id })
+    .find(lease => lease.id === f.workflowStartOwner.leaseId).releaseReason, "user_input_yielded");
+  assert.equal(f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later).replayed, false);
+  const acknowledged = f.store.getChannelWorkflowStep(f.step.id);
+  assert.equal(acknowledged.status, "running");
+  assert.equal(acknowledged.updatedAt, admitted.updatedAt, "ACK must not start an admission-owned step twice");
+  assert.deepEqual(acknowledged.metadata.startOwner, binding.workflowStartOwner);
+});
+
+test("canonical workflow ACK rejects a replaced start owner without partial receiver state", async t => {
+  const f = await fixture(t, "channel", { storedTask: true, workflow: true, canonicalWorkflowOwner: true });
+  f.prepare();
+  const binding = f.admit({ workflowStartOwner: f.workflowStartOwner });
+  const admitted = f.store.getChannelWorkflowStep(f.step.id);
+  f.store.updateChannelWorkflowStep(f.step.id, { metadata: { ...admitted.metadata,
+    startOwner: { ...binding.workflowStartOwner, leaseId: "replacement-owner" } } }, later);
+  const before = {
+    run: f.store.getRun(binding.runId), unit: f.store.getWorkUnit(binding.fence.workUnitId),
+    attempt: f.store.getWorkUnitAttempt(binding.fence.attemptId), task: f.store.getTask(f.storedTask.id),
+    step: f.store.getChannelWorkflowStep(f.step.id), delivery: f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId),
+    wait: f.store.getUserInputWait(f.thread.id, f.seed.request.requestId),
+  };
+  assert.throws(() => f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later), code("source_conflict"));
+  assert.equal(f.store.getUserInputContinuationReceipt(f.thread.id, f.delivery.deliveryId), undefined);
+  assert.deepEqual({
+    run: f.store.getRun(binding.runId), unit: f.store.getWorkUnit(binding.fence.workUnitId),
+    attempt: f.store.getWorkUnitAttempt(binding.fence.attemptId), task: f.store.getTask(f.storedTask.id),
+    step: f.store.getChannelWorkflowStep(f.step.id), delivery: f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId),
+    wait: f.store.getUserInputWait(f.thread.id, f.seed.request.requestId),
+  }, before);
+});
 
 for (const surface of ["normal", "private", "channel"]) {
   test(`Host continuation keeps the original ${surface} owner through preparation, binding and ACK`, async t => {
@@ -80,10 +128,14 @@ for (const surface of ["normal", "private", "channel"]) {
     assert.equal(f.store.listLingTurnRuns(f.turn.turnId).find(link => link.runId === run.id).role, "resume");
     assert.equal(f.db.prepare("SELECT COUNT(*) n FROM ling_turns").get().n, 1);
     assert.equal(f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId).status, "claimed");
-    assert.throws(() => f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later), code("source_conflict"));
-    f.activate(binding);
+    assert.equal(f.store.getRun(binding.runId).status, "queued");
+    assert.equal(f.store.getWorkUnit(binding.fence.workUnitId).status, "claimed");
+    assert.equal(f.store.getWorkUnitAttempt(binding.fence.attemptId).status, "created");
     const receipt = f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later);
     assert.equal(receipt.replayed, false);
+    assert.equal(f.store.getRun(binding.runId).status, "running");
+    assert.equal(f.store.getWorkUnit(binding.fence.workUnitId).status, "running");
+    assert.equal(f.store.getWorkUnitAttempt(binding.fence.attemptId).status, "started");
     assert.equal(f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId).status, "applied");
     assert.equal(f.store.getUserInputWait(f.thread.id, f.seed.request.requestId).status, "resumed");
     assert.equal(f.store.getLingTurn(f.turn.turnId).status, "running");
@@ -118,7 +170,7 @@ test("first preparation wins and expired/replaced delivery workers cannot change
   assert.equal(result.idempotentReplay, true);
   assert.deepEqual(result.snapshot, f.preparedRequest);
   const replacement = f.store.claimUserInputDelivery({ threadId: f.thread.id, deliveryId: f.delivery.deliveryId,
-    expectedRevision: f.delivery.revision, ownerId: "replacement", leaseMs: 1000 }, later);
+    expectedRevision: f.delivery.revision, ownerId: "replacement", leaseMs: 1000 }, "2026-09-07T00:01:04.000Z");
   assert.throws(() => f.admit(), code("delivery_conflict"));
   assert.equal(f.store.getRun(replacement.successorRunId), undefined);
 });
@@ -146,7 +198,7 @@ for (const change of ["runner", "cwd", "task", "provider", "sdk", "hydration"]) 
 }
 for (const change of ["missing", "replaced"]) {
   test(`admitted Run cannot lose or replace its own SDK source input before ACK: ${change}`, async t => {
-    const f = await fixture(t); f.prepare(); const binding = f.admit(); f.activate(binding);
+    const f = await fixture(t); f.prepare(); const binding = f.admit();
     const run = f.store.getRun(binding.runId), snapshot = structuredClone(run.requestSnapshot);
     if (change === "missing") delete snapshot.runnerExecutionInput;
     else snapshot.runnerExecutionInput.input.task.prompt = "borrowed parent input";
@@ -166,6 +218,177 @@ test("binding survives reopen and cannot allocate another successor after lease 
     assert.throws(() => f.admit(), code("delivery_conflict"));
     assert.equal(other.listWorkUnitAttempts(f.unit.id).length, 2);
   } finally { other.close(); }
+});
+test("deferred admitted delivery survives reopen and becomes reclaimable only when retry is due", async t => {
+  const f = await fixture(t); f.prepare(); const binding = f.admit();
+  const deferredAt = "2026-09-07T00:00:05.000Z";
+  const retryAt = "2026-09-07T00:00:06.000Z";
+  const currentClaim = { ...f.claimIdentity, expectedRevision: binding.deliveryRevision };
+  const writer = createSqliteRunStore(f.cwd);
+  assert.equal(writer.deferUserInputContinuationRecovery({ ...currentClaim, bindingRef: ref(binding), sourceFence: binding.fence,
+    retryAt, errorCode: "recoverable_failure" }, deferredAt), true);
+  writer.close();
+
+  const reopened = createSqliteRunStore(f.cwd);
+  try {
+    const deferred = reopened.getUserInputDelivery(f.thread.id, f.delivery.deliveryId);
+    assert.equal(deferred.status, "claimed");
+    assert.equal(deferred.claim, null);
+    assert.equal(deferred.retryAt, retryAt);
+    assert.equal(deferred.lastErrorCode, "recoverable_failure");
+    assert.equal(reopened.listDueUserInputDeliveries({ threadId: f.thread.id }, deferredAt).length, 0);
+    assert.equal(reopened.listUserInputDispatchCandidates({ createdAtOrBefore: deferredAt }, deferredAt).length, 0);
+    assert.deepEqual(reopened.listUserInputDispatchCandidates({ createdAtOrBefore: deferredAt }, retryAt)
+      .map(candidate => candidate.deliveryId), [f.delivery.deliveryId]);
+
+    const reclaimed = reopened.claimUserInputContinuationRecovery({ threadId: f.thread.id,
+      deliveryId: f.delivery.deliveryId, bindingRef: ref(binding), sourceFence: binding.fence,
+      ownerId: "reopened-recovery-worker", leaseMs: 1_000 }, retryAt);
+    assert.equal(reclaimed.status, "claimed");
+    assert.equal(reclaimed.claim.expectedRevision, binding.deliveryRevision);
+    assert.equal(reopened.renewUserInputContinuationLease({ threadId: f.thread.id, deliveryId: f.delivery.deliveryId,
+      ownerId: currentClaim.ownerId, claimToken: currentClaim.claimToken, leaseMs: 1_500 },
+    "2026-09-07T00:00:06.500Z").status, "lost");
+    assert.equal(reopened.renewUserInputContinuationLease({ threadId: f.thread.id, deliveryId: f.delivery.deliveryId,
+      ownerId: reclaimed.claim.ownerId, claimToken: reclaimed.claim.claimToken, leaseMs: 1_500 },
+    "2026-09-07T00:00:06.500Z").status, "renewed");
+    assert.throws(() => reopened.acknowledgeUserInputContinuation(f.ackInput(binding, currentClaim),
+      "2026-09-07T00:00:07.000Z"), code("delivery_conflict"));
+    assert.equal(reopened.acknowledgeUserInputContinuation(f.ackInput(binding, reclaimed.claim),
+      "2026-09-07T00:00:07.000Z").replayed, false);
+    assert.equal(reopened.getUserInputDelivery(f.thread.id, f.delivery.deliveryId).status, "applied");
+    assert.equal(reopened.listWorkUnitAttempts(f.unit.id).length, 2);
+  } finally { reopened.close(); }
+});
+test("run_created replay repairs a post-commit JSONL failure without duplicating the durable fact", async t => {
+  const f = await fixture(t); f.prepare(); const binding = f.admit();
+  const run = f.store.getRun(binding.runId);
+  const claim = { ...f.claimIdentity, expectedRevision: binding.deliveryRevision };
+  const data = { taskId: run.taskId, workUnitId: binding.fence.workUnitId, attemptId: binding.fence.attemptId,
+    threadId: f.thread.id, cwd: run.cwd };
+  const input = { claim, bindingRef: ref(binding), sourceFence: binding.fence, runId: run.id,
+    workspaceCwd: f.cwd, data };
+  await mkdir(run.eventLogPath, { recursive: true });
+  assert.throws(() => f.store.publishUserInputContinuationRunCreated(input, later),
+    error => error instanceof UserInputRunCreatedDeferredError && error.phase === "mirror");
+  const committed = f.store.listEvents(run.id, { limit: 100 }).filter(event => event.type === "run_created");
+  assert.equal(committed.length, 1, "SQLite remains the authoritative committed fact after mirror failure");
+  await rm(run.eventLogPath, { recursive: true, force: true });
+
+  const replay = f.store.publishUserInputContinuationRunCreated(input, later);
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(replay.event, committed[0]);
+  assert.equal(f.store.publishUserInputContinuationRunCreated(input, later).replayed, true);
+  const mirrored = (await readFile(run.eventLogPath, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+  assert.deepEqual(mirrored, [committed[0]]);
+  assert.equal(f.store.listEvents(run.id, { limit: 100 }).filter(event => event.type === "run_created").length, 1);
+});
+test("run_created mirror defers a real filesystem ELOOP and replays the one committed fact after repair", async t => {
+  const f = await fixture(t); f.prepare(); const binding = f.admit();
+  const run = f.store.getRun(binding.runId);
+  const input = { claim: { ...f.claimIdentity, expectedRevision: binding.deliveryRevision }, bindingRef: ref(binding),
+    sourceFence: binding.fence, runId: run.id, workspaceCwd: f.cwd, data: { taskId: run.taskId } };
+  await mkdir(dirname(run.eventLogPath), { recursive: true });
+  await symlink(run.eventLogPath, run.eventLogPath);
+  await assert.rejects(readFile(run.eventLogPath, "utf8"), code("ELOOP"), "the real OS must supply the failure");
+
+  assert.throws(() => f.store.publishUserInputContinuationRunCreated(input, later),
+    error => error instanceof UserInputRunCreatedDeferredError && error.phase === "mirror");
+  const committed = f.store.listEvents(run.id).filter(event => event.type === "run_created");
+  assert.equal(committed.length, 1);
+  assert.equal(f.store.getRun(run.id).status, "queued");
+  assert.equal(f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId).status, "claimed");
+  assert.equal(f.store.getUserInputContinuationReceipt(f.thread.id, f.delivery.deliveryId), undefined);
+
+  // Remove only this test's self-referential link; never truncate an event log.
+  await unlink(run.eventLogPath);
+  const replay = f.store.publishUserInputContinuationRunCreated(input, later);
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(replay.event, committed[0]);
+  assert.deepEqual(f.store.listEvents(run.id).filter(event => event.type === "run_created"), committed);
+  assert.deepEqual((await readFile(run.eventLogPath, "utf8")).trim().split("\n").map(JSON.parse), committed);
+});
+test("recovery lease renewal rejects a foreign thread without changing its current owner", async t => {
+  const f = await fixture(t); f.prepare(); f.admit();
+  const before = f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId);
+  assert.equal(f.store.renewUserInputContinuationLease({ ...f.claimIdentity, threadId: "foreign-thread", leaseMs: 60_000 }, later)
+    .status, "lost");
+  assert.deepEqual(f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId), before);
+});
+test("recovery defer rejects an undeclared error code without poisoning durable delivery decoding", async t => {
+  const f = await fixture(t); f.prepare(); const binding = f.admit();
+  const before = f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId);
+  assert.throws(() => f.store.deferUserInputContinuationRecovery({ ...f.claimIdentity,
+    expectedRevision: binding.deliveryRevision, bindingRef: ref(binding), sourceFence: binding.fence,
+    retryAt: "2026-09-07T00:00:08.000Z", errorCode: "undeclared-code" }, later), code("invalid_input"));
+  assert.deepEqual(f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId), before);
+});
+test("run_created publication defers a real SQLite writer lock without terminalizing its admitted Run", async t => {
+  const f = await fixture(t); f.prepare(); const binding = f.admit();
+  const run = f.store.getRun(binding.runId);
+  const input = { claim: { ...f.claimIdentity, expectedRevision: binding.deliveryRevision }, bindingRef: ref(binding),
+    sourceFence: binding.fence, runId: run.id, workspaceCwd: f.cwd, data: { taskId: run.taskId } };
+  f.store.database.exec("PRAGMA busy_timeout=0");
+  f.db.exec("BEGIN IMMEDIATE");
+  try {
+    assert.throws(() => f.store.publishUserInputContinuationRunCreated(input, later),
+      error => error instanceof UserInputRunCreatedDeferredError && error.phase === "commit");
+    assert.equal(f.store.listEvents(run.id).length, 0);
+    assert.equal(f.store.getRun(run.id).status, "queued");
+  } finally { f.db.exec("ROLLBACK"); }
+  assert.equal(f.store.publishUserInputContinuationRunCreated(input, later).replayed, false);
+});
+for (const damage of ["malformed", "conflicting", "duplicate"]) {
+  test(`run_created mirror rejects ${damage} JSONL as a hard conflict instead of retrying indefinitely`, async t => {
+    const f = await fixture(t); f.prepare(); const binding = f.admit();
+    const run = f.store.getRun(binding.runId);
+    const input = { claim: { ...f.claimIdentity, expectedRevision: binding.deliveryRevision }, bindingRef: ref(binding),
+      sourceFence: binding.fence, runId: run.id, workspaceCwd: f.cwd, data: { taskId: run.taskId } };
+    const first = f.store.publishUserInputContinuationRunCreated(input, later);
+    await writeFile(run.eventLogPath, damage === "malformed" ? "not-json\n"
+      : damage === "duplicate" ? `${JSON.stringify(first.event)}\n${JSON.stringify(first.event)}\n`
+        : `${JSON.stringify({ ...first.event, data: { taskId: "forged" } })}\n`);
+    assert.throws(() => f.store.publishUserInputContinuationRunCreated(input, later), code("source_conflict"));
+    assert.deepEqual(f.store.listEvents(run.id), [first.event]);
+  });
+}
+test("run_created publication compares the durable JSON shape of optional Host fields", async t => {
+  const f = await fixture(t); f.prepare(); const binding = f.admit();
+  const run = f.store.getRun(binding.runId);
+  const data = { taskId: run.taskId, cwd: run.cwd, workflowStepId: undefined,
+    providerTransport: { api: "openai-completions", compatibility: undefined },
+    leases: [] };
+  const input = { claim: { ...f.claimIdentity, expectedRevision: binding.deliveryRevision },
+    bindingRef: ref(binding), sourceFence: binding.fence, runId: run.id, workspaceCwd: f.cwd, data };
+  const first = f.store.publishUserInputContinuationRunCreated(input, later);
+  const committed = f.store.listEvents(run.id, { limit: 100 });
+  assert.equal(first.replayed, false);
+  assert.deepEqual(first.event.data, JSON.parse(JSON.stringify(data)));
+  assert.deepEqual(committed, [first.event]);
+  assert.equal(f.store.publishUserInputContinuationRunCreated(input, later).replayed, true);
+  const mirrored = (await readFile(run.eventLogPath, "utf8")).trim().split("\n").map(JSON.parse);
+  assert.deepEqual(mirrored, committed);
+});
+
+test("startup recovery preserves the exact pre-ACK user-input binding", async t => {
+  const f = await fixture(t); f.prepare(plan => {
+    plan.runRequestSnapshot.userInputContinuationContext = { seedRef: ref(f.seed) };
+  }); const binding = f.admit();
+  assert.equal(f.store.recoverStaleRuns(later), 0);
+  assert.equal(f.store.getRun(binding.runId).status, "queued");
+  assert.equal(f.store.getWorkUnit(binding.fence.workUnitId).status, "claimed");
+  assert.equal(f.store.getWorkUnitAttempt(binding.fence.attemptId).status, "created");
+  assert.equal(f.store.getUserInputContinuationReceipt(f.thread.id, f.delivery.deliveryId), undefined);
+  assert.equal(f.store.listEvents(binding.runId, { limit: 100 }).some(event => event.type === "run_error"), false);
+});
+test("startup recovery still fails a queued successor without valid user-input lineage", async t => {
+  const f = await fixture(t); f.prepare(plan => {
+    plan.runRequestSnapshot.userInputContinuationContext = { seedRef: ref(f.seed) };
+  }); const binding = f.admit();
+  f.db.prepare("UPDATE run_sessions SET continuation_reason=NULL WHERE id=?").run(binding.runId);
+  assert.equal(f.store.recoverStaleRuns(later), 1);
+  assert.equal(f.store.getRun(binding.runId).status, "failed");
+  assert.equal(f.store.listEvents(binding.runId, { limit: 100 }).some(event => event.type === "run_error"), true);
 });
 for (const target of ["run_sessions", "work_unit_attempts", "conversation_context_snapshots", "control_plane_events"]) {
   test(`admission rolls back all pointers if ${target} rejects a write`, async t => {
@@ -189,8 +412,13 @@ test("logical cancellation wins before admission and keeps the accepted answer",
   assert.equal(f.read().find(item => item.kind === "user_input_answer").availability, "available");
 });
 test("stale execution fence and receipt fingerprint cannot ACK", async t => {
-  const f = await fixture(t); f.prepare(); const binding = f.admit(); f.activate(binding);
+  const f = await fixture(t); f.prepare(); const binding = f.admit();
   const input = f.ackInput(binding);
+  assert.throws(() => f.store.acknowledgeUserInputContinuation({ ...input,
+    claim: { ...input.claim, ownerId: "stale-owner" } }, later), code("delivery_conflict"));
+  assert.throws(() => f.store.acknowledgeUserInputContinuation({ ...input,
+    claim: { ...input.claim, claimToken: "stale-token" } }, later), code("delivery_conflict"));
+  assert.throws(() => f.store.acknowledgeUserInputContinuation(input, "2026-09-07T00:01:04.000Z"), code("delivery_conflict"));
   assert.throws(() => f.store.acknowledgeUserInputContinuation({ ...input,
     sourceFence: { ...input.sourceFence, fencingToken: "wrong" } }, later), code("source_conflict"));
   assert.throws(() => f.store.acknowledgeUserInputContinuation({ ...input,
@@ -200,11 +428,14 @@ test("stale execution fence and receipt fingerprint cannot ACK", async t => {
   assert.equal(f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId).status, "claimed");
 });
 test("ACK, wait state and transcript visibility roll back together", async t => {
-  const f = await fixture(t); f.prepare(); const binding = f.admit(); f.activate(binding);
+  const f = await fixture(t); f.prepare(); const binding = f.admit();
   f.db.exec("CREATE TRIGGER receipt_failure BEFORE UPDATE ON user_input_deliveries WHEN NEW.status='applied' BEGIN SELECT RAISE(ABORT,'receipt failure'); END");
   assert.throws(() => f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later), /receipt failure/);
   assert.equal(f.store.getUserInputContinuationReceipt(f.thread.id, f.delivery.deliveryId), undefined);
   assert.equal(f.store.getUserInputWait(f.thread.id, f.seed.request.requestId).status, "resuming");
+  assert.equal(f.store.getRun(binding.runId).status, "queued");
+  assert.equal(f.store.getWorkUnit(binding.fence.workUnitId).status, "claimed");
+  assert.equal(f.store.getWorkUnitAttempt(binding.fence.attemptId).status, "created");
   f.db.exec("DROP TRIGGER receipt_failure");
   assert.equal(f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later).replayed, false);
   const other = createSqliteRunStore(f.cwd);
@@ -229,7 +460,6 @@ for (const options of [{ storedTask: true }, { workflow: true }, { storedTask: t
       assert.equal(f.store.getChannelWorkflowStep(f.step.id).status, "claimed");
       assert.equal(f.store.getChannelWorkflowStep(f.step.id).runId, binding.runId);
     }
-    f.activate(binding);
     assert.equal(f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later).replayed, false);
     if (sibling) assert.deepEqual(f.store.getChannelWorkflowStep(sibling.id), sibling);
   });
@@ -239,7 +469,6 @@ for (const stage of ["request", "binding", "receipt"]) {
     const f = await fixture(t, "channel", { storedTask: true, workflow: true });
     if (stage !== "request") f.prepare();
     const binding = stage === "receipt" ? f.admit() : undefined;
-    if (binding) f.activate(binding);
     const before = [f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId), f.store.getWorkUnit(f.unit.id),
       f.store.getTask(f.storedTask.id), f.store.getChannelWorkflowStep(f.step.id), f.store.getLingThread(f.thread.id),
       f.store.getUserInputWait(f.thread.id, f.request.requestId)];
@@ -260,7 +489,7 @@ for (const stage of ["request", "binding", "receipt"]) {
 for (const stage of ["request", "execution", "binding", "receipt"]) {
   for (const damage of ["payload", "scope", "parent"]) {
     test(`corrupt ${stage} ${damage} cannot hydrate an applied answer`, async t => {
-      const f = await fixture(t); f.prepare(); const binding = f.admit(); f.activate(binding);
+      const f = await fixture(t); f.prepare(); const binding = f.admit();
       f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later);
       const recordId = `user_input_continuation_${stage}:${f.delivery.deliveryId}`;
       if (damage === "payload") f.db.prepare("UPDATE conversation_context_snapshots SET payload_json='{}' WHERE id=?").run(recordId);
@@ -285,7 +514,7 @@ for (const stage of ["request", "execution", "binding", "receipt"]) {
 }
 test("missing upstream preparation or binding cannot be reconstructed from an admitted Run", async t => {
   for (const stage of ["request", "execution", "binding"]) {
-    const f = await fixture(t); f.prepare(); const binding = f.admit(); f.activate(binding);
+    const f = await fixture(t); f.prepare(); const binding = f.admit();
     f.db.prepare("DELETE FROM conversation_context_snapshots WHERE snapshot_use=?").run("user_input_continuation_" + stage);
     assert.throws(() => f.store.getUserInputContinuationBinding(f.thread.id, f.delivery.deliveryId), code("invalid_record"));
     assert.throws(() => f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later), code("invalid_record"));
@@ -306,14 +535,14 @@ test("preparation rejects secrets and SQL-writing getters without changing the c
   f.prepare(); assert.ok(f.admit());
 });
 test("archived conversation cannot ACK, and a failed ACK does not unarchive it", async t => {
-  const f = await fixture(t); f.prepare(); const binding = f.admit(); f.activate(binding);
+  const f = await fixture(t); f.prepare(); const binding = f.admit();
   f.store.updateLingThread(f.thread.id, { status: "archived", archivedAt: later }, later);
   assert.throws(() => f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later), code("source_conflict"));
   assert.equal(f.store.getLingThread(f.thread.id).status, "archived");
   assert.equal(f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId).status, "claimed");
 });
 test("historical receipt remains readable after its execution finishes", async t => {
-  const f = await fixture(t); f.prepare(); const binding = f.admit(); f.activate(binding);
+  const f = await fixture(t); f.prepare(); const binding = f.admit();
   const receipt = f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later).receipt;
   assert.equal(f.store.transitionWorkUnitStatus({ ...binding.fence, expectedStatus: "running", event: "runner_succeeded", actor: "runner", now: later }).ok, true);
   assert.ok(f.store.updateWorkUnitAttemptStatus({ ...binding.fence, status: "succeeded", endedAt: later, now: later }));
@@ -325,9 +554,9 @@ test("historical receipt remains readable after its execution finishes", async t
 for (const owner of ["task", "step", "turn"]) {
   test(`cancellation of the current ${owner} wins before receiver ACK`, async t => {
     const f = await fixture(t, "channel", { storedTask: true, workflow: true }); f.prepare();
-    const binding = f.admit(); f.activate(binding);
-    const result = owner === "task" ? f.store.transitionTaskStatus({ taskId: f.storedTask.id, expectedStatus: "running", event: "cancel", actor: "user", now: later })
-      : owner === "step" ? f.store.transitionChannelWorkflowStepStatus({ workflowStepId: f.step.id, expectedStatus: "running", event: "cancel", actor: "user", now: later })
+    const binding = f.admit();
+    const result = owner === "task" ? f.store.transitionTaskStatus({ taskId: f.storedTask.id, expectedStatus: "claimed", event: "cancel", actor: "user", now: later })
+      : owner === "step" ? f.store.transitionChannelWorkflowStepStatus({ workflowStepId: f.step.id, expectedStatus: "claimed", event: "cancel", actor: "user", now: later })
       : f.store.transitionLingTurnStatus({ turnId: f.turn.turnId, expectedStatus: "running", event: "cancel", actor: "user", now: later });
     assert.equal(result.ok, true);
     assert.throws(() => f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later), code("source_conflict"));
@@ -346,7 +575,6 @@ test("continuation admission and ACK preserve a sibling approval's Thread priori
   const binding = f.admit();
   assert.equal(f.store.getLingThread(f.thread.id).status, "waiting_for_approval");
   assert.equal(f.store.getLingThread(f.thread.id).activeRunId, sibling.id);
-  f.activate(binding);
   f.store.acknowledgeUserInputContinuation(f.ackInput(binding), later);
   assert.deepEqual(f.store.getRun(sibling.id), before);
   assert.equal(f.store.getLingThread(f.thread.id).status, "waiting_for_approval");
@@ -356,7 +584,6 @@ for (const operation of ["admitUserInputContinuation", "acknowledgeUserInputCont
   test(`two SQLite connections serialize ${operation} to one write`, { timeout: 20000 }, async t => {
     const f = await fixture(t); f.prepare();
     const binding = operation === "acknowledgeUserInputContinuation" ? f.admit() : undefined;
-    if (binding) f.activate(binding);
     const input = binding ? f.ackInput(binding) : { ...f.claimIdentity, executionRef: ref(f.preparedExecution), runtimeInstanceId: "parallel-runtime" };
     const gate = new SharedArrayBuffer(4);
     const workers = [0, 1].map(() => new Worker(`

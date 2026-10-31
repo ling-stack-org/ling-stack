@@ -62,6 +62,6 @@ function readRecordString(record: Record<string, unknown>, key: string): string 
   return value;
 }
 
-function isChannelMessageFileRefSource(value: string): value is ChannelMessageFileRefSource {
-  return value === "composer" || value === "explicit_text" || value === "api";
+export function isChannelMessageFileRefSource(value: string): value is ChannelMessageFileRefSource {
+  return value === "composer" || value === "explicit_text" || value === "api" || value === "inferred_text";
 }

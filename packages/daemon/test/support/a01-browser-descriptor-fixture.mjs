@@ -24,9 +24,9 @@ export async function bounded(promise, label, timeoutMs = 10_000) {
   } finally { clearTimeout(timer); }
 }
 
-export function assertA01Isolation() {
+export function assertA01Isolation(environment = process.env) {
   for (const name of ["LING_STACK_HOME", "LING_STACK_DEFAULT_WORKSPACE_CWD"]) {
-    const path = process.env[name];
+    const path = environment[name];
     assert.ok(path && isAbsolute(path) && resolve(path) === path && path !== "/" && path !== process.cwd());
     assert.ok(statSync(path).isDirectory());
   }
@@ -38,12 +38,15 @@ export function a01Environment(home, workspace, caseName) {
 }
 
 export async function runA01Child(caseName, entryUrl) {
-  assertA01Isolation();
   const root = await fs.realpath(await fs.mkdtemp(join(os.tmpdir(), `ling-a01-${caseName}-`)));
   const home = join(root, "user"), workspace = join(root, "workspace");
   await fs.mkdir(home); await fs.mkdir(workspace);
+  const environment = a01Environment(home, workspace, caseName);
+  // The launcher never imports product code; validate the scope actually passed
+  // to its owned child rather than requiring unused parent-process overrides.
+  assertA01Isolation(environment);
   const child = spawn(process.execPath, ["--test", "--test-reporter=tap", fileURLToPath(entryUrl)], {
-    env: a01Environment(home, workspace, caseName), stdio: ["ignore", "pipe", "pipe"], timeout: 45_000,
+    env: environment, stdio: ["ignore", "pipe", "pipe"], timeout: 45_000,
   });
   let stdout = "", stderr = "";
   child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");

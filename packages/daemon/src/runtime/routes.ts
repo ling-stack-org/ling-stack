@@ -17,6 +17,7 @@ import type { LingExtensionMetadata, LingExtensionRegistry } from "@ling-stack/p
 import type { ResolvedDaemonConfig } from "../config.js";
 import { HttpError } from "../errors.js";
 import { assertNoUnsafeRequiredPause } from "../features/runs/user-input-cancellation-guard.js";
+import { projectPublicRunSession, projectPublicWorkUnit } from "../features/runs/public-execution-snapshots.js";
 import { appendControlPlaneEvent } from "../features/control-plane/events.js";
 import type { ControlPlaneEventHub } from "../features/control-plane/events.js";
 import type { WorkUnitRoute } from "../server/routes.js";
@@ -169,9 +170,14 @@ export function handleGetRuntimeSupervisor(
     return;
   }
   try {
+    const diagnostics = runtimeSupervisor.getDiagnostics(resolved.cwd, resolved.store);
     writeJson(response, 200, {
       cwd: resolved.cwd,
-      ...runtimeSupervisor.getDiagnostics(resolved.cwd, resolved.store),
+      ...diagnostics,
+      active: diagnostics.active.map(workUnit => projectPublicWorkUnit(workUnit, resolved.store)),
+      stuck: diagnostics.stuck.map(workUnit => projectPublicWorkUnit(workUnit, resolved.store)),
+      queued: diagnostics.queued.map(workUnit => projectPublicWorkUnit(workUnit, resolved.store)),
+      stale: diagnostics.stale.map(workUnit => projectPublicWorkUnit(workUnit, resolved.store)),
     });
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
@@ -186,7 +192,7 @@ export function handleListRuntimeActive(response: ServerResponse, url: URL, stor
   if (!resolved) {
     return;
   }
-  writeJson(response, 200, { cwd: resolved.cwd, workUnits: listActiveWorkUnits(resolved.store) });
+  writeJson(response, 200, { cwd: resolved.cwd, workUnits: listActiveWorkUnits(resolved.store).map((workUnit) => projectPublicWorkUnit(workUnit, resolved.store)) });
 }
 
 export function handleListRuntimeStuck(response: ServerResponse, url: URL, storeRegistry: RunStoreRegistry): void {
@@ -197,7 +203,7 @@ export function handleListRuntimeStuck(response: ServerResponse, url: URL, store
   const now = new Date();
   writeJson(response, 200, {
     cwd: resolved.cwd,
-    workUnits: listActiveWorkUnits(resolved.store).filter((workUnit) => isStuckWorkUnit(workUnit, now)),
+    workUnits: listActiveWorkUnits(resolved.store).filter((workUnit) => isStuckWorkUnit(workUnit, now)).map((workUnit) => projectPublicWorkUnit(workUnit, resolved.store)),
   });
 }
 
@@ -237,7 +243,7 @@ export function handleListWorkUnits(response: ServerResponse, url: URL, storeReg
       channelId: url.searchParams.get("channelId") ?? undefined,
       linkedRunId: url.searchParams.get("linkedRunId") ?? undefined,
       limit: readOptionalIntegerQuery(url, "limit", 1),
-    }),
+    }).map((workUnit) => projectPublicWorkUnit(workUnit, resolved.store)),
   });
 }
 
@@ -489,7 +495,7 @@ export async function handleWorkUnitRoute(
     );
     writeJson(response, 200, {
       cwd: resolved.cwd,
-      workUnit: latest,
+      workUnit: projectPublicWorkUnit(latest, resolved.store),
     });
     return;
   }
@@ -501,7 +507,7 @@ export async function handleWorkUnitRoute(
       writeJson(response, 409, {
         error: "terminal_state",
         message: "Cancelled work units cannot be retried from the runtime control plane.",
-        workUnit: current,
+        workUnit: projectPublicWorkUnit(current, resolved.store),
       });
       return;
     }
@@ -513,8 +519,8 @@ export async function handleWorkUnitRoute(
         writeJson(response, 409, {
           error: "continuation_activation_state_stale",
           message: "Enforced task Run retry requires both the Run and WorkUnit to be failed.",
-          run: linkedRun,
-          workUnit: current,
+          run: projectPublicRunSession(linkedRun, resolved.store),
+          workUnit: projectPublicWorkUnit(current, resolved.store),
         });
         return;
       }
@@ -523,15 +529,15 @@ export async function handleWorkUnitRoute(
         writeJson(response, started.statusCode, {
           error: started.error,
           message: started.message,
-          run: resolved.store.getRun(linkedRun.id) ?? linkedRun,
-          workUnit: resolved.store.getWorkUnit(current.id) ?? current,
+          run: projectPublicRunSession(resolved.store.getRun(linkedRun.id) ?? linkedRun, resolved.store),
+          workUnit: projectPublicWorkUnit(resolved.store.getWorkUnit(current.id) ?? current, resolved.store),
         });
         return;
       }
       writeJson(response, 202, {
         cwd: resolved.cwd,
-        run: resolved.store.getRun(linkedRun.id) ?? linkedRun,
-        workUnit: resolved.store.getWorkUnit(current.id) ?? current,
+        run: projectPublicRunSession(resolved.store.getRun(linkedRun.id) ?? linkedRun, resolved.store),
+        workUnit: projectPublicWorkUnit(resolved.store.getWorkUnit(current.id) ?? current, resolved.store),
         continuation: { origin: "runner_retry", status: "started", runId: started.runId },
       });
       return;
@@ -549,7 +555,7 @@ export async function handleWorkUnitRoute(
       errorMessage: null,
     });
     if (!transition.ok) {
-      writeJson(response, 409, { error: transition.code, message: `Work unit retry failed: ${transition.code}`, workUnit: current });
+      writeJson(response, 409, { error: transition.code, message: `Work unit retry failed: ${transition.code}`, workUnit: projectPublicWorkUnit(current, resolved.store) });
       return;
     }
     const latest = resolved.store.getWorkUnit(current.id) ?? current;
@@ -571,7 +577,7 @@ export async function handleWorkUnitRoute(
     });
     writeJson(response, 200, {
       cwd: resolved.cwd,
-      workUnit: latest,
+      workUnit: projectPublicWorkUnit(latest, resolved.store),
       event,
     });
     return;
@@ -593,7 +599,7 @@ export async function handleWorkUnitRoute(
   );
   writeJson(response, 200, {
     cwd: resolved.cwd,
-    workUnit: resolved.store.getWorkUnit(reconciled.id) ?? reconciled,
+    workUnit: projectPublicWorkUnit(resolved.store.getWorkUnit(reconciled.id) ?? reconciled, resolved.store),
   });
 }
 
@@ -607,13 +613,13 @@ function buildWorkUnitDetailResponse(cwd: string, store: RunStore, workUnit: Wor
   const attempts = store.listWorkUnitAttempts(workUnit.id);
   return removeUndefined({
     cwd,
-    workUnit,
+    workUnit: projectPublicWorkUnit(workUnit, store),
     attempts,
     stopEvidence: readWorkUnitStopEvidence(store, workUnit, attempts, activeRuns),
     events: store.listRuntimeEvents(workUnit.id, { limit: 500 }),
     leases: store.listResourceLeases({ workUnitId: workUnit.id, limit: 500 }),
     semaphoreSlots: store.listRuntimeSemaphoreSlots({ workUnitId: workUnit.id, limit: 500 }),
-    run: workUnit.linkedRunId ? store.getRun(workUnit.linkedRunId) : undefined,
+    run: projectPublicRunSession(workUnit.linkedRunId ? store.getRun(workUnit.linkedRunId) : undefined, store),
   });
 }
 

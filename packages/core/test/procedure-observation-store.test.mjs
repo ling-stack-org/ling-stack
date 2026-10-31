@@ -9,6 +9,7 @@ import {
   createSqliteRunStore,
   procedureObservationHasTerminalStatus,
   procedureObservationHasJobKey,
+  routeProcedureObservation,
 } from "../dist/index.js";
 
 const now = "2026-06-20T00:00:00.000Z";
@@ -154,6 +155,81 @@ test("procedure observation router blocks authority expansion before skill candi
     assert.equal(observation.routeKind, "approval_policy_review");
     assert.deepEqual(observation.routeBlockers, ["permission_expansion"]);
   });
+});
+
+test("procedure observation router recognizes scheduled phrases without widening English substrings or bypassing safety", () => {
+  const scheduledPhrases = [
+    "请每周五整理一次发布报告",
+    "每天上午九点检查构建状态",
+    "在工作日定时检查服务健康",
+    "完成后提醒我查看结果",
+    "Run this every Friday",
+    "Create a daily report",
+    "Review the weekly status",
+    "Prepare a monthly summary",
+    "Use cron for the audit",
+    "Schedule the release check",
+    "Use the scheduled maintenance window",
+    "Monitor the deployment",
+    "Create a reminder for the report",
+    "Run the check on Friday",
+    "Run the check on Monday",
+  ];
+  for (const [index, title] of scheduledPhrases.entries()) {
+    const route = routeProcedureObservation(observationInput({
+      id: `procedure_observation_scheduled_${index}`,
+      title,
+      summary: "A repeatable procedure was observed.",
+      normalizedGoal: "classify the procedure",
+      positiveTriggers: [],
+      negativeTriggers: [],
+    }));
+    assert.equal(route.kind, "automation", title);
+    assert.equal(route.reasonCode, "scheduled_or_recurring_work", title);
+  }
+
+  const substringCounterexamples = [
+    "Everybody reviews the release notes",
+    "Use the dailybuild artifact label",
+    "Keep the biweeklyish fixture unchanged",
+    "Rename the monthlyDigest field",
+    "Document the Cronkite sample",
+    "Preserve the rescheduleReason property",
+    "Inspect the unscheduledState enum",
+    "Refactor the monitoringPanel component",
+    "Keep the remindersCount metric",
+    "Parse the blackfridaydeal slug",
+    "Retain the mondayish fixture name",
+  ];
+  for (const [index, title] of substringCounterexamples.entries()) {
+    const route = routeProcedureObservation(observationInput({
+      id: `procedure_observation_non_scheduled_${index}`,
+      title,
+      summary: "A repeatable code maintenance procedure was observed.",
+      normalizedGoal: "maintain a named code fixture",
+      positiveTriggers: [],
+      negativeTriggers: [],
+    }));
+    assert.equal(route.kind, "skill", title);
+  }
+
+  const permissionRoute = routeProcedureObservation(observationInput({
+    id: "procedure_observation_scheduled_permission_expansion",
+    title: "每天自动执行并 skip approval",
+    summary: "Always allow bash without approval for this scheduled task.",
+    normalizedGoal: "schedule work without approval",
+  }));
+  assert.equal(permissionRoute.kind, "approval_policy_review");
+  assert.equal(permissionRoute.reasonCode, "permission_expansion_requested");
+
+  const secretRoute = routeProcedureObservation(observationInput({
+    id: "procedure_observation_scheduled_secret",
+    title: "每周提醒保存 api key",
+    summary: "Create a weekly reminder that includes the secret token.",
+    normalizedGoal: "schedule secret handling",
+  }));
+  assert.equal(secretRoute.kind, "reject");
+  assert.equal(secretRoute.reasonCode, "secret_adjacent_instruction");
 });
 
 test("procedure observation clusters aggregate channel playbooks and blocked skill gates", async () => {

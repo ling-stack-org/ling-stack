@@ -608,7 +608,7 @@ test("closed gate never composes a provider even when the daemon returned a type
   assert.equal(status.state, "connected");
   assert.equal(factoryCalls, 0);
   assert.equal(bindingFactoryCalls, 0);
-  assert.equal(daemon.statusListenerCount, 0, "closed gates do not add provider lifecycle observers");
+  assert.equal(daemon.statusListenerCount, 1, "Host drain must fence execution authority even with Computer Use disabled");
   assert.equal(runtime.cuaDriverCoordinator, undefined);
 });
 
@@ -1011,7 +1011,7 @@ test("a lock received before provider composition still blocks a later resume hi
   await runtime.shutdown();
 });
 
-test("shutdown continues to the owned daemon after coordinator cleanup fails", async () => {
+test("shutdown confirms original daemon stop before coordinator cleanup and preserves cleanup errors", async () => {
   const events = [];
   const cleanupError = new Error("coordinator cleanup failed");
   const daemon = fakeDaemon(authority("connection-a", 1), {
@@ -1033,7 +1033,7 @@ test("shutdown continues to the owned daemon after coordinator cleanup fails", a
   await assert.rejects(runtime.shutdown(), (error) => error === cleanupError);
   await assert.rejects(runtime.ensureStarted(), (error) => error?.code === "shutdown_requested");
 
-  assert.deepEqual(events, ["coordinator.shutdown", "daemon.stop"]);
+  assert.deepEqual(events, ["daemon.stop", "coordinator.shutdown"]);
   assert.equal(daemon.stopCalls, 1);
 });
 
@@ -1057,8 +1057,9 @@ test("concurrent and repeated shutdown calls share one coordinator and daemon cl
   await runtime.ensureStarted();
 
   const firstShutdown = runtime.shutdown();
-  assert.equal(daemon.statusListenerCount, 0, "shutdown synchronously removes the internal status observer");
+  assert.equal(daemon.statusListenerCount, 1, "stop observation remains until real Host stop proof");
   await shutdownStarted.promise;
+  assert.equal(daemon.statusListenerCount, 0, "confirmed stop permits removing the internal observer");
   daemon.emitStatus({ state: "disconnected", baseUrl: "http://127.0.0.1:17891", ownedByDesktop: false });
   const secondShutdown = runtime.shutdown();
 
@@ -1070,7 +1071,7 @@ test("concurrent and repeated shutdown calls share one coordinator and daemon cl
   assert.equal(daemon.stopCalls, 1);
 });
 
-test("restart still rotates daemon authority when old coordinator cleanup fails", async () => {
+test("restart retains old coordinator and cannot start a successor when cleanup fails", async () => {
   const cleanupError = new Error("old coordinator cleanup failed");
   const daemon = fakeDaemon(authority("connection-a", 1), {
     onRestart: () => {
@@ -1096,7 +1097,8 @@ test("restart still rotates daemon authority when old coordinator cleanup fails"
   await assert.rejects(runtime.restart(), (error) => error === cleanupError);
   await assert.rejects(runtime.ensureStarted(), (error) => error === cleanupError);
 
-  assert.equal(daemon.restartCalls, 1, "daemon handshake must still fence the old lease");
+  assert.equal(daemon.stopCalls, 1, "the old Host must really stop before local cleanup");
+  assert.equal(daemon.restartCalls, 0, "incomplete local cleanup cannot authorize a successor");
   assert.equal(factoryCalls, 1, "an incompletely stopped coordinator blocks replacement");
   assert.ok(runtime.cuaDriverCoordinator, "failed cleanup remains retained for retry instead of being forgotten");
 });
@@ -1132,7 +1134,7 @@ test("shutdown fences an in-flight startup and still stops the daemon", async ()
   assert.deepEqual(events, ["daemon.start.begin", "daemon.start.end", "daemon.stop"]);
 });
 
-test("shutdown racing availability publication revokes the composed coordinator before daemon stop", async () => {
+test("shutdown racing availability publication retains the composed coordinator until daemon stop", async () => {
   const enableStarted = deferred();
   const releaseEnable = deferred();
   const events = [];
@@ -1164,8 +1166,8 @@ test("shutdown racing availability publication revokes the composed coordinator 
   assert.deepEqual(events, [
     "coordinator.enable.begin",
     "coordinator.enable.end",
-    "coordinator.shutdown",
     "daemon.stop",
+    "coordinator.shutdown",
   ]);
 });
 
@@ -1205,6 +1207,7 @@ test("shutdown fences an in-flight restart before it can compose replacement aut
   await rejectedRestart;
   await shuttingDown;
   assert.deepEqual(events, [
+    "daemon.stop",
     "coordinator.shutdown",
     "daemon.restart.begin",
     "daemon.restart.end",
@@ -1212,7 +1215,7 @@ test("shutdown fences an in-flight restart before it can compose replacement aut
   ]);
   assert.equal(factoryCalls, 1, "shutdown must prevent replacement coordinator construction");
   assert.equal(daemon.restartCalls, 1);
-  assert.equal(daemon.stopCalls, 1);
+  assert.equal(daemon.stopCalls, 2, "shutdown must stop the in-flight restart's successor too");
   assert.equal(runtime.cuaDriverCoordinator, undefined);
 });
 
@@ -1511,6 +1514,7 @@ function fakeDaemon(initialAuthority, options = {}) {
     async stopOwnedDaemon() {
       this.stopCalls += 1;
       options.onStop?.();
+      return { kind: "owned_stopped", pid: 42000, code: 0, signal: null };
     },
     onStatusChanged(listener) {
       statusListeners.add(listener);

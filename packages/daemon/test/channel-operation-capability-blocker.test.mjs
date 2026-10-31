@@ -174,8 +174,11 @@ for (const [name, mutate] of [
 ]) test(`invalid ${name} is still rejected as binding failure before capability classification`, async (t) => {
   const f = await fixture(t); mutate(f.execution.operations[0]);
   const result = await f.select();
-  assert.equal(result.action, "clarify");
+  assert.equal(result.action, "blocked");
+  assert.equal(result.errorCode, "channel_operation_plan_invalid");
   const decision = f.store.getChannelIntentDecision(result.intentDecisionId);
+  assert.equal(decision.status, "failed");
+  assert.equal(decision.errorCode, "channel_operation_plan_invalid");
   assert.notEqual(decision.errorCode, code);
   assert.equal(decision.execution, undefined);
   assertNoExecution(f);

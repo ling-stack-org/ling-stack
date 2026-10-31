@@ -1,6 +1,6 @@
+import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { channelSessionThreadId, isChannelSessionDraft } from "../../app/channel-session-state.js";
 import { reconcileChannelSessionMessageCache } from "./channel-session-message-cache.js";
-import { useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
   getChannelCollaborationProtocol,
   getChannelBrief,
@@ -254,7 +254,17 @@ export function useWorkspaceDomain(input: {
     title: input.translate(defaultTaskForm.title),
     prompt: input.translate(defaultTaskForm.prompt),
   }));
-  const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [taskSelection, setTaskSelection] = useState({ id: "", explicitRevision: 0 });
+  const selectedTaskId = taskSelection.id;
+  function setSelectedTaskId(update: SetStateAction<string>): void {
+    setTaskSelection(current => ({ ...current, id: typeof update === "function" ? update(current.id) : update }));
+  }
+  function selectTaskExplicitly(update: SetStateAction<string>): void {
+    setTaskSelection(current => ({
+      id: typeof update === "function" ? update(current.id) : update,
+      explicitRevision: current.explicitRevision + 1,
+    }));
+  }
   const [taskEditForm, setTaskEditForm] = useState<TaskEditFormState>(defaultTaskEditForm);
   const [taskRunProviderId, setTaskRunProviderId] = useState("");
   const [channelMessages, setChannelMessages] = useState<readonly ChannelMessage[]>([]);
@@ -336,6 +346,21 @@ export function useWorkspaceDomain(input: {
   const selectedChannelMessageThreadIdRef = useRef(selectedChannelMessageThreadId);
   selectedChannelIdRef.current = selectedChannelId;
   selectedChannelMessageThreadIdRef.current = selectedChannelMessageThreadId;
+  // Dock panels belong to the channel, not its selected root/topic/branch.
+  const channelPanelOwnerKey = JSON.stringify([input.cwd.trim(), selectedChannelId]);
+  const [channelPanelStateOwner, setChannelPanelStateOwner] = useState({
+    key: channelPanelOwnerKey, cwd: input.cwd.trim(), taskSelectionRevision: taskSelection.explicitRevision,
+  });
+  const channelPanelOwnerRef = useRef({ key: channelPanelOwnerKey });
+  if (channelPanelOwnerRef.current.key !== channelPanelOwnerKey) {
+    channelPanelOwnerRef.current = { key: channelPanelOwnerKey };
+  }
+  if (channelPanelStateOwner.key !== channelPanelOwnerKey ||
+    channelPanelStateOwner.taskSelectionRevision !== taskSelection.explicitRevision) {
+    setChannelPanelStateOwner({
+      key: channelPanelOwnerKey, cwd: input.cwd.trim(), taskSelectionRevision: taskSelection.explicitRevision,
+    });
+  }
   const channelReadOwner = JSON.stringify([input.cwd.trim(), selectedChannelId, selectedChannelMessageThreadId ?? ""]);
   const channelRuntimeMetrics = channelRuntimeMetricsState.owner === channelReadOwner ? channelRuntimeMetricsState.metrics : undefined;
   const channelReadOwnerChanged = channelReadOwnerRef.current !== channelReadOwner;
@@ -346,35 +371,88 @@ export function useWorkspaceDomain(input: {
     });
     channelReadOwnerRef.current = channelReadOwner;
     channelReadEpochRef.current.invalidate();
-    channelInputPageRef.current = channelMessageCacheRef.current.get(channelReadOwner)?.page;
-  }
-
-  useLayoutEffect(() => {
     const cached = channelMessageCacheRef.current.get(channelReadOwner);
+    channelInputPageRef.current = cached?.page;
+    // Keep the owner transition synchronous so a newly selected channel cannot
+    // paint the previous channel's transcript while its first read is pending.
     setChannelMessages(cached?.messages ?? []);
     setChannelConversationItems(cached?.items ?? []);
     setChannelGeneratedMedia(cached?.generatedMedia ?? []);
     setChannelMessagesHasOlder(cached?.hasOlder ?? false);
     setChannelItemsBeforeSequence(cached?.before);
     setChannelMessagesLoadingOlder(false);
-    if (cached?.page) {
-      setChannelTurnContextAssignmentState({ owner: channelReadOwner, assignments: cached.page.turnContextAssignments });
-      setChannelUserInputState({ owner: channelReadOwner, items: cached.page.userInputs ?? [] });
-      setChannelReasoningSummaryState({ owner: channelReadOwner, items: cached.page.reasoningSummaries });
-      setChannelContextCompactionState({ owner: channelReadOwner, items: cached.page.contextCompactions ?? [] });
-    }
-  }, [channelReadOwner]);
-
-  useLayoutEffect(() => {
-    if (channelReadOwnerChanged) return;
+    setChannelTurnContextAssignmentState(cached?.page
+      ? { owner: channelReadOwner, assignments: cached.page.turnContextAssignments }
+      : { owner: channelReadOwner, assignments: [] });
+    setChannelUserInputState(cached?.page
+      ? { owner: channelReadOwner, items: cached.page.userInputs ?? [] }
+      : { owner: channelReadOwner, items: [] });
+    setChannelReasoningSummaryState(cached?.page
+      ? { owner: channelReadOwner, items: cached.page.reasoningSummaries }
+      : { owner: channelReadOwner, items: [] });
+    setChannelContextCompactionState(cached?.page
+      ? { owner: channelReadOwner, items: cached.page.contextCompactions ?? [] }
+      : { owner: channelReadOwner, items: [] });
+  } else {
     channelMessageCacheRef.current.set(channelReadOwner, {
       messages: channelMessages, items: channelConversationItems, page: channelInputPageRef.current,
       generatedMedia: channelGeneratedMedia, hasOlder: channelMessagesHasOlder, before: channelItemsBeforeSequence,
     });
-  }, [channelMessages, channelConversationItems, channelGeneratedMedia, channelMessagesHasOlder, channelItemsBeforeSequence]);
+  }
+
+  if (channelPanelStateOwner.key !== channelPanelOwnerKey) {
+    // Clear before React commits the new owner, so a newly selected channel cannot paint old dock data.
+    setChannelExecutionProposals([]);
+    setChannelAttachments([]);
+    setChannelLinkPreviews([]);
+    setChannelFilesLoading(false);
+    // Task navigation can inject a target row before selecting its channel in the same React batch.
+    setTasks(current => channelPanelStateOwner.cwd === input.cwd.trim()
+      ? current.filter(task => task.channelId === selectedChannelId) : []);
+    if (channelPanelStateOwner.taskSelectionRevision === taskSelection.explicitRevision) {
+      setSelectedTaskId("");
+    }
+    setTasksLoading(false);
+    setChannelArtifactsByRun({});
+    setChannelArtifactErrorsByRun({});
+    setChannelRunArtifactsLoading(false);
+    setChannelExecutionActions([]);
+    setChannelExecutionActionError("");
+    setChannelStateTransitions([]);
+    setChannelActivityTransitionError("");
+    setChannelActivityTransitionsLoading(false);
+    channelActivityTransitionsLoadedScopeRef.current = "";
+    setChannelGovernanceNotifications([]);
+    setChannelGovernanceNotificationsLoading(false);
+    setChannelCouncilPolicy(undefined);
+    setChannelEffectiveCouncil(undefined);
+    setChannelCouncilLoading(false);
+    resetChannelProtocol();
+    setError(undefined);
+  }
 
   function isSelectedChannelConversation(channelId: string, threadId?: string): boolean {
     return channelId === selectedChannelIdRef.current && threadId === selectedChannelMessageThreadIdRef.current;
+  }
+
+  function beginChannelPanelRead(key: string, cwd: string, channelId: string) {
+    const owner = channelPanelOwnerRef.current;
+    const token = owner.key === JSON.stringify([cwd, channelId]) ? loadGuard.next(key) : undefined;
+    const isCurrent = () => token !== undefined && channelPanelOwnerRef.current === owner && loadGuard.isCurrent(key, token);
+    function publish<T>(setter: Dispatch<SetStateAction<T>>, update: SetStateAction<NoInfer<T>>): void {
+      if (!isCurrent()) return;
+      // React may apply an updater after navigation or a newer request.
+      setter(current => !isCurrent() ? current : typeof update === "function"
+        ? (update as (value: T) => T)(current) : update);
+    }
+    function report(surface: WorkspaceFeedbackSurface, caught: unknown): void {
+      if (!isCurrent()) return;
+      const message = caught instanceof Error ? caught.message : String(caught);
+      const error: DomainError = { scope: "load", message };
+      publish(setError, error);
+      input.reportFeedback({ workspaceCwd: cwd.trim(), surface, identity: channelId, scope: "load", message });
+    }
+    return { isCurrent, publish, report };
   }
 
   function clearScopedFeedback(surface: WorkspaceFeedbackSurface, identity: string): void {
@@ -429,36 +507,33 @@ export function useWorkspaceDomain(input: {
 
   async function refreshTasks(channelId = selectedChannelId): Promise<void> {
     const cwd = input.cwd.trim();
+    const read = beginChannelPanelRead(`tasks:${cwd}:${channelId}`, cwd, channelId);
+    if (!read.isCurrent()) return;
     if (!cwd || !channelId) {
-      setTasks([]);
+      read.publish(setTasks, []);
+      read.publish(setTasksLoading, false);
       return;
     }
 
-    const token = loadGuard.next(`tasks:${cwd}:${channelId}`);
-    setTasksLoading(true);
+    read.publish(setTasksLoading, true);
     try {
       clearScopedFeedback("task", channelId);
-      setError(undefined);
+      read.publish(setError, undefined);
       const response = await listTasks(cwd, channelId);
-      if (!loadGuard.isCurrent(`tasks:${cwd}:${channelId}`, token)) {
-        return;
-      }
-      setTasks(response.tasks);
-      setSelectedTaskId((current) => {
+      read.publish(setTasks, response.tasks);
+      read.publish(setSelectedTaskId, (current) => {
         if (response.tasks.some((task) => task.id === current)) {
           return current;
         }
         return "";
       });
     } catch (caught) {
-      if (!loadGuard.isCurrent(`tasks:${cwd}:${channelId}`, token)) return;
-      reportScopedFeedback("task", channelId, "load", caught);
+      read.report("task", caught);
     } finally {
-      if (loadGuard.isCurrent(`tasks:${cwd}:${channelId}`, token)) {
-        setTasksLoading(false);
-      }
+      read.publish(setTasksLoading, false);
     }
   }
+
 
   async function refreshAiCouncils(cwd = input.cwd.trim()): Promise<void> {
     if (!cwd) {
@@ -494,36 +569,32 @@ export function useWorkspaceDomain(input: {
 
   async function refreshSelectedChannelCouncil(channelId = selectedChannelId): Promise<void> {
     const cwd = input.cwd.trim();
+    const read = beginChannelPanelRead(`channelCouncil:${cwd}:${channelId}`, cwd, channelId);
+    if (!read.isCurrent()) return;
     if (!cwd || !channelId) {
-      setChannelCouncilPolicy(undefined);
-      setChannelEffectiveCouncil(undefined);
-      setChannelCouncilLoading(false);
+      read.publish(setChannelCouncilPolicy, undefined);
+      read.publish(setChannelEffectiveCouncil, undefined);
+      read.publish(setChannelCouncilLoading, false);
       return;
     }
 
-    const token = loadGuard.next(`channelCouncil:${cwd}:${channelId}`);
-    setChannelCouncilLoading(true);
+    read.publish(setChannelCouncilLoading, true);
     try {
       clearScopedFeedback("workspace", channelId);
-      setError(undefined);
+      read.publish(setError, undefined);
       const [policyResponse, effectiveResponse] = await Promise.all([
         getChannelCouncilPolicy(cwd, channelId),
         getChannelEffectiveCouncil(cwd, channelId),
       ]);
-      if (!loadGuard.isCurrent(`channelCouncil:${cwd}:${channelId}`, token)) {
-        return;
-      }
-      setChannelCouncilPolicy(policyResponse.policy);
-      setChannelEffectiveCouncil(effectiveResponse.effectiveCouncil);
+      read.publish(setChannelCouncilPolicy, policyResponse.policy);
+      read.publish(setChannelEffectiveCouncil, effectiveResponse.effectiveCouncil);
     } catch (caught) {
-      if (!loadGuard.isCurrent(`channelCouncil:${cwd}:${channelId}`, token)) return;
-      reportScopedFeedback("workspace", channelId, "load", caught);
+      read.report("workspace", caught);
     } finally {
-      if (loadGuard.isCurrent(`channelCouncil:${cwd}:${channelId}`, token)) {
-        setChannelCouncilLoading(false);
-      }
+      read.publish(setChannelCouncilLoading, false);
     }
   }
+
 
   async function updateSelectedChannelCouncilPolicy(
     policyInput: UpdateChannelCouncilPolicyRequest,
@@ -687,25 +758,23 @@ export function useWorkspaceDomain(input: {
 
   async function refreshChannelExecutionProposals(channelId = selectedChannelId): Promise<void> {
     const cwd = input.cwd.trim();
+    const read = beginChannelPanelRead(`executionProposals:${cwd}:${channelId}`, cwd, channelId);
+    if (!read.isCurrent()) return;
     if (!cwd || !channelId) {
-      setChannelExecutionProposals([]);
+      read.publish(setChannelExecutionProposals, []);
       return;
     }
 
-    const token = loadGuard.next(`executionProposals:${cwd}:${channelId}`);
     try {
       clearScopedFeedback("workflow", channelId);
-      setError(undefined);
+      read.publish(setError, undefined);
       const response = await listChannelExecutionProposals(cwd, channelId);
-      if (!loadGuard.isCurrent(`executionProposals:${cwd}:${channelId}`, token)) {
-        return;
-      }
-      setChannelExecutionProposals(response.proposals);
+      read.publish(setChannelExecutionProposals, response.proposals);
     } catch (caught) {
-      if (!loadGuard.isCurrent(`executionProposals:${cwd}:${channelId}`, token)) return;
-      reportScopedFeedback("workflow", channelId, "load", caught);
+      read.report("workflow", caught);
     }
   }
+
 
   function upsertChannelExecutionProposal(proposal: ChannelExecutionProposal): void {
     setChannelExecutionProposals((current) => [
@@ -716,54 +785,52 @@ export function useWorkspaceDomain(input: {
 
   async function refreshChannelFiles(channelId = selectedChannelId): Promise<void> {
     const cwd = input.cwd.trim();
+    const read = beginChannelPanelRead(`files:${cwd}:${channelId}`, cwd, channelId);
+    if (!read.isCurrent()) return;
     if (!cwd || !channelId) {
-      setChannelAttachments([]);
-      setChannelLinkPreviews([]);
+      read.publish(setChannelAttachments, []);
+      read.publish(setChannelLinkPreviews, []);
+      read.publish(setChannelFilesLoading, false);
       return;
     }
 
-    const token = loadGuard.next(`files:${cwd}:${channelId}`);
-    setChannelFilesLoading(true);
+    read.publish(setChannelFilesLoading, true);
     try {
       clearScopedFeedback("dock", channelId);
-      setError(undefined);
+      read.publish(setError, undefined);
       const [attachmentsResponse, linksResponse] = await Promise.all([
         listChannelAttachments(cwd, channelId),
         listChannelLinkPreviews(cwd, channelId),
       ]);
-      if (!loadGuard.isCurrent(`files:${cwd}:${channelId}`, token)) {
-        return;
-      }
-      setChannelAttachments(attachmentsResponse.attachments);
-      setChannelLinkPreviews(linksResponse.linkPreviews);
+      read.publish(setChannelAttachments, attachmentsResponse.attachments);
+      read.publish(setChannelLinkPreviews, linksResponse.linkPreviews);
     } catch (caught) {
-      if (!loadGuard.isCurrent(`files:${cwd}:${channelId}`, token)) return;
-      reportScopedFeedback("dock", channelId, "load", caught);
+      read.report("dock", caught);
     } finally {
-      if (loadGuard.isCurrent(`files:${cwd}:${channelId}`, token)) {
-        setChannelFilesLoading(false);
-      }
+      read.publish(setChannelFilesLoading, false);
     }
   }
+
 
   async function refreshChannelRunArtifacts(
     cwd = input.cwd.trim(),
     channelId = selectedChannelId,
     channelRuns: readonly RunSession[] = [],
   ): Promise<void> {
+    const read = beginChannelPanelRead(`runArtifacts:${cwd}:${channelId}`, cwd, channelId);
+    if (!read.isCurrent()) return;
     if (!cwd || !channelId) {
-      setChannelArtifactsByRun({});
-      setChannelArtifactErrorsByRun({});
-      setChannelRunArtifactsLoading(false);
+      read.publish(setChannelArtifactsByRun, {});
+      read.publish(setChannelArtifactErrorsByRun, {});
+      read.publish(setChannelRunArtifactsLoading, false);
       return;
     }
     if (channelRuns.length === 0) {
-      setChannelRunArtifactsLoading(false);
+      read.publish(setChannelRunArtifactsLoading, false);
       return;
     }
 
-    const token = loadGuard.next(`runArtifacts:${cwd}:${channelId}`);
-    setChannelRunArtifactsLoading(true);
+    read.publish(setChannelRunArtifactsLoading, true);
     const results = await Promise.all(
       channelRuns.map(async (sourceRun) => {
         try {
@@ -775,7 +842,7 @@ export function useWorkspaceDomain(input: {
         }
       }),
     );
-    if (!loadGuard.isCurrent(`runArtifacts:${cwd}:${channelId}`, token)) {
+    if (!read.isCurrent()) {
       return;
     }
 
@@ -788,28 +855,30 @@ export function useWorkspaceDomain(input: {
         nextErrors[result.runId] = result.error;
       }
     }
-    setChannelArtifactsByRun(nextArtifacts);
-    setChannelArtifactErrorsByRun(nextErrors);
-    setChannelRunArtifactsLoading(false);
+    read.publish(setChannelArtifactsByRun, nextArtifacts);
+    read.publish(setChannelArtifactErrorsByRun, nextErrors);
+    read.publish(setChannelRunArtifactsLoading, false);
   }
+
 
   async function refreshChannelExecutionActions(
     cwd = input.cwd.trim(),
     channelId = selectedChannelId,
     channelRuns: readonly RunSession[] = [],
   ): Promise<void> {
+    const read = beginChannelPanelRead(`executionActions:${cwd}:${channelId}`, cwd, channelId);
+    if (!read.isCurrent()) return;
     if (!cwd || !channelId) {
-      setChannelExecutionActions([]);
-      setChannelExecutionActionError("");
+      read.publish(setChannelExecutionActions, []);
+      read.publish(setChannelExecutionActionError, "");
       return;
     }
     if (channelRuns.length === 0) {
-      setChannelExecutionActions([]);
-      setChannelExecutionActionError("");
+      read.publish(setChannelExecutionActions, []);
+      read.publish(setChannelExecutionActionError, "");
       return;
     }
 
-    const token = loadGuard.next(`executionActions:${cwd}:${channelId}`);
     const [results, narrationResults] = await Promise.all([Promise.all(
       channelRuns.map(async (sourceRun) => {
         try {
@@ -826,13 +895,13 @@ export function useWorkspaceDomain(input: {
         return { error: caught instanceof Error ? caught.message : String(caught) };
       }
     }))]);
-    if (!loadGuard.isCurrent(`executionActions:${cwd}:${channelId}`, token)) {
+    if (!read.isCurrent()) {
       return;
     }
 
     const nextActions = new Map<string, ExecutionAction>();
     const errors = new Set<string>();
-    setChannelWorkflowSteps(current => mergeWorkflowNarration(current, narrationResults.flatMap(result => result.steps ?? [])));
+    read.publish(setChannelWorkflowSteps, current => mergeWorkflowNarration(current, narrationResults.flatMap(result => result.steps ?? [])));
     for (const result of narrationResults) if (result.error) errors.add(result.error);
     for (const result of results) {
       if ("error" in result) {
@@ -843,23 +912,26 @@ export function useWorkspaceDomain(input: {
         }
       }
     }
-    setChannelExecutionActions([...nextActions.values()].sort((a, b) =>
+    read.publish(setChannelExecutionActions, [...nextActions.values()].sort((a, b) =>
       (b.completedAt ?? b.executedAt ?? b.resolvedAt ?? b.createdAt).localeCompare(a.completedAt ?? a.executedAt ?? a.resolvedAt ?? a.createdAt) ||
       b.id.localeCompare(a.id),
     ));
-    setChannelExecutionActionError(errors.size > 0 ? [...errors][0] : "");
+    read.publish(setChannelExecutionActionError, errors.size > 0 ? [...errors][0] : "");
   }
+
 
   async function refreshChannelActivityTransitions(
     cwd = input.cwd.trim(),
     channelId = selectedChannelId,
     channelRuns: readonly RunSession[] = [],
   ): Promise<void> {
+    const read = beginChannelPanelRead(`activityTransitions:${cwd}:${channelId}`, cwd, channelId);
+    if (!read.isCurrent()) return;
     if (!cwd || !channelId) {
       channelActivityTransitionsLoadedScopeRef.current = "";
-      setChannelStateTransitions([]);
-      setChannelActivityTransitionError("");
-      setChannelActivityTransitionsLoading(false);
+      read.publish(setChannelStateTransitions, []);
+      read.publish(setChannelActivityTransitionError, "");
+      read.publish(setChannelActivityTransitionsLoading, false);
       return;
     }
 
@@ -867,14 +939,13 @@ export function useWorkspaceDomain(input: {
     const entities = buildChannelTransitionEntities(channelId, tasks, channelRuns, channelWorkflows, channelWorkflowSteps);
     if (entities.length === 0) {
       channelActivityTransitionsLoadedScopeRef.current = scopeKey;
-      setChannelStateTransitions([]);
-      setChannelActivityTransitionError("");
-      setChannelActivityTransitionsLoading(false);
+      read.publish(setChannelStateTransitions, []);
+      read.publish(setChannelActivityTransitionError, "");
+      read.publish(setChannelActivityTransitionsLoading, false);
       return;
     }
 
-    const token = loadGuard.next(`activityTransitions:${cwd}:${channelId}`);
-    setChannelActivityTransitionsLoading(channelActivityTransitionsLoadedScopeRef.current !== scopeKey);
+    read.publish(setChannelActivityTransitionsLoading, channelActivityTransitionsLoadedScopeRef.current !== scopeKey);
     const results = await Promise.all(
       entities.map(async (entity) => {
         try {
@@ -889,7 +960,7 @@ export function useWorkspaceDomain(input: {
         }
       }),
     );
-    if (!loadGuard.isCurrent(`activityTransitions:${cwd}:${channelId}`, token)) {
+    if (!read.isCurrent()) {
       return;
     }
 
@@ -905,43 +976,38 @@ export function useWorkspaceDomain(input: {
       }
     }
 
-    setChannelStateTransitions([...nextTransitions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
-    setChannelActivityTransitionError(errors.size > 0 ? [...errors][0] : "");
+    read.publish(setChannelStateTransitions, [...nextTransitions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+    read.publish(setChannelActivityTransitionError, errors.size > 0 ? [...errors][0] : "");
     channelActivityTransitionsLoadedScopeRef.current = scopeKey;
-    setChannelActivityTransitionsLoading(false);
+    read.publish(setChannelActivityTransitionsLoading, false);
   }
+
 
   async function refreshChannelGovernanceNotifications(channelId = selectedChannelId): Promise<void> {
     const cwd = input.cwd.trim();
+    const read = beginChannelPanelRead(`governanceNotifications:${cwd}:${channelId}`, cwd, channelId);
+    if (!read.isCurrent()) return;
     if (!cwd || !channelId) {
-      setChannelGovernanceNotifications([]);
-      setChannelGovernanceNotificationsLoading(false);
+      read.publish(setChannelGovernanceNotifications, []);
+      read.publish(setChannelGovernanceNotificationsLoading, false);
       return;
     }
 
-    const token = loadGuard.next(`governanceNotifications:${cwd}:${channelId}`);
-    setChannelGovernanceNotificationsLoading(true);
+    read.publish(setChannelGovernanceNotificationsLoading, true);
     try {
       const response = await listGovernanceNotifications(cwd, {
         surface: "channel",
         channelId,
         limit: 50,
       });
-      if (!loadGuard.isCurrent(`governanceNotifications:${cwd}:${channelId}`, token)) {
-        return;
-      }
-      setChannelGovernanceNotifications(response.notifications);
+      read.publish(setChannelGovernanceNotifications, response.notifications);
     } catch {
-      if (!loadGuard.isCurrent(`governanceNotifications:${cwd}:${channelId}`, token)) {
-        return;
-      }
-      setChannelGovernanceNotifications([]);
+      read.publish(setChannelGovernanceNotifications, []);
     } finally {
-      if (loadGuard.isCurrent(`governanceNotifications:${cwd}:${channelId}`, token)) {
-        setChannelGovernanceNotificationsLoading(false);
-      }
+      read.publish(setChannelGovernanceNotificationsLoading, false);
     }
   }
+
 
   async function markChannelGovernanceNotificationSeen(notificationId: string): Promise<void> {
     const cwd = input.cwd.trim();
@@ -983,60 +1049,57 @@ export function useWorkspaceDomain(input: {
 
   async function refreshChannelMessageRouteDecisions(channelId = selectedChannelId): Promise<void> {
     const cwd = input.cwd.trim();
+    const read = beginChannelPanelRead(`messageRouteDecisions:${cwd}:${channelId}`, cwd, channelId);
+    if (!read.isCurrent()) return;
     if (!cwd || !channelId) {
-      setChannelMessageRouteDecisions([]);
+      read.publish(setChannelMessageRouteDecisions, []);
       return;
     }
 
-    const token = loadGuard.next(`messageRouteDecisions:${cwd}:${channelId}`);
     try {
       clearScopedFeedback("protocol", channelId);
-      setError(undefined);
+      read.publish(setError, undefined);
       const response = await listChannelMessageRouteDecisions(cwd, channelId, { limit: channelMessageRouteDecisionLimit });
-      if (!loadGuard.isCurrent(`messageRouteDecisions:${cwd}:${channelId}`, token)) {
-        return;
-      }
-      setChannelMessageRouteDecisions(response.decisions);
+      read.publish(setChannelMessageRouteDecisions, response.decisions);
     } catch (caught) {
-      if (!loadGuard.isCurrent(`messageRouteDecisions:${cwd}:${channelId}`, token)) return;
-      reportScopedFeedback("protocol", channelId, "load", caught);
+      read.report("protocol", caught);
     }
   }
+
 
   async function refreshChannelIntentDecisions(channelId = selectedChannelId): Promise<void> {
     const cwd = input.cwd.trim();
+    const read = beginChannelPanelRead(`intentDecisions:${cwd}:${channelId}`, cwd, channelId);
+    if (!read.isCurrent()) return;
     if (!cwd || !channelId) {
-      setChannelIntentDecisions([]);
+      read.publish(setChannelIntentDecisions, []);
       return;
     }
 
-    const token = loadGuard.next(`intentDecisions:${cwd}:${channelId}`);
     try {
       clearScopedFeedback("protocol", channelId);
-      setError(undefined);
+      read.publish(setError, undefined);
       const response = await listChannelIntentDecisions(cwd, channelId, { limit: channelIntentDecisionLimit });
-      if (!loadGuard.isCurrent(`intentDecisions:${cwd}:${channelId}`, token)) {
-        return;
-      }
-      setChannelIntentDecisions(response.decisions);
+      read.publish(setChannelIntentDecisions, response.decisions);
     } catch (caught) {
-      if (!loadGuard.isCurrent(`intentDecisions:${cwd}:${channelId}`, token)) return;
-      reportScopedFeedback("protocol", channelId, "load", caught);
+      read.report("protocol", caught);
     }
   }
 
+
   async function refreshChannelProtocol(channelId = selectedChannelId): Promise<void> {
     const cwd = input.cwd.trim();
+    const read = beginChannelPanelRead(`protocol:${cwd}:${channelId}`, cwd, channelId);
+    if (!read.isCurrent()) return;
     if (!cwd || !channelId) {
       resetChannelProtocol();
       return;
     }
 
-    const token = loadGuard.next(`protocol:${cwd}:${channelId}`);
-    setChannelProtocolLoading(true);
+    read.publish(setChannelProtocolLoading, true);
     try {
       clearScopedFeedback("protocol", channelId);
-      setError(undefined);
+      read.publish(setError, undefined);
       const [briefResponse, protocolResponse, decisionsResponse, routeDecisionsResponse, intentDecisionsResponse, handoffsResponse, summariesResponse, workflowsResponse] = await Promise.all([
         getChannelBrief(cwd, channelId),
         getChannelCollaborationProtocol(cwd, channelId),
@@ -1047,28 +1110,24 @@ export function useWorkspaceDomain(input: {
         listChannelContextSummaries(cwd, channelId),
         listChannelWorkflows(cwd, channelId),
       ]);
+      if (!read.isCurrent()) return;
       const workflowSteps = await loadWorkflowSteps(cwd, workflowsResponse.workflows);
-      if (!loadGuard.isCurrent(`protocol:${cwd}:${channelId}`, token)) {
-        return;
-      }
-      setChannelBrief(briefResponse.brief);
-      setChannelCollaborationProtocol(protocolResponse);
-      setChannelDecisions(decisionsResponse.decisions);
-      setChannelMessageRouteDecisions(routeDecisionsResponse.decisions);
-      setChannelIntentDecisions(intentDecisionsResponse.decisions);
-      setChannelHandoffs(handoffsResponse.handoffs);
-      setChannelContextSummaries(summariesResponse.contextSummaries);
-      setChannelWorkflows(workflowsResponse.workflows);
-      setChannelWorkflowSteps(current => mergeWorkflowStepReadModels(current, workflowSteps));
+      read.publish(setChannelBrief, briefResponse.brief);
+      read.publish(setChannelCollaborationProtocol, protocolResponse);
+      read.publish(setChannelDecisions, decisionsResponse.decisions);
+      read.publish(setChannelMessageRouteDecisions, routeDecisionsResponse.decisions);
+      read.publish(setChannelIntentDecisions, intentDecisionsResponse.decisions);
+      read.publish(setChannelHandoffs, handoffsResponse.handoffs);
+      read.publish(setChannelContextSummaries, summariesResponse.contextSummaries);
+      read.publish(setChannelWorkflows, workflowsResponse.workflows);
+      read.publish(setChannelWorkflowSteps, current => mergeWorkflowStepReadModels(current, workflowSteps));
     } catch (caught) {
-      if (!loadGuard.isCurrent(`protocol:${cwd}:${channelId}`, token)) return;
-      reportScopedFeedback("protocol", channelId, "load", caught);
+      read.report("protocol", caught);
     } finally {
-      if (loadGuard.isCurrent(`protocol:${cwd}:${channelId}`, token)) {
-        setChannelProtocolLoading(false);
-      }
+      read.publish(setChannelProtocolLoading, false);
     }
   }
+
 
   async function refreshUsedMemoryAudit(cwd = input.cwd.trim()): Promise<void> {
     if (!cwd) {
@@ -1291,7 +1350,7 @@ export function useWorkspaceDomain(input: {
       setChannelCreateOpen,
       setChannelEditForm,
       setTasks,
-      setSelectedTaskId,
+      setSelectedTaskId: selectTaskExplicitly,
       setTaskForm,
       setTaskEditForm,
       setTaskRunProviderId,

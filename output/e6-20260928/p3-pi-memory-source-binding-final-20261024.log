@@ -1,0 +1,31 @@
+(node:93574) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./output/e6-20260928/public-projection-test-loader.mjs", pathToFileURL("./")); register("./output/e6-20260928/public-projection-test-loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real Pi plus loopback SSE completes source-bound read and exclusive create with continuations=off (1821.250041ms)
+✔ real Pi plus loopback SSE completes source-bound read and exclusive create with continuations=enforce (1181.074709ms)
+(node:93575) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./output/e6-20260928/public-projection-test-loader.mjs", pathToFileURL("./")); register("./output/e6-20260928/public-projection-test-loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ preselected Pi Memory preserves source revision across unchanged (416.246875ms)
+✔ preselected Pi Memory preserves source revision across before-entry (317.75225ms)
+✔ preselected Pi Memory preserves source revision across during-prepare (319.071625ms)
+✔ preselected Pi Memory preserves source revision across missing-revision (298.324833ms)
+✔ preselected Pi Memory preserves source revision across usage-only (319.347791ms)
+✔ actual normal Pi dispatch persists the full non-secret source input (539.57225ms)
+✔ actual private Pi dispatch persists the full non-secret source input (364.46875ms)
+✔ actual channel Pi dispatch persists the full non-secret source input (330.161208ms)
+✔ source preparation rechecks memory after awaiting SDK input (324.304ms)
+✔ source preparation rechecks provider after awaiting SDK input (321.714541ms)
+✔ source preparation rechecks endpoint after awaiting SDK input (288.755417ms)
+✔ source preparation rechecks shutdown after awaiting SDK input (277.798083ms)
+✔ universal source preparation uses current Host policy, not the old SDK timing (305.469208ms)
+✔ external parsing cannot supply a forged source execution snapshot (268.379208ms)
+✔ an unverified adapter cannot inherit fabricated source input (319.314208ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6322.334917

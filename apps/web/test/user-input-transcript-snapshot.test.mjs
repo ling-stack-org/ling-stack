@@ -15,6 +15,11 @@ const source = {
   runId: "run-1", attemptId: "attempt-1", workUnitId: "unit-1", participantId: "engineer",
   sourceItemId: "source-1", workflowStepId: "step-1",
 };
+function authority(overrides = {}) {
+  return { schemaVersion: 1, threadId: source.threadId, runId: source.runId, attemptId: source.attemptId,
+    participantId: source.participantId, requestId: "request-1", requestVersion: 1, statusRevision: 1,
+    token: "a".repeat(64), ...overrides };
+}
 function request(overrides = {}) {
   return {
     availability: "available", kind: "user_input_request", itemId: "question-1", requestId: "request-1",
@@ -141,10 +146,32 @@ test("hydration is selected only by exact canonical identity, never by a matchin
   assert.deepEqual(mergeConversationDetailSnapshots(undefined, missingAnchor).userInputs, []);
 });
 test("only whitelisted fields survive; Markdown, option labels and line breaks are exact", () => {
-  const input = request({ fenceToken: "INTERNAL_AUTHORITY", source: { ...source, claimToken: "INTERNAL_AUTHORITY" } });
+  const input = request({ answerAuthority: authority(), fenceToken: "INTERNAL_AUTHORITY",
+    source: { ...source, claimToken: "INTERNAL_AUTHORITY" } });
   const result = mergeConversationDetailSnapshots(undefined, detail([input]));
-  assert.deepEqual(result.userInputs, [request()]);
+  assert.deepEqual(result.userInputs, [request({ answerAuthority: authority() })]);
   assert.equal(JSON.stringify(result).includes("INTERNAL_AUTHORITY"), false);
+});
+test("equal-revision authority disagreement removes submit authority without hiding question history", () => {
+  const first = detail([request({ answerAuthority: authority() })]);
+  const second = detail([request({ answerAuthority: authority({ token: "b".repeat(64) }) })]);
+  for (const [current, incoming] of [[first, second], [second, first]]) {
+    const result = mergeConversationDetailSnapshots(current, incoming);
+    assert.equal(result.userInputs[0].availability, "available");
+    assert.equal(result.userInputs[0].questions[0].prompt, request().questions[0].prompt);
+    assert.equal(result.userInputs[0].answerAuthority, undefined);
+  }
+});
+test("answer authority changes invalidate the shared projection without exposing private fields", () => {
+  const first = [request({ answerAuthority: authority() })];
+  const second = [request({ answerAuthority: authority({ token: "b".repeat(64) }) })];
+  assert.notEqual(userInputTranscriptRevisionSignature(first), userInputTranscriptRevisionSignature(second));
+  for (const invalid of [authority({ threadId: "other" }), authority({ participantId: "other" }),
+    authority({ statusRevision: 2 }), { ...authority(), fenceToken: "PRIVATE" }]) {
+    const result = mergeConversationDetailSnapshots(undefined, detail([request({ answerAuthority: invalid })]));
+    assert.deepEqual(result.userInputs, [unavailable(request())]);
+    assert.equal(JSON.stringify(result).includes("PRIVATE"), false);
+  }
 });
 test("channel page carries request and answer hydration without projecting extra messages", () => {
   const records = [request(), answer()];

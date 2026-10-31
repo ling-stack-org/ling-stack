@@ -18,7 +18,279 @@ const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.me
 const workspaceNames = ["browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"];
 const reviewedLeaf = "packages/core/src/original-office-host-bridge.ts";
 const compiledLeaf = "packages/core/dist/original-office-host-bridge.js";
+const currentMainFeatureClosureInputs = [
+  "packages/daemon/src/server/request-auth.ts",
+  "packages/contracts/src/artifacts.ts",
+  "packages/contracts/src/diagnostics.ts",
+  "packages/contracts/src/im-destinations.ts",
+  "packages/contracts/src/marketplace.ts",
+  "packages/contracts/src/notifications.ts",
+  "packages/daemon/src/features/diagnostics/routes.ts",
+  "packages/daemon/src/features/im-destinations/registry.ts",
+  "packages/daemon/src/features/im-destinations/routes.ts",
+  "packages/daemon/src/features/notifications/hub.ts",
+  "packages/daemon/src/features/notifications/routes.ts",
+  "packages/daemon/src/features/skills/marketplace-route.ts",
+];
+test("Office fixed closure pins current-main notification, diagnostics and marketplace authored inputs", () => {
+  for (const path of currentMainFeatureClosureInputs) {
+    assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.filter(input => input === path).length,
+      1, `current-main authored input must occur exactly once: ${path}`);
+  }
+});
+test("Office fixed closure pins the shared Host workflow prompt projector", () => {
+  assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(
+    "packages/daemon/src/features/channels/workflow-step-prompt.ts"));
+});
+test("Office fixed closure pins the shared read-only P3 compaction projection", () => {
+  assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(
+    "packages/daemon/src/features/conversations/context-compaction-projection.ts"));
+});
+test("Office fixed closure pins project inputs and public execution projections", () => {
+  for (const path of [
+    "packages/daemon/src/runtime/sandbox/node-command-inputs.ts",
+    "packages/daemon/src/features/runs/public-execution-snapshots.ts",
+    "packages/daemon/src/features/channels/channel-intent-diagnostics.ts",
+    "packages/daemon/src/features/channels/terminal-report-command-evidence.ts",
+  ]) {
+    assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path), `missing reviewed P3 input: ${path}`);
+  }
+});
+test("Office fixed closure pins the cold-start protocol and Desktop stage controller", () => {
+  for (const path of ["apps/desktop/main/daemon-lifecycle.ts", "packages/core/src/daemon-resource-bootstrap.ts",
+    "packages/core/src/execution-engine-host-authority.ts", "packages/core/src/bundled-skill-source.ts",
+    "packages/core/package.json", "packages/daemon/src/cli.ts"]) {
+    assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path), `missing reviewed bootstrap input: ${path}`);
+  }
+});
+const requiredQuestionAndApprovalClosureInputs = [
+  "packages/core/src/storage/sqlite/user-input-admission-policy.ts",
+  "packages/core/src/storage/sqlite/user-input-answer-authority.ts",
+  "packages/core/src/storage/sqlite/user-input-prestart-recovery-store.ts",
+  "packages/core/src/storage/sqlite/user-input-run-created-replay.ts",
+  "packages/core/src/storage/sqlite/user-input-startup-failure.ts",
+  "packages/core/src/storage/sqlite/user-input-workflow-admission.ts",
+  "packages/daemon/src/features/conversations/user-input-answer-route.ts",
+  "packages/daemon/src/features/runs/approval-decision-projection.ts",
+  "packages/daemon/src/features/runs/approval-postcommit-evidence.ts",
+  "packages/daemon/src/features/runs/user-input-answer-dispatch.ts",
+  "packages/daemon/src/features/runs/user-input-answer-routes.ts",
+  "packages/daemon/src/features/runs/user-input-continuation-context.ts",
+  "packages/daemon/src/features/runs/user-input-continuation-receiver.ts",
+  "packages/daemon/src/features/runs/user-input-delivery-worker.ts",
+  "packages/daemon/src/features/runs/user-input-execution-preparation.ts",
+  "packages/daemon/src/features/runs/user-input-prepared-request.ts",
+  "packages/daemon/src/features/runs/user-input-source-execution.ts",
+  "packages/daemon/src/features/runs/user-input-source-policy.ts",
+  "packages/daemon/src/features/runs/user-input-workflow-terminal.ts",
+  "packages/daemon/src/features/runs/workflow-step-input-turn.ts",
+];
+const requiredNativeExecutionAndDelegationClosureInputs = [
+  "packages/contracts/src/execution-engines.ts",
+  "packages/contracts/src/runner-acceptance.ts",
+  "packages/core/src/approval-decisions.ts",
+  "packages/core/src/delegation-completion-barrier.ts",
+  "packages/core/src/delegation-completion-evidence.ts",
+  "packages/core/src/delegation-host-store-bridge.ts",
+  "packages/core/src/execution-engine-host-authority.ts",
+  "packages/core/src/execution-engine-profiles.ts",
+  "packages/core/src/harness/delegation-lifecycle-types.ts",
+  "packages/core/src/harness/delegation-write-types.ts",
+  "packages/core/src/harness/delegation-write-validation.ts",
+  "packages/core/src/harness/reliability.ts",
+  "packages/core/src/native-artifacts.ts",
+  "packages/core/src/native-execution-types.ts",
+  "packages/core/src/native-openclaw-session.ts",
+  "packages/core/src/run-terminal-intent-types.ts",
+  "packages/core/src/storage/execution-engine-profile-store.ts",
+  "packages/core/src/storage/sqlite/delegation-budget-migration.ts",
+  "packages/core/src/storage/sqlite/delegation-budget-rows.ts",
+  "packages/core/src/storage/sqlite/delegation-completion-evidence.ts",
+  "packages/core/src/storage/sqlite/delegation-instruction-migration.ts",
+  "packages/core/src/storage/sqlite/delegation-lifecycle-store.ts",
+  "packages/core/src/storage/sqlite/delegation-stopped-handoff.ts",
+  "packages/core/src/storage/sqlite/delegation-write-store.ts",
+  "packages/core/src/storage/sqlite/harness-artifact-retention-store.ts",
+  "packages/core/src/storage/sqlite/harness-artifact-recovery-pins.ts",
+  "packages/core/src/storage/sqlite/harness-projection-checkpoint-store.ts",
+  "packages/core/src/storage/sqlite/harness-reliability-migration.ts",
+  "packages/core/src/storage/sqlite/harness-retention-index-migration.ts",
+  "packages/core/src/storage/sqlite/harness-recovery-index-migration.ts",
+  "packages/core/src/storage/sqlite/harness-reliability-schema.ts",
+  "packages/core/src/storage/sqlite/host-attempt-native-coverage.ts",
+  "packages/core/src/storage/sqlite/host-attempt-read-scope.ts",
+  "packages/core/src/storage/sqlite/native-execution-migration.ts",
+  "packages/core/src/storage/sqlite/native-execution-store.ts",
+  "packages/core/src/storage/sqlite/native-approval-wait.ts",
+  "packages/core/src/storage/sqlite/native-run-artifacts.ts",
+  "packages/core/src/storage/sqlite/native-run-output.ts",
+  "packages/core/src/storage/sqlite/run-terminal-intent-migration.ts",
+  "packages/core/src/storage/sqlite/run-terminal-intent-store.ts",
+  "packages/core/src/storage/sqlite/run-ancestry.ts",
+  "packages/daemon/src/features/channels/terminal-report-delegation-evidence.ts",
+  "packages/daemon/src/features/conversations/conversation-execution-selection.ts",
+  "packages/daemon/src/features/conversations/conversation-run-request.ts",
+  "packages/daemon/src/features/conversations/native-response-preferences.ts",
+  "packages/daemon/src/features/execution-engines/engine-secret-store.ts",
+  "packages/daemon/src/features/execution-engines/feature.ts",
+  "packages/daemon/src/features/execution-engines/authority.ts",
+  "packages/daemon/src/features/execution-engines/connection-probe.ts",
+  "packages/daemon/src/features/execution-engines/controller.ts",
+  "packages/daemon/src/features/execution-engines/installation-probe.ts",
+  "packages/daemon/src/features/execution-engines/login-manager.ts",
+  "packages/daemon/src/features/execution-engines/run-target-dispatcher.ts",
+  "packages/daemon/src/features/execution-engines/acp-connection.ts",
+  "packages/daemon/src/features/execution-engines/acp-probe-transport.ts",
+  "packages/daemon/src/features/execution-engines/claude-connection.ts",
+  "packages/daemon/src/features/execution-engines/claude-environment.ts",
+  "packages/daemon/src/features/execution-engines/claude-probe-process.ts",
+  "packages/daemon/src/features/execution-engines/codex-auth-state.ts",
+  "packages/daemon/src/features/execution-engines/codex-connection.ts",
+  "packages/daemon/src/features/execution-engines/codex-login.ts",
+  "packages/daemon/src/features/execution-engines/kimi-auth-state.ts",
+  "packages/daemon/src/features/execution-engines/kimi-connection.ts",
+  "packages/daemon/src/features/execution-engines/kimi-native-executable.ts",
+  "packages/daemon/src/features/execution-engines/kimi-probe-isolation.ts",
+  "packages/daemon/src/features/execution-engines/kimi-terminal-login.ts",
+  "packages/daemon/src/features/execution-engines/native-admission.ts",
+  "packages/daemon/src/features/execution-engines/native-auth-home.ts",
+  "packages/daemon/src/features/execution-engines/native-auth-file.ts",
+  "packages/daemon/src/features/execution-engines/native-login.ts",
+  "packages/daemon/src/features/execution-engines/native-secrets.ts",
+  "packages/daemon/src/features/execution-engines/openclaw-environment.ts",
+  "packages/daemon/src/features/execution-engines/owned-native-process.ts",
+  "packages/daemon/src/features/execution-engines/secret-profile.ts",
+  "packages/daemon/src/features/execution-engines/windows-supervisor.ts",
+  "packages/daemon/src/features/harness/delegations/completion-wait.ts",
+  "packages/daemon/src/features/harness/delegations/delegated-run-dispatch.ts",
+  "packages/daemon/src/features/harness/delegations/delegated-run-recovery.ts",
+  "packages/daemon/src/features/harness/delegations/provider-budget-host.ts",
+  "packages/daemon/src/features/harness/delegations/runner-tools.ts",
+  "packages/daemon/src/features/harness/delegations/runtime-registry.ts",
+  "packages/daemon/src/features/harness/delegations/store-composition.ts",
+  "packages/daemon/src/features/harness/delegations/host-authority.ts",
+  "packages/daemon/src/features/harness/delegations/price-registry.ts",
+  "packages/daemon/src/features/harness/evaluations/qa-model-pilot-runner.ts",
+  "packages/daemon/src/features/harness/reliability/artifact-retention-service.ts",
+  "packages/daemon/src/features/harness/reliability/lifecycle-coordinator.ts",
+  "packages/daemon/src/features/harness/reliability/projection-reconciler.ts",
+  "packages/daemon/src/features/runs/approval-action-policy.ts",
+  "packages/daemon/src/features/runs/existing-idempotent-run.ts",
+  "packages/daemon/src/features/runs/native-approval-events.ts",
+  "packages/daemon/src/features/runs/native-run-dispatcher.ts",
+  "packages/daemon/src/features/runs/native-conversation-selection.ts",
+  "packages/daemon/src/features/runs/preparation-thread-failure.ts",
+  "packages/daemon/src/features/runs/run-ready.ts",
+  "packages/daemon/src/runtime/adapters/native-artifact-files.ts",
+  "packages/daemon/src/runtime/conversation-execution-route.ts",
+  "packages/daemon/src/runtime/native-runners.ts",
+  "packages/daemon/src/runtime/run-execution-supervision.ts",
+  "packages/daemon/src/runtime/runner-acceptance-store.ts",
+  "packages/daemon/src/runtime/acp/journaled-lifecycle.ts",
+  "packages/daemon/src/runtime/acp/approval-journal.ts",
+  "packages/daemon/src/runtime/acp/content.ts",
+  "packages/daemon/src/runtime/acp/event-normalizer.ts",
+  "packages/daemon/src/runtime/acp/host-files.ts",
+  "packages/daemon/src/runtime/acp/host-requests.ts",
+  "packages/daemon/src/runtime/acp/host-terminal-process.ts",
+  "packages/daemon/src/runtime/acp/host-terminals.ts",
+  "packages/daemon/src/runtime/acp/host-text-read.ts",
+  "packages/daemon/src/runtime/acp/host-text-write.ts",
+  "packages/daemon/src/runtime/acp/kimi-bash-actions.ts",
+  "packages/daemon/src/runtime/acp/kimi-action-preparation.ts",
+  "packages/daemon/src/runtime/acp/kimi-execution-home.ts",
+  "packages/daemon/src/runtime/acp/kimi-file-actions.ts",
+  "packages/daemon/src/runtime/acp/kimi-host-files.ts",
+  "packages/daemon/src/runtime/acp/kimi-host-terminals.ts",
+  "packages/daemon/src/runtime/acp/kimi-model-configuration.ts",
+  "packages/daemon/src/runtime/acp/kimi-model-transport.ts",
+  "packages/daemon/src/runtime/acp/kimi-oauth-credentials.ts",
+  "packages/daemon/src/runtime/acp/live-client.ts",
+  "packages/daemon/src/runtime/acp/live-errors.ts",
+  "packages/daemon/src/runtime/acp/live-stream.ts",
+  "packages/daemon/src/runtime/acp/openclaw-action-preparation.ts",
+  "packages/daemon/src/runtime/acp/session-metadata.ts",
+  "packages/daemon/src/runtime/acp/session-settings.ts",
+  "packages/daemon/src/runtime/acp/tool-observation.ts",
+  "packages/daemon/src/runtime/acp/kimi-owned-execution.ts",
+  "packages/daemon/src/runtime/acp/openclaw-owned-execution.ts",
+  "packages/daemon/src/runtime/adapters/codex/journaled-lifecycle.ts",
+  "packages/daemon/src/runtime/adapters/codex/action-preparation.ts",
+  "packages/daemon/src/runtime/adapters/codex/approval-journal.ts",
+  "packages/daemon/src/runtime/adapters/codex/approval-wait.ts",
+  "packages/daemon/src/runtime/adapters/codex/duplex.ts",
+  "packages/daemon/src/runtime/adapters/codex/event-normalizer.ts",
+  "packages/daemon/src/runtime/adapters/codex/file-change-context.ts",
+  "packages/daemon/src/runtime/adapters/codex/live-client.ts",
+  "packages/daemon/src/runtime/adapters/codex/local-environment.ts",
+  "packages/daemon/src/runtime/adapters/codex/observed-tools.ts",
+  "packages/daemon/src/runtime/adapters/codex/owned-execution.ts",
+  "packages/daemon/src/runtime/adapters/codex/permission-preparation.ts",
+  "packages/daemon/src/runtime/adapters/codex/tool-content.ts",
+  "packages/daemon/src/runtime/adapters/codex/tool-output.ts",
+  "packages/daemon/src/runtime/adapters/native-artifact-import.ts",
+  "packages/daemon/src/runtime/adapters/native-command-policy.ts",
+  "packages/daemon/src/runtime/adapters/native-image-sanitizer.ts",
+  "packages/daemon/src/runtime/adapters/native-model-relay.ts",
+  "packages/daemon/src/runtime/adapters/native-tool-content.ts",
+  "packages/daemon/src/runtime/adapters/native-stream-redaction.ts",
+  "packages/daemon/src/runtime/runner-acceptance.ts",
+  "packages/daemon/src/runtime/sandbox/native-process-launch.ts",
+  "packages/runner-pi/src/delegation-instruction.ts",
+  "packages/runner-pi/src/extensions/delegation.ts",
+  "packages/runner-pi/src/provider-budget.ts",
+  "packages/runner-pi/src/runtime-suspension.ts",
+];
+const gracefulTreeTypeOnlyInputs = [
+  "packages/core/src/run-final-settlement-types.ts",
+];
+// These contracts also export Error classes consumed by the SQLite writers.
+const gracefulTreeRuntimeInputs = [
+  "packages/core/src/run-suspension-activation-types.ts",
+  "packages/core/src/run-suspension-delegated-types.ts",
+  "packages/core/src/run-suspension-start-types.ts",
+  "packages/core/src/run-suspension-stop-types.ts",
+  "packages/core/src/run-suspension-types.ts",
+  "packages/core/src/storage/sqlite/delegation-resume-lineage.ts",
+  "packages/core/src/storage/sqlite/run-compaction-suspension-effects.ts",
+  "packages/core/src/storage/sqlite/run-compaction-suspension-lineage.ts",
+  "packages/core/src/storage/sqlite/run-compaction-suspension-witness.ts",
+  "packages/core/src/storage/sqlite/run-final-settlement-handoff.ts",
+  "packages/core/src/storage/sqlite/run-final-settlement-migration.ts",
+  "packages/core/src/storage/sqlite/run-final-settlement-records.ts",
+  "packages/core/src/storage/sqlite/run-final-settlement-store.ts",
+  "packages/core/src/storage/sqlite/run-suspension-activation-migration.ts",
+  "packages/core/src/storage/sqlite/run-suspension-activation-records.ts",
+  "packages/core/src/storage/sqlite/run-suspension-activation-store.ts",
+  "packages/core/src/storage/sqlite/run-suspension-delegated-migration.ts",
+  "packages/core/src/storage/sqlite/run-suspension-delegated-records.ts",
+  "packages/core/src/storage/sqlite/run-suspension-delegated-store.ts",
+  "packages/core/src/storage/sqlite/run-suspension-dependencies.ts",
+  "packages/core/src/storage/sqlite/run-suspension-migration.ts",
+  "packages/core/src/storage/sqlite/run-suspension-queued-proof.ts",
+  "packages/core/src/storage/sqlite/run-suspension-start-migration.ts",
+  "packages/core/src/storage/sqlite/run-suspension-start-records.ts",
+  "packages/core/src/storage/sqlite/run-suspension-start-store.ts",
+  "packages/core/src/storage/sqlite/run-suspension-stop-migration.ts",
+  "packages/core/src/storage/sqlite/run-suspension-stop-records.ts",
+  "packages/core/src/storage/sqlite/run-suspension-stop-store.ts",
+  "packages/core/src/storage/sqlite/run-suspension-stopped-handoff.ts",
+  "packages/core/src/storage/sqlite/run-suspension-store.ts",
+  "packages/core/src/storage/sqlite/run-suspension-witness.ts",
+  "packages/daemon/src/features/harness/continuations/final-settlement-observation.ts",
+  "packages/daemon/src/features/harness/continuations/root-suspension-dispatch.ts",
+  "packages/daemon/src/features/harness/continuations/run-compaction-suspension.ts",
+  "packages/daemon/src/features/harness/continuations/run-graceful-suspension.ts",
+  "packages/daemon/src/runtime/delegated-terminal-handoff.ts",
+  "packages/daemon/src/runtime/run-shutdown-coordinator.ts",
+  "packages/daemon/src/runtime/run-suspension-order.ts",
+];
 const newAuthoredRuntimeLeaves = [
+  "packages/daemon/src/runtime/acp/host-text-write-worker.ts",
+  "packages/daemon/src/features/runs/run-execution-sink.ts",
+  ...gracefulTreeRuntimeInputs,
+  "packages/daemon/src/runtime/packaged-qa-harness-bootstrap.ts",
+  "packages/daemon/src/runtime/workspace-runtime-owner.ts",
   "packages/daemon/src/features/runs/approval-event-state.ts",
   "packages/daemon/src/features/runs/approval-resume-preparation.ts",
   "packages/core/src/storage/sqlite/teammate-direct-approval-continuation-proof.ts",
@@ -79,6 +351,7 @@ const newAuthoredRuntimeLeaves = [
   "packages/core/src/storage/sqlite/delegation-migration.ts",
   "packages/core/src/storage/sqlite/delegation-mappers.ts",
   "packages/core/src/storage/sqlite/delegation-store.ts",
+  "packages/core/src/harness/delegation-authority.ts",
   "packages/core/src/storage/sqlite/harness-diagnostics-mappers.ts",
   "packages/core/src/storage/sqlite/harness-diagnostics-store.ts",
   "packages/core/src/storage/sqlite/harness-diagnostics-validation.ts",
@@ -108,6 +381,7 @@ const newAuthoredRuntimeLeaves = [
   "packages/daemon/src/features/harness/evaluations/task-worker-input.ts",
   "packages/daemon/src/features/harness/evaluations/task-worker-prepared.ts",
   "packages/daemon/src/features/harness/evaluations/task-worker.ts",
+  "packages/daemon/src/features/harness/evaluations/task-worker-composition.ts",
   "packages/core/src/harness/evaluation-qa.ts",
   "packages/core/src/storage/sqlite/run-evaluation-qa-validation.ts",
   "packages/core/src/storage/sqlite/run-evaluation-qa-mappers.ts",
@@ -130,13 +404,17 @@ const newAuthoredRuntimeLeaves = [
   "packages/daemon/src/features/harness/evaluations/human-evaluation-routes.ts",
   "packages/daemon/src/features/harness/evaluations/human-evaluation-service.ts",
   "packages/daemon/src/features/harness/evaluations/human-evaluation-report.ts",
+  ...requiredQuestionAndApprovalClosureInputs,
+  ...requiredNativeExecutionAndDelegationClosureInputs.filter(name => name !== "packages/core/src/run-terminal-intent-types.ts"),
 ];
 // This contract is exported with `export type *`; esbuild correctly erases it.
 // It remains an explicit reviewed source and gets every fail-closed check below.
 const newAuthoredTypeOnlyInputs = ["packages/contracts/src/harness-evaluation-qa.ts", "packages/contracts/src/harness-human-evaluation.ts",
-  "packages/contracts/src/harness-human-evaluation-read.ts", "packages/core/src/harness/human-evaluation-read.ts"];
+  "packages/contracts/src/harness-human-evaluation-read.ts", "packages/core/src/harness/human-evaluation-read.ts",
+  "packages/core/src/run-terminal-intent-types.ts", ...gracefulTreeTypeOnlyInputs];
 const reviewedNativeInputs = ["apps/desktop/scripts/build-human-evaluation-helper.mjs", "apps/desktop/scripts/native/human-evaluation-darwin.swift"];
-const newAuthoredRequiredInputs = [...newAuthoredRuntimeLeaves, ...newAuthoredTypeOnlyInputs, ...reviewedNativeInputs];
+const newAuthoredRequiredInputs = [...newAuthoredRuntimeLeaves, ...newAuthoredTypeOnlyInputs,
+  ...reviewedNativeInputs, ...currentMainFeatureClosureInputs];
 const staleSentinel = "__LING_EXPLICIT_STALE_DIST_RED__";
 const authoredSentinel = "__LING_EXPLICIT_REVIEWED_AUTHORED_SOURCE_GREEN__";
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -150,6 +428,44 @@ test("Office packaging review requires every new browser lifecycle, Pi, progress
     assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(name), true,
       `Runtime leaf must be an explicit required review input: ${name}`);
   }
+});
+
+test("Office fixed review closure explicitly pins required-question and approval authored sources", () => {
+  assert.equal(requiredQuestionAndApprovalClosureInputs.length, 20);
+  for (const name of requiredQuestionAndApprovalClosureInputs) {
+    assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(name), true,
+      `Required-question or approval source must be an explicit fixed review input: ${name}`);
+  }
+});
+
+test("Office fixed review closure explicitly pins native execution and dynamic delegation authored sources", () => {
+  assert.equal(requiredNativeExecutionAndDelegationClosureInputs.length, 154);
+  for (const name of requiredNativeExecutionAndDelegationClosureInputs) {
+    assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(name), true,
+      `Native execution or delegation source must be an explicit fixed review input: ${name}`);
+  }
+});
+
+test("Office review closure pins the Broker command result trust boundary", () => {
+  assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(
+    "packages/daemon/src/features/harness/tool-execution/broker-command-result.ts"), true);
+});
+
+// Regression: P3-MAIN-CLOSURE — imported main leaves must be reviewed authored inputs.
+// Found by /qa independent AST audit on 2026-10-24
+// Report: output/e6-20260928/p3-main-office-closure-audit-20261024.md
+test("Office review closure pins main work-summary and text-boundary runtime leaves", () => {
+  for (const path of [
+    "packages/core/src/storage/sqlite/work-summary-migration.ts",
+    "packages/core/src/storage/sqlite/work-summary-store.ts",
+    "packages/core/src/string-boundaries.ts",
+    "packages/daemon/src/features/work-summary/cache.ts",
+    "packages/daemon/src/features/work-summary/git-summary.ts",
+    "packages/daemon/src/features/work-summary/pull-requests.ts",
+    "packages/daemon/src/features/work-summary/routes.ts",
+    "packages/daemon/src/features/work-summary/service.ts",
+    "packages/daemon/src/shared/html-text.ts",
+  ]) assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path), true, path);
 });
 
 test("Office fixed fresh daemon must not consume a stale compiled bridge with unchanged reviewed TS (real esbuild, synthetic native only)", {

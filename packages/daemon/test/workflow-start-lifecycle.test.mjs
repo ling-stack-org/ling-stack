@@ -241,11 +241,11 @@ test("A12 ordinary finalizer stops after a lost completion CAS without publishin
 
 for (const corruption of ["pending", "denied", "foreign channel", "foreign workflow", "foreign canonical step",
   "foreign payload step", "wrong type", "post gate"]) {
-  test(`A12 online reconcile rejects ${corruption} PRE approval as missing execution ownership`, async (t) => {
+  test(`B013 online reconcile rejects unversioned ${corruption} PRE approval as stale admission`, async (t) => {
     const f = await fixture(t, { startDaemon: true });
     const now = new Date().toISOString();
-    // The real gate lifecycle can start a Step before creating any execution.
-    // Only a canonical, approved, exactly matching PRE decision may exempt it.
+    // These legacy fixtures deliberately have no Host-frozen preGateBasis.
+    // An id/status alone cannot authorize a new Task under B013, even approved.
     assert.equal(f.store.transitionChannelWorkflowStepStatus({ workflowStepId: f.step.id, expectedStatus: "queued",
       event: "claim", actor: "system", now }).ok, true);
     assert.equal(f.store.transitionChannelWorkflowStepStatus({ workflowStepId: f.step.id, expectedStatus: "claimed",
@@ -289,11 +289,17 @@ for (const corruption of ["pending", "denied", "foreign channel", "foreign workf
     assert.equal(before.tasks.length, 0);
     assert.equal(before.runs.length, 0);
     const response = await orchestrate(f);
-    assert.equal(response.status, 200, JSON.stringify(response));
+    assert.equal(response.status, 409, JSON.stringify(response));
+    assert.equal(response.body.error, "workflow_pre_approval_basis_stale");
     const after = state(f);
     assert.equal(after.step.status, "blocked");
     assert.equal(after.workflow.status, "blocked");
-    assert.match(after.step.blocker, /workflow_start_owner_missing/u);
+    assert.match(after.step.blocker, /pre-approval changed/u);
+    assert.equal(after.step.metadata.preStepApprovalId, undefined);
+    assert.equal(after.step.metadata.preStepApprovalMarker, undefined);
+    assert.equal(f.store.getApprovalRequest(approval.id).status,
+      corruption === "pending" || corruption === "denied" ? corruption : "approved",
+      "retiring a stale active pointer must preserve the original Approval audit");
     assert.equal(after.step.taskId, undefined);
     assert.equal(after.step.runId, undefined);
     assert.equal(after.step.metadata.startOwner, undefined);

@@ -1,6 +1,9 @@
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { PiRunnerProviderInvocationContextBudget, PiRunnerRunOptions, PiRunnerUserInputYieldDirective } from "./types.js";
+import type { PiRunnerProviderInvocationContextBudget, PiRunnerRunOptions, PiRunnerRuntimeSuspensionDirective, PiRunnerUserInputYieldDirective } from "./types.js";
+import { types } from "node:util";
+import { randomUUID } from "node:crypto";
 import { readUserInputYieldDirective } from "./task-yield.js";
+import { readRuntimeSuspensionDirective } from "./runtime-suspension.js";
 import { readUserInputRequestReceipt, readUserInputWaitMode } from "./user-input-request.js";
 import { throwIfAborted } from "./utils.js";
 import { assertPiModelContextCapacity, assertPreparedPiModelContext, estimatePiModelContextBudget, type PiRunnerPreparedInput } from "./prepared-input.js";
@@ -12,10 +15,19 @@ import { piTranscript } from "./session-transcript.js";
 import { assertCompactionRecoveryModelContext } from "./compaction-recovery.js";
 import { assertOrdinaryProgressRecoveryModelContext } from "./ordinary-progress-recovery.js";
 import { bindPiProviderInvocationResolution, createPiProviderInvocation } from "./provider-invocation.js";
+import { bindPiProviderBudgetResolution, createPiProviderBudgetInvocation } from "./provider-budget.js";
+import { readDelegationInstructionDirective } from "./delegation-instruction.js";
 
 /** Internal latch only. The public yielded outcome requires an idle SDK first. */
 class PendingUserInputYield extends Error {
   constructor() { super("Required user input closes execution admission."); }
+}
+
+/** Distinct from required input; only adapter cleanup may publish a suspended outcome. */
+class PendingRuntimeSuspension extends Error {
+  // Pi reflects a thrown control error into an empty assistant failure message.
+  // A private per-boundary nonce distinguishes that reflection from model text.
+  constructor() { super(`Host-sealed runtime suspension closes execution admission. ${randomUUID()}`); }
 }
 
 /**
@@ -54,16 +66,37 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
   readonly acceptedTaskPrompt: string;
   readonly sessionId: string;
   readonly preparedInput: PiRunnerPreparedInput;
-} | undefined) {
+} | undefined, readBoundaryModelView?: () => readonly unknown[] | undefined) {
   const stop = new AbortController();
   const signal = options.signal ? AbortSignal.any([options.signal, stop.signal]) : stop.signal;
   let failure: Error | undefined;
   let yieldRequest: PiRunnerUserInputYieldDirective | undefined;
+  let suspensionRequest: PiRunnerRuntimeSuspensionDirective | undefined;
+  const delegationInstructions = new Map<string, string>();
   const pendingYield = new PendingUserInputYield();
+  const pendingSuspension = new PendingRuntimeSuspension();
+  const latchFailure = (error: unknown): never => {
+    if (error === pendingYield || error === pendingSuspension) throw error;
+    failure ??= error instanceof Error ? error : new Error(String(error));
+    stop.abort(failure);
+    throw failure;
+  };
+  const withoutLiveDelegationInstructions = (context: Parameters<typeof piTranscript>[0]) => {
+    if (!delegationInstructions.size) return context;
+    const transcript = piTranscript(context);
+    return { messages: transcript.messages.filter(message => {
+      if (!message || typeof message !== "object" || Array.isArray(message)) return true;
+      const identity = Object.getOwnPropertyDescriptor(message, "delegationInstruction")?.value;
+      const id = identity && typeof identity === "object" && !Array.isArray(identity)
+        ? Object.getOwnPropertyDescriptor(identity, "messageId")?.value : undefined;
+      return typeof id !== "string" || delegationInstructions.get(id) !== JSON.stringify(message);
+    }) };
+  };
   const assertOpen = (): void => {
     throwIfAborted(options.signal);
     if (failure) throw failure;
     if (yieldRequest) throw pendingYield;
+    if (suspensionRequest) throw pendingSuspension;
     throwIfAborted(signal);
   };
   // Pi may prepare an entire parallel batch before executing any member.
@@ -80,6 +113,23 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
     ...(options.onMcpToolCall ? { onMcpToolCall: guard(options.onMcpToolCall) } : {}),
     ...(options.onHostCapabilityCall ? { onHostCapabilityCall: guard(options.onHostCapabilityCall) } : {}),
     ...(options.onMediaGenerationToolCall ? { onMediaGenerationToolCall: guard(options.onMediaGenerationToolCall) } : {}),
+    ...(options.onDelegationToolCall ? { onDelegationToolCall: async request => {
+      try {
+        assertOpen();
+        const receipt = await options.onDelegationToolCall!(request);
+        // Abort/required-input closes admission even when a Host callback settles late.
+        assertOpen();
+        return receipt;
+      } catch (error) {
+        // Expected refusals are structured receipts. An unexpected Host error
+        // may follow a durable mutation and must not become SDK retry narration.
+        if (!options.signal?.aborted && error !== pendingYield && error !== pendingSuspension) {
+          failure ??= error instanceof Error ? error : new Error("Delegation Host request failed.");
+          stop.abort(failure);
+        }
+        throw error;
+      }
+    } } : {}),
     ...(options.onUserInputRequest ? {
       onUserInputRequest: async (request) => {
         try {
@@ -95,7 +145,7 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
           }
           return accepted;
         } catch (error) {
-          if (!options.signal?.aborted && error !== pendingYield) {
+          if (!options.signal?.aborted && error !== pendingYield && error !== pendingSuspension) {
             failure ??= error instanceof Error ? error : new Error("User input Host request failed.");
             stop.abort(failure);
           }
@@ -107,17 +157,40 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
       onTaskContinuationBoundary: async (boundary, modelView) => {
         try {
           assertOpen();
-          const directive = await options.onTaskContinuationBoundary?.(boundary, modelView);
+          const actualModelView = boundary === "before_provider_request" ? readBoundaryModelView?.() ?? modelView : modelView;
+          const raw = await options.onTaskContinuationBoundary?.(boundary, actualModelView);
           assertOpen();
-          if (directive !== undefined) {
-            yieldRequest = readUserInputYieldDirective(directive);
+          if (raw !== undefined && directiveKind(raw) === "runtime_suspension") {
+            if (boundary !== "before_provider_request" || !Array.isArray(actualModelView) || !actualModelView.length) {
+              throw new Error("Runtime suspension requires an actual provider boundary view.");
+            }
+            suspensionRequest = readRuntimeSuspensionDirective(raw, options);
+            stop.abort(pendingSuspension);
+            throw pendingSuspension;
+          }
+          if (raw !== undefined && directiveKind(raw) === "delegation_instructions") {
+            if (boundary !== "before_provider_request") throw new Error("Delegation instructions require a provider boundary.");
+            const directive = readDelegationInstructionDirective(raw);
+            for (const message of directive.messages) {
+              const id = message.delegationInstruction.messageId;
+              const serialized = JSON.stringify(message);
+              const previous = delegationInstructions.get(id);
+              if (previous !== undefined && previous !== serialized) {
+                throw new Error("Delegation instruction identity changed before provider dispatch.");
+              }
+              delegationInstructions.set(id, serialized);
+            }
+            return directive;
+          }
+          if (raw !== undefined) {
+            yieldRequest = readUserInputYieldDirective(raw);
             stop.abort(pendingYield);
             throw pendingYield;
           }
         } catch (error) {
           // Explicit user cancellation keeps its AbortError semantics. A Host
           // boundary failure must survive the SDK's error-and-continue hooks.
-          if (!options.signal?.aborted && error !== pendingYield) {
+          if (!options.signal?.aborted && error !== pendingYield && error !== pendingSuspension) {
             failure ??= error instanceof Error ? error : new Error(String(error));
             stop.abort(failure);
           }
@@ -125,6 +198,47 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
         }
       },
     } : {}),
+    ...(options.onTaskSettledBoundary ? {
+      onTaskSettledBoundary: async modelView => {
+        try {
+          assertOpen();
+          const raw = await options.onTaskSettledBoundary!(modelView);
+          assertOpen();
+          if (raw !== undefined) {
+            suspensionRequest = readRuntimeSuspensionDirective(raw, options);
+            stop.abort(pendingSuspension);
+            throw pendingSuspension;
+          }
+        } catch (error) {
+          if (!options.signal?.aborted && error !== pendingSuspension && error !== pendingYield) {
+            failure ??= error instanceof Error ? error : new Error(String(error));
+            stop.abort(failure);
+          }
+          throw error;
+        }
+      },
+    } : {}),
+    ...(options.onTaskRestoredCompleteBoundary ? {
+      onTaskRestoredCompleteBoundary: async modelView => {
+        try {
+          assertOpen();
+          const raw = await options.onTaskRestoredCompleteBoundary!(modelView);
+          assertOpen();
+          if (raw !== undefined) {
+            suspensionRequest = readRuntimeSuspensionDirective(raw, options);
+            stop.abort(pendingSuspension);
+            throw pendingSuspension;
+          }
+        } catch (error) {
+          if (!options.signal?.aborted && error !== pendingSuspension && error !== pendingYield) {
+            failure ??= error instanceof Error ? error : new Error(String(error));
+            stop.abort(failure);
+          }
+          throw error;
+        }
+      },
+    } : {}),
+    onTaskContinuationDirectiveFailure: latchFailure,
   };
 
   return {
@@ -132,10 +246,25 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
     assertOpen,
     get failure(): Error | undefined { return failure; },
     get yieldRequest(): PiRunnerUserInputYieldDirective | undefined { return yieldRequest; },
+    get suspensionRequest(): PiRunnerRuntimeSuspensionDirective | undefined { return suspensionRequest; },
+    isRuntimeSuspensionControlMessage(message: unknown): boolean {
+      if (!suspensionRequest || failure || options.signal?.aborted
+        || !message || typeof message !== "object" || Array.isArray(message) || types.isProxy(message)) return false;
+      const data = message as Record<string, unknown>;
+      if (data.role !== "assistant" || data.stopReason !== "aborted" || data.errorMessage !== pendingSuspension.message
+        || !Array.isArray(data.content) || data.content.length !== 1
+        || data.content[0]?.type !== "text" || data.content[0]?.text !== "") return false;
+      const usage = data.usage as Record<string, unknown> | undefined;
+      const cost = usage?.cost as Record<string, unknown> | undefined;
+      return !!usage && !!cost
+        && ["input", "output", "cacheRead", "cacheWrite", "totalTokens"].every(key => usage[key] === 0)
+        && ["input", "output", "cacheRead", "cacheWrite", "total"].every(key => cost[key] === 0);
+    },
     /** Guard this run's runtime, including built-in and custom providers. */
     bindModelRuntime(runtime: ModelRuntime): void {
       const streamSimple = runtime.streamSimple.bind(runtime);
       const associateInvocation = bindPiProviderInvocationResolution(runtime, options);
+      const associateBudget = bindPiProviderBudgetResolution(runtime, options);
       let firstRequest = true;
       runtime.streamSimple = (model, context, streamOptions) => {
         assertOpen();
@@ -150,7 +279,7 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
                 context,
               );
             } else {
-              assertPreparedPiModelContext(options.preparedInput!, model, context, {
+              assertPreparedPiModelContext(options.preparedInput!, model, withoutLiveDelegationInstructions(context), {
                 allowRestoredMessages: Boolean(options.compactionRecovery || options.ordinaryProgressRecovery),
               });
             }
@@ -197,6 +326,12 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
         const invocation = createPiProviderInvocation(options, () =>
           options.signal?.aborted || streamOptions?.signal?.aborted ? "cancelled"
             : failure || yieldRequest || stop.signal.aborted ? "local_rejected" : undefined, contextBudget);
+        const budget = createPiProviderBudgetInvocation(options, () =>
+          options.signal?.aborted || streamOptions?.signal?.aborted ? "cancelled"
+            : failure || yieldRequest || stop.signal.aborted ? "local_rejected" : undefined, error => {
+          failure ??= error instanceof Error ? error : new Error("Provider budget authority failed");
+          stop.abort(failure);
+        });
         const observeLocalCallbackFailure = <Args extends unknown[]>(callback: (...args: Args) => void | Promise<void>) =>
           async (...args: Args): Promise<void> => {
             try { await callback(...args); }
@@ -217,16 +352,18 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
             }
             const candidate = next ?? payload;
             const summaryPayload = applyReasoningSummaryModeToPayload(candidate, requestModel.api, options.reasoningSummary);
+            const reservedPayload = budget.authorize(summaryPayload ?? candidate, requestModel);
             // This wrapper also covers SDK summary streams without an Agent
             // extension hook. It observes logical admission, not network I/O.
             invocation.admit(requestModel);
-            return summaryPayload ?? next;
+            return options.providerBudget ? reservedPayload : summaryPayload ?? next;
           } catch (error) {
             invocation.rejectLocally();
             throw error;
           }
         };
         associateInvocation(onPayload, invocation);
+        associateBudget(onPayload, budget);
         const requestStream = streamSimple(model, modelContext, {
           ...streamOptions,
           ...(streamOptions?.onResponse ? { onResponse: observeLocalCallbackFailure(streamOptions.onResponse) } : {}),
@@ -235,9 +372,17 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
           signal: streamOptions?.signal ? AbortSignal.any([signal, streamOptions.signal]) : signal,
           onPayload,
         });
-        invocation.observe(requestStream);
-        return requestStream;
+        const guardedStream = budget.guardResult(requestStream);
+        invocation.observe(guardedStream);
+        return guardedStream;
       };
     },
   };
+}
+
+function directiveKind(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  if (types.isProxy(value)) throw new Error("Invalid Pi Host continuation directive.");
+  const descriptor = Object.getOwnPropertyDescriptor(value, "kind");
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }

@@ -81,7 +81,13 @@ test("discovery classifies out-of-range versions as unsupported", async (t) => {
     resolveExecutable: async (command) => (command === "codex" ? fake : undefined),
   });
   const codex = report.candidates.find((candidate) => candidate.engineId === "codex-app-server");
-  assert.equal(codex?.status, "unsupported");
+  assert.equal(codex?.status, "unsupported", JSON.stringify({
+    classification: ["detected", "unsupported", "not_found"].includes(codex?.status) ? codex.status : "unrecognized",
+    runtimeVersion: /^\d+\.\d+\.\d+$/u.test(codex?.version ?? "") ? codex.version : undefined,
+    runtimeVersionPresent: typeof codex?.version === "string", executableDigestPresent: typeof codex?.digest === "string",
+    installable: codex?.installable, probeStatus: "not_exposed_by_discovery_report",
+    classificationInput: codex?.version ? "runtime_version_available" : "runtime_version_unavailable",
+  }));
   assert.equal(codex?.version, "0.100.0");
 });
 

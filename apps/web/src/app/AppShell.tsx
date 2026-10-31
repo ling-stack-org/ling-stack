@@ -1,6 +1,7 @@
 import { useChannelSessionsController } from "./use-channel-sessions-controller.js";
 import { channelSessionThreadId, isChannelSessionDraft } from "./channel-session-state.js";
 import { WorkSummaryProvider } from "../features/workspace/work-summary/WorkSummaryProvider.js";
+import { DaemonObservationProvider, useDaemonObservationState, DaemonObservationDeferredError } from "../shared/conversation/observation/daemon-observation.js";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   PanelRightClose,
@@ -81,6 +82,7 @@ import {
   effectiveApprovalStatus,
 } from "../lib/approvals.js";
 import { buildInlineApprovalViews } from "../lib/inline-approvals.js";
+import { approvalRecoveryNotice } from "../lib/approval-recovery.js";
 import {
   channelToForm,
   defaultChannelCreateForm,
@@ -105,6 +107,7 @@ import { useAutomationsDomain } from "../domains/automations/use-automations-dom
 import { DesktopComputerUseBridge } from "./DesktopComputerUseBridge.js";
 import { AppPresentationSurfaceBridge } from "./AppPresentationSurfaceBridge.js";
 import { AppConnectionStatus } from "./AppConnectionStatus.js";
+import { useDesktopDaemonStatus } from "./use-desktop-daemon-status.js";
 import { AppShellOverlayBoundary } from "./AppShellOverlayBoundary.js";
 import { DesktopWindowChrome } from "./DesktopWindowChrome.js";
 import { DesktopTitlebarProvider, DesktopTitlebarSurface } from "./DesktopTitlebarSurface.js";
@@ -265,7 +268,7 @@ export function AppShell(): React.JSX.Element {
   const [channelSidebarOpen, setChannelSidebarOpen] = useState(() => !narrowViewport);
   const [selectedChannelBranchId, setSelectedChannelBranchId] = useState("");
   const [daemonHealthy, setDaemonHealthy] = useState<boolean | undefined>();
-  const focusRevalidationToken = useFocusRevalidationToken({ enabled: daemonHealthy === true });
+  const desktopDaemonStatus = useDesktopDaemonStatus();
   const [daemonHealthRefreshing, setDaemonHealthRefreshing] = useState(false);
   const [daemonFeatures, setDaemonFeatures] = useState<DaemonFeatureFlags>({
     channels: { autoRoute: false },
@@ -306,6 +309,10 @@ export function AppShell(): React.JSX.Element {
     buildTaskRunRequest,
     daemonBaseUrl,
   } = useRunCommandController();
+  const daemonObservation = useDaemonObservationState(desktopDaemonStatus, daemonBaseUrl, form.cwd);
+  const daemonObservationRef = useRef(daemonObservation);
+  daemonObservationRef.current = daemonObservation;
+  const focusRevalidationToken = useFocusRevalidationToken({ enabled: daemonHealthy === true && !daemonObservation.paused });
   const { getDaemonHealth } = useSettingsCommandController();
   const slashCommands = useSlashCommandRegistry({
     workspaceCwd: form.cwd.trim(),
@@ -472,6 +479,7 @@ export function AppShell(): React.JSX.Element {
     : undefined;
   const conversationDomain = useConversationDomain({
     cwd: form.cwd.trim(),
+    observation: daemonObservation,
     translate: t,
   });
   const {
@@ -811,6 +819,7 @@ export function AppShell(): React.JSX.Element {
   } = durableWorkItemsDomain.actions;
   const runtimeDomain = useRuntimeDomain({
     cwd: form.cwd.trim(),
+    observation: daemonObservation,
     onWorkUnitActionComplete: async (workUnitId, action) => {
       if (action === "cancel" && run?.workUnitId === workUnitId) {
         abortCurrentRun();
@@ -850,6 +859,7 @@ export function AppShell(): React.JSX.Element {
   } = settingsDomain.actions;
   const runsDomain = useRunsDomain({
     cwd: form.cwd.trim(),
+    observation: daemonObservation,
     confirmFullAccessRunIfNeeded,
     setSelectedWorkUnitDetail,
     refreshApprovals,
@@ -1272,6 +1282,12 @@ export function AppShell(): React.JSX.Element {
     () => deriveChannelRuns(selectedChannelId, tasks, runs, run),
     [run, runs, selectedChannelId, tasks],
   );
+  const approvalRefreshOwnerRef = useRef({ cwd: form.cwd.trim(), channelId: selectedChannelId });
+  if (approvalRefreshOwnerRef.current.cwd !== form.cwd.trim() || approvalRefreshOwnerRef.current.channelId !== selectedChannelId) {
+    // Replace the identity, including when the user later returns to this scope.
+    approvalRefreshOwnerRef.current = { cwd: form.cwd.trim(), channelId: selectedChannelId };
+  }
+  const approvalRefreshOwner = approvalRefreshOwnerRef.current;
   const channelRunArtifactsKey = useMemo(
     () => channelRunsForArtifacts.map((item) => `${item.id}:${item.updatedAt}`).join("|"),
     [channelRunsForArtifacts],
@@ -1803,6 +1819,7 @@ export function AppShell(): React.JSX.Element {
   const controlPlaneInvalidation = useControlPlaneInvalidation({
     daemonBaseUrl,
     daemonHealthy,
+    observation: daemonObservation,
     localWebSocketRpcEnabled: daemonFeatures.transports?.localWebSocketRpc === true,
     workspaceCwd: form.cwd.trim(),
     selectedChannelId,
@@ -1810,6 +1827,7 @@ export function AppShell(): React.JSX.Element {
     channelRunsForArtifacts,
     setSkillLibraryRefreshToken,
     refreshRuns,
+    refreshConversationThreads,
     refreshSelectedConversation,
     refreshRuntimeState,
     refreshApprovals,
@@ -1871,11 +1889,27 @@ export function AppShell(): React.JSX.Element {
   useShellErrorFeedback({ dismissToast, items: shellErrorFeedbackItems, showToast });
 
   useEffect(() => {
-    void refreshHealth();
     void refreshProviderTemplates();
     void refreshProviders();
     void refreshAiTeammates();
   }, []);
+
+  useEffect(() => {
+    // Retry invalidated startup reads from the next live observation. Once
+    // healthy, cwd changes must not reapply the Host's default workspace.
+    if (daemonObservation.paused || daemonHealthy === true) return;
+    void refreshHealth();
+  }, [daemonObservation.epoch, daemonObservation.paused]);
+
+  useEffect(() => {
+    const cwd = form.cwd.trim();
+    if (!cwd || daemonHealthy !== true || daemonObservation.paused || daemonObservation.workspaceCwd !== cwd) return;
+    // Health may change cwd before React commits the new observation. Hydrate
+    // guarded workspace reads from that committed owner, never the old render.
+    void refreshChannels(cwd);
+    void refreshAiCouncils(cwd);
+    void refreshUsedMemoryAudit(cwd);
+  }, [form.cwd, daemonHealthy, daemonObservation.epoch, daemonObservation.paused]);
 
   useEffect(() => {
     if (activeView === "workspace") {
@@ -1996,34 +2030,34 @@ export function AppShell(): React.JSX.Element {
   }, [channelBranches, channelsLoading, selectedChannelBranchId]);
 
   useEffect(() => {
-    if (activeView !== "workspace") {
+    if (activeView !== "workspace" || daemonObservation.paused) {
       return;
     }
     void refreshChannelRunArtifacts(form.cwd.trim(), selectedChannelId, channelRunsForArtifacts);
-  }, [activeView, channelRunArtifactsKey, form.cwd, selectedChannelId]);
+  }, [activeView, channelRunArtifactsKey, form.cwd, selectedChannelId, daemonObservation.paused]);
 
   useEffect(() => {
-    if (activeView !== "workspace") {
+    if (activeView !== "workspace" || daemonObservation.paused) {
       return;
     }
     void refreshChannelExecutionActions(form.cwd.trim(), selectedChannelId, channelRunsForArtifacts);
-  }, [activeView, channelRunArtifactsKey, form.cwd, selectedChannelId]);
+  }, [activeView, channelRunArtifactsKey, form.cwd, selectedChannelId, daemonObservation.paused]);
 
   useEffect(() => {
     const cwd = form.cwd.trim();
     const hasActiveVisibleRun = channelRunsForArtifacts.some((candidate) =>
       candidate.status === "queued" || candidate.status === "running" || candidate.status === "waiting_for_approval",
     );
-    if (activeView !== "workspace" || !cwd || !selectedChannelId || (!hasActiveVisibleRun && !hasLiveWorkflowTimeline)) {
+    if (daemonObservation.paused || activeView !== "workspace" || !cwd || !selectedChannelId || (!hasActiveVisibleRun && !hasLiveWorkflowTimeline)) {
       return undefined;
     }
     const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState === "visible" && !daemonObservationRef.current.paused) {
         void refreshChannelExecutionActions(cwd, selectedChannelId, channelRunsForArtifacts);
       }
     }, 750);
     return () => window.clearInterval(interval);
-  }, [activeView, channelRunArtifactsKey, form.cwd, selectedChannelId, hasLiveWorkflowTimeline]);
+  }, [activeView, channelRunArtifactsKey, form.cwd, selectedChannelId, hasLiveWorkflowTimeline, daemonObservation.paused]);
 
   useEffect(() => {
     if (activeView !== "workspace") {
@@ -2034,22 +2068,18 @@ export function AppShell(): React.JSX.Element {
 
   useEffect(() => {
     const cwd = form.cwd.trim();
-    if (activeView !== "workspace" || isRunning || !workspaceTimelineRunId || !cwd) {
+    if (daemonObservationRef.current.paused || activeView !== "workspace" || isRunning || !workspaceTimelineRunId || !cwd) {
       return;
     }
 
-    const loadKey = `${cwd}::${workspaceTimelineRunId}`;
+    const loadKey = `${cwd}::${workspaceTimelineRunId}::${daemonObservation.epoch}`;
     if (workspaceTimelineLoadRef.current === loadKey) {
-      return;
-    }
-    if (run?.id === workspaceTimelineRunId && events.length > 0) {
-      workspaceTimelineLoadRef.current = loadKey;
       return;
     }
 
     workspaceTimelineLoadRef.current = loadKey;
-    void loadRun(workspaceTimelineRunId, cwd);
-  }, [activeView, events.length, form.cwd, isRunning, run?.id, workspaceTimelineRunId]);
+    void loadRun(workspaceTimelineRunId, cwd).catch(() => undefined);
+  }, [activeView, form.cwd, isRunning, workspaceTimelineRunId, daemonObservation.epoch, daemonObservation.paused]);
 
   useEffect(() => {
     const syncKey = `${form.cwd}::${selectedChannelId}`;
@@ -2089,9 +2119,11 @@ export function AppShell(): React.JSX.Element {
   }, [approvals, selectedApprovalId]);
 
   async function refreshHealth(): Promise<void> {
+    const observationEpoch = daemonObservationRef.current.epoch;
     setDaemonHealthRefreshing(true);
     try {
       const health = await getDaemonHealth();
+      if (daemonObservationRef.current.epoch !== observationEpoch) return;
       setDaemonHealthy(health.ok);
       setDaemonFeatures(health.features ?? {
         channels: { autoRoute: false },
@@ -2108,7 +2140,7 @@ export function AppShell(): React.JSX.Element {
           if (savedWorkspaceCwd) {
             clearSavedWorkspaceCwd();
           }
-          if (form.cwd.trim() !== defaultWorkspaceCwd) {
+          if (daemonObservationRef.current.workspaceCwd !== defaultWorkspaceCwd) {
             updateWorkspaceCwd(defaultWorkspaceCwd);
           }
         } else {
@@ -2125,19 +2157,17 @@ export function AppShell(): React.JSX.Element {
         }
         void Promise.all([
           refreshProviders(defaultWorkspaceCwd),
-          refreshChannels(defaultWorkspaceCwd),
           refreshAiTeammates(defaultWorkspaceCwd),
-          refreshAiCouncils(defaultWorkspaceCwd),
           refreshMcp(defaultWorkspaceCwd),
           refreshRuns(defaultWorkspaceCwd),
           refreshApprovals(defaultWorkspaceCwd),
           refreshRuntimeState(defaultWorkspaceCwd),
-          refreshUsedMemoryAudit(defaultWorkspaceCwd),
           refreshWorkItems(defaultWorkspaceCwd),
           loadStartupStatus(defaultWorkspaceCwd),
         ]).catch(() => undefined);
       }
     } catch {
+      if (daemonObservationRef.current.epoch !== observationEpoch) return;
       setDaemonHealthy(false);
       setDaemonFeatures({
         channels: { autoRoute: false },
@@ -2177,6 +2207,7 @@ export function AppShell(): React.JSX.Element {
   }
 
   async function refreshChannelActivity(): Promise<void> {
+    if (daemonObservationRef.current.paused) throw new DaemonObservationDeferredError();
     const channelId = selectedChannelId;
     if (!channelId) {
       return;
@@ -2205,6 +2236,68 @@ export function AppShell(): React.JSX.Element {
     }
   }
 
+  async function refreshApprovalDependents(workspaceCwd: string, event: {
+    readonly runId?: string;
+    readonly mediaJobId?: string;
+    readonly externalWorkActionId?: string;
+    readonly channelId?: string;
+  }): Promise<void> {
+    const owner = approvalRefreshOwner;
+    const observationEpoch = daemonObservationRef.current.epoch;
+    const isCurrent = () => approvalRefreshOwnerRef.current === owner && owner.cwd === workspaceCwd
+      && !daemonObservationRef.current.paused && daemonObservationRef.current.epoch === observationEpoch;
+    if (!isCurrent()) return;
+    await refreshConversationThreads(workspaceCwd);
+    if (!isCurrent()) return;
+    window.setTimeout(() => {
+      if (isCurrent()) void refreshConversationThreads(workspaceCwd);
+    }, 750);
+    if (event.runId && selectedConversationDetail?.runs.some((run) => run.id === event.runId)) {
+      await refreshSelectedConversation(workspaceCwd);
+      if (!isCurrent()) return;
+    }
+    if (event.externalWorkActionId) {
+      await refreshExternalActionDetailsByIds(workspaceCwd, [event.externalWorkActionId]);
+      if (!isCurrent()) return;
+    }
+    const isDiagnosticRun = event.runId && (event.runId === activeRunId || event.runId === lookupRunId || event.runId === approvalRepairRunId);
+    if (isDiagnosticRun) {
+      try {
+        await Promise.all([loadRun(event.runId, workspaceCwd), refreshRuns(workspaceCwd)]);
+      } catch (error) {
+        // Approval acceptance is already a fact; deferring its observation is
+        // not an approval failure. Real read/HTTP errors keep their owner.
+        if (error instanceof DaemonObservationDeferredError) return;
+        throw error;
+      }
+      if (!isCurrent()) return;
+      window.setTimeout(() => {
+        if (!isCurrent()) return;
+        void loadRun(event.runId, workspaceCwd).catch(() => undefined);
+        void refreshRuns(workspaceCwd);
+        void refreshApprovals(workspaceCwd, event.runId);
+      }, 750);
+    }
+    if (event.mediaJobId) await refreshMediaJobs(workspaceCwd);
+    if (!isCurrent()) return;
+    const channelId = selectedChannelId && (event.channelId
+      ? event.channelId === selectedChannelId
+      : channelRunsForArtifacts.some(candidate => candidate.id === event.runId)) ? selectedChannelId : undefined;
+    if (channelId) {
+      // Do not call refreshChannelActivity: it also refreshes approval receipts.
+      await Promise.all([
+        ...(isDiagnosticRun ? [] : [refreshRuns(workspaceCwd)]),
+        refreshTasks(channelId),
+        refreshChannelMessages(channelId, selectedChannelMessageThreadId),
+        refreshChannelProtocol(channelId),
+        refreshChannelFiles(channelId),
+        refreshChannelRunArtifacts(workspaceCwd, channelId, channelRunsForArtifacts),
+        refreshChannelExecutionActions(workspaceCwd, channelId, channelRunsForArtifacts),
+        refreshChannelActivityTransitions(workspaceCwd, channelId, channelRunsForArtifacts),
+      ]);
+    }
+  }
+
   async function handleDomainEvent(event: DomainEvent): Promise<void> {
     const workspaceCwd = form.cwd.trim();
     switch (event.type) {
@@ -2217,37 +2310,31 @@ export function AppShell(): React.JSX.Element {
         setActiveSidebarTarget(event.target ?? event.view);
         return;
 
-      case "approval.resolved":
-        if (event.reconciliationPending) {
+      case "approval.recoveryChanged": {
+        if (event.cwd !== workspaceCwd) return;
+        const scope = `approval:${event.approvalId}:postcommit`;
+        const notice = approvalRecoveryNotice(event.recoveryState);
+        if (notice) {
           showToast({
-            message: t("Approval was recorded, but execution recovery is pending. Check run status before trying again."),
-            scope: `approval:${event.approvalId}:postcommit`,
-            tone: "warning",
-            durationMs: 15_000,
+            message: t(notice.message),
+            scope,
+            tone: notice.tone,
+            durationMs: notice.tone === "warning" ? 15_000 : 3_000,
           });
+        } else {
+          dismissToast(scope);
+          // Recovery completion may arrive without SSE. Refresh the owning
+          // views, not the receipt observer itself, to avoid recursive lookups.
+          if (event.runId || event.mediaJobId || event.externalWorkActionId || event.channelId) {
+            await refreshApprovalDependents(workspaceCwd, event);
+          }
         }
+        return;
+      }
+
+      case "approval.resolved":
         await refreshApprovals(workspaceCwd, event.runId);
-        await refreshConversationThreads(workspaceCwd);
-        window.setTimeout(() => {
-          void refreshConversationThreads(workspaceCwd);
-        }, 750);
-        if (event.runId && selectedConversationDetail?.runs.some((run) => run.id === event.runId)) {
-          await refreshSelectedConversation(workspaceCwd);
-        }
-        if (event.externalWorkActionId) {
-          await refreshExternalActionDetailsByIds(workspaceCwd, [event.externalWorkActionId]);
-        }
-        if (event.runId && (event.runId === activeRunId || event.runId === lookupRunId || event.runId === approvalRepairRunId)) {
-          await Promise.all([loadRun(event.runId, workspaceCwd), refreshRuns(workspaceCwd)]);
-          window.setTimeout(() => {
-            void loadRun(event.runId, workspaceCwd);
-            void refreshRuns(workspaceCwd);
-            void refreshApprovals(workspaceCwd, event.runId);
-          }, 750);
-        }
-        if (event.mediaJobId) {
-          await refreshMediaJobs(workspaceCwd);
-        }
+        await refreshApprovalDependents(workspaceCwd, event);
         return;
 
       case "provider.repairRequested": {
@@ -2437,6 +2524,7 @@ export function AppShell(): React.JSX.Element {
         : "normal_conversation"
     : undefined;
   return (
+    <DaemonObservationProvider value={daemonObservation}>
     <DesktopTitlebarProvider>
     <AppShellOverlayBoundary className={shellClassName}>
       <DesktopWindowChrome
@@ -2453,6 +2541,7 @@ export function AppShell(): React.JSX.Element {
         hasSelectedTeammate={Boolean(selectedAiTeammate)}
       />
       <AppConnectionStatus
+        desktopStatus={desktopDaemonStatus}
         offline={daemonHealthy === false}
         refreshing={daemonHealthRefreshing}
         onRetry={() => void refreshHealth()}
@@ -2805,20 +2894,21 @@ export function AppShell(): React.JSX.Element {
                 if (!confirmation) return;
               }
               setForm((current) => {
-              const workspaceAccessMode = workspaceAccessModeForPermissionPreset(permissionMode === "full_access"
-                ? "full_access"
-                : permissionMode === "ask_everything"
-                  ? "read_only"
-                  : "workspace_collaboration");
-              const legacy = authorizationAndAccessToLegacyPermission(current.authorizationMode, workspaceAccessMode);
-              return {
-                ...current,
-                workspaceAccessMode,
-                permissionMode: legacy.permissionMode,
-                permissionPreset: legacy.permissionPreset,
-              };
+                const workspaceAccessMode = workspaceAccessModeForPermissionPreset(permissionMode === "full_access"
+                  ? "full_access"
+                  : permissionMode === "ask_everything"
+                    ? "read_only"
+                    : "workspace_collaboration");
+                const legacy = authorizationAndAccessToLegacyPermission(current.authorizationMode, workspaceAccessMode);
+                return {
+                  ...current,
+                  workspaceAccessMode,
+                  permissionMode: legacy.permissionMode,
+                  permissionPreset: legacy.permissionPreset,
+                };
               });
             }}
+            onOpenSandboxSettings={() => openSettingsSection("approval-strategy")}
             onCancelActiveRun={(targetRun) => void cancelRunOrWorkUnit(targetRun)}
             onOpenRun={(runId) => void openRunFromWorkspace(runId)}
             onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
@@ -3033,6 +3123,7 @@ export function AppShell(): React.JSX.Element {
                 fullAccessConfirmed={fullAccessConfirmation.isConfirmed(teammateConversationFullAccessScope)}
                 onConfirmFullAccess={() => fullAccessConfirmation.request(teammateConversationFullAccessScope)}
                 onConfirmFullAccessSelection={() => fullAccessConfirmation.request(teammateConversationFullAccessScope)}
+                permissionSelectionOwnerKey={JSON.stringify(teammateConversationFullAccessScope)}
                 defaultPermissionMode={workspaceSettings?.defaultPermissionMode}
                 defaultPermissionPreset={workspaceSettings?.defaultPermissionPreset}
                 workspacePolicy={approvalPolicy}
@@ -3543,6 +3634,7 @@ export function AppShell(): React.JSX.Element {
       />
     </AppShellOverlayBoundary>
     </DesktopTitlebarProvider>
+    </DaemonObservationProvider>
   );
 }
 

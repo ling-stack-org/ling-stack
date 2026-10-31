@@ -53,7 +53,7 @@ export function FullAccessConfirmationDialog({
           )}
         />
         <DialogBody className="full-access-confirmation-body">
-          <p>{t("Full access can read and write outside the workspace and use network or tool actions allowed by this session.")}</p>
+          <p>{t("Confirmation enables automatic approvals and Full Access for this conversation, including access outside the workspace. System permissions and Host deny rules still apply.")}</p>
           <p>{t("This confirmation applies only to the current conversation. New conversations and permission changes require confirmation again.")}</p>
           <p>{t("Use it only for trusted workspaces. Denied tools in workspace policy still stay blocked.")}</p>
         </DialogBody>

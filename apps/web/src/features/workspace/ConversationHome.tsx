@@ -364,7 +364,7 @@ export function ConversationHome({
     () => composerWorkspaceFileParts(composerSubmissionInputParts).map((part) => ({
       path: part.path,
       ...(part.line !== undefined ? { line: part.line } : {}),
-      source: "composer" as const,
+      source: "inferred_text" as const,
     })),
     [composerSubmissionInputParts],
   );

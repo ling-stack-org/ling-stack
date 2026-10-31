@@ -5,7 +5,9 @@ import { buildSurfaceTimelineSnapshot } from "../../domains/conversations/timeli
 import { filterUsedMemoryEventsByResponse, UsedMemorySummary } from "../../shared/components/index.js";
 import { ConversationReplacementRetry, ConversationTimelineFeed, InlineMessageEditor, MessageActionBar, MessageRow, mountConversationTimeline } from "../../shared/conversation/index.js";
 import { useConversationReadingViewport } from "../../shared/conversation/blocks/use-conversation-reading-viewport.js";
+import { conversationReadingScope } from "../../shared/conversation/view-store/conversation-reading-storage.js";
 import { IconButton, Textarea } from "../../shared/ui/index.js";
+import { daemonBaseUrl, submitUserInputAnswer } from "../../api.js";
 import type { ChannelMention, ChannelMessage, ConversationItemV1, ConversationReasoningSummaryRecord, MemoryObject, UsedMemoryEvent, UserInputTranscriptItemV1 } from "../../types.js";
 
 export function ThreadReplyPanel({
@@ -84,10 +86,12 @@ export function ThreadReplyPanel({
     workspaceId: rootMessage.workspaceId, channelId: rootMessage.channelId, threadId,
     rootMessage, replies, conversationItems, userInputs, reasoningSummaries, contextCompactions,
   });
+  const readingScopeKey = conversationReadingScope(daemonBaseUrl, cwd, `topic:${rootMessage.id}`, threadId);
   const reading = useConversationReadingViewport({
     scopeKey: JSON.stringify([cwd, rootMessage.id, threadId]),
     revision: timelineItems,
     contentKey: timelineItems.map(item => item.id).join("|"),
+    readingScopeKey,
   });
   const timelineNode = mountConversationTimeline({
     snapshot: buildSurfaceTimelineSnapshot({
@@ -99,6 +103,7 @@ export function ThreadReplyPanel({
     }),
     depth: 0,
     cwd,
+    onSubmitUserInputAnswer: (command) => submitUserInputAnswer(cwd, command),
     virtualScrollRef: reading.scrollRef,
     itemLocatorRef: reading.locatorRef,
     onDisclosureIntent: reading.pauseAutoFollow,
@@ -185,6 +190,7 @@ export function ThreadReplyPanel({
       </div>
       <ConversationTimelineFeed
         surfaceId={`topic:${rootMessage.id}`}
+        readingScopeKey={readingScopeKey}
         scrollRef={reading.scrollRef}
         frameClassName="message-feed-wrap"
         feedClassName="thread-reply-list"

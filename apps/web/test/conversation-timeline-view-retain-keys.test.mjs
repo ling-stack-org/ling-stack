@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { collectConversationTimelineViewRetainKeys } from "../src/shared/conversation/timeline/conversation-timeline-view-retain-keys.ts";
+import test, { after } from "node:test";
+import { createServer } from "vite";
+import { fileURLToPath } from "node:url";
+import { createConversationViewStore } from "../src/shared/conversation/view-store/conversation-view-store.ts";
+
+const vite = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, logLevel: "silent", server: { middlewareMode: true } });
+const { collectConversationTimelineViewRetainKeys } = await vite.ssrLoadModule("/src/shared/conversation/timeline/conversation-timeline-view-retain-keys.ts");
+const { projectTimelineResponsePresentation } = await vite.ssrLoadModule("/src/shared/conversation/timeline/timeline-response-presentation.ts");
+after(() => vite.close());
+
+test("response file disclosure survives snapshot reconciliation with its owning response", () => {
+  const items = [{ id: "final", kind: "agentMessage", markdown: "Done", phase: "final", status: "succeeded", turnId: "turn-1", sourceRefs: [] }];
+  const response = projectTimelineResponsePresentation(items).footerByItemId.get("final");
+  assert.ok(response);
+  assert.ok(collectConversationTimelineViewRetainKeys(items).blockIds.has(`response-files:${response.id}`));
+});
 
 const lineage = {
   revision: 1,
@@ -26,6 +40,16 @@ function command(id, actionId) {
     outputTruncated: false,
   };
 }
+
+test("a command output revision retains its copy feedback and prunes foreign actions", () => {
+  const item = command("command:copy", "action_copy");
+  const store = createConversationViewStore("surface");
+  store.markCopied(`${item.id}:copy-command`, 100);
+  store.markCopied("removed-command:copy-command", 100);
+  store.reconcileRetainedKeys(collectConversationTimelineViewRetainKeys([{ ...item, revision: 2 }]));
+  assert.equal(store.getSnapshot().copyFeedbackByActionId.get(`${item.id}:copy-command`).copiedAt, 100);
+  assert.equal(store.getSnapshot().copyFeedbackByActionId.has("removed-command:copy-command"), false);
+});
 
 test("timeline retain keys include batches, hidden children, and nested Agent items", () => {
   const leading = {
@@ -95,5 +119,5 @@ test("timeline retain keys include batches, hidden children, and nested Agent it
     "timeline-sub-agent:sub-agent:1",
   ]);
   assert.deepEqual([...keys.spanIds], ["legacy:span"]);
-  assert.deepEqual([...keys.actionIds].sort(), ["action_batched", "action_nested", "legacy:action"]);
+  assert.deepEqual([...keys.actionIds].sort(), ["action_batched", "action_nested", "command:batched:copy-command", "command:nested:copy-command", "legacy:action"]);
 });

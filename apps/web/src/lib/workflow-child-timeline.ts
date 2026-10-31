@@ -1,7 +1,9 @@
 import {
-  batchCanonicalTranscriptItems, mergeConversationRunNarration, projectConversationRunNarration, projectConversationTimelineItems,
+  batchCanonicalTranscriptItems, mergeConversationRunNarration, parseUnverifiedBlockedNarration,
+  projectConversationRunNarration, projectConversationTimelineItems,
   type ConversationTimelineItem, type ConversationTimelineMessageItem, type ConversationWorkCellRow,
 } from "@ling-stack/conversation-ui-core";
+import { isDelegatedOutcomeV1 } from "@ling-stack/contracts";
 import type { ChannelWorkflowStep, ExecutionAction } from "../types.js";
 import { interleaveWorkflowChildUserInputs } from "./workflow-child-user-input.js";
 
@@ -37,6 +39,7 @@ export function projectWorkflowChildTimeline(input: {
       && attempts.size <= 1 && (!narration.attemptId || attempts.size === 0 || attempts.has(narration.attemptId));
     if (!ownsNarration) return positionAndBatch(atomic, stepIndex, input.contextSegmentIdByItemId);
     const attemptId = narration.attemptId ?? [...attempts][0];
+    const blockedOutcome = matchingBlockedOutcome(step, narration, attemptId, input.parentItemId);
     const messageStatus = step.status === "succeeded" || step.status === "skipped" ? "succeeded"
       : step.status === "failed" ? "failed" : step.status === "cancelled" ? "cancelled"
       : step.status === "blocked" ? "blocked" : "running";
@@ -59,13 +62,27 @@ export function projectWorkflowChildTimeline(input: {
     // Child ownership was validated above from the Host's enclosing step/run
     // envelope. Normal/private per-segment ownership is a different source.
     const messages = projectConversationRunNarration({ message, segments: narration.segments, runId: narration.runId, anchor: message })
-      .map(row => ({
-        ...row, attemptId, participantId: narration.participantId, workflowStepId: step.id,
-        sourceRefs: [
-          ...row.sourceRefs.filter(ref => ref.kind !== "attempt" && ref.kind !== "participant"),
-          { kind: "participant", id: narration.participantId }, ...(attemptId ? [{ kind: "attempt", id: attemptId }] : []),
-        ],
-      }));
+      .map((row, index): ConversationTimelineItem => {
+        const scoped = {
+          ...row, attemptId, participantId: narration.participantId, workflowStepId: step.id,
+          sourceRefs: [
+            ...row.sourceRefs.filter(ref => ref.kind !== "attempt" && ref.kind !== "participant"),
+            { kind: "participant", id: narration.participantId }, ...(attemptId ? [{ kind: "attempt", id: attemptId }] : []),
+          ],
+        };
+        const segment = narration.segments[index]!;
+        const source = segment.source;
+        const ownSegment = !source || source.workspaceId === step.workspaceId && source.threadId === narration.threadId
+          && source.turnId === narration.turnId && source.runId === narration.runId
+          && source.attemptId === attemptId && source.participantId === narration.participantId
+          && typeof source.workUnitId === "string" && source.workUnitId.trim().length > 0;
+        const explanation = blockedOutcome && ownSegment && segment.completed && row.phase === "final"
+          ? parseUnverifiedBlockedNarration(row.markdown) : undefined;
+        if (!explanation || !blockedOutcome) return scoped;
+        const { markdown: _markdown, phase: _phase, logicalMessageId: _logical, waitingPlaceholder: _waiting, ...base } = scoped;
+        return { ...base, kind: "protocolEvent", protocolKind: "workflow-step", title: "Task blocked",
+          blockedExplanation: { ...explanation, hostCode: "required_operation_evidence_missing", hostReason: blockedOutcome.reason } };
+      });
     const scopedAtomic = atomic.map(item => item.runId === narration.runId && item.attemptId === attemptId
       && item.participantId === narration.participantId ? { ...item, turnId: narration.turnId } : item);
     const merged = interleaveWorkflowChildUserInputs({ step, participantId: input.participantId,
@@ -74,6 +91,32 @@ export function projectWorkflowChildTimeline(input: {
     // without comparing sequence 1 in a retry/teammate with another run's 100.
     return positionAndBatch(merged, stepIndex, input.contextSegmentIdByItemId);
   });
+}
+
+function matchingBlockedOutcome(
+  step: ChannelWorkflowStep,
+  narration: NonNullable<ChannelWorkflowStep["runNarration"]>,
+  attemptId: string | undefined,
+  parentItemId: string | undefined,
+) {
+  const outcome = step.metadata?.delegatedOutcome;
+  const sourceItemId = parentItemId ?? step.metadata?.sourceMessageId;
+  if (step.status !== "blocked" || !isDelegatedOutcomeV1(outcome) || outcome.kind !== "blocked"
+    || outcome.code !== "required_operation_evidence_missing"
+    || outcome.workflowId !== step.workflowId || outcome.workflowStepId !== step.id
+    || outcome.participantId !== step.toParticipantId || outcome.participantId !== narration.participantId
+    || outcome.lineage.runId !== step.runId || outcome.lineage.runId !== narration.runId
+    || !attemptId?.trim() || outcome.lineage.attemptId !== attemptId || narration.attemptId !== attemptId
+    || !sourceItemId?.trim() || sourceItemId !== narration.sourceItemId
+    || (step.metadata?.sourceMessageId && step.metadata.sourceMessageId !== sourceItemId)) return undefined;
+  const expectedRefs: Readonly<Record<string, string>> = {
+    workflow: step.workflowId, workflow_step: step.id, run: narration.runId, attempt: attemptId,
+    conversation_item: sourceItemId,
+  };
+  // The contract validates required refs and uniqueness. Reject additional refs
+  // to another owning run/attempt/source as well, rather than guessing lineage.
+  if (outcome.lineage.sourceRefs.some(ref => Object.hasOwn(expectedRefs, ref.type) && expectedRefs[ref.type] !== ref.id)) return undefined;
+  return outcome;
 }
 
 function positionAndBatch(

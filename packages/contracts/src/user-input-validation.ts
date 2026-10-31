@@ -2,6 +2,7 @@ import {
   USER_INPUT_LIMITS_V1 as limits,
   userInputRequestStatusesV1,
   type UserInputAnswerRequestContextV1,
+  type UserInputAnswerCommandV1,
   type UserInputAnswerSubmissionV1,
   type UserInputAnswerV1,
   type UserInputInvalidReasonV1,
@@ -11,6 +12,56 @@ import {
   type UserInputValidationFailureV1,
   type UserInputValidationResultV1,
 } from "./user-input.js";
+
+/** Parse the public answer command without evaluating or reconstructing Host authority. */
+export function parseUserInputAnswerCommandV1(
+  value: unknown,
+): UserInputValidationResultV1<UserInputAnswerCommandV1> {
+  if (!record(value)) return invalid("$", "invalid_shape");
+  if (!keys(value, ["schemaVersion", "authority", "idempotencyKey", "answers"])) {
+    return invalid("$", "unknown_field");
+  }
+  if (value.schemaVersion !== 1 || !record(value.authority)
+    || !keys(value.authority, ["schemaVersion", "threadId", "runId", "attemptId", "participantId",
+      "requestId", "requestVersion", "statusRevision", "token"])) {
+    return invalid("authority", "invalid_shape");
+  }
+  const authority = value.authority;
+  if (authority.schemaVersion !== 1 || !id(authority.threadId) || !id(authority.runId)
+    || !id(authority.attemptId) || !id(authority.participantId) || !id(authority.requestId)
+    || !positiveInteger(authority.requestVersion) || !positiveInteger(authority.statusRevision)
+    || typeof authority.token !== "string" || !/^[a-f0-9]{64}$/u.test(authority.token)) {
+    return invalid("authority", "invalid_value");
+  }
+  const submission = parseUserInputAnswerSubmissionV1({
+    schemaVersion: 1,
+    requestId: authority.requestId,
+    expectedVersion: authority.requestVersion,
+    expectedStatusRevision: authority.statusRevision,
+    idempotencyKey: value.idempotencyKey,
+    answers: value.answers,
+  });
+  if (!submission.ok) return submission;
+  return {
+    ok: true,
+    value: {
+      schemaVersion: 1,
+      authority: {
+        schemaVersion: 1,
+        threadId: authority.threadId,
+        runId: authority.runId,
+        attemptId: authority.attemptId,
+        participantId: authority.participantId,
+        requestId: authority.requestId,
+        requestVersion: authority.requestVersion,
+        statusRevision: authority.statusRevision,
+        token: authority.token,
+      },
+      idempotencyKey: submission.value.idempotencyKey,
+      answers: submission.value.answers,
+    },
+  };
+}
 
 /** Parse model-owned question content; reject every Host/permission field. */
 export function parseUserInputToolInputV1(value: unknown): UserInputValidationResultV1<UserInputToolInputV1> {

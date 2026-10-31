@@ -416,6 +416,34 @@ test("local-user continuation freezes a new source while retaining intervention 
   }
 });
 
+for (const mode of ["queue_followup", "interrupt_redirect"]) {
+  test(`${mode} keeps lexical file origins display-only through SQLite, projection and replay`, async t => {
+    const f = await fixture(t);
+    const sourceRun = f.store.getRun("old-run");
+    const body = "只解释 ../records.csv 的含义，不读取文件";
+    const fileRefs = [{ path: "../records.csv", source: "inferred_text", rootRelation: "unknown",
+      kind: "unknown", materializationStatus: "not_loaded", previewText: "MUST_NOT_ENTER_PROMPT" }];
+    const created = f.store.createRunIntervention({ sourceRunId: sourceRun.id, mode, instruction: body,
+      messagePayload: { body, attachmentIds: [], linkPreviewIds: [], fileRefs },
+      requestedBy: "local-user", idempotencyKey: `lexical-${mode}` }, new Date().toISOString());
+    f.store.close(); f.store = createSqliteRunStore(f.cwd);
+    const intervention = f.store.getRunIntervention(created.id);
+    assert.equal(intervention.messagePayload.fileRefs[0].source, "inferred_text");
+    const pending = buildConversationDetail(f.store, f.cwd, f.thread).messages.find(message => message.content === body);
+    assert.equal(pending.fileRefs[0].source, "inferred_text");
+    const request = buildRunInterventionContinuationRequest(f.store, sourceRun, intervention);
+    const canonical = f.store.getConversationItem(request.sourceMessageId);
+    assert.deepEqual(canonical.payload.fileRefs, [{ path: "../records.csv", source: "inferred_text" }]);
+    assert.equal(request.task.prompt.includes(body), true);
+    assert.equal(request.task.prompt.includes("Workspace file refs:"), false);
+    assert.equal(request.task.prompt.includes("MUST_NOT_ENTER_PROMPT"), false);
+    persist(f, request, "lexical-continuation");
+    f.store.close(); f.store = createSqliteRunStore(f.cwd);
+    assert.deepEqual(buildRunInterventionContinuationRequest(f.store, f.store.getRun(sourceRun.id),
+      f.store.getRunIntervention(created.id)), request);
+  });
+}
+
 for (const mode of ["queue_followup", "interrupt_redirect"]) for (const language of ["follow_user", "zh-CN"]) {
   test(`ACP ${mode} preserves original ${language} preference through English guidance and durable replay`, async t => {
     const original = { tone: "friendly", language };

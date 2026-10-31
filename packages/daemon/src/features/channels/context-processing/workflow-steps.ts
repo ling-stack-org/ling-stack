@@ -7,6 +7,7 @@ import type {
   SkillApprovalProfile,
 } from "@ling-stack/core";
 import { resolveChannelExecutionCwd } from "@ling-stack/core";
+import { projectWorkflowStepPrompt } from "../workflow-step-prompt.js";
 import { collectChannelStateSource, collectWorkflowEvidenceSources, collectWorkflowStepSource } from "./sources.js";
 import { buildProjectedConversationContextSlice } from "./conversation-context-adapter.js";
 import type { ChannelContextBudgetSnapshot, ChannelContextSection, ChannelContextSourceRef, ChannelContextView } from "./types.js";
@@ -130,7 +131,7 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
         input.step.metadata?.skillId ? `Skill: ${input.step.metadata.skillId}` : undefined,
         "",
         "Step instruction:",
-        input.prompt,
+        projectWorkflowStepPrompt(input),
       ].filter((line): line is string => line !== undefined).join("\n"),
       sourceRefIds: [input.step.id],
       visibility: "prompt",
@@ -212,7 +213,9 @@ function buildCompactedWorkflowDependencySection(summary: WorkflowStepCompactedD
   return {
     id: "workflow_dependency_summary",
     role: "evidence",
-    priority: "high",
+    // This replaces required dependency outputs. Dropping the replacement
+    // would dispatch a different task with no upstream context at all.
+    priority: "must_keep",
     compactionSurvival: "summarize",
     title: "workflow_dependency_summary",
     text: summary.text,

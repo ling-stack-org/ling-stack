@@ -5,6 +5,26 @@ import { readNativeResponsePreferences } from "../dist/features/conversations/na
 import { parseRunRequest } from "../dist/features/runs/schemas.js";
 
 const tools = ["read", "grep", "find", "ls", "bash", "edit", "write"];
+for (const explicit of [false, true]) {
+  test(`normal prompt distinguishes inferred operands from explicit file references (${explicit})`, () => {
+    const message = "解释 node cli.js ../records.csv，不运行。";
+    const fileRefs = [{ path: "../records.csv", source: "inferred_text" },
+      ...(explicit ? [{ path: "README.md", source: "api" }] : [])];
+    const request = buildConversationRunRequest({ workspaceCwd: "/fixture", thread: { id: "thread" },
+      turn: { id: "turn", title: "Reference boundary", createdByActor: "local-user" },
+      input: { message, fileRefs }, lingConversationTone: "none", defaultReasoningSummary: "auto",
+      attachments: [], attachmentMaterializations: new Map(), normalConversationContext: { renderedHistory: "", projection: {} } });
+    assert.deepEqual(request.conversationFileRefs, fileRefs, "durable request retains display provenance");
+    if (explicit) {
+      assert.match(request.task.prompt, /Workspace file references:\n- 1\. README\.md/);
+      assert.doesNotMatch(request.task.prompt, /- \d+\. \.\.\/records\.csv/);
+    } else {
+      assert.equal(request.task.prompt, message, "lexical tokens remain solely in their original narrative");
+    }
+    assert.deepEqual(request.tools, tools);
+  });
+}
+
 for (const engineId of ["kimi-acp", "openclaw-acp", "codex-app-server", "pi"]) {
   for (const language of ["follow_user", "zh-CN"]) test(`${engineId} conversation preserves ${language} presentation intent`, () => {
     const binding = engineId === "pi" ? { kind: "pi_provider", providerPresetId: "fixture" }

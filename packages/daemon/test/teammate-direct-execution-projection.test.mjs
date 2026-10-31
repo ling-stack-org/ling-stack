@@ -240,7 +240,7 @@ class CapturedResponse extends EventEmitter {
   destroyed = false;
   setHeader() {}
   writeHead(status) { this.status = status; }
-  write(chunk) { this.output += chunk; }
+  write(chunk) { this.output += chunk; return true; }
   end(chunk = "") { this.output += chunk; }
 }
 

@@ -139,9 +139,10 @@ test("normal conversation composer uses Radix menus and preserves draft, upload,
   await expect(permissionMenu).toHaveCount(0);
   await expect(permissionTrigger).toBeFocused();
 
-  await expect(composer.getByRole("button", { name: /Selected thinking mode|Selected reasoning summary|Selected authorization mode/ })).toHaveCount(0);
+  await expect(composer.getByRole("button", { name: /^(Selected thinking mode|Selected reasoning summary|Selected authorization mode)/ })).toHaveCount(0);
   const modelTrigger = composer.getByRole("button", { name: "Selected model gpt-5.5" });
-  await expect(modelTrigger).toContainText("Off");
+  await expect(modelTrigger).toContainText("Thinking off");
+  await expect(modelTrigger).toHaveAccessibleName("Selected model gpt-5.5 · Selected thinking mode Off");
   await modelTrigger.click();
   const reasoningPanel = page.getByRole("dialog", { name: "Thinking mode" });
   const slider = reasoningPanel.getByRole("slider", { name: "Thinking mode" });
@@ -152,7 +153,7 @@ test("normal conversation composer uses Radix menus and preserves draft, upload,
   await slider.press("ArrowLeft");
   await expect(slider).toHaveAttribute("aria-valuetext", "High");
   await expect(modelTrigger).toContainText("High");
-  await expect(modelTrigger).toHaveAccessibleName("Selected model gpt-5.5 · High");
+  await expect(modelTrigger).toHaveAccessibleName("Selected model gpt-5.5 · Selected thinking mode High");
   await expectCompactMutedComposerControl(permissionTrigger);
   await expectCompactMutedComposerControl(modelTrigger);
   await captureEvidence(page, "1440x960-ling-light-normal-composer-reasoning.png");

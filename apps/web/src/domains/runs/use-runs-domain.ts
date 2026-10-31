@@ -8,12 +8,13 @@ import {
   listRuns,
 } from "../../api.js";
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
+import { DaemonObservationDeferredError, isDaemonObservationPausedForWorkspace, liveDaemonObservation, shouldDeferDaemonObservationError, type DaemonObservation } from "../../shared/conversation/observation/daemon-observation.js";
 import { readDataString } from "../../lib/data.js";
 import { inferRunStatus } from "../../lib/run-evidence.js";
 import { useRunControl } from "../../lib/use-run-control.js";
 import { useLatestKeyedRequestGuard } from "../../lib/use-latest-request.js";
 import { useI18n } from "../../i18n.js";
-import { streamRun } from "../../sse.js";
+import { streamRun, type StreamJsonResponseParser } from "../../sse.js";
 import type {
   RunArtifact,
   RunEventEnvelope,
@@ -43,7 +44,13 @@ export interface RunsActions {
   readonly loadRun: (runId?: string, cwd?: string) => Promise<void>;
   readonly refreshRunList: (cwd?: string) => Promise<void>;
   readonly runWithRequest: (requestBody: unknown, cwd: string, afterRunLoaded?: (runId: string) => Promise<void>) => Promise<void>;
-  readonly streamRunRequest: (url: string, requestBody: unknown, cwd: string, afterRunLoaded?: (runId: string) => Promise<void>) => Promise<void>;
+  readonly streamRunRequest: <TResponse = never>(
+    url: string,
+    requestBody: unknown,
+    cwd: string,
+    afterRunLoaded?: (runId: string) => Promise<void>,
+    parseJsonResponse?: StreamJsonResponseParser<TResponse>,
+  ) => Promise<TResponse | undefined>;
   readonly abortCurrentRun: () => void;
   readonly cancelRunOrWorkUnit: (targetRun?: RunSession) => Promise<void>;
   readonly resetForCwd: () => void;
@@ -53,6 +60,7 @@ export type RunsController = DomainController<RunsState, RunsActions>;
 
 export function useRunsDomain(input: {
   readonly cwd: string;
+  readonly observation?: DaemonObservation;
   readonly confirmFullAccessRunIfNeeded: (requestBody: unknown) => Promise<unknown | undefined>;
   readonly setSelectedWorkUnitDetail: (detail: WorkUnitDetailResponse | undefined) => void;
   readonly refreshApprovals: (cwd: string, runId?: string) => Promise<void>;
@@ -74,6 +82,12 @@ export function useRunsDomain(input: {
   const [error, setError] = useState<DomainError | undefined>();
   const abortRef = useRef<AbortController | undefined>(undefined);
   const runLoadGuard = useLatestKeyedRequestGuard();
+  const observationRef = useRef(input.observation ?? liveDaemonObservation);
+  observationRef.current = input.observation ?? liveDaemonObservation;
+  const workspaceCwdRef = useRef(input.cwd.trim());
+  workspaceCwdRef.current = input.cwd.trim();
+  const runLoadOwnerRef = useRef<object | undefined>(undefined);
+  const runListOwnerRef = useRef<object | undefined>(undefined);
 
   const assistantText = useMemo(
     () =>
@@ -91,8 +105,22 @@ export function useRunsDomain(input: {
       setError({ scope: "load", message: t("Enter a Run ID") });
       return;
     }
+    const observation = observationRef.current;
+    const workspaceCwd = cwd.trim();
+    if (workspaceCwdRef.current !== workspaceCwd || isDaemonObservationPausedForWorkspace(observation, cwd)) {
+      throw new DaemonObservationDeferredError();
+    }
 
     const requestToken = runLoadGuard.next(trimmedRunId);
+    const owner = {};
+    runLoadOwnerRef.current = owner;
+    // A keyed request alone cannot fence A -> B navigation to a different Run.
+    const isRequestCurrent = () => runLoadOwnerRef.current === owner && runLoadGuard.isCurrent(trimmedRunId, requestToken);
+    const isOwnerCurrent = () => isRequestCurrent() && workspaceCwdRef.current === workspaceCwd;
+    const canCommit = () => isOwnerCurrent() && observationRef.current.epoch === observation.epoch
+      && observationRef.current.baseUrl === observation.baseUrl && observationRef.current.workspaceCwd === observation.workspaceCwd
+      && !isDaemonObservationPausedForWorkspace(observationRef.current, cwd);
+    const assertReadCurrent = (): void => { if (!canCommit()) throw new DaemonObservationDeferredError(); };
     setRunLoading(true);
     try {
       setError(undefined);
@@ -101,52 +129,69 @@ export function useRunsDomain(input: {
         getRunEvents(trimmedRunId, cwd),
         listRunArtifacts(trimmedRunId, cwd),
       ]);
-      if (!runLoadGuard.isCurrent(trimmedRunId, requestToken)) {
-        return;
-      }
-      setRun(runResult);
-      setEvents(eventResult.events);
-      setArtifacts(artifactResult.artifacts);
-      setActiveRunId(runResult.id);
-      setLookupRunId(runResult.id);
+      assertReadCurrent();
+      // React may apply queued publications after the observation has changed.
+      setRun(current => canCommit() ? runResult : current);
+      setEvents(current => canCommit() ? eventResult.events : current);
+      setArtifacts(current => canCommit() ? artifactResult.artifacts : current);
+      setActiveRunId(current => canCommit() ? runResult.id : current);
+      setLookupRunId(current => canCommit() ? runResult.id : current);
       if (runResult.workUnitId) {
-        try {
-          input.setSelectedWorkUnitDetail(await getWorkUnit(cwd, runResult.workUnitId));
-        } catch {
-          input.setSelectedWorkUnitDetail(undefined);
-        }
+        assertReadCurrent();
+        const detail = await getWorkUnit(cwd, runResult.workUnitId);
+        assertReadCurrent();
+        input.setSelectedWorkUnitDetail(detail);
       } else {
+        assertReadCurrent();
         input.setSelectedWorkUnitDetail(undefined);
       }
+      assertReadCurrent();
       await input.refreshRuntimeState(cwd, runResult);
+      assertReadCurrent();
     } catch (caught) {
+      if (caught instanceof DaemonObservationDeferredError || shouldDeferDaemonObservationError(caught, observationRef.current, cwd)) {
+        throw caught instanceof DaemonObservationDeferredError ? caught : new DaemonObservationDeferredError();
+      }
       const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "load", message });
+      if (isOwnerCurrent()) setError(current => isOwnerCurrent() ? { scope: "load", message } : current);
       throw caught;
     } finally {
-      if (runLoadGuard.isCurrent(trimmedRunId, requestToken)) {
+      if (isRequestCurrent()) {
         setRunLoading(false);
       }
     }
   }
 
   async function refreshRunList(cwd = input.cwd): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (workspaceCwdRef.current !== workspaceCwd) return;
     if (!cwd) {
       setRuns([]);
       return;
     }
 
-    setRunsLoading(true);
+    const observation = observationRef.current;
+    if (isDaemonObservationPausedForWorkspace(observation, cwd)) return;
+    const owner = {};
+    runListOwnerRef.current = owner;
+    const isRequestCurrent = () => runListOwnerRef.current === owner;
+    const isOwnerCurrent = () => isRequestCurrent() && workspaceCwdRef.current === workspaceCwd;
+    const canCommit = () => isOwnerCurrent() && observationRef.current.epoch === observation.epoch
+      && observationRef.current.baseUrl === observation.baseUrl && observationRef.current.workspaceCwd === observation.workspaceCwd
+      && !isDaemonObservationPausedForWorkspace(observationRef.current, cwd);
+    setRunsLoading(current => canCommit() ? true : current);
     try {
-      setError(undefined);
+      setError(current => canCommit() ? undefined : current);
       const response = await listRuns(cwd);
-      setRuns(response.runs);
+      if (!canCommit()) return;
+      setRuns(current => canCommit() ? response.runs : current);
       void input.refreshRuntimeState(cwd);
     } catch (caught) {
+      if (caught instanceof DaemonObservationDeferredError || shouldDeferDaemonObservationError(caught, observationRef.current, cwd)) return;
       const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "load", message });
+      if (isOwnerCurrent()) setError(current => isOwnerCurrent() ? { scope: "load", message } : current);
     } finally {
-      setRunsLoading(false);
+      if (isRequestCurrent()) setRunsLoading(current => isRequestCurrent() ? false : current);
     }
   }
 
@@ -158,15 +203,16 @@ export function useRunsDomain(input: {
     await streamRunRequest(`${daemonBaseUrl}/runs`, requestBody, cwd, afterRunLoaded);
   }
 
-  async function streamRunRequest(
+  async function streamRunRequest<TResponse = never>(
     url: string,
     requestBody: unknown,
     cwd: string,
     afterRunLoaded?: (runId: string) => Promise<void>,
-  ): Promise<void> {
+    parseJsonResponse?: StreamJsonResponseParser<TResponse>,
+  ): Promise<TResponse | undefined> {
     const confirmedRequestBody = await input.confirmFullAccessRunIfNeeded(requestBody);
     if (!confirmedRequestBody) {
-      return;
+      return undefined;
     }
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -181,7 +227,7 @@ export function useRunsDomain(input: {
 
     try {
       let streamedRunId = "";
-      await streamRun(
+      const jsonResponse = await streamRun(
         url,
         confirmedRequestBody,
         (message) => {
@@ -197,7 +243,12 @@ export function useRunsDomain(input: {
           setEvents((current) => [...current, message.event]);
         },
         controller.signal,
+        parseJsonResponse,
       );
+
+      if (jsonResponse !== undefined) {
+        return jsonResponse;
+      }
 
       if (streamedRunId) {
         await loadRun(streamedRunId, cwd);
@@ -206,14 +257,22 @@ export function useRunsDomain(input: {
         await input.refreshUsedMemoryAudit(cwd);
         await afterRunLoaded?.(streamedRunId);
       }
+      return undefined;
     } catch (caught) {
-      if ((caught as Error).name !== "AbortError") {
+      // A deferred post-stream read does not reject the accepted execution.
+      if (caught instanceof DaemonObservationDeferredError) return undefined;
+      const aborted = (caught as Error).name === "AbortError";
+      if (!aborted && !parseJsonResponse) {
         const message = caught instanceof Error ? caught.message : String(caught);
         setError({ scope: "stream", message });
       }
+      if (parseJsonResponse && !aborted) {
+        throw caught;
+      }
+      return undefined;
     } finally {
       setIsRunning(false);
-      await input.refreshHealth();
+      if (!isDaemonObservationPausedForWorkspace(observationRef.current, cwd)) await input.refreshHealth();
     }
   }
 

@@ -14,6 +14,7 @@ import {
 export type ConversationDecisionAction = "allow" | "allow_secondary" | "deny";
 
 export function ConversationDecisionGate({
+  allowDisabled = false,
   allowLabel,
   allowMenuLabel,
   allowSecondaryDescription,
@@ -31,6 +32,7 @@ export function ConversationDecisionGate({
   errorMessage,
   focusKey,
   icon,
+  recoveryAction,
   retryLabel,
   surface,
   title,
@@ -38,6 +40,7 @@ export function ConversationDecisionGate({
   onAllowSecondary,
   onDeny,
 }: {
+  readonly allowDisabled?: boolean;
   readonly allowLabel: string;
   readonly allowMenuLabel?: string;
   readonly allowSecondaryDescription?: string;
@@ -55,6 +58,7 @@ export function ConversationDecisionGate({
   readonly errorMessage?: string;
   readonly focusKey: string;
   readonly icon?: ReactNode;
+  readonly recoveryAction?: ReactNode;
   readonly retryLabel: string;
   readonly surface: "channel" | "normal_conversation" | "teammate_direct";
   readonly title: string;
@@ -94,6 +98,7 @@ export function ConversationDecisionGate({
         <p className="conversation-decision-gate-error" role="alert">{errorMessage}</p>
       ) : null}
       <div className="conversation-decision-gate-actions">
+        {recoveryAction}
         <Button
           ref={denyButtonRef}
           leadingIcon={<X aria-hidden="true" size={15} />}
@@ -112,7 +117,7 @@ export function ConversationDecisionGate({
             role="group"
           >
             <SplitButtonPrimary
-              disabled={Boolean(busyAction)}
+              disabled={allowDisabled || Boolean(busyAction)}
               leadingIcon={<Check aria-hidden="true" size={15} />}
               loading={busyAction === "allow" || busyAction === "allow_secondary"}
               loadingLabel={busyAction === "allow_secondary" ? allowingSecondaryLabel ?? allowingLabel : allowingLabel}
@@ -124,7 +129,7 @@ export function ConversationDecisionGate({
             <Menu modal={false}>
               <MenuTrigger asChild>
                 <SplitButtonTrigger
-                  disabled={Boolean(busyAction)}
+                  disabled={allowDisabled || Boolean(busyAction)}
                   icon={ChevronDown}
                   label={allowMenuLabel ?? allowLabel}
                   tooltip=""
@@ -132,10 +137,10 @@ export function ConversationDecisionGate({
                 />
               </MenuTrigger>
               <MenuContent align="end" className="conversation-decision-allow-menu" side="top">
-                <MenuItem onSelect={onAllow}>
+                <MenuItem disabled={allowDisabled || Boolean(busyAction)} onSelect={onAllow}>
                   <span className="conversation-decision-menu-label">{allowLabel}</span>
                 </MenuItem>
-                <MenuItem data-command-rule-decision="true" onSelect={onAllowSecondary}>
+                <MenuItem disabled={allowDisabled || Boolean(busyAction)} data-command-rule-decision="true" onSelect={onAllowSecondary}>
                   <span className="conversation-decision-menu-copy">
                     <span className="conversation-decision-menu-label">
                       {errorMessage && attemptedAction === "allow_secondary" ? retryLabel : allowSecondaryLabel}
@@ -150,7 +155,7 @@ export function ConversationDecisionGate({
           </SplitButton>
         ) : (
           <Button
-            disabled={Boolean(busyAction)}
+            disabled={allowDisabled || Boolean(busyAction)}
             leadingIcon={<Check aria-hidden="true" size={15} />}
             loading={busyAction === "allow"}
             loadingLabel={allowingLabel}

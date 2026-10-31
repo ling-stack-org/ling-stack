@@ -125,6 +125,11 @@ export class SqliteTeammateCoreStore {
 
   listAiTeammates(options: ListAiTeammatesOptions = {}): AiTeammate[] {
     this.ports.ensureDefaultTeammateMemoryScopesForAll(new Date().toISOString());
+    return this.readAiTeammates(options);
+  }
+
+  /** Pure enumeration for Host admission transactions; never bootstraps memory. */
+  readAiTeammates(options: ListAiTeammatesOptions = {}): AiTeammate[] {
     const clauses = ["workspace_id = ?"];
     const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
     if (options.status) {

@@ -24,7 +24,12 @@ export function projectLingTrace(input: ProjectLingTraceInput): ProjectLingTrace
   const traceId = createLingTraceId(input.subjectKind, input.subjectId);
   const runParentSpanIds = new Map<string, string>();
   const workUnitParentSpanIds = new Map<string, string>();
-  const toolCallIdsFromEvents = new Set<string>();
+  const canonicalToolKeys = new Set<string>();
+  for (const action of input.executionActions ?? []) {
+    if (action.runId && action.toolCallId) {
+      canonicalToolKeys.add(toolCorrelationKey(action.runId, action.toolCallId));
+    }
+  }
   const spans: LingTraceSpan[] = [];
 
   for (const run of [...input.runs].sort(compareRuns)) {
@@ -66,17 +71,13 @@ export function projectLingTrace(input: ProjectLingTraceInput): ProjectLingTrace
       run,
       events: input.eventsByRunId[run.id] ?? [],
       parentSpanId: spanId,
-      toolCallIdsFromEvents,
+      canonicalToolKeys,
     });
     spans.push(...toolSpans);
   }
 
   for (const action of input.executionActions ?? []) {
     const parentSpanId = action.runId ? runParentSpanIds.get(action.runId) : undefined;
-    const duplicateToolSpan = action.toolCallId ? toolCallIdsFromEvents.has(action.toolCallId) : false;
-    if (duplicateToolSpan) {
-      continue;
-    }
     spans.push(executionActionToSpan(traceId, action, parentSpanId));
   }
 
@@ -120,16 +121,18 @@ function buildToolCallSpans(input: {
   readonly run: RunSession;
   readonly events: readonly RunEventEnvelope[];
   readonly parentSpanId: string;
-  readonly toolCallIdsFromEvents: Set<string>;
+  readonly canonicalToolKeys: ReadonlySet<string>;
 }): LingTraceSpan[] {
   const starts = new Map<string, RunEventEnvelope>();
   const ends = new Map<string, RunEventEnvelope>();
   for (const event of input.events) {
-    const toolCallId = readStringAttribute(event.data, "toolCallId");
-    if (!toolCallId) {
+    if (event.runId !== input.run.id) {
       continue;
     }
-    input.toolCallIdsFromEvents.add(toolCallId);
+    const toolCallId = readStringAttribute(event.data, "toolCallId");
+    if (!toolCallId || input.canonicalToolKeys.has(toolCorrelationKey(input.run.id, toolCallId))) {
+      continue;
+    }
     if (event.type === "tool_start") {
       starts.set(toolCallId, event);
     } else if (event.type === "tool_end") {
@@ -154,8 +157,10 @@ function buildToolCallSpans(input: {
       kind: "tool_call",
       title: `${toolName} tool`,
       startedAt: start?.ts ?? end?.ts ?? input.run.createdAt,
-      endedAt: end?.ts,
-      status: end ? isError ? "failed" : "succeeded" : "running",
+      // A raw window is diagnostic, not the accepted lifecycle/Host receipt.
+      // Preserve a nonterminal presentation but declare the missing authority.
+      status: "running",
+      evidenceCoverage: { source: "raw_event_fallback", completeness: "partial" },
       refs: {
         threadId: input.run.threadId,
         runId: input.run.id,
@@ -167,11 +172,16 @@ function buildToolCallSpans(input: {
         toolName,
         startSeq: start?.seq,
         endSeq: end?.seq,
+        observedEndAt: end?.ts,
         isError: end ? isError : undefined,
       }),
     });
   }
   return spans;
+}
+
+function toolCorrelationKey(runId: string, toolCallId: string): string {
+  return JSON.stringify([runId, toolCallId]);
 }
 
 function executionActionToSpan(traceId: string, action: ExecutionAction, parentSpanId: string | undefined): LingTraceSpan {
@@ -183,12 +193,16 @@ function executionActionToSpan(traceId: string, action: ExecutionAction, parentS
     kind,
     title: action.title,
     startedAt: action.executedAt ?? action.createdAt,
-    endedAt: action.completedAt ?? action.resolvedAt,
+    endedAt: action.completedAt,
     status: statusFromExecutionAction(action.status),
+    evidenceCoverage: { source: "execution_action", completeness: "complete" },
     refs: {
       threadId: action.threadId,
       runId: action.runId,
       workUnitId: action.workUnitId,
+      attemptId: action.attemptId,
+      participantId: action.participantId,
+      workflowStepId: action.workflowStepId,
       approvalId: action.approvalId,
       executionActionId: action.id,
       toolCallId: action.toolCallId,
@@ -343,7 +357,9 @@ function buildTrace(input: ProjectLingTraceInput, traceId: string, spans: readon
     ...input.runs.map((run) => run.endedAt),
     ...spans.map((span) => span.endedAt),
   ]);
-  const status = input.status ?? deriveTraceStatus(input.runs, spans);
+  // A diagnostic-only fallback must not vote on the owning Run's outcome.
+  const status = input.status ?? deriveTraceStatus(input.runs,
+    spans.filter((span) => span.evidenceCoverage?.source !== "raw_event_fallback"));
   return {
     id: traceId,
     workspaceId: input.workspaceId,

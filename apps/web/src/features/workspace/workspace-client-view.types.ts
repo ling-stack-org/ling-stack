@@ -1,7 +1,7 @@
 import type { ChannelSessionSummary } from "@ling-stack/contracts";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import type { ConversationRuntimeMetrics } from "@ling-stack/contracts";
-import type { AiTeammateTemplate } from "@ling-stack/core";
+import type { AiTeammateTemplate } from "@ling-stack/core/skill-types";
 import type { ChannelActivityTriageDraft, ChannelActivityTriageResult } from "../../lib/channel-activity-triage.js";
 import type {
   ApprovalRequest,
@@ -261,6 +261,7 @@ export interface WorkspaceClientViewProps {
   readonly onRunTask: (task: Task) => void;
   readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
   readonly onPermissionModeChange: (mode: SessionPermissionMode) => void;
+  readonly onOpenSandboxSettings: () => void;
   readonly onCancelActiveRun: (run?: RunSession) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApprovals: (runId?: string) => void;

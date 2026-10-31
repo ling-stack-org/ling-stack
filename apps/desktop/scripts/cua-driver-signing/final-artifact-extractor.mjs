@@ -745,10 +745,13 @@ export async function runBoundedCommand(command, args, options = {}) {
   }
   return new Promise((settle, reject) => {
     let inputError;
+    const startedAt = new Date().toISOString();
+    const started = performance.now();
+    const timeoutMs = options.timeoutMs ?? COMMAND_TIMEOUT_MS;
     const child = execFile(command, args, {
       encoding: "utf8",
       maxBuffer: COMMAND_MAX_BUFFER_BYTES,
-      timeout: options.timeoutMs ?? COMMAND_TIMEOUT_MS,
+      timeout: timeoutMs,
       windowsHide: true,
     }, (error, stdout, stderr) => {
       const boundedOutput = typeof stdout === "string" && typeof stderr === "string"
@@ -757,18 +760,40 @@ export async function runBoundedCommand(command, args, options = {}) {
       if (error || inputError || !boundedOutput) {
         const cause = error && inputError ? new AggregateError([error, inputError], "command_and_stdin_failed")
           : error ?? inputError;
+        const outputComplete = boundedOutput && !inputError && Number.isInteger(error?.code)
+          && error.killed !== true && !error.signal;
+        // Persist only fixed transport metadata, never argv, input or output
+        // contents. The normal Error message must survive CLI/Builder logging,
+        // which does not necessarily serialize a nested cause or hidden receipt.
+        const diagnostic = Object.freeze({
+          command: basename(command),
+          operation: basename(command) === "hdiutil" && ["info", "attach", "detach"].includes(args[0])
+            ? args[0] : null,
+          pid: Number.isInteger(child.pid) ? child.pid : null,
+          startedAt,
+          elapsedMs: Math.max(0, Math.round(performance.now() - started)),
+          timeoutMs,
+          exitCode: Number.isInteger(error?.code) ? error.code : null,
+          errorCode: typeof error?.code === "string" ? error.code : null,
+          signal: error?.signal ?? null,
+          killed: error?.killed === true,
+          stdinFailed: Boolean(inputError),
+          stdoutBytes: typeof stdout === "string" ? Buffer.byteLength(stdout, "utf8") : null,
+          stderrBytes: typeof stderr === "string" ? Buffer.byteLength(stderr, "utf8") : null,
+          outputComplete,
+        });
         const failure = contractError(
           "final_artifact_command_failed",
-          `${basename(command)} failed with ${String(error?.code ?? "unknown")}`,
+          `${basename(command)} failed with ${String(error?.code ?? "unknown")} ${JSON.stringify(diagnostic)}`,
           cause,
         );
+        Object.defineProperty(failure, "commandDiagnostic", { value: diagnostic });
         Object.defineProperty(failure, "commandReceipt", { value: Object.freeze({
           stdout: boundedOutput ? stdout : "",
           stderr: boundedOutput ? stderr : "",
           // Only a completed nonzero exit can retain a complete partial-attach
           // receipt. Timeout, signal, pipe failure and maxBuffer are unknown.
-          outputComplete: boundedOutput && !inputError && Number.isInteger(error?.code)
-            && error.killed !== true && !error.signal,
+          outputComplete,
         }) });
         reject(failure);
       } else {

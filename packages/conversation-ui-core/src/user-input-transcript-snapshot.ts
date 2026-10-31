@@ -19,6 +19,17 @@ export interface CanonicalUserInputSource {
   readonly sourceItemId: string;
   readonly workflowStepId?: string;
 }
+export interface CanonicalUserInputAnswerAuthority {
+  readonly schemaVersion: 1;
+  readonly threadId: string;
+  readonly runId: string;
+  readonly attemptId: string;
+  readonly participantId: string;
+  readonly requestId: string;
+  readonly requestVersion: number;
+  readonly statusRevision: number;
+  readonly token: string;
+}
 interface AvailableInput {
   readonly availability: "available";
   readonly itemId: string;
@@ -42,6 +53,7 @@ export interface CanonicalUserInputRequest extends AvailableInput {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly expiresAt?: string;
+  readonly answerAuthority?: CanonicalUserInputAnswerAuthority;
 }
 export interface CanonicalUserInputAnswer extends AvailableInput {
   readonly kind: "user_input_answer";
@@ -121,7 +133,8 @@ export function userInputTranscriptRevisionSignature(items: readonly CanonicalUs
   return JSON.stringify((items ?? []).map(item => item.availability === "unavailable"
     ? [item.itemId, item.kind, item.availability]
     : [item.itemId, item.kind, item.requestVersion, item.kind === "user_input_request"
-      ? [item.statusRevision, item.status] : [item.answerId, item.delivery.revision, item.delivery.status]])
+      ? [item.statusRevision, item.status, authoritySignature(item.answerAuthority)]
+      : [item.answerId, item.delivery.revision, item.delivery.status]])
     .sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
 }
 
@@ -199,10 +212,14 @@ function selectPublicValue(scope: Scope, anchor: CanonicalConversationItem, item
       || !item.questions.every((q: CanonicalUserInputRequest["questions"][number]) => q && nonempty(q.questionId) && typeof q.prompt === "string"
         && typeof q.required === "boolean" && typeof q.allowFreeText === "boolean" && Array.isArray(q.options)
         && q.options.every(o => o && nonempty(o.optionId) && typeof o.label === "string"))) return unavailable(item);
+    const answerAuthority = item.answerAuthority === undefined ? undefined
+      : validatedAnswerAuthority(item.answerAuthority, item, source);
+    if (item.answerAuthority !== undefined && !answerAuthority) return unavailable(item);
     return { ...base, kind: item.kind, status: item.status, statusRevision: item.statusRevision, waitMode: item.waitMode,
       questions: item.questions.map((q: CanonicalUserInputRequest["questions"][number]) => ({ questionId: q.questionId, prompt: q.prompt, required: q.required,
         allowFreeText: q.allowFreeText, options: q.options.map(o => ({ optionId: o.optionId, label: o.label })) })),
-      createdAt: item.createdAt, updatedAt: item.updatedAt, ...(item.expiresAt ? { expiresAt: item.expiresAt } : {}) };
+      createdAt: item.createdAt, updatedAt: item.updatedAt, ...(item.expiresAt ? { expiresAt: item.expiresAt } : {}),
+      ...(answerAuthority ? { answerAuthority } : {}) };
   }
   if (!item.delivery || !positive(item.delivery.revision) || !nonempty(item.answerId)
     || !["pending", "claimed", "applied", "failed", "obsolete"].includes(item.delivery.status)
@@ -217,12 +234,22 @@ function mergeValue(left: CanonicalUserInput, right: CanonicalUserInput): Canoni
   if (left.availability === "unavailable" || right.availability === "unavailable" || left.kind !== right.kind) return unavailable(left);
   if (serialize(immutableContent(left)) !== serialize(immutableContent(right))) return unavailable(left);
   const a = revision(left), b = revision(right);
-  if (a === b) return serialize(left) === serialize(right) ? left : unavailable(left);
+  if (a === b) {
+    if (left.kind === "user_input_request" && right.kind === "user_input_request") {
+      const leftWithoutAuthority = withoutAnswerAuthority(left);
+      const rightWithoutAuthority = withoutAnswerAuthority(right);
+      if (serialize(leftWithoutAuthority) !== serialize(rightWithoutAuthority)) return unavailable(left);
+      return serialize(left.answerAuthority) === serialize(right.answerAuthority)
+        ? left
+        : leftWithoutAuthority;
+    }
+    return serialize(left) === serialize(right) ? left : unavailable(left);
+  }
   return a > b ? left : right;
 }
 function immutableContent(item: CanonicalUserInputRequest | CanonicalUserInputAnswer): unknown {
   if (item.kind === "user_input_request") {
-    const { status: _status, statusRevision: _revision, updatedAt: _time, ...immutable } = item;
+    const { status: _status, statusRevision: _revision, updatedAt: _time, answerAuthority: _authority, ...immutable } = item;
     return immutable;
   }
   const { delivery: _delivery, ...immutable } = item;
@@ -232,6 +259,32 @@ function revision(item: CanonicalUserInputRequest | CanonicalUserInputAnswer): n
   return item.kind === "user_input_request" ? item.statusRevision : item.delivery.revision;
 }
 function positive(value: number): boolean { return Number.isSafeInteger(value) && value > 0; }
+function withoutAnswerAuthority(item: CanonicalUserInputRequest): CanonicalUserInputRequest {
+  const { answerAuthority: _authority, ...rest } = item;
+  return rest;
+}
+function authoritySignature(authority: CanonicalUserInputAnswerAuthority | undefined): unknown {
+  return authority ? [authority.threadId, authority.runId, authority.attemptId, authority.participantId,
+    authority.requestId, authority.requestVersion, authority.statusRevision, authority.token] : null;
+}
+function validatedAnswerAuthority(
+  value: unknown,
+  request: Pick<CanonicalUserInputRequest, "requestId" | "requestVersion" | "statusRevision" | "status">,
+  source: CanonicalUserInputSource,
+): CanonicalUserInputAnswerAuthority | undefined {
+  if (request.status !== "pending" || !value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const row = value as Record<string, unknown>;
+  if (!Object.keys(row).every(key => ["schemaVersion", "threadId", "runId", "attemptId", "participantId",
+    "requestId", "requestVersion", "statusRevision", "token"].includes(key))
+    || Object.keys(row).length !== 9 || row.schemaVersion !== 1
+    || row.threadId !== source.threadId || row.runId !== source.runId || row.attemptId !== source.attemptId
+    || row.participantId !== source.participantId || row.requestId !== request.requestId
+    || row.requestVersion !== request.requestVersion || row.statusRevision !== request.statusRevision
+    || typeof row.token !== "string" || !/^[a-f0-9]{64}$/u.test(row.token)) return undefined;
+  return { schemaVersion: 1, threadId: row.threadId, runId: row.runId, attemptId: row.attemptId,
+    participantId: row.participantId, requestId: row.requestId, requestVersion: row.requestVersion,
+    statusRevision: row.statusRevision, token: row.token };
+}
 /** Same bounded public shape as contracts, without a runtime dependency on the Host package. */
 export function isCanonicalUserInputRunEventPosition(value: unknown): value is CanonicalUserInputRunEventPosition {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;

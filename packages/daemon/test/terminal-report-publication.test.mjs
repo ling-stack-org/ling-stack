@@ -22,6 +22,27 @@ import { materializeWorkflowDelegatedStepRequirements } from "../dist/features/c
 import { preflightWorkflowParticipantProvider } from "../dist/features/channels/workflow-participant-provider.js";
 import { reconcileWorkflowFromCanonicalState } from "../dist/features/channels/workflow-reconciliation.js";
 import { createTerminalWorkflowFixture } from "./terminal-report-coordinator-fixture.mjs";
+import { injectUnverifiedRequiredDelegation } from "./support/terminal-report-delegation-injection.mjs";
+
+test("workflow without a participant manifest rejects dynamic evidence added after synthesis", async () => {
+  const f = await createManifestPublicationFixture("dynamic-no-manifest", "succeeded");
+  try {
+    const input = publicationInput(f);
+    const metadata = { ...f.store.getChannelWorkflow(f.workflow.id).metadata };
+    delete metadata.requiredParticipantManifest;
+    f.store.updateChannelWorkflow(f.workflow.id, { metadata }, f.publishAt);
+    assert.equal(f.store.getChannelWorkflow(f.workflow.id).metadata.requiredParticipantManifest, undefined);
+    injectUnverifiedRequiredDelegation(f.store, f.run.id, f.publishAt);
+    const evidence = f.store.getDelegationCompletionEvidence({ rootRunIds: [f.run.id] });
+    assert.equal(evidence.steps.length, 1);
+    assert.notEqual(evidence.status, "satisfied");
+    assert.deepEqual(f.store.commitTerminalReportPublication({ ...input, expectedCompletion: undefined }),
+      { ok: false, code: "stale_completion_basis" });
+    assert.throws(() => publishWorkflowTerminalReport({ store: f.store, report: f.report, now: f.publishAt }),
+      error => error instanceof TerminalReportPublicationError && error.code === "stale_completion_basis");
+    assertNoPublication(f);
+  } finally { await f.close(); }
+});
 
 test("terminal report publication uses a deterministic message id across mark-published retries", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-publication-"));
@@ -325,13 +346,18 @@ test("publication rejects stale completion, incompatible outcome, source Turn, a
 
 test("restart reuses the complete atomic publication lineage", async () => {
   const fixture = await createManifestPublicationFixture("restart", "succeeded");
-  const message = publishWorkflowTerminalReport({ store: fixture.store, report: fixture.report, now: fixture.publishAt });
+  const message = publishWorkflowTerminalReport({ store: fixture.store, report: fixture.report,
+    linkedRunId: fixture.run.id, now: fixture.publishAt });
+  const committed = capturePublicationLineage(fixture.store, fixture, message.id);
+  assert.deepEqual(committed.item.domainRefs.filter((ref) => ref.type === "run"), [{ type: "run", id: fixture.run.id }]);
   fixture.store.close();
   const reopened = createSqliteRunStore(fixture.cwd);
   try {
     const report = reopened.getTerminalReport(fixture.report.id).report;
     const repeated = publishWorkflowTerminalReport({ store: reopened, report, now: "2026-08-12T20:00:11.000Z" });
     assert.equal(repeated.id, message.id);
+    assert.deepEqual(capturePublicationLineage(reopened, fixture, message.id), committed,
+      "startup replay without a transient Run hint must preserve the first complete publication exactly");
     assert.equal(reopened.listConversationItemsForTurn({ turnId: fixture.sourceTurn.id })
       .filter((item) => item.id === message.id).length, 1);
     assert.equal(reopened.listControlPlaneEvents({
@@ -346,6 +372,69 @@ test("restart reuses the complete atomic publication lineage", async () => {
     await fixture.remove();
   }
 });
+
+test("later participant and retry hints cannot rewrite the first publication's frozen Run references", async (t) => {
+  for (const anchored of [true, false]) {
+    await t.test(anchored ? "first publication has a Run anchor" : "first publication has no Run anchor", async () => {
+      const suffix = anchored ? "frozen-run" : "frozen-no-run";
+      const fixture = await createManifestPublicationFixture(suffix, "succeeded");
+      try {
+        // These are stored Run identities for late callbacks, not additional
+        // workflow evidence. Neither changes the selected step or completion basis.
+        const otherTask = fixture.store.createTask({ channelId: fixture.workflow.channelId,
+          title: "Late participant callback", prompt: "Late participant callback", assigneeTeammateId: "teammate_builtin_qa" }, fixture.publishAt);
+        const otherParticipant = fixture.store.createRun({
+          id: `run_publication_${suffix}_qa_late`, cwd: fixture.cwd, taskId: otherTask.id,
+          channelId: fixture.workflow.channelId, teammateId: "teammate_builtin_qa",
+          providerName: "test-provider", providerModel: "test-model",
+          taskSnapshot: { id: otherTask.id, title: otherTask.title },
+          providerSnapshot: { provider: "test-provider", model: "test-model" },
+          requestSnapshot: { cwd: fixture.cwd }, createdAt: fixture.publishAt,
+        });
+        const laterRetry = fixture.store.createRun({
+          id: `run_publication_${suffix}_retry_late`, cwd: fixture.cwd, taskId: fixture.run.taskId,
+          channelId: fixture.workflow.channelId, teammateId: fixture.run.teammateId,
+          workflowStepId: fixture.run.workflowStepId, parentRunId: fixture.run.id,
+          providerName: "test-provider", providerModel: "test-model",
+          taskSnapshot: fixture.run.taskSnapshot, providerSnapshot: fixture.run.providerSnapshot,
+          requestSnapshot: fixture.run.requestSnapshot, createdAt: fixture.publishAt,
+        });
+        assert.notEqual(otherParticipant.teammateId, fixture.run.teammateId);
+        assert.equal(laterRetry.parentRunId, fixture.run.id);
+        assert.equal(fixture.store.getChannelWorkflowStep(fixture.run.workflowStepId).runId, fixture.run.id);
+        const message = publishWorkflowTerminalReport({ store: fixture.store, report: fixture.report,
+          ...(anchored ? { linkedRunId: fixture.run.id } : {}), now: fixture.publishAt });
+        assert.ok(message);
+        const committed = capturePublicationLineage(fixture.store, fixture, message.id);
+        assert.deepEqual(committed.item.domainRefs.filter((ref) => ref.type === "run"),
+          anchored ? [{ type: "run", id: fixture.run.id }] : []);
+
+        for (const linkedRunId of [undefined, otherParticipant.id, laterRetry.id]) {
+          const repeated = publishWorkflowTerminalReport({ store: fixture.store, report: fixture.report,
+            ...(linkedRunId ? { linkedRunId } : {}), now: "2026-08-12T20:00:12.000Z" });
+          assert.equal(repeated?.id, message.id);
+          assert.deepEqual(capturePublicationLineage(fixture.store, fixture, message.id), committed,
+            "a callback hint cannot change any committed Item, report, Turn settlement or publication event");
+        }
+        assert.equal(committed.events.length, 1);
+        assert.equal(committed.transitions.filter((event) => event.toStatus === "succeeded").length, 1);
+      } finally {
+        await fixture.close();
+      }
+    });
+  }
+});
+
+function capturePublicationLineage(store, fixture, itemId) {
+  return {
+    item: store.getConversationItem(itemId),
+    report: store.getTerminalReport(fixture.report.id),
+    turn: store.getLingTurn(fixture.sourceTurn.id),
+    transitions: store.listStateTransitionEvents({ entityType: "turn", entityId: fixture.sourceTurn.id }),
+    events: store.listControlPlaneEvents({ workspaceId: "workspace_default", entityType: "terminal_report",
+      entityId: fixture.report.id, action: "terminal_report.published", limit: 100 }),
+  };
+}
 
 async function createManifestPublicationFixture(suffix, outcome, options = {}) {
   const cwd = await mkdtemp(resolve(tmpdir(), `ling-terminal-publication-${suffix}-`));
@@ -523,6 +612,7 @@ async function createManifestPublicationFixture(suffix, outcome, options = {}) {
     cwd,
     store,
     workflow,
+    run,
     sourceItem,
     sourceTurn: store.getLingTurn(sourceTurn.id),
     report,

@@ -15,19 +15,22 @@ export function deriveSilentChannelReplyRunIds(input: {
 
   for (const run of input.runs) {
     const workUnit = run.workUnitId ? workUnitById.get(run.workUnitId) : undefined;
+    const hasVisibleWork = conversationRunHasVisibleWork({
+      run,
+      approvals: input.approvals.filter((approval) => approval.runId === run.id),
+      executionActions: input.executionActions.filter((action) => action.runId === run.id),
+      terminalReport: terminalReportByRunId.get(run.id),
+    });
     if (run.workUnitId && !workUnit) {
-      silentRunIds.add(run.id);
+      // A paged-out or still-loading owner does not invalidate known facts.
+      // Hide only the evidence-free supervision shell while ownership loads.
+      if (!hasVisibleWork) silentRunIds.add(run.id);
       continue;
     }
     if (workUnit?.kind !== "channel_ai_reply") {
       continue;
     }
-    if (!conversationRunHasVisibleWork({
-      run,
-      approvals: input.approvals.filter((approval) => approval.runId === run.id),
-      executionActions: input.executionActions.filter((action) => action.runId === run.id),
-      terminalReport: terminalReportByRunId.get(run.id),
-    })) {
+    if (!hasVisibleWork) {
       silentRunIds.add(run.id);
     }
   }

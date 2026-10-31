@@ -1351,15 +1351,27 @@ export interface UpdateChannelWorkflowStepRequest {
   readonly resultSummary?: string | null;
 }
 
-export interface StartChannelWorkflowStepRequest {
-  readonly mode: ChannelWorkflowStepStartMode;
+interface StartChannelWorkflowStepRequestBase {
   readonly taskTitle?: string;
   readonly taskPrompt?: string;
   readonly providerPresetId?: string;
+  readonly runnerId?: string;
   readonly assigneeTeammateId?: string;
   readonly idempotencyKey?: string;
   readonly skipProviderPreflight?: boolean;
 }
+
+export interface CreateTaskChannelWorkflowStepStartRequest extends StartChannelWorkflowStepRequestBase {
+  readonly mode: "create_task";
+}
+
+export interface CreateAndRunTaskChannelWorkflowStepStartRequest extends StartChannelWorkflowStepRequestBase {
+  readonly mode: "create_and_run_task";
+}
+
+export type StartChannelWorkflowStepRequest =
+  | CreateTaskChannelWorkflowStepStartRequest
+  | CreateAndRunTaskChannelWorkflowStepStartRequest;
 
 export interface ChannelWorkflowListResponse {
   readonly cwd: string;
@@ -1395,12 +1407,154 @@ export interface ChannelWorkflowStepMutationResponse {
   readonly workflow?: ChannelWorkflow;
 }
 
-export interface ChannelWorkflowStepStartResponse {
+export interface ChannelWorkflowStepCreateTaskStartedResponse {
+  readonly status: "started";
+  readonly mode: "create_task";
   readonly workflowStep: ChannelWorkflowStep;
-  readonly workflow?: ChannelWorkflow;
-  readonly task?: Task;
-  readonly run?: RunSession;
-  readonly blocker?: string;
+  readonly workflow: ChannelWorkflow;
+  readonly task: Task;
+}
+
+export interface ChannelWorkflowStepWaitingForApprovalResponse {
+  readonly status: "waiting_for_approval";
+  readonly mode: ChannelWorkflowStepStartMode;
+  readonly workflow: ChannelWorkflow;
+  readonly workflowStep: ChannelWorkflowStep;
+  readonly approval: ApprovalRequest;
+}
+
+export interface ChannelWorkflowStepBlockedResponse {
+  readonly status: "blocked";
+  readonly mode: ChannelWorkflowStepStartMode;
+  readonly workflow: ChannelWorkflow;
+  readonly workflowStep: ChannelWorkflowStep;
+  readonly blocker: string;
+}
+
+export type ChannelWorkflowStepStartAdmissionResponse =
+  | ChannelWorkflowStepWaitingForApprovalResponse
+  | ChannelWorkflowStepBlockedResponse;
+
+export type ChannelWorkflowStepStartResponse =
+  | ChannelWorkflowStepCreateTaskStartedResponse
+  | ChannelWorkflowStepStartAdmissionResponse;
+
+export type ChannelWorkflowStepStartTrustedStep = Pick<
+  ChannelWorkflowStep,
+  "id" | "workflowId" | "channelId" | "title" | "prompt" | "toParticipantId"
+>;
+
+export interface ChannelWorkflowStepStartResponseContext {
+  readonly mode: ChannelWorkflowStepStartMode;
+  readonly workflowId: string;
+  readonly channelId: string;
+  /** Frozen caller-owned definition. Never derive these values from the response. */
+  readonly workflowStep: ChannelWorkflowStepStartTrustedStep;
+  /** Effective values captured by the caller before the request is sent. */
+  readonly taskTitle: string;
+  readonly taskPrompt: string;
+  readonly assigneeTeammateId: string;
+  readonly providerPresetId?: string;
+  readonly runnerId?: string;
+  readonly skipProviderPreflight: boolean;
+}
+
+/** JSON start responses are untrusted until their complete request lineage is checked. */
+export function parseChannelWorkflowStepStartResponse(
+  value: unknown,
+  expected: ChannelWorkflowStepStartResponseContext,
+): ChannelWorkflowStepStartResponse | undefined {
+  const expectedStep = expected.workflowStep;
+  if (expectedStep.workflowId !== expected.workflowId || expectedStep.channelId !== expected.channelId) return undefined;
+  const response = workflowRecord(value);
+  const workflow = workflowRecord(response?.workflow);
+  const workflowStep = workflowRecord(response?.workflowStep);
+  if (!response
+    || response.mode !== expected.mode
+    || !workflow
+    || workflow.id !== expected.workflowId
+    || workflow.channelId !== expected.channelId
+    || !workflowStep
+    || workflowStep.id !== expectedStep.id
+    || workflowStep.workflowId !== expected.workflowId
+    || workflowStep.channelId !== expected.channelId
+    || workflowStep.title !== expectedStep.title
+    || workflowStep.prompt !== expectedStep.prompt
+    || workflowStep.toParticipantId !== expectedStep.toParticipantId) return undefined;
+
+  if (response.status === "started") {
+    const task = workflowRecord(response.task);
+    return expected.mode === "create_task"
+      && task
+      && typeof task.id === "string"
+      && task.id.length > 0
+      && task.channelId === expected.channelId
+      && task.title === expected.taskTitle
+      && task.prompt === expected.taskPrompt
+      && task.assigneeTeammateId === expected.assigneeTeammateId
+      && workflowStep.taskId === task.id
+      && workflowStep.runId === undefined
+      && response.run === undefined
+      ? response as unknown as ChannelWorkflowStepCreateTaskStartedResponse
+      : undefined;
+  }
+
+  if (response.status === "blocked") {
+    return typeof response.blocker === "string" && response.blocker.trim().length > 0
+      ? response as unknown as ChannelWorkflowStepBlockedResponse
+      : undefined;
+  }
+  if (response.status !== "waiting_for_approval") return undefined;
+
+  const approval = workflowRecord(response.approval);
+  const payload = workflowRecord(approval?.payload);
+  const basis = workflowRecord(payload?.preGateBasis);
+  const executionPermit = workflowRecord(basis?.executionPermit);
+  if (!approval
+    || typeof approval.id !== "string"
+    || approval.id.length === 0
+    || approval.workflowStepId !== expectedStep.id
+    || approval.channelId !== expected.channelId
+    || approval.runId !== undefined
+    || approval.taskId !== undefined
+    || approval.actionType !== "workflow_step"
+    || approval.status !== "pending"
+    || !payload
+    || payload.type !== "workflow_step"
+    || payload.gateStage !== "pre"
+    || payload.workflowId !== expected.workflowId
+    || payload.workflowStepId !== expectedStep.id
+    || payload.runId !== undefined
+    || !basis
+    || basis.schemaVersion !== 1
+    || typeof basis.startNonce !== "string"
+    || basis.startNonce.length === 0
+    || typeof basis.authorityBasis !== "string"
+    || !/^wso1_[a-f0-9]{64}$/u.test(basis.authorityBasis)
+    || typeof basis.gateFingerprint !== "string"
+    || !/^wpgate1_[a-f0-9]{64}$/u.test(basis.gateFingerprint)
+    || typeof basis.requestedStatus !== "string"
+    || !["queued", "claimed", "running", "waiting_for_approval", "waiting_for_input", "blocked", "succeeded", "failed", "skipped", "cancelled"].includes(basis.requestedStatus)
+    || typeof basis.fingerprint !== "string"
+    || !/^wpg1_[a-f0-9]{64}$/u.test(basis.fingerprint)
+    || !executionPermit
+    || executionPermit.schemaVersion !== 1
+    || executionPermit.mode !== expected.mode
+    || executionPermit.taskTitle !== expected.taskTitle
+    || executionPermit.taskPrompt !== expected.taskPrompt
+    || executionPermit.providerPresetId !== expected.providerPresetId
+    || executionPermit.runnerId !== expected.runnerId
+    || executionPermit.assigneeTeammateId !== expected.assigneeTeammateId
+    || executionPermit.skipProviderPreflight !== expected.skipProviderPreflight
+    || typeof executionPermit.fingerprint !== "string"
+    || !/^wpgpermit1_[a-f0-9]{64}$/u.test(executionPermit.fingerprint)) return undefined;
+  return response as unknown as ChannelWorkflowStepWaitingForApprovalResponse;
+}
+
+function workflowRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 export type ChannelSmartSchedulingEffectiveMode = "serial" | "parallel";

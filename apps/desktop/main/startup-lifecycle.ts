@@ -1,3 +1,5 @@
+import { DesktopDaemonLifecycleError } from "./daemon-lifecycle.js";
+
 export interface DesktopExitLifecycleOptions {
   readonly shutdown: () => Promise<void>;
   readonly quit: () => void;
@@ -116,16 +118,28 @@ export function createDesktopExitLifecycle(
 
   const requestExit = (exitCode = 0): Promise<void> => {
     requestedExitCode = mergeExitCode(requestedExitCode, exitCode);
-    exitPromise ??= (async () => {
+    // Install the single flight before shutdown or diagnostic callbacks can
+    // synchronously request exit again.
+    exitPromise ??= Promise.resolve().then(async () => {
       try {
         await options.shutdown();
       } catch (error) {
-        requestedExitCode = mergeExitCode(requestedExitCode, 1);
+        const retainedHost = error instanceof DesktopDaemonLifecycleError
+          && (error.code === "stop_blocked" || error.code === "stop_unconfirmed");
         try {
           options.onShutdownError?.(error);
         } catch {
-          // Diagnostics must not prevent the process from exiting after cleanup.
+          // Diagnostics cannot authorize exit or change the Host stop result.
         }
+        if (retainedHost) {
+          // A finite observation failure is not a permanent stopped verdict.
+          // A later explicit quit may recheck the same original Host; this
+          // does not itself retry, release resources or start a successor.
+          exitPromise = undefined;
+          requestedExitCode = 0;
+          return;
+        }
+        requestedExitCode = mergeExitCode(requestedExitCode, 1);
       }
       cleanupComplete = true;
       if (requestedExitCode === 0) {
@@ -133,7 +147,7 @@ export function createDesktopExitLifecycle(
       } else {
         options.exit(requestedExitCode);
       }
-    })();
+    });
     return exitPromise;
   };
 

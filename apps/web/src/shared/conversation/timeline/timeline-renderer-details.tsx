@@ -3,21 +3,33 @@ import type { ConversationTimelineRowItem } from "@ling-stack/conversation-ui-co
 import { useI18n } from "../../../i18n.js";
 import { formatCommandOutputTail } from "../../../lib/command-output-tail.js";
 import { MessageBodyRenderer } from "../blocks/MessageBodyRenderer.js";
+import { OperationBubbleCopyAction } from "../blocks/OperationBubbleCopyAction.js";
 import {
   ConversationTimelineFileChangeDetail,
   ConversationTimelineFileReference,
 } from "./ConversationTimelineFileChangeDetail.js";
-import { operationFileSourceRefForPath } from "./source-ref.js";
+import { hasExecutableFileLineage, operationFileSourceRefForPath } from "./source-ref.js";
 import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
+import { commandLogEvidence } from "./command-log-evidence.js";
 
-export function CommandDetail({ item }: { readonly item: Extract<ConversationTimelineRowItem, { kind: "commandExecution" }> }): React.JSX.Element {
+export function CommandDetail({ item, onOpenSourceRef }: { readonly item: Extract<ConversationTimelineRowItem, { kind: "commandExecution" }>; readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler }): React.JSX.Element {
   const { t } = useI18n();
+  const logs = commandLogEvidence(item);
   return (
     <>
+      {item.command ? <div className="conversation-timeline-command-source">
+        <pre className="conversation-timeline-detail-code" aria-label={t("Command")}><code>{item.command}</code></pre>
+        <OperationBubbleCopyAction actionId={`${item.id}:copy-command`} text={item.command} label={`${t("Copy")}: ${t("Command")}`} copiedLabel={t("Command copied")} className="conversation-timeline-command-copy" />
+      </div> : null}
       {item.cwd ? <small className="conversation-timeline-detail-meta">cwd: {item.cwd}</small> : null}
       {item.outputTail.length > 0 ? <pre className="conversation-timeline-output">{formatCommandOutputTail(item.outputTail)}</pre> : null}
       {commandOutputMeta(item, t) ? <small className="conversation-timeline-detail-meta" data-conversation-command-output-stats>{commandOutputMeta(item, t)}</small> : null}
-      {item.outputTruncated ? <small className="conversation-timeline-detail-meta">Output truncated; open the full log from evidence.</small> : null}
+      {item.outputTruncated ? <small className="conversation-timeline-detail-meta">{t("Output truncated")}</small> : null}
+      {logs.length > 0 ? <div className="conversation-timeline-ref-list">{logs.map(({ stream, ref }) => <ConversationTimelineFileReference
+        key={ref.id} item={item} onOpenSourceRef={onOpenSourceRef}
+        file={{ fileRef: ref, displayName: `${t("Open full log")} · ${stream}` }}
+      />)}</div> : null}
+      {item.outputTruncated && (!logs.length || !onOpenSourceRef || !hasExecutableFileLineage(item)) ? <small className="conversation-timeline-detail-meta">{t("Full output is unavailable for this command.")}</small> : null}
       <CommandResult item={item} />
     </>
   );
@@ -122,7 +134,7 @@ function DetailText({ text, cwd }: { readonly text: string | undefined; readonly
 }
 
 function CommandResult({ item }: { readonly item: Extract<ConversationTimelineRowItem, { kind: "commandExecution" }> }): React.JSX.Element | null {
-  const parts = [item.exitCode === undefined || item.exitCode === 0 ? undefined : `exit ${item.exitCode}`, item.durationMs === undefined ? undefined : formatDuration(item.durationMs), item.signal ? `signal ${item.signal}` : undefined].filter(Boolean);
+  const parts = [item.exitCode === undefined ? undefined : `exit ${item.exitCode}`, item.durationMs === undefined ? undefined : formatDuration(item.durationMs), item.signal ? `signal ${item.signal}` : undefined].filter(Boolean);
   return parts.length > 0 ? <small className="conversation-timeline-detail-meta">{parts.join(" · ")}</small> : null;
 }
 
@@ -138,7 +150,7 @@ function commandOutputMeta(
 }
 
 export function detailExists(item: ConversationTimelineRowItem): boolean {
-  if (item.kind === "commandExecution") return Boolean(item.outputTail.length > 0 || item.cwd || item.exitCode !== undefined || item.durationMs !== undefined || item.signal);
+  if (item.kind === "commandExecution") return Boolean(item.command || item.outputTail.length > 0 || item.outputTruncated || commandLogEvidence(item).length || item.cwd || item.exitCode !== undefined || item.durationMs !== undefined || item.signal);
   if (item.kind === "fileChange") return item.files.length > 0 || Boolean(item.changePreview);
   if (item.kind === "exploration") return item.targets.length > 0 || Boolean(item.resultSummary);
   if (item.kind === "plan") return item.steps.length > 0;

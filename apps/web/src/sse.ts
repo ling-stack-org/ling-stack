@@ -1,18 +1,22 @@
 import type { RunEventEnvelope } from "./types.js";
+import { LingDaemonTransportError } from "@ling-stack/api-client";
 
 export type StreamMessage =
   | { readonly kind: "ready"; readonly runId: string }
   | { readonly kind: "event"; readonly event: RunEventEnvelope };
 
-export async function streamRun(
+export type StreamJsonResponseParser<TResponse> = (value: unknown) => TResponse;
+
+export async function streamRun<TResponse = never>(
   url: string,
   body: unknown,
   onMessage: (message: StreamMessage) => void,
   signal?: AbortSignal,
-): Promise<void> {
+  parseJsonResponse?: StreamJsonResponseParser<TResponse>,
+): Promise<TResponse | undefined> {
   try {
     await streamRunRpc(url, body, onMessage, signal);
-    return;
+    return undefined;
   } catch (error) {
     if (!(error instanceof RpcFallbackError)) {
       throw error;
@@ -26,8 +30,28 @@ export async function streamRun(
     signal,
   });
 
-  if (!response.ok || !response.body) {
+  if (!response.ok) {
     throw new Error(await readErrorMessage(response));
+  }
+
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  if (contentType.includes("json")) {
+    if (!parseJsonResponse) {
+      throw new Error("Unexpected JSON response while starting a run stream.");
+    }
+    let value: unknown;
+    try {
+      value = await response.json();
+    } catch {
+      throw new Error("Run admission response was not valid JSON.");
+    }
+    return parseJsonResponse(value);
+  }
+  if (!contentType.includes("text/event-stream")) {
+    throw new Error(`Unexpected run stream content type: ${contentType || "missing"}.`);
+  }
+  if (!response.body) {
+    throw new Error("Run stream response did not include a body.");
   }
 
   await readSseResponse(response, (parsed) => {
@@ -40,6 +64,7 @@ export async function streamRun(
     }
     onMessage({ kind: "event", event: JSON.parse(parsed.data) as RunEventEnvelope });
   });
+  return undefined;
 }
 
 class RpcFallbackError extends Error {}
@@ -165,7 +190,15 @@ export async function readSseResponse(response: Response, onMessage: (message: {
   let buffer = "";
 
   for (;;) {
-    const { done, value } = await reader.read();
+    // Only reader IO is transport. Decoder/JSON/onMessage exceptions remain
+    // protocol/business errors and must never be hidden by a Host stop banner.
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try { chunk = await reader.read(); }
+    catch (cause) {
+      if (cause instanceof Error && cause.name === "AbortError") throw cause;
+      throw new LingDaemonTransportError("stream-read", cause);
+    }
+    const { done, value } = chunk;
     if (done) {
       buffer += decoder.decode();
       const parsed = parseSseBlock(buffer);

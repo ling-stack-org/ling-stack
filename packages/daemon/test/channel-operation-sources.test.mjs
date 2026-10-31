@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createCompositeSecretResolver, createSqliteRunStore } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, createCompositeSecretResolver, createSqliteRunStore } from "@ling-stack/core";
 import { appendChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import { channelOperationVisibleSources } from "../dist/features/channels/channel-operation-sources.js";
 import { selectChannelWorkflowIntent } from "../dist/features/channels/channel-intent-selector.js";
@@ -48,6 +48,18 @@ async function fixture(t) {
   return { store, channel, source, previous, draft, content, candidate, select, now };
 }
 
+function assertInvalidPlan(f, result, decision) {
+  assert.equal(result.action, "blocked");
+  assert.equal(result.errorCode, "channel_operation_plan_invalid");
+  assert.equal(decision.status, "failed");
+  assert.equal(decision.errorCode, "channel_operation_plan_invalid");
+  assert.equal(decision.execution, undefined);
+  assert.equal(f.store.listRuns({ channelId: f.channel.id }).length, 0);
+  assert.equal(f.store.listTasks({ channelId: f.channel.id }).length, 0);
+  assert.equal(f.store.listChannelExecutionProposals({ channelId: f.channel.id }).length, 0);
+  assert.deepEqual(f.store.getChannel(f.channel.id).allowedTools, ["read", "write"]);
+}
+
 test("current execution intent and prior assistant content use separate immutable canonical source refs", async (t) => {
   const f = await fixture(t);
   const sources = channelOperationVisibleSources({ store: f.store, sourceItemId: f.source.id });
@@ -71,8 +83,7 @@ test("host_default cannot smuggle a model-chosen participant ID", async (t) => {
   const f = await fixture(t);
   f.candidate.operations[0].owner.participantId = "teammate_builtin_qa";
   const { result, decision } = await f.select();
-  assert.equal(result.action, "clarify");
-  assert.equal(decision.execution, undefined);
+  assertInvalidPlan(f, result, decision);
 });
 
 test("a foreign canonical item cannot enter the source registry merely because its ID exists", async (t) => {
@@ -81,17 +92,18 @@ test("a foreign canonical item cannot enter the source registry merely because i
   const foreign = appendChannelItemFixture(f.store, { channelId: other.id, authorType: "local-user", body: `index.html ${f.content}` }, f.now);
   f.candidate.operations[0].contentSource.sourceItemId = foreign.id;
   const { result, decision } = await f.select();
-  assert.equal(result.action, "clarify");
-  assert.equal(decision.execution, undefined);
-  assert.match(decision.reason, /projected canonical item/u);
+  assertInvalidPlan(f, result, decision);
+  const observations = f.store.listControlPlaneEvents({ workspaceId: DEFAULT_WORKSPACE_ID,
+    entityType: "channel_intent_selection", entityId: f.source.id });
+  assert.deepEqual(observations.filter(e => e.data.outcome === "binding_rejected").map(e => e.data.fields),
+    [["execution.operations[].contentSource.sourceQuote"], ["execution.operations[].contentSource.sourceQuote"]]);
 });
 
 test("previous assistant text cannot be substituted for the current operation authorization quote", async (t) => {
   const f = await fixture(t);
   f.candidate.operations[0].sourceQuote = f.draft.body;
   const { result, decision } = await f.select();
-  assert.equal(result.action, "clarify");
-  assert.equal(decision.execution, undefined);
+  assertInvalidPlan(f, result, decision);
 });
 
 test("host_default requires an actual Host routing decision instead of selecting the first candidate", async (t) => {

@@ -15,6 +15,7 @@ import type { RunSession, RunStore } from "../../run-types.js";
 import type { RuntimeAttemptFenceV1 } from "../../runtime-supervisor-types.js";
 import { captureRunProgressCheckpointLineage } from "../../run-progress-checkpoint-lineage.js";
 import { assertNoUnsettledHostFacts, readRunProgressEvents, validateRunProgressRecoveryBookkeeping } from "./run-progress-checkpoint-effects.js";
+import { readCompactionSuspensionHandoffAttempts } from "./run-compaction-suspension-lineage.js";
 
 const timestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u;
 
@@ -332,10 +333,11 @@ export function hasCommittedRunCompactionReceipt(context: SqliteStoreContext, po
     if (!checkpoint || checkpoint.state !== "committed" || !checkpoint.committedAt || !attempt
       || attempt.workUnitId !== sourceFence.workUnitId || attempt.id !== sourceFence.attemptId
       || attempt.runtimeInstanceId !== sourceFence.runtimeInstanceId || attempt.fencingToken !== sourceFence.fencingToken
-      || attempt.workUnitId !== run.workUnitId || checkpoint.attemptId !== attempt.id
+      || attempt.workUnitId !== run.workUnitId
       || checkpoint.contextViewId !== run.contextViewId || checkpoint.providerName !== run.providerName
       || checkpoint.providerModel !== run.providerModel || checkpoint.unresolvedToolCallIds.length
       || checkpoint.unresolvedApprovalIds.length || checkpoint.unresolvedQuestionIds.length) return false;
+    const handoffAttempts = readCompactionSuspensionHandoffAttempts(context.database, checkpoint, sourceFence);
     assertDurableReferences(context, { ...checkpoint, createdAt: checkpoint.createdAt });
     const start = context.database.prepare(`SELECT seq,data_json FROM run_events WHERE run_id=?
       AND type='context_compaction_start' ORDER BY seq DESC LIMIT 1`).get(run.id);
@@ -384,6 +386,7 @@ export function hasCommittedRunCompactionReceipt(context: SqliteStoreContext, po
       || !replay.artifactRefs.includes(checkpoint.contextSnapshotArtifactId) || !replay.artifactRefs.includes(checkpoint.summaryArtifactId)) return false;
     const events = readRunProgressEvents(ports, run.id);
     const recoveryBookkeeping: typeof events = [];
+    const historicalBookkeeping = new Map<string, typeof events>();
     let installed = checkpoint.sourceEventSeq > Number(start.seq);
     for (const event of events.filter(event => event.seq > checkpoint.sourceEventSeq)) {
       if (!installed && event.type === "context_compaction_end" && event.data.attemptId === checkpoint.attemptId
@@ -396,12 +399,17 @@ export function hasCommittedRunCompactionReceipt(context: SqliteStoreContext, po
       // Pi starts the next logical turn after installing an initial compaction view,
       // before the next provider request has produced any observable progress.
       if (installed && event.type === "turn_start" && event.data.attemptId === sourceFence.attemptId) continue;
+      if (installed && event.type === "run_start" && typeof event.data.attemptId === "string" && handoffAttempts.has(event.data.attemptId)) {
+        const markers = historicalBookkeeping.get(event.data.attemptId) ?? []; markers.push(event);
+        historicalBookkeeping.set(event.data.attemptId, markers); continue;
+      }
       if (installed && recoveryTargetFence && ["run_start", "turn_start"].includes(event.type)) {
         recoveryBookkeeping.push(event); continue;
       }
       return false;
     }
     if (recoveryTargetFence) validateRunProgressRecoveryBookkeeping(run, recoveryBookkeeping, recoveryTargetFence.attemptId);
+    for (const [attemptId, markers] of historicalBookkeeping) validateRunProgressRecoveryBookkeeping(run, markers, attemptId);
     if (!installed || !events.some(event => event.type === "context_compaction_end" && event.seq > Number(start.seq)
       && event.data.attemptId === data.attemptId && event.data.outcome === "sdk_installed")
       || ports.listHarnessToolExecutions(run.id).some(execution => !["succeeded", "denied", "failed", "cancelled", "superseded"].includes(execution.state))

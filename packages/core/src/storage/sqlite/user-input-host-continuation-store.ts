@@ -16,9 +16,10 @@ import { readUserInputDelivery, validDeliveryKey, validDeliveryRevision } from "
 import { assertUserInputAdmissionPolicy } from "./user-input-admission-policy.js";
 import { activateUserInputWorkflowAdmission, prepareUserInputWorkflowAdmission,
   type UserInputWorkflowAdmissionPorts } from "./user-input-workflow-admission.js";
-import { isWorkflowStepStartOwnerV1 } from "../../workflow-step-start-owner.js";
+import { isWorkflowStepStartOwnerV1, workflowStepStartOwnerMatches } from "../../workflow-step-start-owner.js";
 import { failUserInputStartupWithinTransaction, type UserInputStartupFailurePorts } from "./user-input-startup-failure.js";
 import { userInputTimestamp } from "./user-input-records.js";
+import { normalizeRunnerIdsInSnapshot } from "../../runner-ids.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { makeUserInputContinuationRecord, readUserInputContinuationRecord, insertUserInputContinuationRecord,
   userInputContinuationRef as ref, sameUserInputValue as same, requireUserInputRecordKeys, userInputEnvelopeKeys } from "./user-input-continuation-envelope.js";
@@ -26,7 +27,8 @@ import { makeUserInputContinuationRecord, readUserInputContinuationRecord, inser
 type Ports = UserInputStartupFailurePorts & UserInputWorkflowAdmissionPorts & Pick<RunStore,
   "getRun" | "getTask" | "getWorkUnit" | "getWorkUnitAttempt" | "getLingTurnForRun" | "getLingThread"
   | "getUserInputRequest" | "getConversationItem" | "getUserInputWait" | "listLingTurnRuns" | "getChannelWorkflowStep" | "getChannelWorkflow"
-  | "transitionWorkUnitStatus" | "transitionTaskStatus" | "transitionChannelWorkflowStepStatus" | "reconcileLingTurnStatus" | "updateLingThread">;
+  | "transitionRunStatus" | "transitionWorkUnitStatus" | "updateWorkUnitAttemptStatus" | "transitionTaskStatus"
+  | "transitionChannelWorkflowStepStatus" | "reconcileLingTurnStatus" | "updateLingThread">;
 
 /** Atomic physical binding and receiver ACK. Never resolves policy, leases, models or executor lifecycle. */
 export class SqliteUserInputHostContinuationStore {
@@ -62,6 +64,12 @@ export class SqliteUserInputHostContinuationStore {
     return receipt;
   }
 
+  /** Internal recovery composition only. The caller must already own the write transaction. */
+  readBindingWithinTransaction(threadId: string, deliveryId: string): UserInputContinuationBinding | undefined {
+    const seed = this.preparation.seedWithinTransaction(threadId, deliveryId);
+    return seed ? this.readBinding(seed) : undefined;
+  }
+
   admit(input: AdmitUserInputContinuation, now: string): UserInputContinuationBinding {
     return this.transaction(now, () => {
       const captured = readSqliteWithinTransaction(this.context.database, () => JSON.parse(JSON.stringify(input)) as AdmitUserInputContinuation);
@@ -74,7 +82,7 @@ export class SqliteUserInputHostContinuationStore {
       if (!prepared || !same(captured.executionRef, ref(prepared))) throw new UserInputStoreError("source_conflict");
       if (userInputTimestamp(now) < userInputTimestamp(prepared.createdAt)) throw new UserInputStoreError("delivery_conflict");
       if (this.readBinding(seed)) throw new UserInputStoreError("delivery_conflict");
-      const plan = prepared.payload as UserInputContinuationExecutionPlan, source = seed.source;
+      const plan = normalizeRunnerIdsInSnapshot(prepared.payload) as UserInputContinuationExecutionPlan, source = seed.source;
       if (captured.workflowStartOwner !== undefined && !source.workflowStepId
         || captured.effectivePolicySnapshot && source.workflowStepId && !captured.workflowStartOwner) {
         throw new UserInputStoreError("source_conflict");
@@ -140,9 +148,13 @@ export class SqliteUserInputHostContinuationStore {
       const wait = this.ports.getUserInputWait(seed.source.threadId, seed.request.requestId);
       if (bound.delivery.status === "applied") throw new UserInputStoreError("invalid_record");
       if (bound.delivery.status !== "claimed" || bound.delivery.revision !== binding.deliveryRevision
+        || bound.delivery.claim?.ownerId !== captured.claim.ownerId || bound.delivery.claim.token !== captured.claim.claimToken
+        || Date.parse(bound.delivery.claim.expiresAt) <= userInputTimestamp(now)
         || !wait || wait.status !== "resuming" || wait.revision !== binding.waitRevision
         || userInputTimestamp(now) < userInputTimestamp(bound.delivery.updatedAt)) throw new UserInputStoreError("delivery_conflict");
-      this.assertCurrentReceiver(seed, binding);
+      this.assertCurrentReceiver(seed, binding, "prepared");
+      this.startCurrentReceiver(seed, binding, now);
+      this.assertCurrentReceiver(seed, binding, "running");
       const receipt = makeUserInputContinuationRecord<UserInputContinuationReceipt>(this.context, seed, "receipt",
         { bindingRef: ref(binding), acceptance: captured.receipt }, now);
       insertUserInputContinuationRecord(this.context, seed, receipt);
@@ -176,6 +188,8 @@ export class SqliteUserInputHostContinuationStore {
         || attempt?.status !== "created" || attempt.startedAt || attempt.endedAt
         || !same(toRuntimeAttemptFence(attempt), binding.fence) || this.readReceiptWithinTransaction(captured.threadId, captured.deliveryId)
         || bound?.delivery.status !== "claimed" || bound.delivery.revision !== binding.deliveryRevision
+        || bound.delivery.claim?.ownerId !== captured.claim.ownerId || bound.delivery.claim.token !== captured.claim.claimToken
+        || Date.parse(bound.delivery.claim.expiresAt) <= userInputTimestamp(now)
         || wait?.status !== "resuming" || wait.revision !== binding.waitRevision) return false;
       if (userInputTimestamp(now) < userInputTimestamp(bound.delivery.updatedAt)) throw new UserInputStoreError("delivery_conflict");
       failUserInputStartupWithinTransaction(this.context, this.ports, seed, binding, captured, now);
@@ -207,7 +221,8 @@ export class SqliteUserInputHostContinuationStore {
       || binding.fence.attemptId === seed.source.fence.attemptId
       || userInputTimestamp(binding.createdAt) < userInputTimestamp(prepared.createdAt)) throw new UserInputStoreError("invalid_record");
     const run = this.ports.getRun(binding.runId), attempt = this.ports.getWorkUnitAttempt(binding.fence.attemptId);
-    const turn = this.ports.getLingTurnForRun(binding.runId), plan = prepared.payload as UserInputContinuationExecutionPlan, s = seed.source;
+    const turn = this.ports.getLingTurnForRun(binding.runId),
+      plan = normalizeRunnerIdsInSnapshot(prepared.payload) as UserInputContinuationExecutionPlan, s = seed.source;
     if (!run || !attempt || !same(toRuntimeAttemptFence(attempt), binding.fence) || attempt.runnerId !== plan.runnerId
       || attempt.providerPresetId !== plan.providerPresetId || !turn || turn.id !== s.turnId
       || !this.ports.listLingTurnRuns(s.turnId).some(link => link.runId === run.id && link.role === "resume")
@@ -225,41 +240,65 @@ export class SqliteUserInputHostContinuationStore {
   private requestSnapshot(seed: UserInputContinuationSeed, prepared: import("../../user-input-host-continuation-types.js").UserInputContinuationPreparation,
     policy?: import("../../session-permissions.js").EffectiveRunPolicySnapshot,
     workflowStartOwner?: import("../../workflow-step-start-owner.js").WorkflowStepStartOwnerV1) {
-    const plan = prepared.payload as UserInputContinuationExecutionPlan;
-    return { ...plan.requestSnapshot, runnerExecutionInput: plan.runnerExecutionInput,
+    const plan = normalizeRunnerIdsInSnapshot(prepared.payload) as UserInputContinuationExecutionPlan;
+    return { ...plan.runRequestSnapshot, runnerExecutionInput: plan.runnerExecutionInput,
       ...(policy ? { effectivePolicySnapshot: policy } : {}),
       ...(workflowStartOwner ? { workflowStartOwner } : {}),
       userInputContinuation: { seedRef: ref(seed), requestRef: prepared.parentRef, executionRef: ref(prepared) } };
   }
   private acceptance(seed: UserInputContinuationSeed, binding: UserInputContinuationBinding): UserInputRunnerAcceptance {
-    const plan = this.preparation.readWithinTransaction(seed, "execution")!.payload as UserInputContinuationExecutionPlan;
+    const plan = normalizeRunnerIdsInSnapshot(this.preparation.readWithinTransaction(seed, "execution")!.payload) as UserInputContinuationExecutionPlan;
     return { schemaVersion: 1, boundary: "pi-session-ready", runId: binding.runId, attemptId: binding.fence.attemptId,
       taskId: seed.source.taskBinding.taskId, preparedInputFingerprint: plan.preparedInputFingerprint };
   }
-  private assertCurrentReceiver(seed: UserInputContinuationSeed, binding: UserInputContinuationBinding): void {
+  private assertCurrentReceiver(seed: UserInputContinuationSeed, binding: UserInputContinuationBinding,
+    phase: "prepared" | "running"): void {
     const s = seed.source, fence = binding.fence;
     const run = this.ports.getRun(binding.runId), unit = this.ports.getWorkUnit(fence.workUnitId);
     const attempt = this.ports.getWorkUnitAttempt(fence.attemptId), thread = this.ports.getLingThread(s.threadId);
     const turn = this.ports.getLingTurnForRun(binding.runId), task = this.ports.getTask(s.taskBinding.taskId);
-    if (!run || run.status !== "running" || !unit || unit.status !== "running" || unit.endedAt
+    if (!run || run.status !== (phase === "prepared" ? "queued" : "running")
+      || !unit || unit.status !== (phase === "prepared" ? "claimed" : "running") || unit.endedAt
       || unit.workspaceId !== s.workspaceId || unit.channelId !== undefined && unit.channelId !== s.channelId
       || unit.teammateId !== undefined && unit.teammateId !== s.participantId
       || unit.activeAttemptId !== fence.attemptId || unit.linkedRunId !== binding.runId
-      || !attempt || attempt.status !== "started" || attempt.endedAt || !same(toRuntimeAttemptFence(attempt), fence)
+      || !attempt || attempt.status !== (phase === "prepared" ? "created" : "started")
+      || attempt.endedAt || !same(toRuntimeAttemptFence(attempt), fence)
       || !thread || thread.status === "archived" || thread.archivedAt || !turn
       || thread.workspaceId !== s.workspaceId || turn.workspaceId !== s.workspaceId || turn.threadId !== s.threadId
       || ["cancelled", "superseded", "succeeded", "failed"].includes(turn.status)
-      || (s.taskBinding.kind === "stored_task" ? !task || task.status !== "running" || task.currentRunId !== binding.runId : !!task)) {
+      || (s.taskBinding.kind === "stored_task" ? !task
+        || task.status !== (phase === "prepared" ? "claimed" : "running") || task.currentRunId !== binding.runId : !!task)) {
       throw new UserInputStoreError("source_conflict");
     }
     if (s.workflowStepId) {
       const step = this.ports.getChannelWorkflowStep(s.workflowStepId), workflow = step ? this.ports.getChannelWorkflow(step.workflowId) : undefined;
-      if (!step || step.status !== "running" || step.runId !== binding.runId || step.toParticipantId !== s.participantId
+      const admissionOwned = binding.workflowStartOwner !== undefined;
+      const expectedStatus = admissionOwned ? "running" : phase === "prepared" ? "claimed" : "running";
+      if (!step || step.status !== expectedStatus
+        || step.runId !== binding.runId || step.toParticipantId !== s.participantId
         || step.workspaceId !== s.workspaceId || step.channelId !== s.channelId || !workflow || workflow.workspaceId !== s.workspaceId
-        || workflow.channelId !== s.channelId || !["running", "waiting_for_input"].includes(workflow.status)) {
+        || workflow.channelId !== s.channelId || !["running", "waiting_for_input"].includes(workflow.status)
+        || admissionOwned && !workflowStepStartOwnerMatches(step.metadata?.startOwner, binding.workflowStartOwner!)) {
         throw new UserInputStoreError("source_conflict");
       }
     }
+  }
+  private startCurrentReceiver(seed: UserInputContinuationSeed, binding: UserInputContinuationBinding, now: string): void {
+    const s = seed.source, fence = binding.fence;
+    if (!this.ports.updateWorkUnitAttemptStatus({ ...fence, status: "started", startedAt: now,
+      lastHeartbeatAt: now, now })) throw new UserInputStoreError("source_conflict");
+    requireTransition(this.ports.transitionRunStatus({ runId: binding.runId, expectedStatus: "queued",
+      event: "runner_started", actor: "runner", now, startedAt: now }));
+    requireTransition(this.ports.transitionWorkUnitStatus({ ...fence, expectedStatus: "claimed",
+      event: "runner_started", actor: "runner", now, activeAttemptId: fence.attemptId,
+      startedAt: now, lastHeartbeatAt: now }));
+    if (s.taskBinding.kind === "stored_task") requireTransition(this.ports.transitionTaskStatus({
+      taskId: s.taskBinding.taskId, expectedStatus: "claimed", event: "start_run", actor: "system",
+      currentRunId: binding.runId, now }));
+    if (s.workflowStepId && !binding.workflowStartOwner) requireTransition(this.ports.transitionChannelWorkflowStepStatus({
+      workflowStepId: s.workflowStepId, expectedStatus: "claimed", event: "start", actor: "system",
+      runId: binding.runId, now }));
   }
   private reconcile(seed: UserInputContinuationSeed, runId: string, now: string): void {
     this.ports.reconcileLingTurnStatus(seed.source.turnId, now);

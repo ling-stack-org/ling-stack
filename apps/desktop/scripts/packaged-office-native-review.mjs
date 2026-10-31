@@ -80,7 +80,11 @@ export function readReviewedPackagedOfficeSource() {
     exactKeys(review.headers, ["selector", "environment", "sha256"]);
     requireReview(review.headers.selector === "local_environment_path"
       && review.headers.environment === "LING_OFFICE_NODE_HEADERS");
-    const observed = observeOfficeNativeToolchain();
+    // Reject stale authored inputs before even invoking trusted OS discovery.
+    // The common checks below still recheck them after the reviewed version probe.
+    assertDigests(nativeRoot, review.sourceSha256, OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS, 4 * 1024 * 1024, 16 * 1024 * 1024);
+    assertDigests(repositoryRoot, review.packagingSha256, packagingPaths);
+    const observed = observeOfficeNativeToolchain({ profiles: review.toolchains, headerDigests: review.headers.sha256 });
     assertOfficeNativeToolchainProfile(review.toolchains, review.headers.sha256, observed);
     // Expanded paths/facts are transient observations. The approved JSON stays
     // static and its digest continues to bind the same-process publication.

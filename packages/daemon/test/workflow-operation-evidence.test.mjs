@@ -787,6 +787,7 @@ test("approval restart resume feeds QA evidence through the shared multi-agent c
     const approval = fixture.store.createApprovalRequest({
       runId: fixture.qaRun.id,
       taskId: fixture.qaTask.id,
+      channelId: fixture.qaRun.channelId,
       toolCallId: "qa_node_after_restart",
       actionType: "bash",
       risk: "medium",
@@ -913,6 +914,7 @@ test("approval resume rejects a command that no longer matches the workflow bind
     const approval = fixture.store.createApprovalRequest({
       runId: fixture.qaRun.id,
       taskId: fixture.qaTask.id,
+      channelId: fixture.qaRun.channelId,
       toolCallId: "qa_mismatched_resume_command",
       actionType: "bash",
       risk: "medium",

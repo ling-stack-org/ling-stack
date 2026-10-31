@@ -16,14 +16,17 @@ test("typed timeline keeps the feed as the only vertical scroll owner", async ()
   assert.doesNotMatch(styles, /\.conversation-(?:command|exploration)-batch[^}]*overflow-y:\s*(?:auto|scroll)/su);
 });
 
-test("terminal report renders detailed result sections and Dock keeps viewer semantics", async () => {
+// The 2026-10-27 execution-detail ownership design supersedes the older full-report ending.
+test("terminal result retains actionable supplements while Dock keeps viewer semantics", async () => {
   const [terminalReport, dockWorkspaceFile] = await Promise.all([
     readFile(terminalReportSourceUrl, "utf8"),
     readFile(dockWorkspaceFileSourceUrl, "utf8"),
   ]);
-  for (const section of ["Corrections", "Changes", "Verification", "Agents", "Artifacts", "Risks", "Sources"]) {
+  for (const section of ["Corrections", "Verification", "Agents", "Artifacts", "Risks"]) {
     assert.equal(terminalReport.includes(`title="${section}"`), true);
   }
+  for (const section of ["Changes", "Sources"]) assert.equal(terminalReport.includes(`title="${section}"`), false);
+  assert.doesNotMatch(terminalReport, /Execution details|verification\.command|durationMs|showSummary/u);
   assert.match(dockWorkspaceFile, /capabilityTarget === "open_artifact"/u);
   assert.match(dockWorkspaceFile, /capabilityTarget === "open_diff" && preview\.kind !== "diff"/u);
   assert.match(dockWorkspaceFile, /data-workspace-viewer-kind="artifact"/u);
@@ -39,14 +42,14 @@ test("terminal report formats participant narration and separates mixed metadata
   assert.match(source, /text=\{summary\}\s+cwd=\{cwd\}/u);
 });
 
-test("status-only terminal reports have no empty disclosure or duplicate success chrome", async () => {
+test("status-only terminal reports have no empty disclosure or duplicate response owner", async () => {
   const source = await readFile(terminalReportSourceUrl, "utf8");
-  assert.match(source, /const compactStatusOnly = !hasDetail && !item\.summary\.trim\(\);/u);
-  assert.match(source, /compact=\{compactStatusOnly\}/u);
+  assert.match(source, /presentation\.showStatus \? <TimelineFactRow/u);
+  assert.match(source, /statusLabel=""/u);
   assert.match(source, /meta=""/u);
   assert.doesNotMatch(source, /MessageActionBar/u, "TerminalReport must not own a second response action bar");
-  assert.match(source, /detail=\{hasDetail \|\| hasNarration && Boolean\(item\.summary\) \? <TerminalReportDetail/u);
-  assert.match(source, /item\.references\.some\(\(ref\) => Boolean\(ref\.path \|\| ref\.label\)\)/u);
+  assert.match(source, /detail=\{hasDetail \? <TerminalReportResultSupplement/u);
+  assert.match(source, /terminalReportFinalPresentation\(inputItem, hasNarration\)/u);
 });
 
 test("every typed row exposes the stable renderer key semantic attribute", async () => {

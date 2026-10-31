@@ -5,6 +5,18 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./daemon-shutdown-observer": {
+      "types": "./dist/daemon-shutdown-observer.d.ts",
+      "default": "./dist/daemon-shutdown-observer.js"
+    },
+    "./daemon-resource-bootstrap": {
+      "types": "./dist/daemon-resource-bootstrap.d.ts",
+      "default": "./dist/daemon-resource-bootstrap.js"
+    },
+    "./delegation-host-store-bridge": {
+      "types": "./dist/delegation-host-store-bridge.d.ts",
+      "default": "./dist/delegation-host-store-bridge.js"
+    },
     "./execution-engine-host-authority": {
       "types": "./dist/execution-engine-host-authority.d.ts",
       "default": "./dist/execution-engine-host-authority.js"

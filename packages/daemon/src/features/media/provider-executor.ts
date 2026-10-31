@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   DEFAULT_WORKSPACE_ID,
+  createRuntimeResourceRenewal,
   normalizeProviderPresetForMediaRuntime,
   resolveMediaProviderRuntimeState,
   type MediaJob,
@@ -530,12 +531,14 @@ function ensureSemaphore(store: ProviderExecutionStore, provider: ProviderPreset
 }
 
 function recordHeartbeat(store: ProviderExecutionStore, supervised: MediaRuntimeHandle, phase: string): void {
+  const ts = now();
   store.recordRuntimeHeartbeat({
     workUnitId: supervised.workUnit.id,
     attemptId: supervised.attempt.id,
     runtimeInstanceId: supervised.attempt.runtimeInstanceId,
     fencingToken: supervised.attempt.fencingToken,
-    ts: now(),
+    ts,
+    resourceExpiresAt: createRuntimeResourceRenewal(ts).expiresAt,
     source: "provider",
     detail: { phase },
   });

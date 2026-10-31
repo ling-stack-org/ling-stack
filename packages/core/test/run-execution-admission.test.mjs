@@ -151,23 +151,66 @@ test("replacement during payload normalization is rejected at SQL INSERT before 
   assert.equal(f.store.countEvents(f.run.id), 1);
 });
 
-test("another connection replaces the owner between completion precheck and SQL UPDATE", async t => {
+test("completion transaction blocks another connection from replacing the owner between precheck and SQL UPDATE", async t => {
   const f = await fixture(t);
   const writer = createSqliteRunStore(f.cwd);
   try {
-    let replaced = false;
+    writer.database.exec("PRAGMA busy_timeout=1");
+    let replacementBlocked = false;
     const sessions = new SqliteRunSessionStore({ database: f.store.database }, f.store.paths, {
-      findStateTransitionByIdempotency() { replaced = true; f.replace(writer); },
-      recordStateTransitionEvent() { assert.fail("stale transition must not publish"); },
-      reconcileLingTurnStatusForRun() { assert.fail("stale transition must not project"); },
-      rebuildLingThreadMetadata() { assert.fail("stale transition must not invalidate"); },
+      findStateTransitionByIdempotency() {
+        assert.throws(() => f.replace(writer), error => error.code === "ERR_SQLITE_ERROR"
+          && error.errcode === 5 && error.message === "database is locked");
+        replacementBlocked = true;
+      },
+      recordStateTransitionEvent: input => f.store.recordStateTransitionEvent(input),
+      reconcileLingTurnStatusForRun() {},
+      rebuildLingThreadMetadata() {},
+      getDelegationCompletionEvidence: input => f.store.getDelegationCompletionEvidence(input),
     });
     const result = sessions.transitionRunExecutionStatus({ runId: f.run.id, sourceFence: f.fence, event: "runner_succeeded",
       actor: "runner", now, endedAt: now, idempotencyKey: "race" });
-    assert.equal(replaced, true);
-    assert.equal(result.ok, false);
-    assert.equal(f.store.getRun(f.run.id).status, "running");
+    assert.equal(replacementBlocked, true);
+    assert.equal(result.ok, true);
+    assert.equal(f.store.getRun(f.run.id).status, "succeeded");
+    assert.equal(f.store.listWorkUnitAttempts(f.unit.id).length, 1);
+    assert.equal(f.store.findStateTransitionByIdempotency("run", f.run.id, "race")?.toStatus, "succeeded");
   } finally { writer.close(); }
+});
+
+test("completion SQL rejects an owner replaced on the same connection after precheck", async t => {
+  const f = await fixture(t);
+  let replaced = false;
+  const sessions = new SqliteRunSessionStore({ database: f.store.database }, f.store.paths, {
+    findStateTransitionByIdempotency() {
+      // Inject replacement inside the existing transaction, without a nested BEGIN.
+      f.store.createWorkUnitAttemptWithinTransaction({ workUnitId: f.unit.id, attemptNumber: 2,
+        runtimeInstanceId: "new-runtime", runnerId: "pi", status: "started", now });
+      replaced = true;
+    },
+    recordStateTransitionEvent() { assert.fail("stale transition must not publish"); },
+    reconcileLingTurnStatusForRun() { assert.fail("stale transition must not project"); },
+    rebuildLingThreadMetadata() { assert.fail("stale transition must not invalidate"); },
+    getDelegationCompletionEvidence: input => f.store.getDelegationCompletionEvidence(input),
+  });
+  const result = sessions.transitionRunExecutionStatus({ runId: f.run.id, sourceFence: f.fence,
+    event: "runner_succeeded", actor: "runner", now, endedAt: now, idempotencyKey: "same-connection-race" });
+  assert.equal(replaced, true);
+  assert.equal(result.ok, false);
+  assert.equal(f.store.getRun(f.run.id).status, "running");
+  assert.equal(f.store.listWorkUnitAttempts(f.unit.id).length, 2);
+  assert.equal(f.store.findStateTransitionByIdempotency("run", f.run.id, "same-connection-race"), undefined);
+});
+
+test("successful completion inside a caller transaction is undone by the caller rollback", async t => {
+  const f = await fixture(t);
+  f.store.database.exec("BEGIN IMMEDIATE");
+  try {
+    assert.equal(f.complete("runner_succeeded").ok, true);
+    assert.equal(f.store.getRun(f.run.id).status, "succeeded");
+  } finally { f.store.database.exec("ROLLBACK"); }
+  assert.equal(f.store.getRun(f.run.id).status, "running");
+  assert.deepEqual(f.store.database.prepare("SELECT 1 FROM state_transition_events WHERE entity_type='run' AND entity_id=? AND to_status='succeeded'").all(f.run.id), []);
 });
 
 test("timeout cleanup may record failure but cannot start new tools or succeed", async t => {

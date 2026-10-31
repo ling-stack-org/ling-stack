@@ -1,6 +1,7 @@
 import type { ApprovalPostCommitEffect, ApprovalRequest, MediaJob, RunStore } from "@ling-stack/core";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
-import { hasApprovalDecisionEvent, reconcileApprovalPostCommitEffects } from "./approval-postcommit-effects.js";
+import { reconcileApprovalPostCommitEffects } from "./approval-postcommit-effects.js";
+import { verifyApprovalPostCommitEvidence } from "./approval-postcommit-evidence.js";
 
 export interface ApprovalPostCommitRecoveryResult {
   readonly recovered: number;
@@ -21,6 +22,7 @@ export function recoverApprovalPostCommitStore(input: {
   let recovered = 0;
   let unknown = 0;
   let deferred = 0;
+  const decisionEventsDeferredUntilNextScan = new Set<string>();
   let after: { createdAt: string; approvalId: string; effectKind: ApprovalPostCommitEffect["effectKind"] } | undefined;
   for (;;) {
     const page = store.listApprovalPostCommitEffects({ status: "claimed", after, limit: 500 });
@@ -30,12 +32,20 @@ export function recoverApprovalPostCommitStore(input: {
         const resolution = expiredEffectResolution(store, effect, approval);
         const settled = store.recoverExpiredApprovalPostCommitClaim(effect.approvalId, effect.effectKind, {
           expectedRevision: effect.revision,
-          status: resolution,
-          errorCode: resolution === "effect_unknown" ? "approval_effect_outcome_unknown"
-            : resolution === "blocked" ? "approval_owner_evidence_missing" : "approval_recovery_verified",
+          status: resolution.status,
+          errorCode: resolution.code,
         }, now);
         if (settled?.status === "effect_unknown") unknown += 1;
         if (settled?.status === "completed") recovered += 1;
+        if (effect.effectKind === "decision_event" && settled?.status === "pending") {
+          // Do not reclaim and replay a decision event in the same recovery
+          // scan that expired its prior lease. The stale publisher may still
+          // be returning from appendEvent; a same-scan replay can race it and
+          // append the same canonical decision twice. The next periodic scan
+          // will either observe the old publisher's event or safely replay it.
+          decisionEventsDeferredUntilNextScan.add(effect.approvalId);
+          deferred += 1;
+        }
       }
     }
     if (page.length < 500) break;
@@ -86,7 +96,10 @@ export function recoverApprovalPostCommitStore(input: {
   for (;;) {
     const page = store.listApprovalPostCommitEffects({ status: "pending", after, limit: 500 });
     for (const effect of page) {
-      if (effect.approvalId !== lastProcessedId) reconcileId(effect.approvalId);
+      if (effect.approvalId !== lastProcessedId
+        && !decisionEventsDeferredUntilNextScan.has(effect.approvalId)) {
+        reconcileId(effect.approvalId);
+      }
       lastProcessedId = effect.approvalId;
     }
     if (page.length < 500) break;
@@ -100,18 +113,18 @@ function expiredEffectResolution(
   store: RunStore,
   effect: ApprovalPostCommitEffect,
   approval: ApprovalRequest | undefined,
-): "pending" | "completed" | "blocked" | "effect_unknown" {
-  if (!approval || approval.status === "pending") return "blocked";
-  if (effect.effectKind === "decision_event") return hasApprovalDecisionEvent(store, approval) ? "completed" : "pending";
-  if (effect.effectKind === "control_plane_event") return "pending"; // approval ID is the idempotency key.
-  if (effect.ownerKind === "media_job") return "effect_unknown";
-  if (effect.ownerKind === "workflow_step" || effect.ownerKind === "external_work_action") return "pending";
-  if (effect.ownerKind === "run" && approval.runId) {
-    const checkpoint = store.getApprovalCheckpointForApproval(approval.id);
-    const run = store.getRun(approval.runId);
-    if (!checkpoint || !run) return "blocked";
-    if (run.status !== "waiting_for_approval") return "completed";
-    if (checkpoint.status === "approved" || checkpoint.status === "denied") return "pending";
+): { readonly status: "pending" | "completed" | "blocked" | "effect_unknown"; readonly code: string } {
+  if (!approval || approval.status === "pending") {
+    return { status: "blocked", code: "approval_owner_evidence_missing" };
   }
-  return "blocked";
+  const evidence = verifyApprovalPostCommitEvidence(store, approval, effect.effectKind);
+  if (evidence.status === "applied") {
+    return { status: "completed", code: evidence.code };
+  }
+  // An expired media claim may have crossed the provider boundary before the
+  // daemon died. Unless durable evidence proves the outcome, never replay it.
+  if (effect.effectKind === "owner" && effect.ownerKind === "media_job") {
+    return { status: "effect_unknown", code: "approval_effect_outcome_unknown" };
+  }
+  return { status: evidence.status, code: evidence.code };
 }

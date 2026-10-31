@@ -8,12 +8,13 @@ import type { AuthorizationMode, PermissionPreset } from "../../types.js";
 const authorizationIcons = { ask: Hand, smart: Shield, always: ShieldAlert };
 
 export function ConversationPermissionControl({
-  authorizationMode, permissionPreset, fullAccessConfirmed, disabled, onAuthorizationModeChange,
+  authorizationMode, permissionPreset, fullAccessConfirmed, disabled, disabledReason, onAuthorizationModeChange,
 }: {
   readonly authorizationMode: AuthorizationMode;
   readonly permissionPreset: PermissionPreset;
   readonly fullAccessConfirmed: boolean;
   readonly disabled: boolean;
+  readonly disabledReason?: string;
   readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
@@ -21,16 +22,17 @@ export function ConversationPermissionControl({
   const authorizationModes = conversationAuthorizationModeMenuOptions(t);
   const options = authorizationModes.map((option) => option.mode === "always" ? {
     ...option,
-    label: t("Full access"),
-    description: t("Full access lets Ling act without asking for routine local approvals in this conversation."),
+    label: t("Full access permissions"),
+    description: t("After confirmation, this conversation uses automatic approvals and Full Access. System permissions and Host deny rules still apply."),
   } : option);
   const fullAccess = authorizationMode === "always" && permissionPreset === "full_access";
   // An inherited always + restricted sandbox is not the Full access shortcut.
   const selectedMode = authorizationMode === "always" && !fullAccess ? "custom" : authorizationMode;
   const selectedAuthorization = options.find((option) => option.mode === selectedMode)
     ?? authorizationModes.find((option) => option.mode === authorizationMode)!;
+  const triggerLabel = fullAccess ? t("Full access") : selectedAuthorization.label;
   const confirmationLabel = fullAccess && fullAccessConfirmed
-    ? t("Full access · Confirmed for this conversation") : selectedAuthorization.label;
+    ? t("Full access · Confirmed for this conversation") : triggerLabel;
   const Icon = selectedMode === "custom" ? ShieldCheck : authorizationIcons[authorizationMode];
 
   useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
@@ -47,9 +49,9 @@ export function ConversationPermissionControl({
           disabled={disabled}
           data-full-access={fullAccess}
           aria-label={t("Selected permission preset {label}", { label: confirmationLabel })}
-          title={disabled ? t("Permission is locked while the current message is running.") : `${confirmationLabel}. ${selectedAuthorization.description} ${t("Sandbox settings")}: ${permissionPresetLabel(permissionPreset, t)}`}
+          title={disabled ? disabledReason ?? t("Permission is locked while the current message is running.") : `${confirmationLabel}. ${selectedAuthorization.description} ${t("Sandbox settings")}: ${permissionPresetLabel(permissionPreset, t)}`}
         >
-          {selectedAuthorization.label}
+          {triggerLabel}
         </Button>
       </MenuTrigger>
       <MenuContent className="conversation-permission-menu" side="top" align="start" sideOffset={12} aria-label={t("Authorization mode")}>

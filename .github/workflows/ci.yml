@@ -314,7 +314,10 @@ jobs:
     needs: [scope, build]
     if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # The selected workspace tests are serial and exceeded the prior 25m cap
+    # while still passing. Keep the full test set and give it the same bounded
+    # headroom as the daemon lane.
+    timeout-minutes: 40
     env:
       SELECTED_PACKAGES: ${{ needs.scope.outputs.test-packages }}
       WEB_SELECTED: ${{ needs.scope.outputs.web }}

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { ArrowDown, Copy, FileText, Pencil } from "lucide-react";
-import { attachmentContentUrl } from "../../api.js";
+import { attachmentContentUrl, daemonBaseUrl, submitUserInputAnswer } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
@@ -21,7 +21,9 @@ import {
   MessageRow,
 } from "../../shared/conversation/index.js";
 import { IconButton, InlineFeedback } from "../../shared/ui/index.js";
-import type { ConversationGeneratedMedia, RunSession } from "../../types.js";
+import { UserProfileAvatar } from "../../shared/components/index.js";
+import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
+import type { ConversationGeneratedMedia, RunSession, UserProfile } from "../../types.js";
 import type {
   WorkspaceRightDockFileTarget,
   WorkspaceRightDockReviewTarget,
@@ -44,9 +46,7 @@ import { requestTimelineWorkspaceFileOpen } from "../../shared/conversation/time
 import { timelineMessageChromeOwnerIds } from "../../shared/conversation/timeline/timeline-message-chrome-owners.js";
 import { NormalConversationResponseActions } from "./NormalConversationResponseActions.js";
 import { useConversationReadingViewport } from "../../shared/conversation/blocks/use-conversation-reading-viewport.js";
-import { UserProfileAvatar } from "../../shared/components/index.js";
-import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
-import type { UserProfile } from "../../types.js";
+import { conversationReadingScope } from "../../shared/conversation/view-store/conversation-reading-storage.js";
 
 export interface NormalConversationFeedProps {
   readonly userProfile?: UserProfile;
@@ -155,6 +155,7 @@ export function NormalConversationFeed({
   );
   const workspaceId = detailContext?.executionActions.find((action) => action.workspaceId.trim())?.workspaceId;
   const timelineThreadId = detailContext?.threadId ?? feedItems.find((item) => item.message.threadId)?.message.threadId;
+  const readingScopeKey = conversationReadingScope(daemonBaseUrl, projectPath?.trim() || workspaceCwd, "normal", timelineThreadId);
   const handleOpenTimelineSourceRef = useCallback(async (
     ref: import("@ling-stack/conversation-ui-core").ConversationOperationSourceRef,
     item?: import("@ling-stack/conversation-ui-core").ConversationTimelineItem,
@@ -185,6 +186,7 @@ export function NormalConversationFeed({
     revision: feedItems,
     contentKey: itemIdentityKey,
     searchActive,
+    readingScopeKey,
   });
 
   function toggleFeedback(messageId: string, feedback: "up" | "down"): void {
@@ -201,6 +203,7 @@ export function NormalConversationFeed({
   return (
     <ConversationTimelineFeed
       surfaceId={`normal:${timelineSnapshot.scope.threadId}`}
+      readingScopeKey={readingScopeKey}
       scrollRef={feedRef}
       frameClassName="normal-conversation-feed-frame"
       feedClassName="normal-conversation-feed"
@@ -217,8 +220,7 @@ export function NormalConversationFeed({
             snapshot: timelineSnapshot,
             depth: 0,
             cwd: projectPath?.trim() || workspaceCwd.trim(),
-            virtualScrollRef: feedRef,
-            itemLocatorRef: timelineItemLocatorRef,
+            onSubmitUserInputAnswer: (command) => submitUserInputAnswer(projectPath?.trim() || workspaceCwd.trim(), command),
             onPositionNavigate: pauseTimelineAutoFollow,
             positionIdentity: (item) => item.kind === "userMessage" ? {
               name: userProfile?.displayName.trim() || t("You"),
@@ -227,6 +229,8 @@ export function NormalConversationFeed({
               name: t("Ling Agent"),
               avatar: <TeammateAvatarView cwd={workspaceCwd} compact teammate={{ displayName: "Ling Agent", kind: "system_teammate", systemRole: "ling_agent" }} />,
             },
+            virtualScrollRef: feedRef,
+            itemLocatorRef: timelineItemLocatorRef,
             onDisclosureIntent: pauseTimelineAutoFollow,
             onOpenSourceRef: handleOpenTimelineSourceRef,
             onOpenNativeFile: (localFile) => onOpenReportFile({ path: localFile.path, line: localFile.line, localFile }),

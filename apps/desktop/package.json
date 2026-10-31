@@ -92,6 +92,7 @@
     },
     "files": [
       "dist/**/*",
+      "!dist/daemon/bundled{,/**/*}",
       "package.json",
       "!dist/distribution{,/**/*}",
       "!dist/office-local{,/**/*}",

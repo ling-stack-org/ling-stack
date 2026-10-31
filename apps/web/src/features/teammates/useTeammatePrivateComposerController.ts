@@ -7,6 +7,7 @@ import {
   type TokenizedComposerInputHandle,
 } from "../../shared/conversation/index.js";
 import type { AuthorizationMode, PermissionConfirmation, PermissionPreset, WorkspaceAccessMode } from "../../types.js";
+import { useConversationPermissionSelection } from "../../shared/conversation/conversation-permission-selection.js";
 import {
   permissionPresetForWorkspaceAccessMode,
   workspaceAccessModeForPermissionPreset,
@@ -25,13 +26,15 @@ export interface TeammatePrivateComposerController {
   readonly handleComposerInputKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
   readonly handleComposerValueChange: (value: string, caret: number) => void;
   readonly handleAuthorizationModeChange: (mode: AuthorizationMode) => void;
-  readonly handlePermissionPresetChange: (preset: PermissionPreset) => void;
   readonly submitComposer: () => void;
   readonly updateSlashPicker: (value: string, caret: number) => void;
 }
 
 export function useTeammatePrivateComposerController({
   identityKey,
+  defaultWorkspaceAccessMode,
+  permissionLocked,
+  onPermissionError,
   authorizationMode,
   messageDraft,
   onComposerKeyDown,
@@ -45,6 +48,9 @@ export function useTeammatePrivateComposerController({
   workspaceAccessMode,
 }: {
   readonly identityKey: string;
+  readonly defaultWorkspaceAccessMode: WorkspaceAccessMode;
+  readonly permissionLocked: boolean;
+  readonly onPermissionError: (error: unknown) => void;
   readonly authorizationMode: AuthorizationMode;
   readonly messageDraft: string;
   readonly onComposerKeyDown: (
@@ -74,6 +80,21 @@ export function useTeammatePrivateComposerController({
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
   const slashCommandPickerOptions = filterSlashCommandPickerOptions(slashCommands, slashPicker);
+  const handleAuthorizationModeChange = useConversationPermissionSelection({
+    ownerKey: identityKey,
+    authorizationMode: selectedAuthorizationMode,
+    workspaceAccessMode: workspaceAccessModeForPermissionPreset(selectedPermissionPreset),
+    defaultWorkspaceAccessMode,
+    disabled: permissionLocked,
+    confirmFullAccess: onFullAccessPresetSelected,
+    onChange: (selection) => {
+      setSelectedAuthorizationMode(selection.authorizationMode);
+      setSelectedPermissionPreset(permissionPresetForWorkspaceAccessMode(selection.workspaceAccessMode));
+      onAuthorizationModeChange(selection.authorizationMode);
+      onWorkspaceAccessModeChange(selection.workspaceAccessMode);
+    },
+    onError: onPermissionError,
+  });
 
   useEffect(() => {
     setSelectedAuthorizationMode(authorizationMode);
@@ -151,19 +172,6 @@ export function useTeammatePrivateComposerController({
     focusComposerAt(inserted.caret);
   }
 
-  function handlePermissionPresetChange(preset: PermissionPreset): void {
-    if (preset === "full_access" && onFullAccessPresetSelected) {
-      void onFullAccessPresetSelected().then((confirmation) => {
-        if (!confirmation) return;
-        setSelectedPermissionPreset(preset);
-        onWorkspaceAccessModeChange(workspaceAccessModeForPermissionPreset(preset));
-      });
-      return;
-    }
-    setSelectedPermissionPreset(preset);
-    onWorkspaceAccessModeChange(workspaceAccessModeForPermissionPreset(preset));
-  }
-
   function focusComposerAt(caret: number): void {
     const focus = (): void => composerInputRef.current?.focusAt(caret);
     focus();
@@ -187,11 +195,7 @@ export function useTeammatePrivateComposerController({
       onMessageDraftChange(value);
       updateSlashPicker(value, caret);
     },
-    handleAuthorizationModeChange: (mode) => {
-      setSelectedAuthorizationMode(mode);
-      onAuthorizationModeChange(mode);
-    },
-    handlePermissionPresetChange,
+    handleAuthorizationModeChange,
     submitComposer,
     updateSlashPicker,
   };

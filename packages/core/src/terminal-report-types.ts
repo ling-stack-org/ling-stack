@@ -33,6 +33,12 @@ export type TerminalReportSourceRefKind =
   | "deployment"
   | "memory"
   | "context_source"
+  | "delegation_step"
+  | "delegation_result"
+  | "delegation_budget_reservation"
+  | "delegation_budget_charge"
+  | "runtime_attempt"
+  | "host_attempt_completion"
   | "external";
 
 export interface TerminalReportSourceRef {
@@ -65,7 +71,27 @@ export interface TerminalReportEvidenceOperation {
   readonly runId?: string;
   readonly teammateId?: string;
   readonly changedPaths: readonly string[];
+  /** Bounded Host command facts, not model narration or proof of tree drain. */
+  readonly commandEvidence?: TerminalReportEvidenceCommand;
   readonly sourceRefs: readonly TerminalReportSourceRef[];
+}
+
+export interface TerminalReportEvidenceCommand {
+  readonly command: string;
+  readonly commandTruncated: boolean;
+  readonly cwd?: string;
+  readonly outcome?: "succeeded" | "failed" | "timed_out" | "cancelled" | "unknown";
+  readonly exitCode?: number;
+  readonly signal?: string;
+  readonly timedOut?: boolean;
+  readonly cancelled?: boolean;
+  readonly durationMs?: number;
+  /** Whitespace-preserving, redacted previews sharing one character budget. */
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly outputTruncated: boolean;
+  /** This projection/chunk reports redaction; false does not certify raw input. */
+  readonly outputRedacted: boolean;
 }
 
 export interface TerminalReportEvidenceCheck {
@@ -156,6 +182,8 @@ export interface TerminalReportEvidenceSnapshot {
   readonly approvals: readonly TerminalReportEvidenceApproval[];
   readonly risks: readonly TerminalReportEvidenceRisk[];
   readonly references: readonly TerminalReportSourceRef[];
+  /** Host subtree read-set used for synthesis, persisted across restart/recovery. */
+  readonly delegationCompletionFingerprint?: string;
   readonly evidenceFingerprint: string;
   readonly generatedAt: string;
 }
@@ -307,8 +335,10 @@ export interface ListLingTerminalReportsOptions {
   readonly sourceKind?: TerminalReportSourceKind;
   readonly sourceId?: string;
   readonly status?: TerminalReportRecordStatus;
-  /** Return only the newest committed/fallback revision for each source. */
+  /** Return the newest committed/fallback revision for each source within the selected publication scope. */
   readonly effectiveOnly?: boolean;
+  /** Require a matching committed canonical result Item; does not publish or settle anything. */
+  readonly publishedOnly?: boolean;
   readonly limit?: number;
 }
 

@@ -1,29 +1,21 @@
 import { hostCapabilityApprovalPayload } from "./host-capability-action.js";
 import { createHostCapabilityAuthority } from "./host-capability-authority.js";
 import {
-  DEFAULT_WORKSPACE_ID,
   approvalSideEffectFingerprintV1,
   createApprovalResumeBasisV1,
   riskyRunTools,
-  syncExternalWorkActionForApproval,
-  type ApprovalStoreFacet,
   type ApprovalPayload,
   type ApprovalPolicy,
   type ApprovalRequest,
   type ApprovalRisk,
   type CreateApprovalRequestInput,
   type EffectiveRunPolicySnapshot,
-  type ExternalWorkStoreFacet,
   type RunEventEnvelope,
   type RunEventDataByType,
   type RunEventEmitter,
-  type RunEventType,
-  type RunExecutionStoreFacet,
   type RunSession,
-  type RunStorePathsFacet,
   type RunStore,
   type RunTool,
-  type RuntimeSupervisorStoreFacet,
   type RuntimeAttemptFenceV1,
   type SkillApprovalProfile,
 } from "@ling-stack/core";
@@ -32,8 +24,15 @@ import type { PiRunnerApprovalRequest, PiRunnerRunOptions } from "@ling-stack/ru
 import { isRecord } from "../../shared/validation.js";
 import { formatEditPreview } from "./edit-diff-preview.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
-import { appendControlPlaneEvent } from "../control-plane/events.js";
 import { appendExecutionActionArtifactEvents } from "./action-artifacts.js";
+import {
+  appendApprovalCreatedControlPlaneEvent,
+  appendApprovalDecisionEvent,
+  appendApprovalExpiredControlPlaneEvent,
+  appendApprovalResolvedControlPlaneEvent,
+  approvalDecisionEventType,
+} from "./approval-decision-projection.js";
+import { reconcileApprovalPostCommitEffects } from "./approval-postcommit-effects.js";
 import { createCallbackApprovalWait, createOwnedApprovalPreviewArtifacts } from "./approval-preview-failure.js";
 import {
   classifyApprovalActionType,
@@ -66,6 +65,7 @@ import { classifyApprovalRisk, evaluateApprovalActionPolicy, evaluateApprovalPol
 export { isRunTool } from "./approval-action-policy.js";
 import { commandMatchesPolicy } from "../channels/command-operation-match.js";
 import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
+import { bindWorkflowCommandRequest } from "./workflow-command-cwd.js";
 import type { NativeRestrictedCommandRuntime } from "../../runtime/sandbox/restricted-command-runtime.js";
 import type { AttemptHostOperationTracker } from "../../runtime/attempt-host-operation-tracker.js";
 import type { HostCommandOperation } from "../../runtime/host-operation-effects.js";
@@ -81,35 +81,14 @@ const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
 const APPROVAL_POLL_INTERVAL_MS = 500;
 const APPROVAL_PREVIEW_LIMIT = 1_200;
 
-type ApprovalDecisionEventStore = RunExecutionStoreFacet & Partial<Pick<RunStore, "publishNativeApprovalDecision">>;
-type ApprovalExpirationStore =
-  ApprovalStoreFacet &
-  RunExecutionStoreFacet &
-  ExternalWorkStoreFacet &
-  RuntimeSupervisorStoreFacet &
-  RunStorePathsFacet;
+type ApprovalExpirationStore = RunStore;
 
-export function appendApprovalDecisionEvent(
-  store: ApprovalDecisionEventStore,
-  approval: ApprovalRequest,
-): void {
-  if (!approval.runId) {
-    return;
-  }
-  if (store.publishNativeApprovalDecision?.(approval.id, approval.resolvedAt ?? new Date().toISOString())) return;
-  const run = store.getRun(approval.runId);
-  if (!run) {
-    return;
-  }
-  store.appendEvent(approval.runId, approvalDecisionEventType(approval), {
-    approvalId: approval.id,
-    status: approval.status,
-    resolvedBy: approval.resolvedBy,
-    decisionReason: approval.decisionReason,
-    decisionKind: approval.decisionKind,
-    decisionRuleId: approval.decisionRuleId,
-  });
-}
+export {
+  appendApprovalCreatedControlPlaneEvent,
+  appendApprovalDecisionEvent,
+  appendApprovalExpiredControlPlaneEvent,
+  appendApprovalResolvedControlPlaneEvent,
+} from "./approval-decision-projection.js";
 
 export function expireStalePendingApprovals(
   store: ApprovalExpirationStore,
@@ -227,6 +206,12 @@ export function createRunApprovalHandler(options: {
     if (options.signal?.aborted) throwIfAborted(options.signal);
     if (options.store.getRun(options.run.id)?.status !== "running") {
       return { approved: false, reason: "stale_run_execution: Run is no longer active for this approval request." } as const;
+    }
+    try { request = bindWorkflowCommandRequest(options.store, options.run, request); }
+    catch (error) {
+      const reason = error instanceof Error ? error.message : "operation_binding_cwd_mismatch";
+      return { approved: false, reason,
+        handledResult: createUnifiedExecDeniedResult({ toolCallId: request.toolCallId, reason }) };
     }
     const isHost = request.toolName.startsWith("host_");
     const unifiedExecBash = options.unifiedExecEnabled === true && request.toolName === "bash";
@@ -347,6 +332,7 @@ export function createRunApprovalHandler(options: {
       const matchingRules = findMatchingApprovalCommandRulesForCommand(
         options.store,
         approvalInput.payload.command,
+        approvalInput.payload.cwd,
       );
       if (matchingRules) {
         policyDecision = {
@@ -359,6 +345,7 @@ export function createRunApprovalHandler(options: {
           requestedPrefix: readInputStringList(request.input, "prefix_rule"),
           risk: approvalInput.risk,
           riskFlags: approvalInput.payload.riskFlags,
+          cwd: approvalInput.payload.cwd,
         });
         if (proposedCommandRule) {
           approvalInput = {
@@ -440,8 +427,18 @@ export function createRunApprovalHandler(options: {
         ...options, sourceFence, request, approval: denied, mode: toolBrokerMode, unifiedExecBash, fileMutationDraft,
         now: createdAt, decision: "deny", decisionReason: policyDecision.reason,
         publishDecision: (resolved) => {
-          appendApprovalResolvedControlPlaneEvent(options.store, options.controlPlaneEvents,
-            options.workspaceCwd ?? options.run.cwd, resolved, "pending", "denied", resolved.resolvedAt ?? new Date().toISOString());
+          const resolvedAt = resolved.resolvedAt ?? new Date().toISOString();
+          try {
+            reconcileApprovalPostCommitEffects({
+              store: options.store,
+              approval: resolved,
+              cwd: options.workspaceCwd ?? options.run.cwd,
+              now: resolvedAt,
+              controlPlaneEvents: options.controlPlaneEvents,
+            });
+          } catch {
+            // The preview cleanup decision committed with its recovery ledger.
+          }
           streamOrAppendApprovalDecisionEvent({ store: options.store, approval: resolved, afterSeq: 0,
             appendAndMaybeStream: options.appendAndMaybeStream, streamEnvelope: options.streamEnvelope,
             onExistingEvent: options.onExistingApprovalDecisionEvent });
@@ -455,28 +452,12 @@ export function createRunApprovalHandler(options: {
       if (!resolved) {
         throw new Error(`Approval request not found after policy denial: ${denied.id}`);
       }
-      appendApprovalResolvedControlPlaneEvent(
-        options.store,
-        options.controlPlaneEvents,
-        options.workspaceCwd ?? options.run.cwd,
-        resolved,
-        "pending",
-        "denied",
-        resolved.resolvedAt ?? new Date().toISOString(),
-      );
       const requestEvent = options.appendAndMaybeStream("approval_requested", approvalRequestEventPayload(resolved, previewArtifacts));
       appendExecutionActionArtifactEvents({
         artifacts: previewArtifacts,
         approval: resolved,
         role: "preview",
         appendAndMaybeStream: options.appendAndMaybeStream,
-      });
-      streamOrAppendApprovalDecisionEvent({
-        store: options.store,
-        approval: resolved,
-        afterSeq: requestEvent?.seq ?? 0,
-        appendAndMaybeStream: options.appendAndMaybeStream,
-        streamEnvelope: options.streamEnvelope,
       });
       if (unifiedExecBash) {
         prepareHarnessBashApproval({
@@ -507,6 +488,24 @@ export function createRunApprovalHandler(options: {
           resultSummary: { reason: resolved.decisionReason ?? policyDecision.reason },
         });
       }
+      try {
+        reconcileApprovalPostCommitEffects({
+          store: options.store,
+          approval: resolved,
+          cwd: options.workspaceCwd ?? options.run.cwd,
+          now: resolved.resolvedAt ?? new Date().toISOString(),
+          controlPlaneEvents: options.controlPlaneEvents,
+        });
+      } catch {
+        // The policy denial committed with its recovery ledger.
+      }
+      streamOrAppendApprovalDecisionEvent({
+        store: options.store,
+        approval: resolved,
+        afterSeq: requestEvent?.seq ?? 0,
+        appendAndMaybeStream: options.appendAndMaybeStream,
+        streamEnvelope: options.streamEnvelope,
+      });
       return {
         approved: false,
         approvalId: resolved.id,
@@ -576,8 +575,18 @@ export function createRunApprovalHandler(options: {
       onApprovalResolved: (resolved) => approvalWait.resolve(resolved),
       onApprovalWaitAbandoned: () => approvalWait.abandon(),
       publishDecision: (resolved) => {
-        appendApprovalResolvedControlPlaneEvent(options.store, options.controlPlaneEvents,
-          options.workspaceCwd ?? options.run.cwd, resolved, "pending", "cancelled", resolved.resolvedAt ?? new Date().toISOString());
+        const resolvedAt = resolved.resolvedAt ?? new Date().toISOString();
+        try {
+          reconcileApprovalPostCommitEffects({
+            store: options.store,
+            approval: resolved,
+            cwd: options.workspaceCwd ?? options.run.cwd,
+            now: resolvedAt,
+            controlPlaneEvents: options.controlPlaneEvents,
+          });
+        } catch {
+          // The preview cleanup decision committed with its recovery ledger.
+        }
         streamOrAppendApprovalDecisionEvent({ store: options.store, approval: resolved, afterSeq: 0,
           appendAndMaybeStream: options.appendAndMaybeStream, streamEnvelope: options.streamEnvelope,
           onExistingEvent: options.onExistingApprovalDecisionEvent });
@@ -595,14 +604,25 @@ export function createRunApprovalHandler(options: {
       const reason = "host_capability_owner_invalid: Host approval could not enter the captured execution's wait.";
       const cancelled = options.store.cancelApprovalRequest(approval.id, { reason }, new Date().toISOString());
       if (cancelled) {
-        options.appendAndMaybeStream("approval_cancelled", {
-          approvalId: cancelled.id,
-          status: cancelled.status,
-          resolvedBy: cancelled.resolvedBy,
-          decisionReason: cancelled.decisionReason,
+        try {
+          reconcileApprovalPostCommitEffects({
+            store: options.store,
+            approval: cancelled,
+            cwd: options.workspaceCwd ?? options.run.cwd,
+            now: cancelled.resolvedAt ?? new Date().toISOString(),
+            controlPlaneEvents: options.controlPlaneEvents,
+          });
+        } catch {
+          // The cancellation committed with its recovery ledger.
+        }
+        streamOrAppendApprovalDecisionEvent({
+          store: options.store,
+          approval: cancelled,
+          afterSeq: 0,
+          appendAndMaybeStream: options.appendAndMaybeStream,
+          streamEnvelope: options.streamEnvelope,
+          onExistingEvent: options.onExistingApprovalDecisionEvent,
         });
-        appendApprovalResolvedControlPlaneEvent(options.store, options.controlPlaneEvents,
-          options.workspaceCwd ?? options.run.cwd, cancelled, "pending", "cancelled", cancelled.resolvedAt ?? new Date().toISOString());
         approvalWait.resolve(cancelled);
       }
       return { approved: false, approvalId: approval.id, reason };
@@ -677,26 +697,6 @@ export function createRunApprovalHandler(options: {
         }),
       });
     }
-    if (resolvedApproval.status === "expired") {
-      appendApprovalExpiredControlPlaneEvent(
-        options.store,
-        options.controlPlaneEvents,
-        options.workspaceCwd ?? options.run.cwd,
-        resolvedApproval,
-        "pending",
-        resolvedAt,
-      );
-    } else {
-      appendApprovalResolvedControlPlaneEvent(
-        options.store,
-        options.controlPlaneEvents,
-        options.workspaceCwd ?? options.run.cwd,
-        resolvedApproval,
-        "pending",
-        resolvedApproval.status === "approved" ? "approved" : "denied",
-        resolvedAt,
-      );
-    }
     if (resolvedApproval.status === "approved") {
       transitionRunStatus({
         runId: options.run.id,
@@ -728,6 +728,18 @@ export function createRunApprovalHandler(options: {
         endedAt: resolvedAt,
         errorMessage: resolvedApproval.decisionReason ?? "Approval denied.",
       });
+    }
+    try {
+      reconcileApprovalPostCommitEffects({
+        store: options.store,
+        approval: resolvedApproval,
+        cwd: options.workspaceCwd ?? options.run.cwd,
+        now: resolvedAt,
+        controlPlaneEvents: options.controlPlaneEvents,
+      });
+    } catch {
+      // The decision and Run projection are durable. Recovery owns any
+      // remaining decision/control-plane publication or owner reconciliation.
     }
     streamOrAppendApprovalDecisionEvent({
       store: options.store,
@@ -1049,97 +1061,6 @@ export function usesSideEffectTools(tools: readonly RunTool[]): boolean {
   return tools.some((tool) => tool === "bash" || tool === "edit" || tool === "write");
 }
 
-export function appendApprovalCreatedControlPlaneEvent(
-  store: RunStore,
-  hub: ControlPlaneEventHub | undefined,
-  cwd: string,
-  approval: ApprovalRequest,
-  now: string,
-): void {
-  if (!hub) {
-    return;
-  }
-  const owner = resolveApprovalOwner(approval);
-  appendControlPlaneEvent(store, hub, {
-    workspaceId: DEFAULT_WORKSPACE_ID,
-    cwd,
-    domain: "approvals",
-    entityType: "approval",
-    entityId: approval.id,
-    action: "approval.created",
-    data: {
-      ownerType: owner.type,
-      ownerId: owner.id,
-      actionType: approval.actionType,
-      risk: approval.risk,
-      expiresAt: approval.expiresAt ?? null,
-    },
-  }, now);
-}
-
-export function appendApprovalResolvedControlPlaneEvent(
-  store: RunStore,
-  hub: ControlPlaneEventHub | undefined,
-  cwd: string,
-  approval: ApprovalRequest,
-  previousStatus: ApprovalRequest["status"],
-  decision: "approved" | "denied" | "cancelled",
-  now: string,
-): void {
-  if (!hub) {
-    return;
-  }
-  const owner = resolveApprovalOwner(approval);
-  appendControlPlaneEvent(store, hub, {
-    workspaceId: DEFAULT_WORKSPACE_ID,
-    cwd,
-    domain: "approvals",
-    entityType: "approval",
-    entityId: approval.id,
-    action: "approval.resolved",
-    idempotencyKey: `approval-resolved:${approval.id}`,
-    data: {
-      ownerType: owner.type,
-      ownerId: owner.id,
-      previousStatus,
-      status: approval.status,
-      decision,
-      resolvedBy: approval.resolvedBy ?? (decision === "cancelled" ? "system" : "local-user"),
-    },
-  }, now);
-}
-
-export function appendApprovalExpiredControlPlaneEvent(
-  store: RunExecutionStoreFacet,
-  hub: ControlPlaneEventHub | undefined,
-  cwd: string,
-  approval: ApprovalRequest,
-  previousStatus: ApprovalRequest["status"],
-  now: string,
-): void {
-  if (!hub) {
-    return;
-  }
-  const owner = resolveApprovalOwner(approval);
-  appendControlPlaneEvent(store, hub, {
-    workspaceId: DEFAULT_WORKSPACE_ID,
-    cwd,
-    domain: "approvals",
-    entityType: "approval",
-    entityId: approval.id,
-    action: "approval.expired",
-    idempotencyKey: `approval-expired:${approval.id}`,
-    data: {
-      ownerType: owner.type,
-      ownerId: owner.id,
-      previousStatus,
-      status: approval.status,
-      decision: "expired",
-      resolvedBy: "system",
-    },
-  }, now);
-}
-
 function expireApproval(
   store: ApprovalExpirationStore,
   approval: ApprovalRequest,
@@ -1153,46 +1074,14 @@ function expireApproval(
     now,
   );
   if (expired) {
-    appendApprovalDecisionEvent(store, expired);
-    syncExternalWorkActionForApproval(store, expired, now);
-    appendApprovalExpiredControlPlaneEvent(store, controlPlaneEvents, cwd, expired, "pending", now);
+    try {
+      reconcileApprovalPostCommitEffects({ store, approval: expired, cwd, now, controlPlaneEvents });
+    } catch {
+      // The decision and its recovery ledger committed in one SQLite write.
+      // Publication failures remain pending for the durable recovery scan.
+    }
   }
   return expired;
-}
-
-function resolveApprovalOwner(approval: ApprovalRequest): { readonly type: string; readonly id: string | null } {
-  if (approval.runId) {
-    return { type: "run", id: approval.runId };
-  }
-  if (approval.mediaJobId) {
-    return { type: "media_job", id: approval.mediaJobId };
-  }
-  if (approval.externalWorkActionId) {
-    return { type: "external_work_action", id: approval.externalWorkActionId };
-  }
-  if (approval.workflowStepId) {
-    return { type: "workflow_step", id: approval.workflowStepId };
-  }
-  if (approval.taskId) {
-    return { type: "task", id: approval.taskId };
-  }
-  if (approval.channelId) {
-    return { type: "channel", id: approval.channelId };
-  }
-  return { type: "unknown", id: null };
-}
-
-function approvalDecisionEventType(approval: ApprovalRequest): Extract<RunEventType, "approval_approved" | "approval_denied" | "approval_expired" | "approval_cancelled"> {
-  if (approval.status === "approved") {
-    return "approval_approved";
-  }
-  if (approval.status === "expired") {
-    return "approval_expired";
-  }
-  if (approval.status === "cancelled") {
-    return "approval_cancelled";
-  }
-  return "approval_denied";
 }
 
 function approvalRequestEventPayload(
@@ -1401,7 +1290,10 @@ export async function waitForApprovalDecision(store: RunStore, approvalId: strin
   if (!expired) {
     throw new Error(`Approval request not found after timeout: ${approvalId}`);
   }
-  appendApprovalDecisionEvent(store, expired);
+  // expireApprovalRequest atomically persists the terminal decision and its
+  // post-commit ledger. The caller projects Run/control-plane facts and then
+  // wakes the same durable reconciler; a publication fault must not reverse
+  // this already committed timeout decision.
   return expired;
 }
 
@@ -1440,7 +1332,7 @@ function findApprovalDecisionEvent(
     .listEvents(approval.runId, { afterSeq, limit: 1000 })
     .find(
       (event) =>
-        (event.type === "approval_approved" || event.type === "approval_denied" || event.type === "approval_expired") &&
+        event.type === approvalDecisionEventType(approval) &&
         isRecord(event.data) &&
         event.data.approvalId === approval.id,
     );

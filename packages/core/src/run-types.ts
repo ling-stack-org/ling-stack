@@ -5,8 +5,11 @@ import type { LearningReviewStore } from "./learning-review-types.js";
 import { randomUUID } from "node:crypto";
 import type { ApplyProposedPlanArtifactActionInput, ProposedPlanArtifactActionResult } from "./proposed-plan-mutation.js";
 import type { NativeExecutionStore } from "./native-execution-types.js";
+import type { HarnessArtifactRetentionStore, HarnessProjectionStore } from "./harness/reliability.js";
+import type { DelegationCompletionEvidenceV1, GetDelegationCompletionEvidenceInput } from "./delegation-completion-evidence.js";
 import type {
   ConversationItemV1,
+  ConversationWorkspaceFileRefSourceV1,
   CompactionCheckpoint,
   CreateCompactionCheckpointInput,
   CreatePostCompactionUndoRecordInput,
@@ -418,6 +421,7 @@ import type {
   RuntimeEvent,
   RuntimeHeartbeat,
   RuntimeAttemptFenceV1,
+  RuntimeResourceRenewal,
   RuntimeSemaphoreSlot,
   TerminalAttemptStatus,
   TerminalRuntimeEventType,
@@ -1371,6 +1375,7 @@ export interface RunInterventionLinkPreviewPayload {
 export interface RunInterventionWorkspaceFilePayload {
   readonly path: string;
   readonly label?: string;
+  readonly source?: ConversationWorkspaceFileRefSourceV1;
   readonly rootRelation: "inside_workspace" | "outside_workspace" | "unknown";
   readonly kind: "file" | "directory" | "glob" | "unknown";
   readonly materializationStatus: RunInterventionMaterializationStatus;
@@ -1467,6 +1472,8 @@ export interface RunArtifact {
   readonly contentType?: string;
   readonly sizeBytes?: number;
   readonly sealedPayload?: unknown;
+  /** Present only after Host-authorized body GC; contentSha256 remains unchanged. */
+  readonly sealedPayloadState?: "pruned";
   readonly contentSha256?: string;
   readonly createdAt: string;
 }
@@ -1556,7 +1563,15 @@ export interface ControlPlaneReplayWindowResult {
   readonly events: readonly ControlPlaneEvent[];
 }
 
-export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, LearningReviewStore, NativeExecutionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
+export interface ClaimSnapshotRestoreFenceInput {
+  readonly requestId: string;
+  readonly expectedState: "requested" | "validating";
+  readonly expectedRequestFencingEpoch: number;
+  readonly now: string;
+}
+
+export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, LearningReviewStore, NativeExecutionStore, HarnessProjectionStore, HarnessArtifactRetentionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
+  getDelegationCompletionEvidence(input: GetDelegationCompletionEvidenceInput): DelegationCompletionEvidenceV1;
   listApprovalPostCommitEffects(options?: {
     readonly approvalId?: string;
     readonly status?: import("./approval-postcommit-types.js").ApprovalPostCommitEffectStatus;
@@ -1752,10 +1767,22 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   markRunFailed(runId: string, endedAt: string, errorMessage: string, summaryPath?: string): void;
   markRunCancelled(runId: string, endedAt: string, summaryPath?: string): void;
   appendEvent<K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K], now?: string): Extract<RunEventEnvelope, { readonly type: K }>;
+  /** Approval decisions use a stable Host idempotency identity, not a check-then-append projection. */
+  appendApprovalDecisionEvent(
+    runId: string,
+    approvalId: string,
+    type: Extract<RunEventType, "approval_approved" | "approval_denied" | "approval_expired" | "approval_cancelled">,
+    data: RunEventDataByType[Extract<RunEventType, "approval_approved" | "approval_denied" | "approval_expired" | "approval_cancelled">],
+    now?: string,
+  ): Extract<RunEventEnvelope, { readonly type: "approval_approved" | "approval_denied" | "approval_expired" | "approval_cancelled" }>;
   /** Runner callbacks must supply the Host identity captured before dispatch. */
   appendExecutionEvent<K extends RunEventType>(runId: string, sourceFence: RuntimeAttemptFenceV1, type: K,
     data: RunEventDataByType[K], now?: string): Extract<RunEventEnvelope, { readonly type: K }>;
   isCurrentRunExecutionOwner(runId: string, sourceFence: RuntimeAttemptFenceV1, allowCleanup?: boolean): boolean;
+  /** Read-only veto for ordinary startup recovery. Not authority to resume or terminalize. */
+  hasPendingRunTerminalIntent(source: import("./host-operation-journal-types.js").HostOperationSource): boolean;
+  /** Read-only startup veto. Requested/sealed is not evidence of physical stop or permission to resume. */
+  hasPendingRunSuspension(source: import("./host-operation-journal-types.js").HostOperationSource): boolean;
   transitionRunExecutionStatus(input: Parameters<RunStore["transitionRunStatus"]>[0] & { readonly sourceFence: RuntimeAttemptFenceV1 }): TransitionResult<RunStatus>;
   appendIgnoredRunnerCompletionEvent(runId: string, data: RunEventDataByType["stale_runner_completion_ignored"], now?: string): Extract<RunEventEnvelope, { readonly type: "stale_runner_completion_ignored" }>;
   appendControlPlaneEvent(input: AppendControlPlaneEventInput, now: string): ControlPlaneEvent;
@@ -1796,6 +1823,8 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   listSkillRegressionRuns(options?: ListSkillRegressionRunsOptions): SkillRegressionRun[];
   getRun(runId: string): RunSession | undefined;
   listRuns(options?: ListRunsOptions): RunSession[];
+  /** Complete execution-admission scopes, never a paginated history projection. */
+  listActiveRunScopes(): Pick<RunSession, "id" | "cwd">[];
   listEvents(runId: string, options?: ListRunEventsOptions): RunEventEnvelope[];
   getLatestRunCompactionStart(runId: string): Extract<RunEventEnvelope, { readonly type: "context_compaction_start" }> | undefined;
   countEvents(runId: string): number;
@@ -1807,7 +1836,9 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   listWorkspaceMutationRecords(options?: ListWorkspaceMutationRecordsOptions): WorkspaceMutationRecord[];
   getLatestWorkspaceProvenanceWatermark(workspaceId?: string): string;
   commitRunProgressCheckpoint(input: import("./run-progress-checkpoint-types.js").CommitRunProgressCheckpointInput): import("./run-progress-checkpoint-types.js").CommitRunProgressCheckpointResult;
+  listPendingDelegationInstructionIds(input: import("./run-progress-checkpoint-types.js").ListPendingDelegationInstructionsInput): readonly string[];
   readRunProgressCheckpointForRecovery(input: import("./run-progress-checkpoint-types.js").ReadRunProgressCheckpointForRecoveryInput): import("./run-progress-checkpoint-types.js").ReadRunProgressCheckpointForRecoveryResult;
+  readRunCompactionSuspensionWitness(input: import("./run-suspension-types.js").ReadRunCompactionSuspensionWitnessInput): import("./run-suspension-types.js").ReadRunCompactionSuspensionWitnessResult;
   createCompactionCheckpoint(input: CreateCompactionCheckpointInput): CompactionCheckpoint;
   getCompactionCheckpoint(id: string): CompactionCheckpoint | undefined;
   listCompactionCheckpoints(options?: ListCompactionCheckpointsOptions): CompactionCheckpoint[];
@@ -1841,6 +1872,8 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   createSnapshotRestoreJournalEntries(inputs: readonly CreateSnapshotRestoreJournalEntryInput[]): SnapshotRestoreJournalEntry[];
   listSnapshotRestoreJournalEntries(options: ListSnapshotRestoreJournalOptions): SnapshotRestoreJournalEntry[];
   updateSnapshotRestoreJournalEntry(input: UpdateSnapshotRestoreJournalEntryInput): SnapshotRestoreJournalEntry | undefined;
+  /** Atomically bind a restore request and its workspace lease; no partial claim is published. */
+  claimSnapshotRestoreFence(input: ClaimSnapshotRestoreFenceInput): number | undefined;
   acquireWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): number;
   getWorkspaceSnapshotFence(workspaceId: string): { readonly epoch: number; readonly ownerRequestId?: string };
   releaseWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string, expectedEpoch?: number): boolean;
@@ -1983,7 +2016,7 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   listRuntimeEvents(workUnitId: string, options?: ListRuntimeEventsOptions): RuntimeEvent[];
   recordRuntimeHeartbeat(input: RecordRuntimeHeartbeatInput): RuntimeHeartbeat;
   acquireRuntimeSemaphoreSlot(input: AcquireRuntimeSemaphoreSlotInput): RuntimeSemaphoreSlot | undefined;
-  renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number;
+  renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewal: RuntimeResourceRenewal): number;
   releaseRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number;
   expireRuntimeSemaphoreSlots(now: string): number;
   listRuntimeSemaphoreSlots(options?: ListRuntimeSemaphoreSlotsOptions): RuntimeSemaphoreSlot[];
@@ -2026,7 +2059,7 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
     readonly errorMessage?: string | null;
   }): TransitionResult<RunStatus>;
   acquireResourceLease(input: CreateResourceLeaseInput): ResourceLease | undefined;
-  renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number;
+  renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewal: RuntimeResourceRenewal): number;
   releaseResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number;
   releaseResourceLeasesForOwner(ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number;
   releaseResourceLease(id: string, ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number;
@@ -2060,6 +2093,8 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   createAiTeammate(input: CreateAiTeammateInput, now: string): AiTeammate;
   getAiTeammate(id: string): AiTeammate | undefined;
   listAiTeammates(options?: ListAiTeammatesOptions): AiTeammate[];
+  /** Read-only snapshot; safe within an existing admission transaction. */
+  readAiTeammates(options?: ListAiTeammatesOptions): AiTeammate[];
   updateAiTeammate(id: string, input: AiTeammateUpdateInput, now: string): AiTeammate | undefined;
   disableAiTeammate(id: string, now: string): AiTeammate | undefined;
   hardDeleteAiTeammate(id: string, input: HardDeleteAiTeammateInput, now: string): HardDeleteAiTeammateResult | undefined;
@@ -2194,6 +2229,11 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   acknowledgeUserInputContinuation(input: import("./user-input-host-continuation-types.js").AcknowledgeUserInputContinuation, now: string): { readonly receipt: import("./user-input-host-continuation-types.js").UserInputContinuationReceipt; readonly replayed: boolean };
   getUserInputContinuationReceipt(threadId: string, deliveryId: string): import("./user-input-host-continuation-types.js").UserInputContinuationReceipt | undefined;
   failUserInputContinuationStartup(input: import("./user-input-host-continuation-types.js").FailUserInputContinuationStartup, now: string): boolean;
+  claimUserInputContinuationRecovery(input: import("./user-input-host-continuation-types.js").ClaimUserInputContinuationRecovery, now: string): import("./user-input-host-continuation-types.js").ClaimUserInputContinuationRecoveryResult;
+  renewUserInputContinuationLease(input: import("./user-input-host-continuation-types.js").RenewUserInputContinuationLease, now: string): import("./user-input-host-continuation-types.js").RenewUserInputContinuationLeaseResult;
+  deferUserInputContinuationRecovery(input: import("./user-input-host-continuation-types.js").DeferUserInputContinuationRecovery, now: string): boolean;
+  recoverUserInputContinuationPrestart(input: import("./user-input-host-continuation-types.js").RecoverUserInputContinuationPrestart): import("./user-input-host-continuation-types.js").RecoverUserInputContinuationPrestartResult;
+  publishUserInputContinuationRunCreated(input: import("./user-input-host-continuation-types.js").PublishUserInputContinuationRunCreated, now: string): import("./user-input-host-continuation-types.js").PublishUserInputContinuationRunCreatedResult;
   cancelUserInputWait(input: import("./user-input-wait-types.js").CancelUserInputWait, now: string): import("./user-input-wait-types.js").CancelUserInputWaitResult;
   appendConversationUserTurn(input: AppendConversationUserTurnInput, now: string): AppendConversationUserTurnResult;
   appendConversationUserTurnWithAcceptedSnapshot(
@@ -2269,6 +2309,11 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   createChannelIntentDecision(input: CreateChannelIntentDecisionInput, now: string): ChannelIntentDecision;
   getChannelIntentDecision(id: string): ChannelIntentDecision | undefined;
   listChannelIntentDecisions(options?: ListChannelIntentDecisionsOptions): ChannelIntentDecision[];
+  getChannelPendingOperationResolution(pendingDecisionId: string): import("./channel-pending-operation.js").ChannelPendingOperationResolution | undefined;
+  getChannelPendingAuthorityVersions(input: import("./channel-pending-operation.js").GetChannelPendingAuthorityVersionsInput): import("./channel-pending-operation.js").ChannelPendingAuthorityVersions;
+  /** One synchronous Host transaction for resolution, proposal and decision; no OS effects. */
+  resolveChannelPendingOperation(input: import("./channel-pending-operation.js").ResolveChannelPendingOperationInput,
+    publish: () => ChannelIntentDecision, now: string): import("./channel-pending-operation.js").ChannelPendingOperationResolved;
   createChannelExecutionProposal(input: CreateChannelExecutionProposalInput, now: string): ChannelExecutionProposal;
   getChannelExecutionProposal(id: string): ChannelExecutionProposal | undefined;
   listChannelExecutionProposals(options: ListChannelExecutionProposalsOptions): ChannelExecutionProposal[];
@@ -2409,6 +2454,8 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
     readonly idempotencyKey: string;
     readonly now: string;
   }): TransitionResult<ChannelWorkflowStep["status"]>;
+  requestChannelWorkflowStepPreApproval(input: import("./workflow-pre-gate.js").WorkflowStepPreApprovalInput): import("./workflow-pre-gate.js").WorkflowStepPreApprovalResult;
+  resolveChannelWorkflowStepPreApproval(input: import("./workflow-pre-gate.js").WorkflowStepPreApprovalResolveInput): import("./workflow-pre-gate.js").WorkflowStepPreApprovalResult;
   beginChannelWorkflowStepStart(input: import("./workflow-step-start-owner.js").BeginChannelWorkflowStepStartInput): import("./workflow-step-start-owner.js").BeginChannelWorkflowStepStartResult;
   commitChannelWorkflowStepRunReady(input: import("./workflow-step-start-owner.js").WorkflowStepStartCommitInput): import("./workflow-step-start-owner.js").WorkflowStepStartCommitResult;
   settleChannelWorkflowStepStartFailure(input: import("./workflow-step-start-owner.js").WorkflowStepStartFailureInput): import("./workflow-step-start-owner.js").WorkflowStepStartCommitResult;
@@ -2510,7 +2557,7 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   expireApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   cancelApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   listApprovalCommandRules(options?: { readonly includeRevoked?: boolean }): ApprovalCommandRule[];
-  findMatchingApprovalCommandRule(toolName: "bash", argv: readonly string[]): ApprovalCommandRule | undefined;
+  findMatchingApprovalCommandRule(toolName: "bash", argv: readonly string[], cwd?: string): ApprovalCommandRule | undefined;
   revokeApprovalCommandRule(id: string, now: string): ApprovalCommandRule | undefined;
   createApprovalCheckpoint(input: CreateApprovalCheckpointInput, now: string): LingApprovalCheckpoint;
   getApprovalCheckpoint(id: string): LingApprovalCheckpoint | undefined;
@@ -2789,6 +2836,8 @@ export type RunExecutionStoreFacet = RunStoreFacet<
 >;
 
 export type RuntimeSupervisorStoreFacet = RunStoreFacet<
+  | "hasPendingRunTerminalIntent"
+  | "hasPendingRunSuspension"
   | "createWorkUnit"
   | "getWorkUnit"
   | "listWorkUnits"
@@ -2855,6 +2904,7 @@ export type TeammateStoreFacet = RunStoreFacet<
   | "createAiTeammate"
   | "getAiTeammate"
   | "listAiTeammates"
+  | "readAiTeammates"
   | "updateAiTeammate"
   | "disableAiTeammate"
   | "hardDeleteAiTeammate"

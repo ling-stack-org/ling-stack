@@ -1192,13 +1192,13 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(privateFeed).toBeVisible();
   await expect(privateFeed).toHaveAttribute("data-conversation-feed-window-owner", "timeline");
   // Private chat owns one Timeline root. This fixture intentionally omits the
-  // action/attempt lineage needed to claim command execution, so it must fail
+  // admitted Run ownership needed to load execution evidence, so it must fail
   // closed as a diagnostic instead of recreating the legacy WorkCell batch.
   const privateTimeline = privateFeed.locator('[data-conversation-timeline][data-conversation-timeline-scope="private"]');
   await expect(privateTimeline).toHaveCount(1);
   const lineageDiagnostic = privateTimeline.locator('[data-conversation-timeline-kind="diagnostic"][data-conversation-timeline-status="blocked"]');
   await expect(lineageDiagnostic).toHaveCount(1);
-  await expect(lineageDiagnostic).toContainText("Command batch lineage is incomplete.");
+  await expect(lineageDiagnostic).toContainText("Execution evidence is missing required lineage.");
   const linkedRunPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "Private acceptance criteria summary." });
   await expect(linkedRunPrivateRow.getByText("Private acceptance criteria summary.", { exact: true })).toHaveCount(1);
   await expect(privateTimeline.locator(".conversation-command-batch")).toHaveCount(0);
@@ -1281,7 +1281,8 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(pendingPrivateRow).toHaveClass(/message-bubble/);
   await expect(pendingPrivateRow).toHaveClass(/message-bubble-peer/);
   await expect(pendingPrivateRow).toHaveClass(/message-bubble-pending/);
-  await expect(pendingPrivateRow.locator(".message-pending-spinner")).toBeVisible();
+  await expect(pendingPrivateRow.getByRole("status")).toHaveText("AI teammate is replying...");
+  await expect(pendingPrivateRow.locator(".conversation-activity-label")).toHaveAttribute("data-activity-motion", "running");
   await expect(pendingPrivateRow.locator(".status-badge")).toHaveCount(0);
   await page.locator(".teammate-direct-composer input[type=file]").setInputFiles({
     name: "private-notes.md",
@@ -1292,12 +1293,12 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(privateToolbar.getByRole("button", { name: "Private attachments: 1" })).toBeVisible();
 
   const privateComposer = page.locator(".teammate-direct-composer");
-  await privateComposer.getByRole("button", { name: /Selected permission preset Workspace write/ }).click();
-  await page.getByRole("menuitemradio", { name: /Read only/ }).click();
+  await privateComposer.getByRole("button", { name: /Selected permission preset/ }).click();
+  await page.getByRole("menuitemradio", { name: "Request approval", exact: true }).click();
   await page.getByPlaceholder("Message this AI teammate privately").fill("Please refine the private workspace acceptance criteria.");
   await page.getByPlaceholder("Message this AI teammate privately").press("Enter");
-  await expect.poll(() => state.lastTeammateDirectMessageRequest?.authorizationMode).toBe("smart");
-  await expect.poll(() => state.lastTeammateDirectMessageRequest?.workspaceAccessMode).toBe("read_only");
+  await expect.poll(() => state.lastTeammateDirectMessageRequest?.authorizationMode).toBe("ask");
+  await expect.poll(() => state.lastTeammateDirectMessageRequest?.workspaceAccessMode).toBe("workspace_write");
   await expect(page.getByText("Please refine the private workspace acceptance criteria.")).toBeVisible();
   await expect(privateFeed.getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
   const privateMessageRow = page.locator(".teammate-message-row").filter({ hasText: "Please refine the private workspace acceptance criteria." });
@@ -1456,11 +1457,13 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await page.getByRole("button", { name: "Back to private chat" }).click();
   await expect(page.getByRole("heading", { name: "Renamed Engineer", level: 1 })).toBeVisible();
   await privateComposer.getByRole("button", { name: /Selected permission preset/ }).click();
-  await page.getByRole("menuitemradio", { name: /Read only/ }).click();
+  await page.getByRole("menuitemradio", { name: "Help me approve", exact: true }).click();
   await page.getByPlaceholder("Message this AI teammate privately").fill("Use the newly saved model.");
   await page.getByPlaceholder("Message this AI teammate privately").press("Enter");
   await expect(page.getByLabel("Private chat", { exact: true }).getByText("Private reply: I will refine this into a scoped task.")).toBeVisible();
-  await expect.poll(() => state.lastTeammateDirectMessageRequest?.permissionPreset).toBe("read_only");
+  await expect.poll(() => state.lastTeammateDirectMessageRequest?.authorizationMode).toBe("smart");
+  await expect.poll(() => state.lastTeammateDirectMessageRequest?.workspaceAccessMode).toBe("workspace_write");
+  await expect.poll(() => state.lastTeammateDirectMessageRequest?.permissionPreset).toBe("workspace_collaboration");
 
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Design" }).click();
   await openChannelTeammateManager(page);

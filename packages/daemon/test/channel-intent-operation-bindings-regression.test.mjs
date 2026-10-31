@@ -3,13 +3,15 @@ import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createCompositeSecretResolver, createSqliteRunStore } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, createCompositeSecretResolver, createSqliteRunStore } from "@ling-stack/core";
 import { appendChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import { selectChannelWorkflowIntent } from "../dist/features/channels/channel-intent-selector.js";
 import { bindChannelOperationPlan, isChannelOperationCandidatePlanV2 } from "../dist/features/channels/channel-operation-bindings.js";
 import { assignExecutionOperationOwners, requiredToolsForExecutionOperations } from "../dist/features/channels/workflow-operation-ownership.js";
 import { confirmChannelExecutionProposalWorkflow } from "../dist/features/channels/proposal-workflows.js";
 import { isChannelIntentExecutionPlanV1, channelOperationPlanFingerprintV1 } from "@ling-stack/contracts";
+import { PiRunnerAdapter } from "@ling-stack/runner-pi";
+import { createRunnerRegistry } from "../dist/runtime/runners.js";
 
 // C01 request reconstructed from the packaged capture and explicit file-ref labels.
 // No model, command execution, permission expansion or project file write is used.
@@ -39,7 +41,7 @@ async function select(t, body = c01, modelOutput = workflowChoice, options = {})
   let classifications = 0;
   const prompts = [];
   const result = await selectChannelWorkflowIntent({ store, channel, sourceMessage,
-    secretResolver: createCompositeSecretResolver({ env: {} }), config: { channels: { intentSelector: true } },
+    secretResolver: createCompositeSecretResolver({ env: {} }), config: { channels: { intentSelector: options.intentSelector ?? true } },
     runnerRegistry: { resolve: () => ({ runner: { adapter: { runTask: async (input) => {
       classifications += 1;
       prompts.push(input.task.prompt);
@@ -59,9 +61,20 @@ async function select(t, body = c01, modelOutput = workflowChoice, options = {})
   assert.equal(store.listRuns({ channelId: channel.id, limit: 20 }).length, 0);
   assert.equal(store.listTasks({ channelId: channel.id, limit: 20 }).length, 0);
   const decision = store.listChannelIntentDecisions({ sourceItemId: sourceMessage.id, limit: 10 })[0];
-  assert.notEqual(decision?.action, "reply", decision?.reason);
+  if (decision?.status === "failed") assert.equal(decision.errorCode, "channel_operation_plan_invalid");
+  else assert.notEqual(decision?.action, "reply", decision?.reason);
   const operations = decision?.execution?.operations ?? [];
-  return { result, decision, operations, store, channel, prompts };
+  const diagnostics = store.listControlPlaneEvents({ workspaceId: DEFAULT_WORKSPACE_ID,
+    entityType: "channel_intent_selection", entityId: sourceMessage.id });
+  return { result, decision, operations, store, channel, prompts, diagnostics };
+}
+
+function assertPlanBlocked(result, decision) {
+  assert.equal(result.action, "blocked");
+  assert.equal(result.errorCode, "channel_operation_plan_invalid");
+  assert.equal(decision.action, "reply", "failed diagnostic only, not an accepted ordinary reply");
+  assert.equal(decision.status, "failed");
+  assert.equal(decision.errorCode, "channel_operation_plan_invalid");
 }
 
 test("incomplete operation graph gets one bounded repair before Host binding", async (t) => {
@@ -98,11 +111,12 @@ test("valid-shaped owner-span mistakes receive one repair without weakening Host
 test("repeated semantic binding failure stays closed after exactly one repair", async (t) => {
   const invalid = c01BoundCandidate();
   invalid.operations[0].owner = invalid.operations[3].owner;
-  const { result, decision, operations, prompts } = await select(t, c01,
+  const { result, decision, operations, prompts, diagnostics } = await select(t, c01,
     { action: "execute", reason: "Invalid cross-owner span", execution: invalid }, { expectedClassifications: 2 });
   assert.equal(prompts.length, 2);
-  assert.equal(result.action, "clarify");
-  assert.deepEqual(decision.clarification.missingFields, ["owner.sourceQuote"]);
+  assertPlanBlocked(result, decision);
+  assert.deepEqual(diagnostics.filter(e => e.data.outcome === "binding_rejected").map(e => e.data.fields),
+    [["owner.sourceQuote"], ["owner.sourceQuote"]]);
   assert.deepEqual(operations, []);
   assert.doesNotMatch(result.aiReply.body, /owner\.sourceQuote/u, "internal validator fields are audit facts, not user prose");
 });
@@ -113,20 +127,19 @@ test("semantic repair cannot evade the binding gate by changing to a text reply"
   const { result, decision, operations } = await select(t, c01,
     { action: "execute", reason: "Invalid owner span", execution: invalid },
     { repairOutput: { action: "reply", reason: "Pretend that work was completed" }, expectedClassifications: 2 });
-  assert.equal(result.action, "clarify");
-  assert.equal(decision.action, "clarify");
+  assertPlanBlocked(result, decision);
   assert.deepEqual(operations, []);
 });
 
 test("failed semantic repair transport retains the original fail-closed decision", async (t) => {
   const invalid = c01BoundCandidate();
   invalid.operations[0].sourceQuote = "真实读取 todo.mjs 和 app.js";
-  const { result, decision, operations, prompts } = await select(t, c01,
+  const { result, decision, operations, prompts, diagnostics } = await select(t, c01,
     { action: "execute", reason: "Invalid owner span", execution: invalid },
     { repairError: new Error("Fixture transport disconnected"), expectedClassifications: 2 });
   assert.equal(prompts.length, 2);
-  assert.equal(result.action, "clarify");
-  assert.match(decision.reason, /instruction span/u);
+  assertPlanBlocked(result, decision);
+  assert.deepEqual(diagnostics.find(e => e.data.outcome === "binding_rejected").data.fields, ["owner.sourceQuote"]);
   assert.deepEqual(operations, []);
 });
 
@@ -138,8 +151,7 @@ test("repair cannot evade Host source binding by inventing a quote", async (t) =
   const { result, decision } = await select(t, c01,
     { action: "execute", reason: "Incomplete work", execution: malformed },
     { repairOutput: { action: "execute", reason: "Invented provenance", execution: invented }, expectedClassifications: 2 });
-  assert.equal(result.action, "clarify");
-  assert.equal(decision.action, "clarify");
+  assertPlanBlocked(result, decision);
 });
 
 test("repeated malformed operation graph stops after one repair request", async (t) => {
@@ -149,8 +161,7 @@ test("repeated malformed operation graph stops after one repair request", async 
     { action: "execute", reason: "Incomplete work", execution: malformed },
     { expectedClassifications: 2 });
   assert.equal(prompts.length, 2);
-  assert.equal(result.action, "clarify");
-  assert.equal(decision.action, "clarify");
+  assertPlanBlocked(result, decision);
 });
 
 test("explicit review-only participant stays required when another participant owns the Host operation", async (t) => {
@@ -315,8 +326,7 @@ for (const [name, mutate] of [
     const { result, decision, operations } = await select(t, c01,
       { action: "execute", reason: "Invalid candidate must not trigger materialization fallback", execution: candidate },
       { expectedClassifications: 2 });
-    assert.equal(result.action, "clarify");
-    assert.equal(decision.action, "clarify");
+    assertPlanBlocked(result, decision);
     assert.deepEqual(operations, []);
   });
 }
@@ -353,6 +363,83 @@ test("literal content and generated objective remain distinct source-bound paylo
   assert.equal(bound.execution.operations[0].binding.contentSource.kind, "literal");
   assert.equal(bound.execution.operations[0].binding.contentSource.text, "状态回归");
 });
+
+test("deterministic capability blockers stay outside reusable proposal risk notes", async (t) => {
+  const { result, decision } = await select(t, "请打开 index.html。", {}, {
+    intentSelector: false, expectedClassifications: 0, participantIds: ["teammate_builtin_engineer"],
+    mentions: [{ id: "teammate_builtin_engineer", label: "Engineer", kind: "ai-teammate" }],
+  });
+  assert.equal(result.action, "workflow_proposal");
+  assert.equal(decision.createdBy, "deterministic");
+  assert.equal(result.proposal.status, "blocked");
+  assert.equal(decision.errorCode, "operation_binding_host_capability_unavailable");
+  assert.ok(result.proposal.errorMessage, "retain the original selection blocker");
+  assert.ok(result.proposal.riskSummary, "retain general risk guidance");
+  assert.ok(!result.proposal.riskSummary.includes(result.proposal.errorMessage),
+    "dynamic Host capability blocker is not reusable risk guidance");
+});
+
+for (const historicalRisk of [false, true]) {
+  test(historicalRisk
+    ? "legacy proposal risk notes remain verbatim historical context after channel capability changes"
+    : "resolved channel capability blockers do not enter reusable proposal risk notes", async (t) => {
+    const files = ["a", "b", "c", "d"].map((name) => ({
+      path: `qa-channel-${name}.txt`, text: `频道产物 ${name.toUpperCase()}`,
+    }));
+    const body = `Engineer 用 write 工具创建四个文件，文件内容精确为引号内文本，不添加换行：${files.map(({ path, text }) => `${path} 内容“${text}”`).join("；")}。不用 shell，不读取其他目录。`;
+    const candidate = { schemaVersion: 2, operations: files.map(({ path, text }, index) => ({
+      id: `create_${index}`, kind: "file_create", targetKind: "file", required: true, dependsOn: [], sourceQuote: body,
+      owner: { participantId: "teammate_builtin_engineer", sourceQuote: "Engineer" },
+      target: { path, sourceQuote: path },
+      contentSource: { kind: "literal", text, sourceQuote: `“${text}”` },
+    })) };
+    const { result, decision, store, channel } = await select(t, body,
+      { action: "execute", reason: "Four source-bound literal writes", execution: candidate },
+      { participantIds: ["teammate_builtin_engineer"] });
+    const adapter = new PiRunnerAdapter();
+    adapter.runTask = async () => assert.fail("confirmation must not invoke a model");
+    const runnerRegistry = createRunnerRegistry([{ id: "pi", displayName: "Pi confirmation only", status: "enabled", adapter }]);
+    store.updateWorkspaceSettings({ defaultProviderPresetId: channel.defaultProviderPresetId }, "2026-09-06T00:00:01.000Z");
+    assert.equal(result.proposal.status, "blocked");
+    assert.equal(decision.errorCode, "operation_binding_channel_tools_unavailable");
+    const originalError = result.proposal.errorMessage;
+    assert.match(originalError, /not allowed in this channel: write/u);
+    const originalPlan = structuredClone(decision.execution);
+    assert.throws(() => confirmChannelExecutionProposalWorkflow({ store, cwd: channel.boundPath,
+      proposalId: result.proposal.id, validateRunRequest: () => undefined }), { code: "proposal_required_tools_not_available" });
+    assert.deepEqual(store.getChannel(channel.id).allowedTools, ["read", "grep", "find", "ls"]);
+    assert.equal(store.listChannelWorkflows({ channelId: channel.id }).length, 0);
+
+    const riskNotes = historicalRisk ? `Preserve existing user files.\n\n${originalError}` : result.proposal.riskSummary;
+    if (historicalRisk) store.updateChannelExecutionProposal(result.proposal.id, { riskSummary: riskNotes }, "2026-09-06T00:00:02.000Z");
+    store.updateChannel(channel.id, { allowedTools: [...channel.allowedTools, "write"] }, "2026-09-06T00:00:03.000Z");
+    const confirmed = confirmChannelExecutionProposalWorkflow({ store, cwd: channel.boundPath,
+      proposalId: result.proposal.id, runnerRegistry, validateRunRequest: () => undefined, now: "2026-09-06T00:00:04.000Z" });
+    assert.equal(confirmed.proposal.id, result.proposal.id);
+    assert.equal(confirmed.proposal.status, "accepted");
+    assert.equal(confirmed.proposal.errorMessage, undefined);
+    assert.deepEqual(confirmed.proposal.requiredTools, ["write"]);
+    assert.deepEqual(confirmed.workflowSteps[0].metadata.requiredTools, ["write"]);
+    assert.deepEqual(confirmed.workflowSteps[0].metadata.executionPlan, originalPlan);
+    assert.deepEqual(store.getChannelIntentDecision(decision.id).execution, originalPlan);
+    assert.equal(store.getChannelIntentDecision(decision.id).errorCode, decision.errorCode, "retain original selection diagnostic");
+    assert.equal(store.listRuns({ channelId: channel.id }).length, 0, "confirmation alone must not execute");
+    assert.equal(store.listTasks({ channelId: channel.id }).length, 0);
+    const prompt = confirmed.workflowSteps[0].prompt;
+    assert.match(prompt, /Confirmed task-scoped tools:\nwrite/u);
+    if (historicalRisk) {
+      assert.equal(confirmed.proposal.riskSummary, riskNotes, "do not rewrite existing risk history");
+      assert.ok(prompt.includes(riskNotes), "retain the original risk notes verbatim");
+      assert.match(prompt, /Pre-confirmation risk notes \(historical context, not current runtime authorization\):/u);
+      assert.match(prompt, /Current tool access and approval requirements are determined by Host policy and runtime gates/u);
+    } else {
+      assert.ok(riskNotes, "retain the proposal's general risk guidance");
+      assert.ok(prompt.includes(riskNotes));
+      assert.ok(!riskNotes.includes(originalError), "capability blocker belongs to the selection error, not reusable risk notes");
+      assert.ok(!prompt.includes(originalError), "resolved capability blocker must not become current prompt advice");
+    }
+  });
+}
 
 test("an exact command stages only source-bound inputs tied to explicit file dependencies", async (t) => {
   const { store, channel } = await select(t);

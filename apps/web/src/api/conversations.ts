@@ -4,10 +4,11 @@ import type {
   ConversationStreamRequest,
   EditConversationMessageRequest,
   EditConversationMessageResponse,
-} from "@ling-stack/contracts";
+  UserInputAnswerAcceptedResponseV1,
+  UserInputAnswerCommandV1,
+} from "../types.js";
 import { daemonClient } from "./client.js";
-import { authorizationAndAccessFromLegacyPermission } from "@ling-stack/core/session-permissions";
-import type { ConversationSubmissionQuery, ConversationSubmissionReceipt } from "@ling-stack/contracts";
+import type { ConversationSubmissionQuery, ConversationSubmissionReceipt } from "../types.js";
 
 export function getConversationSubmission(cwd: string, query: ConversationSubmissionQuery): Promise<ConversationSubmissionReceipt> {
   return daemonClient.getConversationSubmission(cwd, query);
@@ -19,18 +20,15 @@ export async function getConversation(cwd: string, threadId: string): Promise<Co
 }
 
 export async function streamConversation(cwd: string, input: ConversationStreamRequest): Promise<Response> {
-  const legacy = authorizationAndAccessFromLegacyPermission(input.permissionMode, input.permissionPreset);
-  const { permissionMode: _permissionMode, permissionPreset: _permissionPreset, ...request } = input;
-  return daemonClient.streamConversation(cwd, {
-    ...request,
-    schemaVersion: 2,
-    authorizationMode: input.authorizationMode ?? legacy.authorizationMode,
-    workspaceAccessMode: input.workspaceAccessMode ?? legacy.workspaceAccessMode,
-  });
+  return daemonClient.streamConversation(cwd, input);
 }
 
 export async function editConversationMessage(cwd: string, input: EditConversationMessageRequest): Promise<EditConversationMessageResponse> {
   return daemonClient.editConversationMessage(cwd, input);
+}
+
+export async function submitUserInputAnswer(cwd: string, input: UserInputAnswerCommandV1): Promise<UserInputAnswerAcceptedResponseV1> {
+  return daemonClient.submitUserInputAnswer(cwd, input);
 }
 
 export async function uploadConversationAttachment(

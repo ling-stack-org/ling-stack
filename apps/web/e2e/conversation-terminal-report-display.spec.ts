@@ -1,10 +1,16 @@
 import { expect, test } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
-import { createBaseState } from "./support/mock-state";
+import { createBaseState, cwd } from "./support/mock-state";
 import { attachCommittedChannelReportItem, completedTerminalReport, installChannelWorkCellFixture, installNormalWorkCellFixture, installTeammateWorkCellFixture } from "./support/conversation-work-cell-fixture";
 import { openEngineeringChannel } from "./support/test-helpers";
 
 // API fixtures exercise production adapters/renderers; they are not native QA.
+// The 2026-10-27 execution-detail ownership contract replaces the old full-report ending.
+test.beforeEach(async ({ page }) => {
+  // The channel read boundary rejects an empty cwd; own the synthetic workspace
+  // instead of depending on the developer's VITE default or persisted browser state.
+  await page.addInitScript((workspaceCwd) => localStorage.setItem("ling-stack.workspaceCwd", workspaceCwd), cwd);
+});
 for (const surface of ["normal", "private", "channel"] as const) {
   for (const status of ["succeeded", "failed", "blocked", "cancelled", "partially_succeeded"] as const) {
     test(`${surface} ${status} separates final narration from report evidence`, async ({ page }, testInfo) => {
@@ -16,7 +22,20 @@ for (const surface of ["normal", "private", "channel"] as const) {
       const teammate = surface === "private" ? installTeammateWorkCellFixture(state) : undefined;
       if (surface === "channel") {
         const { threadId, runId } = installChannelWorkCellFixture(state, "report-display");
-        const turnId = state.turnRunLinks.find((link) => link.runId === runId)!.turnId;
+        const originalTurnId = state.turnRunLinks.find((link) => link.runId === runId)!.turnId;
+        const sourceMessage = state.channelMessages.find((message) => message.linkedRunId === runId)!;
+        // The mock channel API derives canonical user-item turns from message ids.
+        // Keep the WorkCell, Run and published report on that exact same turn;
+        // production deliberately rejects a different turn in the same thread.
+        const turnId = `turn_${sourceMessage.id}`;
+        // Run/Turn do not have a partially_succeeded state. This fixture retains
+        // successful command evidence, while the failed Run/Turn reports partial work.
+        const runStatus = status === "blocked" || status === "partially_succeeded" ? "failed" : status;
+        const turnStatus = status === "partially_succeeded" ? "failed" : status;
+        state.runs = state.runs.map((run) => run.id === runId ? { ...run, turnId, status: runStatus } : run);
+        state.turns = state.turns.map((turn) => turn.id === originalTurnId ? { ...turn, id: turnId, status: turnStatus } : turn);
+        state.turnRunLinks = state.turnRunLinks.map((link) => link.runId === runId ? { ...link, turnId } : link);
+        state.threads = state.threads.map((thread) => thread.id === threadId ? { ...thread, status: turnStatus } : thread);
         state.terminalReports = [{ ...completedTerminalReport({ id: "report-channel-display", threadId, turnId, runId, title: "Completed" }), channelId: "channel_engineering" }];
       }
       const original = state.terminalReports[0]!;
@@ -35,7 +54,7 @@ for (const surface of ["normal", "private", "channel"] as const) {
       }
       state.terminalReports = [{ ...original,
         outcome: { ...original.outcome, status, summary: "REPORT_SECOND_SUMMARY_SENTINEL" },
-        verification: [{ id: "check-display", title: "Verified command", status: "passed", command: "node --test", sourceRefs: [] }],
+        verification: [{ id: "check-display", title: "Verified command", status: "passed", command: "node --test", durationMs: 12345, sourceRefs: [] }],
       }];
       state.conversationItems = state.conversationItems?.map((item) => item.id === original.resultItemId
         ? { ...item, payload: { ...item.payload, outcomeStatus: status } } : item);
@@ -68,8 +87,13 @@ for (const surface of ["normal", "private", "channel"] as const) {
       } else {
         const detail = rows.locator('[data-conversation-timeline-kind="terminalReport"]');
         await expect(detail).toBeVisible();
-        await expect(detail.locator(".conversation-timeline-activity-main")).toHaveAttribute("aria-expanded", "true");
-        await expect(detail).toContainText("REPORT_SECOND_SUMMARY_SENTINEL");
+        await expect(detail).toHaveAttribute("data-conversation-timeline-status", status);
+        await expect(detail.locator(".conversation-timeline-activity-detail")).toHaveCount(0);
+        await expect(detail).not.toContainText("REPORT_SECOND_SUMMARY_SENTINEL");
+        await expect(detail).not.toContainText("Execution details");
+        await expect(detail).not.toContainText("Verified command");
+        await expect(detail).not.toContainText("node --test");
+        await expect(detail).not.toContainText("12.3s");
       }
       await expect(rows.filter({ hasText: "generation 1" })).toHaveCount(0);
       const process = rows.locator('[data-conversation-process-header][aria-expanded="false"]');
@@ -107,7 +131,7 @@ for (const attention of ["skipped-check", "pending-risk"] as const) {
     const report = page.locator('[data-conversation-terminal-response]').first();
     await expect(report).toBeVisible();
     await expect(report.locator('.conversation-timeline-activity-main')).toHaveAttribute("aria-expanded", "true");
-    await expect(report).toContainText("Needs attention");
+    await expect(report).toContainText("Open Issues");
     await expect(report).toContainText(attention === "skipped-check" ? "Manual smoke not run" : "Approval still needed");
     await expect(report.locator('[data-conversation-timeline-status]')).toHaveAttribute("data-conversation-timeline-status", "succeeded");
     await page.screenshot({ path: testInfo.outputPath(`${attention}-retained.png`) });

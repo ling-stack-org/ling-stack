@@ -15,6 +15,8 @@ import { mergeApprovalSnapshot, mergeApprovalsForRun, upsertApproval } from "../
 import { removeRecordKey } from "../../lib/records.js";
 import { daemonBaseUrl } from "../../api/client.js";
 import { approvalDecisionLookupJournal } from "../../lib/approval-decision-lookup-journal.js";
+import { approvalReceiptRecoveryState, type ApprovalRecoveryState } from "../../lib/approval-recovery.js";
+import type { ApprovalDecisionLookup } from "../../lib/approval-decision-lookup-journal.js";
 import type {
   ApprovalMutationResponse,
   ApprovalRequest,
@@ -108,14 +110,30 @@ export function useApprovalsDomain(input: {
   const externalDetailRequestRef = useRef(new Map<string, number>());
   const externalMutationRequestRef = useRef(new Map<string, number>());
   const externalActionBusyRef = useRef(new Map<string, ExternalActionOperation>());
+  const recoveryTimerRef = useRef<ReturnType<typeof window.setTimeout> | undefined>(undefined);
+  const recoveryDelayRef = useRef(500);
+  const recoveryReadsRef = useRef(new Set<string>());
+  const recoveryStatesRef = useRef(new Map<string, { token: string; state: ApprovalRecoveryState }>());
+  const mountedRef = useRef(true);
 
   cwdRef.current = input.cwd.trim();
   emitEventRef.current = input.emitEvent;
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      listRequestSequenceRef.current += 1;
+      externalMutationRequestRef.current.clear();
+      clearRecoveryTracking();
+    };
+  }, []);
+
+  useEffect(() => {
     const cwd = input.cwd.trim();
     if (previousCwdRef.current === cwd) return;
     previousCwdRef.current = cwd;
+    clearRecoveryTracking();
     // Startup may request the selected workspace before its render commits.
     if (listRequestCwdRef.current !== cwd) listRequestSequenceRef.current += 1;
     resolvingApprovalsRef.current.clear();
@@ -165,40 +183,94 @@ export function useApprovalsDomain(input: {
       if (!isCurrentListRequest(cwd, requestId)) return;
       const mutationKey = `approval:${lookup.approvalId}`;
       const originalMutation = externalMutationRequestRef.current.get(mutationKey);
-      if (resolvingApprovalsRef.current.has(lookup.approvalId)) continue;
+      const readKey = JSON.stringify([cwd, lookup.approvalId, lookup.token]);
+      if (resolvingApprovalsRef.current.has(lookup.approvalId) || recoveryReadsRef.current.has(readKey)) continue;
+      recoveryReadsRef.current.add(readKey);
       let receipt: Awaited<ReturnType<typeof getApproval>>;
       try {
-        receipt = await getApproval(cwd, lookup.approvalId);
-        if (!isCurrentListRequest(cwd, requestId)
-          || externalMutationRequestRef.current.get(mutationKey) !== originalMutation) continue;
-        if (receipt?.approval?.id !== lookup.approvalId
-          || !["pending", "approved", "denied", "expired", "cancelled"].includes(receipt.approval.status)) {
-          throw new Error(t("Pending confirmation"));
+        try {
+          receipt = await getApproval(cwd, lookup.approvalId);
+          if (receipt?.approval?.id !== lookup.approvalId
+            || !["pending", "approved", "denied", "expired", "cancelled"].includes(receipt.approval.status)) {
+            throw new Error(t("Pending confirmation"));
+          }
+        } catch {
+          if (!isCurrentListRequest(cwd, requestId)
+            || externalMutationRequestRef.current.get(mutationKey) !== originalMutation) continue;
+          await publishRecoveryState(cwd, lookup, "unknown");
+          continue;
         }
-      } catch {
         if (!isCurrentListRequest(cwd, requestId)
           || externalMutationRequestRef.current.get(mutationKey) !== originalMutation) continue;
-        setApprovalErrors(current => ({ ...current, [lookup.approvalId]: t("Pending confirmation") }));
-        continue;
-      }
-      try {
         updateApprovals({ type: "upsert", approval: receipt.approval });
-        approvalDecisionLookupJournal.forget(scope, lookup);
+        // Pending means the original decision has not been confirmed. Keep only
+        // its query pointer; neither refresh nor the timer can authorize again.
         if (receipt.approval.status === "pending") continue;
+        const recoveryState = approvalReceiptRecoveryState(receipt);
+        await publishRecoveryState(cwd, lookup, recoveryState, receipt.approval);
+        if (!isCurrentListRequest(cwd, requestId)
+          || externalMutationRequestRef.current.get(mutationKey) !== originalMutation) continue;
+        if (recoveryState === "completed") approvalDecisionLookupJournal.forget(scope, lookup);
         setApprovalErrors(current => removeRecordKey(current, lookup.approvalId));
-        await emitEventRef.current({ type: "approval.resolved", approvalId: lookup.approvalId,
-          runId: receipt.approval.runId, mediaJobId: receipt.approval.mediaJobId,
-          externalWorkActionId: receipt.approval.externalWorkActionId,
-          reconciliationPending: !Array.isArray(receipt.postCommitEffects)
-            || receipt.postCommitEffects.some(effect => !effect || effect.approvalId !== lookup.approvalId
-              || effect.status !== "completed"),
-        });
       } catch (caught) {
         if (!isCurrentListRequest(cwd, requestId)
           || externalMutationRequestRef.current.get(mutationKey) !== originalMutation) continue;
         setError({ scope: "load", message: caught instanceof Error ? caught.message : String(caught) });
+      } finally {
+        recoveryReadsRef.current.delete(readKey);
       }
     }
+    scheduleRecoveryLookup(cwd);
+  }
+
+  async function publishRecoveryState(cwd: string, lookup: ApprovalDecisionLookup, state: ApprovalRecoveryState, approval?: ApprovalRequest): Promise<void> {
+    if (!mountedRef.current || cwdRef.current !== cwd) return;
+    const previous = recoveryStatesRef.current.get(lookup.approvalId);
+    if (previous?.token === lookup.token && previous.state === state) return;
+    await emitEventRef.current({ type: "approval.recoveryChanged", cwd, approvalId: lookup.approvalId, recoveryState: state,
+      runId: approval?.runId, mediaJobId: approval?.mediaJobId, externalWorkActionId: approval?.externalWorkActionId,
+      channelId: approval?.channelId });
+    if (mountedRef.current && cwdRef.current === cwd) recoveryStatesRef.current.set(lookup.approvalId, { token: lookup.token, state });
+  }
+
+  function clearRecoveryTracking(): void {
+    if (recoveryTimerRef.current !== undefined) window.clearTimeout(recoveryTimerRef.current);
+    recoveryTimerRef.current = undefined;
+    recoveryDelayRef.current = 500;
+    recoveryReadsRef.current.clear();
+    recoveryStatesRef.current.clear();
+  }
+
+  function scheduleRecoveryLookup(cwd: string): void {
+    if (!mountedRef.current || cwdRef.current !== cwd) return;
+    try {
+      if (approvalDecisionLookupJournal.read({ daemonBaseUrl, cwd }).length === 0) {
+        if (recoveryTimerRef.current !== undefined) window.clearTimeout(recoveryTimerRef.current);
+        recoveryTimerRef.current = undefined;
+        recoveryDelayRef.current = 500;
+        return;
+      }
+    } catch (caught) {
+      setError({ scope: "load", message: caught instanceof Error ? caught.message : String(caught) });
+      return;
+    }
+    if (recoveryTimerRef.current !== undefined) return;
+    // One GET-only, backoff-capped observer per mounted workspace. Keep durable
+    // pointers on failure/reload; do not retry POSTs or infer Run completion.
+    recoveryTimerRef.current = window.setTimeout(async () => {
+      recoveryTimerRef.current = undefined;
+      if (!mountedRef.current || cwdRef.current !== cwd) return;
+      recoveryDelayRef.current = Math.min(30_000, recoveryDelayRef.current * 2);
+      try {
+        await recoverDecisionLookups(cwd, listRequestSequenceRef.current);
+      } catch (caught) {
+        if (mountedRef.current && cwdRef.current === cwd) {
+          setError({ scope: "load", message: caught instanceof Error ? caught.message : String(caught) });
+        }
+      } finally {
+        scheduleRecoveryLookup(cwd);
+      }
+    }, recoveryDelayRef.current);
   }
 
   async function refreshExternalActionDetails(cwd: string, sourceApprovals: readonly ApprovalRequest[]): Promise<void> {
@@ -303,11 +375,16 @@ export function useApprovalsDomain(input: {
     setResolvingApprovals((current) => ({ ...current, [approvalId]: decision }));
     setApprovalErrors((current) => removeRecordKey(current, approvalId));
     const approvalBeforeResolution = approvals.find((approval) => approval.id === approvalId);
-    async function applyResolution(response: ApprovalMutationResponse): Promise<void> {
+    async function applyResolution(response: ApprovalMutationResponse, observedRecoveryState?: ApprovalRecoveryState): Promise<void> {
       if (!isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) return;
       setSelectedApprovalId(response.approval.id);
       updateApprovals({ type: "upsert", approval: response.approval });
-      approvalDecisionLookupJournal.forget(lookupScope, lookup);
+      const recoveryState = observedRecoveryState ?? (response.postCommit?.status === "deferred" ? "pending" : "completed");
+      // The mutation emits approval.resolved below; only a later GET receipt
+      // needs to invalidate the dependent views through recoveryChanged.
+      await publishRecoveryState(cwd, lookup, recoveryState);
+      if (!isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) return;
+      if (recoveryState === "completed") approvalDecisionLookupJournal.forget(lookupScope, lookup);
       setApprovalErrors((current) => removeRecordKey(current, approvalId));
       if (response.approval.externalWorkActionId) {
         await refreshExternalActionDetailsByIds(cwd, [response.approval.externalWorkActionId]);
@@ -319,12 +396,13 @@ export function useApprovalsDomain(input: {
         runId: response.approval.runId || approvalBeforeResolution?.runId,
         mediaJobId: response.approval.mediaJobId || approvalBeforeResolution?.mediaJobId,
         externalWorkActionId: response.approval.externalWorkActionId || approvalBeforeResolution?.externalWorkActionId,
-        reconciliationPending: response.postCommit?.status === "deferred",
+        channelId: response.approval.channelId || approvalBeforeResolution?.channelId,
       });
     }
     try {
       approvalDecisionLookupJournal.remember(lookupScope, lookup);
       let response: ApprovalMutationResponse;
+      let observedRecoveryState: ApprovalRecoveryState | undefined;
       try {
         response = decision !== "deny"
           ? await approveApproval(cwd, approvalId, {
@@ -344,13 +422,8 @@ export function useApprovalsDomain(input: {
         if (!isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) return;
         if (receipt?.approval?.id === approvalId
           && ["approved", "denied", "expired", "cancelled"].includes(receipt.approval.status)) {
-          response = {
-            approval: receipt.approval,
-            ...(!Array.isArray(receipt.postCommitEffects)
-              || receipt.postCommitEffects.some(effect => !effect || effect.approvalId !== approvalId || effect.status !== "completed") ? {
-              postCommit: { status: "deferred", code: "approval_postcommit_reconciliation_required" },
-            } as const : {}),
-          };
+          response = { approval: receipt.approval };
+          observedRecoveryState = approvalReceiptRecoveryState(receipt);
         } else {
           const message = caught instanceof Error ? caught.message : String(caught);
           await refreshApprovals(cwd);
@@ -361,7 +434,7 @@ export function useApprovalsDomain(input: {
         }
       }
       try {
-        await applyResolution(response);
+        await applyResolution(response, observedRecoveryState);
       } catch (caught) {
         if (!isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) return;
         const message = caught instanceof Error ? caught.message : String(caught);
@@ -375,6 +448,7 @@ export function useApprovalsDomain(input: {
       if (isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) {
         resolvingApprovalsRef.current.delete(approvalId);
         setResolvingApprovals((current) => removeRecordKey(current, approvalId));
+        scheduleRecoveryLookup(cwd);
       }
     }
   }
@@ -385,6 +459,7 @@ export function useApprovalsDomain(input: {
   }
 
   function resetForCwd(): void {
+    clearRecoveryTracking();
     listRequestSequenceRef.current += 1;
     resolvingApprovalsRef.current.clear();
     externalActionBusyRef.current.clear();
@@ -401,7 +476,7 @@ export function useApprovalsDomain(input: {
   }
 
   function isCurrentListRequest(cwd: string, requestId: number): boolean {
-    return cwdRef.current === cwd && listRequestSequenceRef.current === requestId;
+    return mountedRef.current && cwdRef.current === cwd && listRequestSequenceRef.current === requestId;
   }
 
   function isCurrentExternalRequest(
@@ -410,7 +485,7 @@ export function useApprovalsDomain(input: {
     cwd: string,
     requests: ReadonlyMap<string, number>,
   ): boolean {
-    return cwdRef.current === cwd && requests.get(id) === requestId;
+    return mountedRef.current && cwdRef.current === cwd && requests.get(id) === requestId;
   }
 
   function beginExternalAction(actionId: string, operation: ExternalActionOperation): number {

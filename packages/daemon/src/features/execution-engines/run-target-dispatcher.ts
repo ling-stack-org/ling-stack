@@ -20,12 +20,15 @@ import { HttpError } from "../../errors.js";
 import { lingConversationToneInstruction } from "../conversations/conversation-tone.js";
 import { responseLanguageInstruction } from "../channels/response-language.js";
 import { readNativeResponsePreferences } from "../conversations/native-response-preferences.js";
+import type { RestrictedCommandExecutablePin } from "../../runtime/sandbox/restricted-command-runtime.js";
 
 const nativeRunTools: readonly RunTool[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 
 export interface ExecutionEngineRunTargetDispatcherOptions extends NativeAdmissionOptions {
   readonly getProfileStore: () => ExecutionEngineProfileStore;
   readonly secretResolver: SecretResolver;
+  /** Trusted daemon Host bootstrap getter; never a profile or HTTP field. */
+  readonly getHostFileNode?: () => RestrictedCommandExecutablePin | undefined;
   readonly probeInstallation?: (
     profile: ExecutionEngineProfile,
     signal: AbortSignal,
@@ -111,6 +114,7 @@ export function createExecutionEngineRunTargetDispatcher(
       const binding = input.runRequest.executionBinding;
 
       if (binding.engineId === "kimi-acp") {
+        const hostFileNode = options.getHostFileNode?.();
         const configuration = {
           cwd: input.runRequest.cwd,
           ...(binding.nativeModelId ? { modelId: binding.nativeModelId } : {}),
@@ -134,6 +138,7 @@ export function createExecutionEngineRunTargetDispatcher(
           store: input.store,
           reservation: { runId: input.run.id, generation, fence, selection },
           configuration,
+          hostFileNode: hostFileNode ? structuredClone(hostFileNode) : undefined,
           input: acpPromptInput(input),
           process: {
             executablePath: profile.configuration.executablePath,

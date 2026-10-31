@@ -791,6 +791,7 @@ function projectTerminalReports(
       output.set(anchor.id, {
         id: `terminal-report:${entry.report.id}`,
         kind: "terminalReport",
+        reportStatus: entry.report.status,
         language: entry.report.language,
         outcomeSourceRefs: entry.report.outcome.sourceRefs,
         revision: anchor.revision,
@@ -1028,7 +1029,8 @@ function projectSupplementalEvidence(
       description: approval.summary,
       meta: approval.summary,
       approvalId: approval.id,
-      decision: approvalDecision(status),
+      ...(approval.status === "denied" || approval.status === "expired" ? { approvalOutcome: approval.status } : {}),
+      decision: approvalDecision(approval.status),
     } satisfies ConversationTimelineApprovalItem);
   }
 
@@ -1651,6 +1653,8 @@ function projectCanonicalAction(
     threadSequence: anchor.sequence,
     partIndex,
     turnId: action.turnId ?? anchor.turnId ?? scope.turnId,
+    ...(action.approvalId && (action.status === "denied" || action.status === "expired")
+      ? { approvalOutcome: action.status as "denied" | "expired" } : {}),
   };
   const kind = actionKind(action.actionType);
   const status = statusFromAction(action.status);
@@ -1702,7 +1706,7 @@ function projectCanonicalAction(
       diagnostics.push({ code: "missing_lineage", sourceRefs, message: `Approval action ${action.id} is missing its durable approval id.` });
       return blockedAction(base, "Approval evidence is missing its durable approval id.", diagnostics, sourceRefs);
     }
-    return { ...base, kind, status, title: action.title, description: action.summary, meta: action.summary, approvalId: action.approvalId, decision: approvalDecision(status) } satisfies ConversationTimelineApprovalItem;
+    return { ...base, kind, status, title: action.title, description: action.summary, meta: action.summary, approvalId: action.approvalId, decision: approvalDecision(action.status) } satisfies ConversationTimelineApprovalItem;
   }
   if (kind === "mcpToolCall" || kind === "dynamicToolCall" || kind === "collabAgentToolCall") {
     return {
@@ -1799,10 +1803,9 @@ function statusFromCanonicalItem(item: CanonicalConversationItem): ConversationT
   return item.status === "committed" ? "succeeded" : "pending";
 }
 
-function approvalDecision(status: ConversationTimelineItemStatus): ConversationTimelineApprovalItem["decision"] {
-  if (status === "succeeded") return "allowed";
-  if (status === "failed" || status === "blocked") return "denied";
-  if (status === "cancelled") return "cancelled";
+function approvalDecision(status: string): ConversationTimelineApprovalItem["decision"] {
+  if (status === "succeeded" || status === "approved") return "allowed";
+  if (status === "denied" || status === "expired" || status === "cancelled") return status;
   return undefined;
 }
 

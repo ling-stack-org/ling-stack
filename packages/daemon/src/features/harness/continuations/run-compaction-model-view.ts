@@ -47,8 +47,11 @@ function recoveryMode(value: readonly unknown[]): CompactionRecoveryMode | undef
   const last = value.at(-1);
   if (!isRecord(last)) return undefined;
   if (last.role === "toolResult") return "continue";
-  if (last.role !== "assistant") return undefined;
-  if (Array.isArray(last.content) && last.content.some((block) => isRecord(block) && block.type === "toolCall")) {
+  // A final-looking text is not a settled successful provider response. In
+  // particular, a cancelled/error/truncated response must never skip continue()
+  // and become a successful Run merely because its role is assistant.
+  if (last.role !== "assistant" || last.stopReason !== "stop" || !Array.isArray(last.content)) return undefined;
+  if (last.content.some((block) => isRecord(block) && block.type === "toolCall")) {
     return undefined;
   }
   return "complete";

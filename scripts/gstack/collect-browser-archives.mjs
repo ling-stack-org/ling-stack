@@ -194,7 +194,8 @@ export async function collectGstackBrowserArchives({ resourceStagePath, outputPa
   if (inputs.find(input => input.path === "upstream-lock.json").checksum !== checksum(lockBytes)) throw new Error("gstack_browser_collector_changed");
   const lease = await managedResourceWrite(output, { kind: "browser", additionalBytes: 2 * 1024 ** 3 });
   await mkdir(dirname(output), { recursive: true });
-  const temporary = await realpath(await mkdtemp(join(dirname(output), ".gstack-browser-acquisition-")));
+  const temporary = await realpath(await mkdtemp(join(lease.scratchPath, "tmp", ".gstack-browser-acquisition-")));
+  let completed = false;
   try {
     const home = join(temporary, "home"), candidate = join(temporary, "candidate");
     await mkdir(home); await mkdir(candidate);
@@ -230,9 +231,12 @@ export async function collectGstackBrowserArchives({ resourceStagePath, outputPa
     await writeFile(join(candidate, "browser-archives.json"), `${JSON.stringify(receipt, null, 2)}\n`, { flag: "wx" });
     await resourceCheckpoint(lease.root);
     await publishStagedDirectory(candidate, output);
+    completed = true;
     return receipt;
   } finally {
-    await rm(temporary, { recursive: true, force: true });
+    // A timed-out registry process may still use this home. Leave failed
+    // staging in the lease until the outer owner proves process settlement.
+    if (completed) await rm(temporary, { recursive: true, force: true });
   }
 }
 

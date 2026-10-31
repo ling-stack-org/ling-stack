@@ -86,6 +86,43 @@ for await (const line of createInterface({ input: process.stdin })) {
 }
 `;
 
+/** Bounded typed context only; never dump paths, tokens, peer output or error text. */
+function candidateFailureDiagnostic(f, result) {
+  const stages = ["connection", "conversation", "recovery", "cancellation", "permissions", "artifacts", "workspace", "approval", "denial", "artifact"];
+  const safeTokens = new Set([...stages, ...["connection", "conversation", "recovery", "cancellation", "approval", "denial", "artifact", "cleanup", "host-failure"].map(name => `codex-${name}.json`),
+    "passed", "failed", "not_run", "completed", "cancelled", "rejected", "not_submitted", "running", "started", "created",
+    "approved", "denied", "pending", "written", "not_written", "write_failed", "configured", "detected", "unsupported",
+    "installed", "not_found", "not_executable", "timed_out", "output_limit", "probe_failed", "unexpected_runtime",
+    "connected", "auth_required", "not_checked", "required", "configured_unverified", "provider_managed", "unverified",
+    "protocol_error", "unsupported_engine", "unsupported_platform", "unsupported_auth", "claimed", "unknown", "SIGINT", "SIGTERM", "SIGKILL",
+    "candidate_not_run", "cross_workspace_execution_not_exercised", "connection_observed_authentication_not_certified",
+    "connection_not_ready", "exact_text_and_durable_submission", "database_reopened_and_native_binding_reused",
+    "conversation_required_for_same_binding_recovery", "interrupted_after_turn_start_and_durable_cancelled",
+    "failed_prerequisite_blocks_write_scenarios", "candidate_aborted_or_prior_execution_not_drained",
+    "exact_approve_and_deny_require_journal_and_file_effects", "single_file_native_patch_requires_exact_content_and_written_approval",
+    "candidate_host_operation_failed", "engine_native_auth_mismatch", "commandExecution", "fileChange", "bash",
+    "item/started", "item/completed", "turn/started", "turn/completed",
+    "item/commandExecution/requestApproval", "item/fileChange/requestApproval"]);
+  const safeKeys = new Set(["observations", "stages", "records", "name", "stage", "status", "reason", "evidence",
+    "connection", "authentication", "runtimeVersion", "errorCode", "execution", "submission", "children", "pid", "closed", "code", "signal", "spawnFailed",
+    "allChildrenClosed", "allLifetimesDrained", "unresolvedSubmissionCount", "unresolvedSubmissions", "notRun", "failed", "deadlineReached",
+    "unexpectedTool", "unexpectedApproval", "unexpectedRequest", "protocolOverflow", "sentinelMatches", "cancelTriggeredAtTurnStart",
+    "streamedEventsMatchJournal", "durableTerminal", "artifact", "approvedFile", "deniedFile", "exists", "exact",
+    "approvals", "correlation", "replyStatus", "protocol", "method", "kind", "exitCode", ...stages]);
+  const safe = (value, depth = 0) => {
+    if (depth > 8) return "[bounded]";
+    if (value === null || typeof value === "boolean") return value;
+    if (typeof value === "number") return Number.isFinite(value) ? value : "[non-finite]";
+    if (typeof value === "string") return value.length <= 128 && (safeTokens.has(value) || /^\d+\.\d+\.\d+$/u.test(value)) ? value : "[redacted]";
+    if (Array.isArray(value)) return value.slice(0, 32).map(item => safe(item, depth + 1));
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => safeKeys.has(key)).map(([key, item]) => [key, safe(item, depth + 1)]));
+    return undefined;
+  };
+  return JSON.stringify({ signalAborted: f.input.signal.aborted, ...safe({ ...result,
+    records: [...f.records].map(([evidence, value]) => ({ evidence, ...value })) }) });
+}
+
 async function fixture(t, { omitEffect = false, forceDeniedEffect = false, extraFileChange = false, interruptAfterDenial = false } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ling-codex-candidate-test-")));
   const workspace = join(root, "workspace");
@@ -120,7 +157,7 @@ test("candidate scenes prove exact approval and denial effects through the owned
   const f = await fixture(t);
   const { runCodexScenarios } = await import("../../../scripts/native-execution-engines/codex-scenarios.mjs");
   const result = await runCodexScenarios(f.input);
-  assert.equal(result.observations.permissions.status, "passed");
+  assert.equal(result.observations.permissions.status, "passed", candidateFailureDiagnostic(f, result));
   assert.equal(await readFile(join(f.workspace, "candidate-approved.txt"), "utf8"), "");
   await assert.rejects(readFile(join(f.workspace, "candidate-denied.txt")), { code: "ENOENT" });
   assert.equal(result.observations.recovery.status, "passed");
@@ -143,7 +180,7 @@ test("a completed peer and written approval cannot pass without the approved fil
   const f = await fixture(t, { omitEffect: true });
   const { runCodexScenarios } = await import("../../../scripts/native-execution-engines/codex-scenarios.mjs");
   const result = await runCodexScenarios(f.input);
-  assert.equal(result.observations.permissions.status, "failed");
+  assert.equal(result.observations.permissions.status, "failed", candidateFailureDiagnostic(f, result));
   assert.equal(result.observations.artifacts.status, "not_run");
   assert.equal(f.records.get("codex-approval.json").submission.status, "completed");
   assert.equal(f.records.get("codex-approval.json").approvals[0].correlation.replyStatus, "written");

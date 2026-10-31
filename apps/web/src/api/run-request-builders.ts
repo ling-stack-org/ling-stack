@@ -11,7 +11,6 @@ import {
   readOptionalString,
   readRecord,
   readRunTask,
-  readStringArray,
   readToolArray,
   removeUndefined,
 } from "./shared.js";
@@ -104,7 +103,21 @@ function resolveChannelExecutionCwd(channel: Channel, workspaceCwd: string): str
   return channel.boundPath || workspaceCwd;
 }
 
+function isWorkflowRun(run: RunSession): boolean {
+  return Boolean(run.workflowStepId || readOptionalString(readRecord(run.requestSnapshot), "workflowStepId"));
+}
+
+/** Workflow retries belong to the Host step controller, never a reconstructed task. */
+export function canRerunSnapshot(run: RunSession | undefined): boolean {
+  if (!run || isWorkflowRun(run)) return false;
+  return Boolean((run.providerPresetId ?? readOptionalString(readRecord(run.requestSnapshot), "providerPresetId"))
+    && readOptionalString(readRecord(run.taskSnapshot), "prompt"));
+}
+
 export function buildRerunRequest(run: RunSession): unknown {
+  if (isWorkflowRun(run)) {
+    throw new Error("Retry this workflow step through its channel workflow controls, not its public snapshot.");
+  }
   const snapshot = readRecord(run.requestSnapshot);
   const providerPresetId = run.providerPresetId ?? readOptionalString(snapshot, "providerPresetId");
   if (!providerPresetId) {
@@ -127,8 +140,7 @@ export function buildRerunRequest(run: RunSession): unknown {
     ...permissions,
     thinkingLevel: readOptionalString(snapshot, "thinkingLevel") ?? "medium",
     lingConversationTone: readOptionalString(snapshot, "lingConversationTone"),
-    systemPrompt: readOptionalString(snapshot, "systemPrompt"),
-    appendSystemPrompt: readStringArray(snapshot, "appendSystemPrompt"),
+    // Private system hydration is Host-owned and is not replayed from cached public DTOs.
     agentDir: readOptionalString(snapshot, "agentDir"),
   });
 }

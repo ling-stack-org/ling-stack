@@ -108,6 +108,28 @@ test("rule scheduler completes sealed JSON evaluation and records deterministic 
   assert.equal(rationale.sealedPayload.rationale.total, 2);
 });
 
+test("low priority evaluation yields before claim and grading to already queued foreground work", async t => {
+  const f = await fixture(t);
+  const order = [];
+  const claim = f.store.claimRunEvaluation.bind(f.store);
+  f.store.claimRunEvaluation = input => { order.push("evaluation-claim"); return claim(input); };
+  const foreground = new Promise(resolve => setImmediate(() => { order.push("foreground"); resolve(); }));
+  const evaluation = processNextRunEvaluation({ store: f.store, workerId: "low-priority", now: later });
+  assert.deepEqual(order, []);
+  await foreground;
+  assert.equal((await evaluation).disposition, "completed");
+  assert.deepEqual(order, ["foreground", "evaluation-claim"]);
+});
+
+test("shutdown during the foreground yield stops evaluation before any durable claim", async t => {
+  const f = await fixture(t);
+  const abort = new AbortController();
+  const evaluation = processNextRunEvaluation({ store: f.store, workerId: "stopped-before-claim", now: later, signal: abort.signal });
+  abort.abort();
+  assert.deepEqual(await evaluation, { disposition: "stopped" });
+  assert.equal(f.store.getRunEvaluation(f.evaluation.id).state, "queued");
+});
+
 test("malformed rule input fails closed instead of retrying or fabricating a grade", async (t) => {
   const f = await fixture(t, {
     schemaVersion: 1,
@@ -135,9 +157,83 @@ test("artifact payload corruption after enqueue fails closed against the sealed 
     now: later,
   });
   assert.equal(result.disposition, "failed");
+  assert.equal(f.store.getRunEvaluation(f.evaluation.id).state, "failed");
   assert.equal(f.store.getRunEvaluation(f.evaluation.id).failureCode, "evaluation.result_invalid");
   assert.equal(f.store.listRunEvaluationGrades(f.evaluation.id).length, 0);
 });
+
+test("artifact corruption after a real claim fails before start can invoke any grader", async t => {
+  const f = await fixture(t);
+  const claim = f.store.claimRunEvaluation.bind(f.store);
+  f.store.claimRunEvaluation = input => {
+    const result = claim(input);
+    if (result.ok) replaceArtifactBody(f, f.candidate.id, { status: "changed-after-claim" });
+    return result;
+  };
+  let graderCalls = 0;
+  const result = await processNextRunEvaluation({ store: f.store, workerId: "rule-worker", now: later,
+    grade() { graderCalls++; assert.fail("a corrupt claimed input must not enter the grader"); } });
+  assert.deepEqual(result, { disposition: "failed", evaluationId: f.evaluation.id });
+  const failed = f.store.getRunEvaluation(f.evaluation.id);
+  assert.equal(failed.state, "failed");
+  assert.equal(failed.failureCode, "evaluation.result_invalid");
+  assert.equal(failed.claimOwner, undefined);
+  assert.equal(failed.claimToken, undefined);
+  assert.equal(graderCalls, 0);
+  assert.equal(f.store.listRunEvaluationGrades(f.evaluation.id).length, 0);
+});
+
+test("body corruption during a transient grader failure is terminal instead of requeued", async t => {
+  const f = await fixture(t);
+  let graderCalls = 0;
+  const result = await processNextRunEvaluation({ store: f.store, workerId: "rule-worker", now: later,
+    grade() {
+      graderCalls++;
+      replaceArtifactBody(f, f.candidate.id, { status: "changed-during-grading" });
+      throw new Error("the original grader became unavailable");
+    } });
+  assert.deepEqual(result, { disposition: "failed", evaluationId: f.evaluation.id });
+  const failed = f.store.getRunEvaluation(f.evaluation.id);
+  assert.equal(failed.state, "failed");
+  assert.equal(failed.failureCode, "evaluation.result_invalid");
+  assert.equal(failed.nextAttemptAt, undefined);
+  assert.equal(failed.claimToken, undefined);
+  assert.equal(graderCalls, 1);
+  assert.equal(f.store.listRunEvaluationGrades(f.evaluation.id).length, 0);
+});
+
+test("a corrupt queue head fails without starving the next valid evaluation", async t => {
+  const f = await fixture(t);
+  const candidate = f.store.createArtifact({ id: "artifact-scheduler-valid-candidate", runId: f.run.id,
+    type: "json", path: "evaluation/valid-candidate.json", sealedPayload: { count: 2, status: "ok" }, createdAt: now });
+  const next = f.store.enqueueRunEvaluation({
+    id: "evaluation-scheduler-2", runId: f.run.id,
+    suiteId: "suite", suiteVersion: "1", suiteArtifactId: f.suite.id,
+    caseId: "case", caseVersion: "1", caseArtifactId: f.testCase.id,
+    baselineId: "baseline", baselineVersion: "1", baselineArtifactId: f.baseline.id,
+    candidateArtifactId: candidate.id, now,
+  }).evaluation;
+  replaceArtifactBody(f, f.candidate.id, { status: "invalid-head" });
+  const errors = [];
+  const scheduler = new RunEvaluationSchedulerRegistry({ enabled: true, concurrency: 1,
+    scanIntervalMs: 60_000, onError: error => { errors.push(error); } });
+  t.after(async () => { scheduler.beginShutdown(); await scheduler.waitForIdle(); });
+  scheduler.registerStore(f.store);
+  await waitFor(() => f.store.getRunEvaluation(next.id).state === "completed");
+  scheduler.beginShutdown();
+  await scheduler.waitForIdle();
+  assert.equal(f.store.getRunEvaluation(f.evaluation.id).state, "failed");
+  assert.equal(f.store.getRunEvaluation(f.evaluation.id).failureCode, "evaluation.result_invalid");
+  assert.equal(f.store.listRunEvaluationGrades(f.evaluation.id).length, 0);
+  assert.equal(f.store.listRunEvaluationGrades(next.id).length, 1);
+  assert.deepEqual(errors, [], "a permanent bad input is a durable failure, not a worker crash");
+});
+
+function replaceArtifactBody(fixture, artifactId, payload) {
+  const database = new DatabaseSync(resolveRuntimePaths(fixture.cwd).databasePath);
+  try { database.prepare("UPDATE artifacts SET sealed_payload_json = ? WHERE id = ?").run(JSON.stringify(payload), artifactId); }
+  finally { database.close(); }
+}
 
 test("transient grader failure requeues with backoff and a later scan completes", async (t) => {
   const f = await fixture(t);

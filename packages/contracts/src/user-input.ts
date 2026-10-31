@@ -67,6 +67,49 @@ export interface UserInputAnswerSubmissionResponseV1 {
 }
 
 /**
+ * Public optimistic authority for one visible question snapshot. The token is
+ * Host-derived from private source lineage; it is not a runtime fence, claim,
+ * permission grant or proof that a Runner received an answer.
+ */
+export interface UserInputAnswerAuthorityV1 {
+  readonly schemaVersion: 1;
+  readonly threadId: string;
+  readonly runId: string;
+  readonly attemptId: string;
+  readonly participantId: string;
+  readonly requestId: string;
+  readonly requestVersion: number;
+  readonly statusRevision: number;
+  readonly token: string;
+}
+
+/** Authenticated local-user intent. Host revalidates every authority field. */
+export interface UserInputAnswerCommandV1 {
+  readonly schemaVersion: 1;
+  readonly authority: UserInputAnswerAuthorityV1;
+  readonly idempotencyKey: string;
+  readonly answers: readonly UserInputAnswerV1[];
+}
+
+/**
+ * Durable Host acceptance only. `accepted` never means delivery, continuation
+ * admission, Runner receipt or task completion.
+ */
+export interface UserInputAnswerAcceptedResponseV1 {
+  readonly accepted: true;
+  readonly receipt: {
+    readonly requestId: string;
+    readonly requestVersion: number;
+    readonly answerId: string;
+    readonly answerItemId: string;
+    readonly deliveryId: string;
+    readonly acceptedAt: string;
+    readonly replayed: boolean;
+  };
+  readonly delivery: { readonly status: "pending" };
+}
+
+/**
  * Read-only subset of the authoritative request used for content validation.
  * Scope authorization and an atomic status/version CAS remain Host duties.
  */

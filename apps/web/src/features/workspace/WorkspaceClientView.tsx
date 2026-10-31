@@ -431,6 +431,7 @@ export function WorkspaceClientView({
   onRunTask,
   onAuthorizationModeChange,
   onPermissionModeChange,
+  onOpenSandboxSettings,
   onCancelActiveRun,
   onOpenRun,
   onOpenApprovals,
@@ -2096,6 +2097,7 @@ export function WorkspaceClientView({
       onCheckThenRunTask={onCheckThenRunTask}
       onRunTask={onRunTask}
       onPermissionModeChange={onPermissionModeChange}
+      onOpenSandboxSettings={onOpenSandboxSettings}
       onCancelActiveRun={onCancelActiveRun}
       onOpenRun={openRunInPanel}
       onOpenApprovals={onOpenApprovals}
@@ -3145,8 +3147,10 @@ export function WorkspaceClientView({
       assigneeLabel={teammateLabel(selectedExecutionProposal.assigneeTeammateId, teammateOptions, t("Deleted teammate"))}
       errorMessage={workflowErrors[selectedExecutionProposal.id]}
       proposal={selectedExecutionProposal}
+      allowedTools={selectedChannel?.allowedTools ?? []}
       onAllow={onConfirmExecutionProposal}
       onDeny={onCancelExecutionProposal}
+      onOpenChannelSettings={openChannelSettingsPage}
     />
   ) : <>{channelSessionDraft ? <ChannelSessionDraft {...channelSessionDraft} /> : null}{channelComposer}</>;
 

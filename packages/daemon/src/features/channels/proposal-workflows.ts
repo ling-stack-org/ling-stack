@@ -490,7 +490,14 @@ function stepPrompt(
     isSingleStepBoundedToolsProposal(proposal) && proposal.requiredTools.length > 0
       ? `Confirmed task-scoped tools:\n${proposal.requiredTools.join(", ")}`
       : undefined,
-    proposal.riskSummary ? `Risk summary:\n${proposal.riskSummary}` : undefined,
+    proposal.riskSummary
+      ? [
+          "Pre-confirmation risk notes (historical context, not current runtime authorization):",
+          proposal.riskSummary,
+          "",
+          "These notes may include blockers that have since been resolved. Current tool access and approval requirements are determined by Host policy and runtime gates within the confirmed task scope; historical capability statements do not override those gates.",
+        ].join("\n")
+      : undefined,
     responseLanguageInstruction(responseLanguage),
     "Complete only this step. Do not start or approve later workflow steps.",
     "Do not use tools, write paths, commands, MCP actions, or external side effects beyond the confirmed task scope; request runtime permission if the work needs an undeclared escalation.",
@@ -516,7 +523,7 @@ function renderOwnedOperationBinding(
     return `- ${operation.id}: ${operation.kind} -> ${target}${dependency}${command}${binding}`;
   });
   const header = "Host-materialized operation bindings (authoritative for completion, not display advice):";
-  const rule = "Execute only the operations owned by this step. An exact command must be run exactly; do not substitute a semantically equivalent command. If the binding cannot be executed, return structured blocked instead of ready text or narration.";
+  const rule = "Execute only the operations owned by this step. An exact command must be run exactly; do not substitute a semantically equivalent command. If the binding cannot be executed, explain concisely to the user what was not executed or verified and the limitation; do not return ready text or a raw blocked JSON as the user-facing answer. The Host records the structured blocked outcome from verified tool and execution evidence, not from your narrative or JSON.";
   return [header, ...lines, rule].join("\n");
 }
 

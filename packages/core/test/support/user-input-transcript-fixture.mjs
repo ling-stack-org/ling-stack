@@ -10,7 +10,12 @@ export const acceptedAt = "2026-09-07T00:00:01.000Z";
 export const claimedAt = "2026-09-07T00:00:03.000Z";
 
 /** Synthetic temporary database only; never touches an App workspace or starts a Runner. */
-export async function userInputTranscriptFixture(t, { surface = "normal", storedTask = false, workflow = false } = {}) {
+export async function userInputTranscriptFixture(t, {
+  surface = "normal",
+  storedTask = false,
+  workflow = false,
+  runnerId = "runner_pi_embedded",
+} = {}) {
   if ((storedTask || workflow) && surface !== "channel") throw new Error("Stored workflow fixtures require the channel surface");
   const cwd = await mkdtemp(join(tmpdir(), "ling-input-transcript-"));
   const f = { cwd, store: createSqliteRunStoreFixture(cwd), participantId: surface === "private" ? "teammate_builtin_engineer" : "ling_agent" };
@@ -48,7 +53,7 @@ export async function userInputTranscriptFixture(t, { surface = "normal", stored
   });
   f.attempt = f.store.createWorkUnitAttempt({
     workUnitId: f.unit.id, attemptNumber: 1, runtimeInstanceId: "source-runtime",
-    runnerId: "runner_pi_embedded", status: "started", now,
+    runnerId, status: "started", now,
   });
   f.run = f.store.createRun({
     id: "source-run", cwd, taskId: f.storedTask?.id ?? "snapshot-task", threadId: f.thread.id, turnId: f.turn.turnId,
@@ -78,14 +83,14 @@ export async function userInputTranscriptFixture(t, { surface = "normal", stored
     } }, acceptedAt);
     return f.receipt;
   };
-  f.claim = () => {
+  f.claim = ({ leaseMs = 1000 } = {}) => {
     f.store.commitUserInputYield({
       threadId: f.thread.id, requestId: f.request.requestId, expectedRequestVersion: 1,
       sourceFence: toRuntimeAttemptFence(f.attempt),
       quiescence: { kind: "runner_quiesced", runnerId: f.attempt.runnerId, stoppedAt: acceptedAt, lastRunEventSeq: 0 },
     }, "2026-09-07T00:00:02.000Z");
     return f.store.claimUserInputDelivery({
-      threadId: f.thread.id, deliveryId: f.receipt.deliveryId, expectedRevision: 1, ownerId: "host-worker", leaseMs: 1000,
+      threadId: f.thread.id, deliveryId: f.receipt.deliveryId, expectedRevision: 1, ownerId: "host-worker", leaseMs,
     }, claimedAt);
   };
   f.read = (itemIds = [f.request.itemId, ...(f.receipt ? [f.receipt.answerItemId] : [])]) =>

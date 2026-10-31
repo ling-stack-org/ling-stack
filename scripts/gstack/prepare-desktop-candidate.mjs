@@ -7,7 +7,7 @@ import { runManagedNode } from "./run-managed.mjs";
 import { buildGstackSourceBundle } from "./build-source-bundle.mjs";
 import { buildGstackNativeRuntime } from "./build-native-runtime.mjs";
 import { prepareGstackPlatformResourceStage } from "./prepare-platform-resource-stage.mjs";
-import { buildShellParser } from "./build-shell-parser.mjs";
+import { buildShellParser } from "./build-shell-parser-binary.mjs";
 import { collectGstackBrowserArchives } from "./collect-browser-archives.mjs";
 import { inspectGstackBrowserArchives } from "./inspect-browser-archives.mjs";
 import { collectTestsavantModel } from "./collect-testsavant-model.mjs";
@@ -91,7 +91,7 @@ async function executeStep(step, options) {
   else if (step === "model") await collectTestsavantModel({ onProgress: progress });
   else if (step === "assembly") await assembleExecutableBundle({ stageRoot: paths.resource, browserInspectionRoot: paths.inspection,
     browserArchivesRoot: paths.archives, outputRoot: paths.executable, modelMode: "download-required", browserMode: "download-required",
-    expectedStageChecksum: await checksum(paths.resource, "resource-stage.json"),
+    expectedResourceStageChecksum: await checksum(paths.resource, "resource-stage.json"),
     expectedArchiveReceiptChecksum: await checksum(paths.archives, "browser-archives.json"),
     expectedBrowserInspectionChecksum: await checksum(paths.inspection, "browser-member-inspection.json"), onProgress: progress });
   else throw new Error("gstack_desktop_step_invalid");

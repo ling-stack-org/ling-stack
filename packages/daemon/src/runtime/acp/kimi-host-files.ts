@@ -8,7 +8,7 @@ import type { AcpHostFileHandler, AcpHostFileRequest } from "./host-files.js";
 import type { AcpHostFileContext } from "./journaled-lifecycle.js";
 import { KimiActionPreparer, type KimiPreparedHostFile } from "./kimi-action-preparation.js";
 import { prepareBoundedHostText, type HostTextRead } from "./host-text-read.js";
-import { HostTextWriteError, prepareBoundedHostWrite, type HostTextWrite } from "./host-text-write.js";
+import { HostTextWriteError, prepareBoundedHostWrite, type HostTextWrite, type HostTextWriteOptions } from "./host-text-write.js";
 import { AcpLifecycleError, record } from "./live-errors.js";
 import type { AcpReplyObservation } from "./live-stream.js";
 
@@ -34,6 +34,7 @@ export class KimiHostFiles implements AcpHostFileHandler<ReadTextFileRequest, Re
   readonly #pairs = new Map<string, Entry>();
   readonly #context: AcpHostFileContext;
   readonly #actions: KimiActionPreparer;
+  readonly #writeOptions: HostTextWriteOptions;
   readonly writeTextFile: AcpHostFileHandler<WriteTextFileRequest, WriteTextFileResponse> = {
     receive: (request, signal) => this.#receive(request, signal),
     execute: (request, signal) => this.#write(request, signal),
@@ -41,10 +42,11 @@ export class KimiHostFiles implements AcpHostFileHandler<ReadTextFileRequest, Re
     onReplyOutcome: observation => this.onReplyOutcome(observation),
   };
 
-  constructor(context: AcpHostFileContext) {
+  constructor(context: AcpHostFileContext, writeOptions: HostTextWriteOptions = {}) {
     if (!(context.actions instanceof KimiActionPreparer)) throw new AcpLifecycleError("invalid_input");
     this.#actions = context.actions;
     this.#context = { ...context, key: structuredClone(context.key) };
+    this.#writeOptions = structuredClone(writeOptions);
   }
 
   receive(request: Request, signal: AbortSignal): void {
@@ -158,7 +160,8 @@ export class KimiHostFiles implements AcpHostFileHandler<ReadTextFileRequest, Re
     const payload = entry.prepared.approval.payload;
     if (payload.type !== "file_write" && payload.type !== "file_edit") fail();
     const baseline = entry.previous?.result;
-    const file = prepareBoundedHostWrite(payload.path, signal, baseline && "content" in baseline ? baseline : undefined);
+    const file = prepareBoundedHostWrite(payload.path, signal, baseline && "content" in baseline ? baseline : undefined,
+      this.#writeOptions);
     const operation = this.#claim(entry);
     const { store, key, now } = this.#context;
     let succeeded = false;

@@ -34,6 +34,7 @@ import { assertNoUnsafeRequiredPause } from "../runs/user-input-cancellation-gua
 import { settleTeammateDirectMessage } from "./direct-message-lifecycle.js";
 import { continuationSourceReady } from "../../runtime/continuation-source-barrier.js";
 import { readWorkUnitStopEvidence } from "../../runtime/work-unit-stop-evidence.js";
+import { projectPublicWorkUnit } from "../runs/public-execution-snapshots.js";
 
 export interface TeammateDirectRuntimeSnapshot {
   readonly teammateId: string;
@@ -487,6 +488,12 @@ function renderDirectGuidanceFileRef(fileRef: ChannelMessageFileRef): string {
   return `${fileRef.label?.trim() || fileRef.path}${line}`;
 }
 
+/** Execution services retain recovery input; only the transport receives this view. */
+function projectPublicDirectRuntime(runtime: TeammateDirectRuntimeSnapshot, store: RunStore): TeammateDirectRuntimeSnapshot {
+  return { ...runtime, ...(runtime.activeReply ? { activeReply: { ...runtime.activeReply,
+    workUnit: projectPublicWorkUnit(runtime.activeReply.workUnit, store) } } : {}) };
+}
+
 export async function handleTeammateDirectRuntime(
   request: IncomingMessage,
   response: ServerResponse,
@@ -510,7 +517,7 @@ export async function handleTeammateDirectRuntime(
           void service.maybeStartNextQueuedContinuation({ store, teammateId, threadId: runtime.thread.id }).catch(() => undefined);
         });
       }
-      writeJson(response, 200, { cwd, ...runtime });
+      writeJson(response, 200, { cwd, ...projectPublicDirectRuntime(runtime, store) });
       return;
     }
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for teammate direct-runtime` });
@@ -550,7 +557,8 @@ export async function handleTeammateDirectInterventions(
     if (request.method === "POST") {
       const body = parseDirectInterventionCreateRequest(await readJsonBody(request, config.maxBodyBytes));
       const intervention = service.createIntervention({ store, teammateId, ...body });
-      writeJson(response, 201, { cwd, teammateId, intervention, runtime: service.getRuntime({ store, teammateId }) });
+      writeJson(response, 201, { cwd, teammateId, intervention,
+        runtime: projectPublicDirectRuntime(service.getRuntime({ store, teammateId }), store) });
       return;
     }
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for teammate direct-interventions` });
@@ -619,7 +627,7 @@ export async function handleTeammateDirectInterventionPromote(
       cwd,
       teammateId: result.intervention.teammateId,
       intervention: result.intervention,
-      runtime: service.getRuntime({ store, teammateId: result.intervention.teammateId }),
+      runtime: projectPublicDirectRuntime(service.getRuntime({ store, teammateId: result.intervention.teammateId }), store),
       ...(result.message ? { message: result.message } : {}),
     });
   } catch (error) {
@@ -653,7 +661,7 @@ export async function handleTeammateDirectReplyCancel(
     const raw = await readOptionalJsonBody(request, config.maxBodyBytes);
     const body = parseOptionalReason(raw);
     const result = service.cancelReply({ store, workUnitId, reason: body.reason, ...parseExecutionCancellationRequest(raw) });
-    writeJson(response, 200, { cwd, ...result });
+    writeJson(response, 200, { cwd, ...result, workUnit: projectPublicWorkUnit(result.workUnit, store) });
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",

@@ -74,7 +74,8 @@ export function extractWrappedSection(
   return section || undefined;
 }
 
-function asciiLowercase(value: string): string {
+/** Fold ASCII search tokens without changing offsets into the original text. */
+export function asciiLowercase(value: string): string {
   const result: string[] = [];
   for (let index = 0; index < value.length; index += 1) {
     const character = value[index] ?? "";

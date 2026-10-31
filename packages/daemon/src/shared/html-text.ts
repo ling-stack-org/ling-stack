@@ -46,10 +46,13 @@ export function stripUnreadableHtml(html: string): string {
       output.push(" ");
       continue;
     }
-    const tag = readHtmlTag(source, cursor);
+    const scan = readHtmlTag(source, cursor);
+    const tag = scan.tag;
     if (!tag) {
-      output.push("<");
-      cursor += 1;
+      // A recognized but unterminated tag is not trustworthy readable content.
+      // Never reinterpret its tail at every nested '<' (quadratic rescanning).
+      output.push(scan.unterminatedTag ? " " : source.slice(cursor, scan.next));
+      cursor = scan.next;
       continue;
     }
     cursor = tag.end;
@@ -72,9 +75,10 @@ function findBodyContentRange(html: string): { readonly start: number; readonly 
   while (cursor < html.length) {
     const opening = html.indexOf("<", cursor);
     if (opening === -1) return undefined;
-    const tag = readHtmlTag(html, opening);
+    const scan = readHtmlTag(html, opening);
+    const tag = scan.tag;
     if (!tag) {
-      cursor = opening + 1;
+      cursor = scan.next;
       continue;
     }
     if (!tag.closing && tag.name === "body") {
@@ -95,9 +99,10 @@ function findClosingTag(html: string, name: string, start: number): HtmlTag | un
   while (cursor < html.length) {
     const opening = html.indexOf("<", cursor);
     if (opening === -1) return undefined;
-    const tag = readHtmlTag(html, opening);
+    const scan = readHtmlTag(html, opening);
+    const tag = scan.tag;
     if (tag?.closing && tag.name === name) return tag;
-    cursor = tag ? tag.end : opening + 1;
+    cursor = scan.next;
   }
   return undefined;
 }
@@ -109,8 +114,18 @@ interface HtmlTag {
   readonly end: number;
 }
 
-function readHtmlTag(html: string, start: number): HtmlTag | undefined {
-  if (html[start] !== "<") return undefined;
+interface HtmlTagScan {
+  readonly next: number;
+  readonly tag?: HtmlTag;
+  readonly unterminatedTag?: boolean;
+}
+
+function readHtmlTag(html: string, start: number): HtmlTagScan {
+  if (html[start] !== "<") return { next: start + 1 };
+  if (html.startsWith("<!--", start)) {
+    const end = html.indexOf("-->", start + 4);
+    return { next: end === -1 ? html.length : end + 3 };
+  }
   let cursor = start + 1;
   while (isHtmlWhitespace(html[cursor])) cursor += 1;
   let closing = false;
@@ -121,7 +136,7 @@ function readHtmlTag(html: string, start: number): HtmlTag | undefined {
   }
   const nameStart = cursor;
   while (isAsciiLetterOrDigit(html[cursor])) cursor += 1;
-  if (cursor === nameStart) return undefined;
+  if (cursor === nameStart) return { next: cursor };
   const name = html.slice(nameStart, cursor).toLowerCase();
   let quote: "\"" | "'" | undefined;
   while (cursor < html.length) {
@@ -131,11 +146,14 @@ function readHtmlTag(html: string, start: number): HtmlTag | undefined {
     } else if (character === "\"" || character === "'") {
       quote = character;
     } else if (character === ">") {
-      return { start, name, closing, end: cursor + 1 };
+      return { tag: { start, name, closing, end: cursor + 1 }, next: cursor + 1 };
     }
     cursor += 1;
   }
-  return undefined;
+  // A single trailing comparison/text fragment need not be markup. If an
+  // incomplete named tag contains further tag starts, discard the ambiguous
+  // tail instead of restarting its parse at every one of those starts.
+  return { next: html.length, unterminatedTag: /^[a-z]/u.test(name) && html.indexOf("<", start + 1) !== -1 };
 }
 
 function isHtmlWhitespace(value: string | undefined): boolean {

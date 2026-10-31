@@ -1,6 +1,7 @@
 import {
   buildWorkflowCompletionExpectedReadSet,
   workflowCompletionGateBasisFingerprintV1,
+  workflowDelegationCompletionFingerprintV1,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
   type RunStore,
@@ -96,6 +97,18 @@ function buildEvaluation(
   const graphFingerprint = values.graph
     ? workflowGraphFingerprintV1(values.graph)
     : input.workflow.metadata?.workflowGraphFingerprint ?? "missing_graph";
+  const actions = input.steps
+    .flatMap((step) => step.runId ? listAllExecutionActionsForRun(input.store, step.runId) : [])
+    .sort((left, right) => left.id.localeCompare(right.id));
+  const referencedActionIds = [...new Set(values.participantResults.flatMap((participant) => participant.evidenceRefs
+    .filter((ref) => ref.kind === "execution_action")
+    .map((ref) => ref.id)))].sort();
+  const expectedReadSet = buildWorkflowCompletionExpectedReadSet({
+    store: input.store,
+    workflow: input.workflow,
+    steps: input.steps,
+    derivedEvidence: { referencedActionIds, executionActionProjectionFingerprint: workflowCompletionBasisFingerprintV1(actions) },
+  });
   const basisFingerprint = workflowCompletionGateBasisFingerprintV1({
     workflowId: input.workflow.id,
     sourceIntentDecisionId: values.sourceIntentDecisionId,
@@ -103,10 +116,12 @@ function buildEvaluation(
     graphFingerprint,
     participantResults: values.participantResults,
     steps: input.steps,
+    delegationCompletionFingerprint: workflowDelegationCompletionFingerprintV1(expectedReadSet.delegations),
   });
   const gate: WorkflowCompletionGateV1 = {
     schemaVersion: 1,
-    status: values.forceStatus,
+    status: values.forceStatus === "verified" && expectedReadSet.delegations.status !== "satisfied"
+      ? expectedReadSet.delegations.status : values.forceStatus,
     sourceIntentDecisionId: values.sourceIntentDecisionId,
     participantManifestFingerprint: manifest.fingerprint,
     graphFingerprint,
@@ -114,24 +129,7 @@ function buildEvaluation(
     participantResults: values.participantResults,
     checkedAt: input.now,
   };
-  const actions = input.steps
-    .flatMap((step) => step.runId ? listAllExecutionActionsForRun(input.store, step.runId) : [])
-    .sort((left, right) => left.id.localeCompare(right.id));
-  const referencedActionIds = [...new Set(values.participantResults.flatMap((participant) => participant.evidenceRefs
-    .filter((ref) => ref.kind === "execution_action")
-    .map((ref) => ref.id)))].sort();
-  return {
-    gate,
-    expectedReadSet: buildWorkflowCompletionExpectedReadSet({
-      store: input.store,
-      workflow: input.workflow,
-      steps: input.steps,
-      derivedEvidence: {
-        referencedActionIds,
-        executionActionProjectionFingerprint: workflowCompletionBasisFingerprintV1(actions),
-      },
-    }),
-  };
+  return { gate, expectedReadSet };
 }
 
 function evaluateParticipant(

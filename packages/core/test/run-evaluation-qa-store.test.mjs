@@ -108,6 +108,17 @@ test("settlement result/receipt/usage atomic; completed task still holds lane un
   assert.equal(f.store.getRunEvaluationQaScope().laneState, "available");
   assert.equal(f.counts().run_evaluation_qa_requests, 1);
 });
+test("task receipt lookup returns one allowlisted immutable binding and rejects cross-enrollment corruption", async t => {
+  const f = await qaFixture(t), first = f.complete(f.admit(f.claim(f.enroll())));
+  f.release(first.request);
+  assert.deepEqual(f.store.getRunEvaluationQaRequestForTask(first.task.id), f.store.getRunEvaluationQaRequest(first.request.id));
+  assert.equal("payloadUtf8" in f.store.getRunEvaluationQaRequestForTask(first.task.id), false);
+  const task = f.store.getRunEvaluationTask(first.task.id);
+  const corrupted = new SqliteRunEvaluationQaStore({ database: f.database }, {
+    getRunEvaluationTask: () => ({ ...task, evaluationId: "foreign-evaluation" }),
+  }, f.cwd, id => f.store.getArtifact(id));
+  assert.throws(() => corrupted.getRunEvaluationQaRequestForTask(first.task.id), /evaluation.task_invalid/u);
+});
 test("fault in final receipt update rolls task result and terminal task/attempt back", async t => {
   const f = await qaFixture(t), admitted = f.admit(f.claim(f.enroll())), before = f.counts();
   f.database.exec("CREATE TRIGGER qa_inject BEFORE UPDATE OF receipt_json ON run_evaluation_qa_requests BEGIN SELECT RAISE(ABORT,'inject'); END");

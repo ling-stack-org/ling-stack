@@ -23,9 +23,9 @@ const graph = {
 // Transport/content persistence evidence, not a claim of playable generated media.
 const mediaBytes = Buffer.from("A11-owned-upstream-video-bytes");
 
-function assertIsolation() {
+function assertIsolation(environment = process.env) {
   for (const key of ["LING_STACK_HOME", "LING_STACK_DEFAULT_WORKSPACE_CWD"]) {
-    const value = process.env[key];
+    const value = environment[key];
     assert.ok(value && isAbsolute(value) && resolve(value) === value && value !== process.cwd() && value !== "/",
       `${key} must name an explicit isolated directory before product import`);
     assert.ok(statSync(value).isDirectory());
@@ -34,7 +34,6 @@ function assertIsolation() {
 
 /** Each case owns its process, listener, SQLite directory and builtin hooks. */
 async function runChild(caseName) {
-  assertIsolation();
   const root = await mkdtemp(join(tmpdir(), "ling-a11-public-api-"));
   const home = join(root, "user"), workspace = join(root, "workspace");
   await Promise.all([mkdir(home), mkdir(workspace)]);
@@ -43,6 +42,9 @@ async function runChild(caseName) {
     LING_STACK_HOME: home, LING_STACK_DEFAULT_WORKSPACE_CWD: workspace,
     LING_A11_PUBLIC_API_CASE: caseName,
   };
+  // The launcher does not import product code; validate the owned scope it
+  // actually passes to the child, not unused parent-process overrides.
+  assertIsolation(env);
   // Do not inherit Node test context, Provider credentials or daily user storage.
   const child = spawn(process.execPath, ["--test", "--test-reporter=tap", import.meta.filename],
     { env, stdio: ["ignore", "pipe", "pipe"], timeout: 45_000 });

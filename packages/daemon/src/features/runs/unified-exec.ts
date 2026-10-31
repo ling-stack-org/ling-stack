@@ -2,6 +2,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve as resolvePath } from "node:path";
+import { isChannelOperationRelativePathV1 } from "@ling-stack/contracts";
 import {
   redactSecrets,
   type ArtifactType,
@@ -29,6 +30,7 @@ import { createShellSnapshotWriter } from "./shell-snapshots.js";
 import { renderUnifiedExecModelOutput } from "./unified-exec-model-output.js";
 import { observeCommandProcess } from "./unified-exec-process.js";
 import type { NativeRestrictedCommandRuntime } from "../../runtime/sandbox/restricted-command-runtime.js";
+import { NodeCommandInputPreparationError } from "../../runtime/sandbox/node-command-inputs.js";
 import { createRestrictedCommandDispatch } from "./restricted-command-dispatch.js";
 import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
 import { validateWorkflowOperationRunContext } from "./workflow-operation-snapshot.js";
@@ -36,6 +38,7 @@ import { createStreamCapture, createSyntheticStreamCapture, toStreamSummary, typ
 import type { HostCommandOperation } from "../../runtime/host-operation-effects.js";
 import { createUnifiedExecRawDispatch } from "./unified-exec-raw-source.js";
 import { normalizeBashRequest } from "./unified-exec-request.js";
+import { bindWorkflowCommandRequest } from "./workflow-command-cwd.js";
 import { readStoredRunnerExecution } from "./existing-run-request.js";
 import { packagedSkillEnvironment, preparePackagedSkillState, restorePackagedSkillContext } from "../skills/packaged-runtime.js";
 
@@ -59,6 +62,9 @@ export async function executeUnifiedBashTool(input: {
   let delegated = false;
   try {
     input.hostOperation?.assertMayPrepare();
+    try { input = { ...input, request: bindWorkflowCommandRequest(input.store, input.run, input.request) }; }
+    catch (error) { return createUnifiedExecDeniedResult({ toolCallId: input.request.toolCallId,
+      approvalId: input.approvalId, reason: formatError(error) }); }
     const normalized = normalizeBashRequest(input.run, input.request, input.approvalId);
     if ("error" in normalized) {
       return writeSyntheticFailureResult({
@@ -662,6 +668,31 @@ function sanitizeId(value: string): string {
 }
 
 function formatError(error: unknown): string {
+  if (error instanceof NodeCommandInputPreparationError) {
+    // Only the parser's typed diagnostic may describe a dependency path. Do not
+    // treat arbitrary tool error fields, source text or specifiers as authority.
+    const path = isChannelOperationRelativePathV1(error.path) && error.path.length <= 4096
+      && !error.path.split("/").some(part => part.startsWith(".")) ? error.path : undefined;
+    const dependency = path === undefined ? "A dependency" : `Dependency ${JSON.stringify(path)}`;
+    switch (error.code) {
+      case "restricted_command_dependency_scope_required":
+        return `${error.code}: ${dependency} has no accepted dependency-read scope. Read permission for this path is required before this operation can continue.`;
+      case "restricted_command_dependency_outside_scope":
+        return `${error.code}: ${dependency} is outside the accepted read scope. Read permission for this path is required before this operation can continue.`;
+      case "restricted_command_dependency_unsupported":
+        return `${error.code}: This Node dependency syntax or resolution form is not supported. This is a preparation capability limit; repeated or broader authorization cannot resolve it.`;
+    }
+  }
+  if (error instanceof Error && (!("code" in error) || error.code === error.message)) {
+    // These exact Host policy codes intentionally expose no underlying cause or
+    // caller-provided fields. Other errors retain the existing formatting.
+    switch (error.message) {
+      case "restricted_command_input_policy_changed":
+        return `${error.message}: The accepted channel, participant, source or workspace policy facts or permissions changed. Revalidate the original operation before continuing.`;
+      case "restricted_command_input_read_not_allowed":
+        return `${error.message}: The effective policy must have read=allow before dependency inputs can be read. Command approval does not grant dependency-read permission.`;
+    }
+  }
   return error instanceof Error ? error.message : String(error);
 }
 

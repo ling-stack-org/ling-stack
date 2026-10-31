@@ -1,0 +1,36 @@
+✔ real Pi plus loopback SSE completes source-bound read and exclusive create with continuations=off (1869.994333ms)
+✔ real Pi plus loopback SSE completes source-bound read and exclusive create with continuations=enforce (1451.805417ms)
+✔ first delegated child reaches real SDK ACK, measured budget and sealed Host result (channel) (541.821709ms)
+✔ first delegated child reaches real SDK ACK, measured budget and sealed Host result (conversation) (473.895708ms)
+✔ resolved adapter and narrative/run_start cannot replace the actual receiver ACK: no-ack (543.775708ms)
+✔ resolved adapter and narrative/run_start cannot replace the actual receiver ACK: spurious-ready (405.96725ms)
+✔ a failed durable start commit rolls back ACK state and prevents the Provider transport (419.437667ms)
+✔ lookalike execution entry and modified child request cannot enter the actual Runner (371.798167ms)
+✔ interrupt drains the physical SDK Attempt without ending its logical Run or parent Task (642.807083ms)
+✔ same delegated child resumes its real committed SDK read checkpoint without replay (channel) (552.845458ms)
+✔ same delegated child resumes its real committed SDK read checkpoint without replay (conversation) (562.060291ms)
+✔ suspension verifies persisted SDK optional undefined fields without treating them as view drift (357.104667ms)
+✔ a live delegated child seals its own view without pretending it is a stopped handoff (349.555417ms)
+✔ suspension seals a pristine SDK view even when ordinary progress is not needed (350.075917ms)
+✔ suspension revalidates an existing exact head rather than inserting another checkpoint (365.590417ms)
+✔ suspension does not reuse a head when the actual SDK view no longer matches (359.064ms)
+✔ suspension rejects open tool batches even with a previously committed head (347.668125ms)
+✔ suspension cannot bless a final assistant as an ordinary paired-tool checkpoint (461.932875ms)
+✔ suspension still requires a complete view when there are no new tool_end events (342.005833ms)
+✔ suspension seals a newer canonical watermark even without another completed tool (344.149834ms)
+✔ a stale source cannot reuse a previously sealed head (356.156875ms)
+✔ suspension rechecks current permissions on a head with no new canonical events (518.075917ms)
+✔ missing durable payload cannot be replaced by the controller's cached SDK view (319.927583ms)
+✔ the Core canonical batch veto wins even if the in-memory active set is empty (327.926917ms)
+✔ suspension blocks Core checkpoint.effect_unjournaled; live-capable is not suspend-capable (327.266083ms)
+✔ suspension blocks Core checkpoint.effect_unknown; live-capable is not suspend-capable (346.031709ms)
+✔ suspension blocks Core checkpoint.head_conflict; live-capable is not suspend-capable (314.196333ms)
+✔ suspension blocks Core checkpoint.commit_failed; live-capable is not suspend-capable (316.8745ms)
+ℹ tests 28
+ℹ suites 0
+ℹ pass 28
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6267.871458

@@ -61,6 +61,7 @@ interface Scheduled {
 }
 interface Execution {
   readonly handle: MediaLocalExecutionHandle;
+  readonly abortController: AbortController;
   readonly key: string;
   readonly done: Completion;
   readonly reservations: Reservation[];
@@ -88,6 +89,18 @@ export class MediaLocalExecutionAdmissionError extends Error {
   constructor(readonly code: string, message: string) {
     super(message);
     this.name = "MediaLocalExecutionAdmissionError";
+  }
+}
+
+/** A finite local drain observation, never a remote stop or release receipt. */
+export class MediaLocalExecutionDrainTimeoutError extends Error {
+  readonly code = "media_local_drain_timeout";
+  readonly details: Readonly<{ activeExecutions: number; activeCallbacks: number; pendingReservations: number }>;
+
+  constructor(details: MediaLocalExecutionDrainTimeoutError["details"]) {
+    super("Media local executions have not drained.");
+    this.name = "MediaLocalExecutionDrainTimeoutError";
+    this.details = Object.freeze({ ...details });
   }
 }
 
@@ -262,6 +275,7 @@ export class MediaLocalExecutionRegistry {
     if (!entry || entry.phase === "completed" || entry.phase === "completing") return false;
     const draining = entry.active > 0;
     entry.cancelled = true;
+    entry.abortController.abort();
     if (entry.scheduled) { clearTimeout(entry.scheduled.timer); entry.scheduled = undefined; }
     // A prepared-but-never-dispatched generation has no physical tail to drain.
     if (entry.phase === "prepared") entry.phase = "active";
@@ -276,6 +290,11 @@ export class MediaLocalExecutionRegistry {
     if (this.#execution(handle).cancelled) {
       throw new MediaLocalExecutionAdmissionError("media_job_cancelled", "Media job was locally cancelled; remote outcome is separate.");
     }
+  }
+
+  /** A stop request for this exact local generation, never proof of remote cancellation or drain. */
+  getAbortSignal(handle: MediaLocalExecutionHandle): AbortSignal {
+    return this.#execution(handle).abortController.signal;
   }
 
   /** Read back the original immutable child fence; a late tail cannot adopt a replacement. */
@@ -354,7 +373,15 @@ export class MediaLocalExecutionRegistry {
   }
 
   beginShutdown(): void {
+    this.stopAdmission();
+    this.abortOwned();
+  }
+
+  stopAdmission(): void {
     this.#shutdown = true;
+  }
+
+  abortOwned(): void {
     for (const entry of this.#active) this.#stop(entry, "shutdown");
     this.#notify();
   }
@@ -381,7 +408,9 @@ export class MediaLocalExecutionRegistry {
       this.#waiters.add(notify);
       if (timeoutMs !== undefined) timer = setTimeout(() => {
         this.#waiters.delete(notify);
-        rejectPromise(new Error("Media local executions have not drained."));
+        rejectPromise(new MediaLocalExecutionDrainTimeoutError({ activeExecutions: this.#active.size,
+          activeCallbacks: [...this.#active].reduce((count, entry) => count + entry.active, 0),
+          pendingReservations: this.#pending.size }));
       }, timeoutMs);
     });
   }
@@ -400,7 +429,7 @@ export class MediaLocalExecutionRegistry {
   #create(binding: MediaLocalExecutionBinding, input?: MediaLocalExecutionReservationInput): Execution {
     const done = completion();
     const handle = Object.freeze({ cwd: binding.cwd, mediaJobId: binding.mediaJobId, generation: randomUUID(), completion: done.promise });
-    const entry: Execution = { handle, key: bindingKey(binding), done, reservations: [], phase: "prepared", retained: true, active: 0,
+    const entry: Execution = { handle, abortController: new AbortController(), key: bindingKey(binding), done, reservations: [], phase: "prepared", retained: true, active: 0,
       cancelled: false, source: input?.source, requestDigest: input?.requestDigest, toolCallId: input?.toolCallId,
       workUnitId: binding.workUnitId, effectGate: input?.effectGate, launchEffect: input?.launchEffect,
       completionGate: input?.completionGate };
@@ -446,6 +475,7 @@ export class MediaLocalExecutionRegistry {
   }
   #stop(entry: Execution, reason: "shutdown" | "source_obsolete"): void {
     entry.stopped = reason === "source_obsolete" ? reason : entry.stopped ?? reason;
+    entry.abortController.abort();
     if (entry.scheduled) { clearTimeout(entry.scheduled.timer); entry.scheduled = undefined; }
     this.#tryComplete(entry);
   }

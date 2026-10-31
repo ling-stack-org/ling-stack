@@ -54,6 +54,22 @@ async function writeSkill(root, directory, skillMarkdown, options = {}) {
   return skillDir;
 }
 
+// Regression: P3-MAIN-MCP-OFFSET — Unicode lowercasing changed original offsets.
+// Found by /qa independent content review on 2026-10-24
+// Report: output/e6-20260928/p3-main-core-provider-delta-review-20261024.md
+test("MCP claims and warning locations survive Unicode prefixes without offset drift", async () => {
+  const markdown = ["---", "name: review", "description: Review source", "---", "İ".repeat(16), "Use MCP__Server__Tool.", "After"].join("\n");
+  assert.deepEqual(buildSkillSourceSemanticProfile({ markdown, sourceChecksum: "sha256:unicode" }).toolClaims, ["mcp__server__tool"]);
+  await withTempDir("ling-stack-mcp-unicode-", async root => {
+    await writeSkill(root, "gstack-review", markdown);
+    const report = await previewGstackSkillSourceSync({
+      roots: [{ rootPath: root, sourceKind: "gstack-skill-directory", upstreamName: "gstack", upstreamVersion: GSTACK_DEFAULT_UPSTREAM_VERSION }],
+      registrySkills: builtinRegistryEntries(), snapshots: [], generatedAt: "2026-06-22T00:00:00.000Z",
+    });
+    assert.equal(report.records[0].warnings.find(warning => warning.code === "unsupported_tool")?.location, "SKILL.md:6");
+  });
+});
+
 function builtinRegistryEntries() {
   const pack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
   assert.ok(pack);

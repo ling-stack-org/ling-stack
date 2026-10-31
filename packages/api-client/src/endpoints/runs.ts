@@ -270,7 +270,7 @@ export const runEndpoints = {
       return this._post(`/threads/${encodeURIComponent(threadId)}/unpin`, { cwd }, input);
     },
 
-  async submitUserInputAnswer(
+  async submitRunUserInputAnswer(
     this: LingDaemonEndpointContext,
     cwd: string,
     threadId: string,

@@ -30,10 +30,6 @@ import {
 } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import type { ConversationRuntimeMetrics } from "@ling-stack/contracts";
-import {
-  conversationAuthorizationModeMenuOptions,
-  conversationPermissionPresetMenuOptions,
-} from "../../lib/session-permissions.js";
 import { useI18n } from "../../i18n.js";
 import {
   ComposerPendingAssetStrip,
@@ -44,8 +40,7 @@ import {
   type TokenizedComposerInputProps,
 } from "../../shared/components/index.js";
 import {
-  ComposerAuthorizationMenu,
-  ComposerPermissionMenu,
+  ConversationPermissionControl,
   ConversationComposerShell,
   ConversationBottomStatusStrip,
   ConversationGuidanceStrip,
@@ -566,23 +561,13 @@ export function ChannelComposer({
           <button className="icon-button composer-tool-button" type="button" onClick={onInsertMentionTrigger} disabled={!selectedChannelId || composerBusy} aria-label={t("Mention teammate")} title={t("Mention teammate")}>
             <AtSign size={16} />
           </button>
-          <ComposerAuthorizationMenu
-            mode={authorizationMode}
-            options={conversationAuthorizationModeMenuOptions(t)}
-            disabled={permissionLocked}
-            disabledReason={t("Authorization is locked while this channel run or message is active.")}
-            selectedModeLabel={t("Selected authorization mode {label}")}
-            menuLabel={t("Authorization mode")}
-            onModeChange={onAuthorizationModeChange}
-          />
-          <ComposerPermissionMenu
-            preset={permissionPreset}
-            options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}
+          <ConversationPermissionControl
+            authorizationMode={authorizationMode}
+            permissionPreset={permissionPreset}
+            fullAccessConfirmed={fullAccessConfirmed}
             disabled={permissionLocked}
             disabledReason={t("Permission is locked while this channel run or message is active.")}
-            selectedPermissionLabel={t("Selected permission preset {label}")}
-            menuLabel={t("Permission preset")}
-            onPresetChange={onPermissionPresetChange}
+            onAuthorizationModeChange={onAuthorizationModeChange}
           />
           {planModeChipVisible ? (
             <span className={planModeActive ? "conversation-mode-chip plan active" : "conversation-mode-chip plan"}>

@@ -4,7 +4,9 @@ import type { HostOperationSource, RunStore, HostAttemptEffectObservation } from
 export function observeHostAttemptCompletion(store: Pick<RunStore, "trackHostAttemptCompletion" | "releaseHostAttemptResources">,
   source: HostOperationSource, lifetime: Promise<unknown>, verifyEffectCoverage?: () => HostAttemptEffectObservation,
   onDurableCleanup?: () => void): Promise<void> {
-  const unavailable = (): void => { console.warn("host_attempt_completion_unavailable: durable local drain remains unverified"); };
+  const unavailable = (): void => {
+    console.warn("host_attempt_completion_unavailable: durable local drain remains unverified");
+  };
   try {
     return store.trackHostAttemptCompletion(source, lifetime, verifyEffectCoverage).then(async fact => {
       for (let attempt = 0; ; attempt++) {

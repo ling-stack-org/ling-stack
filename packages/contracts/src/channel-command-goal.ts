@@ -32,15 +32,22 @@ function isLiteral(value: unknown, depth: number): value is JsonLiteral {
 }
 
 /** Deterministic payload shared by binding, persistence validation and execution matching. */
-export function nodeFunctionGoalCommand(goal: Pick<ChannelNodeFunctionGoalV1, "modulePath" | "invocation">): string | undefined {
+export function nodeFunctionGoalCommand(goal: Pick<ChannelNodeFunctionGoalV1, "modulePath" | "invocation">, workingDirectoryPath?: string): string | undefined {
   const call = parseNodeFunctionInvocation(goal.invocation);
   const path = goal.modulePath;
   if (!call || typeof path !== "string" || !path || path.startsWith("/") || /[\\\u0000-\u001f:*?]/u.test(path)
     || path.split("/").some(part => !part || part === "." || part === "..")) return undefined;
   // Encode URL-significant path characters before dynamic import. Shell quoting
   // is a separate layer, and never authorizes the input file or command effect.
+  if (workingDirectoryPath !== undefined && (!workingDirectoryPath || workingDirectoryPath.startsWith("/")
+    || /[\\\u0000-\u001f:*?]/u.test(workingDirectoryPath)
+    || workingDirectoryPath.split("/").some(part => !part || part === "." || part === ".."))) return undefined;
+  const directoryParts = workingDirectoryPath?.split("/") ?? [], moduleParts = path.split("/");
+  let common = 0;
+  while (common < directoryParts.length && directoryParts[common] === moduleParts[common]) common++;
+  const relativeParts = [...directoryParts.slice(common).map(() => ".."), ...moduleParts.slice(common)];
   let moduleUrl: string;
-  try { moduleUrl = "./" + path.split("/").map(encodeURIComponent).join("/"); }
+  try { moduleUrl = (relativeParts[0] === ".." ? "" : "./") + relativeParts.map(encodeURIComponent).join("/"); }
   catch { return undefined; } // A lone UTF-16 surrogate is not a filesystem URL.
   const script = `const m=await import(${JSON.stringify(moduleUrl)});const k=${JSON.stringify(call.name)};`
     + `const f=Object.hasOwn(m,k)?m[k]:Object.hasOwn(m.default??{},k)?m.default[k]:null;`

@@ -8,6 +8,7 @@ import { omitUndefined } from "./helpers.js";
 import { mapArtifact } from "./external-work-mappers.js";
 import { artifactSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import type { SQLOutputValue } from "node:sqlite";
 
 export interface SqliteArtifactStorePorts {
   readonly hasRun: (id: string) => boolean;
@@ -118,28 +119,39 @@ export class SqliteArtifactStore {
 
   getArtifact(artifactId: string): RunArtifact | undefined {
     const row = this.context.database.prepare(artifactSelectSql("WHERE id = ?")).get(artifactId);
-    return row ? mapArtifact(row) : undefined;
+    return row ? this.mapArtifactWithRetention(row) : undefined;
   }
 
   listArtifacts(runId: string): RunArtifact[] {
     return this.context.database
       .prepare(`${artifactSelectSql("WHERE run_id = ?")} ORDER BY created_at ASC, id ASC`)
       .all(runId)
-      .map(mapArtifact);
+      .map((row) => this.mapArtifactWithRetention(row));
   }
 
   listMediaJobArtifacts(mediaJobId: string): RunArtifact[] {
     return this.context.database
       .prepare(`${artifactSelectSql("WHERE media_job_id = ?")} ORDER BY created_at ASC, id ASC`)
       .all(mediaJobId)
-      .map(mapArtifact);
+      .map((row) => this.mapArtifactWithRetention(row));
   }
 
   listExternalWorkArtifacts(externalWorkId: string): RunArtifact[] {
     return this.context.database
       .prepare(`${artifactSelectSql("WHERE external_work_id = ?")} ORDER BY created_at ASC, id ASC`)
       .all(externalWorkId)
-      .map(mapArtifact);
+      .map((row) => this.mapArtifactWithRetention(row));
+  }
+
+  private mapArtifactWithRetention(row: Record<string, SQLOutputValue>): RunArtifact {
+    const artifact = mapArtifact(row);
+    if (row.sealed_payload_json !== null || row.content_sha256 === null) return artifact;
+    // Some migrations use the artifact reader before the additive retention migration is installed.
+    if (!this.context.database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='harness_artifact_gc_receipts'").get()) return artifact;
+    const receipt = this.context.database.prepare("SELECT content_sha256 FROM harness_artifact_gc_receipts WHERE artifact_id=?").get(artifact.id);
+    if (!receipt) return artifact;
+    if (receipt.content_sha256 !== artifact.contentSha256) throw new Error("artifact_pruned_digest_mismatch");
+    return { ...artifact, sealedPayloadState: "pruned" };
   }
 }
 

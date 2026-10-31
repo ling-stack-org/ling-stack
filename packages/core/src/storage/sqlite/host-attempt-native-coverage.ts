@@ -3,6 +3,7 @@ import { isExternalExecutionEngineId, parseExecutionBindingRequest } from "@ling
 import type { HostOperationSource } from "../../host-operation-journal-types.js";
 import type { NativeAttemptEffectInventory } from "../../host-attempt-completion-types.js";
 import { readHostOperationBlockers } from "./host-operation-journal-store.js";
+import { assertHistoricalAttemptSource, type HostAttemptReadScope } from "./host-attempt-read-scope.js";
 
 /** Use durable execution identity, never a callback's claim to use Pi coverage. */
 export function isNativeCompletionSource(database: DatabaseSync, source: HostOperationSource): boolean {
@@ -27,7 +28,7 @@ export function nativeAttemptInventory(value: unknown): NativeAttemptEffectInven
 
 /** Every read re-verifies the exact original journal. Neither process exit nor tool_end settles a remote effect. */
 export function readNativeAttemptEffectStatus(database: DatabaseSync, source: HostOperationSource,
-  json: SQLOutputValue | undefined): "settled" | "pending" | "unknown" | "unverified" {
+  json: SQLOutputValue | undefined, scope: HostAttemptReadScope = "whole_run"): "settled" | "pending" | "unknown" | "unverified" {
   try {
     const inventory = typeof json === "string" ? nativeAttemptInventory(JSON.parse(json)) : undefined;
     if (!inventory || !isNativeCompletionSource(database, source)) return "unverified";
@@ -35,24 +36,47 @@ export function readNativeAttemptEffectStatus(database: DatabaseSync, source: Ho
       .get(source.runId, source.workUnitId);
     const binding = parseExecutionBindingRequest(JSON.parse(String(run?.request_snapshot_json)).executionBinding);
     if (binding.kind !== "native_profile") return "unverified";
-    // The closed inventory covers the entire Run, including effects published outside the native event writer.
-    const uncovered = database.prepare(`SELECT data_json FROM run_events WHERE run_id=?
+    if (scope === "whole_run" && database.prepare(`SELECT data_json FROM run_events WHERE run_id=?
       AND (type IN ('tool_start','tool_update','tool_end') OR json_type(data_json,'$.nativeOutput') IS NOT NULL)`)
       .all(source.runId).some(row => {
         const native = JSON.parse(String(row.data_json)).nativeOutput;
         return !native || !inventory.submissionIds.includes(native.submissionId);
-      });
-    if (uncovered) return "unverified";
-    const blockers = readHostOperationBlockers(database, source, new Date().toISOString());
+      })) return "unverified";
+    const blockers = readHostOperationBlockers(database, source, new Date().toISOString(), scope);
     if (blockers.some(blocker => blocker.phase === "unknown_outcome")) return "unknown";
     if (blockers.length) return "pending";
     const submissions = database.prepare(`SELECT submission.*,binding.selection_json FROM native_submissions AS submission
       JOIN native_execution_bindings AS binding ON binding.id=submission.binding_id
       WHERE submission.run_id=? OR submission.attempt_id=? ORDER BY submission.id`).all(source.runId, source.attemptId);
-    if (submissions.length !== inventory.submissionIds.length
-      || submissions.some(row => !inventory.submissionIds.includes(String(row.id)) || row.run_id !== source.runId
-        || row.work_unit_id !== source.workUnitId || row.attempt_id !== source.attemptId
-        || row.runtime_instance_id !== source.runtimeInstanceId || row.fencing_token !== source.fencingToken)) return "unverified";
+    const current = submissions.filter(row => row.attempt_id === source.attemptId);
+    if (current.length !== inventory.submissionIds.length) return "unverified";
+    for (const row of submissions) {
+      if (row.run_id !== source.runId || row.work_unit_id !== source.workUnitId) return "unverified";
+      if (row.attempt_id === source.attemptId) {
+        if (!inventory.submissionIds.includes(String(row.id)) || row.runtime_instance_id !== source.runtimeInstanceId
+          || row.fencing_token !== source.fencingToken) return "unverified";
+      } else {
+        if (scope !== "exact_attempt") return "unverified";
+        assertHistoricalAttemptSource(database, source, { runId: String(row.run_id), workUnitId: String(row.work_unit_id),
+          attemptId: String(row.attempt_id), runtimeInstanceId: String(row.runtime_instance_id), fencingToken: String(row.fencing_token) }, new Date().toISOString());
+        const historical = database.prepare(`SELECT native_effect_inventory_json FROM host_attempt_completions WHERE run_id=? AND attempt_id=?
+          AND work_unit_id=? AND runtime_instance_id=? AND fencing_token=?`)
+          .get(row.run_id!, row.attempt_id!, row.work_unit_id!, row.runtime_instance_id!, row.fencing_token!);
+        const closed = typeof historical?.native_effect_inventory_json === "string" ? nativeAttemptInventory(JSON.parse(historical.native_effect_inventory_json)) : undefined;
+        const ownRows = submissions.filter(candidate => candidate.attempt_id === row.attempt_id);
+        if (!closed || ownRows.length !== closed.submissionIds.length || ownRows.some(candidate => !closed.submissionIds.includes(String(candidate.id)))) return "unverified";
+      }
+    }
+    // In exact scope every historical submission is independently checked below;
+    // an unowned event still cannot disappear merely because its Attempt differs.
+    const ownedIds = scope === "whole_run" ? inventory.submissionIds : submissions.map(row => String(row.id));
+    const uncovered = database.prepare(`SELECT data_json FROM run_events WHERE run_id=?
+      AND (type IN ('tool_start','tool_update','tool_end') OR json_type(data_json,'$.nativeOutput') IS NOT NULL)`)
+      .all(source.runId).some(row => {
+        const native = JSON.parse(String(row.data_json)).nativeOutput;
+        return !native || !ownedIds.includes(native.submissionId);
+      });
+    if (uncovered) return "unverified";
     for (const row of submissions) {
       if (row.status === "unknown") return "unknown";
       if (["reserved", "submission_pending", "accepted"].includes(String(row.status))) return "pending";

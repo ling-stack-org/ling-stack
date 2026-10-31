@@ -3,7 +3,7 @@ import type { ChannelWorkflowStep } from "../types.js";
 import type { ConversationAgentActivitySpan, ConversationWorkCellRow, ConversationWorkCellRowTone, ConversationWorkCellViewModel } from "./conversation-work-cell.js";
 import { normalizeConversationOperationCell } from "./conversation-work-cell.js";
 import type { CollaborationTaskCardModel, CollaborationTaskStepState } from "./collaboration-task-card.js";
-import { workflowProgressToConversationWorkCell, type WorkflowProgressModel } from "./workflow-progress.js";
+import { workflowProgressToConversationWorkCell, workflowStepLifecycle, type WorkflowProgressModel } from "./workflow-progress.js";
 
 export function collaborationTaskCardToConversationWorkCell(input: {
   readonly card: CollaborationTaskCardModel;
@@ -217,7 +217,9 @@ function buildCollaborationAgentSpans(
     summary: group.latestStep ? undefined : group.summary,
     meta: undefined,
     tone: collaborationStepTone(group.state),
-    stateLabel: collaborationTaskStepStateMeta(group.state, t),
+    lifecycle: collaborationGroupLifecycle(group.state),
+    stateLabel: group.state === "waiting" && group.latestStep && workflowStepById.get(group.latestStep.id)?.status === "waiting_for_input"
+      ? t("waiting for user input") : collaborationTaskStepStateMeta(group.state, t),
     latestRow: group.latestStep ? collaborationStepToAgentRow(group.latestStep, t, "latest", workflowStepById.get(group.latestStep.id)) : undefined,
     rows: group.detailSteps.map((step) => collaborationStepToAgentRow(step, t, "history", workflowStepById.get(step.id))),
   }));
@@ -291,7 +293,9 @@ function agentSpanFocusStep(
   return steps.find((step) => step.state === "blocked") ??
     steps.find((step) => step.state === "failed") ??
     steps.find((step) => step.state === "active") ??
-    steps.find((step) => step.state === "waiting" || step.state === "queued") ??
+    steps.find((step) => step.state === "waiting") ??
+    steps.find((step) => step.state === "queued") ??
+    steps.find((step) => step.state === "cancelled") ??
     steps.at(-1);
 }
 
@@ -530,7 +534,7 @@ function agentSpanGroupState(steps: readonly CollaborationTaskCardModel["steps"]
   if (steps.every((step) => step.state === "done")) {
     return "done";
   }
-  if (steps.every((step) => step.state === "cancelled")) {
+  if (steps.every((step) => step.state === "done" || step.state === "cancelled")) {
     return "cancelled";
   }
   return "waiting";
@@ -603,4 +607,12 @@ function collaborationStepTone(state: CollaborationTaskStepState): ConversationW
     return "waiting";
   }
   return "failed";
+}
+
+function collaborationGroupLifecycle(state: CollaborationTaskStepState): NonNullable<ConversationAgentActivitySpan["lifecycle"]> {
+  const status: Record<CollaborationTaskStepState, ChannelWorkflowStep["status"]> = {
+    done: "succeeded", active: "running", waiting: "waiting_for_approval", queued: "queued",
+    blocked: "blocked", failed: "failed", cancelled: "cancelled",
+  };
+  return workflowStepLifecycle(status[state]);
 }

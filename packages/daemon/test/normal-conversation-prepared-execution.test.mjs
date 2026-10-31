@@ -89,7 +89,7 @@ for (const explicit of [true, false]) test(`typed Pi conversation prepares, exec
     body = ""; statusCode = 200; writableEnded = false; headersSent = false;
     writeHead(status) { this.statusCode = status; this.headersSent = true; }
     setHeader() {} flushHeaders() {}
-    write(value) { this.body += value; }
+    write(value) { this.body += value; return true; }
     end(value = "") { this.body += value; this.writableEnded = true; }
   }
   const input = { threadId: f.request.threadId, message: "TYPED_PI_CURRENT", idempotencyKey: `typed-pi-${explicit}`,
@@ -255,7 +255,7 @@ test("a real conversation route ends its SSE with blocked when preparation fails
     writeHead(status) { this.statusCode = status; this.headersSent = true; }
     setHeader() {}
     flushHeaders() {}
-    write(value) { this.body += value; }
+    write(value) { this.body += value; return true; }
     end(value = "") { this.body += value; this.writableEnded = true; }
   }
   const response = new Response();

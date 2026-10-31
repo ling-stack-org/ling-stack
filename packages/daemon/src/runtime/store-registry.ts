@@ -6,6 +6,8 @@ import { MediaLocalExecutionRegistry } from "./media-local-executions.js";
 export type RunStoreFactory = (cwd: string) => RunStore;
 
 export interface RunStoreRegistryOptions {
+  /** Synchronous ownership admission, before either registry recovery mutates the Store. */
+  readonly beforeRecovery?: (cwd: string, store: RunStore) => void;
   readonly onStoreInitialized?: (cwd: string, store: RunStore) => void | Promise<void>;
   readonly trustedWorkspaceRoots?: readonly string[];
   readonly recoverOnOpen?: boolean;
@@ -35,23 +37,24 @@ export class RunStoreRegistry {
     }
 
     const store = this.storeFactory(cwd);
-    if (this.options.recoverOnOpen !== false) {
-      const now = new Date().toISOString();
-      store.recoverStaleRuns(now);
-      store.recoverStaleChannelWorkflows(now);
-    }
-    this.storesByCwd.set(cwd, store);
     try {
+      this.options.beforeRecovery?.(cwd, store);
+      if (this.options.recoverOnOpen !== false) {
+        const now = new Date().toISOString();
+        store.recoverStaleRuns(now);
+        store.recoverStaleChannelWorkflows(now);
+      }
+      this.storesByCwd.set(cwd, store);
       void Promise.resolve(this.options.onStoreInitialized?.(cwd, store)).catch(() => undefined);
     } catch (error) {
-      this.storesByCwd.delete(cwd);
+      if (this.storesByCwd.get(cwd) === store) this.storesByCwd.delete(cwd);
       for (const [runId, rememberedStore] of this.storesByRunId) {
         if (rememberedStore === store) this.storesByRunId.delete(runId);
       }
       try {
         store.close();
-      } catch {
-        // Cleanup failure must not replace the original initialization error.
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "run_store_initialization_failed_cleanup_incomplete", { cause: error });
       }
       throw error;
     }

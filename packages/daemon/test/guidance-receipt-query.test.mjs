@@ -16,7 +16,11 @@ async function fixture(t) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-guidance-receipt-"));
   const f = { cwd, store: createSqliteRunStore(cwd) };
   const config = resolveConfig({ host: "127.0.0.1", port: 0 });
-  const registry = new RunStoreRegistry(() => f.store);
+  let registry = new RunStoreRegistry(() => f.store);
+  f.reopen = () => {
+    f.store.close(); f.store = createSqliteRunStore(cwd);
+    registry = new RunStoreRegistry(() => f.store);
+  };
   const activeRuns = new ActiveRunRegistry();
   const directService = new DirectReplyControlService({});
   const server = createServer((request, response) => {
@@ -111,4 +115,23 @@ test("normal guidance HTTP acceptance preserves its file and exact query does no
   assert.equal(f.store.getConversationAttachment(file.id).turnId, undefined);
   assert.equal(f.store.listLingTurns({ threadId: thread.id }).length, 0);
   assert.equal(f.store.listRuns().length, 1);
+});
+
+test("normal guidance HTTP and SQLite round-trip distinguish lexical and explicit file sources", async t => {
+  const f = await fixture(t);
+  sourceRun(f, "path-source-run");
+  const fileRefs = ["inferred_text", "composer", "explicit_text", "api"].map(source => ({
+    path: `${source}/file.txt`, source, rootRelation: "unknown", kind: "unknown", materializationStatus: "not_loaded" }));
+  const input = { mode: "queue_followup", instruction: "Explain paths", idempotencyKey: "path-origin",
+    messagePayload: { body: "Explain paths", attachmentIds: [], linkPreviewIds: [], fileRefs } };
+  const accepted = await f.request("/runs/path-source-run/interventions", input);
+  assert.equal(accepted.status, 201, JSON.stringify(accepted.data));
+  assert.deepEqual(accepted.data.intervention.messagePayload.fileRefs, fileRefs);
+  f.reopen();
+  const receipt = await f.request("/runs/path-source-run/interventions?idempotencyKey=path-origin");
+  assert.equal(receipt.status, 200, JSON.stringify(receipt.data));
+  assert.deepEqual(receipt.data.interventions[0].messagePayload.fileRefs, fileRefs);
+  const invalid = await f.request("/runs/path-source-run/interventions", { ...input,
+    idempotencyKey: "invalid-origin", messagePayload: { ...input.messagePayload, fileRefs: [{ ...fileRefs[0], source: "invalid" }] } });
+  assert.equal(invalid.status, 400);
 });

@@ -47,9 +47,25 @@ export class SqliteChannelSessionStore {
   createChannel(input: CreateChannelInput, now: string): Channel {
     return this.write(() => {
       const channel = this.ports.createChannel(input, now);
-      this.ports.createLingThread({ kind: "channel_discussion", channelId: channel.id,
-        title: "Default conversation", objective: `Default conversation for ${channel.name}.`,
-        surfaceKind: "channel_root", relationKind: "root" }, now);
+      const existingRoot = this.database.prepare(`SELECT id FROM ling_threads
+        WHERE workspace_id = ? AND channel_id = ? AND surface_kind = 'channel_root'
+        ORDER BY created_at, id LIMIT 1`).get(DEFAULT_WORKSPACE_ID, channel.id) as Row | undefined;
+      if (existingRoot) {
+        // Channel deletion deliberately keeps the historical root thread. Reopen
+        // that tombstone so recreating the same channel id cannot violate the
+        // active-root uniqueness invariant or fork the channel's default history.
+        this.ports.updateLingThread(String(existingRoot.id), {
+          title: "Default conversation",
+          objective: `Default conversation for ${channel.name}.`,
+          status: "open",
+          archivedAt: null,
+          archivedReason: null,
+        }, now);
+      } else {
+        this.ports.createLingThread({ kind: "channel_discussion", channelId: channel.id,
+          title: "Default conversation", objective: `Default conversation for ${channel.name}.`,
+          surfaceKind: "channel_root", relationKind: "root" }, now);
+      }
       return channel;
     });
   }

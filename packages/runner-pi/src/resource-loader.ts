@@ -9,6 +9,7 @@ import { createLingStackPermissionRequestExtension } from "./extensions/permissi
 import { createLingStackToolHydrationExtension } from "./extensions/tool-hydration.js";
 import { createLingStackTaskContinuationExtension } from "./extensions/task-continuation.js";
 import { createLingStackUserInputExtension, isUserInputToolSurfaceEnabled } from "./extensions/user-input.js";
+import { createLingStackDelegationExtension, isDelegationToolSurfaceEnabled } from "./extensions/delegation.js";
 import { createLingStackToolBeforeExtension } from "./extensions/tool-before.js";
 import { createLingStackModelContextBudgetExtension } from "./model-context-budget.js";
 import type { PiRunnerRunOptions } from "./types.js";
@@ -35,6 +36,7 @@ export async function createLingStackResourceLoader(
       createLingStackModelContextBudgetExtension({ acceptedTaskPrompt: options.preparedInput?.userPrompt ?? formatTaskPrompt(options.task) }),
       ...(options.onTaskContinuationBoundary ? [createLingStackTaskContinuationExtension(options)] : []),
       ...(isUserInputToolSurfaceEnabled(options) ? [createLingStackUserInputExtension(options)] : []),
+      ...(isDelegationToolSurfaceEnabled(options) ? [createLingStackDelegationExtension(options)] : []),
       ...(options.onToolBefore ? [createLingStackToolBeforeExtension(options)] : []),
       createLingStackFileMutationToolExtension(options),
       // Bash always has a Host result. Feature flags cannot re-enable an unjournaled SDK spawn.

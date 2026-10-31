@@ -376,18 +376,26 @@ export class SqliteConversationContextStore {
       SELECT status FROM ling_threads WHERE workspace_id = ? AND id = ?
     `).get(DEFAULT_WORKSPACE_ID, input.threadId) as Record<string, SQLOutputValue> | undefined;
     if (!thread) throw new Error(`Conversation snapshot thread not found: ${input.threadId}`);
-    const segment = this.context.database.prepare(`
-      SELECT thread_id, state FROM context_segments WHERE workspace_id = ? AND id = ?
-    `).get(DEFAULT_WORKSPACE_ID, input.segmentId) as Record<string, SQLOutputValue> | undefined;
-    if (!segment || readString(segment, "thread_id") !== input.threadId) {
-      throw new Error(`Conversation snapshot segment does not belong to thread: ${input.segmentId}`);
-    }
-    const watermark = this.context.database.prepare(`
-      SELECT id FROM conversation_items
-      WHERE workspace_id = ? AND thread_id = ? AND sequence = ? AND status = 'committed'
-    `).get(DEFAULT_WORKSPACE_ID, input.threadId, input.throughItemSequence);
-    if (!watermark) {
-      throw new Error(`Conversation snapshot watermark item not found: ${input.threadId}/${input.throughItemSequence}`);
+    if (input.throughItemSequence === 0) {
+      const nonempty = this.context.database.prepare(`
+        SELECT 1 FROM conversation_items WHERE workspace_id = ? AND thread_id = ?
+        UNION ALL SELECT 1 FROM ling_turns WHERE workspace_id = ? AND thread_id = ? LIMIT 1
+      `).get(DEFAULT_WORKSPACE_ID, input.threadId, DEFAULT_WORKSPACE_ID, input.threadId);
+      if (nonempty) throw new Error(`An empty snapshot requires an empty parent thread: ${input.threadId}`);
+    } else {
+      const segment = this.context.database.prepare(`
+        SELECT thread_id, state FROM context_segments WHERE workspace_id = ? AND id = ?
+      `).get(DEFAULT_WORKSPACE_ID, input.segmentId ?? null) as Record<string, SQLOutputValue> | undefined;
+      if (!segment || readString(segment, "thread_id") !== input.threadId) {
+        throw new Error(`Conversation snapshot segment does not belong to thread: ${input.segmentId}`);
+      }
+      const watermark = this.context.database.prepare(`
+        SELECT id FROM conversation_items
+        WHERE workspace_id = ? AND thread_id = ? AND sequence = ? AND status = 'committed'
+      `).get(DEFAULT_WORKSPACE_ID, input.threadId, input.throughItemSequence);
+      if (!watermark) {
+        throw new Error(`Conversation snapshot watermark item not found: ${input.threadId}/${input.throughItemSequence}`);
+      }
     }
     const summaryIds = [...new Set(input.summaryIds ?? [])];
     for (const summaryId of summaryIds) {
@@ -399,7 +407,7 @@ export class SqliteConversationContextStore {
     const snapshot: ConversationContextSnapshot = {
       id: input.id ?? `context_snapshot_${randomUUID()}`,
       threadId: input.threadId,
-      segmentId: input.segmentId,
+      ...(input.segmentId ? { segmentId: input.segmentId } : {}),
       projectionVersion: input.projectionVersion,
       throughItemSequence: input.throughItemSequence,
       summaryIds,
@@ -419,7 +427,7 @@ export class SqliteConversationContextStore {
       snapshot.id,
       DEFAULT_WORKSPACE_ID,
       snapshot.threadId,
-      snapshot.segmentId,
+      snapshot.segmentId ?? null,
       snapshot.projectionVersion,
       snapshot.throughItemSequence,
       stringifyJson(snapshot.summaryIds),
@@ -721,7 +729,7 @@ function mapConversationContextSnapshot(row: Record<string, SQLOutputValue>): Co
   const value = {
     id: readString(row, "id"),
     threadId: readString(row, "thread_id"),
-    segmentId: readString(row, "segment_id"),
+    ...(readNullableString(row, "segment_id") ? { segmentId: readNullableString(row, "segment_id") } : {}),
     projectionVersion: readString(row, "projection_version"),
     throughItemSequence: readNumber(row, "through_item_sequence"),
     summaryIds,
@@ -830,15 +838,21 @@ function assertValidSummarySourceFence(source: ConversationContextSummarySourceF
 }
 
 function assertValidSnapshotInput(input: CreateConversationContextSnapshotInput): void {
-  if (!input.threadId.trim() || !input.segmentId.trim()) {
-    throw new Error("Conversation snapshot thread and segment ids are required.");
+  if (!input.threadId.trim()) {
+    throw new Error("Conversation snapshot thread id is required.");
   }
   if (!input.projectionVersion.trim() || !input.policyVersion.trim()) {
     throw new Error("Conversation snapshot projection and policy versions are required.");
   }
-  if (!Number.isSafeInteger(input.throughItemSequence) || input.throughItemSequence < 1) {
+  if (!Number.isSafeInteger(input.throughItemSequence) || input.throughItemSequence < 0) {
     throw new RangeError(`Invalid conversation snapshot watermark: ${input.throughItemSequence}`);
   }
+  if (input.throughItemSequence === 0) {
+    if (input.segmentId !== undefined || (input.summaryIds?.length ?? 0) !== 0
+      || input.sourceRefs.length !== 1 || input.sourceRefs[0]?.type !== "thread" || input.sourceRefs[0].id !== input.threadId) {
+      throw new Error("An empty snapshot has no segment or summaries and references only its parent thread.");
+    }
+  } else if (!input.segmentId?.trim()) throw new Error("A nonempty conversation snapshot requires a segment id.");
   if (input.sourceRefs.some((ref) => !isConversationDomainRef(ref))) {
     throw new Error("Conversation snapshot contains an invalid source ref.");
   }

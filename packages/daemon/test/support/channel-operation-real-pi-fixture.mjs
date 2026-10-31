@@ -41,14 +41,14 @@ export async function startRealPiChannelFixture(cwd, respond, hostConfig = {}) {
     get selectorRequests() { return upstream.requests.filter((request) => /channel intent selector/i.test(systemText(request))); },
     get requests() { return upstream.requests; },
     async close() { await daemon.stop(); await upstream.close(); },
-    async assertWorkflowCompleted(created, { files, actionTypes, participantIds, approvalCount = files.length }) {
+    async assertWorkflowCompleted(created, { files, actionTypes, participantIds, approvalCount = files.length, settleTimeoutMs = 10_000 }) {
       const store = stores.get(cwd);
       const workflowId = created.autoStartedWorkflow.workflow.id;
       const source = store.getConversationItem((created.userItem ?? created.message).id);
       const steps = created.autoStartedWorkflow.workflowSteps;
       const stepIds = new Set(steps.map((step) => step.id));
       const approvals = new Set();
-      const deadline = Date.now() + 10_000;
+      const deadline = Date.now() + settleTimeoutMs;
       while (Date.now() < deadline) {
         for (const approval of store.listApprovalRequests({ status: "pending", limit: 20 })) {
           assert.ok(stepIds.has(store.getRun(approval.runId)?.workflowStepId), "only this workflow may request an approval");
