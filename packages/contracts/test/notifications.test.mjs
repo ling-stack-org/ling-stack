@@ -56,7 +56,7 @@ test("interactive html scan accepts offline self-contained documents and rejects
   assert.equal(scanInteractiveHtml("x".repeat(3 * 1024 * 1024)).ok, false);
 });
 
-test("interactive html preview carries the offline CSP so scripts cannot reach the daemon or the network", () => {
+test("interactive html preview carries the resource CSP for connections and form submission", () => {
   const cspMeta = '<meta http-equiv="Content-Security-Policy" content="' + HTML_INTERACTIVE_CSP + '">';
   const withHead = injectInteractiveHtmlCsp("<html><head><title>t</title></head><body><script>1+1</script></body></html>");
   assert.ok(withHead.startsWith("<html><head>" + cspMeta), withHead.slice(0, 120));

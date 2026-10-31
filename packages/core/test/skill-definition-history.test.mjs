@@ -92,7 +92,7 @@ test("imports and direct owning-source updates also enter history; historical mi
   f.edit("Current definition");
   f.database.exec(`DROP TRIGGER skill_definition_history_create; DROP TRIGGER skill_definition_history_update;
     DROP TRIGGER skill_definition_history_notice; DROP TABLE skill_definition_revision_notices;
-    DROP TABLE skill_definition_revisions; DELETE FROM schema_migrations WHERE version = 178`);
+    DROP TABLE skill_definition_revisions; DELETE FROM schema_migrations WHERE version = 180`);
   f.reopen();
   const history = f.store.listSkillDefinitionRevisions(definition.id);
   assert.equal(history.length, 1); assert.equal(history[0].kind, "baseline");

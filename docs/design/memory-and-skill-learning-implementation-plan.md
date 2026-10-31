@@ -2,7 +2,7 @@
 
 Status: source implemented; final review and release acceptance in progress
 Owner: memory, skill governance, and daemon runtime maintainers
-Last verified: 2026-10-29
+Last verified: 2026-10-30
 Document type: cross-feature implementation plan
 Canonical replacement: none; existing memory, skill, and runtime contracts remain authoritative
 Code and test anchors: listed in the baseline and verification sections below
@@ -18,7 +18,7 @@ Code and test anchors: listed in the baseline and verification sections below
 
 SQLite 中的记忆对象、审核记录和技能注册表继续拥有事实状态；LanceDB 和 Wiki 都是派生层。默认 runner、执行权限和审批仍由 Ling runtime control plane 管理。
 
-本计划只定义实施范围和验收条件，不表示代码已实现、PR 已合并或应用已发布。实施基线已刷新为远端 `origin/main` 的 `0b25fc18`；代码位于独立的 `codex/memory-skill-learning` 工作树，未复制原工作区的会话／审批 WIP。packaged 应用尚未验收。
+本计划定义实施范围和验收条件；代码交付与实际验收分别记录在当前执行账本，不能据计划状态推断 PR 已合并或应用已发布。当前整合基线为远端 `origin/main` 的 `05aca19c`；代码位于独立的 `codex/memory-skill-learning` 工作树，未复制原工作区的会话／审批 WIP。packaged 应用尚未验收。
 
 ## 2. 借鉴来源与边界
 
@@ -208,11 +208,11 @@ flowchart TD
 | A | 统一召回边界、真实 owner/membership/lineage 校验与资格／排除／选择审计已接入 | 核心资格排除计数、daemon 无结果／拒绝审计与现有 UsedMemoryEvent 分层测试通过；不将选择或供给当成模型实际采纳 |
 | B | FTS5 Unicode 二元组候选索引、事务更新、dirty 回退、重建已实现 | 索引／召回／审核定向测试、1k/10k 合成样例；跨平台 packaged FTS5 仍待实测 |
 | C | 观察治理 service、来源幂等、有限证据提炼和显式经验保存已接入；支持持久任务、三种会话 turn 和已确认决策 | 三种无 task turn 来源、决策确认／拒绝／替换、归属、候选原子提交、纠正到修订及 transport 测试通过 |
-| D | 默认关闭的持久作业、WorkUnit/Attempt、可调低预算、取消、前台让行和重启 fencing 已接入 | 定向测试及 daemon HTTP 验收已通过；真实模型质量／费用仍待实测 |
-| E | 定义 before/after 历史、CAS、幂等撤销、可恢复通知及运行定义快照已实现 | 前端历史、差异、确认撤销已接；真实浏览器纠正→审核→原技能修订→撤销及数据库内容恢复已通过 |
-| F | 已接统一回复 footer、run 详情、频道决策和 AI evolution 的按需学习面板 | 本地受控模型完成浏览器纠正闭环；三种会话来源服务测试通过，记忆候选原 scope 审核与归档入口已补齐，新增浏览器验收进行中 |
-| G | 可选 LanceDB、embedding transport、outbox／generation／分页恢复、五入口融合和设置界面已实现 | 原生 adapter 与 HTTP／数据策略／离线回退测试通过；本机真实 EmbeddingGemma 的独立校准和小型标注质量评测通过；原生跨平台 packaged 验收仍独立保留 |
-| H | 精确 scope Wiki、主题／来源／关联索引、报告、独立人工笔记与 Markdown 导出已实现 | 确定性、来源失效、并发 fencing、manifest 防篡改、删除派生重建及 API 验证通过；浏览器验收进行中 |
+| D | 默认关闭的持久作业、WorkUnit/Attempt、可调低预算、取消、前台让行和重启 fencing 已接入 | 定向测试及 daemon HTTP 验收通过；本机 CPA 的 gpt-6-luna 完成 4 个人工质量样例及真实持久任务，token 已记录、金额费率未知；小样本不代表泛化质量 |
+| E | 定义 before/after 历史、CAS、幂等撤销、可恢复通知及运行定义快照已实现 | 真实浏览器修订／撤销、双窗口冲突保留草稿与键盘确认通过；另用 CPA gpt-6.1-sol 完成实际只读 Pi 来源 Run→真实 tool_end 证据→学习 job→pending→显式批准→原技能 revision2→真实后续 Run 固定 revision2→undo 恢复原定义。同一来源 lineage 已核对，旧 Run 保留 revision1；人工收据样例两版都正确，不证明方法质量提升，费用费率未知 |
+| F | 已接统一回复 footer、run 详情、频道决策和 AI evolution 的按需学习面板；频道适配保留明确 Run 关联 | 普通／私聊／频道均在真实 daemon/SQLite 与人工终态来源、受控 HTTP 提炼下完成记忆保存、错误恢复与原 owner 批准，并完成技能纠正→待审核→diff→原技能应用→undo；全定义、来源、权限、绑定与旧 Run revision 保持。受控组件浏览器另验证来源／cwd 延迟读取和旧保存响应不能覆盖新页面草稿；三种受控 UI 流程不冒称三次真实模型会话，实际来源任务的学习 lineage 由 E 的独立 CPA 实操补证 |
+| G | 可选 LanceDB、embedding transport、outbox／generation／分页恢复、五入口融合和设置界面已实现 | 原生 adapter 与 HTTP／数据策略／离线回退测试、本机真实 EmbeddingGemma 独立校准和小型质量评测通过；实际 Electron developer CLI 已分别验证 FTS／缺 native 与 native 生命周期，按各冻结 CLI hash 报告，不混成后续同一产物全部通过；`.app`／Windows packaged 验收仍独立保留 |
+| H | 精确 scope Wiki、主题／来源／关联索引、报告、独立人工笔记与 Markdown 导出已实现 | 确定性、来源失效、并发 fencing、manifest 防篡改、删除派生重建及 API 验证通过；真实 daemon/SQLite 浏览器与人工来源完成搜索／主题／索引／报告、笔记跨重建与归属切换保留、下载内容读回、频道／私聊隔离，以及来源禁用→stale 禁止导出→重建恢复；不据此认领 packaged 验收 |
 
 推荐顺序为 A → B → C → D/E → F → G → H。D 与 E 可以在文件职责隔离后独立开发，主代理完成集成；本计划不要求启动多代理。
 

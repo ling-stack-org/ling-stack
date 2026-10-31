@@ -164,7 +164,8 @@ export function ConversationTimeline({
     gap: 10,
     overscan: 4,
     rangeExtractor,
-    useFlushSync: false,
+    // The root channel owns measurement correction; other surfaces restore their own anchors.
+    useFlushSync: snapshot.scope.kind === "channel_root",
     scrollToFn: (offset, options, instance) => {
       if (options.adjustments) {
         instance.scrollElement?.dispatchEvent(new CustomEvent<number>(conversationMeasurementScrollEvent, {

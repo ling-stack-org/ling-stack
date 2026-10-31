@@ -108,13 +108,12 @@ test("memory extraction preserves narrow scope and never activates a memory", as
   assert.equal(memory.ownerId, f.task.id); assert.equal(memory.sensitivity, "normal");
 });
 
+
 test("a concrete correction proposes an existing definition revision without changing its authority", async t => {
-  const f = await learningFixture(t, { correction: "Compare the ledger sum as well as the receipt total.", selectedSkillId: "amber" });
   const definition = { id: "amber", name: "Amber", summary: "Reconcile receipts", roleAffinity: ["engineer"],
     promptFragments: ["Read receipt total."], requiredTools: ["read"], requiredProviderCapabilities: ["chat"],
     approvalProfile: { mode: "strict", risk: "high" }, stateEffects: [] };
-  const imported = f.store.createSkillImportDraft({ source: "custom", name: "Amber", definitions: [{ definition }] }, clock());
-  f.store.publishSkillImportDraft(imported.id, clock());
+  const f = await learningFixture(t, { correction: "Compare the ledger sum as well as the receipt total.", skillDefinition: definition });
   const evidence = captureLearningEvidence(f.store, f.run.id, "Compare the ledger sum as well as the receipt total.");
   const { job, fence } = f.claim(f.enqueue("explicit", evidence));
   const result = commitLearningDraft({ store: f.store, job, fence, draft: f.draft, hub: f.hub });
@@ -216,13 +215,11 @@ test("policy off while a model is running cancels the automatic job and rejects 
 test("daemon HTTP correction completes model, review, revision history and safe undo without replacing skill ownership", async t => {
   const { createSqliteRunStore } = await import("@ling-stack/core");
   const { createDaemonServer } = await import("../dist/index.js");
-  const f = await learningFixture(t, { selectedSkillId: "amber" }); let requests = 0;
   const originalDefinition = { id: "amber", name: "Amber", summary: "Reconcile receipts", roleAffinity: ["engineer"],
     promptFragments: ["Read receipt total."], requiredTools: ["read"], requiredProviderCapabilities: ["chat"],
     approvalProfile: { mode: "none" }, stateEffects: [] };
-  const imported = f.store.createSkillImportDraft({ source: "custom", sourcePath: "receipt/skills.json", name: "Amber pack",
-    definitions: [{ definition: originalDefinition }] }, clock());
-  const original = f.store.publishSkillImportDraft(imported.id, clock())[0];
+  const f = await learningFixture(t, { skillDefinition: originalDefinition, skillSourcePath: "receipt/skills.json" }); let requests = 0;
+  const original = f.skill;
   const upstream = createServer(async (req, res) => {
     let body = ""; for await (const chunk of req) body += chunk;
     assert.equal(JSON.parse(body).max_tokens, 1024);
@@ -288,14 +285,18 @@ test("daemon HTTP correction completes model, review, revision history and safe 
   const undo = await undoResponse.json(); assert.deepEqual(undo.skill.definition, original.definition);
   assert.equal(undo.revision.undoOfRevisionId, applied.revision.id);
   assert.equal((await post(`/skills/${original.id}/revisions`, revisionRequest)).status, 409, "a repeated apply cannot consume a published candidate twice");
+  f.database.prepare("UPDATE run_sessions SET request_snapshot_json = '{}' WHERE id = ?").run(f.run.id);
+  const unknownSource = await post("/skills/learning-reviews", { runId: f.run.id, providerPresetId: provider.id,
+    correction: "A historical Run cannot prove which skill definition it used." });
+  assert.equal(unknownSource.status, 400);
+  assert.equal((await unknownSource.json()).error, "learning_skill_provenance_unavailable");
+  assert.equal(requests, 1, "unknown historical provenance is rejected before another model request");
 });
 
 test("an intervening definition edit rejects a learned correction even with a fresh editor timestamp", async t => {
-  const f = await learningFixture(t, { selectedSkillId: "amber" });
   const definition = { id: "amber", name: "Amber", summary: "Original", roleAffinity: ["engineer"], promptFragments: ["Read receipt."],
     requiredTools: ["read"], requiredProviderCapabilities: ["chat"], approvalProfile: { mode: "none" }, stateEffects: [] };
-  const initial = f.store.createSkillImportDraft({ source: "custom", name: "Amber", definitions: [{ definition }] }, clock());
-  f.store.publishSkillImportDraft(initial.id, clock());
+  const f = await learningFixture(t, { skillDefinition: definition });
   const { job, fence } = f.claim(f.enqueue("explicit", captureLearningEvidence(f.store, f.run.id, "Also verify the sum.")));
   const result = commitLearningDraft({ store: f.store, job, fence, draft: f.draft, hub: f.hub });
   const candidate = f.store.applySkillCandidateReviewAction({ candidateId: result.candidateIds[0], actor: "user", action: "approve_for_draft" }, clock()).candidate;

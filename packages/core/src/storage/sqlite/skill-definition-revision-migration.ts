@@ -1,7 +1,7 @@
 import type { SqliteRunStoreMigrationContext } from "./migrations.js";
 
 export function applySkillDefinitionRevisionMigration(context: SqliteRunStoreMigrationContext): void {
-  if (context.hasMigration(178)) return;
+  if (context.hasMigration(185)) return;
   context.database.exec("SAVEPOINT skill_definition_history_migration");
   try {
     context.database.exec(`
@@ -61,7 +61,7 @@ export function applySkillDefinitionRevisionMigration(context: SqliteRunStoreMig
           VALUES (new.id, new.workspace_id, new.skill_id, new.created_at);
       END;
     `);
-    context.recordMigration(178, "immutable_skill_definition_revision_history");
+    context.recordMigration(185, "immutable_skill_definition_revision_history");
     context.database.exec("RELEASE skill_definition_history_migration");
   } catch (error) {
     context.database.exec("ROLLBACK TO skill_definition_history_migration; RELEASE skill_definition_history_migration");

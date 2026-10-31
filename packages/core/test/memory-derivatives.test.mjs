@@ -21,6 +21,14 @@ test('derivative source eligibility and monotonic revisions cover source/health 
  assert.equal(f.store.listMemoryDerivativeChanges(0).length,1,'coalesced source outbox');
  f.store.upsertMemorySelfImprovingMetadata({memoryId:'source',kind:'workflow_lesson',trigger:'manual_review',lesson:'expired',validUntil:'2000-01-01T00:00:00Z'});
  assert.equal(f.store.getMemoryDerivativeSource('source'),undefined);
+ // Value: protects=health UPSERTs coalesce with increasing outbox sequence; fails_when=repeat health updates conflict or retain stale qualification; why_new=source update coverage does not exercise outer SQLite UPSERT triggers; seam=none; no_claim=packaged SQLite acceptance.
+ const expiredSequence=f.store.getMemoryDerivativeSequence();
+ f.store.upsertMemorySelfImprovingMetadata({memoryId:'source',kind:'workflow_lesson',trigger:'manual_review',lesson:'restored',validUntil:null});
+ assert.ok(f.store.getMemoryDerivativeSequence()>expiredSequence);
+ assert.ok(f.store.getMemoryDerivativeSource('source').revision>first.revision);
+ assert.equal(f.store.listMemoryDerivativeChanges(0).length,1);
+ f.store.upsertMemorySelfImprovingMetadata({memoryId:'source',kind:'workflow_lesson',trigger:'manual_review',lesson:'replaced',supersededBy:'replacement'});
+ assert.equal(f.store.getMemoryDerivativeSource('source'),undefined);
  for(const [id,extra] of [['candidate',{reviewState:'candidate'}],['disabled',{enabled:false}],['secret',{sensitivity:'secret-adjacent'}]]){
   f.create(id,extra);assert.equal(f.store.getMemoryDerivativeSource(id),undefined);
  }

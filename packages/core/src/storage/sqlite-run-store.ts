@@ -1,11 +1,19 @@
 import { applyChannelSessionMigration, CHANNEL_SESSION_MIGRATION_VERSION } from "./sqlite/channel-session-migration.js";
 import { SqliteChannelSessionStore } from "./sqlite/channel-session-store.js";
 import type { CreateChannelSessionInput, ListChannelSessionsOptions, UpdateChannelSessionRequest } from "../channel-session-types.js";
+import { SqliteMemoryWikiStore } from "./sqlite/memory-wiki-store.js";
+import type { MemoryWikiStore } from "../memory-wiki-types.js";
+import { SqliteMemoryDerivativeStore } from "./sqlite/memory-derivative-store.js";
+import type { MemoryDerivativeStore } from "../memory-derivative-types.js";
+import { SqliteLearningReviewStore } from "./sqlite/learning-review-store.js";
+import type { LearningReviewStore } from "../learning-review-types.js";
+import { drainSkillDefinitionRevisionNotices } from "./sqlite/skill-definition-revision-store.js";
 import { SqliteWorkSummaryStore } from "./sqlite/work-summary-store.js";
 import { applyWorkSummaryMigration } from "./sqlite/work-summary-migration.js";
 import { applyWorkspacePermissionMigration } from "./sqlite/workspace-permission-migration.js";
 import { applyRunnerIdMigration } from "./sqlite/runner-id-migration.js";
 import { existsSync } from "node:fs";
+import { writeMemoryWithSearchIndex } from "./sqlite/memory-search-index.js";
 import { publishNormalRunNarration } from "./sqlite/normal-run-narration-publication.js";
 import { isCurrentRunExecutionOwner } from "./sqlite/run-execution-admission.js";
 import { SqliteTeammateDirectMessageRuntimeStore } from "./sqlite/teammate-direct-message-runtime-store.js";
@@ -253,6 +261,8 @@ import {
   type ListSkillRegistryOptions,
   type ListSkillSourceSnapshotOptions,
   type PublishSkillRevisionDraftInput,
+  type SkillDefinitionRevision,
+  type SkillDefinitionUndoRequest,
   type SkillCompiledRuntimeViewRecord,
   type SkillHardDeleteResult,
   type SkillImportDraft,
@@ -763,6 +773,9 @@ export interface SqliteRunStoreOptions {
 export class SqliteRunStore implements RunStore {
   readonly paths: LingStackRuntimePaths;
   private readonly database: DatabaseSync;
+  private readonly memoryWiki: SqliteMemoryWikiStore;
+  private readonly memoryDerivatives: SqliteMemoryDerivativeStore;
+  private readonly learningReviews: SqliteLearningReviewStore;
   private readonly legacyContinuityFixtureMode: boolean;
   private readonly automations: SqliteAutomationStore;
   private readonly providers: SqliteProviderStore;
@@ -1191,6 +1204,9 @@ export class SqliteRunStore implements RunStore {
     });
     this.userProfile = new SqliteUserProfileStore({ database: this.database });
     this.workspaceSettings = new SqliteWorkspaceSettingsStore({ database: this.database });
+    this.memoryWiki = new SqliteMemoryWikiStore({ database: this.database });
+    this.memoryDerivatives = new SqliteMemoryDerivativeStore({ database: this.database });
+    this.learningReviews = new SqliteLearningReviewStore({ database: this.database });
     this.skillRegistry = new SqliteSkillRegistryStore({ database: this.database });
     this.skillRegression = new SqliteSkillRegressionStore({ database: this.database });
     this.skillCandidates = new SqliteSkillCandidateStore({ database: this.database });
@@ -3749,6 +3765,59 @@ export class SqliteRunStore implements RunStore {
     return this.skillRegistry.publishSkillRevisionDraft(input, now);
   }
 
+  getLearningReviewPolicy(...args: Parameters<LearningReviewStore["getLearningReviewPolicy"]>): ReturnType<LearningReviewStore["getLearningReviewPolicy"]> {
+    return this.learningReviews.getLearningReviewPolicy(...args);
+  }
+
+  updateLearningReviewPolicy(...args: Parameters<LearningReviewStore["updateLearningReviewPolicy"]>): ReturnType<LearningReviewStore["updateLearningReviewPolicy"]> {
+    return this.learningReviews.updateLearningReviewPolicy(...args);
+  }
+
+  enqueueLearningReview(...args: Parameters<LearningReviewStore["enqueueLearningReview"]>): ReturnType<LearningReviewStore["enqueueLearningReview"]> {
+    return this.learningReviews.enqueueLearningReview(...args);
+  }
+
+  getLearningReviewJob(...args: Parameters<LearningReviewStore["getLearningReviewJob"]>): ReturnType<LearningReviewStore["getLearningReviewJob"]> {
+    return this.learningReviews.getLearningReviewJob(...args);
+  }
+
+  listLearningReviewJobs(...args: Parameters<LearningReviewStore["listLearningReviewJobs"]>): ReturnType<LearningReviewStore["listLearningReviewJobs"]> {
+    return this.learningReviews.listLearningReviewJobs(...args);
+  }
+
+  claimLearningReviewJob(...args: Parameters<LearningReviewStore["claimLearningReviewJob"]>): ReturnType<LearningReviewStore["claimLearningReviewJob"]> {
+    return this.learningReviews.claimLearningReviewJob(...args);
+  }
+
+  reserveLearningReviewModelRequest(...args: Parameters<LearningReviewStore["reserveLearningReviewModelRequest"]>): ReturnType<LearningReviewStore["reserveLearningReviewModelRequest"]> {
+    return this.learningReviews.reserveLearningReviewModelRequest(...args);
+  }
+
+  finishLearningReviewJob(...args: Parameters<LearningReviewStore["finishLearningReviewJob"]>): ReturnType<LearningReviewStore["finishLearningReviewJob"]> {
+    return this.learningReviews.finishLearningReviewJob(...args);
+  }
+
+  cancelLearningReviewJob(...args: Parameters<LearningReviewStore["cancelLearningReviewJob"]>): ReturnType<LearningReviewStore["cancelLearningReviewJob"]> {
+    return this.learningReviews.cancelLearningReviewJob(...args);
+  }
+
+  listSkillDefinitionRevisions(skillId: string, limit?: number): SkillDefinitionRevision[] {
+    return this.skillRegistry.listSkillDefinitionRevisions(skillId, limit);
+  }
+
+  drainSkillDefinitionRevisionNotices(cwd: string, now: string, limit?: number): ControlPlaneEvent[] {
+    return drainSkillDefinitionRevisionNotices({ database: this.database }, cwd, now,
+      (input, at) => this.controlPlane.appendControlPlaneEventWithinTransaction(input, at), limit);
+  }
+
+  getSkillDefinitionRevision(skillId: string, revisionId?: string): SkillDefinitionRevision | undefined {
+    return this.skillRegistry.getSkillDefinitionRevision(skillId, revisionId);
+  }
+
+  undoSkillDefinitionRevision(skillId: string, input: SkillDefinitionUndoRequest, now: string) {
+    return this.skillRegistry.undoSkillDefinitionRevision(skillId, input, now);
+  }
+
   archiveSkillRegistryEntry(id: string, now: string): SkillRegistryEntry | undefined {
     return this.skillRegistry.archiveSkillRegistryEntry(id, now);
   }
@@ -3786,6 +3855,17 @@ export class SqliteRunStore implements RunStore {
 
   createProcedureObservation(input: CreateProcedureObservationInput, now: string): ProcedureObservation {
     return this.procedureObservations.createProcedureObservation(input, now);
+  }
+
+  getProcedureObservationByJobKey(jobKey: string, workspaceId?: string): ProcedureObservation | undefined {
+    return this.procedureObservations.getProcedureObservationByJobKey(jobKey, workspaceId);
+  }
+
+  withProcedureObservationJobTransaction<T>(mutate: (events: Pick<RunStore, "appendControlPlaneEvent">) => T): T {
+    if (Object.prototype.toString.call(mutate) === "[object AsyncFunction]") throw new TypeError("Procedure observation commits must be synchronous");
+    return this.procedureObservations.withProcedureObservationJobTransaction(() => mutate({
+      appendControlPlaneEvent: (input, now) => this.controlPlane.appendControlPlaneEventWithinTransaction(input, now),
+    }));
   }
 
   listProcedureObservations(options: ListProcedureObservationsOptions = {}): ProcedureObservation[] {
@@ -3868,7 +3948,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   createMemoryObject(input: CreateMemoryObjectInput, now: string): MemoryObject {
-    return this.memoryObjects.createMemoryObject(input, now);
+    return writeMemoryWithSearchIndex(this.database, () => this.memoryObjects.createMemoryObject(input, now));
   }
 
   getMemoryObject(id: string): MemoryObject | undefined {
@@ -3880,7 +3960,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   updateMemoryObject(id: string, input: MemoryObjectUpdateInput, now: string): MemoryObject | undefined {
-    return this.memoryObjects.updateMemoryObject(id, input, now);
+    return writeMemoryWithSearchIndex(this.database, () => this.memoryObjects.updateMemoryObject(id, input, now));
   }
 
   getMemorySelfImprovingMetadata(memoryId: string): MemorySelfImprovingMetadata | undefined {
@@ -3917,6 +3997,72 @@ export class SqliteRunStore implements RunStore {
 
   applyMemoryReviewAction(input: ApplyMemoryReviewActionInput, now: string): { readonly memory: MemoryObject; readonly action: MemoryReviewActionRecord } {
     return this.memoryReviews.applyMemoryReviewAction(input, now);
+  }
+
+  listMemoryWikiSources(...args: Parameters<MemoryWikiStore["listMemoryWikiSources"]>): ReturnType<MemoryWikiStore["listMemoryWikiSources"]> {
+    return this.memoryWiki.listMemoryWikiSources(...args);
+  }
+  listMemoryWikiDecisions(...args: Parameters<MemoryWikiStore["listMemoryWikiDecisions"]>): ReturnType<MemoryWikiStore["listMemoryWikiDecisions"]> {
+    return this.memoryWiki.listMemoryWikiDecisions(...args);
+  }
+
+  getMemoryWikiGeneration(...args: Parameters<MemoryWikiStore["getMemoryWikiGeneration"]>): ReturnType<MemoryWikiStore["getMemoryWikiGeneration"]> {
+    return this.memoryWiki.getMemoryWikiGeneration(...args);
+  }
+
+  beginMemoryWikiGeneration(...args: Parameters<MemoryWikiStore["beginMemoryWikiGeneration"]>): ReturnType<MemoryWikiStore["beginMemoryWikiGeneration"]> {
+    return this.memoryWiki.beginMemoryWikiGeneration(...args);
+  }
+
+  publishMemoryWikiGeneration(...args: Parameters<MemoryWikiStore["publishMemoryWikiGeneration"]>): ReturnType<MemoryWikiStore["publishMemoryWikiGeneration"]> {
+    return this.memoryWiki.publishMemoryWikiGeneration(...args);
+  }
+
+  getMemoryWikiHumanBlock(...args: Parameters<MemoryWikiStore["getMemoryWikiHumanBlock"]>): ReturnType<MemoryWikiStore["getMemoryWikiHumanBlock"]> {
+    return this.memoryWiki.getMemoryWikiHumanBlock(...args);
+  }
+
+  updateMemoryWikiHumanBlock(...args: Parameters<MemoryWikiStore["updateMemoryWikiHumanBlock"]>): ReturnType<MemoryWikiStore["updateMemoryWikiHumanBlock"]> {
+    return this.memoryWiki.updateMemoryWikiHumanBlock(...args);
+  }
+
+  getMemorySemanticPolicy(...args: Parameters<MemoryDerivativeStore["getMemorySemanticPolicy"]>): ReturnType<MemoryDerivativeStore["getMemorySemanticPolicy"]> {
+    return this.memoryDerivatives.getMemorySemanticPolicy(...args);
+  }
+
+  updateMemorySemanticPolicy(...args: Parameters<MemoryDerivativeStore["updateMemorySemanticPolicy"]>): ReturnType<MemoryDerivativeStore["updateMemorySemanticPolicy"]> {
+    return this.memoryDerivatives.updateMemorySemanticPolicy(...args);
+  }
+
+  listMemoryDerivativeSources(...args: Parameters<MemoryDerivativeStore["listMemoryDerivativeSources"]>): ReturnType<MemoryDerivativeStore["listMemoryDerivativeSources"]> {
+    return this.memoryDerivatives.listMemoryDerivativeSources(...args);
+  }
+
+  getMemoryDerivativeSource(...args: Parameters<MemoryDerivativeStore["getMemoryDerivativeSource"]>): ReturnType<MemoryDerivativeStore["getMemoryDerivativeSource"]> {
+    return this.memoryDerivatives.getMemoryDerivativeSource(...args);
+  }
+
+  listMemoryDerivativeChanges(...args: Parameters<MemoryDerivativeStore["listMemoryDerivativeChanges"]>): ReturnType<MemoryDerivativeStore["listMemoryDerivativeChanges"]> {
+    return this.memoryDerivatives.listMemoryDerivativeChanges(...args);
+  }
+
+  getMemoryDerivativeSequence(...args: Parameters<MemoryDerivativeStore["getMemoryDerivativeSequence"]>): ReturnType<MemoryDerivativeStore["getMemoryDerivativeSequence"]> {
+    return this.memoryDerivatives.getMemoryDerivativeSequence(...args);
+  }
+
+  getMemorySemanticGeneration(...args: Parameters<MemoryDerivativeStore["getMemorySemanticGeneration"]>): ReturnType<MemoryDerivativeStore["getMemorySemanticGeneration"]> {
+    return this.memoryDerivatives.getMemorySemanticGeneration(...args);
+  }
+
+  beginMemorySemanticGeneration(...args: Parameters<MemoryDerivativeStore["beginMemorySemanticGeneration"]>): ReturnType<MemoryDerivativeStore["beginMemorySemanticGeneration"]> {
+    return this.memoryDerivatives.beginMemorySemanticGeneration(...args);
+  }
+
+  advanceMemorySemanticGeneration(...args: Parameters<MemoryDerivativeStore["advanceMemorySemanticGeneration"]>): ReturnType<MemoryDerivativeStore["advanceMemorySemanticGeneration"]> {
+    return this.memoryDerivatives.advanceMemorySemanticGeneration(...args);
+  }
+  advanceMemorySemanticScan(...args: Parameters<MemoryDerivativeStore["advanceMemorySemanticScan"]>): ReturnType<MemoryDerivativeStore["advanceMemorySemanticScan"]> {
+    return this.memoryDerivatives.advanceMemorySemanticScan(...args);
   }
 
   recallMemory(input: MemoryRecallRequest): MemoryRecallResult {

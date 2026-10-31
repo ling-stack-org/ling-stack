@@ -1092,6 +1092,7 @@ test("progress popover shows active context source groups and opens source detai
   await expect(workflowEvent).toHaveAttribute("data-conversation-timeline-status", "running");
   // PR #585 moves liveness from the identifying icon to visible status text.
   const activeLabel = workflowEvent.locator('.conversation-activity-label[data-activity-motion="running"]');
+  await expect(activeLabel).toHaveAttribute("data-activity-motion", "running");
   await expect(activeLabel).toHaveCSS("animation-name", "conversation-activity-light");
   await expect(workflowEvent.locator(".conversation-timeline-activity-main > svg")).toHaveCSS("animation-name", "none");
   await expect(page.locator('[data-conversation-timeline-kind="subAgentActivity"]')).toHaveCount(0);
@@ -5984,6 +5985,7 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await expect(workflowEvent).toHaveCount(1);
   await expect(workflowEvent).toHaveAttribute("data-conversation-timeline-status", "running");
   await expect(workflowEvent).toContainText("running");
+  await expect(workflowEvent.locator(".conversation-timeline-activity-main")).toHaveAttribute("aria-label", /Working/);
   await expect(timeline.locator('[data-conversation-timeline-kind="subAgentActivity"]')).toHaveCount(0);
   await expect(feed.locator(".conversation-work-cell")).toHaveCount(0);
   await expect(feed).not.toContainText("Agent branches");
@@ -6558,6 +6560,7 @@ test("workflow-only active transcript keeps one protocol fact while the latest s
   await expect(workflowFact).toHaveCount(1);
   await expect(workflowFact).toHaveAttribute("data-conversation-timeline-status", "running");
   await expect(workflowFact).toContainText("running");
+  await expect(workflowFact.locator(".conversation-timeline-activity-main")).toHaveAttribute("aria-label", /Working/);
   await expect(workflowFact).toContainText("Read project structure");
   await expect(timeline).not.toContainText("Project structure inspected.");
   await expect(timeline.locator('[data-conversation-timeline-kind="subAgentActivity"]')).toHaveCount(0);
@@ -8805,6 +8808,7 @@ test("channel activity keeps the composer visible while the message feed scrolls
   await expect(page.locator(".activity-chat-layout")).toHaveCSS("padding-top", "0px");
   const panelBox = await page.locator(".task-list-panel.activity-tab-panel").boundingBox();
   const feedBox = await page.locator(".activity-shell .message-feed").boundingBox();
+  // The frame includes the status strip now rendered below the input box.
   const composerBox = await page.getByLabel("Channel composer").boundingBox();
   const composerFrame = page.locator('[data-conversation-composer-frame="channel"]');
   const composerFrameBox = await composerFrame.boundingBox();
@@ -9470,6 +9474,8 @@ test("channel conversation turn shows thinking for empty pending ai replies", as
     return color;
   });
   await expect(thinkingMessage).toHaveCSS("color", mutedColor);
+  await expect(thinkingMessage.locator("..")).toHaveClass("conversation-thinking-indicator");
+  await expect(thinkingMessage.locator("..")).toHaveAttribute("role", "status");
   await expect(thinkingMessage).toHaveAttribute("data-activity-motion", "running");
   await expect(thinkingMessage).toHaveCSS("animation-name", "conversation-activity-light");
   await expect(thinkingBlock.locator(".message-pending-spinner")).toHaveCount(0);
@@ -10719,7 +10725,8 @@ test("control-plane snapshot-required subscribes before refresh and applies an e
   await expect.poll(() => page.evaluate(() =>
     (globalThis as typeof globalThis & { __snapshotHandoff: { urls: string[] } }).__snapshotHandoff.urls.length
   )).toBe(1);
-  // Publish the server snapshot before notifying the client that it must refresh.
+  // Publish the new snapshot before notifying the browser: its refresh can arrive
+  // before page.evaluate resolves back to this test process.
   snapshotSeq = 8;
   await page.evaluate(() => {
     (globalThis as typeof globalThis & { __snapshotHandoff: { snapshotRequired: () => void } })

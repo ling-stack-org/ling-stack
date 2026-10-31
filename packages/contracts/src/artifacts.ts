@@ -31,21 +31,41 @@ import type { SpreadsheetWorkbook } from "./deliverables.js";
 
 /**
  * Gen UI interactive HTML preview (ux-gap-roadmap-02). Rendered inside an
- * opaque-origin sandboxed iframe: scripts run, but the document gets no
+ * opaque-origin sandboxed iframe: scripts require explicit trust and the document gets no
  * same-origin access to Ling, the daemon, or storage.
  */
 export const HTML_INTERACTIVE_SANDBOX: readonly string[] = ["allow-scripts"];
 export const HTML_INTERACTIVE_MAX_BYTES = 2 * 1024 * 1024;
 
 /**
- * Interactive artifacts are documents, not network clients: scripts may run
- * for in-frame interactivity, but the opaque origin must not be able to reach
- * the daemon, the network, or form endpoints.
+ * Restrict resource loading and form submission. CSP does not block every
+ * browser networking API (notably WebRTC), so it is not a network sandbox.
  */
-export const HTML_INTERACTIVE_CSP = "connect-src 'none'; form-action 'none'; base-uri 'none'";
+const HTML_INTERACTIVE_RESOURCE_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'";
+export const HTML_INTERACTIVE_CSP = `${HTML_INTERACTIVE_RESOURCE_CSP}; frame-src 'none'`;
 
 /**
- * Attach the offline CSP to a scanned document. Always injects: skipping on a
+ * The trusted outer document controls navigation of the untrusted inner frame.
+ * A document's own resource CSP alone does not prevent its self-navigation.
+ * Scripts stay disabled by default. Enabling them requires explicit trust in
+ * the exact document, including its ability to use browser networking APIs.
+ * Callers must also sandbox this outer document, allowing scripts only after trust.
+ */
+export function createInteractiveHtmlPreviewDocument(html: string, title: string, allowScripts = false): string {
+  const escapeAttribute = (value: string): string => value.replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("'", "&#39;");
+  const resources = allowScripts ? HTML_INTERACTIVE_RESOURCE_CSP
+    : HTML_INTERACTIVE_RESOURCE_CSP.replace("script-src 'unsafe-inline'", "script-src 'none'");
+  const outerCsp = `${resources}; frame-src about:`;
+  return '<!doctype html><html><head><meta charset="utf-8">'
+    + '<meta http-equiv="Content-Security-Policy" content="' + outerCsp + '">'
+    + '<style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style>'
+    + '</head><body><iframe sandbox="' + (allowScripts ? "allow-scripts" : "") + '" title="' + escapeAttribute(title)
+    + '" srcdoc="' + escapeAttribute(injectInteractiveHtmlCsp(html)) + '"></iframe></body></html>';
+}
+
+/**
+ * Attach the resource CSP to a scanned document. Always injects: skipping on a
  * content substring match would let a document smuggle the policy text and
  * opt out of enforcement. Repeated injection only repeats the same strict
  * directive, which CSP combines restrictively.

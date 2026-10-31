@@ -21,13 +21,13 @@ const MEMORY_RECALL_POLICY_VERSION = "ling-memory-v1-lexical-v3";
 export class SqliteMemoryRetrievalStore {
   constructor(private readonly context: SqliteStoreContext) {}
 
-  /** Same authority predicate as selection, but only test frozen IDs without decoding any body. */
+  /** Active-source predicate for frozen IDs, preserving the caller's private inspection filter. */
   getEligibleMemoryIdsForRecall(input: MemoryRecallRequest, memoryIds: readonly string[]): readonly string[] {
     if (memoryIds.length > 20 || memoryIds.some((id) => typeof id !== "string" || !id)) throw new RangeError("Invalid prepared memory IDs.");
     const ids = [...new Set(memoryIds)];
     if (ids.length === 0) return [];
-    const { clause, params } = memoryRecallPredicate({ ...input, intent: "task-run", includeDisabled: false,
-      includePrivate: false, includeSecretAdjacent: false }, input.workspaceId ?? DEFAULT_WORKSPACE_ID, new Date().toISOString());
+    const { clause, params } = memoryRecallPredicate({ ...input, includeDisabled: false,
+      includeSecretAdjacent: false }, input.workspaceId ?? DEFAULT_WORKSPACE_ID, new Date().toISOString());
     const rows = this.context.database.prepare(`SELECT id FROM memory_objects WHERE ${clause} AND id IN (${ids.map(() => "?").join(",")})`)
       .all(...params, ...ids);
     const eligible = new Set(rows.map((row) => String(row.id)));
@@ -232,10 +232,10 @@ function memoryRecallPredicate(
     if (inspection) {
       clauses.push("sensitivity != 'private'");
     } else {
-      // Ownership was filtered above using Host-selected scopes. A shared workspace/channel
-      // record can be private without belonging to a teammate; this does not permit quoting
-      // it publicly or widen the selected channel/workspace. Inspection flags grant nothing.
-      const privateScopes = ["scope_type IN ('workspace', 'channel')"];
+      // Ownership was filtered above using Host-selected scopes. Private shared and
+      // task/run working records remain usable only in those exact owners. This
+      // does not permit public quoting or widen a scope. Inspection flags grant nothing.
+      const privateScopes = ["scope_type IN ('workspace', 'channel', 'task', 'run')"];
       if (input.teammateId) {
         privateScopes.push("(scope_type = 'teammate' AND owner_id = ?)");
         params.push(input.teammateId);

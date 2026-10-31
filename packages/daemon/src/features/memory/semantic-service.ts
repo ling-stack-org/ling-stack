@@ -139,7 +139,7 @@ export class MemorySemanticService {
     if(this.provider)this.retired.push(this.provider.value);this.provider={generation,value};
    } else if(!this.provider || this.provider.generation.generation!==generation!.generation){
     const value=await (this.options.open??openLanceMemoryProvider)({path:join(store.paths.rootDir,'memory','lancedb'),
-     tableName:generation!.tableName,dimensions:policy.dimensions!,create:false});
+     tableName:generation!.tableName,dimensions:policy.dimensions!,create:!generation!.scanComplete&&!generation!.scanAfter});
     if(this.provider)this.retired.push(this.provider.value);this.provider={generation:generation!,value};
    }
    const value=this.provider!.value;
@@ -182,14 +182,21 @@ export class MemorySemanticService {
   const allowed=sources.filter(s=>local||(s.memory.sensitivity!=='private'&&s.memory.scopeType!=='teammate')||policy.allowPrivateRemote);
   const excluded=sources.filter(s=>!allowed.includes(s)).map(s=>s.memory.id);
   if(excluded.length)await provider.remove(excluded);
-  if(!allowed.length)return;
+  // Native removal can yield while consent or source eligibility is revoked.
+  // Revalidate before dispatch: a post-embedding fence cannot unsend memory.
+  if(!this.current(policy,generation))return;
+  const dispatchable=allowed.filter(source=>{
+   const current=this.options.store.getMemoryDerivativeSource(source.memory.id);
+   return current && current.revision===source.revision && memorySourceHash(current)===memorySourceHash(source);
+  });
+  if(!dispatchable.length)return;
   const controller=new AbortController();this.controllers.add(controller);
   const timeout=setTimeout(()=>controller.abort(),30_000);
   try{
-   const vectors=await this.embed(policy,allowed.map(textFor),controller.signal);
+   const vectors=await this.embed(policy,dispatchable.map(textFor),controller.signal);
    controller.signal.throwIfAborted();
    if(!this.current(policy,generation))return;
-   const chunks=allowed.flatMap((source,index)=>{
+   const chunks=dispatchable.flatMap((source,index)=>{
     const current=this.options.store.getMemoryDerivativeSource(source.memory.id);
     if(!current||current.revision!==source.revision||memorySourceHash(current)!==memorySourceHash(source))return [];
     return [{memoryId:source.memory.id,scopeKey:memoryScopeKey(source.memory.workspaceId,source.memory.scopeType,source.memory.ownerId),

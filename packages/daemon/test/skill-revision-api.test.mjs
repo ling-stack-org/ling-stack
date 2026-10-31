@@ -190,7 +190,7 @@ test("skill revision rejects read-only sources and preserves AI candidate lineag
 
 test("definition history API exposes reviewable differences and conflict-safe idempotent undo", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-definition-undo-api-"));
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 });
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd });
   await daemon.start();
   const baseUrl = `http://127.0.0.1:${daemon.server.address().port}`;
   const query = `?cwd=${encodeURIComponent(cwd)}`;

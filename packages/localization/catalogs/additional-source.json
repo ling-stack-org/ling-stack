@@ -512,5 +512,8 @@
   "Conversation navigation": "Conversation navigation",
   "Message {position} of {count}: {author}": "Message {position} of {count}: {author}",
   "Message with attachments": "Message with attachments",
-  "Jump to message": "Jump to message"
+  "Jump to message": "Jump to message",
+  "Scripts can contact external services. Only run documents you trust.": "Scripts can contact external services. Only run documents you trust.",
+  "Run interactive preview": "Run interactive preview",
+  "Stop interactive preview": "Stop interactive preview"
 }

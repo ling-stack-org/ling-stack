@@ -18,6 +18,8 @@ test('real LanceDB: durable upsert/remove, quoted scopes, pre-top-k isolation an
  assert.deepEqual((await provider.search(query)).map(x=>x.memoryId),['mine'],'closer foreign and expired rows cannot crowd the authorized hit out');
  await provider.upsert([row('mine',"owner's-private",[0,1,0])]);
  assert.deepEqual(await provider.search(query),[],'cosine threshold excludes unrelated result');
+ provider.close();provider=await openLanceMemoryProvider({path,tableName:'memory_abcd',dimensions:3,create:true,load});
+ assert.deepEqual((await provider.search({...query,vector:[0,1,0]})).map(x=>x.memoryId),['mine'],'replaying first-create preserves previously indexed rows');
  provider.close();provider=await openLanceMemoryProvider({path,tableName:'memory_abcd',dimensions:3,create:false,load});
  assert.deepEqual((await provider.search({...query,vector:[0,1,0]})).map(x=>x.memoryId),['mine']);
  await provider.remove(['mine']);assert.deepEqual(await provider.search({...query,vector:[0,1,0]}),[]);

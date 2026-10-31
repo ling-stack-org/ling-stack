@@ -8,14 +8,14 @@ import {openLanceMemoryProvider} from '../dist/features/memory/lancedb-provider.
 import {recallMemory} from '../dist/features/memory/recall-service.js';
 const modulePath=process.env.LING_TEST_LANCEDB_MODULE;
 const resolver={resolve(){return {status:'not_required'};}};
-async function setup(t,embed,{timeoutMs=1000}={}){
+async function setup(t,embed,{timeoutMs=1000,open=openLanceMemoryProvider}={}){
  const f=await learningFixture(t);
  const preset=f.store.createProviderPreset({kind:'openai-compatible',displayName:'Local fixture',providerId:'fixture',model:'fixture',api:'openai-completions',
   baseUrl:'http://127.0.0.1:1/v1',authHeader:false,reasoning:false,capabilities:['chat'],enabled:true},f.now);
  f.store.updateMemorySemanticPolicy({mode:'lancedb',expectedRevision:0,providerPresetId:preset.id,model:'synthetic-fixture',dimensions:3,maxDistance:0.1,timeoutMs});
  const require=createRequire(import.meta.url);const load=async()=>require(modulePath);
  const service=new MemorySemanticService({store:f.store,secretResolver:resolver,embed,
-  open:options=>openLanceMemoryProvider({...options,load})});
+  open:options=>open({...options,load})});
  registerMemorySemanticService(f.store,service);t.after(async()=>{service.beginShutdown();await service.drain();});
  const create=(id,extra={})=>f.store.createMemoryObject({id,scopeType:'channel',ownerId:f.channel.id,title:'Approved period convention',body:'Use the signed receipt date.',...extra},f.now);
  return {...f,preset,service,create,request:{runId:f.run.id,intent:'task-run',query:'paraphrased synthetic fixture',maxResults:6}};
@@ -66,4 +66,34 @@ test('missing optional native module degrades without affecting lexical recall o
  registerMemorySemanticService(f.store,service);t.after(async()=>{service.beginShutdown();await service.drain();});
  await service.refresh();assert.equal(service.status().status,'unavailable');
  assert.deepEqual((await recallMemory(f.store,{runId:f.run.id,intent:'task-run',query:'receipt sentinel'})).memories.map(x=>x.memory.id),['lexical']);
+});
+
+// Value: protects=semantic management queries respect the same private filter as lexical recall; fails_when=automatic eligibility silently widens inspection; why_new=automatic-scope tests do not exercise search/review privacy flags; seam=existing provider/embedding interfaces; no_claim=embedding quality (fixed vectors).
+test('semantic search and review retain explicit private inspection filters',async t=>{
+ if(!native(t))return;
+ const f=await setup(t,async({texts})=>texts.map(()=>[1,0,0]));
+ f.create('private',{sensitivity:'private'});await f.service.refresh();
+ for(const intent of ['search','review']){
+  const request={channelId:f.channel.id,intent,query:'paraphrased synthetic fixture'};
+  assert.deepEqual(f.store.recallMemory(request).memories,[]);
+  assert.deepEqual((await recallMemory(f.store,request)).memories,[]);
+  assert.deepEqual((await recallMemory(f.store,{...request,includePrivate:true})).memories.map(item=>item.memory.id),['private']);
+ }
+ assert.deepEqual((await recallMemory(f.store,f.request)).memories.map(item=>item.memory.id),['private']);
+});
+
+// Value: protects=a transient first-create failure recovers without user policy edits or lost rows; fails_when=a durable generation opens a table never created; why_new=existing missing-module coverage never restores the module; seam=existing native opener fault; no_claim=OS crash or native installation acceptance.
+test('a generation recovers after its first native table creation fails',async t=>{
+ if(!native(t))return;const flags=[];
+ const f=await setup(t,async({texts})=>texts.map(()=>[1,0,0]),{open:async options=>{
+  flags.push(options.create);if(flags.length===1)throw new Error('synthetic transient creation failure');
+  return openLanceMemoryProvider(options);
+ }});
+ f.create('mine');await f.service.refresh();assert.equal(f.service.status().status,'unavailable');
+ const generation=f.store.getMemorySemanticGeneration();
+ t.mock.timers.enable({apis:['Date'],now:Date.now()+31_000});
+ await f.service.refresh();assert.equal(f.service.status().status,'ready');
+ assert.deepEqual(flags,[true,true]);
+ assert.equal(f.store.getMemorySemanticGeneration().tableName,generation.tableName);
+ assert.deepEqual((await recallMemory(f.store,f.request)).memories.map(item=>item.memory.id),['mine']);
 });

@@ -52,6 +52,10 @@ export function ChannelProtocolResetDialog({
           const target = returnFocusRef.current;
           if (target?.isConnected) target.focus({ preventScroll: true });
         }}
+        onEscapeKeyDown={(event) => {
+          if (!busy) onOpenChange(false);
+          event.stopPropagation();
+        }}
       >
         <DialogHeader closeLabel={t("Close")} title={t("Reset channel protocol?")} />
         {error ? (

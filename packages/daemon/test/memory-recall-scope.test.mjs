@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createSqliteRunStore } from "@ling-stack/core";
+import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
 import { recallMemory, resolveAutomaticMemoryRecallScope } from "../dist/features/memory/recall-service.js";
+import { registerMemorySemanticService } from "../dist/features/memory/semantic-registry.js";
+import { assertPreparedRunnerMemoryCurrent } from "../dist/features/runs/prepared-runner-input.js";
 
 function fixture(overrides = {}) {
   const calls = [];
@@ -103,3 +110,116 @@ test('durable selection audit contains aggregate exclusions and selected IDs, wi
  assert.equal(events[1].data.scopeRejected,true);
  assert.doesNotMatch(JSON.stringify(events[1]),/hidden-owner-name|hidden-title/);
 });
+
+// Value: protects=durable workflow authority permits assigned nonmember recall and rejects forged ownership;
+// fails_when=raw membership overrides workflow authority or an arbitrary workflow id widens recall;
+// why_new=existing scope fixtures have no workflow owner and autoplan covers only the valid path; seam=none;
+// no_claim=model quality or a workflow start beyond the existing owner transaction.
+test("Host workflow recall respects durable participant authority without granting arbitrary owner claims", async t => {
+  const f = await workflowFixture(t);
+  assert.equal(resolveAutomaticMemoryRecallScope(f.store, f.request), undefined);
+  assert.deepEqual((await recallMemory(f.store, f.request, f.host)).memories.map(item => item.memory.id), [f.memory.id]);
+  assert.deepEqual(f.store.listTeammateChannelMemberships(f.teammate.id), [], "recall never enrolls workflow participants");
+  for (const status of ["queued", "blocked", "claimed", "running"]) {
+    const store = overrideStore(f.store, { getChannelWorkflowStep: () => ({ ...f.step, status }) });
+    assert.equal(resolveAutomaticMemoryRecallScope(store, f.request, f.host)?.teammateId, f.teammate.id, status);
+  }
+  const cases = [
+    { getChannelWorkflowStep: () => undefined },
+    { getChannelWorkflowStep: () => ({ ...f.step, channelId: "foreign" }) },
+    { getChannelWorkflowStep: () => ({ ...f.step, workspaceId: "foreign" }) },
+    { getChannelWorkflowStep: () => ({ ...f.step, toParticipantId: "teammate_builtin_designer" }) },
+    { getChannelWorkflowStep: () => ({ ...f.step, status: "cancelled" }) },
+    { getChannelWorkflowStep: () => ({ ...f.step, taskId: "unrelated-task" }) },
+    { getChannelWorkflowStep: () => ({ ...f.step, participantAuthority: { ...f.step.participantAuthority, fingerprint: "forged" } }) },
+    { getChannelWorkflowStep: () => ({ ...f.step, participantAuthority: createWorkflowParticipantAuthorityV1({
+      kind: "channel_selection", origin: "manual_channel_step", participantId: f.teammate.id, sourceId: "manual" }) }) },
+    { getChannelWorkflow: () => ({ ...f.workflow, channelId: "foreign" }) },
+    { getChannelWorkflow: () => ({ ...f.workflow, status: "succeeded" }) },
+    { getAiTeammate: () => ({ ...f.teammate, hidden: true }) },
+    { getAiTeammate: () => ({ ...f.teammate, status: "paused" }) },
+    { getAiTeammate: () => ({ ...f.teammate, allowedTools: [] }) },
+  ];
+  for (const overrides of cases) {
+    const result = await recallMemory(overrideStore(f.store, overrides), f.request, f.host);
+    assert.deepEqual(result.memories, []);
+    assert.equal(result.audit.scopeRejected, true);
+  }
+  assert.equal(resolveAutomaticMemoryRecallScope(f.store, { ...f.request, taskId: "not-persisted" }, f.host), undefined);
+  assert.equal(resolveAutomaticMemoryRecallScope(f.store, { ...f.request, intent: "channel-reply" }, f.host), undefined);
+});
+
+// Value: protects=workflow cancellation during semantic work revokes both old lexical and vector results;
+// fails_when=async recall reuses authority that was valid only before provider work;
+// why_new=scope-only tests have no asynchronous provider boundary; seam=none;
+// no_claim=real embedding quality (the semantic provider is controlled).
+test("workflow authority is rechecked after asynchronous semantic retrieval", async t => {
+  const f = await workflowFixture(t);
+  let searched = false;
+  registerMemorySemanticService(f.store, {
+    status: () => ({ status: "ready", optional: true }),
+    search: async () => {
+      searched = true;
+      f.store.updateChannelWorkflow(f.workflow.id, { status: "cancelled" }, new Date().toISOString());
+      return [];
+    },
+    revalidate: () => { assert.fail("cancelled authority cannot revalidate provider hits"); },
+  });
+  const result = await recallMemory(f.store, f.request, f.host);
+  assert.equal(searched, true);
+  assert.deepEqual(result.memories, []);
+  assert.equal(result.audit.scopeRejected, true);
+});
+
+// Value: protects=frozen workflow memory requires the exact durable task start owner and current authority;
+// fails_when=nonmember restores lose valid memory or a forged/stale workflow id authorizes it;
+// why_new=prepared dispatch tests cover shared memory but no workflow-owned nonmember; seam=none;
+// no_claim=SDK execution (this tests the public restore eligibility guard).
+test("prepared workflow memory keeps a valid nonmember owner and rejects foreign or revoked lineage", async t => {
+  const f = await workflowFixture(t);
+  const now = new Date().toISOString();
+  const lease = f.store.acquireResourceLease({ workspaceId: "workspace_default", resourceType: "workflow_step", resourceKey: f.step.id,
+    ownerType: "workflow_step", ownerId: f.step.id, acquiredAt: now, expiresAt: new Date(Date.now() + 60000).toISOString() });
+  const begun = f.store.beginChannelWorkflowStepStart({ workflowStepId: f.step.id, expected: f.step, leaseId: lease.id, now,
+    task: { channelId: f.channel.id, assigneeTeammateId: f.teammate.id, title: "Receipt", prompt: "Compare receipts." } });
+  assert.equal(begun.status, "begun");
+  const request = { cwd: f.cwd, workflowStepId: f.step.id, teammateId: f.teammate.id,
+    task: { id: begun.task.id, title: "Receipt", prompt: "Compare receipts.", channelId: f.channel.id } };
+  const payload = { usedMemory: { memoryIds: [f.memory.id], recallQuery: "receipt", policyVersion: "fixture" } };
+  assert.doesNotThrow(() => assertPreparedRunnerMemoryCurrent(f.store, request, payload));
+  for (const taskId of ["not-persisted", f.store.createTask({ channelId: f.channel.id, assigneeTeammateId: f.teammate.id,
+    title: "Other task", prompt: "Another receipt." }, now).id]) {
+    assert.throws(() => assertPreparedRunnerMemoryCurrent(f.store, { ...request, task: { ...request.task, id: taskId } }, payload),
+      error => error.code === "prepared_memory_unavailable");
+  }
+  f.store.updateChannelWorkflow(f.workflow.id, { status: "cancelled" }, new Date().toISOString());
+  assert.throws(() => assertPreparedRunnerMemoryCurrent(f.store, request, payload), error => error.code === "prepared_memory_unavailable");
+});
+
+async function workflowFixture(t) {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-workflow-memory-scope-"));
+  const store = createSqliteRunStore(cwd);
+  t.after(async () => { store.close(); await rm(cwd, { recursive: true, force: true }); });
+  const now = new Date().toISOString();
+  const channel = store.createChannel({ name: "Workflow memory", boundPath: cwd, allowedTools: ["read"] }, now);
+  const teammate = store.getAiTeammate("teammate_builtin_engineer");
+  store.replaceTeammateChannelMemberships(teammate.id, [], now);
+  const workflow = store.createChannelWorkflow({ channelId: channel.id, title: "Receipt workflow", objective: "Compare receipts.",
+    status: "ready", createdBy: "local-user" }, now);
+  const step = store.createChannelWorkflowStep({ workflowId: workflow.id, title: "Receipt step", prompt: "Compare receipts.",
+    toParticipantId: teammate.id, toParticipantLabel: teammate.displayName, metadata: { requiredTools: ["read"] },
+    participantAuthority: createWorkflowParticipantAuthorityV1({ kind: "workflow_definition", origin: "workflow_graph",
+      participantId: teammate.id, sourceId: "receipt-graph" }) }, now);
+  const memory = store.createMemoryObject({ scopeType: "teammate", ownerId: teammate.id, title: "Receipt procedure",
+    body: "Compare the signed receipt against the account.", sensitivity: "private" }, now);
+  const request = { teammateId: teammate.id, channelId: channel.id, intent: "task-run", query: "receipt" };
+  return { cwd, store, channel, teammate, workflow, step, memory, request, host: { workflowStepId: step.id } };
+}
+
+function overrideStore(store, overrides) {
+  return new Proxy(store, { get(target, key) {
+    if (Object.hasOwn(overrides, key)) return overrides[key];
+    const value = Reflect.get(target, key);
+    return typeof value === "function" ? value.bind(target) : value;
+  } });
+}

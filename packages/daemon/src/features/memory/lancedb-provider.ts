@@ -19,7 +19,7 @@ interface NativeTable {
 }
 interface NativeConnection {
  openTable(name:string):Promise<NativeTable>;
- createTable(name:string,rows:Record<string,unknown>[]):Promise<NativeTable>;
+ createTable(name:string,rows:Record<string,unknown>[],options?:{readonly existOk:boolean}):Promise<NativeTable>;
  close():void;
 }
 export interface LanceDbModule { connect(path:string):Promise<NativeConnection> }
@@ -42,7 +42,9 @@ export async function openLanceMemoryProvider(input:{readonly path:string;readon
  try {
   if(input.create){
    const id=`empty_${randomUUID()}`;
-   table=await connection.createTable(input.tableName,[{memoryId:id,scopeKey:'',contentHash:'',qualificationRevision:0,validUntil:0,vector:Array(input.dimensions).fill(0)}]);
+   // A crash can leave a created table before the first scan checkpoint. Reopen
+   // that exact generation idempotently; never overwrite already indexed rows.
+   table=await connection.createTable(input.tableName,[{memoryId:id,scopeKey:'',contentHash:'',qualificationRevision:0,validUntil:0,vector:Array(input.dimensions).fill(0)}],{existOk:true});
    await table.delete(`memoryId=${literal(id)}`);
   } else table=await connection.openTable(input.tableName);
  } catch(error){connection.close();throw error;}

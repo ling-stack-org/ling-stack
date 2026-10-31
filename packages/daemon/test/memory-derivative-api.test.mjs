@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {createDaemonServer} from '../dist/index.js';
 
 test('HTTP policy CAS, scoped Wiki compile/export/notes, stale sources and candidate review retain original ownership',async t=>{
- const cwd=await mkdtemp(join(tmpdir(),'ling-memory-api-')),daemon=createDaemonServer({host:'127.0.0.1',port:0});await daemon.start();
+ const cwd=await mkdtemp(join(tmpdir(),'ling-memory-api-')),daemon=createDaemonServer({host:'127.0.0.1',port:0,defaultWorkspaceCwd:cwd});await daemon.start();
  t.after(async()=>{await daemon.stop();await rm(cwd,{recursive:true,force:true});});
  const base=`http://127.0.0.1:${daemon.server.address().port}`,query=`?cwd=${encodeURIComponent(cwd)}`;
  const call=async(path,method='GET',body)=>{const response=await fetch(`${base}${path}${query}`,{method,headers:{'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});return {status:response.status,body:await response.json()};};

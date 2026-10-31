@@ -24,6 +24,11 @@ export function foregroundWorkActive(store: RunStore): boolean {
     .some(unit => unit.kind !== "learning_review"));
 }
 
+function learningGenerationAllowed(store: RunStore, job: LearningReviewJob): boolean {
+  const governance = store.getWorkspaceSettings().skillGovernancePolicy;
+  return governance.generationMode !== "off" && (job.mode !== "explicit" || governance.recordingMode === "user_initiated");
+}
+
 /** Source/policy checks and candidate publication share one synchronous owning transaction. */
 export function commitLearningDraft(input: { readonly store: RunStore; readonly job: LearningReviewJob;
   readonly fence: RuntimeAttemptFenceV1; readonly draft: LearningDraft; readonly hub: ControlPlaneEventHub }): LearningReviewJob {
@@ -31,8 +36,7 @@ export function commitLearningDraft(input: { readonly store: RunStore; readonly 
   const events: ControlPlaneEvent[] = [];
   const result = store.withProcedureObservationJobTransaction(writer => {
     if (!learningEvidenceCurrent(store, job.evidence) || foregroundWorkActive(store)) throw new Error("learning_source_or_foreground_changed");
-    const governance = store.getWorkspaceSettings().skillGovernancePolicy;
-    if (governance.generationMode === "off" || (job.mode === "explicit" && governance.recordingMode !== "user_initiated")) throw new Error("learning_generation_disabled");
+    if (!learningGenerationAllowed(store, job)) throw new Error("learning_generation_disabled");
     // Also validate Host/test adapter output; the returned object cannot mint an entitlement.
     const draft = parseLearningDraft(JSON.stringify(input.draft), job.evidence);
     const ids: string[] = [];
@@ -146,6 +150,9 @@ export class LearningReviewCoordinator {
   }
   private async process(store: RunStore, selected: LearningReviewJob, controller: AbortController): Promise<void> {
     if (this.stopped || controller.signal.aborted || foregroundWorkActive(store)) return;
+    if (!learningGenerationAllowed(store, selected)) {
+      store.cancelLearningReviewJob(selected.id, "learning_generation_disabled", new Date().toISOString()); return;
+    }
     if (!learningEvidenceCurrent(store, selected.evidence)) {
       store.cancelLearningReviewJob(selected.id, "learning_source_changed", new Date().toISOString()); return;
     }
@@ -166,7 +173,7 @@ export class LearningReviewCoordinator {
       try {
         const preset = store.getProviderPreset(selected.providerPresetId);
         if ((!this.options.extract && (!preset?.enabled || preset.updatedAt !== providerRevision)) ||
-          store.getWorkspaceSettings().skillGovernancePolicy.generationMode === "off" ||
+          !learningGenerationAllowed(store, selected) ||
           foregroundWorkActive(store) || store.getLearningReviewJob(selected.id)?.status !== "running" ||
           !learningEvidenceCurrent(store, selected.evidence) || this.options.runtimeSupervisor.getRuntime(store.paths.cwd, store).runtimeInstanceId !== fence.runtimeInstanceId) stop();
       } catch { stop(); }
@@ -184,6 +191,8 @@ export class LearningReviewCoordinator {
       let draft: LearningDraft | undefined;
       for (let requestIndex = 0; requestIndex < job.limits.maxRequests; requestIndex += 1) {
         if (foregroundWorkActive(store) || !learningEvidenceCurrent(store, job.evidence)) throw new Error("learning_source_or_foreground_changed");
+        // A queued selection or retry cannot outlive the user's current recording authority.
+        if (!learningGenerationAllowed(store, job)) throw new Error("learning_generation_disabled");
         job = store.reserveLearningReviewModelRequest(job.id, fence, prepared.inputTokens, new Date().toISOString());
         controller.signal.throwIfAborted();
         try {

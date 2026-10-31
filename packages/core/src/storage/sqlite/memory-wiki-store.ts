@@ -10,12 +10,12 @@ import type { SqliteStoreContext } from './store-context.js';
 import type { SqliteRunStoreMigrationContext } from './migrations.js';
 
 export function applyMemoryWikiMigration(context: SqliteRunStoreMigrationContext): void {
-  if (context.hasMigration(181)) return;
+  if (context.hasMigration(188)) return;
   context.database.exec('SAVEPOINT memory_wiki_migration');
   try {
-    context.database.exec(`CREATE TABLE memory_wiki_generations(scope_key TEXT PRIMARY KEY, record_json TEXT NOT NULL CHECK(json_valid(record_json)));
-      CREATE TABLE memory_wiki_human_blocks(scope_key TEXT PRIMARY KEY, revision INTEGER NOT NULL, text TEXT NOT NULL);`);
-    context.recordMigration(181, 'rebuildable_scoped_memory_wiki');
+    context.database.exec(`CREATE TABLE IF NOT EXISTS memory_wiki_generations(scope_key TEXT PRIMARY KEY, record_json TEXT NOT NULL CHECK(json_valid(record_json)));
+      CREATE TABLE IF NOT EXISTS memory_wiki_human_blocks(scope_key TEXT PRIMARY KEY, revision INTEGER NOT NULL, text TEXT NOT NULL);`);
+    context.recordMigration(188, 'rebuildable_scoped_memory_wiki');
     context.database.exec('RELEASE memory_wiki_migration');
   } catch (error) {
     context.database.exec('ROLLBACK TO memory_wiki_migration; RELEASE memory_wiki_migration'); throw error;

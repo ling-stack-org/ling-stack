@@ -93,7 +93,8 @@ export function assertPreparedRunnerMemoryCurrent(store: RunStore, request: RunR
   const ids = payload.usedMemory?.memoryIds ?? [];
   if (ids.length === 0) return;
   const scope = resolveAutomaticMemoryRecallScope(store, { teammateId: request.teammateId, channelId: request.task.channelId,
-    taskId: request.task.id, intent: "task-run", query: "" });
+    taskId: request.task.id, intent: "task-run", query: "" },
+  request.workflowStepId ? { workflowStepId: request.workflowStepId } : undefined);
   const eligible = scope ? store.getEligibleMemoryIdsForRecall(scope, ids) : [];
   if (eligible.length !== ids.length) throw new HttpError(409, "prepared_memory_unavailable", "A prepared Memory source is no longer eligible.");
 }

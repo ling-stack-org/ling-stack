@@ -161,18 +161,15 @@ Already implemented in Ling:
 
 Current gaps:
 
-- No implemented runtime hook that automatically submits post-run observation jobs from
-  run completion or workflow fan-in. The daemon job path is policy-gated, but callers
-  still submit bounded observations explicitly.
+- Opt-in post-run learning is implemented by the [bounded learning runtime](learning-review-runtime.md).
+  Automatic workflow fan-in observation remains outside that adapter.
 - No implemented transcript-derived candidate generation from raw transcripts. Selected
   transcript snippets should become bounded observation jobs, not hidden transcript
   crawls.
-- No implemented automatic correction-to-update-candidate job yet. Correction telemetry
-  is recorded and surfaced through health; a reviewer can create an update candidate.
-- No implemented automatic observation-to-protocol-draft or observation-to-playbook-draft
-  creation yet. Channel/protocol/playbook clusters are surfaced for review; a reviewer can
-  manually convert a ready `channel_protocol` cluster into a protocol candidate and a
-  ready `playbook` cluster into a channel-local playbook candidate.
+- Explicit corrections can create pending `update_existing` candidates through bounded
+  learning; correction telemetry alone does not enroll a review job.
+- Bounded learning can propose channel protocol/playbook drafts. Standalone observation
+  clusters still require manual conversion; neither path applies or activates a draft.
 
 ## Product Rule
 

@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { lstatSync, realpathSync, type BigIntStats } from "node:fs";
-import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import type { HostTextRead } from "./host-text-read.js";
+import { executeHostTextWriteWorker } from "./host-text-write-worker.js";
 
 interface Identity { readonly dev: string; readonly ino: string; readonly size: string; readonly mtime: string; readonly ctime: string }
 export interface HostTextWrite { assertUnchanged(): void }
@@ -25,13 +25,18 @@ export function prepareBoundedHostWrite(path: string, signal: AbortSignal, basel
   // Validate the captured destination against the retained read, never adopt a newer baseline.
   baseline?.assertUnchanged();
   const executable = realpathSync(process.execPath);
-  const worker = realpathSync(fileURLToPath(new URL("./host-text-write-worker.js", import.meta.url)));
+  // Serialize only this authored, closure-free function; stdin carries the bounded request.
+  // A bundled daemon has no adjacent worker file, so its reviewed CLI pins the worker too.
+  const worker = `(${executeHostTextWriteWorker.toString()})()`;
   const literal = (value: string): string => `(literal ${JSON.stringify(value)})`;
   const ancestors = [parent];
   while (dirname(ancestors.at(-1)!) !== ancestors.at(-1)) ancestors.push(dirname(ancestors.at(-1)!));
+  const electronFrameworks = process.versions.electron
+    ? realpathSync(join(dirname(executable), "../Frameworks")) : undefined;
   const profile = ["(version 1)", "(deny default)", "(allow process-exec)", "(allow sysctl-read)",
     "(allow file-read-metadata)", "(deny network*)", `(allow file-read-data ${ancestors.map(literal).join(" ")})`,
-    `(allow file-read* ${[executable, worker, "/dev/null", "/dev/urandom", "/dev/random"].map(literal).join(" ")}
+    ...(electronFrameworks ? [`(allow file-read* (subpath ${JSON.stringify(electronFrameworks)}))`] : []),
+    `(allow file-read* ${[executable, "/dev/null", "/dev/urandom", "/dev/random"].map(literal).join(" ")}
       (subpath "/usr/lib") (subpath "/usr/share") (subpath "/System"))`,
     `(allow file-write* ${literal(path)} (literal "/dev/null"))`,
   ].join("\n");
@@ -39,7 +44,7 @@ export function prepareBoundedHostWrite(path: string, signal: AbortSignal, basel
     signal.throwIfAborted();
     const bytes = Buffer.from(content, "utf8");
     if (bytes.length > maxBytes || content.includes("\0") || bytes.toString("utf8") !== content) throw new HostTextWriteError("not_started");
-    const output = await writeWorker(["-p", profile, executable, worker], parent,
+    const output = await writeWorker(["-p", profile, executable, "--input-type=module", "--eval", worker], parent,
       JSON.stringify({ path, parent: { dev: String(directory.dev), ino: String(directory.ino) }, expected, content }), signal);
     let value;
     try { value = JSON.parse(output); } catch { throw new HostTextWriteError("unknown"); }
@@ -55,7 +60,8 @@ export function prepareBoundedHostWrite(path: string, signal: AbortSignal, basel
 
 async function writeWorker(args: readonly string[], cwd: string, input: string, signal: AbortSignal): Promise<string> {
   signal.throwIfAborted();
-  const child = spawn("/usr/bin/sandbox-exec", args, { cwd, env: { PATH: "/usr/bin:/bin", HOME: "/nonexistent" },
+  const child = spawn("/usr/bin/sandbox-exec", args, { cwd, env: { PATH: "/usr/bin:/bin", HOME: "/nonexistent",
+    ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
     shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];

@@ -814,7 +814,7 @@ export async function prepareWorkflowStepStart(
     intent: "task-run",
     query: memoryRecallQuery,
     maxResults: 6,
-  });
+  }, { workflowStepId: step.id });
   const renderedMemory = renderUsedMemoryPromptForView({
     memories: memoryRecall.memories,
     recallPolicyVersion: memoryRecall.policyVersion,

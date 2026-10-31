@@ -119,6 +119,22 @@ test("private teammate recall does not include other agents, channels, workspace
   assert.deepEqual(ids(f.recall({ channelId: "x' OR 1=1 --" })), []);
 });
 
+// Value: protects=approved task/run private knowledge is usable only in its selected owner; fails_when=private sensitivity filters all working memory or broadens a peer scope; why_new=teammate/workspace checks do not exercise task/run private recall; seam=none; no_claim=daemon owner resolution (tested separately).
+test("private working memory recalls after approval only in its selected task or run", async t => {
+  const f = await fixture(t);
+  for (const scopeType of ["task", "run"]) {
+    const id = `private_${scopeType}`;
+    f.create(id, { title: "sentinel", scopeType, ownerId: "own", sensitivity: "private", reviewState: "candidate" });
+    const request = { intent: "task-run", channelId: undefined, [`${scopeType}Id`]: "own" };
+    assert.deepEqual(ids(f.recall(request)), []);
+    f.store.applyMemoryReviewAction({ memoryId: id, action: "approve", actor: "local-user" }, "2026-10-29T00:00:00Z");
+    assert.deepEqual(ids(f.recall(request)), [id]);
+    assert.deepEqual(ids(f.recall({ ...request, [`${scopeType}Id`]: "peer" })), []);
+    assert.deepEqual(ids(f.recall({ intent: "task-run", channelId: undefined })), []);
+    assert.deepEqual(f.store.getEligibleMemoryIdsForRecall({ ...request, query: "sentinel" }, [id]), [id]);
+  }
+});
+
 test("health and review revocation take effect on the next recall without resurrecting cached content", async (t) => {
   const f = await fixture(t);
   f.create("target", { title: "sentinel", verifyBeforeUse: true });

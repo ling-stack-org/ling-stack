@@ -342,9 +342,15 @@ recall itself is read-only. Usage only changes `lastUsedAt`, not knowledge `upda
 The daemon shares one async recall service across private chat, channel replies, task
 runs, workflow steps and manual queries. Automatic callers cannot grant scopes using an
 unverified owner ID or inspection flags. Non-system teammates must belong to the selected
-channel; task/run lineage must agree with its persisted owner. An unpersisted task request
-can receive verified shared context but cannot claim task-specific memory. Explicit local
-search/review keeps its management inspection semantics.
+channel or hold the selected durable workflow step's participant authority. The latter is
+host-only context, never a public recall request field: the service rechecks the step,
+workflow, channel, participant run profile and persisted task/run ownership, including
+after asynchronous retrieval. Prepared workflow input uses the same authority check.
+An unpersisted task request can receive verified shared context but cannot claim
+task-specific memory. Approved private task/run knowledge is eligible only within that
+verified task/run owner. Explicit local search/review keeps its private-inspection flags
+for both lexical and semantic results; neither path includes disabled or secret-adjacent
+sources through semantic retrieval.
 
 Selection audit reports strategy, scoped candidate work, eligibility/exclusion counts and
 selected IDs. The daemon persists `memory.recall_selected` control-plane events, including

@@ -172,7 +172,12 @@ export function processProcedureObservationJobWithinTransaction(input: {
   if (target && ["custom", "skill-directory", "agents-md"].includes(target.source) && target.reviewStatus === "published") {
     const proposed = skillCandidateInputFromObservation(observation);
     const withAnalysis = withDuplicateAnalysis({ ...proposed, targetSkillId: target.id, proposedAction: "update_existing" }, store);
-    if (withAnalysis.duplicateAnalysis.matchedCandidateIds.length > 0) {
+    const pendingRevision = withAnalysis.duplicateAnalysis.matchedCandidateIds.some(id => {
+      const candidate = store.getSkillCandidate(id);
+      return candidate?.targetSkillId === target.id &&
+        ["pending", "needs_edit", "approved_for_draft"].includes(candidate.status);
+    });
+    if (pendingRevision) {
       const generationDecision = persistGenerationDecision(store, { observation, route, source: generationSource,
         decision: "append_evidence", duplicateAnalysis: withAnalysis.duplicateAnalysis,
         reason: "The correction overlaps an existing pending revision; evidence was retained for review.", now });
@@ -576,7 +581,9 @@ export function withDuplicateAnalysis(
   const duplicateAnalysis = input.duplicateAnalysis ?? analyzeSkillDuplicate({
     candidate: skillCandidateHealthInputFromCreateRequest(input),
     activeSkills: listEffectiveSkillRegistryEntries(store),
-    pendingCandidates: store.listSkillCandidates({ workspaceId: input.workspaceId, limit: 500 }).map(skillCandidateHealthInputFromCandidate),
+    pendingCandidates: store.listSkillCandidates({ workspaceId: input.workspaceId, limit: 500 })
+      .filter(candidate => ["pending", "needs_edit", "approved_for_draft"].includes(candidate.status))
+      .map(skillCandidateHealthInputFromCandidate),
   });
   return {
     ...input,

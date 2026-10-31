@@ -51,7 +51,7 @@ test("migration maps legacy source keys without inventing or deleting historical
   const f = await fixture(t);
   const built = createProcedureObservationInputFromJob({ ...job, effectiveAttemptId: undefined, evidenceVersion: undefined });
   f.store.createProcedureObservation({ ...built.observationInput, id: "legacy", sourceRefs: [{ type: "observation-job", id: built.legacyJobKey }] }, now);
-  f.database.exec("DELETE FROM procedure_observation_jobs; DELETE FROM schema_migrations WHERE version = 177");
+  f.database.exec("DELETE FROM procedure_observation_jobs; DELETE FROM schema_migrations WHERE version = 179");
   f.reopen();
   assert.equal(f.store.getProcedureObservationByJobKey(built.legacyJobKey).id, "legacy");
   assert.equal(f.database.prepare("SELECT count(*) AS n FROM procedure_observations").get().n, 1);

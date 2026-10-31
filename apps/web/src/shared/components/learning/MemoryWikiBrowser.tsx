@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { compileMemoryWiki, exportMemoryWiki, getMemoryWiki, listAiTeammates, listChannels, updateMemoryWikiHumanBlock } from "../../../api.js";
 import type { MemoryWikiResponse, MemoryWikiScope } from "../../../types.js";
 import { useI18n } from "../../../i18n.js";
@@ -16,6 +16,7 @@ function MemoryWikiBrowser({cwd, runId}: {readonly cwd: string; readonly runId?:
   const initial: MemoryWikiScope = runId ? {scopeType: "run", ownerId: runId} : {scopeType: "workspace", ownerId: "workspace_default"};
   const [scopes, setScopes] = useState<readonly {scope: MemoryWikiScope; label: string}[]>([{scope: initial, label: runId ? t("Run") : t("Workspace")}]);
   const [selected, setSelected] = useState(JSON.stringify(initial));
+  const selectedScope = useMemo(() => JSON.parse(selected) as MemoryWikiScope, [selected]);
   const [error, setError] = useState("");
   useEffect(() => {
     let active = true;
@@ -34,7 +35,7 @@ function MemoryWikiBrowser({cwd, runId}: {readonly cwd: string; readonly runId?:
       {scopes.map(({scope, label}) => <option key={JSON.stringify(scope)} value={JSON.stringify(scope)}>{label}</option>)}
     </Select></Field>
     {error ? <InlineFeedback tone="danger">{error}</InlineFeedback> : null}
-    <MemoryWikiPartition key={`${cwd}:${selected}`} cwd={cwd} scope={JSON.parse(selected) as MemoryWikiScope} />
+    <MemoryWikiPartition key={`${cwd}:${selected}`} cwd={cwd} scope={selectedScope} />
   </div>;
 }
 function MemoryWikiPartition({cwd, scope}: {readonly cwd: string; readonly scope: MemoryWikiScope}): React.JSX.Element {
@@ -43,17 +44,20 @@ function MemoryWikiPartition({cwd, scope}: {readonly cwd: string; readonly scope
   const [query, setQuery] = useState("");
   const [notes, setNotes] = useState("");
   const [topic, setTopic] = useState("");
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const alive = useRef(false);
   useEffect(() => {
+    let active = true;
     alive.current = true;
-    void getMemoryWiki(cwd, scope).then(result => {if (alive.current) {setWiki(result); setNotes(result.human.text);}})
-      .catch(caught => {if (alive.current) setError(caught instanceof Error ? caught.message : String(caught));});
-    return () => {alive.current = false;};
+    void getMemoryWiki(cwd, scope).then(result => {if (active) {setWiki(result); setNotes(result.human.text);}})
+      .catch(caught => {if (active) setError(caught instanceof Error ? caught.message : String(caught));})
+      .finally(() => {if (active) setLoading(false);});
+    return () => {active = false; alive.current = false;};
   }, [cwd, scope]);
   async function act(action: () => Promise<void>): Promise<void> {
-    if (busy) return;
+    if (busy || loading) return;
     setBusy(true); setError("");
     try {await action();} catch (caught) {if (alive.current) setError(caught instanceof Error ? caught.message : String(caught));}
     finally {if (alive.current) setBusy(false);}
@@ -63,7 +67,7 @@ function MemoryWikiPartition({cwd, scope}: {readonly cwd: string; readonly scope
   return <div className="learning-review-jobs">
     {wiki ? <small>{t("Wiki status")}: {wiki.status}</small> : null}
     <div className="learning-review-toolbar">
-      <Button size="sm" disabled={busy} onClick={() => void act(async () => {const result = await compileMemoryWiki(cwd, scope); if (alive.current) setWiki(result);})}>{t("Rebuild Wiki")}</Button>
+      <Button size="sm" disabled={busy || loading} onClick={() => void act(async () => {const result = await compileMemoryWiki(cwd, scope); if (alive.current) setWiki(result);})}>{t("Rebuild Wiki")}</Button>
       <Button size="sm" variant="ghost" disabled={busy || wiki?.status !== "ready"} onClick={() => void act(async () => {
         const result = await exportMemoryWiki(cwd, scope);
         if (!alive.current) return;
@@ -87,7 +91,7 @@ function MemoryWikiPartition({cwd, scope}: {readonly cwd: string; readonly scope
       <p>{t("Reports show explicit conflict tags, missing evidence, expiry and replacement. They do not detect semantic contradictions.")}</p>
       <ul>{wiki?.reports.map(report => <li key={`${report.sourceId}:${report.kind}`}>{report.kind} · {report.title}</li>)}</ul>
     </details>
-    <Field label={t("Human notes")}><Textarea value={notes} rows={3} maxLength={16384} disabled={busy} onChange={e => setNotes(e.target.value)} /></Field>
+    <Field label={t("Human notes")}><Textarea value={notes} rows={3} maxLength={16384} disabled={busy || !wiki} onChange={e => setNotes(e.target.value)} /></Field>
     <small>{t("Notes survive rebuilds and never change active memory.")}</small>
     <Button size="sm" disabled={busy || !wiki || notes === wiki.human.text} onClick={() => void act(async () => {
       if (!wiki) return;

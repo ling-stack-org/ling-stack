@@ -1,7 +1,7 @@
 import type { SqliteRunStoreMigrationContext } from "./migrations.js";
 
 export function applyProcedureObservationJobMigration(context: SqliteRunStoreMigrationContext): void {
-  if (context.hasMigration(177)) return;
+  if (context.hasMigration(184)) return;
   context.database.exec(`
     CREATE TABLE IF NOT EXISTS procedure_observation_jobs (
       workspace_id TEXT NOT NULL,
@@ -17,5 +17,5 @@ export function applyProcedureObservationJobMigration(context: SqliteRunStoreMig
         AND typeof(json_extract(ref.value, '$.id')) = 'text' AND length(json_extract(ref.value, '$.id')) > 0
       ORDER BY observations.created_at, observations.id;
   `);
-  context.recordMigration(177, "procedure_observation_unique_source_jobs");
+  context.recordMigration(184, "procedure_observation_unique_source_jobs");
 }

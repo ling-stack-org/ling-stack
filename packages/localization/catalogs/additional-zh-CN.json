@@ -512,5 +512,8 @@
   "Conversation navigation": "会话导航",
   "Message {position} of {count}: {author}": "第 {position} 条消息，共 {count} 条：{author}",
   "Message with attachments": "包含附件的消息",
-  "Jump to message": "跳转到消息"
+  "Jump to message": "跳转到消息",
+  "Scripts can contact external services. Only run documents you trust.": "脚本可能连接外部服务。请仅运行你信任的文档。",
+  "Run interactive preview": "运行交互预览",
+  "Stop interactive preview": "停止交互预览"
 }

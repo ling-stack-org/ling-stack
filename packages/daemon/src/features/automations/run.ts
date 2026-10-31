@@ -221,7 +221,7 @@ async function emitAutomationRunNotification(
       title: failed ? "Automation run failed" : "Automation run finished",
       body: failed
         ? `${automation.title} run ${terminalRun?.errorMessage ? `failed: ${terminalRun.errorMessage}` : "could not start."}`
-        : `${automation.title} completed successfully.`,
+        : status === "cancelled" ? `${automation.title} was cancelled.` : `${automation.title} completed successfully.`,
       automationId: automation.id,
       automationLabel: automation.title,
       runId: terminalRun?.id,

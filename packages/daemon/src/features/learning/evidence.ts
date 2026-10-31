@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { redactSecrets, DEFAULT_WORKSPACE_ID, type RunStore, type LearningEvidenceBundle, type LearningEvidenceItem } from "@ling-stack/core";
 import { resolveAutomaticMemoryRecallScope } from "../memory/recall-service.js";
+import { isRecord } from "../../shared/validation.js";
 
 /** Only selected durable lineage is read. A bounded window is explicit, never a claim of complete evidence. */
 export function captureLearningEvidence(store: RunStore, runId: string, correction?: string): LearningEvidenceBundle {
@@ -11,11 +12,14 @@ export function captureLearningEvidence(store: RunStore, runId: string, correcti
   const task = scope.taskId ? store.getTask(scope.taskId) : undefined;
   const turn = task ? undefined : store.getLingTurnForRun(run.id);
   if (!task && (!turn || !["succeeded", "failed", "cancelled"].includes(turn.status))) throw new Error("learning_source_turn_unavailable");
+  const selectedSkillRevisionId = sourceSkillRevisionId(store, run.selectedSkillId, run.requestSnapshot);
+  if (correction?.trim() && run.selectedSkillId && !selectedSkillRevisionId) throw new Error("learning_skill_provenance_unavailable");
   const unit = run.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;
   const eventCount = store.countEvents(run.id);
   const events = store.listEvents(run.id, { afterSeq: Math.max(0, eventCount - 62), limit: 62 });
   const items: LearningEvidenceItem[] = [];
   const missing: string[] = eventCount > 62 ? ["earlier_events_omitted"] : [];
+  if (run.selectedSkillId && !selectedSkillRevisionId) missing.push("skill_provenance_unavailable");
   let available = 6000;
   const append = (item: Omit<LearningEvidenceItem, "text">, value: unknown, maxBytes: number): void => {
     const redacted = redactSecrets(value);
@@ -36,7 +40,7 @@ export function captureLearningEvidence(store: RunStore, runId: string, correcti
   const basis = { schemaVersion: 1 as const, workspaceId: scope.workspaceId ?? DEFAULT_WORKSPACE_ID,
     runId: run.id, taskId: task?.id, turnId: turn?.id, channelId: scope.channelId, teammateId: scope.teammateId,
     sourceAttemptId: unit?.activeAttemptId, selectedSkillId: run.selectedSkillId,
-    selectedSkillRevisionId: run.selectedSkillId ? store.getSkillDefinitionRevision(run.selectedSkillId)?.id : undefined, taskUpdatedAt: task?.updatedAt,
+    selectedSkillRevisionId, taskUpdatedAt: task?.updatedAt,
     ...(turn ? { turnUpdatedAt: turn.updatedAt } : {}),
     runStatus: run.status as LearningEvidenceBundle["runStatus"], sourceUpdatedAt: run.updatedAt, eventCount, items, missing };
   return { ...basis, digest: createHash("sha256").update(JSON.stringify(basis)).digest("hex") };
@@ -59,12 +63,28 @@ export function captureDecisionLearningEvidence(store: RunStore, decisionId: str
 
 export function learningEvidenceCurrent(store: RunStore, evidence: LearningEvidenceBundle): boolean {
   try {
+    // Keep the Run's revision immutable while invalidating work whose target definition has since changed.
+    if (evidence.selectedSkillRevisionId && (!evidence.selectedSkillId ||
+      store.getSkillDefinitionRevision(evidence.selectedSkillId)?.id !== evidence.selectedSkillRevisionId)) return false;
     const correction = evidence.items.find(item => item.kind === "correction");
     const text = correction?.text;
     return (evidence.decisionId ? captureDecisionLearningEvidence(store, evidence.decisionId) :
       evidence.runId ? captureLearningEvidence(store, evidence.runId, text) : undefined)?.digest === evidence.digest;
   } catch { return false; }
 }
+
+/** Historical Runs without a verified frozen snapshot cannot acquire today's definition as provenance. */
+function sourceSkillRevisionId(store: RunStore, skillId: string | undefined, requestSnapshot: unknown): string | undefined {
+  if (!skillId || !isRecord(requestSnapshot) || !isRecord(requestSnapshot.skillDefinitionSnapshot)) return undefined;
+  const snapshot = requestSnapshot.skillDefinitionSnapshot;
+  if (snapshot.skillId !== skillId || typeof snapshot.revisionId !== "string" || !snapshot.revisionId ||
+    typeof snapshot.definitionHash !== "string") return undefined;
+  const revision = store.getSkillDefinitionRevision(skillId, snapshot.revisionId);
+  if (!revision || revision.skillId !== skillId || snapshot.definitionHash !==
+    `sha256:${createHash("sha256").update(JSON.stringify(revision.afterDefinition)).digest("hex")}`) return undefined;
+  return revision.id;
+}
+
 function clipUtf8(value: string, bytes: number): string {
   if (bytes < 1) return "";
   let result = "";
