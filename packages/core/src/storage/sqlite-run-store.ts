@@ -3794,6 +3794,7 @@ export class SqliteRunStore implements RunStore {
   createChannelBranch(input: CreateChannelBranchInput, now: string): ChannelBranch {
     if (!input.conversationThread && !this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)) return this.channelCore.createChannelBranch(input, now);
     if (this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)) return this.channelSessions.registerDirectory(input, now);
+    throw new Error("channel_branch_creation_unavailable");
   }
 
   getChannelBranch(id: string): ChannelBranch | undefined {

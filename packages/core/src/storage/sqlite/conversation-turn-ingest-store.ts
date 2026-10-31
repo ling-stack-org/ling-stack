@@ -243,7 +243,6 @@ export class SqliteConversationTurnIngestStore {
           sourceItemId: item.id,
         }),
       );
-      this.onUserMessage?.(input.threadId, input.payload.body);
       return {
         turnId,
         item,
