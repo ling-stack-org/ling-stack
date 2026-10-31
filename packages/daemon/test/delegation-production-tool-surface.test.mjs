@@ -139,6 +139,14 @@ function deferred() {
   return { promise, resolve };
 }
 
+// Node 22 exits a test coordinator when only intentionally pending deferred
+// Promises remain. These fixtures model a real Host drain that may outlive the
+// observation window, so retain one test-owned handle until the test finishes.
+function keepEventLoopAlive(t) {
+  const handle = setInterval(() => {}, 1_000);
+  t.after(() => clearInterval(handle));
+}
+
 for (const outcome of ["succeeded", "failed", "cancelled"]) test(`production parent ${outcome} stops optional exact lifetime before terminal and rejects late spawn`, { timeout: 15_000 }, async t => {
   const parentPrompt = "Inspect the selected workflow.", childObjective = "Hold the optional child after measured SDK completion.";
   const childModel = deferred(), stopped = deferred(), drain = deferred(); t.after(() => drain.resolve());
@@ -231,6 +239,7 @@ test("production stop_with_parent freezes a deep optional subtree without erasin
 });
 
 for (const featureOff of [false, true]) for (const outcome of ["failed", "cancelled"]) test(`${outcome}-parent stop observation timeout retains custody then durably closes after late drain${featureOff ? " with producer feature off" : ""}`, { timeout: 15_000 }, async t => {
+  keepEventLoopAlive(t);
   const parentPrompt = "Inspect the selected workflow.", childObjective = "Hold original stop drain beyond the observation deadline.";
   const childModel = deferred(), stopped = deferred(), drain = deferred(); t.after(() => drain.resolve());
   const f = await fixture(t, true, { dispatchChildren: true, spawns: {
@@ -281,6 +290,7 @@ for (const featureOff of [false, true]) for (const outcome of ["failed", "cancel
 });
 
 test("daemon shutdown persists a started child's interrupt before abort and commits its physical drain", { timeout: 15_000 }, async t => {
+  keepEventLoopAlive(t);
   const parentPrompt = "Inspect the selected workflow.";
   const childObjective = "Hold a started delegated child until daemon shutdown.";
   const childStarted = deferred(), childSawAbort = deferred(), childDrain = deferred(), parentDrain = deferred();
