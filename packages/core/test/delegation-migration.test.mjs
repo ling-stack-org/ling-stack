@@ -189,7 +189,7 @@ function removePost175HarnessOverlays(database) {
     "harness_artifact_gc_receipts", "harness_artifact_pin_events", "harness_artifact_pins", "harness_artifact_retention",
     "delegation_budget_charges", "delegation_budget_reservations", "delegation_root_budgets",
   ]) dropEmpty(table);
-  database.exec("DELETE FROM schema_migrations WHERE version IN (176,177,178,181,182,183,189,193,194,195,196,197,198,199,200,201)");
+  database.exec("DELETE FROM schema_migrations WHERE version IN (176,177,178,182,183,189,193,194,195,196,197,198,199,200,201,202)");
 }
 
 /** Removes only the row-free post-153 overlays so this fixture is a genuine schema153 database. */
@@ -257,7 +257,7 @@ function removePost178LearningOverlays(database) {
   for (const table of learningOverlayTables) {
     if (!table.startsWith("memory_search_fts_v1_")) database.exec(`DROP TABLE ${table}`);
   }
-  database.exec("DELETE FROM schema_migrations WHERE version IN (179,180,184,185,186,187,188)");
+  database.exec("DELETE FROM schema_migrations WHERE version IN (179,180,181,184,185,186,187,188)");
   assert.deepEqual(schema(database).filter(row => learningOverlayTables.has(row.tbl_name) || learningOverlayTriggers.has(row.name)), []);
 }
 

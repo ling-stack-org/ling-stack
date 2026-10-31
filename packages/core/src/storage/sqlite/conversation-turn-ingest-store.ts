@@ -26,6 +26,7 @@ export class SqliteConversationTurnIngestStore {
     private readonly context: SqliteStoreContext,
     private readonly items: SqliteConversationItemStore,
     private readonly workflowInputs?: WorkflowStepStartReadStore & Pick<RunStore, "getLingThread" | "getLingTurnForRun">,
+    private readonly onUserMessage?: (threadId: string, body: string) => void,
   ) {}
 
   appendUserTurn(input: AppendConversationUserTurnInput, now: string): AppendConversationUserTurnResult {
@@ -243,6 +244,7 @@ export class SqliteConversationTurnIngestStore {
           sourceItemId: item.id,
         }),
       );
+      this.onUserMessage?.(input.threadId, input.payload.body);
       return {
         turnId,
         item,

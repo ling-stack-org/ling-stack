@@ -1,7 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
-const version = 181, name = "create_host_run_terminal_intents_v1";
+export const RUN_TERMINAL_INTENT_MIGRATION_VERSION = 202;
+export const RUN_TERMINAL_INTENT_MIGRATION_NAME = "create_host_run_terminal_intents_v1";
+const version = RUN_TERMINAL_INTENT_MIGRATION_VERSION, name = RUN_TERMINAL_INTENT_MIGRATION_NAME;
 const definitions = [
   ["table", "run_terminal_intents", `CREATE TABLE run_terminal_intents (
     id TEXT PRIMARY KEY NOT NULL,

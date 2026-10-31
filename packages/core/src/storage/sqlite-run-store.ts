@@ -954,6 +954,9 @@ export class SqliteRunStore implements RunStore {
       { database: this.database },
       this.conversationItems,
       this,
+      (threadId, body) => {
+        if (this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)) this.channelSessions.nameFromFirstMessage(threadId, body);
+      },
     );
     this.conversationContext = new SqliteConversationContextStore({ database: this.database });
     this.conversationAcceptedInput = new SqliteConversationAcceptedInputStore({ database: this.database }, this.conversationTurnIngest);
@@ -1828,13 +1831,13 @@ export class SqliteRunStore implements RunStore {
             applyDelegationInstructionMigration,
             applyHarnessRetentionIndexMigration,
             applyHarnessRecoveryIndexMigration,
-            applyRunTerminalIntentMigration,
             applyRunSuspensionMigration,
             applyRunSuspensionStopMigration,
             applyRunSuspensionActivationMigration,
             applyRunSuspensionStartMigration,
             applyRunSuspensionDelegatedMigration,
             applyRunFinalSettlementMigration,
+            applyRunTerminalIntentMigration,
           ]) {
             // Historical Continuity fixtures have no sealed artifact columns yet.
             // Normal startup installs retention after the authority cutover above.

@@ -7,6 +7,7 @@ import type { RunTerminalIntentRecord, RunTerminalIntentReconcileResult, RunTerm
 import type { RuntimeAttemptFenceV1 } from "../../runtime-supervisor-types.js";
 import { harnessArtifactOwnerHolder, readHarnessRetainedBody, syncHarnessArtifactOwnerPins } from "./harness-artifact-recovery-pins.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
+import { RUN_TERMINAL_INTENT_MIGRATION_VERSION } from "./run-terminal-intent-migration.js";
 import { hostAttemptReadScopeForSource } from "./host-attempt-read-scope.js";
 import { isCurrentRunExecutionOwner } from "./run-execution-admission.js";
 import type { SqliteStoreContext } from "./store-context.js";
@@ -66,7 +67,7 @@ export function assertNoPendingRunTerminalIntent(context: SqliteStoreContext, ru
 }
 function hasTable(context: SqliteStoreContext): boolean {
   if (context.database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='run_terminal_intents'").get()) return true;
-  if (context.database.prepare("SELECT 1 FROM schema_migrations WHERE version=181").get()) fail("schema_missing");
+  if (context.database.prepare(`SELECT 1 FROM schema_migrations WHERE version=${RUN_TERMINAL_INTENT_MIGRATION_VERSION}`).get()) fail("schema_missing");
   return false; // Only historical migration fixtures lack this not-yet-installed authority.
 }
 
