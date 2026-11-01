@@ -50,6 +50,20 @@ test("the aggregate verifies reports before caching only default-branch successf
   assert.doesNotMatch(quality, /continue-on-error/u);
 });
 
+test("quality preserves non-blocking run, job, and shard timing telemetry", () => {
+  const quality = job("quality");
+  assert.match(quality, /permissions:\n      actions: read\n      contents: read/u);
+  assert.match(quality, /GH_TOKEN: \$\{\{ github\.token \}\}/u);
+  assert.match(quality, /actions\/runs\/\$\{GITHUB_RUN_ID\}/u);
+  assert.match(quality, /actions\/runs\/\$\{GITHUB_RUN_ID\}\/jobs\?per_page=100/u);
+  assert.match(quality, /ci-telemetry\.mjs/u);
+  assert.match(quality, /--reports-dir=\.codex-artifacts\/ci\/reports/u);
+  assert.match(quality, /cat \.codex-artifacts\/ci\/ci-telemetry\.md >> "\$GITHUB_STEP_SUMMARY"/u);
+  assert.match(quality, /name: ci-telemetry\n          include-hidden-files: true/u);
+  assert.match(quality, /name: Preserve CI timing telemetry\n        if: always\(\)/u);
+  assert.match(quality, /exit 0/u);
+});
+
 test("complete PR history scans ignore docs-only final diffs while Draft previews stay deferred", () => {
   const common = job("common-fast");
   assert.doesNotMatch(common, /^    if:/mu, "the common job must not bypass history scans based on file scope");

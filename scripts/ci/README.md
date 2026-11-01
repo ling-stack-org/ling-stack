@@ -43,6 +43,23 @@ cancellations, launch errors and log/cleanup failures fail the job. The aggregat
 requires every planned file to have passed exactly once before saving new timing
 hints. Only successful default-branch runs publish timing caches.
 
+## Timing Telemetry
+
+The `quality` job also preserves a non-blocking `ci-telemetry` artifact for
+complete and preview runs. It records workflow run and job timestamps,
+estimated queue and execution time, step durations, shard/file durations,
+`critical_path_duration`, `max_core_shard_duration`,
+`max_daemon_shard_duration`, shard imbalance by suite, and timeout/leaked-process
+counters. The summary is appended to the GitHub step summary and the raw JSON
+is retained for 14 days. Collection uses the current run's Actions API data;
+API or parsing failures create an unavailable observation and never change the
+quality gate. Run duration is labelled as observed at collection because the
+telemetry step runs inside the aggregate job.
+
+Use at least 5-10 complete hosted runs to compare the observations before
+changing shard counts, worker concurrency, or adding another E2E lane. The
+telemetry does not establish a fixed speedup percentage by itself.
+
 Generate a local plan without running tests:
 
 ```sh
