@@ -60,7 +60,8 @@ test("complete PR history scans ignore docs-only final diffs while Draft preview
 test("secret scans use commit history planning and retain full checkout and pinned scanner", () => {
   const common = job("common-fast");
   assert.match(common, /fetch-depth: 0/u);
-  assert.match(common, /secret-scan\.mjs --event="\$GITHUB_EVENT_NAME" --base="\$BASE_SHA" --head=HEAD/u);
+  assert.match(common, /HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/u);
+  assert.match(common, /secret-scan\.mjs --event="\$GITHUB_EVENT_NAME" --base="\$BASE_SHA" --head="\$HEAD_SHA"/u);
   assert.match(common, /--log-opts="\$log_opts"/u);
   assert.match(common, /gitleaks@sha256:[a-f0-9]{64}/u);
   assert.match(common, /--redact=100/u);
