@@ -49,6 +49,9 @@ async function runFile(file, { cwd, shard, worker, suite, temporaryDirectory, st
     let logError;
     let cleanupError;
     const processes = trackTestProcesses(child.pid, token);
+    // Capture descendants before a fast coordinator can exit and reparent them.
+    try { processes.live(true); }
+    catch (error) { cleanupError = error; }
     const terminate = signal => {
       // Observe ancestry before terminating parents that may orphan a child.
       try { processes.signal(signal); }
@@ -65,7 +68,7 @@ async function runFile(file, { cwd, shard, worker, suite, temporaryDirectory, st
     const observe = setInterval(() => {
       try { processes.live(); }
       catch (error) { cleanupError ??= error; stop("cleanup_error"); }
-    }, 200);
+    }, 25);
     const onAbort = () => stop("cancelled");
     const onLogError = error => { logError = error; stop("log_error"); };
     log?.on("error", onLogError);
@@ -79,6 +82,12 @@ async function runFile(file, { cwd, shard, worker, suite, temporaryDirectory, st
       child.once("exit", (code, exitSignal) => done({ code, signal: exitSignal }));
     });
     const closed = new Promise(done => child.once("close", done));
+    child.once("exit", () => {
+      // The exit event is the last reliable boundary before the coordinator is
+      // reaped; take one final ownership snapshot before teardown starts.
+      try { processes.live(true); }
+      catch (error) { cleanupError ??= error; stop("cleanup_error"); }
+    });
     const deadline = setTimeout(() => stop("timed_out"), fileTimeoutMs);
     signal.addEventListener("abort", onAbort, { once: true });
     if (signal.aborted) onAbort();
