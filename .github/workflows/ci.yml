@@ -122,7 +122,10 @@ jobs:
     name: Common checks (fast lane)
     needs: scope
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # A policy or ignore-file change forces a complete repository-history
+    # Gitleaks scan. Keep this lane bounded, but allow that audit to finish on
+    # the full monorepo instead of failing at the generic 15-minute job limit.
+    timeout-minutes: 35
     steps:
       - name: Check out repository without retained credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -162,7 +165,9 @@ jobs:
             --log-opts="$log_opts" \
             --config /repo/.gitleaks.toml \
             --gitleaks-ignore-path /repo/.gitleaksignore \
-            --timeout 600 \
+            # Full-history scans can exceed ten minutes on the monorepo. The
+            # job timeout above remains the outer bound.
+            --timeout 1800 \
             /repo
 
       - name: Check pull request whitespace
