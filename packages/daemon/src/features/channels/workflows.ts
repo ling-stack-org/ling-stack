@@ -644,6 +644,8 @@ async function handleChannelWorkflowStepStart(
   }
   if (started.kind === "blocked") {
     writeJson(response, 200, {
+      status: "blocked",
+      mode: input.mode,
       workflow: store.getChannelWorkflow(started.workflowId),
       workflowStep: store.getChannelWorkflowStep(workflowStepId),
       blocker: started.blocker,
@@ -666,6 +668,8 @@ async function handleChannelWorkflowStepStart(
     }
     completeWorkflowIfStepsFinished(store, started.workflowId, finishedAt);
     writeJson(response, 200, {
+      status: "started",
+      mode: "create_task",
       workflow: store.getChannelWorkflow(started.workflowId),
       workflowStep: store.getChannelWorkflowStep(workflowStepId),
       task: started.task,
