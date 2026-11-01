@@ -31,6 +31,7 @@ jobs:
       packages: ${{ steps.classify.outputs.packages }}
       test-packages: ${{ steps.classify.outputs.test-packages }}
       typecheck-packages: ${{ steps.classify.outputs.typecheck-packages }}
+      unit-matrix: ${{ steps.test-plan.outputs.unit-matrix }}
       daemon: ${{ steps.classify.outputs.daemon }}
       web: ${{ steps.classify.outputs.web }}
     steps:
@@ -86,6 +87,37 @@ jobs:
           for (const [key, value] of Object.entries(outputs)) console.log(`${key}=${value}`);
           NODE
 
+      - name: Restore timing hints once for the entire run
+        if: steps.policy.outputs.execution-tier == 'complete' && steps.classify.outputs.mode != 'docs'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: .codex-artifacts/ci/timings.json
+          key: ci-node-timings-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ci-node-timings-v1-
+
+      - name: Plan complete core and daemon file coverage
+        id: test-plan
+        env:
+          SELECTED_TEST_PACKAGES: ${{ steps.classify.outputs.test-packages }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          unit_matrix="$(node scripts/ci/test-shard-plan.mjs \
+            --packages="$SELECTED_TEST_PACKAGES" \
+            --timings=.codex-artifacts/ci/timings.json \
+            --output=.codex-artifacts/ci/test-plan.json)"
+          printf 'unit-matrix=%s\n' "$unit_matrix" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the immutable test plan for every shard
+        if: steps.policy.outputs.execution-tier == 'complete' && steps.classify.outputs.mode != 'docs'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-test-plan
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+          path: .codex-artifacts/ci/test-plan.json
+
   common-fast:
     name: Common checks (fast lane)
     needs: scope
@@ -112,18 +144,26 @@ jobs:
       - name: Check scanner boundaries, execution policy, classification, and platform CI gates
         run: node --test scripts/check-public-repo-safety.test.mjs scripts/ci/*.test.mjs scripts/native-execution-engines/verify-codex.test.mjs
 
+      # Final file scope cannot exclude secrets introduced and later deleted.
       - name: Scan Git history for secrets
-        if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs'
-        run: >-
-          docker run --rm
-          -v "$GITHUB_WORKSPACE:/repo:ro"
-          zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
-          git --no-banner --no-color --redact=100
-          --log-opts=HEAD
-          --config /repo/.gitleaks.toml
-          --gitleaks-ignore-path /repo/.gitleaksignore
-          --timeout 600
-          /repo
+        if: needs.scope.outputs.execution-tier == 'complete'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          scan_plan="$(node scripts/ci/secret-scan.mjs --event="$GITHUB_EVENT_NAME" --base="$BASE_SHA" --head=HEAD)"
+          echo "Secret scan plan: $scan_plan"
+          log_opts="$(SCAN_PLAN="$scan_plan" node --input-type=module -e 'console.log(JSON.parse(process.env.SCAN_PLAN).logOpts)')"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/repo:ro" \
+            zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git --no-banner --no-color --redact=100 \
+            --log-opts="$log_opts" \
+            --config /repo/.gitleaks.toml \
+            --gitleaks-ignore-path /repo/.gitleaksignore \
+            --timeout 600 \
+            /repo
 
       - name: Check pull request whitespace
         if: github.event_name == 'pull_request'
@@ -310,14 +350,14 @@ jobs:
         run: node scripts/ci/run-packages.mjs --task=typecheck:ci --packages="$SELECTED_PACKAGES"
 
   unit-tests:
-    name: Unit tests and Web checks
+    name: Unit tests and Web checks (${{ matrix.suite }} ${{ matrix.shard }})
     needs: [scope, build]
     if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
-    # The selected workspace tests are serial and exceeded the prior 25m cap
-    # while still passing. Keep the full test set and give it the same bounded
-    # headroom as the daemon lane.
-    timeout-minutes: 40
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.scope.outputs.unit-matrix) }}
     env:
       SELECTED_PACKAGES: ${{ needs.scope.outputs.test-packages }}
       WEB_SELECTED: ${{ needs.scope.outputs.web }}
@@ -353,15 +393,42 @@ jobs:
           name: ci-dist
           path: .
 
+      - name: Download the shared test plan
+        if: matrix.suite == 'core'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ci-test-plan
+          path: .codex-artifacts/ci
+
       - name: Run selected unit tests without rebuilding dependencies
-        run: node scripts/ci/run-packages.mjs --task=test:ci --packages="$SELECTED_PACKAGES" --exclude='["@ling-stack/daemon"]'
+        if: matrix.suite == 'packages'
+        run: node scripts/ci/run-packages.mjs --task=test:ci --packages="$SELECTED_PACKAGES" --exclude='["@ling-stack/daemon","@ling-stack/core"]'
+
+      - name: Run bounded core shard
+        if: matrix.suite == 'core'
+        run: >-
+          node scripts/ci/node-test-shard.mjs --suite=core
+          --shard=${{ matrix.shard }} --shard-count=4 --concurrency=2
+          --shard-timeout-ms=1200000
+          --plan=.codex-artifacts/ci/test-plan.json
+          --report=.codex-artifacts/ci/reports/core-${{ matrix.shard }}.json
+
+      - name: Preserve core file timings and failure logs
+        if: always() && matrix.suite == 'core'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-test-report-core-${{ matrix.shard }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+          path: .codex-artifacts/ci/reports/**
 
       - name: Check Web architecture and UI rules
-        if: env.WEB_SELECTED == 'true'
+        if: matrix.suite == 'packages' && env.WEB_SELECTED == 'true'
         run: corepack pnpm --filter @ling-stack/web lint
 
       - name: Check translations
-        if: env.WEB_SELECTED == 'true'
+        if: matrix.suite == 'packages' && env.WEB_SELECTED == 'true'
         run: corepack pnpm --filter @ling-stack/web check:i18n
 
   daemon-tests:
@@ -371,9 +438,7 @@ jobs:
     # Full discovery is unchanged: original Darwin-only positive cases must
     # execute on the real Host, not skip or weaken the production platform gate.
     runs-on: macos-26
-    # Run 39274142315 reached 1,584 passing tests in shard 1 before the 25m
-    # job limit cancelled it while tests were still progressing. Include setup
-    # and room for the remaining files without changing discovery or isolation.
+    # File/shard watchdogs report failures before this final infrastructure cap.
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -411,6 +476,12 @@ jobs:
           name: ci-dist
           path: .
 
+      - name: Download the shared test plan
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ci-test-plan
+          path: .codex-artifacts/ci
+
       # ci-dist comes from Ubuntu; native codecs must be rebuilt on this macOS host.
       - name: Build the host image codec
         env:
@@ -420,10 +491,22 @@ jobs:
           corepack pnpm --filter @ling-stack/daemon build:image-sanitizer
 
       - name: Run isolated daemon shard
-        # Each worker retains serial file execution and its own home/workspace.
-        # Short native lifecycle fixtures retain exclusive execution first.
-        # Reuse the same four macOS jobs instead of adding more queued runners.
-        run: node scripts/ci/daemon-test-shard.mjs --shard=${{ matrix.shard }} --shard-count=4 --concurrency=2
+        # Every file owns its home/workspace and process group. Short native
+        # lifecycle fixtures still finish exclusively before parallel workers.
+        run: >-
+          node scripts/ci/daemon-test-shard.mjs --shard=${{ matrix.shard }} --shard-count=4 --concurrency=2
+          --plan=.codex-artifacts/ci/test-plan.json
+          --report=.codex-artifacts/ci/reports/daemon-${{ matrix.shard }}.json
+
+      - name: Preserve daemon file timings and failure logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-test-report-daemon-${{ matrix.shard }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+          path: .codex-artifacts/ci/reports/**
 
       - name: Collect fixed OS bootstrap source for review only
         if: always()
@@ -618,3 +701,34 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/ci/execution-policy.mjs --check-quality
+
+      - name: Download the shared test plan for coverage verification
+        if: needs.scope.outputs.execution-tier == 'complete' && (needs.scope.outputs.daemon == 'true' || contains(needs.scope.outputs.test-packages, '"@ling-stack/core"'))
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ci-test-plan
+          path: .codex-artifacts/ci
+
+      - name: Download all successful shard reports
+        if: needs.scope.outputs.execution-tier == 'complete' && (needs.scope.outputs.daemon == 'true' || contains(needs.scope.outputs.test-packages, '"@ling-stack/core"'))
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: ci-test-report-*
+          merge-multiple: true
+          path: .codex-artifacts/ci/reports
+
+      - name: Verify every planned file passed exactly once and collect timings
+        if: needs.scope.outputs.execution-tier == 'complete' && (needs.scope.outputs.daemon == 'true' || contains(needs.scope.outputs.test-packages, '"@ling-stack/core"'))
+        run: >-
+          node scripts/ci/test-shard-plan.mjs
+          --plan=.codex-artifacts/ci/test-plan.json --reports=.codex-artifacts/ci/reports
+          --output=.codex-artifacts/ci/timings.json
+
+      # Only validated default-branch runs publish hints. PRs consume them but
+      # cannot replace the baseline; all shards use the same uploaded plan.
+      - name: Save trusted default-branch test timings
+        if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: .codex-artifacts/ci/timings.json
+          key: ci-node-timings-v1-${{ github.run_id }}-${{ github.run_attempt }}
