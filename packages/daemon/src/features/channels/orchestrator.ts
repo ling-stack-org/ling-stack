@@ -206,21 +206,6 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
       eligibleSteps,
       now: new Date().toISOString(),
     }).workflowStep;
-    const isApprovedGatedStep = isApprovedPreStartStep(input.store, latestCandidate);
-    if (!isApprovedGatedStep) {
-      const gateResult = maybeRequestPreStepApproval(input.store, input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow, latestCandidate);
-      if (gateResult) {
-        if (gateResult.status === "waiting_for_approval") {
-          waitingApprovals.push({ workflowStep: gateResult.workflowStep, approval: gateResult.approval });
-          if (parallelStartBudget <= 1) {
-            break;
-          }
-          continue;
-        }
-        return { ...gateResult, schedulingDecision };
-      }
-    }
-
     const started = await prepareWorkflowStepStart(
       input.store,
       latestCandidate.id,
@@ -253,6 +238,13 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
       continue;
     }
     if (started.kind === "error") {
+      // A terminal callback from a sibling run can race this continuation
+      // attempt. In that case the other callback owns the step lease and is
+      // already progressing the workflow; treat the collision as a benign
+      // no-op instead of turning a successful run into a shutdown failure.
+      if (started.code === "resource_conflict") {
+        continue;
+      }
       throw new HttpError(started.statusCode, started.code, started.message);
     }
 

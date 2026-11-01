@@ -2897,7 +2897,11 @@ export async function routeRequest(
           }
         },
         syncWorkflow: () => {
-          if (approval.payload.type !== "workflow_step") return;
+          // Legacy workflow approvals may retain their original tool payload
+          // (for example `bash`) while workflowStepId remains the durable
+          // owner reference. Reconcile by owner reference instead of
+          // requiring the newer typed payload shape.
+          if (!approval.workflowStepId && approval.payload.type !== "workflow_step") return;
           const result = syncWorkflowApprovalDecision(store, approval, now);
           if (result.status === "missing_owner") throw new Error("approval_workflow_owner_missing");
           if (result.status === "stale_owner") throw new Error("approval_workflow_owner_stale");

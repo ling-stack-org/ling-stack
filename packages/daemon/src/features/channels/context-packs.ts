@@ -239,10 +239,7 @@ export function resolveProviderContextBudget(
     capabilities.contextWindowTokens ??
     (mode === "model_estimated" ? MODEL_ESTIMATED_CONTEXT_WINDOW_TOKENS : MODEL_UNKNOWN_CONTEXT_WINDOW_TOKENS);
   const reservedOutputTokens = capabilities.maxOutputTokens ?? (kind.includes("selector") ? SELECTOR_OUTPUT_TOKENS : DEFAULT_OUTPUT_TOKENS);
-  const inputBudgetTokens = Math.max(
-    0,
-    contextWindowTokens - reservedOutputTokens - RUNTIME_OVERHEAD_TOKENS,
-  );
+  const inputBudgetTokens = Math.max(0, contextWindowTokens - reservedOutputTokens - RUNTIME_OVERHEAD_TOKENS);
   return {
     mode,
     contextWindowTokens,

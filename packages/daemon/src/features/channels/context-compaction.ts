@@ -70,9 +70,10 @@ export async function compactChannelDiscussionForNoToolsRetry(input: {
   readonly inputBudgetTokens: number;
   readonly now: string;
 }): Promise<ChannelDiscussionCompactionResult> {
-  // Maintenance requires at least 1024 input tokens. A smaller real budget is
-  // not an invitation to invent capacity; the caller still gates the rendered retry.
-  const result = Number.isSafeInteger(input.inputBudgetTokens) && input.inputBudgetTokens >= 1024
+  // Preserve the provider's actual positive input capacity. A smaller real
+  // budget is not an invitation to invent capacity; the caller still gates
+  // the rendered retry.
+  const result = Number.isSafeInteger(input.inputBudgetTokens) && input.inputBudgetTokens >= 1
     ? await coordinateConversationContextSummary({
     store: input.store,
     sourceItemId: input.sourceMessage.id,

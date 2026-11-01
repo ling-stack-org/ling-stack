@@ -173,6 +173,17 @@ export function reconcileApprovalPostCommitEffects(input: {
         approval.status === "approved" ? "approved" : approval.status === "cancelled" ? "cancelled" : "denied", now);
     }
   });
-  if (!effects.length) attempt("owner", () => { syncExternalWorkActionForApproval(store, approval, now); });
+  if (!effects.length) attempt("owner", () => {
+    // Legacy workflow-step approvals predate the post-commit effects ledger
+    // and may carry a tool payload (for example `bash`) rather than the
+    // typed workflow_step payload. Still run the owner callback so the
+    // workflow projection is reconciled after the approval is committed.
+    if (approval.workflowStepId || approval.mediaJobId) {
+      mediaJob = input.onOwnerResolved?.();
+      if (approval.mediaJobId && !mediaJob) throw new Error("approval_media_owner_missing");
+      return;
+    }
+    syncExternalWorkActionForApproval(store, approval, now);
+  });
   return { ...(mediaJob ? { mediaJob } : {}), deferred };
 }

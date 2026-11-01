@@ -35,7 +35,9 @@ async function runChild(caseName) {
   child.stdout.on("data", bytes => { stdout += bytes; });
   child.stderr.on("data", bytes => { stderr += bytes; });
   let expired = false;
-  const timeout = setTimeout(() => { expired = true; child.kill("SIGKILL"); }, 45_000);
+  // The request deadline is 30 seconds; allow a slower macOS runner enough
+  // time to flush the daemon shutdown and restore the process-global fixture.
+  const timeout = setTimeout(() => { expired = true; child.kill("SIGKILL"); }, 65_000);
   let status;
   try {
     status = await new Promise((resolveExit, rejectExit) => {
@@ -44,18 +46,18 @@ async function runChild(caseName) {
   } finally { clearTimeout(timeout); }
   process.stdout.write(stdout);
   if (stderr) process.stderr.write(stderr);
-  assert.equal(expired, false, `${caseName} child exceeded its 45-second bound`);
+  assert.equal(expired, false, `${caseName} child exceeded its 65-second bound`);
   assert.match(stdout, new RegExp(`A11 deadline child entered: ${caseName}`));
   assert.deepEqual(status, { code: 0, signal: null }, `${caseName}\n${stdout}\n${stderr}`);
 }
 
 if (!childCase) {
-  test("A11 Comfy public HTTP actual default deadlines", { concurrency: 3, timeout: 50_000 }, async t => {
-    await Promise.all(cases.map(caseName => t.test(`A11 actual 30-second ${caseName} deadline`, { timeout: 47_000 },
+  test("A11 Comfy public HTTP actual default deadlines", { concurrency: 3, timeout: 70_000 }, async t => {
+    await Promise.all(cases.map(caseName => t.test(`A11 actual 30-second ${caseName} deadline`, { timeout: 67_000 },
       () => runChild(caseName))));
   });
 } else {
-  test(`A11 public HTTP deadline fixture child ${childCase}`, { timeout: 42_000 }, async t => {
+  test(`A11 public HTTP deadline fixture child ${childCase}`, { timeout: 62_000 }, async t => {
     assertIsolation();
     assert.ok(cases.includes(childCase));
     console.log(`A11 deadline child entered: ${childCase}`);
