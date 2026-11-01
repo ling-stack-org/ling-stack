@@ -115,7 +115,7 @@ async function runFile(file, { cwd, shard, worker, suite, temporaryDirectory, st
       if (logError) throw logError;
       if (cleanupError) throw cleanupError;
       result = { file, worker, status: stopped ?? (exit.code === 0 ? "passed" : "failed"),
-        exitCode: exit.code, signal: exit.signal, durationMs: Math.max(1, performance.now() - started) };
+        exitCode: exit.code, signal: exit.signal, fileTimeoutMs, durationMs: Math.max(1, performance.now() - started) };
     } finally {
       clearTimeout(deadline);
       clearTimeout(escalation);
@@ -137,12 +137,15 @@ async function runFile(file, { cwd, shard, worker, suite, temporaryDirectory, st
 }
 
 export async function runNodeTestFiles(files, {
-  concurrency = 1, shard = 0, shardCount = 1, suite = "tests", cwd = process.cwd(), exclusive = [], timings = {}, temporaryDirectory = tmpdir(), stdio = "inherit",
+  concurrency = 1, shard = 0, shardCount = 1, suite = "tests", cwd = process.cwd(), exclusive = [], timings = {}, fileTimeouts = {}, temporaryDirectory = tmpdir(), stdio = "inherit",
   fileTimeoutMs = defaultFileTimeoutMs, shardTimeoutMs = defaultShardTimeoutMs, terminationGraceMs = 5000,
   reportPath, signal: parentSignal,
 } = {}) {
   for (const [name, value] of Object.entries({ concurrency, fileTimeoutMs, shardTimeoutMs, terminationGraceMs })) {
     if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} must be a positive integer`);
+  }
+  for (const [file, timeout] of Object.entries(fileTimeouts)) {
+    if (!Number.isSafeInteger(timeout) || timeout < 1) throw new RangeError(`fileTimeouts[${file}] must be a positive integer`);
   }
   if (process.platform === "win32") throw new Error("This CI runner requires POSIX process groups (Linux or macOS)");
   const selected = [...new Set(files)];
@@ -169,12 +172,13 @@ export async function runNodeTestFiles(files, {
   const worker = async (bucket, index) => {
     for (const file of bucket) {
       if (controller.signal.aborted) break;
-      console.log(`[${suite} shard ${shard}, worker ${index}] START ${file} (deadline ${fileTimeoutMs}ms)`);
+      const timeout = fileTimeouts[file] ?? fileTimeoutMs;
+      console.log(`[${suite} shard ${shard}, worker ${index}] START ${file} (deadline ${timeout}ms)`);
       records.set(file, { file, worker: index, status: "running" });
       await persist();
       try {
         const result = await runFile(file, { cwd, shard, worker: index, suite, temporaryDirectory, stdio,
-          signal: controller.signal, fileTimeoutMs, terminationGraceMs, reportPath });
+          signal: controller.signal, fileTimeoutMs: timeout, terminationGraceMs, reportPath });
         records.set(file, result);
         console.log(`[${suite} shard ${shard}, worker ${index}] END ${file}: ${result.status}, ${(result.durationMs / 1000).toFixed(2)}s`);
       } catch (error) {

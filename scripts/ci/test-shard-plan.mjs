@@ -8,6 +8,14 @@ export const testSuites = {
   core: { packageName: "@ling-stack/core", cwd: join(root, "packages/core"), platform: "linux", shardCount: 4, concurrency: 2, excluded: [], exclusive: [] },
   daemon: { packageName: "@ling-stack/daemon", cwd: join(root, "packages/daemon"), platform: "darwin", shardCount: 4, concurrency: 2,
     excluded: ["dependency-security.test.mjs"],
+    // These integration fixtures are deliberately bounded more generously:
+    // hosted macOS runners crossed the default five-minute watchdog while
+    // still making forward progress. The default remains five minutes for
+    // every other daemon file.
+    fileTimeouts: {
+      "test/channel-workspace.test.mjs": 600_000,
+      "test/recovery-discovery-fair-scan.test.mjs": 600_000,
+    },
     exclusive: ["test/acp-kimi-host-read.test.mjs", "test/acp-kimi-host-terminal.test.mjs",
       // Preserve the child-lifecycle fixture's exclusive execution from the PR.
       "test/delegation-production-tool-surface.test.mjs",

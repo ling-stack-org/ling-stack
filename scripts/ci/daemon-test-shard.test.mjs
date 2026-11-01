@@ -84,6 +84,24 @@ test("daemon workers overlap while retaining separate homes and workspaces", asy
   assert.deepEqual(await readdir(fixture.options.temporaryDirectory), []);
 });
 
+test("file-specific watchdogs can extend only a known slow fixture", async (t) => {
+  const fixture = await runnerFixture(t, [`
+    import { setTimeout as delay } from 'node:timers/promises';
+    import test from 'node:test';
+    test('slow fixture', async () => { await delay(1200); });
+  `], ["recovery-discovery-fair-scan.test.mjs"]);
+  const report = join(fixture.root, "report.json");
+  assert.equal(await runDaemonTestFiles(fixture.files, {
+    ...fixture.options,
+    fileTimeoutMs: 1000,
+    fileTimeouts: { "test/recovery-discovery-fair-scan.test.mjs": 2500 },
+    reportPath: report,
+  }), 0);
+  const result = JSON.parse(await readFile(report, "utf8")).results[0];
+  assert.equal(result.fileTimeoutMs, 2500);
+  assert.equal(result.status, "passed");
+});
+
 test("daemon workers report failures and finish every assigned file before cleanup", async (t) => {
   const fixture = await runnerFixture(t, [0, 1, 2].map(index => `
     import assert from 'node:assert/strict';
