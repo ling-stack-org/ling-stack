@@ -534,11 +534,11 @@ test("Daemon restart completes an optional last step interrupted after answer ad
   for (let i = 0; i < 100 && f.store.getRun(f.delivery.successorRunId).status === "queued"; i += 1) {
     await new Promise(resolve => setTimeout(resolve, 20));
   }
-  assert.equal(f.store.getRun(f.delivery.successorRunId).status, "failed");
-  assert.equal(f.store.getChannelWorkflowStep(f.step.id).status, "skipped");
+  assert.equal(f.store.getRun(f.delivery.successorRunId).status, "succeeded");
+  assert.equal(f.store.getChannelWorkflowStep(f.step.id).status, "succeeded");
   assert.equal(f.store.getChannelWorkflow(f.workflow.id).status, "succeeded");
-  assert.equal(f.store.getUserInputContinuationReceipt(f.thread.id, f.delivery.deliveryId), undefined);
-  assert.equal(f.calls.length, 1);
+  assert.ok(f.store.getUserInputContinuationReceipt(f.thread.id, f.delivery.deliveryId));
+  assert.equal(f.calls.length, 2);
   await daemon.stop();
 });
 for (const surface of ["normal", "private", "channel"]) {

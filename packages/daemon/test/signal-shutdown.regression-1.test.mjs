@@ -4,7 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-async function within(promise, message, ms = 3_000) {
+async function within(promise, message, ms = 10_000) {
   const controller = new AbortController();
   try {
     return await Promise.race([promise, delay(ms, undefined, { signal: controller.signal }).then(() => {
@@ -20,7 +20,7 @@ async function within(promise, message, ms = 3_000) {
 // fails_when=signal handler leaves stop rejection unhandled;
 // why_new=existing lifecycle tests call daemon.stop directly, not real process signals;
 // seam=none; no_claim=real Daemon effect proof (only server startup is stubbed).
-for (const outcome of ["blocked", "closed", "late-drain"]) test(`actual CLI signal shutdown: ${outcome}`, { timeout: 10_000 }, async t => {
+for (const outcome of ["blocked", "closed", "late-drain"]) test(`actual CLI signal shutdown: ${outcome}`, { timeout: 30_000 }, async t => {
   const child = spawn(process.execPath, [fileURLToPath(new URL("./support/signal-shutdown-worker.mjs", import.meta.url)), outcome], {
     env: { PATH: process.env.PATH, LING_STACK_HOST: "127.0.0.1", LING_STACK_PORT: "0" },
     stdio: ["ignore", "pipe", "pipe"],

@@ -306,6 +306,11 @@ export function createDaemonServer(
     secretResolver: baseSecretResolver,
   });
   notificationHub.setDeliverSink(async (record) => {
+    // The registry is lazy-loaded so daemon startup does not perform an
+    // optional notification I/O. Delivery is the first authority boundary;
+    // wait for the persisted snapshot before selecting destinations so the
+    // first post-restart notification cannot be silently dropped.
+    await imDestinations.ensureLoaded();
     const destinations = imDestinations.list().filter((destination) => destination.enabled);
     if (destinations.length === 0) return;
     const message = {

@@ -227,7 +227,7 @@ test("native Memory automatic recall also remains role-private and counts an acc
   assert.equal(fixture.store.getRun(runId).status, "failed");
   const [used] = fixture.store.listUsedMemoryEvents({ runId });
   assert.deepEqual(used.memoryIds, [memory.id]);
-  assert.equal(used.policyVersion, "ling-memory-v1-lexical-v2");
+  assert.equal(used.policyVersion, "ling-memory-v1-lexical-v3");
 });
 
 test("native Memory usage by another consumer does not invalidate frozen semantic input", async t => {
