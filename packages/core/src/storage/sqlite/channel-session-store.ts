@@ -12,6 +12,10 @@ import {
 import type { Channel, CreateChannelInput, CreateChannelBranchInput, ChannelBranch, ChannelBranchUpdateInput } from "../../workspace-types.js";
 import { DEFAULT_WORKSPACE_ID, createChannelBranchId } from "../../workspace-types.js";
 import type { CreateLingThreadInput, LingThread, UpdateLingThreadInput } from "../../run-types.js";
+import type {
+  ResolveOrCreateConversationThreadInput,
+  ResolveOrCreateConversationThreadResult,
+} from "../../conversation-thread-topology-types.js";
 
 interface SessionPorts {
   readonly createChannel: (input: CreateChannelInput, now: string) => Channel;
@@ -23,6 +27,10 @@ interface SessionPorts {
   readonly getLingThread: (id: string) => LingThread | undefined;
   readonly updateLingThread: (id: string, input: UpdateLingThreadInput, now: string) => LingThread | undefined;
   readonly createChannelBranch: (input: CreateChannelBranchInput, now: string) => ChannelBranch;
+  readonly resolveOrCreateConversationThreadWithinTransaction: (
+    input: ResolveOrCreateConversationThreadInput,
+    now: string,
+  ) => ResolveOrCreateConversationThreadResult;
 }
 
 type Row = Record<string, SQLOutputValue>;
@@ -104,9 +112,15 @@ export class SqliteChannelSessionStore {
 
   registerDirectory(input: CreateChannelBranchInput, now: string): ChannelBranch {
     return this.write(() => {
-      this.channel(input.channelId, true);
-      if (input.rootThreadId) {
-        const thread = this.ports.getLingThread(input.rootThreadId);
+      const resolvedThread = input.conversationThread
+        ? this.ports.resolveOrCreateConversationThreadWithinTransaction(input.conversationThread, now).thread
+        : undefined;
+      const directoryInput = resolvedThread
+        ? { ...input, rootThreadId: resolvedThread.id, conversationThread: undefined }
+        : input;
+      this.channel(directoryInput.channelId, true);
+      if (directoryInput.rootThreadId) {
+        const thread = this.ports.getLingThread(directoryInput.rootThreadId);
         if (!thread || thread.channelId !== input.channelId || thread.surfaceKind === "channel_root"
           || thread.kind !== "channel_discussion" || thread.taskId || thread.teammateId || thread.workflowId
           || thread.workflowStepId || thread.externalWorkId) {
@@ -119,12 +133,12 @@ export class SqliteChannelSessionStore {
           throw new ChannelSessionError("invalid_session_mapping", "Conversation directory has unsupported thread topology.");
         }
       }
-      const branch = this.ports.createChannelBranch(input.rootThreadId
-        ? { ...input, status: "active", archivedAt: undefined } : input, now);
-      if (input.rootThreadId) {
-        this.update(input.channelId, input.rootThreadId, { title: input.name,
-          ...(input.status === "archived" ? { archived: true } : {}) }, now, true);
-        if (input.status === "archived" && input.archivedAt) this.ports.updateBranch(branch.id, { archivedAt: input.archivedAt }, now);
+      const branch = this.ports.createChannelBranch(directoryInput.rootThreadId
+        ? { ...directoryInput, status: "active", archivedAt: undefined } : directoryInput, now);
+      if (directoryInput.rootThreadId) {
+        this.update(directoryInput.channelId, directoryInput.rootThreadId, { title: directoryInput.name,
+          ...(directoryInput.status === "archived" ? { archived: true } : {}) }, now, true);
+        if (directoryInput.status === "archived" && directoryInput.archivedAt) this.ports.updateBranch(branch.id, { archivedAt: directoryInput.archivedAt }, now);
       }
       return this.ports.getBranch(branch.id)!;
     });

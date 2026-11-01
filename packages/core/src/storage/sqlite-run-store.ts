@@ -1513,6 +1513,8 @@ export class SqliteRunStore implements RunStore {
       getLingThread: (id) => this.lingThreads.getLingThread(id),
       updateLingThread: (id, input, now) => this.lingThreads.updateLingThread(id, input, now),
       createChannelBranch: (input, now) => this.channelCore.createChannelBranch(input, now),
+      resolveOrCreateConversationThreadWithinTransaction: (input, now) =>
+        this.conversationThreadTopology.resolveOrCreateWithinTransaction(input, now),
     });
     this.channelTeamEvidence = new SqliteChannelTeamEvidenceStore(
       { database: this.database },

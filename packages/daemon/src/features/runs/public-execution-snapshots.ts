@@ -3,7 +3,7 @@ import type { ConversationItemV1 } from "@ling-stack/contracts";
 import { isRecord } from "../../shared/validation.js";
 
 type PublicSnapshotStore = Pick<RunStore, "getLingThread" | "getRun">;
-const privateWorkflowInput = "Host-dispatched workflow input (private execution context omitted).";
+export const privateWorkflowInput = "Host-dispatched workflow input (private execution context omitted).";
 
 export function isWorkflowExecutionThread(thread: LingThread | undefined): boolean {
   return thread?.kind === "workflow_step" || isWorkflowStepId(thread?.workflowStepId);
@@ -13,7 +13,7 @@ export function projectPublicLingThread<T extends LingThread>(thread: T): T {
   return isWorkflowExecutionThread(thread) ? { ...thread, objective: privateWorkflowInput } : thread;
 }
 
-function isPrivateWorkflowTurn(turn: LingTurn, thread: LingThread | undefined): boolean {
+export function isPrivateWorkflowTurn(turn: LingTurn, thread: LingThread | undefined): boolean {
   return turn.createdByActor === "system" && (turn.kind === "workflow_step"
     || isWorkflowStepId(turn.workflowStepId) || isWorkflowExecutionThread(thread));
 }

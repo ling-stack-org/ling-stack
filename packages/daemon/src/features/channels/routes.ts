@@ -46,6 +46,7 @@ import { validateChannelModelUpdate } from "./model-binding-validation.js";
 import { createInitialChannelWorkspaceBinding } from "./workspace.js";
 import { hydrateProposedPlanSourceStates } from "../runs/proposed-plan-source-state.js";
 import { assertRunnableConversationProvider } from "../providers/conversation-model-validation.js";
+import { buildChannelBranchOrigin } from "./channel-branch-origin.js";
 
 export async function handleChannelsCollection(
   request: IncomingMessage,
@@ -291,10 +292,23 @@ export async function handleChannelBranchesCollection(
       const idempotencyKey = typeof body === "object" && body !== null && "idempotencyKey" in body
         ? (body as { idempotencyKey?: unknown }).idempotencyKey : undefined;
       if (idempotencyKey !== undefined && typeof idempotencyKey !== "string") throw new Error("idempotencyKey must be a string");
-      const result = store.createChannelSession({ channelId, title: input.name, legacy: true,
-        archived: input.status === "archived", ...(idempotencyKey !== undefined ? { idempotencyKey } : {}) }, now);
-      const branch = store.getChannelBranch(result.session.legacyBranchId!);
-      writeJson(response, result.idempotentReplay ? 200 : 201, { branch });
+      if (idempotencyKey !== undefined) {
+        // Preserve retry identity for the legacy branch facade. New callers
+        // without a retry key use the canonical branch topology below.
+        const result = store.createChannelSession({ channelId, title: input.name, legacy: true,
+          archived: input.status === "archived", idempotencyKey }, now);
+        const branch = store.getChannelBranch(result.session.legacyBranchId!);
+        writeJson(response, result.idempotentReplay ? 200 : 201, { branch });
+        return;
+      }
+      const origin = buildChannelBranchOrigin({ store, channel, name: input.name, now });
+      const branch = store.createChannelBranch({
+        channelId,
+        name: input.name,
+        status: input.status,
+        conversationThread: origin,
+      }, now);
+      writeJson(response, 201, { branch });
       return;
     }
 
