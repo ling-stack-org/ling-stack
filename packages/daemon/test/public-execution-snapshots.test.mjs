@@ -180,7 +180,7 @@ test("Run and WorkUnit HTTP views and terminal control responses never serialize
       else if (url.pathname === "/runtime/stuck") handleListRuntimeStuck(response, url, registry);
       else await handleWorkUnitRoute(request, response, url, registry, {}, supervisor,
         { kind: url.pathname.endsWith("/retry") ? "retry" : "detail", workUnitId: workUnit.id }, () => {}, {}, () => {});
-    } catch (error) { response.writeHead(500); response.end(String(error)); }
+    } catch { response.writeHead(500); response.end("fixture request failed"); }
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -242,7 +242,7 @@ test("direct control HTTP runtime, intervention, promote, and cancel responses p
       else if (request.url.startsWith("/promote")) await handleTeammateDirectInterventionPromote(request, response, config, registry, intervention.id, service);
       else if (request.url.startsWith("/cancel")) await handleTeammateDirectReplyCancel(request, response, config, registry, directUnit.id, service);
       else await handleTeammateDirectInterventions(request, response, config, registry, runtime.teammateId, service);
-    } catch (error) { response.writeHead(500); response.end(String(error)); }
+    } catch { response.writeHead(500); response.end("fixture request failed"); }
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");

@@ -55,7 +55,7 @@ async function fixture(t) {
         { kind: url.pathname.slice(1) || "detail", threadId: thread.id },
         { maxBodyBytes: 100_000, startResumeRun: async () => { starts++; return run.id; },
           startForkRun: async () => { starts++; return run.id; } });
-    } catch (error) { response.writeHead(500); response.end(String(error)); }
+    } catch { response.writeHead(500); response.end("fixture request failed"); }
   });
   t.after(async () => {
     await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
