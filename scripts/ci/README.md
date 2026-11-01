@@ -11,7 +11,8 @@ platform acceptance are unchanged.
 - Other packages and Web checks: one Linux matrix entry, excluding core and
   daemon because their complete discovery runs in their own entries.
 - Daemon: four macOS shards, two serial file workers per shard. The native Kimi
-  lifecycle files run exclusively before other files on their assigned runner.
+  and delegation lifecycle files run exclusively before other files on their
+  assigned runner.
 - Linux restricted-command contracts and real macOS native smoke remain separate
   mandatory lanes. No daemon files have been moved to Linux or removed.
 

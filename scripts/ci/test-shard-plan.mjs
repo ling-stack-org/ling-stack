@@ -8,7 +8,9 @@ export const testSuites = {
   core: { packageName: "@ling-stack/core", cwd: join(root, "packages/core"), platform: "linux", shardCount: 4, concurrency: 2, excluded: [], exclusive: [] },
   daemon: { packageName: "@ling-stack/daemon", cwd: join(root, "packages/daemon"), platform: "darwin", shardCount: 4, concurrency: 2,
     excluded: ["dependency-security.test.mjs"],
-    exclusive: ["test/acp-kimi-host-read.test.mjs", "test/acp-kimi-host-terminal.test.mjs"] },
+    exclusive: ["test/acp-kimi-host-read.test.mjs", "test/acp-kimi-host-terminal.test.mjs",
+      // Preserve the child-lifecycle fixture's exclusive execution from the PR.
+      "test/delegation-production-tool-surface.test.mjs"] },
 };
 
 export async function discoverTestFiles(cwd, excluded = []) {

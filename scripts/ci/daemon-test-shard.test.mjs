@@ -143,6 +143,28 @@ test("native lifecycle fixtures finish exclusively before parallel workers start
   assert.deepEqual(await readdir(fixture.options.temporaryDirectory), []);
 });
 
+test("delegation lifecycle fixture finishes exclusively before ordinary files", async (t) => {
+  const fixture = await runnerFixture(t, [
+    `import assert from 'node:assert/strict';
+     import { existsSync, writeFileSync } from 'node:fs';
+     import test from 'node:test';
+     test('delegation lifecycle', () => {
+       assert.equal(existsSync('ordinary-started'), false);
+       writeFileSync('delegation-finished', 'done');
+     });`,
+    `import assert from 'node:assert/strict';
+     import { existsSync, writeFileSync } from 'node:fs';
+     import test from 'node:test';
+     test('ordinary file', () => {
+       writeFileSync('ordinary-started', 'yes');
+       assert.ok(existsSync('delegation-finished'));
+     });`,
+  ], ['delegation-production-tool-surface.test.mjs', 'aaa-ordinary.test.mjs']);
+  assert.equal(await runDaemonTestFiles([...fixture.files].reverse(), { ...fixture.options, concurrency: 1 }), 0);
+  assert.equal(await readFile(join(fixture.root, 'delegation-finished'), 'utf8'), 'done');
+  assert.deepEqual(await readdir(fixture.options.temporaryDirectory), []);
+});
+
 test("an exclusive fixture failure still runs other files and fails the shard", async (t) => {
   const fixture = await runnerFixture(t, [
     "import test from 'node:test'; test('exclusive failure', () => { throw new Error('expected'); });",
