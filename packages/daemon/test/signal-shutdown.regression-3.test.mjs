@@ -13,7 +13,7 @@ import { observeDaemonShutdown } from "@ling-stack/core/daemon-shutdown-observer
 // why_new=regression-1 sees only stderr and regression-2 only callback order;
 // seam=none; no_claim=packaged Desktop/UI acceptance (server startup is stubbed).
 for (const outcome of ["blocked", "closed", "late-drain", "lost-observer"]) {
-  test(`actual CLI private shutdown observation: ${outcome}`, { timeout: 8000 }, async t => {
+  test(`actual CLI private shutdown observation: ${outcome}`, { timeout: 15000 }, async t => {
     const child = spawn(process.execPath, [fileURLToPath(new URL("./support/signal-shutdown-worker.mjs", import.meta.url)),
       outcome === "lost-observer" ? "blocked" : outcome], {
       env: { PATH: process.env.PATH, LING_STACK_HOST: "127.0.0.1", LING_STACK_PORT: "0", LING_STACK_SHUTDOWN_OBSERVER_FD: "5" },
@@ -27,15 +27,19 @@ for (const outcome of ["blocked", "closed", "late-drain", "lost-observer"]) {
     const dispose = observeDaemonShutdown({ channel: child.stdio[5], pid: child.pid,
       onPhase: phase => phases.push(phase), onUnavailable: code => failures.push(code) });
     t.after(async () => { dispose(); if (!exit) child.kill("SIGKILL"); await exited; });
-    async function until(check) {
-      const deadline = Date.now() + 3000;
+    async function until(check, timeoutMs = 3000) {
+      const deadline = Date.now() + timeoutMs;
       while (!check()) {
         if (exit) throw new Error(`CLI exited before observation: ${JSON.stringify(exit)}; ${stderr}`);
         if (Date.now() >= deadline) throw new Error(`CLI observation timeout; phases=${JSON.stringify(phases)}; ${stderr}`);
         await delay(5);
       }
     }
-    await until(() => stdout.includes("Ling Stack daemon listening"));
+    // macOS CI can be heavily loaded while the real CLI fixture starts. Keep
+    // the lifecycle assertions strict, but give startup its own bounded
+    // window so a slow runner does not turn a valid observation into a flaky
+    // failure before the signal path is exercised.
+    await until(() => stdout.includes("Ling Stack daemon listening"), 8000);
     if (outcome === "lost-observer") dispose();
     child.kill("SIGTERM");
     if (outcome === "closed" || outcome === "late-drain") {
