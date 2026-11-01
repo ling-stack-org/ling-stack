@@ -14,7 +14,7 @@ import { inferRunStatus } from "../../lib/run-evidence.js";
 import { useRunControl } from "../../lib/use-run-control.js";
 import { useLatestKeyedRequestGuard } from "../../lib/use-latest-request.js";
 import { useI18n } from "../../i18n.js";
-import { streamRun, type StreamJsonResponseParser } from "../../sse.js";
+import { streamRun, type StreamJsonResponseParser, type StreamRunOptions } from "../../sse.js";
 import type {
   RunArtifact,
   RunEventEnvelope,
@@ -50,6 +50,7 @@ export interface RunsActions {
     cwd: string,
     afterRunLoaded?: (runId: string) => Promise<void>,
     parseJsonResponse?: StreamJsonResponseParser<TResponse>,
+    options?: StreamRunOptions,
   ) => Promise<TResponse | undefined>;
   readonly abortCurrentRun: () => void;
   readonly cancelRunOrWorkUnit: (targetRun?: RunSession) => Promise<void>;
@@ -220,6 +221,7 @@ export function useRunsDomain(input: {
     cwd: string,
     afterRunLoaded?: (runId: string) => Promise<void>,
     parseJsonResponse?: StreamJsonResponseParser<TResponse>,
+    options: StreamRunOptions = {},
   ): Promise<TResponse | undefined> {
     const confirmedRequestBody = await input.confirmFullAccessRunIfNeeded(requestBody);
     if (!confirmedRequestBody) {
@@ -255,6 +257,7 @@ export function useRunsDomain(input: {
         },
         controller.signal,
         parseJsonResponse,
+        options,
       );
 
       if (jsonResponse !== undefined) {

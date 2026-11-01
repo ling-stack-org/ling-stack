@@ -287,6 +287,7 @@ export function TeammatePrivateChatComposer({
               disabled={permissionLocked}
               disabledReason={t("Permission is locked while the private reply is running.")}
               onAuthorizationModeChange={controller.handleAuthorizationModeChange}
+              onPermissionPresetChange={controller.handlePermissionPresetChange}
             />
           </>
         )}

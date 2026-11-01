@@ -300,7 +300,7 @@ export function useChannelWorkflowController(input: {
           throw new Error("Workflow step start returned an invalid admission response or foreign lineage.");
         }
         return parsed;
-      });
+      }, { disableRpc: true });
       if (admission) {
         publishChannelWorkflowStepStartResponse(admission, input);
       }

@@ -70,6 +70,8 @@ export interface UserInputDeliveryWorkerSnapshot {
   readonly inFlightDeliveryCount: number;
 }
 
+export const DEFAULT_USER_INPUT_DELIVERY_MAX_IN_FLIGHT_PER_STORE = 4;
+
 type ProcessDisposition = "processed" | "deferred" | "claim_lost";
 
 interface ClaimLeaseExecution<T> {
@@ -109,7 +111,7 @@ export class UserInputDeliveryWorker {
     this.pageSize = boundedInteger(options.pageSize, 100, 1, 500, "delivery page size");
     this.maxInFlightPerStore = boundedInteger(
       options.maxInFlightPerStore,
-      1,
+      DEFAULT_USER_INPUT_DELIVERY_MAX_IN_FLIGHT_PER_STORE,
       1,
       32,
       "delivery per-store concurrency",

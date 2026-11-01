@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
 import { Check, ChevronDown, Hand, Shield, ShieldAlert, ShieldCheck } from "lucide-react";
+import { ComposerPermissionMenu } from "@ling-stack/conversation-ui-react";
 import { useI18n } from "../../i18n.js";
-import { conversationAuthorizationModeMenuOptions, permissionPresetLabel } from "../../lib/session-permissions.js";
+import { conversationAuthorizationModeMenuOptions, conversationPermissionPresetMenuOptions } from "../../lib/session-permissions.js";
 import { Button, Menu, MenuContent, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../../shared/ui/index.js";
 import type { AuthorizationMode, PermissionPreset } from "../../types.js";
 
 const authorizationIcons = { ask: Hand, smart: Shield, always: ShieldAlert };
 
 export function ConversationPermissionControl({
-  authorizationMode, permissionPreset, fullAccessConfirmed, disabled, disabledReason, onAuthorizationModeChange,
+  authorizationMode, permissionPreset, fullAccessConfirmed, disabled, disabledReason, onAuthorizationModeChange, onPermissionPresetChange,
 }: {
   readonly authorizationMode: AuthorizationMode;
   readonly permissionPreset: PermissionPreset;
@@ -16,6 +17,7 @@ export function ConversationPermissionControl({
   readonly disabled: boolean;
   readonly disabledReason?: string;
   readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
+  readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -37,7 +39,7 @@ export function ConversationPermissionControl({
 
   useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
 
-  return (
+  return <>
     <Menu open={open && !disabled} onOpenChange={(value) => setOpen(value && !disabled)}>
       <MenuTrigger asChild>
         <Button
@@ -48,8 +50,8 @@ export function ConversationPermissionControl({
           trailingIcon={<ChevronDown size={13} />}
           disabled={disabled}
           data-full-access={fullAccess}
-          aria-label={t("Selected permission preset {label}", { label: confirmationLabel })}
-          title={disabled ? disabledReason ?? t("Permission is locked while the current message is running.") : `${confirmationLabel}. ${selectedAuthorization.description} ${t("Sandbox settings")}: ${permissionPresetLabel(permissionPreset, t)}`}
+          aria-label={t("Selected authorization mode {label}", { label: confirmationLabel })}
+          title={disabled ? disabledReason ?? t("Permission is locked while the current message is running.") : `${confirmationLabel}. ${selectedAuthorization.description}`}
         >
           {triggerLabel}
         </Button>
@@ -69,5 +71,14 @@ export function ConversationPermissionControl({
         </MenuRadioGroup>
       </MenuContent>
     </Menu>
-  );
+    <ComposerPermissionMenu
+      preset={permissionPreset}
+      options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}
+      disabled={disabled}
+      disabledReason={disabledReason}
+      selectedPermissionLabel={t("Selected permission preset {label}")}
+      menuLabel={t("Permission preset")}
+      onPresetChange={onPermissionPresetChange}
+    />
+  </>;
 }

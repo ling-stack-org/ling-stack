@@ -568,6 +568,7 @@ export function ChannelComposer({
             disabled={permissionLocked}
             disabledReason={t("Permission is locked while this channel run or message is active.")}
             onAuthorizationModeChange={onAuthorizationModeChange}
+            onPermissionPresetChange={onPermissionPresetChange}
           />
           {planModeChipVisible ? (
             <span className={planModeActive ? "conversation-mode-chip plan active" : "conversation-mode-chip plan"}>

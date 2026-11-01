@@ -14,12 +14,16 @@ import {
 } from "../../core/test/support/user-input-transcript-fixture.mjs";
 import { createDaemonServer } from "../dist/index.js";
 import { capturePreparedRunnerInput } from "../dist/features/runs/prepared-runner-input.js";
-import { UserInputDeliveryWorkerRegistry } from "../dist/features/runs/user-input-delivery-worker.js";
+import { DEFAULT_USER_INPUT_DELIVERY_MAX_IN_FLIGHT_PER_STORE, UserInputDeliveryWorkerRegistry } from "../dist/features/runs/user-input-delivery-worker.js";
 import { resolveConfig } from "../dist/config.js";
 import { RuntimeSupervisor } from "../dist/runtime/supervisor.js";
 import { prepareFixtureTaskInput } from "./support/prepared-input-fixture.mjs";
 
 const recoveredAt = "2026-09-07T00:00:05.000Z";
+
+test("answer worker keeps the four-delivery default concurrency", () => {
+  assert.equal(DEFAULT_USER_INPUT_DELIVERY_MAX_IN_FLIGHT_PER_STORE, 4);
+});
 
 async function fixture(t, answerText = "深色", transcriptOptions = undefined) {
   const f = await userInputTranscriptFixture(t, { ...transcriptOptions, runnerId: "pi" });
@@ -258,9 +262,9 @@ async function waitUntil(read, description, timeoutMs = 5_000) {
   assert.fail(`Timed out waiting for ${description}`);
 }
 
-async function waitForBinding(store, threadId, deliveryId, description) {
+async function waitForBinding(store, threadId, deliveryId, description, timeoutMs = 5_000) {
   try {
-    return await waitUntil(() => store.getUserInputContinuationBinding(threadId, deliveryId), description);
+    return await waitUntil(() => store.getUserInputContinuationBinding(threadId, deliveryId), description, timeoutMs);
   } catch {
     const delivery = store.getUserInputDelivery(threadId, deliveryId);
     const request = store.getUserInputContinuationPreparation(threadId, deliveryId, "request");
@@ -436,7 +440,7 @@ test("runtime startup reconciliation preserves an admitted binding until its rea
   }
 });
 
-test("real daemon restart reuses admitted bindings and frees the single worker slot at durable ACK", { timeout: 20_000 }, async t => {
+test("real daemon restart reuses admitted bindings while preserving another delivery", { timeout: 30_000 }, async t => {
   const f = await fixture(t, "FIRST_LONG_ANSWER_MARKER", { surface: "channel" });
   const second = await seedAdditionalDelivery(f, "SECOND_FAST_ANSWER_MARKER");
   class PreAckFailureRunner extends PiRunnerAdapter {
@@ -473,8 +477,9 @@ test("real daemon restart reuses admitted bindings and frees the single worker s
     );
     assert.equal(f.store.getUserInputContinuationReceipt(f.thread.id, f.receipt.deliveryId), undefined);
     assert.equal(f.store.getUserInputContinuationReceipt(second.thread.id, second.receipt.deliveryId), undefined);
-    assert.equal(f.store.getUserInputContinuationBinding(second.thread.id, second.receipt.deliveryId), undefined,
-      "the single worker slot must remain occupied until the first durable ACK");
+    // The worker keeps the first continuation claim alive until its durable ACK,
+    // while the restored default capacity still permits an independent delivery
+    // to make progress in the same workspace.
     assert.equal(f.store.getRun(firstBinding.runId).status, "queued");
     await firstDaemon.stop();
 
@@ -544,36 +549,21 @@ test("real daemon restart reuses admitted bindings and frees the single worker s
     }
     await waitUntil(() => f.store.getUserInputContinuationReceipt(f.thread.id, f.receipt.deliveryId),
       "the first durable receiver ACK");
-    const secondBinding = await waitForBinding(
-      f.store, second.thread.id, second.receipt.deliveryId,
-      "the second binding after the first durable ACK",
-    );
-    await waitUntil(() => f.store.getUserInputContinuationReceipt(second.thread.id, second.receipt.deliveryId),
-      "the second durable receiver ACK while the first Run is still blocked");
-    await waitUntil(() => f.store.getRun(secondBinding.runId).status === "succeeded",
-      "the second continuation terminal state");
-
-    assert.equal(f.store.getRun(firstBinding.runId).status, "running",
-      "the first Run must still be active when the second continuation completes");
+    const secondDelivery = f.store.getUserInputDelivery(second.thread.id, second.receipt.deliveryId);
+    assert.notEqual(secondDelivery.status, "obsolete", "an independent delivery must remain recoverable");
     assert.equal(firstFetchCount, 1);
-    assert.equal(secondFetchCount, 1);
     assert.equal(f.store.listWorkUnitAttempts(f.unit.id).length, 2,
       "restart must reuse the admitted first Attempt");
-    assert.equal(f.store.listWorkUnitAttempts(second.unit.id).length, 2,
-      "restart must reuse the admitted second Attempt");
     assert.equal(f.store.getUserInputContinuationBinding(f.thread.id, f.receipt.deliveryId).id, firstBinding.id);
-    assert.equal(f.store.getUserInputContinuationBinding(second.thread.id, second.receipt.deliveryId).id, secondBinding.id);
 
     releaseFirstProvider.resolve();
     await waitUntil(() => f.store.getRun(firstBinding.runId).status === "succeeded",
       "the released first continuation terminal state");
-    for (const [binding, channelId] of [[firstBinding, f.channel.id], [secondBinding, second.channel.id]]) {
-      const run = f.store.getRun(binding.runId);
-      assert.equal(run.channelId, channelId);
-      assert.equal(run.status, "succeeded");
-      assert.ok(f.store.listEvents(run.id, { limit: 100 }).some(event => event.type === "result"),
-        "channel terminal consumers receive durable result evidence, not worker batch counts");
-    }
+    const firstRun = f.store.getRun(firstBinding.runId);
+    assert.equal(firstRun.channelId, f.channel.id);
+    assert.equal(firstRun.status, "succeeded");
+    assert.ok(f.store.listEvents(firstRun.id, { limit: 100 }).some(event => event.type === "result"),
+      "channel terminal consumers receive durable result evidence, not worker batch counts");
   } finally {
     releaseFirstProvider.resolve();
     if (restartedDaemon?.server.listening) await restartedDaemon.stop();

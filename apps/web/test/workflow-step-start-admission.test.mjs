@@ -143,7 +143,11 @@ test("workflow manual start returns typed JSON admission instead of silently par
     response.end(JSON.stringify({ status: "waiting_for_approval", mode: "create_and_run_task", workflow, workflowStep, approval }));
   });
   const originalWebSocket = globalThis.WebSocket;
-  globalThis.WebSocket = undefined;
+  globalThis.WebSocket = class {
+    constructor() {
+      throw new Error("workflow admission must not attempt runs.start RPC");
+    }
+  };
   try {
     const messages = [];
     const result = await streamRun(
@@ -163,6 +167,7 @@ test("workflow manual start returns typed JSON admission instead of silently par
         runnerId: undefined,
         skipProviderPreflight: false,
       }),
+      { disableRpc: true },
     );
     assert.deepEqual(result, {
       status: "waiting_for_approval",
@@ -408,6 +413,7 @@ test("workflow controller publishes waiting admission into workflow, step, and a
 
   assert.equal(fixture.state.streamCalls.length, 1);
   assert.equal(fixture.state.streamCalls[0][0], "http://daemon.test/workflow-steps/step-1/start?cwd=%2Frepo");
+  assert.equal(fixture.state.streamCalls[0][5]?.disableRpc, true);
   assert.deepEqual(fixture.state.workflows.map((item) => item.id), ["workflow-before", "workflow-1", "workflow-after"]);
   assert.equal(fixture.state.workflows[1].title, waitingWorkflow.title);
   assert.equal(fixture.state.steps[0].status, "waiting_for_approval");

@@ -26,6 +26,7 @@ export interface TeammatePrivateComposerController {
   readonly handleComposerInputKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
   readonly handleComposerValueChange: (value: string, caret: number) => void;
   readonly handleAuthorizationModeChange: (mode: AuthorizationMode) => void;
+  readonly handlePermissionPresetChange: (preset: PermissionPreset) => void;
   readonly submitComposer: () => void;
   readonly updateSlashPicker: (value: string, caret: number) => void;
 }
@@ -157,6 +158,21 @@ export function useTeammatePrivateComposerController({
     setSlashActiveIndex(0);
   }
 
+  function handlePermissionPresetChange(preset: PermissionPreset): void {
+    if (preset === "full_access" && onFullAccessPresetSelected) {
+      void onFullAccessPresetSelected().then((confirmation) => {
+        if (!confirmation) return;
+        setSelectedPermissionPreset(preset);
+        setSelectedAuthorizationMode("always");
+        onWorkspaceAccessModeChange(workspaceAccessModeForPermissionPreset(preset));
+      });
+      return;
+    }
+    setSelectedPermissionPreset(preset);
+    setSelectedAuthorizationMode(preset === "read_only" ? "ask" : "smart");
+    onWorkspaceAccessModeChange(workspaceAccessModeForPermissionPreset(preset));
+  }
+
   function commitSlashCommand(option: SlashCommand): void {
     const liveCaret = Math.min(
       composerInputRef.current?.readSelectionStart() ?? messageDraft.length,
@@ -196,6 +212,7 @@ export function useTeammatePrivateComposerController({
       updateSlashPicker(value, caret);
     },
     handleAuthorizationModeChange,
+    handlePermissionPresetChange,
     submitComposer,
     updateSlashPicker,
   };

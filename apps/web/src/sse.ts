@@ -7,14 +7,21 @@ export type StreamMessage =
 
 export type StreamJsonResponseParser<TResponse> = (value: unknown) => TResponse;
 
+export interface StreamRunOptions {
+  /** Skip the WebSocket RPC transport when the endpoint has a narrower request contract. */
+  readonly disableRpc?: boolean;
+}
+
 export async function streamRun<TResponse = never>(
   url: string,
   body: unknown,
   onMessage: (message: StreamMessage) => void,
   signal?: AbortSignal,
   parseJsonResponse?: StreamJsonResponseParser<TResponse>,
+  options: StreamRunOptions = {},
 ): Promise<TResponse | undefined> {
   try {
+    if (options.disableRpc) throw new RpcFallbackError("WebSocket RPC disabled for this endpoint.");
     await streamRunRpc(url, body, onMessage, signal);
     return undefined;
   } catch (error) {
