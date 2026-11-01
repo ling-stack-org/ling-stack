@@ -1396,6 +1396,8 @@ export interface ChannelWorkflowStepMutationResponse {
 }
 
 export interface ChannelWorkflowStepStartResponse {
+  readonly status: "started" | "blocked";
+  readonly mode: ChannelWorkflowStepStartMode;
   readonly workflowStep: ChannelWorkflowStep;
   readonly workflow?: ChannelWorkflow;
   readonly task?: Task;
