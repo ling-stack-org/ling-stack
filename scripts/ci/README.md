@@ -45,16 +45,22 @@ hints. Only successful default-branch runs publish timing caches.
 
 ## Timing Telemetry
 
-The `quality` job also preserves a non-blocking `ci-telemetry` artifact for
-complete and preview runs. It records workflow run and job timestamps,
-estimated queue and execution time, step durations, shard/file durations,
-`critical_path_duration`, `max_core_shard_duration`,
-`max_daemon_shard_duration`, shard imbalance by suite, and timeout/leaked-process
-counters. The summary is appended to the GitHub step summary and the raw JSON
-is retained for 14 days. Collection uses the current run's Actions API data;
-API or parsing failures create an unavailable observation and never change the
-quality gate. Run duration is labelled as observed at collection because the
-telemetry step runs inside the aggregate job.
+The independent `timing-telemetry` job runs after `quality` and preserves a
+best-effort `ci-telemetry` artifact for complete and preview runs. The mandatory
+quality gate never depends on telemetry, so collection, download, parsing,
+upload, or telemetry job failures cannot change that gate. Available shard
+reports are downloaded even when the quality gate fails. The artifact retains
+run/job/step observations, per-file results, cumulative shard file time,
+imbalance by suite, and timeout/leaked-process counts from available reports.
+The summary is appended to the GitHub step summary and the JSON is retained
+for 14 days. Actions API jobs are restricted to the current run attempt.
+
+Job start delay includes dependency waits; it is not a pure runner queue
+measurement. Cumulative file time is not shard wall-clock time because files
+run concurrently. Elapsed time through completed jobs is not a dependency-DAG
+critical path and excludes in-progress jobs. Run duration is observed at
+collection while the workflow is still in progress. Missing reports do not
+establish zero failures across the full run.
 
 Use at least 5-10 complete hosted runs to compare the observations before
 changing shard counts, worker concurrency, or adding another E2E lane. The

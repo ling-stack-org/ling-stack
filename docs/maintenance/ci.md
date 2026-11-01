@@ -129,12 +129,15 @@ Linux 每日回归仅在同一提交、同一检查方案已有有效的完整�
 
 每次运行分别记录排队时间、页面总时长、各任务运行时间、Linux／macOS 累计任务分钟、测试数量与原生跳过数量。累计任务分钟是性能观察，不能在没有账单证据时称为实际扣额；失败任务已运行的部分也会消耗资源。
 
-当前 `quality` 汇总任务还会保存非阻断的 `ci-telemetry` artifact（保留 14
-天），记录 workflow run、job、step、shard 和测试文件耗时，以及
-`critical_path_duration`、Core/Daemon 最大 shard 耗时、分片不均衡比和
-timeout/leaked-process 计数。摘要会写入 GitHub Step Summary；Actions API
-不可用、报告缺失或 telemetry 解析失败时只标记观测不可用，不改变原有质量门。
-由于采集步骤位于汇总任务内部，run 总时长标为采集时已观测值。先观察至少
+独立的 `timing-telemetry` 任务在 `quality` 汇总结束后，尽力保存
+`ci-telemetry` artifact（保留 14 天）并写入 GitHub Step Summary。质量门
+不依赖该任务；采集、下载、解析、上传或观测任务失败都不改变原有门禁。
+质量门失败时仍下载可用分片报告，记录本次运行尝试的 run/job/step 观测、
+逐文件结果、Core/Daemon 最大分片文件累计耗时、分片不均衡比和可用报告中的
+timeout/leaked-process 计数。job 启动延迟包含依赖等待，不能当作纯 runner
+排队时间；并发文件累计耗时不等于分片实际时长；截至已完成任务的经过时间
+不等于依赖图关键路径，且不包含仍在执行的任务。run 总时长标为采集时
+已观测值，报告缺失也不能据此断言全量测试没有超时或泄漏。先观察至少
 5～10 次完整 hosted run，再决定是否调整分片、worker 并发或增加 E2E；当前
 不据此承诺固定提速比例。
 

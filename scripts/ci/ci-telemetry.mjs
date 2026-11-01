@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 const MAX_REASONABLE_MS = 7 * 24 * 60 * 60 * 1000;
 
 function parseTimestamp(value) {
-  const timestamp = Date.parse(value ?? "");
+  const timestamp = typeof value === "string" ? Date.parse(value) : NaN;
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
@@ -23,19 +23,18 @@ function sum(values) {
 function percentile(values, fraction) {
   const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
   if (!sorted.length) return null;
-  return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * fraction))];
+  return sorted[Math.max(0, Math.ceil(sorted.length * fraction) - 1)];
 }
 
 function normalizeJobs(input) {
-  if (Array.isArray(input)) return input;
-  if (Array.isArray(input?.jobs)) return input.jobs;
-  return [];
+  const jobs = Array.isArray(input) ? input : Array.isArray(input?.jobs) ? input.jobs : [];
+  return jobs.filter(job => job && typeof job === "object");
 }
 
 function normalizeReports(input) {
   if (!Array.isArray(input)) return [];
   return input.filter(report => report && report.version === 1 && typeof report.suite === "string"
-    && Number.isInteger(report.shard) && Array.isArray(report.results));
+    && report.suite.length > 0 && Number.isInteger(report.shard) && report.shard >= 0 && Array.isArray(report.results));
 }
 
 function parseArguments(argv, allowed) {
@@ -68,13 +67,11 @@ async function readReportsDirectory(directory) {
 }
 
 function jobTelemetry(jobs, run) {
-  const runCreated = parseTimestamp(run.created_at);
-  const runStarted = parseTimestamp(run.run_started_at) ?? runCreated;
+  const runStarted = parseTimestamp(run.run_started_at) !== null ? run.run_started_at : run.created_at;
   return jobs.map(job => {
     const executionMs = duration(job.started_at, job.completed_at);
-    const queuedMs = runStarted !== null && parseTimestamp(job.started_at) !== null
-      ? Math.max(0, parseTimestamp(job.started_at) - runStarted) : null;
-    const stepDurations = (job.steps ?? []).map(step => ({
+    const startDelayMs = duration(runStarted, job.started_at);
+    const stepDurations = (Array.isArray(job.steps) ? job.steps : []).filter(step => step && typeof step === "object").map(step => ({
       name: step.name,
       conclusion: step.conclusion ?? null,
       durationMs: duration(step.started_at, step.completed_at),
@@ -84,7 +81,7 @@ function jobTelemetry(jobs, run) {
       status: job.status ?? null,
       conclusion: job.conclusion ?? null,
       runner: job.runner_name ?? null,
-      queuedMs,
+      startDelayMs,
       executionMs,
       stepDurations,
     };
@@ -93,26 +90,33 @@ function jobTelemetry(jobs, run) {
 
 function reportTelemetry(reports) {
   const shards = reports.map(report => {
-    const durations = report.results.map(result => result.durationMs).filter(value => Number.isFinite(value) && value >= 0);
-    const statuses = Object.fromEntries([...new Set(report.results.map(result => result.status))]
-      .map(status => [status, report.results.filter(result => result.status === status).length]));
+    const files = report.results.filter(result => result && typeof result.file === "string").map(result => ({
+      file: result.file,
+      status: typeof result.status === "string" ? result.status : null,
+      durationMs: Number.isFinite(result.durationMs) && result.durationMs >= 0 && result.durationMs <= MAX_REASONABLE_MS
+        ? result.durationMs : null,
+    }));
+    const durations = files.map(result => result.durationMs).filter(Number.isFinite);
+    const statuses = Object.fromEntries([...new Set(files.map(result => result.status))]
+      .map(status => [status, files.filter(result => result.status === status).length]));
     return {
       suite: report.suite,
       shard: report.shard,
       platform: report.platform ?? null,
       complete: report.complete === true,
-      fileCount: report.results.length,
-      passedCount: report.results.filter(result => result.status === "passed").length,
+      fileCount: files.length,
+      passedCount: files.filter(result => result.status === "passed").length,
       statusCounts: statuses,
-      sumFileDurationMs: sum(durations),
+      sumFileDurationMs: durations.length ? sum(durations) : null,
       maxFileDurationMs: durations.length ? Math.max(...durations) : null,
       p95FileDurationMs: percentile(durations, 0.95),
+      files,
     };
   });
-  const bySuite = {};
+  const bySuite = Object.create(null);
   for (const shard of shards) (bySuite[shard.suite] ??= []).push(shard);
   const suites = Object.fromEntries(Object.entries(bySuite).map(([suite, entries]) => {
-    const durations = entries.map(entry => entry.sumFileDurationMs).filter(value => value > 0);
+    const durations = entries.map(entry => entry.sumFileDurationMs).filter(Number.isFinite);
     const max = durations.length ? Math.max(...durations) : null;
     const average = durations.length ? sum(durations) / durations.length : null;
     return [suite, {
@@ -125,27 +129,31 @@ function reportTelemetry(reports) {
   return { shards, suites };
 }
 
-export function buildTelemetry({ run = {}, jobs = [], reports = [] } = {}) {
+export function buildTelemetry({ run = {}, jobs = [], reports = [], capturedAt = new Date().toISOString() } = {}) {
+  run ??= {};
   const normalizedJobs = normalizeJobs(jobs);
   const normalizedReports = normalizeReports(reports);
   const jobDurations = jobTelemetry(normalizedJobs, run);
-  const runDurationMs = duration(run.created_at, run.updated_at);
-  const completedAt = normalizedJobs.map(job => parseTimestamp(job.completed_at)).filter(Number.isFinite);
-  const runCreated = parseTimestamp(run.created_at);
-  const criticalPathMs = runCreated !== null && completedAt.length && Math.max(...completedAt) >= runCreated
-    ? Math.min(Math.max(...completedAt) - runCreated, MAX_REASONABLE_MS) : null;
+  const durationSource = run.status === "completed" ? "updated_at" : "capturedAt";
+  const runDurationMs = duration(run.created_at, durationSource === "updated_at" ? run.updated_at : capturedAt);
+  const completedAt = normalizedJobs.filter(job => job.status === "completed")
+    .map(job => parseTimestamp(job.completed_at)).filter(Number.isFinite);
+  const completedJobsElapsedMs = completedAt.length
+    ? duration(run.created_at, new Date(Math.max(...completedAt)).toISOString()) : null;
   const failedJobs = jobDurations.filter(job => job.conclusion && !["success", "skipped"].includes(job.conclusion)).length;
-  const timedOutFiles = normalizedReports.flatMap(report => report.results)
+  const reportDetails = reportTelemetry(normalizedReports);
+  const files = reportDetails.shards.flatMap(shard => shard.files);
+  const timedOutFiles = files
     .filter(result => result.status === "timed_out").length;
-  const leakedProcessFiles = normalizedReports.flatMap(report => report.results)
+  const leakedProcessFiles = files
     .filter(result => result.status === "leaked_processes").length;
-  const suiteSummaries = reportTelemetry(normalizedReports).suites;
+  const suiteSummaries = reportDetails.suites;
   const finiteJobExecutions = jobDurations.map(job => job.executionMs).filter(Number.isFinite);
-  const finiteJobQueues = jobDurations.map(job => job.queuedMs).filter(Number.isFinite);
+  const finiteJobStartDelays = jobDurations.map(job => job.startDelayMs).filter(Number.isFinite);
   return {
     version: 1,
-    capturedAt: new Date().toISOString(),
-    telemetryUnavailable: run.telemetry_unavailable === true || jobs.telemetry_unavailable === true,
+    capturedAt,
+    telemetryUnavailable: run.telemetry_unavailable === true || jobs?.telemetry_unavailable === true,
     run: {
       id: run.id ?? null,
       event: run.event ?? null,
@@ -156,37 +164,40 @@ export function buildTelemetry({ run = {}, jobs = [], reports = [] } = {}) {
       startedAt: run.run_started_at ?? null,
       updatedAt: run.updated_at ?? null,
       durationMs: runDurationMs,
-      criticalPathMs,
+      durationSource,
+      completedJobsElapsedMs,
     },
     summary: {
       jobCount: jobDurations.length,
       failedJobCount: failedJobs,
-      timedOutFileCount: timedOutFiles,
-      leakedProcessFileCount: leakedProcessFiles,
+      availableReportCount: normalizedReports.length,
+      timedOutFileCount: normalizedReports.length ? timedOutFiles : null,
+      leakedProcessFileCount: normalizedReports.length ? leakedProcessFiles : null,
       maxJobExecutionMs: finiteJobExecutions.length ? Math.max(...finiteJobExecutions) : null,
-      maxJobQueueMs: finiteJobQueues.length ? Math.max(...finiteJobQueues) : null,
-      maxCoreShardDurationMs: suiteSummaries.core?.maxShardFileDurationMs ?? null,
-      maxDaemonShardDurationMs: suiteSummaries.daemon?.maxShardFileDurationMs ?? null,
+      maxJobStartDelayMs: finiteJobStartDelays.length ? Math.max(...finiteJobStartDelays) : null,
+      maxCoreShardFileDurationMs: suiteSummaries.core?.maxShardFileDurationMs ?? null,
+      maxDaemonShardFileDurationMs: suiteSummaries.daemon?.maxShardFileDurationMs ?? null,
       shardImbalanceRatioBySuite: Object.fromEntries(Object.entries(suiteSummaries)
         .map(([suite, summary]) => [suite, summary.imbalanceRatio])),
     },
     jobs: jobDurations,
-    reports: reportTelemetry(normalizedReports),
+    reports: reportDetails,
   };
 }
 
 export function renderSummary(telemetry) {
   const ms = value => value === null ? "n/a" : `${(value / 60000).toFixed(2)} min`;
+  const count = value => value === null ? "n/a" : value;
   const lines = [
     "## CI timing telemetry",
     "",
     ...(telemetry.telemetryUnavailable ? ["- Collection status: **unavailable**; this did not affect the quality gate."] : []),
-    `- Run duration observed at collection: **${ms(telemetry.run.durationMs)}**; critical path: **${ms(telemetry.run.criticalPathMs)}**`,
-    `- Jobs: **${telemetry.summary.jobCount}**; max execution: **${ms(telemetry.summary.maxJobExecutionMs)}**; max queue estimate: **${ms(telemetry.summary.maxJobQueueMs)}**`,
-    `- Failed jobs: **${telemetry.summary.failedJobCount}**; timed-out files: **${telemetry.summary.timedOutFileCount}**; leaked-process files: **${telemetry.summary.leakedProcessFileCount}**`,
+    `- Run duration: **${ms(telemetry.run.durationMs)}** (source: ${telemetry.run.durationSource}); completed jobs elapsed since run creation: **${ms(telemetry.run.completedJobsElapsedMs)}** (excludes in-progress jobs; not a DAG critical path).`,
+    `- Jobs: **${telemetry.summary.jobCount}**; max execution: **${ms(telemetry.summary.maxJobExecutionMs)}**; max start delay: **${ms(telemetry.summary.maxJobStartDelayMs)}** (includes dependency wait; measured from run start, or run creation if unavailable).`,
+    `- Failed jobs: **${telemetry.summary.failedJobCount}**; timed-out files: **${count(telemetry.summary.timedOutFileCount)}**; leaked-process files: **${count(telemetry.summary.leakedProcessFileCount)}** (counts from available reports: ${telemetry.summary.availableReportCount}; missing or incomplete reports do not establish zero faults across the run).`,
   ];
   for (const [suite, data] of Object.entries(telemetry.reports.suites)) {
-    lines.push(`- ${suite} shards: **${data.shardCount}**; max/average file time: **${ms(data.maxShardFileDurationMs)} / ${ms(data.averageShardFileDurationMs)}**; imbalance: **${data.imbalanceRatio === null ? "n/a" : data.imbalanceRatio.toFixed(2)}x**`);
+    lines.push(`- ${suite} shards: **${data.shardCount}**; max/average aggregate file time: **${ms(data.maxShardFileDurationMs)} / ${ms(data.averageShardFileDurationMs)}** (aggregate file time, not wall clock); imbalance: **${data.imbalanceRatio === null ? "n/a" : data.imbalanceRatio.toFixed(2)}x**`);
   }
   lines.push("", "Per-job and per-file details are retained in the `ci-telemetry` artifact.");
   return `${lines.join("\n")}\n`;

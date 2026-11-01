@@ -671,9 +671,6 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      actions: read
-      contents: read
     steps:
       - name: Check out quality policy without retained credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -736,13 +733,46 @@ jobs:
           path: .codex-artifacts/ci/timings.json
           key: ci-node-timings-v1-${{ github.run_id }}-${{ github.run_attempt }}
 
+  timing-telemetry:
+    name: CI timing telemetry
+    needs: [scope, quality]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    continue-on-error: true
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out timing telemetry without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+
+      - name: Download available shard reports including failures
+        if: always() && needs.scope.outputs.execution-tier == 'complete' && (needs.scope.outputs.daemon == 'true' || contains(needs.scope.outputs.test-packages, '"@ling-stack/core"'))
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: ci-test-report-*
+          merge-multiple: true
+          path: .codex-artifacts/ci/reports
+
       - name: Collect workflow timing metadata
         if: always()
+        continue-on-error: true
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -u
+          set +e
           mkdir -p .codex-artifacts/ci
           run_status=0
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > .codex-artifacts/ci/telemetry-run.json || run_status=$?
@@ -750,23 +780,26 @@ jobs:
             printf '{"telemetry_unavailable":true,"reason":"workflow run API request failed"}\n' > .codex-artifacts/ci/telemetry-run.json
           fi
           jobs_status=0
-          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" > .codex-artifacts/ci/telemetry-jobs-pages.json || jobs_status=$?
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" > .codex-artifacts/ci/telemetry-jobs-pages.json || jobs_status=$?
           if [ "$jobs_status" -ne 0 ]; then
             printf '{"telemetry_unavailable":true,"reason":"workflow jobs API request failed"}\n' > .codex-artifacts/ci/telemetry-jobs-pages.json
           else
             node --input-type=module <<'NODE'
           import { readFile, writeFile } from "node:fs/promises";
           const pages = JSON.parse(await readFile(".codex-artifacts/ci/telemetry-jobs-pages.json", "utf8"));
-          const jobs = Array.isArray(pages) ? pages.flatMap(page => page?.jobs ?? []) : [];
+          if (!Array.isArray(pages) || pages.some(page => !Array.isArray(page?.jobs))) throw new Error("Invalid jobs API pages");
+          const jobs = pages.flatMap(page => page.jobs);
           await writeFile(".codex-artifacts/ci/telemetry-jobs.json", `${JSON.stringify({ jobs }, null, 2)}\n`);
           NODE
           fi
           if [ ! -f .codex-artifacts/ci/telemetry-jobs.json ]; then
             printf '{"jobs":[],"telemetry_unavailable":true}\n' > .codex-artifacts/ci/telemetry-jobs.json
           fi
+          exit 0
 
       - name: Render CI timing telemetry
         if: always()
+        continue-on-error: true
         shell: bash
         run: |
           set +e
@@ -787,6 +820,7 @@ jobs:
 
       - name: Preserve CI timing telemetry
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ci-telemetry
