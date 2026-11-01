@@ -155,6 +155,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Full-history scans can exceed ten minutes on the monorepo. The
+          # job timeout above remains the outer bound.
           scan_plan="$(node scripts/ci/secret-scan.mjs --event="$GITHUB_EVENT_NAME" --base="$BASE_SHA" --head=HEAD)"
           echo "Secret scan plan: $scan_plan"
           log_opts="$(SCAN_PLAN="$scan_plan" node --input-type=module -e 'console.log(JSON.parse(process.env.SCAN_PLAN).logOpts)')"
@@ -165,8 +167,6 @@ jobs:
             --log-opts="$log_opts" \
             --config /repo/.gitleaks.toml \
             --gitleaks-ignore-path /repo/.gitleaksignore \
-            # Full-history scans can exceed ten minutes on the monorepo. The
-            # job timeout above remains the outer bound.
             --timeout 1800 \
             /repo
 
