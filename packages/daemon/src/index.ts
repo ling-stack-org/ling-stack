@@ -404,6 +404,11 @@ export function createDaemonServer(
     dependencies.storeFactory ?? createOriginalOfficeDirectoryStoreFactory(runtimeSupervisor), {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
     recoverOnOpen: false,
+    beforeRecovery: (cwd, store) => {
+      // Every Store, including construction-time dependency stores, must pass
+      // the same runtime owner admission before any recovery or registration.
+      runtimeSupervisor.getRuntime(cwd, store);
+    },
     onStoreInitialized: (cwd, store) => {
       pendingOwnedStores.set(store, cwd);
       if (workspaceCustodyReady) initializeOwnedStore(cwd, store);
@@ -981,6 +986,8 @@ export function createDaemonServer(
       learningReviewCoordinator?.beginShutdown();
       for (const service of memorySemanticServices.values()) service.beginShutdown();
       humanEvaluations.close();
+      // Latch all run admission before media abort callbacks can re-enter.
+      activeRuns.stopAdmission();
       storeRegistry.mediaLocalExecutions.beginShutdown();
       if (approvalRecoveryTimer) clearInterval(approvalRecoveryTimer);
       approvalRecoveryTimer = undefined;
