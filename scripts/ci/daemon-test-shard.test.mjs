@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import {
   assignTestShards,
   createDaemonShardIsolation,
@@ -25,6 +27,33 @@ async function runnerFixture(t, sources, names = sources.map((_, index) => `${in
   return { root, files: names.map(name => `test/${name}`),
     options: { cwd: root, temporaryDirectory: join(root, "isolation"), stdio: "ignore" } };
 }
+
+test("bounded runner fails a leaked file and still completes its next file", { skip: process.platform === "win32" }, async (t) => {
+  const fixture = await runnerFixture(t, [
+    "import test from 'node:test'; test('passes but leaks a handle', () => { setInterval(() => {}, 1000); });",
+    "import { writeFileSync } from 'node:fs'; import test from 'node:test'; test('next file', () => writeFileSync('next-ran', 'yes'));",
+  ]);
+  const runner = pathToFileURL(resolve("scripts/ci/daemon-test-shard.mjs")).href;
+  const source = `import { runDaemonTestFiles } from ${JSON.stringify(runner)};
+    process.exitCode = await runDaemonTestFiles(${JSON.stringify(fixture.files)},
+      ${JSON.stringify({ ...fixture.options, fileTimeoutMs: 800, terminationGraceMs: 100 })});`;
+  const child = spawn(process.execPath, ["--input-type=module", "-e", source], {
+    detached: true, stdio: "ignore", env: { ...process.env, NODE_TEST_CONTEXT: "" },
+  });
+  let watchdogExpired = false;
+  const watchdog = setTimeout(() => {
+    watchdogExpired = true;
+    try { process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; }
+  }, 5000);
+  const status = await new Promise((resolveStatus, reject) => {
+    child.once("error", reject);
+    child.once("close", resolveStatus);
+  }).finally(() => clearTimeout(watchdog));
+  assert.equal(watchdogExpired, false, "file deadline must finish before the outer safety watchdog");
+  assert.equal(status, 1, "a leaked handle must fail, never force a green result");
+  assert.equal(await readFile(join(fixture.root, "next-ran"), "utf8"), "yes");
+  assert.deepEqual(await readdir(fixture.options.temporaryDirectory), []);
+});
 
 test("daemon workers overlap while retaining separate homes and workspaces", async (t) => {
   const fixture = await runnerFixture(t, [0, 1].map(index => `

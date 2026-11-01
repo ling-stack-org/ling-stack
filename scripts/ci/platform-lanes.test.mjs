@@ -17,7 +17,7 @@ function jobSource(id) {
 }
 
 function runQuality(overrides = {}) {
-  const run = /        run: (?:(\|)\n([\s\S]+)|([^\n]+))/u.exec(jobSource("quality"));
+  const run = /^ {8}run: (?:(\|)\n((?: {10}[^\n]*(?:\n|$)|\n)*)|([^\n]+))/mu.exec(jobSource("quality"));
   const script = run?.[1] ? run[2].replace(/^ {10}/gmu, "") : run?.[3];
   assert.ok(script, "quality must retain an executable aggregation gate");
   return spawnSync("bash", ["-c", script], {
