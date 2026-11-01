@@ -116,6 +116,13 @@ export class WorkspaceRuntimeOwner {
           unlinkSync(this.#lockPath);
           this.#projectionOwned = false;
           this.#projectionAttempted = false;
+        } else if (this.#projectionOwned && current === undefined) {
+          // The private coordination transaction is still held, so no
+          // successor owner can have replaced the projection. Treat an
+          // already-removed pathname as idempotent cleanup and continue
+          // releasing the lease.
+          this.#projectionOwned = false;
+          this.#projectionAttempted = false;
         } else if (this.#projectionOwned) {
           // Do not unlink a missing, malformed or replaced pathname on faith.
           throw new Error("runtime_owner_projection_unknown");

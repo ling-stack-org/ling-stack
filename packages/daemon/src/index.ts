@@ -1018,11 +1018,24 @@ export function createDaemonServer(
         server.closeAllConnections();
       });
     },
-    settle: () => settleHarnessLifetimes([
-      runShutdown.shutdown("daemon_restart"),
-      cuaDriverActivationCoordinator.shutdown(), providerImportShutdown ?? Promise.resolve(),
-      storeRegistry.mediaLocalExecutions.waitForIdle(),
-    ]),
+    settle: async () => {
+      // Physical CUA pool disposal is authorized only after the original Host
+      // drain has completed. Running both promises in Promise.all allowed a
+      // failed drain to close the pool anyway, which violated the retained
+      // store contract and made shutdown failures look nondeterministic.
+      let hostDrainError: unknown;
+      try {
+        await runShutdown.shutdown("daemon_restart");
+      } catch (error) {
+        hostDrainError = error;
+      }
+      await settleHarnessLifetimes([
+        providerImportShutdown ?? Promise.resolve(),
+        storeRegistry.mediaLocalExecutions.waitForIdle(),
+      ]);
+      if (hostDrainError !== undefined) throw hostDrainError;
+      await cuaDriverActivationCoordinator.shutdown();
+    },
   });
   harnessLifecycle.register({
     domain: "evaluation", enabled: resolvedConfig.harness.evaluations.mode !== "off" || dependencies.runEvaluationQaTaskWorker !== undefined,
