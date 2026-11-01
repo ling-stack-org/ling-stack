@@ -10,7 +10,10 @@ export const testSuites = {
     excluded: ["dependency-security.test.mjs"],
     exclusive: ["test/acp-kimi-host-read.test.mjs", "test/acp-kimi-host-terminal.test.mjs",
       // Preserve the child-lifecycle fixture's exclusive execution from the PR.
-      "test/delegation-production-tool-surface.test.mjs"] },
+      "test/delegation-production-tool-surface.test.mjs",
+      // This large channel integration file exceeds its 5-minute file watchdog
+      // only when it contends with another macOS worker.
+      "test/channel-workspace.test.mjs"] },
 };
 
 export async function discoverTestFiles(cwd, excluded = []) {
