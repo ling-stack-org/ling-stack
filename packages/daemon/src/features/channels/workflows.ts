@@ -629,6 +629,8 @@ async function handleChannelWorkflowStepStart(
   const started = await prepareWorkflowStepStart(store, workflowStepId, input, cwd, validateRunRequest, secretResolver);
   if (started.kind === "blocked") {
     writeJson(response, 200, {
+      status: "blocked",
+      mode: input.mode,
       workflow: store.getChannelWorkflow(started.workflowId),
       workflowStep: store.getChannelWorkflowStep(workflowStepId),
       blocker: started.blocker,
@@ -651,6 +653,8 @@ async function handleChannelWorkflowStepStart(
     }
     completeWorkflowIfStepsFinished(store, started.workflowId, finishedAt);
     writeJson(response, 200, {
+      status: "started",
+      mode: "create_task",
       workflow: store.getChannelWorkflow(started.workflowId),
       workflowStep: store.getChannelWorkflowStep(workflowStepId),
       task: started.task,

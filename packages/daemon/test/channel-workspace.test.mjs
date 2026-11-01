@@ -9351,6 +9351,8 @@ test("channel handoff workflows start steps, create tasks, and expose blockers",
       mode: "create_task",
       taskTitle: "Workflow generated task",
     });
+    assert.equal(started.status, "started");
+    assert.equal(started.mode, "create_task");
     assert.equal(started.workflow.status, "succeeded");
     assert.equal(started.workflowStep.status, "succeeded");
     assert.equal(started.task.title, "Workflow generated task");
@@ -9379,6 +9381,8 @@ test("channel handoff workflows start steps, create tasks, and expose blockers",
     const blocked = await postJson(`${daemon.url}/workflow-steps/${encodeURIComponent(blockedWorkflow.workflowStep.id)}/start?cwd=${encodeURIComponent(cwd)}`, {
       mode: "create_and_run_task",
     });
+    assert.equal(blocked.status, "blocked");
+    assert.equal(blocked.mode, "create_and_run_task");
     assert.equal(blocked.workflowStep.status, "blocked");
     assert.match(blocked.blocker, /provider preset/i);
 
