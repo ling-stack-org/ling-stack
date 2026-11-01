@@ -100,6 +100,7 @@ import { CuaDriverComputerUseProjectionProducer } from "../computer-use/cua-driv
 import { resolveEligibleCuaDriverProjectionServerIds } from "../computer-use/provider-eligibility.js";
 import type { ComputerUseProjectionRegistry } from "../computer-use/registry.js";
 import { assertPreselectedMemoryCurrent, renderUsedMemoryPrompt } from "../memory/prompt.js";
+import { renderContextPack, type ContextPack } from "../channels/context-packs.js";
 import { resolveCurrentRunSkill } from "./skill-selection.js";
 import { prepareRunSkillSource } from "./skill-source-context.js";
 import { withGstackHostContext } from "./gstack-host-context.js";
@@ -698,8 +699,9 @@ async function executeAdmittedRunRequest(
     // checkpoints and restart. Existing Runs retain their original snapshot.
     const canonicalTask = store.getTask(runRequest.task.id);
     const storedTaskSnapshot = run?.taskSnapshot as RunRequest["task"] | undefined;
-    durableTaskSnapshot = userInputContinuation ? runRequest.task : storedTaskSnapshot
+    const acceptedTask = userInputContinuation ? runRequest.task : storedTaskSnapshot
       ?? (canonicalTask ? { ...canonicalTask, ...runRequest.task, channelId: runRequest.task.channelId } : runRequest.task);
+    durableTaskSnapshot = publicWorkflowTaskSnapshot(runRequest, acceptedTask);
     const runStore = store;
     let mcpToolAccess = resolveMcpToolAccessForRun(runStore, secretResolver, runRequest, (teammateId) =>
       resolveAiTeammateReference(runStore, teammateId)?.id);
@@ -766,7 +768,11 @@ async function executeAdmittedRunRequest(
     assertHostCapabilitiesCurrent();
     runnerRequest = {
       cwd: runRequest.cwd,
-      task: runRequest.task,
+      // The durable Run keeps the complete Task row, but the frozen Runner
+      // boundary accepts only the semantic model-task fields. Keeping these
+      // projections separate preserves checkpoint lineage while allowing the
+      // stored Task to retain ownership/status metadata.
+      task: modelTaskInput(durableTaskSnapshot),
       provider: resolvedProvider,
       tools: runtimeTools,
       mcpTools,
@@ -4026,6 +4032,41 @@ function workflowOperationUsesNativeFileCreate(request: RunRequest): boolean {
   if (!execution) return false;
   const ownedIds = new Set(execution.ownedOperationIds);
   return execution.plan.operations.some((operation) => ownedIds.has(operation.id) && operation.kind === "file_create");
+}
+
+/**
+ * Role-scoped Memory is valid model input, but it must not become part of the
+ * durable Task/request envelope or any public workflow projection.  Preparation
+ * keeps the full prompt so the assigned Agent can use it; admission freezes a
+ * public task while the protected appendSystemPrompt channel carries the same
+ * Memory to the model.
+ */
+function publicWorkflowTaskSnapshot(request: RunRequest, task: RunRequest["task"]): RunRequest["task"] {
+  const contextPack = (request as RunRequest & { readonly contextPack?: ContextPack }).contextPack;
+  if (!request.workflowStepId || !contextPack || !task.prompt.includes("Context Pack:")) return task;
+  const pack = contextPack;
+  if (!pack.sections.some((section) => section.id === "workflow_role_evidence")) return task;
+  const publicPack = { ...pack, sections: pack.sections.filter((section) => section.id !== "workflow_role_evidence") };
+  const prompt = [
+    `Context Pack: ${publicPack.kind}`,
+    `Provider budget mode: ${publicPack.budget.mode}`,
+    `Provider model: ${publicPack.modelId ?? "unknown"}`,
+    `Estimated input tokens: ${publicPack.estimatedInputTokens}/${publicPack.budget.inputBudgetTokens}`,
+    `Dropped sections: ${publicPack.droppedSectionIds.length > 0 ? publicPack.droppedSectionIds.join(", ") : "none"}`,
+    "Workflow context artifact: pending until run starts",
+    "",
+    renderContextPack(publicPack),
+  ].join("\n");
+  return { ...task, prompt };
+}
+
+function modelTaskInput(task: RunRequest["task"]): RunRequest["task"] {
+  return {
+    id: task.id,
+    title: task.title,
+    prompt: task.prompt,
+    ...(task.channelId === undefined ? {} : { channelId: task.channelId }),
+  };
 }
 
 function isExistingRunRepreparationOrigin(

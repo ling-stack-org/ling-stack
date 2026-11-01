@@ -1081,21 +1081,15 @@ function workflowCoordinatorReplyStatusIsTerminal(status: ChannelWorkflowStatus)
 }
 
 function renderWorkflowStepContextPackPrompt(pack: ContextPack): string {
-  // Memory is hydrated through the protected Run appendSystemPrompt channel.
-  // Keep the durable task/model envelope free of private role evidence while
-  // retaining the rest of the source-bound workflow context.
-  const taskPack = pack.sections.some((section) => section.id === "workflow_role_evidence")
-    ? { ...pack, sections: pack.sections.filter((section) => section.id !== "workflow_role_evidence") }
-    : pack;
   return [
-    `Context Pack: ${taskPack.kind}`,
-    `Provider budget mode: ${taskPack.budget.mode}`,
-    `Provider model: ${taskPack.modelId ?? "unknown"}`,
-    `Estimated input tokens: ${taskPack.estimatedInputTokens}/${taskPack.budget.inputBudgetTokens}`,
-    `Dropped sections: ${taskPack.droppedSectionIds.length > 0 ? taskPack.droppedSectionIds.join(", ") : "none"}`,
+    `Context Pack: ${pack.kind}`,
+    `Provider budget mode: ${pack.budget.mode}`,
+    `Provider model: ${pack.modelId ?? "unknown"}`,
+    `Estimated input tokens: ${pack.estimatedInputTokens}/${pack.budget.inputBudgetTokens}`,
+    `Dropped sections: ${pack.droppedSectionIds.length > 0 ? pack.droppedSectionIds.join(", ") : "none"}`,
     "Workflow context artifact: pending until run starts",
     "",
-    renderContextPack(taskPack),
+    renderContextPack(pack),
   ].join("\n");
 }
 
