@@ -197,13 +197,20 @@ test("workflow child input rejects forged workspace and archived Thread ownershi
   }, forged.request, now), /lineage|workspace/u);
 
   const parentArchived = await fixture(t);
-  parentArchived.store.updateLingThread(parentArchived.source.threadId, {
+  const archivedParent = parentArchived.store.resolveOrCreateConversationThread({
+    surfaceKind: "topic",
+    channelId: parentArchived.channel.id,
+    anchorItemId: parentArchived.source.id,
+    title: "Archived parent",
+    objective: "Archived parent lineage fixture",
+  }, later).thread;
+  parentArchived.store.updateLingThread(archivedParent.id, {
     status: "archived",
     archivedAt: later,
   }, later);
   assert.throws(() => ensureLingTurnForRun(
     parentArchived.store,
-    parentArchived.thread,
+    archivedParent,
     parentArchived.request,
     later,
   ), /lineage|archived/u);

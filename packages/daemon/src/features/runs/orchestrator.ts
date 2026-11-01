@@ -692,6 +692,14 @@ async function executeAdmittedRunRequest(
       selectedSkillSourceContext = sourcePrompt.context;
       selectedSkillSourcePrompt = sourcePrompt.promptFragment;
     }
+    // A Task row is the canonical objective, not necessarily the actual model
+    // input: workflow steps render a source-bound context pack into task.prompt.
+    // Preserve Task metadata but freeze the accepted execution fields for both
+    // checkpoints and restart. Existing Runs retain their original snapshot.
+    const canonicalTask = store.getTask(runRequest.task.id);
+    const storedTaskSnapshot = run?.taskSnapshot as RunRequest["task"] | undefined;
+    durableTaskSnapshot = userInputContinuation ? runRequest.task : storedTaskSnapshot
+      ?? (canonicalTask ? { ...canonicalTask, ...runRequest.task, channelId: runRequest.task.channelId } : runRequest.task);
     const runStore = store;
     let mcpToolAccess = resolveMcpToolAccessForRun(runStore, secretResolver, runRequest, (teammateId) =>
       resolveAiTeammateReference(runStore, teammateId)?.id);
@@ -785,12 +793,6 @@ async function executeAdmittedRunRequest(
     if (!thread || !turn) {
       throw new HttpError(409, "continuation_source_incomplete", "Run thread or turn lineage is incomplete.");
     }
-    // A Task row is the canonical objective, not necessarily the actual model
-    // input: workflow steps render a source-bound context pack into task.prompt.
-    // Preserve Task metadata but freeze the accepted execution fields for both
-    // checkpoints and restart. Existing Runs retain their original snapshot.
-    durableTaskSnapshot = userInputContinuation ? runRequest.task : run?.taskSnapshot as RunRequest["task"] | undefined
-      ?? { ...store.getTask(runRequest.task.id), ...runRequest.task, channelId: runRequest.task.channelId };
     const harnessFeatureSnapshot = runRequest.harnessFeatureSnapshot ?? createHarnessFeatureSnapshot({
       harness: runtimeSupervisor.getHarnessFeatures(),
     });
@@ -826,7 +828,7 @@ async function executeAdmittedRunRequest(
     runnerRequest = { ...runnerRequest, mediaGenerationTools: currentMediaTools,
       initialToolSurface: { mediaGeneration: currentMediaTools.length > 0, toolHydration: toolHydrationEnabled,
         userInput: userInputAvailable(),
-        nativeFileCreate: runRequest.workflowOperationExecution !== undefined,
+        nativeFileCreate: workflowOperationUsesNativeFileCreate(runRequest),
         delegation: delegationToolSurfaceEnabled } };
     if (!frozenExecution && runnerResolution.runner.adapter instanceof PiRunnerAdapter) {
       runnerRequest = withGstackHostContext(runnerRequest, selectedSkillSourceContext);
@@ -895,7 +897,7 @@ async function executeAdmittedRunRequest(
         initialToolSurface: { mediaGeneration: mediaGenerationEligible,
           toolHydration: runnerResolution.runner.toolHydration?.mode === "daemon_hydrated" && runnerResolution.runner.toolHydration.conformance === "verified",
           userInput: userInputAvailable(),
-          nativeFileCreate: runRequest.workflowOperationExecution !== undefined,
+          nativeFileCreate: workflowOperationUsesNativeFileCreate(runRequest),
           delegation: currentDelegationToolSurfaceEnabled },
         provider: resolvedProvider, mcpTools: currentMcp, mediaGenerationTools: mediaGenerationEligible
           ? createConversationMediaGenerationToolDefinitions(listConversationMediaGenerationTargets(runStore, secretResolver)) : [] });
@@ -4017,6 +4019,13 @@ function selectHostCapabilityToolsForRun(
   return needsOpen
     ? hostCapabilityToolsV1.filter((tool) => tool.capabilityId === "host.open_local_target")
     : [];
+}
+
+function workflowOperationUsesNativeFileCreate(request: RunRequest): boolean {
+  const execution = request.workflowOperationExecution;
+  if (!execution) return false;
+  const ownedIds = new Set(execution.ownedOperationIds);
+  return execution.plan.operations.some((operation) => ownedIds.has(operation.id) && operation.kind === "file_create");
 }
 
 function isExistingRunRepreparationOrigin(

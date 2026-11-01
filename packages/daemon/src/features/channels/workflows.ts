@@ -59,8 +59,8 @@ import {
   maybeScheduleWorkflowTerminalReport,
   terminalReportsEnabledForStore,
 } from "./terminal-report-coordinator.js";
-import { buildWorkflowEvidence } from "./workflow-evidence.js";
-import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
+import { buildWorkflowEvidence, projectPublicWorkflowEvidence } from "./workflow-evidence.js";
+import { createMemorySourceRevisions, renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { reviewWorkflowFanInContext } from "./workflow-fanin.js";
 import type { PreselectedMemoryUse } from "../runs/schemas.js";
 import { createWorkflowOperationExecutionSnapshot, type WorkflowOperationExecutionSnapshot } from "../runs/workflow-operation-snapshot.js";
@@ -489,7 +489,7 @@ export async function handleChannelWorkflowEvidence(
   try {
     const store = storeRegistry.getStore(cwd);
     const evidence = buildWorkflowEvidence(store, workflowId);
-    writeJson(response, 200, evidence);
+    writeJson(response, 200, projectPublicWorkflowEvidence(evidence));
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",
@@ -557,7 +557,7 @@ export async function handleChannelWorkflowStepEvidence(
     if (!step) {
       throw new HttpError(404, "workflow_step_not_found", `Channel workflow step not found: ${workflowStepId}`);
     }
-    const evidence = buildWorkflowEvidence(store, step.workflowId);
+    const evidence = projectPublicWorkflowEvidence(buildWorkflowEvidence(store, step.workflowId));
     const workflowStep = evidence.steps.find((item) => item.step.id === workflowStepId);
     if (!workflowStep) {
       throw new HttpError(404, "workflow_step_not_found", `Channel workflow step not found: ${workflowStepId}`);
@@ -944,7 +944,11 @@ export async function prepareWorkflowStepStart(
     preselectedMemoryUse: renderedMemory.memoryIds.length > 0
       ? {
           memoryIds: renderedMemory.memoryIds,
+          sourceRevisions: createMemorySourceRevisions(memoryRecall.memories
+            .filter((item) => renderedMemory.memoryIds.includes(item.memory.id))
+            .map((item) => item.memory)),
           recallQuery: memoryRecallQuery,
+          renderedPrompt: renderedMemory.prompt,
           policyVersion: renderedMemory.policyVersion,
         }
       : undefined,
@@ -1077,15 +1081,21 @@ function workflowCoordinatorReplyStatusIsTerminal(status: ChannelWorkflowStatus)
 }
 
 function renderWorkflowStepContextPackPrompt(pack: ContextPack): string {
+  // Memory is hydrated through the protected Run appendSystemPrompt channel.
+  // Keep the durable task/model envelope free of private role evidence while
+  // retaining the rest of the source-bound workflow context.
+  const taskPack = pack.sections.some((section) => section.id === "workflow_role_evidence")
+    ? { ...pack, sections: pack.sections.filter((section) => section.id !== "workflow_role_evidence") }
+    : pack;
   return [
-    `Context Pack: ${pack.kind}`,
-    `Provider budget mode: ${pack.budget.mode}`,
-    `Provider model: ${pack.modelId ?? "unknown"}`,
-    `Estimated input tokens: ${pack.estimatedInputTokens}/${pack.budget.inputBudgetTokens}`,
-    `Dropped sections: ${pack.droppedSectionIds.length > 0 ? pack.droppedSectionIds.join(", ") : "none"}`,
+    `Context Pack: ${taskPack.kind}`,
+    `Provider budget mode: ${taskPack.budget.mode}`,
+    `Provider model: ${taskPack.modelId ?? "unknown"}`,
+    `Estimated input tokens: ${taskPack.estimatedInputTokens}/${taskPack.budget.inputBudgetTokens}`,
+    `Dropped sections: ${taskPack.droppedSectionIds.length > 0 ? taskPack.droppedSectionIds.join(", ") : "none"}`,
     "Workflow context artifact: pending until run starts",
     "",
-    renderContextPack(pack),
+    renderContextPack(taskPack),
   ].join("\n");
 }
 

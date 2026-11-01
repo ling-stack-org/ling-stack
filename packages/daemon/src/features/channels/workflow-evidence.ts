@@ -9,6 +9,8 @@ import {
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import { listAllExecutionActionsForRun, listExecutionActions } from "../runs/execution-actions.js";
+import { projectPublicRunSession } from "../runs/public-execution-snapshots.js";
+import { toPublicArtifactMetadata } from "../runs/public-artifacts.js";
 import { buildWorkflowContextInspectSummary, type WorkflowContextInspectSummary } from "./context-processing/inspect.js";
 import {
   readWorkflowStepContextPacketArtifact,
@@ -52,6 +54,26 @@ export interface WorkflowEvidence {
     readonly sourceWorkflowId: string;
     readonly sourceWorkflowStepIds: readonly string[];
   }[];
+}
+
+/**
+ * Workflow evidence is also exposed through the HTTP read model.  The builder
+ * intentionally keeps the complete stored Run for terminal-report synthesis,
+ * but that object contains the frozen runner input and private Memory prompt.
+ * Project those fields at the public boundary instead of weakening the
+ * durable/recovery snapshot or dropping useful internal evidence.
+ */
+export function projectPublicWorkflowEvidence(evidence: WorkflowEvidence) {
+  return {
+    ...evidence,
+    steps: evidence.steps.map((item) => ({
+      ...item,
+      linkedRun: item.linkedRun ? projectPublicRunSession(item.linkedRun, undefined) : undefined,
+      packetArtifacts: item.packetArtifacts.map(toPublicArtifactMetadata),
+      linkedArtifacts: item.linkedArtifacts.map(toPublicArtifactMetadata),
+    })),
+    artifacts: evidence.artifacts.map(toPublicArtifactMetadata),
+  };
 }
 
 export function buildWorkflowEvidence(store: RunStore, workflowId: string): WorkflowEvidence {
