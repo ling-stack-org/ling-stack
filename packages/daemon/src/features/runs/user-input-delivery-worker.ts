@@ -28,6 +28,8 @@ export interface UserInputDeliveryExecution {
   readonly request: RunRequest;
   readonly claim: UserInputContinuationClaim;
   readonly binding?: UserInputContinuationBinding;
+  /** Releases the delivery slot after the receiver has durably ACKed. */
+  readonly onReceiverAccepted?: () => void;
 }
 
 export type ExecuteUserInputDelivery = (input: UserInputDeliveryExecution) => Promise<string | undefined>;
@@ -257,8 +259,15 @@ export class UserInputDeliveryWorker {
     this.activeDeliveryKeys.add(key);
     const executions = this.executions.get(store) ?? new Set<Promise<ProcessDisposition>>();
     this.executions.set(store, executions);
-    let execution!: Promise<ProcessDisposition>;
-    execution = this.process(store, delivery).catch(() => {
+    let accept!: () => void;
+    const accepted = new Promise<void>(resolve => { accept = resolve; });
+    let acceptedOnce = false;
+    const onReceiverAccepted = (): void => {
+      if (acceptedOnce) return;
+      acceptedOnce = true;
+      accept();
+    };
+    const background = this.process(store, delivery, onReceiverAccepted).catch(() => {
       this.failure({
         cwd: store.paths.cwd,
         deliveryId: delivery.deliveryId,
@@ -266,17 +275,30 @@ export class UserInputDeliveryWorker {
         code: "delivery_invalid",
       });
       return "claim_lost" as const;
-    }).finally(() => {
+    });
+    let execution!: Promise<ProcessDisposition>;
+    // A durable receiver ACK is the scheduling boundary. The model request
+    // continues in the background and remains owned by active-runs, while
+    // this outbox slot becomes available for the next delivery.
+    execution = Promise.race([
+      background,
+      accepted.then(() => "processed" as const),
+    ]).finally(() => {
       this.activeDeliveryKeys.delete(key);
       executions.delete(execution);
       if (executions.size === 0) this.executions.delete(store);
       if (!this.isClosing()) setImmediate(() => this.wake(store));
     });
+    void background.catch(() => undefined);
     executions.add(execution);
     return execution;
   }
 
-  private async process(store: RunStore, candidate: UserInputDispatchCandidate): Promise<ProcessDisposition> {
+  private async process(
+    store: RunStore,
+    candidate: UserInputDispatchCandidate,
+    onReceiverAccepted: () => void,
+  ): Promise<ProcessDisposition> {
     if (store.getUserInputContinuationReceipt(candidate.threadId, candidate.deliveryId)) return "processed";
 
     let binding: UserInputContinuationBinding | undefined;
@@ -291,7 +313,7 @@ export class UserInputDeliveryWorker {
       });
       return "claim_lost";
     }
-    if (binding) return this.executeBinding(store, candidate, binding);
+    if (binding) return this.executeBinding(store, candidate, binding, onReceiverAccepted);
 
     const current = store.getUserInputDelivery(candidate.threadId, candidate.deliveryId);
     if (!current) return "claim_lost";
@@ -331,6 +353,7 @@ export class UserInputDeliveryWorker {
         deliveryId: candidate.deliveryId,
         request: prepared.request,
         claim,
+        onReceiverAccepted,
       });
     });
     if (store.getUserInputContinuationReceipt(candidate.threadId, candidate.deliveryId)) return "processed";
@@ -373,6 +396,7 @@ export class UserInputDeliveryWorker {
     store: RunStore,
     delivery: UserInputDispatchCandidate,
     binding: UserInputContinuationBinding,
+    onReceiverAccepted: () => void,
   ): Promise<ProcessDisposition> {
     const claimAt = this.now();
     const claimed = store.claimUserInputContinuationRecovery({
@@ -413,6 +437,7 @@ export class UserInputDeliveryWorker {
         request: prepared.request,
         claim,
         binding,
+        onReceiverAccepted,
       }));
     if (store.getUserInputContinuationReceipt(delivery.threadId, delivery.deliveryId)) return "processed";
     if (execution.lost) {

@@ -712,6 +712,7 @@ export function createDaemonServer(
         hostCapabilityBridge,
         enableUserInputPause: true,
         afterRunTerminal: createUserInputWorkflowTerminalHook(channelTurnDispatchOptions),
+        onUserInputReceiverAccepted: () => input.onReceiverAccepted?.(),
       },
     ),
   });
