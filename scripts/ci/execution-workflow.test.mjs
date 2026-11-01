@@ -19,7 +19,7 @@ function jobSource(id) {
 
 /** Execute the actual workflow aggregation command with simulated job outcomes. */
 function runQuality(overrides = {}) {
-  const command = jobSource("quality").split("        run: |\n")[1];
+  const command = /^ {8}run: \|\n((?: {10}[^\n]*(?:\n|$)|\n)*)/mu.exec(jobSource("quality"))?.[1];
   assert.ok(command, "quality must retain an executable aggregation gate");
   return spawnSync("bash", ["-c", command.replace(/^ {10}/gmu, "")], {
     cwd: root,
@@ -53,7 +53,7 @@ test("every expensive job requires complete execution and retains its scope sele
   }
   const common = jobSource("common-fast");
   assert.match(common, /run: node --test scripts\/check-public-repo-safety\.test\.mjs scripts\/ci\/\*\.test\.mjs/u);
-  assert.match(common, /name: Scan Git history for secrets\n        if: needs\.scope\.outputs\.execution-tier == 'complete' && needs\.scope\.outputs\.mode != 'docs'/u);
+  assert.match(common, /name: Scan Git history for secrets\n        if: needs\.scope\.outputs\.execution-tier == 'complete'\n/u);
   const dependencyPolicy = jobSource("dependency-policy");
   assert.match(dependencyPolicy, /name: Check production dependency update policy\n        run: node --test scripts\/production-dependency-policy\.test\.mjs/u);
 });

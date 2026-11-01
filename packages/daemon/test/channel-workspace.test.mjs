@@ -4,7 +4,6 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -49,6 +48,7 @@ import { commandOperationCandidate, fileOperationCandidate } from "./support/cha
 import { messageText, startRealPiChannelFixture, systemText } from "./support/channel-operation-real-pi-fixture.mjs";
 import { prepareFixtureTaskInput } from "./support/prepared-input-fixture.mjs";
 import { ToolFreePiRunner } from "./support/tool-free-pi-runner.mjs";
+import { startMockOpenAICompatibleServer } from "./support/mock-openai-compatible-server.mjs";
 
 const require = createRequire(import.meta.url);
 const ASYNC_SETTLE_TIMEOUT_MS = 10_000;
@@ -2442,9 +2442,9 @@ test("materialized image attachment lets Ling answer without materialization cla
   }
 });
 
-test("provider-backed image materialization works without injected summarizer", async () => {
+test("provider-backed image materialization works without injected summarizer", async (t) => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-provider-backed-image-materialization-"));
-  const relay = await startMockOpenAICompatibleServer({
+  const relay = await startMockOpenAICompatibleServer(t, {
     responseContent: ({ body }) => {
       const content = body?.messages?.[0]?.content;
       if (Array.isArray(content) && content.some((part) => part?.type === "image_url")) {
@@ -2521,7 +2521,6 @@ test("provider-backed image materialization works without injected summarizer", 
     assert.match(imagePart.image_url.url, /^data:image\/png;base64,/);
   } finally {
     await daemon.close();
-    await relay.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });
@@ -11754,10 +11753,10 @@ test("AI teammate private workspace endpoints persist roster, setup, private mes
   }
 });
 
-test("AI teammate private reply waits for startup provider refresh instead of using stale timeout", async () => {
+test("AI teammate private reply waits for startup provider refresh instead of using stale timeout", async (t) => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-direct-provider-startup-refresh-"));
   await ensureGitRepo(cwd);
-  const relay = await startMockOpenAICompatibleServer();
+  const relay = await startMockOpenAICompatibleServer(t);
   const runner = new RecordingRunner();
   let daemon = await startDaemonForTest(runner);
   try {
@@ -11806,7 +11805,6 @@ test("AI teammate private reply waits for startup provider refresh instead of us
     assert.equal(refreshed.provider.lastCheck.code, "ready");
   } finally {
     await daemon.close();
-    await relay.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });
@@ -16020,43 +16018,6 @@ function simulateLegacyChannelWithoutModel(cwd, channelId) {
   } finally {
     store.close();
   }
-}
-
-async function startMockOpenAICompatibleServer(options = {}) {
-  const requests = [];
-  const server = createServer(async (request, response) => {
-    const chunks = [];
-    for await (const chunk of request) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    const bodyText = Buffer.concat(chunks).toString("utf8");
-    const body = bodyText ? JSON.parse(bodyText) : {};
-    requests.push({
-      method: request.method,
-      path: request.url,
-      authorization: request.headers.authorization,
-      body,
-    });
-    const responseContent = typeof options.responseContent === "function"
-      ? options.responseContent({ request, body })
-      : options.responseContent ?? "OK";
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({
-      id: "chatcmpl-startup-refresh",
-      object: "chat.completion",
-      choices: [{ index: 0, message: { role: "assistant", content: responseContent }, finish_reason: "stop" }],
-    }));
-  });
-  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
-  const address = server.address();
-  assert.ok(address && typeof address === "object");
-  return {
-    url: `http://127.0.0.1:${address.port}`,
-    requests,
-    close: () => new Promise((resolveClose, rejectClose) => {
-      server.close((error) => error ? rejectClose(error) : resolveClose());
-    }),
-  };
 }
 
 async function postTaskRunAndReadReadyRunId(baseUrl, cwd, taskId, body) {
