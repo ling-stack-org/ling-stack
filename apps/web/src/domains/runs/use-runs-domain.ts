@@ -14,7 +14,8 @@ import { inferRunStatus } from "../../lib/run-evidence.js";
 import { useRunControl } from "../../lib/use-run-control.js";
 import { useLatestKeyedRequestGuard } from "../../lib/use-latest-request.js";
 import { useI18n } from "../../i18n.js";
-import { streamRun, type StreamJsonResponseParser, type StreamRunOptions } from "../../sse.js";
+import { streamRun, type StreamJsonResponseParser } from "../../sse.js";
+import type { StreamRunOptions } from "../../sse.js";
 import type {
   RunArtifact,
   RunEventEnvelope,
