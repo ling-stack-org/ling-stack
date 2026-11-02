@@ -6,6 +6,12 @@ open-source baseline onward.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and future
 release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-11-02
+
+### Fixed
+
+- Active replies and their Stop controls are available after the workspace first loads, without a manual refresh.
+
 ## [0.2.0] - 2026-10-30
 
 ### Added
