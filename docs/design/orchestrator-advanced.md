@@ -1,11 +1,16 @@
 # Orchestrator Advanced
 
+Status: reference contract with active safe-concurrency follow-up
+Owner: Ling maintainers
+Last verified: 2026-11-02 (static source review)
+Code anchors: daemon workflow compiler, smart scheduler and orchestrator listed below
+
 ## Purpose
 
 This document defines the next orchestrator slices after the implemented serial
 `autoplan-lite` engine.
 
-Current production boundary:
+Current source boundary:
 
 - workflow steps are durable `ChannelWorkflowStep` rows;
 - each step starts through the normal task/run coordinator;
@@ -13,16 +18,21 @@ Current production boundary:
   and daemon restart recovery are implemented for serial execution;
 - downstream steps start on explicit orchestrator ticks.
 
-The remaining advanced scope is:
+Basic smart branch scheduling and inline custom-template compilation already exist.
+The remaining delivery order is:
 
-1. parallel workflow branches;
-2. user or product-defined auto-startable workflow templates;
-3. explicit side-effect classes and safe parallel policy;
-4. future isolated worktree merge for parallel workspace writes.
+1. explicit side-effect classes, Host enforcement and safe parallel admission;
+2. step-level isolated worktree execution and merge;
+3. combined restart, cancellation, conflict and approval acceptance;
+4. stored custom-template registry and authoring UI;
+5. workflow graph visualization.
 
 These should not change the default serial behavior for unsafe work. The canonical
 side-effect and UI rules live in
 [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md).
+The active protocol and small-PR queue are maintained in the
+[safe-concurrency detailed design](ling-multi-agent-safe-concurrency-detailed-design.md)
+and [implementation plan](ling-multi-agent-safe-concurrency-implementation-plan.md).
 
 ## Implementation Status
 
@@ -50,11 +60,15 @@ Implemented in the current future-hardening slice:
 
 Still future:
 
+- side-effect class and grouped parallel policy metadata on every built-in and custom
+  workflow step, bound to actual Host-enforced capability;
+- isolated worktree merge protocol for safe parallel `workspace_write` branches;
+- combined parallel restart/cancel/conflict/approval acceptance;
 - stored `customTemplateId` registry lookup and authoring UI for custom templates;
 - graph visualization of branch groups and fan-in.
-- side-effect class and grouped parallel policy metadata on every built-in and custom
-  workflow step;
-- isolated worktree merge protocol for safe parallel `workspace_write` branches.
+
+Current tool-list inference is not a workflow-level artifact-only enforcement contract.
+Existing branch/list projection is reusable; it is not the final graph view.
 
 ## Non-Goals
 
@@ -184,7 +198,9 @@ autoParallel=true
 ```
 
 `workspace_write`, `external_mutation`, and `release` must remain serial by default even
-when dependency graph and runtime budget would allow parallel starts. This is the
+when dependency graph and runtime budget would allow parallel starts. Isolated merge
+may later admit selected `workspace_write` steps; external mutation and release stay
+serial regardless of local worktree isolation. This is the
 required bridge between the existing `maxParallelSiblings` implementation and the safer
 product policy described in
 [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md#step-side-effect-model).
@@ -206,6 +222,9 @@ Until that protocol exists, automatic parallel `workspace_write` is a policy vio
 not a scheduler optimization. The advanced scheduler may reserve metadata fields for
 worktree ids, branch names, merge packets, and verification artifact refs, but it must
 not start multiple writing siblings against the same workspace.
+The [detailed protocol](ling-multi-agent-safe-concurrency-detailed-design.md) defines the
+Host execution binding, no-clobber ownership, immutable base, integration journal,
+explicit first-version merge approval and Git/SQLite crash recovery requirements.
 
 ### Output Merge
 
@@ -235,7 +254,8 @@ Workspace workflow cards should show:
 - fan-in/join step indicator;
 - "Advance" action result with multiple started steps.
 
-The first UI can remain list-based. A graph view is optional polish.
+The first delivery remains list-based. Graph visualization is the final planned stage,
+not a prerequisite for safe scheduling or recovery.
 
 ### Tests
 
@@ -355,6 +375,9 @@ POST /channels/:channelId/workflows
 
 ## Rollout
 
+Items 1-3 below describe landed foundations, not a new delivery queue. Remaining work
+follows the [five-stage implementation plan](ling-multi-agent-safe-concurrency-implementation-plan.md).
+
 1. Add custom template parser and validator with no UI. Status: implemented for inline
    `customTemplate` JSON requests.
 2. Add serial custom-template compile path. Status: implemented.
@@ -371,5 +394,5 @@ POST /channels/:channelId/workflows
 - Write-conflicting branches are blocked, queued, or kept serial by side-effect policy.
 - Every started step has context/output packet evidence.
 - Every custom template compile is deterministic and auditable.
-- Unsafe classes cannot auto-parallelize without the isolated worktree merge protocol and
-  an explicit user or policy approval path.
+- Workspace writers cannot auto-parallelize without the isolated worktree merge protocol
+  and its explicit approval path. External mutation and release remain serial.

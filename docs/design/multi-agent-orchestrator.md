@@ -1,15 +1,11 @@
 # Multi-Agent Orchestrator
 
-Status: active; evidence-aware finalization, Completion Gate, approval-wait suspension,
-reconnect recovery, explicit participant preservation, participant authority/profile,
-and typed provider preflight exist. Explicit Node 22 transaction ownership, its fault
-matrix, Runtime fencing, closed delegated-outcome binding, required-participant
-coverage, and single-terminal-publication amendments are implemented and green. The
-fresh packaged macOS matrix is also green for naked-ready and missing-provider
-blockers, Engineer + QA fan-in, safe checkpoint/no-checkpoint/effect-unknown restart
-classification, daemon restart, SSE reconnect, and final evidence publication. Only
-S6 delivery review/PR/CI/merge remains for this slice.
-Last verified: 2026-08-25
+Status: canonical orchestrator contract; serial execution, smart branch scheduling,
+durable start ownership, approvals, evidence finalization and recovery foundations
+exist. Safe-concurrency delivery is tracked separately below; source presence does not
+establish a fresh packaged or cross-platform acceptance result.
+Owner: Ling maintainers
+Last verified: 2026-11-02 (post-PR-614 static baseline; no runtime suite rerun)
 
 ## Purpose
 
@@ -110,6 +106,11 @@ Implemented follow-up slices:
 
 Advanced follow-up design:
 
+- [Ling Multi-Agent Safe Concurrency Detailed Design](ling-multi-agent-safe-concurrency-detailed-design.md)
+  refines Host-enforced safety, atomic admission, step-level worktrees, deterministic
+  integration and crash recovery. The [implementation plan](ling-multi-agent-safe-concurrency-implementation-plan.md)
+  is the active five-stage queue; do not rebuild already-landed Harness foundations or
+  migrate the old dirty Harness worktree wholesale.
 - [Orchestrator Advanced](orchestrator-advanced.md) defines the parallel branch scheduler,
   custom auto-startable template schema, fan-in packet behavior, and additional tests.
 - [Channel Context Processing Layer](channel-context-processing-layer.md) defines how
