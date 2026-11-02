@@ -19,6 +19,7 @@ import { removeUndefined } from "../../shared/validation.js";
 import { usesSideEffectTools } from "./approvals.js";
 import type { RunRequest } from "./schemas.js";
 import { createWorkflowSafetyAdmission } from "./workflow-safety.js";
+import { assertWorkflowRepositoryRunAllowed } from "../workspaces/workflow-repository-fence.js";
 
 const RESOURCE_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -41,6 +42,7 @@ export function prepareRunConcurrency(input: {
   readonly existingContinuationId?: string;
   readonly now: string;
 }): PreparedRunConcurrency {
+  assertWorkflowRepositoryRunAllowed(input.store, input.runRequest);
   input.store.expireResourceLeases(input.now);
 
   const taskId = input.runRequest.task.id;
@@ -128,6 +130,7 @@ export function recoverPreparedRunConcurrency(input: {
   readonly runnerId?: string;
   readonly now: string;
 }): PreparedRunConcurrency {
+  assertWorkflowRepositoryRunAllowed(input.store, input.runRequest);
   assertRecoverablePreparedRunOwner(input);
   if (input.binding.runId !== input.runId
     || !isDeepStrictEqual(input.binding.fence, toRuntimeAttemptFence(input.attempt))) {
@@ -297,6 +300,7 @@ export function acquireRunRuntimeSemaphores(input: {
   readonly runnerId?: string;
   readonly now: string;
 }): void {
+  assertWorkflowRepositoryRunAllowed(input.store, { cwd: input.store.paths.cwd });
   for (const slotInput of buildRunSemaphoreInputs(input)) {
     const slot = input.store.acquireRuntimeSemaphoreSlot(slotInput);
     if (!slot) {

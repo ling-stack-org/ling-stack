@@ -43,6 +43,8 @@ import { reconcileWorkflowIsolatedResults, workflowIsolatedResultBlocker } from 
 import { reconcileWorkflowIntegrations } from "./workflow-integration-coordinator.js";
 import { waitForWorkflowIsolationIdle } from "./workflow-isolation-lifecycle.js";
 import { cleanupWorkflowWorktrees } from "./workflow-worktree-cleanup.js";
+import { reconcileWorkflowParallelParentFences } from "./workflow-isolation-parent-fence.js";
+import { assertWorkflowIsolationSelectionIntegrity, type WorkflowIsolationHost } from "./workflow-isolation-selection.js";
 import { finalizeDelegatedWorkflowStepFromCanonicalState } from "./workflow-step-finalizer.js";
 import { preserveMarkdownLayout } from "./markdown-text.js";
 import { reconcileWorkflowFromCanonicalState } from "./workflow-reconciliation.js";
@@ -64,6 +66,7 @@ export interface OrchestrateWorkflowInput {
   readonly validateRunRequest: ValidateWorkflowStepRunRequest;
   readonly startRun: StartOrchestratedWorkflowStepRun;
   readonly resolveParallelCapability?: ResolveWorkflowParallelCapability;
+  readonly isolationHost?: WorkflowIsolationHost;
 }
 
 export type StartOrchestratedWorkflowStepRun = (input: {
@@ -129,6 +132,7 @@ export interface RetryWorkflowStepInput {
   readonly store: RunStore;
   readonly secretResolver?: SecretResolver;
   readonly runnerRegistry?: RunnerRegistry;
+  readonly isolationHost?: WorkflowIsolationHost;
   readonly cwd: string;
   readonly workflowStepId: string;
   readonly validateRunRequest: ValidateWorkflowStepRunRequest;
@@ -147,6 +151,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
   if (!workflow) {
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${input.workflowId}`);
   }
+  assertWorkflowIsolationSelectionIntegrity(input.store, workflow.id);
   syncWorkflowSourceTurnProgress(input.store, workflow, new Date().toISOString());
   const planModeBlocker = getWorkflowPlanModeBlocker(input.store, workflow);
   if (planModeBlocker) {
@@ -254,6 +259,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
       input.validateRunRequest,
       input.secretResolver,
       input.runnerRegistry,
+      input.isolationHost,
     );
     if (started.kind === "waiting_for_approval") {
       waitingApprovals.push({
@@ -501,6 +507,7 @@ export async function cancelChannelWorkflow(input: CancelWorkflowInput): Promise
     // the publication coordinator so a cancelled source turn/thread cannot
     // remain open merely because the first request returned early.
     await waitForWorkflowIsolationIdle(input.store, workflow.id);
+    reconcileWorkflowParallelParentFences(input.store, workflow.id);
     syncWorkflowSourceTurnProgress(input.store, workflow, now);
     maybeCreateWorkflowTerminalCoordinatorReply(input.store, workflow.id, { now });
     return {
@@ -583,6 +590,7 @@ export async function cancelChannelWorkflow(input: CancelWorkflowInput): Promise
   // same durable publication coordinator as success/failure so the source
   // turn/thread cannot remain open after the user has cancelled the work.
   await waitForWorkflowIsolationIdle(input.store, workflow.id);
+  reconcileWorkflowParallelParentFences(input.store, workflow.id);
   const terminalWorkflow = input.store.getChannelWorkflow(workflow.id) ?? latestWorkflow;
   if (isTerminalWorkflowStatus(terminalWorkflow.status)) {
     syncWorkflowSourceTurnProgress(input.store, terminalWorkflow, now);
@@ -644,6 +652,7 @@ export async function retryChannelWorkflowStep(input: RetryWorkflowStepInput): P
     input.validateRunRequest,
     input.secretResolver,
     input.runnerRegistry,
+    input.isolationHost,
   );
   if (started.kind === "waiting_for_approval") {
     return {

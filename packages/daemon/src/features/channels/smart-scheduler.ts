@@ -31,7 +31,8 @@ export type SmartSchedulingReasonCode =
   | "host_parallel_capability_unavailable"
   | "active_step_safety_unverified"
   | "resource_conflict"
-  | "read_only_parallel_allowed";
+  | "read_only_parallel_allowed"
+  | "isolated_files_parallel_allowed";
 
 export interface SmartSchedulingDecision {
   readonly schedulingMode: "smart";
@@ -58,6 +59,9 @@ export interface WorkflowParallelCapabilityInput {
 /** Host evidence, not a declaration inferred from a prompt or a tool name. */
 export interface WorkflowParallelCapability {
   readonly verified: true;
+  readonly kind?: "isolated_files";
+  /** Only members of one frozen isolated round may share a writing group. */
+  readonly groupKey?: string;
   /** Canonical exclusive keys derived by Host; declarations can only add keys. */
   readonly resourceKeys: readonly string[];
   /** Total concurrent limit after Host provider/runner/workspace constraints. */
@@ -98,7 +102,9 @@ export function resolveSmartSchedulingDecision(input: ResolveSmartSchedulingDeci
   let parallelLimit = Math.min(maxConcurrentRuns, input.workflow.metadata?.maxParallelSteps === undefined
     ? maxConcurrentRuns : positiveLimit(input.workflow.metadata.maxParallelSteps));
   let safetyEvidence: SmartSchedulingDecision["safetyEvidence"] = "complete";
-  let parallel = Boolean(channel?.runtimePolicy.allowReadOnlyParallel && input.resolveParallelCapability);
+  let parallel = Boolean(channel && input.resolveParallelCapability && (channel.runtimePolicy.allowReadOnlyParallel
+    || [...active, ...eligible].some(step => step.metadata?.sideEffectClass === "workspace_write" && step.metadata.isolationScopePlan)));
+  let parallelGroup: string | undefined;
   const heldResources = new Set<string>();
   const now = new Date().toISOString();
 
@@ -143,6 +149,12 @@ export function resolveSmartSchedulingDecision(input: ResolveSmartSchedulingDeci
       reasons.add("active_step_safety_unverified");
       safetyEvidence = "partial";
     } else {
+      const group = safety.capability.kind === "isolated_files" ? safety.capability.groupKey! : "readonly";
+      if (parallelGroup !== undefined && parallelGroup !== group) {
+        parallel = false;
+        reasons.add("active_step_safety_unverified");
+      }
+      parallelGroup = group;
       parallelLimit = Math.min(parallelLimit, safety.limit);
       for (const key of safety.resources) heldResources.add(key);
     }
@@ -164,6 +176,7 @@ export function resolveSmartSchedulingDecision(input: ResolveSmartSchedulingDeci
     }
     const safety = resolveStepParallelSafety(input, step);
     if (earlierApproval && !safety.capability) continue;
+    if (earlierApproval && safety.capability?.kind === "isolated_files") continue;
     const sharing = activeStepCount + runnableStepIds.length > 0;
     if (!safety.capability || !parallel) {
       if (sharing) continue;
@@ -183,10 +196,16 @@ export function resolveSmartSchedulingDecision(input: ResolveSmartSchedulingDeci
       reasons.add("resource_conflict");
       continue;
     }
+    const group = safety.capability.kind === "isolated_files" ? safety.capability.groupKey! : "readonly";
+    if (parallelGroup !== undefined && parallelGroup !== group) {
+      reasons.add("resource_conflict");
+      continue;
+    }
+    parallelGroup = group;
     parallelLimit = nextLimit;
     for (const key of safety.resources) heldResources.add(key);
     runnableStepIds.push(step.id);
-    reasons.add("read_only_parallel_allowed");
+    reasons.add(safety.capability.kind === "isolated_files" ? "isolated_files_parallel_allowed" : "read_only_parallel_allowed");
     if (activeStepCount + runnableStepIds.length >= parallelLimit) break;
   }
   if (!parallel && runnableStepIds.length === 0) approvalStepIds.splice(1);
@@ -236,10 +255,15 @@ function resolveStepParallelSafety(input: ResolveSmartSchedulingDecisionInput, s
   const blocked = (reason: SmartSchedulingReasonCode) => ({ reason, limit: 1, resources: [] });
   const tools = resolveStepTools(input.store, step);
   if (!tools) return blocked("unknown_tools_serial");
-  if (tools.some(isRiskyRunTool)) return blocked("side_effectful_step_serial");
-  if (step.metadata?.sideEffectClass !== "analysis_readonly" || step.metadata.parallelPolicy?.autoParallel !== true) {
+  const isolated = step.metadata?.sideEffectClass === "workspace_write" && step.metadata.isolationScopePlan
+    && step.metadata.safetyPlan?.profile === "pi_host_isolated_files_v1";
+  if (tools.some(tool => isolated ? !["read", "grep", "find", "ls", "write", "edit"].includes(tool) : isRiskyRunTool(tool))) {
+    return blocked("side_effectful_step_serial");
+  }
+  if ((!isolated && step.metadata?.sideEffectClass !== "analysis_readonly") || step.metadata?.parallelPolicy?.autoParallel !== true) {
     return blocked("safety_opt_in_required");
   }
+  if (!isolated && input.channel?.runtimePolicy.allowReadOnlyParallel !== true) return blocked("read_only_parallel_disabled");
   if (!input.channel || !input.resolveParallelCapability) return blocked("host_parallel_capability_unavailable");
   let capability: WorkflowParallelCapability | undefined;
   try {
@@ -250,6 +274,10 @@ function resolveStepParallelSafety(input: ResolveSmartSchedulingDecisionInput, s
   }
   const declaredResources = step.metadata.parallelPolicy.resourceKeys ?? [];
   if (capability?.verified !== true || !validResourceKeys(capability.resourceKeys) || !validResourceKeys(declaredResources)) {
+    return blocked("host_parallel_capability_unavailable");
+  }
+  if (isolated ? capability.kind !== "isolated_files" || !capability.groupKey
+    || input.channel.runtimePolicy.writeLockScope !== "boundPath" : capability.kind !== undefined) {
     return blocked("host_parallel_capability_unavailable");
   }
   const limits = [step.metadata.parallelPolicy.maxParallelSiblings, step.metadata.maxParallelSiblings, capability.parallelLimit]
@@ -265,12 +293,13 @@ export function withSmartSchedulingReason(
   decision: SmartSchedulingDecision,
   reasonCode: SmartSchedulingReasonCode,
 ): SmartSchedulingDecision {
+  const allowed = reasonCode === "read_only_parallel_allowed" || reasonCode === "isolated_files_parallel_allowed";
   return {
     ...decision,
-    effectiveMode: reasonCode === "read_only_parallel_allowed" ? decision.effectiveMode : "serial",
-    parallelLimit: reasonCode === "read_only_parallel_allowed" ? decision.parallelLimit : 1,
-    runnableStepIds: reasonCode === "read_only_parallel_allowed" ? decision.runnableStepIds : [],
-    queuedStepIds: reasonCode === "read_only_parallel_allowed"
+    effectiveMode: allowed ? decision.effectiveMode : "serial",
+    parallelLimit: allowed ? decision.parallelLimit : 1,
+    runnableStepIds: allowed ? decision.runnableStepIds : [],
+    queuedStepIds: allowed
       ? decision.queuedStepIds
       : [...new Set([...decision.runnableStepIds, ...decision.queuedStepIds])],
     reasonCodes: [...new Set([...decision.reasonCodes, reasonCode])],

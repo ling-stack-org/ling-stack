@@ -54,6 +54,7 @@ export function workflowGitRepositoryBasisDigest(repository: WorkflowGitReposito
 const oid = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const identifier = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const lockName = "ling-workflow-git.lock";
+const repositoryOperations = new Map<string, Promise<void>>();
 const ongoing = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD", "rebase-apply", "rebase-merge", "sequencer", "BISECT_START"];
 const unsafeConfiguration = /^(?:include\.|includeif\.|filter\.|credential\.|diff\..*\.(?:command|textconv)$|merge\..*\.driver$|core\.(?:sshcommand|gitproxy|fsmonitor)$|extensions\.worktreeconfig$)/u;
 const requireGit: (condition: unknown, code: string) => asserts condition = (condition, code) => {
@@ -190,13 +191,28 @@ export async function withWorkflowGitRepositoryLock<T>(repository: WorkflowGitRe
   }
 }
 
+/** Queue cooperating Host operations only. Foreign or abandoned lock owners still fail closed. */
+export async function withQueuedWorkflowGitRepositoryLock<T>(repository: WorkflowGitRepository, action: () => Promise<T>): Promise<T> {
+  const previous = repositoryOperations.get(repository.commonDir);
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  repositoryOperations.set(repository.commonDir, pending);
+  try {
+    await previous;
+    return await withWorkflowGitRepositoryLock(repository, action);
+  } finally {
+    if (repositoryOperations.get(repository.commonDir) === pending) repositoryOperations.delete(repository.commonDir);
+    release();
+  }
+}
+
 /** Caller persists a create intent first. Failures retain possible physical effects. */
 export async function createWorkflowGitWorktree(scope: WorkflowGitWorktreeScope,
   options: { readonly beforeCreate?: () => void } = {}): Promise<WorkflowGitWorktreeReceipt> {
   const planned = await planWorkflowGitWorktree(scope);
   requireGit(planned.executionRoot === scope.executionRoot && planned.branchRef === scope.branchRef
     && planned.baseCommit === scope.baseCommit, "workflow_git_scope_invalid");
-  return withWorkflowGitRepositoryLock(scope.repository, async () => {
+  return withQueuedWorkflowGitRepositoryLock(scope.repository, async () => {
     const current = await inspectWorkflowGitRepository(scope.repository.root, { allowDirtyCandidate: scope.repository.dirty,
       hostStateRoot: scope.repository.hostState?.root });
     requireGit(sameRepository(scope.repository, current), "workflow_git_repository_basis_changed");

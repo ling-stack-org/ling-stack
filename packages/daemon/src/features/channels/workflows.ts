@@ -84,6 +84,7 @@ import { preflightWorkflowParticipantProvider } from "./workflow-participant-pro
 import { createWorkflowPreApprovalExecutionPermit, prepareWorkflowPreApproval,
   workflowPreApprovalStartOverrideError } from "./workflow-pre-approval.js";
 import { createWorkflowSafetyAdmission, freezeWorkflowSafetyPlan, workflowSafetySnapshot, type WorkflowSafetySnapshotV1 } from "../runs/workflow-safety.js";
+import { assertWorkflowIsolationSelectionReady, type WorkflowIsolationHost } from "./workflow-isolation-selection.js";
 export { completeWorkflowIfStepsFinished } from "./workflow-completion.js";
 
 const WORKFLOW_STEP_RESOURCE_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -596,6 +597,7 @@ export async function handleChannelWorkflowStepStartRoute(
   startRun: StartWorkflowStepRun,
   secretResolver?: SecretResolver,
   runnerRegistry?: RunnerRegistry,
+  isolationHost?: WorkflowIsolationHost,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -611,9 +613,11 @@ export async function handleChannelWorkflowStepStartRoute(
       writeJson(response, 404, { error: "workflow_step_not_found", message: `Channel workflow step not found: ${workflowStepId}` });
       return;
     }
-    await handleChannelWorkflowStepStart(request, response, config, storeRegistry, cwd, existing.id, validateRunRequest, startRun, secretResolver, runnerRegistry);
+    await handleChannelWorkflowStepStart(request, response, config, storeRegistry, cwd, existing.id, validateRunRequest, startRun, secretResolver, runnerRegistry, isolationHost);
   } catch (error) {
-    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request", message: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -628,6 +632,7 @@ async function handleChannelWorkflowStepStart(
   startRun: StartWorkflowStepRun,
   secretResolver?: SecretResolver,
   runnerRegistry?: RunnerRegistry,
+  isolationHost?: WorkflowIsolationHost,
 ): Promise<void> {
   if (request.method !== "POST") {
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow step start` });
@@ -637,7 +642,7 @@ async function handleChannelWorkflowStepStart(
   const store = storeRegistry.getStore(cwd);
   const body = await readJsonBody(request, config.maxBodyBytes);
   const input = parseChannelWorkflowStepStartRequest(body);
-  const started = await prepareWorkflowStepStart(store, workflowStepId, input, cwd, validateRunRequest, secretResolver, runnerRegistry);
+  const started = await prepareWorkflowStepStart(store, workflowStepId, input, cwd, validateRunRequest, secretResolver, runnerRegistry, isolationHost);
   if (started.kind === "waiting_for_approval") {
     writeJson(response, 200, {
       status: "waiting_for_approval",
@@ -707,6 +712,7 @@ export async function prepareWorkflowStepStart(
   validateRunRequest: ValidateWorkflowStepRunRequest,
   secretResolver?: SecretResolver,
   runnerRegistry?: RunnerRegistry,
+  isolationHost?: WorkflowIsolationHost,
 ): Promise<PreparedWorkflowStepStart> {
   let step = store.getChannelWorkflowStep(workflowStepId);
   if (!step) {
@@ -720,6 +726,7 @@ export async function prepareWorkflowStepStart(
   if (!channel) {
     return { kind: "error", statusCode: 404, code: "channel_not_found", message: `Channel not found: ${step.channelId}` };
   }
+  assertWorkflowIsolationSelectionReady(store, workflow.id, runnerRegistry, isolationHost);
   const planModeBlocker = getWorkflowPlanModeBlocker(store, workflow);
   if (planModeBlocker) {
     return { kind: "error", statusCode: 409, code: "plan_mode_workflow_blocked", message: planModeBlocker };

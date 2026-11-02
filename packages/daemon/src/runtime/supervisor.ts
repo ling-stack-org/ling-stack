@@ -179,6 +179,10 @@ export class RuntimeSupervisor {
     return this.config.harness;
   }
 
+  getChannelFeatures(): ResolvedDaemonConfig["channels"] {
+    return this.config.channels;
+  }
+
   getRestrictedCommandRuntime(): NativeRestrictedCommandRuntime | undefined {
     const config = this.config.sandbox.restrictedCommands;
     if (config) this.restrictedCommandRuntime ??= new NativeRestrictedCommandRuntime(config, this.protectedHostStages);

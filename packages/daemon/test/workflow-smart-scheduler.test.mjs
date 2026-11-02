@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import test from "node:test";
-import { GSTACK_DEFAULT_SKILL_PACK_ID, listDefaultSkills } from "../../core/dist/index.js";
+import { parseWorkflowStepExecutionSafety } from "@ling-stack/contracts";
+import { GSTACK_DEFAULT_SKILL_PACK_ID, listDefaultSkills, workflowStepSafetyPlanDigest } from "../../core/dist/index.js";
 import { schedulerFixture, schedulerInput, schedulerModule, beginSchedulerStep, linkSchedulerRun } from "./support/workflow-scheduler-fixture.mjs";
 
 const { resolveSmartSchedulingDecision } = await schedulerModule("smart-scheduler");
@@ -46,6 +48,78 @@ test("explicit Host-verified analysis branches can fill the available budget", a
   assert.equal(result.effectiveMode, "parallel");
   assert.deepEqual(result.runnableStepIds, [a.id, b.id]);
 });
+
+function isolatedStep(f, title, id, extra = {}) {
+  const step = f.step(title, { sideEffectClass: "workspace_write", requiredTools: ["read", "edit", "write"], requestedRunnerId: "pi",
+    parallelPolicy: { autoParallel: true, maxParallelSiblings: 2, resourceKeys: [] },
+    isolationScopePlan: { planId: id, planDigest: `wip1_${"a".repeat(64)}` }, ...extra });
+  const executionRoot = join(f.root, `worktree-${id}`);
+  const fields = { schemaVersion: 1, profile: "pi_host_isolated_files_v1", workflowId: f.workflow.id, workflowStepId: step.id,
+    workspaceRoot: f.cwd, executionRoot, safety: parseWorkflowStepExecutionSafety(step.metadata), tools: ["edit", "read", "write"],
+    runnerId: "pi", networkAccess: false, writeRoots: [executionRoot] };
+  return f.store.updateChannelWorkflowStep(step.id, { metadata: { ...step.metadata,
+    safetyPlan: { ...fields, digest: workflowStepSafetyPlanDigest(fields) } } }, new Date().toISOString());
+}
+
+const isolatedCapability = ({ step }) => ({ verified: true, kind: "isolated_files", groupKey: "isolation:round:1",
+  resourceKeys: [`worktree:${step.id}`], parallelLimit: 2 });
+
+test("only a Host-verified isolated group may share writing capacity with readonly parallel disabled", async t => {
+  const f = await schedulerFixture(t, { cap: 2 });
+  f.store.updateChannel(f.channel.id, { runtimePolicy: { ...f.channel.runtimePolicy,
+    allowReadOnlyParallel: false, writeLockScope: "boundPath" } }, new Date().toISOString());
+  const a = isolatedStep(f, "Isolated A", "a"), b = isolatedStep(f, "Isolated B", "b");
+  const result = decide(f, { resolveParallelCapability: isolatedCapability });
+  assert.equal(result.effectiveMode, "parallel");
+  assert.equal(result.parallelLimit, 2);
+  assert.deepEqual(result.runnableStepIds, [a.id, b.id]);
+  assert.ok(result.reasonCodes.includes("isolated_files_parallel_allowed"));
+  assert.equal(result.reasonCodes.includes("read_only_parallel_allowed"), false);
+});
+
+for (const [label, metadata, capability, lockScope] of [
+  ["missing Host opt-in", {}, () => undefined, "boundPath"],
+  ["readonly capability", {}, () => ({ verified: true, resourceKeys: [], parallelLimit: 2 }), "boundPath"],
+  ["unidentified group", {}, context => ({ ...isolatedCapability(context), groupKey: undefined }), "boundPath"],
+  ["shell tool", { requiredTools: ["read", "bash"] }, isolatedCapability, "boundPath"],
+  ["missing isolated pin", { isolationScopePlan: undefined }, isolatedCapability, "boundPath"],
+  ["workspace write lock", {}, isolatedCapability, "workspace"],
+  ["channel write lock", {}, isolatedCapability, "channel"],
+]) {
+  test(`isolated writes stay serial for ${label}`, async t => {
+    const f = await schedulerFixture(t, { cap: 2 });
+    f.store.updateChannel(f.channel.id, { runtimePolicy: { ...f.channel.runtimePolicy, writeLockScope: lockScope } }, new Date().toISOString());
+    isolatedStep(f, "A", "a", metadata); isolatedStep(f, "B", "b", metadata);
+    const result = decide(f, { resolveParallelCapability: capability });
+    assert.equal(result.effectiveMode, "serial");
+    assert.equal(result.runnableStepIds.length, 1);
+    assert.equal(result.reasonCodes.includes("isolated_files_parallel_allowed"), false);
+  });
+}
+
+test("different isolated rounds cannot share a scheduling group", async t => {
+  const f = await schedulerFixture(t, { cap: 2 });
+  f.store.updateChannel(f.channel.id, { runtimePolicy: { ...f.channel.runtimePolicy, writeLockScope: "boundPath" } }, new Date().toISOString());
+  const a = isolatedStep(f, "A", "a"), b = isolatedStep(f, "B", "b");
+  const result = decide(f, { resolveParallelCapability: context => ({ ...isolatedCapability(context), groupKey: `round:${context.step.id}` }) });
+  assert.deepEqual(result.runnableStepIds, [a.id]);
+  assert.deepEqual(result.queuedStepIds, [b.id]);
+  assert.ok(result.reasonCodes.includes("resource_conflict"));
+});
+
+for (const first of ["readonly", "isolated"]) {
+  test(`${first} selection cannot mix readonly and isolated writing capabilities`, async t => {
+    const f = await schedulerFixture(t, { cap: 2 });
+    f.store.updateChannel(f.channel.id, { runtimePolicy: { ...f.channel.runtimePolicy, writeLockScope: "boundPath" } }, new Date().toISOString());
+    const a = first === "isolated" ? isolatedStep(f, "A", "a") : f.step("A");
+    const b = first === "readonly" ? isolatedStep(f, "B", "b") : f.step("B");
+    const result = decide(f, { resolveParallelCapability: context => context.step.metadata.sideEffectClass === "workspace_write"
+      ? isolatedCapability(context) : { verified: true, resourceKeys: [], parallelLimit: 2 } });
+    assert.deepEqual(result.runnableStepIds, [a.id]);
+    assert.deepEqual(result.queuedStepIds, [b.id]);
+    assert.ok(result.reasonCodes.includes("resource_conflict"));
+  });
+}
 
 test("channel workflow sibling legacy and Host limits take the minimum", async t => {
   const f = await schedulerFixture(t, { cap: 5, workflowCap: 4 });

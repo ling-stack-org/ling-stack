@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { RuntimeAttemptFenceV1, WorkflowStepStartOwnerV1 } from "@ling-stack/core";
 import { workflowGit } from "../workspaces/managed-worktrees.js";
-import { inspectWorkflowGitRepository, inspectWorkflowGitTree, safeWorkflowGitPath, withWorkflowGitRepositoryLock,
+import { inspectWorkflowGitRepository, inspectWorkflowGitTree, safeWorkflowGitPath, withQueuedWorkflowGitRepositoryLock,
   type WorkflowGitRepository, type WorkflowGitWorktreeReceipt, type WorkflowGitWorktreeScope } from "../workspaces/workflow-git-repository.js";
 
 export const WORKFLOW_BRANCH_CAPTURE_POLICY = Object.freeze({ schemaVersion: 1, maxEntries: 10000, maxDepth: 32,
@@ -217,7 +217,7 @@ export async function captureWorkflowBranchResult(input: WorkflowBranchCaptureCo
     validateTerminal(context, current);
     requireCapture(workflowGitPacketDigest(current) === workflowGitPacketDigest(terminal), "workflow_branch_terminal_basis_changed");
   };
-  return withWorkflowGitRepositoryLock(context.scope.repository, async () => {
+  return withQueuedWorkflowGitRepositoryLock(context.scope.repository, async () => {
     const repository = await inspectCaptureSource(context);
     const base = await readBaseTree(repository.root, context.scope.baseCommit);
     const first = await discover(repository.root, context.scope.baseCommit.length);

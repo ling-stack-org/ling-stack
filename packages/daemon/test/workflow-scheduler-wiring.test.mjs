@@ -61,8 +61,15 @@ for (const [path, registry, expectedCalls] of [
       assert.ok(property, "Every dispatch/continuation must supply Host verification.");
       assert.equal(property.value.type, "CallExpression");
       assert.equal(text(property.value.callee), "createWorkflowParallelCapabilityResolver");
-      assert.equal(property.value.arguments.length, 1);
+      assert.equal(property.value.arguments.length, 2);
       assert.equal(text(property.value.arguments[0]), registry);
+      const host = property.value.arguments[1];
+      assert.equal(host.type, "ObjectExpression");
+      const broker = host.properties.find(node => node.type === "ObjectProperty" && node.key.name === "toolBrokerMode");
+      assert.ok(broker, "Writing capability must observe the live Host Broker mode.");
+      assert.equal(broker.value.type, "ArrowFunctionExpression");
+      assert.equal(broker.value.params.length, 0);
+      assert.equal(text(broker.value.body), `${registry.startsWith("options.") ? "options." : ""}runtimeSupervisor.getHarnessFeatures().toolBroker.mode`);
       const runner = argument.properties.find(node => node.type === "ObjectProperty" && node.key.name === "runnerRegistry");
       assert.ok(runner);
       assert.equal(text(runner.value), registry);
@@ -75,8 +82,9 @@ test("orchestrator forwards the optional runner registry to both preparation pat
   const calls = callsIn(parse(source, { sourceType: "module", plugins: ["typescript"] }), "prepareWorkflowStepStart");
   assert.equal(calls.length, 2);
   for (const call of calls) {
-    assert.equal(call.arguments.length, 7);
+    assert.equal(call.arguments.length, 8);
     assert.equal(source.slice(call.arguments[6].start, call.arguments[6].end), "input.runnerRegistry");
+    assert.equal(source.slice(call.arguments[7].start, call.arguments[7].end), "input.isolationHost");
   }
 });
 
@@ -85,12 +93,14 @@ test("direct workflow step start forwards the runner registry through route and 
   const ast = parse(source, { sourceType: "module", plugins: ["typescript"] });
   const [route] = callsIn(ast, "handleChannelWorkflowStepStart");
   assert.ok(route);
-  assert.equal(route.arguments.length, 10);
+  assert.equal(route.arguments.length, 11);
   assert.equal(source.slice(route.arguments[9].start, route.arguments[9].end), "runnerRegistry");
+  assert.equal(source.slice(route.arguments[10].start, route.arguments[10].end), "isolationHost");
   const [prepare] = callsIn(ast, "prepareWorkflowStepStart");
   assert.ok(prepare);
-  assert.equal(prepare.arguments.length, 7);
+  assert.equal(prepare.arguments.length, 8);
   assert.equal(source.slice(prepare.arguments[6].start, prepare.arguments[6].end), "runnerRegistry");
+  assert.equal(source.slice(prepare.arguments[7].start, prepare.arguments[7].end), "isolationHost");
 });
 
 test("router forwards the real runner registry for direct start and retry", async () => {
@@ -98,8 +108,9 @@ test("router forwards the real runner registry for direct start and retry", asyn
   const ast = parse(source, { sourceType: "module", plugins: ["typescript"] });
   const [start] = callsIn(ast, "handleChannelWorkflowStepStartRoute");
   assert.ok(start);
-  assert.equal(start.arguments.length, 9);
+  assert.equal(start.arguments.length, 10);
   assert.equal(source.slice(start.arguments[8].start, start.arguments[8].end), "runnerRegistry");
+  assert.equal(source.slice(start.arguments[9].start, start.arguments[9].end), "workflowIsolationHost");
   const [retry] = callsIn(ast, "retryChannelWorkflowStep");
   assert.ok(retry);
   const registry = retry.arguments[0].properties.find(node => node.type === "ObjectProperty" && node.key.name === "runnerRegistry");

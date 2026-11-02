@@ -78,6 +78,7 @@ import { executeWorkflowReadonlyTool } from "./workflow-readonly-executor.js";
 import { executeWorkflowIsolatedTool } from "./workflow-isolated-executor.js";
 import { prepareWorkflowIsolatedExecution, type WorkflowIsolatedExecution } from "./workflow-isolation-execution.js";
 import { assertWorkflowIsolatedExecutionAuthority } from "./workflow-isolation-file-authority.js";
+import { reconcileWorkflowParallelParentFences } from "../channels/workflow-isolation-parent-fence.js";
 import { readWorkflowIsolationWorktreeScope } from "../channels/workflow-isolation-planning.js";
 import { settleWorkflowIsolatedResult } from "../channels/workflow-isolated-result.js";
 import { captureWorkflowStartOwner, commitWorkflowStartReady, assertWorkflowRunAdmission,
@@ -94,6 +95,7 @@ import { createRunExecutionSupervision } from "../../runtime/run-execution-super
 import { scopeUserInputLocalWriters } from "./user-input-local-writer-scope.js";
 import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
 import { DEFAULT_RUNNER_ID, UnsupportedRunnerError, type RunnerRegistry, type RunnerResolution } from "../../runtime/runners.js";
+import { assertWorkflowIsolationSelectionReady } from "../channels/workflow-isolation-selection.js";
 import { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { checkPlatformNativeSandboxBackend } from "../../runtime/sandbox/platform-native.js";
@@ -560,6 +562,11 @@ async function executeAdmittedRunRequest(
       secretResolver,
     });
     store = storeRegistry.getStore(workspaceCwd);
+    const selectedWorkflowStep = runRequest.workflowStepId ? store.getChannelWorkflowStep(runRequest.workflowStepId) : undefined;
+    if (selectedWorkflowStep) assertWorkflowIsolationSelectionReady(store, selectedWorkflowStep.workflowId, runnerRegistry, {
+      enabled: () => runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
+      toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
+    });
     if (options.delegatedExecution) {
       delegatedExecution = readOriginalDelegatedExecutionEntry(options.delegatedExecution, store);
       const expected = delegatedExecution.buildRequest();
@@ -4015,7 +4022,10 @@ async function executeAdmittedRunRequest(
           if (userInputBinding) {
             finalizeUserInputAnswerWorkflow(store, userInputBinding, terminalRun, terminalRun.endedAt ?? executionNow());
           }
-          await options.afterRunTerminal?.(terminalRun);
+          try { await options.afterRunTerminal?.(terminalRun); }
+          finally {
+            if (isolatedExecution) reconcileWorkflowParallelParentFences(store, isolatedExecution.plan.workflowId, executionNow());
+          }
         }
         suspensionOrder.finish(suspensionSource);
       } catch (finalizationError) {

@@ -4,7 +4,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { inspectSealedWorkflowBranchResult, workflowGitPacketDigest }
   from "../dist/features/channels/workflow-branch-result.js";
-import { reconcileWorkflowIsolatedResults } from "../dist/features/channels/workflow-isolated-result.js";
+import { reconcileWorkflowIsolatedResults, settleWorkflowIsolatedResult } from "../dist/features/channels/workflow-isolated-result.js";
+import { withWorkflowGitRepositoryLock } from "../dist/features/workspaces/workflow-git-repository.js";
 import { orchestrateChannelWorkflow } from "../dist/features/channels/orchestrator.js";
 import { interruptedResultIsolation, nativeGit, now, sha256, workflowIsolatedResultFixture }
   from "./support/workflow-isolated-result-fixture.mjs";
@@ -118,6 +119,42 @@ test("duplicate capture and database reopen reuse exactly one result ref, packet
   f.reopenIsolation();
   assert.deepEqual(await f.capture(), result);
   assert.deepEqual(await f.resultSnapshot(), snapshot, "reopen must not recapture, rewrite a ref or append artifacts");
+  assert.equal(f.blocker(), undefined);
+});
+
+test("repository-busy capture retains its original diagnostic and resumes only after confirmed terminal evidence", nativeGit, async t => {
+  const f = await workflowIsolatedResultFixture(t);
+  requireJournal(f);
+  const execution = () => ({ run: f.run(), attempt: f.store.getWorkUnitAttempt(f.writer.attemptId), binding: f.binding(),
+    runs: f.store.database.prepare("SELECT id FROM run_sessions ORDER BY id").all(),
+    attempts: f.store.database.prepare("SELECT id FROM work_unit_attempts ORDER BY id").all() });
+  const original = execution();
+  await withWorkflowGitRepositoryLock(f.scopeGit.repository, () => settleWorkflowIsolatedResult({
+    store: f.store, isolation: f.isolation, writer: f.writer, now,
+  }));
+  const blocked = f.current(f.scopeIsolation);
+  assert.equal(blocked.status, "blocked");
+  assert.equal(blocked.blocker, "workflow_isolation.result_capture_unverified");
+  assert.equal(f.store.getChannelWorkflow(f.plan.workflowId).status, "blocked");
+  assert.equal(f.intent(), undefined);
+  assert.equal(await f.ref(), null);
+  assert.deepEqual(f.store.listArtifacts(f.runId)
+    .filter(artifact => artifact.sealedPayload?.kind === "workflow_isolation_result_capture_blocked")
+    .map(artifact => artifact.sealedPayload.code), ["workflow_git_repository_busy"]);
+  assert.deepEqual(execution(), original);
+
+  t.mock.timers.tick(1);
+  f.reopenIsolation();
+  await reconcileWorkflowIsolatedResults(f.store, f.plan.workflowId, now);
+  const resumed = f.current(f.scopeIsolation);
+  assert.equal(f.intent().status, "confirmed");
+  assert.equal(await f.ref(), f.intent().commit);
+  assert.equal(resumed.status, "running");
+  assert.equal(resumed.blocker, undefined);
+  assert.equal(resumed.runId, blocked.runId);
+  assert.deepEqual(resumed.metadata.startOwner, blocked.metadata.startOwner);
+  assert.equal(f.store.getChannelWorkflow(f.plan.workflowId).status, "running");
+  assert.deepEqual(execution(), original, "result recovery never creates or restarts a Run or Attempt");
   assert.equal(f.blocker(), undefined);
 });
 

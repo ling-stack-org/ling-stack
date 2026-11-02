@@ -7,7 +7,7 @@ import test from "node:test";
 import { workflowGraphFingerprintV1 } from "@ling-stack/contracts";
 import { createSqliteWorkflowIsolationStore, isWorkflowStepSafetyPlanV1 } from "@ling-stack/core";
 import { planWorkflowIsolatedRound, readWorkflowIsolationWorktreeScope } from "../dist/features/channels/workflow-isolation-planning.js";
-import { assertWorkflowSafetyRequest, createWorkflowSafetyAdmission, restrictWorkflowSafetyTools,
+import { assertWorkflowSafetyRequest, createWorkflowParallelCapabilityResolver, createWorkflowSafetyAdmission, restrictWorkflowSafetyTools,
   workflowSafetySnapshot } from "../dist/features/runs/workflow-safety.js";
 import { schedulerFixture } from "./support/workflow-scheduler-fixture.mjs";
 
@@ -66,6 +66,103 @@ test("Host freezes two isolated file scopes before approval without creating Tas
   assert.equal((await f.git("for-each-ref", "--format=%(refname)", "refs/heads/ling/")).trim(), "");
   assert.deepEqual(await planWorkflowIsolatedRound(f.input()), result, "identical Host planning is idempotent");
 });
+
+test("Host can freeze target delivery before start but cannot change it on the same round", native, async t => {
+  const f = await fixture(t), step = f.writing("One");
+  const before = await f.git("rev-parse", "HEAD");
+  const result = await planWorkflowIsolatedRound({ ...f.input(), mode: "apply_to_target" });
+  assert.equal(result.round.inputs.mode, "apply_to_target");
+  assert.equal(result.round.phase, "preparing");
+  assert.deepEqual(await planWorkflowIsolatedRound({ ...f.input(), mode: "apply_to_target" }), result);
+  await assert.rejects(planWorkflowIsolatedRound(f.input()));
+  assert.deepEqual(createSqliteWorkflowIsolationStore(f.store).getIntegrationRound(result.round.roundId), result.round);
+  assert.equal(f.store.database.prepare("SELECT COUNT(*) AS n FROM tasks").get().n, 0);
+  assert.equal(f.store.database.prepare("SELECT COUNT(*) AS n FROM run_sessions").get().n, 0);
+  assert.equal(f.store.database.prepare("SELECT COUNT(*) AS n FROM approval_requests").get().n, 0);
+  assert.equal(await f.git("rev-parse", "HEAD"), before);
+  assert.equal(await f.git("status", "--porcelain"), "");
+  await assert.rejects(access(result.plans[0].executionRoot), { code: "ENOENT" });
+  assert.equal(f.store.getChannelWorkflowStep(step.id).metadata.isolationScopePlan.planDigest, result.plans[0].planDigest);
+});
+
+test("unknown Host delivery mode is rejected before persisting any isolation authority", native, async t => {
+  const f = await fixture(t), step = f.writing("One");
+  await assert.rejects(planWorkflowIsolatedRound({ ...f.input(), mode: "automatic_merge" }));
+  assert.equal(createSqliteWorkflowIsolationStore(f.store).getIntegrationRound(f.input().roundId), undefined);
+  assert.equal(f.store.getChannelWorkflowStep(step.id).metadata.isolationScopePlan, undefined);
+  assert.equal(f.store.getChannelWorkflowStep(step.id).metadata.safetyPlan, undefined);
+});
+
+const parallelExecution = { profile: "isolated_siblings_v1", maxConcurrentSteps: 2, writeLockScope: "boundPath" };
+
+function parallelSteps(f) {
+  f.channel = f.store.updateChannel(f.channel.id, { runtimePolicy: { ...f.channel.runtimePolicy,
+    maxConcurrentRuns: 2, allowReadOnlyParallel: false, writeLockScope: "boundPath" } }, new Date().toISOString());
+  return [f.writing("One", { parallelPolicy: { autoParallel: true, maxParallelSiblings: 2, resourceKeys: ["fixture:left"] } }),
+    f.writing("Two", { parallelPolicy: { autoParallel: true, maxParallelSiblings: 2, resourceKeys: ["fixture:right"] } })];
+}
+
+test("explicit Host isolated policy freezes per-worktree exclusive resources and bounded shared capacity", native, async t => {
+  const f = await fixture(t), steps = parallelSteps(f);
+  const planned = await planWorkflowIsolatedRound({ ...f.input(), parallelExecution });
+  assert.deepEqual(planned.round.inputs.parallelExecution, parallelExecution);
+  assert.deepEqual(await planWorkflowIsolatedRound({ ...f.input(), parallelExecution }), planned);
+  for (const [index, plan] of planned.plans.entries()) {
+    const step = f.store.getChannelWorkflowStep(steps[index].id);
+    assert.deepEqual(plan.resourcePlan.resourceKeys, [`fixture:${index ? "right" : "left"}`, `worktree:${plan.executionRoot}`].sort());
+    assert.ok(plan.resourcePlan.entries.filter(entry => entry.resourceType === "channel_parallel").every(entry => entry.limit === 2));
+    assert.deepEqual(createWorkflowSafetyAdmission(f.store, step, f.request(step)), plan.resourcePlan);
+    const context = { store: f.store, channel: f.channel, workflow: f.workflow, step, tools: step.metadata.safetyPlan.tools };
+    assert.equal(createWorkflowParallelCapabilityResolver(f.runnerRegistry)(context), undefined);
+    assert.equal(createWorkflowParallelCapabilityResolver(f.runnerRegistry, { toolBrokerMode: () => "shadow" })(context), undefined);
+    const capability = createWorkflowParallelCapabilityResolver(f.runnerRegistry, { toolBrokerMode: () => "enforce" })(context);
+    if (process.platform === "darwin") assert.deepEqual(capability, { verified: true, kind: "isolated_files",
+      groupKey: `isolation:${planned.round.roundId}:1`, resourceKeys: plan.resourcePlan.resourceKeys, parallelLimit: 2 });
+    else assert.equal(capability, undefined, "unverified platforms cannot grant concurrent writing capability");
+    await assert.rejects(access(plan.executionRoot), { code: "ENOENT" });
+  }
+  assert.equal(f.store.database.prepare("SELECT COUNT(*) AS n FROM run_sessions").get().n, 0);
+});
+
+for (const kind of ["no opt-in", "capacity", "coarse lock", "unknown profile", "too large", "fractional limit"]) {
+  test(`Host isolated parallel planner rejects ${kind} before freezing authority`, native, async t => {
+    const f = await fixture(t), steps = parallelSteps(f);
+    const policy = { ...parallelExecution };
+    if (kind === "no opt-in") f.store.updateChannelWorkflowStep(steps[0].id, { metadata: { ...steps[0].metadata,
+      parallelPolicy: { autoParallel: false, maxParallelSiblings: 2, resourceKeys: [] } } }, new Date().toISOString());
+    if (kind === "capacity" || kind === "coarse lock") f.store.updateChannel(f.channel.id, { runtimePolicy: { ...f.channel.runtimePolicy,
+      ...(kind === "capacity" ? { maxConcurrentRuns: 1 } : { writeLockScope: "workspace" }) } }, new Date().toISOString());
+    if (kind === "unknown profile") policy.profile = "unrestricted";
+    if (kind === "too large") policy.maxConcurrentSteps = 5;
+    if (kind === "fractional limit") policy.maxConcurrentSteps = 1.5;
+    await assert.rejects(planWorkflowIsolatedRound({ ...f.input(), parallelExecution: policy }));
+    assert.equal(createSqliteWorkflowIsolationStore(f.store).getIntegrationRound(f.input().roundId), undefined);
+    for (const step of steps) assert.equal(f.store.getChannelWorkflowStep(step.id).metadata.isolationScopePlan, undefined);
+  });
+}
+
+test("serial isolated plans cannot be upgraded in place by enabling Host parallel policy", native, async t => {
+  const f = await fixture(t); parallelSteps(f);
+  const planned = await planWorkflowIsolatedRound(f.input());
+  await assert.rejects(planWorkflowIsolatedRound({ ...f.input(), parallelExecution }));
+  assert.deepEqual(createSqliteWorkflowIsolationStore(f.store).getIntegrationRound(planned.round.roundId), planned.round);
+  assert.equal(planned.round.inputs.parallelExecution, undefined);
+});
+
+for (const kind of ["write lock", "capacity", "step opt-in", "declared resource", "provider identity"]) {
+  test(`frozen isolated admission rejects ${kind} drift`, native, async t => {
+    const f = await fixture(t), steps = parallelSteps(f);
+    await planWorkflowIsolatedRound({ ...f.input(), parallelExecution });
+    let step = f.store.getChannelWorkflowStep(steps[0].id);
+    const request = f.request(step);
+    if (kind === "write lock" || kind === "capacity") f.store.updateChannel(f.channel.id, { runtimePolicy: { ...f.channel.runtimePolicy,
+      ...(kind === "write lock" ? { writeLockScope: "channel" } : { maxConcurrentRuns: 1 }) } }, new Date().toISOString());
+    if (kind === "step opt-in" || kind === "declared resource") step = f.store.updateChannelWorkflowStep(step.id, { metadata: { ...step.metadata,
+      parallelPolicy: { ...step.metadata.parallelPolicy, ...(kind === "step opt-in" ? { autoParallel: false } : { resourceKeys: ["foreign:resource"] }) } } }, new Date().toISOString());
+    if (kind === "provider identity") request.providerPresetId = "foreign-provider";
+    assert.throws(() => createWorkflowSafetyAdmission(f.store, step, request), { code: "workflow_safety_mismatch" });
+  });
+}
 
 for (const kind of ["shell", "foreign runner", "release", "prior approval", "dirty repository"]) {
   test(`Host planning rejects ${kind} before persisting a round or isolation pin`, native, async t => {

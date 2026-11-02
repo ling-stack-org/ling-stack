@@ -94,7 +94,9 @@ export async function settleWorkflowIsolatedResult(input: Parameters<typeof capt
         ensureArtifact(input.store, workflowIsolationDigest(payload, "wirf_"), binding.runId,
           "Workflow isolated result capture blocked", payload, now);
       } finally {
-        blockUnverifiedResultStep(input.store, binding.runId, binding.startOwner, code, now);
+        const blocker = /^workflow_isolation\.result_[a-z0-9_]+$/u.test(code)
+          ? code : "workflow_isolation.result_capture_unverified";
+        blockUnverifiedResultStep(input.store, binding.runId, binding.startOwner, blocker, now);
       }
     } catch {
       // Missing confirmed evidence still blocks semantic success; diagnostic IO must not strand the step running.

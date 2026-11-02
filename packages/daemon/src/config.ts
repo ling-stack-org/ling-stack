@@ -80,6 +80,8 @@ export interface ChannelFeatureConfig {
   readonly intentSelector?: boolean;
   readonly teamObserverBus?: boolean;
   readonly terminalReports?: boolean;
+  /** Host opt-in for explicitly selected Pi isolated-file workflows; never a workspace setting. */
+  readonly workflowIsolatedFiles?: boolean;
 }
 
 export interface RuntimeToolFeatureConfig {
@@ -244,6 +246,8 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
       intentSelector: config.channels?.intentSelector ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_INTENT_SELECTOR, true),
       teamObserverBus: config.channels?.teamObserverBus ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_TEAM_OBSERVER_BUS, false),
       terminalReports: config.channels?.terminalReports ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_TERMINAL_REPORTS, true),
+      workflowIsolatedFiles: config.channels?.workflowIsolatedFiles
+        ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_WORKFLOW_ISOLATED_FILES, false),
     },
     cuaDriver: {
       bundledEmbedded: {

@@ -6,6 +6,7 @@ import { cleanupWorkflowGitWorktree, observeWorkflowGitCleanup, type WorkflowGit
   from "../workspaces/workflow-git-cleanup.js";
 import { integrationValue, requireIntegration, retainIntegrationArtifact } from "./workflow-integration-journal.js";
 import { runWorkflowIsolationOperation } from "./workflow-isolation-lifecycle.js";
+import { reconcileWorkflowParallelParentFences } from "./workflow-isolation-parent-fence.js";
 
 export interface WorkflowWorktreeCleanupResult {
   readonly worktreeId?: string;
@@ -128,6 +129,7 @@ export async function cleanupWorkflowWorktrees(store: RunStore, workflowId: stri
       for (const worktreeId of worktreeIds) results.push(await coordinateWorkflowWorktreeCleanup({ store, workflowId,
         roundId, generation, worktreeId, ...options }));
     }
+    reconcileWorkflowParallelParentFences(store, workflowId, options.now?.() ?? new Date().toISOString());
   } catch {
     results.push({ status: "retained", code: "workflow_cleanup.inventory_unverified" });
   }

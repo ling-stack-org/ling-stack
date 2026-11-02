@@ -26,8 +26,11 @@ export function createUserInputWorkflowTerminalHook(options: ChannelTurnDispatch
       || !workflow || workflow.status !== "running") return;
     await orchestrateChannelWorkflow({ store, cwd: store.paths.cwd, workflowId: workflow.id,
       secretResolver: options.secretResolver,
-      resolveParallelCapability: createWorkflowParallelCapabilityResolver(options.runnerRegistry),
+      resolveParallelCapability: createWorkflowParallelCapabilityResolver(options.runnerRegistry,
+        { toolBrokerMode: () => options.runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
       runnerRegistry: options.runnerRegistry,
+      isolationHost: { enabled: () => options.runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
+        toolBrokerMode: () => options.runtimeSupervisor.getHarnessFeatures().toolBroker.mode },
       validateRunRequest: request => resolveProviderForRun(store, request, options.secretResolver),
       startRun: createStartOrchestratedRun(options, store, store.paths.cwd) });
   };

@@ -373,6 +373,9 @@ import {
 import { RunControlService } from "../run-control.js";
 import { allowLocalServiceRequest, allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
+import { readOptionalJsonBody } from "../shared/request.js";
+import { parseChannelWorkflowOrchestrationRequest } from "@ling-stack/contracts";
+import { selectWorkflowIsolatedExecution, type WorkflowIsolationHost } from "../features/channels/workflow-isolation-selection.js";
 import { handleStartupStatus } from "../startup/routes.js";
 import { handleDiagnosticsDoctor, handleDiagnosticsLogs } from "../features/diagnostics/routes.js";
 import { handleNotifications } from "../features/notifications/routes.js";
@@ -1865,6 +1868,10 @@ export async function routeRequest(
     }
   };
 
+  const workflowIsolationHost: WorkflowIsolationHost = {
+    enabled: () => runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
+    toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
+  };
   const createStartOrchestratedRun = (store: RunStore, cwd: string): StartOrchestratedWorkflowStepRun => {
     const startOrchestratedRun: StartOrchestratedWorkflowStepRun = ({ workflow, workflowStep, taskId, runRequest }) =>
       new Promise((resolve) => {
@@ -1897,8 +1904,10 @@ export async function routeRequest(
                 await orchestrateChannelWorkflow({
                   store,
                   secretResolver,
-                  resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry),
+                  resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
+                    { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
                   runnerRegistry,
+                  isolationHost: workflowIsolationHost,
                   cwd,
                   workflowId: workflow.id,
                   validateRunRequest: (candidateRunRequest) => {
@@ -1940,8 +1949,10 @@ export async function routeRequest(
     const orchestration = await orchestrateChannelWorkflow({
       store: input.store,
       secretResolver,
-      resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry),
+      resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
+        { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
       runnerRegistry,
+      isolationHost: workflowIsolationHost,
       cwd: input.cwd,
       workflowId: confirmed.workflow.id,
       validateRunRequest: (candidateRunRequest) => {
@@ -2129,13 +2140,18 @@ export async function routeRequest(
           return;
         }
         try {
+          const input = parseChannelWorkflowOrchestrationRequest(await readOptionalJsonBody(request, config.maxBodyBytes));
           const store = storeRegistry.getStore(cwd);
+          if (input.executionProfile) await selectWorkflowIsolatedExecution({ store, workflowId: workflowRoute.workflowId,
+            runnerRegistry, host: workflowIsolationHost });
           const startOrchestratedRun = createStartOrchestratedRun(store, cwd);
           const result = await orchestrateChannelWorkflow({
             store,
             secretResolver,
-            resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry),
+            resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
+              { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
             runnerRegistry,
+            isolationHost: workflowIsolationHost,
             cwd,
             workflowId: workflowRoute.workflowId,
             validateRunRequest: (candidateRunRequest) => {
@@ -2226,6 +2242,7 @@ export async function routeRequest(
           store,
           secretResolver,
           runnerRegistry,
+          isolationHost: workflowIsolationHost,
           cwd,
           workflowStepId: workflowRoute.workflowStepId,
           validateRunRequest: (candidateRunRequest) => {
@@ -2286,6 +2303,7 @@ export async function routeRequest(
           ),
         secretResolver,
         runnerRegistry,
+        workflowIsolationHost,
       );
       return;
     }

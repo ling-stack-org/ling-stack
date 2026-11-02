@@ -11,6 +11,8 @@ import {
 import { HttpError } from "../../errors.js";
 import { createWorkflowSafetyAdmission, createWorkflowSafetyPlan, workflowSafetySnapshot } from "../runs/workflow-safety.js";
 import { assertChannelWorkspaceReady } from "./workspace.js";
+import { assertWorkflowRepositoryRunAllowed, releaseWorkflowRepositoryFence, reserveWorkflowRepositoryFence }
+  from "../workspaces/workflow-repository-fence.js";
 import {
   inspectWorkflowGitRepository, planWorkflowGitWorktree, workflowGitRepositoryBasisDigest,
   type WorkflowGitWorktreeScope,
@@ -24,6 +26,10 @@ export interface PlanWorkflowIsolatedRoundInput {
   readonly validationRequirements: WorkflowIntegrationRoundInputsV1["validationRequirements"];
   readonly templatePins?: WorkflowIntegrationRoundInputsV1["templatePins"];
   readonly optionalFailurePolicy?: WorkflowIntegrationRoundInputsV1["optionalFailurePolicy"];
+  /** Host delivery selection, frozen before start; target application still requires its own approval. */
+  readonly mode?: WorkflowIntegrationRoundInputsV1["mode"];
+  /** Explicit Host-only opt-in; declarations and the readonly channel switch do not grant it. */
+  readonly parallelExecution?: WorkflowIntegrationRoundInputsV1["parallelExecution"];
   /** Tests/Host bootstrap may choose an owned root; never supplied by the model. */
   readonly worktreeRoot?: string;
   readonly now?: string;
@@ -46,10 +52,23 @@ export async function planWorkflowIsolatedRound(input: PlanWorkflowIsolatedRound
   if (!workflow || !channel || !workflow.metadata?.workflowGraphFingerprint) blocked("An accepted workflow graph and channel are required.");
   const workspace = assertChannelWorkspaceReady(channel, store.paths.cwd);
   if (!workspace.ok || workspace.executionCwd !== store.paths.cwd) blocked("This profile requires the channel's canonical repository checkout.");
-  const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true })
+  const allSteps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
+  const steps = allSteps
     .filter(step => step.metadata?.sideEffectClass === "workspace_write")
     .sort((a, b) => a.position - b.position || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   if (steps.length === 0 || steps.length > 128) blocked("The selected workflow has no bounded writing participants.");
+  const parallelExecution = input.parallelExecution;
+  if (parallelExecution && (parallelExecution.profile !== "isolated_siblings_v1"
+    || parallelExecution.writeLockScope !== "boundPath" || channel.runtimePolicy.writeLockScope !== "boundPath"
+    || !Number.isSafeInteger(parallelExecution.maxConcurrentSteps) || parallelExecution.maxConcurrentSteps < 2
+    || parallelExecution.maxConcurrentSteps > 4 || parallelExecution.maxConcurrentSteps > steps.length
+    || channel.runtimePolicy.maxConcurrentRuns < parallelExecution.maxConcurrentSteps
+    || (workflow.metadata.maxParallelSteps ?? channel.runtimePolicy.maxConcurrentRuns) < parallelExecution.maxConcurrentSteps
+    || steps.some(step => step.metadata?.parallelPolicy?.autoParallel !== true
+      || (step.metadata.parallelPolicy.maxParallelSiblings ?? 1) < parallelExecution.maxConcurrentSteps
+      || (step.metadata.maxParallelSiblings ?? parallelExecution.maxConcurrentSteps) < parallelExecution.maxConcurrentSteps))) {
+    blocked("Isolated sibling execution requires an explicit bounded file group and boundPath write locking.");
+  }
   for (const step of steps) {
     if (step.taskId || step.runId || step.metadata?.startOwner || !["queued", "waiting_for_approval"].includes(step.status)
       || step.metadata?.preStepApprovalId && !step.metadata.isolationScopePlan) blocked("Isolation must be selected before approval or start.");
@@ -65,12 +84,17 @@ export async function planWorkflowIsolatedRound(input: PlanWorkflowIsolatedRound
   const scopes: WorkflowGitWorktreeScope[] = [];
   for (const step of steps) scopes.push(await scopeFor(step.id));
   const observed = await inspectWorkflowGitRepository(store.paths.cwd, { hostStateRoot });
-  if (workflowGitRepositoryBasisDigest(observed) !== workflowGitRepositoryBasisDigest(repository)
-    || !isDeepStrictEqual(store.getChannelWorkflow(workflow.id), workflow)
-    || !isDeepStrictEqual(store.getChannel(channel.id), channel)
-    || steps.some(step => !isDeepStrictEqual(store.getChannelWorkflowStep(step.id), step))) {
-    blocked("The workflow or repository changed during isolation planning.");
+  const assertUnchanged = () => {
+    if (!isDeepStrictEqual(store.getChannelWorkflow(workflow.id), workflow)
+      || !isDeepStrictEqual(store.getChannel(channel.id), channel)
+      || !isDeepStrictEqual(store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true }), allSteps)) {
+      blocked("The workflow changed during isolation planning.");
+    }
+  };
+  if (workflowGitRepositoryBasisDigest(observed) !== workflowGitRepositoryBasisDigest(repository)) {
+    blocked("The repository changed during isolation planning.");
   }
+  assertUnchanged();
 
   const prepared = steps.map((step, index) => {
     const scope = scopes[index]!;
@@ -82,7 +106,7 @@ export async function planWorkflowIsolatedRound(input: PlanWorkflowIsolatedRound
     }
     const plannedStep = { ...step, metadata: { ...step.metadata, safetyPlan } };
     const resourcePlan = createWorkflowSafetyAdmission(store, plannedStep, { workflowSafetySnapshot: workflowSafetySnapshot(safetyPlan),
-      providerPresetId: step.metadata?.providerPresetId ?? channel.defaultProviderPresetId, runnerId: "pi" });
+      providerPresetId: step.metadata?.providerPresetId ?? channel.defaultProviderPresetId, runnerId: "pi" }, parallelExecution);
     if (!resourcePlan) blocked("Isolation planning requires resolved Provider and Runner capacity.");
     return { step: plannedStep, scope, resourcePlan };
   });
@@ -97,7 +121,8 @@ export async function planWorkflowIsolatedRound(input: PlanWorkflowIsolatedRound
     safetyPins, safetyFingerprint: workflowIsolationSafetyFingerprint(safetyPins), templatePins: input.templatePins ?? [],
     participants: prepared.map(({ step }) => ({ workflowStepId: step.id, position: step.position,
       required: true })), mergeOrder: prepared.map(({ step }) => step.id),
-    optionalFailurePolicy: input.optionalFailurePolicy ?? "require_success", validationRequirements: input.validationRequirements, mode: "candidate_only" });
+    optionalFailurePolicy: input.optionalFailurePolicy ?? "require_success", validationRequirements: input.validationRequirements,
+    mode: input.mode ?? "candidate_only", ...(parallelExecution ? { parallelExecution } : {}) });
   if (!inputs) blocked("The Host isolation requirements are invalid.");
   const plans = prepared.map(({ step, scope, resourcePlan }) => {
     const fields: Omit<WorkflowIsolationScopePlanV1, "planDigest"> = { schemaVersion: 1,
@@ -110,20 +135,20 @@ export async function planWorkflowIsolatedRound(input: PlanWorkflowIsolatedRound
     return { ...fields, planDigest: workflowIsolationScopePlanDigest(fields) };
   });
   const now = input.now ?? new Date().toISOString(), isolation = createSqliteWorkflowIsolationStore(store);
-  for (const { step } of prepared) {
-    const current = store.getChannelWorkflowStep(step.id)!;
-    if (!isDeepStrictEqual(current.metadata?.safetyPlan, step.metadata.safetyPlan)) {
-      store.updateChannelWorkflowStep(step.id, { metadata: step.metadata }, now);
-    }
+  let repositoryReservation: string | undefined;
+  if (parallelExecution) repositoryReservation = await reserveWorkflowRepositoryFence(store, input.roundId, inputs);
+  else assertWorkflowRepositoryRunAllowed(store, { cwd: repository.root });
+  try {
+    assertUnchanged();
+    return accepted(isolation.freezePlan({ roundId: input.roundId, inputs, plans,
+      safetyPlans: prepared.map(({ step }) => step.metadata.safetyPlan!),
+      expectedWorkflow: workflow, expectedChannel: channel, expectedSteps: allSteps, now }));
+  } catch (error) {
+    // No Core round means no member could have acquired execution authority.
+    if (repositoryReservation !== undefined && !isolation.getIntegrationRound(input.roundId))
+      releaseWorkflowRepositoryFence(store, input.roundId, 1, inputs, now, repositoryReservation);
+    throw error;
   }
-  const round = accepted(isolation.createIntegrationRound({ roundId: input.roundId, inputs, now }));
-  for (const plan of plans) {
-    accepted(isolation.createScopePlan({ plan, now }));
-    const step = store.getChannelWorkflowStep(plan.workflowStepId)!;
-    if (!step.metadata?.isolationScopePlan) store.updateChannelWorkflowStep(step.id, { metadata: { ...step.metadata,
-      isolationScopePlan: { planId: plan.planId, planDigest: plan.planDigest } } }, now);
-  }
-  return { round, plans };
 }
 
 /** Rebuild only the preallocated scope; this is not creation or authority to run. */

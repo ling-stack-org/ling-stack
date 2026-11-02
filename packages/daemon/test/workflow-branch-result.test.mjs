@@ -5,8 +5,173 @@ import test from "node:test";
 import { captureWorkflowBranchResult, inspectSealedWorkflowBranchResult, WORKFLOW_BRANCH_CAPTURE_POLICY, workflowGitPacketDigest, workflowGitResultRef }
   from "../dist/features/channels/workflow-branch-result.js";
 import { workflowGit } from "../dist/features/workspaces/managed-worktrees.js";
-import { inspectWorkflowGitRepository } from "../dist/features/workspaces/workflow-git-repository.js";
+import { createWorkflowGitWorktree, inspectWorkflowGitRepository, planWorkflowGitWorktree, withQueuedWorkflowGitRepositoryLock,
+  workflowGitRefExists } from "../dist/features/workspaces/workflow-git-repository.js";
 import { nativeGit, workflowGitResultsFixture } from "./support/workflow-git-results-fixture.mjs";
+
+test("eight cooperating branches create independent worktrees without treating sibling creation as a foreign lock", nativeGit, async t => {
+  const f = await workflowGitResultsFixture(t);
+  const created = await Promise.allSettled(Array.from({ length: 8 }, (_, index) => f.branch(`parallel-${index}`)));
+  assert.deepEqual(created.filter(result => result.status === "rejected").map(result => result.reason.code), []);
+  const branches = created.map(result => result.value);
+  assert.equal(new Set(branches.map(branch => branch.scope.executionRoot)).size, 8);
+  assert.equal(new Set(branches.map(branch => branch.scope.branchRef)).size, 8);
+  for (const branch of branches) assert.equal(await branch.git("rev-parse", "HEAD"), f.repository.head);
+  assert.equal(await f.git("status", "--porcelain"), "");
+  assert.equal(await f.git("rev-parse", "HEAD"), f.repository.head);
+});
+
+test("eight simultaneous terminal captures seal every original branch without sibling repository-busy failures", nativeGit, async t => {
+  const f = await workflowGitResultsFixture(t), branches = [];
+  for (let index = 0; index < 8; index++) {
+    const branch = await f.branch(`capture-${index}`, ["owned.txt"]);
+    await writeFile(join(branch.scope.executionRoot, "owned.txt"), `branch ${index}\n`);
+    branches.push(branch);
+  }
+  const captures = await Promise.allSettled(branches.map(branch => branch.capture()));
+  assert.deepEqual(captures.filter(result => result.status === "rejected").map(result => result.reason.code), []);
+  assert.equal(new Set(captures.map(result => result.value.resultRef)).size, 8);
+  for (const [index, capture] of captures.entries()) {
+    const result = capture.value, branch = branches[index];
+    assert.equal(await workflowGitResultRef(f.root, result.resultRef), result.commit);
+    assert.equal((await f.gitAt(f.root, ["show", `${result.commit}:owned.txt`])).toString(), `branch ${index}\n`);
+    assert.deepEqual(branch.journal.receipts.map(receipt => receipt.outcome), ["confirmed"]);
+    assert.equal(await branch.git("rev-parse", "HEAD"), f.repository.head);
+  }
+  assert.equal(await f.git("status", "--porcelain"), "");
+  assert.equal(await f.git("rev-parse", "HEAD"), f.repository.head);
+});
+
+test("eight queued repository operations retain FIFO ownership and drain after the first owner fails", nativeGit, async t => {
+  const f = await workflowGitResultsFixture(t), entered = [], fault = new Error("fixture: first owner failed");
+  let announce, release, active = 0;
+  const started = new Promise(resolve => { announce = resolve; });
+  const barrier = new Promise(resolve => { release = resolve; });
+  t.after(() => release());
+  const first = withQueuedWorkflowGitRepositoryLock(f.repository, async () => {
+    assert.equal(active++, 0);
+    entered.push(0);
+    announce();
+    await barrier;
+    active--;
+    throw fault;
+  });
+  await started;
+  const remaining = Array.from({ length: 7 }, (_, index) => withQueuedWorkflowGitRepositoryLock({ ...f.repository }, async () => {
+    assert.equal(active++, 0);
+    entered.push(index + 1);
+    const head = await f.git("rev-parse", "HEAD");
+    active--;
+    return head;
+  }));
+  const completion = Promise.allSettled([first, ...remaining]);
+  assert.deepEqual(entered, [0], "queued actors cannot enter the held physical lock");
+  release();
+  const outcomes = await completion;
+  assert.equal(outcomes[0].status, "rejected");
+  assert.equal(outcomes[0].reason, fault);
+  assert.deepEqual(outcomes.slice(1), Array.from({ length: 7 }, () => ({ status: "fulfilled", value: f.repository.head })));
+  assert.deepEqual(entered, Array.from({ length: 8 }, (_, index) => index));
+  assert.equal(active, 0);
+  assert.equal(await withQueuedWorkflowGitRepositoryLock(f.repository, async () => "next owner"), "next owner");
+  await assert.rejects(access(join(f.repository.commonDir, "ling-workflow-git.lock")), { code: "ENOENT" });
+});
+
+test("a terminal fence revoked while capture is queued cannot publish a result ref", nativeGit, async t => {
+  const f = await workflowGitResultsFixture(t), branch = await f.branch();
+  const following = await f.branch("capture-after-revocation", ["owned.txt"]);
+  await writeFile(join(following.scope.executionRoot, "owned.txt"), "healthy follower\n");
+  let announce, release, observed, followingObserved, revoked = false;
+  const started = new Promise(resolve => { announce = resolve; });
+  const barrier = new Promise(resolve => { release = resolve; });
+  const read = new Promise(resolve => { observed = resolve; });
+  const followingRead = new Promise(resolve => { followingObserved = resolve; });
+  t.after(() => release());
+  const held = withQueuedWorkflowGitRepositoryLock(f.repository, async () => { announce(); await barrier; });
+  await started;
+  const capture = branch.capture({ assertTerminalQuiescent: async () => {
+    if (revoked) throw new Error("fixture: terminal fence revoked");
+    observed();
+    return branch.terminal;
+  } });
+  const refused = assert.rejects(capture, { message: "fixture: terminal fence revoked" });
+  await read;
+  revoked = true;
+  const followingCapture = following.capture({ assertTerminalQuiescent: async () => {
+    followingObserved();
+    return following.terminal;
+  } });
+  const completion = Promise.all([held, refused, followingCapture]);
+  await followingRead;
+  release();
+  await held;
+  await refused;
+  const [, , result] = await completion;
+  assert.deepEqual(branch.journal.intents, []);
+  assert.deepEqual(branch.journal.receipts, []);
+  assert.equal(await workflowGitResultRef(f.root,
+    `refs/ling/workflow/results/round-one/step-one/1-${branch.scope.worktreeId}`), null);
+  assert.equal(await branch.git("rev-parse", "HEAD"), f.repository.head);
+  assert.equal(await f.git("rev-parse", "HEAD"), f.repository.head);
+  assert.equal(result.status, "sealed");
+  assert.equal(await workflowGitResultRef(f.root, result.resultRef), result.commit);
+  assert.equal((await f.gitAt(f.root, ["show", `${result.commit}:owned.txt`])).toString(), "healthy follower\n");
+  assert.deepEqual(following.journal.receipts.map(receipt => receipt.outcome), ["confirmed"]);
+  assert.equal(await following.git("rev-parse", "HEAD"), f.repository.head);
+  assert.equal(await withQueuedWorkflowGitRepositoryLock(f.repository, async () => "next owner"), "next owner");
+  await assert.rejects(access(join(f.repository.commonDir, "ling-workflow-git.lock")), { code: "ENOENT" });
+});
+
+test("a create guard revoked while queued leaves no worktree or ref and lets its healthy follower drain", nativeGit, async t => {
+  const f = await workflowGitResultsFixture(t);
+  const plan = { repository: f.repository, worktreeRoot: f.worktreeRoot, roundId: "round-one", generation: 1 };
+  const scope = await planWorkflowGitWorktree({ ...plan, stepId: "revoked-create" });
+  const followingScope = await planWorkflowGitWorktree({ ...plan, stepId: "create-after-revocation" });
+  const checked = [], fault = new Error("fixture: create owner revoked");
+  let announce, release, observed, followingObserved, revoked = false, queued = 0;
+  const started = new Promise(resolve => { announce = resolve; });
+  const barrier = new Promise(resolve => { release = resolve; });
+  const waiting = new Promise(resolve => { observed = resolve; });
+  const followingWaiting = new Promise(resolve => { followingObserved = resolve; });
+  t.after(() => release());
+  const held = withQueuedWorkflowGitRepositoryLock(f.repository, async () => { announce(); await barrier; });
+  await started;
+  // Observe admission after asynchronous planning without sleeps or production hooks.
+  const originalSet = Map.prototype.set;
+  const admission = t.mock.method(Map.prototype, "set", function (key, value) {
+    const result = originalSet.call(this, key, value);
+    if (key === f.repository.commonDir) {
+      if (++queued === 1) observed();
+      else if (queued === 2) followingObserved();
+    }
+    return result;
+  });
+  const create = createWorkflowGitWorktree(scope, { beforeCreate() {
+    checked.push("revoked");
+    if (revoked) throw fault;
+  } });
+  const refused = assert.rejects(create, error => error === fault);
+  await waiting;
+  revoked = true;
+  const followingCreate = createWorkflowGitWorktree(followingScope, { beforeCreate() { checked.push("following"); } });
+  const completion = Promise.all([held, refused, followingCreate]);
+  await followingWaiting;
+  admission.mock.restore();
+  assert.deepEqual(checked, [], "neither create guard can run while the physical lock is held");
+  release();
+  const [, , receipt] = await completion;
+  assert.deepEqual(checked, ["revoked", "following"]);
+  await assert.rejects(access(scope.executionRoot), { code: "ENOENT" });
+  assert.equal(await workflowGitRefExists(f.root, scope.branchRef), false);
+  assert.equal(receipt.executionRoot, followingScope.executionRoot);
+  assert.equal(receipt.branchRef, followingScope.branchRef);
+  await access(followingScope.executionRoot);
+  assert.equal(await f.git("rev-parse", followingScope.branchRef), f.repository.head);
+  assert.equal(await f.git("status", "--porcelain"), "");
+  assert.equal(await f.git("rev-parse", "HEAD"), f.repository.head);
+  assert.equal(await withQueuedWorkflowGitRepositoryLock(f.repository, async () => "next owner"), "next owner");
+  await assert.rejects(access(join(f.repository.commonDir, "ling-workflow-git.lock")), { code: "ENOENT" });
+});
 
 test("Host seals tracked edits, authorized new text, deletions and executable modes without touching Runner index or HEAD", nativeGit, async t => {
   const f = await workflowGitResultsFixture(t), b = await f.branch();

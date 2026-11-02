@@ -3,9 +3,10 @@ import { dirname, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   createSqliteWorkflowIsolationStore, isWorkflowStepSafetyPlanV1, workflowStepSafetyPlanDigest,
+  workflowIsolationStepSafetyFingerprint, workflowIsolationDigest, toRuntimeAttemptFence,
   type ChannelWorkflowStep, type RunSession, type RunStore, type RunTool,
   type RuntimeAttemptFenceV1, type WorkflowStepSafetyPlanV1,
-  type WorkflowStepAdmissionPlan,
+  type WorkflowStepAdmissionPlan, type WorkflowIntegrationRoundInputsV1,
 } from "@ling-stack/core";
 import { parseWorkflowStepExecutionSafety } from "@ling-stack/contracts";
 import { PiRunnerAdapter, type PiRunnerRunOptions } from "@ling-stack/runner-pi";
@@ -66,6 +67,7 @@ export function createWorkflowSafetyPlan(input: {
     || isolatedPlan.workflowId !== step.workflowId || isolatedPlan.workflowStepId !== step.id)) {
     throw mismatch("The isolated workflow scope pin cannot be verified.");
   }
+  if (isolatedPlan) readIsolatedParallelExecution(store, step);
   const isolated = Boolean(input.isolatedScope || isolatedPlan);
   let runnerId = input.runnerId ?? step.metadata?.requestedRunnerId;
   if (!readonly && !isolated && !runnerId && input.runnerRegistry) {
@@ -224,17 +226,24 @@ export function assertWorkflowSafetyEffectByRunId(store: RunStore, runId: string
 function mismatch(reason: string): HttpError { return new HttpError(409, "workflow_safety_mismatch", reason); }
 
 /** Only the registered, enabled Pi adapter can produce this capability. */
-export function createWorkflowParallelCapabilityResolver(runnerRegistry: RunnerRegistry): ResolveWorkflowParallelCapability {
+export function createWorkflowParallelCapabilityResolver(runnerRegistry: RunnerRegistry, host?: {
+  readonly toolBrokerMode: () => string;
+}): ResolveWorkflowParallelCapability {
   return input => {
     try {
-      if (input.step.metadata?.sideEffectClass !== "analysis_readonly"
-        || input.step.metadata.parallelPolicy?.autoParallel !== true) return undefined;
+      if (input.step.metadata?.parallelPolicy?.autoParallel !== true) return undefined;
+      const readonly = input.step.metadata.sideEffectClass === "analysis_readonly";
+      const parallelExecution = readonly ? undefined : readIsolatedParallelExecution(input.store, input.step);
+      if (!readonly && (!parallelExecution || process.platform !== "darwin" || host?.toolBrokerMode() !== "enforce")) return undefined;
       const workspace = assertChannelWorkspaceReady(input.channel, input.store.paths.cwd);
       if (!workspace.ok) return undefined;
+      const scope = !readonly && input.step.metadata.isolationScopePlan
+        ? createSqliteWorkflowIsolationStore(input.store).getScopePlan(input.step.metadata.isolationScopePlan.planId) : undefined;
       const plan = createWorkflowSafetyPlan({ store: input.store, step: input.step,
-        workspaceCwd: input.store.paths.cwd, executionCwd: workspace.executionCwd,
+        workspaceCwd: input.store.paths.cwd, executionCwd: scope?.executionRoot ?? workspace.executionCwd,
         runnerId: input.runRequest?.runnerId });
-      if (!plan || plan.profile !== "pi_host_readonly_v1" || !isDeepStrictEqual(plan.tools, [...input.tools].sort())) return undefined;
+      if (!plan || plan.profile !== (readonly ? "pi_host_readonly_v1" : "pi_host_isolated_files_v1")
+        || !isDeepStrictEqual(plan.tools, [...input.tools].sort())) return undefined;
       if (input.step.metadata.safetyPlan && !isDeepStrictEqual(input.step.metadata.safetyPlan, plan)) return undefined;
       const settings = loadWorkspaceRuntimeSettings(input.store, runnerRegistry);
       const resolution = runnerRegistry.resolve({ requestedRunnerId: "pi", allowFallback: false,
@@ -245,15 +254,30 @@ export function createWorkflowParallelCapabilityResolver(runnerRegistry: RunnerR
       if (input.run) {
         const raw = input.run.requestSnapshot;
         if (!isRecord(raw) || !isDeepStrictEqual(assertWorkflowSafetyRequest(input.store, raw as unknown as RunRequest), plan)) return undefined;
+        if (scope) {
+          const unit = input.run.workUnitId ? input.store.getWorkUnit(input.run.workUnitId) : undefined;
+          const attempt = unit?.activeAttemptId ? input.store.getWorkUnitAttempt(unit.activeAttemptId) : undefined;
+          if (!attempt || !isRecord(raw.harnessFeatureSnapshot) || raw.harnessFeatureSnapshot.toolBroker !== "enforce") return undefined;
+          const fence = toRuntimeAttemptFence(attempt);
+          const current = createSqliteWorkflowIsolationStore(input.store).assertExecutionBinding({
+            writer: { bindingId: workflowIsolationDigest({ runId: input.run.id, ...fence }, "wib_"), ...fence },
+            now: new Date().toISOString(), requireReady: true });
+          if (current.status !== "current" || current.plan.planDigest !== scope.planDigest) return undefined;
+        }
       }
-      return { verified: true, resourceKeys: [], parallelLimit: 4 };
+      return scope && parallelExecution
+        ? { verified: true, kind: "isolated_files", groupKey: `isolation:${scope.integrationRoundId}:${scope.generation}`,
+            resourceKeys: scope.resourcePlan.resourceKeys,
+            parallelLimit: parallelExecution.maxConcurrentSteps }
+        : { verified: true, resourceKeys: [], parallelLimit: 4 };
     } catch { return undefined; }
   };
 }
 
 /** The same semantic plan is derived before begin and from the actual prepared Run. */
 export function createWorkflowSafetyAdmission(store: RunStore, step: ChannelWorkflowStep, request: Pick<RunRequest,
-  "workflowSafetySnapshot" | "providerPresetId" | "provider" | "runnerId" | "executionBinding">): WorkflowStepAdmissionPlan | undefined {
+  "workflowSafetySnapshot" | "providerPresetId" | "provider" | "runnerId" | "executionBinding">,
+  planningParallelExecution?: WorkflowIntegrationRoundInputsV1["parallelExecution"]): WorkflowStepAdmissionPlan | undefined {
   const plan = request.workflowSafetySnapshot?.plan;
   if (!plan) return undefined;
   const channel = store.getChannel(step.channelId), workflow = store.getChannelWorkflow(step.workflowId);
@@ -267,9 +291,13 @@ export function createWorkflowSafetyAdmission(store: RunStore, step: ChannelWork
     if (step.metadata?.parallelPolicy?.autoParallel) throw mismatch("Parallel admission requires resolved Provider and Runner identities.");
     return undefined;
   }
-  const parallel = plan.profile === "pi_host_readonly_v1" && plan.safety.parallelPolicy?.autoParallel === true
-    && channel.runtimePolicy.allowReadOnlyParallel;
-  const limit = parallel ? Math.min(4, positiveLimit(channel.runtimePolicy.maxConcurrentRuns),
+  const isolatedParallel = planningParallelExecution ?? readIsolatedParallelExecution(store, step);
+  if (isolatedParallel && (plan.profile !== "pi_host_isolated_files_v1"
+    || channel.runtimePolicy.writeLockScope !== isolatedParallel.writeLockScope
+    || plan.safety.parallelPolicy?.autoParallel !== true)) throw mismatch("The isolated sibling policy cannot authorize this admission.");
+  const parallel = isolatedParallel !== undefined || plan.profile === "pi_host_readonly_v1"
+    && plan.safety.parallelPolicy?.autoParallel === true && channel.runtimePolicy.allowReadOnlyParallel;
+  const limit = parallel ? Math.min(isolatedParallel?.maxConcurrentSteps ?? 4, positiveLimit(channel.runtimePolicy.maxConcurrentRuns),
     positiveLimit(workflow.metadata?.maxParallelSteps ?? channel.runtimePolicy.maxConcurrentRuns),
     positiveLimit(plan.safety.parallelPolicy?.maxParallelSiblings ?? 1),
     positiveLimit(step.metadata?.maxParallelSiblings ?? plan.safety.parallelPolicy?.maxParallelSiblings ?? 1)) : 1;
@@ -281,8 +309,39 @@ export function createWorkflowSafetyAdmission(store: RunStore, step: ChannelWork
     { resourceType: "channel_parallel", resourceKey: `workspace:${plan.workspaceRoot}`, limit },
   ];
   entries.sort((a, b) => JSON.stringify([a.resourceType, a.resourceKey]).localeCompare(JSON.stringify([b.resourceType, b.resourceKey]), "en"));
-  return { entries, resourceKeys: [...new Set([...(plan.safety.parallelPolicy?.resourceKeys ?? []),
-    ...(plan.profile === "pi_host_isolated_files_v1" ? [`workflow:${workflow.id}`, `workspace:${plan.workspaceRoot}`] : [])])].sort() };
+  const admission = { entries, resourceKeys: [...new Set([...(plan.safety.parallelPolicy?.resourceKeys ?? []),
+    ...(plan.profile === "pi_host_isolated_files_v1" ? isolatedParallel ? [`worktree:${plan.executionRoot}`]
+      : [`workflow:${workflow.id}`, `workspace:${plan.workspaceRoot}`] : [])])].sort() };
+  const pin = step.metadata?.isolationScopePlan;
+  if (pin) {
+    const frozen = createSqliteWorkflowIsolationStore(store).getScopePlan(pin.planId);
+    if (!frozen || frozen.planDigest !== pin.planDigest || !isDeepStrictEqual(frozen.resourcePlan, admission)) {
+      throw mismatch("The current admission differs from its frozen isolated resource plan.");
+    }
+  }
+  return admission;
+}
+
+/** Read only persisted Host authority. Metadata alone cannot opt a writing step into parallelism. */
+function readIsolatedParallelExecution(store: RunStore, step: ChannelWorkflowStep): WorkflowIntegrationRoundInputsV1["parallelExecution"] {
+  const pin = step.metadata?.isolationScopePlan;
+  if (!pin) return undefined;
+  const isolation = createSqliteWorkflowIsolationStore(store), scope = isolation.getScopePlan(pin.planId);
+  const round = scope && isolation.getIntegrationRound(scope.integrationRoundId);
+  if (!scope || scope.planDigest !== pin.planDigest || scope.workflowId !== step.workflowId || scope.workflowStepId !== step.id
+    || !round || round.generation !== scope.generation) throw mismatch("The isolated round membership changed.");
+  const policy = round.inputs.parallelExecution;
+  if (!policy) return undefined;
+  const channel = store.getChannel(step.channelId), workflow = store.getChannelWorkflow(step.workflowId);
+  if (policy.profile !== "isolated_siblings_v1" || policy.writeLockScope !== "boundPath"
+    || channel?.runtimePolicy.writeLockScope !== policy.writeLockScope
+    || positiveLimit(channel.runtimePolicy.maxConcurrentRuns) < policy.maxConcurrentSteps
+    || positiveLimit(workflow?.metadata?.maxParallelSteps ?? channel.runtimePolicy.maxConcurrentRuns) < policy.maxConcurrentSteps
+    || step.metadata?.sideEffectClass !== "workspace_write" || step.metadata.parallelPolicy?.autoParallel !== true
+    || positiveLimit(step.metadata.parallelPolicy.maxParallelSiblings ?? 1) < policy.maxConcurrentSteps
+    || positiveLimit(step.metadata.maxParallelSiblings ?? policy.maxConcurrentSteps) < policy.maxConcurrentSteps
+    || scope.safetyFingerprint !== workflowIsolationStepSafetyFingerprint(step)) throw mismatch("The isolated sibling policy or write lock changed.");
+  return policy;
 }
 
 function positiveLimit(value: number): number { return Number.isSafeInteger(value) && value > 0 ? value : 1; }
