@@ -1,4 +1,5 @@
 import type { SidebarTarget, ViewId } from "./view-types.js";
+import type { ApprovalRecoveryState } from "../lib/approval-recovery.js";
 
 export type DomainEvent =
   | { readonly type: "workspace.cwdChanged"; readonly cwd: string }
@@ -7,7 +8,8 @@ export type DomainEvent =
   | { readonly type: "run.completed"; readonly runId: string; readonly channelId?: string; readonly taskId?: string }
   | { readonly type: "run.cancelled"; readonly runId: string; readonly channelId?: string; readonly taskId?: string }
   | { readonly type: "run.selected"; readonly runId: string }
-  | { readonly type: "approval.resolved"; readonly approvalId: string; readonly runId?: string; readonly mediaJobId?: string; readonly externalWorkActionId?: string; readonly reconciliationPending?: boolean }
+  | { readonly type: "approval.resolved"; readonly approvalId: string; readonly runId?: string; readonly mediaJobId?: string; readonly externalWorkActionId?: string; readonly channelId?: string }
+  | { readonly type: "approval.recoveryChanged"; readonly cwd: string; readonly approvalId: string; readonly recoveryState: ApprovalRecoveryState; readonly runId?: string; readonly mediaJobId?: string; readonly externalWorkActionId?: string; readonly channelId?: string }
   | { readonly type: "approval.policyUpdated" }
   | { readonly type: "provider.repairRequested"; readonly providerPresetId?: string; readonly sourceRunId?: string }
   | { readonly type: "task.repairRequested"; readonly taskId: string; readonly sourceRunId?: string }

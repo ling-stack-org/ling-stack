@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { collectGstackBrowserArchives, downloadBrowserArchive, validateBrowserArchivePlan,
   verifyBrowserArchiveSource } from "./collect-browser-archives.mjs";
+import { acquireResourceLease, initResourceWorkspace } from "./resource-workspace.mjs";
 
 const checksum = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const lock = JSON.parse(await readFile(new URL("./upstream-lock.json", import.meta.url), "utf8"));
@@ -116,6 +117,9 @@ test("an invalid native target does not become approved by self-refreshing inven
 
 test("all exact archives are independently hashed and remain non-executable candidates with explicit pending gates", async t => {
   const f = await fixture(t);
+  let home;
+  const registryReader = f.options.registryReader;
+  f.options.registryReader = (...args) => { home = args[1]; return registryReader(...args); };
   const receipt = await collectGstackBrowserArchives(f.options);
   assert.deepEqual(f.calls(), { registryCalls: 1, downloadCalls: 3 });
   assert.equal(receipt.reviewStatus, "candidate-only");
@@ -130,6 +134,39 @@ test("all exact archives are independently hashed and remain non-executable cand
   await assert.rejects(collectGstackBrowserArchives(f.options), /gstack_browser_output_exists/);
   assert.deepEqual(await readFile(join(f.stage, "resource-stage.json")), f.receipt);
   assert.equal((await readdir(f.root)).some(path => path.startsWith(".gstack-browser-acquisition-")), false);
+  await assert.rejects(lstat(home), { code: "ENOENT" });
+});
+
+test("a failed registry retains artifact-output staging inside its lease until explicit owner release", async t => {
+  const f = await fixture(t), managed = join(await realpath(f.root), "managed");
+  await initResourceWorkspace({ root: managed, storageMode: "local-bounded" });
+  const lease = await acquireResourceLease(managed);
+  const keys = ["LING_GSTACK_RESOURCE_ROOT", "LING_GSTACK_RESOURCE_TOKEN", "TMPDIR", "TMP", "TEMP"];
+  const previous = new Map(keys.map(key => [key, process.env[key]]));
+  let home;
+  try {
+    for (const key of keys) process.env[key] = lease.env[key];
+    f.options.outputPath = join(managed, "artifacts/browser/registry-timeout");
+    // No subprocess is started: force the same exception as registry timeout.
+    f.options.registryReader = async (_source, registryHome) => {
+      home = registryHome;
+      await writeFile(join(home, "registry-input.txt"), "synthetic registry input");
+      throw Object.assign(new Error("synthetic registry timed out"), { code: "ETIMEDOUT" });
+    };
+    await assert.rejects(collectGstackBrowserArchives(f.options), { code: "ETIMEDOUT" });
+    assert.ok((await lstat(home)).isDirectory());
+    assert.equal(dirname(dirname(home)), join(lease.scratchPath, "tmp"));
+    assert.equal(await readFile(join(home, "registry-input.txt"), "utf8"), "synthetic registry input");
+    await assert.rejects(lstat(f.options.outputPath), { code: "ENOENT" });
+    assert.deepEqual(await readdir(join(managed, "artifacts/browser")), []);
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    // This fixture never executes a registry/descendant. Only its owner releases.
+    await lease.release();
+  }
+  await assert.rejects(lstat(home), { code: "ENOENT" });
 });
 
 test("bad download hashes, non-ZIP responses and interrupted acquisition cannot publish a partial output", async t => {

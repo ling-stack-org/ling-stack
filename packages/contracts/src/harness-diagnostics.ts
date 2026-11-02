@@ -1,14 +1,18 @@
 import type {
+  DelegationFailureCode,
+  DelegationStepState,
   HarnessToolExecutionFailureCode,
   HarnessToolExecutionState,
   HarnessToolExecutorKind,
+  RunEvaluationFailureCode,
+  RunEvaluationState,
   RunnerContinuationFailureCode,
   RunnerContinuationOrigin,
   RunnerContinuationState,
   RunnerContinuationStrategy,
 } from "./harness.js";
 
-export type HarnessDiagnosticKind = "continuation" | "tool_execution";
+export type HarnessDiagnosticKind = "continuation" | "tool_execution" | "evaluation" | "delegation";
 
 /** Read-only metadata. Claim tokens, resume handles, inputs and artifact bodies are deliberately absent. */
 export interface HarnessDiagnosticMetadataV1 {
@@ -53,7 +57,41 @@ export type HarnessDiagnosticRecordV1 =
       readonly failureCode?: HarnessToolExecutionFailureCode;
       readonly executionStartedAt?: string;
       readonly executionFinishedAt?: string;
+    })
+  | (HarnessDiagnosticMetadataV1 & {
+      readonly kind: "evaluation";
+      readonly rootRunId: string;
+      readonly state: RunEvaluationState;
+      readonly failureCode?: RunEvaluationFailureCode;
+      readonly completedAt?: string;
+    })
+  | (HarnessDiagnosticMetadataV1 & {
+      readonly kind: "delegation";
+      readonly rootRunId: string;
+      readonly state: DelegationStepState;
+      readonly parentAttemptId: string;
+      readonly workflowId?: string;
+      readonly workflowStepId?: string;
+      readonly parentDelegationStepId?: string;
+      readonly childRunId?: string;
+      readonly required: boolean;
+      readonly depth: number;
+      readonly failureCode?: DelegationFailureCode;
+      readonly completedAt?: string;
     });
+
+/** Derived projection health only. `ready`/`isCurrent` never assert Run or task completion. */
+export interface HarnessDiagnosticProjectionCheckpointV1 {
+  readonly domain: HarnessDiagnosticKind;
+  readonly generation: number;
+  readonly sourceEpoch: number;
+  readonly builtEpoch: number;
+  readonly state: "stale" | "rebuilding" | "ready" | "failed";
+  readonly rowCount: number;
+  readonly isCurrent: boolean;
+  readonly failureCode?: string;
+  readonly updatedAt: string;
+}
 
 /** Exclusive descending creation/kind/id keyset, bound to its original Run and WorkUnit. */
 export interface HarnessDiagnosticCursorV1 {
@@ -105,5 +143,7 @@ export interface WorkUnitHarnessDiagnosticsResponse {
   readonly status: "available" | "run_unlinked" | "run_missing" | "lineage_mismatch";
   readonly observedAt: string;
   readonly items: readonly HarnessDiagnosticObservationV1[];
+  /** Separate from authority records so projection readiness cannot masquerade as completed work. */
+  readonly projectionCheckpoints: readonly HarnessDiagnosticProjectionCheckpointV1[];
   readonly nextCursor?: HarnessDiagnosticCursorV1;
 }

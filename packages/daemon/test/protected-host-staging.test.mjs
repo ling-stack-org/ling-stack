@@ -40,8 +40,18 @@ function patchFs(replacements, effect) {
   const originals = new Map(Object.keys(replacements).map(name => [name, fs[name]]));
   for (const [name, replacement] of Object.entries(replacements)) fs[name] = replacement(originals.get(name));
   syncBuiltinESMExports();
-  try { return effect(); }
-  finally { for (const [name, original] of originals) fs[name] = original; syncBuiltinESMExports(); }
+  const restore = () => { for (const [name, original] of originals) fs[name] = original; syncBuiltinESMExports(); };
+  try {
+    const result = effect();
+    // Command preparation now captures dependencies asynchronously before the
+    // original bootstrap reader runs. Keep the injected fault until it settles.
+    if (result instanceof Promise) return result.finally(restore);
+    restore();
+    return result;
+  } catch (error) {
+    restore();
+    throw error;
+  }
 }
 
 test("protected issuer rejects cloned/cross-registry source, stage and original prepared capabilities", native, async t => {
@@ -153,6 +163,7 @@ test("stage privacy is rechecked, and actual bootstrap/device data scopes are co
 test("unknown actual bootstrap bytes close registration/current Office only, without blocking no-stage execution", native, async t => {
   const f = createProtectedHostStageFixture(t), stage = f.register(), command = commandFor("process.exit(0)");
   const descriptors = new Set();
+  let corruptedReads = 0;
   const corrupt = effect => patchFs({
     openSync: original => (...args) => {
       const fd = original(...args);
@@ -162,7 +173,7 @@ test("unknown actual bootstrap bytes close registration/current Office only, wit
     readSync: original => (...args) => {
       if (!descriptors.has(args[0])) return original(...args);
       const count = original(...args);
-      if (count > 0) args[1][args[2]] ^= 1;
+      if (count > 0) { args[1][args[2]] ^= 1; corruptedReads += 1; }
       return count;
     },
     closeSync: original => fd => { descriptors.delete(fd); return original(fd); },
@@ -172,7 +183,9 @@ test("unknown actual bootstrap bytes close registration/current Office only, wit
     assert.throws(() => f.register(), /protected_host_bootstrap_domain_unverified/);
   });
   f.registry.closeStage(stage);
+  const readsBeforePreparation = corruptedReads;
   const prepared = await corrupt(() => f.runtime.prepare(f.input(command)));
+  assert.ok(corruptedReads > readsBeforePreparation, "fault injection must span asynchronous command preparation");
   await waitActor(prepared.spawn()); prepared.dispose();
   assert.throws(() => f.register(), /protected_host_actor_coverage_unknown/);
 });

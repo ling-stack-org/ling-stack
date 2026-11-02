@@ -44,7 +44,7 @@ if (!caseName) {
     const actual = { rename: fs.rename, rm: fs.rm };
     const { createDaemonServer } = await import("../dist/index.js");
     const { RunStoreRegistry } = await import("../dist/runtime/store-registry.js");
-    const { RuntimeSupervisor, isOriginalRuntimeSupervisorOfficeRoot } = await import("../dist/runtime/supervisor.js");
+    const { RuntimeSupervisor } = await import("../dist/runtime/supervisor.js");
     const { HostCapabilityBridgeController } = await import("../dist/features/runs/host-capability-bridge-controller.js");
     const events = [], stores = [], supervisors = [];
     const getStore = RunStoreRegistry.prototype.getStore, releaseAll = RuntimeSupervisor.prototype.releaseAll,
@@ -106,17 +106,20 @@ if (!caseName) {
       gate.release.complete();
       const result = await bounded(stop, "actual daemon stop completes remaining drain");
       assert.ok(actualRemoveError, "real fs.rm must reject the owned directory pathname");
-      assert.equal(result.error, actualRemoveError, "actual index stop returns the original broker error after drain");
+      assert.ok(result.error instanceof AggregateError);
+      assert.equal(result.error.message, "harness_shutdown_incomplete_stores_retained");
+      assert.deepEqual(result.error.errors, [actualRemoveError],
+        "the lifecycle barrier retains the original broker failure without closing writable resources");
       await bounded(rpcClosed, "daemon closes RPC client itself");
       assert.equal(daemon.server.listening, false);
       assert.equal(rpc.readyState, WebSocket.CLOSED);
-      assert.equal(supervisors.length, 1);
-      assert.equal(isOriginalRuntimeSupervisorOfficeRoot(supervisors[0]), false, "original root really retired");
       assert.ok(stores.length >= 1);
-      assert.equal(events.filter(event => event === "store-close").length, stores.length);
+      assert.equal(supervisors.length, 0, "failed lifecycle drain must retain the runtime lease owner");
+      assert.equal(events.filter(event => event === "store-close").length, 0,
+        "failed lifecycle drain must retain every Store for explicit recovery");
       assert.equal(events.filter(event => event === "bridge-close").length, 1);
       assert.ok(events.indexOf("descriptor-remove-error") < events.indexOf("bridge-close"));
-      assert.ok(events.indexOf("runtime-release") < events.indexOf("store-close"));
+      assert.equal(events.includes("runtime-release"), false);
       const refused = await bounded(new Promise(done => {
         const probe = connect({ host: "127.0.0.1", port });
         probe.once("connect", () => { probe.destroy(); done(false); });
@@ -124,13 +127,15 @@ if (!caseName) {
       }), "closed HTTP port");
       assert.equal(refused, true);
       console.log(`A01 D4 actual evidence: ${JSON.stringify({ port, descriptorPath: path, workspace,
-        originalErrorCode: actualRemoveError.code, returnedSameError: true, httpClosed: !daemon.server.listening,
-        rpcClosed: rpc.readyState === WebSocket.CLOSED, originalRootRetired: true, events })}`);
+        originalErrorCode: actualRemoveError.code, retainedAsOnlyCause: true, httpClosed: !daemon.server.listening,
+        rpcClosed: rpc.readyState === WebSocket.CLOSED, storesRetained: stores.length, events })}`);
     } finally {
       observed.releaseAll();
       if (stop) await stop;
       else if (daemon) await daemon.stop();
       rpc?.terminate();
+      shutdownPhase = false;
+      for (const store of stores) store.close();
       for (const patch of [...patches, ...storePatches].reverse()) patch.mock.restore(); syncBuiltinESMExports();
       observed.restore();
     }

@@ -10,6 +10,7 @@ import type {
 } from "./work-cell-view-model.js";
 import type { CanonicalUserInputRequest, CanonicalUserInputAnswer, CanonicalUserInputUnavailable } from "./user-input-transcript-snapshot.js";
 import { isUserInputTimelinePayload } from "./user-input-timeline.js";
+import type { ConversationBlockedExplanation } from "./blocked-explanation.js";
 
 /**
  * A typed, rebuildable presentation item. This is intentionally separate from the
@@ -79,6 +80,8 @@ export interface ConversationTimelineItemBase {
   readonly itemId?: string;
   readonly actionId?: string;
   readonly approvalId?: string;
+  /** Exact Host rejection outcome, independent of the non-success lifecycle. Never inferred from failed. */
+  readonly approvalOutcome?: "denied" | "expired";
   readonly toolCallId?: string;
   readonly runId?: string;
   readonly attemptId?: string;
@@ -253,6 +256,8 @@ export interface ConversationTimelineContextCompactionItem extends ConversationT
 /** The single Host-owned outcome row for an executed turn. */
 export interface ConversationTimelineTerminalReportItem extends ConversationTimelineActivityPayload {
   readonly kind: "terminalReport";
+  /** Host report provenance; separate from the execution's outcome status. */
+  readonly reportStatus?: "committed" | "fallback";
   readonly language?: import("@ling-stack/localization").SupportedLocale;
   readonly outcomeSourceRefs?: readonly ConversationOperationSourceRef[];
   readonly reportId: string;
@@ -345,6 +350,8 @@ export interface ConversationTimelineProtocolEventItem extends ConversationTimel
   readonly kind: "protocolEvent";
   readonly protocolKind: "decision" | "handoff" | "summary" | "workflow" | "workflow-step" | "task" | "run" | "state-transition";
   readonly availableActions?: readonly ConversationProtocolAction[];
+  /** Host-validated block with separately labelled, unverified model explanation. */
+  readonly blockedExplanation?: ConversationBlockedExplanation;
 }
 
 export interface ConversationTimelineDiagnosticItem extends ConversationTimelineActivityPayload {
@@ -450,6 +457,8 @@ export interface ConversationTimelineSubAgentItem extends ConversationTimelineIt
   readonly workflowStepId: string | null;
   readonly label: string;
   readonly lifecycle: "started" | "running" | "waiting" | "interrupted" | "completed" | "blocked" | "errored";
+  /** Optional adapter display label; never used to infer lifecycle or status. */
+  readonly stateLabel?: string;
   readonly childItems: readonly ConversationTimelineItem[];
 }
 
@@ -664,7 +673,7 @@ export function projectConversationSubAgentActivity(
     revision: revisionFromSpan(span),
     threadSequence: projectedChildItems[0]?.threadSequence ?? 0,
     partIndex: 0,
-    status: statusFromTone(span.tone),
+    status: statusFromLifecycle(lifecycleFromSpan(span)),
     turnId: options.turnId,
     participantId,
     runId: span.runId ?? firstFactRunId,
@@ -672,6 +681,7 @@ export function projectConversationSubAgentActivity(
       workflowStepId: span.workflowStepId ?? firstFactWorkflowStepId ?? null,
     label: span.label,
     lifecycle: lifecycleFromSpan(span),
+    ...(span.stateLabel ? { stateLabel: span.stateLabel } : {}),
     sourceRefs: span.sourceRefs ?? firstFactSourceRefs ?? [],
     childItems: projectedChildItems,
   };
@@ -1241,15 +1251,17 @@ function revisionFromSpan(span: ConversationAgentActivitySpan): number {
   return revisions.length > 0 ? Math.max(...revisions) : 0;
 }
 
-function statusFromTone(tone: ConversationAgentActivitySpan["tone"]): ConversationTimelineItemStatus | undefined {
-  if (tone === "running") return "running";
-  if (tone === "waiting") return "waiting";
-  if (tone === "failed") return "failed";
-  if (tone === "success") return "succeeded";
-  return undefined;
+function statusFromLifecycle(lifecycle: ConversationTimelineSubAgentItem["lifecycle"]): ConversationTimelineItemStatus {
+  if (lifecycle === "completed") return "succeeded";
+  if (lifecycle === "blocked") return "blocked";
+  if (lifecycle === "errored") return "failed";
+  if (lifecycle === "waiting") return "waiting";
+  if (lifecycle === "interrupted") return "cancelled";
+  return lifecycle === "started" ? "pending" : "running";
 }
 
 function lifecycleFromSpan(span: ConversationAgentActivitySpan): ConversationTimelineSubAgentItem["lifecycle"] {
+  if (span.lifecycle) return span.lifecycle;
   if (span.tone === "failed") return "errored";
   if (span.tone === "waiting") return "waiting";
   if (span.tone === "running") return "running";

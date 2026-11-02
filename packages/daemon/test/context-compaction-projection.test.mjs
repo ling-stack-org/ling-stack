@@ -78,7 +78,6 @@ test("compaction selects the earliest assistant anchor in the linked turn", () =
     assert.deepEqual(project(events, { items: [earlierTurn] }), []);
   }
 });
-
 test("projection respects thread, turn-link, anchor ownership and event pagination", () => {
   for (const overrides of [
     { items: [{ ...anchor, threadId: "other" }] },

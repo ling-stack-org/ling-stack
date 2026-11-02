@@ -24,11 +24,12 @@ export async function createA21LoopbackTransport(responseForRequest) {
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       const recorded = { body, path: request.url };
       requests.push(recorded);
-      const delta = responseForRequest(requests.length, recorded);
+      const { usage, ...delta } = await responseForRequest(requests.length, recorded);
       const finish = delta.tool_calls ? "tool_calls" : "stop";
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`
         + `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: finish }] })}\n\n`
+        + (usage ? `data: ${JSON.stringify({ choices: [], usage })}\n\n` : "")
         + "data: [DONE]\n\n");
     } catch (error) {
       response.writeHead(500, { "content-type": "application/json" });
@@ -91,7 +92,7 @@ export function createA21RealPiRunner(transport, { afterHostBoundary } = {}) {
 }
 
 /** Read only genuine dedicated-journal settlement plus the paired canonical SDK end. */
-export function readA21SettledCommand(store, runId, toolCallId) {
+export function readA21SettledCommand(store, runId, toolCallId, { commandExitCode = 0 } = {}) {
   return store.readSnapshot(() => {
     const events = store.listEvents(runId, { limit: 1000 });
     const prepared = events.find((event) => event.type === "host_command_prepared" && event.data.toolCallId === toolCallId);
@@ -99,7 +100,8 @@ export function readA21SettledCommand(store, runId, toolCallId) {
       && event.data.executionId === prepared.data.executionId);
     const end = events.find((event) => event.type === "tool_end" && event.data.toolCallId === toolCallId);
     if (!prepared || settled?.data.outcome !== "completed" || settled.data.ownerCurrent !== true
-      || !end || end.data.isError || settled.seq >= end.seq) return undefined;
+      || !end || end.data.isError !== (commandExitCode !== 0) || settled.seq >= end.seq
+      || (commandExitCode !== 0 && end.data.result?.details?.unifiedExec?.exitCode !== commandExitCode)) return undefined;
     return { prepared, settled, end, sourceEventSeq: events.at(-1).seq };
   });
 }
@@ -151,9 +153,10 @@ async function sendOwnedWorkerMessage(message) {
 }
 
 async function runA21CrashWorker(input) {
-  const { cwd, markerPath, nonce, toolCallId, checkpointFault } = input;
+  const { cwd, markerPath, nonce, toolCallId, checkpointFault, commandExitCode = 0 } = input;
   assert.ok(cwd && markerPath && nonce && toolCallId);
   assert.ok(checkpointFault === undefined || checkpointFault === "head_insert");
+  assert.ok(commandExitCode === 0 || commandExitCode === 7);
   assert.equal(process.env.LING_STACK_DEFAULT_WORKSPACE_CWD, cwd);
   const stores = new RunStoreRegistry(createSqliteRunStore);
   const store = stores.getStore(cwd);
@@ -173,7 +176,7 @@ async function runA21CrashWorker(input) {
   const activeRuns = new ActiveRunRegistry();
   const errors = [];
   const shellPath = `'${markerPath.replaceAll("'", "'\\''")}'`;
-  const command = `printf 'a21-effect\\n' >> ${shellPath}`;
+  const command = `printf 'a21-effect\\n' >> ${shellPath}${commandExitCode ? "; exit 7" : ""}`;
   const transport = await createA21LoopbackTransport((count) => count === 1
     ? { tool_calls: [{ index: 0, id: toolCallId, type: "function",
       function: { name: "bash", arguments: JSON.stringify({ command }) } }] }
@@ -181,7 +184,7 @@ async function runA21CrashWorker(input) {
   let paused = false;
   const runner = createA21RealPiRunner(transport, { afterHostBoundary: async ({ boundary, modelView, directive, hostFailed, hostError, options }) => {
     if (boundary !== "before_provider_request" || paused) return;
-    const settlement = readA21SettledCommand(store, options.runId, toolCallId);
+    const settlement = readA21SettledCommand(store, options.runId, toolCallId, { commandExitCode });
     if (!settlement) return;
     paused = true;
     assert.equal(directive, undefined);

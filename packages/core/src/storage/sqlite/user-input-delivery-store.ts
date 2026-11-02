@@ -39,14 +39,26 @@ export class SqliteUserInputDeliveryStore {
   listDue(input: ListDueUserInputDeliveries, now: string): readonly UserInputDelivery[] {
     userInputTimestamp(now);
     const limit = input.limit ?? 100;
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) throw new UserInputStoreError("invalid_input");
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500
+      || input.threadId !== undefined && !validDeliveryKey(input.threadId)
+      || input.after !== undefined && (!validDeliveryKey(input.after.deliveryId)
+        || !Number.isFinite(Date.parse(input.after.createdAt)))) throw new UserInputStoreError("invalid_input");
     return readSqliteSnapshot(this.context.database, () => {
-      const rows = this.context.database.prepare("SELECT d.delivery_id FROM user_input_deliveries d"
+      const clauses = ["r.workspace_id=?", "(d.status='pending'"
+        + " OR (d.status='claimed' AND (d.claim_expires_at IS NULL OR d.claim_expires_at<=?)"
+        + " AND (d.retry_at IS NULL OR d.retry_at<=?))"
+        + " OR (d.status='failed' AND d.retry_at<=?))"];
+      const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, now, now, now];
+      if (input.threadId !== undefined) { clauses.push("r.thread_id=?"); params.push(input.threadId); }
+      if (input.after !== undefined) {
+        clauses.push("(d.created_at>? OR (d.created_at=? AND d.delivery_id>?))");
+        params.push(input.after.createdAt, input.after.createdAt, input.after.deliveryId);
+      }
+      params.push(limit);
+      const rows = this.context.database.prepare("SELECT d.delivery_id,r.thread_id FROM user_input_deliveries d"
         + " JOIN user_input_answers a ON a.answer_id=d.answer_id JOIN user_input_requests r ON r.request_id=a.request_id"
-        + " WHERE r.workspace_id=? AND r.thread_id=? AND (d.status='pending'"
-        + " OR (d.status='claimed' AND d.claim_expires_at<=?) OR (d.status='failed' AND d.retry_at<=?))"
-        + " ORDER BY d.created_at,d.delivery_id LIMIT ?").all(DEFAULT_WORKSPACE_ID, input.threadId, now, now, limit);
-      return rows.map(row => this.require(input.threadId, String(row.delivery_id)).delivery);
+        + ` WHERE ${clauses.join(" AND ")} ORDER BY d.created_at,d.delivery_id LIMIT ?`).all(...params);
+      return rows.map(row => this.require(String(row.thread_id), String(row.delivery_id)).delivery);
     });
   }
 
@@ -61,10 +73,11 @@ export class SqliteUserInputDeliveryStore {
         + " JOIN user_input_answers a ON a.answer_id=d.answer_id JOIN user_input_requests r ON r.request_id=a.request_id"
         + " WHERE r.workspace_id=? AND typeof(d.delivery_id)='text' AND typeof(d.created_at)='text' AND typeof(r.thread_id)='text' AND d.created_at<=?"
         + " AND (? IS NULL OR d.created_at>? OR (d.created_at=? AND d.delivery_id>?))"
-        + " AND (d.status='pending' OR (d.status='claimed' AND d.claim_expires_at<=?) OR (d.status='failed' AND d.retry_at<=?))"
+        + " AND (d.status='pending' OR (d.status='claimed' AND (d.claim_expires_at IS NULL OR d.claim_expires_at<=?)"
+        + " AND (d.retry_at IS NULL OR d.retry_at<=?)) OR (d.status='failed' AND d.retry_at<=?))"
         + " ORDER BY d.created_at,d.delivery_id LIMIT ?")
         .all(DEFAULT_WORKSPACE_ID, input.createdAtOrBefore, input.after?.createdAt ?? null,
-          input.after?.createdAt ?? null, input.after?.createdAt ?? null, input.after?.deliveryId ?? null, now, now, limit);
+          input.after?.createdAt ?? null, input.after?.createdAt ?? null, input.after?.deliveryId ?? null, now, now, now, limit);
       return rows.map(row => ({ threadId: String(row.thread_id), deliveryId: String(row.delivery_id), createdAt: String(row.created_at) }));
     });
   }
@@ -89,7 +102,7 @@ export class SqliteUserInputDeliveryStore {
       const successorRunId = delivery.successorRunId ?? "run_" + randomUUID();
       freezeUserInputContinuationSeed(this.context, this.ports, bound, successorRunId, now);
       const changed = this.context.database.prepare("UPDATE user_input_deliveries SET status='claimed',status_revision=status_revision+1,"
-        + " attempt_count=attempt_count+1,updated_at=?,successor_run_id=?,claim_owner_id=?,claim_token=?,claim_expires_at=?,retry_at=NULL"
+        + " attempt_count=attempt_count+1,updated_at=?,successor_run_id=?,claim_owner_id=?,claim_token=?,claim_expires_at=?,retry_at=NULL,last_error_code=NULL"
         + " WHERE delivery_id=? AND status_revision=?")
         .run(now, successorRunId, input.ownerId, randomUUID(), new Date(nowMs + input.leaseMs).toISOString(), input.deliveryId, input.expectedRevision);
       if (Number(changed.changes) !== 1) throw new UserInputStoreError("delivery_conflict");

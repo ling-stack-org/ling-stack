@@ -117,7 +117,7 @@ if (childCase) {
       assert.throws(() => f.registry.assertActorInventoryCurrent(), /inventory_incomplete/u);
       const manifest = await harness.loadSourceHookModule("runtime/sandbox/protected-host-original-entry-manifest.js");
       const originalEntries = manifest.readOriginalProtectedHostActorEntries();
-      assert.equal(originalEntries.length, 20, "the fixed source list is complete, not this two-entry fixture inventory");
+      assert.equal(originalEntries.length, 21, "the fixed source list is complete, not this two-entry fixture inventory");
       assert.ok(originalEntries.includes(harness.keychain.KEYCHAIN_SECURITY_ACTOR_ENTRY));
       assert.ok(originalEntries.includes(harness.bootstrap.PACKAGED_CODESIGN_ACTOR_ENTRY));
     });

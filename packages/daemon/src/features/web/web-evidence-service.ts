@@ -168,7 +168,7 @@ export function prependWebEvidenceContext(prompt: string, context: WebEvidenceCo
 
 export function shouldRunWebSearchForText(text: string): boolean {
   const normalized = text.trim();
-  if (!normalized) {
+  if (!normalized || hasExplicitOfflineInstruction(normalized)) {
     return false;
   }
   if (/(web[_ -]?search|search\s+(?:the\s+)?web|browse\s+(?:the\s+)?web|联网|上网|网页搜索|网络搜索|搜索一下|搜一下|查一下|查询一下|查网页|搜网页)/iu.test(normalized)) {
@@ -179,8 +179,21 @@ export function shouldRunWebSearchForText(text: string): boolean {
 }
 
 export function shouldReadPublicUrlsForText(text: string): boolean {
-  return extractPublicUrls(text).length > 0 &&
+  return !hasExplicitOfflineInstruction(text) && extractPublicUrls(text).length > 0 &&
     /(open[_ -]?url|read[_ -]?url|打开|读取|读一下|看看|总结|概括|提取|分析|open|read|summari[sz]e|extract|analy[sz]e|what.*about)/iu.test(text);
+}
+
+/** This is only an eager-prefetch hint, never tool authorization. In ambiguous
+ * offline requests, leave the decision to the normal model/tool policy path
+ * instead of turning a negated keyword into a Host-initiated network request.
+ */
+function hasExplicitOfflineInstruction(text: string): boolean {
+  // Require a directive position: "如何保持离线模式" may be a web-search
+  // subject, unlike "本轮是明确离线" or "请保持离线" at a clause boundary.
+  return /(?:^|[。！？!?；;，,：:\n])\s*(?:(?:本轮|本次|当前任务|本任务)(?:是|应|须|需要|必须)?\s*)?(?:(?:(?:请|务必|必须)\s*)?(?:仅|只|明确|保持|全程)(?:使用)?\s*离线|(?:请|务必|必须)\s*离线(?:执行|运行|处理|验收|测试|分析|完成))/u.test(text)
+    || /(?:不(?:要|许|用|得|需(?:要)?)?|无需|无须|禁止|避免)(?:进行|使用)?\s*(?:联网|上网|网络访问|网络搜索|网页搜索|搜索(?:网页|网络|互联网)|web[_ -]?search|(?:访问|连接)(?:网络|互联网)|(?:打开|访问|读取|抓取)\s*(?:https?:\/\/|URL|网址|链接|网页))/iu.test(text)
+    || /\b(?:offline|without\s+(?:any\s+)?(?:network|internet|web)\s+access|no\s+(?:network|internet|web)\s+access)\b/iu.test(text)
+    || /\b(?:do\s+not|don['’]t|must\s+not|never)\s+(?:use\s+(?:the\s+)?(?:network|internet|web)|(?:search|browse|access)\s+(?:the\s+)?(?:web|internet)|(?:open|fetch|read|access)\s+(?:any\s+)?(?:https?:\/\/|urls?\b|links?\b))/iu.test(text);
 }
 
 export function planWebSearchQueries(text: string): string[] {

@@ -90,6 +90,24 @@ abort、timeout、断网、解析失败、结果提交失败、崩溃及已准�
 初版采用 OpenAI-compatible `openai-completions` 的独立非流式 JSON 请求，不建立 AgentSession，
 不启动工具、压缩或普通执行。不是所有 Provider/API 适配完成声明，不静默换模型/API。
 
+### 生产生命周期接线
+
+Daemon 对每个已取得 workspace custody 的 Store 先执行不需要 credential 的 task recovery：完整分页回收
+过期的 pre-dispatch claim，并把已准入但无法证明未发送的 attempt 与 QA lane 原子推进为
+`unknown_outcome/quarantined`。该恢复即使模型 worker 未启用也必须执行，且先于任何队列 claim 或
+Provider 读取；重启不能把旧 owned batch、旧 request row 或旧进程内证明重新绑定为发送权限。
+
+模型 worker 默认关闭。唯一启用入口是创建 Daemon 时由受信 Host 注入的内存
+`runEvaluationQaTaskWorker.createHostAdapter({ cwd, store })` factory；每个 adapter 必须绑定收到的原始
+Store 与该 Store 的私有 owned-batch handle。`harness.evaluations.mode/modelGate`、环境变量、HTTP、
+Renderer、Agent、MCP 和 SQLite DTO 都不能自动创建此 authority。没有 factory 或 factory 对该 Store
+返回 `undefined` 时，只做恢复，绝不读 claimable queue、materialize credential 或调用 Provider。
+
+关闭顺序固定为：同步停止新 claim 并 abort owned callback，等待真实 worker/transport `onDrained`，
+最后才释放 runtime custody 和关闭 Store。启动失败也复用同一 stop 路径；不能用 timeout 或 fabricated
+idle 绕过 callback drain。生产回归必须覆盖：默认零 claim、过期 pre-dispatch 回收、admitted restart
+隔离、显式 Store-bound activation、单次发送、shutdown drain 先于 Store close。
+
 preparation 持有封闭请求 handle。仅读取 enrollment 固定的 reviewed artifact 内容，包含完整
 system/rubric/schema/protocol 开销；拒绝 accessor、custom prototype、未知字段和全树超预算。
 所有异步准备后和准入/发送前检查取消。artifact、config 与 payload hash 都进入 admission pins。

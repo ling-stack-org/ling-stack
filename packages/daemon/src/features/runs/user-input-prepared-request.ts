@@ -5,6 +5,7 @@ import { redactSecrets, type RunSession, type RunStore, type UserInputContinuati
 import { HttpError } from "../../errors.js";
 import { isRecord } from "../../shared/validation.js";
 import { inlineProviderDescriptor } from "../conversations/normal-conversation-prepared-provider.js";
+import { readWorkflowAgentContextFromRunSnapshot } from "../channels/workflow-step-packets.js";
 import { parseRunRequest, type RunRequest } from "./schemas.js";
 import { createWorkflowOperationExecutionSnapshot } from "./workflow-operation-snapshot.js";
 import { collectUserInputContinuationEvents, renderUserInputContinuationPrompt, userInputContextHash } from "./user-input-continuation-context.js";
@@ -20,7 +21,7 @@ const inheritedKeys = ["tools", "requestedSkillId", "thinkingLevel", "reasoningS
   "runtimeToolFeatures", "lingConversationTone", "responseLanguage", "skillOptimizationMode"] as const;
 const executionKeys = ["tools", "thinkingLevel", "reasoningSummary", "systemPrompt", "appendSystemPrompt", "agentDir", "runtimeToolFeatures"] as const;
 const internalKeys = ["providerBinding", "delegatedRequirement", "executionOperationBindings", "workflowOperationExecution",
-  "directWorkspaceBinding", "directWorkspaceSnapshot"] as const;
+  "contextPack", "directWorkspaceBinding", "directWorkspaceSnapshot"] as const;
 
 /** Build actual three-surface input from immutable Host facts, never from caller-provided answer text. */
 export function prepareUserInputContinuationRequest(store: RunStore, claim: UserInputContinuationClaim, now: string): UserInputPreparedRequest {
@@ -107,12 +108,24 @@ function buildRequest(store: RunStore, seed: UserInputContinuationSeed): RunRequ
 
 /** Preserve exact workflow requirements, never silently downgrade broken typed metadata. */
 function inheritInternalContext(store: RunStore, source: RunSession, snapshot: Record<string, unknown>): Record<string, unknown> {
-  const hasWorkflowInput = ["providerBinding", "delegatedRequirement", "executionOperationBindings", "workflowOperationExecution"]
+  const hasWorkflowInput = ["providerBinding", "delegatedRequirement", "executionOperationBindings", "workflowOperationExecution", "contextPack"]
     .some(key => snapshot[key] !== undefined);
   if (!source.workflowStepId && hasWorkflowInput) throw invalidSource();
   if (source.workflowStepId) {
     const step = store.getChannelWorkflowStep(source.workflowStepId);
     if (!step || step.toParticipantId !== (source.teammateId ?? "ling_agent") || step.channelId !== source.channelId) throw invalidSource();
+    const workflow = store.getChannelWorkflow(step.workflowId);
+    if (!workflow || workflow.channelId !== step.channelId || workflow.workspaceId !== step.workspaceId) throw invalidSource();
+    const sourceItemId = step.metadata?.sourceMessageId ?? workflow.metadata?.sourceMessageId;
+    if (sourceItemId || isRecord(snapshot.contextPack) && snapshot.contextPack.agentContext !== undefined) {
+      const stamp = readWorkflowAgentContextFromRunSnapshot(source);
+      const item = stamp && store.getConversationItem(stamp.sourceItemId);
+      if (!stamp || !item || item.workspaceId !== step.workspaceId || item.channelId !== step.channelId
+        || sourceItemId !== undefined && stamp.sourceItemId !== sourceItemId
+        || (stamp.consumerTeammateId ?? "ling_agent") !== step.toParticipantId
+        || !isRecord(snapshot.contextPack)
+        || !isDeepStrictEqual(snapshot.contextPack.contextProjection, stamp.contextProjection)) throw invalidSource();
+    }
     if (snapshot.providerBinding !== undefined && (!isWorkflowParticipantProviderBindingV1(snapshot.providerBinding)
       || snapshot.providerBinding.participantId !== step.toParticipantId
       || snapshot.providerBinding.providerPresetId !== source.providerPresetId

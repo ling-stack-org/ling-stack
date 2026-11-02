@@ -5,7 +5,7 @@ import { useI18n, type Translate } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { MetaRow } from "../../shared/components/MetaRow.js";
 import { Button, EmptyState, InlineFeedback, InspectorSection, StatusIndicator } from "../../shared/ui/index.js";
-import type { HarnessDiagnosticObservationV1, WorkUnitDetailResponse } from "../../types.js";
+import type { HarnessDiagnosticObservationV1, HarnessDiagnosticRecordV1, WorkUnitDetailResponse } from "../../types.js";
 import { createHarnessDiagnosticsController, type HarnessDiagnosticsAvailability, type HarnessDiagnosticsIssue, type HarnessDiagnosticsState } from "./harness-diagnostics-controller.js";
 
 /** Loaded only while the existing Debug details disclosure is open; a new scope creates an empty controller synchronously. */
@@ -54,7 +54,7 @@ export function RunHarnessDiagnosticsView({ state, onRefresh, onLoadMore }: {
       ) : null}
       {state.phase === "unavailable" ? <InlineFeedback tone="warning">{availabilityDescription(state.availability, t)}</InlineFeedback> : null}
       {loading ? <p role="status" aria-live="polite">{t("Loading recovery diagnostics...")}</p> : null}
-      {state.phase === "ready" && state.items.length === 0 ? <EmptyState compact title={t("No stored recovery records for this run")} description={t("No continuation or controlled tool execution metadata was found.")} /> : null}
+      {state.phase === "ready" && state.items.length === 0 ? <EmptyState compact title={t("No stored recovery records for this run")} description={t("No continuation, controlled tool execution, evaluation or delegation metadata was found.")} /> : null}
       <div className="runs-section-list runs-harness-record-list">
         {state.items.map(item => <HarnessDiagnosticRow key={`${item.record.kind}:${item.record.id}`} item={item} />)}
       </div>
@@ -73,20 +73,10 @@ function HarnessDiagnosticRow({ item }: { readonly item: HarnessDiagnosticObserv
     ["Created", formatDateTime(record.createdAt)], ["Updated", formatDateTime(record.updatedAt)],
     ["Claim owner", record.claimOwner], ["Lease expires", record.claimExpiresAt ? formatDateTime(record.claimExpiresAt) : undefined],
     ["Next retry", record.nextAttemptAt ? formatDateTime(record.nextAttemptAt) : undefined], ["Failure code", record.failureCode],
-    ...(record.kind === "continuation" ? [
-      ["Source attempt", record.sourceAttemptId], ["Target attempt", record.targetAttemptId], ["Origin", record.origin],
-      ["Strategy", record.strategy], ["Runner", record.runnerId], ["Continuation generation", record.generation],
-      ["Failure detail artifact", record.failureDetailArtifactId], ["Completed", record.completedAt ? formatDateTime(record.completedAt) : undefined],
-    ] as const : [
-      ["Attempt", record.attemptId], ["Tool call", record.toolCallId], ["Tool", record.toolName], ["Executor kind", record.executorKind],
-      ["Continuation", record.continuationId], ["Delegation step", record.delegationStepId], ["Supersedes execution", record.supersedesExecutionId],
-      ["Policy snapshot artifact", record.policySnapshotArtifactId], ["Approval", record.approvalId], ["Sandbox profile", record.sandboxProfileId],
-      ["Execution started", record.executionStartedAt ? formatDateTime(record.executionStartedAt) : undefined],
-      ["Execution finished", record.executionFinishedAt ? formatDateTime(record.executionFinishedAt) : undefined],
-    ] as const),
+    ...diagnosticRecordFields(record),
   ];
   return (
-    <InspectorSection title={record.kind === "continuation" ? t("Continuation") : `${t("Controlled tool execution")} · ${record.toolName}`} summary={
+    <InspectorSection title={diagnosticRecordTitle(record, t)} summary={
       <span className="runs-harness-record-summary">
         <code title={record.id}>{record.id.length > 36 ? `${record.id.slice(0, 16)}…${record.id.slice(-16)}` : record.id}</code>
         <StatusIndicator label={t(record.state)} />
@@ -111,6 +101,40 @@ function HarnessDiagnosticRow({ item }: { readonly item: HarnessDiagnosticObserv
       ))}
     </InspectorSection>
   );
+}
+
+function diagnosticRecordTitle(record: HarnessDiagnosticRecordV1, t: Translate): string {
+  switch (record.kind) {
+    case "continuation": return t("Continuation");
+    case "tool_execution": return `${t("Controlled tool execution")} · ${record.toolName}`;
+    case "evaluation": return t("Run evaluation");
+    case "delegation": return t("Delegation");
+  }
+}
+
+function diagnosticRecordFields(record: HarnessDiagnosticRecordV1): readonly (readonly [string, string | number | undefined])[] {
+  switch (record.kind) {
+    case "continuation": return [
+      ["Source attempt", record.sourceAttemptId], ["Target attempt", record.targetAttemptId], ["Origin", record.origin],
+      ["Strategy", record.strategy], ["Runner", record.runnerId], ["Continuation generation", record.generation],
+      ["Failure detail artifact", record.failureDetailArtifactId], ["Completed", record.completedAt ? formatDateTime(record.completedAt) : undefined],
+    ];
+    case "tool_execution": return [
+      ["Attempt", record.attemptId], ["Tool call", record.toolCallId], ["Tool", record.toolName], ["Executor kind", record.executorKind],
+      ["Continuation", record.continuationId], ["Delegation step", record.delegationStepId], ["Supersedes execution", record.supersedesExecutionId],
+      ["Policy snapshot artifact", record.policySnapshotArtifactId], ["Approval", record.approvalId], ["Sandbox profile", record.sandboxProfileId],
+      ["Execution started", record.executionStartedAt ? formatDateTime(record.executionStartedAt) : undefined],
+      ["Execution finished", record.executionFinishedAt ? formatDateTime(record.executionFinishedAt) : undefined],
+    ];
+    case "evaluation": return [
+      ["Root run", record.rootRunId], ["Completed", record.completedAt ? formatDateTime(record.completedAt) : undefined],
+    ];
+    case "delegation": return [
+      ["Root run", record.rootRunId], ["Parent attempt", record.parentAttemptId], ["Workflow", record.workflowId],
+      ["Workflow step", record.workflowStepId], ["Parent delegation step", record.parentDelegationStepId], ["Child run", record.childRunId],
+      ["Required", String(record.required)], ["Depth", record.depth], ["Completed", record.completedAt ? formatDateTime(record.completedAt) : undefined],
+    ];
+  }
 }
 
 function issueDescription(issue: HarnessDiagnosticsIssue | undefined, t: Translate): string {

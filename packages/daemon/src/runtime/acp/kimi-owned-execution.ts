@@ -21,6 +21,7 @@ import { NativeSecretRegistry } from "../adapters/native-stream-redaction.js";
 import { KimiHostFiles } from "./kimi-host-files.js";
 import { KimiHostTerminals } from "./kimi-host-terminals.js";
 import { readOnlyRunTools, riskyRunTools } from "@ling-stack/core";
+import type { RestrictedCommandExecutablePin } from "../sandbox/restricted-command-runtime.js";
 
 export interface KimiExecutionAuthentication {
   readonly store: ExecutionEngineProfileStore;
@@ -38,6 +39,8 @@ export interface OwnedKimiExecutionOptions {
   /** Host-prepared identity, not a renderer profile or proof of native acceptance. */
   readonly process: { readonly executablePath: string; readonly executableDigest: string;
     readonly kimiHome: string; readonly expectedVersion: string };
+  /** Current Host Node/Electron boot identity; never native/model configuration. */
+  readonly hostFileNode?: RestrictedCommandExecutablePin;
   readonly authentication?: KimiExecutionAuthentication;
   readonly approvalPolicy: Omit<KimiActionPreparationOptions, "cwd" | "sessionId" | "terminalShell">;
   readonly output: AcpJournaledLifecycleOptions["output"];
@@ -71,7 +74,7 @@ export async function executeOwnedKimiPrompt(request: OwnedKimiExecutionOptions)
   }
   const options: OwnedKimiExecutionOptions = { ...request, reservation: structuredClone(request.reservation),
     configuration: structuredClone(request.configuration), input: structuredClone(request.input),
-    process: structuredClone(request.process), approvalPolicy,
+    process: structuredClone(request.process), hostFileNode: request.hostFileNode ? structuredClone(request.hostFileNode) : undefined, approvalPolicy,
     output: structuredClone(request.output), authentication: request.authentication ? { ...request.authentication,
       profile: structuredClone(request.authentication.profile) } : undefined };
   const grace = options.interruptGraceMs ?? 3000;
@@ -211,8 +214,8 @@ export async function executeOwnedKimiPrompt(request: OwnedKimiExecutionOptions)
         createActions: binding => new KimiActionPreparer({ ...options.approvalPolicy, nativeTools, terminalShell, extraSecrets,
           cwd: options.configuration.cwd, sessionId: binding.sessionId }, secretRegistry),
         createHostFiles: delegateReads ? {
-          readTextFile: context => files ??= new KimiHostFiles(context),
-          ...(delegateWrites ? { writeTextFile: context => (files ??= new KimiHostFiles(context)).writeTextFile } : {}),
+          readTextFile: context => files ??= new KimiHostFiles(context, { node: options.hostFileNode }),
+          ...(delegateWrites ? { writeTextFile: context => (files ??= new KimiHostFiles(context, { node: options.hostFileNode })).writeTextFile } : {}),
         } : undefined,
         createHostTerminals: nativeTools.includes("Bash") ? context => new KimiHostTerminals(context, {
           workspaceRoot: options.configuration.cwd, policyProfileId: executionHome!.readOnly ? "read_only" : "workspace_write",

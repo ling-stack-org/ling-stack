@@ -23,8 +23,11 @@ export async function officeJournalFixture(t, { overwrite = false, shortWrite = 
   const database = new DatabaseSync(databasePath), readers = [];
   t.after(async () => { for (const reader of readers) reader.close(); database.close(); await rm(directory, { recursive: true, force: true }); });
   database.exec(`
-    CREATE TABLE run_sessions(id TEXT PRIMARY KEY, work_unit_id TEXT, cwd TEXT);
+    CREATE TABLE run_sessions(id TEXT PRIMARY KEY, work_unit_id TEXT, cwd TEXT, parent_run_id TEXT);
+    CREATE TABLE work_units(id TEXT PRIMARY KEY, linked_run_id TEXT, owner_type TEXT, owner_id TEXT);
     CREATE TABLE work_unit_attempts(id TEXT PRIMARY KEY, work_unit_id TEXT, runtime_instance_id TEXT, fencing_token TEXT);
+    CREATE TABLE delegation_steps(id TEXT PRIMARY KEY, child_run_id TEXT, parent_run_id TEXT, root_run_id TEXT);
+    CREATE TABLE delegation_budget_reservations(delegation_step_id TEXT, child_run_id TEXT, root_run_id TEXT);
     CREATE TABLE artifacts(id TEXT PRIMARY KEY, run_id TEXT, media_job_id TEXT, type TEXT,
       sealed_payload_json TEXT, content_sha256 TEXT, created_at TEXT);
     CREATE TABLE host_operations(operation_id TEXT PRIMARY KEY, schema_version INTEGER, run_id TEXT, work_unit_id TEXT,
@@ -130,7 +133,7 @@ export async function officeJournalFixture(t, { overwrite = false, shortWrite = 
     workspace: { final: { state: "directory", identity: identity(100, 4096, 200) }, observedAt: tick() }, completedAt: tick() };
   const admittedAt = new Date(Date.parse(prepared.preparedAt) - 10).toISOString();
   const launchedAt = new Date(Date.parse(effects[0].effect.enteredAt) + 1).toISOString(), settledAt = tick();
-  database.prepare("INSERT INTO run_sessions VALUES(?,?,?)").run(source.runId, source.workUnitId, workspacePath);
+  database.prepare("INSERT INTO run_sessions(id,work_unit_id,cwd) VALUES(?,?,?)").run(source.runId, source.workUnitId, workspacePath);
   database.prepare("INSERT INTO work_unit_attempts VALUES(?,?,?,?)").run(source.attemptId, source.workUnitId, source.runtimeInstanceId, source.fencingToken);
   const insertOperation = (id, kind, parentId = null, producerId = null) => database.prepare(`INSERT INTO host_operations
     (operation_id,schema_version,run_id,work_unit_id,attempt_id,runtime_instance_id,fencing_token,kind,tool_call_id,

@@ -1,5 +1,7 @@
 import { CheckSquare, GitBranch, Handshake, ListChecks, MessageSquareText, Play, Workflow } from "lucide-react";
 import type { ConversationProtocolAction, ConversationTimelineProtocolEventItem } from "@ling-stack/conversation-ui-core";
+import { useI18n } from "../../../i18n.js";
+import { CodeBlock } from "../blocks/CodeBlock.js";
 import { TimelineFactRow } from "./TimelineFactRow.js";
 import { TextDetail, detailExists } from "./timeline-renderer-details.js";
 import { ConversationTimelineProtocolActions } from "./ConversationTimelineProtocolActions.js";
@@ -13,6 +15,12 @@ export function ConversationTimelineProtocolRenderer({
   readonly depth: 0 | 1;
   readonly onInvokeProtocolAction?: (item: ConversationTimelineProtocolEventItem, action: ConversationProtocolAction) => void | Promise<void>;
 }): React.JSX.Element {
+  const { t } = useI18n();
+  if (item.blockedExplanation) {
+    return <TimelineFactRow item={item} depth={depth} title={t("Task blocked")} meta={t("Insufficient evidence")}
+      icon={<ProtocolIcon kind={item.protocolKind} />} defaultExpanded={false}
+      detail={<BlockedExplanationDetail explanation={item.blockedExplanation} />} />;
+  }
   const hasActions = Boolean(onInvokeProtocolAction && item.availableActions?.length);
   return (
     <TimelineFactRow
@@ -29,6 +37,17 @@ export function ConversationTimelineProtocolRenderer({
       ) : undefined}
     />
   );
+}
+
+function BlockedExplanationDetail({ explanation }: {
+  readonly explanation: NonNullable<ConversationTimelineProtocolEventItem["blockedExplanation"]>;
+}): React.JSX.Element {
+  const { t } = useI18n();
+  return <>
+    <p><strong>{t("Reason")}: </strong>{explanation.hostReason} <code>{explanation.hostCode}</code></p>
+    <p><strong>{t("Agent")} · {t("terminal_report.meta.unverified")}: </strong>{explanation.agentReason}</p>
+    <CodeBlock code={explanation.rawJson} language="json" />
+  </>;
 }
 
 function ProtocolIcon({ kind }: { readonly kind: ConversationTimelineProtocolEventItem["protocolKind"] }): React.JSX.Element {

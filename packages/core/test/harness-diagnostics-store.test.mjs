@@ -60,6 +60,20 @@ async function fixture(t) {
       revision,created_at,updated_at
     ) VALUES (?,1,?,?,?,?,'bash','bash','approved',?,?,?,'workspace-write',?,0,?,?)
   `);
+  f.insertEvaluation = f.database.prepare(`
+    INSERT INTO run_evaluations (
+      id,schema_version,root_run_id,run_id,suite_id,suite_version,suite_artifact_id,suite_digest,
+      case_id,case_version,case_artifact_id,case_digest,baseline_id,baseline_version,baseline_artifact_id,
+      baseline_digest,candidate_artifact_id,candidate_digest,idempotency_key,state,revision,created_at,updated_at
+    ) VALUES (?,1,?,?,'suite','v1',?,?,'case','v1',?,?,'baseline','v1',?,?,?,?,?,'queued',0,?,?)
+  `);
+  f.insertDelegation = f.database.prepare(`
+    INSERT INTO delegation_steps (
+      id,schema_version,root_run_id,parent_run_id,parent_attempt_id,spawn_call_id,objective_artifact_id,
+      required,state,depth,permission_snapshot_artifact_id,tool_allowlist_artifact_id,
+      workspace_scope_artifact_id,provider_policy_artifact_id,idempotency_key,revision,created_at,updated_at
+    ) VALUES (?,1,?,?,?,?,?,1,'planned',1,?,?,?,?,?,0,?,?)
+  `);
   return f;
 }
 
@@ -78,6 +92,23 @@ function tool(f, id, createdAt = now, workUnitId = f.unit.id) {
     `{${privateValue}`, createdAt, createdAt,
   );
   return { kind: "tool_execution", id, createdAt };
+}
+
+function evaluation(f, id, createdAt = now, runId = f.run.id, rootRunId = runId) {
+  const digest = "c".repeat(64);
+  f.insertEvaluation.run(
+    id, rootRunId, runId, f.artifact.id, digest, f.artifact.id, digest,
+    f.artifact.id, digest, f.artifact.id, digest, `idempotency:${id}`, createdAt, createdAt,
+  );
+  return { kind: "evaluation", id, createdAt };
+}
+
+function delegation(f, id, createdAt = now, parentRunId = f.run.id, rootRunId = parentRunId, parentAttemptId = f.attempt.id) {
+  f.insertDelegation.run(
+    id, rootRunId, parentRunId, parentAttemptId, `spawn:${id}`, f.artifact.id,
+    f.artifact.id, f.artifact.id, f.artifact.id, f.artifact.id, `idempotency:${id}`, createdAt, createdAt,
+  );
+  return { kind: "delegation", id, createdAt };
 }
 
 function descending(a, b) {
@@ -160,6 +191,23 @@ test("live keyset crosses same-time kind boundaries and does not require cursor 
   assert.equal(second.nextCursor, undefined);
 });
 
+test("all four authority domains share one stable bounded keyset without treating projections as records", async (t) => {
+  const f = await fixture(t);
+  const expected = [
+    continuation(f, "same"),
+    delegation(f, "same"),
+    evaluation(f, "same"),
+    tool(f, "same"),
+  ].sort(descending);
+  const first = f.store.queryHarnessDiagnostics(f.run.id, f.unit.id, { limit: 2 });
+  assert.deepEqual(first.items.map(({ kind, id, createdAt }) => ({ kind, id, createdAt })), expected.slice(0, 2));
+  assert.deepEqual(first.nextCursor, { runId: f.run.id, workUnitId: f.unit.id, ...expected[1] });
+  const second = f.store.queryHarnessDiagnostics(f.run.id, f.unit.id, { limit: 2, cursor: first.nextCursor });
+  assert.deepEqual(second.items.map(({ kind, id, createdAt }) => ({ kind, id, createdAt })), expected.slice(2));
+  assert.equal(second.nextCursor, undefined);
+  assert.ok(first.items.every((item) => !Object.hasOwn(item, "projectionState")));
+});
+
 test("safe output retains diagnosis lineage and leases but excludes tokens, resume handles and private results", async (t) => {
   const f = await fixture(t);
   continuation(f, "continuation");
@@ -200,6 +248,48 @@ test("safe output retains diagnosis lineage and leases but excludes tokens, resu
   assert.ok(!JSON.stringify(items).includes(privateValue));
 });
 
+test("evaluation and delegation diagnostics expose only allowlisted authority metadata", async (t) => {
+  const f = await fixture(t);
+  evaluation(f, "evaluation");
+  delegation(f, "delegation");
+  f.database.prepare(`UPDATE run_evaluations SET state='claimed',claim_owner='evaluation-worker',claim_token=?,
+    claim_expires_at=?,next_attempt_at=?,revision=4,updated_at=? WHERE id='evaluation'`)
+    .run(privateValue, later, later, later);
+  const { items } = f.store.queryHarnessDiagnostics(f.run.id, f.unit.id);
+  const evaluationRecord = items.find((item) => item.kind === "evaluation");
+  const delegationRecord = items.find((item) => item.kind === "delegation");
+  assert.deepEqual({
+    kind: evaluationRecord.kind, id: evaluationRecord.id, runId: evaluationRecord.runId,
+    workUnitId: evaluationRecord.workUnitId, rootRunId: evaluationRecord.rootRunId,
+    state: evaluationRecord.state, revision: evaluationRecord.revision,
+    createdAt: evaluationRecord.createdAt, updatedAt: evaluationRecord.updatedAt,
+    claimOwner: evaluationRecord.claimOwner, claimExpiresAt: evaluationRecord.claimExpiresAt,
+    nextAttemptAt: evaluationRecord.nextAttemptAt,
+  }, {
+    kind: "evaluation", id: "evaluation", runId: f.run.id, workUnitId: f.unit.id,
+    rootRunId: f.run.id, state: "claimed", revision: 4, createdAt: now, updatedAt: later,
+    claimOwner: "evaluation-worker", claimExpiresAt: later, nextAttemptAt: later,
+  });
+  assert.deepEqual({
+    kind: delegationRecord.kind, id: delegationRecord.id, runId: delegationRecord.runId,
+    workUnitId: delegationRecord.workUnitId, rootRunId: delegationRecord.rootRunId,
+    state: delegationRecord.state, revision: delegationRecord.revision,
+    createdAt: delegationRecord.createdAt, updatedAt: delegationRecord.updatedAt,
+    parentAttemptId: delegationRecord.parentAttemptId, required: delegationRecord.required, depth: delegationRecord.depth,
+  }, {
+    kind: "delegation", id: "delegation", runId: f.run.id, workUnitId: f.unit.id,
+    rootRunId: f.run.id, state: "planned", revision: 0, createdAt: now, updatedAt: now,
+    parentAttemptId: f.attempt.id, required: true, depth: 1,
+  });
+  const serialized = JSON.stringify(items);
+  assert.ok(!serialized.includes(privateValue));
+  for (const forbidden of [
+    "claimToken", "suiteId", "suiteArtifactId", "caseArtifactId", "candidateArtifactId",
+    "objectiveArtifactId", "permissionSnapshotArtifactId", "toolAllowlistArtifactId",
+    "workspaceScopeArtifactId", "providerPolicyArtifactId", "idempotencyKey",
+  ]) assert.ok(!serialized.includes(forbidden), forbidden);
+});
+
 test("strict query validation rejects malformed, foreign, accessor and prototype input without invoking getters", async (t) => {
   const f = await fixture(t);
   tool(f, "tool");
@@ -231,6 +321,10 @@ test("strict query validation rejects malformed, foreign, accessor and prototype
   }
   assert.deepEqual(validateHarnessDiagnosticQuery(f.run.id, f.unit.id, Object.assign(Object.create(null), { limit: 2 })), { limit: 2 });
   assert.deepEqual(validateHarnessDiagnosticQuery(f.run.id, f.unit.id, { cursor: valid }), { limit: 100, cursor: valid });
+  for (const kind of ["continuation", "tool_execution", "evaluation", "delegation"]) {
+    const cursor = { ...valid, kind };
+    assert.deepEqual(validateHarnessDiagnosticQuery(f.run.id, f.unit.id, { cursor }), { limit: 100, cursor });
+  }
 });
 
 test("scope must match both directions and foreign WorkUnit metadata is never returned", async (t) => {
@@ -241,6 +335,17 @@ test("scope must match both directions and foreign WorkUnit metadata is never re
   });
   tool(f, "own");
   continuation(f, "foreign", now, foreign.id);
+  const foreignRun = f.store.createRun({
+    id: "foreign-run", cwd: f.cwd, taskId: f.run.taskId, workUnitId: foreign.id,
+    providerName: "test", providerModel: "fixture", taskSnapshot: {}, providerSnapshot: {}, requestSnapshot: {}, createdAt: now,
+  });
+  f.store.linkRunToWorkUnit(foreignRun.id, foreign.id, now);
+  const foreignAttempt = f.store.createWorkUnitAttempt({
+    id: "foreign-attempt", workUnitId: foreign.id, attemptNumber: 1,
+    runtimeInstanceId: "foreign-runtime", runnerId: "runner_pi_embedded", status: "started", now,
+  });
+  evaluation(f, "foreign-evaluation", now, foreignRun.id);
+  delegation(f, "foreign-delegation", now, foreignRun.id, foreignRun.id, foreignAttempt.id);
   assert.deepEqual(f.store.queryHarnessDiagnostics(f.run.id, f.unit.id).items.map((row) => row.id), ["own"]);
   assert.throws(() => f.store.queryHarnessDiagnostics(f.run.id, foreign.id), isCode("diagnostics.lineage_mismatch"));
   assert.throws(() => f.store.queryHarnessDiagnostics("missing", f.unit.id), isCode("diagnostics.lineage_mismatch"));
@@ -381,19 +486,28 @@ test("actual SQLite diagnostic statements use metadata-only columns and both exi
   reader.getHarnessDiagnosticAttempt(f.unit.id, f.attempt.id);
   const page = reader.queryHarnessDiagnostics(f.run.id, f.unit.id, { limit: 1 });
   reader.queryHarnessDiagnostics(f.run.id, f.unit.id, { limit: 1, cursor: page.nextCursor });
+  evaluation(f, "evaluation");
+  delegation(f, "delegation");
   const selects = captured.filter((sql) => sql.includes("UNION ALL"));
   assert.equal(selects.length, 2);
   for (const sql of captured) {
-    assert.doesNotMatch(sql, /\b(claim_token|runner_handle_ref|result_summary_json|request_digest|side_effect_fingerprint|sealed_payload|evidence_artifact_ids|request_json|timeout_policy_json|task_snapshot_json|provider_snapshot_json|request_snapshot_json|runner_fallback_reason_json|error_code|error_message)\b/u);
+    assert.doesNotMatch(sql, /\b(claim_token|runner_handle_ref|result_summary_json|request_digest|side_effect_fingerprint|sealed_payload|evidence_artifact_ids|request_json|timeout_policy_json|task_snapshot_json|provider_snapshot_json|request_snapshot_json|runner_fallback_reason_json|error_code|error_message|suite_artifact_id|case_artifact_id|baseline_artifact_id|candidate_artifact_id|objective_artifact_id|permission_snapshot_artifact_id|tool_allowlist_artifact_id|workspace_scope_artifact_id|provider_policy_artifact_id)\b/u);
     assert.doesNotMatch(sql, /SELECT\s+\*/iu);
   }
   for (let index = 0; index < selects.length; index += 1) {
     const params = index === 0
-      ? [f.run.id, f.unit.id, f.run.id, f.unit.id, 2]
-      : [f.run.id, f.unit.id, now, "tool_execution", "tool", f.run.id, f.unit.id, now, "tool_execution", "tool", 2];
+      ? [f.run.id, f.unit.id, f.run.id, f.unit.id, f.run.id, f.unit.id, f.run.id, f.unit.id, 2]
+      : [
+          f.run.id, f.unit.id, now, "tool_execution", "tool",
+          f.run.id, f.unit.id, now, "tool_execution", "tool",
+          f.run.id, f.unit.id, now, "tool_execution", "tool",
+          f.run.id, f.unit.id, now, "tool_execution", "tool", 2,
+        ];
     const plan = f.database.prepare(`EXPLAIN QUERY PLAN ${selects[index]}`).all(...params).map((row) => row.detail).join("\n");
     assert.match(plan, /idx_runner_continuations_run_created/u);
     assert.match(plan, /idx_harness_tool_executions_run_created/u);
+    assert.match(plan, /idx_run_evaluations_lineage/u);
+    assert.match(plan, /idx_delegation_steps_parent_created/u);
   }
 });
 
@@ -417,6 +531,27 @@ test("corrupt approved metadata fails visibly, including corruption in the extra
     const f = await fixture(subtest);
     continuation(f, "bad");
     f.database.prepare("UPDATE runner_continuations SET generation=9007199254740992 WHERE id='bad'").run();
+    assert.throws(() => f.store.queryHarnessDiagnostics(f.run.id, f.unit.id), isCode("diagnostics.record_invalid"));
+  });
+  await t.test("evaluation invalid state", async (subtest) => {
+    const f = await fixture(subtest);
+    evaluation(f, "bad");
+    f.database.exec("PRAGMA ignore_check_constraints=ON");
+    f.database.prepare("UPDATE run_evaluations SET state='bad-state' WHERE id='bad'").run();
+    assert.throws(() => f.store.queryHarnessDiagnostics(f.run.id, f.unit.id), isCode("diagnostics.record_invalid"));
+  });
+  await t.test("delegation invalid required flag", async (subtest) => {
+    const f = await fixture(subtest);
+    delegation(f, "bad");
+    f.database.exec("PRAGMA ignore_check_constraints=ON");
+    f.database.exec(`INSERT INTO delegation_steps (
+      id,schema_version,root_run_id,parent_run_id,parent_attempt_id,spawn_call_id,objective_artifact_id,
+      required,state,depth,permission_snapshot_artifact_id,tool_allowlist_artifact_id,
+      workspace_scope_artifact_id,provider_policy_artifact_id,idempotency_key,revision,created_at,updated_at
+    ) SELECT 'bad-probe',schema_version,root_run_id,parent_run_id,parent_attempt_id,'spawn:bad-probe',objective_artifact_id,
+      2,state,depth,permission_snapshot_artifact_id,tool_allowlist_artifact_id,
+      workspace_scope_artifact_id,provider_policy_artifact_id,'idempotency:bad-probe',revision,created_at,updated_at
+      FROM delegation_steps WHERE id='bad'`);
     assert.throws(() => f.store.queryHarnessDiagnostics(f.run.id, f.unit.id), isCode("diagnostics.record_invalid"));
   });
 });

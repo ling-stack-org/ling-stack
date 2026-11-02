@@ -40,6 +40,7 @@ export class ImDestinationRegistry {
   private readonly fetchImpl: FetchLike;
   private destinations: ImDestination[] = [];
   private loaded = false;
+  private loadPromise: Promise<void> | null = null;
 
   constructor(paths: { storePath?: string | null; secretResolver?: SecretResolver; fetchImpl?: FetchLike } = {}) {
     this.storePath = paths.storePath ?? null;
@@ -49,6 +50,13 @@ export class ImDestinationRegistry {
 
   async ensureLoaded(): Promise<void> {
     if (this.loaded) return;
+    // A delayed cold read must not overwrite mutations made by another caller.
+    this.loadPromise ??= this.load();
+    await this.loadPromise;
+    this.loaded = true;
+  }
+
+  private async load(): Promise<void> {
     if (this.storePath) {
       try {
         const parsed = JSON.parse(await readFile(this.storePath, "utf8")) as ImDestinationsFile;
@@ -59,7 +67,6 @@ export class ImDestinationRegistry {
         // Missing store: start empty.
       }
     }
-    this.loaded = true;
   }
 
   list(): readonly ImDestination[] {

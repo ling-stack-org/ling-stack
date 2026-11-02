@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { conversationWorkspaceFileRefSourcesV1 } from "@ling-stack/contracts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   runInterventionModes,
@@ -41,6 +42,7 @@ import { buildRunInterventionContinuationRequest } from "./run-intervention-cont
 import { assertNoUnsafeRequiredPause } from "./user-input-cancellation-guard.js";
 import { continuationSourceReady } from "../../runtime/continuation-source-barrier.js";
 import type { NativeRunDispatcher } from "./native-run-dispatcher.js";
+import { projectPublicRunSession } from "./public-execution-snapshots.js";
 
 const runControlService = new RunControlService();
 
@@ -100,7 +102,7 @@ export async function handleRunInterventions(
   }
 
   if (input.mode === "interrupt_redirect" && isTerminalRunStatus(sourceRun.status)) {
-    writeJson(response, 409, { error: "run_not_cancellable", message: `Run ${sourceRun.id} is already ${sourceRun.status}.`, run: sourceRun });
+    writeJson(response, 409, { error: "run_not_cancellable", message: `Run ${sourceRun.id} is already ${sourceRun.status}.`, run: projectPublicRunSession(sourceRun, store) });
     return;
   }
 
@@ -195,7 +197,7 @@ export async function handleRunInterventions(
   writeJson(response, 201, {
     cwd: store.paths.cwd,
     intervention: store.getRunIntervention(intervention.id) ?? updated,
-    run: store.getRun(sourceRunId),
+    run: projectPublicRunSession(store.getRun(sourceRunId), store),
     event: cancellation.event,
   });
 }
@@ -295,7 +297,7 @@ export function handleRunInterventionPromote(
     writeJson(response, 202, {
       cwd: resolved.cwd,
       intervention: resolved.store.getRunIntervention(intervention.id) ?? intervention,
-      run: resolved.store.getRun(sourceRun.id) ?? sourceRun,
+      run: projectPublicRunSession(resolved.store.getRun(sourceRun.id) ?? sourceRun, resolved.store),
       message: "当前运行已结束，这条引导会按排队顺序继续执行。",
     });
     return;
@@ -361,7 +363,7 @@ export function handleRunInterventionPromote(
   writeJson(response, 200, {
     cwd: resolved.cwd,
     intervention: resolved.store.getRunIntervention(intervention.id) ?? promoted,
-    run: resolved.store.getRun(currentRun.id),
+    run: projectPublicRunSession(resolved.store.getRun(currentRun.id), resolved.store),
     event: cancellation.event,
   });
 }
@@ -917,9 +919,14 @@ function readOptionalRunInterventionWorkspaceFilePayloads(
     const label = readOptionalString(item, "label");
     const previewText = readOptionalString(item, "previewText");
     const blockedReason = readOptionalString(item, "blockedReason");
+    const source = item.source;
+    if (source !== undefined && source !== "composer" && source !== "explicit_text" && source !== "api" && source !== "inferred_text") {
+      throw new Error(`fileRefs source must be one of ${conversationWorkspaceFileRefSourcesV1.join(", ")}`);
+    }
     return {
       path: readString(item, "path"),
       ...(label ? { label } : {}),
+      ...(source ? { source } : {}),
       rootRelation: readRunInterventionWorkspaceFileRootRelation(item.rootRelation),
       kind: readRunInterventionWorkspaceFileKind(item.kind),
       materializationStatus: readRunInterventionMaterializationStatus(item.materializationStatus),

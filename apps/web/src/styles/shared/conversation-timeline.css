@@ -14,6 +14,42 @@
   overflow: visible;
 }
 
+.conversation-timeline-command-source {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ling-space-2);
+  min-width: 0;
+}
+
+.conversation-timeline-command-source pre {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.conversation-timeline-command-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--ling-radius-sm);
+  background: transparent;
+  color: var(--conversation-text-muted);
+  cursor: pointer;
+}
+
+.conversation-timeline-command-copy:hover,
+.conversation-timeline-command-copy:focus-visible {
+  background: var(--conversation-bg-muted);
+  color: var(--conversation-text-strong);
+}
+
 /* Q/A shares message rails, theme and hover/focus copy chrome. It never owns scrolling. */
 .conversation-timeline-user-input,
 .conversation-user-input-content,
@@ -92,6 +128,63 @@
 
 .conversation-user-input-status[data-tone="danger"] {
   color: var(--ling-status-danger);
+}
+
+.conversation-user-input-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--conversation-border);
+}
+
+.conversation-user-input-fieldset {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.conversation-user-input-fieldset legend {
+  margin-bottom: 4px;
+  color: var(--conversation-text-muted);
+  font-size: 12px;
+}
+
+.conversation-user-input-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.conversation-user-input-choice input {
+  margin-top: 3px;
+}
+
+.conversation-user-input-free-text {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  border: 1px solid var(--conversation-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--conversation-bg-muted);
+  color: var(--conversation-text-strong);
+  font: inherit;
+}
+
+.conversation-user-input-submit-error {
+  color: var(--conversation-status-danger);
+  font-size: 12px;
+}
+
+.conversation-user-input-submit-accepted {
+  color: var(--conversation-text-muted);
+  font-size: 12px;
 }
 
 [data-conversation-timeline="true"].virtualized {

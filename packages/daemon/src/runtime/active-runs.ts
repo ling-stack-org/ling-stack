@@ -2,6 +2,7 @@ import type { RunEventEnvelope } from "@ling-stack/core";
 import type { AttemptExecutionSource } from "./attempt-execution-quiescence.js";
 import { AttemptLocalWriterGroup } from "./attempt-local-writers.js";
 import { readOriginalAttemptExecutorGroupSnapshot, type AttemptExecutorGroup } from "./attempt-execution-quiescence.js";
+import { verifyDelegatedTerminalHandoff, type DelegatedTerminalHandoff } from "./delegated-terminal-handoff.js";
 
 export type ActiveRunStopIntentV1 =
   | { readonly kind: "user_cancel"; readonly actor: "local-user"; readonly reason: string }
@@ -26,6 +27,16 @@ export interface ActiveRun {
   readonly attemptId?: string;
   readonly fencingToken?: string;
   readonly stopIntent?: ActiveRunStopIntentV1;
+  /** Host-selected current executor capability, not a persisted-version fallback. */
+  readonly runtimeShutdownPolicy?: "checkpoint" | "stop_without_resume";
+  /** Original Host request callback. Fulfilment acknowledges persistence only, never physical stop. */
+  readonly requestGracefulSuspension?: (request: ActiveRunSuspensionRequest) => void | Promise<void>;
+  readonly terminalHandoff?: DelegatedTerminalHandoff;
+}
+
+export interface ActiveRunSuspensionRequest {
+  readonly cause: Extract<ActiveRunStopIntentV1, { kind: "runtime_suspend" }>["cause"];
+  readonly source: AttemptExecutionSource;
 }
 
 interface RegisteredActiveRun extends ActiveRun {
@@ -50,9 +61,17 @@ export class ActiveRunRegistry {
     localDrainStatus: "draining" | "drained";
   }>();
   private shutdownCause?: Extract<ActiveRunStopIntentV1, { kind: "runtime_suspend" }>["cause"];
+  private admissionClosed = false;
+  private shutdownMode?: "abort" | "graceful";
+  private gracefulRequestBarrier?: Promise<void>;
+  private readonly gracefulRequests = new Set<Promise<void>>();
+  private readonly gracefulRequested = new WeakSet<RegisteredActiveRun>();
+  private readonly gracefulRequestFailures: unknown[] = [];
+  private readonly terminalHandoffs: { readonly source: AttemptExecutionSource; readonly reference: DelegatedTerminalHandoff }[] = [];
 
   add(runId: string, run: ActiveRun): void {
-    this.activeRuns.set(runId, { ...run });
+    const registered = { ...run };
+    this.activeRuns.set(runId, registered);
     if (run.completion) {
       if (run.workUnitId && run.attemptId && run.runtimeInstanceId && run.fencingToken) {
         this.trackAttemptCompletion({ runId, workUnitId: run.workUnitId, attemptId: run.attemptId,
@@ -60,7 +79,8 @@ export class ActiveRunRegistry {
       } else this.trackCompletion(run.completion);
     }
     if (this.shutdownCause) {
-      this.requestStop(runId, {
+      if (this.shutdownMode === "graceful") this.requestCapturedSuspension(runId, registered);
+      else this.requestStop(runId, {
         kind: "runtime_suspend",
         cause: this.shutdownCause,
         runtimeInstanceId: run.runtimeInstanceId ?? "unknown-runtime",
@@ -229,7 +249,14 @@ export class ActiveRunRegistry {
     return retained ? Object.freeze({ source: retained.source, localDrainStatus: retained.localDrainStatus }) : undefined;
   }
 
+  /** Close launch admission without invoking sources before other domains close theirs. */
+  stopAdmission(): void {
+    this.admissionClosed = true;
+  }
+
   suspendAll(cause: Extract<ActiveRunStopIntentV1, { kind: "runtime_suspend" }>["cause"]): void {
+    if (this.shutdownMode === "graceful") throw new Error("runtime_graceful_suspension_cannot_be_replaced_by_abort");
+    this.shutdownMode = "abort";
     this.shutdownCause ??= cause;
     for (const [runId, run] of this.activeRuns) {
       this.requestStop(runId, {
@@ -240,8 +267,94 @@ export class ActiveRunRegistry {
     }
   }
 
+  /**
+   * Close admission, then ask each original execution to persist its exact
+   * source-bound intent. This deliberately does not set stopIntent or abort:
+   * a later explicit cancellation keeps its own disposition. The separate
+   * physical-lifetime and durable stopped-receipt barriers remain mandatory.
+   */
+  requestGracefulSuspension(cause: ActiveRunSuspensionRequest["cause"]): Promise<void> {
+    if (!["daemon_restart", "desktop_quit", "process_signal"].includes(cause)) {
+      return Promise.reject(new TypeError("runtime_graceful_suspension_cause_invalid"));
+    }
+    if (this.shutdownMode === "abort") return Promise.reject(new Error("runtime_already_aborting"));
+    if (this.gracefulRequestBarrier) return this.gracefulRequestBarrier;
+    this.shutdownMode = "graceful";
+    this.shutdownCause ??= cause;
+    let resolveBarrier!: () => void, rejectBarrier!: (error: unknown) => void;
+    this.gracefulRequestBarrier = new Promise<void>((resolve, reject) => { resolveBarrier = resolve; rejectBarrier = reject; });
+    for (const [runId, run] of this.activeRuns) this.requestCapturedSuspension(runId, run);
+    void this.waitForGracefulRequests().then(resolveBarrier, rejectBarrier);
+    // A caller may observe the barrier later, after shutting down other domains.
+    // Retain the rejection without emitting an unhandled rejection meanwhile.
+    void this.gracefulRequestBarrier.catch(() => undefined);
+    return this.gracefulRequestBarrier;
+  }
+
+  /** Recheck after actual execution/preflight drain; a later registration can fail after initial acceptance. */
+  waitForGracefulSuspensionRequests(): Promise<void> {
+    if (this.shutdownMode !== "graceful") return Promise.reject(new Error("runtime_graceful_suspension_not_requested"));
+    return this.waitForGracefulRequests();
+  }
+
+  /** This is a separate final proof, never graceful/resumable acceptance. */
+  verifyTerminalShutdownHandoffs(): void {
+    const failures: unknown[] = [];
+    for (const handoff of this.terminalHandoffs) {
+      try {
+        const active = this.activeRuns.get(handoff.source.runId);
+        if (active && !sameAttempt(active, handoff.source)) throw new Error("runtime_terminal_handoff_source_replaced");
+        verifyDelegatedTerminalHandoff(handoff.reference, handoff.source, "settled");
+      } catch (error) { failures.push(error); }
+    }
+    if (failures.length) throw new AggregateError(failures, "runtime_terminal_handoff_unverified");
+  }
+
+  private requestCapturedSuspension(runId: string, run: RegisteredActiveRun): void {
+    if (this.gracefulRequested.has(run)) return;
+    this.gracefulRequested.add(run);
+    let accepted: void | Promise<void>;
+    try {
+      if (!runId || !run.completion || !run.workUnitId || !run.attemptId || !run.runtimeInstanceId
+        || !run.fencingToken) {
+        throw new Error("runtime_graceful_suspension_source_unverified");
+      }
+      const source = Object.freeze({ runId, workUnitId: run.workUnitId, attemptId: run.attemptId,
+        runtimeInstanceId: run.runtimeInstanceId, fencingToken: run.fencingToken });
+      if (run.abortController.signal.aborted && run.terminalHandoff !== undefined) {
+        verifyDelegatedTerminalHandoff(run.terminalHandoff, source, "capture");
+        this.terminalHandoffs.push({ source, reference: run.terminalHandoff! });
+        return;
+      }
+      if (run.runtimeShutdownPolicy === "stop_without_resume") {
+        // The original entry still owns its terminal/drain path. This is not
+        // checkpoint acceptance, a stopped receipt or permission to replay.
+        // An earlier explicit stop keeps its disposition; it must still pass
+        // the same original lifetime/finalization barriers as a new stop.
+        this.requestStop(runId, { kind: "runtime_suspend", cause: this.shutdownCause!, runtimeInstanceId: run.runtimeInstanceId });
+        return;
+      }
+      if (run.abortController.signal.aborted) throw new Error("runtime_terminal_handoff_source_unverified");
+      if (!run.requestGracefulSuspension) throw new Error("runtime_graceful_suspension_source_unverified");
+      accepted = run.requestGracefulSuspension(Object.freeze({ cause: this.shutdownCause!, source }));
+    } catch (error) { this.gracefulRequestFailures.push(error); return; }
+    const request = Promise.resolve(accepted).catch(error => { this.gracefulRequestFailures.push(error); });
+    this.gracefulRequests.add(request);
+    this.trackCompletion(request);
+    void request.then(() => this.gracefulRequests.delete(request));
+  }
+
+  private async waitForGracefulRequests(): Promise<void> {
+    // Preflight executions may register their exact source while an earlier
+    // source persists its request. Include these actual callbacks too.
+    while (this.gracefulRequests.size) await Promise.all([...this.gracefulRequests]);
+    if (this.gracefulRequestFailures.length) {
+      throw new AggregateError([...this.gracefulRequestFailures], "runtime_graceful_suspension_request_failed");
+    }
+  }
+
   isShuttingDown(): boolean {
-    return this.shutdownCause !== undefined;
+    return this.admissionClosed || this.shutdownCause !== undefined;
   }
 
   /** Wait for registered executions and callbacks, never infer idle from elapsed time. */

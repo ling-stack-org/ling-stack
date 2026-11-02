@@ -50,6 +50,7 @@ const approvalActionTypes = [
   "workflow_step",
   "mcp_tool_call",
   "runtime_permission_request",
+  "host_capability",
 ] as const satisfies readonly ApprovalActionType[];
 
 type SkillRouteStore = ReturnType<RunStoreRegistry["getStore"]>;

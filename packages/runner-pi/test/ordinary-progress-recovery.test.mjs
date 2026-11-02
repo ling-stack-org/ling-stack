@@ -196,9 +196,9 @@ for (const boundary of ["before_agent_start", "before_provider_request"]) {
     assert.equal(f.payloads.length, 0, "Host rejection must prevent every transport fetch");
     assert.equal(f.admitted.length, 0, "Host rejection must prevent logical provider admission");
     assert.equal(f.settled.length, 0, "an unadmitted stream must not publish provider settlement");
-    // Pi assembles the stream before its awaited before_provider_request payload hook.
-    // Initialization is not transport: the Host latch must block the fetch above.
-    assert.equal(f.contexts.length, boundary === "before_provider_request" ? 1 : 0);
+    // The provider-neutral context hook now checks Host authority before Pi
+    // assembles a transport stream, so either rejection prevents all contexts.
+    assert.equal(f.contexts.length, 0);
     assert.equal(f.boundaries.filter(item => item.boundary === boundary).length, 1);
     assert.equal(f.effects(), 0);
     assert.equal(f.events.some(event => event.type === "run_end"), false);

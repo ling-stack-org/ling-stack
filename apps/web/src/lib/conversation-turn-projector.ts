@@ -86,6 +86,8 @@ export interface BuildConversationTurnProjectionInput {
   readonly operationCellByThreadId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly lingAgentAuthorId: string;
   readonly terminalReportResultItemIds?: ReadonlySet<string>;
+  /** Same Host-evidence visibility decision used by the standalone activity feed. */
+  readonly silentChannelReplyRunIds?: ReadonlySet<string>;
 }
 
 export function buildConversationTurnProjection(input: BuildConversationTurnProjectionInput): ConversationTurnProjection {
@@ -133,6 +135,7 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
       runsById,
       operationCellByWorkflowId: input.operationCellByWorkflowId,
       operationCellByThreadId: input.operationCellByThreadId,
+      silentChannelReplyRunIds: input.silentChannelReplyRunIds,
     });
     const childMessages = uniqueMessages([
       ...(sourceMessage.turnId ? messagesByTurnId.get(sourceMessage.turnId) ?? [] : []),
@@ -278,6 +281,7 @@ function findTurnOperation(input: {
   readonly runsById: ReadonlyMap<string, RunSession>;
   readonly operationCellByWorkflowId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly operationCellByThreadId: ReadonlyMap<string, ConversationWorkCellViewModel>;
+  readonly silentChannelReplyRunIds?: ReadonlySet<string>;
 }): { readonly cell: ConversationWorkCellViewModel; readonly ref: ConversationTurnOperationRef } | undefined {
   const workflowIds = uniqueStrings([
     ...input.proposals.map((proposal) => proposal.linkedWorkflowId).filter(isString),
@@ -310,12 +314,18 @@ function findTurnOperation(input: {
     ...input.proposals.map((proposal) => proposal.linkedRunId).filter(isString),
   ]);
   for (const runId of linkedRunIds) {
+    if (input.silentChannelReplyRunIds?.has(runId)) {
+      continue;
+    }
     const threadId = input.runsById.get(runId)?.threadId;
     if (!threadId) {
       continue;
     }
     const cell = input.operationCellByThreadId.get(threadId);
-    if (cell) {
+    // The map is thread-scoped and may already contain another turn's cell.
+    // A shared thread alone cannot transfer that execution to this request.
+    if (cell && cell.runIds.includes(runId) &&
+      (!input.sourceMessage.turnId || !cell.turnId || input.sourceMessage.turnId === cell.turnId)) {
       return { cell, ref: { kind: "run_thread", threadId } };
     }
   }

@@ -11,13 +11,20 @@ platform acceptance are unchanged.
 - Other packages and Web checks: one Linux matrix entry, excluding core and
   daemon because their complete discovery runs in their own entries.
 - Daemon: four macOS shards, two serial file workers per shard. The native Kimi
-  lifecycle files run exclusively before other files on their assigned runner.
+  and delegation lifecycle files run exclusively before other files on their
+  assigned runner.
 - Linux restricted-command contracts and real macOS native smoke remain separate
   mandatory lanes. No daemon files have been moved to Linux or removed.
 
 Every file gets a private runtime home/workspace and a POSIX process group.
 An assertion failure does not suppress later files. A file exceeding five
 minutes fails and its group is terminated; it is not retried or forced green.
+The two known high-cost daemon integration fixtures,
+`test/channel-workspace.test.mjs` and
+`test/recovery-discovery-fair-scan.test.mjs`, have an explicit ten-minute
+watchdog because hosted macOS runs crossed five minutes while continuing to
+make progress. This exception is file-scoped; every other daemon file keeps
+the five-minute bound.
 SIGTERM gets up to five seconds before SIGKILL. Cancellation stops new work.
 The core queue has a 20-minute deadline and daemon has a 30-minute deadline,
 leaving setup and artifact upload time within their unchanged job caps.

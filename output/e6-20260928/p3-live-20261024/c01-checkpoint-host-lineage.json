@@ -1,0 +1,94 @@
+{
+  "capturedAt": "2026-10-24T03:46:21.401Z",
+  "source": "Public Host APIs; real packaged GUI failure",
+  "workflowId": "workflow_7560c256-b048-422f-9844-4c4062598cba",
+  "run": {
+    "id": "run_1d74e385-1c7a-40fc-b285-fe31130afcc5",
+    "status": "failed",
+    "channelId": "channel_dac98dcb-eb5f-49ce-9198-1d167b80daf5",
+    "workflowStepId": "wfstep_7a9ddc53-3b2f-4494-8586-a7b064346687",
+    "workUnitId": "work_unit_2e581045-8858-442a-8761-a736f80db1a8",
+    "threadId": "thread_febf499b-fcd7-4f68-ba7f-a374627805e9",
+    "contextViewId": "context_view_e277d4e6-5835-40db-a223-68e53d71e2ac",
+    "startedAt": "2026-10-24T03:36:03.702Z",
+    "endedAt": "2026-10-24T03:36:07.804Z"
+  },
+  "steps": [
+    {
+      "id": "wfstep_7a9ddc53-3b2f-4494-8586-a7b064346687",
+      "status": "blocked",
+      "runId": "run_1d74e385-1c7a-40fc-b285-fe31130afcc5",
+      "participantId": "teammate_builtin_engineer",
+      "blocker": "A safe ordinary Run progress checkpoint is required before the next model request (checkpoint.lineage_mismatch)."
+    },
+    {
+      "id": "wfstep_f75b7d72-5d8d-4d40-aaec-41306373675d",
+      "status": "queued",
+      "participantId": "teammate_builtin_qa"
+    }
+  ],
+  "actions": [
+    {
+      "id": "tool:run_1d74e385-1c7a-40fc-b285-fe31130afcc5:call_b1zhBEsdRSkFBCjEMGkFiYXg",
+      "runId": "run_1d74e385-1c7a-40fc-b285-fe31130afcc5",
+      "status": "succeeded",
+      "actionType": "read"
+    }
+  ],
+  "approvals": [],
+  "comparisons": {
+    "taskFieldMatches": {
+      "id": true,
+      "title": true,
+      "prompt": false,
+      "channelId": true
+    },
+    "preparedFingerprintMatches": true,
+    "taskPromptSha256": "ce59fea50baee90b0faffe53ac0dda96c12f6ae79d93e76494b39fe86bfc0993",
+    "taskSnapshotPromptSha256": "0366a89b5dd4092925cb66b2297910383462f5b8cf74fbea41f9a97da79c24c6"
+  },
+  "counts": {
+    "run_created": 1,
+    "run_start": 1,
+    "turn_start": 2,
+    "message_end": 5,
+    "assistant_text_delta": 65,
+    "tool_start": 1,
+    "tool_end": 1,
+    "artifact_created": 1,
+    "turn_end": 2,
+    "run_error": 1
+  },
+  "events": [
+    {
+      "id": "evt_8b9c09d8-f1fe-435e-bf44-72ce9c59bbed",
+      "seq": 72,
+      "type": "tool_start",
+      "ts": "2026-10-24T03:36:07.764Z",
+      "toolName": "read",
+      "toolCallId": "call_b1zhBEsdRSkFBCjEMGkFiYXg",
+      "attemptId": "work_unit_attempt_16b0d478-9f6b-49a2-b068-de7836125204"
+    },
+    {
+      "id": "evt_816395a1-df61-473e-9df0-a2d8b93a4ec4",
+      "seq": 73,
+      "type": "tool_end",
+      "ts": "2026-10-24T03:36:07.778Z",
+      "toolName": "read",
+      "toolCallId": "call_b1zhBEsdRSkFBCjEMGkFiYXg",
+      "attemptId": "work_unit_attempt_16b0d478-9f6b-49a2-b068-de7836125204",
+      "isError": false
+    },
+    {
+      "id": "evt_bbfe2643-1d7b-44f0-8100-db9cf2dc5154",
+      "seq": 80,
+      "type": "run_error",
+      "ts": "2026-10-24T03:36:07.798Z"
+    }
+  ],
+  "webEvents": [],
+  "limits": [
+    "Failed original remains unchanged; no retry or real DB repair.",
+    "Loopback regression is not a real model, GUI or network transport result."
+  ]
+}

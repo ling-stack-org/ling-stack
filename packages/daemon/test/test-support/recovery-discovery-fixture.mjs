@@ -22,11 +22,11 @@ export const DISCOVERY_CREATED_AT = "2026-10-01T00:00:00.000Z";
 export const DISCOVERY_DUE_AT = "2026-10-01T01:00:00.000Z";
 
 /** Real SQLite, frozen Pi input and Host policy. No provider request is made. */
-export async function createRecoveryDiscoveryFixture(t, suffix) {
+export async function createRecoveryDiscoveryFixture(t, suffix, options = {}) {
   const cwd = await mkdtemp(join(tmpdir(), `ling-recovery-discovery-${suffix}-`));
   const stores = new RunStoreRegistry(createSqliteRunStore);
   const store = stores.getStore(cwd);
-  const supervisor = new RuntimeSupervisor(resolveConfig({
+  const supervisor = options.runtimeSupervisor ?? new RuntimeSupervisor(resolveConfig({
     defaultWorkspaceCwd: cwd,
     harness: { continuations: { mode: "enforce" } },
   }));
@@ -54,7 +54,7 @@ export async function createRecoveryDiscoveryFixture(t, suffix) {
       reopened.supervisor.releaseAll();
       reopened.stores.closeAll();
     }
-    supervisor.releaseAll();
+    if (!options.runtimeSupervisor) supervisor.releaseAll();
     stores.closeAll();
     await rm(cwd, { recursive: true, force: true });
   });

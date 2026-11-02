@@ -1,4 +1,5 @@
 import type { SQLOutputValue } from "node:sqlite";
+import { isDeepStrictEqual } from "node:util";
 import { GSTACK_DEFAULT_SKILL_PACK_ID, LING_AGENT_DEFAULT_SKILL_IDS, listDefaultTeammateTemplates } from "../../builtin-skill-packs.js";
 import type { AiTeammateTemplate } from "../../skill-types.js";
 import {
@@ -11,7 +12,7 @@ import {
   type ReplaceTeammateSkillBindingInput,
   type TeammateSkillBinding,
 } from "../../workspace-types.js";
-import { readString, stringifyJson } from "./helpers.js";
+import { omitUndefined, readString, stringifyJson } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import { applyLingAgentProtectedFields } from "./teammate-core-store.js";
 
@@ -213,6 +214,10 @@ export class SqliteTeammateBootstrapCoordinator {
     }
 
     const next = applyLingAgentProtectedFields(existing);
+    // Opening a Store is not an authority change. Keep the durable revision
+    // stable unless the protected profile actually needs repairing; restart
+    // recovery compares that revision against the original frozen authority.
+    if (isDeepStrictEqual(omitUndefined({ ...next }), existing)) return existing;
     this.context.database
       .prepare(`
         UPDATE ai_teammates

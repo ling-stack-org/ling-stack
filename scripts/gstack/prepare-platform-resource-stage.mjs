@@ -140,7 +140,8 @@ export async function prepareGstackPlatformResourceStage({ nativeCandidatePath, 
   const adaptationInputs = Buffer.concat(await Promise.all(adaptationPaths.map(path => readFile(join(scriptRoot, path)))));
   const lease = await managedResourceWrite(output, { kind: "resource", additionalBytes: (await resourceTreeBytes(source)) * 2 + 512 * 1024 ** 2 });
   await mkdir(dirname(output), { recursive: true });
-  const temporary = await realpath(await mkdtemp(join(dirname(output), ".gstack-resource-stage-")));
+  const temporary = await realpath(await mkdtemp(join(lease.scratchPath, "tmp", ".gstack-resource-stage-")));
+  let completed = false;
   try {
     const candidate = join(temporary, "candidate");
     onProgress("clone native prerequisites into exclusively owned staging");
@@ -291,9 +292,10 @@ export async function prepareGstackPlatformResourceStage({ nativeCandidatePath, 
     await writeFile(join(candidate, "resource-stage.json"), `${JSON.stringify(record, null, 2)}\n`);
     await resourceCheckpoint(lease.root);
     await publishStagedDirectory(candidate, output);
+    completed = true;
     return record;
   } finally {
-    await rm(temporary, { recursive: true, force: true });
+    if (completed) await rm(temporary, { recursive: true, force: true });
   }
 }
 

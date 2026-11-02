@@ -2,6 +2,12 @@ import type { HarnessFeatureSnapshotV1 } from "@ling-stack/contracts";
 import type { ResolvedDaemonConfig } from "../../config.js";
 
 export function createHarnessFeatureSnapshot(config: Pick<ResolvedDaemonConfig, "harness">): HarnessFeatureSnapshotV1 {
+  const selected = config.harness.delegations.selectedWorkflowIds ?? [];
+  if (!Array.isArray(selected) || selected.length > 100
+    || selected.some(id => typeof id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,255}$/u.test(id))
+    || new Set(selected).size !== selected.length) {
+    throw Object.assign(new Error("delegation.invalid_workflow_selection"), { code: "delegation.invalid_workflow_selection" });
+  }
   return {
     schemaVersion: 1,
     continuations: config.harness.continuations.mode,
@@ -10,6 +16,7 @@ export function createHarnessFeatureSnapshot(config: Pick<ResolvedDaemonConfig, 
     evaluationModelGate: config.harness.evaluations.modelGate,
     delegations: config.harness.delegations.mode,
     delegationMaxDepth: config.harness.delegations.maxDepth,
+    delegationSelectedWorkflowIds: Object.freeze([...selected]),
   };
 }
 
@@ -27,6 +34,16 @@ export { createRunEvaluationQaModelConfiguration, runEvaluationQaModelConfigurat
 export type { RunEvaluationQaModelConfiguration, RunEvaluationQaModelConfigurationInput,
   RunEvaluationQaModelConfigurationFacts } from "./evaluations/qa-model-preparation.js";
 export { createRunEvaluationQaModelHostAdapter } from "./evaluations/qa-model-coordinator.js";
+export {
+  reconcileRunEvaluationTasksAtStartup,
+  RunEvaluationTaskWorkerComposition,
+  type RunEvaluationQaTaskWorkerActivation,
+  type RunEvaluationTaskStartupRecoveryResult,
+  type RunEvaluationTaskWorkerCompositionOptions,
+} from "./evaluations/task-worker-composition.js";
 export { createRunEvaluationQaOwnedModelBatch, runEvaluationQaOwnedModelBatchFacts,
   createRunEvaluationQaProviderCurrentness } from "./evaluations/qa-model-owned-batch.js";
 export type { RunEvaluationQaOwnedModelBatch } from "./evaluations/qa-model-owned-batch.js";
+export { createRunEvaluationQaPilotReview, runEvaluationQaModelPilot } from "./evaluations/qa-model-pilot-runner.js";
+export type { RunEvaluationQaPilotCase, RunEvaluationQaPilotExecution, RunEvaluationQaPilotOptions,
+  RunEvaluationQaPilotResult, RunEvaluationQaPilotReviewV1 } from "./evaluations/qa-model-pilot-runner.js";

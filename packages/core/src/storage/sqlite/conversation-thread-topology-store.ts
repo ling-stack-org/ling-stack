@@ -110,7 +110,20 @@ export class SqliteConversationThreadTopologyStore {
         };
       }
       case "branch": {
-        this.assertParentLineage(input.channelId, input.parentThreadId, input.parentTurnId);
+        if (input.parentTurnId) {
+          this.assertParentLineage(input.channelId, input.parentThreadId, input.parentTurnId);
+          if (input.forkContextSnapshot.throughItemSequence === 0) throw new Error("An empty branch cannot have a parent turn.");
+          const boundary = this.context.database.prepare(`
+            SELECT turn_id FROM conversation_items
+            WHERE workspace_id = ? AND thread_id = ? AND sequence = ? AND status = 'committed'
+          `).get(DEFAULT_WORKSPACE_ID, input.parentThreadId, input.forkContextSnapshot.throughItemSequence) as Record<string, SQLOutputValue> | undefined;
+          if (!boundary || readNullableString(boundary, "turn_id") !== input.parentTurnId) {
+            throw new Error("Conversation branch watermark must belong to its parent turn.");
+          }
+        } else {
+          this.assertParentThread(input.channelId, input.parentThreadId);
+          if (input.forkContextSnapshot.throughItemSequence !== 0) throw new Error("A nonempty branch requires a parent turn.");
+        }
         const snapshot = this.ports.createConversationContextSnapshotWithinTransaction({
           ...input.forkContextSnapshot,
           threadId: input.parentThreadId,

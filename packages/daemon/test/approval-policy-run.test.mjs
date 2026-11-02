@@ -181,6 +181,38 @@ test("bash=allow lets the runner continue without creating an approval request",
   }
 });
 
+test("Bash approval displays and grants only the model-selected subdirectory", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-approval-effective-cwd-"));
+  await mkdir(resolve(cwd, "project"));
+  const runner = new ApprovalProbeRunner({ toolCallId: "effective-cwd", toolName: "bash",
+    input: { command: "printf scoped", cwd: "project", prefix_rule: ["printf"] } });
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "effective-cwd-approval"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const [pending] = await listApprovals(daemon.url, cwd, ready.data.runId);
+    // Resolve first, so a failed assertion cannot strand this isolated approval wait.
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(pending.id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      decisionKind: "approve_command_rule", proposedRuleFingerprint: pending.proposedCommandRule.fingerprint,
+    });
+    await sse.collectRemaining();
+    assert.equal(requested.data.data.payload.cwd, resolve(cwd, "project"));
+    assert.equal(pending.payload.cwd, resolve(cwd, "project"));
+    assert.equal(pending.proposedCommandRule.cwd, resolve(cwd, "project"));
+    const rules = await getJson(`${daemon.url}/approval-command-rules?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(rules.rules[0].cwd, resolve(cwd, "project"));
+    assert.equal(runner.decisions[0].handledResult.details.unifiedExec.cwd, resolve(cwd, "project"));
+    const run = await getJson(`${daemon.url}/runs/${ready.data.runId}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(run.cwd, cwd);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("risk review upgrades allowed force push into an explicit approval request", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-risk-review-force-push-"));
   execFileSync("git", ["init"], { cwd, stdio: "ignore" });

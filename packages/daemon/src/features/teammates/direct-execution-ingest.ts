@@ -74,7 +74,7 @@ export function ingestTeammateDirectExecutionSource(input: {
         path: ref.path,
         ...(ref.label ? { label: ref.label } : {}),
         ...(ref.line !== undefined ? { line: ref.line } : {}),
-        source: "explicit_text",
+        source: ref.source ?? "explicit_text",
       })),
     },
     ...(previousItem ? { supersedesItemId: previousItem.id, sourceTurnId: previousItem.turnId } : {}),

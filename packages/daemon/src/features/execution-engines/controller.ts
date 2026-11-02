@@ -19,7 +19,7 @@ export class EngineManagementController {
     readonly authority: EngineManagementAuthority;
     readonly getStore: () => ExecutionEngineProfileStore;
     readonly probe?: (profile: ExecutionEngineProfile, signal: AbortSignal, mode: ExecutionEngineProbeMode) => Promise<ExecutionEngineProbe>;
-    readonly discover?: () => Promise<unknown>;
+    readonly discover?: (signal: AbortSignal) => Promise<unknown>;
     readonly install?: (engineId: ExternalExecutionEngineId, signal: AbortSignal) => Promise<unknown>;
     readonly installStatus?: (engineId: ExternalExecutionEngineId) => unknown;
     readonly onProfileChanged?: (engineId: ExternalExecutionEngineId) => void;
@@ -63,8 +63,21 @@ export class EngineManagementController {
       }
       if (url.pathname === `${prefix}/discovery` && request.method === "GET") {
         if (!this.options.discover) { writeEngineJson(response, 404, { error: "engine_route_not_found" }, origin); return true; }
-        this.options.authority.authorize(request);
-        writeEngineJson(response, 200, await this.options.discover(), origin);
+        const abort = new AbortController();
+        const closed = (): void => { if (!response.writableEnded) abort.abort(); };
+        response.once("close", closed);
+        try {
+          const signal = AbortSignal.any([abort.signal, this.options.authority.lifetime(principal)]);
+          const result = await this.options.discover(signal);
+          this.options.authority.authorize(request);
+          signal.throwIfAborted();
+          writeEngineJson(response, 200, result, origin);
+        } catch (error) {
+          this.options.authority.authorize(request);
+          throw error;
+        } finally {
+          response.off("close", closed);
+        }
         return true;
       }
       if (url.pathname === prefix && request.method === "GET") {
@@ -146,6 +159,9 @@ export class EngineManagementController {
           const result = await this.options.install(engineId, signal);
           this.options.authority.authorize(request);
           writeEngineJson(response, 200, { install: result }, origin);
+        } catch (error) {
+          this.options.authority.authorize(request);
+          throw error;
         } finally {
           response.off("close", closed);
         }

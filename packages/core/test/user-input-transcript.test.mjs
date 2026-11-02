@@ -55,6 +55,12 @@ for (const surface of ["normal", "private", "channel"]) {
     assert.equal(request.source.participantId, f.participantId);
     assert.equal(request.source.sourceItemId, f.turn.item.id);
     assert.equal(request.source.attemptId, f.attempt.id);
+    assert.deepEqual(request.answerAuthority, {
+      schemaVersion: 1, threadId: f.thread.id, runId: f.run.id, attemptId: f.attempt.id,
+      participantId: f.participantId, requestId: f.request.requestId, requestVersion: 1,
+      statusRevision: 1, token: request.answerAuthority.token,
+    });
+    assert.match(request.answerAuthority.token, /^[a-f0-9]{64}$/u);
     f.submit();
     const result = f.read();
     assert.equal(result[0].status, "answered");
@@ -90,6 +96,25 @@ test("projection is an explicit whitelist and never leaks leases or authority", 
     f.cwd, "fencingToken", "runtimeInstanceId", "toolCallId", "taskBinding", "idempotencyKey", "submission_fingerprint"]) {
     assert.ok(!json.includes(forbidden), "must omit internal field/value: " + forbidden);
   }
+});
+
+test("only the current active or yielded owner receives answer authority while history stays readable", async t => {
+  const active = await fixture(t);
+  assert.match(active.read()[0].answerAuthority.token, /^[a-f0-9]{64}$/u);
+  active.db.prepare("UPDATE work_unit_attempts SET status='lost',ended_at=? WHERE id=?").run(acceptedAt, active.attempt.id);
+  const stale = active.read()[0];
+  assert.equal(stale.availability, "available");
+  assert.equal(stale.status, "pending");
+  assert.equal(stale.answerAuthority, undefined);
+
+  const yielded = await fixture(t);
+  yielded.store.commitUserInputYield({
+    threadId: yielded.thread.id, requestId: yielded.request.requestId, expectedRequestVersion: 1,
+    sourceFence: { workUnitId: yielded.attempt.workUnitId, attemptId: yielded.attempt.id,
+      runtimeInstanceId: yielded.attempt.runtimeInstanceId, fencingToken: yielded.attempt.fencingToken },
+    quiescence: { kind: "runner_quiesced", runnerId: yielded.attempt.runnerId, stoppedAt: acceptedAt, lastRunEventSeq: 0 },
+  }, acceptedAt);
+  assert.match(yielded.read()[0].answerAuthority.token, /^[a-f0-9]{64}$/u);
 });
 
 test("read preserves item ordering, de-duplicates IDs and does not hydrate off-page answers", async t => {

@@ -1,0 +1,424 @@
+{
+  "schemaVersion": 1,
+  "purpose": "WIP checkpoint backup only; not acceptance or release approval",
+  "branch": "codex/e6-safe-continuation",
+  "parentCommit": "c1618558bd96150b6e9bd76c93651aa84c322b8f",
+  "observedMainCommit": "912e3e8e835f68a0d62161e3d5694ce9f9f7c6cb",
+  "selfExcluded": true,
+  "excludedPaths": [
+    "packages/daemon/report.20261018.103550.23062.0.001.json"
+  ],
+  "inputCount": 82,
+  "inputs": [
+    {
+      "path": "apps/desktop/package.json",
+      "bytes": 10128,
+      "sha256": "acfd37d50c6f50ef590034d7982cd7dee108c8fb1686878e46c0045e940d2499"
+    },
+    {
+      "path": "apps/desktop/scripts/packaged-office-native-asar-checks.mjs",
+      "bytes": 9444,
+      "sha256": "d8dbefb32de9b6a62efe13da8d02aafd5c47edbfe4094d1041bc477bd011712d"
+    },
+    {
+      "path": "apps/desktop/scripts/packaged-office-native-review-inputs.mjs",
+      "bytes": 92054,
+      "sha256": "a6c66e06063555c64dccd9a2fa542b421a6292986c26653895680db3fbb9d5dd"
+    },
+    {
+      "path": "apps/desktop/scripts/stage-development-bundled-plugins.mjs",
+      "bytes": 4831,
+      "sha256": "01fe4dcad164b1ce71ab4fe4b46e7f191b1124288c579bc20c4bfff6368a9911"
+    },
+    {
+      "path": "apps/desktop/tests/bundled-plugin-resources.test.mjs",
+      "bytes": 10470,
+      "sha256": "bc4f2df4d190cca07973fcebb92d55e0dfdbee2241ad54427d64236f3904ce8e"
+    },
+    {
+      "path": "apps/desktop/tests/packaged-office-daemon-source-inputs.test.mjs",
+      "bytes": 39136,
+      "sha256": "35cdc1cba8fc349fea8f3a8b565c7fdfe2192bc4374e1aed1860f62cf0360150"
+    },
+    {
+      "path": "apps/desktop/tests/packaged-office-native-asar-checks.test.mjs",
+      "bytes": 13925,
+      "sha256": "34692a9bbca3c2a368153a9cfb14eee69c143b57da2bd5a10d8a20bb0737df5d"
+    },
+    {
+      "path": "apps/desktop/tests/packaged-office-native-publication.test.mjs",
+      "bytes": 23286,
+      "sha256": "a5f567c0c36497731c764e039f37dc12d31f3841012a8293fde653b56661b0b1"
+    },
+    {
+      "path": "docs/design/conversation-user-input-and-sandbox-integration.md",
+      "bytes": 56899,
+      "sha256": "626953c986e9bea858d4349cfdabf2cf1f8e0e5cfc0a61c727c568e3a8fdd6a4"
+    },
+    {
+      "path": "docs/design/e6-checkpoint-status-2026-10-19.md",
+      "bytes": 4523,
+      "sha256": "1b3a522aa27f368034159f24a3256af4af496c0f6f768b449f11947bb3bca4b1"
+    },
+    {
+      "path": "docs/design/harness-delegation-codex-source-cross-check-2026-10-18.md",
+      "bytes": 7798,
+      "sha256": "77ae3d0027fefc2464f8ca73aff207a7903e30a401925adda576ea4924403b25"
+    },
+    {
+      "path": "docs/design/harness-delegation-writer-detailed-design-2026-10-19.md",
+      "bytes": 23816,
+      "sha256": "f37ec83cd559aeda7cdeaa6eb3c689b281aff3f1551abe63b64323b04b69c57f"
+    },
+    {
+      "path": "docs/design/harness-evaluation-qa-producer-detailed-design.md",
+      "bytes": 18737,
+      "sha256": "69ac0d229a3eb48657a4482c821f9f19594ed6fc04dcee796eeb9e5c0c0f8068"
+    },
+    {
+      "path": "packages/core/src/approval-types.ts",
+      "bytes": 11775,
+      "sha256": "defa577444e69082279b0b71a1256a538daf3ed8421f61d5efeb3ec332de52d0"
+    },
+    {
+      "path": "packages/core/src/candidate-router.ts",
+      "bytes": 3751,
+      "sha256": "c39c02c3464a546d7b3d0fffa3e3af29924b659d1ac997f6f2865ff333155e9e"
+    },
+    {
+      "path": "packages/core/src/conversation-turn-ingest-types.ts",
+      "bytes": 5482,
+      "sha256": "252cbbb19cb26481427ab4418a23c4674e0ad42345d8d416a2838005c803c2cf"
+    },
+    {
+      "path": "packages/core/src/harness/delegation-authority.ts",
+      "bytes": 10473,
+      "sha256": "9b4663e28dadafbef1a243c747ff2a1af7b000243f0183bb2fb7a24943bb32d3"
+    },
+    {
+      "path": "packages/core/src/index.ts",
+      "bytes": 8988,
+      "sha256": "c2518895cf3e3c64c3f0c987458e640776fbb5106d58884c69f32539d0a6b921"
+    },
+    {
+      "path": "packages/core/src/run-types.ts",
+      "bytes": 161582,
+      "sha256": "46e80051ecba9b9312b9426535305411b4408a2f2c3e65f64daa1c43166b6095"
+    },
+    {
+      "path": "packages/core/src/storage/event-log.ts",
+      "bytes": 2801,
+      "sha256": "cee7877f5df9ada2b9105afc2b9b6be0b6a1c01d65fa72644fe021f4e595eab3"
+    },
+    {
+      "path": "packages/core/src/storage/sqlite-run-store.ts",
+      "bytes": 275161,
+      "sha256": "e3b10afb232b1bd1a33d604b8f830fdb505eb5d68ad1fa4b576126ed2782391b"
+    },
+    {
+      "path": "packages/core/src/storage/sqlite/conversation-turn-ingest-store.ts",
+      "bytes": 23804,
+      "sha256": "73063c82a4ff91e1302cc6f8f9be3d31124abb5804bd7cad3d7c5ab745aee3be"
+    },
+    {
+      "path": "packages/core/src/storage/sqlite/run-ancestry.ts",
+      "bytes": 6528,
+      "sha256": "ef82d1faf827a67c17b35c221f6a493a77db1caf1c8174a346b18aec86f030d2"
+    },
+    {
+      "path": "packages/core/src/storage/sqlite/runtime-recovery-coordinator.ts",
+      "bytes": 25465,
+      "sha256": "348803a40f0b55d9b814945ea894d5f5f795bab8999fae8d328e900684907d25"
+    },
+    {
+      "path": "packages/core/src/storage/sqlite/runtime-semaphore-store.ts",
+      "bytes": 15113,
+      "sha256": "7599e42d2049b25d335ee14b7ef0a7123e8f752f08a0820aef683392ce377794"
+    },
+    {
+      "path": "packages/core/src/storage/sqlite/user-input-delivery-records.ts",
+      "bytes": 9423,
+      "sha256": "05d4e3578ecab61eb91321e4ed26c7269240b242439b1316813b86a387c44b7e"
+    },
+    {
+      "path": "packages/core/src/storage/sqlite/user-input-delivery-store.ts",
+      "bytes": 15523,
+      "sha256": "7bf46695f3663f0278380a6148d4dcdb68fc7199da8355d1d71b906c891ba70b"
+    },
+    {
+      "path": "packages/core/src/storage/sqlite/user-input-host-continuation-store.ts",
+      "bytes": 27434,
+      "sha256": "cb3cb9ef9fbc82c001f4af4a8c8441b8b6d033c1be8a0c48303b8e590333b47f"
+    },
+    {
+      "path": "packages/core/src/storage/sqlite/user-input-prestart-recovery-store.ts",
+      "bytes": 29621,
+      "sha256": "1ad591660b3c636e5f1abb7fa4ebeec273314d9cea4ef0b91dc89808de011f36"
+    },
+    {
+      "path": "packages/core/src/storage/sqlite/user-input-run-created-replay.ts",
+      "bytes": 4092,
+      "sha256": "f40843b50da8d714963ba478de529edf2002fb9e28e04b37097dcfc3f1923e6b"
+    },
+    {
+      "path": "packages/core/src/user-input-host-continuation-types.ts",
+      "bytes": 7398,
+      "sha256": "cdce48e97bce849119b72c21c366e629bb8c42ee13ba2dfcdd20565c5b11ecf0"
+    },
+    {
+      "path": "packages/core/test/channel-runtime-store.test.mjs",
+      "bytes": 112069,
+      "sha256": "4fa4d0b499f2b4e0b9e48b750f616fc86cdf0ee059f1700f7cd68f069f5abcc6"
+    },
+    {
+      "path": "packages/core/test/conversation-surface-ingest.test.mjs",
+      "bytes": 17720,
+      "sha256": "d4d190536decd1bb394bf4730e4a119f854c1490b7989a4b6cbece53e922a91e"
+    },
+    {
+      "path": "packages/core/test/delegation-authority.test.mjs",
+      "bytes": 9405,
+      "sha256": "0390fb92de411d6a243cc56b4a56b7273486abe06151ce5c8b26531e2fce36d8"
+    },
+    {
+      "path": "packages/core/test/event-log-mirror-io.test.mjs",
+      "bytes": 2075,
+      "sha256": "290f212c30d3c9f7f6c1d618b160bb465a2a834d4b57a99be4ca7b834a394add"
+    },
+    {
+      "path": "packages/core/test/procedure-observation-store.test.mjs",
+      "bytes": 16392,
+      "sha256": "7bd8e62e8913ca0375fb2520eb588fd8813741efc5c781bfe09f490a9f0bd35a"
+    },
+    {
+      "path": "packages/core/test/run-ancestry.test.mjs",
+      "bytes": 8397,
+      "sha256": "6a6009429da3522226c9bb0ee0f15fbe9354655ff5a47ac09faa85501f25be04"
+    },
+    {
+      "path": "packages/core/test/support/user-input-transcript-fixture.mjs",
+      "bytes": 6263,
+      "sha256": "652dca782ee25dd56222e5aa4da6aed6836b2acb6a9f6a3b1100d074a81db64a"
+    },
+    {
+      "path": "packages/core/test/user-input-delivery.test.mjs",
+      "bytes": 26569,
+      "sha256": "71d5bf6f6210fe88da81e468c4d0fa2f3ff64a15dfbaaceb1df842121befe129"
+    },
+    {
+      "path": "packages/core/test/user-input-host-continuation.test.mjs",
+      "bytes": 43021,
+      "sha256": "8ea141990caef5ecc44b8ecc225ce33cdee54233f05dcefac52b5eaff4ffea48"
+    },
+    {
+      "path": "packages/daemon/src/context.ts",
+      "bytes": 13042,
+      "sha256": "f9faa4aae36cc6ee9b3515353248ef18c4ea0d81643fded39e23699e3925f5e6"
+    },
+    {
+      "path": "packages/daemon/src/features/channels/channel-turn-dispatch-executor.ts",
+      "bytes": 14588,
+      "sha256": "a33a342ba30bbf3c66394dbd8c265e61831c584c51b9b398372566a0e107de87"
+    },
+    {
+      "path": "packages/daemon/src/features/harness/evaluations/qa-model-coordinator.ts",
+      "bytes": 12728,
+      "sha256": "e5bdf37d3472039ef4dde4bb5797af23e72dda2cc4de4cedc17fcb9a1922656b"
+    },
+    {
+      "path": "packages/daemon/src/features/harness/evaluations/task-worker-composition.ts",
+      "bytes": 5526,
+      "sha256": "03deec0e461c6ba7d74fbadca23b774d1c3ca502fd56529bef3a7a673ad9c02b"
+    },
+    {
+      "path": "packages/daemon/src/features/harness/evaluations/task-worker.ts",
+      "bytes": 13695,
+      "sha256": "0ea65846bb2338b47e0bfed6a5ecb966b87f69ead11a4f50618c3642438e2cdd"
+    },
+    {
+      "path": "packages/daemon/src/features/harness/index.ts",
+      "bytes": 2066,
+      "sha256": "4be5d14903f3f0d4039e294d96a553bd04e261c41651079a3c6f7ad4dce946e2"
+    },
+    {
+      "path": "packages/daemon/src/features/runs/approvals.ts",
+      "bytes": 60164,
+      "sha256": "1da54202ae0b7f367d700088ec5c3bfef0d737d4d912b2fb772610ba6ec88ab0"
+    },
+    {
+      "path": "packages/daemon/src/features/runs/concurrency.ts",
+      "bytes": 17835,
+      "sha256": "da87c82eace95e88abc9bc0871c4945d5dcf0b7ad9e72dbddf68abb397f0cb06"
+    },
+    {
+      "path": "packages/daemon/src/features/runs/orchestrator.ts",
+      "bytes": 164957,
+      "sha256": "c2e62cd6f9f70d60011e23881d0f3200ff33d6238b477837aab36ee130fe8294"
+    },
+    {
+      "path": "packages/daemon/src/features/runs/threads.ts",
+      "bytes": 19129,
+      "sha256": "0368aeb2d60d5b62cba075ca57e1a171d89e185cad4326180ee40b307b0b22e7"
+    },
+    {
+      "path": "packages/daemon/src/features/runs/user-input-answer-dispatch.ts",
+      "bytes": 6201,
+      "sha256": "5891c9daa5a6091a9ccab30fd3e1158fe2252557f46ba6586f12ab7e3a2cf600"
+    },
+    {
+      "path": "packages/daemon/src/features/runs/user-input-continuation-receiver.ts",
+      "bytes": 4711,
+      "sha256": "926a88b92afdac0362999b61814215c2a6e40ccd92fa842ab6e0b51763d79199"
+    },
+    {
+      "path": "packages/daemon/src/features/runs/user-input-delivery-worker.ts",
+      "bytes": 19251,
+      "sha256": "6fd99412f44e402dc88b94911a9efd2e7c028860d468b6f185d204cd9c4eed44"
+    },
+    {
+      "path": "packages/daemon/src/features/runs/user-input-prepared-request.ts",
+      "bytes": 11962,
+      "sha256": "e019d34c74203e4b4cf49efb4d206c47de69a35634a633619b9e64e72bff0861"
+    },
+    {
+      "path": "packages/daemon/src/features/runs/workflow-step-input-turn.ts",
+      "bytes": 6084,
+      "sha256": "153516173138c1afa1ff4e84b584dca9a41088cb7887e203ff3c12167a61278c"
+    },
+    {
+      "path": "packages/daemon/src/features/skills/revision-routes.ts",
+      "bytes": 14114,
+      "sha256": "85e7c2af57c14151b1e15f29a47fdee0b2eb2cf30d4eeae2d96f3ee8dd01eff1"
+    },
+    {
+      "path": "packages/daemon/src/index.ts",
+      "bytes": 51378,
+      "sha256": "6d4bd81159e39910162b03e7b5fdb744083e113a953b1138b93c1ec66bfd07d7"
+    },
+    {
+      "path": "packages/daemon/test/approval-preview-failure.test.mjs",
+      "bytes": 25859,
+      "sha256": "382c04655d28eed2a99b9310e372907c5598069f0a2b3826b86b1747a7b0b54c"
+    },
+    {
+      "path": "packages/daemon/test/bootstrap-original-source-hooks.test.mjs",
+      "bytes": 24021,
+      "sha256": "3f926dc56b68985c45de4626e6212531269acb4926ade367bf1381ddbc4188e1"
+    },
+    {
+      "path": "packages/daemon/test/bundled-skill-startup.test.mjs",
+      "bytes": 14736,
+      "sha256": "0923da7d79ed1d77cf4543bdf2c7a940185cdd272a1eacfb67b9e6f5c71f235e"
+    },
+    {
+      "path": "packages/daemon/test/channel-turn-dispatch-recovery.test.mjs",
+      "bytes": 30280,
+      "sha256": "de253ab95deb57625b972a51a04be9ebaf4fbdba953348266816a4bbba5cd475"
+    },
+    {
+      "path": "packages/daemon/test/channel-workspace.test.mjs",
+      "bytes": 796992,
+      "sha256": "6dd4b0435bab15ff91c51a57cd40f3bff8a77740ea08c114fbe0480f59f128e4"
+    },
+    {
+      "path": "packages/daemon/test/continuation-concurrency-admission.test.mjs",
+      "bytes": 32704,
+      "sha256": "270e241c53c7784228f3917f01014b78330f0bf0eb6a152f6abb45034b1a7af9"
+    },
+    {
+      "path": "packages/daemon/test/harness-tool-execution-startup-recovery.test.mjs",
+      "bytes": 12262,
+      "sha256": "8e0ca680a0345651132f9285a7bfdf170b95a4e43982e0ab8bca8928082b8dd8"
+    },
+    {
+      "path": "packages/daemon/test/office-local-directory-core-composition.test.mjs",
+      "bytes": 21329,
+      "sha256": "74bd50cdec4c79b9b30e1093c62abb3d4a61305c831e7e76decf1dd116a273cc"
+    },
+    {
+      "path": "packages/daemon/test/p2-stop-attempt-fencing.test.mjs",
+      "bytes": 47792,
+      "sha256": "cd110be6db552552f46ea397acda8937819bb237ded6e93092449519b57cfcda"
+    },
+    {
+      "path": "packages/daemon/test/provider-capability-save-boundary.test.mjs",
+      "bytes": 3602,
+      "sha256": "3d0b8a49dea92dbc43da96535a0cd32681d12cd63788dee3531f44020ebe2f57"
+    },
+    {
+      "path": "packages/daemon/test/recovery-discovery-fair-scan.test.mjs",
+      "bytes": 20031,
+      "sha256": "cf00d68ba16c456be4631c5530c263d0abbc33cb60242a75398f64fa5664dd07"
+    },
+    {
+      "path": "packages/daemon/test/required-question-channel-e2e.test.mjs",
+      "bytes": 9101,
+      "sha256": "7035a6324a93826717594cc8d92b10b738dcdadcb0796048bdcfe8df98640e27"
+    },
+    {
+      "path": "packages/daemon/test/run-evaluation-task-worker-composition.test.mjs",
+      "bytes": 9109,
+      "sha256": "d0f09576406b63c808a68bc43a943fceaad71da7578b8bd4a5d9a8ed6f4e9590"
+    },
+    {
+      "path": "packages/daemon/test/skill-revision-api.test.mjs",
+      "bytes": 12989,
+      "sha256": "fdf3e2f0bee5c3f94d1749ec973c1db65a9ca0e10d5b1ee752ab53fd9ef8fd74"
+    },
+    {
+      "path": "packages/daemon/test/support/required-question-channel-e2e-fixture.mjs",
+      "bytes": 20836,
+      "sha256": "a9b9455ede95256386e217bdb78fd163f95f01b0c29c30ae9f024b7b5585cb0e"
+    },
+    {
+      "path": "packages/daemon/test/test-support/recovery-discovery-fixture.mjs",
+      "bytes": 12851,
+      "sha256": "7b75f1715b47cf34db2c356cd7c601243de6508a83df3d63c9877dfeb7db6abf"
+    },
+    {
+      "path": "packages/daemon/test/thread-hard-delete-api.test.mjs",
+      "bytes": 8863,
+      "sha256": "968c50cb9a7ea3c701d566a7505f2937c9b8a6d13c2e174cc9daa40db4984a34"
+    },
+    {
+      "path": "packages/daemon/test/tool-surfaces-api.test.mjs",
+      "bytes": 19755,
+      "sha256": "4d9ae10af11a9ef1c6ead924b7b647c017386c3fdfa7200d134f671066be274b"
+    },
+    {
+      "path": "packages/daemon/test/user-input-continuation-receiver.test.mjs",
+      "bytes": 18258,
+      "sha256": "50602762cd9f4f3aeda6368ca9d0e382377d662b2da44df435a91a7b0a1bc5b3"
+    },
+    {
+      "path": "packages/daemon/test/user-input-delivery-worker.test.mjs",
+      "bytes": 33707,
+      "sha256": "93153d8225c5abe48a2fabe13e8ee2555dc83998fee6315132b75c5c31d10435"
+    },
+    {
+      "path": "packages/daemon/test/user-input-dispatch.test.mjs",
+      "bytes": 58805,
+      "sha256": "8891854b6cfde3a807ebeb90fde836c02a8f008467b16bb84b56677501485d99"
+    },
+    {
+      "path": "packages/daemon/test/user-input-prepared-request.test.mjs",
+      "bytes": 24640,
+      "sha256": "cdb1675ccf10b61d3fdd799ef25bc0aab10c46e256f420675b05f619da2f59c6"
+    },
+    {
+      "path": "packages/daemon/test/workflow-operation-evidence.test.mjs",
+      "bytes": 125448,
+      "sha256": "bdb88ea0558463efeaa543ecc3dc5b58e7354b2194c485fd235afb6b8733e3ab"
+    },
+    {
+      "path": "packages/daemon/test/workflow-status-gate-contract.test.mjs",
+      "bytes": 17650,
+      "sha256": "5155f345b26455f6da439af6070b3f81e95d3159136e1dceae809c22c56cfc19"
+    },
+    {
+      "path": "packages/daemon/test/workflow-step-input-turn.test.mjs",
+      "bytes": 11825,
+      "sha256": "15498b91f9b9d83aab231d3f2516ed8426f7c7aaba15645eb921c4a2397604dc"
+    }
+  ]
+}

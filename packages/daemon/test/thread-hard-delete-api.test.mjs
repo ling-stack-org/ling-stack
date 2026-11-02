@@ -178,6 +178,7 @@ test("thread hard delete rejects unsafe records and enabled automation targets",
 
 async function startDaemonForTest(cwd, dependencies = {}) {
   const daemon = createDaemonServer({
+    defaultWorkspaceCwd: cwd,
     host: "127.0.0.1",
     port: 0,
     defaultWorkspaceCwd: cwd,

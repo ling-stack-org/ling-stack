@@ -23,6 +23,14 @@ const cases = {
   "bash-deny-same-message-failed": deniedTerminal,
   "resume-pre-dispatch-shutdown": preDispatchShutdown,
   "terminal-commit-message-gap": terminalMessageGap,
+  "shutdown-request-before-approval-commit-blocked": shutdownBeforeApproval,
+  "shutdown-missing-approval-checkpoint-blocked": f => shutdownInvalidApproval(f, "missing"),
+  "shutdown-foreign-approval-basis-blocked": f => shutdownInvalidApproval(f, "foreign"),
+  "shutdown-delegated-owner-blocked": f => shutdownInvalidApproval(f, "delegated"),
+  "shutdown-real-local-writer-drains-before-suspension": shutdownWithLocalWriter,
+  "shutdown-local-writer-checkpoint-change-blocked": f => shutdownWithLocalWriter(f, "checkpoint"),
+  "shutdown-local-writer-owner-change-blocked": f => shutdownWithLocalWriter(f, "owner"),
+  "shutdown-local-writer-throwing-live-listener": f => shutdownWithLocalWriter(f, undefined, true),
 };
 const selected = process.env[CASE_ENV];
 if (selected) assert.ok(Object.hasOwn(cases, selected), "only a named disposable child case may run");
@@ -46,7 +54,8 @@ async function ownedCase(t, label, exercise) {
     const homeHook = t.mock.method(os, "homedir", () => home);
     syncBuiltinESMExports();
     const originalFetch = globalThis.fetch;
-    let origin, fixture;
+    let origin, fixture, exerciseError;
+    const cleanupErrors = [];
     const unownedRequests = [];
     globalThis.fetch = async function (input, init) {
       const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
@@ -60,20 +69,44 @@ async function ownedCase(t, label, exercise) {
       const core = await import("../../core/dist/index.js");
       const { createDaemonServer } = await import("../dist/index.js");
       const { createRunnerRegistry } = await import("../dist/runtime/runners.js");
+      const { RunStoreRegistry } = await import("../dist/runtime/store-registry.js");
+      const { ControlPlaneEventHub } = await import("../dist/features/control-plane/events.js");
       const { PiRunnerAdapter } = await import("../../runner-pi/dist/index.js");
+      const { AttemptLocalWriterGroup } = await import("../dist/runtime/attempt-local-writers.js");
+      const writerGroups = new Map();
+      const originalReserve = AttemptLocalWriterGroup.prototype.reserve;
+      // Observe the original group only. Never substitute its ticket, drain
+      // promise, membership or result with caller-supplied completion facts.
+      t.mock.method(AttemptLocalWriterGroup.prototype, "reserve", function (...args) {
+        const ticket = Reflect.apply(originalReserve, this, args);
+        writerGroups.set(this.source.runId, this);
+        return ticket;
+      });
       const { prepareFixtureTaskInput } = await import("./support/prepared-input-fixture.mjs");
-      fixture = createFixture({ t, cwd, core, createDaemonServer, createRunnerRegistry,
-        PiRunnerAdapter, prepareFixtureTaskInput, setOrigin: value => { origin = value; } });
+      fixture = createFixture({ t, cwd, core, createDaemonServer, createRunnerRegistry, RunStoreRegistry, ControlPlaneEventHub,
+        PiRunnerAdapter, prepareFixtureTaskInput, writerGroups, setOrigin: value => { origin = value; } });
       await fixture.start();
       console.log(`A28 entered owned real recovery case: ${label}`);
       await exercise(fixture);
       assert.deepEqual(unownedRequests, [], "neither Provider nor public web transport may run");
+    } catch (error) {
+      exerciseError = error;
     } finally {
-      await fixture?.stop();
-      globalThis.fetch = originalFetch;
-      homeHook.mock.restore();
-      syncBuiltinESMExports();
+      fixture?.releaseOriginalApproval();
+      try { await fixture?.stop(); }
+      catch (error) { cleanupErrors.push(error); }
+      try { await fixture?.disposeBlockedFixture(); }
+      catch (error) { cleanupErrors.push(error); }
+      finally {
+        globalThis.fetch = originalFetch;
+        homeHook.mock.restore();
+        syncBuiltinESMExports();
+      }
     }
+    if (exerciseError && cleanupErrors.length) throw new AggregateError([exerciseError, ...cleanupErrors],
+      "A28 exercise failed before isolated fixture cleanup", { cause: exerciseError });
+    if (exerciseError) throw exerciseError;
+    if (cleanupErrors.length) throw new AggregateError(cleanupErrors, "A28 isolated fixture cleanup failed");
     return;
   }
   const temporaryRoot = await realpath(os.tmpdir());
@@ -115,15 +148,18 @@ async function ownedCase(t, label, exercise) {
  * HTTP approval route, resume coordinator, continuation dispatcher, Host bash,
  * terminal transaction and SQLite remain production implementations.
  */
-function createFixture({ t, cwd, core, createDaemonServer, createRunnerRegistry,
-  PiRunnerAdapter, prepareFixtureTaskInput, setOrigin }) {
+function createFixture({ t, cwd, core, createDaemonServer, createRunnerRegistry, RunStoreRegistry, ControlPlaneEventHub,
+  PiRunnerAdapter, prepareFixtureTaskInput, writerGroups, setOrigin }) {
   const secretResolver = core.createCompositeSecretResolver({ env: {} });
   const databasePath = join(cwd, ".ling-stack", "ling-stack.sqlite");
-  const calls = [], claims = [], terminals = [];
+  const calls = [], claims = [], terminals = [], suspensions = [];
   const approvalCommitted = deferred(), resumeClaimed = deferred(), terminalCommitted = deferred();
+  const beforeApproval = deferred(), allowApproval = deferred();
   const responseFacts = { closed: false, writesAfterClose: 0 };
   const responseClosed = deferred();
-  let daemon, stopping, store, provider, generation = 0, terminalMode = "ready", stopOnResumeClaim = false;
+  let daemon, stopping, blockedDaemon, store, provider, generation = 0, terminalMode = "ready", stopOnResumeClaim = false;
+  let pauseBeforeApproval = false;
+  let controlPlaneHub;
   let claimStop;
   class OwnedRecoveryRunner extends PiRunnerAdapter {
     prepareTaskInput(options) { return prepareFixtureTaskInput(options); }
@@ -148,6 +184,10 @@ function createFixture({ t, cwd, core, createDaemonServer, createRunnerRegistry,
         "recovery must not replay the original private prompt as a fresh Run");
       options.onEvent?.({ type: "assistant_text_delta", text: NARRATION });
       options.onEvent?.({ type: "message_end", role: "assistant", text: NARRATION });
+      if (pauseBeforeApproval) {
+        beforeApproval.resolve();
+        await allowApproval.promise;
+      }
       await options.onApprovalRequired({ toolCallId: TOOL_CALL, toolName: "bash", cwd,
         task: options.task, input: { command: COMMAND, cwd } });
       options.signal.throwIfAborted();
@@ -159,17 +199,39 @@ function createFixture({ t, cwd, core, createDaemonServer, createRunnerRegistry,
     adapter: new OwnedRecoveryRunner(), resumeCapabilities: { nativeResume: false, hostApprovalContinuation: ["bash"] },
   }]);
   const f = {
-    core, cwd, databasePath, calls, claims, terminals, approvalCommitted, resumeClaimed,
-    terminalCommitted, responseFacts, responseClosed,
+    core, cwd, databasePath, calls, claims, terminals, suspensions, approvalCommitted, resumeClaimed,
+    terminalCommitted, responseFacts, responseClosed, beforeApproval,
     get store() { return store; },
     get generation() { return generation; },
     get claimStop() { return claimStop; },
     setTerminalMode(value) { terminalMode = value; },
     stopAfterNextResumeClaim() { stopOnResumeClaim = true; },
+    pauseOriginalBeforeApproval() { pauseBeforeApproval = true; },
+    releaseOriginalApproval() { allowApproval.resolve(); },
+    subscribeThrowingSuspensionListener(source) {
+      assert.ok(controlPlaneHub, "observe the original index Hub before subscribing a real listener");
+      const delivered = [];
+      const subscription = controlPlaneHub.subscribeListener({ workspaceId: source.work.workspaceId, cwd,
+        onEvent(event) {
+          if (!event.action.endsWith("_suspended")) return;
+          delivered.push(event);
+          throw new Error("A28_OWNED_ACTIVE_LISTENER_FAILURE");
+        } });
+      subscription.activate([]);
+      return { delivered, close: () => subscription.close() };
+    },
+    holdLocalWriter(runId) {
+      const group = writerGroups.get(runId);
+      assert.ok(group, "the real original captured group must already own its Runner callbacks");
+      const gate = deferred();
+      const completion = group.wrapAsync("a28-controlled-actual-local-writer", () => gate.promise)();
+      return { release: gate.resolve, completion };
+    },
     async start() {
       if (stopping) await stopping;
       assert.equal(daemon, undefined);
       store = undefined;
+      controlPlaneHub = undefined;
       generation++;
       daemon = createDaemonServer({
         host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd,
@@ -182,60 +244,6 @@ function createFixture({ t, cwd, core, createDaemonServer, createRunnerRegistry,
           setSecret() { throw new Error("A28 recovery forbids external secret writes"); },
           deleteSecret() { throw new Error("A28 recovery forbids external secret deletes"); } },
         chromeBrowserNativeMessagingEnabled: false,
-        storeFactory(storeCwd) {
-          assert.equal(resolve(storeCwd), cwd);
-          assert.equal(store, undefined, "one owned Store per daemon generation");
-          store = core.createSqliteRunStore(storeCwd);
-          assert.equal(store.paths.databasePath, databasePath);
-          if (!provider) {
-            const now = new Date().toISOString();
-            provider = store.createProviderPreset({ kind: "openai-compatible", displayName: "A28 no-model fixture",
-              providerId: "a28-owned-fixture", model: "a28-owned-fixture", api: "openai-completions",
-              authHeader: false, baseUrl: "https://fixture.invalid/v1", capabilities: ["chat"], input: ["text"],
-              enabled: true, contextWindow: 128_000, maxTokens: 4096 }, now);
-            store.recordProviderCheckResult(provider.id, { ok: true, code: "static_check",
-              message: "Owned static fixture only; never a model request", checkedAt: now });
-            assert.ok(store.updateAiTeammate(TEAMMATE, { providerPresetId: provider.id,
-              allowedTools: ["bash"], approvalProfile: { mode: "standard", requiredForTools: ["bash"] } }, now));
-            const thread = store.getOrCreateTeammateDirectThread(TEAMMATE, now);
-            store.updateTeammateDirectThreadWorkspace(thread.id, { mode: "local", status: "ready", executionPath: cwd,
-              createdAt: now, checkedAt: now, updatedAt: now }, now);
-            store.updateApprovalPolicy({ toolDecisions: { bash: "ask" } }, now);
-          }
-          const appendExecutionEvent = store.appendExecutionEvent;
-          t.mock.method(store, "appendExecutionEvent", function (...args) {
-            const envelope = Reflect.apply(appendExecutionEvent, this, args);
-            if (envelope.type === "approval_requested") approvalCommitted.resolve(envelope);
-            return envelope;
-          });
-          const commitClaim = store.commitApprovalResumeClaim;
-          t.mock.method(store, "commitApprovalResumeClaim", function (...args) {
-            const result = Reflect.apply(commitClaim, this, args);
-            if (result.ok) {
-              claims.push(result);
-              resumeClaimed.resolve(result);
-              if (stopOnResumeClaim) {
-                stopOnResumeClaim = false;
-                // This calls the real index stop synchronously after its real
-                // claim commit. ActiveRunRegistry retains the shutdown intent
-                // even if the dispatcher registers its Attempt a moment later.
-                claimStop = f.stop();
-                claimStop.catch(() => undefined);
-              }
-            }
-            return result;
-          });
-          const commitTerminal = store.commitApprovalResumeTerminal;
-          t.mock.method(store, "commitApprovalResumeTerminal", function (...args) {
-            const result = Reflect.apply(commitTerminal, this, args);
-            if (result.ok) {
-              terminals.push(result);
-              terminalCommitted.resolve(result);
-            }
-            return result;
-          });
-          return store;
-        },
       });
       daemon.server.prependListener("request", (request, response) => {
         if (!request.url?.startsWith(`/teammates/${TEAMMATE}/direct-messages/stream?`)) return;
@@ -260,7 +268,21 @@ function createFixture({ t, cwd, core, createDaemonServer, createRunnerRegistry,
       daemon = undefined;
       const completion = closing.stop();
       stopping = completion;
-      try { await completion; } finally { if (stopping === completion) stopping = undefined; }
+      try { await completion; }
+      catch (error) { blockedDaemon = closing; throw error; }
+      finally { if (stopping === completion) stopping = undefined; }
+    },
+    async disposeBlockedFixture() {
+      if (!blockedDaemon) return;
+      // Only after asserting the real failed shutdown: dispose this child's
+      // owned test listener/DB. This is not a product stop or drain receipt.
+      const closing = blockedDaemon;
+      blockedDaemon = undefined;
+      closing.server.closeAllConnections();
+      if (closing.server.listening) {
+        await new Promise((done, reject) => closing.server.close(error => error ? reject(error) : done()));
+      }
+      store.close();
     },
     request(path, method = "GET", body) {
       const url = new URL(path, f.origin);
@@ -319,6 +341,78 @@ function createFixture({ t, cwd, core, createDaemonServer, createRunnerRegistry,
       catch (error) { if (error.code === "ENOENT") return undefined; throw error; }
     },
   };
+  const originalPublish = ControlPlaneEventHub.prototype.publish;
+  // Observe the real index Hub and retain its original publish behavior. The
+  // failing consumer below uses real subscribeListener + activate, not a
+  // replacement publish result or fabricated delivery receipt.
+  t.mock.method(ControlPlaneEventHub.prototype, "publish", function (...args) {
+    if (args[0].cwd === cwd) {
+      if (controlPlaneHub) assert.equal(this, controlPlaneHub);
+      controlPlaneHub = this;
+    }
+    return Reflect.apply(originalPublish, this, args);
+  });
+  const originalGetStore = RunStoreRegistry.prototype.getStore;
+  // Retain index's default constructor and its original Supervisor custody.
+  // Observe only the exact owned cwd and the original getStore return value;
+  // this observer never supplies, substitutes or re-enrolls a Store.
+  t.mock.method(RunStoreRegistry.prototype, "getStore", function (...args) {
+    const original = Reflect.apply(originalGetStore, this, args);
+    assert.equal(resolve(args[0]), cwd);
+    assert.equal(original.paths.databasePath, databasePath);
+    if (store) { assert.equal(original, store); return original; }
+    store = original;
+    if (!provider) {
+      const now = new Date().toISOString();
+      provider = store.createProviderPreset({ kind: "openai-compatible", displayName: "A28 no-model fixture",
+        providerId: "a28-owned-fixture", model: "a28-owned-fixture", api: "openai-completions",
+        authHeader: false, baseUrl: "https://fixture.invalid/v1", capabilities: ["chat"], input: ["text"],
+        enabled: true, contextWindow: 128_000, maxTokens: 4096 }, now);
+      store.recordProviderCheckResult(provider.id, { ok: true, code: "static_check",
+        message: "Owned static fixture only; never a model request", checkedAt: now });
+      assert.ok(store.updateAiTeammate(TEAMMATE, { providerPresetId: provider.id,
+        allowedTools: ["bash"], approvalProfile: { mode: "standard", requiredForTools: ["bash"] } }, now));
+      const thread = store.getOrCreateTeammateDirectThread(TEAMMATE, now);
+      store.updateTeammateDirectThreadWorkspace(thread.id, { mode: "local", status: "ready", executionPath: cwd,
+        createdAt: now, checkedAt: now, updatedAt: now }, now);
+      store.updateApprovalPolicy({ toolDecisions: { bash: "ask" } }, now);
+    }
+    const appendExecutionEvent = store.appendExecutionEvent;
+    t.mock.method(store, "appendExecutionEvent", function (...eventArgs) {
+      const envelope = Reflect.apply(appendExecutionEvent, this, eventArgs);
+      if (envelope.type === "approval_requested") approvalCommitted.resolve(envelope);
+      return envelope;
+    });
+    const commitClaim = store.commitApprovalResumeClaim;
+    t.mock.method(store, "commitApprovalResumeClaim", function (...claimArgs) {
+      const result = Reflect.apply(commitClaim, this, claimArgs);
+      if (result.ok) {
+        claims.push(result);
+        resumeClaimed.resolve(result);
+        if (stopOnResumeClaim) {
+          stopOnResumeClaim = false;
+          // The real index stop follows the actual claim commit. Registration
+          // may follow later, but its original shutdown intent is retained.
+          claimStop = f.stop();
+          claimStop.catch(() => undefined);
+        }
+      }
+      return result;
+    });
+    const commitTerminal = store.commitApprovalResumeTerminal;
+    t.mock.method(store, "commitApprovalResumeTerminal", function (...terminalArgs) {
+      const result = Reflect.apply(commitTerminal, this, terminalArgs);
+      if (result.ok) { terminals.push(result); terminalCommitted.resolve(result); }
+      return result;
+    });
+    const commitSuspension = store.commitApprovalResumeSuspension;
+    t.mock.method(store, "commitApprovalResumeSuspension", function (...suspensionArgs) {
+      const result = Reflect.apply(commitSuspension, this, suspensionArgs);
+      suspensions.push({ input: suspensionArgs[0], result });
+      return result;
+    });
+    return original;
+  });
   return f;
 }
 
@@ -358,6 +452,208 @@ async function pausedSource(f, closeStreamFirst = false) {
   // Defer the already-covered pause-message assertions until after exercising
   // recovery, so its initial RED cannot hide another broken terminal chain.
   return { source, suspended, streamResult: result };
+}
+
+/** A real in-flight tool reaches approval after shutdown already chose ordinary suspension. */
+async function shutdownBeforeApproval(f) {
+  f.pauseOriginalBeforeApproval();
+  const stream = await f.beginStream();
+  const linked = await bounded(stream.linked.promise, "the original private stream never linked a real Run");
+  await bounded(f.beforeApproval.promise, "the original Runner never reached its fixture-owned tool gate");
+  const runId = linked.data.linkedRunId;
+  const original = f.store.getRun(runId);
+  const unit = f.store.getWorkUnit(original.workUnitId);
+  const attempt = f.store.getWorkUnitAttempt(unit.activeAttemptId);
+  const source = { runId, workUnitId: unit.id, attemptId: attempt.id,
+    runtimeInstanceId: attempt.runtimeInstanceId, fencingToken: attempt.fencingToken };
+  assert.equal(original.status, "running");
+  assert.equal(unit.status, "running");
+  assert.equal(f.store.listApprovalRequests({ runId, limit: 10 }).length, 0);
+  const stopped = f.stop().then(() => { throw new Error("an unsealed ordinary request cannot close the Host"); }, error => error);
+  // Observe the real Core request, not a controller mock or sleep ordering.
+  await waitFor(() => f.store.hasPendingRunSuspension(source), "shutdown never persisted its ordinary suspension request");
+  f.releaseOriginalApproval();
+  await bounded(f.approvalCommitted.promise, "the real approval handler never committed after the shutdown request");
+  await bounded(stream.done, "the original approval polling callback did not actually stop");
+  const failure = await bounded(stopped, "blocked approval shutdown deadlocked instead of reporting its unknown boundary");
+  const messages = flattenErrors(failure);
+  assert.ok(messages.includes("harness_shutdown_incomplete_stores_retained"), messages.join(" | "));
+  assert.ok(messages.includes("runtime_shutdown_unverified"), messages.join(" | "));
+  assert.ok(messages.includes("suspension.boundary_unavailable"), messages.join(" | "));
+  const retained = facts(f.store, runId, linked.data.messageId);
+  assert.equal(retained.run.status, "waiting_for_approval");
+  assert.equal(retained.work.status, "waiting_for_approval");
+  assert.equal(retained.work.activeAttemptId, attempt.id);
+  assert.equal(retained.attempts.length, 1);
+  assert.equal(retained.attempts[0].status, "waiting_for_approval");
+  assert.equal(retained.attempts[0].endedAt, undefined);
+  assert.equal(retained.checkpoint.status, "pending");
+  assert.equal(retained.approval.status, "pending");
+  assert.equal(f.store.hasPendingRunSuspension(source), true);
+  assert.equal(retained.runtimeEvents.some(event => event.type === "work_unit_stale"
+    && event.data?.reason === "runtime_suspend" && event.data?.recoverable === true), false);
+  assert.equal(retained.events.some(event => ["run_error", "run_cancelled", "run_end"].includes(event.type)), false);
+  assert.equal(await f.marker(), undefined);
+  assert.equal(f.calls.length, 1);
+  console.log(`A28 shutdown-before-approval real blocked evidence: ${JSON.stringify({ runId,
+    attemptId: attempt.id, checkpointId: retained.checkpoint.id, failureCodes: messages })}`);
+}
+
+function flattenErrors(error) {
+  return [error?.message ?? String(error), ...(Array.isArray(error?.errors) ? error.errors.flatMap(flattenErrors) : [])];
+}
+
+async function liveApprovalSource(f) {
+  const stream = await f.beginStream();
+  const linked = await bounded(stream.linked.promise, "the original stream never linked");
+  await bounded(f.approvalCommitted.promise, "the real approval never committed");
+  return { stream, source: facts(f.store, linked.data.linkedRunId, linked.data.messageId) };
+}
+
+function resourceIds(f, workUnitId) {
+  return {
+    leases: f.store.listResourceLeases({ status: "active", workUnitId }).map(row => row.id).sort(),
+    slots: f.store.listRuntimeSemaphoreSlots({ status: "active", workUnitId }).map(row => row.id).sort(),
+  };
+}
+
+function assertRetainedApproval(f, source, resources) {
+  const attempt = f.store.getWorkUnitAttempt(source.attempts[0].id);
+  assert.equal(f.store.getRun(source.run.id).status, "waiting_for_approval");
+  assert.equal(f.store.getWorkUnit(source.work.id).status, "waiting_for_approval");
+  assert.equal(f.store.getWorkUnit(source.work.id).activeAttemptId, attempt.id);
+  assert.equal(attempt.status, source.attempts[0].status, "blocking must not change the original waiting Attempt");
+  assert.equal(attempt.endedAt, undefined);
+  assert.equal(f.store.isCurrentRunExecutionOwner(source.run.id, f.core.toRuntimeAttemptFence(attempt)), true);
+  assert.deepEqual(resourceIds(f, source.work.id), resources, "unknown stop cannot release original leases or slots");
+  assert.equal(f.store.listRuntimeEvents(source.work.id, { limit: 1000 }).some(event => event.type === "work_unit_stale"
+    && event.data?.reason === "runtime_suspend" && event.data?.recoverable === true), false);
+  assert.equal(f.store.listEvents(source.run.id, { limit: 1000 }).some(event =>
+    ["run_error", "run_cancelled", "run_end"].includes(event.type)), false);
+}
+
+/** Corrupt only this owned disposable DB, then exercise the real shutdown guard. */
+async function shutdownInvalidApproval(f, corruption) {
+  const { stream, source } = await liveApprovalSource(f);
+  const resources = resourceIds(f, source.work.id);
+  assert.ok(resources.leases.length || resources.slots.length, "the real source must own resources to test non-release");
+  if (corruption === "missing") {
+    f.sql(db => db.prepare("DELETE FROM approval_checkpoints WHERE id=?").run(source.checkpoint.id), true);
+  } else if (corruption === "foreign") {
+    const { schemaVersion, fingerprint, ...basisInput } = source.checkpoint.resumeBasis;
+    const foreignBasis = f.core.createApprovalResumeBasisV1({ ...basisInput,
+      priorAttemptId: "a28_foreign_attempt_not_the_original_source" });
+    assert.equal(f.core.isApprovalResumeBasisV1(foreignBasis), true,
+      "the foreign source must have a valid self-fingerprint, not merely malformed JSON");
+    f.sql(db => db.prepare("UPDATE approval_checkpoints SET resume_basis_json=? WHERE id=?")
+      .run(JSON.stringify(foreignBasis), source.checkpoint.id), true);
+  } else {
+    // This is a foreign-owner rejection, not an E2E dynamic-child execution.
+    f.sql(db => db.prepare("UPDATE work_units SET owner_type='delegation_step',owner_id=? WHERE id=?")
+      .run("a28_foreign_delegation_step", source.work.id), true);
+  }
+  const failure = await bounded(f.stop().then(() => {
+    throw new Error("invalid approval ownership must not be accepted as a stopped checkpoint");
+  }, error => error), "invalid approval source kept polling forever instead of reporting blocked");
+  await bounded(stream.done, "the rejected original approval callback never stopped");
+  const messages = flattenErrors(failure);
+  assert.ok(messages.includes("runtime_shutdown_unverified"), messages.join(" | "));
+  assert.ok(messages.includes(corruption === "delegated" ? "suspension.source_stale" : "suspension.witness_mismatch"), messages.join(" | "));
+  assertRetainedApproval(f, source, resources);
+  assert.equal(await f.marker(), undefined);
+  assert.equal(f.calls.length, 1);
+  console.log(`A28 ${corruption} approval actual shutdown blocked: ${JSON.stringify({ runId: source.run.id,
+    attemptId: source.attempts[0].id, resources, failureCodes: messages })}`);
+}
+
+/** Actual local-writer mechanism regression; not a claimed MCP end-to-end test. */
+async function shutdownWithLocalWriter(f, change, throwingListener = false) {
+  const { stream, source } = await liveApprovalSource(f);
+  const resources = resourceIds(f, source.work.id);
+  assert.ok(resources.leases.length || resources.slots.length);
+  const writer = f.holdLocalWriter(source.run.id);
+  const listener = throwingListener ? f.subscribeThrowingSuspensionListener(source) : undefined;
+  let stopSettled = false;
+  const stopped = f.stop().then(() => { stopSettled = true; return { ok: true }; },
+    error => { stopSettled = true; return { ok: false, error }; });
+  try {
+    // The production bounded observer has timed out, but its original writer
+    // still exists. The whole Host must not produce a close receipt yet.
+    await bounded(stream.done, "the local-writer observation never reported its blocked result");
+    assert.equal(stopSettled, false, "shutdown must await the real writer, not the observation timeout");
+    assertRetainedApproval(f, source, resources);
+    assert.equal(f.store.getApprovalCheckpoint(source.checkpoint.id).revision, source.checkpoint.revision);
+    assert.equal(await f.marker(), undefined);
+    if (change === "checkpoint") {
+      // A newer checkpoint must not be recaptured as permission for the old
+      // deferred close, even when the tool/basis shape remains identical.
+      f.sql(db => db.prepare("UPDATE approval_checkpoints SET revision=revision+1 WHERE id=?")
+        .run(source.checkpoint.id), true);
+    } else if (change === "owner") {
+      f.sql(db => db.prepare("UPDATE work_units SET owner_type='delegation_step',owner_id=? WHERE id=?")
+        .run("a28_foreign_delegation_during_actual_drain", source.work.id), true);
+    }
+  } finally {
+    writer.release();
+    await writer.completion;
+  }
+  const stoppedResult = await bounded(stopped, "the real released writer did not drain its original Host lifetime");
+  if (change) {
+    assert.equal(stoppedResult.ok, false, "real local drain cannot authorize a changed approval source");
+    const messages = flattenErrors(stoppedResult.error);
+    assert.ok(messages.includes("runtime_shutdown_unverified"), messages.join(" | "));
+    assert.ok(messages.includes(change === "owner" ? "suspension.source_stale" : "suspension.witness_mismatch"),
+      messages.join(" | "));
+    assertRetainedApproval(f, source, resources);
+    console.log(`A28 actual local-writer ${change} change blocked: ${JSON.stringify({ runId: source.run.id,
+      attemptId: source.attempts[0].id, resources, failureCodes: messages })}`);
+  } else {
+    if (listener) {
+      assert.equal(f.suspensions.length, 1, "the actual Core suspension CAS must have committed once");
+      assert.equal(f.suspensions[0].result.ok, true);
+      assert.equal(f.suspensions[0].result.attempt.status, "lost");
+      assert.equal(f.suspensions[0].result.checkpoint.revision, source.checkpoint.revision + 1);
+      assert.ok(listener.delivered.length > 0, "the real active Hub consumer must have been called");
+      if (!stoppedResult.ok) {
+        const failureCodes = flattenErrors(stoppedResult.error);
+        assert.ok(failureCodes.includes("A28_OWNED_ACTIVE_LISTENER_FAILURE"), failureCodes.join(" | "));
+        console.log(`A28 actual committed CAS followed by throwing live listener: ${JSON.stringify({
+          runId: source.run.id, attemptId: source.attempts[0].id, checkpointRevision: source.checkpoint.revision + 1,
+          committedCasCount: f.suspensions.length, actualListenerCalls: listener.delivered.length, failureCodes })}`);
+      }
+    }
+    assert.equal(stoppedResult.ok, true,
+      `committed approval cleanup must survive notification failure: ${stoppedResult.error?.stack}`);
+    const drained = f.reopen(store => ({ value: facts(store, source.run.id, source.message.id),
+      leases: store.listResourceLeases({ status: "active", workUnitId: source.work.id }),
+      slots: store.listRuntimeSemaphoreSlots({ status: "active", workUnitId: source.work.id }) }));
+    assert.equal(drained.value.run.status, "waiting_for_approval");
+    assert.equal(drained.value.work.status, "waiting_for_approval");
+    assert.equal(drained.value.attempts.length, 1);
+    assert.equal(drained.value.attempts[0].id, source.attempts[0].id);
+    assert.equal(drained.value.attempts[0].status, "lost");
+    assert.equal(drained.value.attempts[0].errorCode, "runtime_suspend");
+    assert.equal(drained.value.checkpoint.status, "pending");
+    assert.equal(drained.value.checkpoint.revision, source.checkpoint.revision + 1);
+    assert.deepEqual(drained.leases, []);
+    assert.deepEqual(drained.slots, []);
+    assert.deepEqual(drained.value.events, source.events, "late drain is cleanup, not a business Run event");
+    assertSuspensionAudit(drained.value, drained.value.attempts[0]);
+    if (listener) {
+      assert.equal(f.suspensions.length, 1, "a failed notification cannot repeat the Core CAS");
+      assert.equal(f.suspensions[0].result.ok, true);
+      assert.equal(listener.delivered.length, 3, "each real invalidation is attempted after another listener delivery throws");
+      assert.deepEqual(listener.delivered.map(event => event.action), ["run.approval_resume_suspended",
+        "work_unit.approval_resume_suspended", "approval.resume_suspended"]);
+      assert.equal(drained.value.runtimeEvents.filter(event => event.type === "work_unit_stale"
+        && event.data?.reason === "runtime_suspend" && event.attemptId === source.attempts[0].id).length, 1);
+      listener.close();
+    }
+    console.log(`A28 actual local-writer real drain committed original approval suspension: ${JSON.stringify({
+      runId: source.run.id, attemptId: source.attempts[0].id, checkpointId: source.checkpoint.id })}`);
+  }
+  assert.equal(f.calls.length, 1);
+  assert.equal(await f.marker(), undefined);
 }
 
 async function recoveredTerminal(f, status, closeStreamFirst = false) {

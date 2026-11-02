@@ -1,4 +1,4 @@
-import type { UserInputDeliveryStatusV1, UserInputQuestionV1, UserInputRequestStatusV1 } from "./user-input.js";
+import type { UserInputAnswerAuthorityV1, UserInputDeliveryStatusV1, UserInputQuestionV1, UserInputRequestStatusV1 } from "./user-input.js";
 import type { UserInputRunEventPositionV1 } from "./user-input-event-position.js";
 
 /** Public lineage only. Runtime fence, claim, credentials and prepared authority stay on the Host. */
@@ -31,6 +31,8 @@ export interface UserInputRequestTranscriptV1 extends UserInputTranscriptAvailab
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly expiresAt?: string;
+  /** Present only while this exact visible request is currently answerable. */
+  readonly answerAuthority?: UserInputAnswerAuthorityV1;
 }
 /** Exact accepted option label or free text, derived from immutable question and answer records. */
 export type UserInputTranscriptAnswerV1 = {

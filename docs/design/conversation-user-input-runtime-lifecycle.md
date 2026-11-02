@@ -603,6 +603,11 @@ summary 不作为 SQLite authority，也不是新的 completion evidence。数�
 ## 11. U2 本地 writer 与 retained authority 分层（2026-10-03，增量在建）
 
 `enableUserInputPause`只允许可信Host内部验证opt-in，默认关闭，不读公开Run input。
+问答能力同时要求该Run冻结的`harnessFeatureSnapshot.toolBroker === "enforce"`、canonical source item和非delegated执行。
+off/shadow不暴露`request_user_input`，也不因内部opt-in创建依赖Broker回执的Host tracker；保留原文件执行语义，
+不把模式偷偷升级为enforce。初始准备、重准备/恢复与执行coordinator共用同一能力判定。
+已封存true但当前判定不满足时沿用`prepared_tool_capability_changed`拒绝，不修改封存输入/fingerprint；
+已封存false也不因当前gate打开而增添工具。完整文件effect/停止证明仍只认实际durable Broker receipt。
 准备、封存、恢复、extension和真实SDK以同一`initialToolSurface.userInput`选择工具；显式false优先于callback presence。
 封存true不能在gate撤销后恢复，封存false也不能因gate后来打开而临时加工具。fingerprint校验不放宽。
 required检查在lock await前后复验，不能靠await之前的一次检查允许之后provider继续。

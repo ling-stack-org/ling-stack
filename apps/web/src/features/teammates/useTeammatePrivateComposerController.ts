@@ -7,6 +7,7 @@ import {
   type TokenizedComposerInputHandle,
 } from "../../shared/conversation/index.js";
 import type { AuthorizationMode, PermissionConfirmation, PermissionPreset, WorkspaceAccessMode } from "../../types.js";
+import { useConversationPermissionSelection } from "../../shared/conversation/conversation-permission-selection.js";
 import {
   permissionPresetForWorkspaceAccessMode,
   workspaceAccessModeForPermissionPreset,
@@ -32,6 +33,9 @@ export interface TeammatePrivateComposerController {
 
 export function useTeammatePrivateComposerController({
   identityKey,
+  defaultWorkspaceAccessMode,
+  permissionLocked,
+  onPermissionError,
   authorizationMode,
   messageDraft,
   onComposerKeyDown,
@@ -45,6 +49,9 @@ export function useTeammatePrivateComposerController({
   workspaceAccessMode,
 }: {
   readonly identityKey: string;
+  readonly defaultWorkspaceAccessMode: WorkspaceAccessMode;
+  readonly permissionLocked: boolean;
+  readonly onPermissionError: (error: unknown) => void;
   readonly authorizationMode: AuthorizationMode;
   readonly messageDraft: string;
   readonly onComposerKeyDown: (
@@ -74,6 +81,21 @@ export function useTeammatePrivateComposerController({
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
   const slashCommandPickerOptions = filterSlashCommandPickerOptions(slashCommands, slashPicker);
+  const handleAuthorizationModeChange = useConversationPermissionSelection({
+    ownerKey: identityKey,
+    authorizationMode: selectedAuthorizationMode,
+    workspaceAccessMode: workspaceAccessModeForPermissionPreset(selectedPermissionPreset),
+    defaultWorkspaceAccessMode,
+    disabled: permissionLocked,
+    confirmFullAccess: onFullAccessPresetSelected,
+    onChange: (selection) => {
+      setSelectedAuthorizationMode(selection.authorizationMode);
+      setSelectedPermissionPreset(permissionPresetForWorkspaceAccessMode(selection.workspaceAccessMode));
+      onAuthorizationModeChange(selection.authorizationMode);
+      onWorkspaceAccessModeChange(selection.workspaceAccessMode);
+    },
+    onError: onPermissionError,
+  });
 
   useEffect(() => {
     setSelectedAuthorizationMode(authorizationMode);
@@ -136,6 +158,21 @@ export function useTeammatePrivateComposerController({
     setSlashActiveIndex(0);
   }
 
+  function handlePermissionPresetChange(preset: PermissionPreset): void {
+    if (preset === "full_access" && onFullAccessPresetSelected) {
+      void onFullAccessPresetSelected().then((confirmation) => {
+        if (!confirmation) return;
+        setSelectedPermissionPreset(preset);
+        setSelectedAuthorizationMode("always");
+        onWorkspaceAccessModeChange(workspaceAccessModeForPermissionPreset(preset));
+      });
+      return;
+    }
+    setSelectedPermissionPreset(preset);
+    setSelectedAuthorizationMode(preset === "read_only" ? "ask" : "smart");
+    onWorkspaceAccessModeChange(workspaceAccessModeForPermissionPreset(preset));
+  }
+
   function commitSlashCommand(option: SlashCommand): void {
     const liveCaret = Math.min(
       composerInputRef.current?.readSelectionStart() ?? messageDraft.length,
@@ -149,19 +186,6 @@ export function useTeammatePrivateComposerController({
     setSlashPicker(undefined);
     setSlashActiveIndex(0);
     focusComposerAt(inserted.caret);
-  }
-
-  function handlePermissionPresetChange(preset: PermissionPreset): void {
-    if (preset === "full_access" && onFullAccessPresetSelected) {
-      void onFullAccessPresetSelected().then((confirmation) => {
-        if (!confirmation) return;
-        setSelectedPermissionPreset(preset);
-        onWorkspaceAccessModeChange(workspaceAccessModeForPermissionPreset(preset));
-      });
-      return;
-    }
-    setSelectedPermissionPreset(preset);
-    onWorkspaceAccessModeChange(workspaceAccessModeForPermissionPreset(preset));
   }
 
   function focusComposerAt(caret: number): void {
@@ -187,10 +211,7 @@ export function useTeammatePrivateComposerController({
       onMessageDraftChange(value);
       updateSlashPicker(value, caret);
     },
-    handleAuthorizationModeChange: (mode) => {
-      setSelectedAuthorizationMode(mode);
-      onAuthorizationModeChange(mode);
-    },
+    handleAuthorizationModeChange,
     handlePermissionPresetChange,
     submitComposer,
     updateSlashPicker,

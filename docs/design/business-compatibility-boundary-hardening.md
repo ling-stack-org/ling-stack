@@ -17,7 +17,7 @@
 ## 现状问题
 
 1. Runner alias 的规范化已分布在 daemon 多个 parser，Core mapper 对 JSON 快照、运行事件和 control-plane data 仍有缺口，容易出现同一历史记录在不同页面得到不同 ID。
-2. 迁移 178 会重写部分历史 JSON。这样会改变 run snapshot、context snapshot 或其他 evidence 的原始字节，和 audit/replay fingerprint 不变量冲突。
+2. 迁移 178 只负责 runner identity 的可变运行绑定；delegation instruction receipt schema 使用迁移 193。历史 JSON evidence 仍按原始字节保留，避免破坏 audit/replay fingerprint 不变量。
 3. 用户输入 continuation 读取时如果直接用规范化后的对象计算 fingerprint，会把历史证据投影误当成持久化来源，导致恢复校验不一致。
 4. 旧权限字段和 legacy media protocol 的兼容逻辑没有统一的“新写入禁止、旧读取允许”边界，新增入口容易再次写入旧形状。
 

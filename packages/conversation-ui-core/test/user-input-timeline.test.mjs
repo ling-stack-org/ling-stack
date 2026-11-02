@@ -6,6 +6,11 @@ const now = "2026-09-08T00:00:00.000Z";
 const scope = { surface: "normal", workspaceId: "workspace", threadId: "thread", depth: 0 };
 const source = { workspaceId: "workspace", threadId: "thread", turnId: "turn", runId: "run",
   attemptId: "attempt", participantId: "engineer", workUnitId: "unit", sourceItemId: "origin" };
+function authority(overrides = {}) {
+  return { schemaVersion: 1, threadId: source.threadId, runId: source.runId, attemptId: source.attemptId,
+    participantId: source.participantId, requestId: "request", requestVersion: 1, statusRevision: 1,
+    token: "a".repeat(64), ...overrides };
+}
 function request(overrides = {}) {
   return { availability: "available", itemId: "question", kind: "user_input_request", requestId: "request",
     requestVersion: 1, source, status: "pending", statusRevision: 1, waitMode: "required",
@@ -52,6 +57,18 @@ test("request and delivery revisions are independent, never completion evidence"
   assert.deepEqual(result.items.map(i => i.revision), [5, 8]);
   assert.ok(result.items.every(i => i.status !== "succeeded"));
   assert.deepEqual(result.terminalEvidence, []);
+});
+test("pending request projects only exact public answer authority", () => {
+  const result = project([request({ answerAuthority: authority() })]);
+  assert.deepEqual(result.items[0].userInput.answerAuthority, authority());
+  assert.equal(JSON.stringify(result).includes("fenceToken"), false);
+  for (const answerAuthority of [authority({ threadId: "other" }), authority({ participantId: "other" }),
+    authority({ requestVersion: 2 }), authority({ statusRevision: 2 }), { ...authority(), claimToken: "private" }]) {
+    const invalid = project([request({ answerAuthority })]);
+    assert.equal(invalid.items[0].userInput.availability, "unavailable");
+  }
+  assert.equal(project([request({ status: "answered", statusRevision: 2,
+    answerAuthority: authority({ statusRevision: 2 }) })]).items[0].userInput.availability, "unavailable");
 });
 test("absent hydration differs from an anchored unavailable record", () => {
   assert.deepEqual(project(undefined, { userInputs: undefined }).items, []);
@@ -132,4 +149,5 @@ test("typed row validation rejects malformed public content", () => {
   for (const userInput of [null, { ...request(), questions: null }, { ...request(), status: "success" }]) {
     assert.equal(isConversationTimelineItem({ ...row, userInput }), false);
   }
+  assert.equal(isConversationTimelineItem({ ...row, userInput: request({ answerAuthority: authority({ runId: "other" }) }) }), false);
 });

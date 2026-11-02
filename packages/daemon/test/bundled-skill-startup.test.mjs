@@ -128,20 +128,24 @@ test("the source API explicitly pins and resumes following with stale-selection 
   const { cwd, selection } = await fixture(t);
   const initializeBundledSkills = await prepareBundledSkillStartup(selection);
   const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd }, { initializeBundledSkills });
-  t.after(() => daemon.stop()); await daemon.start();
-  const url = `http://127.0.0.1:${daemon.server.address().port}/skills/qa/source?cwd=${encodeURIComponent(cwd)}`;
-  const current = (await (await fetch(url)).json()).snapshot;
-  const change = (snapshot, bundleUpdateMode) => fetch(url, { method: "PUT", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ bundleUpdateMode, expectedSnapshotId: snapshot.id, expectedSourceChecksum: snapshot.sourceChecksum }) });
-  const pin = await change(current, "pinned");
-  assert.equal(pin.status, 200);
-  const pinned = (await pin.json()).snapshot;
-  assert.equal(pinned.bundleUpdateMode, "pinned");
-  assert.equal((await change(current, "follow")).status, 409);
-  const follow = await change(pinned, "follow");
-  assert.equal(follow.status, 200);
-  assert.equal((await follow.json()).snapshot.bundleUpdateMode, "follow");
-  assert.equal((await change(pinned, "invalid")).status, 400);
+  await daemon.start();
+  try {
+    const url = `http://127.0.0.1:${daemon.server.address().port}/skills/qa/source?cwd=${encodeURIComponent(cwd)}`;
+    const current = (await (await fetch(url)).json()).snapshot;
+    const change = (snapshot, bundleUpdateMode) => fetch(url, { method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ bundleUpdateMode, expectedSnapshotId: snapshot.id, expectedSourceChecksum: snapshot.sourceChecksum }) });
+    const pin = await change(current, "pinned");
+    assert.equal(pin.status, 200);
+    const pinned = (await pin.json()).snapshot;
+    assert.equal(pinned.bundleUpdateMode, "pinned");
+    assert.equal((await change(current, "follow")).status, 409);
+    const follow = await change(pinned, "follow");
+    assert.equal(follow.status, 200);
+    assert.equal((await follow.json()).snapshot.bundleUpdateMode, "follow");
+    assert.equal((await change(pinned, "invalid")).status, 400);
+  } finally {
+    await daemon.stop();
+  }
 });
 
 test("verified executable package initializes full sources atomically and restart does not add history", async t => {
@@ -227,10 +231,13 @@ test("the actual daemon initializes before exposing skill HTTP reads, not in a b
   const { cwd, selection } = await fixture(t);
   const initializeBundledSkills = await prepareBundledSkillStartup(selection);
   const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd }, { initializeBundledSkills });
-  t.after(() => daemon.stop());
   await daemon.start();
-  const url = `http://127.0.0.1:${daemon.server.address().port}/skills?cwd=${encodeURIComponent(cwd)}`;
-  const response = await fetch(url); assert.equal(response.status, 200);
-  const { skills } = await response.json();
-  for (const id of ["review", "qa"]) assert.equal(skills.find(s => s.id === id).version, "1.91.101.0");
+  try {
+    const url = `http://127.0.0.1:${daemon.server.address().port}/skills?cwd=${encodeURIComponent(cwd)}`;
+    const response = await fetch(url); assert.equal(response.status, 200);
+    const { skills } = await response.json();
+    for (const id of ["review", "qa"]) assert.equal(skills.find(s => s.id === id).version, "1.91.101.0");
+  } finally {
+    await daemon.stop();
+  }
 });

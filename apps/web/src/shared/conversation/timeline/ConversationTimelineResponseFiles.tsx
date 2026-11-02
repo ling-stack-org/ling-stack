@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { ChevronDown, FilePenLine } from "lucide-react";
 import { useI18n } from "../../../i18n.js";
 import type { ConversationTimelineResponse } from "./timeline-response-presentation.js";
@@ -7,6 +7,7 @@ import type { WorkspaceRightDockReviewTarget } from "../../../features/workspace
 import { terminalReportFileIcon, terminalReportFileName } from "../blocks/TerminalReportBlock.js";
 import { useWorkspaceRecovery } from "../blocks/workspace-recovery-resource.js";
 import { ConversationWorkspaceRecoveryControls } from "../blocks/ConversationWorkspaceRecoveryControls.js";
+import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
 
 export function ConversationTimelineResponseFiles({ response, depth, cwd, onOpenReview }: {
   readonly response: ConversationTimelineResponse;
@@ -21,7 +22,10 @@ export function ConversationTimelineResponseFiles({ response, depth, cwd, onOpen
   const resource = useWorkspaceRecovery(cwd?.trim(), response.settled && evidenceFiles.length ? target : undefined, revisionKey);
   const review = useMemo(() => projectTimelineResponseReview(response, resource.recovery?.review), [response, resource.recovery?.review]);
   const files = review?.files ?? evidenceFiles;
-  const [expanded, setExpanded] = useState(false);
+  const { expanded, setExpanded } = useConversationBlockView({
+    blockId: `response-files:${response.id}`, revisionKey, defaultExpanded: false,
+    preserveTouchedStateOnRevision: true,
+  });
   if (!response.settled || files.length === 0) return null;
   const canOpen = Boolean(cwd && target && review && onOpenReview);
   const openReview = (path?: string): void => {

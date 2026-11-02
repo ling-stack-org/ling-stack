@@ -10,15 +10,23 @@ export function terminalReportDisplayPolicy(
   hasFinalNarration: boolean,
 ): { readonly visible: boolean; readonly needsAttention: boolean } {
   const needsAttention = item.status !== "succeeded" || item.outcomeStatus !== "succeeded" ||
-    item.verification.some((check) => check.status !== "passed" && !(check.expectation === "informational" &&
-      (check.status === "skipped" || check.status === "not_run"))) ||
+    item.verification.some(terminalReportCheckNeedsAttention) ||
     item.participants.some((participant) => participant.status !== "completed") ||
-    item.risks.some((risk) => risk.status === "unresolved" || risk.status === "unverified" ||
-      risk.approvalDecision === "pending" || risk.approvalDecision === "denied" ||
-      risk.approvalDecision === "expired" || risk.approvalDecision === "cancelled");
+    item.risks.some(terminalReportRiskNeedsAttention);
   // A correction or a non-file deliverable can add useful information even
   // when the Run succeeded. File changes have their own shared final card.
   const hasSupplement = item.corrections.length > 0 || item.artifacts.some((artifact) =>
     artifact.kind !== "file" && artifact.kind !== "diff" && artifact.kind !== "test_result");
   return { visible: !hasFinalNarration || needsAttention || hasSupplement, needsAttention };
+}
+
+export function terminalReportCheckNeedsAttention(check: ConversationTimelineTerminalReportItem["verification"][number]): boolean {
+  return check.status !== "passed" && !(check.expectation === "informational" &&
+    (check.status === "skipped" || check.status === "not_run"));
+}
+
+export function terminalReportRiskNeedsAttention(risk: ConversationTimelineTerminalReportItem["risks"][number]): boolean {
+  return risk.status === "unresolved" || risk.status === "unverified" ||
+    risk.approvalDecision === "pending" || risk.approvalDecision === "denied" ||
+    risk.approvalDecision === "expired" || risk.approvalDecision === "cancelled";
 }

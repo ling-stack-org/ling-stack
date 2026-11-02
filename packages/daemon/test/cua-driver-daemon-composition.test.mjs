@@ -261,6 +261,7 @@ test("lease publication rejects authority and retries after a durable projection
       },
     },
     clientPool: {
+      beginShutdown() {},
       async closeStale() { closeStaleCalls += 1; },
       async closeAll() { closeAllCalls += 1; },
     },
@@ -310,6 +311,7 @@ test("availability projection is sequence-fenced and reprojects only the current
       async reconcileRequestedIntent() {},
     },
     clientPool: {
+      beginShutdown() {},
       async closeStale() {},
       async closeAll() {},
     },
@@ -350,6 +352,7 @@ test("failed retirement projection cannot let a same-generation renewal bypass t
       async reconcileRequestedIntent() { reconciles += 1; },
     },
     clientPool: {
+      beginShutdown() {},
       async closeStale() {},
       async closeAll() {},
     },
@@ -405,6 +408,7 @@ test("lease retirement retries its durable projection after storage recovers", a
       async reconcileRequestedIntent() { reconciles += 1; },
     },
     clientPool: {
+      beginShutdown() {},
       async closeStale() {},
       async closeAll() { closeAllCalls += 1; },
     },

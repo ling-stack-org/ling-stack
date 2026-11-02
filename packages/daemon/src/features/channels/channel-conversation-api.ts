@@ -27,6 +27,11 @@ import { listAllConversationTurns } from "../conversations/all-turns.js";
 import { projectConversationReasoningSummaries } from "../conversations/reasoning-summary-projection.js";
 import { projectConversationContextCompactions } from "../conversations/context-compaction-projection.js";
 import { channelConversationRuntimeMetricsScope } from "./conversation-runtime-metrics-scope.js";
+import {
+  projectPublicConversationItem,
+  projectPublicLingThread,
+  projectPublicLingTurn,
+} from "../runs/public-execution-snapshots.js";
 
 export function listChannelConversationItems(input: {
   readonly store: RunStore;
@@ -52,6 +57,12 @@ export function listChannelConversationItems(input: {
   });
   const { conversationItems: visibleItems, userInputs } = projectConversationUserInputs(input.store, input.thread.id, selectedItems);
   const turns = turnsForItems(input.store, visibleItems);
+  const publicItems = visibleItems.map((item) => projectPublicConversationItem(
+    item,
+    input.thread,
+    item.turnId ? input.store.getLingTurn(item.turnId) : undefined,
+  ));
+  const publicTurns = turns.map((turn) => projectPublicLingTurn(turn, input.thread));
   const decorations = decorationsForItems(input.store, visibleItems);
   const runLinks = turns.flatMap((turn) => input.store.listLingTurnRuns(turn.id));
   const runs = runLinks
@@ -66,11 +77,11 @@ export function listChannelConversationItems(input: {
   return {
     cwd: input.cwd,
     channelId: input.channel.id,
-    thread: input.thread,
-    turns,
+    thread: projectPublicLingThread(input.thread),
+    turns: publicTurns,
     runtimeMetrics: projectConversationRuntimeMetrics({ store: input.store, thread: input.thread, channelThreads, turns: allTurns, runs: allRuns,
       enumerationMayBeTruncated }),
-    items: visibleItems,
+    items: publicItems,
     turnContextAssignments: turns.flatMap((turn) => {
       const assignment = input.store.getEffectiveTurnContextAssignment(turn.id);
       return assignment ? [assignment] : [];

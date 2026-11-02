@@ -1,41 +1,45 @@
 import { useEffect, useState } from "react";
 import { Check, ChevronDown, Hand, Shield, ShieldAlert, ShieldCheck } from "lucide-react";
+import { ComposerPermissionMenu } from "@ling-stack/conversation-ui-react";
 import { useI18n } from "../../i18n.js";
-import { conversationAuthorizationModeMenuOptions, permissionPresetLabel } from "../../lib/session-permissions.js";
+import { conversationAuthorizationModeMenuOptions, conversationPermissionPresetMenuOptions } from "../../lib/session-permissions.js";
 import { Button, Menu, MenuContent, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../../shared/ui/index.js";
 import type { AuthorizationMode, PermissionPreset } from "../../types.js";
 
 const authorizationIcons = { ask: Hand, smart: Shield, always: ShieldAlert };
 
 export function ConversationPermissionControl({
-  authorizationMode, permissionPreset, fullAccessConfirmed, disabled, onAuthorizationModeChange,
+  authorizationMode, permissionPreset, fullAccessConfirmed, disabled, disabledReason, onAuthorizationModeChange, onPermissionPresetChange,
 }: {
   readonly authorizationMode: AuthorizationMode;
   readonly permissionPreset: PermissionPreset;
   readonly fullAccessConfirmed: boolean;
   readonly disabled: boolean;
+  readonly disabledReason?: string;
   readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
+  readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const authorizationModes = conversationAuthorizationModeMenuOptions(t);
   const options = authorizationModes.map((option) => option.mode === "always" ? {
     ...option,
-    label: t("Full access"),
-    description: t("Full access lets Ling act without asking for routine local approvals in this conversation."),
+    label: t("Full access permissions"),
+    description: t("After confirmation, this conversation uses automatic approvals and Full Access. System permissions and Host deny rules still apply."),
   } : option);
   const fullAccess = authorizationMode === "always" && permissionPreset === "full_access";
   // An inherited always + restricted sandbox is not the Full access shortcut.
   const selectedMode = authorizationMode === "always" && !fullAccess ? "custom" : authorizationMode;
   const selectedAuthorization = options.find((option) => option.mode === selectedMode)
     ?? authorizationModes.find((option) => option.mode === authorizationMode)!;
+  const triggerLabel = fullAccess ? t("Full access") : selectedAuthorization.label;
   const confirmationLabel = fullAccess && fullAccessConfirmed
-    ? t("Full access · Confirmed for this conversation") : selectedAuthorization.label;
+    ? t("Full access · Confirmed for this conversation") : triggerLabel;
   const Icon = selectedMode === "custom" ? ShieldCheck : authorizationIcons[authorizationMode];
 
   useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
 
-  return (
+  return <>
     <Menu open={open && !disabled} onOpenChange={(value) => setOpen(value && !disabled)}>
       <MenuTrigger asChild>
         <Button
@@ -46,10 +50,10 @@ export function ConversationPermissionControl({
           trailingIcon={<ChevronDown size={13} />}
           disabled={disabled}
           data-full-access={fullAccess}
-          aria-label={t("Selected permission preset {label}", { label: confirmationLabel })}
-          title={disabled ? t("Permission is locked while the current message is running.") : `${confirmationLabel}. ${selectedAuthorization.description} ${t("Sandbox settings")}: ${permissionPresetLabel(permissionPreset, t)}`}
+          aria-label={t("Selected authorization mode {label}", { label: confirmationLabel })}
+          title={disabled ? disabledReason ?? t("Permission is locked while the current message is running.") : `${confirmationLabel}. ${selectedAuthorization.description}`}
         >
-          {selectedAuthorization.label}
+          {triggerLabel}
         </Button>
       </MenuTrigger>
       <MenuContent className="conversation-permission-menu" side="top" align="start" sideOffset={12} aria-label={t("Authorization mode")}>
@@ -67,5 +71,14 @@ export function ConversationPermissionControl({
         </MenuRadioGroup>
       </MenuContent>
     </Menu>
-  );
+    <ComposerPermissionMenu
+      preset={permissionPreset}
+      options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}
+      disabled={disabled}
+      disabledReason={disabledReason}
+      selectedPermissionLabel={t("Selected permission preset {label}")}
+      menuLabel={t("Permission preset")}
+      onPresetChange={onPermissionPresetChange}
+    />
+  </>;
 }

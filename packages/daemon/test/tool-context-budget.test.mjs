@@ -110,7 +110,9 @@ test("a matching actual Provider and original scope may consume a current learne
   learnWindow(f);
   const budget = resolveRunToolContextBudget(f.input());
   assert.equal(budget.contextWindowTokens, 2_048);
-  assert.equal(budget.inputBudgetTokens, 1_024);
+  assert.equal(budget.reservedOutputTokens, 1_024);
+  assert.equal(budget.reservedRuntimeOverheadTokens, 512);
+  assert.equal(budget.inputBudgetTokens, 512, "2048 - 1024 output - 512 overhead must not invent extra input capacity");
   assert.equal(budget.capabilitySource, "runtime_observed");
 });
 
@@ -143,7 +145,7 @@ test("external value drift and resolver outage remove runtime reuse without bann
   f.values.key = "synthetic-rotated-tool-key";
   assert.equal(resolveRunToolContextBudget(f.input()).inputBudgetTokens, 6_656);
   f.values.key = KEY;
-  assert.equal(resolveRunToolContextBudget(f.input()).inputBudgetTokens, 1_024);
+  assert.equal(resolveRunToolContextBudget(f.input()).inputBudgetTokens, 512);
   f.values.unavailable = true;
   assert.equal(resolveRunToolContextBudget(f.input()).inputBudgetTokens, 6_656);
   assert.equal(resolveRunToolContextBudget(f.input({ secretResolver: undefined })).inputBudgetTokens, 6_656);

@@ -16,6 +16,7 @@ import { WORKSPACE_ICON_PROBE_ACTOR_ENTRY } from "../../features/previews/worksp
 import { KEYCHAIN_SECURITY_ACTOR_ENTRY } from "../../features/providers/keychain-secret-store.js";
 import { PACKAGED_CODESIGN_ACTOR_ENTRY } from "./packaged-restricted-command-bootstrap.js";
 import { DOCKER_PROBE_ACTOR_ENTRY } from "./docker.js";
+import { EXTERNAL_WORKFLOW_REQUEST_ACTOR_ENTRY } from "./external-workflow-request-source.js";
 
 /**
  * Exact source-owned physical launch wrappers, never caller arrays, names,
@@ -47,5 +48,6 @@ export function readOriginalProtectedHostActorEntries(): readonly ProtectedHostA
     KEYCHAIN_SECURITY_ACTOR_ENTRY,
     PACKAGED_CODESIGN_ACTOR_ENTRY,
     DOCKER_PROBE_ACTOR_ENTRY,
+    EXTERNAL_WORKFLOW_REQUEST_ACTOR_ENTRY,
   ]);
 }

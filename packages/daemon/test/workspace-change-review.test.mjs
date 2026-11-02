@@ -188,7 +188,7 @@ test("oversized historical text diff is unavailable instead of sending unbounded
 });
 
 /** Remap only lexical provenance to exercise non-native OS semantics, never disk content. */
-function remapReviewProvenance(f, run, cwd, path, artifactOverride = {}) {
+function remapReviewProvenance(f, run, cwd, path, artifactOverride = {}, runOverride = {}) {
   const [record] = f.store.listWorkspaceMutationRecords({ runId: run.id });
   const store = new Proxy(f.store, { get(target, key) {
     if (key === "listWorkspaceMutationRecords") return () => [{ ...record, cwd, path }];
@@ -201,8 +201,40 @@ function remapReviewProvenance(f, run, cwd, path, artifactOverride = {}) {
     const value = Reflect.get(target, key, target);
     return typeof value === "function" ? value.bind(target) : value;
   } });
-  return buildWorkspaceChangeReview(store, { scope: { kind: "run", id: run.id }, runs: [{ ...run, cwd }] });
+  return buildWorkspaceChangeReview(store, { scope: { kind: "run", id: run.id }, runs: [{ ...run, cwd, ...runOverride }] });
 }
+
+test("Host-captured private worktree root permits project diffs but not its internal metadata or siblings", async (t) => {
+  const f = await fixture(t); const run = f.run("private-managed-review");
+  await f.apply(run, "*** Add File: original.txt\n+historical");
+  const cwd = "/captured/workspace/.ling-stack/worktrees/teammates/engineer/dm-proof";
+  const snapshot = { mode: "managed_worktree", status: "ready", workspaceCwd: "/captured/workspace",
+    executionCwd: cwd, worktreePath: cwd };
+  const owner = { teammateId: "engineer", requestSnapshot: { ...run.requestSnapshot,
+    teammateId: "engineer", directWorkspaceSnapshot: snapshot } };
+  for (const path of ["src/file.txt", `${cwd}/src/file.txt`]) {
+    const review = remapReviewProvenance(f, run, cwd, path, {}, owner);
+    assert.equal(review.state, "exact", review.unavailableReason);
+    assert.deepEqual(review.coveredPaths, ["src/file.txt"]);
+    assert.equal(review.additions, 1); assert.equal(review.deletions, 0);
+  }
+  for (const path of [".ling-stack/internal.txt", `${cwd}/.LING-STACK/internal.txt`,
+    `${cwd}-sibling/file.txt`, "../sibling/file.txt", "src/../file.txt"]) {
+    const review = remapReviewProvenance(f, run, cwd, path, {}, owner);
+    assert.equal(review.state, "unavailable", path);
+    assert.deepEqual(review.files, []); assert.equal(review.additions, undefined);
+  }
+  for (const override of [
+    {},
+    { ...owner, teammateId: "other" },
+    { ...owner, requestSnapshot: { ...owner.requestSnapshot, directWorkspaceSnapshot: { ...snapshot, mode: "local" } } },
+    { ...owner, requestSnapshot: { ...owner.requestSnapshot, directWorkspaceSnapshot: { ...snapshot, executionCwd: `${cwd}-sibling` } } },
+    { ...owner, requestSnapshot: { ...owner.requestSnapshot, directWorkspaceSnapshot: { ...snapshot, worktreePath: `${cwd}-sibling` } } },
+  ]) {
+    const review = remapReviewProvenance(f, run, cwd, "src/file.txt", {}, override);
+    assert.equal(review.state, "unavailable"); assert.deepEqual(review.files, []);
+  }
+});
 
 test("absolute review projection preserves POSIX and Windows captured-root semantics", async (t) => {
   const f = await fixture(t); const run = f.run("path-semantics");

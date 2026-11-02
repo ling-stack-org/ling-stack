@@ -169,6 +169,7 @@ export class CuaDriverDesktopCoordinator {
   private proxy: CuaDriverMcpProxy | undefined;
   private leasePublisher: CuaDriverLeasePublisher | undefined;
   private stopped = false;
+  private hostDraining = false;
   private cleanupDebt = false;
   private requestedEnabled = false;
   private requestedRevision = 0;
@@ -276,6 +277,22 @@ export class CuaDriverDesktopCoordinator {
     this.proxy?.closeCallGate(reason);
   }
 
+  /**
+   * Terminal Host admission fence. Do not revoke or stop these resources until
+   * the original Host has actually exited and shutdown performs final cleanup.
+   */
+  beginHostDrain(reason: string): void {
+    if (this.hostDraining) return;
+    this.hostDraining = true;
+    this.requestedEnabled = false;
+    this.requestedRevision += 1;
+    this.pendingRecoveryAction = undefined;
+    this.pendingWindowsSessionSuspension = undefined;
+    this.windowsSessionResumeHintPending = false;
+    this.proxy?.beginHostDrain(reason);
+    this.leasePublisher?.beginHostDrain();
+  }
+
   /** Host lock/suspend fence. Retains requested intent while retiring this generation. */
   suspendForSystem(reason: string): Promise<void> {
     if (this.stopped || !this.requestedEnabled) {
@@ -297,6 +314,9 @@ export class CuaDriverDesktopCoordinator {
 
   /** Validate, bind and publish one generation. Child spawn remains lazy until initialize. */
   enable(): Promise<CuaDriverCoordinatorSnapshot> {
+    if (this.hostDraining) {
+      return Promise.reject(new Error("cua_driver_host_draining"));
+    }
     if (this.stopped) {
       return Promise.reject(new Error("cua_driver_coordinator_stopped"));
     }
@@ -309,6 +329,9 @@ export class CuaDriverDesktopCoordinator {
   }
 
   private enableForRevision(requestedRevision: number): Promise<CuaDriverCoordinatorSnapshot> {
+    if (this.hostDraining) {
+      return Promise.reject(new Error("cua_driver_host_draining"));
+    }
     if (this.stopped) {
       return Promise.reject(new Error("cua_driver_coordinator_stopped"));
     }
@@ -354,6 +377,9 @@ export class CuaDriverDesktopCoordinator {
   }
 
   private beginEnable(): Promise<CuaDriverCoordinatorSnapshot> {
+    if (this.hostDraining) {
+      return Promise.reject(new Error("cua_driver_host_draining"));
+    }
     if (this.enablePromise) {
       return this.enablePromise;
     }
@@ -370,6 +396,9 @@ export class CuaDriverDesktopCoordinator {
   }
 
   disable(reason = "disabled"): Promise<void> {
+    if (this.retainTransportWhileHostDrains()) {
+      return Promise.reject(new Error("cua_driver_host_draining"));
+    }
     this.requestedRevision += 1;
     this.requestedEnabled = false;
     this.recoveryAttempt = 0;
@@ -400,6 +429,9 @@ export class CuaDriverDesktopCoordinator {
   }
 
   private beginDisable(reason: string): Promise<void> {
+    if (this.retainTransportWhileHostDrains()) {
+      return Promise.resolve();
+    }
     if (this.disablePromise) {
       return this.disablePromise;
     }
@@ -491,6 +523,7 @@ export class CuaDriverDesktopCoordinator {
         requireReleaseEvidence: this.options.requireReleaseEvidence ?? this.options.packaged ?? false,
       };
       const lock = await readCuaDriverProviderLock(paths.lockPath, lockOptions);
+      this.assertHostNotDraining();
       const artifacts = await verifyCuaDriverProviderArtifacts({
         platform: this.options.platform,
         architecture: this.options.architecture,
@@ -499,11 +532,13 @@ export class CuaDriverDesktopCoordinator {
         platformIdentityVerifier: this.platformIdentityVerifier,
         requirePlatformIdentityVerification: this.options.packaged === true,
       });
+      this.assertHostNotDraining();
       const stateRoot = await createCuaDriverStateRoot({
         userDataPath: this.options.userDataPath,
         platform: this.options.platform,
         platformProtector: this.stateRootProtector,
       });
+      this.assertHostNotDraining();
       this.resourcePaths = paths;
       this.artifacts = artifacts;
       this.stateRoot = stateRoot;
@@ -561,7 +596,7 @@ export class CuaDriverDesktopCoordinator {
           }
         },
         onTerminal: ({ reason, unexpected, preSpawnFailureKind }) => {
-          if (this.host?.generation !== generation) {
+          if (this.hostDraining || this.host?.generation !== generation) {
             return;
           }
           telemetry.emit(unexpected ? "error" : "info", "cua_driver.coordinator.host_terminal", { generation, reason });
@@ -599,8 +634,9 @@ export class CuaDriverDesktopCoordinator {
           }
         },
         onManagedReadinessChanged: (message) => {
+          if (this.hostDraining) return;
           const readiness = this.readinessController.acceptChanged?.(readinessContext(), message);
-          if (!readiness || this.host?.generation !== generation) {
+          if (this.hostDraining || !readiness || this.host?.generation !== generation) {
             return;
           }
           if (readiness.ready && this.windowsSessionSuspended) {
@@ -639,7 +675,9 @@ export class CuaDriverDesktopCoordinator {
           }
         },
         onInitialized: async () => {
+          if (this.hostDraining) return { callGate: "closed" as const };
           const readiness = await this.readinessController.check(readinessContext());
+          if (this.hostDraining) return { callGate: "closed" as const };
           if (this.host?.generation !== generation) {
             throw new Error("cua_driver_readiness_generation_stale");
           }
@@ -656,6 +694,7 @@ export class CuaDriverDesktopCoordinator {
                 ? { windowsReadiness: readiness.windowsReadiness }
                 : {}),
             });
+            if (this.hostDraining) return { callGate: "closed" as const };
           }
           const readinessAction = classifyCuaDriverInitialReadiness(readiness);
           if (readinessAction !== "open_call_gate") {
@@ -705,6 +744,7 @@ export class CuaDriverDesktopCoordinator {
       });
       this.proxy = proxy;
       const endpoint = await proxy.start();
+      this.assertHostNotDraining();
       if (this.windowsSessionSuspended) {
         return this.retainSuspendedGeneration(generation);
       }
@@ -751,6 +791,7 @@ export class CuaDriverDesktopCoordinator {
       });
       this.leasePublisher = publisher;
       await publisher.publish();
+      this.assertHostNotDraining();
       if (this.windowsSessionSuspended) {
         return this.retainSuspendedGeneration(generation);
       }
@@ -766,6 +807,9 @@ export class CuaDriverDesktopCoordinator {
         },
       });
     } catch (error) {
+      if (this.hostDraining) {
+        throw error;
+      }
       if (this.windowsSessionSuspended) {
         return this.retainSuspendedGeneration(generation);
       }
@@ -777,9 +821,12 @@ export class CuaDriverDesktopCoordinator {
   }
 
   private async retainSuspendedGeneration(generation: number): Promise<CuaDriverCoordinatorSnapshot> {
+    this.assertHostNotDraining();
     const reason = this.windowsSessionSuspensionReason;
     await this.fenceProviderBeforeSessionBoundary(reason, generation);
+    this.assertHostNotDraining();
     await this.cleanupPartiallyStarted(reason);
+    this.assertHostNotDraining();
     return this.publishSnapshot({
       lifecycle: "included",
       providerState: "interactive_session_required",
@@ -789,9 +836,11 @@ export class CuaDriverDesktopCoordinator {
   }
 
   private async disableInternal(reason: string): Promise<void> {
+    if (this.retainTransportWhileHostDrains()) return;
     if (this.enablePromise) {
       await this.enablePromise.catch(() => undefined);
     }
+    if (this.retainTransportWhileHostDrains()) return;
     const publisher = this.leasePublisher;
     const proxy = this.proxy;
     const host = this.host;
@@ -800,6 +849,7 @@ export class CuaDriverDesktopCoordinator {
     if (publisher || proxy || host) {
       this.publishSnapshot({ lifecycle: "stopping", providerState: "desktop_unavailable", generation: this.generation, reason });
     }
+    if (this.retainTransportWhileHostDrains()) return;
     let leaseError: unknown;
     let cleanupError: unknown;
     try {
@@ -807,11 +857,13 @@ export class CuaDriverDesktopCoordinator {
     } catch (error) {
       leaseError = error;
     }
+    if (this.retainTransportWhileHostDrains()) return;
     try {
       await proxy?.close(reason);
     } catch (error) {
       cleanupError = cleanupError ?? error;
     }
+    if (this.retainTransportWhileHostDrains()) return;
     if (host) {
       try {
         await host.stop(reason);
@@ -843,11 +895,13 @@ export class CuaDriverDesktopCoordinator {
   }
 
   private async cleanupPartiallyStarted(reason: string): Promise<void> {
+    if (this.retainTransportWhileHostDrains()) return;
     const results = await Promise.allSettled([
       this.leasePublisher?.revoke(),
       this.proxy?.close(reason),
       this.host?.stop(reason),
     ]);
+    if (this.retainTransportWhileHostDrains()) return;
     if (results.some((result) => result.status === "rejected")) {
       this.cleanupDebt = true;
       return;
@@ -968,8 +1022,10 @@ export class CuaDriverDesktopCoordinator {
 
   private startWindowsSessionSuspensionCleanup(reason: string, generation: number): void {
     const pending = Promise.resolve().then(async () => {
+      if (this.hostDraining) return;
       try {
         await this.fenceProviderBeforeSessionBoundary(reason, generation);
+        if (this.hostDraining) return;
         await this.beginDisable(reason);
         if (this.requestedEnabled && !this.stopped && !this.cleanupDebt && this.windowsSessionSuspended) {
           this.publishSnapshot({
@@ -990,12 +1046,14 @@ export class CuaDriverDesktopCoordinator {
   }
 
   private async fenceProviderBeforeSessionBoundary(reason: string, generation: number): Promise<void> {
+    if (this.hostDraining) return;
     const host = this.host;
     if (!host || host.generation !== generation) return;
     if (typeof host.fenceInput !== "function") return;
     try {
       await host.fenceInput();
     } catch (error) {
+      if (this.hostDraining) return;
       const fenceReason = error instanceof CuaDriverInputFenceError && error.fenceCode === "timeout"
         ? "locked_control_input_fence_timeout"
         : "locked_control_input_unavailable";
@@ -1130,7 +1188,7 @@ export class CuaDriverDesktopCoordinator {
     generation: number,
     providerState: Extract<CuaDriverProviderState, "corrupt" | "platform_unavailable">,
   ): void {
-    if (this.host?.generation !== generation) {
+    if (this.hostDraining || this.host?.generation !== generation) {
       return;
     }
     this.proxy?.closeCallGate(reason);
@@ -1217,10 +1275,19 @@ export class CuaDriverDesktopCoordinator {
   }
 
   private isCurrentEnableIntent(requestedRevision: number): boolean {
-    return this.requestedEnabled && this.requestedRevision === requestedRevision;
+    return !this.hostDraining && this.requestedEnabled && this.requestedRevision === requestedRevision;
+  }
+
+  private retainTransportWhileHostDrains(): boolean {
+    return this.hostDraining && !this.stopped;
+  }
+
+  private assertHostNotDraining(): void {
+    if (this.hostDraining) throw new Error("cua_driver_host_draining");
   }
 
   private publishSnapshot(input: Omit<CuaDriverCoordinatorSnapshot, "generation"> & { readonly generation?: number }): CuaDriverCoordinatorSnapshot {
+    if (this.retainTransportWhileHostDrains()) return this.snapshotValue;
     const integrity: CuaDriverIntegrityStatus = input.integrity
       ?? (input.providerState === "corrupt"
         ? "failed"

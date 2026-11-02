@@ -37,6 +37,8 @@ export function ConversationModelControl({
   const defaultLevel = normalConversationDefaultThinkingLevel(levels);
   const levelIndex = Math.max(0, levels.indexOf(thinkingLevel));
   const levelLabel = normalConversationThinkingLabel(levels[levelIndex] ?? "off", t);
+  const thinkingOff = (levels[levelIndex] ?? "off") === "off";
+  const effortLabel = thinkingOff ? t("Thinking off") : levelLabel;
   const visibleModels = modelOptions.filter((option) =>
     [option.model, option.label, option.displayName, option.providerId].join(" ").toLowerCase().includes(search.trim().toLowerCase()),
   );
@@ -68,13 +70,13 @@ export function ConversationModelControl({
           className="conversation-model-trigger"
           variant="ghost"
           size="sm"
-          aria-label={`${t("Selected model {label}", { label: modelLabel })}${supportsReasoning ? ` · ${levelLabel}` : ""}`}
-          title={`${modelLabel}${supportsReasoning ? ` · ${levelLabel}` : ""}`}
+          aria-label={`${t("Selected model {label}", { label: modelLabel })}${supportsReasoning ? ` · ${t("Selected thinking mode {label}", { label: levelLabel })}` : ""}`}
+          title={`${modelLabel}${supportsReasoning ? ` · ${thinkingOff ? t("Thinking is off; no thinking level will be sent.") : levelLabel}` : ""}`}
           trailingIcon={<ChevronDown size={13} />}
           disabled={disabled}
         >
           <span className="conversation-model-trigger-name">{modelLabel}</span>
-          {supportsReasoning ? <span className="conversation-model-trigger-effort">{levelLabel}</span> : null}
+          {supportsReasoning ? <span className="conversation-model-trigger-effort">{effortLabel}</span> : null}
         </Button>
       </PopoverTrigger>
       <PopoverContent

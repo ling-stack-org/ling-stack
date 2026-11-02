@@ -11,6 +11,7 @@ import { useI18n } from "../../../i18n.js";
 import { ConversationActivityLabel } from "../feedback/ConversationActivityLabel.js";
 import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
 import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
+import { useDaemonObservation } from "../observation/daemon-observation.js";
 
 export interface TimelineFactRowProps {
   readonly item: ConversationTimelineRowItem;
@@ -45,6 +46,9 @@ export function TimelineFactRow({
   depth = 0,
 }: TimelineFactRowProps): React.JSX.Element {
   const { t } = useI18n();
+  const paused = useDaemonObservation().paused;
+  const displayTitle = paused && (item.status === "running" || item.status === "pending" || item.status === "waiting")
+    ? `${t("Stale snapshot")} · ${title}` : title;
   const hasDetail = Boolean(detail);
   const disclosure = useConversationBlockView({
     blockId: `timeline-item:${item.id}`,
@@ -54,7 +58,9 @@ export function TimelineFactRow({
     preserveTouchedStateOnRevision: true,
   });
   const expanded = hasDetail && disclosure.expanded;
-  const status = statusLabel ?? timelineStatusLabel(item.status, t);
+  const status = item.approvalOutcome === "denied" ? t("Denied")
+    : item.approvalOutcome === "expired" ? t("Expired")
+    : statusLabel ?? timelineStatusLabel(item.status, t);
   const visibleStatus = (item.status === "running" && statusLabel === undefined) || (compact && item.status === "succeeded")
     ? undefined : status;
   const visibleMeta = meta !== undefined ? meta : compact ? undefined : item.meta;
@@ -90,12 +96,12 @@ export function TimelineFactRow({
           type="button"
           aria-expanded={expanded}
           aria-controls={detailId}
-          aria-label={`${title}${status ? ` · ${status}` : ""}. ${expanded ? t("Collapse details") : t("Expand details")}`}
+          aria-label={`${displayTitle}${status ? ` · ${status}` : ""}. ${expanded ? t("Collapse details") : t("Expand details")}`}
           onClick={disclosure.toggleExpanded}
         >
           <StatusAwareIcon item={item} icon={icon} />
           <span className="conversation-timeline-activity-copy">
-            <strong title={titleTooltip ?? title}><ConversationActivityLabel active={item.status === "running"}>{title}</ConversationActivityLabel></strong>
+            <strong title={titleTooltip ?? title}><ConversationActivityLabel active={item.status === "running"}>{displayTitle}</ConversationActivityLabel></strong>
             {visibleMeta ? <small>{visibleMeta}</small> : null}
           </span>
           {visibleStatus ? <span className="conversation-timeline-activity-status">{visibleStatus}</span> : null}
@@ -105,7 +111,7 @@ export function TimelineFactRow({
         <div className="conversation-timeline-activity-main static">
           <StatusAwareIcon item={item} icon={icon} />
           <span className="conversation-timeline-activity-copy">
-            <strong title={titleTooltip ?? title}><ConversationActivityLabel active={item.status === "running"}>{title}</ConversationActivityLabel></strong>
+            <strong title={titleTooltip ?? title}><ConversationActivityLabel active={item.status === "running"}>{displayTitle}</ConversationActivityLabel></strong>
             {visibleMeta ? <small>{visibleMeta}</small> : null}
           </span>
           {visibleStatus ? <span className="conversation-timeline-activity-status">{visibleStatus}</span> : null}

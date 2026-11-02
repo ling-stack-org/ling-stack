@@ -8,8 +8,10 @@ import { readSqliteSnapshot } from "./read-snapshot.js";
 import { readUserInputDelivery } from "./user-input-delivery-records.js";
 import { readUserInputRunEventPosition } from "./user-input-event-position.js";
 import { userInputHash, type UserInputRow } from "./user-input-records.js";
+import { projectUserInputAnswerAuthority, type UserInputAnswerAuthorityPorts } from "./user-input-answer-authority.js";
 
-type Ports = Pick<RunStore, "getLingThread" | "getLingTurn" | "getConversationItem" | "getUserInputRequest">;
+type Ports = UserInputAnswerAuthorityPorts
+  & Pick<RunStore, "getLingThread" | "getLingTurn" | "getConversationItem" | "getUserInputRequest">;
 type Anchor = Extract<ConversationItemV1, { readonly kind: "user_input_request" | "user_input_answer" }>;
 
 /** One read-only snapshot for canonical anchors, questions, answers and delivery revisions. No scheduling. */
@@ -62,12 +64,14 @@ export class SqliteUserInputTranscriptStore {
     const base = { availability: "available" as const, itemId: item.id, requestId: request.requestId,
       requestVersion: request.requestVersion, source, ...(runEventPosition ? { runEventPosition } : {}) };
     if (item.kind === "user_input_request") {
+      const answerAuthority = projectUserInputAnswerAuthority(this.context, this.ports, request, new Date().toISOString());
       return { ...base, kind: item.kind, status: request.status, statusRevision: request.statusRevision,
         waitMode: request.waitMode,
         questions: request.questions.map(q => ({ questionId: q.questionId, prompt: q.prompt, required: q.required,
           allowFreeText: q.allowFreeText, options: q.options.map(o => ({ optionId: o.optionId, label: o.label })) })),
         createdAt: request.createdAt, updatedAt: request.updatedAt,
-        ...(request.expiresAt ? { expiresAt: request.expiresAt } : {}) };
+        ...(request.expiresAt ? { expiresAt: request.expiresAt } : {}),
+        ...(answerAuthority ? { answerAuthority } : {}) };
     }
     if (!accepted || accepted.answer.itemId !== item.id || accepted.answer.answerId !== item.payload.answerId
       || !hasRef(item, "user_input_request", request.requestId)

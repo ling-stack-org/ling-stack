@@ -82,11 +82,12 @@ export async function prepareUserInputContinuationExecution(input: {
   const execution = capturePreparedRunnerInput({ runnerId: input.runnerId,
     options: { ...current, mcpTools: facts.sourceExecution.input.mcpTools }, preparedInput,
     usedMemory: facts.sourceExecution.usedMemory, skillSourceContext: facts.sourceExecution.skillSourceContext });
+  const runRequestSnapshot = json({ ...request.request, runnerExecutionInput: execution });
   const plan = json({ schemaVersion: 1, runnerId: input.runnerId,
     providerName: execution.input.provider.provider, providerModel: execution.input.provider.model,
     providerPresetId: facts.source.providerPresetId, selectedSkillId: facts.source.selectedSkillId,
     taskSnapshot: execution.input.task, providerSnapshot: execution.input.provider, requestSnapshot: request.request,
-    preparedInput, preparedInputFingerprint: preparedInput.fingerprint, runnerExecutionInput: execution });
+    runRequestSnapshot, preparedInput, preparedInputFingerprint: preparedInput.fingerprint, runnerExecutionInput: execution });
   const saved = store.saveUserInputContinuationPreparation({ ...claim, stage: "execution",
     parentRef: request.ref, payload: plan }, input.now()).snapshot;
   if (!isDeepStrictEqual(saved.payload, plan)) {

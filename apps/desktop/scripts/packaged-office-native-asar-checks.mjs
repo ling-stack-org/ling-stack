@@ -6,6 +6,7 @@ import { readActiveOriginalPackagedOfficeDaemonBundle } from "./build-packaged-d
 import { readActiveOriginalPackagedOfficeNativePublication } from "./build-packaged-office-native.mjs";
 
 const cliEntry = "dist/daemon/cli.mjs";
+const developmentBundledRoot = "dist/daemon/bundled";
 const maximumArchiveBytes = 2n * 1024n * 1024n * 1024n;
 const maximumHeaderBytes = 16 * 1024 * 1024;
 const maximumCliBytes = 64 * 1024 * 1024;
@@ -148,7 +149,8 @@ export function verifyOriginalOfficeDaemonInApp(appPath) {
     const expected = inspectHeader(raw.header, budget).sort();
     const entries = listPackage(archive).map(path => path.replace(/^\//u, "")).sort();
     requireAsar(entries.length === expected.length && entries.every((path, index) => path === expected[index])
-      && entries.filter(path => path === cliEntry).length === 1);
+      && entries.filter(path => path === cliEntry).length === 1
+      && entries.every(path => path !== developmentBundledRoot && !path.startsWith(developmentBundledRoot + "/")));
     for (const path of ["dist", "dist/daemon"]) {
       const metadata = statFile(archive, path, false);
       requireAsar(Object.hasOwn(metadata, "files") && !Object.hasOwn(metadata, "link") && metadata.unpacked !== true);

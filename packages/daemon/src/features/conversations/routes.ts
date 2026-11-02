@@ -35,8 +35,8 @@ import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
-import { assertPermissionContractVersion } from "../../shared/permission-contract.js";
-import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
+import { writeJson } from "../../shared/response.js";
+import { createSseRunExecutionSink } from "../runs/run-execution-sink.js";
 import { isRecord, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { persistConversationAttachment, CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES } from "../channels/attachments.js";
 import { parseChannelAttachmentRequest, readOptionalChannelMessageFileRefs } from "../channels/schemas.js";
@@ -59,6 +59,7 @@ import { resolveConversationExecutionSelection, inheritConversationExecutionSele
 import { parseExecutionBindingRequest } from "@ling-stack/contracts";
 import { projectTerminalReportDto } from "../channels/terminal-report-routes.js";
 import { listExecutionActions } from "../runs/execution-actions.js";
+import { projectPublicRunSession } from "../runs/public-execution-snapshots.js";
 import {
   buildConversationGeneratedMediaProjection,
   runHasConversationGeneratedMedia,
@@ -194,6 +195,7 @@ export async function handleConversationStream(
     return;
   }
 
+  const transport = createSseRunExecutionSink(response);
   try {
     const input = parseConversationStreamRequest(await readJsonBody(request, config.maxBodyBytes));
     const store = storeRegistry.getStore(workspaceCwd);
@@ -218,23 +220,16 @@ export async function handleConversationStream(
     let assistantMessage = createAssistantTranscriptMessage(thread, turn, undefined, "", "running", now);
     let narration = new ConversationNarrationAccumulator();
     let runId = "";
-    let closed = false;
-
-    response.on("close", () => {
-      closed = true;
-    });
     const safeWrite = (event: string, data: unknown): void => {
-      if (!closed && !response.destroyed) {
-        writeSse(response, event, data);
-      }
+      transport.writeEvent(event, data);
     };
     const streamSink: RunExecutionSink = {
       kind: "sse",
       onClose(listener) {
-        response.on("close", listener);
+        transport.onClose(listener);
       },
       isClosed() {
-        return closed || response.destroyed;
+        return transport.isClosed();
       },
       writeReady(data) {
         const ready = data as { readonly runId?: unknown };
@@ -337,19 +332,17 @@ export async function handleConversationStream(
           updatedAt: latestRun?.updatedAt ?? new Date().toISOString(),
         };
         if (latestRun && (terminalStatus === "succeeded" || terminalStatus === "cancelled")) {
-          safeWrite("done", { thread: latestThread, turn: latestTurn, run: latestRun, assistantMessage: finalAssistant });
+          safeWrite("done", { thread: latestThread, turn: latestTurn, run: projectPublicRunSession(latestRun, store), assistantMessage: finalAssistant });
         } else {
           safeWrite("blocked", {
             thread: latestThread,
             turn: latestTurn,
-            run: latestRun,
+            run: projectPublicRunSession(latestRun, store),
             assistantMessage: finalAssistant,
             error: finalAssistant.errorMessage || latestRun?.errorMessage || finalAssistant.content,
           });
         }
-        if (!closed) {
-          response.end();
-        }
+        transport.end();
       },
     };
 
@@ -365,14 +358,14 @@ export async function handleConversationStream(
       normalConversationContext: prepared.context,
       normalConversationAcceptedSnapshotId: prepared.acceptedSnapshotId,
     }), now);
-    writeSseHead(response);
-    safeWrite("ready", { thread, turn, userMessage, assistantMessage });
+    transport.writeReady({ thread, turn, userMessage, assistantMessage });
     await startRun(runRequest, streamSink);
   } catch (error) {
-    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+    transport.writeError(error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
+    transport.end();
   }
 }
 
@@ -584,7 +577,7 @@ export function buildConversationDetail(
     userInputs,
     supersessionTombstones: projectConversationSupersessionTombstones(projection),
     runLinks,
-    runs,
+    runs: runs.map((run) => projectPublicRunSession(run, store)),
     reasoningSummaries: projectConversationReasoningSummaries({
       store,
       thread,
@@ -678,7 +671,6 @@ function parseConversationStreamRequest(value: unknown): ConversationStreamReque
   if (!isRecord(value)) {
     throw new Error("Conversation request must be a JSON object.");
   }
-  assertPermissionContractVersion(value);
   const message = readString(value, "message").trim();
   const attachmentIds = readOptionalStringArray(value, "attachmentIds") ?? [];
   const fileRefs = readOptionalChannelMessageFileRefs(value, "fileRefs") ?? [];
@@ -692,7 +684,6 @@ function parseConversationStreamRequest(value: unknown): ConversationStreamReque
   const executionBinding = value.executionBinding === undefined ? undefined : parseExecutionBindingRequest(value.executionBinding);
   if (executionBinding && providerPresetId) throw new Error("Choose an execution binding or a provider preset.");
   return {
-    ...(value.schemaVersion === 2 ? { schemaVersion: 2 as const } : {}),
     threadId: readOptionalString(value, "threadId")?.trim() || undefined,
     message,
     attachmentIds: normalizeStringList(attachmentIds),

@@ -7,6 +7,7 @@ import type { SqliteUserInputDeliveryStore } from "./user-input-delivery-store.j
 import type { UserInputSeedPorts } from "./user-input-continuation-records.js";
 import { readUserInputDelivery } from "./user-input-delivery-records.js";
 import { readUserInputContinuationSeed } from "./user-input-continuation-store.js";
+import { freezeUserInputSeed } from "./user-input-continuation-records.js";
 import { readSqliteSnapshot, readSqliteWithinTransaction } from "./read-snapshot.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { assertNonSensitiveUserInput, userInputHash, userInputTimestamp } from "./user-input-records.js";
@@ -29,7 +30,10 @@ export class SqliteUserInputPreparationStore {
     assertStage(stage);
     return readSqliteSnapshot(this.context.database, () => {
       const seed = this.seedWithinTransaction(threadId, deliveryId);
-      return seed ? this.readWithinTransaction(seed, stage) : undefined;
+      const value = seed ? this.readWithinTransaction(seed, stage) : undefined;
+      return value && stage === "execution"
+        ? freezeUserInputSeed({ ...value, payload: normalizeRunnerIdsInSnapshot(value.payload) }) as UserInputContinuationPreparation
+        : value;
     });
   }
 
@@ -73,10 +77,7 @@ export class SqliteUserInputPreparationStore {
       if (stage === "request") assertRequest(value.payload, seed);
       else assertUserInputExecutionPlan(value.payload, seed, (parent as UserInputContinuationPreparation).payload);
       assertNonSensitiveUserInput(value.payload);
-      if (stage !== "execution" || !record(value.payload)) return value;
-      // Historical plans may carry the old Pi package name. Return a
-      // canonical projection while keeping the stored record and fingerprint.
-      return { ...value, payload: normalizeRunnerIdsInSnapshot(value.payload) };
+      return value;
     } catch { throw new UserInputStoreError("invalid_record"); }
   }
 }
@@ -95,7 +96,7 @@ function assertRequest(value: unknown, seed: UserInputContinuationSeed): asserts
 /** Storage validates immutable identity; the selected adapter still validates its exact SDK DTO before dispatch. */
 export function assertUserInputExecutionPlan(value: unknown, seed: UserInputContinuationSeed, request: unknown): asserts value is UserInputContinuationExecutionPlan {
   const keys = ["schemaVersion", "runnerId", "providerName", "providerModel", "providerPresetId", "selectedSkillId",
-    "taskSnapshot", "providerSnapshot", "requestSnapshot", "preparedInput", "preparedInputFingerprint", "runnerExecutionInput"];
+    "taskSnapshot", "providerSnapshot", "requestSnapshot", "runRequestSnapshot", "preparedInput", "preparedInputFingerprint", "runnerExecutionInput"];
   const storedValue = value;
   const normalizedValue = normalizeRunnerIdsInSnapshot(value);
   const normalizedRequest = normalizeRunnerIdsInSnapshot(request);
@@ -106,13 +107,17 @@ export function assertUserInputExecutionPlan(value: unknown, seed: UserInputCont
   if (plan.schemaVersion !== 1 || Object.keys(storedValue).some(key => !keys.includes(key))
     || !["runnerId", "providerName", "providerModel", "preparedInputFingerprint"].every(key => typeof plan[key] === "string" && plan[key])
     || !["providerPresetId", "selectedSkillId"].every(key => plan[key] === undefined || typeof plan[key] === "string" && plan[key])
-    || !record(plan.taskSnapshot) || !record(plan.providerSnapshot) || !record(plan.requestSnapshot) || !record(plan.preparedInput)
+    || !record(plan.taskSnapshot) || !record(plan.providerSnapshot) || !record(plan.requestSnapshot)
+    || !record(plan.preparedInput)
     || !same(plan.requestSnapshot, normalizedRequest) || !same(plan.taskSnapshot, plan.requestSnapshot.task)
+    || (record(plan.runRequestSnapshot) && (!same(plan.taskSnapshot, plan.runRequestSnapshot.task)
+      || !same(plan.runRequestSnapshot.runnerExecutionInput, plan.runnerExecutionInput)))
     || plan.providerSnapshot.provider !== plan.providerName || plan.providerSnapshot.model !== plan.providerModel
     || plan.preparedInput.taskId !== seed.source.taskBinding.taskId || plan.preparedInput.fingerprint !== plan.preparedInputFingerprint) {
     throw new UserInputStoreError("source_conflict");
   }
   assertRequest(plan.requestSnapshot, seed);
+  if (record(plan.runRequestSnapshot)) assertRequest(plan.runRequestSnapshot, seed);
   // The Core boundary validates shared identities, not Pi prompt/tool semantics.
   // A fingerprint-only plan cannot become the source of a second continuation.
   const execution = plan.runnerExecutionInput;

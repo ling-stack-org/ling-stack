@@ -22,7 +22,7 @@ test("harness features default off and produce an immutable run policy snapshot"
       continuations: { mode: "off" },
       toolBroker: { mode: "off" },
       evaluations: { mode: "off", modelGate: "shadow" },
-      delegations: { mode: "off", maxDepth: 4 },
+      delegations: { mode: "off", maxDepth: 4, selectedWorkflowIds: [] },
     });
     assert.deepEqual(createHarnessFeatureSnapshot(daemon.config), {
       schemaVersion: 1,
@@ -32,6 +32,7 @@ test("harness features default off and produce an immutable run policy snapshot"
       evaluationModelGate: "shadow",
       delegations: "off",
       delegationMaxDepth: 4,
+      delegationSelectedWorkflowIds: [],
     });
   });
 });
@@ -50,7 +51,7 @@ test("harness environment modes are validated and delegation depth is bounded", 
       continuations: { mode: "shadow" },
       toolBroker: { mode: "enforce" },
       evaluations: { mode: "off", modelGate: "enforce" },
-      delegations: { mode: "shadow", maxDepth: 16 },
+      delegations: { mode: "shadow", maxDepth: 16, selectedWorkflowIds: [] },
     });
   });
 });
@@ -76,7 +77,7 @@ test("explicit harness config wins over environment and invalid depth falls back
       continuations: { mode: "off" },
       toolBroker: { mode: "shadow" },
       evaluations: { mode: "shadow", modelGate: "shadow" },
-      delegations: { mode: "off", maxDepth: 4 },
+      delegations: { mode: "off", maxDepth: 4, selectedWorkflowIds: [] },
     });
   });
 });

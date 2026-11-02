@@ -22,6 +22,7 @@ export interface BeginChannelWorkflowStepStartInput {
   readonly workflowStepId: string;
   readonly expected: WorkflowStepStartExpectedBasis;
   readonly leaseId: string;
+  readonly executionPermit?: import("./workflow-pre-gate.js").WorkflowPreGateExecutionPermitV1;
   readonly task: CreateTaskInput;
   readonly createTaskOnly?: boolean;
   readonly fanInContextReviews?: NonNullable<ChannelWorkflowStep["metadata"]>["fanInContextReviews"];

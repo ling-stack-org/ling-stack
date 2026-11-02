@@ -1,5 +1,5 @@
 import type { ConversationTimelineItemStatus } from "@ling-stack/conversation-ui-core";
-import type { LingTurnStatus, MediaJobStatus, WorkUnitStatus } from "@ling-stack/core";
+import type { LingTurnStatus, MediaJobStatus, WorkUnitStatus } from "@ling-stack/contracts";
 import type { ChannelActivityItem } from "../../lib/channel-activity.js";
 
 type ProtocolTimelineStatus = ConversationTimelineItemStatus | undefined;

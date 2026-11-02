@@ -2,6 +2,9 @@ import { recallMemory } from "../memory/recall-service.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   DEFAULT_WORKSPACE_ID,
+  effectiveWorkflowPreGate,
+  inspectWorkflowPreApproval,
+  type ApprovalRequest,
   type ChannelWorkflow,
   type ChannelHandoff,
   type ChannelMessage,
@@ -56,8 +59,8 @@ import {
   maybeScheduleWorkflowTerminalReport,
   terminalReportsEnabledForStore,
 } from "./terminal-report-coordinator.js";
-import { buildWorkflowEvidence } from "./workflow-evidence.js";
-import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
+import { buildWorkflowEvidence, projectPublicWorkflowEvidence } from "./workflow-evidence.js";
+import { createMemorySourceRevisions, renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { reviewWorkflowFanInContext } from "./workflow-fanin.js";
 import type { PreselectedMemoryUse } from "../runs/schemas.js";
 import { createWorkflowOperationExecutionSnapshot, type WorkflowOperationExecutionSnapshot } from "../runs/workflow-operation-snapshot.js";
@@ -78,6 +81,8 @@ import {
 } from "./workflow-participant-run-profile.js";
 import { mergeWorkflowApprovalProfiles } from "./workflow-step-run-policy.js";
 import { preflightWorkflowParticipantProvider } from "./workflow-participant-provider.js";
+import { createWorkflowPreApprovalExecutionPermit, prepareWorkflowPreApproval,
+  workflowPreApprovalStartOverrideError } from "./workflow-pre-approval.js";
 export { completeWorkflowIfStepsFinished } from "./workflow-completion.js";
 
 const WORKFLOW_STEP_RESOURCE_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -484,7 +489,7 @@ export async function handleChannelWorkflowEvidence(
   try {
     const store = storeRegistry.getStore(cwd);
     const evidence = buildWorkflowEvidence(store, workflowId);
-    writeJson(response, 200, evidence);
+    writeJson(response, 200, projectPublicWorkflowEvidence(evidence));
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",
@@ -552,7 +557,7 @@ export async function handleChannelWorkflowStepEvidence(
     if (!step) {
       throw new HttpError(404, "workflow_step_not_found", `Channel workflow step not found: ${workflowStepId}`);
     }
-    const evidence = buildWorkflowEvidence(store, step.workflowId);
+    const evidence = projectPublicWorkflowEvidence(buildWorkflowEvidence(store, step.workflowId));
     const workflowStep = evidence.steps.find((item) => item.step.id === workflowStepId);
     if (!workflowStep) {
       throw new HttpError(404, "workflow_step_not_found", `Channel workflow step not found: ${workflowStepId}`);
@@ -627,6 +632,16 @@ async function handleChannelWorkflowStepStart(
   const body = await readJsonBody(request, config.maxBodyBytes);
   const input = parseChannelWorkflowStepStartRequest(body);
   const started = await prepareWorkflowStepStart(store, workflowStepId, input, cwd, validateRunRequest, secretResolver);
+  if (started.kind === "waiting_for_approval") {
+    writeJson(response, 200, {
+      status: "waiting_for_approval",
+      mode: input.mode,
+      workflow: store.getChannelWorkflow(started.workflowId),
+      workflowStep: store.getChannelWorkflowStep(workflowStepId),
+      approval: started.approval,
+    });
+    return;
+  }
   if (started.kind === "blocked") {
     writeJson(response, 200, {
       status: "blocked",
@@ -674,6 +689,7 @@ async function handleChannelWorkflowStepStart(
 
 export type PreparedWorkflowStepStart =
   | { readonly kind: "ready"; readonly workflowId: string; readonly task: Task; readonly runRequest: WorkflowStepRunRequest }
+  | { readonly kind: "waiting_for_approval"; readonly workflowId: string; readonly approval: ApprovalRequest }
   | { readonly kind: "blocked"; readonly workflowId: string; readonly blocker: string }
   | { readonly kind: "error"; readonly statusCode: number; readonly code: string; readonly message: string };
 
@@ -685,11 +701,11 @@ export async function prepareWorkflowStepStart(
   validateRunRequest: ValidateWorkflowStepRunRequest,
   secretResolver?: SecretResolver,
 ): Promise<PreparedWorkflowStepStart> {
-  const step = store.getChannelWorkflowStep(workflowStepId);
+  let step = store.getChannelWorkflowStep(workflowStepId);
   if (!step) {
     return { kind: "error", statusCode: 404, code: "workflow_step_not_found", message: `Channel workflow step not found: ${workflowStepId}` };
   }
-  const workflow = store.getChannelWorkflow(step.workflowId);
+  let workflow = store.getChannelWorkflow(step.workflowId);
   if (!workflow) {
     return { kind: "error", statusCode: 404, code: "workflow_not_found", message: `Channel workflow not found: ${step.workflowId}` };
   }
@@ -703,6 +719,40 @@ export async function prepareWorkflowStepStart(
   }
 
   const now = new Date().toISOString();
+  const initialPreApproval = inspectWorkflowPreApproval(store, step, now);
+  const overrideError = workflowPreApprovalStartOverrideError(step, channel, input, initialPreApproval);
+  if (overrideError) return overrideError;
+  const executionPermit = createWorkflowPreApprovalExecutionPermit(step, channel, input);
+  // Ungated starts retain their established admission path even when a
+  // manifest-backed step is malformed; the provider preflight below owns the
+  // user-facing blocked result for a missing frozen binding.
+  let preApprovalEvidence = initialPreApproval;
+  if (effectiveWorkflowPreGate(step, step.status, workflow.title)) {
+    const preApproval = prepareWorkflowPreApproval(store, step, executionPermit, now);
+    if (preApproval.kind !== "continue") return preApproval;
+    // Resolving approval may have moved waiting -> running. Use that persisted CAS
+    // basis below, never the pre-resolution snapshot or the request's approved text.
+    const currentStep = store.getChannelWorkflowStep(workflowStepId);
+    const currentWorkflow = currentStep && store.getChannelWorkflow(currentStep.workflowId);
+    if (!currentStep || !currentWorkflow) {
+      return { kind: "error", statusCode: 409, code: "workflow_pre_approval_basis_stale", message: "Workflow changed during pre-approval admission." };
+    }
+    preApprovalEvidence = inspectWorkflowPreApproval(store, currentStep, now, executionPermit);
+    if (preApprovalEvidence.status === "pending") {
+      return { kind: "waiting_for_approval", workflowId: currentWorkflow.id, approval: preApprovalEvidence.approval };
+    }
+    if (preApprovalEvidence.status === "blocked") {
+      return { kind: "blocked", workflowId: currentWorkflow.id,
+        blocker: preApprovalEvidence.approval.decisionReason ?? `Workflow step pre-approval ${preApprovalEvidence.code}.` };
+    }
+    if (preApprovalEvidence.status === "required" || preApprovalEvidence.status === "stale") {
+      return { kind: "error", statusCode: 409,
+        code: preApprovalEvidence.status === "stale" ? preApprovalEvidence.code : "workflow_pre_approval_required",
+        message: "Workflow pre-approval changed before execution preparation. Refresh the workflow and explicitly retry the current definition." };
+    }
+    step = currentStep;
+    workflow = currentWorkflow;
+  }
   store.expireResourceLeases(now);
   const lease = store.acquireResourceLease({
     workspaceId: DEFAULT_WORKSPACE_ID,
@@ -754,7 +804,7 @@ export async function prepareWorkflowStepStart(
   if (!workspace.ok) {
     return block(workspace.message);
   }
-  const runnerId = input.runnerId;
+  const runnerId = input.runnerId ?? (preApprovalEvidence.status === "approved" ? step.metadata?.requestedRunnerId : undefined);
   const taskTitle = input.taskTitle ?? step.title;
   const requestedAssigneeTeammateId = input.assigneeTeammateId ?? step.toParticipantId;
   const runTools = workflowStepRunTools(step.metadata?.requiredTools);
@@ -894,7 +944,11 @@ export async function prepareWorkflowStepStart(
     preselectedMemoryUse: renderedMemory.memoryIds.length > 0
       ? {
           memoryIds: renderedMemory.memoryIds,
+          sourceRevisions: createMemorySourceRevisions(memoryRecall.memories
+            .filter((item) => renderedMemory.memoryIds.includes(item.memory.id))
+            .map((item) => item.memory)),
           recallQuery: memoryRecallQuery,
+          renderedPrompt: renderedMemory.prompt,
           policyVersion: renderedMemory.policyVersion,
         }
       : undefined,
@@ -903,7 +957,7 @@ export async function prepareWorkflowStepStart(
     appendSystemPrompt: participantProfile?.appendSystemPrompt,
     approvalProfile: mergeWorkflowApprovalProfiles(
       participantProfile?.approvalProfile,
-      step.metadata?.approvalGate,
+      preApprovalEvidence.status === "approved" ? preApprovalEvidence.gate.approvalProfile : step.metadata?.approvalGate,
     ),
     task: {
       id: "pending",
@@ -931,6 +985,7 @@ export async function prepareWorkflowStepStart(
 
   const begun = store.beginChannelWorkflowStepStart({
     workflowStepId: step.id, expected: step, leaseId: lease.id, now: new Date().toISOString(),
+    executionPermit,
     createTaskOnly: input.mode === "create_task",
     fanInContextReviews: fanInContext.reviews,
     task: {

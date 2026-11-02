@@ -35,6 +35,8 @@ export interface HostMediaNativeTransport {
   readJson(exchange: HostMediaHttpExchange): unknown;
 }
 interface TransportOptions {
+  /** Host-owned local generation signal; caller/Provider deadlines remain independently effective. */
+  readonly signal?: AbortSignal;
   /** Called after serialization, immediately around the one actual native send. */
   readonly launch: (mode: "forward" | "observation", request: HostMediaWireRequest, send: () => void) => void;
   readonly onCompleted?: (exchange: HostMediaHttpExchange) => void;
@@ -49,7 +51,7 @@ interface TransportOptions {
  * body read failures cannot accidentally create completed transport evidence.
  */
 export function createHostMediaNativeTransport(options: TransportOptions): HostMediaNativeTransport {
-  if (Reflect.ownKeys(options).some(key => typeof key !== "string" || !["launch", "onCompleted", "maxResponseBytes"].includes(key))) {
+  if (Reflect.ownKeys(options).some(key => typeof key !== "string" || !["launch", "onCompleted", "maxResponseBytes", "signal"].includes(key))) {
     throw new Error("media_native_transport_invalid_option");
   }
   assertSynchronousHook(options.launch);
@@ -60,7 +62,8 @@ export function createHostMediaNativeTransport(options: TransportOptions): HostM
   }
   // Capture hooks before the first await; mutation of an options object does not
   // change authority halfway through request preparation or body consumption.
-  const { launch, onCompleted } = options;
+  const { launch, onCompleted, signal } = options;
+  if (signal !== undefined && !(signal instanceof AbortSignal)) throw new TypeError("media_native_transport_invalid_signal");
   const responses = new WeakMap<Response, HostMediaHttpExchange>();
   const bodies = new WeakMap<HostMediaHttpExchange, Uint8Array>();
   const fetch: typeof globalThis.fetch = async (input, init) => {
@@ -82,7 +85,7 @@ export function createHostMediaNativeTransport(options: TransportOptions): HostM
       // below includes the native-generated length and tests compare upstream.
       headers.delete("content-length");
       const actual = new Request(wireUrl, {
-        method: original.method, headers, body, signal: original.signal, redirect: "error",
+        method: original.method, headers, body, signal: signal ? AbortSignal.any([original.signal, signal]) : original.signal, redirect: "error",
         credentials: original.credentials, cache: original.cache, integrity: original.integrity,
         keepalive: original.keepalive, referrer: original.referrer, referrerPolicy: original.referrerPolicy,
       });

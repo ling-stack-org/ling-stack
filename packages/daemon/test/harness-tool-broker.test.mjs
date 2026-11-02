@@ -19,12 +19,13 @@ import {
 import { reconcileHarnessToolExecutionsAtStartup } from "../dist/features/harness/tool-execution/recovery.js";
 import { listExecutionActions } from "../dist/features/runs/execution-actions.js";
 import { createUnifiedExecFixture } from "./support/unified-exec-fixture.mjs";
+import { AttemptHostOperationTracker } from "../dist/runtime/attempt-host-operation-tracker.js";
 
-async function fixture(t, name) {
+async function fixture(t, name, options = {}) {
   const cwd = await mkdtemp(join(tmpdir(), `ling-harness-tool-broker-${name}-`));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const task = { id: `task-${name}`, title: "Harness broker", prompt: "Isolated broker fixture" };
-  const f = createUnifiedExecFixture(t, cwd, task, `run-${name}`);
+  const f = createUnifiedExecFixture(t, cwd, task, `run-${name}`, options);
   const effectivePolicySnapshot = resolveSessionRunPolicy({
     workspacePolicy: f.store.getApprovalPolicy(),
     authorizationMode: "always",
@@ -94,6 +95,33 @@ test("enforced broker records a known non-zero exit as failed, not unknown", asy
   assert.equal(execution.failureCode, "tool.executor_failed");
   assert.ok(execution.evidenceArtifactIds.length >= 2);
 });
+
+for (const workspaceAccessMode of ["read_only", "full_access"]) {
+  test(`enforced broker preserves a sparse pre-dispatch ${workspaceAccessMode} denial without fabricating execution`, async t => {
+    const f = await fixture(t, `sparse-denied-${workspaceAccessMode}`, { requestSnapshot: { workspaceAccessMode } });
+    const request = f.request("printf 'must-not-launch' > forbidden-result.txt");
+    const source = { runId: f.run.id, ...f.sourceFence };
+    const tracker = new AttemptHostOperationTracker({ store: f.store, source });
+    const operation = tracker.beginHostCall("command", request.toolCallId);
+    const result = await f.execute(request, { hostOperation: tracker.commandOperation(operation) });
+    assert.equal(result.isError, true);
+    assert.equal(result.details.unifiedExec.denied, true);
+    assert.equal(result.details.unifiedExec.stdout, undefined, "a denial is not a process result");
+    const execution = f.store.listHarnessToolExecutions(f.run.id)[0];
+    assert.equal(execution.state, "failed");
+    assert.equal(execution.failureCode, "tool.policy_denied");
+    assert.equal(execution.resultSummary.denied, true);
+    assert.equal(Object.hasOwn(execution.resultSummary, "stdoutBytes"), false);
+    assert.deepEqual(execution.evidenceArtifactIds, []);
+    assert.equal(f.store.getHostOperation(operation.operationId).phase, "safe");
+    assert.equal(f.store.listEvents(f.run.id).filter(event => event.type === "host_command_prepared").length, 0);
+    await assert.rejects(readFile(join(f.cwd, "forbidden-result.txt")), { code: "ENOENT" });
+    const replay = await f.execute(request);
+    assert.equal(replay.isError, true);
+    assert.match(replay.content[0].text, /already_terminal: failed/);
+    assert.equal(f.store.listHarnessToolExecutions(f.run.id).length, 1);
+  });
+}
 
 test("approval pending, approval resolution, and execution reuse the same ToolExecution", async t => {
   const f = await fixture(t, "approval");

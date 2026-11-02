@@ -110,7 +110,7 @@ for (const [continuationReason, origin] of cases) {
           outcome: "sdk_installed", willRetry: false, tokensBefore: 1800, estimatedTokensAfter: 400,
           compactedSummary: "Fixture compacted view",
           compactedModelView: [{ role: "compactionSummary", summary: "Fixture compacted view" },
-            { role: "assistant", content: [{ type: "text", text: "done" }] }] });
+            { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop" }] });
         await options.onTaskContinuationBoundary?.("before_provider_request");
         return { taskId: options.task.id, events: [], messages: [{ role: "assistant", content: "done" }] };
       }
@@ -388,15 +388,17 @@ test("a queueable continuation conflict reuses the already-persisted Run", async
 
 test("the task WorkUnit retry API dispatches one fenced runner_retry continuation", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-harness-runner-retry-"));
-  const calls = [];
-  class RetryFixtureRunner extends PiRunnerAdapter {
-    async runTask(options) {
-      assert.ok(options.preparedInput, "task retry requires a durable prepared Runner input");
-      calls.push({ runId: options.runId, attemptId: options.runnerAttemptId });
-      if (calls.length === 1) throw new Error("synthetic first attempt failure");
-      return { taskId: options.task.id, events: [], messages: [{ role: "assistant", content: "retry finished" }] };
+  const transport = await createA21LoopbackTransport(() => ({ content: "retry finished" }));
+  t.after(() => transport.close());
+  const runner = createA21RealPiRunner(transport, { afterHostBoundary: async ({ boundary, options }) => {
+    assert.ok(options.preparedInput, "task retry requires a durable prepared Runner input");
+    // Fail inside the real SDK lifetime, not a fabricated adapter return. The
+    // original SDK cleanup must prove that this source executed no tools.
+    if (runner.dispatches.length === 1 && boundary === "before_provider_request") {
+      throw new Error("synthetic first attempt failure");
     }
-  }
+  } });
+  const calls = runner.dispatches;
 
   const seeded = createSqliteRunStore(cwd);
   const now = new Date().toISOString();
@@ -427,7 +429,11 @@ test("the task WorkUnit retry API dispatches one fenced runner_retry continuatio
     port: 0,
     defaultWorkspaceCwd: cwd,
     harness: { continuations: { mode: "enforce" } },
-  }, { runner: new RetryFixtureRunner() });
+    // This fixture counts exact task Attempts/provider dispatches. Terminal
+    // report synthesis has its own tests and otherwise adds a valid tool-free
+    // model call without runId after this task completes.
+    channels: { terminalReports: false },
+  }, { runner });
   await daemon.start();
   const address = daemon.server.address();
   assert.ok(address && typeof address === "object");
@@ -490,6 +496,7 @@ test("the task WorkUnit retry API dispatches one fenced runner_retry continuatio
   assert.equal(completedUnit.workUnit.status, "succeeded");
   assert.deepEqual(calls.map((call) => call.runId), [runId, runId]);
   assert.notEqual(calls[0].attemptId, calls[1].attemptId);
+  assert.equal(transport.requests.length, 1, "only the successful retry reaches the offline provider");
   const continuations = completedUnit.events.filter((event) => event.type === "work_unit_queued"
     && event.data?.origin === "runner_retry");
   assert.equal(continuations.length, 1);
@@ -797,24 +804,16 @@ test("daemon recovery refuses dispatch after shutdown begins", async (t) => {
 test("daemon startup recovers one enforced Harness task Run through a fresh fenced Attempt", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-harness-daemon-recovery-"));
   const seeded = await seedRecoverableHarnessRun(cwd, "restart");
-  const calls = [];
-  class RecoveryFixtureRunner extends PiRunnerAdapter {
-    async runTask(options) {
-      assert.ok(options.preparedInput, "daemon recovery must reuse frozen Runner input");
-      calls.push({ runId: options.runId, attemptId: options.runnerAttemptId });
-      return {
-        taskId: options.task.id,
-        events: [],
-        messages: [{ role: "assistant", content: "daemon recovery finished" }],
-      };
-    }
-  }
+  const transport = await createA21LoopbackTransport(() => ({ content: "daemon recovery finished" }));
+  t.after(() => transport.close());
+  const runner = createA21RealPiRunner(transport);
+  const calls = runner.dispatches;
   const daemon = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
     defaultWorkspaceCwd: cwd,
     harness: { continuations: { mode: "enforce" } },
-  }, { runner: new RecoveryFixtureRunner() });
+  }, { runner });
   await daemon.start();
   const observed = createSqliteRunStore(cwd);
   t.after(async () => {
@@ -848,6 +847,7 @@ test("daemon startup recovers one enforced Harness task Run through a fresh fenc
   assert.equal(workUnit.status, "succeeded");
   assert.deepEqual(attempts.map((attempt) => attempt.status), ["lost", "succeeded"]);
   assert.deepEqual(calls.map((call) => call.runId), [seeded.runId]);
+  assert.equal(transport.requests.length, 1);
   assert.notEqual(calls[0].attemptId, seeded.attemptId);
   const continuation = observed.findRunnerContinuationByIdempotencyKey(`${runnerContinuationIdempotencyKey({
     runId: seeded.runId,
@@ -950,10 +950,11 @@ test("A21 real non-compacted worker crash blocks recovery without committed Host
   assert.equal(await readFile(fixture.source.markerPath, "utf8"), markerContents);
 });
 
-test("A21 real non-compacted worker crash restores the exact committed SDK and wire tool view once", async (t) => {
-  const fixture = await createA21CrashedDaemonRecoveryFixture(t);
+async function assertA21CommittedRecovery(t, commandExitCode) {
+  const fixture = await createA21CrashedDaemonRecoveryFixture(t, undefined, { commandExitCode });
   const sourceFacts = fixture.store.listEvents(fixture.source.runId);
-  const transport = await createA21LoopbackTransport(() => ({ content: "The original command completed once before restart." }));
+  const transport = await createA21LoopbackTransport(() => ({ content: commandExitCode
+    ? "The original command failed with exit 7 once before restart." : "The original command completed once before restart." }));
   t.after(() => transport.close());
   const runner = createA21RealPiRunner(transport);
   const errors = [];
@@ -995,6 +996,9 @@ test("A21 real non-compacted worker crash restores the exact committed SDK and w
   assert.equal(runner.contexts.length, 1);
   assert.equal(transport.requests.length, 1);
   assertA21ExactRecoveredToolProgress(fixture.source, runner.contexts[0], transport.requests[0].body);
+  const originalResult = runner.contexts[0].find(message => message.role === "toolResult" && message.toolCallId === fixture.source.toolCallId);
+  assert.equal(originalResult.isError, commandExitCode !== 0);
+  assert.equal(fixture.source.settlement.end.data.result.details.unifiedExec.exitCode, commandExitCode);
   const events = fixture.store.listEvents(fixture.source.runId);
   assert.deepEqual(events.filter(event => event.seq <= fixture.source.settlement.sourceEventSeq), sourceFacts);
   assert.equal(events.filter(event => event.type === "tool_start").length, 1);
@@ -1011,8 +1015,14 @@ test("A21 real non-compacted worker crash restores the exact committed SDK and w
   t.diagnostic(JSON.stringify({ sourceAttempt: fixture.source.attemptId, recoveryAttempt: runner.dispatches[0].attemptId,
     authorityTables: fixture.sourceAuthorityTables, sourceHighWater: fixture.source.settlement.sourceEventSeq,
     sourceRequestCount: fixture.source.requests.length, recoveryRequestCount: transport.requests.length,
-    recoveredToolResults: runner.contexts[0].filter(message => message.role === "toolResult").length, markerLines: 1 }));
-});
+    recoveredToolResults: runner.contexts[0].filter(message => message.role === "toolResult").length,
+    originalIsError: originalResult.isError, commandExitCode, markerLines: 1 }));
+}
+
+for (const commandExitCode of [0, 7]) {
+  test(`A21 real non-compacted worker crash restores the exact committed SDK and wire tool view once (exit ${commandExitCode})`,
+    t => assertA21CommittedRecovery(t, commandExitCode));
+}
 
 for (const toolBroker of ["off", "enforce"]) {
   test(`A21 real SDK write/edit remain live-capable with toolBroker ${toolBroker}`, async (t) => {
@@ -1177,6 +1187,7 @@ test("daemon restart restores a completed compacted Run without replaying the pr
       runnerCalls.push(options);
       assert.deepEqual(options.compactionRecovery?.modelView.at(-1), {
         role: "assistant", content: [{ type: "text", text: "The task was already completed before restart." }],
+        stopReason: "stop",
       });
       options.onEvent?.({ type: "run_start", taskId: options.task.id, cwd: options.cwd,
         provider: options.provider.provider, model: options.provider.model });
@@ -1899,7 +1910,7 @@ async function seedRecoverableHarnessRun(cwd, suffix, withCompaction = false, su
           ] : [
             { role: "compactionSummary", summary: "Host-approved compacted view" },
             { role: "user", content: [{ type: "text", text: preparedInput.userPrompt }], timestamp: 0 },
-            { role: "assistant", content: [{ type: "text", text: "The task was already completed before restart." }] },
+            { role: "assistant", content: [{ type: "text", text: "The task was already completed before restart." }], stopReason: "stop" },
           ] }, createdAt: now });
       const checkpoint = store.createRunCompactionCheckpoint({
         runId: run.id, attemptId: attempt.id, sourceEventSeq: start.seq,
@@ -1979,7 +1990,7 @@ async function createDaemonRecoveryCoordinatorFixture(t, suffix, withCompaction 
 }
 
 /** Crash only a nonce/PID/path-verified owned worker after durable Host settlement. */
-async function createA21CrashedDaemonRecoveryFixture(t, checkpointFault) {
+async function createA21CrashedDaemonRecoveryFixture(t, checkpointFault, { commandExitCode = 0 } = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-a21-noncompacted-workspace-"));
   const ambient = await mkdtemp(join(tmpdir(), "ling-a21-noncompacted-ambient-"));
   const lingHome = join(ambient, "home");
@@ -1987,7 +1998,7 @@ async function createA21CrashedDaemonRecoveryFixture(t, checkpointFault) {
   const scriptPath = fileURLToPath(new URL("./support/noncompacted-recovery-crash-worker.mjs", import.meta.url));
   const nonce = randomUUID();
   const markerPath = join(cwd, "a21-effect-marker.txt");
-  const child = fork(scriptPath, [JSON.stringify({ cwd, markerPath, nonce, toolCallId: `a21-bash-${nonce}`, checkpointFault })],
+  const child = fork(scriptPath, [JSON.stringify({ cwd, markerPath, nonce, toolCallId: `a21-bash-${nonce}`, checkpointFault, commandExitCode })],
     { cwd, execArgv: [], stdio: ["ignore", "pipe", "pipe", "ipc"], env: {
       PATH: process.env.PATH ?? "/usr/bin:/bin",
       LING_STACK_HOME: lingHome,
@@ -2041,7 +2052,7 @@ async function createA21CrashedDaemonRecoveryFixture(t, checkpointFault) {
   let sourceAuthorityTables;
   try {
     assert.equal(observed.getRun(source.runId)?.status, "running");
-    assert.deepEqual(readA21SettledCommand(observed, source.runId, source.toolCallId), source.settlement,
+    assert.deepEqual(readA21SettledCommand(observed, source.runId, source.toolCallId, { commandExitCode }), source.settlement,
       "a second SQLite connection must read the actual completed dedicated journal and tool_end before crash");
     assert.equal(observed.listHostCommandWriteBlockers(cwd).length, 0);
     assert.equal(observed.getLatestRunCompactionStart(source.runId), undefined);

@@ -107,7 +107,7 @@ export function uniqueDirectLinkPreviews(previews: readonly TeammateDirectLinkPr
 export function directComposerFileRefs(parts: ReturnType<typeof composerWorkspaceFileParts>): readonly ChannelMessageFileRef[] {
   return parts.map((part) => ({
     path: part.path,
-    source: "composer" as const,
+    source: "inferred_text" as const,
     ...(part.line ? { line: part.line } : {}),
   }));
 }

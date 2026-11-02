@@ -24,7 +24,7 @@ import { normalizeArtifactPath } from "../../shared/path.js";
 import { isRecord } from "../../shared/validation.js";
 import { isWorkflowAgentContextStamp } from "./agent-context-consistency.js";
 import type { WorkflowStepContextCompactionSummary } from "./context-compaction.js";
-import type { WorkflowStepRunRequest } from "./workflows.js";
+import type { WorkflowStepRunContextPackSnapshot, WorkflowStepRunRequest } from "./workflows.js";
 import { listAllExecutionActionsForRun } from "../runs/execution-actions.js";
 
 type WorkflowStepPacketArtifactStore = RunExecutionStoreFacet & RunStorePathsFacet;
@@ -182,9 +182,17 @@ export function buildWorkflowStepContextPacket(input: {
     effectiveRunnerId: runnerAudit?.effectiveRunnerId,
     providerPresetId: input.runRequest.providerPresetId ?? input.run.providerPresetId,
     approvalGate: input.step.metadata?.approvalGate,
-    contextPack: input.runRequest.contextPack,
+    contextPack: publicWorkflowContextPack(input.runRequest.contextPack),
     generatedAt: input.now,
   });
+}
+
+function publicWorkflowContextPack(pack: WorkflowStepRunContextPackSnapshot | undefined): WorkflowStepRunContextPackSnapshot | undefined {
+  if (!pack) return undefined;
+  return {
+    ...pack,
+    sections: pack.sections.filter((section) => section.id !== "workflow_role_evidence"),
+  };
 }
 
 export function buildWorkflowStepOutputPacket(input: {

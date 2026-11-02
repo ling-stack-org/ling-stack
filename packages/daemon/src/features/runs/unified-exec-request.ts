@@ -3,12 +3,30 @@ import type { RunSession, UnifiedExecRequest } from "@ling-stack/core";
 import type { PiRunnerApprovalRequest } from "@ling-stack/runner-pi";
 import { isRecord } from "../../shared/validation.js";
 
+/** Select once before approval; launch normalization uses the same directory contract.
+ * A model-supplied cwd selects a location, never additional filesystem authority.
+ */
+export function normalizeBashWorkingDirectory(run: Pick<RunSession, "cwd">,
+  approvalRequest: Pick<PiRunnerApprovalRequest, "cwd" | "input">): { readonly cwd: string; readonly error?: string } {
+  const inputCwd = isRecord(approvalRequest.input) ? approvalRequest.input.cwd : undefined;
+  if (inputCwd !== undefined && (typeof inputCwd !== "string" || !inputCwd.trim())) {
+    return { cwd: resolve(run.cwd), error: "Ling Stack rejected a non-string or empty command cwd." };
+  }
+  const requestedCwd = typeof inputCwd === "string" ? inputCwd : approvalRequest.cwd || run.cwd;
+  const cwd = isAbsolute(requestedCwd) ? resolve(requestedCwd) : resolve(run.cwd, requestedCwd);
+  const path = relative(resolve(run.cwd), cwd);
+  if (path !== "" && (path.startsWith("..") || isAbsolute(path))) {
+    return { cwd, error: `Ling Stack unified exec rejected cwd outside the run workspace: ${cwd}` };
+  }
+  return { cwd };
+}
+
 /** The same pure normalization at the public tool entry and original source-owned launcher. */
 export function normalizeBashRequest(run: RunSession, approvalRequest: PiRunnerApprovalRequest,
   approvalId: string | undefined): { readonly request: UnifiedExecRequest } | { readonly request: UnifiedExecRequest; readonly error: string } {
   const command = readInputString(approvalRequest.input, "command", "");
-  const requestedCwd = readInputString(approvalRequest.input, "cwd", approvalRequest.cwd || run.cwd);
-  const cwd = isAbsolute(requestedCwd) ? resolve(requestedCwd) : resolve(run.cwd, requestedCwd);
+  const directory = normalizeBashWorkingDirectory(run, approvalRequest);
+  const cwd = directory.cwd;
   const timeoutMs = readTimeoutMs(approvalRequest.input);
   const idleTimeoutMs = readInputNumber(approvalRequest.input, "idleTimeoutMs");
   const pty = isRecord(approvalRequest.input) && typeof approvalRequest.input.pty === "boolean" ? approvalRequest.input.pty : false;
@@ -17,10 +35,7 @@ export function normalizeBashRequest(run: RunSession, approvalRequest: PiRunnerA
     environment: { mode: "inherit_minimal" }, startedBy: "run_tool" };
   if (!command.trim()) return { request, error: "Ling Stack unified exec rejected an empty bash command." };
   if (pty) return { request, error: "Ling Stack unified exec P1 does not support PTY shell commands." };
-  const path = relative(resolve(run.cwd), resolve(cwd));
-  if (path !== "" && (path.startsWith("..") || isAbsolute(path))) {
-    return { request, error: `Ling Stack unified exec rejected cwd outside the run workspace: ${cwd}` };
-  }
+  if (directory.error) return { request, error: directory.error };
   return { request };
 }
 function readInputString(input: unknown, key: string, fallback: string): string {

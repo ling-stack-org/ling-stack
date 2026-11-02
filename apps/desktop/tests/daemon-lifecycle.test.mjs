@@ -9,6 +9,131 @@ import { DesktopDaemonLifecycle } from "../dist/main/daemon-lifecycle.js";
 
 const existingEntryPath = fileURLToPath(import.meta.url);
 
+function resourceBootstrapFixture(t, options = {}) {
+  const child = createFakeChild();
+  const authority = new PassThrough();
+  const resources = new PassThrough();
+  child.stdio = [null, null, null, authority, resources];
+  const spawned = deferred();
+  const prepared = deferred();
+  const diagnostics = [];
+  let healthChecks = 0;
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:17991", daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd: "/tmp/ling-desktop-workspace", packaged: true,
+    probePort: async () => "free",
+    fetch: async () => {
+      healthChecks++;
+      if (healthChecks === 1 || options.neverReady) throw new TypeError("fetch failed");
+      return daemonHealth("/tmp/ling-desktop-workspace");
+    },
+    spawnDaemon: input => { spawned.resolve(input); return child; },
+    onDiagnostic: (event, details) => {
+      diagnostics.push({ event, details });
+      if (event === "daemon.resources_ready") prepared.resolve();
+    },
+  });
+  t.after(() => lifecycle.stopOwnedDaemon());
+  return { child, authority, resources, spawned, prepared, diagnostics, lifecycle,
+    healthChecks: () => healthChecks,
+    acknowledge: () => resources.end(JSON.stringify({ schemaVersion: 1, phase: "resources_ready", pid: child.pid })),
+  };
+}
+
+test("packaged resource bootstrap does not consume service readiness or FD3 authority time", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  const input = resourceBootstrapFixture(t);
+  const pending = input.lifecycle.ensureStarted();
+  const spawned = await input.spawned.promise;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(input.lifecycle.status.state, "starting", "HTTP health cannot bypass resource authentication");
+  assert.equal(input.healthChecks(), 1, "no service probe before the resource receipt");
+  assert.equal(spawned.env.LING_STACK_RESOURCE_BOOTSTRAP_FD, "4");
+  t.mock.timers.tick(30_000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(input.lifecycle.status.state, "starting");
+  assert.deepEqual(input.child.killSignals, []);
+  input.acknowledge();
+  input.authority.end(JSON.stringify(engineAuthorityFixture(input.child.pid)));
+  assert.equal((await pending).state, "connected");
+  assert.deepEqual(await input.lifecycle.getExecutionEngineAuthority(), engineAuthorityFixture(input.child.pid));
+  assert.equal(input.resources.destroyed, true);
+});
+
+test("packaged resource bootstrap retains the ordinary 20-second service deadline after its receipt", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  const input = resourceBootstrapFixture(t, { neverReady: true });
+  const pending = assert.rejects(input.lifecycle.ensureStarted(), { code: "start_timeout" });
+  await input.spawned.promise;
+  t.mock.timers.tick(30_000);
+  input.acknowledge();
+  await input.prepared.promise;
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(20_000);
+  await new Promise(resolve => setImmediate(resolve));
+  await pending;
+  assert.deepEqual(input.child.killSignals, ["SIGTERM"]);
+  assert.equal(input.authority.destroyed, true);
+});
+
+test("packaged resource bootstrap has a fixed deadline, not an activity-renewed lease", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  const input = resourceBootstrapFixture(t);
+  const pending = assert.rejects(input.lifecycle.ensureStarted(), { code: "start_timeout" });
+  await input.spawned.promise;
+  input.resources.write('{"schemaVersion":1,');
+  t.mock.timers.tick(59_000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(input.child.killSignals, []);
+  input.resources.write('"phase":"resources_ready",');
+  t.mock.timers.tick(1_000);
+  await pending;
+  assert.equal(input.healthChecks(), 1);
+  assert.equal(input.diagnostics.some(item => item.event === "daemon.resources_timeout"), true);
+  assert.equal(input.resources.destroyed, true);
+  assert.equal(input.authority.destroyed, true);
+});
+
+test("packaged resource bootstrap rejects missing, corrupt or wrong-child receipts without probing service", async t => {
+  for (const scenario of ["missing", "invalid", "pid", "phase", "oversize", "closed"]) {
+    await t.test(scenario, async t => {
+      const input = resourceBootstrapFixture(t);
+      if (scenario === "missing") input.child.stdio.pop();
+      const pending = assert.rejects(input.lifecycle.ensureStarted(), { code: "resource_missing" });
+      await input.spawned.promise;
+      if (scenario === "invalid") input.resources.end("not-json");
+      if (scenario === "pid") input.resources.end(JSON.stringify({ schemaVersion: 1, phase: "resources_ready", pid: 999 }));
+      if (scenario === "phase") input.resources.end(JSON.stringify({ schemaVersion: 1, phase: "still_working", pid: 42 }));
+      if (scenario === "oversize") input.resources.end("x".repeat(1025));
+      if (scenario === "closed") input.resources.destroy();
+      await pending;
+      assert.equal(input.healthChecks(), 1);
+      assert.deepEqual(input.child.killSignals, ["SIGTERM"]);
+      assert.equal(input.authority.destroyed, true);
+    });
+  }
+});
+
+test("packaged resource bootstrap cancels and drains both private pipes when stopping or the child fails", async t => {
+  for (const scenario of ["stop", "exit", "spawn-error"]) {
+    await t.test(scenario, async t => {
+      const input = resourceBootstrapFixture(t);
+      const pending = assert.rejects(input.lifecycle.ensureStarted(), scenario === "stop"
+        ? /daemon_start_cancelled/ : { code: scenario === "exit" ? "child_exited" : "spawn_failed" });
+      await input.spawned.promise;
+      if (scenario === "stop") await input.lifecycle.stopOwnedDaemon();
+      if (scenario === "exit") { input.child.exitCode = 1; input.child.emit("exit", 1, null); }
+      if (scenario === "spawn-error") input.child.emit("error", new Error("fixture spawn failure"));
+      await pending;
+      assert.equal(input.healthChecks(), 1);
+      for (const pipe of [input.authority, input.resources]) {
+        assert.equal(pipe.destroyed, true);
+        assert.equal(pipe.listenerCount("data"), 0);
+      }
+    });
+  }
+});
+
 test("Desktop engine authority is memory-only and belongs to its live owned child", async (t) => {
   const child = createFakeChild();
   const channel = new PassThrough();
@@ -222,6 +347,9 @@ test("Desktop daemon starts in the selected workspace and stops the owned child"
 
 test("packaged Desktop marks only its fixed child bootstrap as packaged", async () => {
   const child = createFakeChild();
+  const resources = new PassThrough();
+  child.stdio = [null, null, null, null, resources];
+  resources.end(JSON.stringify({ schemaVersion: 1, phase: "resources_ready", pid: child.pid }));
   const inputs = [];
   let healthChecks = 0;
   const lifecycle = new DesktopDaemonLifecycle({
@@ -290,7 +418,7 @@ test("unexpected owned child exit emits one recovery signal while intentional st
   assert.deepEqual(intentionalExits, []);
 });
 
-test("Desktop daemon escalates to SIGKILL when startup cleanup cannot stop the child", async () => {
+test("Desktop retains startup ownership when cleanup cannot confirm the original stop", async () => {
   const child = createFakeChild({ exitOnTerm: false });
   const diagnostics = [];
   const lifecycle = new DesktopDaemonLifecycle({
@@ -305,10 +433,20 @@ test("Desktop daemon escalates to SIGKILL when startup cleanup cannot stop the c
     onDiagnostic: (event) => diagnostics.push(event),
   });
 
-  await assert.rejects(lifecycle.ensureStarted(), /daemon_start_timeout/);
+  // R03 changes the former forced-cleanup contract: startup timeout cannot
+  // prove that a spawned Host never served work. It must not authorize SIGKILL.
+  await assert.rejects(lifecycle.ensureStarted(), error => error?.code === "stop_unconfirmed");
 
-  assert.deepEqual(child.killSignals, ["SIGTERM", "SIGKILL"]);
-  assert.ok(diagnostics.includes("daemon.force_killed"));
+  assert.deepEqual(child.killSignals, ["SIGTERM"]);
+  assert.equal(diagnostics.includes("daemon.force_killed"), false);
+  assert.equal(child.exitCode, null);
+  assert.equal(child.signalCode, null);
+  assert.equal(lifecycle.status.ownedByDesktop, true);
+  assert.equal(lifecycle.status.reason, "stop_unconfirmed");
+  await assert.rejects(lifecycle.restart(), error => error?.code === "stop_unconfirmed");
+  assert.deepEqual(child.killSignals, ["SIGTERM"]);
+  child.exitCode = 0;
+  child.emit("exit", 0, null);
 });
 
 test("missing daemon resources produce a typed recoverable startup failure", async () => {
@@ -925,8 +1063,8 @@ test("an older stop cannot overwrite a newer owned daemon connection", async () 
   assert.deepEqual(oldChild.killSignals, ["SIGTERM"]);
 
   const restarting = lifecycle.ensureStarted();
-  oldChild.signalCode = "SIGTERM";
-  oldChild.emit("exit", null, "SIGTERM");
+  oldChild.exitCode = 0;
+  oldChild.emit("exit", 0, null);
   const restarted = await restarting;
   assert.equal(restarted.state, "connected");
   assert.equal(restarted.ownedByDesktop, true);
@@ -988,8 +1126,8 @@ test("ensureStarted waits for an in-flight stop before probing daemon health", a
   assert.equal(restartSettled, false);
 
   oldChildAlive = false;
-  oldChild.signalCode = "SIGTERM";
-  oldChild.emit("exit", null, "SIGTERM");
+  oldChild.exitCode = 0;
+  oldChild.emit("exit", 0, null);
   const restarted = await restarting;
   await stoppingOldChild;
 
@@ -1032,8 +1170,8 @@ test("concurrent stopOwnedDaemon calls share the same child termination", async 
   assert.deepEqual(child.killSignals, ["SIGTERM"]);
   assert.equal(secondStopSettled, false, "all stop callers must await the same child exit barrier");
 
-  child.signalCode = "SIGTERM";
-  child.emit("exit", null, "SIGTERM");
+  child.exitCode = 0;
+  child.emit("exit", 0, null);
   await Promise.all([firstStop, secondStop]);
   assert.equal(lifecycle.status.state, "disconnected");
 });
@@ -1086,8 +1224,8 @@ test("restart waits for an in-flight owned stop before probing daemon health", a
   assert.equal(restartSettled, false);
 
   oldChildAlive = false;
-  oldChild.signalCode = "SIGTERM";
-  oldChild.emit("exit", null, "SIGTERM");
+  oldChild.exitCode = 0;
+  oldChild.emit("exit", 0, null);
   const restarted = await restarting;
   await stoppingOldChild;
 
@@ -1136,8 +1274,8 @@ test("concurrent restart calls share one stop and one replacement startup", asyn
   await new Promise((resolve) => setImmediate(resolve));
 
   oldChildAlive = false;
-  oldChild.signalCode = "SIGTERM";
-  oldChild.emit("exit", null, "SIGTERM");
+  oldChild.exitCode = 0;
+  oldChild.emit("exit", 0, null);
   const [firstStatus, secondStatus] = await Promise.all([firstRestart, secondRestart]);
 
   assert.equal(sharedRestart, true, "restart callers must receive the same in-flight operation");
@@ -1335,8 +1473,11 @@ function createFakeChild(options = {}) {
     kill(signal = "SIGTERM") {
       this.killSignals.push(signal);
       if (signal === "SIGKILL" || options.exitOnTerm !== false) {
-        this.signalCode = signal;
-        queueMicrotask(() => this.emit("exit", null, signal));
+        // Model a handled SIGTERM only after actual successful Host cleanup.
+        // Abrupt/signal exits remain separately covered by R03 regression-1.
+        this.exitCode = signal === "SIGKILL" ? null : 0;
+        this.signalCode = signal === "SIGKILL" ? signal : null;
+        queueMicrotask(() => this.emit("exit", this.exitCode, this.signalCode));
       }
       return true;
     },

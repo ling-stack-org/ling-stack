@@ -1,3 +1,4 @@
+import { isAbsolute, resolve } from "node:path";
 import {
   createApprovalCommandRuleId,
   createApprovalRequestId,
@@ -379,13 +380,18 @@ export class SqliteApprovalRequestStore {
     return this.context.database
       .prepare(`${approvalCommandRuleSelectSql(whereClause)} ORDER BY created_at DESC`)
       .all(DEFAULT_WORKSPACE_ID)
-      .map(mapApprovalCommandRule);
+      .map(mapApprovalCommandRule)
+      .map(rule => {
+        const approval = rule.sourceApprovalId ? this.getApprovalRequest(rule.sourceApprovalId) : undefined;
+        return approval?.payload.type === "bash" && isAbsolute(approval.payload.cwd)
+          ? { ...rule, cwd: resolve(approval.payload.cwd) } : rule;
+      });
   }
 
-  findMatchingApprovalCommandRule(toolName: "bash", argv: readonly string[]): ApprovalCommandRule | undefined {
-    if (argv.length === 0) return undefined;
+  findMatchingApprovalCommandRule(toolName: "bash", argv: readonly string[], cwd?: string): ApprovalCommandRule | undefined {
+    if (argv.length === 0 || cwd === undefined || !isAbsolute(cwd)) return undefined;
     return this.listApprovalCommandRules()
-      .filter((rule) => rule.toolName === toolName && rule.prefix.length <= argv.length)
+      .filter((rule) => rule.toolName === toolName && rule.cwd === resolve(cwd) && rule.prefix.length <= argv.length)
       .sort((left, right) => right.prefix.length - left.prefix.length)
       .find((rule) => rule.prefix.every((token, index) => token === argv[index]));
   }
@@ -423,6 +429,7 @@ export class SqliteApprovalRequestStore {
       if (
         existing.actionType !== "bash" ||
         !proposal ||
+        (proposal.cwd !== undefined && (existing.payload.type !== "bash" || proposal.cwd !== resolve(existing.payload.cwd))) ||
         !existing.availableDecisions?.includes("approve_command_rule") ||
         input.proposedRuleFingerprint !== proposal.fingerprint
       ) {

@@ -8,19 +8,44 @@ import { createDaemonServer } from "../dist/index.js";
 import { allowLocalServiceRequest } from "../dist/shared/local-workspace-access.js";
 
 async function withDaemon(fn, options = {}) {
-  const cwd = await mkdtemp(join(tmpdir(), "ling-notifications-api-"));
-  const home = await mkdtemp(join(tmpdir(), "ling-notifications-home-"));
-  process.env.LING_STACK_HOME = home;
-  process.env.LING_NOTIFICATIONS_POLL_WAIT_MS = "800";
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, ...options });
+  const previousHome = process.env.LING_STACK_HOME;
+  const previousPollWait = process.env.LING_NOTIFICATIONS_POLL_WAIT_MS;
+  const ownedPaths = [];
+  let cwd;
+  let home;
+  let daemon;
+  let primaryError;
+  const cleanupErrors = [];
   try {
+    cwd = await mkdtemp(join(tmpdir(), "ling-notifications-api-"));
+    ownedPaths.push(cwd);
+    home = await mkdtemp(join(tmpdir(), "ling-notifications-home-"));
+    ownedPaths.push(home);
+    process.env.LING_STACK_HOME = home;
+    process.env.LING_NOTIFICATIONS_POLL_WAIT_MS = "800";
+    daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, ...options });
     await daemon.start();
     const port = daemon.server.address().port;
     await fn(`http://127.0.0.1:${port}`, cwd);
+  } catch (error) {
+    primaryError = error;
   } finally {
-    await daemon.stop().catch(() => {});
-    await rm(cwd, { recursive: true, force: true }).catch(() => {});
-    await rm(home, { recursive: true, force: true }).catch(() => {});
+    if (daemon) {
+      try { await daemon.stop(); } catch (error) { cleanupErrors.push(error); }
+    }
+    for (const path of ownedPaths) {
+      try { await rm(path, { recursive: true, force: true }); }
+      catch (error) { cleanupErrors.push(error); }
+    }
+    if (previousHome === undefined) delete process.env.LING_STACK_HOME;
+    else process.env.LING_STACK_HOME = previousHome;
+    if (previousPollWait === undefined) delete process.env.LING_NOTIFICATIONS_POLL_WAIT_MS;
+    else process.env.LING_NOTIFICATIONS_POLL_WAIT_MS = previousPollWait;
+  }
+  if (primaryError || cleanupErrors.length > 0) {
+    const errors = primaryError ? [primaryError, ...cleanupErrors] : cleanupErrors;
+    if (errors.length === 1) throw errors[0];
+    throw new AggregateError(errors, "notification daemon fixture failed", { cause: primaryError ?? errors[0] });
   }
 }
 

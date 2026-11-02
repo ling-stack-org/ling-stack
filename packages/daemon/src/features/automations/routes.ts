@@ -27,6 +27,7 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalBooleanQuery, readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { ensureRunCancelled } from "../runs/cancellation.js";
+import { projectPublicRunSession } from "../runs/public-execution-snapshots.js";
 import type { AutomationSchedulerRegistry } from "./scheduler.js";
 import { buildAutomationContext } from "./context.js";
 import { assertAutomationRecurrence } from "./recurrence.js";
@@ -348,7 +349,7 @@ export async function handleAutomationItem(
         startRun,
         notificationHub,
       });
-      writeJson(response, 202, result);
+      writeJson(response, 202, { ...result, run: projectPublicRunSession(result.run, store) });
       return;
     }
   } catch (error) {
@@ -411,7 +412,7 @@ export async function handleAutomationRunItem(
         automationRun,
         automation: store.getAutomationDefinition(automationRun.automationId),
         thread: store.getLingThread(automationRun.threadId),
-        run: automationRun.runId ? store.getRun(automationRun.runId) : undefined,
+        run: projectPublicRunSession(automationRun.runId ? store.getRun(automationRun.runId) : undefined, store),
       });
       return;
     }

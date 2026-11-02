@@ -74,3 +74,25 @@ test("private HTTP rejects content/permission drift, validates keys and supports
   await Promise.all([f.submit(body, true), f.submit(body, true)].map(async r => (await r).text()));
   assert.equal(f.calls, 3);
 });
+
+for (const stream of [false, true]) {
+  test(`private ${stream ? "SSE" : "POST"} admits inferred paths and preserves their origin across reload`, async t => {
+    const f = await fixture(t);
+    const fileRefs = [{ path: "../records.csv", source: "inferred_text" },
+      { path: "/outside/private.txt", source: "inferred_text" }];
+    const body = { body: "只解释这些路径，不读取文件", fileRefs, requestAiReply: true,
+      idempotencyKey: `lexical-${stream}`, permissionPreset: "read_only" };
+    const response = await f.submit(body, stream);
+    assert.equal(response.status, stream ? 200 : 201, await response.clone().text());
+    if (stream) assert.match(await response.text(), /event: done/);
+    f.store.close(); f.store = createSqliteRunStore(f.cwd);
+    const receipt = await f.receipt(body.idempotencyKey);
+    assert.equal(receipt.status, "accepted");
+    assert.deepEqual(receipt.message.fileRefs, fileRefs);
+    assert.equal(f.calls, 1);
+    const denied = await f.submit({ ...body, idempotencyKey: `explicit-${stream}`,
+      fileRefs: [{ path: "/outside/private.txt", source: "explicit_text" }] }, stream);
+    assert.equal(denied.status, 400);
+    assert.equal(f.calls, 1);
+  });
+}

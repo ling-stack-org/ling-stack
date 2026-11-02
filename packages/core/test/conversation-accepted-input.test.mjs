@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Worker } from "node:worker_threads";
 import test from "node:test";
 import { createSqliteRunStore, resolveRuntimePaths } from "../dist/index.js";
+import { restorePreEmptyForkSnapshots } from "./support/legacy-schema-rollback.mjs";
 
 const now = "2026-09-06T05:00:00.000Z";
 
@@ -182,6 +183,7 @@ test("pre-accepted-schema fork rows migrate and reopen without changing their DT
   const fork = f.store.createConversationContextSnapshot({ threadId: f.thread.id, segmentId: source.contextSegmentId,
     projectionVersion: "fork-v1", throughItemSequence: source.item.sequence, sourceRefs: [{ type: "conversation_item", id: source.item.id }], policyVersion: "fork-v1" }, now);
   f.store.close();
+  restorePreEmptyForkSnapshots(f.database);
   f.database.exec("DROP INDEX idx_conversation_accepted_input_source_use");
   for (const column of ["snapshot_use", "payload_version", "source_item_id", "payload_json", "payload_fingerprint"]) {
     f.database.exec(`ALTER TABLE conversation_context_snapshots DROP COLUMN ${column}`);

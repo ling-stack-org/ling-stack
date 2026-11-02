@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isAbsolute, resolve } from "node:path";
 import type {
   ApprovalCommandRule,
   ApprovalCommandRuleProposal,
@@ -65,7 +66,9 @@ export function createApprovalCommandRuleProposal(input: {
   readonly requestedPrefix: readonly string[] | undefined;
   readonly risk: ApprovalRisk;
   readonly riskFlags: readonly string[];
+  readonly cwd?: string;
 }): ApprovalCommandRuleProposal | undefined {
+  if (input.cwd !== undefined && (!isAbsolute(input.cwd) || /[\r\n\0]/u.test(input.cwd))) return undefined;
   if (input.risk === "high" || input.risk === "critical" || input.riskFlags.length > 0) {
     return undefined;
   }
@@ -79,14 +82,16 @@ export function createApprovalCommandRuleProposal(input: {
   if (!prefix) return undefined;
   if (!isSafePrefix(prefix)) return undefined;
 
+  const cwd = input.cwd === undefined ? undefined : resolve(input.cwd);
   const fingerprint = createHash("sha256")
-    .update(JSON.stringify({ version: RULE_VERSION, prefix }))
+    .update(JSON.stringify({ version: RULE_VERSION, prefix, ...(cwd === undefined ? {} : { cwd }) }))
     .digest("hex");
   return {
     prefix,
     display: prefix.join(" "),
     fingerprint,
     version: RULE_VERSION,
+    ...(cwd === undefined ? {} : { cwd }),
   };
 }
 
@@ -105,16 +110,18 @@ export function findMatchingApprovalCommandRulesForCommand(
     readonly findMatchingApprovalCommandRule: (
       toolName: "bash",
       argv: readonly string[],
+      cwd?: string,
     ) => ApprovalCommandRule | undefined;
   },
   command: string,
+  cwd?: string,
 ): readonly ApprovalCommandRule[] | undefined {
   const segments = commandSegmentsForRuleMatching(command);
   if (!segments) return undefined;
   const matches = new Map<string, ApprovalCommandRule>();
   for (const argv of commandSegmentsRequiringRules(segments)) {
-    const rule = lookup.findMatchingApprovalCommandRule("bash", argv);
-    if (!rule || !isSafePrefix(rule.prefix)) return undefined;
+    const rule = lookup.findMatchingApprovalCommandRule("bash", argv, cwd);
+    if (!rule || !isSafePrefix(rule.prefix) || (cwd !== undefined && rule.cwd !== resolve(cwd))) return undefined;
     matches.set(rule.id, rule);
   }
   return matches.size > 0 ? [...matches.values()] : undefined;
@@ -127,8 +134,10 @@ export function isApprovalCommandRuleProposalCurrent(approval: ApprovalRequest):
     requestedPrefix: approval.proposedCommandRule.prefix,
     risk: approval.risk,
     riskFlags: approval.payload.riskFlags,
+    ...(approval.proposedCommandRule.cwd === undefined ? {} : { cwd: approval.payload.cwd }),
   });
-  return proposal?.fingerprint === approval.proposedCommandRule.fingerprint;
+  return proposal?.fingerprint === approval.proposedCommandRule.fingerprint
+    && (approval.proposedCommandRule.cwd === undefined || approval.proposedCommandRule.cwd === proposal?.cwd);
 }
 
 function normalizeRequestedPrefix(prefix: readonly string[] | undefined): string[] | undefined {

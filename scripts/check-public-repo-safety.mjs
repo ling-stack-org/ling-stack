@@ -40,6 +40,11 @@ const allowedCredentialDigests = new Set([
   // Deterministic second-access sentinel in conversation-media-execution-admission.test.mjs.
   // It must never be read or persisted; keep the exact fixture, not a key-prefix exemption.
   "71fc1755dc1336c6d16c112ac2db3f361dbb1a862a0dee2ce27bd86461af5620",
+  // Exact C010 export-redaction sentinel; no general "synthetic" exemption.
+  "ed3591aa66597802a38cfd483b640d2f33810e9d95e19f624041b2c1604578b3",
+  // Exact B009 command/path redaction sentinels, never Provider credentials.
+  "5f5c4fb23677d16af2a8dafd383dbe6148ce399bee78879247f4437537a4017a",
+  "bb7f3370c7f539d4bf47e91d41db9531e1334bc3c4db5b1a250758a49fa163ff",
 ]);
 const failures = [];
 

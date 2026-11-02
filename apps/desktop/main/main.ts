@@ -91,7 +91,7 @@ import {
   type DesktopStartupOpenAttempt,
 } from "./startup-lifecycle.js";
 import { createMainWindow } from "./window-factory.js";
-import type { DesktopDisplayWorkArea, DesktopRect } from "../shared/desktop-capabilities.js";
+import type { DesktopDaemonStatus, DesktopDisplayWorkArea, DesktopRect } from "../shared/desktop-capabilities.js";
 import { builtInDesktopRendererThemeInput } from "../shared/renderer-theme.js";
 import { createDesktopThemePackageFirstPaintState } from "../shared/theme-package-first-paint.js";
 
@@ -444,6 +444,9 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
         ...(platformOwner ? { platformOwner } : {}),
         onDiagnostic: logStartup,
       });
+      // Process-lifetime observer, independent of Renderer IPC teardown. A
+      // refused Host stop retains the bridges but fences their new admission.
+      desktopRuntime.onStatusChanged(pauseDesktopCapabilityNewClaims);
     } catch (error) {
       await platformOwner?.dispose();
       throw error;
@@ -485,6 +488,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
       desktopInstanceId: desktopRuntime.desktopInstanceId,
       onDiagnostic: logStartup,
     });
+    pauseDesktopCapabilityNewClaims(desktopRuntime.status);
     await hostCapabilityRuntime.start();
     logStartup("host_capability.started", { capabilities: ["host.open_local_target"] });
   }
@@ -509,6 +513,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
         recoveryRoot: resolve(app.getPath("userData"), "recovery", "office"),
         onDiagnostic: logStartup,
       });
+      pauseDesktopCapabilityNewClaims(desktopRuntime.status);
       await officeDriverRuntime.start();
       logStartup("office_driver.started", { platform: process.platform });
     }
@@ -833,6 +838,12 @@ function requestDesktopDaemonRecovery(details: {
       });
     },
   );
+}
+
+function pauseDesktopCapabilityNewClaims(status: DesktopDaemonStatus): void {
+  if (!status.ownedByDesktop || (status.state !== "draining" && status.state !== "blocked")) return;
+  hostCapabilityRuntime?.pauseNewClaims();
+  officeDriverRuntime?.pauseNewClaims();
 }
 
 async function restartDesktopCapabilityRuntimes(): Promise<void> {
@@ -2008,6 +2019,9 @@ async function waitForSmokeCondition(
 
 async function shutdown(): Promise<void> {
   const activeMainWindowOpen = mainWindowOpenCoordinator.stopAcceptingAndWait();
+  // A refused/unconfirmed Host stop must leave its window, IPC and execution
+  // transports alive. Do not enter best-effort teardown before this barrier.
+  await desktopRuntime?.prepareShutdown();
   let firstCleanupError: unknown;
   let cleanupFailed = false;
   const attemptCleanup = async (cleanup: () => void | Promise<void>): Promise<void> => {

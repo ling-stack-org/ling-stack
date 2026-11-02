@@ -532,7 +532,7 @@ test("context budget manager resolves provider modes and trims lower priority se
   });
   assert.deepEqual(trimmed.sections.map((section) => section.id), ["must"]);
   assert.deepEqual(trimmed.droppedSectionIds, ["low", "high"]);
-  assert.equal(trimmed.overBudget, false);
+  assert.equal(trimmed.overBudget, true);
 
   const protectedOnly = buildContextPack({
     kind: "channel_reply",
@@ -3864,7 +3864,9 @@ test("conversation stream materializes uploaded attachments into the run prompt"
     assert.equal(done.data.run.requestSnapshot.authorizationMode, "smart");
     assert.equal(done.data.run.requestSnapshot.workspaceAccessMode, "workspace_write");
     assert.equal(done.data.run.requestSnapshot.responseLanguage, "en-US");
-    assert.ok(done.data.run.requestSnapshot.appendSystemPrompt.some((instruction) => /Default conversation tone: friendly\./.test(instruction)));
+    // System instructions are retained in the Runner input above but are
+    // intentionally omitted from the public Run snapshot.
+    assert.equal(done.data.run.requestSnapshot.appendSystemPrompt, undefined);
 
     const detail = await getJson(`${daemon.url}/conversations/${encodeURIComponent(initialReady.data.thread.id)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(detail.defaults.authorizationMode, "smart");
@@ -6765,7 +6767,7 @@ test("single-participant execute acknowledgement stays non-terminal until callba
   }
 });
 
-test("model-assisted create-and-run clarifies when the required command is missing", async () => {
+test("model-assisted create-and-run blocks an execute candidate missing its required command", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-model-create-run-command-clarify-"));
   const runner = new ScriptedRunner([
     JSON.stringify({
@@ -6799,21 +6801,20 @@ test("model-assisted create-and-run clarifies when the required command is missi
     });
 
     assert.equal(created.autoStartedWorkflow, undefined);
-    assert.equal(created.aiReply.status, "ready");
-    assert.match(created.aiReply.body, /命令|command/i);
+    assert.equal(created.aiReply.status, "blocked");
+    assert.equal(created.aiReply.errorMessage, "channel_operation_plan_invalid");
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(decisions.decisions.length, 1);
-    assert.equal(decisions.decisions[0].action, "clarify");
-    assert.deepEqual(decisions.decisions[0].clarification.missingFields, ["command"]);
+    await assertInvalidModelPlan(daemon.url, cwd, channel.id, created.message.id, "command");
+    assert.equal(runner.runs.length, 2, "one bounded repair before a failed planning diagnostic");
+    await assert.rejects(access(resolve(cwd, "app.js")));
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test("model-assisted thread follow-up clarifies instead of creating empty recent target", async () => {
+test("model-assisted thread follow-up blocks an execute candidate instead of creating empty recent target", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-thread-model-followup-empty-file-"));
   let previousReply;
   const runner = new ScriptedRunner([
@@ -6876,22 +6877,23 @@ test("model-assisted thread follow-up clarifies instead of creating empty recent
 
     assert.equal(created.autoStartedWorkflow, undefined);
     assert.equal(created.aiReply.kind, "ai_reply");
-    assert.equal(created.aiReply.status, "ready");
+    assert.equal(created.aiReply.status, "blocked");
+    assert.equal(created.aiReply.errorMessage, "channel_operation_plan_invalid");
     assert.equal(created.aiReply.authorId, "ling_agent");
-    assert.match(created.aiReply.body, /内容要求/u);
+    assert.match(created.aiReply.body, /未启动/u);
     assert.doesNotMatch(created.aiReply.body, /contentSource/u);
-    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
-    assert.deepEqual(decisions.decisions[0].clarification.missingFields, ["contentSource"]);
+    await assertInvalidModelPlan(daemon.url, cwd, channel.id, created.message.id, "contentSource");
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
-    assert.equal(runner.runs.length, 2, "one bounded source-binding repair before final clarification");
+    assert.equal(runner.runs.length, 2, "one bounded source-binding repair before a failed planning diagnostic");
+    await assert.rejects(access(resolve(cwd, "index.html")));
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test("model-assisted local write request clarifies when no target validates", async () => {
+test("model-assisted local write request blocks an execute candidate when no target validates", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-model-followup-missing-target-"));
   const runner = new ScriptedRunner([
     JSON.stringify({
@@ -6920,23 +6922,18 @@ test("model-assisted local write request clarifies when no target validates", as
 
     assert.equal(created.autoStartedWorkflow, undefined);
     assert.equal(created.aiReply.kind, "ai_reply");
-    assert.equal(created.aiReply.status, "ready");
+    assert.equal(created.aiReply.status, "blocked");
+    assert.equal(created.aiReply.errorMessage, "channel_operation_plan_invalid");
     assert.equal(created.aiReply.authorId, "ling_agent");
-    assert.match(created.aiReply.body, /输入和输出文件/u);
+    assert.match(created.aiReply.body, /未启动/u);
     assert.doesNotMatch(created.aiReply.body, /\btarget\b/iu);
     assert.doesNotMatch(created.aiReply.body, /不能直接修改工作区|cannot directly modify|没有被授权执行工作区写入/i);
-    assert.equal(runner.runs.length, 2, "one bounded source-binding repair before final clarification");
+    assert.equal(runner.runs.length, 2, "one bounded source-binding repair before a failed planning diagnostic");
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
-    const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(intentDecisions.decisions.length, 1);
-    assert.equal(intentDecisions.decisions[0].action, "clarify");
-    assert.equal(intentDecisions.decisions[0].createdBy, "model_policy");
-    assert.deepEqual(intentDecisions.decisions[0].clarification.missingFields, ["target"]);
-    assert.equal(intentDecisions.decisions[0].clarification.question, created.aiReply.body);
-    assert.match(intentDecisions.decisions[0].reason, /incompatible target/);
+    await assertInvalidModelPlan(daemon.url, cwd, channel.id, created.message.id, "target");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -7819,7 +7816,7 @@ test("model-assisted channel intent no_reply falls through to ordinary Ling repl
   }
 });
 
-test("model-assisted channel intent fallback cannot turn a reply block into a confirmable proposal", async () => {
+test("model-assisted channel intent failure cannot become an ordinary reply or confirmable proposal", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-model-fallback-"));
   const runner = new ScriptedRunner([
     "not json",
@@ -7853,18 +7850,20 @@ test("model-assisted channel intent fallback cannot turn a reply block into a co
 
     assert.equal(created.autoStartedWorkflow, undefined);
     assert.equal(created.aiReply.kind, "ai_reply");
-    assert.ok(["pending", "ready"].includes(created.aiReply.status));
-    await waitForCondition(() => runner.runs.length === 2, "ordinary channel reply after selector parse failure");
-    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
-    assert.equal(listed.messages.find((message) => message.id === created.aiReply.id).body, "普通频道回复。");
+    assert.equal(created.aiReply.status, "blocked");
+    assert.equal(created.aiReply.errorMessage, "channel_intent_selection_failed");
+    assert.equal(runner.runs.length, 2, "initial selection and exactly one format repair");
+    assert.ok(runner.runs.every(run => /channel intent selector/i.test(run.systemPrompt)));
+    assert.doesNotMatch(created.aiReply.body, /普通频道回复|ling_task_proposal/);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 0);
     const allProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(allProposals.proposals.length, 0);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
-    assertSingleReplyIntentDecision(decisions.decisions, created.message.id);
-    assert.equal(decisions.decisions[0].createdBy, "deterministic");
-    assert.match(decisions.decisions[0].reason, /fail-open to an ordinary reply/i);
+    assert.equal(decisions.decisions.length, 1);
+    assert.equal(decisions.decisions[0].status, "failed");
+    assert.equal(decisions.decisions[0].errorCode, "channel_intent_selection_failed");
+    assert.deepEqual(decisions.decisions[0].resultItemIds, [created.aiReply.id]);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -7905,12 +7904,21 @@ test("model execution proposal cannot declare command evidence authority", async
     });
 
     assert.equal(created.autoStartedWorkflow, undefined);
-    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    assert.equal(created.aiReply.status, "blocked");
+    assert.equal(created.aiReply.errorMessage, "channel_operation_plan_invalid");
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
-    assert.equal(decisions.decisions[0].action, "clarify");
-    assert.deepEqual(decisions.decisions[0].clarification.missingFields, ["execution.operations"]);
+    assert.equal(decisions.decisions[0].action, "reply");
+    assert.equal(decisions.decisions[0].status, "failed");
+    assert.equal(decisions.decisions[0].errorCode, "channel_operation_plan_invalid");
     assert.equal(decisions.decisions[0].execution, undefined);
+    assert.equal(runner.runs.length, 2);
+    const observations = await getJson(`${daemon.url}/control-plane/events?cwd=${encodeURIComponent(cwd)}&domains=runners&limit=1000`);
+    const rejected = observations.events.filter(event => event.entityType === "channel_intent_selection"
+      && event.entityId === created.message.id && event.data.outcome === "shape_rejected");
+    assert.deepEqual(rejected.map(event => event.data.issue), [{ path: "execution.operations[]", code: "unexpected_fields" }]);
+    const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(proposals.proposals, []);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -9878,12 +9886,15 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
     assert.equal(firstRun.workflowStepId, firstStepAfterFirstTick.id);
     assert.equal(firstRun.requestSnapshot.workflowStepId, firstStepAfterFirstTick.id);
     assert.equal(firstRun.requestSnapshot.runnerResolution.requestSource, "workflow_step");
-    assert.match(runner.runs[0].task.prompt, /Build the orchestrator test slice with source-linked evidence/u);
-    assert.doesNotMatch(firstRun.taskSnapshot.prompt, /source-linked evidence/u);
-    assert.doesNotMatch(firstRun.requestSnapshot.task.prompt, /source-linked evidence/u);
+    assert.match(runner.runs[0].appendSystemPrompt?.join("\n") ?? "", /Build the orchestrator test slice with source-linked evidence/u);
+    // Public snapshots intentionally omit the private workflow prompt. Keep
+    // this assertion resilient to the field being absent rather than reading
+    // the private prompt through an undefined public property.
+    assert.doesNotMatch(JSON.stringify(firstRun.taskSnapshot), /source-linked evidence/u);
+    assert.doesNotMatch(JSON.stringify(firstRun.requestSnapshot), /source-linked evidence/u);
     assert.equal(firstRun.requestSnapshot.preselectedMemoryUse, undefined);
     const firstWorkUnit = await getJson(`${daemon.url}/work-units/${encodeURIComponent(firstRun.workUnitId)}?cwd=${encodeURIComponent(cwd)}`);
-    assert.doesNotMatch(firstWorkUnit.workUnit.request.task.prompt, /source-linked evidence/u);
+    assert.doesNotMatch(JSON.stringify(firstWorkUnit.workUnit.request), /source-linked evidence/u);
     assert.equal(firstWorkUnit.workUnit.request.preselectedMemoryUse, undefined);
     const firstRunMemoryUse = await getJson(`${daemon.url}/memory/used?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(firstRun.id)}`);
     assert.deepEqual(firstRunMemoryUse.events[0].memoryIds, [firstStepMemory.id]);
@@ -9940,18 +9951,16 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
     assert.equal(implementationContext.priorOutputArtifactIds.length >= 2, true);
     assert.match(runner.runs[0].task.prompt, /Context Pack: workflow_step/);
     assert.match(runner.runs[0].task.prompt, /Provider budget mode: model_estimated/);
-    assert.match(runner.runs[0].task.prompt, /Workflow context artifact: pending until run starts/);
-    assert.match(runner.runs[0].task.prompt, /Dependencies:\n- none/);
-    assert.match(runner.runs[0].task.prompt, /Approval gates:\n- none/);
+    assert.equal(firstRun.requestSnapshot.contextPack.sections.some((section) => section.id === "workflow_dependencies"), true);
+    assert.equal(firstRun.requestSnapshot.contextPack.sections.some((section) => section.id === "workflow_approval_gates"), true);
     const implementationRun = runner.runs.find((run) => run.task.title === "Implementation");
     assert.ok(implementationRun);
     assert.match(implementationRun.task.prompt, /Context Pack: workflow_step/);
     assert.match(implementationRun.task.prompt, /Provider budget mode: model_estimated/);
-    assert.match(implementationRun.task.prompt, /Dependency output:/);
-    assert.match(implementationRun.task.prompt, /Approval gates:\n- pre-run: mode=standard; risk=medium/);
-    assert.match(implementationRun.task.prompt, /Design Review \(succeeded\)/);
-    assert.match(implementationRun.task.prompt, /Engineering Review \(succeeded\)/);
-    assert.ok(implementationRun.task.prompt.includes(designStep.metadata.outputArtifactId));
+    const implementationRunSnapshot = await getJson(`${daemon.url}/runs/${encodeURIComponent(implementationStep.runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(implementationRunSnapshot.requestSnapshot.contextPack.sections.some((section) => section.id === "workflow_dependency_1"), true);
+    assert.equal(implementationRunSnapshot.requestSnapshot.contextPack.sections.some((section) => section.id === "workflow_dependency_2"), true);
+    assert.equal(implementationRunSnapshot.requestSnapshot.contextPack.sections.some((section) => section.id === "workflow_approval_gates"), true);
     assert.deepEqual(runner.runs.map((run) => run.task.title), [
       "Product Discovery",
       "Product Review",
@@ -10164,6 +10173,17 @@ test(`workflow dependency compaction preserves the SDK budget gate at ${contextW
     });
 
     const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    if (contextWindowTokens === 1800) {
+      // The effective input budget is 776 tokens after output and runtime
+      // reservations. The complete workflow packet cannot fit, so the
+      // orchestrator must block before creating a run or calling the provider.
+      assert.equal(tick.status, "blocked");
+      assert.equal(runner.runs.length, 0);
+      const blockedStep = store.getChannelWorkflowStep(downstream.id);
+      assert.equal(blockedStep?.status, "blocked");
+      assert.match(blockedStep?.blocker ?? "", /exceeds provider budget/);
+      return;
+    }
     assert.equal(tick.status, "started");
     assert.equal(tick.workflowStep.id, downstream.id);
     assert.equal(runner.runs.length, 1);
@@ -10198,7 +10218,7 @@ test(`workflow dependency compaction preserves the SDK budget gate at ${contextW
     assert.equal(contextPacket.contextPack.budget.contextWindowTokens, contextWindowTokens);
     assert.equal(contextPacket.contextPack.budget.reservedOutputTokens, 512);
     assert.equal(contextPacket.contextPack.budget.reservedRuntimeOverheadTokens, 512);
-    assert.equal(contextPacket.contextPack.budget.inputBudgetTokens, Math.max(1024, fullInputBudget));
+    assert.equal(contextPacket.contextPack.budget.inputBudgetTokens, fullInputBudget);
     assert.equal(contextPacket.contextPack.budget.tokenizer, "openai-compatible");
     assert.equal(contextPacket.contextPack.budget.capabilitySource, "user_override");
     assert.equal(contextPacket.contextPack.budget.capabilityConfidence, "known");
@@ -15411,7 +15431,25 @@ class DelayedCommandEvidenceRunner {
       type: "tool_end",
       toolCallId,
       toolName: "bash",
-      result: { content: [{ type: "text", text: "proof:7319" }] },
+      result: {
+        content: [{ type: "text", text: "proof:7319" }],
+        details: {
+          unifiedExec: {
+            status: "succeeded",
+            cwd: options.cwd,
+            command: { kind: "shell", command: this.command, shell: "bash" },
+            startedAt: "2026-11-02T00:00:00.000Z",
+            endedAt: "2026-11-02T00:00:00.000Z",
+            durationMs: 0,
+            exitCode: 0,
+            timedOut: false,
+            cancelled: false,
+            stdout: { byteCount: 10, preview: "proof:7319", truncated: false },
+            stderr: { byteCount: 0, preview: "", truncated: false },
+            artifacts: [],
+          },
+        },
+      },
       isError: false,
     });
     const text = "Verified proof:7319.";
@@ -15746,6 +15784,27 @@ function unusedRunnerRegistry() {
       throw new Error("runner registry should not be used by deterministic route test");
     },
   };
+}
+
+async function assertInvalidModelPlan(baseUrl, cwd, channelId, sourceItemId, field) {
+  const decisions = await getJson(`${baseUrl}/channels/${encodeURIComponent(channelId)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(sourceItemId)}`);
+  assert.equal(decisions.decisions.length, 1);
+  const decision = decisions.decisions[0];
+  assert.equal(decision.action, "reply", "failed Host diagnostic only, not an accepted ordinary reply");
+  assert.equal(decision.status, "failed");
+  assert.equal(decision.errorCode, "channel_operation_plan_invalid");
+  assert.equal(decision.createdBy, "model_policy");
+  assert.equal(decision.execution, undefined);
+  const observations = await getJson(`${baseUrl}/control-plane/events?cwd=${encodeURIComponent(cwd)}&domains=runners&limit=1000`);
+  const rejected = observations.events.filter(event => event.entityType === "channel_intent_selection"
+    && event.entityId === sourceItemId && event.data.outcome === "binding_rejected");
+  assert.deepEqual(rejected.map(event => event.data.fields), [[field]]);
+  const owned = observations.events.filter(event => event.entityType === "channel_intent_selection" && event.entityId === sourceItemId);
+  assert.deepEqual(owned.filter(event => event.action === "channel_intent.request_started").map(event =>
+    [event.data.requestOrdinal, event.data.purpose]), [[1, "initial"], [2, "binding_repair"]]);
+  // ScriptedRunner has one response: its repair deliberately returns empty
+  // text. Keep that parse failure distinct from a second binding rejection.
+  assert.deepEqual(owned.filter(event => event.data.outcome === "intent_schema_rejected").map(event => event.data.requestOrdinal), [2]);
 }
 
 async function startDaemonForTest(runner, dependencies = {}, config = {}) {

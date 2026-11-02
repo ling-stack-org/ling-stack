@@ -260,6 +260,8 @@ test("retry preserves immutable receipt and enforces next attempt time",async t=
   assert.throws(()=>f.claim({expectedRevision:failed.revision}),code("delivery_not_ready"));
   const next=f.claim({expectedRevision:failed.revision},retryAt);
   assert.equal(next.successorRunId,first.successorRunId);assert.equal(next.attemptCount,2);
+  assert.equal(next.status,"claimed");assert.equal(next.retryAt,null);assert.equal(next.lastErrorCode,null);
+  assert.notEqual(next.claim.token,first.claim.token);
   assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM user_input_answers").get().n,1);
   assert.equal(f.store.getConversationItem(f.receipt.answerItemId).kind,"user_input_answer");
 });

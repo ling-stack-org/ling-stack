@@ -189,7 +189,7 @@ function normalizeInventory(value, snapshotPath) {
     // An unrelated APFS image can include both a backing disk and a synthesized
     // container disk. Keep every entity for collision checks; only our snapshot
     // may supply the single whole-device lineage used to authorize detach.
-    const entities = normalizeEntities(image, imagePath !== snapshotPath);
+    const entities = normalizeEntities(image, { allowMultipleWholeDevices: imagePath !== snapshotPath });
     for (const entity of entities) {
       requireCondition(!devices.has(entity.device), "inventory_duplicate");
       devices.add(entity.device);
@@ -198,14 +198,15 @@ function normalizeInventory(value, snapshotPath) {
         mountPoints.add(entity.mountPoint);
       }
     }
+    const wholeDevices = entities.filter(entity => WHOLE_DEVICE_PATTERN.test(entity.device));
     return Object.freeze({ imagePath, entities,
-      wholeDevice: entities.find(entity => WHOLE_DEVICE_PATTERN.test(entity.device)).device,
+      wholeDevice: wholeDevices.length === 1 ? wholeDevices[0].device : undefined,
       ...(Object.hasOwn(image, "hdid-pid") ? { helperPid: image["hdid-pid"] } : {}), ownerUid: image["owner-uid"] });
   });
   return Object.freeze(images);
 }
 
-function normalizeEntities(value, allowMultipleWholeDevices = false) {
+function normalizeEntities(value, { allowMultipleWholeDevices = false } = {}) {
   requireCondition(record(value) && Object.hasOwn(value, "system-entities")
     && Array.isArray(value["system-entities"]) && value["system-entities"].length > 0
     && value["system-entities"].length <= MAX_ENTITIES, "entities_invalid");
@@ -230,7 +231,8 @@ function normalizeEntities(value, allowMultipleWholeDevices = false) {
     return Object.freeze({ device, ...(hasMountPoint ? { mountPoint: entity["mount-point"] } : {}) });
   });
   const wholeDevices = entities.filter(entity => WHOLE_DEVICE_PATTERN.test(entity.device));
-  requireCondition(allowMultipleWholeDevices ? wholeDevices.length > 0 : wholeDevices.length === 1, "whole_device_invalid");
+  requireCondition(wholeDevices.length > 0 && (allowMultipleWholeDevices || wholeDevices.length === 1),
+    "whole_device_invalid");
   requireCondition(entities.every(entity => wholeDevices.some(whole => entity.device === whole.device
     || entity.device.startsWith(`${whole.device}s`))), "whole_device_invalid");
   return Object.freeze(entities.sort((left, right) => left.device.localeCompare(right.device)));

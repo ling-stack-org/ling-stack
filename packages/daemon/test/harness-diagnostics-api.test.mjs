@@ -42,7 +42,28 @@ async function fixture(t) {
   assert.ok(address && typeof address === "object");
   const url = new URL(`http://127.0.0.1:${address.port}/work-units/${encodeURIComponent(unit.id)}/harness`);
   url.searchParams.set("cwd", cwd);
-  return { cwd, store, database, daemon, unit, run, attempt, url, factoryCalls: () => factoryCalls };
+  return { cwd, store, database, daemon, unit, run, attempt, policy, url, factoryCalls: () => factoryCalls };
+}
+
+function insertEvaluation(f, id = "evaluation-diag") {
+  const digest = "c".repeat(64);
+  f.database.prepare(`INSERT INTO run_evaluations (
+    id,schema_version,root_run_id,run_id,suite_id,suite_version,suite_artifact_id,suite_digest,
+    case_id,case_version,case_artifact_id,case_digest,baseline_id,baseline_version,baseline_artifact_id,
+    baseline_digest,candidate_artifact_id,candidate_digest,idempotency_key,state,revision,created_at,updated_at
+  ) VALUES (?,1,?,?,'suite','v1',?,?,'case','v1',?,?,'baseline','v1',?,?,?,?,?,'queued',0,?,?)`)
+    .run(id, f.run.id, f.run.id, f.policy.id, digest, f.policy.id, digest, f.policy.id, digest,
+      f.policy.id, digest, `idempotency:${id}`, now, now);
+}
+
+function insertDelegation(f, id = "delegation-diag") {
+  f.database.prepare(`INSERT INTO delegation_steps (
+    id,schema_version,root_run_id,parent_run_id,parent_attempt_id,spawn_call_id,objective_artifact_id,
+    required,state,depth,permission_snapshot_artifact_id,tool_allowlist_artifact_id,
+    workspace_scope_artifact_id,provider_policy_artifact_id,idempotency_key,revision,created_at,updated_at
+  ) VALUES (?,1,?,?,?,?,?,1,'planned',1,?,?,?,?,?,0,?,?)`)
+    .run(id, f.run.id, f.run.id, f.attempt.id, `spawn:${id}`, f.policy.id,
+      f.policy.id, f.policy.id, f.policy.id, f.policy.id, `idempotency:${id}`, now, now);
 }
 
 test("production HTTP diagnostics page through 1001 persisted tools without mutation or private bodies", async t => {
@@ -97,6 +118,34 @@ test("production HTTP diagnostics page through 1001 persisted tools without muta
   assert.deepEqual(f.store.getRun(f.run.id), before.run);
   assert.deepEqual(f.store.getWorkUnit(f.unit.id), before.unit);
   assert.deepEqual(f.database.prepare("SELECT * FROM harness_tool_executions ORDER BY id").all(), before.rows);
+});
+
+test("production endpoint exposes four authority domains and keeps projection health separate from completion facts", async t => {
+  const f = await fixture(t);
+  insertEvaluation(f);
+  insertDelegation(f);
+  const response = await fetch(f.url);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.items.map((item) => item.record.kind).sort(), ["delegation", "evaluation", "tool_execution"]);
+  assert.equal(body.items.find((item) => item.record.kind === "evaluation").attempts.length, 0);
+  assert.deepEqual(body.items.find((item) => item.record.kind === "delegation").attempts, [{
+    id: f.attempt.id, status: "observed", workUnitId: f.unit.id,
+    runtimeInstanceId: f.attempt.runtimeInstanceId, fencingToken: f.attempt.fencingToken, attemptStatus: "started",
+  }]);
+  assert.deepEqual(body.projectionCheckpoints.map((checkpoint) => checkpoint.domain), [
+    "continuation", "tool_execution", "evaluation", "delegation",
+  ]);
+  assert.ok(body.projectionCheckpoints.every((checkpoint) =>
+    typeof checkpoint.generation === "number"
+      && typeof checkpoint.sourceEpoch === "number"
+      && typeof checkpoint.builtEpoch === "number"
+      && typeof checkpoint.isCurrent === "boolean"
+      && !Object.hasOwn(checkpoint, "digest")
+      && !Object.hasOwn(checkpoint, "cursor")
+      && !Object.hasOwn(checkpoint, "completed")));
+  assert.ok(body.items.every((item) => !Object.hasOwn(item, "projectionCheckpoint")));
+  assert.doesNotMatch(JSON.stringify(body), /claimToken|objectiveArtifactId|suiteArtifactId|DIAGNOSTIC_PRIVATE_BODY/);
 });
 
 test("production endpoint rejects invalid/cross-scope pagination, cold Store and mutation methods", async t => {
@@ -155,16 +204,38 @@ test("observation-only registry never constructs cold Stores and refuses access 
 
 test("projection reports absent/wrong lineage and never returns another work-unit attempt metadata", () => {
   const scope = { workUnitId: "unit", runId: "run", status: "available" };
-  const record = { kind: "continuation", id: "continuation", runId: "run", workUnitId: "unit", state: "running", sourceAttemptId: "missing", targetAttemptId: "wrong", claimOwner: "owner", claimExpiresAt: future };
+  const records = [
+    { kind: "continuation", id: "continuation", runId: "run", workUnitId: "unit", state: "running", sourceAttemptId: "missing", targetAttemptId: "wrong", claimOwner: "owner", claimExpiresAt: future },
+    { kind: "evaluation", id: "evaluation", runId: "run", workUnitId: "unit", rootRunId: "run", state: "queued" },
+    { kind: "delegation", id: "delegation", runId: "run", workUnitId: "unit", rootRunId: "run", state: "planned", parentAttemptId: "parent" },
+  ];
   const store = {
-    queryHarnessDiagnostics: () => ({ items: [record] }),
-    getHarnessDiagnosticAttempt: (workUnitId, id) => { assert.equal(workUnitId, "unit"); return { id, status: id === "missing" ? "missing" : "ownership_mismatch" }; },
+    queryHarnessDiagnostics: () => ({ items: records }),
+    getHarnessDiagnosticAttempt: (workUnitId, id) => {
+      assert.equal(workUnitId, "unit");
+      return { id, status: id === "missing" ? "missing" : "ownership_mismatch" };
+    },
+    getHarnessProjectionCheckpoint: (domain) => ({
+      domain, generation: 2, sourceEpoch: 4, builtEpoch: domain === "delegation" ? 3 : 4,
+      state: domain === "delegation" ? "stale" : "ready", rowCount: 9,
+      digest: "DIAGNOSTIC_PRIVATE_DIGEST", cursor: "DIAGNOSTIC_PRIVATE_CURSOR", updatedAt: now,
+    }),
   };
   const response = projectWorkUnitHarnessDiagnostics("/repo", store, scope, {}, now);
   assert.deepEqual(response.items[0].attempts, [{ id: "missing", status: "missing" }, { id: "wrong", status: "ownership_mismatch" }]);
+  assert.deepEqual(response.items[1].attempts, []);
+  assert.deepEqual(response.items[2].attempts, [{ id: "parent", status: "ownership_mismatch" }]);
+  assert.deepEqual(response.projectionCheckpoints, [
+    { domain: "continuation", generation: 2, sourceEpoch: 4, builtEpoch: 4, state: "ready", rowCount: 9, isCurrent: true, updatedAt: now },
+    { domain: "tool_execution", generation: 2, sourceEpoch: 4, builtEpoch: 4, state: "ready", rowCount: 9, isCurrent: true, updatedAt: now },
+    { domain: "evaluation", generation: 2, sourceEpoch: 4, builtEpoch: 4, state: "ready", rowCount: 9, isCurrent: true, updatedAt: now },
+    { domain: "delegation", generation: 2, sourceEpoch: 4, builtEpoch: 3, state: "stale", rowCount: 9, isCurrent: false, updatedAt: now },
+  ]);
+  assert.doesNotMatch(JSON.stringify(response), /DIAGNOSTIC_PRIVATE_DIGEST|DIAGNOSTIC_PRIVATE_CURSOR|digest|cursor/);
   assert.doesNotMatch(JSON.stringify(response), /PRIVATE_/);
   const unavailable = status => {
     assert.equal(status.items.length, 0);
+    assert.equal(status.projectionCheckpoints.length, 0);
     return status.status;
   };
   for (const status of ["run_unlinked", "run_missing", "lineage_mismatch"]) {

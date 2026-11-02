@@ -30,6 +30,7 @@ export function buildProjectedConversationContextSlice(input: {
   readonly explicitItemIds?: readonly string[];
   readonly includeSourceTurnItems?: boolean;
   readonly minimal?: boolean;
+  readonly retainItemIds?: readonly string[];
 }): ProjectedConversationContextSlice {
   const projection = buildConversationContextProjection({
     store: input.store,
@@ -37,6 +38,7 @@ export function buildProjectedConversationContextSlice(input: {
     view: input.view,
     consumerTeammateId: input.consumerTeammateId,
     maxTailTextChars: input.minimal ? 2_048 : undefined,
+    retainItemIds: input.retainItemIds,
     explicitItemIds: input.explicitItemIds,
     includeSourceTurnItems: input.includeSourceTurnItems,
   });

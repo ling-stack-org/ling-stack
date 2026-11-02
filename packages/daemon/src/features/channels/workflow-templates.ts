@@ -542,9 +542,6 @@ function resolveCustomTemplateStepParticipant(store: RunStore, channelId: string
 }
 
 function customTemplateStepHasSideEffects(store: RunStore, step: CustomWorkflowTemplateStep): boolean {
-  if (step.gates && step.gates.length > 0) {
-    return false;
-  }
   const skillTools = step.skillId
     ? listExecutableSkillDefinitions(store).find((skill) => skill.id === step.skillId)?.requiredTools ?? []
     : [];

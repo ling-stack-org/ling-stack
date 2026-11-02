@@ -69,11 +69,12 @@ export function isFreshUserInputAnswerClaim(store: RunStore, binding: UserInputC
 }
 
 export function failUserInputAnswerStartup(store: RunStore, binding: UserInputContinuationBinding,
-  code: string, message: string, now: string): void {
+  claim: UserInputContinuationClaim, code: string, message: string, now: string): boolean {
   const run = store.getRun(binding.runId);
-  if (!run?.threadId) return;
+  if (!run?.threadId) return false;
   if (store.failUserInputContinuationStartup({ threadId: run.threadId, deliveryId: binding.deliveryId,
     bindingRef: { id: binding.id, fingerprint: binding.fingerprint }, sourceFence: binding.fence,
+    claim: { ownerId: claim.ownerId, claimToken: claim.claimToken },
     errorCode: code, errorMessage: message }, now)) {
     store.appendEvent(run.id, "run_error", { code, message, origin: "user_input_continuation_startup" });
     if (run.workflowStepId && binding.workflowStartOwner) {
@@ -83,7 +84,9 @@ export function failUserInputAnswerStartup(store: RunStore, binding: UserInputCo
         completeWorkflowIfStepsFinished(store, step.workflowId, now);
       }
     }
+    return true;
   }
+  return false;
 }
 
 export function finalizeUserInputAnswerWorkflow(store: RunStore, binding: UserInputContinuationBinding,

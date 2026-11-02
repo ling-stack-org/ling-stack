@@ -26,6 +26,7 @@ export async function handleNotifications(
 
   if (url.pathname === "/notifications/preferences") {
     if (request.method === "GET") {
+      await hub.ensureLoaded();
       const body: NotificationPreferencesResponse = { schemaVersion: 1, preferences: hub.getPreferences() };
       writeJson(response, 200, body);
       return;

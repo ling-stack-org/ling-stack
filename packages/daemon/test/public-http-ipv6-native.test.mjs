@@ -1,17 +1,18 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { statSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { mkdirSync, mkdtempSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
 import { createA11PublicHttpNetworkFixture } from "./support/a11-public-http-network-fixture.mjs";
 
 const cases = ["http", "tls", "mapped-loopback", "mixed-mapped-private"];
 const childCase = process.env.LING_A11_IPV6_NATIVE_CASE;
 
-function assertIsolation() {
+function assertIsolation(environment = process.env) {
   for (const key of ["LING_STACK_HOME", "LING_STACK_DEFAULT_WORKSPACE_CWD"]) {
-    const value = process.env[key];
+    const value = environment[key];
     assert.ok(value && isAbsolute(value) && resolve(value) === value && value !== process.cwd() && value !== "/",
       `${key} must be an explicit fresh isolated directory`);
     assert.ok(statSync(value).isDirectory(), `${key} must exist before importing product code`);
@@ -20,9 +21,14 @@ function assertIsolation() {
 
 if (!childCase) {
   for (const caseName of cases) test(`A11 IPv6 native ${caseName}`, { timeout: 25_000 }, () => {
-    assertIsolation();
-    const environment = { ...process.env, LING_A11_IPV6_NATIVE_CASE: caseName };
-    delete environment.NODE_TEST_CONTEXT;
+    const root = mkdtempSync(join(tmpdir(), `ling-a11-ipv6-${caseName}-`));
+    const home = join(root, "user"), workspace = join(root, "workspace");
+    mkdirSync(home, { mode: 0o700 }); mkdirSync(workspace, { mode: 0o700 });
+    const environment = { PATH: process.env.PATH, LANG: "C.UTF-8", TZ: "UTC",
+      LING_STACK_HOME: home, LING_STACK_DEFAULT_WORKSPACE_CWD: workspace, LING_A11_IPV6_NATIVE_CASE: caseName };
+    // Product imports occur only in the child: verify its fresh owned scope and
+    // do not inherit daily storage, credentials or the parent's Node test context.
+    assertIsolation(environment);
     const child = spawnSync(process.execPath,
       ["--test", "--test-name-pattern=^A11 IPv6 native fixture child ", import.meta.filename],
       { env: environment, encoding: "utf8", timeout: 20_000 });

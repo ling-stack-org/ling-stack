@@ -51,7 +51,7 @@ test("channel permission selection confirms its conversation while an unowned ta
 
   await selectFullAccess(page, permissionTrigger);
   await confirmFullAccessSelection(page);
-  await expect(permissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await expect(permissionTrigger).toHaveAccessibleName(/Full access · Confirmed for this conversation/);
 
   await openTaskFromAttentionQueue(page, "Inspect workspace");
   const runButton = page.locator("article.task-detail").getByRole("button", { name: "Run", exact: true });
@@ -72,7 +72,7 @@ test("channel permission selection confirms its conversation while an unowned ta
     mode: "full_access",
     reason: "user_confirmed_full_access",
   });
-  await expect(permissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await expect(permissionTrigger).toHaveAccessibleName(/Full access · Confirmed for this conversation/);
   await runButton.click();
   await expect(fullAccessDialog(page)).toHaveCount(0);
   await expect.poll(() => state.runs.length).toBe(2);
@@ -287,7 +287,7 @@ test("normal conversation distinguishes inherited always authorization from full
   await expect(trigger).toHaveText("Always authorize");
   await trigger.click();
   const menu = page.getByRole("menu").filter({ has: page.getByRole("menuitemradio", { name: "Request approval", exact: true }) });
-  await expect(menu.getByRole("menuitemradio", { name: "Full access", exact: true })).not.toBeChecked();
+  await expect(menu.getByRole("menuitemradio", { name: "Full access permissions", exact: true })).not.toBeChecked();
   await menu.getByRole("menuitemradio", { name: "Request approval", exact: true }).click();
   await composer.getByRole("textbox", { name: "Conversation message" }).fill("Keep the configured read-only sandbox");
   const request = page.waitForRequest((candidate) => candidate.method() === "POST" && new URL(candidate.url()).pathname.endsWith("/conversations/stream"));
@@ -341,7 +341,7 @@ test("teammate private chat confirms explicit selection per conversation", async
   expect(directSendCount).toBe(0);
   await selectFullAccess(page, permissionTrigger);
   await confirmFullAccessSelection(page);
-  await expect(permissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await expect(permissionTrigger).toHaveAccessibleName(/Full access · Confirmed for this conversation/);
   await captureP6FeedbackEvidence(
     page,
     "shell/full-access-confirmation-parity",
@@ -363,7 +363,7 @@ test("teammate private chat confirms explicit selection per conversation", async
     reason: "user_confirmed_full_access",
   });
 
-  await expect(permissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await expect(permissionTrigger).toHaveAccessibleName(/Full access · Confirmed for this conversation/);
   await input.fill("Continue with the same teammate");
   await sendButton.click();
   await expect(fullAccessDialog(page)).toHaveCount(0);
@@ -382,7 +382,7 @@ test("teammate private chat confirms explicit selection per conversation", async
   const restoredPermissionTrigger = restoredComposer.getByRole("button", { name: /Selected permission preset/ });
   await selectFullAccess(page, restoredPermissionTrigger);
   await expect(fullAccessDialog(page)).toHaveCount(0);
-  await expect(restoredPermissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await expect(restoredPermissionTrigger).toHaveAccessibleName(/Full access · Confirmed for this conversation/);
   await restoredComposer.getByRole("textbox").fill("Continue after restarting the app");
   await restoredComposer.getByRole("button", { name: "Send" }).click();
   await expect(fullAccessDialog(page)).toHaveCount(0);
@@ -399,7 +399,7 @@ test("teammate private chat confirms explicit selection per conversation", async
   const nextPermissionTrigger = nextComposer.getByRole("button", { name: /Selected permission preset/ });
   await selectFullAccess(page, nextPermissionTrigger);
   await confirmFullAccessSelection(page);
-  await expect(nextPermissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await expect(nextPermissionTrigger).toHaveAccessibleName(/Full access · Confirmed for this conversation/);
   await nextComposer.getByRole("textbox").fill("Start with the second teammate");
   await nextComposer.getByRole("button", { name: "Send" }).click();
   await expect(fullAccessDialog(page)).toHaveCount(0);
@@ -462,7 +462,7 @@ test("teammate private chat confirms inherited full access on the first run", as
     mode: "full_access",
     reason: "user_confirmed_full_access",
   });
-  await expect(permissionTrigger).toContainText("Full access · Confirmed for this conversation");
+  await expect(permissionTrigger).toHaveAccessibleName(/Full access · Confirmed for this conversation/);
   await expectNoDocumentOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });

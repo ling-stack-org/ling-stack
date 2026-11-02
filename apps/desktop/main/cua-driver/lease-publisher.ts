@@ -127,6 +127,7 @@ export class CuaDriverLeasePublisher {
   private revokePromise: Promise<void> | undefined;
   private active = false;
   private closed = false;
+  private hostDraining = false;
   private abortController = new AbortController();
   private lastLeaseValue: DesktopCuaDriverLeaseV1 | undefined;
   private operationEpoch = 0;
@@ -146,9 +147,19 @@ export class CuaDriverLeasePublisher {
     return this.lastLeaseValue;
   }
 
+  /** Stop advertising new work without revoking the original transport. */
+  beginHostDrain(): void {
+    this.hostDraining = true;
+    this.active = false;
+    this.clearTimer();
+  }
+
   publishReadinessDetails(
     details: CuaDriverLeaseReadinessDetails,
   ): Promise<DesktopCuaDriverLeaseV1> {
+    if (this.hostDraining) {
+      return Promise.reject(new CuaDriverLeasePublisherError("lease_publisher_draining"));
+    }
     if (this.closed) {
       return Promise.reject(new CuaDriverLeasePublisherError("lease_publisher_closed"));
     }
@@ -160,6 +171,9 @@ export class CuaDriverLeasePublisher {
   }
 
   publish(): Promise<DesktopCuaDriverLeaseV1> {
+    if (this.hostDraining) {
+      return Promise.reject(new CuaDriverLeasePublisherError("lease_publisher_draining"));
+    }
     if (this.closed) {
       return Promise.reject(new CuaDriverLeasePublisherError("lease_publisher_closed"));
     }
@@ -216,7 +230,7 @@ export class CuaDriverLeasePublisher {
         generation: lease.generation,
         error: error instanceof Error ? error.message : String(error),
       });
-      if (!this.closed && epoch === this.operationEpoch) {
+      if (!this.closed && !this.hostDraining && epoch === this.operationEpoch) {
         try {
           this.options.onLeaseLost?.(error);
         } catch {
@@ -225,7 +239,7 @@ export class CuaDriverLeasePublisher {
       }
       throw error;
     }
-    this.active = true;
+    this.active = !this.hostDraining;
     this.lastLeaseValue = lease;
     this.scheduleRenewal();
     this.telemetry.emit("info", "cua_driver.lease.published", { generation: lease.generation, expiresAt: lease.expiresAt });
@@ -234,7 +248,7 @@ export class CuaDriverLeasePublisher {
 
   private scheduleRenewal(): void {
     this.clearTimer();
-    if (!this.active || this.closed) {
+    if (!this.active || this.closed || this.hostDraining) {
       return;
     }
     this.timer = setTimeout(() => {

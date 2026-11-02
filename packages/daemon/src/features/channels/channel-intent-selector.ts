@@ -22,10 +22,18 @@ import type {
   RequiredParticipantRequestedByV1,
 } from "@ling-stack/contracts";
 import { channelOperationPlanFingerprintV1, createRequiredParticipantManifestV1 } from "@ling-stack/contracts";
-import { bindChannelOperationPlan, isChannelOperationCandidatePlanV2 } from "./channel-operation-bindings.js";
-import { ChannelOperationBlockerPublicationError, publishChannelOperationBlocker, recoverChannelOperationBlocker,
+import { bindChannelOperationPlan } from "./channel-operation-bindings.js";
+import { compileChannelCommandInputPolicyScope } from "./channel-command-input-policy.js";
+import { resolveChannelExecutionCwd } from "@ling-stack/core";
+import { isRecord } from "../../shared/validation.js";
+import { ChannelIntentDiagnosticPersistenceError, createChannelIntentDiagnostics,
+  type ChannelIntentRequestPurpose } from "./channel-intent-diagnostics.js";
+import { publishChannelOperationBlocker, recoverChannelOperationBlocker,
   type ChannelOperationBlockedResult } from "./channel-operation-blocker.js";
-import { channelOperationVisibleSources } from "./channel-operation-sources.js";
+import { channelOperationContinuationContext, channelOperationVisibleSources } from "./channel-operation-sources.js";
+import { applyChannelPendingAnswerPatch, assertChannelPendingOperationAuthority, ChannelPendingOperationAuthorityChangedError,
+  channelPendingOperationForAnswer, freezeChannelPendingOperation,
+  parseChannelPendingAnswerPatch, type ChannelPendingAnswerPatch } from "./channel-pending-operation.js";
 import { formatServerCatalogMessage } from "@ling-stack/localization";
 import { PiRunnerAdapter } from "@ling-stack/runner-pi";
 import type { ResolvedDaemonConfig } from "../../config.js";
@@ -38,6 +46,7 @@ import { listEffectiveChannelAiTeammateEntries, listEffectiveChannelAiTeammates,
 import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-protocol.js";
 import { materializeCommandIntent, type MaterializedCommandIntent } from "./command-operation-match.js";
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
+import { ChannelModelBudgetError, requireChannelNoToolsBudget } from "./channel-reply-budget-admission.js";
 import { buildChannelIntentSelectorContextPack, renderContextPack } from "./context-packs.js";
 import { buildWorkflowProposalContextView, proposalSourceRefsFromContextView } from "./context-processing/proposals.js";
 import {
@@ -136,10 +145,12 @@ interface MaterializationClarifyReason {
 }
 
 interface ChannelIntentModelOutput {
-  readonly action: "no_reply" | "reply" | "visible_multi_reply" | "clarify" | "workflow_proposal" | "execute";
+  readonly action: "no_reply" | "reply" | "visible_multi_reply" | "clarify" | "workflow_proposal" | "execute" | "resolve_pending";
   readonly reason: string;
   readonly clarification?: ChannelIntentClarificationV2;
   readonly execution?: unknown;
+  readonly pendingDraft?: { readonly execution: unknown; readonly slots: unknown };
+  readonly pendingAnswer?: ChannelPendingAnswerPatch;
 }
 
 
@@ -368,16 +379,20 @@ async function maybeSelectModelAssistedIntent(input: ChannelIntentSelectorInput)
   if (!input.config?.channels.intentSelector || !input.runnerRegistry) {
     return undefined;
   }
+  let output: ChannelIntentModelOutput;
   try {
-    const output = await requestModelIntent(input);
-    return applyModelIntentOutput(input, output);
+    output = await requestModelIntent(input);
   } catch (error) {
-    if (error instanceof ChannelOperationBlockerPublicationError) throw error;
-    return createReplyIntentResult(
-      input,
-      `Intent model output was unavailable or invalid; fail-open to an ordinary reply. ${error instanceof Error ? error.message : String(error)}`,
-    );
+    if (error instanceof ChannelIntentDiagnosticPersistenceError) throw error;
+    // A failed routing/planning request is not a successful ordinary reply.
+    // Keep the diagnostic Host-owned and replayable; never ask a tool-free
+    // reply model to explain a failure it cannot observe.
+    return publishChannelOperationBlocker(input, "channel_intent_selection_failed");
   }
+  // Host application may already have committed a proposal or result item.
+  // Preserve its publication error and recovery lineage, rather than claiming
+  // that model selection failed before any plan was admitted.
+  return applyModelIntentOutput(input, output);
 }
 
 function createReplyIntentResult(
@@ -395,6 +410,22 @@ function createReplyIntentResult(
 }
 
 function applyModelIntentOutput(input: ChannelIntentSelectorInput, output: ChannelIntentModelOutput): ChannelIntentSelectorResult | undefined {
+  if (output.action === "resolve_pending") return resolvePendingModelIntent(input, output);
+  // Once a complete Host-bound draft exists, an answer may not replace it with
+  // another graph. Cancellation/unrelated text still follows reply/clarify.
+  if (output.action === "execute" || output.action === "workflow_proposal") {
+    const context = channelPendingOperationForAnswer(input.store, input.sourceMessage.id);
+    if (context) {
+      try {
+        assertChannelPendingOperationAuthority({ store: input.store, channelId: context.decision.channelId,
+          pending: context.pending, sandbox: input.config?.sandbox });
+      } catch (error) {
+        if (!(error instanceof ChannelPendingOperationAuthorityChangedError)) throw error;
+        return publishChannelOperationBlocker(input, "channel_pending_operation_authority_changed");
+      }
+      return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
+    }
+  }
   if (output.action === "reply") {
     return createReplyIntentResult(input, output.reason, "model_policy");
   }
@@ -410,14 +441,52 @@ function applyModelIntentOutput(input: ChannelIntentSelectorInput, output: Chann
   if (output.action === "clarify") {
     const clarification = output.clarification;
     if (!clarification) throw new Error("Intent model clarify output omitted structured clarification.");
-    validateClarificationForCurrentTurn(input, clarification);
+    if (!validateClarificationForCurrentTurn(input, clarification)) {
+      return createReplyIntentResult(input,
+        "Intent model cannot request a local target for an independently answerable content turn.");
+    }
+    let pendingOperation: ChannelIntentClarificationV2["pendingOperation"];
+    if (output.pendingDraft) {
+      const bound = bindModelIntentOperations(input, output.pendingDraft.execution);
+      const { binding, candidates, routingInput } = bound;
+      if (binding.status === "blocked") return publishChannelOperationBlocker(input, binding.code);
+      if (binding.status !== "bound" || routingInput.sourceMessage.id !== input.sourceMessage.id
+        || clarification.missingFields.length !== 1 || clarification.missingFields[0] !== "projectInputRoot"
+        || channelPendingOperationForAnswer(input.store, input.sourceMessage.id)) {
+        return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
+      }
+      // A complete new graph need not ask the user to repeat a directory already
+      // covered by effective channel policy. This never patches an old draft.
+      const slots = output.pendingDraft.slots;
+      if (Array.isArray(slots) && slots.length > 0 && new Set(slots.map(slot => slot?.operationId)).size === slots.length
+        && slots.every(slot => isRecord(slot) && Object.keys(slot).length === 2
+          && typeof slot.operationId === "string" && slot.field === "project_input_root" && binding.execution.operations.some(operation =>
+          operation.id === slot.operationId && operation.binding?.commandInputScope?.policyAuthority))) {
+        return createModelAssistedExecuteResult(input, { action: "execute", reason: output.reason }, bound);
+      }
+      const manifest = createParticipantManifest(routingInput, candidates.map(candidate => ({ teammate: candidate.teammate,
+        stepAction: candidate.role.action })), "execute", binding.execution);
+      const ownerIds = new Set(binding.execution.operations.map(operation => operation.binding!.ownerParticipantId));
+      if (manifest.participants.some(participant => !ownerIds.has(participant.participantId) && participant.expectedOutcome !== "synthesis")) {
+        return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
+      }
+      try {
+        pendingOperation = freezeChannelPendingOperation({ store: input.store, channelId: input.channel.id,
+          sourceItemId: input.sourceMessage.id, execution: binding.execution, slots: output.pendingDraft.slots,
+          participantManifest: manifest,
+          sandbox: input.config?.sandbox });
+      } catch (error) {
+        if (!isPendingOperationValidationError(error)) throw error;
+        return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
+      }
+    }
     return createClarifyReply(
       input,
       clarifyReasonFromMissingFields(clarification.missingFields),
       "model_policy",
       output.reason,
       clarification.question,
-      clarification,
+      { ...clarification, ...(pendingOperation ? { pendingOperation } : {}) },
     );
   }
   if (output.action === "visible_multi_reply") {
@@ -426,23 +495,24 @@ function applyModelIntentOutput(input: ChannelIntentSelectorInput, output: Chann
   return createModelAssistedExecuteResult(input, output);
 }
 
-function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, output: ChannelIntentModelOutput): ChannelIntentSelectorResult {
-  const reasonCode = detectWorkflowIntentReason(input.sourceMessage) ?? "ordered_work_request";
-  const { candidates, binding } = bindModelIntentOperations(input, output.execution);
+function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, output: ChannelIntentModelOutput,
+  frozenBinding?: ReturnType<typeof bindModelIntentOperations> & { readonly participantManifest?: RequiredParticipantManifestV1 }): ChannelIntentSelectorResult {
+  const { candidates, binding, routingInput, reasonCode } = frozenBinding ?? bindModelIntentOperations(input, output.execution);
   if (binding.status === "blocked") {
-    return publishChannelOperationBlocker(input);
+    return publishChannelOperationBlocker(input, binding.code);
   }
   if (binding.status === "clarify") {
-    const question = "本次操作计划未通过队友归属、步骤依赖与来源校验，尚未开始执行。请分别列出每位队友负责的操作、输入和输出文件、命令及内容要求。";
-    return createClarifyReply(input, "ambiguous_target", "model_policy", binding.reason,
-      question, { missingFields: binding.missingFields, question });
+    // A rejected model candidate is not evidence that the user omitted a
+    // product decision. Genuine questions use the explicit clarify action.
+    return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
   }
   const ownerIds = new Set(binding.execution.operations.map((operation) => operation.binding!.ownerParticipantId));
-  const explicitlyRequiredIds = new Set(explicitRequestedParticipantIds(input));
-  const participants = candidates.filter((participant) => ownerIds.has(participant.teammate.id)
-    || explicitlyRequiredIds.has(participant.teammate.id));
+  const explicitlyRequiredIds = new Set(explicitRequestedParticipantIds(routingInput));
+  const excludedIds = new Set(binding.excludedParticipantIds);
+  const participants = candidates.filter((participant) => !excludedIds.has(participant.teammate.id)
+    && (ownerIds.has(participant.teammate.id) || explicitlyRequiredIds.has(participant.teammate.id)));
   const decisionAction = output.action === "execute" ? "execute" : "workflow_proposal";
-  const participantManifest = createParticipantManifest(input, participants.map((participant) => ({
+  const participantManifest = frozenBinding?.participantManifest ?? createParticipantManifest(input, participants.map((participant) => ({
     teammate: participant.teammate,
     stepAction: participant.role.action,
   })), decisionAction, binding.execution);
@@ -454,6 +524,18 @@ function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, out
       "Required participants cannot be silently dropped from the bound operation graph.",
       question, { missingFields: ["participant.operations"], question });
   }
+  if (binding.pendingInputScopeOperationIds?.length) {
+    const language = resolveChannelResponseLanguage({ store: input.store, channel: input.channel, sourceText: input.sourceMessage.body }).language;
+    const question = language.startsWith("zh")
+      ? "你要求执行前先确认依赖范围。请提供本次命令允许读取的工作区相对项目目录；原命令、参与者和其他限制保持不变，尚未开始执行。"
+      : "You requested confirmation before execution. Which workspace-relative project directory may supply this command's dependencies? The original command, participants and other constraints are unchanged; execution has not started.";
+    const pendingOperation = freezeChannelPendingOperation({ store: input.store, channelId: input.channel.id,
+      sourceItemId: input.sourceMessage.id, execution: binding.execution, participantManifest,
+      slots: binding.pendingInputScopeOperationIds.map(operationId => ({ operationId, field: "project_input_root" })),
+      sandbox: input.config?.sandbox });
+    return createClarifyReply(input, clarifyReasonFromMissingFields(["projectInputRoot"]), "model_policy", "Host preserved the user's ask-first constraint.",
+      question, { missingFields: ["projectInputRoot"], question, pendingOperation });
+  }
   const missingChannelTools = requiredToolsForExecutionOperations(binding.execution.operations)
     .filter((tool) => !input.channel.allowedTools.includes(tool));
   const capabilityBlocker = [
@@ -464,24 +546,83 @@ function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, out
     "model_policy", output.reason, participants, binding.execution, capabilityBlocker ? {
       message: capabilityBlocker,
       code: binding.capabilityBlockers.length > 0 ? "participant_required_tools_unavailable" : "operation_binding_channel_tools_unavailable",
-    } : undefined);
+    } : undefined, participantManifest);
+}
+
+function isPendingOperationValidationError(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith("channel_pending_operation.");
+}
+
+function resolvePendingModelIntent(input: ChannelIntentSelectorInput, output: ChannelIntentModelOutput): ChannelIntentSelectorResult {
+  const context = channelPendingOperationForAnswer(input.store, input.sourceMessage.id);
+  if (!context || !output.pendingAnswer) return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
+  const { pending, continuation, decision } = context;
+  try {
+    applyChannelPendingAnswerPatch({ store: input.store, sourceItemId: input.sourceMessage.id,
+      patch: output.pendingAnswer, sandbox: input.config?.sandbox });
+    const resolved = input.store.resolveChannelPendingOperation({ pendingDecisionId: decision.id,
+      expectedDraftFingerprint: pending.fingerprint, answerItemId: continuation.confirmation.itemId,
+      expectedAnswerRevision: continuation.confirmation.revision!, expectedQuestionRevision: continuation.clarification.revision! }, () => {
+      // No await or tool effect is permitted between these live authority checks
+      // and the atomic proposal + decision + answer-consumption write.
+      const execution = applyChannelPendingAnswerPatch({ store: input.store, sourceItemId: input.sourceMessage.id,
+        patch: output.pendingAnswer!, sandbox: input.config?.sandbox });
+      const original = getChannelMessageView(input.store, continuation.source.itemId)!;
+      const routingInput = { ...input, channel: input.store.getChannel(input.channel.id)!, sourceMessage: original };
+      const reasonCode = detectWorkflowIntentReason(original) ?? "ordered_work_request";
+      const candidates = selectTypedProposalParticipants(routingInput, reasonCode);
+      const capabilityBlockers = execution.operations.flatMap(operation => {
+        const tools = requiredToolsForExecutionOperations([operation]);
+        const participant = candidates.find(candidate => candidate.teammate.id === operation.binding!.ownerParticipantId);
+        if (!participant) throw new Error("channel_pending_operation.participant_unavailable");
+        return tools.filter(tool => !participant.teammate.allowedTools.includes(tool)).map(tool => ({
+          operationId: operation.id, participantId: participant.teammate.id, tool }));
+      });
+      const result = createModelAssistedExecuteResult({ ...input, channel: routingInput.channel },
+        { action: "execute", reason: output.reason }, { candidates, routingInput, reasonCode, participantManifest: pending.participantManifest,
+          binding: { status: "bound", execution, excludedParticipantIds: [], capabilityBlockers } });
+      if (result.action !== "workflow_proposal") throw new Error("channel_pending_operation.invalid_publication");
+      return input.store.getChannelIntentDecision(result.intentDecisionId)!;
+    }, new Date().toISOString());
+    const proposal = resolved.decision.proposalId && input.store.getChannelExecutionProposal(resolved.decision.proposalId);
+    if (!proposal) throw new Error("channel_pending_operation.invalid_publication");
+    return recoverExistingProposalLineage(input, proposal);
+  } catch (error) {
+    if (error instanceof ChannelPendingOperationAuthorityChangedError) {
+      return publishChannelOperationBlocker(input, "channel_pending_operation_authority_changed");
+    }
+    if (!isPendingOperationValidationError(error)) throw error;
+    return publishChannelOperationBlocker(input, "channel_operation_plan_invalid");
+  }
 }
 
 /** The same read-only admission check governs repair and final publication. */
 function bindModelIntentOperations(input: ChannelIntentSelectorInput, candidate: unknown) {
-  const reasonCode = detectWorkflowIntentReason(input.sourceMessage) ?? "ordered_work_request";
-  const candidates = selectTypedProposalParticipants(input, reasonCode);
+  const continuationContext = channelOperationContinuationContext({ store: input.store, sourceItemId: input.sourceMessage.id });
+  const continuationRequested = typeof candidate === "object" && candidate !== null && "continuation" in candidate;
+  const originalMessage = continuationRequested && continuationContext
+    ? getChannelMessageView(input.store, continuationContext.source.itemId) : undefined;
+  // Only routing identity comes from the pending original request. Publication,
+  // current constraints, provider, approval and execution all keep the new Turn.
+  const routingInput = originalMessage ? { ...input, sourceMessage: originalMessage } : input;
+  const reasonCode = detectWorkflowIntentReason(routingInput.sourceMessage) ?? "ordered_work_request";
+  const candidates = selectTypedProposalParticipants(routingInput, reasonCode);
   const binding = bindChannelOperationPlan({
     candidate,
     sourceItemId: input.sourceMessage.id,
     sourceText: input.sourceMessage.body,
-    workspaceCwd: input.channel.boundPath ?? input.store.paths.cwd,
+    workspaceCwd: resolveChannelExecutionCwd(input.store.getChannel(input.channel.id) ?? input.channel, input.store.paths.cwd),
     participants: candidates.map((participant) => participant.teammate),
     ...(candidates.length === 1 ? { defaultOwnerParticipantId: candidates[0]!.teammate.id } : {}),
     visibleSources: channelOperationVisibleSources({ store: input.store, sourceItemId: input.sourceMessage.id }),
+    continuationContext,
     hostCapabilityAvailable: input.hostCapabilityAvailable,
+    compileCommandInputScope: basis => compileChannelCommandInputPolicyScope({
+      store: input.store, channelId: input.channel.id, participantId: basis.participantId,
+      operationId: basis.operationId, sourceItemId: basis.sourceItemId, workspaceCwd: input.store.paths.cwd,
+    }),
   });
-  return { candidates, binding };
+  return { candidates, binding, routingInput, reasonCode };
 }
 
 /** Host routing selects the default; a candidate can request it but cannot name a replacement. */
@@ -516,7 +657,33 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
   let prompt = renderContextPack(contextPack);
   const runnerResolution = input.runnerRegistry.resolve({ tools: [], allowFallback: true });
   const textDeltas: string[] = [];
-  const runIntentTask = async (taskPrompt: string) => {
+  let requestCount = 0;
+  let requestPurpose: ChannelIntentRequestPurpose = "initial";
+  const diagnose = createChannelIntentDiagnostics(input);
+  const observe = (event: Parameters<ReturnType<typeof createChannelIntentDiagnostics>>[2]) => diagnose(requestCount, requestPurpose, event);
+  const parse = (text: string) => {
+    let output: ChannelIntentModelOutput;
+    try { output = parseModelIntentOutput(text); }
+    catch (error) {
+      observe({ phase: "validation", outcome: "intent_schema_rejected" });
+      throw error;
+    }
+    observe({ phase: "validation", outcome: "intent_schema_accepted" });
+    return output;
+  };
+  const inspect = (output: ChannelIntentModelOutput, pendingDraft = false) => {
+    const binding = bindModelIntentOperations(input, pendingDraft ? output.pendingDraft!.execution : output.execution).binding;
+    const path = (value: string) => pendingDraft ? `pendingDraft.${value}` : value;
+    observe({ phase: "validation", outcome: binding.status === "bound" ? "bound"
+      : binding.status === "blocked" ? "capability_blocked" : binding.shapeIssue ? "shape_rejected" : "binding_rejected",
+      ...(binding.status === "clarify" ? { fields: binding.missingFields.map(path),
+        ...(binding.shapeIssue ? { issue: { ...binding.shapeIssue, path: path(binding.shapeIssue.path) } } : {}) } : {}) });
+    return binding;
+  };
+  const runIntentTask = async (taskPrompt: string, purpose: ChannelIntentRequestPurpose) => {
+    if (requestCount >= 2) throw new Error("Channel intent selection request allowance exhausted.");
+    requireChannelNoToolsBudget({ budget: contextPack.budget, contextPackOverBudget: contextPack.overBudget,
+      prompt: taskPrompt, systemPrompt: "You are Ling's channel intent selector. Return strict JSON only." });
     const provider = resolveProviderForRun(input.store, {
       cwd: input.store.paths.cwd,
       workspaceCwd: input.store.paths.cwd,
@@ -531,38 +698,49 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
       thinkingLevel: "low",
       systemPrompt: "You are Ling's channel intent selector. Return strict JSON only.",
     }, input.secretResolver);
-    return runnerResolution.runner.adapter.runTask({
-      cwd: input.store.paths.cwd,
-      task: {
-        id: input.sourceMessage.id,
-        title: `Channel intent selection in ${input.channel.name}`,
-        prompt: taskPrompt,
-        channelId: input.channel.id,
-      },
-      provider,
-      ...(runnerResolution.runner.adapter instanceof PiRunnerAdapter
-        ? createProviderInvocationObserver({
-            store: input.store, provider, taskId: input.sourceMessage.id, origin: "intent",
-            onFailure: failure => { recordProviderInvocationFailureObservations({
-              store: input.store, secretResolver: input.secretResolver, failure,
-            }); },
-          })
-        : {}),
-      tools: [],
-      thinkingLevel: "low",
-      systemPrompt: "You are Ling's channel intent selector. Return strict JSON only.",
-      onEvent: (event) => {
-        if (event.type === "assistant_text_delta") {
-          textDeltas.push(event.text);
-        }
-      },
-    });
+    requestCount += 1;
+    requestPurpose = purpose;
+    observe({ phase: "request_started", outcome: "started" });
+    let result: Awaited<ReturnType<typeof runnerResolution.runner.adapter.runTask>>;
+    try {
+      result = await runnerResolution.runner.adapter.runTask({
+        cwd: input.store.paths.cwd,
+        task: {
+          id: input.sourceMessage.id,
+          title: `Channel intent selection in ${input.channel.name}`,
+          prompt: taskPrompt,
+          channelId: input.channel.id,
+        },
+        provider,
+        ...(runnerResolution.runner.adapter instanceof PiRunnerAdapter
+          ? createProviderInvocationObserver({
+              store: input.store, provider, taskId: input.sourceMessage.id, origin: "intent",
+              onFailure: failure => { recordProviderInvocationFailureObservations({
+                store: input.store, secretResolver: input.secretResolver, failure,
+              }); },
+            })
+          : {}),
+        tools: [],
+        thinkingLevel: "low",
+        systemPrompt: "You are Ling's channel intent selector. Return strict JSON only.",
+        onEvent: (event) => {
+          if (event.type === "assistant_text_delta") {
+            textDeltas.push(event.text);
+          }
+        },
+      });
+    } catch (error) {
+      observe({ phase: "request_finished", outcome: isContextLengthError(error) ? "context_length_error" : "transport_error" });
+      throw error;
+    }
+    observe({ phase: "request_finished", outcome: "completed" });
+    return result;
   };
   let result: Awaited<ReturnType<typeof runIntentTask>>;
   try {
-    result = await runIntentTask(prompt);
+    result = await runIntentTask(prompt, "initial");
   } catch (error) {
-    if (!isContextLengthError(error)) {
+    if (error instanceof ChannelModelBudgetError || !isContextLengthError(error)) {
       throw error;
     }
     const observedAt = new Date().toISOString();
@@ -585,27 +763,59 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
     });
     prompt = renderContextPack(contextPack);
     textDeltas.length = 0;
-    result = await runIntentTask(prompt);
+    result = await runIntentTask(prompt, "compaction_retry");
   }
   const text = textDeltas.join("").trim() || extractAssistantText(result.messages) || "";
-  const output = parseModelIntentOutput(text);
+  let output: ChannelIntentModelOutput;
+  try {
+    output = parse(text);
+  } catch (error) {
+    if (error instanceof ChannelIntentDiagnosticPersistenceError || requestCount >= 2) throw error;
+    // Compaction, format and binding repair share one additional request. No
+    // JSON patching, guessed graph, tool invocation or effect is admitted here.
+    textDeltas.length = 0;
+    const repairedResult = await runIntentTask(`${prompt}\n\nYour previous response was not valid strict JSON or did not match the declared intent schema. Return one complete strict JSON object for the same current user request, with all declared required fields and no Markdown or additional fields. No operation has been admitted or executed. Preserve the source registry, participant ownership and requested permissions; do not invent commands or sources.`, "format_repair");
+    const repairedText = textDeltas.join("").trim() || extractAssistantText(repairedResult.messages) || "";
+    output = parse(repairedText);
+  }
+  if (output.action === "clarify" && output.pendingDraft) {
+    // A draft is not execution authority, but its rejected fields must remain
+    // observable just like an executable candidate. Do not regenerate the graph.
+    inspect(output, true);
+    if (output.clarification!.missingFields.length !== 1 || output.clarification!.missingFields[0] !== "projectInputRoot") {
+      // The graph may bind while its envelope still fails application. Keep the
+      // fixed protocol path, never the model's field spelling or question text.
+      observe({ phase: "validation", outcome: "shape_rejected", fields: ["clarification.missingFields"],
+        issue: { path: "clarification.missingFields", code: "invalid_value" } });
+    }
+    return output;
+  }
   if (output.action !== "execute" && output.action !== "workflow_proposal") return output;
-  const initialBinding = bindModelIntentOperations(input, output.execution).binding;
-  if (initialBinding.status !== "clarify") return output;
+  // A frozen pending graph cannot enter the full-graph binding repair loop.
+  if (channelPendingOperationForAnswer(input.store, input.sourceMessage.id)) return output;
+  const initialBinding = inspect(output);
+  if (initialBinding.status !== "clarify" || requestCount >= 2) return output;
 
   // A valid JSON shape is not a valid source binding. Give both graph-shape and
   // provenance failures one repair attempt; capability blockers never trigger
   // a model retry. No task, proposal, Run or effect is admitted by this check.
+  let repaired: ChannelIntentModelOutput;
   try {
     textDeltas.length = 0;
-    const repairedResult = await runIntentTask(`${prompt}\n\nYour previous JSON selected ${output.action} but Host binding rejected it. Invalid fields: ${initialBinding.missingFields.join(", ")}. Host validation: ${initialBinding.reason}\nPrevious candidate (not execution authority): ${JSON.stringify(output.execution)}\nReturn one corrected strict JSON object with execution.schemaVersion=2 and a nonempty operations array. Each operation needs id, kind, targetKind, required, dependsOn, sourceQuote and owner, plus its quoted target, command or content as applicable. Use only the provided current user turn and canonical source registry; do not invent paths, commands, owners or source quotes. Each explicit owner.sourceQuote must occur inside that operation's verbatim sourceQuote. For a named owner's multi-operation block, quote that owner's complete instruction span when a shorter clause omits the owner. Keep separate owners and every required operation; do not borrow another owner's instruction span. Do not change the action to reply/no_reply to evade validation.`);
+    const repairedResult = await runIntentTask(`${prompt}\n\nYour previous JSON selected ${output.action} but Host binding rejected it. Invalid fields: ${initialBinding.missingFields.join(", ")}. Host validation: ${initialBinding.reason}\nPrevious candidate (not execution authority): ${JSON.stringify(output.execution)}\nReturn one corrected strict JSON object with execution.schemaVersion=2 and a nonempty operations array. Each operation needs id, kind, targetKind, required, dependsOn, sourceQuote and owner, plus its quoted target, command or content as applicable. Use only the provided current user turn and canonical source registry; do not invent paths, commands, owners or source quotes. Each explicit owner.sourceQuote must occur inside that operation's verbatim sourceQuote. For a named owner's multi-operation block, quote that owner's complete instruction span when a shorter clause omits the owner. Keep separate owners and every required operation; do not borrow another owner's instruction span. Do not change the action to reply/no_reply to evade validation.`, "binding_repair");
     const repairedText = textDeltas.join("").trim() || extractAssistantText(repairedResult.messages) || "";
-    const repaired = parseModelIntentOutput(repairedText);
-    if ((repaired.action === "execute" || repaired.action === "workflow_proposal")
-      && isChannelOperationCandidatePlanV2(repaired.execution)) return repaired;
-  } catch {
-    // Retain the original invalid graph for the binder's structured clarify.
+    repaired = parse(repairedText);
+  } catch (error) {
+    if (error instanceof ChannelIntentDiagnosticPersistenceError) throw error;
+    // Transport/parse failure retains the original rejected candidate. It is
+    // never dispatched or converted to an ordinary reply.
+    return output;
   }
+  if (repaired.action === "execute" || repaired.action === "workflow_proposal") {
+    inspect(repaired);
+    return repaired;
+  }
+  observe({ phase: "validation", outcome: "repair_action_rejected" });
   return output;
 }
 
@@ -653,14 +863,15 @@ function parseModelIntentOutput(text: string): ChannelIntentModelOutput {
       action !== "visible_multi_reply" &&
       action !== "clarify" &&
       action !== "workflow_proposal" &&
-      action !== "execute") ||
+      action !== "execute" && action !== "resolve_pending") ||
     typeof reason !== "string" ||
     reason.trim().length === 0
   ) {
     throw new Error("Intent model output schema is invalid.");
   }
   const allowedKeys = action === "clarify"
-    ? new Set(["action", "reason", "clarification"])
+    ? new Set(["action", "reason", "clarification", "pendingDraft"])
+    : action === "resolve_pending" ? new Set(["action", "reason", "pendingAnswer"])
     : action === "execute" || action === "workflow_proposal"
       ? new Set(["action", "reason", "execution"])
       : new Set(["action", "reason"]);
@@ -672,7 +883,17 @@ function parseModelIntentOutput(text: string): ChannelIntentModelOutput {
     reason: reason.trim(),
     ...(action === "clarify" ? { clarification: parseModelClarification(record.clarification) } : {}),
     ...(action === "execute" || action === "workflow_proposal" ? { execution: record.execution } : {}),
+    ...(action === "resolve_pending" ? { pendingAnswer: parseChannelPendingAnswerPatch(record.pendingAnswer) } : {}),
+    ...(action === "clarify" && record.pendingDraft !== undefined ? { pendingDraft: parsePendingDraft(record.pendingDraft) } : {}),
   };
+}
+
+function parsePendingDraft(value: unknown): { readonly execution: unknown; readonly slots: unknown } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)
+    || Object.keys(value).length !== 2 || !("execution" in value) || !("slots" in value)) {
+    throw new Error("Intent model pending draft schema is invalid.");
+  }
+  return { execution: value.execution, slots: value.slots };
 }
 
 function parseModelClarification(value: unknown): ChannelIntentClarificationV2 {
@@ -687,7 +908,7 @@ function parseModelClarification(value: unknown): ChannelIntentClarificationV2 {
     || !Array.isArray(missingFields)
     || missingFields.length === 0
     || missingFields.some((field) => typeof field !== "string" || !field.trim())
-    || new Set(missingFields).size !== missingFields.length
+    || new Set(missingFields.map((field) => typeof field === "string" ? field.trim() : field)).size !== missingFields.length
     || typeof question !== "string"
     || !question.trim()
   ) {
@@ -758,6 +979,7 @@ function createWorkflowProposal(
   participants: readonly ProposalParticipantSelection[],
   boundExecution?: ChannelIntentExecutionPlanV1,
   bindingBlocker?: { readonly message: string; readonly code: string },
+  frozenParticipantManifest?: RequiredParticipantManifestV1,
 ): ChannelIntentSelectorResult {
   const existingProposal = input.store
     .listChannelExecutionProposals({ channelId: input.channel.id, sourceMessageId: input.sourceMessage.id, limit: 1 })
@@ -778,7 +1000,7 @@ function createWorkflowProposal(
     ? genericWorkflowExecutionPlan(input)
     : deriveMultiParticipantExecutionPlan(input, participants));
   const persistedDecisionAction = execution ? "execute" : decisionAction;
-  const participantManifest = createParticipantManifest(
+  const participantManifest = frozenParticipantManifest ?? createParticipantManifest(
     input,
     participants.map((participant) => ({
       teammate: participant.teammate,
@@ -803,10 +1025,10 @@ function createWorkflowProposal(
       .filter((roleKey): roleKey is AiTeammate["roleKey"] => Boolean(roleKey))
       .map((roleKey) => lingAgentFallbackRecommendation(roleKey, responseLanguage)),
   );
+  // Capability blockers remain selection facts; confirmation rechecks live authority.
   const riskSummary = [
     buildRiskSummary(reasonCode, responseLanguage),
     ...fallbackRecommendations,
-    ...(bindingBlocker ? [bindingBlocker.message] : []),
   ].join("\n\n");
   const requiredTools = execution
     ? requiredToolsForExecutionOperations(execution.operations)
@@ -912,7 +1134,7 @@ function createSingleStepExecutableProposal(
     { tools: executableIntent.requiredTools.join(", "), target: executableIntent.targetLabel },
   );
   const riskSummary = blocker
-    ? `${localizedRiskSummary}\n\n${blocker.userMessage}`
+    ? localizedRiskSummary
     : fallbackSpecialistRoleKeys.length > 0
       ? `${localizedRiskSummary}\n\n${fallbackSpecialistRoleKeys.map((roleKey) => lingAgentFallbackRecommendation(roleKey, responseLanguage)).join("\n")}`
       : localizedRiskSummary;
@@ -2164,45 +2386,20 @@ function missingFieldsForClarifyReason(reasonCode: ClarifyReasonCode): readonly 
 function validateClarificationForCurrentTurn(
   input: ChannelIntentSelectorInput,
   clarification: ChannelIntentClarificationV2,
-): void {
+): boolean {
   validateClarificationShape(clarification);
-  if (clarification.missingFields.includes("target") && !currentTurnMayRequireExecutionTarget(input.sourceMessage.body)) {
-    throw new Error("Intent model cannot request a local target for an independently answerable content turn.");
-  }
+  return !clarification.missingFields.includes("target") || currentTurnMayRequireExecutionTarget(input.sourceMessage.body);
 }
 
 function validateClarificationShape(clarification: ChannelIntentClarificationV2): void {
   if (clarification.missingFields.length === 0 || !clarification.question.trim()) {
     throw new Error("Channel clarification requires missingFields and a specific question.");
   }
-  const question = clarification.question.toLowerCase();
-  for (const field of clarification.missingFields) {
-    const pattern = clarificationQuestionPattern(field);
-    if (!pattern.test(question)) {
-      throw new Error(`Channel clarification question does not name missing field: ${field}`);
-    }
-  }
-}
-
-function clarificationQuestionPattern(field: string): RegExp {
-  // Host binding paths remain exact structured audit fields. Their user-facing
-  // question names the missing product concept, never the internal JSON path.
-  const bindingRoot = field.split(".")[0];
-  if (bindingRoot === "owner") return /(owner|participant|队友|负责|归属)/iu;
-  if (bindingRoot === "sourceQuote") return /(source|quote|来源|引用)/iu;
-  if (bindingRoot === "execution") return /(operation|step|graph|操作|步骤|计划)/iu;
-  if (bindingRoot === "contentSource") return /(content|source|内容|来源)/iu;
-  if (bindingRoot === "inputs") return /(input|dependency|输入|依赖)/iu;
-  if (bindingRoot === "outputRefs") return /(output|file|输出|文件)/iu;
-  if (bindingRoot === "commandGoal") return /(command|invocation|module|命令|调用|文件)/iu;
-  if (bindingRoot === "target" && field !== "target") return /(target|file|path|目标|文件|路径)/iu;
-  if (field === "target") return /(target|file|path|directory|branch|pr|对象|目标|文件|路径|目录|分支)/iu;
-  if (field === "content") return /(content|body|text|page|feature|内容|正文|文本|页面|功能)/iu;
-  if (field === "acceptance_criteria") return /(acceptance|criteria|check|done|verify|验收|检查|完成|通过|验证)/iu;
-  if (field === "approval_scope") return /(approval|permission|allow|remote|授权|审批|权限|允许|远端)/iu;
-  if (field === "materialized_input") return /(attachment|link|input|file|image|document|附件|链接|输入|文件|图片|文档)/iu;
-  if (field === "command") return /(command|check|test|命令|检查|测试)/iu;
-  return new RegExp(field.replace(/[_-]+/gu, "[ _-]+"), "iu");
+  // missingFields are structured audit data, not words the localized question
+  // must repeat (and never a regex program). Lexical matching turned valid
+  // Chinese camelCase clarifications and other languages into ordinary replies.
+  // A clarification admits no effect: source/owner/tool/permission binding still
+  // happens only when a later user turn supplies an executable operation graph.
 }
 
 function currentTurnMayRequireExecutionTarget(body: string): boolean {

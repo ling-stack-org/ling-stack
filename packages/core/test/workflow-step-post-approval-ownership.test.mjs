@@ -561,3 +561,77 @@ for (const fault of ["workflow-transition-audit", "step-transition-audit", "gate
     assert.equal(exactLease(f, b.lease.id).status, "active");
   });
 }
+
+test("B013 post approval resumes aggregate Workflow only after the final parallel Step gate resolves", async (t) => {
+  const f = await fixture(t);
+  const secondStep = f.store.createChannelWorkflowStep({
+    workflowId: f.workflow.id,
+    title: "Read second owned evidence",
+    prompt: "Read second evidence.txt",
+    toParticipantId: participantId,
+    toParticipantLabel: "Engineer",
+    metadata: {
+      sourceMessageId: f.source.id,
+      policy: { onRunFailed: "block_for_user", onRunCancelled: "block_for_user", onApprovalDenied: "block_for_user", retryable: true },
+      gates: [{ stage: "post", approvalProfile: { mode: "standard", risk: "medium" }, title: "Review second completed evidence",
+        reason: "A local user must review the second successful result.", requiredForStatuses: ["succeeded"] }],
+    },
+  }, at(1));
+  const second = { ...f, step: secondStep };
+  const firstGeneration = succeed(f, ready(f, begin(f, "aggregate-first", 2)));
+  const secondGeneration = succeed(second, ready(second, begin(second, "aggregate-second", 20)));
+  const firstApproval = approvePostGate(f, firstGeneration, 10);
+  const secondApproval = approvePostGate(second, secondGeneration, 30);
+
+  const firstResolved = f.store.commitChannelWorkflowStepPostApprovalResolved(
+    postApprovalResolvedInput(f, firstGeneration, firstApproval, 40));
+  assert.equal(firstResolved.status, "linked", JSON.stringify(firstResolved));
+  assert.equal(f.store.getChannelWorkflowStep(f.step.id).status, "running");
+  assert.equal(f.store.getChannelWorkflowStep(secondStep.id).status, "waiting_for_approval");
+  assert.equal(f.store.getChannelWorkflow(f.workflow.id).status, "waiting_for_approval");
+  assert.equal(f.store.listStateTransitionEvents({ entityType: "workflow", entityId: f.workflow.id, limit: 100 })
+    .filter(event => event.event === "approval_approved").length, 0);
+
+  const secondResolved = f.store.commitChannelWorkflowStepPostApprovalResolved(
+    postApprovalResolvedInput(second, secondGeneration, secondApproval, 41));
+  assert.equal(secondResolved.status, "linked", JSON.stringify(secondResolved));
+  assert.equal(f.store.getChannelWorkflowStep(secondStep.id).status, "running");
+  assert.equal(f.store.getChannelWorkflow(f.workflow.id).status, "running");
+  assert.equal(f.store.listStateTransitionEvents({ entityType: "workflow", entityId: f.workflow.id, limit: 100 })
+    .filter(event => event.event === "approval_approved").length, 1);
+});
+
+test("B013 post approval keeps aggregate Workflow waiting while another running Step Run awaits approval", async (t) => {
+  const f = await fixture(t);
+  const secondStep = f.store.createChannelWorkflowStep({
+    workflowId: f.workflow.id,
+    title: "Run a second approval-gated action",
+    prompt: "Inspect second evidence.txt",
+    toParticipantId: participantId,
+    toParticipantLabel: "Engineer",
+    metadata: {
+      sourceMessageId: f.source.id,
+      policy: { onRunFailed: "block_for_user", onRunCancelled: "block_for_user", onApprovalDenied: "block_for_user", retryable: true },
+    },
+  }, at(1));
+  const second = { ...f, step: secondStep };
+  const firstGeneration = succeed(f, ready(f, begin(f, "aggregate-step-gate", 2)));
+  const secondGeneration = ready(second, begin(second, "aggregate-run-gate", 20));
+  assert.equal(f.store.transitionRunStatus({ runId: secondGeneration.run.id, expectedStatus: "queued",
+    event: "runner_started", actor: "runner", now: at(24) }).ok, true);
+  assert.equal(f.store.transitionRunStatus({ runId: secondGeneration.run.id, expectedStatus: "running",
+    event: "approval_requested", actor: "system", now: at(25) }).ok, true);
+  assert.equal(f.store.getChannelWorkflowStep(secondStep.id).status, "running");
+  assert.equal(f.store.getRun(secondGeneration.run.id).status, "waiting_for_approval");
+
+  const firstApproval = approvePostGate(f, firstGeneration, 30);
+  const firstResolved = f.store.commitChannelWorkflowStepPostApprovalResolved(
+    postApprovalResolvedInput(f, firstGeneration, firstApproval, 40));
+  assert.equal(firstResolved.status, "linked", JSON.stringify(firstResolved));
+  assert.equal(f.store.getChannelWorkflowStep(f.step.id).status, "running");
+  assert.equal(f.store.getChannelWorkflowStep(secondStep.id).status, "running");
+  assert.equal(f.store.getRun(secondGeneration.run.id).status, "waiting_for_approval");
+  assert.equal(f.store.getChannelWorkflow(f.workflow.id).status, "waiting_for_approval");
+  assert.equal(f.store.listStateTransitionEvents({ entityType: "workflow", entityId: f.workflow.id, limit: 100 })
+    .filter(event => event.event === "approval_approved").length, 0);
+});

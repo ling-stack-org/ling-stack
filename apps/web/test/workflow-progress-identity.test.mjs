@@ -23,6 +23,8 @@ const {
   workflowProgressToConversationWorkCell,
 } = await import("../src/lib/workflow-progress.ts");
 const { conversationTimelineItemsForModel } = await import("../src/lib/conversation-work-cell.ts");
+const { buildCollaborationTaskCardModel } = await import("../src/lib/collaboration-task-card.ts");
+const { collaborationTaskCardToConversationWorkCell } = await import("../src/lib/collaboration-task-work-cell.ts");
 
 const t = (key) => key;
 
@@ -124,7 +126,7 @@ test("workflow-only participant steps do not fabricate sub Agent evidence", () =
   );
 });
 
-function narratedTimeline({ runId = 'run-1', participantId = 'teammate_builtin_engineer', status = 'succeeded', revision = 37, sourceEventSequence = 36 } = {}) {
+function narratedTimeline({ runId = 'run-1', participantId = 'teammate_builtin_engineer', status = 'succeeded', revision = 37, sourceEventSequence = 36, parent = false } = {}) {
   const sourceRefs = [{ kind: 'conversation_item', id: 'source-1' }, { kind: 'run', id: 'run-1' }];
   const taskStep = { ...step('workflow-1', 'step-1', 0, 'teammate_builtin_engineer', 'Engineer'), runId: 'run-1', status,
     resultSummary: 'Inspect first.\n\n## Result\nAll checked.',
@@ -139,7 +141,76 @@ function narratedTimeline({ runId = 'run-1', participantId = 'teammate_builtin_e
     createdAt: '2026-09-06T00:00:00Z', toolEvidence: { toolName: 'read', inputSummary: 'test.ts', outputText: 'const x = 1;', outputTruncated: false, latestEventSeq: revision } };
   const progress = buildWorkflowProgressModel({ workflow: { ...workflow('workflow-1'), status }, steps: [taskStep],
     runs: [], approvals: [], artifactsByRun: {}, executionActions: [action], t });
-  return conversationTimelineItemsForModel(workflowProgressToConversationWorkCell(progress)).find(item => item.kind === 'subAgentActivity').childItems;
+  const item = conversationTimelineItemsForModel(workflowProgressToConversationWorkCell(progress)).find(item => item.kind === 'subAgentActivity');
+  return parent ? item : item.childItems;
+}
+
+test('workflow participant status preserves blocked, cancellation, queued and distinct waits', () => {
+  for (const [status, lifecycle, projectedStatus, stateLabel] of [
+    ['blocked', 'blocked', 'blocked', 'Blocked'], ['cancelled', 'interrupted', 'cancelled', 'Stopped'],
+    ['failed', 'errored', 'failed', 'Failed'], ['queued', 'started', 'pending', undefined],
+    ['running', 'running', 'running', undefined], ['claimed', 'running', 'running', undefined],
+    ['succeeded', 'completed', 'succeeded', undefined], ['skipped', 'completed', 'succeeded', undefined],
+    ['waiting_for_approval', 'waiting', 'waiting', 'Waiting for approval'],
+    ['waiting_for_input', 'waiting', 'waiting', 'waiting for user input'],
+  ]) {
+    const item = narratedTimeline({ status, parent: true });
+    assert.equal(item.lifecycle, lifecycle, status);
+    assert.equal(item.status, projectedStatus, status);
+    assert.equal(item.stateLabel, stateLabel, status);
+  }
+});
+
+test('collaboration adapter preserves blocked, cancelled, queued and distinct wait semantics', () => {
+  for (const [status, lifecycle, stateLabel] of [
+    ['blocked', 'blocked', 'Blocked'], ['cancelled', 'interrupted', 'Stopped'],
+    ['queued', 'started', undefined], ['waiting_for_approval', 'waiting', 'Waiting for approval'],
+    ['waiting_for_input', 'waiting', 'waiting for user input'],
+  ]) {
+    const input = { workflow: { ...workflow('collab-state'), status },
+      steps: [{ ...step('collab-state', 'collab-step', 0, 'teammate_builtin_engineer', 'Engineer'),
+        status, resultSummary: 'Inspect owned input before executing the CLI.' }], runs: [], approvals: [], t };
+    const card = buildCollaborationTaskCardModel(input);
+    const progress = buildWorkflowProgressModel({ ...input, artifactsByRun: {} });
+    const model = collaborationTaskCardToConversationWorkCell({ card, progress, t });
+    const item = conversationTimelineItemsForModel(model).find(row => row.kind === 'subAgentActivity');
+    assert.equal(item.lifecycle, lifecycle, status);
+    assert.equal(item.stateLabel, stateLabel, status);
+    if (status === 'waiting_for_input') {
+      assert.equal(card.mode, 'waiting');
+      assert.equal(card.steps[0].state, 'waiting');
+    }
+  }
+});
+
+for (const parallel of [false, true]) {
+  for (const [statuses, lifecycle, stateLabel] of [
+    [['queued', 'waiting_for_input'], 'waiting', 'waiting for user input'],
+    [['succeeded', 'cancelled'], 'interrupted', 'Stopped'],
+    [['cancelled', 'succeeded'], 'interrupted', 'Stopped'],
+  ]) {
+    test(`participant aggregate does not fabricate approval: ${statuses.join('+')}, parallel=${parallel}`, () => {
+      const input = { workflow: { ...workflow('aggregate-state'), status: 'running' },
+        steps: statuses.map((status, index) => ({ ...step('aggregate-state', `aggregate-${index}`, index,
+          'teammate_builtin_engineer', 'Engineer'), status, resultSummary: 'Inspect the owned command result.',
+          runId: `aggregate-run-${index}`, runNarration: {
+            runId: `aggregate-run-${index}`, participantId: 'teammate_builtin_engineer', workflowStepId: `aggregate-${index}`,
+            threadId: 'parent-thread', turnId: 'parent-turn', sourceItemId: 'parent-item', sourceItemSequence: 1,
+            segments: [{ content: 'Inspect the owned command result.', firstEventId: `narrative-${index}`,
+              lastEventId: `narrative-${index}`, startEventSequence: 1, endEventSequence: 1, completed: true }],
+          },
+          ...(parallel ? { metadata: { branchGroupId: 'owned-branch' } } : {}) })), runs: [], approvals: [], t };
+      const progress = buildWorkflowProgressModel({ ...input, artifactsByRun: {} });
+      const workflowItem = conversationTimelineItemsForModel(workflowProgressToConversationWorkCell(progress))
+        .find(row => row.kind === 'subAgentActivity');
+      assert.equal(workflowItem.lifecycle, lifecycle);
+      const card = buildCollaborationTaskCardModel(input);
+      const model = collaborationTaskCardToConversationWorkCell({ card, progress, t });
+      const item = conversationTimelineItemsForModel(model).find(row => row.kind === 'subAgentActivity');
+      assert.equal(item.lifecycle, lifecycle);
+      assert.equal(item.stateLabel, stateLabel);
+    });
+  }
 }
 
 test('workflow child interleaves narration with its actual read sequence and source lineage', () => {

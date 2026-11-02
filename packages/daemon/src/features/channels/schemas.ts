@@ -1168,8 +1168,8 @@ function readOptionalChannelMessageFileRefSource(
   if (value === undefined) {
     return undefined;
   }
-  if (value !== "composer" && value !== "explicit_text" && value !== "api") {
-    throw new Error(`${label} must be one of: composer, explicit_text, api`);
+  if (value !== "composer" && value !== "explicit_text" && value !== "api" && value !== "inferred_text") {
+    throw new Error(`${label} must be one of: composer, explicit_text, api, inferred_text`);
   }
   return value;
 }

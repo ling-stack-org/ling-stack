@@ -135,7 +135,7 @@ export function collectPrivateMessageSources(input: {
   return input.messages.map((message) => {
     const attachmentIds = message.attachmentIds ?? [];
     const linkPreviewIds = message.linkPreviewIds ?? [];
-    const fileRefs = message.fileRefs ?? [];
+    const fileRefs = (message.fileRefs ?? []).filter((ref) => ref.source !== "inferred_text");
     return {
       id: `private_message:${message.id}`,
       kind: "private_message" as const,
@@ -269,7 +269,7 @@ function renderPrivateMessageLine(
   const body = message.body.trim() || "(no text)";
   const attachmentIds = message.attachmentIds ?? [];
   const linkPreviewIds = message.linkPreviewIds ?? [];
-  const fileRefs = message.fileRefs ?? [];
+  const fileRefs = (message.fileRefs ?? []).filter((ref) => ref.source !== "inferred_text");
   const attachments = attachmentIds
     .map((attachmentId) => attachmentsById.get(attachmentId))
     .filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment))

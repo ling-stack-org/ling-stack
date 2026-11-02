@@ -1,5 +1,6 @@
 import type { ConversationTimelineItem } from "@ling-stack/conversation-ui-core";
 import type { ConversationViewRetainKeys } from "../view-store/conversation-view-store.js";
+import { projectTimelineResponsePresentation } from "./timeline-response-presentation.js";
 
 export function timelineProcessScopeKey(item: ConversationTimelineItem): string | undefined {
   if (!item.turnId || !item.runId || !item.attemptId || !item.participantId) return undefined;
@@ -38,6 +39,7 @@ export function collectConversationTimelineViewRetainKeys(
 
   const collect = (item: ConversationTimelineItem): void => {
     if (item.actionId) actionIds.add(item.actionId);
+    if (item.kind === "commandExecution" && item.command) actionIds.add(`${item.id}:copy-command`);
 
     if (item.kind === "commandBatch") {
       blockIds.add(item.batch.id);
@@ -82,5 +84,8 @@ export function collectConversationTimelineViewRetainKeys(
   };
   items.forEach(collect);
   collectProcess(items);
+  for (const response of projectTimelineResponsePresentation(items).footerByItemId.values()) {
+    blockIds.add(`response-files:${response.id}`);
+  }
   return { blockIds, spanIds, actionIds };
 }

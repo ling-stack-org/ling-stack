@@ -6,7 +6,8 @@ Continue the independent Lane C of the approved
 [Harness plan](ling-harness-gap-closure-implementation-plan.md) on the existing
 `codex/e6-safe-continuation` tree. Foundation has public `DelegationStepV1` and
 `DelegationMessageV1` contracts, a pure transition helper and a read-port shape.
-There is no production delegation SQLite store or durable dynamic child tree.
+The bounded production SQLite read store is now implemented and verified.
+There is no authenticated delegation writer or durable dynamic child runtime.
 Neither an accepted static workflow nor a nested activity renderer supplies
 that missing persistence. Do not redo the completed UI or Pi migration.
 
@@ -223,9 +224,10 @@ The read-only prerequisite audit identifies these actual reusable seams:
   digest/owner checks. They do not authenticate permission/tool/workspace/provider
   role facts or pin immutable expected bytes for delegation. The tool Store's
   policy-owner check alone is insufficient for this gate.
-- `DelegationStore` still exposes only three reads and has no SQLite implementation.
-  Reads/mapper and a strictly non-executing planned intent can be separated from
-  actual spawn; never report them as G19/G20 acceptance.
+- `DelegationQueryStore` now has three complete-or-error reads and two explicit
+  live-page queries, backed by the verified SQLite reader. It has no mutation,
+  authenticated producer or root reservation port. Reads/mapper and a strictly
+  non-executing planned intent are not actual spawn or G19/G20 acceptance.
 - Thread Goal's terminal usage tally and the runtime semaphore are not a root
   reservation ledger. No existing ledger atomically accounts sibling allocation,
   settlement/refund or a trusted frozen money-price source.
@@ -243,3 +245,134 @@ the persisted effective value of inherited child limits. These do not block
 the empty-schema checkpoint, but must be specified and tested before G19/G20
 or any dynamic spawn activation. No fabricated budget/permission producer is
 permitted as a substitute.
+
+## Writer contract review — in progress, 2026-10-09
+
+Fixed target: the **Subsequent writer gate** in this document, not the completed
+migration/read prerequisite, Pi/Expo migration, old UI work or another checkout.
+Review session: `0-1791490840-bf520289`; baseline `d095da29`.
+This is a pending contract review, not an approved implementation or completed
+engineering review. Architecture decisions must resolve before the remaining
+Code Quality, Test, Performance and outside-coverage stages can finish. No new
+product source, native build, live provider call or test run occurred here.
+
+### Scope Challenge record
+
+Scope accepted as-is: trusted frozen delegation facts, current parent Attempt
+fencing, full Run ancestry, root reservation/settlement and atomic child create.
+Reuse existing domain, SQLite Store and Daemon admission boundaries; no second
+orchestrator, scheduler service, batch table or rewrite of accepted workflows.
+The existing approved H10 behavior and its necessary tests/docs stay together.
+Writer module/file counts remain estimates until its contract is selected;
+there is no reason to cut an already approved feature to reduce file count.
+The user explicitly authorized continuous internal chains and waived repeated
+file-count confirmations; no new file-count approval was requested.
+
+Prior completed implementation and its receipts are reused, not rerun. The
+Pi/Expo user addition is already covered by
+[the migration checkpoint](pi1-expo57-migration-checkpoint-2026-10-08.md): exact
+Pi 1.1.0 and supported Expo57 pairing are implemented; fresh packaged macOS and
+Mobile native/device acceptance remain open. A prior bundle/test receipt is not
+a fresh GUI or native-device receipt. No cloud CI, push, merge or credential
+mutation is authorized by this review.
+
+Known reuse: `runExecutionOwnerSql`, the existing complete evaluation ancestry
+walk, revisioned Store transactions and disposable SQLite fixtures. Existing
+Goal terminal accounting is not reservation authority. Existing SHA-sealed JSON
+is not Host policy provenance. Public read pages are not a fan-in snapshot.
+Prior learning applied: `ling-t6-package-tests-not-landing-clearance` and
+`office-source-only-needs-exports-snapshots-metafile` (observed, confidence 10/10).
+Aside and general WebSearch are unavailable in this host; no new web-research
+coverage is claimed. Existing authored source and approved design are the
+evidence; no provider or UI behavior is inferred from undocumented external code.
+
+### Architecture finding F1
+
+**[P1 for dynamic activation] (confidence 9/10), Root and independent reader
+`delegation_migration_adversarial`: root budget authority is not yet specified.**
+
+Motivating approved contract: the Harness plan's Root Budget section says
+"Children reserve from root remaining capacity; unused reservation returns on
+terminal completion." This requires a single authority before atomic spawn.
+
+Current evidence, not a proposed implementation:
+
+- `packages/contracts/src/threads.ts:110`: `readonly tokenBudget?: number;`.
+  The current Goal supports a token bound, not the complete root budget contract.
+- `packages/daemon/src/features/runs/threads.ts:242`:
+  `const nextTokensUsed = goal.tokensUsed + additionalTokens;` is inside
+  `syncLingThreadGoalForTerminalRun`, with the budget check at line 292.
+  This terminal read/modify/write tally does not reserve sibling capacity.
+- `packages/core/src/run-types.ts:1218-1220`: `taskSnapshot`,
+  `providerSnapshot` and `requestSnapshot` are `unknown`, not a typed trusted
+  root-budget producer. `RunSession`/`CreateRunInput` must not be credited with
+  an authenticated budget just because these JSON containers exist.
+- `packages/daemon/src/config.ts:188-191`: delegation config currently contains
+  `mode` and `maxDepth`, not a root budget producer or ledger.
+- `packages/core/src/harness/delegations.ts:76-89` compares supplied parent/child
+  numbers only; it neither authenticates their source nor reserves descendants.
+
+This finding does not reopen the completed read/store/schema decisions. The
+root authority, time meaning, price authority and effective inherited child
+cap are independently selectable. Selecting one must not silently settle the
+others, change any numeric default or activate dynamic children.
+
+## Decision ledger
+
+### R1: root budget authority
+
+Finding: F1, P1 for activation, confidence 9/10; evidence above. Reviewers: Root
+and `delegation_migration_adversarial` (read-only native review, not outside voice).
+Plan baseline: approved H10/G20 requires root accounting and atomic reservation;
+the root source is explicitly unresolved in the preceding writer gate. The
+user's instruction to complete internal chains approves that scope, not a new
+budget authority or numerical default.
+Runtime evidence: Goal token accounting exists only as terminal tally; there is
+no authenticated root budget producer/reservation ledger in the inspected code.
+
+Comparison grid:
+
+| Independently selectable value | Current | A | B | Approval |
+| --- | --- | --- | --- | --- |
+| R1 authority source | unspecified | Host-owned immutable snapshot scoped to RootRun | remains unspecified; bounded comparison with Goal authority only | pending |
+| Root child reservation/atomic create | required, not implemented | unchanged required contract | unchanged required contract, no implementation while source pending | approved H10/G20 |
+| Existing Goal behavior | current terminal accounting | preserved; may be an explicit snapshot input, not mutable root authority | preserved during investigation | current behavior retained |
+| Numeric defaults / UI configuration | unspecified for root writer | still pending, not selected by A | still pending | not decided here |
+| R2 time definition | unspecified | still pending | still pending | not decided here |
+| R3 trusted pricing | unspecified | still pending | still pending | not decided here |
+| R4 effective child inheritance | helper intent, runtime producer unspecified | still pending | still pending | not decided here |
+| Runtime activation / native acceptance | incomplete | not authorized or certified by A | not authorized or certified by B | existing gates retained |
+
+Question D1:
+
+D1 — 多 Agent 的根预算由谁作为权威？
+Project/branch/task: Ling / codex/e6-safe-continuation / H10 writer。
+ELI10: 多个子 Agent 同时接任务，必须从同一个账本预留额度。现在 Goal 只在任务结束后累计用量；如果直接拿它当并发预算，会出现各个 Agent 都看到同一份剩余额度的风险。
+Stakes if we pick wrong: 可能重复分配预算，或修改长期目标时意外改变正在执行任务的限额。
+Recommendation: A，因为 RootRun 专属的 Host 冻结快照能把执行权限和可编辑目标分开。
+Note: options differ in kind, not coverage — no completeness score.
+Pros / cons:
+A) RootRun 冻结快照（推荐）
+  ✅ 由 Host 在根任务准入时生成并持久化同一份不可变预算快照，所有子 Agent 从同一根账本预留，而不是自行声明总额度。
+  ✅ 保留现有 Goal 的用量和状态行为，后续修改长期目标不会隐式改写已经启动任务的预算来源，也便于重启后追溯原依据。
+  ❌ 需要补专用快照生产者和账本接线（human: ~1 day / CC: ~45 min，估算），数值默认、时间、价格和继承规则仍需分别落实。
+B) 先比较 Goal 权威
+  ✅ 先限定核对 Goal 创建、替换和更新对 RootRun 的绑定方式，复用现有额度入口的可行性会有具体源码依据而不是猜测。
+  ✅ 保留当前 Goal、已有静态协作以及其他已批准工作不变；这只是讨论本项来源，不撤销 H10，也不自动选择任何预算数值。
+  ❌ 本项仍未决定，动态委派不能据此启用（human: ~1 hour / CC: ~10 min，估算）；调查只比较来源，不实现或默认采用 Goal。
+Net: A 直接确定执行预算的权威边界；B 只进一步比较来源，不改变其他待决规则。
+Header: 根预算来源
+Options:
+A) RootRun 冻结快照（推荐）
+由 Host 在根任务准入时生成并持久化同一份不可变预算快照，所有子 Agent 从同一根账本预留，而不是自行声明总额度。保留现有 Goal 的用量和状态行为，后续修改长期目标不会隐式改写已经启动任务的预算来源，也便于重启后追溯原依据。需要补专用快照生产者和账本接线（human: ~1 day / CC: ~45 min，估算），数值默认、时间、价格和继承规则仍需分别落实。
+B) 先比较 Goal 权威
+先限定核对 Goal 创建、替换和更新对 RootRun 的绑定方式，复用现有额度入口的可行性会有具体源码依据而不是猜测。保留当前 Goal、已有静态协作以及其他已批准工作不变；这只是讨论本项来源，不撤销 H10，也不自动选择任何预算数值。本项仍未决定，动态委派不能据此启用（human: ~1 hour / CC: ~10 min，估算）；调查只比较来源，不实现或默认采用 Goal。
+
+State: pending
+Actual answer: unanswered
+Accepted scope: none for R1; approved H10 scope remains unchanged.
+History: no prior R1 answer; no completed prerequisite or SDK migration reopened.
+
+R2 (time), R3 (pricing) and R4 (effective child inheritance) remain pending and
+will not be bundled into D1. Approval readiness has not passed. No completed
+review log, clearance dashboard or success telemetry is claimed for this review.

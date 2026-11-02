@@ -559,6 +559,21 @@ Run 的事件序号、频道的 display position。工具引用的 source item �
 - 普通/私聊叙述当前公开 DTO 仍缺已验证的 attempt lineage；不得借问题 source 给叙述补猜测归属。
   下一切片需从 Host 真实 Run/Attempt 归属贯通历史和实时读取，再接两种会话的 Run 内交错。
 
+### 8.17 U4-B2-D delegated Run 的 canonical child input（2026-10-19，实施中）
+
+- 根频道用户 Item 是 workflow delegation 的授权来源，不是 workflow-step Thread 内 Run 的直接输入。
+  禁止把根 Item 跨 Thread 写成 child Turn 的 `sourceItemId`，也不放宽 user-input source guard。
+- 每个 delegated Run 在自己的 workflow-step Thread 内拥有真实、committed、`actorType=system` 的
+  canonical input Item；该 Item 与 child Turn、Run、Attempt、participant、task 和 workflow step 同 scope。
+- child canonical Item 通过 `domainRefs` 回链根 Item/Turn/Thread、workflow、step 和 task。跨 Thread
+  lineage 只存在于这些引用中；`sourceTurnId` 仅允许连接同一 child Thread 内的 retry/resume 前序 Turn。
+- `user_input_request` 和 `user_input_answer` 的直接 source 必须是 child canonical Item。根 Item 继续作为
+  workflow/TerminalReport authority，不能因 UI 将 child span 嵌入根频道而改变底层所有权。
+- Host 在创建 child input 前后都核验 channel、workflow、step、task、participant 和根 source lineage；
+  任一冲突都 fail closed。幂等重放必须返回相同 child Item/Turn，不能生成重复问题或放宽可见范围。
+- Q1 验收同时证明：必要问题只暂停所属 participant；answer successor 沿 child lineage 恢复；其他 required
+  participant 未终态时 fan-in、Completion Gate、TerminalReport 和根 Turn 均不得提前成功。
+
 ## 9. 增量测试矩阵与失败处理
 
 以下均为完整联动用例，当前仍为 not_run。U0 的纯协议测试只覆盖部分输入边界，不将其记为联动通过。原矩阵一项不减。

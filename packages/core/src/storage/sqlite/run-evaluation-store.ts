@@ -28,6 +28,7 @@ import {
   type StartRunEvaluationInput,
 } from "../../harness/evaluations.js";
 import { isHarnessLeaseClaimable } from "../../harness/common.js";
+import { HarnessReliabilityError } from "../../harness/reliability.js";
 import type { RunArtifact, RunSession } from "../../run-types.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import {
@@ -37,6 +38,7 @@ import {
   runEvaluationSelectSql,
 } from "./run-evaluation-mappers.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { harnessArtifactOwnerHolder, syncHarnessArtifactOwnerPins } from "./harness-artifact-recovery-pins.js";
 
 interface RunEvaluationStorePorts {
   readonly getRun: (id: string) => RunSession | undefined;
@@ -153,6 +155,7 @@ export class SqliteRunEvaluationStore {
         if (!sameEnqueueIdentity(existing, input, identity, suite.id, testCase.id, baseline.id)) {
           throw new RunEvaluationStoreError("evaluation.idempotency_conflict");
         }
+        this.syncRecoveryPins(existing, input.now);
         return { evaluation: existing, replayed: true };
       }
       if (input.id && this.getRunEvaluation(input.id)) {
@@ -184,6 +187,7 @@ export class SqliteRunEvaluationStore {
         updatedAt: input.now,
       };
       this.insertEvaluation(evaluation);
+      this.syncRecoveryPins(evaluation, input.now);
       return { evaluation: this.getRunEvaluation(evaluation.id)!, replayed: false };
     });
   }
@@ -195,6 +199,9 @@ export class SqliteRunEvaluationStore {
       if (!current) return { ok: false, code: "not_found" };
       if (current.state === "claimed" && matchesLease(current, input)
         && current.claimExpiresAt && current.claimExpiresAt > input.now) {
+        if (!this.syncAdmissionRecoveryPins(current, input.now)) {
+          return { ok: false, code: "evaluation.artifact_invalid" };
+        }
         return { ok: true, value: current, replayed: true };
       }
       if (current.revision !== input.expectedRevision) return { ok: false, code: "stale_revision" };
@@ -223,6 +230,9 @@ export class SqliteRunEvaluationStore {
         input.now,
       );
       if (Number(result.changes) !== 1) return { ok: false, code: "stale_revision" };
+      if (!this.syncAdmissionRecoveryPins(this.getRunEvaluation(input.evaluationId)!, input.now)) {
+        return { ok: false, code: "evaluation.artifact_invalid" };
+      }
       return { ok: true, value: this.getRunEvaluation(input.evaluationId)!, replayed: false };
     });
   }
@@ -233,7 +243,12 @@ export class SqliteRunEvaluationStore {
       const current = this.getRunEvaluation(input.evaluationId);
       if (!current) return { ok: false, code: "not_found" };
       if (!matchesLiveLease(current, input)) return { ok: false, code: "lease_mismatch" };
-      if (current.state === "grading") return { ok: true, value: current, replayed: true };
+      if (current.state === "grading") {
+        if (!this.syncAdmissionRecoveryPins(current, input.now)) {
+          return { ok: false, code: "evaluation.artifact_invalid" };
+        }
+        return { ok: true, value: current, replayed: true };
+      }
       if (current.revision !== input.expectedRevision) return { ok: false, code: "stale_revision" };
       if (current.state !== "claimed") return { ok: false, code: "invalid_transition" };
       const result = this.context.database.prepare(`
@@ -243,6 +258,9 @@ export class SqliteRunEvaluationStore {
           AND claim_owner = ? AND claim_token = ? AND claim_expires_at > ?
       `).run(input.now, input.evaluationId, input.expectedRevision, input.claimOwner, input.claimToken, input.now);
       if (Number(result.changes) !== 1) return { ok: false, code: "stale_revision" };
+      if (!this.syncAdmissionRecoveryPins(this.getRunEvaluation(input.evaluationId)!, input.now)) {
+        return { ok: false, code: "evaluation.artifact_invalid" };
+      }
       return { ok: true, value: this.getRunEvaluation(input.evaluationId)!, replayed: false };
     });
   }
@@ -257,6 +275,11 @@ export class SqliteRunEvaluationStore {
       if (!matchesLiveLease(current, input)) return { ok: false, code: "lease_mismatch" };
       if (current.revision !== input.expectedRevision) return { ok: false, code: "stale_revision" };
       if (!["claimed", "grading"].includes(current.state)) return { ok: false, code: "invalid_transition" };
+      // Verify while this exact live lease still owns the work. Once requeued,
+      // no old token may be used to terminalize a queue row on a later read.
+      if (!this.syncAdmissionRecoveryPins(current, input.now)) {
+        return { ok: false, code: "evaluation.artifact_invalid" };
+      }
       const result = this.context.database.prepare(`
         UPDATE run_evaluations
         SET state = 'queued', revision = revision + 1, claim_owner = NULL, claim_token = NULL,
@@ -266,6 +289,7 @@ export class SqliteRunEvaluationStore {
       `).run(input.nextAttemptAt, input.failureCode, input.now, input.evaluationId, input.expectedRevision,
         input.claimOwner, input.claimToken);
       if (Number(result.changes) !== 1) return { ok: false, code: "stale_revision" };
+      // The immutable artifact set and nonterminal recovery owner are unchanged.
       return { ok: true, value: this.getRunEvaluation(input.evaluationId)!, replayed: false };
     });
   }
@@ -290,6 +314,7 @@ export class SqliteRunEvaluationStore {
       `).run(input.failureCode, input.now, input.now, input.evaluationId, input.expectedRevision,
         input.claimOwner, input.claimToken);
       if (Number(result.changes) !== 1) return { ok: false, code: "stale_revision" };
+      this.syncRecoveryPins(this.getRunEvaluation(input.evaluationId)!, input.now);
       return { ok: true, value: this.getRunEvaluation(input.evaluationId)!, replayed: false };
     });
   }
@@ -319,6 +344,7 @@ export class SqliteRunEvaluationStore {
       `).run(input.now, input.now, input.evaluationId, input.expectedRevision,
         input.claimOwner, input.claimToken, input.now);
       if (Number(result.changes) !== 1) throw new Error("Evaluation grade commit lost its transaction-local CAS.");
+      this.syncRecoveryPins(this.getRunEvaluation(input.evaluationId)!, input.now);
       return {
         ok: true,
         evaluation: this.getRunEvaluation(input.evaluationId)!,
@@ -455,6 +481,49 @@ export class SqliteRunEvaluationStore {
       grade.costInputTokens ?? null, grade.costOutputTokens ?? null, grade.costAmountMicros ?? null,
       grade.latencyMs ?? null, grade.adjudicationStatus ?? null, grade.gradeDigest, grade.createdAt,
     );
+  }
+
+  private syncRecoveryPins(evaluation: RunEvaluationV1, now: string): void {
+    const holder = harnessArtifactOwnerHolder("evaluation", evaluation.id);
+    const artifactIds = [evaluation.suiteArtifactId, evaluation.caseArtifactId, evaluation.baselineArtifactId, evaluation.candidateArtifactId];
+    const keep = ["queued", "claimed", "grading"].includes(evaluation.state);
+    if (!keep) {
+      // Verify the whole owner set before releasing any pin. A corrupt earlier
+      // body must not hide a later pin's changed reason and release an audit hold.
+      const findPin = this.context.database.prepare("SELECT reason FROM harness_artifact_pins WHERE artifact_id=? AND holder=?");
+      for (const artifactId of new Set(artifactIds)) {
+        const pin = findPin.get(artifactId, holder);
+        if (pin && pin.reason !== "recovery") throw new HarnessReliabilityError("artifact.pin_holder_conflict");
+      }
+    }
+    syncHarnessArtifactOwnerPins(this.context.database, { holder, artifactIds, keep, now });
+  }
+
+  /** False guarantees this exact live owner's durable failed/result_invalid transition committed with its caller. */
+  private syncAdmissionRecoveryPins(evaluation: RunEvaluationV1, now: string): boolean {
+    try {
+      this.syncRecoveryPins(evaluation, now);
+      return true;
+    } catch (error) {
+      // Keep transaction/SQLite faults and pin ownership conflicts observable.
+      // Only the original retained-body verifier can classify permanent input loss.
+      if (!(error instanceof HarnessReliabilityError) || ![
+        "artifact.body_unavailable", "artifact.body_budget_exceeded", "artifact.body_digest_mismatch",
+      ].includes(error.code)) throw error;
+      const failed = this.context.database.prepare(`
+        UPDATE run_evaluations
+        SET state = 'failed', revision = revision + 1, claim_owner = NULL, claim_token = NULL,
+            claim_expires_at = NULL, next_attempt_at = NULL,
+            failure_code = 'evaluation.result_invalid', completed_at = ?, updated_at = ?
+        WHERE id = ? AND revision = ? AND state IN ('claimed', 'grading')
+          AND claim_owner = ? AND claim_token = ? AND claim_expires_at > ?
+      `).run(now, now, evaluation.id, evaluation.revision, evaluation.claimOwner!, evaluation.claimToken!, now);
+      if (Number(failed.changes) !== 1) throw new Error("Evaluation input failure lost its transaction-local CAS.");
+      // Releasing this terminal owner's recovery pins reads no corrupt body;
+      // metadata, original digests and other owners' audit holds remain intact.
+      this.syncRecoveryPins(this.getRunEvaluation(evaluation.id)!, now);
+      return false;
+    }
   }
 
   private transaction<T>(operation: () => T): T {

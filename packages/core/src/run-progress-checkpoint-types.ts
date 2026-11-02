@@ -52,6 +52,12 @@ export interface RunProgressContinuationBinding {
   readonly targetFence: RuntimeAttemptFenceV1;
 }
 
+/** The persisted child/reservation edge is reverified by Core, not granted by this DTO. */
+export interface RunProgressDelegationBinding {
+  readonly reservationId: string;
+  readonly targetFence: RuntimeAttemptFenceV1;
+}
+
 export interface CommitRunProgressCheckpointInput {
   readonly runId: string;
   readonly sourceFence: RuntimeAttemptFenceV1;
@@ -63,7 +69,24 @@ export interface CommitRunProgressCheckpointInput {
   readonly artifactId?: string;
   /** Required when the source is a successor of the checkpoint's Attempt. */
   readonly recoveryPredecessor?: RunProgressCheckpointWitness;
+  readonly delegationBinding?: RunProgressDelegationBinding;
+  /** Exact queued parent instructions appended at this safe boundary; never arbitrary steering text. */
+  readonly delegationInstructionIds?: readonly string[];
   readonly now: string;
+}
+
+export interface DelegationInstructionModelMessage {
+  readonly role: "user";
+  readonly content: string;
+  readonly timestamp: number;
+  readonly delegationInstruction: { readonly messageId: string; readonly digest: string };
+}
+
+export interface ListPendingDelegationInstructionsInput {
+  readonly runId: string;
+  readonly sourceFence: RuntimeAttemptFenceV1;
+  readonly delegationBinding: RunProgressDelegationBinding;
+  readonly limit: number;
 }
 
 export interface ReadRunProgressCheckpointForRecoveryInput {
@@ -71,6 +94,7 @@ export interface ReadRunProgressCheckpointForRecoveryInput {
   readonly sourceFence: RuntimeAttemptFenceV1;
   readonly expectedLineage: RunProgressCheckpointLineage;
   readonly continuationBinding?: RunProgressContinuationBinding;
+  readonly delegationBinding?: RunProgressDelegationBinding;
 }
 
 export type RunProgressCheckpointBlockerCode =
@@ -85,7 +109,9 @@ export type RunProgressCheckpointBlockerCode =
   | "checkpoint.commit_failed";
 
 export type CommitRunProgressCheckpointResult =
-  | { readonly kind: "committed"; readonly checkpoint: RunProgressCheckpoint; readonly headRevision: number; readonly replayed: boolean }
+  | { readonly kind: "committed"; readonly checkpoint: RunProgressCheckpoint; readonly headRevision: number; readonly replayed: boolean;
+      /** Present only when Core atomically appended queued delegation instructions to the sealed model view. */
+      readonly delegationInstructions?: readonly DelegationInstructionModelMessage[] }
   | { readonly kind: "blocked"; readonly code: RunProgressCheckpointBlockerCode };
 
 export type ReadRunProgressCheckpointForRecoveryResult =

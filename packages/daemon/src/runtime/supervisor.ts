@@ -1,7 +1,5 @@
-import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { randomUUID } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
+import { createHash, randomUUID } from "node:crypto";
+import { readFileSync, realpathSync } from "node:fs";
 import "./sandbox/core-original-process-bridge.js";
 import {
   DEFAULT_WORKSPACE_ID,
@@ -19,14 +17,13 @@ import {
 import { assertOriginalOfficeHostBridgeForCompositionCurrent, retireOriginalOfficeHostBridgeForComposition,
   type OriginalOfficeHostBridgeSetup } from "@ling-stack/core/original-office-host-bridge";
 import type { ResolvedDaemonConfig } from "../config.js";
-import { NativeRestrictedCommandRuntime } from "./sandbox/restricted-command-runtime.js";
+import { ExternalWorkflowRequestRuntime } from "./sandbox/external-workflow-request-runtime.js";
+import { NativeRestrictedCommandRuntime, type RestrictedCommandExecutablePin } from "./sandbox/restricted-command-runtime.js";
 import { ProtectedHostStageRegistry } from "./sandbox/protected-host-staging.js";
 import type { ProtectedHostActorEntry } from "./sandbox/protected-host-actor-inventory.js";
 import { readOriginalProtectedHostActorEntries } from "./sandbox/protected-host-original-entry-manifest.js";
 import type { OfficeLocalReviewedNativeArtifact } from "./sandbox/protected-host-office-native-identity.js";
 import { OfficeLocalNativeRuntime } from "../features/office-documents/office-local-native-runtime.js";
-import { HttpError } from "../errors.js";
-import { isRecord } from "../shared/validation.js";
 import {
   isStuckWorkUnit,
   listActiveWorkUnits,
@@ -38,6 +35,7 @@ import {
   LockedTaskContinuationGate,
   type LockedTaskContinuationSnapshot,
 } from "./locked-task-continuation.js";
+import { WorkspaceRuntimeOwner } from "./workspace-runtime-owner.js";
 
 const RUNTIME_SCHEMA_VERSION = 23;
 const originalOfficeRuntimeBindings = new WeakMap<RuntimeSupervisor, {
@@ -134,14 +132,21 @@ export type RuntimeSupervisorWorkUnitTransitionObserver = (input: {
   readonly now: string;
 }) => void;
 
+function localDevelopmentNodePin(): RestrictedCommandExecutablePin | undefined {
+  if (Reflect.get(process.versions, "electron")) return undefined;
+  const path = realpathSync(process.execPath);
+  return Object.freeze({ path, sha256: createHash("sha256").update(readFileSync(path)).digest("hex") });
+}
+
 export class RuntimeSupervisor {
   private readonly hostBootstrap?: RuntimeSupervisorHostBootstrap;
   private restrictedCommandRuntime: NativeRestrictedCommandRuntime | undefined;
+  private externalWorkflowRequestRuntime: ExternalWorkflowRequestRuntime | undefined;
+  private externalWorkflowRequestRuntimeResolved = false;
   private readonly protectedHostStages = new ProtectedHostStageRegistry();
   private readonly officeNativeRuntimes = new Map<RunStore, OfficeLocalNativeRuntime>();
   private readonly runtimesByCwd = new Map<string, RuntimeInstance>();
-  private readonly lockedCwds = new Set<string>();
-  private readonly runtimeLockPathsByCwd = new Map<string, string>();
+  private readonly runtimeOwnersByCwd = new Map<string, WorkspaceRuntimeOwner>();
   private readonly reconciledCwds = new Set<string>();
   private readonly lockedTaskContinuation = new LockedTaskContinuationGate();
   private lockedTaskContinuationOwnerId: string | undefined;
@@ -178,6 +183,16 @@ export class RuntimeSupervisor {
     const config = this.config.sandbox.restrictedCommands;
     if (config) this.restrictedCommandRuntime ??= new NativeRestrictedCommandRuntime(config, this.protectedHostStages);
     return this.restrictedCommandRuntime;
+  }
+
+  getExternalWorkflowRequestRuntime(): ExternalWorkflowRequestRuntime | undefined {
+    if (!originalOfficeRuntimeBindings.get(this)?.active) throw new Error("runtime_supervisor_released");
+    if (this.externalWorkflowRequestRuntimeResolved) return this.externalWorkflowRequestRuntime;
+    this.externalWorkflowRequestRuntimeResolved = true;
+    if (process.platform !== "darwin") return undefined;
+    const node = this.config.sandbox.restrictedCommands?.executables.node ?? localDevelopmentNodePin();
+    if (node) this.externalWorkflowRequestRuntime = new ExternalWorkflowRequestRuntime({ node }, this.protectedHostStages);
+    return this.externalWorkflowRequestRuntime;
   }
 
   /** Shared original issuer for the future fixed Office adapter; never construct a second protection registry. */
@@ -242,28 +257,45 @@ export class RuntimeSupervisor {
   }
 
   getRuntime(cwd: string, store: RuntimeSupervisorRuntimeStore): RuntimeInstance {
+    if (!originalOfficeRuntimeBindings.get(this)!.active) throw new Error("runtime_supervisor_released");
     const existing = this.runtimesByCwd.get(cwd);
     if (existing) {
+      const owner = this.runtimeOwnersByCwd.get(cwd);
+      if (!owner) throw new Error("runtime_owner_lease_unknown");
+      owner.assertCurrent(cwd, store.paths.rootDir);
       return existing;
     }
-
-    this.ensureRuntimeLock(cwd, store);
-    this.reconcileStartup(cwd, store);
-    const now = new Date().toISOString();
-    const runtime: RuntimeInstance = {
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      runtimeInstanceId: `runtime_${randomUUID()}`,
-      pid: process.pid,
-      host: this.config.host,
-      port: this.config.port,
-      startedAt: now,
-      version: "0.0.0",
-      schemaVersion: RUNTIME_SCHEMA_VERSION,
-      status: "healthy",
-    };
-    this.runtimesByCwd.set(cwd, runtime);
-    this.writeRuntimeLock(store, runtime);
-    return runtime;
+    if (this.runtimeOwnersByCwd.has(cwd)) throw new Error("runtime_startup_incomplete");
+    const owner = new WorkspaceRuntimeOwner({ rootDir: store.paths.rootDir, cwd,
+      host: this.config.host, port: this.config.port });
+    this.runtimeOwnersByCwd.set(cwd, owner);
+    try {
+      owner.acquire();
+      this.reconcileStartup(cwd, store);
+      const runtime: RuntimeInstance = {
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        runtimeInstanceId: `runtime_${randomUUID()}`,
+        pid: process.pid,
+        host: this.config.host,
+        port: this.config.port,
+        startedAt: new Date().toISOString(),
+        version: "0.0.0",
+        schemaVersion: RUNTIME_SCHEMA_VERSION,
+        status: "healthy",
+      };
+      owner.publish(runtime);
+      this.runtimesByCwd.set(cwd, runtime);
+      return runtime;
+    } catch (error) {
+      this.reconciledCwds.delete(cwd);
+      try { owner.release(); }
+      catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "runtime_startup_failed_cleanup_incomplete", { cause: error });
+      } finally {
+        if (owner.isReleased) this.runtimeOwnersByCwd.delete(cwd);
+      }
+      throw error;
+    }
   }
 
   getDiagnostics(cwd: string, store: RuntimeSupervisorRuntimeStore): {
@@ -291,6 +323,7 @@ export class RuntimeSupervisor {
   releaseAll(): void {
     const original = originalOfficeRuntimeBindings.get(this)!;
     original.active = false;
+    this.externalWorkflowRequestRuntime?.release();
     for (const bridge of original.storeBridges) retireOriginalOfficeHostBridgeForComposition(bridge.setup, bridge.store);
     original.storeBridges.clear();
     const nativeCloseErrors: unknown[] = [];
@@ -300,21 +333,20 @@ export class RuntimeSupervisor {
     this.clearLockedTaskContinuationLease();
     this.lockedTaskContinuationOwnerId = undefined;
     this.lockedTaskContinuation.update({ continueWhileLocked: true, locked: false });
-    for (const [cwd, runtime] of this.runtimesByCwd.entries()) {
-      const lockPath = this.runtimeLockPathsByCwd.get(cwd) ?? join(cwd, ".ling-stack", "runtime.lock");
-      try {
-        const current = parseRuntimeLock(readFileSync(lockPath, "utf8"));
-        if (current?.runtimeInstanceId === runtime.runtimeInstanceId) {
-          unlinkSync(lockPath);
-        }
-      } catch {
-        // Lock cleanup is best-effort; stale locks are reconciled on the next runtime start.
-      }
+    const ownerCloseErrors: unknown[] = [];
+    for (const [cwd, owner] of this.runtimeOwnersByCwd) {
+      try { owner.release(); } catch (error) { ownerCloseErrors.push(error); }
+      if (owner.isReleased) this.runtimeOwnersByCwd.delete(cwd);
     }
     this.runtimesByCwd.clear();
-    this.lockedCwds.clear();
-    this.runtimeLockPathsByCwd.clear();
     this.reconciledCwds.clear();
+    if (ownerCloseErrors.length) {
+      const failures = [
+        ...(nativeCloseErrors.length ? [new AggregateError(nativeCloseErrors, "office_local_native_identity_close_unknown")] : []),
+        ...ownerCloseErrors,
+      ];
+      throw new AggregateError(failures, "runtime_supervisor_release_incomplete", { cause: failures[0] });
+    }
     if (nativeCloseErrors.length) throw new AggregateError(nativeCloseErrors, "office_local_native_identity_close_unknown");
   }
 
@@ -324,77 +356,11 @@ export class RuntimeSupervisor {
     this.lockedTaskContinuationLeaseTimer = undefined;
   }
 
-  private ensureRuntimeLock(cwd: string, store: RuntimeSupervisorRuntimeStore): void {
-    if (this.lockedCwds.has(cwd)) {
-      return;
-    }
-    const lockPath = join(store.paths.rootDir, "runtime.lock");
-    const lock = {
-      runtimeInstanceId: `runtime_lock_probe_${randomUUID()}`,
-      pid: process.pid,
-      host: this.config.host,
-      port: this.config.port,
-      cwd,
-      startedAt: new Date().toISOString(),
-    };
-    try {
-      writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`, { flag: "wx" });
-      this.lockedCwds.add(cwd);
-      this.runtimeLockPathsByCwd.set(cwd, lockPath);
-      return;
-    } catch (error) {
-      if (!isFsErrorCode(error, "EEXIST")) {
-        throw error;
-      }
-    }
-
-    const existing = parseRuntimeLock(readFileSync(lockPath, "utf8"));
-    if (existing && isProcessAlive(existing.pid)) {
-      throw new HttpError(
-        409,
-        "runtime_already_running",
-        `Workspace runtime is already owned by pid ${existing.pid} at ${existing.host}:${existing.port}.`,
-      );
-    }
-
-    try {
-      unlinkSync(lockPath);
-    } catch {
-      // If unlink races with another daemon, the following create will surface the correct error.
-    }
-    writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`, { flag: "wx" });
-    this.lockedCwds.add(cwd);
-    this.runtimeLockPathsByCwd.set(cwd, lockPath);
-  }
-
-  private writeRuntimeLock(store: RuntimeSupervisorRuntimeStore, runtime: RuntimeInstance): void {
-    const lockPath = join(store.paths.rootDir, "runtime.lock");
-    this.runtimeLockPathsByCwd.set(store.paths.cwd, lockPath);
-    writeFileSync(
-      lockPath,
-      `${JSON.stringify(
-        {
-          runtimeInstanceId: runtime.runtimeInstanceId,
-          pid: runtime.pid,
-          host: runtime.host,
-          port: runtime.port,
-          cwd: store.paths.cwd,
-          startedAt: runtime.startedAt,
-          schemaVersion: runtime.schemaVersion,
-        },
-        null,
-        2,
-      )}\n`,
-    );
-  }
-
   private reconcileStartup(cwd: string, store: RuntimeSupervisorRuntimeStore): void {
     if (this.reconciledCwds.has(cwd)) {
       return;
     }
-    this.reconciledCwds.add(cwd);
     const now = new Date().toISOString();
-    store.expireRuntimeSemaphoreSlots(now);
     const candidates = [
       ...store.listWorkUnits({ status: "claimed", limit: 500 }),
       ...store.listWorkUnits({ status: "running", limit: 500 }),
@@ -402,8 +368,20 @@ export class RuntimeSupervisor {
       ...store.listWorkUnits({ status: "cancelling", limit: 500 }),
     ];
     for (const workUnit of candidates) {
+      // Dynamic children belong to the private delegation lifecycle. Startup
+      // ownership alone is not a stop/drain receipt: do not turn an unknown
+      // child into a lost Attempt or release its resources through legacy
+      // reconciliation. This preserves custody; it never authorizes resume.
+      if (workUnit.ownerType === "delegation_step") continue;
+      const pendingAttempt = workUnit.activeAttemptId ? store.getWorkUnitAttempt(workUnit.activeAttemptId) : undefined;
+      if (workUnit.linkedRunId && pendingAttempt && store.hasPendingRunTerminalIntent({ runId: workUnit.linkedRunId,
+        workUnitId: pendingAttempt.workUnitId, attemptId: pendingAttempt.id,
+        runtimeInstanceId: pendingAttempt.runtimeInstanceId, fencingToken: pendingAttempt.fencingToken })) continue;
+      if (workUnit.linkedRunId && pendingAttempt && store.hasPendingRunSuspension({ runId: workUnit.linkedRunId,
+        workUnitId: pendingAttempt.workUnitId, attemptId: pendingAttempt.id,
+        runtimeInstanceId: pendingAttempt.runtimeInstanceId, fencingToken: pendingAttempt.fencingToken })) continue;
       const reason = "runtime-startup-reconcile";
-      const reconciled = reconcileInterruptedUserInputStartup(store, workUnit, now) ??
+      const reconciled = preserveRecoverableUserInputReceiver(store, workUnit) ??
         preserveRecoverableApprovalWorkUnit(store, workUnit, now) ??
         reconcileActiveWorkUnitFromLinkedTerminalRun(store, workUnit, now) ??
         markWorkUnitStale(store, workUnit, now, reason);
@@ -433,6 +411,8 @@ export class RuntimeSupervisor {
         });
       }
     }
+    store.expireRuntimeSemaphoreSlots(now);
+    this.reconciledCwds.add(cwd);
   }
 
   private notifyWorkUnitTransition(
@@ -458,42 +438,51 @@ export class RuntimeSupervisor {
   }
 }
 
-function reconcileInterruptedUserInputStartup(
+/**
+ * A claimed answer-continuation WorkUnit has not started the model yet. Its
+ * immutable binding is the restart authority until the Pi receiver commits a
+ * receipt, so startup must not retire that exact Run/Attempt as lost work.
+ */
+function preserveRecoverableUserInputReceiver(
   store: RuntimeSupervisorRuntimeStore,
   workUnit: WorkUnit,
-  now: string,
 ): WorkUnit | undefined {
   if (workUnit.status !== "claimed" || !workUnit.linkedRunId || !workUnit.activeAttemptId) return undefined;
+  if (!("getUserInputContinuationBinding" in store) || !("getUserInputContinuationReceipt" in store)) return undefined;
+  const continuationStore = store as RuntimeSupervisorRuntimeStore & Pick<RunStore,
+    "getUserInputContinuationBinding" | "getUserInputContinuationReceipt">;
   const run = store.getRun(workUnit.linkedRunId);
-  const attempt = store.getWorkUnitAttempt(workUnit.activeAttemptId);
-  if (!run || run.continuationReason !== "user_input_answer" || run.status !== "queued" || run.startedAt || run.endedAt
-    || !run.threadId || !attempt || attempt.status !== "created" || attempt.startedAt || attempt.endedAt
-    || !isDeepStrictEqual(toRuntimeAttemptFence(attempt), {
-      workUnitId: workUnit.id,
-      attemptId: attempt.id,
-      runtimeInstanceId: attempt.runtimeInstanceId,
-      fencingToken: attempt.fencingToken,
-    })) return undefined;
-  const deliveryId = readUserInputDeliveryId(run.requestSnapshot);
+  if (!run || run.status !== "queued" || run.continuationReason !== "user_input_answer" || !run.threadId) return undefined;
+  const deliveryId = deliveryIdFromContinuationSnapshot(run.requestSnapshot);
   if (!deliveryId) return undefined;
-  const binding = store.getUserInputContinuationBinding(run.threadId, deliveryId);
-  if (!binding || binding.runId !== run.id || !isDeepStrictEqual(binding.fence, toRuntimeAttemptFence(attempt))) return undefined;
-  const code = "user_input_delivery_startup_interrupted";
-  const message = "Answer execution was interrupted before Runner startup and was settled without replay.";
-  if (!store.failUserInputContinuationStartup({ threadId: run.threadId, deliveryId,
-    bindingRef: { id: binding.id, fingerprint: binding.fingerprint }, sourceFence: binding.fence,
-    errorCode: code, errorMessage: message }, now)) return undefined;
-  store.appendEvent(run.id, "run_error", { code, message, origin: "user_input_continuation_startup" }, now);
-  return store.getWorkUnit(workUnit.id) ?? workUnit;
+  try {
+    const binding = continuationStore.getUserInputContinuationBinding(run.threadId, deliveryId);
+    if (!binding || continuationStore.getUserInputContinuationReceipt(run.threadId, deliveryId)
+      || binding.runId !== run.id || binding.fence.workUnitId !== workUnit.id
+      || binding.fence.attemptId !== workUnit.activeAttemptId) return undefined;
+    const attempt = store.getWorkUnitAttempt(binding.fence.attemptId);
+    if (!attempt || attempt.status !== "created" || attempt.endedAt
+      || attempt.runtimeInstanceId !== binding.fence.runtimeInstanceId
+      || attempt.fencingToken !== binding.fence.fencingToken) return undefined;
+    return workUnit;
+  } catch {
+    // Corrupt continuation evidence is not recoverable authority. The normal
+    // startup reconciliation below will retire the stale execution owner.
+    return undefined;
+  }
 }
 
-function readUserInputDeliveryId(requestSnapshot: unknown): string | undefined {
-  if (!isRecord(requestSnapshot)) return undefined;
-  const continuation = requestSnapshot.userInputContinuation;
-  if (!isRecord(continuation) || !isRecord(continuation.seedRef) || typeof continuation.seedRef.id !== "string") return undefined;
+function deliveryIdFromContinuationSnapshot(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const context = (value as Record<string, unknown>).userInputContinuationContext;
+  if (!context || typeof context !== "object" || Array.isArray(context)) return undefined;
+  const seedRef = (context as Record<string, unknown>).seedRef;
+  if (!seedRef || typeof seedRef !== "object" || Array.isArray(seedRef)) return undefined;
+  const id = (seedRef as Record<string, unknown>).id;
   const prefix = "user_input_continuation_seed:";
-  const deliveryId = continuation.seedRef.id.startsWith(prefix) ? continuation.seedRef.id.slice(prefix.length) : "";
-  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(deliveryId) ? deliveryId : undefined;
+  return typeof id === "string" && id.startsWith(prefix) && id.length > prefix.length
+    ? id.slice(prefix.length)
+    : undefined;
 }
 
 function preserveRecoverableApprovalWorkUnit(
@@ -628,37 +617,4 @@ function terminalWorkUnitTransitionForRun(run: RunSession):
     };
   }
   return undefined;
-}
-
-function parseRuntimeLock(value: string): { readonly runtimeInstanceId?: string; readonly pid: number; readonly host: string; readonly port: number } | undefined {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!isRecord(parsed) || typeof parsed.pid !== "number" || typeof parsed.host !== "string" || typeof parsed.port !== "number") {
-      return undefined;
-    }
-    return {
-      runtimeInstanceId: typeof parsed.runtimeInstanceId === "string" ? parsed.runtimeInstanceId : undefined,
-      pid: parsed.pid,
-      host: parsed.host,
-      port: parsed.port,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-function isFsErrorCode(error: unknown, code: string): boolean {
-  return isRecord(error) && error.code === code;
-}
-
-function isProcessAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return false;
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }

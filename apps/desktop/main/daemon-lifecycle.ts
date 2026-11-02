@@ -2,6 +2,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import { readExecutionEngineHostAuthority, type ExecutionEngineHostAuthority } from "@ling-stack/core/execution-engine-host-authority";
+import { DAEMON_RESOURCE_BOOTSTRAP_TIMEOUT_MS, DaemonResourceBootstrapError, readDaemonResourceBootstrap } from "@ling-stack/core/daemon-resource-bootstrap";
+import { observeDaemonShutdown, type DaemonShutdownPhase } from "@ling-stack/core/daemon-shutdown-observer";
 import { access, mkdir } from "node:fs/promises";
 import { connect } from "node:net";
 import { resolve as resolvePath } from "node:path";
@@ -20,16 +22,15 @@ import {
 import { deriveMobileAccessManagementCapability } from "./mobile-access/authority.js";
 
 const DEFAULT_DAEMON_STARTUP_TIMEOUT_MS = 20_000;
-// Packaged startup verifies the complete bundled native/skill inputs before
-// publishing readiness or FD3 authority; observed starts take 32–52 seconds.
-const PACKAGED_DAEMON_STARTUP_TIMEOUT_MS = 120_000;
 
 export type DesktopDaemonLifecycleErrorCode =
   | "bridge_incompatible"
   | "child_exited"
   | "start_timeout"
   | "resource_missing"
-  | "spawn_failed";
+  | "spawn_failed"
+  | "stop_blocked"
+  | "stop_unconfirmed";
 export type DesktopDaemonPortOccupant = "foreign_service" | "ling_daemon";
 
 type DaemonProbeResult = "compatible" | "incompatible" | "occupied" | "unavailable";
@@ -47,9 +48,23 @@ export interface DesktopDaemonOwnedExit {
   readonly signal: NodeJS.Signals | null;
 }
 
+export type DesktopDaemonStopResult = Readonly<
+  | { kind: "owned_stopped"; pid: number | undefined; code: 0; signal: null }
+  | { kind: "not_owned" }
+>;
+
 export type DesktopDaemonUnexpectedExit = DesktopDaemonOwnedExit & {
   readonly baseUrl: string;
 };
+
+interface OwnedDaemonShutdown {
+  readonly child: ChildProcess;
+  readonly listeners: Set<() => void>;
+  stopRequested: boolean;
+  phase?: DaemonShutdownPhase;
+  exit?: DesktopDaemonOwnedExit;
+  disposeObserver?: () => void;
+}
 
 export class DesktopDaemonLifecycleError extends Error {
   constructor(
@@ -101,26 +116,25 @@ export class DesktopDaemonLifecycle {
   private readonly defaultWorkspaceCwd: string;
   private readonly cuaDriverFeatureFlags: CuaDriverFeatureFlags;
   private readonly bundledCuaDriverGateEnabled: boolean;
-  private readonly startupTimeoutMs: number;
   private child: ChildProcess | undefined;
+  private ownedShutdown: OwnedDaemonShutdown | undefined;
+  private ownedStopResult: DesktopDaemonStopResult | undefined;
   private engineAuthority: {
     readonly child: ChildProcess;
-    readonly channel: Readable | undefined;
     readonly result: Promise<ExecutionEngineHostAuthority | undefined>;
+    readonly abort: AbortController;
   } | undefined;
   private statusValue: DesktopDaemonStatus;
   private cuaDriverAuthorityTupleValue: DesktopDaemonCuaDriverAuthorityTuple | undefined;
   private cuaDriverAuthorityGeneration = 0;
   private ensureStartedPromise: Promise<DesktopDaemonStatus> | undefined;
   private restartPromise: Promise<DesktopDaemonStatus> | undefined;
-  private stopOwnedDaemonPromise: Promise<void> | undefined;
+  private stopOwnedDaemonPromise: Promise<DesktopDaemonStopResult> | undefined;
   private startupGeneration = 0;
   private statusGeneration = 0;
 
   constructor(private readonly options: DesktopDaemonLifecycleOptions) {
     this.fetchImpl = options.fetch ?? globalThis.fetch;
-    this.startupTimeoutMs = options.startupTimeoutMs
-      ?? (options.packaged ? PACKAGED_DAEMON_STARTUP_TIMEOUT_MS : DEFAULT_DAEMON_STARTUP_TIMEOUT_MS);
     this.defaultWorkspaceCwd = resolvePath(options.defaultWorkspaceCwd);
     this.cuaDriverFeatureFlags = options.cuaDriverFeatureFlags ?? resolveDesktopCuaDriverFeatureFlags();
     this.bundledCuaDriverGateEnabled = desktopBundledCuaDriverGateEnabled(
@@ -163,6 +177,12 @@ export class DesktopDaemonLifecycle {
   }
 
   ensureStarted(): Promise<DesktopDaemonStatus> {
+    if (this.stopOwnedDaemonPromise) {
+      return this.stopOwnedDaemonPromise.then(() => this.ensureStarted());
+    }
+    if (this.ownedShutdown?.stopRequested || this.ownedShutdown?.phase) {
+      return Promise.reject(this.stopError(this.ownedShutdown));
+    }
     if (
       this.statusValue.state === "connected"
       && !this.stopOwnedDaemonPromise
@@ -203,6 +223,7 @@ export class DesktopDaemonLifecycle {
     const existingProbe = await this.probeDaemon();
     this.assertStartupCurrent(startupGeneration);
     if (existingProbe === "compatible") {
+      this.ownedStopResult = undefined;
       this.options.onDiagnostic?.("daemon.reused", { baseUrl: this.options.baseUrl });
       return this.update({ state: "connected", baseUrl: this.options.baseUrl, ownedByDesktop: false });
     }
@@ -257,6 +278,8 @@ export class DesktopDaemonLifecycle {
           LING_STACK_PORT: url.port || (url.protocol === "https:" ? "443" : "80"),
           LING_STACK_DEFAULT_WORKSPACE_CWD: this.defaultWorkspaceCwd,
           LING_STACK_ENGINE_AUTHORITY_FD: "3",
+          LING_STACK_RESOURCE_BOOTSTRAP_FD: this.options.packaged ? "4" : undefined,
+          LING_STACK_SHUTDOWN_OBSERVER_FD: "5",
           // Desktop is the trusted local host for command execution. The
           // daemon still applies its approval policy and persists validated
           // command evidence; this only makes the bash surface available to
@@ -277,23 +300,43 @@ export class DesktopDaemonLifecycle {
     } catch (error) {
       this.failOwnedStartup("spawn_failed", "Desktop could not launch the local daemon process.", error);
     }
-    if (!this.isStartupCurrent(startupGeneration)) {
-      await this.stopChild(child);
-      throw new Error("daemon_start_cancelled");
-    }
-    this.options.onDiagnostic?.("daemon.spawned", {
-      pid: child.pid ?? null, baseUrl: this.options.baseUrl, startupTimeoutMs: this.startupTimeoutMs,
-    });
+    this.options.onDiagnostic?.("daemon.spawned", { pid: child.pid ?? null, baseUrl: this.options.baseUrl });
     this.child = child;
-    const startupDeadline = Date.now() + this.startupTimeoutMs;
-    const pipe = child.stdio?.[3];
-    const channel = pipe instanceof Readable ? pipe : undefined;
+    this.ownedStopResult = undefined;
+    const ownedShutdown: OwnedDaemonShutdown = { child, listeners: new Set(), stopRequested: false };
+    this.ownedShutdown = ownedShutdown;
+    const shutdownChannel = (child.stdio as readonly unknown[] | undefined)?.[5];
+    if (shutdownChannel instanceof Readable && child.pid) {
+      ownedShutdown.disposeObserver = observeDaemonShutdown({ channel: shutdownChannel, pid: child.pid,
+        onPhase: phase => {
+          if (this.ownedShutdown !== ownedShutdown || ownedShutdown.exit) return;
+          if (phase === "draining") {
+            this.startupGeneration += 1;
+            this.ensureStartedPromise = undefined;
+            this.clearCuaDriverAuthorityTuple();
+          }
+          ownedShutdown.phase = phase;
+          this.publishStopping(ownedShutdown, phase === "blocked" ? "stop_blocked" : undefined);
+          for (const changed of ownedShutdown.listeners) changed();
+        },
+        onUnavailable: code => {
+          if (this.ownedShutdown !== ownedShutdown || ownedShutdown.exit) return;
+          // EOF can precede a successful child exit. It is never success, but
+          // neither should it overtake that actual exit with a false failure.
+          this.options.onDiagnostic?.("daemon.shutdown_observer_unavailable", { code, pid: child.pid });
+        },
+      });
+    }
+    const channel = child.stdio?.[3];
+    const startupAbort = new AbortController();
+    const serviceStartupTimeoutMs = this.options.startupTimeoutMs ?? DEFAULT_DAEMON_STARTUP_TIMEOUT_MS;
     this.engineAuthority = {
       child,
-      channel,
-      result: channel && child.pid
+      abort: startupAbort,
+      result: channel instanceof Readable && child.pid
         ? readExecutionEngineHostAuthority({ channel, baseUrl: this.options.baseUrl, pid: child.pid,
-            timeoutMs: Math.max(0, startupDeadline - Date.now()) }).catch(() => undefined)
+            timeoutMs: serviceStartupTimeoutMs + (this.options.packaged ? DAEMON_RESOURCE_BOOTSTRAP_TIMEOUT_MS : 0),
+            signal: startupAbort.signal }).catch(() => undefined)
         : Promise.resolve(undefined),
     };
     let resolveChildExit: (exit: DesktopDaemonOwnedExit) => void = () => undefined;
@@ -306,10 +349,19 @@ export class DesktopDaemonLifecycle {
       resolveChildError = resolve;
     });
     child.once("error", (error) => {
+      if (this.child === child && (ownedShutdown.stopRequested || ownedShutdown.phase)) {
+        this.publishStopping(ownedShutdown, "stop_unconfirmed");
+        for (const changed of ownedShutdown.listeners) changed();
+        resolveChildError(error);
+        return;
+      }
+      startupAbort.abort();
       childSpawnError = error;
       if (this.child === child) {
         this.child = undefined;
-        this.clearExecutionEngineAuthority();
+        ownedShutdown.disposeObserver?.();
+        this.ownedShutdown = undefined;
+        this.engineAuthority = undefined;
         this.update({
           state: "disconnected",
           baseUrl: this.options.baseUrl,
@@ -325,13 +377,36 @@ export class DesktopDaemonLifecycle {
       resolveChildError(error);
     });
     child.once("exit", (code, signal) => {
+      startupAbort.abort();
       const exit = { code, signal } satisfies DesktopDaemonOwnedExit;
+      ownedShutdown.exit = exit;
+      ownedShutdown.disposeObserver?.();
       if (this.child !== child) {
         resolveChildExit(exit);
         return;
       }
+      if (ownedShutdown.stopRequested || ownedShutdown.phase) {
+        if (code === 0 && signal === null) {
+          // Keep the actual exit receipt for an explicit retry after a finite
+          // observation timeout. A disconnected status alone is not proof.
+          this.ownedStopResult = Object.freeze({ kind: "owned_stopped", pid: child.pid, code: 0, signal: null });
+          this.child = undefined;
+          this.ownedShutdown = undefined;
+          this.engineAuthority = undefined;
+          this.clearCuaDriverAuthorityTuple();
+          this.update({ state: "disconnected", baseUrl: this.options.baseUrl, ownedByDesktop: false });
+        } else {
+          // Keep a tombstone owner: an abnormal exit while stopping is not a
+          // stopped receipt and must not enable an automatic successor.
+          this.publishStopping(ownedShutdown, "stop_unconfirmed");
+        }
+        for (const changed of ownedShutdown.listeners) changed();
+        resolveChildExit(exit);
+        return;
+      }
       this.child = undefined;
-      this.clearExecutionEngineAuthority();
+      this.ownedShutdown = undefined;
+      this.engineAuthority = undefined;
       this.clearCuaDriverAuthorityTuple();
       this.update({
         state: "disconnected",
@@ -356,22 +431,61 @@ export class DesktopDaemonLifecycle {
       resolveChildExit(exit);
     });
 
-    // Readiness and FD3 share the same bounded verification window. Neither
-    // readiness nor authority is granted merely because this budget is longer.
-    while (Date.now() < startupDeadline) {
+    if (!this.isStartupCurrent(startupGeneration)) {
+      await this.stopChild(child);
+      throw new Error("daemon_start_cancelled");
+    }
+
+    if (this.options.packaged) {
+      this.options.onDiagnostic?.("daemon.resources_preparing", { pid: child.pid ?? null });
+      const resourceChannel = child.stdio?.[4];
+      try {
+        if (!(resourceChannel instanceof Readable) || !child.pid) {
+          throw new DaemonResourceBootstrapError("daemon_resource_bootstrap_unavailable");
+        }
+        await readDaemonResourceBootstrap({ channel: resourceChannel, pid: child.pid, signal: startupAbort.signal });
+        this.assertStartupCurrent(startupGeneration);
+        if (childSpawnError || this.child !== child || child.exitCode !== null || child.signalCode !== null) {
+          throw new Error("daemon_resource_bootstrap_child_failed");
+        }
+      } catch (error) {
+        this.assertStartupCurrent(startupGeneration);
+        if (childSpawnError) throw new DesktopDaemonLifecycleError("spawn_failed", this.options.baseUrl);
+        if (this.child !== child || child.exitCode !== null || child.signalCode !== null) {
+          throw new DesktopDaemonLifecycleError("child_exited", this.options.baseUrl);
+        }
+        const timedOut = error instanceof DaemonResourceBootstrapError && error.code === "daemon_resource_bootstrap_timeout";
+        await this.stopOwnedDaemon();
+        this.options.onDiagnostic?.(timedOut ? "daemon.resources_timeout" : "daemon.resources_failed", {
+          pid: child.pid ?? null,
+        });
+        const code = timedOut ? "start_timeout" : "resource_missing";
+        this.update({ state: "disconnected", baseUrl: this.options.baseUrl, ownedByDesktop: false,
+          reason: code, message: timedOut ? "Packaged resource authentication exceeded its bootstrap deadline."
+            : "Packaged resources did not provide a valid bootstrap receipt." });
+        throw new DesktopDaemonLifecycleError(code, this.options.baseUrl);
+      }
+      this.options.onDiagnostic?.("daemon.resources_ready", { pid: child.pid });
+    }
+
+    // Keep ordinary startup bounded. Callers that intentionally exercise a
+    // translated cold-start path may supply a larger budget without relaxing
+    // native product behavior.
+    const deadline = Date.now() + serviceStartupTimeoutMs;
+    while (Date.now() < deadline) {
       this.assertStartupCurrent(startupGeneration);
       const readiness = await Promise.race([
         this.probeDaemon().then((probe) => ({ kind: "probe" as const, probe })),
         childExit.then((exit) => ({ kind: "child_exit" as const, exit })),
         childError.then((error) => ({ kind: "child_error" as const, error })),
       ]);
+      this.assertStartupCurrent(startupGeneration);
       if (readiness.kind === "child_error") {
         throw new DesktopDaemonLifecycleError("spawn_failed", this.options.baseUrl);
       }
       if (readiness.kind === "child_exit") {
         throw new DesktopDaemonLifecycleError("child_exited", this.options.baseUrl);
       }
-      this.assertStartupCurrent(startupGeneration);
       const probe = readiness.probe;
       if (probe === "compatible") {
         if (childSpawnError) {
@@ -400,13 +514,13 @@ export class DesktopDaemonLifecycle {
         childExit.then((exit) => ({ kind: "child_exit" as const, exit })),
         childError.then((error) => ({ kind: "child_error" as const, error })),
       ]);
+      this.assertStartupCurrent(startupGeneration);
       if (pause.kind === "child_error") {
         throw new DesktopDaemonLifecycleError("spawn_failed", this.options.baseUrl);
       }
       if (pause.kind === "child_exit") {
         throw new DesktopDaemonLifecycleError("child_exited", this.options.baseUrl);
       }
-      this.assertStartupCurrent(startupGeneration);
     }
     if (childSpawnError) {
       throw new DesktopDaemonLifecycleError("spawn_failed", this.options.baseUrl);
@@ -489,6 +603,7 @@ export class DesktopDaemonLifecycle {
         continue;
       }
       if (probe === "compatible") {
+        this.ownedStopResult = undefined;
         return this.update({
           state: "connected",
           baseUrl: this.options.baseUrl,
@@ -521,7 +636,7 @@ export class DesktopDaemonLifecycle {
     }
   }
 
-  stopOwnedDaemon(): Promise<void> {
+  stopOwnedDaemon(): Promise<DesktopDaemonStopResult> {
     this.clearCuaDriverAuthorityTuple();
     const stopStatusGeneration = ++this.statusGeneration;
     this.startupGeneration += 1;
@@ -529,9 +644,11 @@ export class DesktopDaemonLifecycle {
     let pending = this.stopOwnedDaemonPromise;
     if (!pending) {
       const child = this.child;
-      this.child = undefined;
-      this.clearExecutionEngineAuthority();
-      pending = child ? this.stopChild(child) : Promise.resolve();
+      let resolve!: (result: DesktopDaemonStopResult) => void;
+      let reject!: (error: unknown) => void;
+      pending = new Promise<DesktopDaemonStopResult>((done, failed) => { resolve = done; reject = failed; });
+      // State listeners are synchronous and may request stop again. Install
+      // single-flight before stopChild publishes state or sends any signal.
       this.stopOwnedDaemonPromise = pending;
       pending.then(
         () => {
@@ -545,25 +662,80 @@ export class DesktopDaemonLifecycle {
           }
         },
       );
+      try {
+        void (child
+          ? this.stopChild(child).then((): DesktopDaemonStopResult => Object.freeze({
+              kind: "owned_stopped", pid: child.pid, code: 0, signal: null,
+            }))
+          : Promise.resolve(this.ownedStopResult ?? Object.freeze({ kind: "not_owned" } as const)))
+          .then(resolve, reject);
+      }
+      catch (error) { reject(error); }
     }
-    return pending.then(() => {
+    return pending.then(result => {
       if (stopStatusGeneration === this.statusGeneration) {
         this.update({ state: "disconnected", baseUrl: this.options.baseUrl, ownedByDesktop: false });
       }
+      return result;
     });
   }
 
   private async stopChild(child: ChildProcess): Promise<void> {
-    if (child.exitCode !== null || child.signalCode !== null) {
-      return;
+    const owner = this.ownedShutdown;
+    if (!owner || owner.child !== child) throw new DesktopDaemonLifecycleError("stop_unconfirmed", this.options.baseUrl);
+    if (owner.exit) {
+      if (owner.exit.code === 0 && owner.exit.signal === null) return;
+      throw this.stopError(owner);
     }
-    child.kill("SIGTERM");
-    const exited = await waitForExit(child, this.options.shutdownTimeoutMs ?? 3_000);
-    if (!exited && child.exitCode === null && child.signalCode === null) {
-      this.options.onDiagnostic?.("daemon.force_killed", { pid: child.pid ?? null });
-      child.kill("SIGKILL");
-      await waitForExit(child, 1_000);
-    }
+    if (owner.phase === "blocked" || this.statusValue.reason === "stop_unconfirmed") throw this.stopError(owner);
+    const signalNeeded = !owner.stopRequested && !owner.phase;
+    owner.stopRequested = true;
+    this.publishStopping(owner);
+    await new Promise<void>((resolve, reject) => {
+      let finished = false;
+      const finish = (error?: DesktopDaemonLifecycleError): void => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        owner.listeners.delete(changed);
+        if (error) reject(error); else resolve();
+      };
+      const changed = (): void => {
+        if (owner.exit?.code === 0 && owner.exit.signal === null) finish();
+        else if (owner.exit || owner.phase === "blocked" || this.statusValue.reason === "stop_unconfirmed") finish(this.stopError(owner));
+      };
+      const timer = setTimeout(() => {
+        this.publishStopping(owner, "stop_unconfirmed");
+        finish(this.stopError(owner));
+      }, this.options.shutdownTimeoutMs ?? 3_000);
+      owner.listeners.add(changed);
+      if (signalNeeded) {
+        try {
+          if (!child.kill("SIGTERM")) {
+            this.publishStopping(owner, "stop_unconfirmed");
+            finish(this.stopError(owner));
+          }
+        } catch {
+          this.publishStopping(owner, "stop_unconfirmed");
+          finish(this.stopError(owner));
+        }
+      }
+      changed();
+    });
+  }
+
+  private stopError(owner: OwnedDaemonShutdown): DesktopDaemonLifecycleError {
+    return new DesktopDaemonLifecycleError(owner.phase === "blocked" ? "stop_blocked" : "stop_unconfirmed", this.options.baseUrl);
+  }
+
+  private publishStopping(owner: OwnedDaemonShutdown, reason?: "stop_blocked" | "stop_unconfirmed"): void {
+    if (this.ownedShutdown !== owner) return;
+    this.update({ state: reason ? "blocked" : "draining", baseUrl: this.options.baseUrl, ownedByDesktop: true,
+      ...(reason ? { reason } : {}),
+      message: reason === "stop_blocked" ? "Host stop was refused; original ownership is retained."
+        : reason === "stop_unconfirmed" ? "Host stop is unconfirmed; automatic restart is withheld."
+          : "Host is draining its original executions.",
+    });
   }
 
   private isStartupCurrent(startupGeneration: number): boolean {
@@ -572,6 +744,7 @@ export class DesktopDaemonLifecycle {
 
   private assertStartupCurrent(startupGeneration: number): void {
     if (!this.isStartupCurrent(startupGeneration)) {
+      if (this.ownedShutdown?.stopRequested || this.ownedShutdown?.phase) throw this.stopError(this.ownedShutdown);
       throw new Error("daemon_start_cancelled");
     }
   }
@@ -659,14 +832,6 @@ export class DesktopDaemonLifecycle {
     this.cuaDriverAuthorityTupleValue = undefined;
   }
 
-  private clearExecutionEngineAuthority(): void {
-    const authority = this.engineAuthority;
-    this.engineAuthority = undefined;
-    // Release the pending reader immediately, including when startup is
-    // cancelled before the child has completed packaged verification.
-    authority?.channel?.destroy();
-  }
-
   private async probeConfiguredPort(): Promise<DaemonPortProbeResult> {
     const url = new URL(this.options.baseUrl);
     const probePort = this.options.probePort ?? defaultProbePort;
@@ -685,7 +850,17 @@ export class DesktopDaemonLifecycle {
 
   private update(status: DesktopDaemonStatus): DesktopDaemonStatus {
     this.statusValue = status;
-    this.events.emit("status", status);
+    // Observers cannot prevent SIGTERM/stop waiting, crash a timeout callback,
+    // or hide the same Host fact from the remaining observers.
+    for (const listener of this.events.rawListeners("status")) {
+      try {
+        listener.call(this.events, status);
+      } catch {
+        try {
+          this.options.onDiagnostic?.("daemon.status_observer_failed", { state: status.state });
+        } catch { /* Observer diagnostics do not change the stop proof. */ }
+      }
+    }
     return status;
   }
 }
@@ -713,7 +888,7 @@ function defaultSpawnDaemon(input: {
   return spawn(input.executable, [...input.args], {
     cwd: input.cwd,
     env: input.env,
-    stdio: ["ignore", "ignore", "ignore", "pipe"],
+    stdio: ["ignore", "ignore", "ignore", "pipe", input.env.LING_STACK_RESOURCE_BOOTSTRAP_FD === "4" ? "pipe" : "ignore", "pipe"],
     windowsHide: true,
   });
 }
@@ -768,30 +943,13 @@ function lifecycleErrorMessage(
       return `daemon_resource_missing: ${baseUrl}`;
     case "spawn_failed":
       return `daemon_spawn_failed: ${baseUrl}`;
+    case "stop_blocked":
+      return `daemon_stop_blocked: ${baseUrl}`;
+    case "stop_unconfirmed":
+      return `daemon_stop_unconfirmed: ${baseUrl}`;
   }
 }
 
 function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve(true);
-  }
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (exited: boolean): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      child.off("exit", onExit);
-      resolve(exited);
-    };
-    const onExit = (): void => finish(true);
-    const timer = setTimeout(() => finish(false), timeoutMs);
-    child.once("exit", onExit);
-  });
 }
