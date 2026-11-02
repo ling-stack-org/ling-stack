@@ -175,6 +175,9 @@ use package filters for a scoped change and state which checks ran. The default
 Web setup above does not establish that all native or browser test fixtures are
 available. CI selects and builds the affected package graph separately.
 
+See [CI maintenance](docs/maintenance/ci.md) for PR scope, scheduled validation,
+CodeQL scanning, and rerun policy.
+
 Web changes should also run:
 
 ```bash
