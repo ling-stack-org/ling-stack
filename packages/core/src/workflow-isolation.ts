@@ -119,6 +119,11 @@ export function normalizeWorkflowIntegrationRoundInputs(value: unknown): Workflo
     || !array(value.validationRequirements) || value.validationRequirements.length === 0
     || value.mode !== "candidate_only" && value.mode !== "apply_to_target"
     || value.optionalFailurePolicy !== "require_success" && value.optionalFailurePolicy !== "exclude_failed_with_evidence") return undefined;
+  const parallel = value.parallelExecution;
+  if (parallel !== undefined && (!workflowIsolationRecord(parallel)
+    || Object.keys(parallel).sort().join(",") !== "maxConcurrentSteps,profile,writeLockScope"
+    || parallel.profile !== "isolated_siblings_v1" || parallel.writeLockScope !== "boundPath"
+    || !workflowIsolationRevision(parallel.maxConcurrentSteps) || parallel.maxConcurrentSteps < 2 || parallel.maxConcurrentSteps > 4)) return undefined;
   const repo = repository(value.repositoryIdentity), integration = location(value.integration), pins = templates(value.templatePins);
   const dest = repo && target(value.target, repo.objectFormat);
   if (!repo || !integration || !dest || !pins || !objectId(value.baseCommit, repo.objectFormat) || value.baseCommit !== dest.expectedHead
@@ -150,7 +155,9 @@ export function normalizeWorkflowIntegrationRoundInputs(value: unknown): Workflo
     canonicalWorkspaceRoot: value.canonicalWorkspaceRoot, repositoryIdentity: repo, target: dest, baseCommit: value.baseCommit,
     integration, graphFingerprint: value.graphFingerprint, safetyFingerprint: value.safetyFingerprint,
     safetyPins, templatePins: pins, participants, mergeOrder: ids, optionalFailurePolicy: value.optionalFailurePolicy,
-    validationRequirements: validation.sort((a, b) => compare(a.id, b.id)), mode: value.mode };
+    validationRequirements: validation.sort((a, b) => compare(a.id, b.id)), mode: value.mode,
+    ...(parallel === undefined ? {} : { parallelExecution: { profile: "isolated_siblings_v1" as const,
+      maxConcurrentSteps: parallel.maxConcurrentSteps as number, writeLockScope: "boundPath" as const } }) };
 }
 
 export function workflowIntegrationRoundInputsDigest(value: WorkflowIntegrationRoundInputsV1): string {

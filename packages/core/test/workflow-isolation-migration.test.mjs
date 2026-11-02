@@ -12,7 +12,7 @@ const record = db => (version, name) => db.prepare("INSERT INTO schema_migration
   .run(version, name, "2026-11-02T00:00:00.000Z");
 const migrate = (db, extra = {}) => applyWorkflowIsolationMigration({ database: db, hasMigration: has(db), recordMigration: record(db), ...extra });
 
-/** Reconstruct203 without any204-209 overlay or later marker. */
+/** Reconstruct203 without any204-211 overlay or later marker. */
 async function predecessor(t) {
   const f = await workflowIsolationFixture(t, { create: false, pin: false }), db = f.store.database;
   f.assertFullUpgrade = workflowMigrationPredecessorFixture(f, 204);
@@ -27,7 +27,10 @@ for (const guard of ["nonempty-table", "unknown-object", "unknown-marker", "non-
     const f = await workflowIsolationFixture(t, { create: false, pin: false }), db = f.store.database;
     if (guard === "nonempty-table") f.create();
     if (guard === "unknown-object") db.exec("CREATE INDEX fixture_foreign_index ON workflow_worktree_cleanup_intents(workflow_id)");
-    if (guard === "unknown-marker") record(db)(210, "fixture_foreign_overlay");
+    if (guard === "unknown-marker") {
+      const version = db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version + 1;
+      record(db)(version, "fixture_foreign_overlay");
+    }
     const before = snapshot(db), data = f.snapshotIsolation();
     assert.throws(() => workflowMigrationPredecessorFixture(guard === "non-fixture-path" ? { ...f, root: f.cwd } : f, 204),
       /must be empty|unexpected overlay object|explicit overlay inventory|temporary fixture root/);

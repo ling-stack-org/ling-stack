@@ -19,12 +19,18 @@ import { workflowIsolationCanonicalJson as json, workflowIsolationDigest as dige
   normalizeWorkflowIsolationGitIdentity, normalizeWorkflowIntegrationCandidate,
   canTransitionWorkflowIntegrationRound } from "../../workflow-isolation.js";
 import type { SqliteStoreContext } from "./store-context.js";
-import { rollbackOwnedSqliteTransaction } from "./helpers.js";
+import { rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
 import { readSqliteSnapshot } from "./read-snapshot.js";
-import { readWorkflowIsolationTerminalCapture, type WorkflowIsolationTerminalCapturePorts } from "./workflow-isolation-terminal-capture.js";
+import { readWorkflowIsolationTerminalCapture, workflowIsolationBindingStopped,
+  type WorkflowIsolationTerminalCapturePorts } from "./workflow-isolation-terminal-capture.js";
 import { SqliteWorkflowIsolationResultsStore } from "./workflow-isolation-results-store.js";
+import { readWorkflowParallelParents, workflowParallelRoundAvailable, workflowParallelScopeValid,
+  workflowParallelAttemptAllowed, workflowParallelWorkspaceResourcesActive } from "./workflow-parallel-parent-guard.js";
+import { readWorkflowIntegrationCompletionBlocker, readWorkflowIntegrationPublicationBlocker } from "./workflow-integration-completion.js";
+import { hasActiveWorkflowMergeApplyLease } from "./workflow-merge-lease-guard.js";
+import { readWorkflowIsolationSelection } from "./workflow-isolation-selection.js";
 
-type Ports = WorkflowIsolationTerminalCapturePorts;
+type Ports = WorkflowIsolationTerminalCapturePorts & Pick<RunStore, "listChannelWorkflowSteps">;
 type Row = Record<string, SQLOutputValue>;
 type Rejection = { readonly status: "invalid" | "stale" | "conflict"; readonly code: string };
 class Veto extends Error {
@@ -67,6 +73,84 @@ class SqliteWorkflowIsolationStore implements WorkflowIsolationStore {
     this.results = new SqliteWorkflowIsolationResultsStore(context, ports, this, canonicalWorkspaceRoot);
   }
 
+  getSelection(workflowId: string): ReturnType<WorkflowIsolationStore["getSelection"]> {
+    return readWorkflowIsolationSelection(this.context.database, workflowId);
+  }
+
+  beginSelection(input: Parameters<WorkflowIsolationStore["beginSelection"]>[0]): ReturnType<WorkflowIsolationStore["beginSelection"]> {
+    return this.transaction(() => {
+      this.validateTime(input.now);
+      if (!identity(input.workflowId) || !identity(input.roundId)) veto("invalid", "selection_input_invalid");
+      const prior = this.getSelection(input.workflowId);
+      if (prior) return { status: "duplicate", value: prior };
+      const workflow = this.ports.getChannelWorkflow(input.workflowId);
+      const steps = this.ports.listChannelWorkflowSteps({ workflowId: input.workflowId, complete: true });
+      if (!workflow || workflow.status !== "ready" || !workflow.metadata?.workflowGraphFingerprint
+        || steps.length < 2 || steps.length > 128 || steps.some(step => step.status !== "queued"
+          || step.taskId || step.runId || step.metadata?.startOwner || step.metadata?.preStepApprovalId
+          || step.metadata?.safetyPlan || step.metadata?.isolationScopePlan || step.metadata?.sideEffectClass !== "workspace_write")
+        || this.context.database.prepare("SELECT 1 FROM workflow_integration_rounds WHERE workflow_id=? LIMIT 1").get(input.workflowId)
+        || this.context.database.prepare(`SELECT 1 FROM run_sessions WHERE workflow_step_id IN
+          (SELECT id FROM channel_workflow_steps WHERE workflow_id=?) LIMIT 1`).get(input.workflowId))
+        veto("stale", "selection_already_started");
+      this.context.database.prepare(`INSERT INTO workflow_isolation_selections
+        (workflow_id,profile,round_id,phase,created_at,updated_at) VALUES(?,'pi_host_isolated_files_v1',?,'planning',?,?)`)
+        .run(input.workflowId, input.roundId, input.now, input.now);
+      return { status: "created", value: this.getSelection(input.workflowId)! };
+    });
+  }
+
+  freezePlan(input: Parameters<WorkflowIsolationStore["freezePlan"]>[0]): ReturnType<WorkflowIsolationStore["freezePlan"]> {
+    return this.transaction(() => {
+      this.validateTime(input.now);
+      const workflow = this.ports.getChannelWorkflow(input.expectedWorkflow.id);
+      const channel = this.ports.getChannel(input.expectedChannel.id);
+      const steps = this.ports.listChannelWorkflowSteps({ workflowId: input.expectedWorkflow.id, complete: true });
+      if (!workflow || !channel || !same(workflow, input.expectedWorkflow) || !same(channel, input.expectedChannel)
+        || !same(steps, input.expectedSteps) || input.inputs.workflowId !== workflow.id)
+        veto("stale", "planning_snapshot_changed");
+      const selection = this.getSelection(workflow.id);
+      if (selection && (selection.roundId !== input.roundId || !input.inputs.parallelExecution
+        || input.inputs.mode !== "candidate_only" || input.inputs.optionalFailurePolicy !== "require_success"
+        || input.inputs.parallelExecution.maxConcurrentSteps !== 2)) veto("invalid", "selection_plan_mismatch");
+      const ids = input.inputs.participants.map(participant => participant.workflowStepId);
+      if (selection && (steps.length !== ids.length || steps.some(step => !ids.includes(step.id)))
+        || input.safetyPlans.length !== ids.length || input.plans.length !== ids.length
+        || new Set(ids).size !== ids.length || new Set(input.safetyPlans.map(plan => plan.workflowStepId)).size !== ids.length
+        || new Set(input.plans.map(plan => plan.workflowStepId)).size !== ids.length
+        || input.plans.some(plan => !ids.includes(plan.workflowStepId))
+        || input.safetyPlans.some(plan => !ids.includes(plan.workflowStepId))) veto("invalid", "planning_members_invalid");
+      for (const safetyPlan of input.safetyPlans) {
+        const step = steps.find(step => step.id === safetyPlan.workflowStepId);
+        if (!step || step.taskId || step.runId || step.metadata?.startOwner
+          || !["queued", "waiting_for_approval"].includes(step.status)
+          || !isWorkflowStepSafetyPlanV1(safetyPlan) || safetyPlan.workflowId !== workflow.id
+          || safetyPlan.profile !== "pi_host_isolated_files_v1"
+          || step.metadata?.safetyPlan && !same(step.metadata.safetyPlan, safetyPlan)) veto("stale", "planning_step_changed");
+        // Metadata contains independently signed plans whose serialized field order must be retained.
+        if (!step.metadata?.safetyPlan) this.context.database.prepare("UPDATE channel_workflow_steps SET metadata_json=?,updated_at=? WHERE id=?")
+          .run(stringifyJson({ ...step.metadata, safetyPlan }), input.now, step.id);
+      }
+      const requireValue = <T>(result: WorkflowIsolationMutationResult<T>): T => {
+        if ("value" in result) return result.value;
+        throw new Veto(result);
+      };
+      const round = requireValue(this.createIntegrationRoundWithinTransaction({ roundId: input.roundId, inputs: input.inputs, now: input.now }));
+      for (const plan of input.plans) {
+        if (plan.integrationRoundId !== round.roundId || plan.generation !== round.generation) veto("invalid", "planning_round_mismatch");
+        requireValue(this.createScopePlanWithinTransaction({ plan, now: input.now }));
+        const step = this.ports.getChannelWorkflowStep(plan.workflowStepId)!;
+        const pin = { planId: plan.planId, planDigest: plan.planDigest };
+        if (!step.metadata?.isolationScopePlan) this.context.database.prepare("UPDATE channel_workflow_steps SET metadata_json=?,updated_at=? WHERE id=?")
+          .run(stringifyJson({ ...step.metadata, isolationScopePlan: pin }), input.now, step.id);
+      }
+      if (selection?.phase === "planning") this.changed(this.context.database.prepare(`UPDATE workflow_isolation_selections
+        SET phase='ready',updated_at=? WHERE workflow_id=? AND round_id=? AND phase='planning'`)
+        .run(input.now, workflow.id, round.roundId));
+      return { status: "created", value: { round, plans: input.plans } };
+    });
+  }
+
   recordTerminalResultIntent(input: Parameters<WorkflowIsolationStore["recordTerminalResultIntent"]>[0]): ReturnType<WorkflowIsolationStore["recordTerminalResultIntent"]> {
     return this.results.recordTerminalResultIntent(input);
   }
@@ -84,7 +168,10 @@ class SqliteWorkflowIsolationStore implements WorkflowIsolationStore {
   }
 
   createIntegrationRound(input: Parameters<WorkflowIsolationStore["createIntegrationRound"]>[0]): WorkflowIsolationMutationResult<WorkflowIntegrationRound> {
-    return this.transaction(() => {
+    return this.transaction(() => this.createIntegrationRoundWithinTransaction(input));
+  }
+
+  private createIntegrationRoundWithinTransaction(input: Parameters<WorkflowIsolationStore["createIntegrationRound"]>[0]): WorkflowIsolationMutationResult<WorkflowIntegrationRound> {
       this.validateTime(input.now);
       const inputs = normalizeWorkflowIntegrationRoundInputs(input.inputs);
       if (!identity(input.roundId) || !inputs) veto("invalid", "round_inputs_invalid");
@@ -94,12 +181,92 @@ class SqliteWorkflowIsolationStore implements WorkflowIsolationStore {
         if (!same(existing.inputs, inputs)) veto("conflict", "round_id_reused");
         return { status: "duplicate", value: existing };
       }
+      if (!workflowParallelRoundAvailable(this.context.database, inputs)
+        || inputs.parallelExecution && hasActiveWorkflowMergeApplyLease(this.context.database, inputs.canonicalWorkspaceId))
+        veto("conflict", "parallel_parent_busy");
       this.assertLocationAvailable(inputs.integration, inputs.repositoryIdentity.commonDir);
       this.context.database.prepare(`INSERT INTO workflow_integration_rounds(round_id,workflow_id,current_generation,created_at)
         VALUES (?,?,1,?)`).run(input.roundId, inputs.workflowId, input.now);
       this.insertGeneration(input.roundId, 1, inputs, input.now);
+      if (inputs.parallelExecution) this.context.database.prepare(`INSERT INTO workflow_parallel_parent_fences
+        (round_id,generation,workspace_id,common_dir,inputs_digest,state,created_at) VALUES(?,1,?,?,?,'held',?)`)
+        .run(input.roundId, inputs.canonicalWorkspaceId, inputs.repositoryIdentity.commonDir, workflowIntegrationRoundInputsDigest(inputs), input.now);
       return { status: "created", value: this.getIntegrationRound(input.roundId)! };
-    });
+  }
+
+  reconcileParallelParentFence(input: Parameters<WorkflowIsolationStore["reconcileParallelParentFence"]>[0]): ReturnType<WorkflowIsolationStore["reconcileParallelParentFence"]> {
+    const retained = (code: string) => ({ status: "retained" as const, code: `workflow_parallel.${code}` });
+    if (!identity(input.roundId) || !revision(input.generation) || input.generation < 1 || !time(input.now)) return retained("reconcile_input_invalid");
+    // Never finish a caller transaction or mutate business workflow state on a release veto.
+    if (this.context.database.isTransaction) return retained("reconcile_transaction_owned");
+    let began = false;
+    try {
+      this.context.database.exec("BEGIN IMMEDIATE"); began = true;
+      const parents = readWorkflowParallelParents(this.context.database), round = this.getIntegrationRound(input.roundId, input.generation);
+      let result: ReturnType<WorkflowIsolationStore["reconcileParallelParentFence"]>;
+      if (!round) result = retained("round_unknown");
+      else if (!round.inputs.parallelExecution) result = { status: "not_required" };
+      else {
+        const parent = parents.find(parent => parent.roundId === input.roundId && parent.generation === input.generation);
+        const workflow = this.ports.getChannelWorkflow(round.inputs.workflowId);
+        const stopped = workflow?.status === "cancelled" || workflow?.status === "failed";
+        if (!parent) result = retained("parent_unknown");
+        else if (parent.state === "released") result = { status: "released" };
+        else if (!workflow || workflow.status !== "succeeded" && !stopped) result = retained("workflow_not_terminal");
+        else if (workflowParallelWorkspaceResourcesActive(this.context.database, parent.workspaceId, true)
+          || this.context.database.prepare(`SELECT 1 FROM channel_workflow_steps WHERE workflow_id=?
+            AND status NOT IN ('succeeded','failed','cancelled','skipped') LIMIT 1`).get(workflow.id)) result = retained("resources_not_stopped");
+        else if (this.getIntegrationRound(round.roundId)?.generation !== input.generation || round.openIntentId
+          || (stopped ? !["preparing", "collecting", "integrating", "verifying", "awaiting_approval", "applied", "failed"].includes(round.phase)
+            || !!round.outstandingApprovalId
+            : round.inputs.mode === "candidate_only" ? round.phase !== "awaiting_approval" || !round.candidate : round.phase !== "applied"))
+          result = retained("round_not_completed");
+        else if (readWorkflowIntegrationPublicationBlocker(this.context.database, workflow.id)
+          || !stopped && readWorkflowIntegrationCompletionBlocker(this.context.database, workflow.id, input.now))
+          result = retained("completion_unverified");
+        else {
+          const plans = this.context.database.prepare("SELECT plan_id FROM workflow_isolation_scope_plans WHERE workflow_id=?").all(workflow.id);
+          let verified = stopped || plans.length >= round.inputs.participants.length;
+          for (const row of plans) {
+            const plan = this.getScopePlan(String(row.plan_id))!;
+            const raw = this.context.database.prepare("SELECT binding_id FROM workflow_isolation_bindings WHERE plan_id=?").get(plan.planId);
+            const binding = raw && this.getExecutionBinding(String(raw.binding_id));
+            if (!binding && stopped && this.parallelStepNeverStarted(plan.workflowStepId)) continue;
+            if (!binding || !(stopped
+              ? workflowIsolationBindingStopped(this.context.database, this.ports, binding, plan,
+                this.getIntegrationRound(plan.integrationRoundId, plan.generation), input.now)
+              : readWorkflowIsolationTerminalCapture(this.context.database, this.ports, binding, plan,
+                this.getIntegrationRound(plan.integrationRoundId, plan.generation), input.now).status === "authorized")) { verified = false; break; }
+          }
+          if (stopped) {
+            for (const participant of round.inputs.participants) {
+              if (!plans.some(row => this.getScopePlan(String(row.plan_id))!.workflowStepId === participant.workflowStepId)
+                && !this.parallelStepNeverStarted(participant.workflowStepId)) verified = false;
+            }
+          }
+          if (!verified) result = retained("original_bindings_unverified");
+          else {
+            this.changed(this.context.database.prepare(`UPDATE workflow_parallel_parent_fences SET state='released',released_at=?
+              WHERE round_id=? AND generation=? AND state='held' AND created_at<=?`).run(input.now, input.roundId, input.generation, input.now));
+            result = { status: "released" };
+          }
+        }
+      }
+      this.context.database.exec("COMMIT");
+      return result;
+    } catch {
+      if (began) rollbackOwnedSqliteTransaction(this.context.database);
+      return retained("reconcile_evidence_unknown");
+    }
+  }
+
+  private parallelStepNeverStarted(stepId: string): boolean {
+    const step = this.ports.getChannelWorkflowStep(stepId);
+    return !!step && ["cancelled", "skipped"].includes(step.status) && !step.taskId && !step.runId && !step.metadata?.startOwner
+      && !this.context.database.prepare("SELECT 1 FROM workflow_step_admissions WHERE workflow_step_id=? LIMIT 1").get(stepId)
+      && !this.context.database.prepare("SELECT 1 FROM run_sessions WHERE workflow_step_id=? LIMIT 1").get(stepId)
+      && !this.context.database.prepare(`SELECT 1 FROM work_units WHERE json_valid(request_json) IS NOT 1
+        OR json_extract(request_json,'$.workflowStepId')=? LIMIT 1`).get(stepId);
   }
 
   getIntegrationRound(roundId: string, generation?: number): WorkflowIntegrationRound | undefined {
@@ -125,13 +292,21 @@ class SqliteWorkflowIsolationStore implements WorkflowIsolationStore {
   }
 
   createScopePlan(input: Parameters<WorkflowIsolationStore["createScopePlan"]>[0]): WorkflowIsolationMutationResult<WorkflowIsolationScopePlanV1> {
-    return this.transaction(() => {
+    return this.transaction(() => this.createScopePlanWithinTransaction(input));
+  }
+
+  private createScopePlanWithinTransaction(input: Parameters<WorkflowIsolationStore["createScopePlan"]>[0]): WorkflowIsolationMutationResult<WorkflowIsolationScopePlanV1> {
       this.validateTime(input.now);
       const plan = normalizeWorkflowIsolationScopePlan(input.plan);
       if (!plan) veto("invalid", "scope_plan_invalid");
       const round = this.getIntegrationRound(plan.integrationRoundId);
       if (!round || round.generation !== plan.generation) veto("stale", "generation_changed");
       this.validateRoundInputs(round.inputs);
+      const parents = readWorkflowParallelParents(this.context.database);
+      if (parents.some(parent => parent.state === "held" && (parent.workspaceId === plan.canonicalWorkspaceId
+        || parent.commonDir === plan.repositoryIdentity.commonDir) && (parent.roundId !== round.roundId || parent.generation !== round.generation))
+        || round.inputs.parallelExecution && !parents.some(parent => parent.state === "held" && parent.roundId === round.roundId && parent.generation === round.generation))
+        veto("conflict", "parallel_parent_busy");
       const step = this.ports.getChannelWorkflowStep(plan.workflowStepId);
       if (!step || step.workflowId !== plan.workflowId || step.workspaceId !== plan.canonicalWorkspaceId
         || !same({ workflowId: plan.workflowId, canonicalWorkspaceId: plan.canonicalWorkspaceId,
@@ -149,9 +324,10 @@ class SqliteWorkflowIsolationStore implements WorkflowIsolationStore {
         || safety.workspaceRoot !== plan.canonicalWorkspaceRoot || safety.executionRoot !== plan.executionRoot
         || !plan.resourcePlan.entries.some(e => e.resourceType === "runner" && e.resourceKey === safety.runnerId)
         || !plan.resourcePlan.entries.some(e => e.resourceType === "channel_parallel" && e.resourceKey === step.channelId)
-        || !plan.resourcePlan.resourceKeys.includes(`workflow:${plan.workflowId}`)
+        || !round.inputs.parallelExecution && !plan.resourcePlan.resourceKeys.includes(`workflow:${plan.workflowId}`)
         || safety.safety.parallelPolicy?.resourceKeys?.some(key => !plan.resourcePlan.resourceKeys.includes(key))
-        || !plan.resourcePlan.resourceKeys.some(key => key.startsWith("workspace:"))) veto("invalid", "scope_safety_plan_mismatch");
+        || !round.inputs.parallelExecution && !plan.resourcePlan.resourceKeys.some(key => key.startsWith("workspace:"))
+        || round.inputs.parallelExecution && !workflowParallelScopeValid(this.ports, round.inputs, plan)) veto("invalid", "scope_safety_plan_mismatch");
       const pin = { planId: plan.planId, planDigest: plan.planDigest };
       if (step.metadata?.isolationScopePlan && !same(step.metadata.isolationScopePlan, pin)) veto("stale", "scope_pin_changed");
       // Approval/start will see this exact pin after the Host persists it. It is excluded from the safety digest.
@@ -173,7 +349,6 @@ class SqliteWorkflowIsolationStore implements WorkflowIsolationStore {
         plan.canonicalWorkspaceId, plan.integrationRoundId, plan.generation, plan.stepGeneration,
         plan.repositoryIdentity.commonDir, plan.executionRoot, plan.worktreeId, plan.branchRef, basis, json(plan), input.now);
       return { status: "created", value: plan };
-    });
   }
 
   getScopePlan(planId: string): WorkflowIsolationScopePlanV1 | undefined {
@@ -362,9 +537,12 @@ class SqliteWorkflowIsolationStore implements WorkflowIsolationStore {
       if (!inputs || inputs.workflowId !== round.inputs.workflowId || inputs.canonicalWorkspaceId !== round.inputs.canonicalWorkspaceId
         || inputs.canonicalWorkspaceRoot !== round.inputs.canonicalWorkspaceRoot || !same(inputs.repositoryIdentity, round.inputs.repositoryIdentity)
         || inputs.graphFingerprint !== round.inputs.graphFingerprint || inputs.mode !== round.inputs.mode
+        || !same(inputs.parallelExecution ?? null, round.inputs.parallelExecution ?? null)
         || !same(inputs.participants, round.inputs.participants) || !same(inputs.mergeOrder, round.inputs.mergeOrder)
         || !same(inputs.validationRequirements, round.inputs.validationRequirements)
         || inputs.optionalFailurePolicy !== round.inputs.optionalFailurePolicy) veto("invalid", "generation_inputs_mismatch");
+      if (round.inputs.parallelExecution) veto("conflict", "parallel_generation_requires_new_round");
+      if (!workflowParallelRoundAvailable(this.context.database, inputs)) veto("conflict", "parallel_parent_busy");
       this.validateRoundInputs(inputs);
       if (!["failed", "conflicted", "blocked"].includes(round.phase) || this.hasPendingRound(round.roundId, round.generation)) veto("conflict", "generation_effects_unconfirmed");
       this.assertLocationAvailable(inputs.integration, inputs.repositoryIdentity.commonDir);
@@ -528,6 +706,8 @@ class SqliteWorkflowIsolationStore implements WorkflowIsolationStore {
     if (!workflow || !channel || workflow.workspaceId !== inputs.canonicalWorkspaceId || channel.workspaceId !== inputs.canonicalWorkspaceId
       || inputs.canonicalWorkspaceRoot !== this.canonicalWorkspaceRoot || !["ready", "running", "waiting_for_approval", "blocked"].includes(workflow.status)
       || workflow.metadata?.workflowGraphFingerprint !== inputs.graphFingerprint) veto("stale", "round_workflow_changed");
+    if (inputs.parallelExecution && (channel.runtimePolicy.writeLockScope !== "boundPath"
+      || channel.boundPath !== inputs.canonicalWorkspaceRoot)) veto("stale", "parallel_channel_policy_changed");
     for (const participant of inputs.participants) {
       const step = this.ports.getChannelWorkflowStep(participant.workflowStepId);
       if (!step || step.workflowId !== workflow.id || step.workspaceId !== inputs.canonicalWorkspaceId || step.channelId !== channel.id
@@ -572,6 +752,7 @@ class SqliteWorkflowIsolationStore implements WorkflowIsolationStore {
     const admission = this.ports.getChannelWorkflowStepStartAdmission(step.id, owner);
     if (!admission || admission.status === "released" || !same(admission.plan, plan.resourcePlan)
       || admission.status === "transferred" && (admission.runId !== run.id || !admission.fence || !sameFence(admission.fence, binding.fence))) veto("stale", "admission_plan_changed");
+    if (!workflowParallelAttemptAllowed(this.context.database, this.ports, plan.canonicalWorkspaceId, binding.fence)) veto("stale", "parallel_parent_changed");
   }
 
   private currentWriter(writer: WorkflowIsolationWriter, now: string, requireReady: boolean, currentGeneration = true):

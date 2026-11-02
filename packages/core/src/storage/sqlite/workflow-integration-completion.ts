@@ -65,11 +65,11 @@ export function workflowCandidateVerificationMatches(value: unknown, input: {
 }
 
 /** Synchronous reads join an existing completion transaction, never BEGIN inside it. */
-export function readWorkflowIntegrationCompletionBlocker(database: DatabaseSync, workflowId: string): string | undefined {
+export function readWorkflowIntegrationCompletionBlocker(database: DatabaseSync, workflowId: string, now = new Date().toISOString()): string | undefined {
   const read = (): string | undefined => {
     try {
       const reader = readers.get(database);
-      if (reader) return reader(workflowId, new Date().toISOString());
+      if (reader) return reader(workflowId, now);
       return "workflow_isolation.completion_reader_unavailable";
     }
     catch { return "workflow_isolation.completion_evidence_invalid"; }

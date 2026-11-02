@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { readWorkflowParallelParents } from "./workflow-parallel-parent-guard.js";
 
 const permits = "workflow_merge_apply_permits";
 const invalidLease = `lease.id IS NULL OR typeof(permit.lease_id)<>'text' OR length(permit.lease_id)=0
@@ -53,7 +54,10 @@ export function hasActiveWorkflowMergeApplyLease(database: DatabaseSync, workspa
 }
 
 /** Reverse admission guard; call before acquiring the apply lease, under the same write transaction. */
-export function workflowMergeApplyWorkspaceBusy(database: DatabaseSync, workspaceId: string): boolean {
+export function workflowMergeApplyWorkspaceBusy(database: DatabaseSync, workspaceId: string,
+  ownRound?: { readonly roundId: string; readonly generation: number }): boolean {
+  if (readWorkflowParallelParents(database).some(parent => parent.state === "held" && parent.workspaceId === workspaceId
+    && (parent.roundId !== ownRound?.roundId || parent.generation !== ownRound.generation))) return true;
   if (hasActiveWorkflowMergeApplyLease(database, workspaceId)) return true;
   for (const [table, condition] of [
     ["resource_leases", "status='active' AND resource_type IN ('workspace','channel','bound_path')"],

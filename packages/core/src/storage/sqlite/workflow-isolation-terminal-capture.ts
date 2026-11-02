@@ -19,12 +19,34 @@ const sameFence = (a: RuntimeAttemptFenceV1, b: RuntimeAttemptFenceV1): boolean 
 const before = (value: unknown, at: string): value is string => time(value) && value <= at;
 const reject = (status: "stale" | "blocked", code: string): WorkflowIsolationTerminalCaptureResult =>
   ({ status, code: `workflow_isolation.terminal_${code}` });
+type Capture = Extract<WorkflowIsolationTerminalCaptureResult, { status: "authorized" }>;
+type StoppedCapture = Omit<Capture, "terminal"> & { readonly terminal: Omit<Capture["terminal"], "outcome"> &
+  { readonly outcome: "succeeded" | "failed" | "cancelled" } };
+type StoppedCaptureResult = StoppedCapture | Exclude<WorkflowIsolationTerminalCaptureResult, Capture>;
 
 /** Caller owns a synchronous read-only snapshot. No live-owner or resource-release exception is issued here. */
 export function readWorkflowIsolationTerminalCapture(database: DatabaseSync, ports: WorkflowIsolationTerminalCapturePorts,
   binding: WorkflowIsolationExecutionBinding, plan: WorkflowIsolationScopePlanV1, round: WorkflowIntegrationRound | undefined,
   now: string, internalCoordinator?: { readonly roundId: string; readonly generation: number;
     readonly verifiedIntentIds: readonly string[] }): WorkflowIsolationTerminalCaptureResult {
+  const result = readStoppedCapture(database, ports, binding, plan, round, now, false, internalCoordinator);
+  if (result.status !== "authorized") return result;
+  const outcome = result.terminal.outcome;
+  if (outcome !== "succeeded" && outcome !== "failed") return reject("blocked", "cancellation_unverified");
+  return { ...result, terminal: { ...result.terminal, outcome } };
+}
+
+/** Cancellation can prove a stopped parent, never result publication or renewed execution authority. */
+export function workflowIsolationBindingStopped(database: DatabaseSync, ports: WorkflowIsolationTerminalCapturePorts,
+  binding: WorkflowIsolationExecutionBinding, plan: WorkflowIsolationScopePlanV1, round: WorkflowIntegrationRound | undefined,
+  now: string): boolean {
+  return readStoppedCapture(database, ports, binding, plan, round, now, true).status === "authorized";
+}
+
+function readStoppedCapture(database: DatabaseSync, ports: WorkflowIsolationTerminalCapturePorts,
+  binding: WorkflowIsolationExecutionBinding, plan: WorkflowIsolationScopePlanV1, round: WorkflowIntegrationRound | undefined,
+  now: string, allowCancelled: boolean, internalCoordinator?: { readonly roundId: string; readonly generation: number;
+    readonly verifiedIntentIds: readonly string[] }): StoppedCaptureResult {
   const fence = binding.fence, owner = binding.startOwner;
   const step = ports.getChannelWorkflowStep(plan.workflowStepId), workflow = ports.getChannelWorkflow(plan.workflowId);
   const task = ports.getTask(owner.taskId), run = ports.getRun(binding.runId), unit = ports.getWorkUnit(fence.workUnitId), attempt = ports.getWorkUnitAttempt(fence.attemptId);
@@ -39,10 +61,10 @@ export function readWorkflowIsolationTerminalCapture(database: DatabaseSync, por
     || scope.authority_basis !== owner.authorityBasis || workflowStepStartAuthorityBasis(ports, step) !== scope.authority_basis
     || workflow.metadata?.workflowGraphFingerprint !== plan.graphFingerprint || workflowIsolationStepSafetyFingerprint(step) !== plan.safetyFingerprint)
     return reject("stale", "lineage_changed");
-  if ([workflow.status, step.status, task.status, run.status, unit.status, attempt.status].includes("cancelled") || attempt.abortRequestedAt)
+  if (!allowCancelled && ([workflow.status, step.status, task.status, run.status, unit.status, attempt.status].includes("cancelled") || attempt.abortRequestedAt))
     return reject("blocked", "cancellation_unverified");
-  if (!["running", "waiting_for_approval", "blocked", "succeeded", "failed"].includes(workflow.status)
-    || !["running", "waiting_for_approval", "blocked", "succeeded", "failed"].includes(step.status)
+  if (!["running", "waiting_for_approval", "blocked", "succeeded", "failed", ...(allowCancelled ? ["cancelled"] : [])].includes(workflow.status)
+    || !["running", "waiting_for_approval", "blocked", "succeeded", "failed", ...(allowCancelled ? ["cancelled"] : [])].includes(step.status)
     || task.channelId !== step.channelId || task.assigneeTeammateId !== step.toParticipantId || run.taskId !== task.id
     || run.workflowStepId !== step.id || run.channelId !== step.channelId || run.teammateId !== step.toParticipantId
     || run.cwd !== plan.executionRoot || run.workUnitId !== unit.id || unit.workspaceId !== plan.canonicalWorkspaceId
@@ -90,7 +112,9 @@ export function readWorkflowIsolationTerminalCapture(database: DatabaseSync, por
   if (!artifact || artifact.runId !== run.id || artifact.sealedPayloadState === "pruned") return reject("blocked", "creation_receipt_unverified");
   try { readHarnessRetainedBody(database, artifact.id); }
   catch { return reject("blocked", "creation_receipt_unverified"); }
-  if (run.status !== "succeeded" && run.status !== "failed" || unit.status !== run.status || attempt.status !== run.status
+  if (run.status !== "succeeded" && run.status !== "failed" && !(allowCancelled && run.status === "cancelled")
+    || unit.status !== run.status || attempt.status !== run.status
+    || attempt.abortRequestedAt !== undefined && !before(attempt.abortRequestedAt, now)
     || !before(run.endedAt, now) || !before(unit.endedAt, now) || !before(attempt.endedAt, now)) return reject("blocked", "not_terminal");
   const source = { runId: run.id, ...fence }, completion = ports.getHostAttemptCompletion(source);
   if (!completion?.drainedAt) return reject("blocked", "host_not_drained");
@@ -102,7 +126,8 @@ export function readWorkflowIsolationTerminalCapture(database: DatabaseSync, por
   const audits = database.prepare(`SELECT * FROM runtime_events WHERE work_unit_id=? AND attempt_id=? AND runtime_instance_id=?
     AND fencing_token=? AND type IN ('work_unit_succeeded','work_unit_failed','work_unit_cancelled','work_unit_stale') LIMIT 2`)
     .all(fence.workUnitId, fence.attemptId, fence.runtimeInstanceId, fence.fencingToken);
-  if (audits.length !== 1 || audits[0]!.type !== (run.status === "succeeded" ? "work_unit_succeeded" : "work_unit_failed")
+  if (audits.length !== 1 || audits[0]!.type !== (run.status === "succeeded" ? "work_unit_succeeded"
+    : run.status === "cancelled" ? "work_unit_cancelled" : "work_unit_failed")
     || audits[0]!.ts !== attempt.endedAt || !["system", "runner"].includes(String(audits[0]!.actor))) return reject("blocked", "audit_unverified");
   if (database.prepare("SELECT 1 FROM run_terminal_intents WHERE run_id=? AND state='pending'").get(run.id)) return reject("blocked", "intent_pending");
   try { assertUserInputDurableQuiescence(database, run.id, fence, Date.parse(now), hostAttemptReadScopeForSource(database, source)); }

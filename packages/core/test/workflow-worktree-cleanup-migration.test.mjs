@@ -3,6 +3,7 @@ import test from "node:test";
 import { applyWorkflowWorktreeCleanupMigration, WORKFLOW_WORKTREE_CLEANUP_MIGRATION_VERSION }
   from "../dist/storage/sqlite/workflow-worktree-cleanup-migration.js";
 import { workflowIsolationFixture } from "./support/workflow-isolation-fixture.mjs";
+import { workflowMigrationPredecessorFixture } from "./support/workflow-migration-predecessor-fixture.mjs";
 
 const tables = ["workflow_worktree_cleanup_intents", "workflow_worktree_cleanup_receipts"];
 const migrationName = "workflow_worktree_cleanup_journal";
@@ -18,13 +19,7 @@ const migrate = (db, extra = {}) => applyWorkflowWorktreeCleanupMigration({ data
 
 async function fixture(t, { predecessor = false } = {}) {
   const f = await workflowIsolationFixture(t, { create: false, pin: false }), db = f.store.database;
-  if (predecessor) {
-    for (const table of [...tables].reverse()) {
-      assert.deepEqual(rows(db, table), []);
-      db.exec(`DROP TABLE ${table}`);
-    }
-    db.prepare("DELETE FROM schema_migrations WHERE version=209").run();
-  }
+  if (predecessor) f.assertFullUpgrade = workflowMigrationPredecessorFixture(f, 209);
   assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version=208").get().name,
     "workflow_merge_apply_permits");
   return f;
@@ -62,7 +57,9 @@ test("actual208 upgrade preserves predecessor authority, Tasks, Runs, Attempts a
   assert.deepEqual(rows(db, "artifacts"), artifacts);
   const installed = snapshot(db);
   f.reopenIsolation();
-  assert.deepEqual(snapshot(f.store.database), installed);
+  f.assertFullUpgrade(f.store.database, installed);
+  assert.deepEqual(f.snapshotIsolation(), data);
+  assert.deepEqual(rows(f.store.database, "artifacts"), artifacts);
   assert.equal(f.isolation.assertExecutionBinding({ writer: f.writer, requireReady: false, now: f.at(8) }).status, "current");
 });
 

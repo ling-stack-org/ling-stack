@@ -3,6 +3,29 @@ import type { HostAttemptCompletionRecord } from "./host-attempt-completion-type
 import type { WorkflowStepAdmissionPlan } from "./workflow-step-admission.js";
 import type { WorkflowStepStartOwnerV1 } from "./workflow-step-start-owner.js";
 import type { WorkflowIsolationTerminalResultsStore } from "./workflow-isolation-results-types.js";
+import type { Channel, ChannelWorkflow, ChannelWorkflowStep } from "./workspace-types.js";
+import type { WorkflowStepSafetyPlanV1 } from "./workflow-safety-plan.js";
+
+/** Host-owned selection, independent of editable workflow/template metadata. */
+export interface WorkflowIsolationSelection {
+  readonly workflowId: string;
+  readonly profile: "pi_host_isolated_files_v1";
+  readonly roundId: string;
+  readonly phase: "planning" | "ready";
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface FreezeWorkflowIsolationPlanInput {
+  readonly roundId: string;
+  readonly inputs: WorkflowIntegrationRoundInputsV1;
+  readonly plans: readonly WorkflowIsolationScopePlanV1[];
+  readonly safetyPlans: readonly WorkflowStepSafetyPlanV1[];
+  readonly expectedWorkflow: ChannelWorkflow;
+  readonly expectedChannel: Channel;
+  readonly expectedSteps: readonly ChannelWorkflowStep[];
+  readonly now: string;
+}
 
 export interface WorkflowIsolationRepositoryIdentity {
   /** Host-realpathed Git common directory. Core performs no filesystem or Git I/O. */
@@ -51,6 +74,11 @@ export interface WorkflowIntegrationRoundInputsV1 {
   readonly optionalFailurePolicy: "require_success" | "exclude_failed_with_evidence";
   readonly validationRequirements: readonly { readonly id: string; readonly fingerprint: string }[];
   readonly mode: "candidate_only" | "apply_to_target";
+  readonly parallelExecution?: {
+    readonly profile: "isolated_siblings_v1";
+    readonly maxConcurrentSteps: number;
+    readonly writeLockScope: "boundPath";
+  };
 }
 
 /** Frozen before a start owner exists. Runtime identities must never enter its digest. */
@@ -245,10 +273,19 @@ export type WorkflowIsolationTerminalCaptureResult = {
   readonly proofDigest: string;
 } | { readonly status: "invalid" | "stale" | "blocked"; readonly code: string };
 
-/** Host-internal persistence only. No route, approval grant, Git executor or write-concurrency opt-in. */
+/** Host-internal persistence only. No route, approval grant or Git executor. */
 export interface WorkflowIsolationStore extends WorkflowIsolationTerminalResultsStore {
+  getSelection(workflowId: string): WorkflowIsolationSelection | undefined;
+  beginSelection(input: { readonly workflowId: string; readonly roundId: string; readonly now: string }): WorkflowIsolationMutationResult<WorkflowIsolationSelection>;
+  /** Snapshot validation, all plans/pins and selection readiness commit together with step admission excluded. */
+  freezePlan(input: FreezeWorkflowIsolationPlanInput): WorkflowIsolationMutationResult<{
+    readonly round: WorkflowIntegrationRound; readonly plans: readonly WorkflowIsolationScopePlanV1[];
+  }>;
   createIntegrationRound(input: { readonly roundId: string; readonly inputs: WorkflowIntegrationRoundInputsV1; readonly now: string }): WorkflowIsolationMutationResult<WorkflowIntegrationRound>;
   getIntegrationRound(roundId: string, generation?: number): WorkflowIntegrationRound | undefined;
+  /** Durable parent ownership is released only after whole-workflow completion and physical drain. */
+  reconcileParallelParentFence(input: { readonly roundId: string; readonly generation: number; readonly now: string }):
+    { readonly status: "retained" | "released" | "not_required"; readonly code?: string };
   beginIntegrationRoundGeneration(input: { readonly commandId: string; readonly roundId: string; readonly expectedGeneration: number;
     readonly expectedRevision: number; readonly inputs: WorkflowIntegrationRoundInputsV1; readonly writer: WorkflowIsolationWriter;
     readonly now: string }): WorkflowIsolationMutationResult<WorkflowIntegrationRound>;

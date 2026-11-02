@@ -13,6 +13,7 @@ import { harnessArtifactOwnerHolder, pinHarnessArtifactWithinTransaction, readHa
 import { readSqliteSnapshot, readSqliteWithinTransaction } from "./read-snapshot.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { workflowMergeApplyWorkspaceBusy } from "./workflow-merge-lease-guard.js";
+import { withWorkflowParallelApplyLease } from "./workflow-parallel-parent-guard.js";
 
 type Authority = Extract<WorkflowIntegrationCoordinatorAuthority, { readonly status: "authorized" }>;
 interface EvidencePorts {
@@ -62,14 +63,15 @@ class SqliteWorkflowMergeApplyStore implements WorkflowMergeApplyStore, Workflow
       const authority = this.authorized(request, input.now), { round, writer } = authority;
       if (round.revision !== input.expectedRevision || round.phase !== "awaiting_approval" || round.openIntentId)
         reject("stale", "apply_round_changed");
-      if (workflowMergeApplyWorkspaceBusy(this.context.database, round.inputs.canonicalWorkspaceId)) reject("conflict", "target_writer_active");
+      if (workflowMergeApplyWorkspaceBusy(this.context.database, round.inputs.canonicalWorkspaceId, round)) reject("conflict", "target_writer_active");
       const effectPayload = workflowMergeApplyEffectEvidence(request, input.ownerToken);
       const artifact = this.artifact(input.payloadArtifactId, writer.bindingId);
       if (!same(artifact.body, effectPayload)) reject("invalid", "apply_intent_artifact_mismatch");
       const permitId = workflowMergeApplyPermitId(request, input.ownerToken), intentId = workflowMergeApplyIntentId(request);
-      const lease = this.ports.acquireResourceLease({ workspaceId: round.inputs.canonicalWorkspaceId,
+      const lease = withWorkflowParallelApplyLease(this.context.database, { roundId: round.roundId, generation: round.generation,
+        workspaceId: round.inputs.canonicalWorkspaceId, targetRoot: payload.target.executionRoot, permitId }, () => this.ports.acquireResourceLease({ workspaceId: round.inputs.canonicalWorkspaceId,
         resourceType: "bound_path", resourceKey: payload.target.executionRoot, ownerType: "system", ownerId: permitId,
-        acquiredAt: input.now, expiresAt: payload.expiresAt });
+        acquiredAt: input.now, expiresAt: payload.expiresAt }));
       if (!lease) reject("conflict", "target_lease_unavailable");
       const permit: WorkflowMergeApplyPermit = { permitId, approvalId: request.approvalId, requestId: request.requestId,
         roundId: round.roundId, generation: round.generation, authorityDigest: authority.authorityDigest,

@@ -30,15 +30,21 @@ const overlays = [
     indexes: ["idx_workflow_worktree_cleanup_removed"],
     triggers: ["trg_workflow_worktree_cleanup_intents_immutable", "trg_workflow_worktree_cleanup_intents_retained",
       "trg_workflow_worktree_cleanup_receipts_immutable", "trg_workflow_worktree_cleanup_receipts_retained"] },
+  { version: 210, name: "workflow_parallel_parent_fences", tables: ["workflow_parallel_parent_fences"],
+    indexes: ["idx_workflow_parallel_parent_workspace", "idx_workflow_parallel_parent_common_dir"],
+    triggers: ["trg_workflow_parallel_parent_immutable", "trg_workflow_parallel_parent_retained"] },
+  { version: 211, name: "workflow_isolation_selections", tables: ["workflow_isolation_selections"], indexes: [],
+    triggers: ["trg_workflow_isolation_selection_immutable", "trg_workflow_isolation_selection_retained"] },
 ];
 const schema = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
 const markers = db => db.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
 const identity = rows => rows.map(({ version, name }) => ({ version, name }));
 
-/** Downgrade only an owned temporary fixture, retaining an exact full-upgrade expectation. */
-export function workflowMigrationPredecessorFixture(f, version) {
+/** Remove only known empty overlays from an owned temporary fixture. */
+function removeOwnedOverlays(f, version) {
   const db = f.store.database, root = realpathSync(f.root);
-  assert.ok(dirname(root) === realpathSync(tmpdir()) && basename(root).startsWith("ling-p1c-admission-"),
+  assert.ok(dirname(root) === realpathSync(tmpdir()) && ["ling-p1c-admission-", "ling-delegation-full-schema-"]
+    .some(prefix => basename(root).startsWith(prefix)),
     "migration predecessor requires a temporary fixture root");
   const path = realpathSync(f.paths.databasePath);
   assert.ok(path.startsWith(`${root}${sep}`), "database must belong to the temporary fixture");
@@ -81,7 +87,12 @@ export function workflowMigrationPredecessorFixture(f, version) {
     throw error;
   } finally { db.exec(`PRAGMA foreign_keys=${foreignKeys}`); }
   assert.equal(db.prepare("PRAGMA foreign_keys").get().foreign_keys, foreignKeys);
+  return { fullSchema, fullMarkers, objects, removed, tables };
+}
 
+/** Downgrade only an owned temporary fixture, retaining an exact full-upgrade expectation. */
+export function workflowMigrationPredecessorFixture(f, version) {
+  const { fullSchema, fullMarkers } = removeOwnedOverlays(f, version);
   return (upgradedDb, installed) => {
     const laterTables = overlays.filter(overlay => overlay.version > version).flatMap(overlay => overlay.tables);
     assert.deepEqual(schema(upgradedDb).filter(row => !laterTables.includes(row.tbl_name)), installed.schema,
@@ -91,6 +102,21 @@ export function workflowMigrationPredecessorFixture(f, version) {
     assert.deepEqual(schema(upgradedDb), fullSchema, "constructor must restore the exact complete overlay schema");
     assert.deepEqual(identity(markers(upgradedDb)), identity(fullMarkers), "constructor must install every later marker exactly once");
     for (const table of laterTables)
+      assert.equal(upgradedDb.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get().n, 0, `${table} must remain empty`);
+    assert.equal(upgradedDb.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
+    assert.deepEqual(upgradedDb.prepare("PRAGMA foreign_key_check").all(), []);
+  };
+}
+
+/** A deeper historical rewind owns its other changes; these overlays must still be restored exactly. */
+export function removeWorkflowMigrationOverlaysForLegacyFixture(f) {
+  const { fullSchema, fullMarkers, objects, removed, tables } = removeOwnedOverlays(f, 204);
+  return upgradedDb => {
+    assert.deepEqual(schema(upgradedDb).filter(row => objects.has(row.name)), fullSchema.filter(row => objects.has(row.name)));
+    assert.deepEqual(identity(markers(upgradedDb).filter(row => row.version >= 204)), identity(removed));
+    assert.deepEqual(identity(markers(upgradedDb).filter(row => row.version >= 204)),
+      identity(fullMarkers.filter(row => row.version >= 204)));
+    for (const table of tables)
       assert.equal(upgradedDb.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get().n, 0, `${table} must remain empty`);
     assert.equal(upgradedDb.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
     assert.deepEqual(upgradedDb.prepare("PRAGMA foreign_key_check").all(), []);

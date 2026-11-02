@@ -14,9 +14,10 @@ import type { SqliteStoreContext } from "./store-context.js";
 import { withCancelledAttemptResourceVeto } from "./cancelled-attempt-resource-veto.js";
 import { readRuntimeSemaphoreCapacity } from "./workflow-step-admission-capacity.js";
 import { hasActiveWorkflowMergeApplyLease } from "./workflow-merge-lease-guard.js";
+import { readWorkflowParallelParents, workflowParallelSlotAllowed, type WorkflowParallelReadPorts } from "./workflow-parallel-parent-guard.js";
 
 export class SqliteRuntimeSemaphoreStore {
-  constructor(private readonly context: SqliteStoreContext) {}
+  constructor(private readonly context: SqliteStoreContext, private readonly parallelPorts?: WorkflowParallelReadPorts) {}
 
   /**
    * Atomically reuses or creates the one active slot admitted for an exact
@@ -73,6 +74,7 @@ export class SqliteRuntimeSemaphoreStore {
     if (!Number.isSafeInteger(input.limit) || input.limit < 1) return { status: "changed" };
     try {
       if (hasActiveWorkflowMergeApplyLease(this.context.database, input.workspaceId)) return { status: "changed" };
+      if (!workflowParallelSlotAllowed(this.context.database, this.parallelPorts, input, excludePreparingTaskId)) return { status: "changed" };
     } catch {
       // Invalid apply evidence vetoes admission without rolling back the caller's transaction.
       return { status: "changed" };
@@ -84,6 +86,10 @@ export class SqliteRuntimeSemaphoreStore {
         AND attempts.status IN ('created','started','waiting_for_approval','cancelling')
     `).get(input.attemptId, input.workUnitId, input.runtimeInstanceId, input.fencingToken, input.workspaceId);
     if (!current || input.ownerType === "work_unit_attempt" && input.ownerId !== input.attemptId) return { status: "changed" };
+    if (!reuse && readWorkflowParallelParents(this.context.database).some(parent => parent.state === "held" && parent.workspaceId === input.workspaceId)
+      && this.context.database.prepare(`SELECT 1 FROM runtime_semaphore_slots WHERE workspace_id=? AND attempt_id=?
+        AND resource_type=? AND resource_key=? AND status='active' LIMIT 1`).get(input.workspaceId, input.attemptId, input.resourceType, input.resourceKey))
+      return { status: "changed" };
     if (reuse) {
       const rows = this.context.database.prepare(`${runtimeSemaphoreSlotSelectSql(`WHERE workspace_id=? AND resource_type=?
         AND resource_key=? AND owner_id=? AND status='active'`)} ORDER BY id LIMIT 2`)

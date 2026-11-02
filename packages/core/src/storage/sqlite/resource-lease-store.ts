@@ -14,11 +14,13 @@ import { resourceLeaseSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import { withCancelledAttemptResourceVeto } from "./cancelled-attempt-resource-veto.js";
 import { workflowMergeApplyLeaseSql } from "./workflow-merge-lease-guard.js";
+import { workflowParallelLeaseAllowed, type WorkflowParallelReadPorts } from "./workflow-parallel-parent-guard.js";
+import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
 export class SqliteResourceLeaseStore {
   private readonly context: SqliteStoreContext;
 
-  constructor(context: SqliteStoreContext) {
+  constructor(context: SqliteStoreContext, private readonly parallelPorts?: WorkflowParallelReadPorts) {
     this.context = context;
   }
 
@@ -43,7 +45,18 @@ export class SqliteResourceLeaseStore {
       runtimeInstanceId: input.runtimeInstanceId,
       fencingToken: input.fencingToken,
     };
+    let ownsTransaction = false;
     try {
+      if (["workspace", "channel", "bound_path"].includes(input.resourceType)) {
+        if (!this.context.database.isTransaction) {
+          this.context.database.exec("BEGIN IMMEDIATE");
+          ownsTransaction = true;
+        }
+        if (!workflowParallelLeaseAllowed(this.context.database, this.parallelPorts, input)) {
+          if (ownsTransaction) this.context.database.exec("ROLLBACK");
+          return undefined;
+        }
+      }
       const result = this.context.database
         .prepare(`
           INSERT INTO resource_leases (
@@ -97,8 +110,10 @@ export class SqliteResourceLeaseStore {
           lease.workspaceId,
           ...(mergeGuard.workspaceAvailable ? [lease.workspaceId] : []),
         );
+      if (ownsTransaction) this.context.database.exec("COMMIT");
       return Number(result.changes) === 1 ? lease : undefined;
     } catch {
+      if (ownsTransaction) rollbackOwnedSqliteTransaction(this.context.database);
       return undefined;
     }
   }

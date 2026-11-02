@@ -780,6 +780,8 @@ import { applyWorkflowIntegrationCoordinatorMigration } from "./sqlite/workflow-
 import { applyWorkflowMergeApprovalMigration } from "./sqlite/workflow-merge-approval-migration.js";
 import { applyWorkflowMergeApplyMigration } from "./sqlite/workflow-merge-apply-migration.js";
 import { applyWorkflowWorktreeCleanupMigration } from "./sqlite/workflow-worktree-cleanup-migration.js";
+import { applyWorkflowParallelParentMigration } from "./sqlite/workflow-parallel-parent-migration.js";
+import { applyWorkflowIsolationSelectionMigration } from "./sqlite/workflow-isolation-selection-migration.js";
 import { createSqliteWorkflowIsolationStore, registerSqliteWorkflowIsolationStore } from "./sqlite/workflow-isolation-store.js";
 import { createSqliteWorkflowIntegrationCoordinatorStore, registerSqliteWorkflowIntegrationCoordinatorStore } from "./sqlite/workflow-integration-coordinator-store.js";
 import { registerSqliteWorkflowWorktreeCleanupStore } from "./sqlite/workflow-worktree-cleanup-store.js";
@@ -1054,8 +1056,8 @@ export class SqliteRunStore implements RunStore {
     this.userInputDelivery = new SqliteUserInputDeliveryStore({ database: this.database }, this.controlPlane, this);
     this.userInputPreparation = new SqliteUserInputPreparationStore({ database: this.database }, this.userInputDelivery, this);
     this.stateTransitions = new SqliteStateTransitionStore({ database: this.database });
-    this.resourceLeases = new SqliteResourceLeaseStore({ database: this.database });
-    this.runtimeSemaphores = new SqliteRuntimeSemaphoreStore({ database: this.database });
+    this.resourceLeases = new SqliteResourceLeaseStore({ database: this.database }, this);
+    this.runtimeSemaphores = new SqliteRuntimeSemaphoreStore({ database: this.database }, this);
     this.runtimeWorkUnits = new SqliteRuntimeWorkUnitStore(
       { database: this.database },
       {
@@ -1922,6 +1924,16 @@ export class SqliteRunStore implements RunStore {
           recordMigration: (version, name) => this.recordMigration(version, name),
         });
         applyWorkflowWorktreeCleanupMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
+        applyWorkflowParallelParentMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
+        applyWorkflowIsolationSelectionMigration({
           database: this.database,
           hasMigration: (version) => this.hasMigration(version),
           recordMigration: (version, name) => this.recordMigration(version, name),

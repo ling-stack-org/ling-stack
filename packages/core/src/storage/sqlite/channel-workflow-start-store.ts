@@ -19,6 +19,8 @@ import { normalizeWorkflowStepAdmissionPlan, type SqliteWorkflowStepAdmissionSto
 import { toRuntimeAttemptFence } from "../../runtime-supervisor-types.js";
 import { workflowStepBeginApprovalPermitted } from "./workflow-step-start-approval-gate.js";
 import { hasActiveWorkflowMergeApplyLease } from "./workflow-merge-lease-guard.js";
+import { workflowParallelAdmissionAllowed } from "./workflow-parallel-parent-guard.js";
+import { workflowIsolationSelectionReady } from "./workflow-isolation-selection.js";
 
 type Ports = WorkflowStepStartReadStore & Pick<RunStore, "createTask" | "transitionTaskStatus" | "recordStateTransitionEvent" | "releaseResourceLease" | "listChannelWorkflowSteps" | "getWorkUnit" | "getWorkUnitAttempt" | "getApprovalRequest" | "createApprovalRequest">;
 
@@ -31,6 +33,9 @@ export class SqliteChannelWorkflowStartStore {
     return this.transaction(() => {
       const step = this.ports.getChannelWorkflowStep(input.workflowStepId);
       if (!step || !sameExpected(step, input.expected)) return { status: "stale", code: "workflow_start_basis_stale" };
+      if (!workflowIsolationSelectionReady(this.context.database, step.workflowId)) {
+        return { status: "invalid", code: "workflow_isolation_selection_not_ready" };
+      }
       if (hasActiveWorkflowMergeApplyLease(this.context.database, step.workspaceId)) {
         return { status: "conflict", code: "workflow_merge_apply_workspace_busy", resourceType: "workflow_resource", resourceKey: `workspace:${step.workspaceId}` };
       }
@@ -38,6 +43,9 @@ export class SqliteChannelWorkflowStartStore {
       const authorityBasis = workflowStepStartAuthorityBasis(this.ports, step);
       const plan = input.admission === undefined ? undefined : normalizeWorkflowStepAdmissionPlan(input.admission);
       const channel = this.ports.getChannel(step.channelId);
+      if (!workflowParallelAdmissionAllowed(this.context.database, this.ports, step, plan)) {
+        return { status: "conflict", code: "workflow_parallel_parent_conflict", resourceType: "workflow_resource", resourceKey: `workspace:${step.workspaceId}` };
+      }
       if (input.admission !== undefined && (!plan || input.createTaskOnly
         || plan.entries.filter(entry => entry.resourceType === "provider").length !== 1
         || plan.entries.filter(entry => entry.resourceType === "runner").length !== 1

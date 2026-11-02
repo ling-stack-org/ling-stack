@@ -19,6 +19,7 @@ import { assertUserInputDurableQuiescence } from "./user-input-durable-quiescenc
 import { UserInputStoreError } from "../../user-input-store-types.js";
 import { hostAttemptReadScopeForSource } from "./host-attempt-read-scope.js";
 import { hasActiveWorkflowMergeApplyLease } from "./workflow-merge-lease-guard.js";
+import { workflowParallelAdmissionAllowed, workflowParallelAttemptAllowed } from "./workflow-parallel-parent-guard.js";
 
 type Ports = WorkflowStepStartReadStore & Pick<RunStore, "getWorkUnit" | "getWorkUnitAttempt" | "getRunnerContinuation" | "getHostAttemptCompletion">;
 type Entry = { readonly resourceType: RuntimeSemaphoreResourceType; readonly resourceKey: string; readonly limit: number };
@@ -106,6 +107,8 @@ export class SqliteWorkflowStepAdmissionStore {
     if (hasActiveWorkflowMergeApplyLease(this.context.database, step.workspaceId)) {
       return { status: "conflict", code: "workflow_merge_apply_workspace_busy", resourceType: "workflow_resource", resourceKey: `workspace:${step.workspaceId}` };
     }
+    if (!workflowParallelAdmissionAllowed(this.context.database, this.ports, step, plan))
+      return { status: "conflict", code: "workflow_parallel_parent_conflict", resourceType: "workflow_resource", resourceKey: `workspace:${step.workspaceId}` };
     const previous = this.context.database.prepare(`SELECT 1 FROM workflow_step_admissions AS admission
       WHERE admission.workflow_step_id=? AND (admission.status='preparing' OR admission.status='transferred' AND EXISTS (
         SELECT 1 FROM workflow_step_admission_entries AS entry JOIN runtime_semaphore_slots AS slot ON slot.id=entry.slot_id
@@ -138,6 +141,9 @@ export class SqliteWorkflowStepAdmissionStore {
       return { status: "invalid", code: "workflow_admission_deadline_invalid" };
     }
     if (!this.validLineage(step, input.owner, input.runId, input)) return { status: "stale", code: "workflow_admission_attempt_stale" };
+    if (!workflowParallelAdmissionAllowed(this.context.database, this.ports, step, plan)
+      || !workflowParallelAttemptAllowed(this.context.database, this.ports, step.workspaceId, input))
+      return { status: "invalid", code: "workflow_parallel_parent_conflict" };
     if (admission.status === "transferred") {
       if (admission.runId !== input.runId || !sameFence(admission.fence, input)) return { status: "stale", code: "workflow_admission_attempt_stale" };
       const slots = this.transferredSlots(admission, input);
@@ -182,6 +188,9 @@ export class SqliteWorkflowStepAdmissionStore {
   resumeChannelWorkflowStepStartAdmission(input: ResumeChannelWorkflowStepStartAdmissionInput): ResumeChannelWorkflowStepStartAdmissionResult {
     return this.transaction(() => {
       const step = this.currentStep(input.workflowStepId, input.owner);
+      if (step?.metadata?.isolationScopePlan || this.context.database.prepare(
+        "SELECT 1 FROM workflow_isolation_scope_plans WHERE workflow_step_id=?").get(input.workflowStepId))
+        return { status: "invalid", code: "workflow_admission_isolated_resume_unsupported" };
       const admission = this.getChannelWorkflowStepStartAdmission(input.workflowStepId, input.owner);
       if (!step || !admission || admission.status !== "transferred" || admission.runId !== input.runId
         || step.workspaceId !== admission.workspaceId || step.status !== "running" || step.runId !== input.runId
@@ -270,6 +279,8 @@ export class SqliteWorkflowStepAdmissionStore {
     const admission = this.getChannelWorkflowStepStartAdmission(workflowStepId, owner);
     const step = this.currentStep(workflowStepId, owner);
     return !!step && !!admission && this.validLineage(step, owner, runId, fence)
+      && workflowParallelAdmissionAllowed(this.context.database, this.ports, step, admission.plan)
+      && workflowParallelAttemptAllowed(this.context.database, this.ports, step.workspaceId, fence)
       && admission.status === "transferred" && admission.runId === runId
       && sameFence(admission.fence, fence) && !!this.transferredSlots(admission, fence);
   }
