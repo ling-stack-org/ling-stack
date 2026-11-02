@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { MAX_JSON_BYTES, artifactRef, parseJson, parseSuite, parseTask, readArtifact, readBoundFile, safeRelativePath, sha256 } from "./manifest.mjs";
 import { loadCoreGrader } from "./grader.mjs";
-import { assessControl, preflight } from "./preflight.mjs";
+import { assessControl, DEFAULT_SUITE, preflight } from "./preflight.mjs";
 import { calibrate, compareObservations, parseObservation } from "./evidence.mjs";
 import { buildReport, compareBundles, observationBundle, renderReportMarkdown } from "./report.mjs";
 import { prepareOutputDir, publishFile } from "./output.mjs";
@@ -137,13 +137,13 @@ test("changed artifact, task identity and locally unavailable source cannot pass
   await assert.rejects(preflight({ repoRoot, fixtureRoot: root }), code("artifact_digest_mismatch"));
   const suite = clone(checked.suite);
   suite.tasks[0].taskId = "different";
-  await writeJson(join(root, "suites/framework-v1.json"), suite);
+  await writeJson(join(root, DEFAULT_SUITE), suite);
   await assert.rejects(preflight({ repoRoot, fixtureRoot: root }), code("invalid_manifest"));
   const task = clone(checked.tasks[0].task); task.source.commit = "0".repeat(40);
   await writeJson(join(root, "cases/T01/task.json"), task);
   suite.tasks[0].taskId = task.taskId;
   suite.tasks[0].task.sha256 = sha256(await readFile(join(root, "cases/T01/task.json")));
-  await writeJson(join(root, "suites/framework-v1.json"), suite);
+  await writeJson(join(root, DEFAULT_SUITE), suite);
   await assert.rejects(preflight({ repoRoot, fixtureRoot: root }), code("source_unavailable"));
 });
 
@@ -154,7 +154,7 @@ test("re-pinned false negative control produces a failed calibration, not a pass
   task.controls.incorrect.candidate.sha256 = sha256(await readFile(join(root, "controls/T02-incorrect.json")));
   await writeJson(join(root, "cases/T02/task.json"), task);
   suite.tasks[1].task.sha256 = sha256(await readFile(join(root, "cases/T02/task.json")));
-  await writeJson(join(root, "suites/framework-v1.json"), suite);
+  await writeJson(join(root, DEFAULT_SUITE), suite);
   const result = await calibrate({ repoRoot, fixtureRoot: root, invocationId: "bad-control" });
   assert.equal(result.passed, false);
   assert.equal(result.controls.find(item => item.taskId === "T02" && item.caseId === "incorrect").matched, false);

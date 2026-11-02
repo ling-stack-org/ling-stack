@@ -1,8 +1,7 @@
 diff --git a/packages/contracts/src/harness-diagnostics.ts b/packages/contracts/src/harness-diagnostics.ts
 --- a/packages/contracts/src/harness-diagnostics.ts
 +++ b/packages/contracts/src/harness-diagnostics.ts
-@@ -137,5 +137,5 @@
- 
+@@ -138,4 +138,4 @@
  export interface WorkUnitHarnessDiagnosticsResponse {
 -  readonly schemaVersion: 1;
 +  readonly schemaVersion: 2;

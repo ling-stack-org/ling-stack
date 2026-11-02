@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "taskId": "T03",
-  "taskVersion": "1",
+  "taskVersion": "3",
   "category": "two_module_change",
   "source": {
     "repository": "ling-stack",
-    "commit": "d7227c83af77daf237e85845961cb54511d681f8",
-    "lockSha256": "47a8c14c88f8bd07be1f210d5b8e1e56794ddeba7eb5f2a137935a06e1d6191c",
+    "commit": "9f0b72d028f1ca6a966f997125374ffc19ea6a54",
+    "lockSha256": "56fd59b33ab2fc4ab8615ad7e050c839ed14fc621096ee9c754572b7212d3d78",
     "files": [
       {
         "path": "packages/contracts/src/harness-diagnostics.ts",
@@ -29,7 +29,7 @@
     ],
     "injection": {
       "path": "cases/T03/injection.patch",
-      "sha256": "226b3d8c9bb31a8167aab48cc5b9b1b43754d25b554e55c96786b6f0990882f7",
+      "sha256": "356c44bb235279ce81d2c197addf2f9552172486ce81c24f0d9dae2376f2c2f0",
       "mediaType": "text/x-diff"
     }
   },

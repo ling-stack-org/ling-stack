@@ -1,33 +1,33 @@
 {
   "schemaVersion": 1,
   "suiteId": "ling-framework-assurance",
-  "suiteVersion": "1",
+  "suiteVersion": "3",
   "description": "Three source-pinned tasks with synthetic correct, incorrect and missing-evidence controls. No live task, candidate-code execution, Provider call or historical-regression claim.",
   "tasks": [
     {
       "taskId": "T01",
-      "taskVersion": "1",
+      "taskVersion": "2",
       "task": {
         "path": "cases/T01/task.json",
-        "sha256": "9fd7fde71b54a089fb8c8436b753d558c90d5f0784d2d695de064940791ed56f",
+        "sha256": "6bec6e6ff67b399dad6bf4750c2df6e1a50e722b2e9a40c4ed45b0e140ec4f57",
         "mediaType": "application/json"
       }
     },
     {
       "taskId": "T02",
-      "taskVersion": "1",
+      "taskVersion": "2",
       "task": {
         "path": "cases/T02/task.json",
-        "sha256": "1a6e92df7c4f9f2fd94717ebb31457812ea7c3652f27e2b6cb14578604ffa079",
+        "sha256": "f864c0c6ee7bfd05504ddccccf3a0292df9bab4f6a2106e5073b6e192d0019c6",
         "mediaType": "application/json"
       }
     },
     {
       "taskId": "T03",
-      "taskVersion": "1",
+      "taskVersion": "3",
       "task": {
         "path": "cases/T03/task.json",
-        "sha256": "53a96594626262ddd4622ca92afb0a2498c607ea79d9258f37da4cd18d226c38",
+        "sha256": "e571bcfd76b9fef1aa01d067fcc29ed00cb21c2c47a9d2e72aab7a0354a11d50",
         "mediaType": "application/json"
       }
     }

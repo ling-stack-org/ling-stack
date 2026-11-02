@@ -130,7 +130,9 @@ assertions
 | T02 单模块修复 | `evaluation-json.ts` 明确注入删除 `.sort()`；正确/错误/缺证据 JSON | 注入后的代码行为失败、真实修复通过、错误修复失败 |
 | T03 两模块修改 | 明确注入 diagnostics schema 变为 2、api-client 丢 cwd；单侧修复的两个负例均不通过 grader | 隔离环境中的两侧真实类型/行为验证与完整修复 |
 
-三任务已冻结到 `d7227c83af77daf237e85845961cb54511d681f8`，锁、源码、prompt、profile、规则和控制均有字节摘要；两个 patch 通过 `git apply --check`，但未应用。F1 交付的是可运行的**校准任务集**，不是已验收的真实修复 benchmark。profile 为 `offline_control_only`，checks 是受控说明而非任意可执行命令。真实基线失败/修复成功的代码验收保留给 F3。
+三任务最初冻结到 `d7227c83af77daf237e85845961cb54511d681f8`，当前 v3 校准套件冻结到已整合的主线 `9f0b72d028f1ca6a966f997125374ffc19ea6a54`；锁、源码、prompt、profile、规则和控制均有字节摘要。两个 patch 仅执行 `git apply --check`，不应用。F1 交付的是可运行的**校准任务集**，不是已验收的真实修复 benchmark。profile 为 `offline_control_only`，checks 是受控说明而非任意可执行命令。真实基线失败/修复成功的代码验收保留给 F3。
+
+审查期间，为通过完整提交范围的空白检查，T03 patch 删除了一个不必要的空白上下文行；schema 与 cwd 的注入改动不变，T03 和 suite 曾递增到 `2`。随后整合主线锁更新，旧锁摘要在真实预检中被正确拒绝；当前将三任务源码基线和锁摘要一起重新冻结，T01/T02 `taskVersion` 为 `2`、T03 为 `3`，`suiteVersion` 为 `3`，默认索引为 `suites/framework-v3.json`。源码文件、注入内容、schema、规则和 profile 未变；历史报告不改写，也不作为新套件验收。
 
 ## 4. F1 离线流程
 

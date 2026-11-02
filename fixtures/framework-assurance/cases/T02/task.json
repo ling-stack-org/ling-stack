@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "taskId": "T02",
-  "taskVersion": "1",
+  "taskVersion": "2",
   "category": "single_module_fix",
   "source": {
     "repository": "ling-stack",
-    "commit": "d7227c83af77daf237e85845961cb54511d681f8",
-    "lockSha256": "47a8c14c88f8bd07be1f210d5b8e1e56794ddeba7eb5f2a137935a06e1d6191c",
+    "commit": "9f0b72d028f1ca6a966f997125374ffc19ea6a54",
+    "lockSha256": "56fd59b33ab2fc4ab8615ad7e050c839ed14fc621096ee9c754572b7212d3d78",
     "files": [
       {
         "path": "packages/core/src/harness/evaluation-json.ts",

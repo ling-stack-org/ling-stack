@@ -203,7 +203,7 @@ F1 只验证这些任务的元数据、注入补丁可应用性和 synthetic 控
 | 运行目录隔离 | `packages/core/src/runtime-paths.ts` |
 | 本轮离线实现与回归 | `scripts/framework-assurance/manifest.mjs`、`preflight.mjs`、`grader.mjs`、`evidence.mjs`、`report.mjs`、`output.mjs`、`index.mjs`、`offline.test.mjs`、`cli.test.mjs` |
 | 本轮真实包消费与回归 | `scripts/framework-assurance/sdk-consumer.mjs`、`sdk-consumer.test.mjs`、`fixtures/framework-assurance/sdk-consumer/` |
-| 冻结校准输入 | `fixtures/framework-assurance/suites/framework-v1.json` 及 cases/controls 引用 |
+| 冻结校准输入 | `fixtures/framework-assurance/suites/framework-v3.json` 及 cases/controls 引用；历史结果不改写 |
 
 既有业务兼容设计归 `docs/design/business-data-api-compatibility.md`、`business-data-api-compatibility-cutover.md`、`business-compatibility-boundary-hardening.md` 等主线文档所有。本计划不取代其迁移和退出门禁。
 

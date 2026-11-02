@@ -568,4 +568,3 @@ export async function runSdkConsumer({ repoRoot, outputDir, commandTimeoutMs = 1
   await fs.writeFile(reportPath, JSON.stringify(clean, null, 2) + "\n", { flag: "wx" });
   return { ...clean, reportPath };
 }
-
