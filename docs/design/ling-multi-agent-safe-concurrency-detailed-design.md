@@ -1,8 +1,8 @@
 # Ling 多 Agent 安全并发详细设计
 
-状态：P1 安全策略、Host 只读执行与原子准入已实现并通过本地回归；隔离写入与合并协议仍在实现，不是全阶段交付声明。
+状态：P1/P2 本地协议与执行路径已接入；P3 联合验收与缺口收口进行中，不是全阶段交付声明。
 Owner：Ling maintainers。
-最后核对：2026-11-02，基于 PR #614 合并后的 `main`。
+最后核对：2026-11-03，基于 PR #614 合并后的 `main`。
 文档类型：Reference / Explanation。
 权威边界：[Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 继续拥有总体产品设计；本文细化安全并发、隔离执行与合并协议。
@@ -186,6 +186,69 @@ lease 到期不等于进程停止。仍有工具、子执行或 effect journal �
 就把写资源交给后继 Attempt。preparing 预留只是启动前的所有权阶段，不能取代运行中
 既有持久 runtime semaphores 的 fence、续租与安全释放规则。
 
+### 5.4 显式隔离写入组与共享父锁
+
+首个写并发 profile 为 Host 冻结的 `isolated_siblings_v1`，只支持 `boundPath` 写锁，
+`maxConcurrentSteps` 限制在 2 到 4，并受 workflow、channel 和各 step 的更小上限约束。
+该选项属于 immutable integration round inputs，不是模板声明、模型参数或只读并行开关。
+缺少该选项的旧 round 保持原来的串行资源计划，不在读取、重启或 metadata 更新时升级。
+
+写并发组只使用可核验的 Pi Host isolated-files executor。Host Tool Broker 必须为
+`enforce`，实际工具限定为文件读写能力；shell、MCP/CUA、外部操作和未知 executor
+不取得该能力。当前平台边界与是否开启以执行端 gate 为准，不能由客户端显示解锁。
+
+首次冻结 round 时，在同一短事务中取得 workspace/Git common-directory 的持久父锁。
+父锁覆盖整个 round/generation，而每个 sibling 单独保留自己的 worktree 资源、step
+lease 与 Attempt slots。只有精确匹配 frozen participants、scope plan、authority basis、
+当前 Task/WorkUnit/Attempt 和资源计划的成员，才可共享该父锁并写入自己的执行目录。
+其他 workflow、普通 Run、新 round 及共享目标写入均不得借用 sibling 身份准入。
+
+Run 尚未落库的 preparing 路径只能用已冻结计划、原 start owner、当前 Attempt 及绑定
+同一 proposed Run id 的有效 task lease 取得精确 `bound_path` lease。不得通过任意
+Run id、缺失资源记录或较宽 workspace/channel lease 取得权限。创建 Run 后，沿既有
+原子交接把预留转入当前 Attempt slots，不允许额外申请非计划 slot 或重复计算容量。
+
+父锁不因单个 sibling 成功、失败、业务取消、lease TTL 或 daemon 重启而自动释放。
+释放必须核验所有原始执行的 terminal lineage、原 Host 调用 drain、子树与 effect journal；
+成功交付还必须满足该 round 的 candidate-only 或 approved-and-applied 完成协议。
+failed/cancelled 只在全组安全停止且 journal 已收敛后释放，不据此生成成功 candidate。
+merge apply 的目标 lease 只能由 Core 在已验证 single-use permit 的事务中临时取得，
+普通 `system` owner 或客户端字段不能绕过父锁。已释放父锁保留审计行，不删除历史。
+
+Core 父锁只协调同一个业务数据库。Daemon 还在 canonical Git common directory 中持有
+独立 repository fence，绑定 common-directory dev/inode、canonical root、数据库路径、
+round/generation 与输入 digest。普通、native、delegated 和 continuation Run 的准入均需
+检查该持久 fence，不能换 checkout 或另开 Store 绕过。首版 parallel profile 规划时要求
+单 checkout、单 canonical Host 数据库；已登记过其他数据库的仓库保守拒绝，不按 TTL、
+PID 或一时没有 resource rows 回收其他 Store 身份，也不自动删除协调文件。
+
+reservation 在 SQLite writer transaction 内取得；未冻结 round 前，只有该 reservation 的
+唯一 token 可补偿释放。另一个同 round 请求尚未取得 token 时不得释放赢家；已有 round
+的重复请求也不能凭同一个 owner 身份撤销持久父锁。第一次 open 在初始化前遇忙后留下的
+空数据库可在后续 writer transaction 内初始化；未知版本、损坏或外来 schema 仍拒绝。
+
+同一 Host 进程内的 worktree create 与 branch capture 按 canonical Git common directory
+排 FIFO 队列，避免正常 sibling 同时完成时互相触发 fail-fast 仓库锁。队列不替代物理锁；
+跨进程、直接嵌套及遗留 owner 仍 fail closed，不偷取锁、不按 TTL 重试。等待后必须重新
+核验 create authority 或 terminal fence，撤权请求不能因已经入队而获得执行或发布资格。
+
+### 5.5 显式公共选择与回退
+
+`POST /workflows/:id/orchestrate` 的可选 `executionProfile` 只支持
+`pi_host_isolated_files_v1`。Host 开关默认关闭；首版仅支持 macOS、enforced Tool Broker
+及真实注册、workspace-enabled 的 Pi adapter。完整步骤清单必须有 2-128 个
+`workspace_write` 参与者，Host 固定 `isolated_siblings_v1`、并发上限 2、
+`candidate_only` 和 `require_success`。请求不能指定 shell、command、路径、apply mode
+或新的并发数；内部 approved apply 协议不是公共自动合并权限。
+
+选择先持久化 `planning`，再以同一短事务冻结完整 workflow/channel/steps、safety plans、
+scope plans、round 与父锁并转为 `ready`。任一快照漂移全部回滚，不留下半组 pin。
+未完成选择不能降级到旧普通路径创建审批、Task 或 Run；实际 start/dispatch 还要重验当前
+Host 能力。关闭开关后拒绝新准入，但保留已接受 round 的观察、journal reconciliation、
+安全收尾与 evidence 读取，不能用关闭能力开关撤销原隔离边界。
+全组满足原执行 drain 与完成协议后，普通 Run 应能重新取得自己的目标写锁和容量；
+关闭开关或重启后的恢复准入不得重放旧 sibling，也不得顺便应用留存的 candidate。
+
 ## 6. Step 级隔离执行
 
 ### 6.1 Integration Round 与固定基线
@@ -256,6 +319,11 @@ hooks、自定义 merge driver、未授权 credential helper 或网络工具。
 自动创建 commit 只覆盖本 generation 已授权且已核验的路径，不执行 `git add -A` 收走
 其他来源文件。ignored 输出不自动入库，且不能因为 Git status 干净就宣称没有残留。
 模型的 changed-files 文本不能替代 Host tree/patch 捕获。
+
+capture 无法确认时，将 step 阻塞在可恢复的 `workflow_isolation.result_*` 命名空间；
+外层 Git/IO 错误统一映射为 `workflow_isolation.result_capture_unverified`，原始错误 code
+保留在 artifact。只有原 lineage 的完整 terminal/capture 证据才能解除 blocker，不因错误
+分类变化放宽 Core 的恢复判断，也不把 capture 失败当作可重新执行 Runner 的许可。
 
 ### 6.4 资源留存与清理
 

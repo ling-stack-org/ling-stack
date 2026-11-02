@@ -1,8 +1,8 @@
 # Ling 多 Agent 安全并发实施计划
 
-状态：P1 源码与本地回归已落地；P2 隔离执行实现中，P3-P5 未完成。
+状态：P1/P2 协议与执行路径已接入本地代码；P3 联合验收与缺口收口进行中，P4/P5 未开始。
 Owner：Ling maintainers。
-最后核对：2026-11-02。
+最后核对：2026-11-03。
 文档类型：implementation plan；完成后将长期规则归入 owning contracts，不保留完成日志。
 权威设计：[总体设计](multi-agent-app-detailed-design.md)、
 [安全并发详细设计](ling-multi-agent-safe-concurrency-detailed-design.md)。
@@ -34,8 +34,8 @@ requirement shaping 产品扩展、自动远端 merge/push/deploy、跨 worktree
 | --- | --- | --- |
 | P0 | DONE：总体设计、详细协议、实施计划与索引已对齐，文档检查通过 | 统一产品边界、协议、代码责任与验收入口，不代表功能完成 |
 | P1 | 本地实现与回归完成，review/CI/merge 和平台验收未完成 | 安全类别贯穿全路径，Host 实际约束生效，原子准入与回归通过 |
-| P2 | 实现中，尚未交付；普通 workflow 写并发仍关闭 | 隔离写入、封存结果、确定性集成、审批应用和故障恢复协议可运行 |
-| P3 | 待实现 | 多分支联合与真实客户端验收通过，才允许选定 workflow 开启写并发 |
+| P2 | 本地代码已接入并进入组合验收，尚未声明可发布；普通 workflow 写并发仍关闭 | 隔离写入、封存结果、确定性集成、审批应用和故障恢复协议可运行 |
+| P3 | 进行中：真实 Git/SQLite、Pi SDK/Host 双分支与客户端状态组合验收；真实 Provider、packaged 和跨平台门禁未完成 | 目标组合的联合与真实客户端验收通过，才允许选定 workflow 开启写并发 |
 | P4 | 待实现 | registry 版本冻结、校验、authoring 与真实保存/编译流程通过 |
 | P5 | 待实现 | 同一工作对象内 graph/list 一致、可访问、真实状态可靠 |
 
@@ -53,10 +53,64 @@ P2 当前边界：
   回归通过。单次 permit、独占 lease、实际 clean-target fast-forward、审批 route、completion
   与 startup reconciliation 已接入并通过本地构建及真实 Git/SQLite 回归。普通审批同意
   不代表已合入工作区；unknown 保留 intent/lease，重启只观察，不重放 Git。
-- P2-D 尚缺 owned-worktree cleanup/留存与资源预算联合验收；P3 的真实客户端/平台
-  验收也未完成，不能据此声明写并发已交付或对普通 workflow 开启。
-- 内部 isolation planner 保持 `candidate_only`；普通 workflow 写并发仍关闭。静态校验
+- P2-D 已接入独立 owned-worktree cleanup journal、证据/ref 留存与 clean-only no-force
+  回收；duplicate/startup 只观察已有 intent，不延迟重放删除。新建 worktree 的数量与磁盘
+  预算已有 Host 约束，多分支资源预算和 P3 真实客户端/平台联合验收仍需完成。
+- 内部 isolation planner 默认 `candidate_only`；显式 Host 可在启动前冻结 `apply_to_target`，
+  不开放公共自动 merge 请求。普通 workflow 写并发仍关闭。静态校验
   明确记录 `projectTestsRun: false`，不等于项目测试、审批或 apply 已完成。
+
+P3 当前实现与开启范围：
+
+- `POST /workflows/:id/orchestrate` 可显式选择
+  `{"executionProfile":"pi_host_isolated_files_v1"}`。Host 开关默认关闭；只接受 macOS、
+  enforced Tool Broker、实际注册且 workspace-enabled 的 Pi adapter、2-128 个全部声明为
+  `workspace_write` 的参与步骤，冻结并发上限 2、`candidate_only` 与 `require_success`。
+  API 不接受调用方指定 command、target apply、任意路径或并发数；不提供自动合并权限。
+- 受控验收可在启动 Host 时设置 `LING_STACK_CHANNEL_WORKFLOW_ISOLATED_FILES=true` 与
+  `LING_STACK_HARNESS_TOOL_BROKER_MODE=enforce`；等价配置是
+  `channels.workflowIsolatedFiles: true` 和 `harness.toolBroker.mode: "enforce"`。
+  工作区设置与模板不能修改 Host 开关；打开开关本身不代表平台或真实 Provider 验收完成。
+- Core 在一个事务中冻结完整 workflow/channel/step 快照、safety/scope plans、round 和父锁；
+  `planning` 未完成时，普通 orchestrate、manual start、retry 与 Run admission 均不得降级启动。
+- 每个 sibling 保留独立原始 Attempt、Host drain、worktree lease 和持久 slots；一个分支结束
+  不释放全组父锁。普通 Run、其他 workflow 或另一个 round 不能共享该父锁写目标目录。
+- Git common-directory 下的 repository fence 同时约束其他 checkout、Store 与 daemon 进程。
+  首版只支持规划时单 checkout、单 canonical Host 数据库；不是多 checkout 共享写协议。
+  初次空数据库可在 writer transaction 内重试初始化；损坏或旧 owner 未确认时 fail closed。
+  规划失败的补偿只释放本次 reservation，不能撤销并发请求已经取得的所有权。
+- retained isolation evidence 经现有 evidence API 投影到同一 conversation work-cell，分别显示
+  candidate-only、待审批、已批准未应用、applied、冲突、取消与结果待确认；客户端有界轮询
+  不签发执行权限。功能关闭禁止新准入，但保留已接受 round 的观察与收尾。
+
+当前验收入口：`workflow-isolated-parallel-integration.test.mjs` 验真实 Pi SDK/Host 的双分支
+文件写入、审批与 drain；`workflow-multibranch-integration.test.mjs` 验真实 Git/SQLite 的
+merge/conflict/reopen；`workflow-repository-fence.test.mjs` 验跨 Store/process 竞争。
+这些 Provider transport 可控的集成测试不等于真实 Provider 或 packaged 客户端验收。
+
+2026-11-03 本地组合验证：上述 parallel、delivery、multibranch 与 repository-fence 四个
+测试文件共 35 项通过。覆盖使用真实 Pi SDK/Host 的受控传输双分支，以及真实 Git/SQLite
+和跨进程竞争；未运行真实 Provider。另已补齐同进程 create/capture 排队、等待期间撤权、
+健康后继继续执行与物理锁释放回归。跨进程及遗留 owner 仍 fail closed，不自动接管。
+该结果不是全量 Core/Daemon、CI、桌面包或跨平台通过声明。
+
+最新完整 Pi SDK/Host parallel 集成文件回归也已通过，补验显式 candidate-only round 完成后
+关闭功能并重启 Host：留存 evidence 可读，原 sibling 不再派发，普通写能力 Run 可在原
+canonical cwd 取得自己的 fenced `bound_path` lease 与 Provider/Runner slots，terminal/drain
+后释放其资源。该后继使用 tool-free 模型回复，验证的是普通准入与收尾，不是普通文件写入；
+全过程目标 checkout 未变，留存 candidate 未应用。
+
+Web 本地构建产物已用 Playwright 和受控 HTTP fixture 检查：1440x960 下分别呈现
+candidate-only、待审批、已批准未应用、已应用、冲突、结果待确认和取消，均保留两个参与
+分支；重新打开同一会话后不会将未应用结果标为 applied。390x844 下检查取消与未知结果、
+参与者展开及候选 hash 换行，document/feed/证据行均无横向溢出。本地截图位于
+`output/playwright/concurrency-*.png`；这不是真实 daemon/Provider 的浏览器端到端验收，
+也未完成完整客户端重启、SSE 断连与 packaged 门禁。
+
+P3 仍缺 policy/source-turn 撤权贯穿原 Host drain、新 round 启动后旧 generation 重入的
+联合验收，以及真实 Provider、真实 daemon 的浏览器端到端、完整客户端重启/SSE 和
+packaged/跨平台门禁。此前全量 Core/Daemon 的 migration fixture 编号与旧 Core 构建产物
+相关失败已修复并定向复验，但未重新运行两个全量套件，不能标记全量通过。
 
 P1/P2 中各模块的故障测试随实现提交，不能把基本正确性留到 P3 才补。
 P3 是端到端组合验收与缺口收口，不是第一次考虑取消、重启和审批。
@@ -77,10 +131,11 @@ P3 是端到端组合验收与缺口收口，不是第一次考虑取消、重�
 每个被采用候选都应在对应 PR 说明原来源、当前必要性和重跑的验证。
 “旧 WIP 有代码”不是验收；未采用不等于允许删除旧工作现场。
 
-当前只记录两项小候选，不认定为已复现缺陷：
+当前两项候选的处理边界：
 
-- `runtime/store-registry.ts` 的 canonical workspace key 去重；先验证现行调用能否传入
-  等价路径并造成重复 store，再决定是否纳入 P1 的资源身份修复。
+- `runtime/store-registry.ts` 的 canonical workspace key 去重已在当前分支实现并回归；
+  等价路径不能制造同仓库的第二个 live Store。跨数据库/进程仍由 repository fence 处理，
+  不把进程内去重当成全局锁。
 - `canonical-transcript-snapshot.ts` 的 child-action anchor 唯一性；先验证同一 child 的
   spawn + message 是否造成真实投影歧义，必要时作为 P3 的投影修复，不强行搬旧代码。
 
@@ -257,7 +312,7 @@ graph 不能创建节点或执行 effect；列表回退始终可用。视觉验�
 
 ## 10. 验证命令与证据分级
 
-本轮文档检查不安装运行依赖，不跑无关全仓测试：
+文档检查：
 
 ```bash
 node scripts/check-markdown-links.mjs
@@ -300,6 +355,6 @@ shadow 只生成调度决定与诊断，不启动额外 Run/模型/工具/Git ef
 不再把功能 WIP 与已合并 PR 混为一谈。提交只含当前责任文件；未完成现场保留明确
 branch/owner，不跨数个大阶段堆积一个不可审查的 dirty worktree。
 
-下一步接入 P2-D 的单次 permit、target apply journal 与只观察的 crash reconciliation。
-P2-C 的持久 coordinator/completion barrier 与 P2-D 审批基础已通过本地定向回归。P1 与已完成的 P2
-单元不重复从零实现；P3-P5、CI/merge 和真实客户端/平台验收仍未完成。
+下一步收口 P3 的双分支联合故障矩阵、repository fence 竞争与客户端恢复验收，再完成目标
+Provider/Runner 和 packaged 平台门禁。P4 registry/authoring 与 P5 graph 仍未开始，不能因
+局部 fixture、静态检查或构建通过而提前宣称完成；CI/merge 也与本地验证分开记录。
