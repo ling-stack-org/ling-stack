@@ -8,6 +8,7 @@ import type { ResponseLanguagePreference } from "./settings.js";
 import type { RunTool } from "./shared.js";
 import type { WorkflowParticipantProviderBindingV1 } from "./conversation-model-binding.js";
 import type { Task } from "./tasks.js";
+import type { WorkflowStepParallelPolicy, WorkflowStepSideEffectClass } from "./workflow-safety.js";
 import type {
   ChannelIntentExecutionPlanV1,
   ConversationContextProjectionMetadata,
@@ -239,6 +240,14 @@ export function workflowGraphFingerprintV1(graph: WorkflowGraph): string {
       requiredTools: [...(node.requiredTools ?? [])].sort(),
       branchGroupId: node.branchGroupId,
       joinGroupId: node.joinGroupId,
+      sideEffectClass: node.sideEffectClass,
+      parallelPolicy: node.parallelPolicy === undefined ? undefined : {
+        autoParallel: node.parallelPolicy.autoParallel,
+        maxParallelSiblings: node.parallelPolicy.maxParallelSiblings,
+        resourceKeys: node.parallelPolicy.resourceKeys === undefined ? undefined : [...node.parallelPolicy.resourceKeys].sort(),
+        requiresArtifactOnly: node.parallelPolicy.requiresArtifactOnly,
+        cancelSiblingsOnFailure: node.parallelPolicy.cancelSiblingsOnFailure,
+      },
     })).sort((left, right) => left.id.localeCompare(right.id)),
     edges: [...graph.edges].map((edge) => ({
       id: edge.id,
@@ -853,6 +862,8 @@ export interface WorkflowCompletionGateV1 {
 }
 
 export interface ChannelWorkflowStepMetadata {
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
   readonly participantAuthority?: WorkflowParticipantAuthorityV1;
   readonly providerBinding?: WorkflowParticipantProviderBindingV1;
   readonly workflowTemplateId?: string;
@@ -934,6 +945,8 @@ export interface WorkflowGraphNode {
   readonly kind: WorkflowGraphNodeKind;
   readonly name: string;
   readonly prompt: string;
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
   readonly teammateTemplateId?: string;
   readonly teammateId?: string;
   readonly councilSlotKey?: string;
@@ -1291,6 +1304,8 @@ export interface CustomWorkflowTemplateStep {
   readonly id: string;
   readonly name: string;
   readonly prompt: string;
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
   readonly teammateTemplateId?: string;
   readonly teammateId?: string;
   readonly councilSlotKey?: string;
@@ -1571,6 +1586,10 @@ export type ChannelSmartSchedulingReasonCode =
   | "approval_pending"
   | "unknown_tools_serial"
   | "side_effectful_step_serial"
+  | "safety_opt_in_required"
+  | "host_parallel_capability_unavailable"
+  | "active_step_safety_unverified"
+  | "resource_conflict"
   | "read_only_parallel_allowed";
 
 export interface ChannelSmartSchedulingDecision {

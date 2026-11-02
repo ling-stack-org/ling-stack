@@ -4,6 +4,7 @@ import type { CreateResourceLeaseInput, ResourceLease } from "./channel-runtime-
 import type { EffectiveRunPolicySnapshot } from "./session-permissions.js";
 import type { WorkflowStepStartOwnerV1 } from "./workflow-step-start-owner.js";
 import type { RunEventDataByType, RunEventEnvelope } from "./run-types.js";
+import type { WorkflowStepAdmissionPlan } from "./workflow-step-admission.js";
 
 export interface UserInputSnapshotRef { readonly id: string; readonly fingerprint: string }
 export type UserInputContinuationClaim = Pick<RetryUserInputDelivery, "threadId" | "deliveryId" | "expectedRevision" | "ownerId" | "claimToken">;
@@ -132,6 +133,8 @@ export interface RecoverUserInputContinuationPrestart {
   readonly runId: string;
   readonly leases: readonly CreateResourceLeaseInput[];
   readonly semaphores: readonly AcquireRuntimeSemaphoreSlotInput[];
+  /** Complete semantic source plan. Core expands a matching semaphore subset and readmits the whole group atomically. */
+  readonly workflowAdmission?: WorkflowStepAdmissionPlan;
   readonly now: string;
   readonly expiresAt: string;
 }

@@ -42,6 +42,7 @@ export type * from "./channel-sessions.js";
 export * from "./channel-sessions-validation.js";
 export type * from "./channel-team.js";
 export * from "./workflows.js";
+export * from "./workflow-safety.js";
 export type * from "./external-work.js";
 export type * from "./work-items.js";
 export type * from "./media.js";

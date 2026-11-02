@@ -656,6 +656,7 @@ import { SqliteUserInputDeliveryStore } from "./sqlite/user-input-delivery-store
 import { SqliteUserInputPreparationStore } from "./sqlite/user-input-preparation-store.js";
 import { SqliteUserInputHostContinuationStore } from "./sqlite/user-input-host-continuation-store.js";
 import { SqliteUserInputPrestartRecoveryStore } from "./sqlite/user-input-prestart-recovery-store.js";
+import { prepareUserInputWorkflowStepAdmissionRecovery, hasUserInputWorkflowTaskRunLineage } from "./sqlite/user-input-workflow-step-admission.js";
 import { applyUserInputDeliveryMigration } from "./sqlite/user-input-delivery-migration.js";
 import { readSqliteSnapshot } from "./sqlite/read-snapshot.js";
 import { SqliteConversationThreadTopologyStore } from "./sqlite/conversation-thread-topology-store.js";
@@ -771,6 +772,8 @@ import { SqliteChannelProtocolStore } from "./sqlite/channel-protocol-store.js";
 import { SqliteChannelPlaybookStore } from "./sqlite/channel-playbook-store.js";
 import { SqliteChannelWorkflowStore } from "./sqlite/channel-workflow-store.js";
 import { SqliteChannelWorkflowStartStore } from "./sqlite/channel-workflow-start-store.js";
+import { SqliteWorkflowStepAdmissionStore } from "./sqlite/workflow-step-admission-store.js";
+import { applyWorkflowStepAdmissionMigration } from "./sqlite/workflow-step-admission-migration.js";
 import { SqliteChannelWorkflowPreApprovalStore } from "./sqlite/channel-workflow-pre-approval-store.js";
 import { SqliteChannelTeamEvidenceStore } from "./sqlite/channel-team-evidence-store.js";
 import { SqliteChannelTeamLifecycleStore } from "./sqlite/channel-team-lifecycle-store.js";
@@ -914,6 +917,7 @@ export class SqliteRunStore implements RunStore {
   private readonly channelPlaybooks: SqliteChannelPlaybookStore;
   private readonly channelWorkflows: SqliteChannelWorkflowStore;
   private readonly channelWorkflowStarts: SqliteChannelWorkflowStartStore;
+  private readonly workflowStepAdmissions: SqliteWorkflowStepAdmissionStore;
   private readonly channelWorkflowPreApprovals: SqliteChannelWorkflowPreApprovalStore;
   private readonly channelTeamEvidence: SqliteChannelTeamEvidenceStore;
   private readonly channelTeamLifecycle: SqliteChannelTeamLifecycleStore;
@@ -1211,6 +1215,8 @@ export class SqliteRunStore implements RunStore {
       { database: this.database },
       (threadId, deliveryId) => this.userInputContinuation.readBindingWithinTransaction(threadId, deliveryId),
       (runId) => this.runSessions.getRun(runId),
+      (input, binding) => prepareUserInputWorkflowStepAdmissionRecovery({ database: this.database }, this, this.workflowStepAdmissions,
+        this.userInputPreparation.seedWithinTransaction(input.claim.threadId, input.claim.deliveryId), input, binding),
     );
     this.runEvents = new SqliteRunEventStore(
       { database: this.database },
@@ -1472,7 +1478,11 @@ export class SqliteRunStore implements RunStore {
         listArtifacts: (runId) => this.listArtifacts(runId),
       },
     );
-    this.channelWorkflowStarts = new SqliteChannelWorkflowStartStore({ database: this.database }, this);
+    this.workflowStepAdmissions = new SqliteWorkflowStepAdmissionStore({ database: this.database }, this, this.runtimeSemaphores,
+      (taskId, runId) => hasUserInputWorkflowTaskRunLineage({ database: this.database }, this,
+        (threadId, deliveryId) => this.userInputContinuation.readBindingWithinTransaction(threadId, deliveryId),
+        (threadId, deliveryId) => this.userInputPreparation.seedWithinTransaction(threadId, deliveryId), taskId, runId));
+    this.channelWorkflowStarts = new SqliteChannelWorkflowStartStore({ database: this.database }, this, this.workflowStepAdmissions);
     this.channelWorkflowPreApprovals = new SqliteChannelWorkflowPreApprovalStore({ database: this.database }, this);
     this.terminalReportPublication = new SqliteTerminalReportPublicationStore(
       { database: this.database },
@@ -1866,6 +1876,11 @@ export class SqliteRunStore implements RunStore {
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
         }
+        applyWorkflowStepAdmissionMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
       });
     } catch (error) {
       this.database.close();
@@ -5359,6 +5374,18 @@ export class SqliteRunStore implements RunStore {
   }
   beginChannelWorkflowStepStart(input: Parameters<RunStore["beginChannelWorkflowStepStart"]>[0]) {
     return this.channelWorkflowStarts.beginChannelWorkflowStepStart(input);
+  }
+  getChannelWorkflowStepStartAdmission(...args: Parameters<RunStore["getChannelWorkflowStepStartAdmission"]>) {
+    return this.workflowStepAdmissions.getChannelWorkflowStepStartAdmission(...args);
+  }
+  transferChannelWorkflowStepStartAdmission(input: Parameters<RunStore["transferChannelWorkflowStepStartAdmission"]>[0]) {
+    return this.workflowStepAdmissions.transferChannelWorkflowStepStartAdmission(input);
+  }
+  resumeChannelWorkflowStepStartAdmission(input: Parameters<RunStore["resumeChannelWorkflowStepStartAdmission"]>[0]) {
+    return this.workflowStepAdmissions.resumeChannelWorkflowStepStartAdmission(input);
+  }
+  releaseChannelWorkflowStepStartAdmission(input: Parameters<RunStore["releaseChannelWorkflowStepStartAdmission"]>[0]) {
+    return this.workflowStepAdmissions.releaseChannelWorkflowStepStartAdmission(input);
   }
   commitChannelWorkflowStepRunReady(input: Parameters<RunStore["commitChannelWorkflowStepRunReady"]>[0]) {
     return this.channelWorkflowStarts.commitChannelWorkflowStepRunReady(input);

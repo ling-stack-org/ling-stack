@@ -27,6 +27,8 @@ import {
   type WorkflowParticipantAuthorityV1,
   type WorkflowParticipantProviderBindingV1,
   type WorkflowParticipantProviderBlockerV1,
+  type WorkflowStepParallelPolicy,
+  type WorkflowStepSideEffectClass,
 } from "@ling-stack/contracts";
 
 export const DEFAULT_WORKSPACE_ID = "workspace_default";
@@ -2389,6 +2391,9 @@ export interface ChannelWorkflowStepOutputPacket {
 }
 
 export interface ChannelWorkflowStepMetadata {
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
+  readonly safetyPlan?: import("./workflow-safety-plan.js").WorkflowStepSafetyPlanV1;
   readonly startOwner?: import("./workflow-step-start-owner.js").WorkflowStepStartOwnerV1;
   readonly participantAuthority?: WorkflowParticipantAuthorityV1;
   readonly providerBinding?: WorkflowParticipantProviderBindingV1;

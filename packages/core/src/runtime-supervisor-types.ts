@@ -79,7 +79,7 @@ export type RuntimeEventType =
   | "stale_runner_completion_ignored"
   | "diagnostic_stuck_detected";
 
-export type RuntimeSemaphoreResourceType = "provider" | "channel_parallel" | "runner" | "media_provider";
+export type RuntimeSemaphoreResourceType = "provider" | "channel_parallel" | "runner" | "media_provider" | "workflow_resource";
 
 export type RuntimeSemaphoreSlotStatus = "active" | "released" | "expired";
 

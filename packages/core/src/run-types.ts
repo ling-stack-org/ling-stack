@@ -2457,6 +2457,10 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   requestChannelWorkflowStepPreApproval(input: import("./workflow-pre-gate.js").WorkflowStepPreApprovalInput): import("./workflow-pre-gate.js").WorkflowStepPreApprovalResult;
   resolveChannelWorkflowStepPreApproval(input: import("./workflow-pre-gate.js").WorkflowStepPreApprovalResolveInput): import("./workflow-pre-gate.js").WorkflowStepPreApprovalResult;
   beginChannelWorkflowStepStart(input: import("./workflow-step-start-owner.js").BeginChannelWorkflowStepStartInput): import("./workflow-step-start-owner.js").BeginChannelWorkflowStepStartResult;
+  getChannelWorkflowStepStartAdmission(...args: Parameters<import("./workflow-step-admission.js").WorkflowStepAdmissionStore["getChannelWorkflowStepStartAdmission"]>): import("./workflow-step-admission.js").WorkflowStepStartAdmission | undefined;
+  transferChannelWorkflowStepStartAdmission(input: import("./workflow-step-admission.js").TransferChannelWorkflowStepStartAdmissionInput): import("./workflow-step-admission.js").TransferChannelWorkflowStepStartAdmissionResult;
+  resumeChannelWorkflowStepStartAdmission(input: import("./workflow-step-admission.js").ResumeChannelWorkflowStepStartAdmissionInput): import("./workflow-step-admission.js").ResumeChannelWorkflowStepStartAdmissionResult;
+  releaseChannelWorkflowStepStartAdmission(input: import("./workflow-step-admission.js").ReleaseChannelWorkflowStepStartAdmissionInput): import("./workflow-step-admission.js").ReleaseChannelWorkflowStepStartAdmissionResult;
   commitChannelWorkflowStepRunReady(input: import("./workflow-step-start-owner.js").WorkflowStepStartCommitInput): import("./workflow-step-start-owner.js").WorkflowStepStartCommitResult;
   settleChannelWorkflowStepStartFailure(input: import("./workflow-step-start-owner.js").WorkflowStepStartFailureInput): import("./workflow-step-start-owner.js").WorkflowStepStartCommitResult;
   commitChannelWorkflowStepPostApproval(input: import("./workflow-step-start-owner.js").WorkflowStepPostApprovalInput): import("./workflow-step-start-owner.js").WorkflowStepPostApprovalResult;

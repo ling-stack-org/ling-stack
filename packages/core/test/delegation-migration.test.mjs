@@ -267,7 +267,7 @@ test("delegation migration has the release schema 154 identity", () => {
   assert.equal(typeof applyDelegationMigration, "function");
 });
 
-test("real schema153 upgrades through188 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
+test("real schema153 upgrades through203 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
   const f = await fileFixture(t, "full-schema");
   const first = f.own(createSqliteRunStore(f.cwd));
   const channel = first.handle.createChannel({ name: "Legacy", boundPath: f.cwd }, now);
@@ -290,6 +290,11 @@ test("real schema153 upgrades through188 preserving historical SQL/markers/rows 
   restorePreEmptyForkSnapshots(old.handle);
   // Reconstruct schema153 by removing exactly the later overlays.
   // Do not hide them from the baseline while leaving their markers installed.
+  for (const table of ["workflow_step_admission_entries", "workflow_step_admissions"]) {
+    assert.equal(old.handle.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, 0);
+    old.handle.exec(`DROP TABLE ${table}`);
+  }
+  old.handle.exec("DELETE FROM schema_migrations WHERE version=203");
   removePost178LearningOverlays(old.handle);
   removePost175HarnessOverlays(old.handle);
   const workspaceSettings = old.handle.prepare("SELECT workspace_id, settings_json FROM workspace_settings").get();
@@ -389,6 +394,11 @@ test("real schema153 upgrades through188 preserving historical SQL/markers/rows 
   assert.deepEqual(database.prepare("SELECT server_id, server_revision, tools_revision FROM mcp_authority_revisions ORDER BY server_id").all(), oldAuthorityRows);
   assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version <= 153 ORDER BY version").all(), oldMarkers.filter(row => row.version <= 153));
   assert.equal(database.prepare("SELECT count(*) AS n FROM schema_migrations WHERE version BETWEEN 179 AND 181").get().n, 3);
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=203").get().name,
+    "workflow_step_preparing_admission");
+  for (const table of ["workflow_step_admission_entries", "workflow_step_admissions"]) {
+    assert.equal(database.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, 0);
+  }
   assert.deepEqual(database.prepare("SELECT version,name FROM schema_migrations WHERE version IN (197,198,199,200,201) ORDER BY version").all()
     .map(row => ({ version: row.version, name: row.name })), [
     { version: 197, name: "create_work_summary_pull_requests" },

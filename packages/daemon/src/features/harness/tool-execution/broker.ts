@@ -33,6 +33,7 @@ import {
 import { recordNativeFileMutationCompletion } from "./native-file-mutation-completion.js";
 import { readBrokerCommandResult, type BrokerCommandResult } from "./broker-command-result.js";
 import { bindWorkflowCommandRequest } from "../../runs/workflow-command-cwd.js";
+import { workflowSafetyEffectRejection } from "../../runs/workflow-safety.js";
 
 const TOOL_EXECUTION_LEASE_GRACE_MS = 2 * 60 * 1000;
 const DEFAULT_TOOL_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -97,6 +98,12 @@ export async function executeHarnessedBashTool(input: HarnessBashExecutionInput)
     }
   };
   try {
+    const rejection = workflowSafetyEffectRejection({ ...input, request: { ...input.request, toolName: "bash" } });
+    if (rejection) {
+      settleBeforeDispatch();
+      return createUnifiedExecDeniedResult({ toolCallId: input.request.toolCallId, approvalId: input.approvalId,
+        reason: rejection.code + ": " + rejection.reason });
+    }
     input.hostOperation?.assertMayPrepare();
     try { input = { ...input, request: bindWorkflowCommandRequest(input.store, input.run, input.request) }; }
     catch (error) {
@@ -193,6 +200,8 @@ async function executeHarnessedBashToolInternal(
 export async function executeHarnessedFileMutationTool(
   input: HarnessFileMutationToolContext,
 ): Promise<PiRunnerToolHandledResult> {
+  const rejection = workflowSafetyEffectRejection({ ...input, request: { ...input.request, toolName: "write" } });
+  if (rejection) return createFileMutationDeniedResult(input, rejection.code + ": " + rejection.reason);
   input.hostOperation?.assertMayPrepare();
   if (input.mode === "off") {
     return input.hostOperation
@@ -596,6 +605,8 @@ function failExecutionBeforeStart(
 }
 
 async function executeFileMutationDirectly(input: HarnessFileMutationToolContext): Promise<PiRunnerToolHandledResult> {
+  const rejection = workflowSafetyEffectRejection({ ...input, request: { ...input.request, toolName: "write" } });
+  if (rejection) return createFileMutationDeniedResult(input, rejection.code + ": " + rejection.reason);
   input.hostOperation?.assertMayPrepare();
   const applied = await applyPatchActionDraft({
     draft: input.draft,

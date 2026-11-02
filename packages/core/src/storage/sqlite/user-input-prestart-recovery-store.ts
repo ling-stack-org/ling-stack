@@ -34,6 +34,8 @@ import type { SqliteStoreContext } from "./store-context.js";
 import { userInputTimestamp } from "./user-input-records.js";
 import { validDeliveryKey, validDeliveryRevision } from "./user-input-delivery-records.js";
 import { isUserInputRunCreatedReplay } from "./user-input-run-created-replay.js";
+import type { UserInputWorkflowAdmissionRecoveryPlan } from "./user-input-workflow-step-admission.js";
+import { readRuntimeSemaphoreCapacity } from "./workflow-step-admission-capacity.js";
 
 type BindingReader = (threadId: string, deliveryId: string) => UserInputContinuationBinding | undefined;
 type RunReader = (runId: string) => RunSession | undefined;
@@ -44,6 +46,8 @@ export class SqliteUserInputPrestartRecoveryStore {
     private readonly context: SqliteStoreContext,
     private readonly readBinding: BindingReader,
     private readonly getRun: RunReader,
+    private readonly planWorkflowAdmission: (input: RecoverUserInputContinuationPrestart,
+      binding: UserInputContinuationBinding) => UserInputWorkflowAdmissionRecoveryPlan,
   ) {}
 
   claim(input: ClaimUserInputContinuationRecovery, now: string): ClaimUserInputContinuationRecoveryResult {
@@ -140,11 +144,15 @@ export class SqliteUserInputPrestartRecoveryStore {
       if (!binding || !sameBinding(input, binding) || binding.runId !== input.runId
         || binding.deliveryRevision !== input.claim.expectedRevision || !this.hasCurrentClaim(input, input.now)
         || !this.hasCurrentPrestartOwner(binding)) return this.rollbackResult({ status: "changed" });
+      const admission = this.planWorkflowAdmission(input, binding);
+      if (admission.status === "changed") return this.rollbackResult(admission);
+      const recovery = { ...input, semaphores: admission.semaphores };
       const leases = this.recoverLeases(input, binding);
       if (!Array.isArray(leases)) return this.rollbackResult(leases);
-      const semaphores = this.recoverSemaphores(input, binding);
+      const semaphores = this.recoverSemaphores(recovery, binding);
       if (!Array.isArray(semaphores)) return this.rollbackResult(semaphores);
-      if (!this.ensureSemaphoreEvidence(binding, input.semaphores, semaphores, input.now)) {
+      if (!this.ensureSemaphoreEvidence(binding, recovery.semaphores, semaphores, input.now)
+        || !admission.commit(semaphores)) {
         return this.rollbackResult({ status: "changed" });
       }
       this.context.database.exec("COMMIT");
@@ -299,7 +307,8 @@ export class SqliteUserInputPrestartRecoveryStore {
         recovered.push({ ...slot, lastRenewedAt: input.now, expiresAt: input.expiresAt });
         continue;
       }
-      if (rows.length >= candidate.limit) return { status: "busy", kind: "semaphore",
+      const capacity = readRuntimeSemaphoreCapacity(this.context.database, candidate);
+      if (capacity.occupied >= capacity.limit) return { status: "busy", kind: "semaphore",
         resourceType: candidate.resourceType, resourceKey: candidate.resourceKey };
       const slot: RuntimeSemaphoreSlot = { ...candidate, id: createRuntimeSemaphoreSlotId(), status: "active",
         acquiredAt: input.now, lastRenewedAt: input.now, expiresAt: input.expiresAt };

@@ -258,6 +258,7 @@ import { handleHostCapabilityBridgeRoute } from "../features/runs/host-capabilit
 import { handleToolLoadRequestsCollection, handleToolSurfacesCollection } from "../features/runs/tool-surfaces.js";
 import { handleTraceItem, handleTracesCollection } from "../features/runs/traces-routes.js";
 import { resolveProviderForRun } from "../features/runs/providers.js";
+import { createWorkflowParallelCapabilityResolver } from "../features/runs/workflow-safety.js";
 import { handleGetWorkspaceChanges } from "../features/previews/workspace-changes.js";
 import {
   handleGetWorkspaceFileContent,
@@ -1896,6 +1897,8 @@ export async function routeRequest(
                 await orchestrateChannelWorkflow({
                   store,
                   secretResolver,
+                  resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry),
+                  runnerRegistry,
                   cwd,
                   workflowId: workflow.id,
                   validateRunRequest: (candidateRunRequest) => {
@@ -1937,6 +1940,8 @@ export async function routeRequest(
     const orchestration = await orchestrateChannelWorkflow({
       store: input.store,
       secretResolver,
+      resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry),
+      runnerRegistry,
       cwd: input.cwd,
       workflowId: confirmed.workflow.id,
       validateRunRequest: (candidateRunRequest) => {
@@ -2129,6 +2134,8 @@ export async function routeRequest(
           const result = await orchestrateChannelWorkflow({
             store,
             secretResolver,
+            resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry),
+            runnerRegistry,
             cwd,
             workflowId: workflowRoute.workflowId,
             validateRunRequest: (candidateRunRequest) => {
@@ -2218,6 +2225,7 @@ export async function routeRequest(
         const result = await retryChannelWorkflowStep({
           store,
           secretResolver,
+          runnerRegistry,
           cwd,
           workflowStepId: workflowRoute.workflowStepId,
           validateRunRequest: (candidateRunRequest) => {
@@ -2277,6 +2285,7 @@ export async function routeRequest(
             },
           ),
         secretResolver,
+        runnerRegistry,
       );
       return;
     }

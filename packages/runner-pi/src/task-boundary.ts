@@ -17,6 +17,7 @@ import { assertOrdinaryProgressRecoveryModelContext } from "./ordinary-progress-
 import { bindPiProviderInvocationResolution, createPiProviderInvocation } from "./provider-invocation.js";
 import { bindPiProviderBudgetResolution, createPiProviderBudgetInvocation } from "./provider-budget.js";
 import { readDelegationInstructionDirective } from "./delegation-instruction.js";
+import { assertHostReadonlyToolSurface } from "./extensions/host-readonly.js";
 
 /** Internal latch only. The public yielded outcome requires an idle SDK first. */
 class PendingUserInputYield extends Error {
@@ -67,6 +68,7 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
   readonly sessionId: string;
   readonly preparedInput: PiRunnerPreparedInput;
 } | undefined, readBoundaryModelView?: () => readonly unknown[] | undefined) {
+  assertHostReadonlyToolSurface(options);
   const stop = new AbortController();
   const signal = options.signal ? AbortSignal.any([options.signal, stop.signal]) : stop.signal;
   let failure: Error | undefined;
@@ -112,6 +114,17 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
     ...(options.onToolHydrationRequest ? { onToolHydrationRequest: guard(options.onToolHydrationRequest) } : {}),
     ...(options.onMcpToolCall ? { onMcpToolCall: guard(options.onMcpToolCall) } : {}),
     ...(options.onHostCapabilityCall ? { onHostCapabilityCall: guard(options.onHostCapabilityCall) } : {}),
+    ...(options.onReadonlyToolCall ? { onReadonlyToolCall: async request => {
+      try {
+        assertOpen();
+        const result = await options.onReadonlyToolCall!({ ...request,
+          signal: request.signal ? AbortSignal.any([signal, request.signal]) : signal });
+        assertOpen();
+        return result;
+      } catch (error) {
+        return latchFailure(error);
+      }
+    } } : {}),
     ...(options.onMediaGenerationToolCall ? { onMediaGenerationToolCall: guard(options.onMediaGenerationToolCall) } : {}),
     ...(options.onDelegationToolCall ? { onDelegationToolCall: async request => {
       try {

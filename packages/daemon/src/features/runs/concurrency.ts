@@ -18,6 +18,7 @@ import { DEFAULT_RUNNER_ID } from "../../runtime/work-units.js";
 import { removeUndefined } from "../../shared/validation.js";
 import { usesSideEffectTools } from "./approvals.js";
 import type { RunRequest } from "./schemas.js";
+import { createWorkflowSafetyAdmission } from "./workflow-safety.js";
 
 const RESOURCE_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -161,7 +162,14 @@ export function recoverPreparedRunConcurrency(input: {
     taskId: task ? taskId : undefined,
     now: input.now,
   });
-  const semaphoreInputs = buildRunSemaphoreInputs({
+  const step = input.runRequest.workflowStepId ? input.store.getChannelWorkflowStep(input.runRequest.workflowStepId) : undefined;
+  const workflowAdmission = step ? createWorkflowSafetyAdmission(input.store, step,
+    { ...input.runRequest, runnerId: input.attempt.effectiveRunnerId }) : undefined;
+  const semaphoreInputs = workflowAdmission ? [
+    ...workflowAdmission.entries,
+    ...workflowAdmission.resourceKeys.map(resourceKey => ({ resourceType: "workflow_resource" as const, resourceKey, limit: 1 })),
+  ].map(entry => ({ ...entry, workspaceId: input.workUnit.workspaceId, ...toRuntimeAttemptFence(input.attempt),
+    ownerType: "work_unit_attempt" as const, ownerId: input.attempt.id, acquiredAt: input.now, expiresAt })) : buildRunSemaphoreInputs({
     workUnit: input.workUnit,
     attempt: input.attempt,
     channel,
@@ -177,6 +185,7 @@ export function recoverPreparedRunConcurrency(input: {
     runId: input.runId,
     leases: leaseInputs,
     semaphores: semaphoreInputs,
+    ...(workflowAdmission ? { workflowAdmission } : {}),
     now: input.now,
     expiresAt,
   });

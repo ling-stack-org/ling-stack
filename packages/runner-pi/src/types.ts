@@ -153,6 +153,16 @@ export interface PiRunnerToolHandledResult {
   readonly isError?: boolean;
 }
 
+export type PiRunnerReadonlyToolName = "read" | "grep" | "find" | "ls";
+
+export interface PiRunnerReadonlyToolCallRequest {
+  readonly toolCallId: string;
+  readonly toolName: PiRunnerReadonlyToolName;
+  readonly input: unknown;
+  readonly cwd: string;
+  readonly signal?: AbortSignal;
+}
+
 /**
  * Durable Host evidence used to continue an interrupted Agent turn after one
  * approved tool call has already completed. This is transcript evidence, not
@@ -501,6 +511,9 @@ export interface PiRunnerRunOptions {
   readonly task: PiRunnerTask;
   readonly provider: PiRunnerProviderConfig;
   readonly tools?: readonly PiRunnerToolName[];
+  /** Host-selected producers, never an authorization grant or an SDK fallback. */
+  readonly readonlyToolsProfile?: "host_readonly_v1";
+  readonly onReadonlyToolCall?: (request: PiRunnerReadonlyToolCallRequest) => PiRunnerToolHandledResult | Promise<PiRunnerToolHandledResult>;
   readonly mcpTools?: readonly PiRunnerMcpToolDefinition[];
   /** Host-selected schema surface, not an authorization grant. */
   readonly hostCapabilityTools?: readonly PiRunnerHostCapabilityToolDefinition[];

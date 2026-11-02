@@ -16,7 +16,10 @@ test("an explicitly parallel QA sibling can finish while Engineer waits for its 
   const qa = created.workflowSteps.find((step) => step.toParticipantId === "teammate_builtin_qa");
   assert.ok(entry && engineer && qa);
   for (const sibling of [engineer, qa]) {
-    assert.equal(sibling.metadata.maxParallelSiblings, 2);
+    assert.equal(sibling.metadata.sideEffectClass, "analysis_readonly");
+    assert.deepEqual(sibling.metadata.parallelPolicy, {
+      autoParallel: true, maxParallelSiblings: 2, resourceKeys: [],
+    });
     assert.deepEqual(sibling.metadata.dependsOnStepIds, [entry.id],
       "the accepted graph must not serialize one required sibling behind the other");
     assert.deepEqual(sibling.metadata.requiredTools, ["read"]);
@@ -43,6 +46,22 @@ test("an explicitly parallel QA sibling can finish while Engineer waits for its 
   assert.equal(fixture.store.getRun(question.sourceRun.id).status, "yielded");
   assert.equal(fixture.store.getChannelWorkflowStep(engineer.id).status, "waiting_for_input");
   const qaRunId = fixture.store.getChannelWorkflowStep(qa.id).runId;
+  for (const stepId of [engineer.id, qa.id]) {
+    const step = fixture.store.getChannelWorkflowStep(stepId);
+    const run = fixture.store.getRun(step.runId);
+    const plan = run.requestSnapshot.workflowSafetySnapshot?.plan;
+    assert.ok(plan, "parallel execution requires a Host-frozen safety plan");
+    assert.deepEqual(plan, step.metadata.safetyPlan);
+    assert.equal(plan.profile, "pi_host_readonly_v1");
+    assert.equal(plan.runnerId, "pi");
+    assert.equal(plan.safety.sideEffectClass, "analysis_readonly");
+    assert.equal(plan.safety.parallelPolicy.autoParallel, true);
+    assert.deepEqual(plan.tools, ["read"]);
+    assert.equal(plan.networkAccess, false);
+    assert.deepEqual(plan.writeRoots, []);
+    assert.equal(run.requestSnapshot.effectivePolicySnapshot.workspaceAccessMode, "read_only");
+    assert.deepEqual(run.requestSnapshot.effectivePolicySnapshot.allowedWritePaths, []);
+  }
   const qaActionsBefore = fixture.actionsForRun(qaRunId);
   assert.equal(qaActionsBefore.length, 1);
   assert.equal(qaActionsBefore[0].status, "succeeded");
@@ -91,6 +110,8 @@ test("an explicitly parallel QA sibling can finish while Engineer waits for its 
     "QA is an independent sibling, not Engineer's input dependency");
   assert.deepEqual(successors[0].requestSnapshot.contextPack, sourcePack,
     "the parallel sibling must not replace any part of Engineer's frozen context pack");
+  assert.deepEqual(successors[0].requestSnapshot.workflowSafetySnapshot, question.sourceRun.requestSnapshot.workflowSafetySnapshot,
+    "answer continuation must preserve the Host-frozen readonly safety plan");
   assert.equal(successors[0].threadId, question.sourceThread.id);
   assert.equal(successors[0].taskId, question.sourceRun.taskId);
   assert.equal(successors[0].workflowStepId, engineer.id);

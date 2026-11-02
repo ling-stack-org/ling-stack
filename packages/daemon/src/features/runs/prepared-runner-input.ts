@@ -10,7 +10,7 @@ import type { RunRequest } from "./schemas.js";
 import { inlineProviderDescriptor } from "../conversations/normal-conversation-prepared-provider.js";
 
 const inputKeys = ["cwd", "task", "provider", "tools", "mcpTools", "thinkingLevel", "reasoningSummary", "systemPrompt",
-  "appendSystemPrompt", "agentDir", "runtimePaths", "runtimeToolFeatures", "mediaGenerationTools", "initialToolSurface", "hostCapabilityTools"] as const;
+  "appendSystemPrompt", "agentDir", "runtimePaths", "runtimeToolFeatures", "mediaGenerationTools", "initialToolSurface", "hostCapabilityTools", "readonlyToolsProfile"] as const;
 type PreparedOptions = Omit<Pick<PiRunnerRunOptions, (typeof inputKeys)[number]>, "tools"> & { readonly tools?: RunRequest["tools"] };
 export interface SkillDefinitionRuntimeSnapshot {
   readonly skillId: string;
@@ -69,6 +69,9 @@ export function restorePreparedRunnerOptions(
   });
   const frozenSurface = payload.input.initialToolSurface;
   const currentSurface = current.initialToolSurface;
+  if (payload.input.readonlyToolsProfile !== current.readonlyToolsProfile) {
+    throw new HttpError(409, "workflow_safety_mismatch", "The prepared Host read profile changed.");
+  }
   if (payload.toolHydrationEnabled && !(currentSurface?.toolHydration ?? Boolean(current.onToolHydrationRequest)) ||
     frozenSurface?.userInput === true && currentSurface?.userInput !== true ||
     frozenSurface?.delegation === true && currentSurface?.delegation !== true ||
@@ -111,6 +114,12 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
     !isRecord(value.input.provider) || "apiKey" in value.input.provider || "headers" in value.input.provider ||
     !isDeepStrictEqual(redactSecrets(value), value)) throw new Error("Invalid prepared execution payload");
   const prepared = readPreparedPiInput(value.preparedInput);
+  if (value.input.readonlyToolsProfile !== undefined && value.input.readonlyToolsProfile !== "host_readonly_v1") {
+    throw new Error("Invalid prepared Host read profile");
+  }
+  if (value.input.readonlyToolsProfile === "host_readonly_v1" && (value.runnerId !== "pi"
+    || prepared.tools.some(tool => !["read", "grep", "find", "ls", "request_user_input"].includes(tool.name))
+    || value.toolHydrationEnabled)) throw new Error("Invalid prepared Host read tool surface");
   if (value.skillDefinitionSnapshot !== undefined) {
     const snapshot = value.skillDefinitionSnapshot;
     if (!isRecord(snapshot) || typeof snapshot.skillId !== "string" || !snapshot.skillId ||

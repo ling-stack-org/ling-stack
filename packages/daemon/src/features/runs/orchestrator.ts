@@ -70,7 +70,11 @@ import {
 } from "@ling-stack/contracts";
 import { createWorkflowOperationExecutionSnapshot } from "./workflow-operation-snapshot.js";
 import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
-import { captureWorkflowStartOwner, commitWorkflowStartReady, assertWorkflowRunAdmission } from "./workflow-step-start-admission.js";
+import { assertWorkflowSafetyAttempt, assertWorkflowSafetyRequest, assertWorkflowSafetyRunner,
+  restrictWorkflowSafetyTools, workflowSafetyEffectRejection } from "./workflow-safety.js";
+import { executeWorkflowReadonlyTool } from "./workflow-readonly-executor.js";
+import { captureWorkflowStartOwner, commitWorkflowStartReady, assertWorkflowRunAdmission,
+  failUndispatchedWorkflowStart, resumeWorkflowStartAdmission } from "./workflow-step-start-admission.js";
 import { failUnlinkedPreparationThread } from "./preparation-thread-failure.js";
 import type { McpBroker } from "../../context.js";
 import { HttpError } from "../../errors.js";
@@ -670,6 +674,7 @@ async function executeAdmittedRunRequest(
       : runRequest;
     assertFullAccessPermissionConfirmed(policyRequest);
     if (!delegatedExecution) validateWorkflowStepOwner(store, runRequest);
+    const workflowSafetyPlan = assertWorkflowSafetyRequest(store, runRequest);
     workflowStartOwner = delegatedExecution ? undefined : userInputBinding?.workflowStartOwner ?? captureWorkflowStartOwner(
         store,
         runRequest,
@@ -750,6 +755,8 @@ async function executeAdmittedRunRequest(
     if (runRequest.workflowOperationExecution && !(runnerResolution.runner.adapter instanceof PiRunnerAdapter)) {
       throw new HttpError(409, "operation_binding_runner_gate_unavailable", "This runner has no verified universal typed tool-before gate.");
     }
+    assertWorkflowSafetyRunner(store, runRequest, { adapter: runnerResolution.runner.adapter,
+      runnerId: runnerResolution.effectiveRunnerId, tools: runtimeTools });
     const channelForPolicy = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
     const channelWorkspaceSnapshot = channelForPolicy
       ? createChannelWorkspaceSnapshot(channelForPolicy, workspaceCwd)
@@ -759,7 +766,8 @@ async function executeAdmittedRunRequest(
       unifiedExec: runtimeSupervisor.getRuntimeToolFeatures().unifiedExec === true,
       shellSnapshot: runtimeSupervisor.getRuntimeToolFeatures().shellSnapshot === true,
     };
-    const selectedHostCapabilityTools = selectHostCapabilityToolsForRun(runRequest);
+    const selectedHostCapabilityTools = workflowSafetyPlan?.profile === "pi_host_readonly_v1"
+      ? [] : selectHostCapabilityToolsForRun(runRequest);
     const assertHostCapabilitiesCurrent = (): void => {
       if (selectedHostCapabilityTools.some((tool) => options.hostCapabilityBridge?.hasCapability(tool.capabilityId) !== true)) {
         throw new HttpError(409, "host_capability_desktop_required", "The selected Host capability is not currently available from Ling Desktop.");
@@ -816,7 +824,7 @@ async function executeAdmittedRunRequest(
       ? { kind: workUnit.kind, ownerType: workUnit.ownerType, ownerId: workUnit.ownerId }
       : resolveRunWorkUnitOwner(thread, runRequest, turn.id);
     // Definitions belong to initial model input; executable handlers require the real Run below.
-    const mediaGenerationEligible = delegatedExecution ? false : frozenExecution
+    const mediaGenerationEligible = delegatedExecution || workflowSafetyPlan?.profile === "pi_host_readonly_v1" ? false : frozenExecution
       ? frozenExecution.input.initialToolSurface?.mediaGeneration === true
       : isConversationMediaGenerationEligible({
           createdByActor: runRequest.createdByActor,
@@ -836,6 +844,14 @@ async function executeAdmittedRunRequest(
         userInput: userInputAvailable(),
         nativeFileCreate: workflowOperationUsesNativeFileCreate(runRequest),
         delegation: delegationToolSurfaceEnabled } };
+    runnerRequest = restrictWorkflowSafetyTools(runnerRequest, workflowSafetyPlan);
+    if (workflowSafetyPlan?.profile === "pi_host_readonly_v1") {
+      // SDK preparation may inspect schemas, but it has no execution authority.
+      runnerRequest = { ...runnerRequest, onReadonlyToolCall: () => {
+        throw new HttpError(409, "workflow_safety_not_admitted", "Read tools cannot execute during preparation.");
+      }, onToolBefore: () => ({ allowed: false, code: "workflow_safety_not_admitted",
+        reason: "Tools cannot execute during preparation." }) };
+    }
     if (!frozenExecution && runnerResolution.runner.adapter instanceof PiRunnerAdapter) {
       runnerRequest = withGstackHostContext(runnerRequest, selectedSkillSourceContext);
     }
@@ -849,6 +865,7 @@ async function executeAdmittedRunRequest(
     const assertPreparationCurrent = (): void => {
       if (activeRuns.isShuttingDown()) throw new HttpError(503, "runtime_shutting_down", "Runtime is shutting down.");
       assertHostCapabilitiesCurrent();
+      assertWorkflowSafetyRequest(runStore, runRequest);
       if (!frozenExecution) assertPreselectedMemoryCurrent(runStore, runRequest);
       delegatedExecution?.assertCurrent();
     };
@@ -894,19 +911,22 @@ async function executeAdmittedRunRequest(
       runnerResolution = runnerRegistry.resolve({ requestedRunnerId: executionInput.runnerId, allowFallback: false,
         allowedRunnerIds: loadWorkspaceRuntimeSettings(runStore, runnerRegistry).allowedRunnerIds, providerApi: resolvedProvider.api,
         tools: executionInput.input.tools, requestSource: runnerRequestSource });
+      assertWorkflowSafetyRunner(runStore, runRequest, { adapter: runnerResolution.runner.adapter,
+        runnerId: runnerResolution.effectiveRunnerId, tools: executionInput.input.tools });
       dynamicDelegationRegistry = runnerResolution.runner.adapter instanceof PiRunnerAdapter
         ? readOriginalDelegationRuntimeRegistry(runtimeSupervisor) : undefined;
       const currentDelegationToolSurfaceEnabled = runnerResolution.runner.adapter instanceof PiRunnerAdapter
         && dynamicDelegationRegistry?.isSelectedWorkflow({ store: runStore,
           workflowStepId: runRequest.workflowStepId, channelId: runRequest.task.channelId }) === true;
-      runnerRequest = restoreNormalConversationExecutionOptions(executionInput, { ...runnerRequest,
+      runnerRequest = restoreNormalConversationExecutionOptions(executionInput, restrictWorkflowSafetyTools({ ...runnerRequest,
         initialToolSurface: { mediaGeneration: mediaGenerationEligible,
           toolHydration: runnerResolution.runner.toolHydration?.mode === "daemon_hydrated" && runnerResolution.runner.toolHydration.conformance === "verified",
           userInput: userInputAvailable(),
           nativeFileCreate: workflowOperationUsesNativeFileCreate(runRequest),
           delegation: currentDelegationToolSurfaceEnabled },
         provider: resolvedProvider, mcpTools: currentMcp, mediaGenerationTools: mediaGenerationEligible
-          ? createConversationMediaGenerationToolDefinitions(listConversationMediaGenerationTargets(runStore, secretResolver)) : [] });
+          ? createConversationMediaGenerationToolDefinitions(listConversationMediaGenerationTargets(runStore, secretResolver)) : [] }, workflowSafetyPlan));
+      runnerRequest = restrictWorkflowSafetyTools(runnerRequest, workflowSafetyPlan);
       runtimeTools = executionInput.input.tools;
       mcpTools = runnerRequest.mcpTools ?? [];
       const names = new Set(mcpTools.map((tool) => tool.registeredName));
@@ -955,7 +975,8 @@ async function executeAdmittedRunRequest(
     }
     const currentChannelForPolicy = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
     const sessionPolicy = resolveSessionRunPolicy({ workspacePolicy: store.getApprovalPolicy(),
-      authorizationMode: policyRequest.authorizationMode, workspaceAccessMode: policyRequest.workspaceAccessMode,
+      authorizationMode: policyRequest.authorizationMode, workspaceAccessMode: workflowSafetyPlan?.profile === "pi_host_readonly_v1"
+        ? "read_only" : policyRequest.workspaceAccessMode,
       permissionPreset: policyRequest.permissionPreset, permissionMode: policyRequest.permissionMode,
       channelBoundPath: currentChannelForPolicy?.boundPath || runRequest.cwd, approvalProfile: runtimeApprovalProfile });
     approvalPolicy = sessionPolicy.approvalPolicy;
@@ -1427,19 +1448,21 @@ async function executeAdmittedRunRequest(
     } else {
       preparedConcurrency = prepareRunConcurrency({
         store,
-        runRequest,
+        runRequest: { ...runRequest, tools: runtimeTools },
         runId,
         workUnit,
         attempt,
         existingContinuationId: existingContinuation ? continuationExecution?.continuation.id : undefined,
         now: createdAt,
       });
-      acquireRunRuntimeSemaphores({
+      const reservation = runRequest.workflowStepId && workflowStartOwner
+        ? store.getChannelWorkflowStepStartAdmission(runRequest.workflowStepId, workflowStartOwner) : undefined;
+      if (!reservation) acquireRunRuntimeSemaphores({
         store,
         workUnit,
         attempt,
         channel: preparedConcurrency.channel,
-        channelParallelLimit: runRequest.channelParallelLimit,
+        channelParallelLimit: workflowSafetyPlan?.profile === "serial_v1" ? 1 : runRequest.channelParallelLimit,
         providerKey: providerConcurrencyKey,
         runnerId: runnerResolution.effectiveRunnerId,
         now: createdAt,
@@ -1673,6 +1696,9 @@ async function executeAdmittedRunRequest(
       appendRunCreatedControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, run, createdAt,
         userInputBinding ? `user-input-run-created:${userInputBinding.deliveryId}:${run.id}` : undefined);
     }
+    if (run && existingContinuation && continuationExecution) {
+      resumeWorkflowStartAdmission(store, runRequest, run.id, workflowStartOwner, continuationExecution, executionNow());
+    }
     if (run && !delegatedExecution && !userInputContinuation) commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner);
     if (workflowDelegationRootAdmissionPending && run && attempt && resolvedProvider && effectivePolicySnapshot) {
       const delegationRoot = admitOriginalDelegationRoot({ store, run: store.getRun(run.id) ?? run, attempt,
@@ -1797,7 +1823,11 @@ async function executeAdmittedRunRequest(
       if (continuationExecution) {
         continuationExecution = deferPreparedRunnerContinuation(store, continuationExecution, queuedAt);
       }
-      try { commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner); }
+      // An already linked workflow stays linked while its durable continuation
+      // waits for capacity. Ready cannot transfer the source's released slots.
+      const admission = runRequest.workflowStepId && workflowStartOwner
+        ? store.getChannelWorkflowStepStartAdmission(runRequest.workflowStepId, workflowStartOwner) : undefined;
+      try { if (!admission) commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner); }
       catch (ownerError) { writeRunPreparationFailure(sink, 409, { error: "workflow_start_owner_stale", message: String(ownerError) }); return undefined; }
       sink.writeReady({
         ok: true,
@@ -1992,6 +2022,10 @@ async function executeAdmittedRunRequest(
       sink.end();
       return error.runId;
     }
+    if (store && !existingContinuation) {
+      failUndispatchedWorkflowStart({ store, request: runRequest, owner: workflowStartOwner, run, attempt,
+        reason: error instanceof Error ? error.message : String(error), now: executionNow() });
+    }
     const statusCode = error instanceof HttpError ? error.statusCode : error instanceof UnsupportedRunnerError ? 400 : 500;
     writeRunPreparationFailure(sink, statusCode, {
       error: error instanceof HttpError ? error.code : error instanceof UnsupportedRunnerError ? error.code : "run_storage_unavailable",
@@ -2028,6 +2062,7 @@ async function executeAdmittedRunRequest(
     abortController.signal.throwIfAborted();
     if (delegatedExecution) delegatedExecution.assertCurrent();
     else assertWorkflowRunAdmission(store, run, workflowStartOwner, abortController.signal);
+    assertWorkflowSafetyAttempt({ store, run, sourceFence: runnerCallbackFence });
   };
   let resolveRunCompletion: (() => void) | undefined;
   const runCompletion = new Promise<void>((resolve) => {
@@ -2905,12 +2940,15 @@ async function executeAdmittedRunRequest(
         ? { ordinaryProgressRecovery: { schemaVersion: 1 as const, modelView: ordinaryProgressRecoveryModelView } }
         : {}),
       sandbox: sandboxBinding,
+      ...(runnerRequest.readonlyToolsProfile ? { onReadonlyToolCall: (request) =>
+        executeWorkflowReadonlyTool({ root: run.cwd, request, assertCurrent: assertCurrentRunAdmission }) } : {}),
       onToolBefore: (request) => {
         try { assertCurrentRunAdmission(); }
         catch (error) { return { allowed: false, code: delegatedExecution ? "delegation.source_attempt_stale" : "workflow_start_owner_stale",
           reason: error instanceof Error ? error.message : "Execution no longer owns this task and source." }; }
-        const rejection = delegatedExecution ? undefined : workflowOperationEffectRejection({ store, run, request,
-          restrictedCommandRuntime: runtimeSupervisor.getRestrictedCommandRuntime() });
+        const rejection = workflowSafetyEffectRejection({ store, run, request })
+          ?? (delegatedExecution ? undefined : workflowOperationEffectRejection({ store, run, request,
+          restrictedCommandRuntime: runtimeSupervisor.getRestrictedCommandRuntime() }));
         if (rejection) return { allowed: false, code: rejection.code, reason: rejection.reason };
         if (runnerRequest.hostCapabilityTools?.some((tool) => tool.name === request.toolName)) {
           const hostRejection = hostCapabilityAuthority?.check({ ...request, task: runnerRequest.task });
@@ -4293,6 +4331,7 @@ function findRunnerTerminalFailure(events: readonly PiRunnerEvent[]): string | u
 }
 
 export function validateWorkflowStepOwner(store: RunStore, runRequest: RunRequest): void {
+  assertWorkflowSafetyRequest(store, runRequest);
   if (!runRequest.workflowStepId) {
     if (runRequest.workflowOperationExecution !== undefined) {
       throw new HttpError(409, "operation_binding_snapshot_invalid", "Typed execution requires a workflow step owner.");

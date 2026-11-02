@@ -22,6 +22,8 @@ import {
   type WorkflowStepGate,
   type WorkflowStepTemplate,
   type WorkflowGraph,
+  type WorkflowStepParallelPolicy,
+  type WorkflowStepSideEffectClass,
 } from "@ling-stack/core";
 import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
@@ -31,6 +33,7 @@ import { isRecord, readOptionalBoolean, readOptionalNumber, readOptionalString, 
 import { listExecutableSkillDefinitions } from "../skills/registry.js";
 import { resolveCouncilSlotParticipant } from "./council-slot-resolver.js";
 import { compileWorkflowGraph, readOptionalWorkflowGraph } from "./workflow-graph.js";
+import { compileWorkflowStepSafety, readWorkflowStepSafety } from "./workflow-step-safety.js";
 
 export interface CompileWorkflowTemplateInput {
   readonly channelId: string;
@@ -72,6 +75,8 @@ export interface CustomWorkflowTemplateStep {
   readonly joinGroupId?: string;
   readonly dependencyMode?: ChannelWorkflowStepMetadata["dependencyMode"];
   readonly maxParallelSiblings?: number;
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
   readonly policy?: WorkflowStepPolicy;
   readonly gates?: readonly WorkflowStepGate[];
   readonly autoStart?: boolean;
@@ -157,6 +162,13 @@ export function compileWorkflowTemplate(store: RunStore, input: CompileWorkflowT
   const byTemplateStepId = new Map<string, ChannelWorkflowStep>();
   for (const [index, templateStep] of template.steps.entries()) {
     const resolved = resolveBuiltinTemplateStepParticipant(store, channel.id, templateStep, teammateTemplates);
+    const safety = compileWorkflowStepSafety({
+      ...templateStep,
+      parallelPolicy: templateStep.parallelPolicy && {
+        ...templateStep.parallelPolicy,
+        maxParallelSiblings: Math.min(templateStep.parallelPolicy.maxParallelSiblings ?? 1, channel.runtimePolicy.maxConcurrentRuns),
+      },
+    }, { maxConcurrentRuns: channel.runtimePolicy.maxConcurrentRuns });
     const step = store.createChannelWorkflowStep(
       {
         workflowId: workflow.id,
@@ -184,6 +196,8 @@ export function compileWorkflowTemplate(store: RunStore, input: CompileWorkflowT
           approvalGate: templateStep.approvalGate,
           policy: defaultWorkflowStepPolicy(templateStep),
           proposalStepSources: resolved.sources,
+          ...safety,
+          maxParallelSiblings: safety.parallelPolicy?.maxParallelSiblings,
         }),
       },
       now,
@@ -250,6 +264,11 @@ function compileCustomWorkflowTemplate(
     const stepAutoStart = templateStep.autoStart ?? input.autoStart ?? template.autoStartDefault ?? false;
     const requestedRunnerId = templateStep.requestedRunnerId ?? input.runnerId;
     const providerPresetId = templateStep.providerPresetId ?? input.providerPresetId;
+    const safety = compileWorkflowStepSafety(templateStep, {
+      maxConcurrentRuns: channel.runtimePolicy.maxConcurrentRuns,
+      maxParallelSteps: templateBudget,
+      legacyMaxParallelSiblings: templateStep.maxParallelSiblings,
+    });
     const metadata: ChannelWorkflowStepMetadata = {
       workflowTemplateId: template.id,
       templateVersion: `custom:${template.schemaVersion}`,
@@ -263,7 +282,8 @@ function compileCustomWorkflowTemplate(
       branchGroupId: templateStep.branchGroupId,
       joinGroupId: templateStep.joinGroupId,
       dependencyMode: templateStep.dependencyMode,
-      maxParallelSiblings: templateStep.maxParallelSiblings ?? templateBudget,
+      ...safety,
+      maxParallelSiblings: safety.parallelPolicy?.maxParallelSiblings,
       policy: templateStep.policy ?? defaultCustomWorkflowStepPolicy(templateStep),
       gates: templateStep.gates,
       proposalStepSources: resolved.sources,
@@ -384,6 +404,11 @@ function validateCustomWorkflowTemplate(
     );
   }
   for (const step of template.steps) {
+    compileWorkflowStepSafety(step, {
+      maxConcurrentRuns: channelMaxConcurrentRuns,
+      maxParallelSteps: template.maxParallelSteps,
+      legacyMaxParallelSiblings: step.maxParallelSiblings,
+    });
     validateCustomTemplateStepParticipantAndSkill(store, channel.id, step);
     validateCustomTemplateStepRunner(store, step.requestedRunnerId ?? input.runnerId, runnerRegistry);
   }
@@ -545,7 +570,8 @@ function customTemplateStepHasSideEffects(store: RunStore, step: CustomWorkflowT
   const skillTools = step.skillId
     ? listExecutableSkillDefinitions(store).find((skill) => skill.id === step.skillId)?.requiredTools ?? []
     : [];
-  return skillTools.some(isRiskyRunTool);
+  return skillTools.some(isRiskyRunTool) || step.sideEffectClass === "workspace_write"
+    || step.sideEffectClass === "external_mutation" || step.sideEffectClass === "release";
 }
 
 function defaultCustomWorkflowStepPolicy(_templateStep: CustomWorkflowTemplateStep): WorkflowStepPolicy {
@@ -590,6 +616,7 @@ function readCustomWorkflowTemplateStep(value: unknown, location: string): Custo
     throw new Error(`${location} must be an object`);
   }
   return {
+    ...readWorkflowStepSafety(value),
     id: readString(value, "id"),
     name: readString(value, "name"),
     prompt: readString(value, "prompt"),
@@ -701,7 +728,7 @@ function readOptionalPositiveInteger(record: Record<string, unknown>, key: strin
   if (value === undefined) {
     return undefined;
   }
-  if (!Number.isInteger(value) || value <= 0) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${key} must be a positive integer`);
   }
   return value;

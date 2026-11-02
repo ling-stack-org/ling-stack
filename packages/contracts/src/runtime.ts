@@ -364,7 +364,7 @@ export interface RuntimeEvent {
   readonly data: unknown;
 }
 
-export type RuntimeSemaphoreResourceType = "provider" | "channel_parallel" | "runner" | "media_provider";
+export type RuntimeSemaphoreResourceType = "provider" | "channel_parallel" | "runner" | "media_provider" | "workflow_resource";
 
 export type RuntimeSemaphoreSlotStatus = "active" | "released" | "expired";
 

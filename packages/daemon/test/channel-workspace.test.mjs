@@ -9802,9 +9802,9 @@ test("workflow collaboration card endpoints derive compact product cards", async
 });
 
 test("autoplan-lite workflow compiles durable steps and orchestrates them through the runner", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-orchestrator-"));
+  const cwd = realpathSync(await mkdtemp(resolve(tmpdir(), "ling-stack-channel-orchestrator-")));
   const runner = new RecordingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
       name: "Autoplan",
@@ -9978,9 +9978,9 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
 });
 
 test("workflow graph compiles into durable steps and emits standardized packets", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-graph-"));
+  const cwd = realpathSync(await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-graph-")));
   const runner = new RecordingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Graph workflow");
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
@@ -10286,7 +10286,7 @@ test("workflow planning failure follows policy and blocks for user repair", asyn
 test("workflow implementation failure follows policy and fails the workflow", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-implementation-failure-"));
   const runner = new SelectiveFailingRunner(["Implementation"]);
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Implementation failure workflow");
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
@@ -10606,7 +10606,7 @@ test("workflow skipped optional step allows downstream steps to start", async ()
   }
 });
 
-test("workflow orchestrator starts independent parallel branches within channel budget", async () => {
+test("workflow orchestrator keeps legacy independent parallel-looking branches serial without safety opt-in", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-parallel-"));
   const runner = new ParallelDelayedRunner();
   let cleanupWorkflowId;
@@ -10617,7 +10617,7 @@ test("workflow orchestrator starts independent parallel branches within channel 
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
       capabilities: ["chat", "reasoning", "tool_call"],
@@ -10665,15 +10665,16 @@ test("workflow orchestrator starts independent parallel branches within channel 
 
     const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(tick.status, "started");
-    assert.equal(tick.startedSteps.length, 2);
-    assert.equal(tick.schedulingDecision.effectiveMode, "parallel");
-    assert.equal(tick.schedulingDecision.parallelLimit, 2);
-    assert.deepEqual(tick.schedulingDecision.reasonCodes, ["smart_scheduling", "read_only_parallel_allowed"]);
-    assert.deepEqual(tick.startedSteps.map((item) => item.workflowStep.id).sort(), [firstStep.id, secondStep.id].sort());
-    assert.deepEqual(tick.schedulingDecision.queuedStepIds, [thirdStep.id]);
-    await runner.waitUntilStarted(2);
+    const orderedStepIds = [firstStep.id, secondStep.id, thirdStep.id].sort();
+    assert.equal(tick.startedSteps.length, 1);
+    assert.equal(tick.schedulingDecision.effectiveMode, "serial");
+    assert.equal(tick.schedulingDecision.parallelLimit, 1);
+    assert.deepEqual(tick.schedulingDecision.reasonCodes, ["smart_scheduling", "safety_opt_in_required", "active_step_budget_exhausted"]);
+    assert.deepEqual(tick.startedSteps.map((item) => item.workflowStep.id), orderedStepIds.slice(0, 1));
+    assert.deepEqual(tick.schedulingDecision.queuedStepIds, orderedStepIds.slice(1));
+    await runner.waitUntilStarted(1);
     const steps = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
-    assert.deepEqual(steps.workflowSteps.map((step) => step.status).sort(), ["queued", "running", "running"]);
+    assert.deepEqual(steps.workflowSteps.map((step) => step.status).sort(), ["queued", "queued", "running"]);
   } finally {
     try {
       runner.resolveAll("parallel cleanup");
@@ -10936,11 +10937,11 @@ test("custom workflow template unsafe autostart requires explicit confirmation",
   }
 });
 
-test("custom workflow template parallel branches start within compiled budget", async () => {
+test("custom workflow template parallel-looking branches stay serial without an explicit safety contract", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-custom-template-parallel-"));
   const runner = new ParallelDelayedRunner();
   let cleanupWorkflowId;
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
       capabilities: ["chat", "reasoning", "tool_call"],
@@ -10991,10 +10992,13 @@ test("custom workflow template parallel branches start within compiled budget", 
 
     const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(tick.status, "started");
-    assert.equal(tick.startedSteps.length, 2);
+    assert.equal(tick.startedSteps.length, 1);
+    assert.equal(tick.schedulingDecision.effectiveMode, "serial");
+    assert.ok(compiled.workflowSteps.every(step => step.metadata.sideEffectClass === "workspace_write"
+      && step.metadata.parallelPolicy.autoParallel === false));
     cleanupWorkflowId = compiled.workflow.id;
-    await runner.waitUntilStarted(2);
-    assert.deepEqual(runner.runs.map((run) => run.task.title).sort(), ["Branch A", "Branch B"]);
+    await runner.waitUntilStarted(1);
+    assert.deepEqual(runner.runs.map((run) => run.task.title), ["Branch A"]);
   } finally {
     try {
       runner.resolveAll("custom parallel cleanup");
@@ -11019,7 +11023,7 @@ test("workflow orchestrator keeps serial behavior when smart scheduling max runs
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
       capabilities: ["chat", "reasoning", "tool_call"],
@@ -11059,7 +11063,7 @@ test("workflow orchestrator keeps serial behavior when smart scheduling max runs
     assert.equal(tick.status, "started");
     assert.equal(tick.startedSteps.length, 1);
     assert.equal(tick.schedulingDecision.effectiveMode, "serial");
-    assert.deepEqual(tick.schedulingDecision.reasonCodes, ["smart_scheduling", "max_concurrent_runs_one"]);
+    assert.deepEqual(tick.schedulingDecision.reasonCodes, ["smart_scheduling", "max_concurrent_runs_one", "safety_opt_in_required", "active_step_budget_exhausted"]);
     cleanupWorkflowId = workflow.id;
     await runner.waitUntilStarted(1);
     const steps = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
@@ -11091,7 +11095,7 @@ test("workflow smart scheduling keeps side-effectful branches serial", async () 
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
       capabilities: ["chat", "reasoning", "tool_call"],
@@ -11132,7 +11136,7 @@ test("workflow smart scheduling keeps side-effectful branches serial", async () 
     assert.equal(tick.status, "started");
     assert.equal(tick.startedSteps.length, 1);
     assert.equal(tick.schedulingDecision.effectiveMode, "serial");
-    assert.deepEqual(tick.schedulingDecision.reasonCodes, ["smart_scheduling", "side_effectful_step_serial"]);
+    assert.deepEqual(tick.schedulingDecision.reasonCodes, ["smart_scheduling", "side_effectful_step_serial", "active_step_budget_exhausted"]);
     await runner.waitUntilStarted(1);
   } finally {
     try {
@@ -11158,7 +11162,7 @@ test("workflow smart scheduling keeps unknown-tool branches serial", async () =>
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
       capabilities: ["chat", "reasoning", "tool_call"],
@@ -11201,7 +11205,7 @@ test("workflow smart scheduling keeps unknown-tool branches serial", async () =>
     assert.equal(tick.startedSteps.length, 1);
     assert.equal(tick.schedulingDecision.effectiveMode, "serial");
     assert.equal(tick.schedulingDecision.safetyEvidence, "unknown");
-    assert.deepEqual(tick.schedulingDecision.reasonCodes, ["smart_scheduling", "unknown_tools_serial"]);
+    assert.deepEqual(tick.schedulingDecision.reasonCodes, ["smart_scheduling", "unknown_tools_serial", "active_step_budget_exhausted"]);
     await runner.waitUntilStarted(1);
   } finally {
     try {
@@ -11219,6 +11223,7 @@ test("workflow smart scheduling keeps unknown-tool branches serial", async () =>
 test("workflow smart scheduling does not start sibling branches while approval is pending", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-smart-approval-"));
   const runner = new ParallelDelayedRunner();
+  let cleanupWorkflowId;
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
     storeFactory: (storeCwd) => {
@@ -11226,7 +11231,7 @@ test("workflow smart scheduling does not start sibling branches while approval i
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
       capabilities: ["chat", "reasoning", "tool_call"],
@@ -11250,13 +11255,16 @@ test("workflow smart scheduling does not start sibling branches while approval i
       status: "ready",
       createdBy: "local-user",
     }, new Date().toISOString());
+    cleanupWorkflowId = workflow.id;
     createParallelWorkflowStep(store, workflow.id, "Approval A", {
+      position: 1,
       branchGroupId: "branch-a",
       maxParallelSiblings: 2,
       providerPresetId: provider.id,
       approvalGate: { mode: "standard", risk: "medium" },
     });
     createParallelWorkflowStep(store, workflow.id, "Approval B", {
+      position: 2,
       branchGroupId: "branch-b",
       maxParallelSiblings: 2,
       providerPresetId: provider.id,
@@ -11272,8 +11280,15 @@ test("workflow smart scheduling does not start sibling branches while approval i
     assert.equal(steps.workflowSteps.filter((step) => step.status === "waiting_for_approval").length, 1);
     assert.equal(steps.workflowSteps.filter((step) => step.status === "queued").length, 1);
   } finally {
-    await daemon.close();
-    await rm(cwd, { recursive: true, force: true });
+    try {
+      runner.resolveAll("approval cleanup");
+      if (cleanupWorkflowId) {
+        await settleParallelDelayedWorkflow(daemon.url, cwd, cleanupWorkflowId, runner, "approval cleanup");
+      }
+    } finally {
+      await daemon.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
   }
 });
 

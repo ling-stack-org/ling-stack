@@ -8,11 +8,11 @@ import {
   type RuntimeResourceRenewal,
 } from "../../runtime-supervisor-types.js";
 import { assertRuntimeResourceRenewal } from "../../runtime-resource-renewal.js";
-import { readNumber } from "./helpers.js";
 import { mapRuntimeSemaphoreSlot } from "./runtime-work-mappers.js";
 import { runtimeSemaphoreSlotSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import { withCancelledAttemptResourceVeto } from "./cancelled-attempt-resource-veto.js";
+import { readRuntimeSemaphoreCapacity } from "./workflow-step-admission-capacity.js";
 
 export class SqliteRuntimeSemaphoreStore {
   constructor(private readonly context: SqliteStoreContext) {}
@@ -25,77 +25,12 @@ export class SqliteRuntimeSemaphoreStore {
   ensureRuntimeSemaphoreSlotForAttempt(input: AcquireRuntimeSemaphoreSlotInput):
     | { readonly status: "acquired" | "existing"; readonly slot: RuntimeSemaphoreSlot }
     | { readonly status: "full" | "changed" } {
-    const id = createRuntimeSemaphoreSlotId();
     try {
       this.context.database.exec("BEGIN IMMEDIATE;");
-      const current = this.context.database.prepare(`
-        SELECT 1 FROM work_unit_attempts AS attempts
-        JOIN work_units AS units ON units.id = attempts.work_unit_id
-        WHERE attempts.id=? AND attempts.work_unit_id=? AND attempts.runtime_instance_id=?
-          AND attempts.fencing_token=? AND units.active_attempt_id=attempts.id
-          AND units.workspace_id=? AND attempts.status IN ('created','started','waiting_for_approval','cancelling')
-      `).get(input.attemptId, input.workUnitId, input.runtimeInstanceId, input.fencingToken, input.workspaceId);
-      if (!current || input.ownerType !== "work_unit_attempt" || input.ownerId !== input.attemptId) {
-        this.context.database.exec("ROLLBACK;");
-        return { status: "changed" };
-      }
       this.expireRuntimeSemaphoreSlots(input.acquiredAt);
-      const ownedRows = this.context.database.prepare(`${runtimeSemaphoreSlotSelectSql(`
-        WHERE workspace_id = ? AND resource_type = ? AND resource_key = ?
-          AND owner_id = ? AND status = 'active'
-      `)} ORDER BY id LIMIT 2`).all(
-        input.workspaceId,
-        input.resourceType,
-        input.resourceKey,
-        input.ownerId,
-      ) as Record<string, SQLOutputValue>[];
-      if (ownedRows.length > 0) {
-        const slot = ownedRows.length === 1 ? mapRuntimeSemaphoreSlot(ownedRows[0]!) : undefined;
-        if (!slot || !sameExactAttemptSlot(slot, input)) {
-          this.context.database.exec("ROLLBACK;");
-          return { status: "changed" };
-        }
-        this.context.database.exec("COMMIT;");
-        return { status: "existing", slot };
-      }
-      const activeCount = readNumber(
-        this.context.database
-          .prepare(`
-            SELECT COUNT(*) AS count
-            FROM runtime_semaphore_slots
-            WHERE workspace_id = ? AND resource_type = ? AND resource_key = ? AND status = 'active'
-          `)
-          .get(input.workspaceId, input.resourceType, input.resourceKey) as Record<string, SQLOutputValue>,
-        "count",
-      );
-      if (activeCount >= input.limit) {
-        this.context.database.exec("ROLLBACK;");
-        return { status: "full" };
-      }
-      this.context.database.prepare(`
-        INSERT INTO runtime_semaphore_slots (
-          id, workspace_id, resource_type, resource_key, owner_type, owner_id,
-          work_unit_id, attempt_id, runtime_instance_id, fencing_token, status,
-          acquired_at, last_renewed_at, expires_at, released_at, release_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
-      `).run(
-        id,
-        input.workspaceId,
-        input.resourceType,
-        input.resourceKey,
-        input.ownerType,
-        input.ownerId,
-        input.workUnitId,
-        input.attemptId,
-        input.runtimeInstanceId,
-        input.fencingToken,
-        input.acquiredAt,
-        input.acquiredAt,
-        input.expiresAt,
-        null,
-        null,
-      );
-      this.context.database.exec("COMMIT;");
+      const result = this.ensureRuntimeSemaphoreSlotForAttemptWithinTransaction(input);
+      this.context.database.exec(result.status === "acquired" || result.status === "existing" ? "COMMIT;" : "ROLLBACK;");
+      return result;
     } catch {
       try {
         this.context.database.exec("ROLLBACK;");
@@ -104,81 +39,15 @@ export class SqliteRuntimeSemaphoreStore {
       }
       return { status: "changed" };
     }
-    const row = this.context.database.prepare(runtimeSemaphoreSlotSelectSql("WHERE id = ?")).get(id);
-    return row
-      ? { status: "acquired", slot: mapRuntimeSemaphoreSlot(row as Record<string, SQLOutputValue>) }
-      : { status: "changed" };
   }
 
   acquireRuntimeSemaphoreSlot(input: AcquireRuntimeSemaphoreSlotInput): RuntimeSemaphoreSlot | undefined {
-    const id = createRuntimeSemaphoreSlotId();
     try {
       this.context.database.exec("BEGIN IMMEDIATE;");
-      const current = this.context.database.prepare(`
-        SELECT 1 FROM work_unit_attempts AS attempts
-        JOIN work_units AS units ON units.id = attempts.work_unit_id
-        WHERE attempts.id=? AND attempts.work_unit_id=? AND attempts.runtime_instance_id=?
-          AND attempts.fencing_token=? AND units.active_attempt_id=attempts.id
-          AND units.workspace_id=? AND attempts.status IN ('created','started','waiting_for_approval','cancelling')
-      `).get(input.attemptId, input.workUnitId, input.runtimeInstanceId, input.fencingToken, input.workspaceId);
-      if (!current || (input.ownerType === "work_unit_attempt" && input.ownerId !== input.attemptId)) {
-        this.context.database.exec("ROLLBACK;");
-        return undefined;
-      }
       this.expireRuntimeSemaphoreSlots(input.acquiredAt);
-      const activeCount = readNumber(
-        this.context.database
-          .prepare(`
-            SELECT COUNT(*) AS count
-            FROM runtime_semaphore_slots
-            WHERE workspace_id = ? AND resource_type = ? AND resource_key = ? AND status = 'active'
-          `)
-          .get(input.workspaceId, input.resourceType, input.resourceKey) as Record<string, SQLOutputValue>,
-        "count",
-      );
-      if (activeCount >= input.limit) {
-        this.context.database.exec("ROLLBACK;");
-        return undefined;
-      }
-      this.context.database
-        .prepare(`
-          INSERT INTO runtime_semaphore_slots (
-            id,
-            workspace_id,
-            resource_type,
-            resource_key,
-            owner_type,
-            owner_id,
-            work_unit_id,
-            attempt_id,
-            runtime_instance_id,
-            fencing_token,
-            status,
-            acquired_at,
-            last_renewed_at,
-            expires_at,
-            released_at,
-            release_reason
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
-        `)
-        .run(
-          id,
-          input.workspaceId,
-          input.resourceType,
-          input.resourceKey,
-          input.ownerType,
-          input.ownerId,
-          input.workUnitId,
-          input.attemptId,
-          input.runtimeInstanceId,
-          input.fencingToken,
-          input.acquiredAt,
-          input.acquiredAt,
-          input.expiresAt,
-          null,
-          null,
-        );
-      this.context.database.exec("COMMIT;");
+      const result = this.acquireWithinTransaction(input, false);
+      this.context.database.exec(result.status === "acquired" ? "COMMIT;" : "ROLLBACK;");
+      return result.status === "acquired" ? result.slot : undefined;
     } catch {
       try {
         this.context.database.exec("ROLLBACK;");
@@ -187,8 +56,47 @@ export class SqliteRuntimeSemaphoreStore {
       }
       return undefined;
     }
-    const slot = this.context.database.prepare(runtimeSemaphoreSlotSelectSql("WHERE id = ?")).get(id);
-    return slot ? mapRuntimeSemaphoreSlot(slot as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  /** The caller owns BEGIN/COMMIT. Only an exact validated admission handoff may exclude its reservation. */
+  ensureRuntimeSemaphoreSlotForAttemptWithinTransaction(input: AcquireRuntimeSemaphoreSlotInput, excludePreparingTaskId?: string):
+    | { readonly status: "acquired" | "existing"; readonly slot: RuntimeSemaphoreSlot }
+    | { readonly status: "full" | "changed" } {
+    if (input.ownerType !== "work_unit_attempt" || input.ownerId !== input.attemptId) return { status: "changed" };
+    return this.acquireWithinTransaction(input, true, excludePreparingTaskId);
+  }
+
+  private acquireWithinTransaction(input: AcquireRuntimeSemaphoreSlotInput, reuse: boolean, excludePreparingTaskId?: string):
+    | { readonly status: "acquired" | "existing"; readonly slot: RuntimeSemaphoreSlot }
+    | { readonly status: "full" | "changed" } {
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1) return { status: "changed" };
+    const current = this.context.database.prepare(`
+      SELECT 1 FROM work_unit_attempts AS attempts JOIN work_units AS units ON units.id=attempts.work_unit_id
+      WHERE attempts.id=? AND attempts.work_unit_id=? AND attempts.runtime_instance_id=? AND attempts.fencing_token=?
+        AND units.active_attempt_id=attempts.id AND units.workspace_id=?
+        AND attempts.status IN ('created','started','waiting_for_approval','cancelling')
+    `).get(input.attemptId, input.workUnitId, input.runtimeInstanceId, input.fencingToken, input.workspaceId);
+    if (!current || input.ownerType === "work_unit_attempt" && input.ownerId !== input.attemptId) return { status: "changed" };
+    if (reuse) {
+      const rows = this.context.database.prepare(`${runtimeSemaphoreSlotSelectSql(`WHERE workspace_id=? AND resource_type=?
+        AND resource_key=? AND owner_id=? AND status='active'`)} ORDER BY id LIMIT 2`)
+        .all(input.workspaceId, input.resourceType, input.resourceKey, input.ownerId) as Record<string, SQLOutputValue>[];
+      if (rows.length) {
+        const slot = rows.length === 1 ? mapRuntimeSemaphoreSlot(rows[0]!) : undefined;
+        return slot && sameExactAttemptSlot(slot, input) ? { status: "existing", slot } : { status: "changed" };
+      }
+    }
+    const capacity = readRuntimeSemaphoreCapacity(this.context.database, { ...input, excludePreparingTaskId });
+    if (capacity.occupied >= capacity.limit) return { status: "full" };
+    const id = createRuntimeSemaphoreSlotId();
+    this.context.database.prepare(`INSERT INTO runtime_semaphore_slots (
+      id,workspace_id,resource_type,resource_key,owner_type,owner_id,work_unit_id,attempt_id,runtime_instance_id,fencing_token,
+      status,acquired_at,last_renewed_at,expires_at,released_at,release_reason
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,'active',?,?,?,NULL,NULL)`)
+      .run(id, input.workspaceId, input.resourceType, input.resourceKey, input.ownerType, input.ownerId,
+        input.workUnitId, input.attemptId, input.runtimeInstanceId, input.fencingToken, input.acquiredAt, input.acquiredAt, input.expiresAt);
+    const row = this.context.database.prepare(runtimeSemaphoreSlotSelectSql("WHERE id=?")).get(id)!;
+    return { status: "acquired", slot: mapRuntimeSemaphoreSlot(row as Record<string, SQLOutputValue>) };
   }
 
   renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewal: RuntimeResourceRenewal): number {
@@ -262,6 +170,8 @@ export class SqliteRuntimeSemaphoreStore {
       SELECT id, work_unit_id, attempt_id, runtime_instance_id, fencing_token
       FROM runtime_semaphore_slots
       WHERE status = 'active' AND expires_at <= ?
+        AND resource_type <> 'workflow_resource'
+        AND NOT EXISTS (SELECT 1 FROM workflow_step_admission_entries AS entry WHERE entry.slot_id=runtime_semaphore_slots.id)
         AND EXISTS (
           SELECT 1 FROM work_unit_attempts AS attempts
           JOIN work_units AS units ON units.id = attempts.work_unit_id
@@ -286,6 +196,8 @@ export class SqliteRuntimeSemaphoreStore {
           UPDATE runtime_semaphore_slots
           SET status = 'expired', released_at = ?, release_reason = COALESCE(release_reason, 'expired')
           WHERE id = ? AND status = 'active' AND expires_at <= ?
+            AND resource_type <> 'workflow_resource'
+            AND NOT EXISTS (SELECT 1 FROM workflow_step_admission_entries AS entry WHERE entry.slot_id=runtime_semaphore_slots.id)
             AND work_unit_id = ? AND attempt_id = ? AND runtime_instance_id = ? AND fencing_token = ?
             AND EXISTS (
               SELECT 1 FROM work_unit_attempts AS attempts

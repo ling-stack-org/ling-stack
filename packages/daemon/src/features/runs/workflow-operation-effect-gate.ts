@@ -10,6 +10,7 @@ import { commandMatchesPolicy } from "../channels/command-operation-match.js";
 import { isNativeRestrictedCommandRuntime, type NativeRestrictedCommandRuntime } from "../../runtime/sandbox/restricted-command-runtime.js";
 import { bindWorkflowCommandRequest, WorkflowCommandBindingError } from "./workflow-command-cwd.js";
 import { assertChannelCommandInputPolicyCurrent } from "../channels/channel-command-input-policy.js";
+import { workflowSafetyEffectRejection } from "./workflow-safety.js";
 
 interface FileEffect {
   readonly path: string;
@@ -29,6 +30,8 @@ export function workflowOperationEffectRejection(input: {
   readonly request: { readonly toolName: string; readonly input: unknown; readonly cwd: string };
   readonly restrictedCommandRuntime?: NativeRestrictedCommandRuntime;
 }): WorkflowOperationBlock | undefined {
+  const safety = workflowSafetyEffectRejection(input);
+  if (safety) return safety;
   const writeRisk = commandWriteRiskRejection(input);
   if (writeRisk) return writeRisk;
   return workflowOperationAuthorityRejection(input);
@@ -43,6 +46,8 @@ export function workflowOperationAuthorityRejection(input: {
   readonly request: { readonly toolName: string; readonly input: unknown; readonly cwd: string };
   readonly restrictedCommandRuntime?: NativeRestrictedCommandRuntime;
 }): WorkflowOperationBlock | undefined {
+  const safety = workflowSafetyEffectRejection(input);
+  if (safety) return safety;
   const context = validateWorkflowOperationRunContext(input);
   if (context.status === "legacy") return undefined;
   if (context.status === "blocked") return context;

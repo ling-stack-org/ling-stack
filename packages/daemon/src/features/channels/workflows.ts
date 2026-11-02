@@ -83,6 +83,7 @@ import { mergeWorkflowApprovalProfiles } from "./workflow-step-run-policy.js";
 import { preflightWorkflowParticipantProvider } from "./workflow-participant-provider.js";
 import { createWorkflowPreApprovalExecutionPermit, prepareWorkflowPreApproval,
   workflowPreApprovalStartOverrideError } from "./workflow-pre-approval.js";
+import { createWorkflowSafetyAdmission, freezeWorkflowSafetyPlan, workflowSafetySnapshot, type WorkflowSafetySnapshotV1 } from "../runs/workflow-safety.js";
 export { completeWorkflowIfStepsFinished } from "./workflow-completion.js";
 
 const WORKFLOW_STEP_RESOURCE_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -102,6 +103,7 @@ export interface WorkflowStepRunRequest {
   /** Internal-only Host execution bindings for workflow-owned operations. */
   readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
   readonly workflowOperationExecution?: WorkflowOperationExecutionSnapshot;
+  readonly workflowSafetySnapshot?: WorkflowSafetySnapshotV1;
   readonly requestedSkillId?: string;
   readonly skipProviderPreflight?: boolean;
   readonly skipMemoryRecall?: boolean;
@@ -591,6 +593,7 @@ export async function handleChannelWorkflowStepStartRoute(
   validateRunRequest: ValidateWorkflowStepRunRequest,
   startRun: StartWorkflowStepRun,
   secretResolver?: SecretResolver,
+  runnerRegistry?: RunnerRegistry,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -606,7 +609,7 @@ export async function handleChannelWorkflowStepStartRoute(
       writeJson(response, 404, { error: "workflow_step_not_found", message: `Channel workflow step not found: ${workflowStepId}` });
       return;
     }
-    await handleChannelWorkflowStepStart(request, response, config, storeRegistry, cwd, existing.id, validateRunRequest, startRun, secretResolver);
+    await handleChannelWorkflowStepStart(request, response, config, storeRegistry, cwd, existing.id, validateRunRequest, startRun, secretResolver, runnerRegistry);
   } catch (error) {
     writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
   }
@@ -622,6 +625,7 @@ async function handleChannelWorkflowStepStart(
   validateRunRequest: ValidateWorkflowStepRunRequest,
   startRun: StartWorkflowStepRun,
   secretResolver?: SecretResolver,
+  runnerRegistry?: RunnerRegistry,
 ): Promise<void> {
   if (request.method !== "POST") {
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow step start` });
@@ -631,7 +635,7 @@ async function handleChannelWorkflowStepStart(
   const store = storeRegistry.getStore(cwd);
   const body = await readJsonBody(request, config.maxBodyBytes);
   const input = parseChannelWorkflowStepStartRequest(body);
-  const started = await prepareWorkflowStepStart(store, workflowStepId, input, cwd, validateRunRequest, secretResolver);
+  const started = await prepareWorkflowStepStart(store, workflowStepId, input, cwd, validateRunRequest, secretResolver, runnerRegistry);
   if (started.kind === "waiting_for_approval") {
     writeJson(response, 200, {
       status: "waiting_for_approval",
@@ -700,6 +704,7 @@ export async function prepareWorkflowStepStart(
   cwd: string,
   validateRunRequest: ValidateWorkflowStepRunRequest,
   secretResolver?: SecretResolver,
+  runnerRegistry?: RunnerRegistry,
 ): Promise<PreparedWorkflowStepStart> {
   let step = store.getChannelWorkflowStep(workflowStepId);
   if (!step) {
@@ -719,6 +724,17 @@ export async function prepareWorkflowStepStart(
   }
 
   const now = new Date().toISOString();
+  if (input.mode === "create_and_run_task" && step.metadata?.sideEffectClass) {
+    const execution = assertChannelWorkspaceReady(channel, cwd);
+    if (!execution.ok) return { kind: "error", statusCode: 409, code: "workflow_safety_mismatch", message: execution.message };
+    try {
+      step = freezeWorkflowSafetyPlan({ store, step, workspaceCwd: cwd, executionCwd: execution.executionCwd,
+        runnerId: input.runnerId ?? step.metadata?.requestedRunnerId ?? step.metadata?.safetyPlan?.runnerId, runnerRegistry });
+    } catch (error) {
+      return { kind: "error", statusCode: error instanceof HttpError ? error.statusCode : 409,
+        code: error instanceof HttpError ? error.code : "workflow_safety_mismatch", message: error instanceof Error ? error.message : String(error) };
+    }
+  }
   const initialPreApproval = inspectWorkflowPreApproval(store, step, now);
   const overrideError = workflowPreApprovalStartOverrideError(step, channel, input, initialPreApproval);
   if (overrideError) return overrideError;
@@ -804,7 +820,8 @@ export async function prepareWorkflowStepStart(
   if (!workspace.ok) {
     return block(workspace.message);
   }
-  const runnerId = input.runnerId ?? (preApprovalEvidence.status === "approved" ? step.metadata?.requestedRunnerId : undefined);
+  const runnerId = input.runnerId ?? step.metadata?.safetyPlan?.runnerId
+    ?? (preApprovalEvidence.status === "approved" ? step.metadata?.requestedRunnerId : undefined);
   const taskTitle = input.taskTitle ?? step.title;
   const requestedAssigneeTeammateId = input.assigneeTeammateId ?? step.toParticipantId;
   const runTools = workflowStepRunTools(step.metadata?.requiredTools);
@@ -929,7 +946,7 @@ export async function prepareWorkflowStepStart(
   }
   const runRequestBase: WorkflowStepRunRequest = {
     workspaceCwd: cwd,
-    cwd: workspace.executionCwd,
+    cwd: step.metadata?.safetyPlan?.executionRoot ?? workspace.executionCwd,
     providerPresetId,
     providerBinding,
     runnerId,
@@ -939,6 +956,8 @@ export async function prepareWorkflowStepStart(
     delegatedRequirement: step.metadata?.delegatedRequirement,
     executionOperationBindings: workflowStepExecutionOperationBindings(step),
     workflowOperationExecution: createWorkflowOperationExecutionSnapshot(step),
+    workflowSafetySnapshot: workflowSafetySnapshot(step.metadata?.safetyPlan),
+    requestedSkillId: step.metadata?.skillId,
     skipProviderPreflight: input.skipProviderPreflight ?? false,
     skipMemoryRecall: true,
     preselectedMemoryUse: renderedMemory.memoryIds.length > 0
@@ -983,9 +1002,16 @@ export async function prepareWorkflowStepStart(
     }
   }
 
+  let admission: ReturnType<typeof createWorkflowSafetyAdmission>;
+  try {
+    admission = input.mode === "create_and_run_task" ? createWorkflowSafetyAdmission(store, step, runRequestBase) : undefined;
+  } catch (error) {
+    return fail(409, "workflow_safety_mismatch", error instanceof Error ? error.message : String(error));
+  }
   const begun = store.beginChannelWorkflowStepStart({
     workflowStepId: step.id, expected: step, leaseId: lease.id, now: new Date().toISOString(),
     executionPermit,
+    admission,
     createTaskOnly: input.mode === "create_task",
     fanInContextReviews: fanInContext.reviews,
     task: {

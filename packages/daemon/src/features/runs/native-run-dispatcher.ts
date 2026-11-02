@@ -71,7 +71,9 @@ import { notifyRunReady } from "./run-ready.js";
 import { readNormalConversationPreparedRequest } from "../conversations/normal-conversation-prepared-request.js";
 import { findExistingIdempotentRunRequest } from "./existing-idempotent-run.js";
 import { failUnlinkedPreparationThread } from "./preparation-thread-failure.js";
-import { captureWorkflowStartOwner, commitWorkflowStartReady, assertWorkflowRunAdmission } from "./workflow-step-start-admission.js";
+import { captureWorkflowStartOwner, commitWorkflowStartReady, assertWorkflowRunAdmission,
+  failUndispatchedWorkflowStart } from "./workflow-step-start-admission.js";
+import { assertWorkflowSafetyRequest } from "./workflow-safety.js";
 import {
   ensureLingThreadForRun,
   ensureLingTurnForRun,
@@ -197,6 +199,9 @@ async function executeNativeRunRequest(
     store = dependencies.storeRegistry.getStore(workspaceCwd);
     assertFullAccessPermissionConfirmed(runRequest);
     validateWorkflowStepOwner(store, runRequest);
+    if (assertWorkflowSafetyRequest(store, runRequest)?.profile === "pi_host_readonly_v1") {
+      throw new HttpError(409, "workflow_safety_profile_unavailable", "Native execution cannot enforce the approved Host read profile.");
+    }
     // Reject missing workflow authority before native preflight or canonical
     // Thread/Turn creation can obscure its structured admission failure.
     workflowStartOwner = captureWorkflowStartOwner(store, runRequest);
@@ -295,7 +300,9 @@ async function executeNativeRunRequest(
       runtimeInstanceId: runtime.runtimeInstanceId, runnerId: binding.engineId,
       requestedRunnerId: binding.engineId, effectiveRunnerId: binding.engineId, now: createdAt });
     preparedConcurrency = prepareRunConcurrency({ store, runRequest, runId, workUnit, attempt, now: createdAt });
-    acquireRunRuntimeSemaphores({ store, workUnit, attempt, channel: preparedConcurrency.channel,
+    const reservation = runRequest.workflowStepId && workflowStartOwner
+      ? store.getChannelWorkflowStepStartAdmission(runRequest.workflowStepId, workflowStartOwner) : undefined;
+    if (!reservation || reservation.status !== "preparing") acquireRunRuntimeSemaphores({ store, workUnit, attempt, channel: preparedConcurrency.channel,
       channelParallelLimit: runRequest.channelParallelLimit,
       providerKey: `native:${binding.profileId}:${binding.profileRevision}`, runnerId: binding.engineId, now: createdAt });
     claimPreparedRunTask({ store, task: preparedConcurrency.task, runRequest, runId,
@@ -343,10 +350,18 @@ async function executeNativeRunRequest(
       const now = new Date().toISOString();
       const message = error instanceof Error ? error.message : String(error);
       const currentAttempt = attempt ? store.getWorkUnitAttempt(attempt.id) : undefined;
-      if (currentAttempt) transitionWorkUnitTerminal(store, { workUnitId: workUnit.id,
-        attemptId: currentAttempt.id, event: "runner_failed", attemptStatus: "failed",
-        runtimeEventType: "work_unit_failed", actor: "system", now,
-        errorCode: errorCode(error), errorMessage: message });
+      if (currentAttempt) {
+        const currentRun = run ? store.getRun(run.id) : undefined;
+        if (currentRun && (currentRun.status === "queued" || currentRun.status === "running")) {
+          store.transitionRunExecutionStatus({ runId: currentRun.id, sourceFence: toRuntimeAttemptFence(currentAttempt),
+            expectedStatus: currentRun.status, event: "runner_failed", actor: "system", reason: message,
+            now, endedAt: now, errorMessage: message });
+        }
+        transitionWorkUnitTerminal(store, { workUnitId: workUnit.id,
+          attemptId: currentAttempt.id, event: "runner_failed", attemptStatus: "failed",
+          runtimeEventType: "work_unit_failed", actor: "system", now,
+          errorCode: errorCode(error), errorMessage: message });
+      }
     }
     if (store && thread && !run) failUnlinkedPreparationThread(store, thread.id, turn?.id, error, new Date().toISOString());
     if (error instanceof DuplicateRunRequestError) {
@@ -355,6 +370,8 @@ async function executeNativeRunRequest(
       sink.end();
       return error.runId;
     }
+    if (store) failUndispatchedWorkflowStart({ store, request: runRequest, owner: workflowStartOwner, run, attempt,
+      reason: error instanceof Error ? error.message : String(error), now: new Date().toISOString() });
     sink.writeError(statusCode(error), { error: errorCode(error), message: error instanceof Error ? error.message : String(error) });
     return undefined;
   }

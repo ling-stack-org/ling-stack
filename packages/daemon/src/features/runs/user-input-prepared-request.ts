@@ -8,6 +8,7 @@ import { inlineProviderDescriptor } from "../conversations/normal-conversation-p
 import { readWorkflowAgentContextFromRunSnapshot } from "../channels/workflow-step-packets.js";
 import { parseRunRequest, type RunRequest } from "./schemas.js";
 import { createWorkflowOperationExecutionSnapshot } from "./workflow-operation-snapshot.js";
+import { assertWorkflowSafetyRequest } from "./workflow-safety.js";
 import { collectUserInputContinuationEvents, renderUserInputContinuationPrompt, userInputContextHash } from "./user-input-continuation-context.js";
 import { readUserInputSourcePolicyIntent } from "./user-input-source-policy.js";
 import { readUserInputSourceExecution } from "./user-input-source-execution.js";
@@ -20,7 +21,7 @@ export interface UserInputPreparedRequest {
 const inheritedKeys = ["tools", "requestedSkillId", "thinkingLevel", "reasoningSummary", "systemPrompt", "appendSystemPrompt", "agentDir",
   "runtimeToolFeatures", "lingConversationTone", "responseLanguage", "skillOptimizationMode"] as const;
 const executionKeys = ["tools", "thinkingLevel", "reasoningSummary", "systemPrompt", "appendSystemPrompt", "agentDir", "runtimeToolFeatures"] as const;
-const internalKeys = ["providerBinding", "delegatedRequirement", "executionOperationBindings", "workflowOperationExecution",
+const internalKeys = ["providerBinding", "delegatedRequirement", "executionOperationBindings", "workflowOperationExecution", "workflowSafetySnapshot",
   "contextPack", "directWorkspaceBinding", "directWorkspaceSnapshot"] as const;
 
 /** Build actual three-surface input from immutable Host facts, never from caller-provided answer text. */
@@ -108,7 +109,7 @@ function buildRequest(store: RunStore, seed: UserInputContinuationSeed): RunRequ
 
 /** Preserve exact workflow requirements, never silently downgrade broken typed metadata. */
 function inheritInternalContext(store: RunStore, source: RunSession, snapshot: Record<string, unknown>): Record<string, unknown> {
-  const hasWorkflowInput = ["providerBinding", "delegatedRequirement", "executionOperationBindings", "workflowOperationExecution", "contextPack"]
+  const hasWorkflowInput = ["providerBinding", "delegatedRequirement", "executionOperationBindings", "workflowOperationExecution", "workflowSafetySnapshot", "contextPack"]
     .some(key => snapshot[key] !== undefined);
   if (!source.workflowStepId && hasWorkflowInput) throw invalidSource();
   if (source.workflowStepId) {
@@ -140,6 +141,7 @@ function inheritInternalContext(store: RunStore, source: RunSession, snapshot: R
     if (!isDeepStrictEqual(snapshot.workflowOperationExecution, expected)) throw invalidSource();
     if (expected && !isDeepStrictEqual(snapshot.executionOperationBindings,
       expected.plan.operations.filter(operation => expected.ownedOperationIds.includes(operation.id)))) throw invalidSource();
+    try { assertWorkflowSafetyRequest(store, snapshot as unknown as RunRequest); } catch { throw invalidSource(); }
   }
   return Object.fromEntries(internalKeys.filter(key => snapshot[key] !== undefined).map(key => [key, snapshot[key]]));
 }

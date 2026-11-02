@@ -3,6 +3,7 @@ import { createLingStackApprovalExtension } from "./extensions/approval.js";
 import { assertHostCapabilityToolSurface, createLingStackHostCapabilityExtension } from "./extensions/host-capability.js";
 import { createLingStackBashToolExtension } from "./extensions/bash.js";
 import { createLingStackFileMutationToolExtension } from "./extensions/file-mutation.js";
+import { assertHostReadonlyToolSurface, createLingStackHostReadonlyExtension } from "./extensions/host-readonly.js";
 import { createLingStackMcpProxyExtension } from "./extensions/mcp-proxy.js";
 import { createLingStackMediaGenerationExtension } from "./extensions/media-generation.js";
 import { createLingStackPermissionRequestExtension } from "./extensions/permissions.js";
@@ -21,6 +22,7 @@ export async function createLingStackResourceLoader(
   settingsManager: SettingsManager,
 ): Promise<ResourceLoader> {
   assertHostCapabilityToolSurface(options);
+  assertHostReadonlyToolSurface(options);
   const resourceLoader = new DefaultResourceLoader({
     cwd: options.cwd,
     agentDir,
@@ -38,6 +40,7 @@ export async function createLingStackResourceLoader(
       ...(isUserInputToolSurfaceEnabled(options) ? [createLingStackUserInputExtension(options)] : []),
       ...(isDelegationToolSurfaceEnabled(options) ? [createLingStackDelegationExtension(options)] : []),
       ...(options.onToolBefore ? [createLingStackToolBeforeExtension(options)] : []),
+      ...(options.readonlyToolsProfile ? [createLingStackHostReadonlyExtension(options)] : []),
       createLingStackFileMutationToolExtension(options),
       // Bash always has a Host result. Feature flags cannot re-enable an unjournaled SDK spawn.
       createLingStackBashToolExtension(options),

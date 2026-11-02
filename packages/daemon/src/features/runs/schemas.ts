@@ -77,6 +77,7 @@ export interface RunRequest extends Omit<
   PiRunnerRunOptions,
   | "onApprovalRequired"
   | "onToolBefore"
+  | "onReadonlyToolCall"
   | "onEvent"
   | "provider"
   | "providerBudget"
@@ -103,6 +104,8 @@ export interface RunRequest extends Omit<
   readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
   /** Internal-only full accepted plan plus exact step-owned IDs, durably captured at dispatch. */
   readonly workflowOperationExecution?: WorkflowOperationExecutionSnapshot;
+  /** Internal Host-produced scope; never accepted by the public request parser. */
+  readonly workflowSafetySnapshot?: import("./workflow-safety.js").WorkflowSafetySnapshotV1;
   readonly threadId?: string;
   readonly turnId?: string;
   readonly runnerId?: string;

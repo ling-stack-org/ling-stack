@@ -11,6 +11,7 @@ import { fetchProvider } from "./provider-http.js";
 import { createPiSessionStopper, createPiTaskBoundary } from "./task-boundary.js";
 import { assertUserInputExecutionHandler } from "./extensions/user-input.js";
 import { assertDelegationExecutionHandler } from "./extensions/delegation.js";
+import { assertHostReadonlyToolSurface } from "./extensions/host-readonly.js";
 import { PiRunnerYielded } from "./task-yield.js";
 import { PiRunnerSuspended } from "./runtime-suspension.js";
 import { createPiToolBoundaryObservation } from "./tool-boundary-observation.js";
@@ -41,6 +42,7 @@ export class PiRunnerAdapter {
 
   /** Resolves only on completion; typed yield/suspension outcomes require SDK stop and idle. */
   async runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult> {
+    assertHostReadonlyToolSurface(options);
     assertUserInputExecutionHandler(options);
     assertDelegationExecutionHandler(options);
     if (options.ordinaryProgressRecovery !== undefined) {

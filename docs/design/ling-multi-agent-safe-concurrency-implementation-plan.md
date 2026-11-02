@@ -1,13 +1,13 @@
 # Ling 多 Agent 安全并发实施计划
 
-状态：P0 文档准备已完成（DONE）；P1-P5 待实现，运行能力尚未交付。
+状态：P1 源码与本地回归已落地；P2 隔离执行实现中，P3-P5 未完成。
 Owner：Ling maintainers。
 最后核对：2026-11-02。
 文档类型：implementation plan；完成后将长期规则归入 owning contracts，不保留完成日志。
 权威设计：[总体设计](multi-agent-app-detailed-design.md)、
 [安全并发详细设计](ling-multi-agent-safe-concurrency-detailed-design.md)。
 基线：PR #614 已于 2026-11-02 合并；从更新后的 `origin/main` 开发，不从旧 Harness 分支接续。
-Code/test anchors：各阶段表格列出的现有模块与测试；标注“新增”的模块尚不存在。
+Code/test anchors：各阶段表格列出的模块与测试；尚未接入实际执行链的组件不算阶段交付。
 
 ## 1. 交付目标与边界
 
@@ -33,8 +33,8 @@ requirement shaping 产品扩展、自动远端 merge/push/deploy、跨 worktree
 | 阶段 | 当前状态 | 完成含义 |
 | --- | --- | --- |
 | P0 | DONE：总体设计、详细协议、实施计划与索引已对齐，文档检查通过 | 统一产品边界、协议、代码责任与验收入口，不代表功能完成 |
-| P1 | 待实现 | 安全类别贯穿全路径，Host 实际约束生效，原子准入与回归通过 |
-| P2 | 待实现 | 隔离写入、封存结果、确定性集成、审批应用和故障恢复协议可运行 |
+| P1 | 本地实现与回归完成，review/CI/merge 和平台验收未完成 | 安全类别贯穿全路径，Host 实际约束生效，原子准入与回归通过 |
+| P2 | 实现中，尚未交付；普通 workflow 写并发仍关闭 | 隔离写入、封存结果、确定性集成、审批应用和故障恢复协议可运行 |
 | P3 | 待实现 | 多分支联合与真实客户端验收通过，才允许选定 workflow 开启写并发 |
 | P4 | 待实现 | registry 版本冻结、校验、authoring 与真实保存/编译流程通过 |
 | P5 | 待实现 | 同一工作对象内 graph/list 一致、可访问、真实状态可靠 |

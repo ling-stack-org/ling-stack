@@ -17,6 +17,7 @@ import type { RunRequest } from "../runs/schemas.js";
 import type { HostCapabilityBridgeController } from "../runs/host-capability-bridge-controller.js";
 import type { NativeRunDispatcher } from "../runs/native-run-dispatcher.js";
 import { resolveProviderForRun } from "../runs/providers.js";
+import { createWorkflowParallelCapabilityResolver } from "../runs/workflow-safety.js";
 import type { ProviderInvocationFailureSink } from "../providers/runtime-invocations.js";
 import { createAiChannelReply } from "./ai-replies.js";
 import {
@@ -295,6 +296,8 @@ async function confirmAndOrchestrateProposal(
   const orchestration = await orchestrateChannelWorkflow({
     store,
     secretResolver: options.secretResolver,
+    resolveParallelCapability: createWorkflowParallelCapabilityResolver(options.runnerRegistry),
+    runnerRegistry: options.runnerRegistry,
     cwd,
     workflowId: confirmed.workflow.id,
     validateRunRequest,
@@ -342,6 +345,8 @@ export function createStartOrchestratedRun(
               await orchestrateChannelWorkflow({
                 store,
                 secretResolver: options.secretResolver,
+                resolveParallelCapability: createWorkflowParallelCapabilityResolver(options.runnerRegistry),
+                runnerRegistry: options.runnerRegistry,
                 cwd,
                 workflowId: workflow.id,
                 validateRunRequest: (request) => resolveProviderForRun(store, request, options.secretResolver),

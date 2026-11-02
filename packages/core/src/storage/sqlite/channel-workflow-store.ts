@@ -70,6 +70,8 @@ import {
   mapChannelWorkflowStep,
   mapWorkflowHandoffIntent,
   mapWorkflowSelectorDecision,
+  normalizeChannelWorkflowMetadata,
+  normalizeChannelWorkflowStepMetadata,
 } from "./channel-workflow-mappers.js";
 import {
   channelWorkflowSelectSql,
@@ -552,7 +554,7 @@ export class SqliteChannelWorkflowStore {
       objective: input.objective,
       status: input.status ?? "draft",
       createdBy: input.createdBy,
-      metadata: input.metadata,
+      metadata: normalizeChannelWorkflowMetadata(input.metadata),
       createdAt: now,
       updatedAt: now,
     };
@@ -690,7 +692,9 @@ export class SqliteChannelWorkflowStore {
       title: input.title ?? existing.title,
       objective: input.objective ?? existing.objective,
       status: input.status ?? existing.status,
-      metadata: nullableUpdate(input.metadata, existing.metadata),
+      metadata: input.metadata === null
+        ? undefined
+        : input.metadata === undefined ? existing.metadata : normalizeChannelWorkflowMetadata(input.metadata),
       updatedAt: now,
     };
     if (next.status === "succeeded") this.assertDescendantsComplete(id);
@@ -1314,6 +1318,7 @@ export class SqliteChannelWorkflowStore {
         || providerBinding.participantId !== input.toParticipantId)) {
       throw new Error(`Invalid participant provider binding for workflow step ${input.workflowId}`);
     }
+    const metadata = normalizeChannelWorkflowStepMetadata(input.metadata);
     const step: ChannelWorkflowStep = {
       id: stepId,
       workspaceId: DEFAULT_WORKSPACE_ID,
@@ -1328,8 +1333,8 @@ export class SqliteChannelWorkflowStore {
       toParticipantLabel: input.toParticipantLabel,
       participantAuthority,
       status: input.status ?? "queued",
-      metadata: input.metadata
-        ? { ...input.metadata, participantAuthority }
+      metadata: metadata
+        ? { ...metadata, participantAuthority }
         : { participantAuthority },
       createdAt: now,
       updatedAt: now,
@@ -1463,6 +1468,7 @@ export class SqliteChannelWorkflowStore {
         || JSON.stringify(requestedProviderBinding) !== JSON.stringify(existingProviderBinding))) {
       throw new Error(`Workflow participant provider binding is immutable for workflow step ${id}`);
     }
+    const metadata = input.metadata === null ? null : normalizeChannelWorkflowStepMetadata(input.metadata);
     const next: ChannelWorkflowStep = {
       ...existing,
       sourceHandoffId,
@@ -1475,15 +1481,15 @@ export class SqliteChannelWorkflowStore {
       status: input.status ?? existing.status,
       blocker: nullableUpdate(input.blocker, existing.blocker),
       resultSummary: nullableUpdate(input.resultSummary, existing.resultSummary),
-      metadata: input.metadata === null
+      metadata: metadata === null
         ? (existing.metadata ? {
             ...existing.metadata,
             participantAuthority: existing.participantAuthority,
             ...(existingProviderBinding ? { providerBinding: existingProviderBinding } : {}),
           } : undefined)
-        : input.metadata
+        : metadata
           ? {
-              ...input.metadata,
+              ...metadata,
               participantAuthority: existing.participantAuthority,
               ...(existingProviderBinding ? { providerBinding: existingProviderBinding } : {}),
             }
