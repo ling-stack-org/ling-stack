@@ -27,9 +27,11 @@ jobs:
     outputs:
       scan: ${{ steps.scope.outputs.scan }}
     steps:
-      - name: Check out scan inputs
+      - name: Check out trusted scan policy
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          # PR content cannot decide whether its own scan runs.
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
           persist-credentials: false
 
       - name: Determine changed inputs or reuse a recent successful main scan
@@ -37,9 +39,15 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
+            const { existsSync } = require('node:fs');
             const { pathToFileURL } = require('node:url');
-            const { selectCodeqlScan } = await import(pathToFileURL(process.env.GITHUB_WORKSPACE + '/scripts/ci/codeql-scope.mjs'));
-            const result = await selectCodeqlScan({ github, context });
+            const policyPath = process.env.GITHUB_WORKSPACE + '/scripts/ci/codeql-scope.mjs';
+            // The first installation has no selector on the trusted base yet.
+            let result = { scan: true, reason: 'trusted scope selector is absent; scan required' };
+            if (existsSync(policyPath)) {
+              const { selectCodeqlScan } = await import(pathToFileURL(policyPath));
+              result = await selectCodeqlScan({ github, context });
+            }
             core.setOutput('scan', result.scan);
             core.notice(result.reason);
             await core.summary.addRaw((result.scan ? 'Run' : 'Skip') + ' CodeQL: ' + result.reason).write();
@@ -77,6 +85,9 @@ jobs:
           CODEQL_SARIF_ID: ${{ steps.analyze.outputs.sarif-id }}
         with:
           script: |
-            const { pathToFileURL } = require('node:url');
-            const { verifyCodeqlUpload } = await import(pathToFileURL(process.env.GITHUB_WORKSPACE + '/scripts/ci/codeql-scope.mjs'));
-            await verifyCodeqlUpload({ github, context, sarifId: process.env.CODEQL_SARIF_ID });
+            const sarifId = process.env.CODEQL_SARIF_ID;
+            if (!sarifId) throw new Error('CodeQL did not return a SARIF upload ID');
+            const { data } = await github.rest.codeScanning.getSarif({ ...context.repo, sarif_id: sarifId });
+            if (data.processing_status !== 'complete' || data.errors?.length) {
+              throw new Error(`CodeQL SARIF processing is not confirmed: ${data.processing_status}; ${JSON.stringify(data.errors ?? [])}`);
+            }

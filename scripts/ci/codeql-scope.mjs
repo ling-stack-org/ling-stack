@@ -22,15 +22,6 @@ async function compareInputs(github, repository, base, head) {
   return { scan: changed, reason: `${changed ? "changed" : "unchanged"} scan inputs` };
 }
 
-/** A successful analysis job must include confirmed processing of its exact upload. */
-export async function verifyCodeqlUpload({ github, context, sarifId }) {
-  if (!sarifId) throw new Error("CodeQL did not return a SARIF upload ID");
-  const { data } = await github.rest.codeScanning.getSarif({ ...context.repo, sarif_id: sarifId });
-  if (data.processing_status !== "complete" || data.errors?.length) {
-    throw new Error(`CodeQL SARIF processing is not confirmed: ${data.processing_status}; ${JSON.stringify(data.errors ?? [])}`);
-  }
-}
-
 /** Only a recent, successful main scan can authorize skipping a scheduled scan. */
 export async function selectCodeqlScan({ github, context, now = Date.now() }) {
   const scan = (reason) => ({ scan: true, reason });

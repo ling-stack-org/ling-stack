@@ -1,7 +1,24 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { isCodeqlInput, selectCodeqlScan, verifyCodeqlUpload } from "./codeql-scope.mjs";
+import { isCodeqlInput, selectCodeqlScan } from "./codeql-scope.mjs";
+
+const workflow = readFileSync(new URL("../../.github/workflows/codeql.yml", import.meta.url), "utf8");
+const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
+const require = createRequire(import.meta.url);
+
+// Execute the workflow script itself so tests cover its trusted-code boundary.
+function workflowScript(stepName) {
+  const step = workflow.split(`      - name: ${stepName}\n`)[1]?.split("\n      - ")[0];
+  assert.ok(step, `missing workflow step: ${stepName}`);
+  const lines = step.split("          script: |\n")[1]?.split("\n");
+  assert.ok(lines, `missing inline script: ${stepName}`);
+  return new AsyncFunction("github", "context", "process", "core", "require",
+    lines.filter((line) => line.startsWith("            ")).map((line) => line.slice(12)).join("\n"));
+}
 
 const now = Date.parse("2026-11-03T00:00:00Z");
 const sha = "a".repeat(40);
@@ -63,8 +80,10 @@ test("PR input selection uses exact event SHAs and a capped diff always scans", 
 
 test("SARIF proof requires the exact upload to finish processing without errors", async () => {
   const uploads = [];
-  const verify = (data, sarifId = "upload-42") => verifyCodeqlUpload({ context, sarifId,
-    github: { rest: { codeScanning: { getSarif: async (input) => { uploads.push(input); return { data }; } } } } });
+  const verifyStep = workflowScript("Require confirmed SARIF processing");
+  const verify = (data, sarifId = "upload-42") => verifyStep(
+    { rest: { codeScanning: { getSarif: async (input) => { uploads.push(input); return { data }; } } } },
+    context, { env: { CODEQL_SARIF_ID: sarifId } });
   await verify({ processing_status: "complete" });
   assert.deepEqual(uploads[0], { ...context.repo, sarif_id: "upload-42" });
   for (const data of [{ processing_status: "pending" }, { processing_status: "failed", errors: ["invalid SARIF"] },
@@ -72,8 +91,39 @@ test("SARIF proof requires the exact upload to finish processing without errors"
     await assert.rejects(verify(data), /processing is not confirmed/u);
   }
   await assert.rejects(verify({ processing_status: "complete" }, ""), /upload ID/u);
-  await assert.rejects(verifyCodeqlUpload({ context, sarifId: "upload-42",
-    github: { rest: { codeScanning: { getSarif: async () => { throw new Error("API unavailable"); } } } } }), /API unavailable/u);
+  await assert.rejects(verifyStep(
+    { rest: { codeScanning: { getSarif: async () => { throw new Error("API unavailable"); } } } },
+    context, { env: { CODEQL_SARIF_ID: "upload-42" } }), /API unavailable/u);
+});
+
+test("PR scope executes the trusted base selector and missing bootstrap code forces a scan", async () => {
+  const scope = workflow.split("  scope:\n")[1].split("  analyze:\n")[0];
+  assert.match(scope, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}/u);
+  const root = mkdtempSync(join(tmpdir(), "ling-codeql-trust-"));
+  try {
+    const base = join(root, "base");
+    const candidate = join(root, "candidate");
+    for (const dir of [base, candidate]) mkdirSync(join(dir, "scripts/ci"), { recursive: true });
+    const marker = join(root, "candidate-executed");
+    writeFileSync(join(candidate, "scripts/ci/codeql-scope.mjs"),
+      `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "unsafe"); export const selectCodeqlScan = () => ({ scan: false });`);
+    const execute = workflowScript("Determine changed inputs or reuse a recent successful main scan");
+    const outputs = {};
+    const summary = { addRaw() { return this; }, async write() {} };
+    const core = { setOutput: (key, value) => { outputs[key] = value; }, notice() {}, summary };
+    const prContext = { ...context, eventName: "pull_request",
+      payload: { pull_request: { base: { sha: "base" }, head: { sha: "candidate" } } } };
+    const github = { rest: { repos: { compareCommitsWithBasehead: async () =>
+      ({ data: { status: "ahead", files: [{ filename: "source.js" }] } }) } } };
+    await execute(github, prContext, { env: { GITHUB_WORKSPACE: base } }, core, require);
+    assert.equal(outputs.scan, true, "first installation must scan when the base has no selector");
+    writeFileSync(join(base, "scripts/ci/codeql-scope.mjs"), readFileSync(new URL("./codeql-scope.mjs", import.meta.url)));
+    await execute(github, prContext, { env: { GITHUB_WORKSPACE: base } }, core, require);
+    assert.equal(outputs.scan, true, "candidate selector cannot suppress changed source");
+    assert.equal(existsSync(marker), false, "candidate code must never execute");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("recent actual main success skips an identical SHA and binds the exact attempt", async () => {
@@ -168,7 +218,6 @@ test("input selection covers every supported source, dependency and policy type"
 });
 
 test("workflow keeps hourly/manual/PR admission and restricts write permission to analysis", () => {
-  const workflow = readFileSync(new URL("../../.github/workflows/codeql.yml", import.meta.url), "utf8");
   assert.match(workflow, /cron: "23 \* \* \* \*"/u);
   assert.match(workflow, /^  workflow_dispatch:$/mu);
   assert.doesNotMatch(workflow, /^  (?:push|pull_request_target):|^    paths:/mu);
@@ -183,7 +232,9 @@ test("workflow keeps hourly/manual/PR admission and restricts write permission t
   assert.match(analyze, /languages: javascript-typescript/u);
   assert.match(analyze, /id: analyze/u);
   assert.match(analyze, /CODEQL_SARIF_ID: \$\{\{ steps\.analyze\.outputs\.sarif-id \}\}/u);
-  assert.match(analyze, /await verifyCodeqlUpload\(\{ github, context, sarifId: process\.env\.CODEQL_SARIF_ID \}\)/u);
+  const verify = analyze.split("      - name: Require confirmed SARIF processing\n")[1];
+  assert.doesNotMatch(verify, /import\(|GITHUB_WORKSPACE/u);
+  assert.match(verify, /github\.rest\.codeScanning\.getSarif/u);
   assert.doesNotMatch(workflow, /continue-on-error|npm install|pnpm install/u);
   for (const match of workflow.matchAll(/uses: ([^\n]+)/gu)) assert.match(match[1], /@[a-f0-9]{40}(?: #.*)?$/u);
 });
