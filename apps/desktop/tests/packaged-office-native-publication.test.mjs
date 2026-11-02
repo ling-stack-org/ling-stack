@@ -172,6 +172,13 @@ test("Office bundled-plugin staging code and copied metadata remain in the fixed
 
 /** Disposable, explicitly synthetic compiler/signature fixture. It never approves product sources. */
 async function fixture(t, { portable = false, onCompilerVersion } = {}) {
+  // These fixtures verify independent release approval, including the portable row.
+  const previousReviewRequired = process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
+  process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = "1";
+  t.after(() => {
+    if (previousReviewRequired === undefined) delete process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
+    else process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = previousReviewRequired;
+  });
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-office-publication-test-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const scripts = join(root, "apps/desktop/scripts"), nativeRoot = join(root, "native/office-local");
