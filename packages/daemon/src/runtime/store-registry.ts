@@ -31,7 +31,9 @@ export class RunStoreRegistry {
 
   getStore(cwd: string): RunStore {
     if (this.closed) throw new Error("Run Store registry is closed; no new or retained Store access is permitted.");
-    const existing = this.storesByCwd.get(cwd);
+    // Deduplicate live ownership without rewriting existing storage paths or workspace history.
+    const key = normalizeWorkspaceRoot(cwd);
+    const existing = this.storesByCwd.get(key);
     if (existing) {
       return existing;
     }
@@ -44,10 +46,10 @@ export class RunStoreRegistry {
         store.recoverStaleRuns(now);
         store.recoverStaleChannelWorkflows(now);
       }
-      this.storesByCwd.set(cwd, store);
+      this.storesByCwd.set(key, store);
       void Promise.resolve(this.options.onStoreInitialized?.(cwd, store)).catch(() => undefined);
     } catch (error) {
-      if (this.storesByCwd.get(cwd) === store) this.storesByCwd.delete(cwd);
+      if (this.storesByCwd.get(key) === store) this.storesByCwd.delete(key);
       for (const [runId, rememberedStore] of this.storesByRunId) {
         if (rememberedStore === store) this.storesByRunId.delete(runId);
       }
@@ -64,7 +66,7 @@ export class RunStoreRegistry {
   /** Observation only: never constructs a Store, reconciles state or dispatches recovery. */
   getInitializedStore(cwd: string): RunStore | undefined {
     if (this.closed) throw new Error("Run Store registry is closed; observation is unavailable.");
-    return this.storesByCwd.get(cwd);
+    return this.storesByCwd.get(normalizeWorkspaceRoot(cwd));
   }
 
   rememberRun(runId: string, store: RunStore): void {
