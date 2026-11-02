@@ -9314,8 +9314,8 @@ test("channel activity paginates long message history and virtualizes visible ro
   const renderedBefore = await page.locator(".activity-shell .message-feed .conversation-timeline-virtual-row").count();
   expect(renderedBefore).toBeGreaterThan(0);
   expect(renderedBefore).toBeLessThan(100);
-  const scrollBefore = await readScrollState(page, ".activity-shell .message-feed");
-  expect(scrollBefore.atBottom).toBe(true);
+  // Row measurement schedules tail reconciliation on the next animation frame.
+  await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
 
   await page.locator(".activity-shell .message-feed").evaluate((element) => {
     element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
