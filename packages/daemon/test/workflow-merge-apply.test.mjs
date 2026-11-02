@@ -76,7 +76,7 @@ test("one Host permit applies the frozen candidate, releases its exact lease and
   assert.equal(f.round().openIntentId, undefined);
   assert.equal(f.workflow().status, "succeeded");
   assert.equal((await f.targetSnapshot()).head, candidate.commit);
-  assert.equal(await f.branchGit("rev-parse", "HEAD"), before.branchHead);
+  assert.equal(await f.ref(f.scopeGit.branchRef), before.branchHead, "cleanup retains the unchanged owned branch ref");
   assert.equal(f.lease().status, "released");
   assert.deepEqual(f.round().candidate, candidate);
   const journal = await f.journal(), effects = journal.effects.filter(effect => effect.kind === "target_apply");

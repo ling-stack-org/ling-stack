@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { workflowIsolationDigest, workflowIsolationSafetyFingerprint, workflowIsolationScopePlanDigest,
@@ -120,11 +120,17 @@ export async function workflowIntegrationCoordinatorFixture(t, { stage = "succee
   f.targetSnapshot = async () => ({ head: await f.git("rev-parse", "HEAD"), branch: await f.git("symbolic-ref", "HEAD"),
     status: await f.git("status", "--porcelain=v1", "--untracked-files=all"),
     index: await readFile(join(f.gitDir, "index")), content: await readFile(join(f.cwd, "owned.txt")) });
-  f.gitSnapshot = async () => ({ target: await f.targetSnapshot(), branchHead: await f.branchGit("rev-parse", "HEAD"),
-    branchIndex: await readFile(join(f.branchGitDir, "index")),
-    refs: await f.git("for-each-ref", "--format=%(refname) %(objectname)"),
-    reflogs: await f.git("reflog", "show", "--all", "--format=%H %gD"),
-    objects: await f.git("count-objects", "-v"), worktrees: await f.git("worktree", "list", "--porcelain") });
+  f.gitSnapshot = async () => {
+    const present = await access(f.executionRoot).then(() => true, error => {
+      if (error.code === "ENOENT") return false;
+      throw error;
+    });
+    return { target: await f.targetSnapshot(), branchHead: present ? await f.branchGit("rev-parse", "HEAD") : null,
+      branchIndex: present ? await readFile(join(f.branchGitDir, "index")) : null,
+      refs: await f.git("for-each-ref", "--format=%(refname) %(objectname)"),
+      reflogs: await f.git("reflog", "show", "--all", "--format=%H %gD"),
+      objects: await f.git("count-objects", "-v"), worktrees: await f.git("worktree", "list", "--porcelain") };
+  };
   f.integrationSnapshot = async () => ({ git: await f.gitSnapshot(), rows: f.snapshotIsolation(),
     intent: f.intent(), artifacts: f.store.listArtifacts(f.runId) });
   f.executionSnapshot = () => ({ run: f.run(), attempt: f.store.getWorkUnitAttempt(f.writer.attemptId), binding: f.binding(),

@@ -779,8 +779,10 @@ import { applyWorkflowIsolationResultsMigration } from "./sqlite/workflow-isolat
 import { applyWorkflowIntegrationCoordinatorMigration } from "./sqlite/workflow-integration-coordinator-migration.js";
 import { applyWorkflowMergeApprovalMigration } from "./sqlite/workflow-merge-approval-migration.js";
 import { applyWorkflowMergeApplyMigration } from "./sqlite/workflow-merge-apply-migration.js";
-import { registerSqliteWorkflowIsolationStore } from "./sqlite/workflow-isolation-store.js";
-import { registerSqliteWorkflowIntegrationCoordinatorStore } from "./sqlite/workflow-integration-coordinator-store.js";
+import { applyWorkflowWorktreeCleanupMigration } from "./sqlite/workflow-worktree-cleanup-migration.js";
+import { createSqliteWorkflowIsolationStore, registerSqliteWorkflowIsolationStore } from "./sqlite/workflow-isolation-store.js";
+import { createSqliteWorkflowIntegrationCoordinatorStore, registerSqliteWorkflowIntegrationCoordinatorStore } from "./sqlite/workflow-integration-coordinator-store.js";
+import { registerSqliteWorkflowWorktreeCleanupStore } from "./sqlite/workflow-worktree-cleanup-store.js";
 import { SqliteChannelWorkflowPreApprovalStore } from "./sqlite/channel-workflow-pre-approval-store.js";
 import { SqliteChannelTeamEvidenceStore } from "./sqlite/channel-team-evidence-store.js";
 import { SqliteChannelTeamLifecycleStore } from "./sqlite/channel-team-lifecycle-store.js";
@@ -1494,6 +1496,8 @@ export class SqliteRunStore implements RunStore {
     this.channelWorkflowStarts = new SqliteChannelWorkflowStartStore({ database: this.database }, this, this.workflowStepAdmissions);
     registerSqliteWorkflowIsolationStore(this, { database: this.database }, this, this.paths.cwd);
     registerSqliteWorkflowIntegrationCoordinatorStore(this, { database: this.database }, this, this.paths.cwd);
+    registerSqliteWorkflowWorktreeCleanupStore(this, { database: this.database }, this,
+      createSqliteWorkflowIsolationStore(this), createSqliteWorkflowIntegrationCoordinatorStore(this));
     this.channelWorkflowPreApprovals = new SqliteChannelWorkflowPreApprovalStore({ database: this.database }, this);
     this.terminalReportPublication = new SqliteTerminalReportPublicationStore(
       { database: this.database },
@@ -1913,6 +1917,11 @@ export class SqliteRunStore implements RunStore {
           recordMigration: (version, name) => this.recordMigration(version, name),
         });
         applyWorkflowMergeApplyMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
+        applyWorkflowWorktreeCleanupMigration({
           database: this.database,
           hasMigration: (version) => this.hasMigration(version),
           recordMigration: (version, name) => this.recordMigration(version, name),

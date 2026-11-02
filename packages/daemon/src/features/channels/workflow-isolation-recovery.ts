@@ -6,6 +6,7 @@ import { coordinateWorkflowIntegration } from "./workflow-integration-coordinato
 import { reconcileWorkflowIsolatedResults } from "./workflow-isolated-result.js";
 import { maybeCreateWorkflowTerminalCoordinatorReply } from "./workflows.js";
 import { reconcileWorkflowMergeApplication } from "./workflow-merge-apply.js";
+import { cleanupWorkflowWorktrees } from "./workflow-worktree-cleanup.js";
 
 /** Recover persisted rounds, not only workflows still carrying their mutable step pins. */
 export async function recoverWorkflowIsolationsAtStartup(store: RunStore): Promise<number> {
@@ -27,6 +28,7 @@ export async function recoverWorkflowIsolationsAtStartup(store: RunStore): Promi
   const workflows = new Set(rounds.map(round => round.inputs.workflowId));
   let recovered = 0;
   for (const workflowId of workflows) {
+    await cleanupWorkflowWorktrees(store, workflowId, { observeOnly: true });
     const workflow = store.getChannelWorkflow(workflowId);
     if (!workflow || ["succeeded", "failed", "cancelled"].includes(workflow.status)) continue;
     await reconcileWorkflowIsolatedResults(store, workflowId);

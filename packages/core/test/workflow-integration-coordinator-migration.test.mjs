@@ -3,6 +3,7 @@ import test from "node:test";
 import { applyWorkflowIntegrationCoordinatorMigration, WORKFLOW_INTEGRATION_COORDINATOR_MIGRATION_VERSION }
   from "../dist/storage/sqlite/workflow-integration-coordinator-migration.js";
 import { workflowIsolationFixture } from "./support/workflow-isolation-fixture.mjs";
+import { workflowMigrationPredecessorFixture } from "./support/workflow-migration-predecessor-fixture.mjs";
 
 const tables = ["workflow_integration_effect_links", "workflow_integration_receipt_links"];
 const schema = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
@@ -15,9 +16,7 @@ const migrate = (db, extra = {}) => applyWorkflowIntegrationCoordinatorMigration
 
 async function predecessor(t) {
   const f = await workflowIsolationFixture(t, { create: false, pin: false }), db = f.store.database;
-  for (const table of tables) assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0);
-  for (const table of [...tables].reverse()) db.exec(`DROP TABLE ${table}`);
-  db.prepare("DELETE FROM schema_migrations WHERE version=206").run();
+  f.assertFullUpgrade = workflowMigrationPredecessorFixture(f, 206);
   assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version=205").get().name, "workflow_isolation_terminal_results");
   return f;
 }
@@ -43,8 +42,11 @@ test("actual205 upgrade preserves predecessor schema and live authority data", a
   assert.deepEqual(schema(db).filter(row => !tables.includes(row.tbl_name)), before.schema);
   assert.deepEqual(snapshot(db).markers.filter(row => row.version !== 206), before.markers);
   assert.deepEqual(f.snapshotIsolation(), data);
-  const installed = snapshot(db); f.reopenIsolation();
-  assert.deepEqual(snapshot(f.store.database), installed);
+  assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 206);
+  const installed = snapshot(db); migrate(db); assert.deepEqual(snapshot(db), installed);
+  f.reopenIsolation();
+  f.assertFullUpgrade(f.store.database, installed);
+  assert.deepEqual(f.snapshotIsolation(), data);
   assert.equal(f.isolation.assertExecutionBinding({ writer: f.writer, requireReady: false, now: f.at(7) }).status, "current");
 });
 

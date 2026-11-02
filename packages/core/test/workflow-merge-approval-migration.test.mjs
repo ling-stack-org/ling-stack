@@ -6,6 +6,7 @@ import { applyWorkflowMergeApprovalMigration, WORKFLOW_MERGE_APPROVAL_MIGRATION_
   from "../dist/storage/sqlite/workflow-merge-approval-migration.js";
 import { workflowIsolationFixture } from "./support/workflow-isolation-fixture.mjs";
 import { now, resultTables, workflowIsolationResultsFixture } from "./support/workflow-isolation-results-fixture.mjs";
+import { workflowMigrationPredecessorFixture } from "./support/workflow-migration-predecessor-fixture.mjs";
 
 const table = "workflow_merge_approval_requests";
 const migrationName = "workflow_merge_approval_basis";
@@ -31,9 +32,7 @@ async function predecessor(t, { terminal = false } = {}) {
   const f = terminal ? await workflowIsolationResultsFixture(t)
     : await workflowIsolationFixture(t, { create: false, pin: false });
   const db = f.store.database;
-  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0);
-  db.exec(`DROP TABLE ${table}`);
-  db.prepare("DELETE FROM schema_migrations WHERE version=207").run();
+  f.assertFullUpgrade = workflowMigrationPredecessorFixture(f, 207);
   assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version=206").get().name,
     "workflow_integration_coordinator_evidence");
   assert.equal(schema(db).some(row => row.tbl_name === table), false);
@@ -126,9 +125,12 @@ test("actual206 upgrade preserves terminal results, sealed artifacts and populat
   assert.deepEqual(snapshot(db).markers.filter(row => row.version !== 207), before.markers);
   assert.deepEqual(f.snapshotIsolation(), data);
   assert.deepEqual(evidenceSnapshot(db), evidence);
+  assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 207);
   const installed = snapshot(db);
-  migrate(db); f.reopenIsolation();
-  assert.deepEqual(snapshot(f.store.database), installed);
+  migrate(db); assert.deepEqual(snapshot(db), installed);
+  f.reopenIsolation();
+  f.assertFullUpgrade(f.store.database, installed);
+  assert.deepEqual(snapshot(f.store.database).requests, installed.requests);
   assert.deepEqual(f.snapshotIsolation(), data);
   assert.deepEqual(evidenceSnapshot(f.store.database), evidence);
   const authority = createSqliteWorkflowIntegrationCoordinatorStore(f.store)

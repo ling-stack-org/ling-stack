@@ -271,7 +271,31 @@ Host 在创建前检查本地活动 worktree 数量与磁盘预算；不足时�
 同事的目录；先持久 cleanup intent，再 no-force remove，核对后写 receipt/tombstone。
 candidate-only 的未应用分支保留可恢复 ref，未合并/仍被 artifact pin 引用的 commit
 不能随目录一起删掉。不能对 active/unknown generation 运行宽泛 prune/clean。
-清理失败只影响资源回收，保留可重试状态，不改写已验证的业务结果。
+清理失败只影响资源回收，不改写已验证的业务结果。
+
+实现由独立的 `workflow_worktree_cleanup_intents/receipts` journal 持有，不复用业务 round
+phase 或原 Attempt 的写能力。第一版只对真正 `succeeded` 且 candidate verified / target
+applied 的 workflow 开放；仍逐项重验 coordinator authority、publication/completion blocker、
+terminal/quiescence、所有 effect receipts 和独立留存的 branch/candidate artifacts。
+failed/cancelled/conflicted、active、pending 或 unknown 一律保留，不以 terminal 字段代替证据。
+
+Host 从已封存的创建 receipt 派生 scope、canonical repository 和目录 dev/inode，调用方不能
+传入任意待删路径。物理 actor 在同仓库锁内验证 registered non-main worktree、精确 branch/base、
+反向 `.git` registration、未被锁定/prunable、无 symlink、无 index 隐藏标记，且 tracked、
+untracked、ignored residue 均为空。保留的结果 refs 必须仍精确指向封存 commit；删除只调用
+no-force `git worktree remove`，不删 branch/ref，不 reset、不 prune，不吞现场文件。
+最后一次完整物理检查位于 authority/intent 回调之后，检查后不再调用 Host 回调，直接
+dispatch no-force remove。仓库锁只协调 Ling Host actors；Git 自身不保证 ignored 文件的
+原子 clean-check/delete，不能据此宣称阻止不遵守该锁的外部进程并发写入。
+
+短事务先 pin plan/evidence 并记录唯一 `(round, generation, worktreeId)` intent；只有返回
+`created` 的原 Host 调用能执行一次 remove。成功后重新确认目录和 registration 均消失、
+结果 refs 完整，追加 observation receipt/tombstone。物理预检拒绝也尽可能记录留存原因。
+duplicate/reopen/startup 仅观察已有 intent，即使目录后来变干净也不重放删除；intent 前崩溃
+不自动开始新回收，intent 后、remove 前崩溃保留 present，remove 后、receipt 前崩溃补写
+absence observation。后续要再次删除 retained 现场，必须另行明确授权和设计新操作，不能
+把旧 intent 当作延迟删除许可。目录删除失败不会撤销成功交付，removed tombstone 也不能
+授权删除后来在同路径出现的外来目录。
 
 ## 7. 合并、冲突与用户审批
 

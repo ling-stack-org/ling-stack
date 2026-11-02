@@ -42,6 +42,7 @@ import { verifyWorkflowStepExecutionOperations } from "./workflow-operation-evid
 import { reconcileWorkflowIsolatedResults, workflowIsolatedResultBlocker } from "./workflow-isolated-result.js";
 import { reconcileWorkflowIntegrations } from "./workflow-integration-coordinator.js";
 import { waitForWorkflowIsolationIdle } from "./workflow-isolation-lifecycle.js";
+import { cleanupWorkflowWorktrees } from "./workflow-worktree-cleanup.js";
 import { finalizeDelegatedWorkflowStepFromCanonicalState } from "./workflow-step-finalizer.js";
 import { preserveMarkdownLayout } from "./markdown-text.js";
 import { reconcileWorkflowFromCanonicalState } from "./workflow-reconciliation.js";
@@ -168,9 +169,13 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
     if (afterFailure) return afterFailure;
     completeWorkflowIfStepsFinished(input.store, workflow.id, new Date().toISOString());
     const completed = input.store.getChannelWorkflow(workflow.id);
-    if (completed?.status === "succeeded") return { status: "completed", workflow: completed };
+    if (completed?.status === "succeeded") {
+      await cleanupWorkflowWorktrees(input.store, workflow.id);
+      return { status: "completed", workflow: completed };
+    }
   }
   if (reconciled.status === "completed") {
+    await cleanupWorkflowWorktrees(input.store, workflow.id);
     return { status: "completed", workflow: reconciled.workflow };
   }
   if (reconciled.status === "blocked") {
@@ -200,6 +205,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
     completeWorkflowIfStepsFinished(input.store, workflow.id, new Date().toISOString());
     const latest = input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow;
     if (latest.status === "succeeded") {
+      await cleanupWorkflowWorktrees(input.store, workflow.id);
       return { status: "completed", workflow: latest, schedulingDecision };
     }
     return {

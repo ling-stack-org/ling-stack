@@ -8,6 +8,7 @@ import { integrationValue, requireIntegration, retainIntegrationArtifact } from 
 import { runWorkflowIsolationOperation, workflowIsolationIsDraining } from "./workflow-isolation-lifecycle.js";
 import { completeWorkflowIfStepsFinished } from "./workflow-completion.js";
 import { maybeCreateWorkflowTerminalCoordinatorReply } from "./workflows.js";
+import { cleanupWorkflowWorktrees } from "./workflow-worktree-cleanup.js";
 
 export interface WorkflowMergeApplicationResult {
   readonly status: "applied" | "not_applied" | "waiting" | "blocked" | "effect_unknown";
@@ -109,10 +110,11 @@ function coordinate(input: Input, liveDecision: boolean): Promise<WorkflowMergeA
         ? cause.code : "workflow_merge.application_unverified";
       return { status: permit ? "effect_unknown" : "blocked", round: latest(), code };
     }
-  }).then(result => {
+  }).then(async result => {
     if (result.status === "applied" && !workflowIsolationIsDraining(input.store, workflowId)) {
       const at = input.now?.() ?? new Date().toISOString();
       completeWorkflowIfStepsFinished(input.store, workflowId, at);
+      await cleanupWorkflowWorktrees(input.store, workflowId, { observeOnly: !liveDecision, now: input.now });
       maybeCreateWorkflowTerminalCoordinatorReply(input.store, workflowId, { now: at });
     }
     return result;

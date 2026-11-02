@@ -8,6 +8,7 @@ import { applyWorkflowMergeApplyMigration, WORKFLOW_MERGE_APPLY_MIGRATION_VERSIO
   from "../dist/storage/sqlite/workflow-merge-apply-migration.js";
 import { workflowIsolationFixture } from "./support/workflow-isolation-fixture.mjs";
 import { now, resultTables, workflowIsolationResultsFixture } from "./support/workflow-isolation-results-fixture.mjs";
+import { workflowMigrationPredecessorFixture } from "./support/workflow-migration-predecessor-fixture.mjs";
 
 const table = "workflow_merge_apply_permits";
 const migrationName = "workflow_merge_apply_permits";
@@ -47,11 +48,7 @@ async function fixture(t, { predecessor = false, terminal = false } = {}) {
     : await workflowIsolationFixture(t, { create: false, pin: false });
   const db = f.store.database;
   if (predecessor) {
-    if (exists(db)) {
-      assert.equal(rows(db, table).length, 0);
-      db.exec(`DROP TABLE ${table}`);
-    }
-    db.prepare("DELETE FROM schema_migrations WHERE version=208").run();
+    f.assertFullUpgrade = workflowMigrationPredecessorFixture(f, 208);
     assert.equal(schema(db).some(row => row.tbl_name === table), false);
     assert.equal(has(db)(208), false);
   } else migrate(db);
@@ -175,10 +172,13 @@ test("actual207 upgrade preserves approval consent, immutable request, terminal 
   assert.deepEqual(schema(db).filter(row => row.tbl_name !== table), before.schema);
   assert.deepEqual(snapshot(db).markers.filter(row => row.version !== 208), before.markers);
   assert.deepEqual(dataSnapshot(f), data);
+  assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 208);
   insertPermit(f);
   const installed = snapshot(db);
-  migrate(db); reopen(f);
-  assert.deepEqual(snapshot(f.store.database), installed);
+  migrate(db); assert.deepEqual(snapshot(db), installed);
+  reopen(f);
+  f.assertFullUpgrade(f.store.database, installed);
+  assert.deepEqual(snapshot(f.store.database).permits, installed.permits);
   assert.deepEqual(dataSnapshot(f), data);
   assert.deepEqual(rows(f.store.database, table).map(row => ({ ...row })), [f.permitRow]);
 });

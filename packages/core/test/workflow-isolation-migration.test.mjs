@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { applyWorkflowIsolationMigration, WORKFLOW_ISOLATION_MIGRATION_VERSION } from "../dist/storage/sqlite/workflow-isolation-migration.js";
 import { isolationTables, workflowIsolationFixture } from "./support/workflow-isolation-fixture.mjs";
+import { workflowMigrationPredecessorFixture } from "./support/workflow-migration-predecessor-fixture.mjs";
 
 const schema = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
 const markers = db => db.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
@@ -11,20 +12,71 @@ const record = db => (version, name) => db.prepare("INSERT INTO schema_migration
   .run(version, name, "2026-11-02T00:00:00.000Z");
 const migrate = (db, extra = {}) => applyWorkflowIsolationMigration({ database: db, hasMigration: has(db), recordMigration: record(db), ...extra });
 
-/** Reconstruct the actual predecessor, not a marker153/203 with the204 overlay left installed. */
+/** Reconstruct203 without any204-209 overlay or later marker. */
 async function predecessor(t) {
   const f = await workflowIsolationFixture(t, { create: false, pin: false }), db = f.store.database;
-  assert.ok(isolationTables.every(table => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n === 0));
-  db.exec("PRAGMA foreign_keys=OFF");
-  try {
-    for (const table of [...isolationTables].reverse()) db.exec(`DROP TABLE ${table}`);
-    db.prepare("DELETE FROM schema_migrations WHERE version=204").run();
-  } finally { db.exec("PRAGMA foreign_keys=ON"); }
+  f.assertFullUpgrade = workflowMigrationPredecessorFixture(f, 204);
   assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 203);
   assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version=203").get().name, "workflow_step_preparing_admission");
   assert.equal(schema(db).some(row => isolationTables.includes(row.tbl_name)), false);
   return f;
 }
+
+for (const guard of ["nonempty-table", "unknown-object", "unknown-marker", "non-fixture-path"]) {
+  test(`predecessor fixture refuses ${guard} before removing any overlay`, async t => {
+    const f = await workflowIsolationFixture(t, { create: false, pin: false }), db = f.store.database;
+    if (guard === "nonempty-table") f.create();
+    if (guard === "unknown-object") db.exec("CREATE INDEX fixture_foreign_index ON workflow_worktree_cleanup_intents(workflow_id)");
+    if (guard === "unknown-marker") record(db)(210, "fixture_foreign_overlay");
+    const before = snapshot(db), data = f.snapshotIsolation();
+    assert.throws(() => workflowMigrationPredecessorFixture(guard === "non-fixture-path" ? { ...f, root: f.cwd } : f, 204),
+      /must be empty|unexpected overlay object|explicit overlay inventory|temporary fixture root/);
+    assert.deepEqual(snapshot(db), before);
+    assert.deepEqual(f.snapshotIsolation(), data);
+    assert.equal(db.isTransaction, false);
+    assert.equal(db.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
+  });
+}
+
+for (const foreignKeys of [0, 1]) {
+  test(`predecessor fixture rolls back partial removal and restores foreign_keys=${foreignKeys}`, async t => {
+    const f = await workflowIsolationFixture(t, { create: false, pin: false }), db = f.store.database;
+    db.exec(`PRAGMA foreign_keys=${foreignKeys}`);
+    const before = snapshot(db), data = f.snapshotIsolation(), exec = db.exec.bind(db);
+    let reachedFault = false;
+    const fault = t.mock.method(db, "exec", sql => {
+      if (sql === 'DROP TABLE "workflow_worktree_cleanup_intents"') {
+        reachedFault = true;
+        assert.equal(db.prepare("SELECT 1 FROM sqlite_master WHERE name='workflow_worktree_cleanup_receipts'").get(), undefined);
+        throw new Error("predecessor-partial-drop");
+      }
+      return exec(sql);
+    });
+    try { assert.throws(() => workflowMigrationPredecessorFixture(f, 204), /predecessor-partial-drop/); }
+    finally { fault.mock.restore(); }
+    assert.equal(reachedFault, true);
+    assert.deepEqual(snapshot(db), before);
+    assert.deepEqual(f.snapshotIsolation(), data);
+    assert.equal(db.isTransaction, false);
+    assert.equal(db.prepare("PRAGMA foreign_keys").get().foreign_keys, foreignKeys);
+    workflowMigrationPredecessorFixture(f, 204);
+    assert.equal(db.prepare("PRAGMA foreign_keys").get().foreign_keys, foreignKeys);
+  });
+}
+
+test("predecessor fixture preserves an unrelated populated table through removal and full upgrade", async t => {
+  const f = await workflowIsolationFixture(t, { create: false, pin: false }), db = f.store.database;
+  db.exec("CREATE TABLE fixture_unowned (id TEXT PRIMARY KEY, payload TEXT NOT NULL)");
+  db.prepare("INSERT INTO fixture_unowned VALUES(?,?)").run("foreign", "preserve-this-data");
+  const data = db.prepare("SELECT * FROM fixture_unowned").all();
+  const assertFullUpgrade = workflowMigrationPredecessorFixture(f, 204);
+  assert.deepEqual(db.prepare("SELECT * FROM fixture_unowned").all(), data);
+  migrate(db);
+  const installed = snapshot(db);
+  f.reopenIsolation();
+  assertFullUpgrade(f.store.database, installed);
+  assert.deepEqual(f.store.database.prepare("SELECT * FROM fixture_unowned").all(), data);
+});
 
 test("fresh Core SQLite installs independent204 tables, real foreign keys and exactly one marker", async t => {
   const f = await workflowIsolationFixture(t, { create: false, pin: false }), db = f.store.database;
@@ -48,9 +100,11 @@ test("real203 schema upgrades additively, preserves old data, and reopens throug
   assert.deepEqual(schema(db).filter(row => !isolationTables.includes(row.tbl_name)), beforeSchema);
   assert.deepEqual(f.snapshot(), beforeData);
   assert.deepEqual(markers(db).filter(row => row.version !== 204), beforeMarkers);
+  assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 204);
   const installed = snapshot(db);
+  migrate(db); assert.deepEqual(snapshot(db), installed);
   f.reopenIsolation();
-  assert.deepEqual(snapshot(f.store.database), installed);
+  f.assertFullUpgrade(f.store.database, installed);
   assert.deepEqual(f.snapshot(), beforeData);
   f.create(); f.persistPin(); f.bind(); f.link();
   assert.equal(f.isolation.assertExecutionBinding({ writer: f.writer, requireReady: false, now: f.at(7) }).status, "current");
@@ -101,7 +155,7 @@ for (const corruption of ["predecessor-missing", "predecessor-renamed", "marker-
     if (corruption === "predecessor-missing") db.prepare("DELETE FROM schema_migrations WHERE version=203").run();
     if (corruption === "predecessor-renamed") db.prepare("UPDATE schema_migrations SET name='foreign203' WHERE version=203").run();
     if (corruption === "marker-renamed") db.prepare("UPDATE schema_migrations SET name='foreign204' WHERE version=204").run();
-    if (corruption === "marker-duplicate") record(db)(205, "workflow_isolation_foundation");
+    if (corruption === "marker-duplicate") record(db)(999204, "workflow_isolation_foundation");
     const before = snapshot(db);
     assert.throws(() => migrate(db, corruption === "callback-disagrees" ? { hasMigration: () => false } : {}), /migration_predecessor_missing|migration_marker_conflict/);
     assert.deepEqual(snapshot(db), before);

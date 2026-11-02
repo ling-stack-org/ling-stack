@@ -62,6 +62,12 @@ async function coordinateWorkflowIntegrationInner(input: Parameters<typeof coord
   requireIntegration(initial, "workflow_integration.round_missing");
   const latest = () => isolation.getIntegrationRound(initial.roundId)!;
   try {
+    if (store.getChannelWorkflow(initial.inputs.workflowId)?.status === "succeeded") {
+      const blocker = coordinator.readPublicationBlocker(initial.inputs.workflowId)
+        ?? coordinator.readCompletionBlocker(initial.inputs.workflowId);
+      requireIntegration(!blocker, blocker ?? "workflow_integration.completion_unverified");
+      return { status: initial.inputs.mode === "candidate_only" ? "awaiting_approval" : "applied", round: initial };
+    }
     if (initial.inputs.mode === "apply_to_target" && ["awaiting_approval", "applying", "applied", "blocked"].includes(initial.phase)) {
       const request = createSqliteWorkflowMergeApprovalStore(store).getRequest(initial.roundId, initial.generation);
       if (request) {

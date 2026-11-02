@@ -3,6 +3,7 @@ import test from "node:test";
 import { applyWorkflowIsolationResultsMigration, WORKFLOW_ISOLATION_RESULTS_MIGRATION_VERSION } from "../dist/storage/sqlite/workflow-isolation-results-migration.js";
 import { workflowIsolationFixture } from "./support/workflow-isolation-fixture.mjs";
 import { resultTables, workflowIsolationResultsFixture } from "./support/workflow-isolation-results-fixture.mjs";
+import { workflowMigrationPredecessorFixture } from "./support/workflow-migration-predecessor-fixture.mjs";
 
 const schema = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
 const snapshot = db => ({ schema: schema(db), markers: db.prepare("SELECT * FROM schema_migrations ORDER BY version").all() });
@@ -13,12 +14,7 @@ const migrate = (db, extra = {}) => applyWorkflowIsolationResultsMigration({ dat
 
 async function predecessor(t) {
   const f = await workflowIsolationFixture(t, { create: false, pin: false }), db = f.store.database;
-  for (const table of resultTables) assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0);
-  db.exec("PRAGMA foreign_keys=OFF");
-  try {
-    for (const table of [...resultTables].reverse()) db.exec(`DROP TABLE ${table}`);
-    db.prepare("DELETE FROM schema_migrations WHERE version=205").run();
-  } finally { db.exec("PRAGMA foreign_keys=ON"); }
+  f.assertFullUpgrade = workflowMigrationPredecessorFixture(f, 205);
   assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version=204").get().name, "workflow_isolation_foundation");
   assert.equal(schema(db).some(row => resultTables.includes(row.tbl_name)), false);
   return f;
@@ -44,8 +40,11 @@ test("actual204 predecessor upgrades additively, preserves data and reopens thro
   assert.deepEqual(schema(db).filter(row => !resultTables.includes(row.tbl_name)), before.schema);
   assert.deepEqual(f.snapshotIsolation(), data);
   assert.deepEqual(snapshot(db).markers.filter(row => row.version !== 205), before.markers);
-  const installed = snapshot(db); f.reopenIsolation();
-  assert.deepEqual(snapshot(f.store.database), installed);
+  assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 205);
+  const installed = snapshot(db); migrate(db); assert.deepEqual(snapshot(db), installed);
+  f.reopenIsolation();
+  f.assertFullUpgrade(f.store.database, installed);
+  assert.deepEqual(f.snapshotIsolation(), data);
   f.create(); f.persistPin(); f.bind(); f.link();
   assert.equal(f.isolation.assertExecutionBinding({ writer: f.writer, requireReady: false, now: f.at(7) }).status, "current");
 });
