@@ -15,7 +15,7 @@ Code and workflow anchors: `package.json`, `apps/desktop/package.json`,
 | Alpha GitHub tag | Named historical prerelease source baseline | `v0.1.2-alpha.1` has been published; [published Releases](https://github.com/ling-stack-org/ling-stack/releases) record publication status |
 | Local Desktop development candidate | Engineering checks on a platform host | See the [Mac and Windows packaging checklist](development-packages.md); macOS currently requires an independent Office source review record |
 | Public Desktop binary | End-user installation | Blocked by signing, platform, notice, and clean-machine gates |
-| Numeric product version | Source and potential GitHub Release identity | Current version `0.1.3`, intended tag `v0.1.3`; publication remains subject to applicable gates |
+| Numeric product version | Source and potential GitHub Release identity | Candidate version follows [VERSION](../../VERSION), with tag `v<product-version>`; [published Releases](https://github.com/ling-stack-org/ling-stack/releases) record publication status, subject to applicable gates |
 
 Making the repository public is not permission to publish an unsigned Desktop artifact.
 
@@ -28,7 +28,9 @@ the development-only signing and acceptance boundaries described here.
 Future releases use Semantic Versioning. Before `1.0.0`, incompatible product or API
 changes may occur in minor releases but must still be documented.
 
-- The current product version is `0.1.3`; the next release tag is `v0.1.3`.
+- The candidate product version is defined in [VERSION](../../VERSION); its corresponding
+  release tag is `v<product-version>`. Actual publication status is recorded in
+  [published Releases](https://github.com/ling-stack-org/ling-stack/releases).
   The already-published `v0.1.2-alpha.1` remains historical and immutable. Tags and Releases
   are created explicitly after maintainer review and applicable release gates.
 - Release tags must point to reviewed commits on `main`.
@@ -41,10 +43,10 @@ changes may occur in minor releases but must still be documented.
 
 ### Release Naming
 
-- Use `v<product-version>` for every new release tag: this version is `v0.1.3`.
+- Use `v<product-version>` for every new release tag, matching the approved product version.
   Older prerelease tags retain their original meaning; numeric naming by itself does not close release gates.
 - Use `Ling Stack <tag>` as the GitHub Release title, for example
-  `Ling Stack v0.1.3`.
+  `Ling Stack v<product-version>`.
 - Do not include a platform, `dev` prefix, date, commit hash, or packaging recipe
   revision in the tag or title. Record the full source commit, date, development-only
   status, verification scope, and known limits in the release notes and evidence.
@@ -79,7 +81,7 @@ changes may occur in minor releases but must still be documented.
 9. Verify the published tag and source archive checksums from a clean checkout.
 
 No automatic release-on-push workflow exists. Publishing a GitHub Release remains an
-explicit maintainer action. A `v0.1.3` Release eligible for GitHub's
+explicit maintainer action. A product Release eligible for GitHub's
 `/repos/ling-stack-org/ling-stack/releases/latest` requires publication in that repository
 with `draft=false` and `prerelease=false` after the applicable gates; numeric naming and
 an unsigned Draft do not establish release readiness.

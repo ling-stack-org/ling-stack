@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -11,7 +11,7 @@ const packagePath = "node_modules/bun-types";
 const scopes = ["client-command-imports", "native-build-imports", "node-browser-build-imports", "diagram-build-imports", "security-sidecar-build-imports"];
 
 async function fixture(t) {
-  const parent = await mkdtemp(join(tmpdir(), "gstack-type-selection-"));
+  const parent = await realpath(await mkdtemp(join(tmpdir(), "gstack-type-selection-")));
   t.after(() => rm(parent, { recursive: true, force: true }));
   const stage = await mkdtemp(join(parent, ".gstack-resource-stage-"));
   const candidate = join(stage, "candidate"), runtime = join(candidate, "runtime");

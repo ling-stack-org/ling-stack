@@ -22,6 +22,8 @@ async function fixture(t) {
   const modulePath = join(root, "apps/desktop/scripts/build-packaged-daemon.mjs");
   mkdirSync(dirname(modulePath), { recursive: true }); copyFileSync(script, modulePath);
   copyFileSync(sourceScript, join(dirname(modulePath), "packaged-office-daemon-source-inputs.mjs"));
+  copyFileSync(new URL("../scripts/packaged-office-native-review-inputs.mjs", import.meta.url),
+    join(dirname(modulePath), "packaged-office-native-review-inputs.mjs"));
   const runtime = join(root, "packages/daemon/dist/runtime/sandbox");
   const sourceRuntime = join(root, "packages/daemon/src/runtime/sandbox");
   const codesignModule = join(sourceRuntime, "packaged-codesign-published-review.ts");
@@ -82,7 +84,9 @@ async function fixture(t) {
       export function readOriginalRestrictedCommandBuildPublication(receipt) {
         if (receipt !== state.codesignToken) throw new Error("synthetic_codesign_token_invalid"); return state.codesign;
       }`],
-    ["./packaged-office-native-review.mjs", bridge + "export function readReviewedPackagedOfficeSource() { return state.sourceReview; }"],
+    ["./packaged-office-native-review.mjs", bridge + `
+      export function readReviewedPackagedOfficeSource() { return state.sourceReview; }
+      export function readLocalPackagedOfficeSource() { throw new Error("synthetic_review_requires_release_path"); }`],
     ["./packaged-gstack-resources.mjs", bridge + `
       export async function preparePackagedGstackBuild(options) { state.gstackPreparations.push(options); return undefined; }
       export function packagedGstackIdentityPlugin({ identity }) {
@@ -102,6 +106,10 @@ async function fixture(t) {
     Object.defineProperty(process, name, { ...original, value });
     t.after(() => Object.defineProperty(process, name, original));
   }
+  const priorReleaseIntent = process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
+  process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = "1";
+  t.after(() => { if (priorReleaseIntent === undefined) delete process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
+    else process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = priorReleaseIntent; });
   const priorIntent = process.env.LING_PACKAGED_CODESIGN_REVIEW_REQUIRED;
   delete process.env.LING_PACKAGED_CODESIGN_REVIEW_REQUIRED;
   t.after(() => { if (priorIntent === undefined) delete process.env.LING_PACKAGED_CODESIGN_REVIEW_REQUIRED;
