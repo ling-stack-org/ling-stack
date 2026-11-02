@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { classifyChangedFiles } from "./classify-scope.mjs";
@@ -42,18 +44,24 @@ function runOutputTransform(variable, value) {
   const end = source.indexOf("          NODE\n", start);
   assert.notEqual(end, -1, `Missing ${variable} heredoc terminator`);
   const command = source.slice(start, end + "          NODE\n".length).replace(/^ {10}/gmu, "");
-  const result = spawnSync("bash", ["-euo", "pipefail", "-c", command], {
-    cwd: root, encoding: "utf8", timeout: 10_000,
-    env: { ...process.env, scope_json: value, unit_matrix: value, GITHUB_OUTPUT: "/dev/stdout" },
-  });
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-  const lines = result.stdout.trim().split("\n").map((line) => {
-    const separator = line.indexOf("=");
-    assert.ok(separator > 0, `Invalid workflow output: ${line}`);
-    return [line.slice(0, separator), line.slice(separator + 1)];
-  });
-  assert.equal(new Set(lines.map(([key]) => key)).size, lines.length);
-  return Object.fromEntries(lines);
+  const directory = mkdtempSync(join(tmpdir(), "ling-ci-workflow-output-"));
+  const outputFile = join(directory, "output");
+  try {
+    const result = spawnSync("bash", ["-euo", "pipefail", "-c", command], {
+      cwd: root, encoding: "utf8", timeout: 10_000,
+      env: { ...process.env, scope_json: value, unit_matrix: value, GITHUB_OUTPUT: outputFile },
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const lines = readFileSync(outputFile, "utf8").trim().split("\n").map((line) => {
+      const separator = line.indexOf("=");
+      assert.ok(separator > 0, `Invalid workflow output: ${line}`);
+      return [line.slice(0, separator), line.slice(separator + 1)];
+    });
+    assert.equal(new Set(lines.map(([key]) => key)).size, lines.length);
+    return Object.fromEntries(lines);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 async function assertScopeOutputs(scope, { mode, packages, daemon, web, dependency = false, matrix }) {
