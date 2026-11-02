@@ -203,3 +203,42 @@ GUI check, artifact acceptance or hosted CI. The preceding runtime test results
 remain historical evidence for their recorded inputs. The approval still covers
 only Darwin arm64, `unsigned_dev`, ad-hoc, `provider=false` source prerequisites;
 no public signing, notarization, final artifact, deployment or release is approved.
+
+## Main dependency integration follow-up
+
+The merge of main `af6978a6a831b33839d6add511ac441f0c1e0f19` retains its
+dependency updates. Independent Codex reader
+`01a19d38-78e4-72d3-b448-3dfca6720f88` reviewed both complete manifests and
+the merged lock graph before approving three explicit digest replacements.
+The Desktop and Daemon manifest changes are dependency-only; their scripts,
+entrypoints, hooks and signing settings are unchanged.
+
+The first lock review requested removal of one unreferenced
+`minimalistic-assert@1.0.1` snapshot without package metadata. The parent removed
+only that entry. The same reader verified the exact deletion and the final
+lock digest, then returned no findings for that fix verification and allowed
+the lock digest replacement. All 1,467 snapshots have package metadata and
+all 3,505 dependency references resolve. The nine security patches, 22 overrides
+and Expo/MCP/zod branches are preserved.
+
+| Input | Approved SHA-256 |
+| --- | --- |
+| `apps/desktop/package.json` | `12d420c1ed401229bd93981fa900165f0c6353899261d16bcc7d8784a49910d1` |
+| `packages/daemon/package.json` | `72ec2f4d9364649d83a3ecbd9e2e5b2b6b22cca28507d4e93f484b9f4d747c6e` |
+| `pnpm-lock.yaml` | `2277ac3be1d2745c47e074561c66e9150b4c5f4d17dcd95d34fbdd74c0936735` |
+
+The parent adopted exactly those three values and recomputed every current
+input, including the generated localization files: all 1,706 packaging inputs
+and 15 native inputs match, with no missing or extra key. All other record
+fields are unchanged. The updated Office record SHA-256 is
+`2fbed48ef821f7bf4ef8b2a4ab277fc4685e437925823c8b093e2bedd8a0847a`;
+its fixed-order packaging aggregate is
+`bf77a3f9ba40691252abe36dedb06053b91e36f5df4d0beb7c049da122463727`.
+
+This was a static, independent-context review, not a cross-model or human
+approval. The parent separately completed frozen installation and the
+15-workspace Daemon/CLI/Web build. The reader did not run tests, native tools,
+Electron, GUI or hosted CI. Earlier test results remain evidence for their
+recorded snapshots, not final-head CI acceptance. The source prerequisite is
+still limited to Darwin arm64, `unsigned_dev`, ad-hoc, `provider=false`;
+no signing, notarization, runtime or toolchain axis is promoted.
