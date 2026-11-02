@@ -10,7 +10,8 @@ import type { RunRequest } from "./schemas.js";
 import { inlineProviderDescriptor } from "../conversations/normal-conversation-prepared-provider.js";
 
 const inputKeys = ["cwd", "task", "provider", "tools", "mcpTools", "thinkingLevel", "reasoningSummary", "systemPrompt",
-  "appendSystemPrompt", "agentDir", "runtimePaths", "runtimeToolFeatures", "mediaGenerationTools", "initialToolSurface", "hostCapabilityTools", "readonlyToolsProfile"] as const;
+  "appendSystemPrompt", "agentDir", "runtimePaths", "runtimeToolFeatures", "mediaGenerationTools", "initialToolSurface", "hostCapabilityTools", "readonlyToolsProfile", "isolatedToolsProfile"] as const;
+const isolatedToolNames = ["read", "grep", "find", "ls", "write", "edit"] as const;
 type PreparedOptions = Omit<Pick<PiRunnerRunOptions, (typeof inputKeys)[number]>, "tools"> & { readonly tools?: RunRequest["tools"] };
 export interface SkillDefinitionRuntimeSnapshot {
   readonly skillId: string;
@@ -44,7 +45,9 @@ export function capturePreparedRunnerInput(input: {
   readonly skillSourceContext?: SkillSourceRuntimeContext;
   readonly skillDefinitionSnapshot?: SkillDefinitionRuntimeSnapshot;
 }): PreparedRunnerInput {
+  if (input.options.isolatedToolsProfile !== undefined) assertLiveIsolatedOptions(input.options);
   const options = Object.fromEntries(inputKeys.map((key) => [key, input.options[key]]));
+  if (input.options.isolatedToolsProfile) options.tools ??= [...isolatedToolNames];
   options.provider = inlineProviderDescriptor(input.options.provider);
   return readPreparedRunnerInput(json({ schemaVersion: 1, runnerId: input.runnerId, input: options,
     toolHydrationEnabled: input.options.initialToolSurface?.toolHydration ?? Boolean(input.options.onToolHydrationRequest),
@@ -55,6 +58,21 @@ export function capturePreparedRunnerInput(input: {
 export function restorePreparedRunnerOptions(
   payload: PreparedRunnerInput, current: PiRunnerRunOptions,
 ): PiRunnerRunOptions {
+  if (payload.input.readonlyToolsProfile !== current.readonlyToolsProfile ||
+    payload.input.isolatedToolsProfile !== current.isolatedToolsProfile) {
+    throw new HttpError(409, "workflow_safety_mismatch", "The prepared Host tool producer profile changed.");
+  }
+  if (payload.input.isolatedToolsProfile !== undefined) {
+    payload = readPreparedRunnerInput(payload, current);
+    try {
+      assertLiveIsolatedOptions(current);
+    } catch {
+      throw new HttpError(409, "workflow_safety_mismatch", "The current Host isolated-files binding is unavailable or incompatible.");
+    }
+    if (!sameToolSelection(payload.input.tools ?? isolatedToolNames, current.tools ?? isolatedToolNames)) {
+      throw new HttpError(409, "prepared_tool_capability_changed", "The prepared Host isolated-files tool selection changed.");
+    }
+  }
   if (!isDeepStrictEqual(payload.input.provider, json(inlineProviderDescriptor(current.provider)))) {
     throw new HttpError(409, "prepared_provider_configuration_changed", "Prepared provider configuration changed; start a new turn.");
   }
@@ -69,9 +87,6 @@ export function restorePreparedRunnerOptions(
   });
   const frozenSurface = payload.input.initialToolSurface;
   const currentSurface = current.initialToolSurface;
-  if (payload.input.readonlyToolsProfile !== current.readonlyToolsProfile) {
-    throw new HttpError(409, "workflow_safety_mismatch", "The prepared Host read profile changed.");
-  }
   if (payload.toolHydrationEnabled && !(currentSurface?.toolHydration ?? Boolean(current.onToolHydrationRequest)) ||
     frozenSurface?.userInput === true && currentSurface?.userInput !== true ||
     frozenSurface?.delegation === true && currentSurface?.delegation !== true ||
@@ -114,6 +129,13 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
     !isRecord(value.input.provider) || "apiKey" in value.input.provider || "headers" in value.input.provider ||
     !isDeepStrictEqual(redactSecrets(value), value)) throw new Error("Invalid prepared execution payload");
   const prepared = readPreparedPiInput(value.preparedInput);
+  if (value.input.isolatedToolsProfile !== undefined && value.input.isolatedToolsProfile !== "host_isolated_files_v1") {
+    throw new Error("Invalid prepared Host isolated-files profile");
+  }
+  if (value.input.isolatedToolsProfile === "host_isolated_files_v1" && (value.runnerId !== "pi"
+    || value.toolHydrationEnabled || !isNarrowIsolatedSurface(value.input)
+    || !sameToolSelection(value.input.tools ?? isolatedToolNames, prepared.tools.map(tool => tool.name))
+    || !prepared.tools.every(isIsolatedPreparedTool))) throw new Error("Invalid prepared Host isolated-files tool surface");
   if (value.input.readonlyToolsProfile !== undefined && value.input.readonlyToolsProfile !== "host_readonly_v1") {
     throw new Error("Invalid prepared Host read profile");
   }
@@ -202,6 +224,61 @@ function isNativeCreateWriteTool(tool: PiRunnerPreparedInput["tools"][number]): 
   return isRecord(parameters) && parameters.required instanceof Array &&
     parameters.required.length === 2 && parameters.required.includes("path") && parameters.required.includes("content") &&
     !Object.hasOwn(parameters, "anyOf") && parameters.additionalProperties === false;
+}
+
+function assertLiveIsolatedOptions(options: PiRunnerRunOptions): void {
+  if (options.isolatedToolsProfile !== "host_isolated_files_v1" || !isNarrowIsolatedSurface(options) ||
+    typeof options.onToolBefore !== "function" || typeof options.onIsolatedToolCall !== "function") {
+    throw new Error("Invalid prepared Host isolated-files binding");
+  }
+}
+
+function isNarrowIsolatedSurface(input: unknown): boolean {
+  if (!isRecord(input) || input.readonlyToolsProfile !== undefined) return false;
+  const tools = input.tools === undefined ? isolatedToolNames : input.tools;
+  if (!Array.isArray(tools) || !tools.every(name => (isolatedToolNames as readonly unknown[]).includes(name)) ||
+    new Set(tools).size !== tools.length) return false;
+  if (["mcpTools", "hostCapabilityTools", "mediaGenerationTools"].some(key => input[key] !== undefined &&
+    (!Array.isArray(input[key]) || input[key].length !== 0))) return false;
+  for (const [key, allowed] of [
+    ["initialToolSurface", ["mediaGeneration", "toolHydration", "userInput", "nativeFileCreate", "delegation"]],
+    ["runtimeToolFeatures", ["requestPermissions", "unifiedExec", "shellSnapshot"]],
+  ] as const) {
+    const flags = input[key];
+    if (flags !== undefined && (!isRecord(flags) || Object.entries(flags).some(([name, enabled]) =>
+      !(allowed as readonly string[]).includes(name) || enabled !== false && enabled !== undefined))) return false;
+  }
+  // Approval stays live in the Host handler; these other producers may not enter this profile.
+  return ["onMcpToolCall", "onHostCapabilityCall", "onMediaGenerationToolCall", "onToolHydrationRequest",
+    "onDelegationToolCall", "onUserInputRequest", "onPermissionRequired"].every(key => input[key] === undefined);
+}
+
+function sameToolSelection(left: unknown, right: readonly string[]): boolean {
+  return Array.isArray(left) && left.length === right.length && new Set(left).size === left.length &&
+    left.every(name => right.includes(name));
+}
+
+/** Reject legacy mutation/regex schemas too; SDK session fingerprint validation still owns exact schema identity. */
+function isIsolatedPreparedTool(tool: PiRunnerPreparedInput["tools"][number]): boolean {
+  if (!(isolatedToolNames as readonly string[]).includes(tool.name)) return false;
+  if (!["grep", "write", "edit"].includes(tool.name)) return true;
+  const schema = tool.parameters;
+  if (!isRecord(schema) || schema.type !== "object" || !isRecord(schema.properties) || !Array.isArray(schema.required)) return false;
+  const properties = schema.properties;
+  if (tool.name === "grep") return schema.required.includes("literal") && isRecord(properties.literal) &&
+    properties.literal.type === "boolean" && properties.literal.const === true;
+  const fields = tool.name === "write" ? ["path", "content"] : ["path", "edits"];
+  if (!sameToolSelection(schema.required, fields) || !sameToolSelection(Object.keys(properties), fields) ||
+    ["anyOf", "oneOf", "allOf", "$ref"].some(key => schema[key] !== undefined) ||
+    !isRecord(properties.path) || properties.path.type !== "string") return false;
+  if (tool.name === "write") return isRecord(properties.content) && properties.content.type === "string";
+  const edits = properties.edits;
+  if (!isRecord(edits) || edits.type !== "array" || edits.minItems !== 1 || !isRecord(edits.items)) return false;
+  const item = edits.items;
+  const itemProperties = item.properties;
+  return item.type === "object" && sameToolSelection(item.required, ["oldText", "newText"]) && isRecord(itemProperties) &&
+    sameToolSelection(Object.keys(itemProperties), ["oldText", "newText"]) &&
+    ["oldText", "newText"].every(key => isRecord(itemProperties[key]) && itemProperties[key].type === "string");
 }
 
 function requiredRuntimeToolFeaturesRemainAvailable(

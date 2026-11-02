@@ -78,6 +78,7 @@ export interface RunRequest extends Omit<
   | "onApprovalRequired"
   | "onToolBefore"
   | "onReadonlyToolCall"
+  | "onIsolatedToolCall"
   | "onEvent"
   | "provider"
   | "providerBudget"
@@ -106,6 +107,8 @@ export interface RunRequest extends Omit<
   readonly workflowOperationExecution?: WorkflowOperationExecutionSnapshot;
   /** Internal Host-produced scope; never accepted by the public request parser. */
   readonly workflowSafetySnapshot?: import("./workflow-safety.js").WorkflowSafetySnapshotV1;
+  /** Host-only isolation plan binding; never accepted by the public request parser. */
+  readonly workflowIsolationPlan?: { readonly planId: string; readonly planDigest: string };
   readonly threadId?: string;
   readonly turnId?: string;
   readonly runnerId?: string;

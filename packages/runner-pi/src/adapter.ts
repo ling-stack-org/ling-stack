@@ -12,6 +12,7 @@ import { createPiSessionStopper, createPiTaskBoundary } from "./task-boundary.js
 import { assertUserInputExecutionHandler } from "./extensions/user-input.js";
 import { assertDelegationExecutionHandler } from "./extensions/delegation.js";
 import { assertHostReadonlyToolSurface } from "./extensions/host-readonly.js";
+import { withHostIsolatedFilesToolSurface } from "./extensions/host-isolated-files.js";
 import { PiRunnerYielded } from "./task-yield.js";
 import { PiRunnerSuspended } from "./runtime-suspension.js";
 import { createPiToolBoundaryObservation } from "./tool-boundary-observation.js";
@@ -26,6 +27,7 @@ import { resolvePiProviderRequestAuth } from "./provider-request-auth.js";
 export class PiRunnerAdapter {
   /** Assemble exact SDK input without executing, emitting Run events, or persisting a session. */
   async prepareTaskInput(options: PiRunnerRunOptions): Promise<PiRunnerPreparedInput> {
+    options = withHostIsolatedFilesToolSurface(options);
     const session = await createInitializedPiSession(options, (runtime) => {
       this.registerCustomProviderIfNeeded(runtime, options.provider);
       const noModelRequest = (): never => { throw new Error("Model execution is forbidden during input preparation"); };
@@ -42,6 +44,7 @@ export class PiRunnerAdapter {
 
   /** Resolves only on completion; typed yield/suspension outcomes require SDK stop and idle. */
   async runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult> {
+    options = withHostIsolatedFilesToolSurface(options);
     assertHostReadonlyToolSurface(options);
     assertUserInputExecutionHandler(options);
     assertDelegationExecutionHandler(options);

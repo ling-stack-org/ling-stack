@@ -5,12 +5,16 @@ import { verifyElectronNodeResources } from "../sandbox/electron-node-resources.
 import { verifyRestrictedCommandBinaryPin, type RestrictedCommandExecutablePin } from "../sandbox/restricted-command-runtime.js";
 import type { HostTextRead } from "./host-text-read.js";
 import { runHostTextWriteWorker } from "./host-text-write-worker.js";
+import type { HostFileMutationEffectGuard } from "../host-operation-effects.js";
 
 interface Identity { readonly dev: string; readonly ino: string; readonly size: string; readonly mtime: string; readonly ctime: string }
 export interface HostTextWrite { assertUnchanged(): void }
 export interface HostTextWriteOptions {
   /** Trusted Host bootstrap input, never from ACP or a workspace/model payload. */
   readonly node?: RestrictedCommandExecutablePin;
+  /** Captured Host journal authority. Only the synchronous OS launch is guarded. */
+  readonly effectGuard?: HostFileMutationEffectGuard;
+  readonly assertCurrent?: () => void;
 }
 export class HostTextWriteError extends Error {
   constructor(readonly outcome: "not_started" | "unknown") { super("host_file_write_failed"); }
@@ -53,7 +57,7 @@ export function prepareBoundedHostWrite(path: string, signal: AbortSignal, basel
     signal.throwIfAborted();
     const output = await writeWorker(["-p", profile, runtime.executable, "--input-type=module", "--eval", program], parent,
       JSON.stringify({ path, parent: { dev: String(directory.dev), ino: String(directory.ino) }, expected, content }), signal,
-      runtime.electron);
+      runtime.electron, options);
     let value;
     try { value = JSON.parse(output); } catch { throw new HostTextWriteError("unknown"); }
     if (value?.outcome !== "succeeded") throw new HostTextWriteError(value?.outcome === "not_started" ? "not_started" : "unknown");
@@ -90,11 +94,17 @@ function captureHostRuntime(input?: RestrictedCommandExecutablePin) {
   return { executable, electron, readRoots, assertCurrent: () => { check(); } };
 }
 
-async function writeWorker(args: readonly string[], cwd: string, input: string, signal: AbortSignal, electron: boolean): Promise<string> {
+async function writeWorker(args: readonly string[], cwd: string, input: string, signal: AbortSignal, electron: boolean,
+  options: HostTextWriteOptions): Promise<string> {
   signal.throwIfAborted();
-  const child = spawn("/usr/bin/sandbox-exec", args, { cwd, env: { PATH: "/usr/bin:/bin", HOME: "/nonexistent",
+  const launch = () => {
+    signal.throwIfAborted();
+    options.assertCurrent?.();
+    return spawn("/usr/bin/sandbox-exec", args, { cwd, env: { PATH: "/usr/bin:/bin", HOME: "/nonexistent",
     ...(electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
-    shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+      shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+  };
+  const child = options.effectGuard ? options.effectGuard.launch(launch) : launch();
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let failed = false, bytes = 0;

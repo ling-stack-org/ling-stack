@@ -11,6 +11,7 @@ import {
   type DelegationPreparedExecution,
   type RootRunSuspensionActivationRecord,
   createRuntimeResourceRenewal,
+  createSqliteWorkflowIsolationStore,
   DEFAULT_WORKSPACE_ID,
   isExternalExecutionEngineId,
   isApprovalResumeBasisV1,
@@ -50,6 +51,7 @@ import {
   type WorkUnitAttempt,
   type WorkUnitKind,
   toRuntimeAttemptFence,
+  workflowIsolationDigest,
 } from "@ling-stack/core";
 import type {
   PiRunnerApprovedToolContinuation,
@@ -73,6 +75,10 @@ import { workflowOperationEffectRejection } from "./workflow-operation-effect-ga
 import { assertWorkflowSafetyAttempt, assertWorkflowSafetyRequest, assertWorkflowSafetyRunner,
   restrictWorkflowSafetyTools, workflowSafetyEffectRejection } from "./workflow-safety.js";
 import { executeWorkflowReadonlyTool } from "./workflow-readonly-executor.js";
+import { executeWorkflowIsolatedTool } from "./workflow-isolated-executor.js";
+import { prepareWorkflowIsolatedExecution, type WorkflowIsolatedExecution } from "./workflow-isolation-execution.js";
+import { assertWorkflowIsolatedExecutionAuthority } from "./workflow-isolation-file-authority.js";
+import { readWorkflowIsolationWorktreeScope } from "../channels/workflow-isolation-planning.js";
 import { captureWorkflowStartOwner, commitWorkflowStartReady, assertWorkflowRunAdmission,
   failUndispatchedWorkflowStart, resumeWorkflowStartAdmission } from "./workflow-step-start-admission.js";
 import { failUnlinkedPreparationThread } from "./preparation-thread-failure.js";
@@ -476,6 +482,7 @@ async function executeAdmittedRunRequest(
   let resolvedProvider: PiRunnerProviderConfig | undefined;
   let runnerResolution: RunnerResolution | undefined;
   let sandboxBinding: PiRunnerSandboxBinding | undefined;
+  let isolatedExecution: WorkflowIsolatedExecution | undefined;
   let runtimeSettings: WorkspaceRuntimeSettings | undefined;
   let runtimeTools: readonly RunTool[] | undefined;
   let mcpTools: readonly PiRunnerMcpToolDefinition[] = [];
@@ -536,7 +543,7 @@ async function executeAdmittedRunRequest(
   const executionNow = (): string => userInputContinuation ? lifecycleNow() : new Date().toISOString();
   // Required-input checkpoints need durable effect receipts. An internal opt-in
   // cannot turn an off/shadow Broker into an enforced execution path.
-  const userInputAvailable = (): boolean => !delegatedExecution && options.enableUserInputPause === true
+  const userInputAvailable = (): boolean => !delegatedExecution && !runRequest.workflowIsolationPlan && options.enableUserInputPause === true
     && Boolean(turn?.sourceItemId) && durableRunRequest.harnessFeatureSnapshot?.toolBroker === "enforce";
   try {
     if ([existingContinuation, userInputContinuation, options.delegatedExecution].filter(Boolean).length > 1) {
@@ -675,6 +682,13 @@ async function executeAdmittedRunRequest(
     assertFullAccessPermissionConfirmed(policyRequest);
     if (!delegatedExecution) validateWorkflowStepOwner(store, runRequest);
     const workflowSafetyPlan = assertWorkflowSafetyRequest(store, runRequest);
+    const isolatedFiles = workflowSafetyPlan?.profile === "pi_host_isolated_files_v1";
+    if (isolatedFiles && (delegatedExecution || existingContinuation || userInputContinuation || runRequest.parentRunId
+      || resolveHarnessContinuationOrigin(runRequest) || runRequest.normalConversationPreparedRequestRef
+      || runRequest.normalConversationPreparedExecutionRef)) {
+      throw new HttpError(409, "workflow_isolation_continuation_unavailable",
+        "This isolated-files profile requires an original workflow Attempt; recovery cannot re-prompt or borrow another binding.");
+    }
     workflowStartOwner = delegatedExecution ? undefined : userInputBinding?.workflowStartOwner ?? captureWorkflowStartOwner(
         store,
         runRequest,
@@ -766,7 +780,7 @@ async function executeAdmittedRunRequest(
       unifiedExec: runtimeSupervisor.getRuntimeToolFeatures().unifiedExec === true,
       shellSnapshot: runtimeSupervisor.getRuntimeToolFeatures().shellSnapshot === true,
     };
-    const selectedHostCapabilityTools = workflowSafetyPlan?.profile === "pi_host_readonly_v1"
+    const selectedHostCapabilityTools = isolatedFiles || workflowSafetyPlan?.profile === "pi_host_readonly_v1"
       ? [] : selectHostCapabilityToolsForRun(runRequest);
     const assertHostCapabilitiesCurrent = (): void => {
       if (selectedHostCapabilityTools.some((tool) => options.hostCapabilityBridge?.hasCapability(tool.capabilityId) !== true)) {
@@ -810,6 +824,10 @@ async function executeAdmittedRunRequest(
     const harnessFeatureSnapshot = runRequest.harnessFeatureSnapshot ?? createHarnessFeatureSnapshot({
       harness: runtimeSupervisor.getHarnessFeatures(),
     });
+    if (isolatedFiles && (harnessFeatureSnapshot.toolBroker !== "enforce"
+      || runtimeSupervisor.getHarnessFeatures().toolBroker.mode !== "enforce")) {
+      throw new HttpError(409, "workflow_isolation_broker_required", "Isolated writes require the enforced Host Tool Broker.");
+    }
     const harnessContinuationOrigin = resolveHarnessContinuationOrigin(runRequest);
     durableRunRequest = {
       ...runRequest,
@@ -824,7 +842,7 @@ async function executeAdmittedRunRequest(
       ? { kind: workUnit.kind, ownerType: workUnit.ownerType, ownerId: workUnit.ownerId }
       : resolveRunWorkUnitOwner(thread, runRequest, turn.id);
     // Definitions belong to initial model input; executable handlers require the real Run below.
-    const mediaGenerationEligible = delegatedExecution || workflowSafetyPlan?.profile === "pi_host_readonly_v1" ? false : frozenExecution
+    const mediaGenerationEligible = delegatedExecution || isolatedFiles || workflowSafetyPlan?.profile === "pi_host_readonly_v1" ? false : frozenExecution
       ? frozenExecution.input.initialToolSurface?.mediaGeneration === true
       : isConversationMediaGenerationEligible({
           createdByActor: runRequest.createdByActor,
@@ -836,7 +854,7 @@ async function executeAdmittedRunRequest(
       runnerResolution.runner.toolHydration.conformance === "verified";
     dynamicDelegationRegistry = runnerResolution.runner.adapter instanceof PiRunnerAdapter
       ? readOriginalDelegationRuntimeRegistry(runtimeSupervisor) : undefined;
-    const delegationToolSurfaceEnabled = runnerResolution.runner.adapter instanceof PiRunnerAdapter
+    const delegationToolSurfaceEnabled = !isolatedFiles && runnerResolution.runner.adapter instanceof PiRunnerAdapter
       && dynamicDelegationRegistry?.isSelectedWorkflow({ store, workflowStepId: runRequest.workflowStepId,
         channelId: runRequest.task.channelId }) === true;
     runnerRequest = { ...runnerRequest, mediaGenerationTools: currentMediaTools,
@@ -849,6 +867,12 @@ async function executeAdmittedRunRequest(
       // SDK preparation may inspect schemas, but it has no execution authority.
       runnerRequest = { ...runnerRequest, onReadonlyToolCall: () => {
         throw new HttpError(409, "workflow_safety_not_admitted", "Read tools cannot execute during preparation.");
+      }, onToolBefore: () => ({ allowed: false, code: "workflow_safety_not_admitted",
+        reason: "Tools cannot execute during preparation." }) };
+    }
+    if (isolatedFiles) {
+      runnerRequest = { ...runnerRequest, onIsolatedToolCall: () => {
+        throw new HttpError(409, "workflow_safety_not_admitted", "Isolated tools cannot execute during preparation.");
       }, onToolBefore: () => ({ allowed: false, code: "workflow_safety_not_admitted",
         reason: "Tools cannot execute during preparation." }) };
     }
@@ -879,13 +903,13 @@ async function executeAdmittedRunRequest(
         now: lifecycleNow,
         assertCurrent: assertPreparationCurrent,
       });
-    } else if (!delegatedExecution && !existingContinuation && !userInputContinuation) {
+    } else if (!isolatedFiles && !delegatedExecution && !existingContinuation && !userInputContinuation) {
       preparedExecution = await prepareNormalConversationExecution({ store, request: runRequest,
         runnerId: runnerResolution.effectiveRunnerId, adapter: runnerResolution.runner.adapter, options: runnerRequest,
         usedMemory, skillSourceContext: selectedSkillSourceContext, skillDefinitionSnapshot: selectedSkillDefinitionSnapshot, assertCurrent: assertPreparationCurrent });
     }
     let executionInput = userInputPrepared?.execution ?? existingRunnerExecution ?? preparedExecution?.payload;
-    if (!existingContinuation && !userInputContinuation && !executionInput && runnerResolution.runner.adapter instanceof PiRunnerAdapter) {
+    if (!isolatedFiles && !existingContinuation && !userInputContinuation && !executionInput && runnerResolution.runner.adapter instanceof PiRunnerAdapter) {
       // All Pi surfaces retain the actual SDK input, not an approximation rebuilt
       // from requestSnapshot after a question or restart. Normal first-writer input is reused.
       const preparedInput = await runnerResolution.runner.adapter.prepareTaskInput(runnerRequest);
@@ -915,7 +939,7 @@ async function executeAdmittedRunRequest(
         runnerId: runnerResolution.effectiveRunnerId, tools: executionInput.input.tools });
       dynamicDelegationRegistry = runnerResolution.runner.adapter instanceof PiRunnerAdapter
         ? readOriginalDelegationRuntimeRegistry(runtimeSupervisor) : undefined;
-      const currentDelegationToolSurfaceEnabled = runnerResolution.runner.adapter instanceof PiRunnerAdapter
+      const currentDelegationToolSurfaceEnabled = !isolatedFiles && runnerResolution.runner.adapter instanceof PiRunnerAdapter
         && dynamicDelegationRegistry?.isSelectedWorkflow({ store: runStore,
           workflowStepId: runRequest.workflowStepId, channelId: runRequest.task.channelId }) === true;
       runnerRequest = restoreNormalConversationExecutionOptions(executionInput, restrictWorkflowSafetyTools({ ...runnerRequest,
@@ -978,7 +1002,7 @@ async function executeAdmittedRunRequest(
       authorizationMode: policyRequest.authorizationMode, workspaceAccessMode: workflowSafetyPlan?.profile === "pi_host_readonly_v1"
         ? "read_only" : policyRequest.workspaceAccessMode,
       permissionPreset: policyRequest.permissionPreset, permissionMode: policyRequest.permissionMode,
-      channelBoundPath: currentChannelForPolicy?.boundPath || runRequest.cwd, approvalProfile: runtimeApprovalProfile });
+      channelBoundPath: isolatedFiles ? runRequest.cwd : currentChannelForPolicy?.boundPath || runRequest.cwd, approvalProfile: runtimeApprovalProfile });
     approvalPolicy = sessionPolicy.approvalPolicy;
     effectivePolicySnapshot = applyConversationModeToEffectiveRunPolicySnapshot(sessionPolicy.snapshot,
       store.getLingThread(thread.id)?.conversationMode.mode ?? thread.conversationMode.mode);
@@ -1536,6 +1560,36 @@ async function executeAdmittedRunRequest(
       run ??= persistRun(continuationContext);
     }
     if (!run) throw new HttpError(409, "delegation.lineage_invalid", "Existing child Run disappeared before dispatch.");
+    if (isolatedFiles) {
+      const pin = runRequest.workflowIsolationPlan;
+      if (!pin || !workflowStartOwner || !(runnerResolution.runner.adapter instanceof PiRunnerAdapter)) {
+        throw new HttpError(409, "workflow_isolation_binding_missing", "The Host isolation plan, owner and Pi adapter are required.");
+      }
+      const isolation = createSqliteWorkflowIsolationStore(store);
+      const scope = await readWorkflowIsolationWorktreeScope(store, pin);
+      assertPreparationCurrent();
+      const adapter = runnerResolution.runner.adapter;
+      const selectedRunnerId = runnerResolution.effectiveRunnerId;
+      const fence = toRuntimeAttemptFence(attempt);
+      isolatedExecution = await prepareWorkflowIsolatedExecution({ store, isolation, scope,
+        binding: { bindingId: workflowIsolationDigest({ runId: run.id, ...fence }, "wib_"),
+          planId: pin.planId, planDigest: pin.planDigest, startOwner: workflowStartOwner, runId: run.id, fence },
+        assertCurrent: assertPreparationCurrent,
+        prepareInput: async () => {
+          const preparedInput = await adapter.prepareTaskInput(runnerRequest);
+          assertPreparationCurrent();
+          executionInput = capturePreparedRunnerInput({ runnerId: selectedRunnerId, options: runnerRequest,
+            preparedInput, usedMemory, skillSourceContext: selectedSkillSourceContext,
+            skillDefinitionSnapshot: selectedSkillDefinitionSnapshot });
+          return { ...executionInput };
+        },
+      });
+      refreshPreparedExecution();
+      run = store.getRun(run.id);
+      workUnit = store.getWorkUnit(workUnit.id);
+      if (!run || !workUnit || !executionInput) throw new HttpError(409, "workflow_isolation_preparation_missing",
+        "The isolated SDK input was not durably sealed for both Run and WorkUnit.");
+    }
     if (delegatedExecution) {
       const admission = admitOriginalDelegatedChild({ store, claimed: delegatedExecution.claimed,
         originalProvider: resolvedProvider, effectivePolicySnapshot, runtimeTools: runnerRequest.tools,
@@ -1554,7 +1608,7 @@ async function executeAdmittedRunRequest(
       }
       delegatedExecution.assertCurrent();
     }
-    if (runtimeSupervisor.getHarnessFeatures().delegations.mode !== "off" && !run.parentRunId) {
+    if (!isolatedFiles && runtimeSupervisor.getHarnessFeatures().delegations.mode !== "off" && !run.parentRunId) {
       workflowDelegationRootAdmissionPending = Boolean(run.workflowStepId && !userInputContinuation);
       if (!workflowDelegationRootAdmissionPending) {
         const delegationRoot = admitOriginalDelegationRoot({ store, run, attempt, originalProvider: resolvedProvider,
@@ -2063,6 +2117,10 @@ async function executeAdmittedRunRequest(
     if (delegatedExecution) delegatedExecution.assertCurrent();
     else assertWorkflowRunAdmission(store, run, workflowStartOwner, abortController.signal);
     assertWorkflowSafetyAttempt({ store, run, sourceFence: runnerCallbackFence });
+    if (isolatedExecution) {
+      assertWorkflowIsolatedExecutionAuthority({ store, run, sourceFence: runnerCallbackFence,
+        bindingId: isolatedExecution.binding.bindingId, now: executionNow() });
+    }
   };
   let resolveRunCompletion: (() => void) | undefined;
   const runCompletion = new Promise<void>((resolve) => {
@@ -2830,6 +2888,7 @@ async function executeAdmittedRunRequest(
     abortController.signal.throwIfAborted();
     const runApprovalHandler = createRunApprovalHandler({
       recordCompactionBoundaryEvidence: hostCompactionEnabled,
+      workflowIsolationBindingId: isolatedExecution?.binding.bindingId,
       restrictedCommandRuntime: runtimeSupervisor.getRestrictedCommandRuntime(),
       store,
       run,
@@ -2913,7 +2972,7 @@ async function executeAdmittedRunRequest(
       : undefined;
     const boundRunnerRequest: PiRunnerRunOptions = {
       ...runnerRequest,
-      ...(runnerResolution.runner.adapter instanceof PiRunnerAdapter && runtimeSupervisor.getHarnessFeatures().delegations.mode !== "off"
+      ...(!isolatedExecution && runnerResolution.runner.adapter instanceof PiRunnerAdapter && runtimeSupervisor.getHarnessFeatures().delegations.mode !== "off"
         && (!run.parentRunId || delegatedExecution) ? { providerBudget: bindOriginalDelegationProviderBudget({ store, run, attempt, originalProvider: activeProvider }) } : {}),
       ...(delegationRunnerToolHandler ? { onDelegationToolCall: delegationRunnerToolHandler } : {}),
       ...(runnerResolution.runner.adapter instanceof PiRunnerAdapter
@@ -2942,6 +3001,17 @@ async function executeAdmittedRunRequest(
       sandbox: sandboxBinding,
       ...(runnerRequest.readonlyToolsProfile ? { onReadonlyToolCall: (request) =>
         executeWorkflowReadonlyTool({ root: run.cwd, request, assertCurrent: assertCurrentRunAdmission }) } : {}),
+      ...(isolatedExecution ? { onIsolatedToolCall: async (request) => {
+        assertCurrentRunAdmission();
+        if (request.toolName !== "write" && request.toolName !== "edit") {
+          return executeWorkflowIsolatedTool({ root: run.cwd, request, assertCurrent: assertCurrentRunAdmission });
+        }
+        const decision = await runApprovalHandler?.({ ...request, task: runnerRequest.task });
+        if (decision?.handledResult) return decision.handledResult;
+        if (decision?.approved) throw new HttpError(409, "workflow_isolation_host_result_missing",
+          "An approval cannot authorize a native file-tool fallback in isolated execution.");
+        return { isError: true, content: [{ type: "text" as const, text: decision?.reason ?? "The isolated file write was not approved." }] };
+      } } : {}),
       onToolBefore: (request) => {
         try { assertCurrentRunAdmission(); }
         catch (error) { return { allowed: false, code: delegatedExecution ? "delegation.source_attempt_stale" : "workflow_start_owner_stale",
@@ -2978,7 +3048,7 @@ async function executeAdmittedRunRequest(
         }
         return runApprovalHandler(request);
       },
-      onPermissionRequired: createRunPermissionRequestHandler({
+      onPermissionRequired: isolatedExecution ? undefined : createRunPermissionRequestHandler({
         store,
         run,
         approvalPolicy,

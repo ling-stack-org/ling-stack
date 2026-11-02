@@ -104,6 +104,8 @@ export interface WorkflowStepRunRequest {
   readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
   readonly workflowOperationExecution?: WorkflowOperationExecutionSnapshot;
   readonly workflowSafetySnapshot?: WorkflowSafetySnapshotV1;
+  /** Host-frozen scope identity; public step-start input cannot select or replace it. */
+  readonly workflowIsolationPlan?: { readonly planId: string; readonly planDigest: string };
   readonly requestedSkillId?: string;
   readonly skipProviderPreflight?: boolean;
   readonly skipMemoryRecall?: boolean;
@@ -728,7 +730,8 @@ export async function prepareWorkflowStepStart(
     const execution = assertChannelWorkspaceReady(channel, cwd);
     if (!execution.ok) return { kind: "error", statusCode: 409, code: "workflow_safety_mismatch", message: execution.message };
     try {
-      step = freezeWorkflowSafetyPlan({ store, step, workspaceCwd: cwd, executionCwd: execution.executionCwd,
+      step = freezeWorkflowSafetyPlan({ store, step, workspaceCwd: cwd,
+        executionCwd: step.metadata?.isolationScopePlan ? step.metadata.safetyPlan?.executionRoot ?? execution.executionCwd : execution.executionCwd,
         runnerId: input.runnerId ?? step.metadata?.requestedRunnerId ?? step.metadata?.safetyPlan?.runnerId, runnerRegistry });
     } catch (error) {
       return { kind: "error", statusCode: error instanceof HttpError ? error.statusCode : 409,
@@ -957,6 +960,7 @@ export async function prepareWorkflowStepStart(
     executionOperationBindings: workflowStepExecutionOperationBindings(step),
     workflowOperationExecution: createWorkflowOperationExecutionSnapshot(step),
     workflowSafetySnapshot: workflowSafetySnapshot(step.metadata?.safetyPlan),
+    workflowIsolationPlan: step.metadata?.isolationScopePlan,
     requestedSkillId: step.metadata?.skillId,
     skipProviderPreflight: input.skipProviderPreflight ?? false,
     skipMemoryRecall: true,

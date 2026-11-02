@@ -163,6 +163,21 @@ export interface PiRunnerReadonlyToolCallRequest {
   readonly signal?: AbortSignal;
 }
 
+export type PiRunnerIsolatedToolName = PiRunnerReadonlyToolName | "write" | "edit";
+
+/** Untrusted tool arguments only. Host admission and filesystem confinement are separate capabilities. */
+export interface PiRunnerIsolatedToolCallRequest {
+  readonly toolCallId: string;
+  readonly toolName: PiRunnerIsolatedToolName;
+  readonly input: unknown;
+  readonly cwd: string;
+  readonly signal?: AbortSignal;
+}
+
+export type PiRunnerIsolatedToolCallHandler = (
+  request: PiRunnerIsolatedToolCallRequest,
+) => PiRunnerToolHandledResult | Promise<PiRunnerToolHandledResult>;
+
 /**
  * Durable Host evidence used to continue an interrupted Agent turn after one
  * approved tool call has already completed. This is transcript evidence, not
@@ -514,6 +529,9 @@ export interface PiRunnerRunOptions {
   /** Host-selected producers, never an authorization grant or an SDK fallback. */
   readonly readonlyToolsProfile?: "host_readonly_v1";
   readonly onReadonlyToolCall?: (request: PiRunnerReadonlyToolCallRequest) => PiRunnerToolHandledResult | Promise<PiRunnerToolHandledResult>;
+  /** Host-only file producers; mutually exclusive with readonlyToolsProfile. Not an OS isolation or authorization claim. */
+  readonly isolatedToolsProfile?: "host_isolated_files_v1";
+  readonly onIsolatedToolCall?: PiRunnerIsolatedToolCallHandler;
   readonly mcpTools?: readonly PiRunnerMcpToolDefinition[];
   /** Host-selected schema surface, not an authorization grant. */
   readonly hostCapabilityTools?: readonly PiRunnerHostCapabilityToolDefinition[];

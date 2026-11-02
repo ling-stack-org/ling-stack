@@ -1,7 +1,8 @@
-import { realpathSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
-  isWorkflowStepSafetyPlanV1, workflowStepSafetyPlanDigest,
+  createSqliteWorkflowIsolationStore, isWorkflowStepSafetyPlanV1, workflowStepSafetyPlanDigest,
   type ChannelWorkflowStep, type RunSession, type RunStore, type RunTool,
   type RuntimeAttemptFenceV1, type WorkflowStepSafetyPlanV1,
   type WorkflowStepAdmissionPlan,
@@ -19,6 +20,7 @@ import { assertChannelWorkspaceReady } from "../channels/workspace.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
+import type { WorkflowGitWorktreeScope } from "../workspaces/workflow-git-repository.js";
 
 export interface WorkflowSafetySnapshotV1 {
   readonly schemaVersion: 1;
@@ -32,6 +34,7 @@ export interface WorkflowSafetyRejection {
 }
 
 const readTools = new Set(["read", "grep", "find", "ls"]);
+const isolatedTools = new Set([...readTools, "write", "edit"]);
 
 /** A template can request a profile, but only this Host producer freezes it. */
 export function createWorkflowSafetyPlan(input: {
@@ -41,6 +44,8 @@ export function createWorkflowSafetyPlan(input: {
   readonly executionCwd: string;
   readonly runnerId?: string;
   readonly runnerRegistry?: RunnerRegistry;
+  /** Only the Host planner supplies an unpersisted scope, before any approval/start. */
+  readonly isolatedScope?: WorkflowGitWorktreeScope;
 }): WorkflowStepSafetyPlanV1 | undefined {
   const { store, step } = input;
   const safety = parseWorkflowStepExecutionSafety(step.metadata);
@@ -55,8 +60,15 @@ export function createWorkflowSafetyPlan(input: {
     task: { channelId: step.channelId } });
   const tools = [...mergeRunTools(step.metadata?.requiredTools ?? [], selected?.requiredTools ?? [])].sort();
   const readonly = safety.sideEffectClass === "analysis_readonly";
+  const isolationPin = step.metadata?.isolationScopePlan;
+  const isolatedPlan = isolationPin ? createSqliteWorkflowIsolationStore(store).getScopePlan(isolationPin.planId) : undefined;
+  if (isolationPin && (!isolatedPlan || isolatedPlan.planDigest !== isolationPin.planDigest
+    || isolatedPlan.workflowId !== step.workflowId || isolatedPlan.workflowStepId !== step.id)) {
+    throw mismatch("The isolated workflow scope pin cannot be verified.");
+  }
+  const isolated = Boolean(input.isolatedScope || isolatedPlan);
   let runnerId = input.runnerId ?? step.metadata?.requestedRunnerId;
-  if (!readonly && !runnerId && input.runnerRegistry) {
+  if (!readonly && !isolated && !runnerId && input.runnerRegistry) {
     const settings = loadWorkspaceRuntimeSettings(store, input.runnerRegistry);
     const teammate = resolveAiTeammateReference(store, step.toParticipantId);
     runnerId = input.runnerRegistry.resolve({ requestedRunnerId: teammate?.runnerId ?? settings.defaultRunnerId,
@@ -67,17 +79,32 @@ export function createWorkflowSafetyPlan(input: {
   if (readonly && (tools.some(tool => !readTools.has(tool)) || runnerId !== undefined && runnerId !== "pi")) {
     throw mismatch("Read-only workflow requires the Pi Host read profile and cannot include mutating skill tools.");
   }
+  if (isolated && (safety.sideEffectClass !== "workspace_write" || tools.some(tool => !isolatedTools.has(tool))
+    || runnerId !== undefined && runnerId !== "pi")) {
+    throw mismatch("Isolated workflow requires the Pi Host file profile and cannot include shell or external tools.");
+  }
   let workspaceRoot: string, executionRoot: string;
   try {
     workspaceRoot = realpathSync.native(input.workspaceCwd);
-    executionRoot = realpathSync.native(input.executionCwd);
+    if (isolated) {
+      executionRoot = isolatedPlan?.executionRoot ?? input.isolatedScope!.executionRoot;
+      if (executionRoot !== input.executionCwd || resolve(executionRoot) !== executionRoot
+        || realpathSync.native(dirname(executionRoot)) !== dirname(executionRoot)
+        || isolatedPlan && isolatedPlan.canonicalWorkspaceRoot !== workspaceRoot
+        || input.isolatedScope && (input.isolatedScope.repository.root !== workspaceRoot
+          || input.isolatedScope.worktreeRoot !== dirname(executionRoot))) throw new Error("scope_mismatch");
+      try {
+        const stat = lstatSync(executionRoot);
+        if (stat.isSymbolicLink() || !stat.isDirectory() || realpathSync.native(executionRoot) !== executionRoot) throw new Error("root_changed");
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    } else executionRoot = realpathSync.native(input.executionCwd);
   } catch { throw mismatch("Workflow execution roots cannot be verified."); }
   const plan: Omit<WorkflowStepSafetyPlanV1, "digest"> = {
-    schemaVersion: 1, profile: readonly ? "pi_host_readonly_v1" : "serial_v1",
+    schemaVersion: 1, profile: readonly ? "pi_host_readonly_v1" : isolated ? "pi_host_isolated_files_v1" : "serial_v1",
     workflowId: step.workflowId, workflowStepId: step.id, workspaceRoot, executionRoot, safety, tools,
     ...(selected ? { skillFingerprint: captureSkillDefinitionSnapshot(store, selected.skill).definitionHash } : {}),
-    ...(readonly ? { runnerId: "pi" } : runnerId ? { runnerId } : {}),
-    networkAccess: readonly ? false : "session_policy", writeRoots: readonly ? [] : [executionRoot],
+    ...(readonly || isolated ? { runnerId: "pi" } : runnerId ? { runnerId } : {}),
+    networkAccess: readonly || isolated ? false : "session_policy", writeRoots: readonly ? [] : [executionRoot],
   };
   return { ...plan, digest: workflowStepSafetyPlanDigest(plan) };
 }
@@ -103,15 +130,20 @@ export function assertWorkflowSafetyRequest(store: RunStore, request: RunRequest
   const step = request.workflowStepId ? store.getChannelWorkflowStep(request.workflowStepId) : undefined;
   const snapshot = request.workflowSafetySnapshot;
   if (!step) {
-    if (snapshot) throw mismatch("Safety snapshot has no workflow owner.");
+    if (snapshot || request.workflowIsolationPlan) throw mismatch("Safety snapshot has no workflow owner.");
     return undefined;
   }
   const safety = parseWorkflowStepExecutionSafety(step.metadata);
-  if (!safety && !snapshot && !step.metadata?.safetyPlan) return undefined;
+  if (!safety && !snapshot && !step.metadata?.safetyPlan && !request.workflowIsolationPlan && !step.metadata?.isolationScopePlan) return undefined;
   const plan = step.metadata?.safetyPlan;
   if (!plan || !isWorkflowStepSafetyPlanV1(plan) || !snapshot || snapshot.schemaVersion !== 1
     || !isDeepStrictEqual(snapshot.plan, plan) || request.task.channelId !== step.channelId
     || request.teammateId !== step.toParticipantId) throw mismatch("Workflow safety snapshot is missing, replaced, or owned by another participant.");
+  if (plan.profile === "pi_host_isolated_files_v1"
+    ? !isDeepStrictEqual(request.workflowIsolationPlan, step.metadata?.isolationScopePlan) || !request.workflowIsolationPlan
+    : request.workflowIsolationPlan !== undefined || step.metadata?.isolationScopePlan !== undefined) {
+    throw mismatch("The isolated scope and Host tool profile must be bound together.");
+  }
   const current = createWorkflowSafetyPlan({ store, step, workspaceCwd: request.workspaceCwd ?? request.cwd,
     executionCwd: request.cwd, runnerId: request.runnerId });
   if (!isDeepStrictEqual(plan, current)) throw mismatch("Workflow safety scope, tools, or skill changed after approval.");
@@ -123,16 +155,22 @@ export function assertWorkflowSafetyRunner(store: RunStore, request: RunRequest,
 }): WorkflowStepSafetyPlanV1 | undefined {
   const plan = assertWorkflowSafetyRequest(store, request);
   if (plan?.runnerId && input.runnerId !== plan.runnerId) throw mismatch("The actual Runner differs from the approved profile.");
-  if (plan?.profile !== "pi_host_readonly_v1") return plan;
+  if (plan?.profile !== "pi_host_readonly_v1" && plan?.profile !== "pi_host_isolated_files_v1") return plan;
   if (!(input.adapter instanceof PiRunnerAdapter) || input.runnerId !== "pi"
     || !isDeepStrictEqual([...(input.tools ?? [])].sort(), plan.tools)) {
-    throw mismatch("The actual Runner/tool inventory cannot enforce the approved read-only profile.");
+    throw mismatch("The actual Runner/tool inventory cannot enforce the approved Host tool profile.");
   }
   return plan;
 }
 
 /** Drop optional plugin surfaces; required core/skill tools were checked, never silently narrowed. */
 export function restrictWorkflowSafetyTools<T extends PiRunnerRunOptions>(options: T, plan: WorkflowStepSafetyPlanV1 | undefined): T {
+  if (plan?.profile === "pi_host_isolated_files_v1") return { ...options, readonlyToolsProfile: undefined,
+    isolatedToolsProfile: "host_isolated_files_v1", mcpTools: [], hostCapabilityTools: [], mediaGenerationTools: [],
+    onMcpToolCall: undefined, onHostCapabilityCall: undefined, onMediaGenerationToolCall: undefined,
+    onToolHydrationRequest: undefined, onDelegationToolCall: undefined, onUserInputRequest: undefined, onPermissionRequired: undefined,
+    runtimeToolFeatures: { requestPermissions: false, unifiedExec: false, shellSnapshot: false },
+    initialToolSurface: { mediaGeneration: false, toolHydration: false, nativeFileCreate: false, userInput: false, delegation: false } };
   if (plan?.profile !== "pi_host_readonly_v1") return options;
   return { ...options, readonlyToolsProfile: "host_readonly_v1", mcpTools: [], hostCapabilityTools: [], mediaGenerationTools: [],
     runtimeToolFeatures: { ...options.runtimeToolFeatures, requestPermissions: false },
@@ -155,6 +193,9 @@ export function workflowSafetyEffectRejection(input: {
     if (!plan || persisted.cwd !== plan.executionRoot || input.request.cwd !== persisted.cwd) throw mismatch("Actual tool execution root differs from the approved scope.");
     if (plan.profile === "pi_host_readonly_v1" && !readTools.has(input.request.toolName) && input.request.toolName !== "request_user_input") {
       return { status: "blocked", code: "workflow_safety_effect_denied", reason: "The approved read-only profile does not allow this effect: " + input.request.toolName };
+    }
+    if (plan.profile === "pi_host_isolated_files_v1" && !isolatedTools.has(input.request.toolName)) {
+      return { status: "blocked", code: "workflow_safety_effect_denied", reason: "The approved isolated-files profile does not allow this effect: " + input.request.toolName };
     }
     return undefined;
   } catch (error) {
@@ -240,7 +281,8 @@ export function createWorkflowSafetyAdmission(store: RunStore, step: ChannelWork
     { resourceType: "channel_parallel", resourceKey: `workspace:${plan.workspaceRoot}`, limit },
   ];
   entries.sort((a, b) => JSON.stringify([a.resourceType, a.resourceKey]).localeCompare(JSON.stringify([b.resourceType, b.resourceKey]), "en"));
-  return { entries, resourceKeys: [...new Set(plan.safety.parallelPolicy?.resourceKeys ?? [])].sort() };
+  return { entries, resourceKeys: [...new Set([...(plan.safety.parallelPolicy?.resourceKeys ?? []),
+    ...(plan.profile === "pi_host_isolated_files_v1" ? [`workflow:${workflow.id}`, `workspace:${plan.workspaceRoot}`] : [])])].sort() };
 }
 
 function positiveLimit(value: number): number { return Number.isSafeInteger(value) && value > 0 ? value : 1; }
