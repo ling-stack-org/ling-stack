@@ -50,7 +50,7 @@ export function ConversationPermissionControl({
           trailingIcon={<ChevronDown size={13} />}
           disabled={disabled}
           data-full-access={fullAccess}
-          aria-label={t("Selected permission preset {label}", { label: confirmationLabel })}
+          aria-label={t("Selected authorization mode {label}", { label: confirmationLabel })}
           title={disabled ? disabledReason ?? t("Permission is locked while the current message is running.") : `${confirmationLabel}. ${selectedAuthorization.description}`}
         >
           {triggerLabel}
