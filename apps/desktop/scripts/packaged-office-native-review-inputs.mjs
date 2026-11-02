@@ -34,6 +34,9 @@
  * Human QA's early-entry/lifecycle sources are explicit non-Office-build review
  * inputs: their inclusion pins QA isolation/startup, not the entire Main graph.
  *
+ * Local service IPC is an explicit root. Its Main, preload and Web wiring are
+ * exact nonrecursive inputs; pinning Main does not include its whole graph.
+ *
  * A graph change requires an explicit review of this fixed list. It must not
  * silently discover, regenerate, approve, or refresh digests during a build.
  */
@@ -80,9 +83,20 @@ export const PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS = Object.freeze([
   "packages/daemon/src/runtime/sandbox/packaged-office-native-published-review.ts",
   "packages/daemon/src/runtime/sandbox/packaged-office-native-resources.ts",
   "packages/daemon/src/runtime/sandbox/protected-host-office-native-identity.ts",
+  "apps/desktop/main/local-services.ts",
 ]);
 
 export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
+  // Restore the exact local-service IPC inputs dropped during main integration.
+  // Listing these sources does not approve their bytes or root the Main graph.
+  "apps/desktop/main/local-services.ts",
+  "apps/desktop/main/main.ts",
+  "apps/desktop/main/ipc.ts",
+  "apps/desktop/preload/main-window.ts",
+  "apps/desktop/shared/ipc-channels.ts",
+  "apps/desktop/shared/desktop-capabilities.ts",
+  "apps/desktop/shared/local-service-capabilities.ts",
+  "apps/web/src/api/client.ts",
   // Shared HTTP/upgrade authentication; this entry does not approve new bytes.
   "packages/daemon/src/server/request-auth.ts",
   // Explicit managed-engine runtime closure; listing alone grants no approval.
@@ -1745,12 +1759,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "scripts/gstack/testsavant-model-pin.json",
   // Explicitly reviewed mainline runtime edges, 2026-10-29. Keep existing inputs
   // and the 41 authored roots; packaging never discovers or approves this list.
-  "packages/contracts/src/artifacts.ts",
   "packages/contracts/src/deliverables.ts",
-  "packages/contracts/src/engine-lifecycle.ts",
-  "packages/contracts/src/im-destinations.ts",
-  "packages/contracts/src/marketplace.ts",
-  "packages/contracts/src/notifications.ts",
   "packages/core/src/runner-ids.ts",
   "packages/core/src/storage/sqlite/runner-id-migration.ts",
   "packages/core/src/storage/sqlite/workspace-permission-migration.ts",
@@ -1760,14 +1769,6 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/deliverables/routes.ts",
   "packages/daemon/src/features/deliverables/spreadsheet-extract.ts",
   "packages/daemon/src/features/deliverables/spreadsheet-manifest.ts",
-  "packages/daemon/src/features/diagnostics/routes.ts",
-  "packages/daemon/src/features/execution-engines/engine-scanner.ts",
-  "packages/daemon/src/features/execution-engines/managed-engine-installer.ts",
-  "packages/daemon/src/features/im-destinations/registry.ts",
-  "packages/daemon/src/features/im-destinations/routes.ts",
   "packages/daemon/src/features/media/workflows/media-protocol-contract.ts",
-  "packages/daemon/src/features/notifications/hub.ts",
-  "packages/daemon/src/features/notifications/routes.ts",
-  "packages/daemon/src/features/skills/marketplace-route.ts",
   "packages/daemon/src/shared/permission-contract.ts",
 ]);

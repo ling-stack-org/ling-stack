@@ -36,6 +36,7 @@ import {
 import { createConversationDraftIdentity } from "./conversation-surface-identity.js";
 import { mergeConversationDetailSnapshots } from "./conversation-detail-merge.js";
 import { createConversationReadEpoch } from "../../lib/conversation-read-epoch.js";
+import { resolveAuthorizationMode, resolveWorkspaceAccessMode } from "../../lib/conversation-authorization.js";
 import { useConversationStreamBusyOwner } from "./use-conversation-stream-busy-owner.js";
 
 export interface ConversationSendInput {
@@ -550,6 +551,7 @@ export function useConversationDomain(input: {
       submissionLookupJournal.remember(submissionScope, idempotencyKey);
       submitted = true;
       const response = await streamConversation(workspaceCwd, {
+        schemaVersion: 2,
         idempotencyKey,
         threadId: originThreadId || undefined,
         message: message.message,
@@ -560,10 +562,8 @@ export function useConversationDomain(input: {
         executionBinding: message.executionBinding,
         thinkingLevel: normalizeThinkingLevel(message.thinkingLevel),
         reasoningSummary: message.reasoningSummary,
-        authorizationMode: message.authorizationMode,
-        workspaceAccessMode: message.workspaceAccessMode,
-        permissionPreset: message.permissionPreset,
-        permissionMode: message.permissionMode,
+        authorizationMode: resolveAuthorizationMode(message.authorizationMode, message.permissionMode, message.permissionPreset),
+        workspaceAccessMode: resolveWorkspaceAccessMode(message.workspaceAccessMode, message.permissionMode, message.permissionPreset),
         permissionConfirmation: message.permissionConfirmation,
         responseLanguage: message.responseLanguage,
         tools: message.tools,
