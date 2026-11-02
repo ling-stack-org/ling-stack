@@ -1,4 +1,5 @@
 import type { ConversationTimelineItem } from "@ling-stack/conversation-ui-core";
+import { isWorkflowIsolationTimelineItem } from "./workflow-isolation-evidence.js";
 
 /** Display availability is not execution evidence or workflow completion. */
 export function hasWorkflowTimelineContent(item: ConversationTimelineItem): boolean {
@@ -7,7 +8,7 @@ export function hasWorkflowTimelineContent(item: ConversationTimelineItem): bool
   if (item.kind === "explorationBatch") return item.batch.children.some(hasWorkflowTimelineContent);
   if (item.kind === "diagnostic") return item.code === "user_input_order_unavailable";
   if (item.kind === "agentMessage") return !!item.markdown.trim();
-  if (item.kind === "protocolEvent") return Boolean(item.blockedExplanation);
+  if (item.kind === "protocolEvent") return Boolean(item.blockedExplanation) || isWorkflowIsolationTimelineItem(item);
   return ["userInputRequest", "userInputAnswer", "terminalReport", "approval",
     "commandExecution", "fileChange", "exploration", "mcpToolCall", "dynamicToolCall",
     "collabAgentToolCall", "imageView"].includes(item.kind);

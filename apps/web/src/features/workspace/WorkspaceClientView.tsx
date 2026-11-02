@@ -148,6 +148,7 @@ import {
 } from "./ChannelProgressPanels.js";
 import { useChannelProgressSummary } from "./ChannelProgressSummary.js";
 import { useChannelPlanHistory } from "./useChannelPlanHistory.js";
+import { useWorkflowIsolationEvidence } from "./useWorkflowIsolationEvidence.js";
 import {
   ChannelInspector,
   type ChannelInspectorMode,
@@ -791,6 +792,12 @@ export function WorkspaceClientView({
     () => channelTerminalReportItemRevisionSignature(channelConversationItems, selectedChannelId),
     [channelConversationItems, selectedChannelId],
   );
+  const workflowIsolationEvidenceByWorkflowId = useWorkflowIsolationEvidence({
+    cwd, channelId: selectedChannelId, enabled: daemonHealthy === true,
+    workflows: selectedChannelWorkflows, steps: selectedChannelWorkflowSteps,
+    refreshSignature: [channelCollaborationCardRefreshSignature, committedTerminalReportItemRevisionSignature].join("\n"),
+    refreshToken: channelConversationRefreshToken,
+  });
   useEffect(() => {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || !selectedChannelId) {
@@ -934,7 +941,8 @@ export function WorkspaceClientView({
     const cells = new Map<string, WorkflowProgressModel>();
     for (const workflow of channelWorkflowsForDisplay.filter((item) => item.channelId === selectedChannelId)) {
       const steps = channelWorkflowStepsForDisplay.filter((step) => step.workflowId === workflow.id);
-      if (steps.length === 0) {
+      const isolationEvidence = workflowIsolationEvidenceByWorkflowId.get(workflow.id);
+      if (steps.length === 0 && !isolationEvidence?.expected && isolationEvidence?.status !== "error") {
         continue;
       }
       cells.set(workflow.id, buildWorkflowProgressModel({
@@ -948,10 +956,11 @@ export function WorkspaceClientView({
         t,
         artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
         terminalReport: terminalReportByWorkflowId.get(workflow.id),
+        isolationEvidence,
       }));
     }
     return cells;
-  }, [approvals, channelArtifactsByRunForDisplay, channelContextSegmentIdByItemId, channelExecutionActionsForDisplay, channelRuns, channelWorkflowStepsForDisplay, channelWorkflowsForDisplay, cwd, selectedChannelId, t, terminalReportByWorkflowId]);
+  }, [approvals, channelArtifactsByRunForDisplay, channelContextSegmentIdByItemId, channelExecutionActionsForDisplay, channelRuns, channelWorkflowStepsForDisplay, channelWorkflowsForDisplay, cwd, selectedChannelId, t, terminalReportByWorkflowId, workflowIsolationEvidenceByWorkflowId]);
   const localCollaborationTaskCardByWorkflowId = useMemo(() => {
     const cards = new Map<string, CollaborationTaskCardModel>();
     for (const workflow of channelWorkflowsForDisplay.filter((item) => item.channelId === selectedChannelId)) {

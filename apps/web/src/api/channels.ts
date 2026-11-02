@@ -42,6 +42,7 @@ import type {
   ChannelWorkflowListResponse,
   ChannelWorkflowMutationResponse,
   ChannelWorkflowOrchestrationResponse,
+  ChannelWorkflowOrchestrationRequest,
   ChannelWorkflowStepListResponse,
   ChannelWorkflowStepMutationResponse,
   ChannelWorkflowStepRetryResponse,
@@ -542,8 +543,9 @@ export async function retryChannelWorkflowStep(cwd: string, workflowStepId: stri
   return daemonClient.retryChannelWorkflowStep(cwd, workflowStepId);
 }
 
-export async function orchestrateChannelWorkflow(cwd: string, workflowId: string): Promise<ChannelWorkflowOrchestrationResponse> {
-  return daemonClient.orchestrateChannelWorkflow(cwd, workflowId);
+export async function orchestrateChannelWorkflow(cwd: string, workflowId: string,
+  input: ChannelWorkflowOrchestrationRequest = {}): Promise<ChannelWorkflowOrchestrationResponse> {
+  return daemonClient.orchestrateChannelWorkflow(cwd, workflowId, input);
 }
 
 export async function listChannelCollaborationCards(
