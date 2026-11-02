@@ -2164,7 +2164,7 @@ export async function routeRequest(
         }
         try {
           const store = storeRegistry.getStore(cwd);
-          const result = cancelChannelWorkflow({
+          const result = await cancelChannelWorkflow({
             store,
             workflowId: workflowRoute.workflowId,
             cancelRun: (run) => {

@@ -187,14 +187,15 @@ for (const fault of ["missing", "drift"]) {
   });
 }
 
-test("orchestration of a valid confirmed result can complete without preparing or dispatching another Run", nativeGit, async t => {
+test("orchestration finalizes a confirmed branch but cannot complete with unknown candidate validators", nativeGit, async t => {
   const f = await workflowIsolatedResultFixture(t);
   requireJournal(f);
   await f.capture();
   const result = await orchestrate(f);
-  assert.equal(result.status, "completed", JSON.stringify(result));
+  assert.equal(result.status, "blocked", JSON.stringify(result));
+  assert.equal(result.blocker, "workflow_candidate_validation_validator_unknown");
   assert.equal(f.current(f.scopeIsolation).status, "succeeded");
-  assert.equal(f.store.getChannelWorkflow(f.plan.workflowId).status, "succeeded");
+  assert.notEqual(f.store.getChannelWorkflow(f.plan.workflowId).status, "succeeded");
 });
 
 for (const fault of ["missing", "drift"]) {
@@ -281,8 +282,14 @@ test("a result-gate blocked step resumes after exact-ref observation without red
 
   const tick = await orchestrate(f);
   assert.notEqual(tick.status, "started", "recovery must not prepare or dispatch another Run");
+  assert.equal(tick.status, "blocked", "the fixture's unknown validator pins cannot certify an integration candidate");
+  assert.equal(tick.blocker, "workflow_candidate_validation_validator_unknown");
   assert.deepEqual(execution(), original);
-  assert.deepEqual(await f.gitSnapshot(), git);
+  // Orchestration now starts its own integration round, which may add Git objects.
+  // The original branch result, its ref, HEAD and index still must not be rewritten.
+  const { objects: _priorObjects, ...beforeBranch } = git;
+  const { objects: _nextObjects, ...afterBranch } = await f.gitSnapshot();
+  assert.deepEqual(afterBranch, beforeBranch);
 });
 
 test("a receipt committed before a lost response is recovered without duplicating its Git effect", nativeGit, async t => {

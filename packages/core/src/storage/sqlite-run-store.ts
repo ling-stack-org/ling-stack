@@ -776,7 +776,9 @@ import { SqliteWorkflowStepAdmissionStore } from "./sqlite/workflow-step-admissi
 import { applyWorkflowStepAdmissionMigration } from "./sqlite/workflow-step-admission-migration.js";
 import { applyWorkflowIsolationMigration } from "./sqlite/workflow-isolation-migration.js";
 import { applyWorkflowIsolationResultsMigration } from "./sqlite/workflow-isolation-results-migration.js";
+import { applyWorkflowIntegrationCoordinatorMigration } from "./sqlite/workflow-integration-coordinator-migration.js";
 import { registerSqliteWorkflowIsolationStore } from "./sqlite/workflow-isolation-store.js";
+import { registerSqliteWorkflowIntegrationCoordinatorStore } from "./sqlite/workflow-integration-coordinator-store.js";
 import { SqliteChannelWorkflowPreApprovalStore } from "./sqlite/channel-workflow-pre-approval-store.js";
 import { SqliteChannelTeamEvidenceStore } from "./sqlite/channel-team-evidence-store.js";
 import { SqliteChannelTeamLifecycleStore } from "./sqlite/channel-team-lifecycle-store.js";
@@ -1267,6 +1269,8 @@ export class SqliteRunStore implements RunStore {
       getLingThread: (threadId) => this.getLingThread(threadId),
       updateLingThread: (threadId, input, now) => this.updateLingThread(threadId, input, now),
       listRecoverableChannelWorkflows: () => this.channelWorkflows.listRecoverableChannelWorkflows(),
+      hasWorkflowIsolationRound: (workflowId) => Boolean(this.database.prepare(
+        "SELECT 1 FROM workflow_integration_rounds WHERE workflow_id=? LIMIT 1").get(workflowId)),
       listChannelWorkflowSteps: (options) => this.listChannelWorkflowSteps(options),
       getApprovalRequest: (id) => this.getApprovalRequest(id),
       resolveChannelWorkflowStepPreApproval: (input) => this.resolveChannelWorkflowStepPreApproval(input),
@@ -1487,6 +1491,7 @@ export class SqliteRunStore implements RunStore {
         (threadId, deliveryId) => this.userInputPreparation.seedWithinTransaction(threadId, deliveryId), taskId, runId));
     this.channelWorkflowStarts = new SqliteChannelWorkflowStartStore({ database: this.database }, this, this.workflowStepAdmissions);
     registerSqliteWorkflowIsolationStore(this, { database: this.database }, this, this.paths.cwd);
+    registerSqliteWorkflowIntegrationCoordinatorStore(this, { database: this.database }, this, this.paths.cwd);
     this.channelWorkflowPreApprovals = new SqliteChannelWorkflowPreApprovalStore({ database: this.database }, this);
     this.terminalReportPublication = new SqliteTerminalReportPublicationStore(
       { database: this.database },
@@ -1891,6 +1896,11 @@ export class SqliteRunStore implements RunStore {
           recordMigration: (version, name) => this.recordMigration(version, name),
         });
         applyWorkflowIsolationResultsMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
+        applyWorkflowIntegrationCoordinatorMigration({
           database: this.database,
           hasMigration: (version) => this.hasMigration(version),
           recordMigration: (version, name) => this.recordMigration(version, name),

@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   buildDeterministicTerminalReport,
   createSqliteRunStore,
+  createSqliteWorkflowIntegrationCoordinatorStore,
   resolveRuntimePaths,
 } from "../../core/dist/index.js";
 import { createRequiredParticipantManifestV1, workflowGraphFingerprintV1 } from "../../contracts/dist/index.js";
@@ -23,6 +24,43 @@ import { preflightWorkflowParticipantProvider } from "../dist/features/channels/
 import { reconcileWorkflowFromCanonicalState } from "../dist/features/channels/workflow-reconciliation.js";
 import { createTerminalWorkflowFixture } from "./terminal-report-coordinator-fixture.mjs";
 import { injectUnverifiedRequiredDelegation } from "./support/terminal-report-delegation-injection.mjs";
+
+test("the publication transaction rejects isolation evidence added after report synthesis", async t => {
+  const f = await createManifestPublicationFixture("late-isolation", "succeeded");
+  try {
+    const input = publicationInput(f);
+    const coordinator = createSqliteWorkflowIntegrationCoordinatorStore(f.store);
+    t.mock.method(coordinator, "readPublicationBlocker", () => "workflow_isolation.integration_effect_unconfirmed");
+    assert.deepEqual(f.store.commitTerminalReportPublication(input), { ok: false, code: "stale_completion_basis" });
+    assertNoPublication(f);
+  } finally { await f.close(); }
+});
+
+test("failed publication cannot hide unconfirmed isolation effects behind a stale report", async t => {
+  const f = await createManifestPublicationFixture("failed-late-isolation", "failed");
+  try {
+    const input = publicationInput(f);
+    const coordinator = createSqliteWorkflowIntegrationCoordinatorStore(f.store);
+    t.mock.method(coordinator, "readPublicationBlocker", () => "workflow_isolation.result_effect_unconfirmed");
+    assert.deepEqual(f.store.commitTerminalReportPublication(input), { ok: false, code: "stale_completion_basis" });
+    assertNoPublication(f);
+  } finally { await f.close(); }
+});
+
+test("publication rechecks isolation evidence atomically after the daemon precheck", async t => {
+  const f = await createManifestPublicationFixture("isolation-publication-race", "succeeded");
+  try {
+    const coordinator = createSqliteWorkflowIntegrationCoordinatorStore(f.store);
+    const commit = f.store.commitTerminalReportPublication;
+    t.mock.method(f.store, "commitTerminalReportPublication", function(input) {
+      t.mock.method(coordinator, "readPublicationBlocker", () => "workflow_isolation.integration_effect_unconfirmed");
+      return commit.call(this, input);
+    });
+    assert.throws(() => publishWorkflowTerminalReport({ store: f.store, report: f.report, now: f.publishAt }),
+      error => error instanceof TerminalReportPublicationError && error.code === "stale_completion_basis");
+    assertNoPublication(f);
+  } finally { await f.close(); }
+});
 
 test("workflow without a participant manifest rejects dynamic evidence added after synthesis", async () => {
   const f = await createManifestPublicationFixture("dynamic-no-manifest", "succeeded");

@@ -24,6 +24,7 @@ import type { SqliteStoreContext } from "./store-context.js";
 import type { NormalTerminalReportReadStore } from "../../normal-terminal-report-basis.js";
 import { commitNormalTerminalReportWithinTransaction } from "./normal-terminal-report-publication.js";
 import type { DelegationCompletionEvidenceV1 } from "../../delegation-completion-evidence.js";
+import { readWorkflowIntegrationCompletionBlocker, readWorkflowIntegrationPublicationBlocker } from "./workflow-integration-completion.js";
 
 type PublicationItem = AppendConversationItemInput<"terminal_report">;
 
@@ -122,6 +123,13 @@ export class SqliteTerminalReportPublicationStore {
     if (!outcomeMatchesTarget(report.report.outcome.status, targetStatus)) {
       return conflict("outcome_conflict");
     }
+    const isolationBlocker = readWorkflowIntegrationPublicationBlocker(this.context.database, workflow.id);
+    if (isolationBlocker && !report.evidenceSnapshot.risks.some(risk =>
+      risk.id === `workflow-isolation-unconfirmed:${workflow.id}` && risk.status === "unverified" && risk.severity === "critical")) {
+      return conflict("stale_completion_basis");
+    }
+    if (targetStatus === "succeeded" && (isolationBlocker
+      || readWorkflowIntegrationCompletionBlocker(this.context.database, workflow.id))) return conflict("stale_completion_basis");
     const steps = this.ports.listChannelWorkflowSteps(workflow.id);
     let delegations: DelegationCompletionEvidenceV1;
     if (workflow.metadata?.requiredParticipantManifest) {

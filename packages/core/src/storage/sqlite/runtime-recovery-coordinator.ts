@@ -47,6 +47,7 @@ export interface SqliteRuntimeRecoveryCoordinatorPorts extends Pick<RunStore,
   readonly getLingThread: (threadId: string) => LingThread | undefined;
   readonly updateLingThread: (threadId: string, input: UpdateLingThreadInput, now: string) => LingThread | undefined;
   readonly listRecoverableChannelWorkflows: () => ChannelWorkflow[];
+  readonly hasWorkflowIsolationRound: (workflowId: string) => boolean;
   readonly listChannelWorkflowSteps: (options: ListChannelWorkflowStepsOptions) => ChannelWorkflowStep[];
   readonly getApprovalRequest: (id: string) => ApprovalRequest | undefined;
   readonly resolveChannelWorkflowStepPreApproval: (input: WorkflowStepPreApprovalResolveInput) => WorkflowStepPreApprovalResult;
@@ -233,6 +234,7 @@ export class SqliteRuntimeRecoveryCoordinator {
 
     for (const workflow of workflows) {
       const steps = this.ports.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
+      const isolated = this.ports.hasWorkflowIsolationRound(workflow.id) || steps.some(step => step.metadata?.isolationScopePlan);
       for (const step of steps) {
         if ((step.status === "running" || step.status === "waiting_for_approval")
           && step.metadata?.activeGateStage === "pre" && !step.taskId && !step.runId && !step.metadata.startOwner) {
@@ -267,7 +269,7 @@ export class SqliteRuntimeRecoveryCoordinator {
             continue;
           }
         }
-        if (workflow.metadata?.requiredParticipantManifest && step.status === "running" && step.runId) {
+        if ((workflow.metadata?.requiredParticipantManifest || isolated) && step.status === "running" && step.runId) {
           const run = this.ports.getRun(step.runId);
           if (!run) {
             recovered += this.recoverWorkflowStepBlocked(step, "Linked run is missing after daemon restart.", now) ? 1 : 0;
@@ -276,7 +278,7 @@ export class SqliteRuntimeRecoveryCoordinator {
           // reloads immutable requirements, actions, packets, approvals, and graph state.
           continue;
         }
-        if (workflow.metadata?.requiredParticipantManifest
+        if ((workflow.metadata?.requiredParticipantManifest || isolated)
           && step.status === "waiting_for_approval"
           && step.metadata?.activeGateStage === "post") {
           // Approval state is durable, but only the daemon semantic reconciler may turn
@@ -513,7 +515,8 @@ export class SqliteRuntimeRecoveryCoordinator {
         // success. The canonical completion gate still owns that decision.
         return 0;
       }
-      if (workflow.metadata?.requiredParticipantManifest) {
+      if (workflow.metadata?.requiredParticipantManifest || this.ports.hasWorkflowIsolationRound(workflowId)
+        || steps.some(step => step.metadata?.isolationScopePlan)) {
         // Continuity-backed workflows are completed only by the daemon's shared
         // WorkflowCompletionGate after this storage-level reconciliation returns.
         // Core cannot verify operation actions, output packets, or immutable graph edges.

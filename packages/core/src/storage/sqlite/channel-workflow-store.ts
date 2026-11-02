@@ -17,6 +17,7 @@ import type {
 } from "@ling-stack/contracts";
 import type { RunEventEnvelope, RunStore } from "../../run-types.js";
 import { assertDelegationCompletionSatisfied } from "../../delegation-completion-barrier.js";
+import { readWorkflowIntegrationCompletionBlocker } from "./workflow-integration-completion.js";
 import {
   buildWorkflowCompletionExpectedReadSet,
   workflowCompletionGateBasisFingerprintV1,
@@ -824,6 +825,7 @@ export class SqliteChannelWorkflowStore {
         this.context.database.exec("ROLLBACK;");
         return { ok: false, code: "invalid_transition", currentStatus: currentWorkflow.status };
       }
+      if (expectedTarget === "succeeded") this.assertDescendantsComplete(input.workflowId);
       const currentGate = currentWorkflow.metadata?.completionGate;
       if (currentWorkflow.status === expectedTarget
         && currentGate?.basisFingerprint === gate.basisFingerprint
@@ -1643,6 +1645,8 @@ export class SqliteChannelWorkflowStore {
   }
 
   private assertDescendantsComplete(workflowId: string): void {
+    const blocker = readWorkflowIntegrationCompletionBlocker(this.context.database, workflowId);
+    if (blocker) throw new Error(blocker);
     const steps = this.listChannelWorkflowSteps({ workflowId, complete: true });
     assertDelegationCompletionSatisfied(this.ports.getDelegationCompletionEvidence({
       rootRunIds: [...new Set(steps.flatMap(step => step.runId ? [step.runId] : []))].sort(),

@@ -44,6 +44,8 @@ import { ChannelTurnDispatchWorkerRegistry } from "./features/channels/channel-t
 import { createChannelTurnDispatchExecutor } from "./features/channels/channel-turn-dispatch-executor.js";
 import { maybeScheduleRunTerminalReport } from "./features/channels/terminal-report-coordinator.js";
 import { reconcileAllContinuityWorkflows } from "./features/channels/workflow-reconciliation.js";
+import { configureWorkflowIsolationLifecycle } from "./features/channels/workflow-isolation-lifecycle.js";
+import { recoverWorkflowIsolationsAtStartup } from "./features/channels/workflow-isolation-recovery.js";
 import {
   maybeQueueGoalContinuation,
   maybeStartNextRunInterventionContinuation,
@@ -392,6 +394,10 @@ export function createDaemonServer(
     const recoveryNow = new Date().toISOString();
     store.recoverStaleRuns(recoveryNow);
     store.recoverStaleChannelWorkflows(recoveryNow);
+    configureWorkflowIsolationLifecycle(store, {
+      trackCompletion: completion => activeRuns.trackCompletion(completion),
+      isShuttingDown: () => activeRuns.isShuttingDown(),
+    });
     dependencies.initializeBundledSkills?.(store);
     flushSkillDefinitionRevisionNotices(store, controlPlaneEvents, cwd);
     // A process may have crossed the shell side-effect boundary before the
@@ -425,13 +431,13 @@ export function createDaemonServer(
     runEvaluationTaskWorkers.registerStore(cwd, store);
     runEvaluationScheduler?.registerStore(store);
     startupOptionalWarmups?.start(cwd, store);
-    reconcileAllContinuityWorkflows(store, { cause: "startup" });
-    if (resolvedConfig.channels.terminalReports === true) {
-      const terminalReportRecovery = recoverTerminalReports(store).catch(() => {
-        console.warn("terminal_report_recovery_failed: conflicting sources remain recoverable");
-      });
-      activeRuns.trackCompletion(terminalReportRecovery);
-    }
+    const workflowRecovery = recoverWorkflowIsolationsAtStartup(store).then(async () => {
+      reconcileAllContinuityWorkflows(store, { cause: "startup" });
+      if (resolvedConfig.channels.terminalReports === true) await recoverTerminalReports(store);
+    }).catch(() => {
+      console.warn("workflow_recovery_incomplete: unverified effects and publications remain recoverable");
+    });
+    activeRuns.trackCompletion(workflowRecovery);
     harnessProjectionStores.add(store);
     reconcileHarnessProjections(store);
     if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);

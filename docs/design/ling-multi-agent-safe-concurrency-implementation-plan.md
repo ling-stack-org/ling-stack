@@ -39,6 +39,19 @@ requirement shaping 产品扩展、自动远端 merge/push/deploy、跨 worktree
 | P4 | 待实现 | registry 版本冻结、校验、authoring 与真实保存/编译流程通过 |
 | P5 | 待实现 | 同一工作对象内 graph/list 一致、可访问、真实状态可靠 |
 
+P2 当前边界：
+
+- P2-A 的 immutable scope plan、fenced binding、round/journal 与迁移已实现并通过本地回归。
+- P2-B 的 isolated Run cwd、Host file executor、沙盒与 evidence 绑定已实现并通过本地回归。
+- P2-C 的 terminal branch result 封存和结果门禁已接入真实执行链；candidate 生成与固定
+  Host 静态校验、持久 coordinator/completion barrier 与 startup/cancel/drain 已接入并通过
+  本地回归。Core journal/migration 72 项、daemon Git/lifecycle/result 64 项、publication/recovery
+  30 项通过；report 最终事务重新核验 retained evidence，移除 step pin 不绕过持久 round。
+- P2-D 的 clean-target fast-forward 机制已有实现和故障回归，但尚无 merge approval/permit
+  接线，不可用于向用户工作区自动应用结果。
+- 内部 isolation planner 保持 `candidate_only`；普通 workflow 写并发仍关闭。静态校验
+  明确记录 `projectTestsRun: false`，不等于项目测试、审批或 apply 已完成。
+
 P1/P2 中各模块的故障测试随实现提交，不能把基本正确性留到 P3 才补。
 P3 是端到端组合验收与缺口收口，不是第一次考虑取消、重启和审批。
 
@@ -281,5 +294,6 @@ shadow 只生成调度决定与诊断，不启动额外 Run/模型/工具/Git ef
 不再把功能 WIP 与已合并 PR 混为一谈。提交只含当前责任文件；未完成现场保留明确
 branch/owner，不跨数个大阶段堆积一个不可审查的 dirty worktree。
 
-下一步为 P1-A；没有阻塞该单元开工的产品决策。P0 文档的存在不是 P1 完成，
-也不是已有 Harness 或 #614 所有能力都重新通过验收的声明。
+下一步为收口 P2-C 的持久 coordinator、completion barrier 与重开/取消联合验证，
+随后接入 P2-D 的 merge approval、permit、apply reconciliation。P1 与已完成的 P2
+单元不重复从零实现；P3-P5、CI/merge 和真实客户端/平台验收仍未完成。

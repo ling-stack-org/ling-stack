@@ -1,4 +1,4 @@
-import type { RunStore } from "@ling-stack/core";
+import { createSqliteWorkflowIntegrationCoordinatorStore, type RunStore } from "@ling-stack/core";
 import { evaluateWorkflowCompletion } from "./workflow-completion-gate.js";
 
 export function completeWorkflowIfStepsFinished(store: RunStore, workflowId: string, now: string): void {
@@ -6,6 +6,12 @@ export function completeWorkflowIfStepsFinished(store: RunStore, workflowId: str
   if (!workflow || (workflow.status !== "running" && workflow.status !== "waiting_for_approval"
     && workflow.status !== "blocked")) return;
   const steps = store.listChannelWorkflowSteps({ workflowId, complete: true });
+  try {
+    if (createSqliteWorkflowIntegrationCoordinatorStore(store).readCompletionBlocker(workflowId)) return;
+  } catch (error) {
+    if (steps.some(step => step.metadata?.isolationScopePlan) || !(error instanceof Error)
+      || error.message !== "workflow_integration.store_not_sqlite") throw error;
+  }
   const evaluation = evaluateWorkflowCompletion({ store, workflow, steps, now });
   if (workflow.metadata?.requiredParticipantManifest && !evaluation) {
     throw new Error(`Manifest-backed workflow has no completion gate: ${workflow.id}`);

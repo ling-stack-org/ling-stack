@@ -40,6 +40,8 @@ import {
 import { ensureDeterministicWorkflowSelectorDecision } from "./workflow-selector.js";
 import { verifyWorkflowStepExecutionOperations } from "./workflow-operation-evidence.js";
 import { reconcileWorkflowIsolatedResults, workflowIsolatedResultBlocker } from "./workflow-isolated-result.js";
+import { reconcileWorkflowIntegrations } from "./workflow-integration-coordinator.js";
+import { waitForWorkflowIsolationIdle } from "./workflow-isolation-lifecycle.js";
 import { finalizeDelegatedWorkflowStepFromCanonicalState } from "./workflow-step-finalizer.js";
 import { preserveMarkdownLayout } from "./markdown-text.js";
 import { reconcileWorkflowFromCanonicalState } from "./workflow-reconciliation.js";
@@ -150,7 +152,24 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
     throw new HttpError(409, "plan_mode_workflow_blocked", planModeBlocker);
   }
   await reconcileWorkflowIsolatedResults(input.store, workflow.id);
+  let integrations = await reconcileWorkflowIntegrations(input.store, workflow.id);
+  const integrationFailure = (): WorkflowOrchestrationResult | undefined => {
+    const failure = integrations.find(result => ["blocked", "failed", "conflicted"].includes(result.status));
+    return failure ? { status: failure.status === "failed" ? "failed" : "blocked",
+      workflow: input.store.getChannelWorkflow(workflow.id) ?? workflow,
+      blocker: failure.code ?? "workflow_integration.coordination_unverified" } : undefined;
+  };
+  const beforeFailure = integrationFailure();
+  if (beforeFailure) return beforeFailure;
   const reconciled = reconcileWorkflowStepRuns(input.store, workflow.id);
+  if (integrations.some(result => result.status === "waiting")) {
+    integrations = await reconcileWorkflowIntegrations(input.store, workflow.id);
+    const afterFailure = integrationFailure();
+    if (afterFailure) return afterFailure;
+    completeWorkflowIfStepsFinished(input.store, workflow.id, new Date().toISOString());
+    const completed = input.store.getChannelWorkflow(workflow.id);
+    if (completed?.status === "succeeded") return { status: "completed", workflow: completed };
+  }
   if (reconciled.status === "completed") {
     return { status: "completed", workflow: reconciled.workflow };
   }
@@ -464,7 +483,7 @@ function reconcileLegacyWorkflowApprovalDecision(
     : { status: "blocked", workflow: latestWorkflow, workflowStep: latestStep, blocker: latestStep.blocker ?? reason };
 }
 
-export function cancelChannelWorkflow(input: CancelWorkflowInput): CancelWorkflowResult {
+export async function cancelChannelWorkflow(input: CancelWorkflowInput): Promise<CancelWorkflowResult> {
   const workflow = input.store.getChannelWorkflow(input.workflowId);
   if (!workflow) {
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${input.workflowId}`);
@@ -475,6 +494,7 @@ export function cancelChannelWorkflow(input: CancelWorkflowInput): CancelWorkflo
     // the durable status transition and terminal-report publication. Re-run
     // the publication coordinator so a cancelled source turn/thread cannot
     // remain open merely because the first request returned early.
+    await waitForWorkflowIsolationIdle(input.store, workflow.id);
     syncWorkflowSourceTurnProgress(input.store, workflow, now);
     maybeCreateWorkflowTerminalCoordinatorReply(input.store, workflow.id, { now });
     return {
@@ -556,6 +576,7 @@ export function cancelChannelWorkflow(input: CancelWorkflowInput): CancelWorkflo
   // Cancellation is a terminal workflow outcome too. Route it through the
   // same durable publication coordinator as success/failure so the source
   // turn/thread cannot remain open after the user has cancelled the work.
+  await waitForWorkflowIsolationIdle(input.store, workflow.id);
   const terminalWorkflow = input.store.getChannelWorkflow(workflow.id) ?? latestWorkflow;
   if (isTerminalWorkflowStatus(terminalWorkflow.status)) {
     syncWorkflowSourceTurnProgress(input.store, terminalWorkflow, now);
@@ -1118,7 +1139,7 @@ function isApprovedPreStartStep(store: RunStore, step: ChannelWorkflowStep): boo
     && approval.payload.workflowId === step.workflowId && approval.payload.workflowStepId === step.id;
 }
 
-function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): WorkflowOrchestrationResult | { readonly status: "open" } {
+export function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): WorkflowOrchestrationResult | { readonly status: "open" } {
   const steps = store.listChannelWorkflowSteps({ workflowId, complete: true });
   const workflow = store.getChannelWorkflow(workflowId);
   if (!workflow) {

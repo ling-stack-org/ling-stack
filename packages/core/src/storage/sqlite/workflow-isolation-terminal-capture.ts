@@ -23,7 +23,8 @@ const reject = (status: "stale" | "blocked", code: string): WorkflowIsolationTer
 /** Caller owns a synchronous read-only snapshot. No live-owner or resource-release exception is issued here. */
 export function readWorkflowIsolationTerminalCapture(database: DatabaseSync, ports: WorkflowIsolationTerminalCapturePorts,
   binding: WorkflowIsolationExecutionBinding, plan: WorkflowIsolationScopePlanV1, round: WorkflowIntegrationRound | undefined,
-  now: string): WorkflowIsolationTerminalCaptureResult {
+  now: string, internalCoordinator?: { readonly roundId: string; readonly generation: number;
+    readonly verifiedIntentIds: readonly string[] }): WorkflowIsolationTerminalCaptureResult {
   const fence = binding.fence, owner = binding.startOwner;
   const step = ports.getChannelWorkflowStep(plan.workflowStepId), workflow = ports.getChannelWorkflow(plan.workflowId);
   const task = ports.getTask(owner.taskId), run = ports.getRun(binding.runId), unit = ports.getWorkUnit(fence.workUnitId), attempt = ports.getWorkUnitAttempt(fence.attemptId);
@@ -70,8 +71,17 @@ export function readWorkflowIsolationTerminalCapture(database: DatabaseSync, por
       || slot.resource_type !== slot.planned_type || slot.resource_key !== slot.planned_key || slot.owner_type !== "work_unit_attempt"
       || slot.owner_id !== fence.attemptId || slot.work_unit_id !== fence.workUnitId || slot.attempt_id !== fence.attemptId
       || slot.runtime_instance_id !== fence.runtimeInstanceId || slot.fencing_token !== fence.fencingToken)) return reject("stale", "slot_owner_changed");
-  if (binding.status !== "ready" || binding.openIntentId || round.openIntentId || database.prepare(`SELECT 1 FROM workflow_isolation_intents
-    WHERE writer_binding_id=? AND status<>'confirmed' LIMIT 1`).get(binding.bindingId)) return reject("blocked", "git_effect_unconfirmed");
+  // Only the internal coordinator supplies IDs after validating immutable effect/artifact links.
+  // Binding-scoped, foreign-generation and unlinked journals are never covered by this exception.
+  const covered = (id: string): boolean => {
+    if (!internalCoordinator || internalCoordinator.roundId !== round.roundId || internalCoordinator.generation !== round.generation
+      || !internalCoordinator.verifiedIntentIds.includes(id)) return false;
+    const intent = database.prepare("SELECT scope_type,round_id,generation FROM workflow_isolation_intents WHERE intent_id=?").get(id);
+    return intent?.scope_type === "round" && intent.round_id === round.roundId && intent.generation === round.generation;
+  };
+  if (binding.status !== "ready" || binding.openIntentId || round.openIntentId && !covered(round.openIntentId)
+    || database.prepare(`SELECT intent_id FROM workflow_isolation_intents WHERE writer_binding_id=? AND status<>'confirmed'`)
+      .all(binding.bindingId).some(intent => !covered(String(intent.intent_id)))) return reject("blocked", "git_effect_unconfirmed");
   const creation = database.prepare(`SELECT receipt.artifact_id FROM workflow_isolation_receipts receipt
     JOIN workflow_isolation_intents intent ON intent.intent_id=receipt.intent_id WHERE receipt.receipt_id=?
       AND receipt.outcome='confirmed' AND intent.status='confirmed' AND intent.kind='worktree_create'

@@ -9,6 +9,7 @@ import { buildWorkflowStepOutputPacket, readWorkflowStepContextPacketArtifact } 
 import { captureWorkflowBranchResult, inspectSealedWorkflowBranchResult, workflowGitPacketDigest, workflowGitPacketJson,
   workflowGitResultRef, type WorkflowBranchCaptureContext, type WorkflowBranchResult, type WorkflowBranchResultPacketV1,
   type WorkflowBranchTerminalEvidence, type WorkflowGitRefEffect, type WorkflowGitRefJournal } from "./workflow-branch-result.js";
+import { runWorkflowIsolationOperation } from "./workflow-isolation-lifecycle.js";
 
 type TerminalAuthority = Extract<WorkflowIsolationTerminalCaptureResult, { readonly status: "authorized" }>;
 interface MutationEvidence {
@@ -122,6 +123,8 @@ export async function reconcileWorkflowIsolatedResults(store: RunStore, workflow
   now: () => string = () => new Date().toISOString()): Promise<void> {
   for (const step of store.listChannelWorkflowSteps({ workflowId, complete: true })) {
     if (!step.metadata?.isolationScopePlan || !step.runId) continue;
+    // Integration owns terminal branch evidence; its pending effects are not a missing branch capture.
+    if (["succeeded", "failed", "cancelled", "skipped"].includes(step.status)) continue;
     const run = store.getRun(step.runId);
     if (!run || !["succeeded", "failed"].includes(run.status)) continue;
     const unit = run.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;
@@ -140,6 +143,16 @@ export async function captureWorkflowIsolatedResult(input: {
   readonly isolation?: WorkflowIsolationStore;
   readonly now?: () => string;
 }): Promise<WorkflowBranchResult> {
+  const isolation = input.isolation ?? createSqliteWorkflowIsolationStore(input.store);
+  const binding = isolation.getExecutionBinding(input.writer.bindingId);
+  requireResult(binding && same(binding.fence, fenceOf(input.writer)), "workflow_isolation.result_binding_changed");
+  const plan = isolation.getScopePlan(binding.planId);
+  requireResult(plan && plan.planDigest === binding.planDigest, "workflow_isolation.result_plan_changed");
+  return runWorkflowIsolationOperation(input.store, plan.workflowId, `capture:${input.writer.bindingId}`,
+    () => captureWorkflowIsolatedResultInner({ ...input, isolation }));
+}
+
+async function captureWorkflowIsolatedResultInner(input: Parameters<typeof captureWorkflowIsolatedResult>[0]): Promise<WorkflowBranchResult> {
   const { store, writer } = input, isolation = input.isolation ?? createSqliteWorkflowIsolationStore(store);
   const now = input.now ?? (() => new Date().toISOString());
   const binding = isolation.getExecutionBinding(writer.bindingId);

@@ -38,6 +38,7 @@ import { collectTerminalInterruptionRisks, terminalReportFailureSummary } from "
 import { extractWorkflowStepChangedPaths } from "./workflow-step-packets.js";
 import { collectTerminalReportDelegationEvidence, type TerminalReportDelegationEvidence } from "./terminal-report-delegation-evidence.js";
 import { projectTerminalReportCommandEvidence } from "./terminal-report-command-evidence.js";
+import { collectWorkflowIsolationRisks } from "./terminal-report-isolation-evidence.js";
 
 export interface TerminalReportEvidenceBudgets {
   readonly steps: number;
@@ -124,7 +125,8 @@ function collectWorkflowEvidenceWithinSnapshot(
     options.generatedAt ?? evidence.workflow.updatedAt, interruptionRisks);
   const approvals = evidence.approvals.map(mapApproval);
   const participants = aggregateWorkflowParticipants(store, evidence, budgets.summaryCharacters);
-  const risks = [...interruptionRisks, ...collectWorkflowRisks(evidence, checks, budgets.summaryCharacters)];
+  const risks = [...collectWorkflowIsolationRisks(store, workflowId, language),
+    ...interruptionRisks, ...collectWorkflowRisks(evidence, checks, budgets.summaryCharacters)];
 
   return finalizeSnapshotWithDelegations(store, delegations, {
     workspaceId: evidence.workflow.workspaceId,

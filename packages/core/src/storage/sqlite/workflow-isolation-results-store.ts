@@ -152,6 +152,27 @@ export class SqliteWorkflowIsolationResultsStore implements WorkflowIsolationTer
     return value;
   }
 
+  /** Internal read-side reuse by the Host coordinator; never grants a live writer. */
+  readConfirmedTerminalResult(binding: WorkflowIsolationExecutionBinding, plan: WorkflowIsolationScopePlanV1,
+    authority: Authority): WorkflowIsolationTerminalResultIntent {
+    const intent = this.getTerminalResultIntent(binding.bindingId);
+    if (!intent || intent.status !== "confirmed" || intent.bindingRevision !== binding.revision
+      || intent.proofDigest !== authority.proofDigest || !same(intent.writer, writerOf(binding))) veto("stale", "ref_unconfirmed");
+    const packet = this.artifact(intent.packetArtifactId, binding.runId);
+    if (packet.contentSha256 !== intent.packetContentSha256) veto("invalid", "packet_changed");
+    this.validatePacket(intent, binding, plan, packet.body, authority);
+    const row = this.context.database.prepare(`SELECT receipt_id FROM workflow_isolation_result_receipts
+      WHERE intent_id=? AND outcome='confirmed' AND revision=?`).get(intent.intentId, intent.revision);
+    const receipt = row && this.getTerminalResultReceipt(String(row.receipt_id));
+    if (!receipt || receipt.observedCommit !== intent.commit || !same(receipt.writer, intent.writer)) veto("invalid", "receipt_artifact_mismatch");
+    const observation = this.artifact(receipt.artifactId, binding.runId);
+    if (observation.contentSha256 !== receipt.artifactContentSha256 || !same(observation.body, {
+      schemaVersion: 1, kind: "workflow_isolation_result_ref_receipt", intentId: intent.intentId,
+      effect: this.effect(intent, plan, packet.body), outcome: "confirmed", observedCommit: intent.commit,
+    })) veto("invalid", "receipt_artifact_mismatch");
+    return intent;
+  }
+
   resumeTerminalResultStep(input: ResumeWorkflowIsolationTerminalResultStepInput): WorkflowIsolationMutationResult<ChannelWorkflowStep> {
     return this.transaction(() => {
       this.validateTime(input.now);
