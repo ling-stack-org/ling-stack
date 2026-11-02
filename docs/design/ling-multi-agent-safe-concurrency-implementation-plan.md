@@ -50,8 +50,11 @@ P2 当前边界：
 - P2-D 的 Host merge approval 基础已实现：冻结完整目标快照、候选与验证证据，审批只支持
   本地用户单次批准或拒绝，request/checkpoint/round 关联原子落库；不允许自动 reviewer、
   可复用规则或 permission-scope 授权。Core 审批/迁移及关联回归、daemon 真实 Git 审批
-  回归通过。clean-target fast-forward 机制已有实现，但 permit、实际 apply 与恢复接线
-  仍未完成；普通审批同意不代表已合入工作区。
+  回归通过。单次 permit、独占 lease、实际 clean-target fast-forward、审批 route、completion
+  与 startup reconciliation 已接入并通过本地构建及真实 Git/SQLite 回归。普通审批同意
+  不代表已合入工作区；unknown 保留 intent/lease，重启只观察，不重放 Git。
+- P2-D 尚缺 owned-worktree cleanup/留存与资源预算联合验收；P3 的真实客户端/平台
+  验收也未完成，不能据此声明写并发已交付或对普通 workflow 开启。
 - 内部 isolation planner 保持 `candidate_only`；普通 workflow 写并发仍关闭。静态校验
   明确记录 `projectTestsRun: false`，不等于项目测试、审批或 apply 已完成。
 

@@ -320,6 +320,12 @@ digests、candidate commit/tree、验证证据、目标 repository/worktree/bran
 expected target HEAD 和目标 clean-state snapshot。
 模型、普通 route JSON 或只有 digest 的 artifact 不能签发 merge permit。
 
+Host 实现通过独立 merge approval store 冻结完整 proposal/checkpoint；单次
+`approve_once` 且 `resolvedBy: local-user` 才可走 live apply。generic isolation journal
+和 integration journal 均禁止签发或确认 `target_apply`，不能把通用 receipt 当作许可。
+repo-local `.ling-stack` 仅在 Host 实际 state root、canonical 非 symlink、整体 ignored
+且 dev/inode 一致时豁免；该身份进入 target snapshot/fingerprint，不豁免其他 ignored 文件。
+
 审批拒绝/超时不改变目标；candidate 改动、目标 HEAD 改变、checkout 切换、权限撤销或
 验证证据失效都使旧 permit 无效。必须重新检查、生成 candidate 并重新审批。
 审批接受后仍需在实际 Git effect 前检查当前 owner/fence，不以 UI 已点通过作权威。
@@ -335,6 +341,16 @@ apply 取得 canonical target 的独占 lease 和跨进程协调锁，重验：
 只允许 no-force fast-forward；不 stash、不 reset、不覆盖 dirty 文件、不 push。
 应用前记录 intent 和原 HEAD，应用后核对 HEAD/tree/index/工作区并记录 receipt。
 不得用 `update-ref` 移动已检出的 branch 然后假装工作区也已同步。
+
+仓库协调锁内、物理 effect 前的短事务原子写入 exclusive lease、apply intent、effect
+link、不可变单次 permit 与 `applying` phase。只有 `beginApply` 返回 `created` 的原
+Host 调用可执行 Git；duplicate、startup 和 reopen 均只能观察。所有普通资源/容量准入
+及 existing slot 复用在各自写事务内尊重 apply lease；TTL 和通用 cleanup 不释放它。
+exact clean candidate 记为 `applied`，exact clean before 记为 `not_applied`；两者均是
+物理结果已确认，释放精确 lease。dirty/drift/unavailable 记为 unknown，保留 intent/lease。
+cancel、撤权或授权过期后观察到实际 candidate，仍记录物理事实，但业务 blocked。
+已完成 apply 的历史同意按 receipt 时间验证，正常后续超时不撤销已确认历史成功；
+当前 authority、candidate 和 retained evidence 仍必须有效。
 
 协调锁不能阻止编辑器、用户或其他不合作进程写文件。检测到并发漂移或结果不确定时，
 保持 blocked、保存现场和恢复建议，不能自动回滚用户文件。
@@ -355,7 +371,8 @@ branch execution binding 单独索引其 step/start generation；packet bodies �
 | worktree 已创建，receipt 未落库 | 核对 common dir、base、ref、路径和 owner；匹配才补 receipt，否则 blocked |
 | branch 有文件改动，Runner/Attempt 结果未知 | 保留目录/锁/证据；不重新执行模型、不自动合并 |
 | integration Git 动作已完成但 receipt 丢失 | 读取 expected tree/commit 与 Host intent；唯一匹配才能确认，不能重放一次 cherry-pick |
-| approval 已接受，apply 尚未开始 | 重验 permit、目标和当前权限；任一漂移使其失效 |
+| approval 已接受，但没有 apply intent/permit | 重启只展示已同意但尚未应用，不自动开始新的 Git effect |
+| apply intent/permit 已落库，Git 尚未运行 | 只观察 exact clean before，记录 not_applied 并释放原 lease，不重放 Git |
 | target 已 fast-forward，SQLite 尚未记录 applied | 以 intent、expected after commit 和完整目标状态核对；相符才补 applied |
 | apply 部分失败、出现非预期 HEAD/文件 | blocked，保留 before/after 观测，不强制恢复或伪造 applied |
 | 旧 Attempt/旧 generation 晚到完成 | 可记录审计；不得改当前 phase、消费审批或释放新 owner 的 lease |

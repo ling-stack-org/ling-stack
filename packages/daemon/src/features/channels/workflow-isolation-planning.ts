@@ -54,7 +54,8 @@ export async function planWorkflowIsolatedRound(input: PlanWorkflowIsolatedRound
     if (step.taskId || step.runId || step.metadata?.startOwner || !["queued", "waiting_for_approval"].includes(step.status)
       || step.metadata?.preStepApprovalId && !step.metadata.isolationScopePlan) blocked("Isolation must be selected before approval or start.");
   }
-  const repository = await inspectWorkflowGitRepository(store.paths.cwd);
+  const hostStateRoot = store.paths.stateLocation === "repo-local" ? store.paths.rootDir : undefined;
+  const repository = await inspectWorkflowGitRepository(store.paths.cwd, { hostStateRoot });
   const worktreeRoot = input.worktreeRoot ?? resolveStoragePaths(store.paths.cwd, { workspaceStateLocation: "user-data-dir" }).workspace.worktreesDir;
   if (!input.worktreeRoot) await mkdir(worktreeRoot, { recursive: true, mode: 0o700 });
   if (await realpath(worktreeRoot) !== worktreeRoot) blocked("The Host worktree root must be canonical.");
@@ -63,7 +64,7 @@ export async function planWorkflowIsolatedRound(input: PlanWorkflowIsolatedRound
   const integration = await scopeFor("integration");
   const scopes: WorkflowGitWorktreeScope[] = [];
   for (const step of steps) scopes.push(await scopeFor(step.id));
-  const observed = await inspectWorkflowGitRepository(store.paths.cwd);
+  const observed = await inspectWorkflowGitRepository(store.paths.cwd, { hostStateRoot });
   if (workflowGitRepositoryBasisDigest(observed) !== workflowGitRepositoryBasisDigest(repository)
     || !isDeepStrictEqual(store.getChannelWorkflow(workflow.id), workflow)
     || !isDeepStrictEqual(store.getChannel(channel.id), channel)
@@ -129,7 +130,8 @@ export async function planWorkflowIsolatedRound(input: PlanWorkflowIsolatedRound
 export async function readWorkflowIsolationWorktreeScope(store: RunStore, pin: { readonly planId: string; readonly planDigest: string }): Promise<WorkflowGitWorktreeScope> {
   const plan = createSqliteWorkflowIsolationStore(store).getScopePlan(pin.planId);
   if (!plan || plan.planDigest !== pin.planDigest || plan.canonicalWorkspaceRoot !== store.paths.cwd) blocked("The isolated scope plan is missing or changed.");
-  const repository = await inspectWorkflowGitRepository(plan.canonicalWorkspaceRoot);
+  const repository = await inspectWorkflowGitRepository(plan.canonicalWorkspaceRoot,
+    { hostStateRoot: store.paths.stateLocation === "repo-local" ? store.paths.rootDir : undefined });
   if (workflowGitRepositoryBasisDigest(repository) !== plan.target.cleanStateDigest) blocked("The target repository basis changed after planning.");
   const scope = await planWorkflowGitWorktree({ repository, worktreeRoot: dirname(plan.executionRoot),
     roundId: plan.integrationRoundId, stepId: plan.workflowStepId, generation: plan.stepGeneration, worktreeId: plan.worktreeId });

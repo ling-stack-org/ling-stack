@@ -18,6 +18,7 @@ import { toRuntimeAttemptFence } from "../../runtime-supervisor-types.js";
 import { assertUserInputDurableQuiescence } from "./user-input-durable-quiescence.js";
 import { UserInputStoreError } from "../../user-input-store-types.js";
 import { hostAttemptReadScopeForSource } from "./host-attempt-read-scope.js";
+import { hasActiveWorkflowMergeApplyLease } from "./workflow-merge-lease-guard.js";
 
 type Ports = WorkflowStepStartReadStore & Pick<RunStore, "getWorkUnit" | "getWorkUnitAttempt" | "getRunnerContinuation" | "getHostAttemptCompletion">;
 type Entry = { readonly resourceType: RuntimeSemaphoreResourceType; readonly resourceKey: string; readonly limit: number };
@@ -102,6 +103,9 @@ export class SqliteWorkflowStepAdmissionStore {
   checkCapacityWithinTransaction(step: ChannelWorkflowStep, plan: WorkflowStepAdmissionPlan):
     | { readonly status: "reserved" }
     | { readonly status: "conflict"; readonly code: string; readonly resourceType: RuntimeSemaphoreResourceType; readonly resourceKey: string } {
+    if (hasActiveWorkflowMergeApplyLease(this.context.database, step.workspaceId)) {
+      return { status: "conflict", code: "workflow_merge_apply_workspace_busy", resourceType: "workflow_resource", resourceKey: `workspace:${step.workspaceId}` };
+    }
     const previous = this.context.database.prepare(`SELECT 1 FROM workflow_step_admissions AS admission
       WHERE admission.workflow_step_id=? AND (admission.status='preparing' OR admission.status='transferred' AND EXISTS (
         SELECT 1 FROM workflow_step_admission_entries AS entry JOIN runtime_semaphore_slots AS slot ON slot.id=entry.slot_id
@@ -124,6 +128,9 @@ export class SqliteWorkflowStepAdmissionStore {
     if (!step || !admission || step.workspaceId !== admission.workspaceId || step.status !== "running" || admission.status === "released"
       || workflowStepStartAuthorityBasis(this.ports, step) !== input.owner.authorityBasis) {
       return { status: "stale", code: "workflow_admission_owner_stale" };
+    }
+    if (hasActiveWorkflowMergeApplyLease(this.context.database, step.workspaceId)) {
+      return { status: "invalid", code: "workflow_merge_apply_workspace_busy" };
     }
     const plan = normalizeWorkflowStepAdmissionPlan(input.admission);
     if (!plan || JSON.stringify(plan) !== JSON.stringify(admission.plan)) return { status: "invalid", code: "workflow_admission_plan_mismatch" };
@@ -181,6 +188,9 @@ export class SqliteWorkflowStepAdmissionStore {
         || step.metadata?.startOwner?.phase !== "linked" || this.ports.getTask(input.owner.taskId)?.currentRunId !== input.runId
         || workflowStepStartAuthorityBasis(this.ports, step) !== input.owner.authorityBasis) {
         return { status: "stale", code: "workflow_admission_owner_stale" };
+      }
+      if (hasActiveWorkflowMergeApplyLease(this.context.database, step.workspaceId)) {
+        return { status: "conflict", code: "workflow_merge_apply_workspace_busy", resourceType: "workflow_resource", resourceKey: `workspace:${step.workspaceId}` };
       }
       const plan = normalizeWorkflowStepAdmissionPlan(input.admission);
       if (!plan || JSON.stringify(plan) !== JSON.stringify(admission.plan)) return { status: "invalid", code: "workflow_admission_plan_mismatch" };

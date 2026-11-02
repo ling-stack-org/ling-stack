@@ -133,7 +133,9 @@ function snapshotTarget(target: WorkflowGitApplyTarget): WorkflowGitApplyIntent 
     && target.expectedRepository.head === target.expectedHead && target.expectedRepository.dirty === false,
   "workflow_git_apply_scope_invalid");
   requireApply(target.candidateCommit !== target.expectedHead, "workflow_git_apply_candidate_not_successor");
-  return Object.freeze({ expectedRepository: Object.freeze({ ...target.expectedRepository }), expectedHead: target.expectedHead,
+  const hostState = target.expectedRepository.hostState;
+  return Object.freeze({ expectedRepository: Object.freeze({ ...target.expectedRepository,
+    ...(hostState ? { hostState: Object.freeze({ ...hostState }) } : {}) }), expectedHead: target.expectedHead,
     candidateCommit: target.candidateCommit, candidateTree: target.candidateTree,
     expectedBasisDigest: workflowGitRepositoryBasisDigest(target.expectedRepository) });
 }
@@ -141,7 +143,8 @@ function snapshotTarget(target: WorkflowGitApplyTarget): WorkflowGitApplyIntent 
 async function observeLocked(target: WorkflowGitApplyTarget): Promise<WorkflowGitApplyObservation> {
   let repository: WorkflowGitRepository | undefined, head: string | undefined, tree: string | undefined;
   try {
-    repository = Object.freeze(await inspectWorkflowGitRepository(target.expectedRepository.root, { allowDirtyCandidate: true }));
+    repository = Object.freeze(await inspectWorkflowGitRepository(target.expectedRepository.root, { allowDirtyCandidate: true,
+      hostStateRoot: target.expectedRepository.hostState?.root }));
     head = repository.head;
     tree = await gitText(repository.root, ["rev-parse", "--verify", `${head}^{tree}`]);
     requireApply(objectId.test(tree), "workflow_git_apply_tree_invalid");
@@ -151,7 +154,7 @@ async function observeLocked(target: WorkflowGitApplyTarget): Promise<WorkflowGi
     const blobs = await readTextBlobs(repository.root, entries);
     await inspectCleanTarget(repository, entries, blobs);
     // Re-read the facts after raw file capture; a changing checkout is not clean evidence.
-    const after = await inspectWorkflowGitRepository(repository.root, { allowDirtyCandidate: true });
+    const after = await inspectWorkflowGitRepository(repository.root, { allowDirtyCandidate: true, hostStateRoot: repository.hostState?.root });
     requireApply(sameIdentity(repository, after) && after.head === head && !after.dirty,
       "workflow_git_apply_target_changed_during_observation");
     return Object.freeze({ state: head === target.expectedHead ? "expected"
@@ -177,6 +180,8 @@ async function inspectCandidate(target: WorkflowGitApplyTarget): Promise<void> {
   catch (cause) { throw new WorkflowGitError("workflow_git_apply_candidate_not_descendant", { cause }); }
   await inspectWorkflowGitTree(root, target.candidateCommit);
   const candidate = await readTree(root, target.candidateCommit);
+  requireApply(!target.expectedRepository.hostState || !candidate.some(entry => isHostStatePath(entry.path)),
+    "workflow_git_apply_candidate_touches_host_state");
   // Case-only renames are aliases of before paths on common target filesystems.
   rejectCaseAliases([...await readTree(root, target.expectedHead), ...candidate]);
   await readTextBlobs(root, candidate);
@@ -206,8 +211,11 @@ async function inspectMetadata(repository: WorkflowGitRepository): Promise<void>
 
 async function inspectCleanTarget(repository: WorkflowGitRepository, entries: readonly TreeEntry[], blobs: ReadonlyMap<string, Buffer>): Promise<void> {
   const root = repository.root;
-  requireApply(!repository.dirty && (await workflowGit(root,
-    ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching"])).stdout.length === 0,
+  const status = nulRecords((await workflowGit(root,
+    ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching"])).stdout);
+  requireApply(!repository.dirty && status.every(entry => repository.hostState && entry.startsWith("!! ")
+    && (entry.slice(3) === ".ling-stack/" || entry.slice(3).startsWith(".ling-stack/")))
+    && (!repository.hostState || !entries.some(entry => isHostStatePath(entry.path))),
   "workflow_git_target_dirty");
   for (const entry of nulRecords((await workflowGit(root, ["ls-files", "-v", "-z"])).stdout)) {
     requireApply(entry.startsWith("H "), "workflow_git_apply_index_flags_unsupported");
@@ -232,6 +240,7 @@ async function inspectCleanTarget(repository: WorkflowGitRepository, entries: re
   const walk = async (directory: string): Promise<void> => {
     for (const child of await readdir(join(root, directory))) {
       if (!directory && child === ".git") continue;
+      if (!directory && child === ".ling-stack" && repository.hostState) continue;
       const path = directory ? `${directory}/${child}` : child;
       requireApply(++visited <= 20000 && safeWorkflowGitPath(path), "workflow_git_apply_worktree_path_unsupported");
       const absolute = join(root, path), stat = await lstat(absolute);
@@ -252,6 +261,8 @@ async function inspectCleanTarget(repository: WorkflowGitRepository, entries: re
   await walk("");
   requireApply(seen.size === entries.length, "workflow_git_target_dirty");
 }
+
+function isHostStatePath(path: string): boolean { return path.split("/", 1)[0].normalize("NFC").toLowerCase() === ".ling-stack"; }
 
 async function readTree(root: string, commit: string): Promise<readonly TreeEntry[]> {
   const records = nulRecords((await workflowGit(root, ["ls-tree", "-r", "-z", "--full-tree", commit])).stdout);

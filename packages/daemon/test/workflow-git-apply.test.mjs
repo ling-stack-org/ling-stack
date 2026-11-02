@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
-import { access, chmod, link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, link, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -152,6 +152,86 @@ test("repeated apply never repeats a physical effect or treats a candidate obser
   assert.equal(Object.hasOwn(candidate, "applied"), false);
   assert.equal(await f.git("reflog", "show", "--format=%H", "refs/heads/main"), reflog);
 });
+
+async function hostStateFixture(t) {
+  const f = await fixture(t), root = join(f.root, ".ling-stack");
+  await mkdir(root);
+  await writeFile(join(root, "state.sqlite"), "Host state\n");
+  await mkdir(join(f.repository.commonDir, "info"), { recursive: true });
+  await writeFile(join(f.repository.commonDir, "info/exclude"), ".ling-stack/\n");
+  const repository = await inspectWorkflowGitRepository(f.root, { hostStateRoot: root });
+  return { ...f, stateRoot: root, repository, target: { ...f.target, expectedRepository: repository },
+    input: overrides => f.input({ expectedRepository: repository, ...overrides }) };
+}
+
+test("only the Host-bound ignored state directory is preserved while mutable state does not invalidate consent", native, async t => {
+  const f = await hostStateFixture(t), basis = workflowGitRepositoryBasisDigest(f.repository);
+  assert.notEqual(basis, workflowGitRepositoryBasisDigest({ ...f.repository, hostState: undefined }));
+  assert.equal((await observeWorkflowGitApply(f.target)).verifiedClean, true);
+  const result = await applyWorkflowGitFastForward(f.input({ async beforeApply() {
+    await writeFile(join(f.stateRoot, "state.sqlite"), "Host state after permit\n");
+  } }));
+  assert.equal(result.status, "applied", JSON.stringify(result));
+  assert.deepEqual(result.receipt.repository.hostState, f.repository.hostState);
+  assert.equal(await readFile(join(f.stateRoot, "state.sqlite"), "utf8"), "Host state after permit\n");
+  assert.equal((await observeWorkflowGitApply(f.target)).state, "candidate");
+});
+
+test("ignoring one state file does not make its parent an ignored Host directory", native, async t => {
+  const f = await hostStateFixture(t);
+  await writeFile(join(f.repository.commonDir, "info/exclude"), ".ling-stack/state.sqlite\n");
+  assert.equal(await f.git("status", "--porcelain"), "");
+  await assert.rejects(inspectWorkflowGitRepository(f.root, { hostStateRoot: f.stateRoot }),
+    { code: "workflow_git_host_state_not_ignored" });
+  assert.equal((await applyWorkflowGitFastForward(f.input())).status, "blocked");
+  assert.equal(f.intents.length, 0);
+  await assertUnchanged(f);
+});
+
+for (const kind of ["symlink", "replaced"]) {
+  test(`Host state identity is rechecked after durable intent: ${kind}`, native, async t => {
+    const f = await hostStateFixture(t), retained = join(f.base, "original-state");
+    const result = await applyWorkflowGitFastForward(f.input({ async beforeApply(intent) {
+      f.intents.push(intent);
+      await rename(f.stateRoot, retained);
+      if (kind === "symlink") await symlink(retained, f.stateRoot);
+      else await mkdir(f.stateRoot);
+    } }));
+    assert.equal(result.status, "blocked", JSON.stringify(result));
+    assert.equal(result.observation.verifiedClean, false);
+    assert.equal(f.intents.length, 1);
+    assert.equal(f.receipts.length, 0);
+    assert.equal(await readFile(join(retained, "state.sqlite"), "utf8"), "Host state\n");
+    await assertUnchanged(f);
+  });
+}
+
+for (const kind of ["unbound", "foreign-root", "symlink", "replaced", "other-ignored", "candidate", "candidate-case-alias"]) {
+  test(`Host state exclusion cannot conceal user work or a changed authority: ${kind}`, native, async t => {
+    const f = await hostStateFixture(t);
+    let overrides = {};
+    if (kind === "unbound") overrides = { expectedRepository: { ...f.repository, hostState: undefined } };
+    if (kind === "foreign-root") overrides = { expectedRepository: { ...f.repository,
+      hostState: { ...f.repository.hostState, root: join(f.root, "private-user-dir") } } };
+    if (["symlink", "replaced"].includes(kind)) {
+      await rename(f.stateRoot, join(f.base, "original-state"));
+      if (kind === "symlink") await symlink(join(f.base, "original-state"), f.stateRoot);
+      else await mkdir(f.stateRoot);
+    }
+    if (kind === "other-ignored") {
+      await writeFile(join(f.repository.commonDir, "info/exclude"), ".ling-stack/\nuser-private.txt\n");
+      await writeFile(join(f.root, "user-private.txt"), "user ignored WIP\n");
+    }
+    if (kind.startsWith("candidate")) overrides = await f.makeCandidate({ "owned.txt": "candidate\n",
+      [`${kind === "candidate" ? ".ling-stack" : ".LING-STACK"}/state.sqlite`]: "must not replace Host state\n" });
+    const result = await applyWorkflowGitFastForward(f.input(overrides));
+    assert.equal(result.status, "blocked", JSON.stringify(result));
+    assert.equal(f.intents.length, 0);
+    await assertUnchanged(f);
+    assert.equal(await readFile(join(f.stateRoot, "state.sqlite"), "utf8").catch(error => error.code),
+      kind === "replaced" ? "ENOENT" : "Host state\n");
+  });
+}
 
 test("lost durable receipt leaves the actual fast-forward intact and unknown, with no replay or rollback", native, async t => {
   const f = await fixture(t), intentPath = join(f.base, "intent.json");

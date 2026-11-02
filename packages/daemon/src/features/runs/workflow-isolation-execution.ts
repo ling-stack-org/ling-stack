@@ -171,7 +171,8 @@ function assertScope(plan: WorkflowIsolationScopePlanV1, scope: WorkflowGitWorkt
 }
 
 async function assertTargetBasis(scope: WorkflowGitWorktreeScope): Promise<void> {
-  const observed = await inspectWorkflowGitRepository(scope.repository.root, { allowDirtyCandidate: scope.repository.dirty });
+  const observed = await inspectWorkflowGitRepository(scope.repository.root, { allowDirtyCandidate: scope.repository.dirty,
+    hostStateRoot: scope.repository.hostState?.root });
   requireExecution(workflowGitRepositoryBasisDigest(observed) === workflowGitRepositoryBasisDigest(scope.repository),
     "workflow_isolation.execution_target_changed");
 }

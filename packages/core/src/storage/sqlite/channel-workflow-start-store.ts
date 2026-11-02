@@ -18,6 +18,7 @@ import type { SqliteStoreContext } from "./store-context.js";
 import { normalizeWorkflowStepAdmissionPlan, type SqliteWorkflowStepAdmissionStore } from "./workflow-step-admission-store.js";
 import { toRuntimeAttemptFence } from "../../runtime-supervisor-types.js";
 import { workflowStepBeginApprovalPermitted } from "./workflow-step-start-approval-gate.js";
+import { hasActiveWorkflowMergeApplyLease } from "./workflow-merge-lease-guard.js";
 
 type Ports = WorkflowStepStartReadStore & Pick<RunStore, "createTask" | "transitionTaskStatus" | "recordStateTransitionEvent" | "releaseResourceLease" | "listChannelWorkflowSteps" | "getWorkUnit" | "getWorkUnitAttempt" | "getApprovalRequest" | "createApprovalRequest">;
 
@@ -30,6 +31,9 @@ export class SqliteChannelWorkflowStartStore {
     return this.transaction(() => {
       const step = this.ports.getChannelWorkflowStep(input.workflowStepId);
       if (!step || !sameExpected(step, input.expected)) return { status: "stale", code: "workflow_start_basis_stale" };
+      if (hasActiveWorkflowMergeApplyLease(this.context.database, step.workspaceId)) {
+        return { status: "conflict", code: "workflow_merge_apply_workspace_busy", resourceType: "workflow_resource", resourceKey: `workspace:${step.workspaceId}` };
+      }
       const workflow = this.ports.getChannelWorkflow(step.workflowId);
       const authorityBasis = workflowStepStartAuthorityBasis(this.ports, step);
       const plan = input.admission === undefined ? undefined : normalizeWorkflowStepAdmissionPlan(input.admission);
@@ -112,6 +116,9 @@ export class SqliteChannelWorkflowStartStore {
         || !["running", "waiting_for_approval", "blocked"].includes(workflow.status)
         || workflowStepStartAuthorityBasis(this.ports, step) !== input.owner.authorityBasis
         || !this.validLease(step, input.owner.leaseId, input.now)) return { status: "stale", code: "workflow_start_owner_stale" };
+      if (hasActiveWorkflowMergeApplyLease(this.context.database, step.workspaceId)) {
+        return { status: "invalid", code: "workflow_merge_apply_workspace_busy" };
+      }
       const run = this.ports.getRun(input.runId);
       const task = this.ports.getTask(input.owner.taskId);
       const unit = run?.workUnitId ? this.ports.getWorkUnit(run.workUnitId) : undefined;

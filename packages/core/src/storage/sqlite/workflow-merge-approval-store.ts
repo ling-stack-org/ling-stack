@@ -17,6 +17,10 @@ interface EvidencePorts {
   readonly authority: (roundId: string, generation: number, now: string, excludedMergeApprovalId?: string) => WorkflowIntegrationCoordinatorAuthority;
   readonly candidateVerified: (authority: Authority) => boolean;
 }
+/** Retained lineage only; reading this after expiry/cancellation grants no execution authority. */
+export interface WorkflowMergeApprovalRetainedReader extends WorkflowMergeApprovalStore {
+  readRetained(approvalId: string): { readonly request: WorkflowMergeApprovalRequest; readonly approval: ReturnType<WorkflowMergeApprovalPorts["getApprovalRequest"]> & {} };
+}
 type Rejection = { readonly status: "invalid" | "stale" | "conflict"; readonly code: string };
 class Rejected extends Error {
   constructor(readonly result: Rejection) { super(result.code); }
@@ -33,9 +37,11 @@ export function createSqliteWorkflowMergeApprovalStore(store: RunStore): Workflo
 
 /** Host composition only. Neither the proposal nor an approved basis is an execution capability. */
 export function registerSqliteWorkflowMergeApprovalStore(store: RunStore, context: SqliteStoreContext,
-  isolation: WorkflowIsolationStore, ports: WorkflowMergeApprovalPorts, evidence: EvidencePorts): void {
+  isolation: WorkflowIsolationStore, ports: WorkflowMergeApprovalPorts, evidence: EvidencePorts): WorkflowMergeApprovalRetainedReader {
   if (adapters.has(store)) throw new Error("workflow_merge.store_already_registered");
-  adapters.set(store, new SqliteWorkflowMergeApprovalStore(context, isolation, ports, evidence));
+  const adapter = new SqliteWorkflowMergeApprovalStore(context, isolation, ports, evidence);
+  adapters.set(store, adapter);
+  return adapter;
 }
 
 class SqliteWorkflowMergeApprovalStore implements WorkflowMergeApprovalStore {
@@ -90,6 +96,14 @@ class SqliteWorkflowMergeApprovalStore implements WorkflowMergeApprovalStore {
 
   getRequest(roundId: string, generation: number): WorkflowMergeApprovalRequest | undefined {
     return readSqliteSnapshot(this.context.database, () => this.request(roundId, generation));
+  }
+
+  readRetained(approvalId: string): ReturnType<WorkflowMergeApprovalRetainedReader["readRetained"]> {
+    if (!identity(approvalId)) reject("invalid", "approval_identity_invalid");
+    const row = this.context.database.prepare("SELECT round_id,generation FROM workflow_merge_approval_requests WHERE approval_id=?").get(approvalId);
+    const request = row && this.request(String(row.round_id), Number(row.generation));
+    if (!request) reject("invalid", "host_proposal_missing");
+    return { request, approval: this.approvalFor(request) };
   }
 
   inspectApproval(input: Parameters<WorkflowMergeApprovalStore["inspectApproval"]>[0]): WorkflowMergeApprovalInspection {

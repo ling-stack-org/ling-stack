@@ -13,6 +13,7 @@ import { mapResourceLease } from "./runtime-work-mappers.js";
 import { resourceLeaseSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import { withCancelledAttemptResourceVeto } from "./cancelled-attempt-resource-veto.js";
+import { workflowMergeApplyLeaseSql } from "./workflow-merge-lease-guard.js";
 
 export class SqliteResourceLeaseStore {
   private readonly context: SqliteStoreContext;
@@ -25,6 +26,7 @@ export class SqliteResourceLeaseStore {
     if (!isValidResourceLeaseInput(input)) {
       return undefined;
     }
+    const mergeGuard = workflowMergeApplyLeaseSql(this.context.database);
     const lease: ResourceLease = {
       id: createResourceLeaseId(),
       workspaceId: input.workspaceId,
@@ -62,13 +64,13 @@ export class SqliteResourceLeaseStore {
             runtime_instance_id,
             fencing_token
           ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-          WHERE ? IN ('workflow_step','system') OR EXISTS (
+          WHERE (? IN ('workflow_step','system') OR EXISTS (
             SELECT 1 FROM work_unit_attempts AS attempts
             JOIN work_units AS units ON units.id=attempts.work_unit_id
             WHERE attempts.id=? AND attempts.work_unit_id=? AND attempts.runtime_instance_id=?
               AND attempts.fencing_token=? AND units.active_attempt_id=attempts.id
               AND units.workspace_id=? AND attempts.status IN ('created','started','waiting_for_approval','cancelling')
-          )
+          )) AND ${mergeGuard.workspaceAvailable ?? "1"}
         `)
         .run(
           lease.id,
@@ -93,6 +95,7 @@ export class SqliteResourceLeaseStore {
           lease.runtimeInstanceId ?? null,
           lease.fencingToken ?? null,
           lease.workspaceId,
+          ...(mergeGuard.workspaceAvailable ? [lease.workspaceId] : []),
         );
       return Number(result.changes) === 1 ? lease : undefined;
     } catch {
@@ -104,11 +107,13 @@ export class SqliteResourceLeaseStore {
     if (ownerType !== "workflow_step" && ownerType !== "system") {
       throw new Error("Owner-level resource lease release requires workflow_step or system ownership");
     }
+    const mergeGuard = workflowMergeApplyLeaseSql(this.context.database);
     const result = this.context.database
       .prepare(`
         UPDATE resource_leases
         SET status = 'released', released_at = ?, release_reason = COALESCE(release_reason, 'released')
         WHERE owner_type = ? AND owner_id = ? AND status = 'active' AND attempt_id IS NULL
+          AND ${mergeGuard.leaseUnreferenced}
       `)
       .run(releasedAt, ownerType, ownerId);
     return Number(result.changes);
@@ -119,9 +124,11 @@ export class SqliteResourceLeaseStore {
     if (ownerType !== "workflow_step" && ownerType !== "system") {
       throw new Error("Exact resource lease release requires workflow_step or system ownership");
     }
+    const mergeGuard = workflowMergeApplyLeaseSql(this.context.database);
     const result = this.context.database.prepare(`
       UPDATE resource_leases SET status = 'released', released_at = ?, release_reason = COALESCE(release_reason, 'released')
       WHERE id = ? AND owner_type = ? AND owner_id = ? AND status = 'active' AND attempt_id IS NULL
+        AND ${mergeGuard.leaseUnreferenced}
     `).run(releasedAt, id, ownerType, ownerId);
     return Number(result.changes);
   }
@@ -155,6 +162,7 @@ export class SqliteResourceLeaseStore {
   }
 
   releaseResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number {
+    const mergeGuard = workflowMergeApplyLeaseSql(this.context.database);
     return withCancelledAttemptResourceVeto(this.context.database, fence, releasedAt, () => {
       const result = this.context.database
         .prepare(`
@@ -165,6 +173,7 @@ export class SqliteResourceLeaseStore {
           AND runtime_instance_id = ?
           AND fencing_token = ?
           AND status = 'active'
+          AND ${mergeGuard.leaseUnreferenced}
           AND EXISTS (
             SELECT 1
             FROM work_unit_attempts AS attempts
@@ -189,10 +198,12 @@ export class SqliteResourceLeaseStore {
   }
 
   expireResourceLeases(now: string): number {
+    const mergeGuard = workflowMergeApplyLeaseSql(this.context.database);
     const rows = this.context.database.prepare(`
       SELECT id, work_unit_id, attempt_id, runtime_instance_id, fencing_token
       FROM resource_leases
       WHERE status = 'active' AND expires_at <= ?
+        AND ${mergeGuard.leaseUnreferenced}
         AND (
           (owner_type IN ('workflow_step','system') AND work_unit_id IS NULL AND attempt_id IS NULL
             AND runtime_instance_id IS NULL AND fencing_token IS NULL)
@@ -219,6 +230,7 @@ export class SqliteResourceLeaseStore {
           UPDATE resource_leases
           SET status = 'expired', released_at = ?, release_reason = COALESCE(release_reason, 'expired')
           WHERE id = ? AND status = 'active' AND expires_at <= ?
+            AND ${mergeGuard.leaseUnreferenced}
             AND owner_type IN ('workflow_step','system') AND work_unit_id IS NULL AND attempt_id IS NULL
             AND runtime_instance_id IS NULL AND fencing_token IS NULL
         `).run(now, id, now).changes);
@@ -233,6 +245,7 @@ export class SqliteResourceLeaseStore {
           UPDATE resource_leases
           SET status = 'expired', released_at = ?, release_reason = COALESCE(release_reason, 'expired')
           WHERE id = ? AND status = 'active' AND expires_at <= ?
+            AND ${mergeGuard.leaseUnreferenced}
             AND work_unit_id = ? AND attempt_id = ? AND runtime_instance_id = ? AND fencing_token = ?
             AND EXISTS (
               SELECT 1 FROM work_unit_attempts AS attempts

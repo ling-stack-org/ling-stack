@@ -1,6 +1,6 @@
 import { lstat } from "node:fs/promises";
 import { dirname } from "node:path";
-import { createSqliteWorkflowIsolationStore, createSqliteWorkflowIntegrationCoordinatorStore,
+import { createSqliteWorkflowIsolationStore, createSqliteWorkflowIntegrationCoordinatorStore, createSqliteWorkflowMergeApprovalStore,
   type RunStore, type WorkflowIntegrationRound, type WorkflowIsolationGitIdentity,
   type WorkflowIntegrationCoordinatorEffect } from "@ling-stack/core";
 import { isRecord } from "../../shared/validation.js";
@@ -16,9 +16,11 @@ import { validateWorkflowIntegrationCandidate, workflowCandidateValidationRequir
 import { createWorkflowIntegrationJournal, integrationValue, readIntegrationArtifact, requireIntegration,
   retainIntegrationArtifact, WorkflowIntegrationCoordinatorError, type WorkflowIntegrationJournal } from "./workflow-integration-journal.js";
 import { runWorkflowIsolationOperation } from "./workflow-isolation-lifecycle.js";
+import { reconcileWorkflowMergeApplication } from "./workflow-merge-apply.js";
+import { requestWorkflowMergeApproval } from "./workflow-merge-approval.js";
 
 export interface WorkflowIntegrationCoordinationResult {
-  readonly status: "waiting" | "awaiting_approval" | "conflicted" | "blocked" | "failed";
+  readonly status: "waiting" | "awaiting_approval" | "applied" | "conflicted" | "blocked" | "failed";
   readonly round: WorkflowIntegrationRound;
   readonly code?: string;
 }
@@ -29,11 +31,22 @@ export async function reconcileWorkflowIntegrations(store: RunStore, workflowId:
   if (!store.listChannelWorkflowSteps({ workflowId, complete: true }).some(step => step.metadata?.isolationScopePlan)) return [];
   const rounds = createSqliteWorkflowIntegrationCoordinatorStore(store).listRounds(workflowId);
   const results: WorkflowIntegrationCoordinationResult[] = [];
-  for (const { roundId } of rounds) results.push(await coordinateWorkflowIntegration({ store, roundId, now }));
+  for (const { roundId } of rounds) {
+    const result = await coordinateWorkflowIntegration({ store, roundId, now });
+    if (result.status === "awaiting_approval" && result.round.inputs.mode === "apply_to_target"
+      && !result.round.outstandingApprovalId) {
+      const proposal = await requestWorkflowMergeApproval({ store, roundId, now });
+      if (!("value" in proposal)) {
+        results.push({ status: "blocked", round: result.round, code: proposal.code });
+        continue;
+      }
+    }
+    results.push(result);
+  }
   return results;
 }
 
-/** Host candidate coordinator. No model dispatch, merge approval, target apply or cleanup. */
+/** Host integration coordinator. Existing apply permits are observed only; no model dispatch or cleanup. */
 export async function coordinateWorkflowIntegration(input: { readonly store: RunStore; readonly roundId: string;
   readonly now?: () => string }): Promise<WorkflowIntegrationCoordinationResult> {
   const initial = createSqliteWorkflowIsolationStore(input.store).getIntegrationRound(input.roundId);
@@ -49,6 +62,15 @@ async function coordinateWorkflowIntegrationInner(input: Parameters<typeof coord
   requireIntegration(initial, "workflow_integration.round_missing");
   const latest = () => isolation.getIntegrationRound(initial.roundId)!;
   try {
+    if (initial.inputs.mode === "apply_to_target" && ["awaiting_approval", "applying", "applied", "blocked"].includes(initial.phase)) {
+      const request = createSqliteWorkflowMergeApprovalStore(store).getRequest(initial.roundId, initial.generation);
+      if (request) {
+        const result = await reconcileWorkflowMergeApplication({ store, approvalId: request.approvalId, now });
+        return { status: result.status === "applied" ? "applied" : result.status === "waiting" ? "awaiting_approval" : "blocked",
+          round: result.round, code: result.code };
+      }
+      if (initial.phase === "awaiting_approval") return { status: "awaiting_approval", round: initial };
+    }
     const steps = initial.inputs.participants.map(participant => store.getChannelWorkflowStep(participant.workflowStepId));
     if (steps.some(step => step && !["succeeded", "failed", "cancelled", "skipped"].includes(step.status))) {
       return { status: "waiting", round: latest() };
@@ -62,7 +84,8 @@ async function coordinateWorkflowIntegrationInner(input: Parameters<typeof coord
         tree: resultIntent.tree, resultRef: resultIntent.ref };
     });
     const repository = await inspectWorkflowGitRepository(initial.inputs.canonicalWorkspaceRoot,
-      { allowDirtyCandidate: initial.inputs.target.inputMode === "committed_head_only" });
+      { allowDirtyCandidate: initial.inputs.target.inputMode === "committed_head_only",
+        hostStateRoot: store.paths.stateLocation === "repo-local" ? store.paths.rootDir : undefined });
     requireIntegration(workflowGitRepositoryBasisDigest(repository) === initial.inputs.target.cleanStateDigest,
       "workflow_integration.repository_changed");
     for (const branch of branchResults) await inspectSealedWorkflowBranchResult(repository.root, branch);

@@ -17,7 +17,8 @@ export async function requestWorkflowMergeApproval(input: { readonly store: RunS
       const now = input.now ?? (() => new Date().toISOString());
       const approvals = createSqliteWorkflowMergeApprovalStore(input.store);
       const existing = approvals.getRequest(round.roundId, round.generation);
-      const targetSnapshot = await inspectWorkflowGitRepository(round.inputs.canonicalWorkspaceRoot);
+      const targetSnapshot = await inspectWorkflowGitRepository(round.inputs.canonicalWorkspaceRoot,
+        { hostStateRoot: input.store.paths.stateLocation === "repo-local" ? input.store.paths.rootDir : undefined });
       const at = now();
       const authority = existing ? { status: "authorized" as const, authorityDigest: existing.payload.authorityDigest }
         : createSqliteWorkflowIntegrationCoordinatorStore(input.store).assertAuthority({ roundId: round.roundId,

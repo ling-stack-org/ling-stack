@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import test from "node:test";
 import { approvalActionTypes, approvalSideEffectFingerprintV1, assertApprovalDecisionAvailable,
-  workflowIsolationDigest } from "../dist/index.js";
+  workflowIsolationDigest, isWorkflowMergeTargetSnapshot, workflowMergeTargetSnapshotDigest,
+  workflowMergeApprovalFingerprint } from "../dist/index.js";
 import { approvalActionTypes as contractApprovalActionTypes } from "../../contracts/dist/approvals.js";
 import { workflowIsolationFixture, nextCommit, nextTree } from "./support/workflow-isolation-fixture.mjs";
 
@@ -55,6 +57,20 @@ test("workflow_merge is a Core and Contracts action with only once consent", () 
     for (const decision of ["approve_once", "approve_command_rule", "approve_permission_scope"]) {
       assert.throws(() => assertApprovalDecisionAvailable({ ...merge, ...changes }, decision), { code: "approval_decision_unavailable" });
     }
+  }
+});
+
+test("Host state identity is an optional exact snapshot field and part of the merge consent basis", async t => {
+  const f = await fixture(t), snapshot = f.payload.targetSnapshot;
+  const hostState = { root: join(f.cwd, ".ling-stack"), rootDevice: "1", rootInode: "20" };
+  const protectedSnapshot = { ...snapshot, hostState };
+  assert.equal(isWorkflowMergeTargetSnapshot(snapshot), true);
+  assert.equal(isWorkflowMergeTargetSnapshot(protectedSnapshot), true);
+  assert.notEqual(workflowMergeTargetSnapshotDigest(protectedSnapshot), workflowMergeTargetSnapshotDigest(snapshot));
+  const { fingerprint: _fingerprint, ...basis } = f.payload;
+  assert.notEqual(workflowMergeApprovalFingerprint({ ...basis, targetSnapshot: protectedSnapshot }), f.payload.fingerprint);
+  for (const change of [{ root: f.cwd }, { root: join(f.cwd, "user-files") }, { rootDevice: "" }, { rootInode: "bad" }, { extra: "ignored" }]) {
+    assert.equal(isWorkflowMergeTargetSnapshot({ ...snapshot, hostState: { ...hostState, ...change } }), false);
   }
 });
 

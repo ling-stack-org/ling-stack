@@ -36,6 +36,7 @@ import { validDeliveryKey, validDeliveryRevision } from "./user-input-delivery-r
 import { isUserInputRunCreatedReplay } from "./user-input-run-created-replay.js";
 import type { UserInputWorkflowAdmissionRecoveryPlan } from "./user-input-workflow-step-admission.js";
 import { readRuntimeSemaphoreCapacity } from "./workflow-step-admission-capacity.js";
+import { hasActiveWorkflowMergeApplyLease } from "./workflow-merge-lease-guard.js";
 
 type BindingReader = (threadId: string, deliveryId: string) => UserInputContinuationBinding | undefined;
 type RunReader = (runId: string) => RunSession | undefined;
@@ -144,8 +145,16 @@ export class SqliteUserInputPrestartRecoveryStore {
       if (!binding || !sameBinding(input, binding) || binding.runId !== input.runId
         || binding.deliveryRevision !== input.claim.expectedRevision || !this.hasCurrentClaim(input, input.now)
         || !this.hasCurrentPrestartOwner(binding)) return this.rollbackResult({ status: "changed" });
+      const workspaceId = this.context.database.prepare("SELECT workspace_id FROM work_units WHERE id=? AND active_attempt_id=?")
+        .get(binding.fence.workUnitId, binding.fence.attemptId)?.workspace_id;
+      if (typeof workspaceId !== "string" || !workspaceId) return this.rollbackResult({ status: "changed" });
+      if (hasActiveWorkflowMergeApplyLease(this.context.database, workspaceId)) {
+        return this.rollbackResult({ status: "busy", kind: "resource", resourceType: "workspace", resourceKey: workspaceId });
+      }
       const admission = this.planWorkflowAdmission(input, binding);
       if (admission.status === "changed") return this.rollbackResult(admission);
+      if (input.leases.some(lease => lease.workspaceId !== workspaceId)
+        || admission.semaphores.some(slot => slot.workspaceId !== workspaceId)) return this.rollbackResult({ status: "changed" });
       const recovery = { ...input, semaphores: admission.semaphores };
       const leases = this.recoverLeases(input, binding);
       if (!Array.isArray(leases)) return this.rollbackResult(leases);

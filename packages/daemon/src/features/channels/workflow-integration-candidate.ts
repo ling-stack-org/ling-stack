@@ -220,7 +220,8 @@ function snapshotContext(input: WorkflowIntegrationCandidateContext): WorkflowIn
 
 async function inspectCurrentContext(context: WorkflowIntegrationCandidateContext): Promise<void> {
   const { inputs, repository } = context;
-  const current = await inspectWorkflowGitRepository(repository.root, { allowDirtyCandidate: inputs.target.inputMode === "committed_head_only" });
+  const current = await inspectWorkflowGitRepository(repository.root, { allowDirtyCandidate: inputs.target.inputMode === "committed_head_only",
+    hostStateRoot: repository.hostState?.root });
   requireCandidate(workflowGitRepositoryBasisDigest(current) === workflowGitRepositoryBasisDigest(repository),
     "workflow_integration_target_basis_changed");
   const receipt = await reconcileWorkflowGitWorktree(context.integrationScope);

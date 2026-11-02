@@ -8,6 +8,8 @@ import type { WorkflowIsolationTerminalResultsStore, WorkflowIsolationTerminalRe
   RecordWorkflowIsolationTerminalResultIntentInput, RecordWorkflowIsolationTerminalResultReceiptInput,
   ResumeWorkflowIsolationTerminalResultStepInput } from "../../workflow-isolation-results-types.js";
 import type { ChannelWorkflowStep } from "../../workspace-types.js";
+import type { WorkflowMergeTargetSnapshotV1 } from "../../workflow-merge-types.js";
+import { isWorkflowMergeTargetSnapshot, workflowMergeTargetSnapshotDigest } from "../../workflow-merge-approval.js";
 import { transitionWorkflow, transitionWorkflowStep } from "../../state-machines.js";
 import { workflowIsolationCanonicalJson as json, workflowIsolationDigest as digest, workflowIsolationRecord as record,
   workflowIsolationIdentity as identity, workflowIsolationRevision as revision, workflowIsolationTime as time } from "../../workflow-isolation.js";
@@ -355,14 +357,8 @@ export class SqliteWorkflowIsolationResultsStore implements WorkflowIsolationTer
     }
   }
   private repositoryMatches(value: Record<string, unknown>, expected: string): boolean {
-    if (![value.root, value.commonDir, value.gitDir].every(path) || !oid(value.head) || !identity(value.branchRef)
-      || typeof value.configurationDigest !== "string" || !/^[a-f0-9]{64}$/u.test(value.configurationDigest)
-      || ![value.rootDevice, value.rootInode, value.commonDevice, value.commonInode].every(entry => typeof entry === "string" && /^[0-9]+$/u.test(entry))
-      || typeof value.dirty !== "boolean") return false;
-    // Host repository basis v1 has fixed field order, intentionally distinct from canonical packet JSON.
-    return expected === `wgr1_${sha256(JSON.stringify({ root: value.root, commonDir: value.commonDir, gitDir: value.gitDir,
-      head: value.head, branchRef: value.branchRef, configurationDigest: value.configurationDigest, rootDevice: value.rootDevice,
-      rootInode: value.rootInode, commonDevice: value.commonDevice, commonInode: value.commonInode, dirty: value.dirty }))}`;
+    if (typeof value.dirty !== "boolean" || !isWorkflowMergeTargetSnapshot({ ...value, dirty: false })) return false;
+    return expected === workflowMergeTargetSnapshotDigest(value as unknown as WorkflowMergeTargetSnapshotV1);
   }
   private effect(intent: WorkflowIsolationTerminalResultIntent, plan: WorkflowIsolationScopePlanV1,
     packet: Record<string, unknown>): WorkflowIsolationTerminalResultEffectV1 {

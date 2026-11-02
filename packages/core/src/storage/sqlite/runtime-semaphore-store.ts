@@ -13,6 +13,7 @@ import { runtimeSemaphoreSlotSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import { withCancelledAttemptResourceVeto } from "./cancelled-attempt-resource-veto.js";
 import { readRuntimeSemaphoreCapacity } from "./workflow-step-admission-capacity.js";
+import { hasActiveWorkflowMergeApplyLease } from "./workflow-merge-lease-guard.js";
 
 export class SqliteRuntimeSemaphoreStore {
   constructor(private readonly context: SqliteStoreContext) {}
@@ -70,6 +71,12 @@ export class SqliteRuntimeSemaphoreStore {
     | { readonly status: "acquired" | "existing"; readonly slot: RuntimeSemaphoreSlot }
     | { readonly status: "full" | "changed" } {
     if (!Number.isSafeInteger(input.limit) || input.limit < 1) return { status: "changed" };
+    try {
+      if (hasActiveWorkflowMergeApplyLease(this.context.database, input.workspaceId)) return { status: "changed" };
+    } catch {
+      // Invalid apply evidence vetoes admission without rolling back the caller's transaction.
+      return { status: "changed" };
+    }
     const current = this.context.database.prepare(`
       SELECT 1 FROM work_unit_attempts AS attempts JOIN work_units AS units ON units.id=attempts.work_unit_id
       WHERE attempts.id=? AND attempts.work_unit_id=? AND attempts.runtime_instance_id=? AND attempts.fencing_token=?

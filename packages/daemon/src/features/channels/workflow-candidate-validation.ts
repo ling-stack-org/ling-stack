@@ -158,7 +158,7 @@ export async function validateWorkflowIntegrationCandidate(input: {
   return checked(() => withWorkflowGitRepositoryLock(repository, async () => {
     const inspectCurrent = async () => {
       const current = await checked(() => inspectWorkflowGitRepository(root,
-        { allowDirtyCandidate: inputs.target.inputMode === "committed_head_only" }));
+        { allowDirtyCandidate: inputs.target.inputMode === "committed_head_only", hostStateRoot: repository.hostState?.root }));
       requireValidation(workflowGitRepositoryBasisDigest(current) === scope.repositoryBasisDigest,
         "workflow_candidate_validation_repository_changed");
       const receipt = await checked(() => reconcileWorkflowGitWorktree(context.integrationScope));

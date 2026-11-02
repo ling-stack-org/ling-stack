@@ -38,7 +38,7 @@ export async function workflowIntegrationCoordinatorFixture(t, { stage = "succee
   await writeFile(join(f.cwd, "owned.txt"), "base\n");
   await f.git("add", "--", ".gitignore", "owned.txt");
   await f.git("commit", "-m", "initial");
-  f.repository = await inspectWorkflowGitRepository(f.cwd);
+  f.repository = await inspectWorkflowGitRepository(f.cwd, { hostStateRoot: f.store.paths.rootDir });
   const worktreeRoot = join(f.root, "coordinator-worktrees");
   await mkdir(worktreeRoot);
   f.scopeGit = await planWorkflowGitWorktree({ repository: f.repository, worktreeRoot, roundId: f.roundId,

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, realpath, rmdir, statfs, unlink } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { workflowMergeTargetSnapshotDigest } from "@ling-stack/core";
+import { workflowMergeTargetSnapshotDigest, type WorkflowMergeHostStateSnapshotV1 } from "@ling-stack/core";
 import { workflowGit } from "./managed-worktrees.js";
 
 export class WorkflowGitError extends Error {
@@ -21,6 +21,7 @@ export interface WorkflowGitRepository {
   readonly commonDevice: string;
   readonly commonInode: string;
   readonly dirty: boolean;
+  readonly hostState?: WorkflowMergeHostStateSnapshotV1;
 }
 
 export interface WorkflowGitWorktreeScope {
@@ -60,7 +61,11 @@ const requireGit: (condition: unknown, code: string) => asserts condition = (con
 };
 
 /** Repository facts only, never a Runner isolation capability or an apply permit. */
-export async function inspectWorkflowGitRepository(root: string, options: { readonly allowDirtyCandidate?: boolean } = {}): Promise<WorkflowGitRepository> {
+export async function inspectWorkflowGitRepository(root: string, options: {
+  readonly allowDirtyCandidate?: boolean;
+  /** Supplied by the Host's actual RunStore paths, never a request/Runner field. */
+  readonly hostStateRoot?: string;
+} = {}): Promise<WorkflowGitRepository> {
   requireGit(isAbsolute(root), "workflow_git_root_invalid");
   const canonical = await realpath(root);
   requireGit(canonical === resolve(root) && (await lstat(root)).isDirectory(), "workflow_git_root_not_canonical");
@@ -87,11 +92,26 @@ export async function inspectWorkflowGitRepository(root: string, options: { read
   if (await present(infoAttributes)) rejectCustomAttributes(decode(await boundedFile(infoAttributes)));
   const dirty = (await workflowGit(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"])).stdout.length !== 0;
   requireGit(!dirty || options.allowDirtyCandidate === true, "workflow_git_target_dirty");
+  let hostState: WorkflowMergeHostStateSnapshotV1 | undefined;
+  if (options.hostStateRoot !== undefined) {
+    const stateRoot = options.hostStateRoot;
+    requireGit(stateRoot === join(canonical, ".ling-stack") && await realpath(stateRoot) === stateRoot,
+      "workflow_git_host_state_invalid");
+    const state = await lstat(stateRoot, { bigint: true });
+    requireGit(state.isDirectory() && !state.isSymbolicLink()
+      && (await workflowGit(root, ["ls-files", "-z", "--", ".ling-stack"])).stdout.length === 0,
+    "workflow_git_host_state_invalid");
+    const ignored = (await workflowGit(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all",
+      "--ignored=matching", "--", ".ling-stack/"])).stdout;
+    requireGit(decode(ignored) === "!! .ling-stack/\0", "workflow_git_host_state_not_ignored");
+    hostState = { root: stateRoot, rootDevice: String(state.dev), rootInode: String(state.ino) };
+  }
   const rootStat = await lstat(root, { bigint: true }), commonStat = await lstat(commonDir, { bigint: true });
   requireGit(rootStat.isDirectory() && commonStat.isDirectory(), "workflow_git_repository_identity_changed");
   return { root: canonical, commonDir, gitDir, head, branchRef, dirty,
     configurationDigest: createHash("sha256").update(configuration).digest("hex"),
-    rootDevice: String(rootStat.dev), rootInode: String(rootStat.ino), commonDevice: String(commonStat.dev), commonInode: String(commonStat.ino) };
+    rootDevice: String(rootStat.dev), rootInode: String(rootStat.ino), commonDevice: String(commonStat.dev), commonInode: String(commonStat.ino),
+    ...(hostState ? { hostState } : {}) };
 }
 
 export async function inspectWorkflowGitTree(root: string, commit: string): Promise<void> {
@@ -177,7 +197,8 @@ export async function createWorkflowGitWorktree(scope: WorkflowGitWorktreeScope,
   requireGit(planned.executionRoot === scope.executionRoot && planned.branchRef === scope.branchRef
     && planned.baseCommit === scope.baseCommit, "workflow_git_scope_invalid");
   return withWorkflowGitRepositoryLock(scope.repository, async () => {
-    const current = await inspectWorkflowGitRepository(scope.repository.root, { allowDirtyCandidate: scope.repository.dirty });
+    const current = await inspectWorkflowGitRepository(scope.repository.root, { allowDirtyCandidate: scope.repository.dirty,
+      hostStateRoot: scope.repository.hostState?.root });
     requireGit(sameRepository(scope.repository, current), "workflow_git_repository_basis_changed");
     requireGit(!await present(scope.executionRoot) && !await workflowGitRefExists(scope.repository.root, scope.branchRef),
       "workflow_git_worktree_identity_exists");
@@ -242,7 +263,5 @@ function outside(root: string, path: string): boolean {
   const rel = relative(root, path); return rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel);
 }
 function sameRepository(a: WorkflowGitRepository, b: WorkflowGitRepository): boolean {
-  return a.root === b.root && a.commonDir === b.commonDir && a.gitDir === b.gitDir && a.head === b.head && a.branchRef === b.branchRef
-    && a.configurationDigest === b.configurationDigest && a.rootDevice === b.rootDevice && a.rootInode === b.rootInode
-    && a.commonDevice === b.commonDevice && a.commonInode === b.commonInode && a.dirty === b.dirty;
+  return workflowGitRepositoryBasisDigest(a) === workflowGitRepositoryBasisDigest(b);
 }

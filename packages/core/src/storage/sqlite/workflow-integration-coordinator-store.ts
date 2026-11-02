@@ -20,6 +20,7 @@ import { createSqliteWorkflowIsolationStore } from "./workflow-isolation-store.j
 import { readWorkflowIntegrationCompletionBlocker, registerWorkflowIntegrationCompletionReader,
   workflowCandidateVerificationMatches } from "./workflow-integration-completion.js";
 import { registerSqliteWorkflowMergeApprovalStore, type WorkflowMergeApprovalPorts } from "./workflow-merge-approval-store.js";
+import { registerSqliteWorkflowMergeApplyStore, type WorkflowMergeApplyInternalReader } from "./workflow-merge-apply-store.js";
 
 type Authority = Extract<WorkflowIntegrationCoordinatorAuthority, { readonly status: "authorized" }>;
 type Rejection = { readonly status: "invalid" | "stale" | "conflict"; readonly code: string };
@@ -47,13 +48,14 @@ export function registerSqliteWorkflowIntegrationCoordinatorStore(store: RunStor
   const adapter = new SqliteWorkflowIntegrationCoordinatorStore(context, ports, canonicalWorkspaceRoot,
     createSqliteWorkflowIsolationStore(store));
   adapters.set(store, adapter);
-  adapter.registerMergeApprovalStore(store);
+  adapter.registerMergeStores(store);
   registerWorkflowIntegrationCompletionReader(context.database, (workflowId, now) => adapter.completionBlocker(workflowId, now),
     workflowId => adapter.readPublicationBlocker(workflowId));
 }
 
 class SqliteWorkflowIntegrationCoordinatorStore implements WorkflowIntegrationCoordinatorStore {
   private readonly results: SqliteWorkflowIsolationResultsStore;
+  private mergeApply?: WorkflowMergeApplyInternalReader;
   constructor(private readonly context: SqliteStoreContext, private readonly ports: WorkflowIsolationTerminalCapturePorts & WorkflowMergeApprovalPorts,
     private readonly root: string, private readonly isolation: WorkflowIsolationStore) {
     this.results = new SqliteWorkflowIsolationResultsStore(context, ports, isolation, root);
@@ -63,13 +65,22 @@ class SqliteWorkflowIntegrationCoordinatorStore implements WorkflowIntegrationCo
     return readSqliteSnapshot(this.context.database, () => this.readAuthority(input.roundId, input.generation, input.now));
   }
 
-  registerMergeApprovalStore(store: RunStore): void {
-    registerSqliteWorkflowMergeApprovalStore(store, this.context, this.isolation, this.ports, {
+  registerMergeStores(store: RunStore): void {
+    const approvals = registerSqliteWorkflowMergeApprovalStore(store, this.context, this.isolation, this.ports, {
       authority: (roundId, generation, now, excludedMergeApprovalId) => this.readAuthority(roundId, generation, now, excludedMergeApprovalId),
       candidateVerified: authority => {
         try { this.verifyRetainedCandidate(authority); return true; }
         catch { return false; }
       },
+    });
+    this.mergeApply = registerSqliteWorkflowMergeApplyStore(store, this.context, this.isolation, approvals, {
+      authority: (roundId, generation, now, approvalId) => this.readAuthority(roundId, generation, now, approvalId),
+      candidateVerified: (authority, verifiedApplyIntentId) => {
+        try { this.verifyRetainedCandidate(authority, verifiedApplyIntentId); return true; }
+        catch { return false; }
+      },
+      effects: (roundId, generation) => this.effects(roundId, generation),
+      receipts: (roundId, generation) => this.receipts(roundId, generation),
     });
   }
 
@@ -136,6 +147,7 @@ class SqliteWorkflowIntegrationCoordinatorStore implements WorkflowIntegrationCo
       const row = this.context.database.prepare("SELECT round_id,generation FROM workflow_integration_effect_links WHERE intent_id=?").get(input.intentId);
       if (!row) veto("invalid", "receipt_intent_missing");
       const effect = this.effects(String(row.round_id), Number(row.generation)).find(e => e.intentId === input.intentId)!;
+      if (effect.kind === "target_apply") veto("invalid", "target_apply_receipt_requires_permit");
       if (input.authorityDigest !== effect.authorityDigest) veto("stale", "authority_changed");
       const round = this.isolation.getIntegrationRound(String(row.round_id));
       if (!round || round.generation !== row.generation) veto("stale", "generation_changed");
@@ -310,8 +322,13 @@ class SqliteWorkflowIntegrationCoordinatorStore implements WorkflowIntegrationCo
         return "workflow_isolation.completion_plan_changed";
     }
     for (const row of rows) {
-      const authority = this.authority(String(row.round_id), Number(row.current_generation), now), { round } = authority;
-      if (round.inputs.mode !== "candidate_only") return "workflow_isolation.merge_permit_not_implemented";
+      const round = this.isolation.getIntegrationRound(String(row.round_id), Number(row.current_generation))!;
+      if (round.inputs.mode === "apply_to_target") {
+        const blocker = this.mergeApply?.completionBlocker(round, now) ?? (this.mergeApply ? undefined : "workflow_merge.apply_reader_unavailable");
+        if (blocker) return blocker;
+        continue;
+      }
+      const authority = this.authority(round.roundId, round.generation, now);
       if (round.phase !== "awaiting_approval" || !round.candidate || round.openIntentId) return "workflow_isolation.completion_candidate_unverified";
       this.verifyRetainedCandidate(authority);
     }
@@ -392,8 +409,13 @@ class SqliteWorkflowIntegrationCoordinatorStore implements WorkflowIntegrationCo
           || !same(artifact.body, { schemaVersion: 1, kind: "workflow_integration_coordinator_effect", roundId, generation,
             authorityDigest: link.authorityDigest, effectKey: link.effectKey, effectKind: intent.kind,
             before: intent.before, after: intent.after, effect: artifact.body.effect }) || !record(artifact.body.effect)) veto("invalid", "effect_link_corrupt");
-        return { ...intent, effectKey: link.effectKey, payloadArtifactId: link.payloadArtifactId,
+        const effect = { ...intent, effectKey: link.effectKey, payloadArtifactId: link.payloadArtifactId,
           payloadContentSha256: link.payloadContentSha256, authorityDigest: link.authorityDigest };
+        if (intent.kind === "target_apply") {
+          if (!this.mergeApply) veto("invalid", "target_apply_reader_unavailable");
+          this.mergeApply.validateEffect(effect);
+        }
+        return effect;
       });
   }
 
@@ -422,8 +444,13 @@ class SqliteWorkflowIntegrationCoordinatorStore implements WorkflowIntegrationCo
         || link.artifact_id !== receipt.artifactId || link.link_digest !== digest(payload) || artifact.sha256 !== payload.artifactContentSha256
         || !same(artifact.body, { schemaVersion: 1, kind: "workflow_integration_coordinator_receipt", intentId: receipt.intentId,
           effectKey: effect.effectKey, outcome: receipt.outcome, observed: receipt.observed, evidence: artifact.body.evidence })
-        || !record(artifact.body.evidence) || receipt.outcome === "confirmed" && (effect.status !== "confirmed" || !same(receipt.observed, effect.after)))
+        || !record(artifact.body.evidence) || receipt.outcome === "confirmed" && (effect.status !== "confirmed"
+          || effect.kind !== "target_apply" && !same(receipt.observed, effect.after)))
         veto("invalid", "receipt_link_corrupt");
+      if (effect.kind === "target_apply") {
+        if (!this.mergeApply) veto("invalid", "target_apply_reader_unavailable");
+        this.mergeApply.validateReceipt(effect, receipt, artifact.body.evidence);
+      }
       return receipt;
     });
   }
@@ -498,7 +525,7 @@ class SqliteWorkflowIntegrationCoordinatorStore implements WorkflowIntegrationCo
         || evidence.candidate.packetDigest !== candidate.packetDigest || evidence.candidate.resultRef !== candidate.resultRef
         || evidence.inputsDigest !== authority.round.inputsDigest || !same(evidence.writer, authority.writer)
         || !same(evidence.validationRequirements, authority.round.inputs.validationRequirements)) veto("invalid", "verification_observation_mismatch");
-    }
+    } else veto("invalid", "observation_kind_invalid");
   }
 
   private verifyCandidate(authority: Authority, candidate: NonNullable<WorkflowIntegrationRound["candidate"]>, artifactId: string | undefined,
@@ -524,10 +551,17 @@ class SqliteWorkflowIntegrationCoordinatorStore implements WorkflowIntegrationCo
     })) veto("invalid", "candidate_verification_receipt_missing");
   }
 
-  private verifyRetainedCandidate(authority: Authority): void {
+  private verifyRetainedCandidate(authority: Authority, verifiedApplyIntentId?: string): void {
     const { round } = authority;
     const effects = this.effects(round.roundId, round.generation), receipts = this.receipts(round.roundId, round.generation);
-    if (!round.candidate || round.openIntentId || effects.some(effect => effect.status !== "confirmed"))
+    const apply = verifiedApplyIntentId ? effects.find(effect => effect.intentId === verifiedApplyIntentId && effect.kind === "target_apply") : undefined;
+    if (verifiedApplyIntentId && !apply) veto("invalid", "target_apply_effect_missing");
+    if (apply) {
+      if (!this.mergeApply) veto("invalid", "target_apply_reader_unavailable");
+      this.mergeApply.validateEffect(apply);
+    }
+    if (!round.candidate || round.openIntentId && round.openIntentId !== apply?.intentId
+      || effects.some(effect => effect.status !== "confirmed" && effect.intentId !== apply?.intentId))
       veto("conflict", "candidate_effects_unconfirmed");
     const final = effects.find(effect => effect.effectKey === `ref:${this.refPrefix(round)}/candidate`);
     const packet = final && this.effectBody(final).packetJson;

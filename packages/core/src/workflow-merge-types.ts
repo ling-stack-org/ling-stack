@@ -2,6 +2,12 @@ import type { ApprovalRequest } from "./approval-types.js";
 import type { WorkflowIntegrationCandidate, WorkflowIntegrationRound, WorkflowIsolationMutationResult,
   WorkflowIsolationRepositoryIdentity, WorkflowIsolationTarget, WorkflowIsolationTemplatePin } from "./workflow-isolation-types.js";
 
+export interface WorkflowMergeHostStateSnapshotV1 {
+  readonly root: string;
+  readonly rootDevice: string;
+  readonly rootInode: string;
+}
+
 /** Host-observed repository identity. No filesystem access or write permission is implied. */
 export interface WorkflowMergeTargetSnapshotV1 {
   readonly root: string;
@@ -15,6 +21,8 @@ export interface WorkflowMergeTargetSnapshotV1 {
   readonly commonDevice: string;
   readonly commonInode: string;
   readonly dirty: boolean;
+  /** Exact Host state directory only; candidate trees may never contain this path. */
+  readonly hostState?: WorkflowMergeHostStateSnapshotV1;
 }
 
 export interface WorkflowMergeApprovalPayloadV1 {

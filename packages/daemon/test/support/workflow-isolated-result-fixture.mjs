@@ -38,7 +38,8 @@ export async function workflowIsolatedResultFixture(t, { mutations = [], termina
   await writeFile(join(f.cwd, "owned.txt"), "base\n");
   await f.git("add", "--", ".gitignore", "owned.txt");
   await f.git("commit", "-m", "initial");
-  const repository = await inspectWorkflowGitRepository(f.cwd), worktreeRoot = join(f.root, "result-worktrees");
+  const repository = await inspectWorkflowGitRepository(f.cwd, { hostStateRoot: f.store.paths.rootDir });
+  const worktreeRoot = join(f.root, "result-worktrees");
   await mkdir(worktreeRoot);
   f.scopeGit = await planWorkflowGitWorktree({ repository, worktreeRoot, roundId: f.roundId,
     stepId: f.scopeIsolation.step.id, generation: 1, worktreeId: "isolated-result-step" });

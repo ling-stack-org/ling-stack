@@ -475,6 +475,7 @@ class SqliteWorkflowIsolationStore implements WorkflowIsolationStore {
       if (!identity(input.receiptId) || !identity(input.artifactId) || !["confirmed", "blocked", "effect_unknown"].includes(input.outcome)) veto("invalid", "receipt_input_invalid");
       const intent = this.getIntent(input.intentId), observed = normalizeWorkflowIsolationGitIdentity(input.observed);
       if (!intent || !same(intent.writer, input.writer) || !observed) veto("stale", "receipt_intent_mismatch");
+      if (intent.kind === "target_apply") veto("invalid", "target_apply_receipt_requires_permit");
       const receiptDigest = digest(this.receiptPayload(input));
       const existing = this.getReceipt(input.receiptId);
       if (existing) {

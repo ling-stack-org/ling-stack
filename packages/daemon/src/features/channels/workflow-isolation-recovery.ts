@@ -1,9 +1,11 @@
-import { createSqliteWorkflowIntegrationCoordinatorStore, type RunStore } from "@ling-stack/core";
+import { createSqliteWorkflowIntegrationCoordinatorStore, createSqliteWorkflowMergeApprovalStore,
+  createSqliteWorkflowMergeApplyStore, type RunStore } from "@ling-stack/core";
 import { reconcileWorkflowStepRuns } from "./orchestrator.js";
 import { completeWorkflowIfStepsFinished } from "./workflow-completion.js";
 import { coordinateWorkflowIntegration } from "./workflow-integration-coordinator.js";
 import { reconcileWorkflowIsolatedResults } from "./workflow-isolated-result.js";
 import { maybeCreateWorkflowTerminalCoordinatorReply } from "./workflows.js";
+import { reconcileWorkflowMergeApplication } from "./workflow-merge-apply.js";
 
 /** Recover persisted rounds, not only workflows still carrying their mutable step pins. */
 export async function recoverWorkflowIsolationsAtStartup(store: RunStore): Promise<number> {
@@ -14,6 +16,14 @@ export async function recoverWorkflowIsolationsAtStartup(store: RunStore): Promi
     throw error;
   }
   const rounds = coordinator.listRounds();
+  // Cancelled/terminal workflows can still have an unresolved physical target effect.
+  // Observe these before semantic filtering; restart never replays an approved-but-unstarted merge.
+  for (const round of rounds) {
+    if (round.inputs.mode !== "apply_to_target") continue;
+    const request = createSqliteWorkflowMergeApprovalStore(store).getRequest(round.roundId, round.generation);
+    if (request && createSqliteWorkflowMergeApplyStore(store).getPermit(round.roundId, round.generation))
+      await reconcileWorkflowMergeApplication({ store, approvalId: request.approvalId });
+  }
   const workflows = new Set(rounds.map(round => round.inputs.workflowId));
   let recovered = 0;
   for (const workflowId of workflows) {
