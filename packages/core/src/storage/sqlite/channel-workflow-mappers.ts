@@ -1,6 +1,7 @@
 import type { SQLOutputValue } from "node:sqlite";
 import { isWorkflowStepStartOwnerV1 } from "../../workflow-step-start-owner.js";
 import { isWorkflowStepSafetyPlanV1 } from "../../workflow-safety-plan.js";
+import { workflowIsolationIdentity } from "../../workflow-isolation.js";
 import {
   isWorkflowParticipantAuthorityV1,
   isWorkflowParticipantProviderBindingV1,
@@ -61,7 +62,15 @@ export function normalizeChannelWorkflowStepMetadata(
   if (metadata.safetyPlan !== undefined && !isWorkflowStepSafetyPlanV1(metadata.safetyPlan)) {
     throw new WorkflowSafetyValidationError("Workflow safety plan is malformed");
   }
-  return { ...metadata, ...parseWorkflowStepExecutionSafety(metadata) };
+  return { ...metadata, ...parseWorkflowStepExecutionSafety(metadata),
+    ...(metadata.isolationScopePlan === undefined ? {} : { isolationScopePlan: parseWorkflowIsolationScopePin(metadata.isolationScopePlan) }) };
+}
+
+function parseWorkflowIsolationScopePin(value: unknown): NonNullable<ChannelWorkflowStepMetadata["isolationScopePlan"]> {
+  const pin = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+  if (!pin || !workflowIsolationIdentity(pin.planId) || typeof pin.planDigest !== "string"
+    || !/^wip1_[a-f0-9]{64}$/u.test(pin.planDigest)) throw new Error("workflow_isolation.scope_pin_invalid");
+  return { planId: pin.planId, planDigest: pin.planDigest };
 }
 
 export function normalizeChannelWorkflowMetadata(
@@ -248,6 +257,7 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     // Invalid persisted declarations must not become legacy data eligible for safety defaults.
     ...parseWorkflowStepExecutionSafety(record),
     safetyPlan: record.safetyPlan as ChannelWorkflowStepMetadata["safetyPlan"],
+    isolationScopePlan: record.isolationScopePlan === undefined ? undefined : parseWorkflowIsolationScopePin(record.isolationScopePlan),
     startOwner: isWorkflowStepStartOwnerV1(record.startOwner) ? record.startOwner : undefined,
     providerBinding: parseOptionalWorkflowParticipantProviderBinding(record.providerBinding),
     workflowTemplateId: readOptionalStringValue(record.workflowTemplateId),

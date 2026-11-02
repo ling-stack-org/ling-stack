@@ -2394,6 +2394,7 @@ export interface ChannelWorkflowStepMetadata {
   readonly sideEffectClass?: WorkflowStepSideEffectClass;
   readonly parallelPolicy?: WorkflowStepParallelPolicy;
   readonly safetyPlan?: import("./workflow-safety-plan.js").WorkflowStepSafetyPlanV1;
+  readonly isolationScopePlan?: { readonly planId: string; readonly planDigest: string };
   readonly startOwner?: import("./workflow-step-start-owner.js").WorkflowStepStartOwnerV1;
   readonly participantAuthority?: WorkflowParticipantAuthorityV1;
   readonly providerBinding?: WorkflowParticipantProviderBindingV1;

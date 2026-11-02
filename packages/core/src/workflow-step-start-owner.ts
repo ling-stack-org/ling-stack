@@ -128,6 +128,7 @@ export function workflowStepStartAuthorityBasis(store: WorkflowStepStartReadStor
       policy: metadata?.policy, requiredTools: metadata?.requiredTools, runnerId: metadata?.requestedRunnerId,
       sideEffectClass: metadata?.sideEffectClass, parallelPolicy: metadata?.parallelPolicy,
       safetyPlan: metadata?.safetyPlan,
+      isolationScopePlan: metadata?.isolationScopePlan,
       maxParallelSiblings: metadata?.maxParallelSiblings,
       templateId: metadata?.workflowTemplateId, templateVersion: metadata?.templateVersion },
     decision: decision && { id: decision.id, sourceItemId: decision.sourceItemId, sourceTurnId: decision.sourceTurnId,

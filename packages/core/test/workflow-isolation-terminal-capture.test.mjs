@@ -1,0 +1,260 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { SqliteRunTerminalIntentStore } from "../dist/storage/sqlite/run-terminal-intent-store.js";
+import { workflowIsolationFixture, assertIsolationNoWrites } from "./support/workflow-isolation-fixture.mjs";
+
+const now = () => new Date().toISOString();
+const input = f => ({ writer: f.writer, expectedRevision: f.binding().revision, now: now() });
+const read = (f, overrides = {}) => assertIsolationNoWrites(f, () => f.isolation.assertTerminalCapture({ ...input(f), ...overrides }));
+
+async function terminalFixture(t, { coverage = true, drained = true, audit = true, terminal = true,
+  outcome = "succeeded", tools = [] } = {}) {
+  const f = await workflowIsolationFixture(t); f.makeReady();
+  assert.equal(f.isolation.sealPreparedExecution({ writer: f.writer, expectedRevision: f.binding().revision,
+    runnerExecutionInput: f.executionPayload(), now: f.at(11) }).status, "updated");
+  // A controlled clock keeps the real durable Host observation after the fixture's planned lifecycle.
+  t.mock.timers.enable({ apis: ["Date"], now: Date.parse(f.at(20)) });
+  const fence = f.prepared.fence, runId = f.prepared.run.id;
+  assert.equal(f.store.transitionWorkUnitStatus({ ...fence, expectedStatus: "queued", event: "claim", actor: "system", now: now() }).ok, true);
+  assert.ok(f.store.updateWorkUnitAttemptStatus({ ...fence, status: "started", startedAt: now(), now: now() }));
+  assert.equal(f.store.transitionRunStatus({ runId, expectedStatus: "queued", event: "runner_started", actor: "runner", startedAt: now(), now: now() }).ok, true);
+  assert.equal(f.store.transitionWorkUnitStatus({ ...fence, expectedStatus: "claimed", event: "runner_started", actor: "runner", startedAt: now(), now: now() }).ok, true);
+  assert.equal(f.store.transitionTaskStatus({ taskId: f.generation.task.id, expectedStatus: "claimed", event: "start_run",
+    actor: "system", currentRunId: runId, now: now() }).ok, true);
+  f.source = { runId, ...fence };
+  for (const tool of tools) {
+    f.store.appendEvent(runId, "tool_start", { ...tool, attemptId: fence.attemptId }, now());
+    f.store.appendEvent(runId, "tool_end", { ...tool, attemptId: fence.attemptId, result: "done" }, now());
+  }
+  let finish;
+  const lifetime = new Promise(resolve => { finish = resolve; });
+  const completion = f.store.trackHostAttemptCompletion(f.source, lifetime, () => coverage);
+  f.finish = async () => { finish(); return completion; };
+  if (drained) await f.finish();
+  else t.after(f.finish);
+  f.terminal = () => {
+    const event = outcome === "succeeded" ? "runner_succeeded" : "runner_failed";
+    assert.equal(f.store.transitionRunStatus({ runId, expectedStatus: "running", event, actor: "runner", endedAt: now(), now: now() }).ok, true);
+    assert.equal(f.store.transitionWorkUnitStatus({ ...fence, expectedStatus: "running", event, actor: "runner", endedAt: now(), now: now() }).ok, true);
+    assert.ok(f.store.updateWorkUnitAttemptStatus({ ...fence, status: outcome, endedAt: now(), now: now() }));
+  };
+  f.audit = () => f.store.appendTerminalRuntimeAudit({ capability: { ...fence, attemptStatus: outcome, transitionedAt: now() },
+    type: outcome === "succeeded" ? "work_unit_succeeded" : "work_unit_failed", actor: "runner", data: { runId } });
+  if (terminal) { f.terminal(); if (audit) f.audit(); }
+  f.release = () => {
+    f.store.releaseHostAttemptResources(f.source, now());
+    assert.equal(f.store.listRuntimeSemaphoreSlots({ status: "active" }).length, 0);
+    assert.equal(f.store.releaseResourceLease(f.generation.owner.leaseId, "workflow_step", f.plan.workflowStepId, now()), 1);
+  };
+  return f;
+}
+
+for (const outcome of ["succeeded", "failed"]) {
+  test(`original ${outcome} capture remains authorized after real Host resource release and reopen`, async t => {
+    const f = await terminalFixture(t, { outcome });
+    const before = read(f);
+    assert.equal(before.status, "authorized", JSON.stringify(before));
+    assert.equal(before.terminal.outcome, outcome);
+    assert.equal(before.terminal.completion.effectCoverage, "pi_no_tools_v1");
+    assert.match(before.proofDigest, /^witc1_[a-f0-9]{64}$/u);
+    f.release(); f.reopenIsolation();
+    assert.deepEqual(read(f), before);
+    t.mock.timers.tick(60_000);
+    assert.deepEqual(read(f), before, "wall time alone does not grant or revoke capture evidence");
+    assert.equal(f.isolation.assertExecutionBinding({ writer: f.writer, now: now() }).status, "stale");
+    assert.equal(assertIsolationNoWrites(f, () => f.advance("collecting", { now: now() })).status, "stale");
+    assert.equal(assertIsolationNoWrites(f, () => f.isolation.recordIntent(f.intentInput({ intentId: "terminal-capture",
+      commandId: "terminal-capture", kind: "branch_capture", before: f.gitIdentity(true), after: f.gitIdentity(true), now: now() }))).status, "stale");
+  });
+}
+
+test("original tracked builtin read coverage must have paired source-bound canonical tool events", async t => {
+  const f = await terminalFixture(t, { tools: [{ toolCallId: "read-1", toolName: "read" }], coverage: {
+    schemaVersion: 1, toolCallIds: ["read-1"], settledBuiltinReads: [{ toolCallId: "read-1", toolName: "read" }],
+  } });
+  assert.equal(read(f).status, "authorized");
+  f.release(); f.reopenIsolation();
+  assert.equal(read(f).status, "authorized");
+});
+
+test("unresolved original Host promise blocks terminal capture despite terminal rows and expired resources", async t => {
+  const f = await terminalFixture(t, { drained: false });
+  f.store.database.prepare("UPDATE runtime_semaphore_slots SET expires_at=?").run(f.at(-1));
+  f.store.database.prepare("UPDATE resource_leases SET expires_at=?").run(f.at(-1));
+  assert.equal(read(f).code, "workflow_isolation.terminal_host_not_drained");
+  await f.finish();
+  assert.equal(read(f).status, "authorized");
+});
+
+for (const [name, options, code] of [
+  ["effect coverage", { coverage: false }, "effect_coverage_unverified"],
+  ["original terminal audit", { audit: false }, "audit_unverified"],
+  ["terminal lifecycle", { terminal: false }, "not_terminal"],
+]) {
+  test(`missing ${name} is not manufactured by a ready binding or confirmed creation receipt`, async t => {
+    const f = await terminalFixture(t, options);
+    assert.equal(read(f).code, `workflow_isolation.terminal_${code}`);
+  });
+}
+
+test("raw terminal statuses alone do not constitute original Host terminal evidence", async t => {
+  const f = await workflowIsolationFixture(t); f.makeReady();
+  for (const [table, id] of [["run_sessions", f.prepared.run.id], ["work_units", f.prepared.unit.id], ["work_unit_attempts", f.prepared.attempt.id]])
+    f.store.database.prepare(`UPDATE ${table} SET status='succeeded',ended_at=? WHERE id=?`).run(f.at(11), id);
+  assert.equal(read(f, { now: f.at(12) }).code, "workflow_isolation.terminal_host_not_drained");
+});
+
+for (const field of ["workUnitId", "attemptId", "runtimeInstanceId", "fencingToken"]) {
+  test(`terminal reader checks exact ${field} even after release and reopen`, async t => {
+    const f = await terminalFixture(t); f.release(); f.reopenIsolation();
+    assert.equal(read(f, { writer: { ...f.writer, [field]: field === "fencingToken" ? "999" : "foreign" } }).status, "stale");
+    assert.equal(read(f).status, "authorized");
+  });
+}
+
+test("terminal reader validates binding revision and input rather than adopting caller authority", async t => {
+  const f = await terminalFixture(t);
+  assert.equal(read(f, { expectedRevision: f.binding().revision - 1 }).code, "workflow_isolation.revision_changed");
+  assert.equal(read(f, { expectedRevision: -1 }).code, "workflow_isolation.revision_invalid");
+  assert.equal(read(f, { now: "not-a-time" }).status, "invalid");
+  assert.equal(read(f, { writer: { ...f.writer, fencingToken: "0" } }).status, "invalid");
+});
+
+const lineageFaults = {
+  scopePin: f => f.store.updateChannelWorkflowStep(f.plan.workflowStepId, { metadata: { ...f.current(f.scopeIsolation).metadata,
+    isolationScopePlan: { planId: f.plan.planId, planDigest: `wip1_${"0".repeat(64)}` } } }, now()),
+  safetyPin: f => f.store.updateChannelWorkflowStep(f.plan.workflowStepId, { metadata: { ...f.current(f.scopeIsolation).metadata, requiredTools: ["bash"] } }, now()),
+  graphPin: f => f.store.updateChannelWorkflow(f.plan.workflowId, { metadata: { ...f.store.getChannelWorkflow(f.plan.workflowId).metadata,
+    workflowGraphFingerprint: "changed" } }, now()),
+  startOwner: f => f.store.updateChannelWorkflowStep(f.plan.workflowStepId, { metadata: { ...f.current(f.scopeIsolation).metadata,
+    startOwner: { ...f.current(f.scopeIsolation).metadata.startOwner, taskId: "foreign" } } }, now()),
+  runPin: f => f.store.database.prepare("UPDATE run_sessions SET request_snapshot_json='{}' WHERE id=?").run(f.prepared.run.id),
+  currentRun: f => f.store.database.prepare("UPDATE tasks SET current_run_id=NULL WHERE id=?").run(f.generation.task.id),
+  cwd: f => f.store.database.prepare("UPDATE run_sessions SET cwd=? WHERE id=?").run(f.cwd, f.prepared.run.id),
+  runner: f => f.store.database.prepare("UPDATE work_unit_attempts SET effective_runner_id='native' WHERE id=?").run(f.prepared.attempt.id),
+  slotFence: f => f.store.database.prepare("UPDATE runtime_semaphore_slots SET fencing_token='999' WHERE id=(SELECT slot_id FROM workflow_step_admission_entries LIMIT 1)").run(),
+  slotOwner: f => f.store.database.prepare("UPDATE runtime_semaphore_slots SET owner_id='foreign' WHERE id=(SELECT slot_id FROM workflow_step_admission_entries LIMIT 1)").run(),
+};
+for (const [name, mutate] of Object.entries(lineageFaults)) {
+  test(`released original binding cannot capture across changed ${name}`, async t => {
+    const f = await terminalFixture(t); f.release(); mutate(f);
+    assert.equal(read(f).status, "stale");
+  });
+}
+
+test("a newer current Attempt cannot borrow the original terminal binding or its released slots", async t => {
+  const f = await terminalFixture(t); f.release();
+  const attempt = f.store.createWorkUnitAttempt({ workUnitId: f.prepared.unit.id, attemptNumber: 2, runtimeInstanceId: "next-runtime",
+    runnerId: "pi", now: now() });
+  assert.equal(read(f).status, "stale");
+  assert.equal(read(f, { writer: { ...f.writer, attemptId: attempt.id, runtimeInstanceId: attempt.runtimeInstanceId,
+    fencingToken: attempt.fencingToken } }).status, "stale");
+});
+
+test("a different active start lease vetoes capture rather than treating the old lease as a current owner", async t => {
+  const f = await terminalFixture(t); f.release();
+  assert.ok(f.store.acquireResourceLease({ workspaceId: f.channel.workspaceId, resourceType: "workflow_step", resourceKey: f.plan.workflowStepId,
+    ownerType: "workflow_step", ownerId: f.plan.workflowStepId, acquiredAt: now(), expiresAt: f.at(200) }));
+  assert.equal(read(f).code, "workflow_isolation.terminal_lease_owner_changed");
+});
+
+for (const [name, mutate] of Object.entries({
+  workflow: f => f.store.database.prepare("UPDATE channel_workflows SET status='cancelled' WHERE id=?").run(f.plan.workflowId),
+  step: f => f.store.database.prepare("UPDATE channel_workflow_steps SET status='cancelled' WHERE id=?").run(f.plan.workflowStepId),
+  task: f => f.store.database.prepare("UPDATE tasks SET status='cancelled' WHERE id=?").run(f.generation.task.id),
+  abort: f => f.store.database.prepare("UPDATE work_unit_attempts SET abort_requested_at=? WHERE id=?").run(now(), f.prepared.attempt.id),
+})) {
+  test(`late ${name} cancellation blocks the original otherwise complete terminal proof`, async t => {
+    const f = await terminalFixture(t); f.release(); mutate(f);
+    assert.equal(read(f).code, "workflow_isolation.terminal_cancellation_unverified");
+  });
+}
+
+for (const [name, events, coverage] of [
+  ["untracked", [{ type: "tool_start", toolCallId: "unknown", toolName: "write" }, { type: "tool_end", toolCallId: "unknown", toolName: "write" }], true],
+  ["unpaired", [{ type: "tool_start", toolCallId: "read-1", toolName: "read" }], { schemaVersion: 1, toolCallIds: ["read-1"], settledBuiltinReads: [{ toolCallId: "read-1", toolName: "read" }] }],
+  ["foreign", [{ type: "tool_start", toolCallId: "read-1", toolName: "read", attemptId: "foreign" }, { type: "tool_end", toolCallId: "read-1", toolName: "read" }], { schemaVersion: 1, toolCallIds: ["read-1"], settledBuiltinReads: [{ toolCallId: "read-1", toolName: "read" }] }],
+]) {
+  test(`${name} tool events cannot be covered by terminal status or a different inventory`, async t => {
+    const f = await terminalFixture(t, { coverage });
+    for (const { type, ...event } of events) f.store.appendEvent(f.prepared.run.id, type, { attemptId: f.writer.attemptId, ...event }, now());
+    assert.equal(read(f).code, "workflow_isolation.terminal_tool_inventory_unverified");
+  });
+}
+
+test("a tool update arriving after original drain invalidates a previously authorized capture", async t => {
+  const f = await terminalFixture(t, { tools: [{ toolCallId: "read-1", toolName: "read" }], coverage: {
+    schemaVersion: 1, toolCallIds: ["read-1"], settledBuiltinReads: [{ toolCallId: "read-1", toolName: "read" }],
+  } });
+  const before = read(f); assert.equal(before.status, "authorized");
+  t.mock.timers.tick(1);
+  f.store.appendEvent(f.prepared.run.id, "tool_update", { attemptId: f.writer.attemptId, toolCallId: "read-1", toolName: "read", partialResult: "late" }, now());
+  assert.equal(read(f).status, "blocked");
+});
+
+for (const outcome of ["queued", "running", "succeeded", "failed", "cancelled"]) {
+  test(`an unowned ${outcome} descendant is never silently excluded from terminal capture`, async t => {
+    const f = await terminalFixture(t);
+    const child = f.store.createRun({ id: `unowned-child-${outcome}`, cwd: f.executionRoot, taskId: "unowned-task", parentRunId: f.prepared.run.id,
+      channelId: f.channel.id, workflowStepId: f.plan.workflowStepId, providerName: "fixture", providerModel: "fixture", taskSnapshot: {},
+      providerSnapshot: {}, requestSnapshot: {}, createdAt: now() });
+    if (outcome !== "queued") f.store.database.prepare("UPDATE run_sessions SET status=? WHERE id=?").run(outcome, child.id);
+    assert.equal(read(f).code, "workflow_isolation.terminal_descendants_unverified");
+  });
+}
+
+test("an open Git intent blocks capture even when all runtime effects have drained", async t => {
+  const f = await workflowIsolationFixture(t); f.makeReady();
+  f.intent({ intentId: "capture-open", commandId: "capture-open", kind: "branch_capture", before: f.gitIdentity(true), after: f.gitIdentity(true) });
+  assert.equal(read(f, { now: f.at(20) }).code, "workflow_isolation.terminal_git_effect_unconfirmed");
+});
+
+test("advancing the real round generation makes the old terminal binding stale without changing its fence", async t => {
+  const f = await terminalFixture(t);
+  assert.equal(read(f).status, "authorized");
+  assert.equal(f.advance("blocked", { now: now(), reason: "retry explicitly requested" }).status, "updated");
+  const round = f.round();
+  const result = f.isolation.beginIntegrationRoundGeneration({ commandId: "new-generation", roundId: f.roundId,
+    expectedGeneration: round.generation, expectedRevision: round.revision, inputs: { ...f.inputs,
+      integration: { executionRoot: `${f.root}/integration-2`, worktreeId: "integration-2", branchRef: "refs/heads/ling/integration-2" } },
+    writer: f.writer, now: now() });
+  assert.equal(result.status, "created", JSON.stringify(result));
+  assert.equal(read(f).code, "workflow_isolation.terminal_lineage_changed");
+});
+
+test("pending durable cancellation intent vetoes an otherwise finished original source", async t => {
+  const f = await terminalFixture(t, { terminal: false });
+  const intents = new SqliteRunTerminalIntentStore({ database: f.store.database }, {
+    getRun: id => f.store.getRun(id), getHostAttemptCompletion: source => f.store.getHostAttemptCompletion(source),
+    getArtifact: id => f.store.getArtifact(id), createArtifactWithinTransaction: value => f.store.artifacts.createArtifactWithinTransaction(value),
+  });
+  const intent = intents.prepareRunTerminalIntent({ runId: f.prepared.run.id, sourceFence: f.prepared.fence,
+    desiredOutcome: "cancelled", errorCode: "late-cancel", errorMessage: "Original execution cancellation requested", now: now() });
+  assert.equal(intent.state, "pending");
+  f.terminal(); f.audit();
+  assert.equal(read(f).code, "workflow_isolation.terminal_intent_pending");
+});
+
+test("a Host completion earlier than the original execution start cannot certify physical drain", async t => {
+  const f = await terminalFixture(t);
+  f.store.database.prepare("UPDATE work_unit_attempts SET started_at=? WHERE id=?").run(f.at(21), f.prepared.attempt.id);
+  assert.equal(read(f).code, "workflow_isolation.terminal_effect_coverage_unverified");
+});
+
+test("terminal reader owns no caller transaction and leaves query_only and outer changes intact", async t => {
+  const f = await terminalFixture(t);
+  f.store.database.exec("BEGIN IMMEDIATE");
+  try {
+    f.store.database.prepare("UPDATE channel_workflows SET title='caller-kept' WHERE id=?").run(f.plan.workflowId);
+    assert.throws(() => f.isolation.assertTerminalCapture(input(f)), /transaction/i);
+    assert.equal(f.store.database.isTransaction, true);
+    assert.equal(f.store.getChannelWorkflow(f.plan.workflowId).title, "caller-kept");
+    assert.equal(f.store.database.prepare("PRAGMA query_only").get().query_only, 0);
+  } finally { f.store.database.exec("ROLLBACK"); }
+  f.store.database.exec("PRAGMA query_only=ON");
+  try {
+    assert.equal(read(f).status, "authorized");
+    assert.equal(f.store.database.prepare("PRAGMA query_only").get().query_only, 1);
+    assert.equal(f.store.database.isTransaction, false);
+  } finally { f.store.database.exec("PRAGMA query_only=OFF"); }
+});

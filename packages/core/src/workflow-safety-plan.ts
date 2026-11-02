@@ -5,7 +5,7 @@ import type { RunTool } from "./approval-policy.js";
 /** Host scope, frozen before approval. Runtime identities never enter this plan. */
 export interface WorkflowStepSafetyPlanV1 {
   readonly schemaVersion: 1;
-  readonly profile: "pi_host_readonly_v1" | "serial_v1";
+  readonly profile: "pi_host_readonly_v1" | "pi_host_isolated_files_v1" | "serial_v1";
   readonly workflowId: string;
   readonly workflowStepId: string;
   readonly workspaceRoot: string;
@@ -33,7 +33,7 @@ export function workflowStepSafetyPlanDigest(plan: Omit<WorkflowStepSafetyPlanV1
 export function isWorkflowStepSafetyPlanV1(value: unknown): value is WorkflowStepSafetyPlanV1 {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const v = value as Record<string, unknown>;
-  if (v.schemaVersion !== 1 || !["pi_host_readonly_v1", "serial_v1"].includes(String(v.profile))
+  if (v.schemaVersion !== 1 || !["pi_host_readonly_v1", "pi_host_isolated_files_v1", "serial_v1"].includes(String(v.profile))
     || ![v.workflowId, v.workflowStepId, v.workspaceRoot, v.executionRoot, v.digest].every(s => typeof s === "string" && s.length > 0)
     || v.networkAccess !== false && v.networkAccess !== "session_policy"
     || !Array.isArray(v.writeRoots) || v.writeRoots.some(p => typeof p !== "string")
@@ -48,6 +48,11 @@ export function isWorkflowStepSafetyPlanV1(value: unknown): value is WorkflowSte
       && (plan.profile !== "pi_host_readonly_v1"
         || plan.safety.sideEffectClass === "analysis_readonly" && plan.runnerId === "pi"
           && plan.networkAccess === false && plan.writeRoots.length === 0
-          && plan.tools.every(t => ["read", "grep", "find", "ls"].includes(t)));
+          && plan.tools.every(t => ["read", "grep", "find", "ls"].includes(t)))
+      && (plan.profile !== "pi_host_isolated_files_v1"
+        || plan.safety.sideEffectClass === "workspace_write" && plan.runnerId === "pi"
+          && plan.networkAccess === false && plan.writeRoots.length === 1 && plan.writeRoots[0] === plan.executionRoot
+          && plan.executionRoot !== plan.workspaceRoot
+          && plan.tools.every(t => ["read", "grep", "find", "ls", "write", "edit"].includes(t)));
   } catch { return false; }
 }
