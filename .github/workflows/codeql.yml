@@ -1,0 +1,82 @@
+name: CodeQL
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-${{ github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('ref-{0}', github.ref) }}
+  # Finish active scheduled scans; a newer PR commit cancels only its older scan.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  scope:
+    name: Determine CodeQL scope
+    if: ${{ (github.event_name != 'schedule' || github.repository == 'ling-stack-org/ling-stack') && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      scan: ${{ steps.scope.outputs.scan }}
+    steps:
+      - name: Check out scan inputs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Determine changed inputs or reuse a recent successful main scan
+        id: scope
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const { pathToFileURL } = require('node:url');
+            const { selectCodeqlScan } = await import(pathToFileURL(process.env.GITHUB_WORKSPACE + '/scripts/ci/codeql-scope.mjs'));
+            const result = await selectCodeqlScan({ github, context });
+            core.setOutput('scan', result.scan);
+            core.notice(result.reason);
+            await core.summary.addRaw((result.scan ? 'Run' : 'Skip') + ' CodeQL: ' + result.reason).write();
+
+  analyze:
+    name: Analyze JavaScript/TypeScript
+    needs: scope
+    if: needs.scope.outputs.scan == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          languages: javascript-typescript
+          build-mode: none
+
+      - name: Analyze and upload results
+        id: analyze
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          category: /language:javascript-typescript
+
+      - name: Require confirmed SARIF processing
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          CODEQL_SARIF_ID: ${{ steps.analyze.outputs.sarif-id }}
+        with:
+          script: |
+            const { pathToFileURL } = require('node:url');
+            const { verifyCodeqlUpload } = await import(pathToFileURL(process.env.GITHUB_WORKSPACE + '/scripts/ci/codeql-scope.mjs'));
+            await verifyCodeqlUpload({ github, context, sarifId: process.env.CODEQL_SARIF_ID });
