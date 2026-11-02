@@ -89,6 +89,10 @@ test("T13-P.9EF.D Plugin load failure remains on the Plugin page and never reach
   const state = createBaseState({ approvalStatus: "expired" });
   state.managedPlugins = [];
   await mockDaemon(page, state);
+  // Isolate this error-owner check from unrelated seeded automation notifications.
+  await page.route(/\/notifications(?:\/stream)?(?:\?.*)?$/u, async (route) => {
+    await route.fulfill({ json: { schemaVersion: 1, notifications: [], nextSince: null } });
+  });
   await page.route("**/plugins?**", async (route) => {
     if (route.request().method() !== "GET") {
       await route.fallback();

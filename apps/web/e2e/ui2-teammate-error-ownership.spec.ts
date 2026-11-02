@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import { triggerFocusRevalidation } from "./support/focus-revalidation";
+import { openEngineeringChannel } from "./support/test-helpers";
 import {
   createBaseState,
   createChatProvider,
@@ -90,7 +91,7 @@ test("T13-P.9EF.C teammate list failure stays out of Channel", async ({ page }) 
   await expect(panel).toContainText("Teammates could not be refreshed. The last loaded list is still shown.");
 
   await page.getByLabel("Settings sections").getByRole("button", { name: "Back to app" }).click();
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button").filter({ hasText: "Engineering" }).first().click();
+  await openEngineeringChannel(page);
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await expect(page.getByText("Owned teammate list failure", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Teammates could not be refreshed. The last loaded list is still shown.", { exact: true })).toHaveCount(0);
@@ -205,6 +206,10 @@ test("T13-P.9EF.C a provider failure stays on its private reply", async ({ page 
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createTeammateState();
   await mockDaemon(page, state);
+  // Isolate this error-owner check from unrelated seeded automation notifications.
+  await page.route(/\/notifications(?:\/stream)?(?:\?.*)?$/u, async (route) => {
+    await route.fulfill({ json: { schemaVersion: 1, notifications: [], nextSince: null } });
+  });
   await page.route(/\/teammates\/teammate_designer\/direct-messages\/stream(?:\?.*)?$/u, async (route) => {
     if (route.request().method() !== "POST") {
       await route.fallback();
@@ -298,7 +303,7 @@ test("T13-P.9EF.C create failure remains in its draft progress flow", async ({ p
 
   await dialog.getByRole("button", { name: "Close" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Back to app" }).click();
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button").filter({ hasText: "Engineering" }).first().click();
+  await openEngineeringChannel(page);
   await expect(page.getByText("Provider rejected the endpoint or model", { exact: false })).toHaveCount(0);
   expect(runtimeErrors).toEqual([]);
 });

@@ -117,7 +117,7 @@ test("task run requests preserve workspace cwd fallback and approval profile", (
   expect(request).not.toHaveProperty("permissionMode");
 });
 
-test("rerun request reconstructs provider preset payload from run snapshots", () => {
+test("rerun request preserves public snapshot parameters without replaying private prompts", () => {
   const run = {
     id: "run_1",
     status: "succeeded",
@@ -142,6 +142,7 @@ test("rerun request reconstructs provider preset payload from run snapshots", ()
       permissionPreset: "custom",
       permissionMode: "balanced",
       lingConversationTone: "friendly",
+      systemPrompt: "private cached system prompt",
       appendSystemPrompt: ["one", "", "two"],
     },
     eventLogPath: "/tmp/run.log",
@@ -149,7 +150,8 @@ test("rerun request reconstructs provider preset payload from run snapshots", ()
     updatedAt: "2026-06-07T00:00:00.000Z",
   } satisfies RunSession;
 
-  expect(buildRerunRequest(run)).toEqual({
+  const request = buildRerunRequest(run);
+  expect(request).toEqual({
     schemaVersion: 2,
     workspaceCwd: "/workspace",
     cwd: "/repo",
@@ -165,8 +167,9 @@ test("rerun request reconstructs provider preset payload from run snapshots", ()
     workspaceAccessMode: "full_access",
     thinkingLevel: "medium",
     lingConversationTone: "friendly",
-    appendSystemPrompt: ["one", "two"],
   });
+  expect(request).not.toHaveProperty("systemPrompt");
+  expect(request).not.toHaveProperty("appendSystemPrompt");
 });
 
 test("form payload adapters preserve daemon request boundary semantics", () => {
