@@ -48,6 +48,7 @@ import type {
   ChannelWorkflowCancelResponse,
   ChannelWorkflowMutationResponse,
   ChannelWorkflowOrchestrationResponse,
+  ChannelWorkflowOrchestrationRequest,
   ChannelWorkflowStatus,
   ChannelWorkflowStepListResponse,
   ChannelWorkflowStepMutationResponse,
@@ -846,8 +847,9 @@ export const channelEndpoints = {
       return this._post(`/workflow-steps/${encodeURIComponent(workflowStepId)}/retry`, { cwd }, {});
     },
 
-  async orchestrateChannelWorkflow(this: LingDaemonEndpointContext, cwd: string, workflowId: string): Promise<ChannelWorkflowOrchestrationResponse> {
-      return this._post(`/workflows/${encodeURIComponent(workflowId)}/orchestrate`, { cwd }, {});
+  async orchestrateChannelWorkflow(this: LingDaemonEndpointContext, cwd: string, workflowId: string,
+      input: ChannelWorkflowOrchestrationRequest = {}): Promise<ChannelWorkflowOrchestrationResponse> {
+      return this._post(`/workflows/${encodeURIComponent(workflowId)}/orchestrate`, { cwd }, input);
     },
 
   async listChannelCollaborationCards(this: LingDaemonEndpointContext,

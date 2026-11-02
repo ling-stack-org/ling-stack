@@ -20,3 +20,24 @@ test("workflow orchestration and retry preserve explicit safety scheduling reaso
     ["POST", "/workflow-steps/step%20%2F%20safety/retry", "/repo", {}],
   ]);
 });
+
+test("isolated writing scheduling preserves its distinct reason and worktree resources", async () => {
+  const startedSteps = ["left", "right"].map(id => ({ workflowStep: { id }, taskId: `task-${id}`, runId: `run-${id}` }));
+  const response = { status: "started", workflow: { id: "isolated-workflow" }, ...startedSteps[0], startedSteps,
+    schedulingDecision: { schedulingMode: "smart", effectiveMode: "parallel", parallelLimit: 2,
+      runnableStepIds: ["left", "right"], queuedStepIds: [], resourceLocks: ["worktree:/host/left", "worktree:/host/right"],
+      safetyEvidence: "complete", reasonCodes: ["isolated_files_parallel_allowed"] } };
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: async () => Response.json(response) });
+  assert.deepEqual(await client.orchestrateChannelWorkflow("/repo", "isolated-workflow"), response);
+});
+
+test("isolated execution is selected explicitly without adding target application authority", async () => {
+  const calls = [], response = { status: "idle", workflow: { id: "selected" } };
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: async (url, init) => {
+    calls.push({ url: new URL(String(url)), method: init.method, body: JSON.parse(init.body) });
+    return Response.json(response);
+  } });
+  assert.deepEqual(await client.orchestrateChannelWorkflow("/repo", "selected", { executionProfile: "pi_host_isolated_files_v1" }), response);
+  assert.deepEqual(calls.map(call => [call.method, call.url.pathname, call.url.searchParams.get("cwd"), call.body]),
+    [["POST", "/workflows/selected/orchestrate", "/repo", { executionProfile: "pi_host_isolated_files_v1" }]]);
+});

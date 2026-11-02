@@ -1146,6 +1146,7 @@ export interface WorkflowEvidenceStep {
 
 export interface WorkflowEvidenceResponse {
   readonly workflow: ChannelWorkflow;
+  readonly isolation?: import("./workflow-isolation-evidence.js").WorkflowIsolationEvidenceV1;
   readonly steps: readonly WorkflowEvidenceStep[];
   readonly selectorDecisions: readonly WorkflowSelectorDecision[];
   readonly handoffIntents: readonly WorkflowHandoffIntent[];
@@ -1231,6 +1232,20 @@ export interface ChannelCollaborationCardListResponse {
   readonly cwd: string;
   readonly channelId: string;
   readonly cards: readonly CollaborationTaskCardModel[];
+}
+
+export interface ChannelWorkflowOrchestrationRequest {
+  readonly executionProfile?: "pi_host_isolated_files_v1";
+}
+
+export function parseChannelWorkflowOrchestrationRequest(value: unknown): ChannelWorkflowOrchestrationRequest {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || Object.keys(value).some(key => key !== "executionProfile")
+    || "executionProfile" in value && value.executionProfile !== "pi_host_isolated_files_v1") {
+    throw new Error("Workflow orchestration accepts only the explicit pi_host_isolated_files_v1 execution profile.");
+  }
+  return value as ChannelWorkflowOrchestrationRequest;
 }
 
 export interface CreateChannelWorkflowRequest {
@@ -1590,7 +1605,8 @@ export type ChannelSmartSchedulingReasonCode =
   | "host_parallel_capability_unavailable"
   | "active_step_safety_unverified"
   | "resource_conflict"
-  | "read_only_parallel_allowed";
+  | "read_only_parallel_allowed"
+  | "isolated_files_parallel_allowed";
 
 export interface ChannelSmartSchedulingDecision {
   readonly schedulingMode: "smart";
