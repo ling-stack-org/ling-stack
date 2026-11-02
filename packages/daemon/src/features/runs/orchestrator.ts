@@ -2844,17 +2844,27 @@ async function executeAdmittedRunRequest(
         () => {
           if (!hostToolBoundaryEntered && isPiToolFreeCompletion(toolBoundaryObservation, run.id, attempt.id)) return true;
           const sdkTools = readPiCompletedTools(toolBoundaryObservation, run.id, attempt.id);
-          const settledBuiltinReads = readPiCompletedBuiltinReads(toolBoundaryObservation, run.id, attempt.id);
-          if (hostBoundaryUnverified || !sdkTools || !settledBuiltinReads) return false;
-          const settledDelegationCalls = sdkTools.filter(tool => (DELEGATION_TOOL_NAMES as readonly string[]).includes(tool.toolName))
+          const effectTools = isolatedExecution
+            ? readPiCompletedTools(toolBoundaryObservation, run.id, attempt.id, "isolated_host_effects") : sdkTools;
+          const builtinReads = readPiCompletedBuiltinReads(toolBoundaryObservation, run.id, attempt.id);
+          if (hostBoundaryUnverified || !sdkTools || !effectTools || !builtinReads) return false;
+          // Only this frozen Host-only profile can prove a schema/gate refusal
+          // never reached any producer. Every dispatched effect still needs Core receipts.
+          const effectIds = new Set(effectTools.map(tool => tool.toolCallId));
+          const undispatchedIsolatedCalls = isolatedExecution ? sdkTools.filter(tool => !effectIds.has(tool.toolCallId)) : [];
+          const notDispatched = new Set(undispatchedIsolatedCalls.map(tool => tool.toolCallId));
+          const toolCallIds = [...new Set([...sdkTools.map(tool => tool.toolCallId), ...hostToolCalls])];
+          const settledBuiltinReads = builtinReads;
+          const settledDelegationCalls = sdkTools.filter(tool => !notDispatched.has(tool.toolCallId)
+            && (DELEGATION_TOOL_NAMES as readonly string[]).includes(tool.toolName))
             .map(tool => ({ toolCallId: tool.toolCallId,
               toolName: tool.toolName as (typeof DELEGATION_TOOL_NAMES)[number] }));
-          const toolCallIds = [...new Set([...sdkTools.map(tool => tool.toolCallId), ...hostToolCalls])];
           const delegationIds = new Set(settledDelegationCalls.map(call => call.toolCallId));
           if (!hostOperationTracker && toolCallIds.some(id => !delegationIds.has(id)
-            && !settledBuiltinReads.some(read => read.toolCallId === id))) return false;
+            && !notDispatched.has(id) && !settledBuiltinReads.some(read => read.toolCallId === id))) return false;
           return { schemaVersion: 1, toolCallIds, settledBuiltinReads,
-            ...(settledDelegationCalls.length ? { settledDelegationCalls } : {}) };
+            ...(settledDelegationCalls.length ? { settledDelegationCalls } : {}),
+            ...(undispatchedIsolatedCalls.length ? { undispatchedIsolatedCalls } : {}) };
         }, () => activeRuns.retireDurablyDrainedAttempt(capturedWriters.source));
       activeRuns.trackAttemptCompletion(capturedWriters.source, durableAttemptCompletion);
       if (dynamicDelegationRegistry) {

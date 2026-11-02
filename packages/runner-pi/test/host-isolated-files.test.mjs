@@ -420,10 +420,77 @@ test("current Host revocation at actual producer prevents the write admitted by 
   assert.equal(f.requests[1].messages.find(message => message.role === "toolResult").details.code, "authority_revoked");
 });
 
+test("a continuation refusal keeps the full SDK inventory but never claims a Host write dispatch", testOptions, async t => {
+  let receipt, boundaries = 0;
+  const calls = ["first-write", "revoked-write"].map(id => ({ name: "write", id, input: inputFor("write") }));
+  const failure = new Error("Host source authority was revoked");
+  const f = await fixture(t, calls, {
+    onToolBoundaryObservation: value => { receipt = value; },
+    onTaskContinuationBoundary: point => { if (point === "tool_call" && ++boundaries === 2) throw failure; },
+  });
+  await assert.rejects(f.runner.runTask(f.options), error => error === failure);
+  assert.deepEqual(f.hostCalls.map(call => call.toolCallId), ["first-write"]);
+  assert.deepEqual(readPiCompletedTools(receipt, "isolated-run", "isolated-attempt"),
+    calls.map(call => ({ toolCallId: call.id, toolName: call.name })));
+  assert.deepEqual(readPiCompletedTools(receipt, "isolated-run", "isolated-attempt", "isolated_host_effects"),
+    [{ toolCallId: "first-write", toolName: "write" }]);
+  assert.equal(readPiCompletedTools({ ...receipt }, "isolated-run", "isolated-attempt", "isolated_host_effects"), undefined);
+  assert.equal(readPiCompletedTools(receipt, "other-run", "isolated-attempt", "isolated_host_effects"), undefined);
+  assert.equal(f.events.some(event => event.type === "run_end"), false);
+});
+
+for (const refusal of ["event-gate", "producer-gate", "schema", "unselected", "unknown-tool"]) {
+  test(`closed isolated Host inventory excludes ${refusal} only when no producer ran`, testOptions, async t => {
+    let receipt, gates = 0;
+    const call = { name: refusal === "unknown-tool" ? "bash" : "write", id: "not-dispatched",
+      input: refusal === "schema" ? { path: "new.txt" } : inputFor("write") };
+    const f = await fixture(t, [call], {
+      ...(refusal === "unselected" ? { tools: ["read"] } : {}),
+      onToolBoundaryObservation: value => { receipt = value; },
+      onToolBefore: () => ++gates === (refusal === "event-gate" ? 1 : refusal === "producer-gate" ? 2 : -1)
+        ? { allowed: false, code: "revoked", reason: "Host rejected before dispatch" } : { allowed: true },
+      onTaskContinuationBoundary: () => {
+        assert.equal(readPiCompletedTools(receipt, "isolated-run", "isolated-attempt", "isolated_host_effects"), undefined,
+          "a live SDK inventory is never a closed producer inventory");
+      },
+    });
+    await f.runner.runTask(f.options);
+    assert.equal(f.hostCalls.length, 0);
+    assert.deepEqual(readPiCompletedTools(receipt, "isolated-run", "isolated-attempt"),
+      [{ toolCallId: call.id, toolName: call.name }]);
+    assert.deepEqual(readPiCompletedTools(receipt, "isolated-run", "isolated-attempt", "isolated_host_effects"), []);
+    assert.equal(f.events.find(event => event.type === "tool_end").isError, true);
+  });
+}
+
+test("an error-looking Host result cannot be mistaken for a pre-dispatch refusal", testOptions, async t => {
+  let receipt;
+  const f = await fixture(t, [{ name: "write", id: "host-error", input: inputFor("write") }], {
+    onToolBoundaryObservation: value => { receipt = value; },
+    onIsolatedToolCall: () => ({ isError: true, content: [{ type: "text", text: "workflow_start_owner_stale" }],
+      details: { code: "authority_revoked" } }),
+  });
+  await f.runner.runTask(f.options);
+  assert.equal(f.hostCalls.length, 1);
+  assert.deepEqual(readPiCompletedTools(receipt, "isolated-run", "isolated-attempt", "isolated_host_effects"),
+    [{ toolCallId: "host-error", toolName: "write" }]);
+});
+
+test("legacy SDK observation cannot opt into isolated Host-only coverage", testOptions, async t => {
+  let receipt;
+  const f = await fixture(t, [], { tools: [], isolatedToolsProfile: undefined,
+    onToolBoundaryObservation: value => { receipt = value; } });
+  await f.runner.runTask(f.options);
+  assert.deepEqual(readPiCompletedTools(receipt, "isolated-run", "isolated-attempt"), []);
+  assert.equal(readPiCompletedTools(receipt, "isolated-run", "isolated-attempt", "isolated_host_effects"), undefined);
+});
+
 for (const missing of [false, true]) {
   test(`real SDK stops after ${missing ? "missing Host receipt" : "unexpected Host write failure"} without retrying the effect`, testOptions, async t => {
+    let receipt;
     const failure = new Error("Host outcome unknown after durable intent");
     const f = await fixture(t, [{ name: "write", id: "unknown-write", input: inputFor("write") }], {
+      onToolBoundaryObservation: value => { receipt = value; },
       onIsolatedToolCall: async request => {
         await writeFile(join(request.cwd, "host-effect.txt"), "Host already performed this effect");
         if (missing) return undefined;
@@ -434,6 +501,8 @@ for (const missing of [false, true]) {
     assert.equal(f.hostCalls.length, 1);
     assert.equal(f.requests.length, 1);
     assert.equal(f.events.some(event => event.type === "run_end"), false);
+    assert.deepEqual(readPiCompletedTools(receipt, "isolated-run", "isolated-attempt", "isolated_host_effects"),
+      [{ toolCallId: "unknown-write", toolName: "write" }], "unknown effects remain in Core's receipt requirements");
     assert.equal(await readFile(join(f.cwd, "host-effect.txt"), "utf8"), "Host already performed this effect");
     await assert.rejects(readFile(join(f.cwd, "missing-parent", "new.txt")), { code: "ENOENT" });
   });

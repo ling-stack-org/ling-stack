@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
 import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -11,13 +12,14 @@ import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { workflowGraphFingerprintV1 } from "@ling-stack/contracts";
 import { createSqliteRunStore, createSqliteWorkflowIsolationStore, normalizeWorkflowIntegrationRoundInputs,
-  resolveStoragePaths, workflowIsolationSafetyFingerprint, workflowIsolationStepSafetyFingerprint } from "@ling-stack/core";
+  resolveStoragePaths, toRuntimeAttemptFence, workflowIsolationSafetyFingerprint, workflowIsolationStepSafetyFingerprint } from "@ling-stack/core";
 import { schedulerFixture } from "./support/workflow-scheduler-fixture.mjs";
 
 const exec = promisify(execFile), native = { skip: !["darwin", "linux"].includes(process.platform) };
 const dist = process.env.LING_WORKFLOW_FENCE_TEST_DIST ? pathToFileURL(`${resolve(process.env.LING_WORKFLOW_FENCE_TEST_DIST)}/`)
   : new URL("../dist/", import.meta.url);
-const sourceModules = ["features/workspaces/workflow-repository-fence", "features/channels/workflow-isolation-planning"]
+const sourceModules = ["features/workspaces/workflow-repository-fence", "features/workspaces/workflow-retained-checkouts",
+  "features/channels/workflow-isolation-planning"]
   .map(name => [new URL(`${name}.js`, dist).href, new URL(`../src/${name}.ts`, import.meta.url).href]);
 
 // Optional source-only verification while another test lane owns the shared dist tree.
@@ -27,6 +29,7 @@ function installSourceHooks(modules) {
     resolve(specifier, context, nextResolve) {
       const parent = compiled.get(context.parentURL);
       const target = parent && specifier.startsWith(".") ? new URL(specifier, parent).href : specifier;
+      if (sources.has(target)) return { url: sources.get(target), shortCircuit: true };
       const result = nextResolve(target, context);
       return sources.has(result.url) ? { url: sources.get(result.url), shortCircuit: true } : result;
     },
@@ -38,11 +41,12 @@ function installSourceHooks(modules) {
   });
 }
 if (process.env.LING_WORKFLOW_FENCE_TEST_SOURCE) installSourceHooks(sourceModules);
-const { planWorkflowIsolatedRound } = await import(new URL("features/channels/workflow-isolation-planning.js", dist));
+const { planWorkflowIsolatedRound, readWorkflowIsolationWorktreeScope } = await import(new URL("features/channels/workflow-isolation-planning.js", dist));
 const { reconcileWorkflowParallelParentFences } = await import(new URL("features/channels/workflow-isolation-parent-fence.js", dist));
 const { prepareRunConcurrency } = await import(new URL("features/runs/concurrency.js", dist));
 const { releaseWorkflowRepositoryFence } = await import(new URL("features/workspaces/workflow-repository-fence.js", dist));
 const { inspectWorkflowGitRepository, workflowGitRepositoryBasisDigest } = await import(new URL("features/workspaces/workflow-git-repository.js", dist));
+const { ensureWorkflowIsolationWorktree } = await import(new URL("features/runs/workflow-isolation-execution.js", dist));
 const parallelExecution = { profile: "isolated_siblings_v1", maxConcurrentSteps: 2, writeLockScope: "boundPath" };
 const now = () => new Date().toISOString();
 
@@ -115,6 +119,93 @@ function fenceSnapshot(f) {
   try { return { fence: database.prepare("SELECT owner_json,state FROM repository_fence").get(),
     stores: database.prepare("SELECT database_path,identity_json FROM repository_stores ORDER BY database_path").all() }; }
   finally { database.close(); }
+}
+
+async function retiredCheckoutFixture(t, { outcome = "failed" } = {}) {
+  assert.ok(["failed", "cancelled"].includes(outcome));
+  const cancelled = outcome === "cancelled";
+  let finish = () => {}, completion = Promise.resolve();
+  t.after(async () => { finish(); await completion; });
+  const f = await fixture(t), planned = await planWorkflowIsolatedRound(f.input);
+  const isolation = createSqliteWorkflowIsolationStore(f.store), plan = planned.plans[0];
+  const step = f.store.getChannelWorkflowStep(plan.workflowStepId);
+  const lease = f.store.acquireResourceLease({ workspaceId: f.channel.workspaceId, resourceType: "workflow_step",
+    resourceKey: step.id, ownerType: "workflow_step", ownerId: step.id, acquiredAt: now(),
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
+  assert.ok(lease);
+  const begun = f.store.beginChannelWorkflowStepStart({ workflowStepId: step.id, expected: step, leaseId: lease.id,
+    admission: plan.resourcePlan, task: { channelId: f.channel.id, title: step.title, prompt: step.prompt,
+      assigneeTeammateId: step.toParticipantId }, now: now() });
+  assert.equal(begun.status, "begun", JSON.stringify(begun));
+  const taskId = begun.task.id;
+  assert.equal(f.store.transitionTaskStatus({ taskId, expectedStatus: "todo", event: "claim", actor: "system", now: now() }).ok, true);
+  const task = f.store.getTask(taskId), pin = { planId: plan.planId, planDigest: plan.planDigest };
+  const request = { cwd: plan.executionRoot, workflowStepId: step.id, workflowStartOwner: begun.owner, workflowIsolationPlan: pin };
+  const run = f.store.createRun({ id: "retained-run", cwd: plan.executionRoot, taskId, channelId: f.channel.id,
+    workflowStepId: step.id, teammateId: step.toParticipantId, providerName: "fixture", providerModel: "fixture",
+    taskSnapshot: task, providerSnapshot: {}, requestSnapshot: request, createdAt: now() });
+  const unit = f.store.createWorkUnit({ id: "retained-unit", workspaceId: f.channel.workspaceId, kind: "task_run",
+    ownerType: "task", ownerId: taskId, taskId, channelId: f.channel.id, teammateId: step.toParticipantId,
+    runnerId: "pi", effectiveRunnerId: "pi", idempotencyKey: "retained-unit", createdByActor: "system", request, now: now() });
+  f.store.linkRunToWorkUnit(run.id, unit.id, now());
+  const attempt = f.store.createWorkUnitAttempt({ id: "retained-attempt", workUnitId: unit.id, attemptNumber: 1,
+    runtimeInstanceId: "retained-host", runnerId: "pi", effectiveRunnerId: "pi", now: now() });
+  const fence = toRuntimeAttemptFence(attempt), source = { runId: run.id, ...fence };
+  const writer = { bindingId: "retained-binding", ...fence };
+  const scope = await readWorkflowIsolationWorktreeScope(f.store, pin);
+  const execution = await ensureWorkflowIsolationWorktree({ store: f.store, isolation, scope,
+    binding: { bindingId: writer.bindingId, ...pin, startOwner: begun.owner, runId: run.id, fence }, now });
+  assert.equal(f.store.transferChannelWorkflowStepStartAdmission({ workflowStepId: step.id, owner: begun.owner,
+    runId: run.id, admission: plan.resourcePlan, ...fence, now: now(), expiresAt: lease.expiresAt }).status, "transferred");
+  assert.equal(f.store.commitChannelWorkflowStepRunReady({ workflowStepId: step.id, owner: begun.owner,
+    runId: run.id, now: now() }).status, "linked");
+  assert.equal(f.store.transitionWorkUnitStatus({ ...fence, expectedStatus: "queued", event: "claim", actor: "system", now: now() }).ok, true);
+  assert.ok(f.store.updateWorkUnitAttemptStatus({ ...fence, status: "started", startedAt: now(), now: now() }));
+  assert.equal(f.store.transitionRunStatus({ runId: run.id, expectedStatus: "queued", event: "runner_started",
+    actor: "runner", startedAt: now(), now: now() }).ok, true);
+  assert.equal(f.store.transitionWorkUnitStatus({ ...fence, expectedStatus: "claimed", event: "runner_started",
+    actor: "runner", startedAt: now(), now: now() }).ok, true);
+  assert.equal(f.store.transitionTaskStatus({ taskId, expectedStatus: "claimed", event: "start_run", actor: "system",
+    currentRunId: run.id, now: now() }).ok, true);
+  // An actual original Host lifetime with no SDK tools; dirty bytes below are retained user WIP.
+  completion = f.store.trackHostAttemptCompletion(source, new Promise(resolve => { finish = resolve; }), () => true);
+  assert.equal(f.store.transitionRunStatus({ runId: run.id, expectedStatus: "running", event: cancelled ? "cancel" : "runner_failed",
+    actor: "runner", endedAt: now(), now: now() }).ok, true);
+  if (cancelled) assert.equal(f.store.transitionWorkUnitStatus({ ...fence, expectedStatus: "running", event: "cancel",
+    actor: "system", now: now() }).ok, true);
+  assert.equal(f.store.transitionWorkUnitStatus({ ...fence, expectedStatus: cancelled ? "cancelling" : "running", event: `runner_${outcome}`,
+    actor: "runner", endedAt: now(), now: now() }).ok, true);
+  const endedAt = now();
+  assert.ok(f.store.updateWorkUnitAttemptStatus({ ...fence, status: outcome, endedAt,
+    ...(cancelled ? { abortRequestedAt: endedAt } : {}), now: endedAt }));
+  f.store.appendTerminalRuntimeAudit({ capability: { ...fence, attemptStatus: outcome, transitionedAt: endedAt },
+    type: `work_unit_${outcome}`, actor: "runner", data: { runId: run.id } });
+  finish();
+  await completion;
+  assert.equal(f.store.getHostAttemptCompletion(source).effectCoverage, "pi_no_tools_v1");
+  f.store.releaseHostAttemptResources(source, now());
+  assert.equal(f.store.releaseResourceLease(lease.id, "workflow_step", step.id, now()), 1);
+  assert.equal(f.store.transitionTaskStatus({ taskId, expectedStatus: "running", event: `run_${outcome}`, actor: "system", now: now() }).ok, true);
+  assert.equal(f.store.transitionChannelWorkflowStepStatus({ workflowStepId: step.id, expectedStatus: "running",
+    event: cancelled ? "cancel" : "fail", actor: "system", now: now() }).ok, true);
+  for (const sibling of f.steps.slice(1)) assert.equal(f.store.transitionChannelWorkflowStepStatus({ workflowStepId: sibling.id,
+    expectedStatus: "queued", event: cancelled ? "cancel" : "skip", actor: "system", now: now() }).ok, true);
+  assert.equal(f.store.transitionChannelWorkflowStatus({ workflowId: f.workflow.id, expectedStatus: "running",
+    event: cancelled ? "cancel" : "step_failed", actor: "system", now: now() }).ok, true);
+  reconcileWorkflowParallelParentFences(f.store, f.workflow.id);
+  assert.equal(fenceSnapshot(f).fence.state, "released");
+  assert.equal(isolation.reconcileParallelParentFence({ roundId: planned.round.roundId, generation: 1, now: now() }).status, "released");
+  await writeFile(join(plan.executionRoot, "owned.txt"), "retained dirty user result\n");
+  f.successorInput = name => {
+    const metadata = f.store.getChannelWorkflow(f.workflow.id).metadata;
+    const workflow = f.store.createChannelWorkflow({ channelId: f.channel.id, title: name, objective: "Successor ownership",
+      status: "ready", createdBy: "local-user", metadata }, now());
+    for (const original of f.steps) f.store.createChannelWorkflowStep({ workflowId: workflow.id, title: original.title,
+      prompt: original.prompt, position: original.position, toParticipantId: original.toParticipantId,
+      toParticipantLabel: original.toParticipantLabel, metadata: original.metadata }, now());
+    return { ...f.input, workflowId: workflow.id, roundId: name };
+  };
+  return { ...f, isolation, planned, plan, execution, run, unit, attempt, writer, source, lease };
 }
 
 const workerSource = `
@@ -211,6 +302,139 @@ test("native temp Git inventory accepts one canonical checkout, then rejects a s
     message: "This isolated parallel profile requires a repository without other checkouts.", inventoryCalls: 1 });
   await worker.done();
   assert.equal(fenceSnapshot(f).fence.state, "released", "rejecting a real second checkout releases the unused reservation");
+});
+
+test("a successor parallel plan preserves a drained same-Store owned dirty checkout", native, async t => {
+  const f = await retiredCheckoutFixture(t), before = await readFile(join(f.plan.executionRoot, "owned.txt"));
+  const creation = f.isolation.getReceipt(f.execution.binding.creationReceiptId);
+  const successor = await planWorkflowIsolatedRound(f.successorInput("retained-successor"));
+  assert.equal(successor.round.roundId, "retained-successor");
+  assert.deepEqual(await readFile(join(f.plan.executionRoot, "owned.txt")), before);
+  assert.equal(await f.gitAt(f.plan.executionRoot, ["status", "--porcelain"]), "M owned.txt");
+  assert.deepEqual(f.isolation.getReceipt(creation.receiptId), creation, "planning never rewrites the old creation journal");
+  assert.equal(f.isolation.getTerminalResultIntent(f.writer.bindingId), undefined, "retirement does not require publishing a failed result");
+});
+
+for (const reason of ["cancelled", "policyRevoked"]) {
+  test(`a successor parallel plan preserves dirty checkout bytes after ${reason}`, native, async t => {
+    const f = await retiredCheckoutFixture(t, { outcome: reason === "cancelled" ? "cancelled" : "failed" });
+    if (reason === "policyRevoked") f.store.updateChannel(f.channel.id, { allowedTools: ["read", "write"] }, now());
+    const before = await readFile(join(f.plan.executionRoot, "owned.txt")), binding = f.isolation.getExecutionBinding(f.writer.bindingId);
+    const creation = f.isolation.getReceipt(binding.creationReceiptId);
+    assert.notEqual(f.isolation.assertTerminalCapture({ writer: f.writer, expectedRevision: binding.revision, now: now() }).status,
+      "authorized", "stopped ownership does not restore result publication authority");
+    assert.equal(f.isolation.inspectStoppedExecution({ writer: f.writer, expectedRevision: binding.revision, now: now() }).status, "stopped");
+    const successor = await planWorkflowIsolatedRound(f.successorInput(`retained-${reason}`));
+    assert.equal(successor.round.roundId, `retained-${reason}`);
+    assert.deepEqual(await readFile(join(f.plan.executionRoot, "owned.txt")), before);
+    assert.equal(await f.gitAt(f.plan.executionRoot, ["status", "--porcelain"]), "M owned.txt");
+    assert.deepEqual(f.isolation.getReceipt(creation.receiptId), creation);
+    assert.equal(f.isolation.getTerminalResultIntent(f.writer.bindingId), undefined);
+  });
+}
+
+function rewriteRetainedArtifact(f, mutate) {
+  const creation = f.isolation.getReceipt(f.execution.binding.creationReceiptId);
+  const payload = structuredClone(f.store.getArtifact(creation.artifactId).sealedPayload);
+  mutate(payload);
+  const json = JSON.stringify(payload), hash = createHash("sha256").update(json).digest("hex");
+  f.store.database.prepare("UPDATE artifacts SET sealed_payload_json=?,content_sha256=? WHERE id=?")
+    .run(json, hash, creation.artifactId);
+}
+
+const retiredFaults = {
+  workflowStillRunning: f => f.store.updateChannelWorkflow(f.workflow.id, { status: "running" }, now()),
+  stepStillRunning: f => f.store.updateChannelWorkflowStep(f.plan.workflowStepId, { status: "running" }, now()),
+  newStartOwner: f => {
+    const step = f.store.getChannelWorkflowStep(f.plan.workflowStepId);
+    f.store.updateChannelWorkflowStep(step.id, { metadata: { ...step.metadata,
+      startOwner: { ...step.metadata.startOwner, taskId: "different-start-task" } } }, now());
+  },
+  newAttempt: f => f.store.createWorkUnitAttempt({ workUnitId: f.unit.id, attemptNumber: 2,
+    runtimeInstanceId: "successor-host", runnerId: "pi", effectiveRunnerId: "pi", now: now() }),
+  newStartLease: f => assert.ok(f.store.acquireResourceLease({ workspaceId: f.channel.workspaceId, resourceType: "workflow_step",
+    resourceKey: f.plan.workflowStepId, ownerType: "workflow_step", ownerId: f.plan.workflowStepId,
+    acquiredAt: now(), expiresAt: new Date(Date.now() + 3_600_000).toISOString() })),
+  expiredButUnreleasedLease: f => f.store.database.prepare("UPDATE resource_leases SET status='active',released_at=NULL,expires_at=? WHERE id=?")
+    .run(new Date(Date.now() - 1000).toISOString(), f.lease.id),
+  undrainedHost: f => {
+    f.store.database.exec("DROP TRIGGER host_attempt_completion_immutable_terminal");
+    f.store.database.prepare("UPDATE host_attempt_completions SET drained_at=NULL WHERE attempt_id=?").run(f.attempt.id);
+  },
+  missingEffectCoverage: f => {
+    f.store.database.exec("DROP TRIGGER host_attempt_completion_immutable_terminal");
+    f.store.database.prepare("UPDATE host_attempt_completions SET effect_coverage='unverified' WHERE attempt_id=?").run(f.attempt.id);
+  },
+  pendingGitIntent: f => {
+    f.store.database.exec("DROP TRIGGER trg_workflow_isolation_intent_immutable");
+    f.store.database.prepare("UPDATE workflow_isolation_intents SET status='pending' WHERE writer_binding_id=?").run(f.writer.bindingId);
+  },
+  unknownGitIntent: f => {
+    f.store.database.exec("DROP TRIGGER trg_workflow_isolation_intent_immutable");
+    f.store.database.prepare("UPDATE workflow_isolation_intents SET status='effect_unknown' WHERE writer_binding_id=?").run(f.writer.bindingId);
+  },
+  unverifiedCleanupJournal: f => {
+    const creation = f.isolation.getReceipt(f.execution.binding.creationReceiptId), artifact = f.store.getArtifact(creation.artifactId);
+    f.store.database.prepare(`INSERT INTO workflow_worktree_cleanup_intents(cleanup_id,round_id,generation,workflow_id,
+      worktree_id,owner_token,plan_artifact_id,plan_content_sha256,plan_digest,retained_artifacts_json,intent_digest,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run("unverified-cleanup", f.planned.round.roundId, 1, f.workflow.id,
+        f.plan.worktreeId, "unverified-cleanup-owner", artifact.id, artifact.contentSha256,
+        "unverified-cleanup-plan", "[]", "unverified-cleanup-intent", now());
+  },
+  incompleteCreationReceipt: f => {
+    f.store.database.exec("DROP TRIGGER trg_workflow_isolation_receipts_immutable");
+    f.store.database.prepare("UPDATE workflow_isolation_receipts SET outcome='effect_unknown' WHERE receipt_id=?")
+      .run(f.execution.binding.creationReceiptId);
+  },
+  missingRetainedCreationBody: f => {
+    const receipt = f.isolation.getReceipt(f.execution.binding.creationReceiptId);
+    f.store.database.prepare("UPDATE artifacts SET sealed_payload_json=NULL WHERE id=?").run(receipt.artifactId);
+  },
+  receiptIdentityChanged: f => rewriteRetainedArtifact(f, payload => { payload.receipt.rootInode = "0"; }),
+  scopePathChanged: f => rewriteRetainedArtifact(f, payload => { payload.scope.executionRoot = `${f.plan.executionRoot}-foreign`; }),
+  runPinChanged: f => f.store.database.prepare("UPDATE run_sessions SET request_snapshot_json='{}' WHERE id=?").run(f.run.id),
+  sourcePlanChanged: f => {
+    const step = f.store.getChannelWorkflowStep(f.plan.workflowStepId);
+    f.store.updateChannelWorkflowStep(step.id, { metadata: { ...step.metadata,
+      isolationScopePlan: { planId: "foreign-plan", planDigest: f.plan.planDigest } } }, now());
+  },
+  refHeadChanged: async f => {
+    const tree = await f.git("rev-parse", "HEAD^{tree}");
+    const commit = await f.git("commit-tree", tree, "-p", f.plan.baseCommit, "-m", "foreign checkout head");
+    await f.git("update-ref", f.plan.branchRef, commit);
+  },
+  branchChanged: async f => {
+    await f.git("branch", "foreign-retained", f.plan.baseCommit);
+    await f.gitAt(f.plan.executionRoot, ["symbolic-ref", "HEAD", "refs/heads/foreign-retained"]);
+  },
+  backlinkChanged: async f => {
+    const gitDir = await f.gitAt(f.plan.executionRoot, ["rev-parse", "--absolute-git-dir"]);
+    await writeFile(join(gitDir, "gitdir"), `${f.plan.executionRoot}-foreign/.git\n`);
+  },
+  lockedCheckout: f => f.git("worktree", "lock", "--reason", "retain for inspection", f.plan.executionRoot),
+  foreignAlongsideOwned: async f => { await f.checkout(); },
+  retainedIntegrationCheckout: f => f.git("worktree", "add", "-b", "retained-integration", "--", f.planned.round.inputs.integration.executionRoot),
+};
+for (const [name, mutate] of Object.entries(retiredFaults)) {
+  test(`a retired owned checkout remains fail-closed after ${name}`, native, async t => {
+    const f = await retiredCheckoutFixture(t), bytes = await readFile(join(f.plan.executionRoot, "owned.txt"));
+    await mutate(f);
+    const input = f.successorInput(`reject-${name}`);
+    // The Core release fact is intentionally still present: it must not hide later evidence drift.
+    assert.equal(f.isolation.reconcileParallelParentFence({ roundId: f.planned.round.roundId, generation: 1, now: now() }).status, "released");
+    await assert.rejects(planWorkflowIsolatedRound(input), { code: "workflow_repository_checkouts_unsupported" });
+    assert.equal(f.isolation.getIntegrationRound(input.roundId), undefined);
+    assert.equal(fenceSnapshot(f).fence.state, "released", "only this call's unused reservation is compensated");
+    assert.deepEqual(await readFile(join(f.plan.executionRoot, "owned.txt")), bytes, "failed checkout bytes are never cleaned or rewritten");
+  });
+}
+
+test("a same-path replacement cannot adopt a retired checkout's creation receipt", native, async t => {
+  const f = await retiredCheckoutFixture(t), moved = `${f.plan.executionRoot}-kept`, bytes = await readFile(join(f.plan.executionRoot, "owned.txt"));
+  await rename(f.plan.executionRoot, moved);
+  await mkdir(f.plan.executionRoot);
+  await assert.rejects(planWorkflowIsolatedRound(f.successorInput("replaced-root")), { code: "workflow_repository_checkouts_unsupported" });
+  assert.deepEqual(await readFile(join(moved, "owned.txt")), bytes);
 });
 
 test("first BEGIN SQLITE_BUSY leaves an empty sidecar that the next ordinary Run initializes", native, async t => {

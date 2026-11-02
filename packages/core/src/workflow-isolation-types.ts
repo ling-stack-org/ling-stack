@@ -273,6 +273,14 @@ export type WorkflowIsolationTerminalCaptureResult = {
   readonly proofDigest: string;
 } | { readonly status: "invalid" | "stale" | "blocked"; readonly code: string };
 
+/** Physical stop evidence only. Revocation/cancellation never becomes result or execution authority. */
+export type WorkflowIsolationStoppedExecutionResult = {
+  readonly status: "stopped";
+  readonly binding: WorkflowIsolationExecutionBinding;
+  readonly plan: WorkflowIsolationScopePlanV1;
+  readonly proofDigest: string;
+} | { readonly status: "invalid" | "stale" | "blocked"; readonly code: string };
+
 /** Host-internal persistence only. No route, approval grant or Git executor. */
 export interface WorkflowIsolationStore extends WorkflowIsolationTerminalResultsStore {
   getSelection(workflowId: string): WorkflowIsolationSelection | undefined;
@@ -298,6 +306,8 @@ export interface WorkflowIsolationStore extends WorkflowIsolationTerminalResults
     | { readonly status: "stale" | "invalid"; readonly code: string };
   /** Original terminal lineage may be read after resource release; live execution checks remain unchanged. */
   assertTerminalCapture(input: AssertWorkflowIsolationTerminalCaptureInput): WorkflowIsolationTerminalCaptureResult;
+  /** Reverify the original stopped source without granting capture, cleanup or a live writer. */
+  inspectStoppedExecution(input: AssertWorkflowIsolationTerminalCaptureInput): WorkflowIsolationStoppedExecutionResult;
   markExecutionReady(input: { readonly commandId: string; readonly writer: WorkflowIsolationWriter; readonly expectedRevision: number;
     readonly creationReceiptId: string; readonly now: string }): WorkflowIsolationMutationResult<WorkflowIsolationExecutionBinding>;
   /** Physical-ready, before dispatch; may precede admission transfer. Only appends matching Pi evidence to both requests. */

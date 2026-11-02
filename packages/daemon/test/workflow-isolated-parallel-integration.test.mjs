@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { workflowGraphFingerprintV1 } from "@ling-stack/contracts";
+import { appendChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import { createSqliteRunStore, createSqliteWorkflowIntegrationCoordinatorStore, createSqliteWorkflowIsolationStore,
   createSqliteWorkflowMergeApplyStore, toRuntimeAttemptFence, workflowIsolationDigest } from "../../core/dist/index.js";
 import { stream } from "../../runner-pi/node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js";
@@ -201,6 +202,77 @@ test("cancelled siblings retain the parent until both original Host invocations 
   assert.equal(f.executions.size, 2);
 });
 
+for (const revocation of ["channel-policy", "source-turn"]) {
+  test(`${revocation} revocation rejects the next SDK write and retains the parent through original Host drain`, options, async t => {
+    const f = await fixture(t, { holdReturn: true, repeatWriteAfterBarrier: true, sourceAuthority: revocation === "source-turn" });
+    const evidence = await f.start(), isolation = createSqliteWorkflowIsolationStore(f.store);
+    if (revocation === "channel-policy") {
+      const updated = await f.api(`/channels/${f.workflow.channelId}`, { allowedTools: ["read"] }, "PATCH");
+      assert.deepEqual(updated.channel.allowedTools, ["read"]);
+    } else {
+      const turn = f.store.getLingTurn(f.source.turnId);
+      assert.equal(f.store.transitionLingTurnStatus({ turnId: turn.id, expectedStatus: turn.status,
+        event: "cancel", actor: "user", now: now() }).ok, true);
+      assert.equal(f.store.getLingTurn(turn.id).status, "cancelled");
+    }
+    for (const item of evidence) {
+      const current = isolation.assertExecutionBinding({ writer: { bindingId: item.binding.bindingId, ...item.fence }, now: now() });
+      assert.equal(current.status, "stale");
+      assert.equal(current.code, "workflow_isolation.start_owner_changed");
+    }
+
+    for (const gate of f.release) gate.resolve();
+    await f.wait(() => [...f.executions.values()].every(execution => execution.boundaryFailures.some(failure =>
+      failure.point === "tool_call" && failure.code === "workflow_start_owner_stale")),
+    "both original SDK Runs reject their next real write after authority revocation");
+    for (const [index, item] of evidence.entries()) {
+      const execution = f.executions.get(index);
+      assert.equal(execution.gates.some(gate => gate.request.toolCallId === `revoked-write-${index}`), false,
+        "the earlier Host tool-call boundary rejects before file-tool admission");
+      assert.equal(execution.writes.length, 1, "the revoked write cannot reach the Host mutation executor");
+      assert.equal(execution.returned, false);
+      assert.equal(f.completion(item)?.drainedAt, undefined);
+      assert.deepEqual(f.slots(item).map(slot => slot.id).sort(), item.slots.map(slot => slot.id).sort());
+      assert.equal(await readFile(join(item.run.cwd, branches[index].path), "utf8"), branches[index].content);
+      assert.equal(f.store.listHarnessToolExecutions(item.run.id).length, 1, "no new effect intent or approval after revocation");
+      assert.equal(isolation.getTerminalResultIntent(item.binding.bindingId), undefined);
+    }
+    assert.equal(f.parent().state, "held");
+    assert.equal(f.reconcileParent().status, "retained");
+    assert.deepEqual(f.pending(), []);
+    assert.equal(f.round().candidate, undefined);
+    assert.deepEqual(await f.target(), f.initialTarget);
+
+    const cancelled = await f.api(`/workflows/${f.workflow.id}/cancel`, {});
+    assert.equal(cancelled.workflow.status, "cancelled");
+    assert.equal(f.parent().state, "held", "revocation and business cancellation are not original Host stop receipts");
+    f.returnRelease[1].resolve();
+    await f.wait(() => f.completion(evidence[1])?.drainedAt && f.slots(evidence[1]).length === 0,
+      "one revoked original invocation drains");
+    assert.equal(f.completion(evidence[0])?.drainedAt, undefined);
+    assert.equal(f.reconcileParent().status, "retained");
+    assert.equal(f.parent().state, "held");
+    f.returnRelease[0].resolve();
+    await f.wait(() => evidence.every(item => f.completion(item)?.drainedAt && f.slots(item).length === 0),
+      "both revoked original Host invocations drain");
+    await f.api(`/workflows/${f.workflow.id}/cancel`, {});
+    assert.equal(f.parent().state, "released");
+    assert.equal(f.reconcileParent().status, "released");
+    for (const item of evidence) {
+      assert.equal(f.store.getRun(item.run.id).status, "cancelled");
+      assert.equal(f.completion(item).effectCoverage, "pi_tracked_tools_v1");
+      assert.equal(isolation.getTerminalResultIntent(item.binding.bindingId), undefined);
+      assert.deepEqual(f.store.listResourceLeases({ ownerType: "workflow_step", ownerId: item.run.workflowStepId, status: "active" }), []);
+    }
+    assert.deepEqual(f.store.listRuntimeSemaphoreSlots({ status: "active", limit: 100 }), []);
+    assert.equal(f.round().candidate, undefined);
+    assert.equal(createSqliteWorkflowMergeApplyStore(f.store).getPermit(f.roundId, 1), undefined);
+    assert.deepEqual(f.pending(), []);
+    assert.deepEqual(await f.target(), f.initialTarget);
+    assert.equal(f.executions.size, 2);
+  });
+}
+
 test("public explicit selection plans and executes two real Host writers without granting target application", options, async t => {
   const f = await fixture(t, { publicSelection: true });
   assert.equal(createSqliteWorkflowIsolationStore(f.store).getSelection(f.workflow.id), undefined);
@@ -309,7 +381,7 @@ function executionState(f) {
 }
 
 async function fixture(t, { holdReturn = false, publicSelection = false, featureEnabled = publicSelection,
-  brokerMode = "enforce", unverifiedRunner = false } = {}) {
+  brokerMode = "enforce", unverifiedRunner = false, repeatWriteAfterBarrier = false, sourceAuthority = false } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ling-isolated-parallel-sdk-")));
   const previousHome = process.env.LING_STACK_HOME;
   process.env.LING_STACK_HOME = join(root, "host-home");
@@ -358,13 +430,20 @@ async function fixture(t, { holdReturn = false, publicSelection = false, feature
       assert.equal(options.isolatedToolsProfile, "host_isolated_files_v1");
       assert.deepEqual(options.tools, ["write"]);
       for (const key of ["mcpTools", "hostCapabilityTools", "mediaGenerationTools"]) assert.deepEqual(options[key], []);
-      const execution = { runId: run.id, options, requests: [], writes: [], gates: [], reached: false, returned: false };
+      const execution = { runId: run.id, options, requests: [], writes: [], gates: [], boundaryFailures: [], reached: false, returned: false };
       executions.set(index, execution);
       try {
         return await contexts.run(execution, () => super.runTask({ ...options,
+          onTaskContinuationBoundary: async (...args) => {
+            try { return await options.onTaskContinuationBoundary(...args); }
+            catch (error) {
+              execution.boundaryFailures.push({ point: args[0], code: error.code, message: error.message });
+              notices.notify(); throw error;
+            }
+          },
           onToolBefore: async request => {
             const decision = await options.onToolBefore(request);
-            execution.gates.push({ request, decision }); return decision;
+            execution.gates.push({ request, decision }); notices.notify(); return decision;
           },
           onIsolatedToolCall: async request => {
             const result = await options.onIsolatedToolCall(request);
@@ -389,6 +468,12 @@ async function fixture(t, { holdReturn = false, publicSelection = false, feature
           assert.deepEqual((body.tools ?? []).map(tool => tool.function.name), ["write"]);
           if (execution.requests.length === 1) return sse({ tool_calls: [{ index: 0, id: `parallel-write-${index}`, type: "function",
             function: { name: "write", arguments: JSON.stringify({ path: branch.path, content: branch.content }) } }] }, "tool_calls");
+          if (execution.requests.length === 3) {
+            assert.equal(repeatWriteAfterBarrier, true);
+            assert.equal(execution.writes.length, 1, "revoked mutation never reaches the Host");
+            assert.equal(body.messages.filter(message => message.role === "tool").length, 2);
+            return sse({ content: "The Host rejected the revoked write." }, "stop");
+          }
           assert.equal(execution.requests.length, 2);
           assert.equal(execution.writes.length, 1);
           assert.notEqual(execution.writes[0].result.isError, true, JSON.stringify(execution.writes[0]));
@@ -396,6 +481,8 @@ async function fixture(t, { holdReturn = false, publicSelection = false, feature
           execution.reached = true; notices.notify();
           await release[index].promise;
           options.signal?.throwIfAborted();
+          if (repeatWriteAfterBarrier) return sse({ tool_calls: [{ index: 0, id: `revoked-write-${index}`, type: "function",
+            function: { name: "write", arguments: JSON.stringify({ path: branch.path, content: "Revoked write must never execute.\n" }) } }] }, "tool_calls");
           return sse({ content: `${branch.name} finished its isolated Host write.` }, "stop");
         } }),
       });
@@ -458,13 +545,16 @@ async function fixture(t, { holdReturn = false, publicSelection = false, feature
     nodes: branches.map((branch, index) => ({ id: index ? "right" : "left", kind: "step", name: branch.name,
       prompt: `Write ${branch.path}.`, sideEffectClass: "workspace_write" })), edges: [],
     termination: { success: "all_required_succeeded", onFailedRequiredNode: "block_for_user", onApprovalDenied: "block_for_user" } };
+  const source = sourceAuthority ? appendChannelItemFixture(store, { channelId: channel.id, authorType: "local-user",
+    body: "Write both isolated files and retain the target until approved." }, now()) : undefined;
   const workflow = store.createChannelWorkflow({ channelId: channel.id, title: "Parallel isolated SDK Host writes", objective: "Fan in two owned writes",
     status: "ready", createdBy: "local-user", metadata: { maxParallelSteps: 2, workflowGraph: graph,
-      workflowGraphFingerprint: workflowGraphFingerprintV1(graph) } }, now());
+      workflowGraphFingerprint: workflowGraphFingerprintV1(graph), ...(source ? { sourceMessageId: source.id, sourceTurnId: source.turnId } : {}) } }, now());
   const steps = branches.map((branch, position) => store.createChannelWorkflowStep({ workflowId: workflow.id, title: branch.name,
     prompt: `Write ${branch.path}.`, position, toParticipantId: branch.participantId, toParticipantLabel: branch.name,
     metadata: { autoStart: true, dependsOnStepIds: [], providerPresetId: provider.id, requestedRunnerId: "pi", requiredTools: ["write"],
       sideEffectClass: "workspace_write", maxParallelSiblings: 2,
+      ...(source ? { sourceMessageId: source.id } : {}),
       parallelPolicy: { autoParallel: true, maxParallelSiblings: 2, resourceKeys: [] } } }, now()));
   let roundId = "parallel-isolated-round", planned = publicSelection ? undefined : await planWorkflowIsolatedRound({ store,
     workflowId: workflow.id, roundId, worktreeRoot, mode: "apply_to_target", parallelExecution,
@@ -476,7 +566,7 @@ async function fixture(t, { holdReturn = false, publicSelection = false, feature
   const slots = item => store.listRuntimeSemaphoreSlots({ workUnitId: item.fence.workUnitId, status: "active", limit: 100 });
   const completion = item => store.getHostAttemptCompletion({ runId: item.run.id, ...item.fence });
   const describe = () => ({ workflow: store.getChannelWorkflow(workflow.id), executions: [...executions.values()].map(value => ({ runId: value.runId, reached: value.reached,
-    requests: value.requests.length, writes: value.writes, returned: value.returned })), parent: parent(), round: round(),
+    requests: value.requests.length, writes: value.writes, boundaryFailures: value.boundaryFailures, returned: value.returned })), parent: parent(), round: round(),
     runs: store.listRuns({ limit: 20 }).map(run => {
       const unit = run.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;
       const attempt = unit?.activeAttemptId ? store.getWorkUnitAttempt(unit.activeAttemptId) : undefined;
@@ -512,7 +602,7 @@ async function fixture(t, { holdReturn = false, publicSelection = false, feature
         parallelPolicy: { autoParallel: false, maxParallelSiblings: 2, resourceKeys: [] } } }, now());
     return { ordinary, step };
   };
-  return { get store() { return store; }, workflow, steps, get roundId() { return roundId; }, round, parent, pending, api, git, target, initialTarget, executions, release, returnRelease,
+  return { get store() { return store; }, workflow, steps, source, get roundId() { return roundId; }, round, parent, pending, api, git, target, initialTarget, executions, release, returnRelease,
     wait, slots, completion, finished, reconcileParent: () => isolation.reconcileParallelParentFence({ roundId, generation: 1, now: now() }),
     async restartWithIsolationDisabled() {
       await daemon.stop();

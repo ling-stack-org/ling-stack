@@ -21,7 +21,7 @@ import { workflowIsolationCanonicalJson as json, workflowIsolationDigest as dige
 import type { SqliteStoreContext } from "./store-context.js";
 import { rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
 import { readSqliteSnapshot } from "./read-snapshot.js";
-import { readWorkflowIsolationTerminalCapture, workflowIsolationBindingStopped,
+import { readWorkflowIsolationTerminalCapture, readWorkflowIsolationStoppedExecution, workflowIsolationBindingStopped,
   type WorkflowIsolationTerminalCapturePorts } from "./workflow-isolation-terminal-capture.js";
 import { SqliteWorkflowIsolationResultsStore } from "./workflow-isolation-results-store.js";
 import { readWorkflowParallelParents, workflowParallelRoundAvailable, workflowParallelScopeValid,
@@ -441,6 +441,24 @@ class SqliteWorkflowIsolationStore implements WorkflowIsolationStore {
     });
   }
 
+  inspectStoppedExecution(input: Parameters<WorkflowIsolationStore["inspectStoppedExecution"]>[0]): ReturnType<WorkflowIsolationStore["inspectStoppedExecution"]> {
+    return readSqliteSnapshot(this.context.database, () => {
+      try {
+        this.validateTime(input.now);
+        if (!input.writer || !identity(input.writer.bindingId) || !validFence(input.writer)) veto("invalid", "writer_invalid");
+        const binding = this.getExecutionBinding(input.writer.bindingId), plan = binding && this.getScopePlan(binding.planId);
+        if (!binding || !plan || !sameFence(binding.fence, input.writer) || plan.canonicalWorkspaceRoot !== this.canonicalWorkspaceRoot)
+          veto("stale", "writer_fence_changed");
+        this.expectRevision(binding.revision, input.expectedRevision);
+        return readWorkflowIsolationStoppedExecution(this.context.database, this.ports, binding, plan,
+          this.getIntegrationRound(plan.integrationRoundId), input.now);
+      } catch (error) {
+        if (error instanceof Veto) return { status: error.result.status === "invalid" ? "invalid" as const : "stale" as const, code: error.result.code };
+        throw error;
+      }
+    });
+  }
+
   // Journal and phase methods share short owned transactions; Git I/O is always outside this object.
   markExecutionReady(input: Parameters<WorkflowIsolationStore["markExecutionReady"]>[0]): WorkflowIsolationMutationResult<WorkflowIsolationExecutionBinding> {
     return this.transaction(() => {
@@ -527,24 +545,24 @@ class SqliteWorkflowIsolationStore implements WorkflowIsolationStore {
 
   beginIntegrationRoundGeneration(input: Parameters<WorkflowIsolationStore["beginIntegrationRoundGeneration"]>[0]): WorkflowIsolationMutationResult<WorkflowIntegrationRound> {
     return this.transaction(() => {
-      const { plan } = this.currentWriter(input.writer, input.now, true, false);
+      const { plan } = this.generationWriter(input.writer, input.now);
       const command = this.command<WorkflowIntegrationRound>("generation", input.commandId, input, input.writer);
       if (command) return { status: "duplicate", value: command };
       const round = this.getIntegrationRound(input.roundId), inputs = normalizeWorkflowIntegrationRoundInputs(input.inputs);
       if (!round || round.generation !== input.expectedGeneration || plan.integrationRoundId !== round.roundId
         || plan.generation !== round.generation || round.writerBindingId !== input.writer.bindingId) veto("stale", "generation_changed");
       this.expectRevision(round.revision, input.expectedRevision);
-      if (!inputs || inputs.workflowId !== round.inputs.workflowId || inputs.canonicalWorkspaceId !== round.inputs.canonicalWorkspaceId
-        || inputs.canonicalWorkspaceRoot !== round.inputs.canonicalWorkspaceRoot || !same(inputs.repositoryIdentity, round.inputs.repositoryIdentity)
-        || inputs.graphFingerprint !== round.inputs.graphFingerprint || inputs.mode !== round.inputs.mode
-        || !same(inputs.parallelExecution ?? null, round.inputs.parallelExecution ?? null)
-        || !same(inputs.participants, round.inputs.participants) || !same(inputs.mergeOrder, round.inputs.mergeOrder)
-        || !same(inputs.validationRequirements, round.inputs.validationRequirements)
-        || inputs.optionalFailurePolicy !== round.inputs.optionalFailurePolicy) veto("invalid", "generation_inputs_mismatch");
+      if (!inputs || !same(inputs, { ...round.inputs, integration: inputs.integration })) veto("invalid", "generation_inputs_mismatch");
       if (round.inputs.parallelExecution) veto("conflict", "parallel_generation_requires_new_round");
       if (!workflowParallelRoundAvailable(this.context.database, inputs)) veto("conflict", "parallel_parent_busy");
       this.validateRoundInputs(inputs);
-      if (!["failed", "conflicted", "blocked"].includes(round.phase) || this.hasPendingRound(round.roundId, round.generation)) veto("conflict", "generation_effects_unconfirmed");
+      if (!["failed", "conflicted", "blocked"].includes(round.phase) || round.openIntentId
+        || this.hasPendingRound(round.roundId, round.generation)
+        || this.context.database.prepare(`SELECT 1 FROM workflow_isolation_result_intents AS intent
+          JOIN workflow_isolation_bindings AS binding ON binding.binding_id=intent.binding_id
+          JOIN workflow_isolation_scope_plans AS plan ON plan.plan_id=binding.plan_id
+          WHERE plan.round_id=? AND plan.generation=? AND intent.status<>'confirmed' LIMIT 1`)
+          .get(round.roundId, round.generation)) veto("conflict", "generation_effects_unconfirmed");
       this.assertLocationAvailable(inputs.integration, inputs.repositoryIdentity.commonDir);
       this.insertGeneration(round.roundId, round.generation + 1, inputs, input.now);
       this.changed(this.context.database.prepare(`UPDATE workflow_integration_rounds SET current_generation=current_generation+1
@@ -777,6 +795,26 @@ class SqliteWorkflowIsolationStore implements WorkflowIsolationStore {
           || slot.work_unit_id !== binding.fence.workUnitId || slot.attempt_id !== binding.fence.attemptId
           || slot.runtime_instance_id !== binding.fence.runtimeInstanceId || slot.fencing_token !== binding.fence.fencingToken)) veto("stale", "admission_slots_changed");
     }
+    return { binding, plan };
+  }
+
+  private generationWriter(writer: WorkflowIsolationWriter, now: string):
+    { binding: WorkflowIsolationExecutionBinding; plan: WorkflowIsolationScopePlanV1 } {
+    this.validateTime(now);
+    if (!writer || !identity(writer.bindingId) || !validFence(writer)) veto("invalid", "writer_invalid");
+    const binding = this.getExecutionBinding(writer.bindingId), plan = binding && this.getScopePlan(binding.planId);
+    if (!binding || !plan || !sameFence(binding.fence, writer)) veto("stale", "writer_fence_changed");
+    const executions = [this.ports.getRun(binding.runId), this.ports.getWorkUnit(binding.fence.workUnitId),
+      this.ports.getWorkUnitAttempt(binding.fence.attemptId)];
+    if (!executions.some(execution => execution && ["succeeded", "failed", "cancelled", "lost"].includes(execution.status)))
+      return this.currentWriter(writer, now, true, false);
+    if (plan.canonicalWorkspaceRoot !== this.canonicalWorkspaceRoot) veto("stale", "terminal_lineage_changed");
+    // The owned generation transaction rechecks the retained source, including for exact command replay.
+    // Terminal execution must prove drain and coverage even while its live leases remain active.
+    const terminal = readWorkflowIsolationTerminalCapture(this.context.database, this.ports, binding, plan,
+      this.getIntegrationRound(plan.integrationRoundId, plan.generation), now);
+    if (terminal.status !== "authorized") throw new Veto({ status: terminal.status === "blocked" ? "conflict" : terminal.status,
+      code: terminal.code });
     return { binding, plan };
   }
 

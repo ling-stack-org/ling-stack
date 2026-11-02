@@ -30,6 +30,7 @@ export function scopeUserInputLocalWriters(request: PiRunnerRunOptions, writers:
       onTaskRestoredCompleteBoundary: writers.wrapAsync("restored_complete_boundary", request.onTaskRestoredCompleteBoundary),
     } : {}),
     ...(request.onHostCapabilityCall ? { onHostCapabilityCall: effect(writers.wrapAsync("host_capability", request.onHostCapabilityCall)) } : {}),
+    ...(request.onIsolatedToolCall ? { onIsolatedToolCall: effect(writers.wrapAsync("isolated_tool", request.onIsolatedToolCall)) } : {}),
     ...(request.onToolHydrationRequest ? { onToolHydrationRequest: effect(writers.wrapAsync("hydration", request.onToolHydrationRequest)) } : {}),
     ...(request.onMcpToolCall ? { onMcpToolCall: effect(writers.wrapAsync("mcp", request.onMcpToolCall)) } : {}),
     ...(request.onMediaGenerationToolCall ? {

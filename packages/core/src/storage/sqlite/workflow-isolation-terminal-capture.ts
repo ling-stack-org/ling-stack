@@ -3,7 +3,7 @@ import type { RunStore } from "../../run-types.js";
 import type { RuntimeAttemptFenceV1 } from "../../runtime-supervisor-types.js";
 import { workflowStepStartAuthorityBasis, workflowStepStartOwnerMatches, type WorkflowStepStartReadStore } from "../../workflow-step-start-owner.js";
 import type { WorkflowIntegrationRound, WorkflowIsolationExecutionBinding, WorkflowIsolationScopePlanV1,
-  WorkflowIsolationTerminalCaptureResult } from "../../workflow-isolation-types.js";
+  WorkflowIsolationTerminalCaptureResult, WorkflowIsolationStoppedExecutionResult } from "../../workflow-isolation-types.js";
 import { workflowIsolationCanonicalJson as json, workflowIsolationDigest as digest, workflowIsolationRecord as record,
   workflowIsolationTime as time, workflowIsolationStepSafetyFingerprint } from "../../workflow-isolation.js";
 import { readHarnessRetainedBody } from "./harness-artifact-recovery-pins.js";
@@ -36,11 +36,19 @@ export function readWorkflowIsolationTerminalCapture(database: DatabaseSync, por
   return { ...result, terminal: { ...result.terminal, outcome } };
 }
 
-/** Cancellation can prove a stopped parent, never result publication or renewed execution authority. */
+/** Cancellation/revocation can prove a stopped parent, never result publication or renewed execution authority. */
 export function workflowIsolationBindingStopped(database: DatabaseSync, ports: WorkflowIsolationTerminalCapturePorts,
   binding: WorkflowIsolationExecutionBinding, plan: WorkflowIsolationScopePlanV1, round: WorkflowIntegrationRound | undefined,
   now: string): boolean {
   return readStoppedCapture(database, ports, binding, plan, round, now, true).status === "authorized";
+}
+
+export function readWorkflowIsolationStoppedExecution(database: DatabaseSync, ports: WorkflowIsolationTerminalCapturePorts,
+  binding: WorkflowIsolationExecutionBinding, plan: WorkflowIsolationScopePlanV1, round: WorkflowIntegrationRound | undefined,
+  now: string): WorkflowIsolationStoppedExecutionResult {
+  const result = readStoppedCapture(database, ports, binding, plan, round, now, true);
+  return result.status === "authorized"
+    ? { status: "stopped", binding: result.binding, plan: result.plan, proofDigest: result.proofDigest } : result;
 }
 
 function readStoppedCapture(database: DatabaseSync, ports: WorkflowIsolationTerminalCapturePorts,
@@ -58,7 +66,8 @@ function readStoppedCapture(database: DatabaseSync, ports: WorkflowIsolationTerm
     || !same(step.metadata?.isolationScopePlan ?? null, { planId: plan.planId, planDigest: plan.planDigest })
     || !workflowStepStartOwnerMatches(step.metadata?.startOwner, owner) || step.metadata?.startOwner?.phase !== "linked"
     || step.taskId !== task.id || step.runId !== run.id || task.currentRunId !== run.id
-    || scope.authority_basis !== owner.authorityBasis || workflowStepStartAuthorityBasis(ports, step) !== scope.authority_basis
+    || scope.authority_basis !== owner.authorityBasis
+    || !allowCancelled && workflowStepStartAuthorityBasis(ports, step) !== scope.authority_basis
     || workflow.metadata?.workflowGraphFingerprint !== plan.graphFingerprint || workflowIsolationStepSafetyFingerprint(step) !== plan.safetyFingerprint)
     return reject("stale", "lineage_changed");
   if (!allowCancelled && ([workflow.status, step.status, task.status, run.status, unit.status, attempt.status].includes("cancelled") || attempt.abortRequestedAt))

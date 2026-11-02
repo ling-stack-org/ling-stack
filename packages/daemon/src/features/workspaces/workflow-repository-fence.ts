@@ -7,6 +7,7 @@ import { createSqliteWorkflowIsolationStore, workflowIntegrationRoundInputsDiges
   type RunStore, type WorkflowIntegrationRoundInputsV1 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import { workflowGit } from "./managed-worktrees.js";
+import { verifyWorkflowRepositoryCheckouts } from "./workflow-retained-checkouts.js";
 
 interface RepositoryFenceOwner {
   readonly schemaVersion: 1;
@@ -85,11 +86,8 @@ export async function reserveWorkflowRepositoryFence(store: RunStore, roundId: s
   try {
     // Inventory after reserving: a new checkout cannot enter Run admission in the inspection window.
     if (!createSqliteWorkflowIsolationStore(store).getIntegrationRound(roundId)) {
-      const fields = new TextDecoder("utf-8", { fatal: true }).decode(
-        (await workflowGit(inputs.canonicalWorkspaceRoot, ["worktree", "list", "--porcelain", "-z"])).stdout).split("\0");
-      const roots = fields.filter(field => field.startsWith("worktree ")).map(field => field.slice(9));
-      if (roots.length !== 1 || roots[0] !== inputs.canonicalWorkspaceRoot) throw new HttpError(409,
-        "workflow_repository_checkouts_unsupported", "This isolated parallel profile requires a repository without other checkouts.");
+      await verifyWorkflowRepositoryCheckouts(store, inputs,
+        (await workflowGit(inputs.canonicalWorkspaceRoot, ["worktree", "list", "--porcelain", "-z"])).stdout);
     }
   } catch (error) {
     releaseWorkflowRepositoryFence(store, roundId, 1, inputs, undefined, reservationToken);

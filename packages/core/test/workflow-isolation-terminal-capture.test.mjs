@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { SqliteRunTerminalIntentStore } from "../dist/storage/sqlite/run-terminal-intent-store.js";
 import { workflowIsolationFixture, assertIsolationNoWrites } from "./support/workflow-isolation-fixture.mjs";
@@ -6,12 +7,21 @@ import { workflowIsolationFixture, assertIsolationNoWrites } from "./support/wor
 const now = () => new Date().toISOString();
 const input = f => ({ writer: f.writer, expectedRevision: f.binding().revision, now: now() });
 const read = (f, overrides = {}) => assertIsolationNoWrites(f, () => f.isolation.assertTerminalCapture({ ...input(f), ...overrides }));
+const stopped = (f, overrides = {}) => assertIsolationNoWrites(f, () => f.isolation.inspectStoppedExecution({ ...input(f), ...overrides }));
 
 async function terminalFixture(t, { coverage = true, drained = true, audit = true, terminal = true,
-  outcome = "succeeded", tools = [] } = {}) {
+  outcome = "succeeded", tools = [], isolated = false } = {}) {
   const f = await workflowIsolationFixture(t); f.makeReady();
+  const payload = f.executionPayload();
+  if (isolated) {
+    payload.input.isolatedToolsProfile = "host_isolated_files_v1";
+    payload.preparedInput.tools.find(tool => tool.name === "write").parameters = { type: "object",
+      properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] };
+    const { fingerprint: _fingerprint, ...body } = payload.preparedInput;
+    payload.preparedInput.fingerprint = createHash("sha256").update(JSON.stringify(body)).digest("hex");
+  }
   assert.equal(f.isolation.sealPreparedExecution({ writer: f.writer, expectedRevision: f.binding().revision,
-    runnerExecutionInput: f.executionPayload(), now: f.at(11) }).status, "updated");
+    runnerExecutionInput: payload, now: f.at(11) }).status, "updated");
   // A controlled clock keeps the real durable Host observation after the fixture's planned lifecycle.
   t.mock.timers.enable({ apis: ["Date"], now: Date.parse(f.at(20)) });
   const fence = f.prepared.fence, runId = f.prepared.run.id;
@@ -57,8 +67,11 @@ for (const outcome of ["succeeded", "failed"]) {
     assert.equal(before.terminal.outcome, outcome);
     assert.equal(before.terminal.completion.effectCoverage, "pi_no_tools_v1");
     assert.match(before.proofDigest, /^witc1_[a-f0-9]{64}$/u);
+    const retired = stopped(f);
+    assert.deepEqual(retired, { status: "stopped", binding: before.binding, plan: before.plan, proofDigest: before.proofDigest });
     f.release(); f.reopenIsolation();
     assert.deepEqual(read(f), before);
+    assert.deepEqual(stopped(f), retired);
     t.mock.timers.tick(60_000);
     assert.deepEqual(read(f), before, "wall time alone does not grant or revoke capture evidence");
     assert.equal(f.isolation.assertExecutionBinding({ writer: f.writer, now: now() }).status, "stale");
@@ -77,11 +90,76 @@ test("original tracked builtin read coverage must have paired source-bound canon
   assert.equal(read(f).status, "authorized");
 });
 
+const undispatched = [ { toolCallId: "denied-write", toolName: "write" },
+  { toolCallId: "unknown-tool", toolName: "nonexistent_tool" } ];
+const undispatchedCoverage = { schemaVersion: 1, toolCallIds: undispatched.map(tool => tool.toolCallId),
+  settledBuiltinReads: [], undispatchedIsolatedCalls: undispatched };
+
+test("Host-only SDK refusals retain their full inventory across release and SQLite reopen", async t => {
+  const f = await terminalFixture(t, { isolated: true, tools: undispatched, coverage: undispatchedCoverage });
+  assert.equal(f.store.getHostAttemptCompletion(f.source).effectCoverage, "pi_tracked_tools_v1");
+  const inventory = JSON.parse(f.store.database.prepare("SELECT tracked_tool_calls_json FROM host_attempt_completions WHERE attempt_id=?")
+    .get(f.source.attemptId).tracked_tool_calls_json);
+  assert.deepEqual(inventory, undispatchedCoverage);
+  assert.equal(read(f).status, "authorized");
+  f.release(); f.reopenIsolation();
+  assert.equal(f.store.getHostAttemptCompletion(f.source).effectCoverage, "pi_tracked_tools_v1");
+  assert.equal(read(f).status, "authorized");
+});
+
+for (const fault of ["ordinary-profile", "unit-input", "profile-widened", "fingerprint", "run-pin", "foreign-source",
+  "name-mismatch", "missing-end", "overlap-read", "host-producer"]) {
+  test(`undispatched SDK inventory fails closed for ${fault}`, async t => {
+    const coverage = structuredClone(undispatchedCoverage);
+    if (fault === "name-mismatch") coverage.undispatchedIsolatedCalls[0].toolName = "read";
+    if (fault === "overlap-read") coverage.settledBuiltinReads = [{ toolCallId: "denied-write", toolName: "read" }];
+    const f = await terminalFixture(t, { isolated: fault !== "ordinary-profile", tools: undispatched,
+      coverage, drained: false, terminal: false });
+    if (["unit-input", "profile-widened", "fingerprint"].includes(fault)) {
+      const run = f.store.getRun(f.source.runId), snapshot = structuredClone(run.requestSnapshot);
+      if (fault === "unit-input") snapshot.runnerExecutionInput.input.tools.push("bash");
+      if (fault === "profile-widened") snapshot.runnerExecutionInput.toolHydrationEnabled = true;
+      if (fault === "fingerprint") snapshot.runnerExecutionInput.preparedInput.fingerprint = "0".repeat(64);
+      f.store.database.prepare("UPDATE work_units SET request_json=? WHERE id=?")
+        .run(JSON.stringify({ ...f.store.getWorkUnit(f.source.workUnitId).request, runnerExecutionInput: snapshot.runnerExecutionInput }), f.source.workUnitId);
+      if (fault !== "unit-input") f.store.database.prepare("UPDATE run_sessions SET request_snapshot_json=? WHERE id=?")
+        .run(JSON.stringify(snapshot), f.source.runId);
+    }
+    if (fault === "run-pin") {
+      const snapshot = { ...f.store.getRun(f.source.runId).requestSnapshot, workflowIsolationPlan: { planId: "foreign", planDigest: "forged" } };
+      f.store.database.prepare("UPDATE run_sessions SET request_snapshot_json=? WHERE id=?").run(JSON.stringify(snapshot), f.source.runId);
+    }
+    if (fault === "foreign-source" || fault === "missing-end") {
+      const event = f.store.database.prepare("SELECT seq,data_json FROM run_events WHERE run_id=? AND type='tool_end' LIMIT 1").get(f.source.runId);
+      if (fault === "foreign-source") f.store.database.prepare("UPDATE run_events SET data_json=? WHERE run_id=? AND seq=?")
+        .run(JSON.stringify({ ...JSON.parse(event.data_json), attemptId: "foreign" }), f.source.runId, event.seq);
+      else f.store.database.prepare("DELETE FROM run_events WHERE run_id=? AND seq=?").run(f.source.runId, event.seq);
+    }
+    if (fault === "host-producer") f.store.admitHostOperation({ operationId: "unexpected-producer", source: f.source,
+      kind: "plugin", toolCallId: "denied-write", admittedAt: now() });
+    await f.finish(); f.terminal(); f.audit();
+    assert.equal(f.store.getHostAttemptCompletion(f.source).effectCoverage, undefined);
+    assert.notEqual(read(f).status, "authorized");
+  });
+}
+
+test("revoked policy can prove original stop but cannot authorize capture or any renewed writer", async t => {
+  const f = await terminalFixture(t); f.release();
+  f.store.updateChannel(f.channel.id, { allowedTools: ["read"] }, now());
+  assert.equal(read(f).code, "workflow_isolation.terminal_lineage_changed");
+  assert.equal(f.isolation.assertExecutionBinding({ writer: f.writer, now: now() }).status, "stale");
+  assert.equal(stopped(f).status, "stopped");
+  assert.equal("terminal" in stopped(f), false, "a stop proof is not a result publication grant");
+  f.store.appendEvent(f.source.runId, "tool_start", { toolCallId: "untracked", toolName: "write", attemptId: f.writer.attemptId }, now());
+  assert.notEqual(stopped(f).status, "stopped", "revocation never excuses untracked or unfinished tools");
+});
+
 test("unresolved original Host promise blocks terminal capture despite terminal rows and expired resources", async t => {
   const f = await terminalFixture(t, { drained: false });
   f.store.database.prepare("UPDATE runtime_semaphore_slots SET expires_at=?").run(f.at(-1));
   f.store.database.prepare("UPDATE resource_leases SET expires_at=?").run(f.at(-1));
   assert.equal(read(f).code, "workflow_isolation.terminal_host_not_drained");
+  assert.equal(stopped(f).code, "workflow_isolation.terminal_host_not_drained");
   await f.finish();
   assert.equal(read(f).status, "authorized");
 });
@@ -94,6 +172,7 @@ for (const [name, options, code] of [
   test(`missing ${name} is not manufactured by a ready binding or confirmed creation receipt`, async t => {
     const f = await terminalFixture(t, options);
     assert.equal(read(f).code, `workflow_isolation.terminal_${code}`);
+    assert.equal(stopped(f).code, `workflow_isolation.terminal_${code}`);
   });
 }
 
@@ -108,6 +187,7 @@ for (const field of ["workUnitId", "attemptId", "runtimeInstanceId", "fencingTok
   test(`terminal reader checks exact ${field} even after release and reopen`, async t => {
     const f = await terminalFixture(t); f.release(); f.reopenIsolation();
     assert.equal(read(f, { writer: { ...f.writer, [field]: field === "fencingToken" ? "999" : "foreign" } }).status, "stale");
+    assert.equal(stopped(f, { writer: { ...f.writer, [field]: field === "fencingToken" ? "999" : "foreign" } }).status, "stale");
     assert.equal(read(f).status, "authorized");
   });
 }
@@ -118,6 +198,9 @@ test("terminal reader validates binding revision and input rather than adopting 
   assert.equal(read(f, { expectedRevision: -1 }).code, "workflow_isolation.revision_invalid");
   assert.equal(read(f, { now: "not-a-time" }).status, "invalid");
   assert.equal(read(f, { writer: { ...f.writer, fencingToken: "0" } }).status, "invalid");
+  assert.equal(stopped(f, { expectedRevision: -1 }).code, "workflow_isolation.revision_invalid");
+  assert.equal(stopped(f, { now: "not-a-time" }).status, "invalid");
+  assert.equal(stopped(f, { writer: { ...f.writer, fencingToken: "0" } }).status, "invalid");
 });
 
 const lineageFaults = {
@@ -167,6 +250,7 @@ for (const [name, mutate] of Object.entries({
   test(`late ${name} cancellation blocks the original otherwise complete terminal proof`, async t => {
     const f = await terminalFixture(t); f.release(); mutate(f);
     assert.equal(read(f).code, "workflow_isolation.terminal_cancellation_unverified");
+    assert.equal(stopped(f).status, "stopped", "physical stop does not restore the cancelled publication authority");
   });
 }
 
@@ -247,6 +331,7 @@ test("terminal reader owns no caller transaction and leaves query_only and outer
   try {
     f.store.database.prepare("UPDATE channel_workflows SET title='caller-kept' WHERE id=?").run(f.plan.workflowId);
     assert.throws(() => f.isolation.assertTerminalCapture(input(f)), /transaction/i);
+    assert.throws(() => f.isolation.inspectStoppedExecution(input(f)), /transaction/i);
     assert.equal(f.store.database.isTransaction, true);
     assert.equal(f.store.getChannelWorkflow(f.plan.workflowId).title, "caller-kept");
     assert.equal(f.store.database.prepare("PRAGMA query_only").get().query_only, 0);

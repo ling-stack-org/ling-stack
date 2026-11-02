@@ -69,14 +69,20 @@ export class PiRunnerAdapter {
     const builtinReads = new Set((options.tools ?? DEFAULT_TOOLS)
       .filter(name => ["read", "grep", "find", "ls"].includes(name) && !replacedToolNames.has(name)));
     const toolObservation = options.onToolBoundaryObservation && options.runId && options.runnerAttemptId
-      ? createPiToolBoundaryObservation(options.runId, options.runnerAttemptId) : undefined;
+      ? createPiToolBoundaryObservation(options.runId, options.runnerAttemptId, options.isolatedToolsProfile) : undefined;
     if (toolObservation) {
       options.onToolBoundaryObservation!(toolObservation.receipt);
       const onToolBefore = options.onToolBefore;
+      const onIsolatedToolCall = options.onIsolatedToolCall;
       options = { ...options, onToolBefore: request => {
         toolObservation.enter(request.toolCallId, request.toolName);
         return onToolBefore?.(request) ?? { allowed: true };
-      } };
+      }, ...(options.isolatedToolsProfile === "host_isolated_files_v1" && onIsolatedToolCall ? {
+        onIsolatedToolCall: request => {
+          toolObservation.dispatchIsolatedHostTool(request.toolCallId, request.toolName);
+          return onIsolatedToolCall(request);
+        },
+      } : {}) };
     }
     const inputReceiver = createPiPreparedInputReceiver(options);
     if (inputReceiver) options = { ...options, preparedInput: inputReceiver.preparedInput };
