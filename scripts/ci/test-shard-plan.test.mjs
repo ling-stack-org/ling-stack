@@ -12,8 +12,8 @@ test("core and daemon plans preserve full discovery exactly once with dynamic co
   for (const packages of [[], ["@ling-stack/core"], ["@ling-stack/daemon"], ["@ling-stack/core", "@ling-stack/daemon"]]) {
     const plan = await createTestPlan(packages);
     assert.deepEqual(Object.keys(plan.suites), Object.keys(testSuites).filter(name => packages.includes(testSuites[name].packageName)));
-    assert.equal(plan.unitMatrix.include.length, packages.includes("@ling-stack/core") ? 5 : 1);
-    assert.deepEqual(plan.unitMatrix.include[0], { suite: "packages", shard: 0 });
+    assert.deepEqual(plan.unitMatrix.include, packages.includes("@ling-stack/core")
+      ? Array.from({ length: 4 }, (_, shard) => ({ suite: "core", shard })) : []);
     for (const [name, suite] of Object.entries(plan.suites)) {
       const discovered = await discoverTestFiles(testSuites[name].cwd, testSuites[name].excluded);
       assert.ok(discovered.length > 100);
@@ -22,6 +22,17 @@ test("core and daemon plans preserve full discovery exactly once with dynamic co
     }
     if (plan.suites.daemon) assert.ok(!plan.suites.daemon.files.includes("test/dependency-security.test.mjs"));
   }
+});
+
+test("only selected unsharded packages create the packages job", async () => {
+  for (const name of ["@ling-stack/web", "@ling-stack/cli", "@ling-stack/mobile"]) {
+    const plan = await createTestPlan([name, "@ling-stack/daemon"]);
+    assert.deepEqual(plan.unitMatrix.include, [{ suite: "packages", shard: 0 }]);
+    assert.deepEqual(Object.keys(plan.suites), ["daemon"]);
+  }
+  const mixed = await createTestPlan(["@ling-stack/web", "@ling-stack/core", "@ling-stack/daemon"]);
+  assert.deepEqual(mixed.unitMatrix.include, [{ suite: "packages", shard: 0 },
+    ...Array.from({ length: 4 }, (_, shard) => ({ suite: "core", shard }))]);
 });
 
 test("measured durations balance placement deterministically without changing coverage", () => {

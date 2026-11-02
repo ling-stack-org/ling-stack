@@ -9,6 +9,8 @@ import { assertCiResults, selectExecutionTier } from "./execution-policy.mjs";
 
 const script = fileURLToPath(new URL("./execution-policy.mjs", import.meta.url));
 const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
+const selectors = ["dependency", "typecheck", "unit", "daemon"];
+const unselected = Object.fromEntries(selectors.map((selector) => [selector, false]));
 
 function prEvent(action, { draft = false, labels = [], label } = {}) {
   return { action, pull_request: { draft, labels: labels.map((name) => ({ name })) }, ...(label === undefined ? {} : { label: { name: label } }) };
@@ -23,7 +25,8 @@ function results(overrides = {}) {
 }
 
 function quality(overrides = {}) {
-  return assertCiResults({ tier: "complete", mode: "full", daemon: true, results: results(), ...overrides });
+  return assertCiResults({ tier: "complete", mode: "full", dependency: true, typecheck: true, unit: true,
+    daemon: true, results: results(), ...overrides });
 }
 
 test("every Draft update previews while opened and ready PR updates run complete checks", () => {
@@ -91,13 +94,13 @@ for (const lane of lanes) {
 
 test("documentation scope requires scope and common but permits every product lane to skip", () => {
   const skipped = results(Object.fromEntries(lanes.slice(2).map((lane) => [lane, "skipped"])));
-  assert.equal(quality({ mode: "docs", daemon: false, results: skipped }), true);
+  assert.equal(quality({ mode: "docs", ...unselected, results: skipped }), true);
   for (const lane of ["SCOPE", "COMMON"]) {
-    assert.throws(() => quality({ mode: "docs", daemon: false, results: { ...skipped, [lane]: "skipped" } }), new RegExp(`${lane}=skipped`, "u"));
+    assert.throws(() => quality({ mode: "docs", ...unselected, results: { ...skipped, [lane]: "skipped" } }), new RegExp(`${lane}=skipped`, "u"));
   }
   for (const lane of lanes.slice(2)) {
     for (const result of ["failure", "cancelled"]) {
-      assert.throws(() => quality({ mode: "docs", daemon: false, results: { ...skipped, [lane]: result } }), new RegExp(`${lane}=${result}`, "u"));
+      assert.throws(() => quality({ mode: "docs", ...unselected, results: { ...skipped, [lane]: result } }), new RegExp(`${lane}=${result}`, "u"));
     }
   }
 });
@@ -110,10 +113,53 @@ test("Web-only scope can skip platform lanes but requires every Linux product la
   }
 });
 
+test("affected scope permits every selector combination without skipping selected work", () => {
+  for (let mask = 0; mask < 2 ** selectors.length; mask += 1) {
+    const selected = Object.fromEntries(selectors.map((selector, index) => [selector, Boolean(mask & (1 << index))]));
+    const outcomes = results({
+      DEPENDENCY: selected.dependency ? "success" : "skipped",
+      TYPECHECK: selected.typecheck ? "success" : "skipped",
+      UNIT: selected.unit ? "success" : "skipped",
+      DAEMON: selected.daemon ? "success" : "skipped",
+      LINUX_CONTRACT: selected.daemon ? "success" : "skipped",
+      MACOS_NATIVE: selected.daemon ? "success" : "skipped",
+    });
+    assert.equal(quality({ mode: "affected", ...selected, results: outcomes }), true, JSON.stringify(selected));
+    for (const lane of lanes) {
+      if (outcomes[lane] !== "success") continue;
+      assert.throws(() => quality({ mode: "affected", ...selected, results: { ...outcomes, [lane]: "skipped" } }),
+        new RegExp(`${lane}=skipped`, "u"));
+    }
+  }
+});
+
+test("unselected lanes permit explicit skips but still reject failed, cancelled, missing or invalid results", () => {
+  const skipped = results(Object.fromEntries(lanes.slice(2).filter((lane) => lane !== "BUILD").map((lane) => [lane, "skipped"])));
+  for (const lane of lanes.slice(2).filter((lane) => lane !== "BUILD")) {
+    for (const result of ["failure", "cancelled", "", undefined, "pending", null, false]) {
+      assert.throws(() => quality({ mode: "affected", ...unselected, results: { ...skipped, [lane]: result } }),
+        new RegExp(`${lane}=`, "u"));
+    }
+  }
+});
+
+test("every selector is a required boolean and docs/full modes cannot contradict it", () => {
+  for (const selector of selectors) {
+    const name = `${selector.toUpperCase()}_SELECTED`;
+    for (const value of [undefined, null, "true", "false", "", 0, 1, [], {}]) {
+      assert.throws(() => quality({ [selector]: value }), new RegExp(name, "u"));
+    }
+    for (const tier of ["complete", "preview"]) {
+      assert.throws(() => quality({ tier, [selector]: false }), new RegExp(`full.*${name}`, "u"));
+      assert.throws(() => quality({ tier, mode: "docs", ...unselected, [selector]: true }), new RegExp(`docs.*${name}`, "u"));
+    }
+  }
+});
+
 test("Draft common-check success is explicitly deferred instead of certifying an incomplete merge gate", () => {
   const draftResults = results(Object.fromEntries(lanes.slice(2).map((lane) => [lane, "skipped"])));
   for (const mode of ["docs", "affected", "full"]) {
-    assert.throws(() => quality({ tier: "preview", mode, results: draftResults }), /deferred_by_draft_policy/u);
+    assert.throws(() => quality({ tier: "preview", mode, ...(mode === "docs" ? unselected : {}), results: draftResults }), /deferred_by_draft_policy/u);
   }
   for (const lane of ["SCOPE", "COMMON"]) {
     for (const result of ["failure", "cancelled", "skipped", "", undefined]) {
@@ -159,6 +205,7 @@ test("event-file CLI emits only the tier and rejects unreadable, invalid or ambi
 
 test("quality CLI enforces environment types and reports failures in the workflow log", () => {
   const env = { ...process.env, EXECUTION_TIER: "complete", SCOPE_MODE: "full", DAEMON_SELECTED: "true",
+    DEPENDENCY_SELECTED: "true", TYPECHECK_SELECTED: "true", UNIT_SELECTED: "true",
     ...Object.fromEntries(lanes.map((lane) => [`${lane}_RESULT`, "success"])) };
   const run = (overrides = {}) => spawnSync(process.execPath, [script, "--check-quality"], { encoding: "utf8", env: { ...env, ...overrides } });
   assert.equal(run().status, 0);
@@ -170,10 +217,33 @@ test("quality CLI enforces environment types and reports failures in the workflo
     }
   }
   const skippedProducts = Object.fromEntries(lanes.slice(2).map((lane) => [`${lane}_RESULT`, "skipped"]));
-  assert.equal(run({ SCOPE_MODE: "docs", DAEMON_SELECTED: "false", ...skippedProducts }).status, 0);
+  const unselectedEnv = Object.fromEntries(selectors.map((selector) => [`${selector.toUpperCase()}_SELECTED`, "false"]));
+  assert.equal(run({ SCOPE_MODE: "docs", ...unselectedEnv, ...skippedProducts }).status, 0);
   assert.equal(run({ SCOPE_MODE: "affected", DAEMON_SELECTED: "false", DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" }).status, 0);
+  const affectedSkips = { SCOPE_MODE: "affected", ...unselectedEnv, ...skippedProducts, BUILD_RESULT: "success" };
+  assert.equal(run(affectedSkips).status, 0);
+  for (const lane of lanes.slice(2).filter((lane) => lane !== "BUILD")) {
+    for (const result of ["failure", "cancelled", "", undefined, "pending"]) {
+      const check = run({ ...affectedSkips, [`${lane}_RESULT`]: result });
+      assert.equal(check.status, 1, check.stdout + check.stderr);
+      assert.match(check.stdout, new RegExp(`${lane}=`, "u"));
+    }
+  }
+  for (const selector of selectors) {
+    const name = `${selector.toUpperCase()}_SELECTED`;
+    for (const value of [undefined, "", "TRUE", "False", " true", "false ", "0", "1"]) {
+      const check = run({ [name]: value });
+      assert.equal(check.status, 1, check.stdout + check.stderr);
+      assert.match(check.stdout, new RegExp(name, "u"));
+    }
+    for (const overrides of [{ [name]: "false" }, { SCOPE_MODE: "docs", ...unselectedEnv, [name]: "true" }]) {
+      const check = run(overrides);
+      assert.equal(check.status, 1, check.stdout + check.stderr);
+      assert.match(check.stdout, new RegExp(`${overrides.SCOPE_MODE ?? "full"}.*${name}`, "u"));
+    }
+  }
   for (const mode of ["docs", "affected", "full"]) {
-    const preview = run({ EXECUTION_TIER: "preview", SCOPE_MODE: mode, ...skippedProducts });
+    const preview = run({ EXECUTION_TIER: "preview", SCOPE_MODE: mode, ...(mode === "docs" ? unselectedEnv : {}), ...skippedProducts });
     assert.equal(preview.status, 1, preview.stdout + preview.stderr);
     assert.match(preview.stdout, /deferred_by_draft_policy/u);
   }

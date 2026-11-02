@@ -1,4 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * Run one CI-only package script without invoking the package's local build
@@ -21,11 +24,38 @@ if (packages.length === 0) {
   process.exit(0);
 }
 
+// Build closures may include artifact-free workspaces (for example desktop).
+// Selected validation tasks must never succeed by silently skipping a package.
+if (!includeDependencies) {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const manifests = new Map();
+  for (const workspace of ["apps", "packages"]) {
+    const directory = resolve(root, workspace);
+    if (!existsSync(directory)) continue;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const path = resolve(directory, entry.name, "package.json");
+      if (!existsSync(path)) continue;
+      const manifest = JSON.parse(readFileSync(path, "utf8"));
+      manifests.set(manifest.name, manifest);
+    }
+  }
+  const missing = packages.filter(name => {
+    const script = manifests.get(name)?.scripts?.[task];
+    return typeof script !== "string" || script.trim().length === 0;
+  });
+  if (missing.length) {
+    console.error(`Selected packages missing ${task}: ${missing.join(", ")}`);
+    process.exit(1);
+  }
+}
+
 const pnpmArgs = ["pnpm", "--workspace-concurrency=1"];
 for (const packageName of packages) {
   pnpmArgs.push("--filter", includeDependencies ? `${packageName}...` : packageName);
 }
-pnpmArgs.push("--if-present", "run", task);
+if (includeDependencies) pnpmArgs.push("--if-present");
+pnpmArgs.push("run", task);
 
 const result = spawnSync("corepack", pnpmArgs, { stdio: "inherit" });
 if (result.error) throw result.error;

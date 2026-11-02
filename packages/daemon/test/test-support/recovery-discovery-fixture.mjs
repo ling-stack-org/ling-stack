@@ -17,6 +17,7 @@ import { createDetachedRunExecutionSink, executeExistingRunContinuation } from "
 import { createRunnerRegistry } from "../../dist/runtime/runners.js";
 import { RunStoreRegistry } from "../../dist/runtime/store-registry.js";
 import { RuntimeSupervisor } from "../../dist/runtime/supervisor.js";
+import { seedBlockedStalePrefix as seedStalePrefix } from "./recovery-discovery-prefix.ts";
 
 export const DISCOVERY_CREATED_AT = "2026-10-01T00:00:00.000Z";
 export const DISCOVERY_DUE_AT = "2026-10-01T01:00:00.000Z";
@@ -129,19 +130,7 @@ export async function createRecoveryDiscoveryFixture(t, suffix, options = {}) {
   }
 
   function seedBlockedStalePrefix(seeded, count = 500) {
-    for (let index = 0; index < count; index += 1) {
-      const id = `z-blocked-${seeded.unit.kind}-${String(index).padStart(4, "0")}`;
-      const unit = store.createWorkUnit({ id: `unit-${id}`, workspaceId: "workspace_default", kind: seeded.unit.kind,
-        ownerType: seeded.unit.ownerType, ownerId: seeded.unit.ownerId, channelId: seeded.unit.channelId,
-        taskId: seeded.unit.taskId, teammateId: seeded.unit.teammateId, runnerId: "pi", effectiveRunnerId: "pi",
-        providerPresetId: preset.id, idempotencyKey: id, status: "stale", request: {}, createdByActor: "system",
-        now: seeded.unit.createdAt });
-      store.createWorkUnitAttempt({ id: `attempt-${id}`, workUnitId: unit.id, attemptNumber: 1,
-        runtimeInstanceId: "runtime-before-restart", runnerId: "pi", status: "lost", now: seeded.unit.createdAt });
-      const run = store.createRun({ ...seeded.run, id: `run-${id}`, workUnitId: unit.id, createdAt: seeded.unit.createdAt });
-      store.linkRunToWorkUnit(run.id, unit.id, seeded.unit.createdAt);
-      store.markRunCancelled(run.id, seeded.unit.createdAt);
-    }
+    seedStalePrefix(store, preset.id, seeded, count);
   }
 
   function blockWithApproval(run) {

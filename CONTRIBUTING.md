@@ -132,7 +132,9 @@ These repository-wide commands include Desktop checks, and `test` also includes
 Mobile checks. They require the relevant platform toolchain and test fixtures;
 use package filters for a scoped change and state which checks ran. The default
 Web setup above does not establish that all native or browser test fixtures are
-available. CI selects and builds the affected package graph separately.
+available. CI selects and builds the affected package graph separately; see the
+[CI maintenance guide](docs/maintenance/ci.md) and
+[CI test execution reference](scripts/ci/README.md).
 
 Web changes should also run:
 
