@@ -20,7 +20,6 @@ export function mountReadingFixture(messageCount = 36) {
   const root = createRoot(container);
   let threadId = "p2-reading-thread";
   let workspaceCwd = "/p2-fixture";
-  let workspaceCwd = "/p2-fixture";
   let searchActive = false;
   let messages: readonly ConversationHomeMessage[] = Array.from({ length: messageCount }, (_, index) => ({
     id: `reading-message-${index}`,
@@ -75,13 +74,6 @@ export function mountReadingFixture(messageCount = 36) {
       searchActive = false;
       render();
     },
-    returnToThread: () => {
-      threadId = "p2-reading-thread";
-      messages = messages.map(message => ({ ...message, id: message.id.replace(/^other-/, ""), threadId }));
-      searchActive = false;
-      render();
-    },
-    workspace: (cwd: string) => { workspaceCwd = cwd; render(); },
     returnToThread: () => {
       threadId = "p2-reading-thread";
       messages = messages.map(message => ({ ...message, id: message.id.replace(/^other-/, ""), threadId }));
