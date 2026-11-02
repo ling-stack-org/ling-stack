@@ -7,6 +7,7 @@ import { workflowExactCommandBindingRejection } from "../dist/features/runs/appr
 import { channelOperationPlanFingerprintV1, isChannelIntentExecutionPlanV1, nodeFunctionGoalCommand, parseNodeFunctionInvocation } from "@ling-stack/contracts";
 import { executeUnifiedBashTool } from "../dist/features/runs/unified-exec.js";
 import { createUnifiedExecFixture } from "./support/unified-exec-fixture.mjs";
+import { captureNodeGoalCommandDiagnostic } from "./support/node-goal-command-diagnostic.mjs";
 import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, toRuntimeAttemptFence } from "@ling-stack/core";
 import { appendChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import { createDelegatedStepRequirement } from "../dist/features/channels/workflow-step-requirement.js";
@@ -99,31 +100,39 @@ test("Host-generated Node commands really invoke ESM/CJS exports and retain fail
   const task = { id: "node_goal_task", title: "Node goal fixture", prompt: "Execute only temporary fixture functions" };
   const f = createUnifiedExecFixture(t, cwd, task, "node_goal_run");
   let sequence = 0;
+  const diagnostics = [];
   const execute = async (modulePath, invocation) => {
     const command = nodeFunctionGoalCommand({ modulePath, invocation }); assert.ok(command);
-    const result = await executeUnifiedBashTool({ ...f,
-      request: { toolCallId: `node-goal-${++sequence}`, toolName: "bash", cwd, task, input: { command, timeoutMs: 4000 } },
-      appendAndMaybeStream: (type, data) => f.store.appendEvent(f.run.id, type, data) });
+    const result = await captureNodeGoalCommandDiagnostic({ sequence: ++sequence, timeoutMs: 4000,
+      record: diagnostic => diagnostics.push(diagnostic),
+      execute: () => executeUnifiedBashTool({ ...f,
+        request: { toolCallId: `node-goal-${sequence}`, toolName: "bash", cwd, task, input: { command, timeoutMs: 4000 } },
+        appendAndMaybeStream: (type, data) => f.store.appendEvent(f.run.id, type, data) }) });
     assert.equal(result.details.unifiedExec.command.command, command);
     assert.equal(result.details.unifiedExec.runId, f.run.id);
     return result.details.unifiedExec;
   };
-  await writeFile(join(cwd, "proof.mjs"), 'export const formatProof = async value => "proof:" + value;');
-  let result = await execute("proof.mjs", 'formatProof("7319")');
-  assert.equal(result.status, "succeeded"); assert.equal(result.stdout.preview, "proof:7319\n");
-  await writeFile(join(cwd, "proof.cjs"), 'module.exports = { formatProof: value => "common:" + value };');
-  result = await execute("proof.cjs", 'formatProof("7319")');
-  assert.equal(result.status, "succeeded"); assert.equal(result.stdout.preview, "common:7319\n");
-  await writeFile(join(cwd, "quoted '# %.mjs"), "export const echo = value => value;");
-  result = await execute("quoted '# %.mjs", `echo("'$(touch must-not-exist)")`);
-  assert.equal(result.status, "succeeded"); assert.equal(result.stdout.preview, "'$(touch must-not-exist)\n");
-  await assert.rejects(readFile(join(cwd, "must-not-exist")), { code: "ENOENT" });
-  result = await execute("proof.mjs", "missing()");
-  assert.equal(result.status, "failed"); assert.notEqual(result.exitCode, 0); assert.match(result.stderr.preview, /missing export/);
-  await writeFile(join(cwd, "throwing.mjs"), 'export const formatProof = async () => { throw Error("fixture rejection"); };');
-  result = await execute("throwing.mjs", 'formatProof("7319")');
-  assert.equal(result.status, "failed"); assert.notEqual(result.exitCode, 0); assert.match(result.stderr.preview, /fixture rejection/);
-  assert.deepEqual(f.store.listHostCommandWriteBlockers(cwd), []);
+  try {
+    await writeFile(join(cwd, "proof.mjs"), 'export const formatProof = async value => "proof:" + value;');
+    let result = await execute("proof.mjs", 'formatProof("7319")');
+    assert.equal(result.status, "succeeded"); assert.equal(result.stdout.preview, "proof:7319\n");
+    await writeFile(join(cwd, "proof.cjs"), 'module.exports = { formatProof: value => "common:" + value };');
+    result = await execute("proof.cjs", 'formatProof("7319")');
+    assert.equal(result.status, "succeeded"); assert.equal(result.stdout.preview, "common:7319\n");
+    await writeFile(join(cwd, "quoted '# %.mjs"), "export const echo = value => value;");
+    result = await execute("quoted '# %.mjs", `echo("'$(touch must-not-exist)")`);
+    assert.equal(result.status, "succeeded"); assert.equal(result.stdout.preview, "'$(touch must-not-exist)\n");
+    await assert.rejects(readFile(join(cwd, "must-not-exist")), { code: "ENOENT" });
+    result = await execute("proof.mjs", "missing()");
+    assert.equal(result.status, "failed"); assert.notEqual(result.exitCode, 0); assert.match(result.stderr.preview, /missing export/);
+    await writeFile(join(cwd, "throwing.mjs"), 'export const formatProof = async () => { throw Error("fixture rejection"); };');
+    result = await execute("throwing.mjs", 'formatProof("7319")');
+    assert.equal(result.status, "failed"); assert.notEqual(result.exitCode, 0); assert.match(result.stderr.preview, /fixture rejection/);
+    assert.deepEqual(f.store.listHostCommandWriteBlockers(cwd), []);
+  } catch (error) {
+    for (const diagnostic of diagnostics) t.diagnostic(JSON.stringify(diagnostic));
+    throw error;
+  }
 });
 
 test("recomputed plan fingerprints cannot detach generated commands from their accepted goal", async t => {
