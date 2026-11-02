@@ -12,6 +12,7 @@ import { createSqliteRunStore, createSqliteWorkflowIsolationStore, toRuntimeAtte
 import { stream } from "../../runner-pi/node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js";
 import { createDaemonServer } from "../dist/index.js";
 import { planWorkflowIsolatedRound } from "../dist/features/channels/workflow-isolation-planning.js";
+import { captureWorkflowIsolatedResult, workflowIsolatedResultBlocker } from "../dist/features/channels/workflow-isolated-result.js";
 import { listAllExecutionActionsForRun } from "../dist/features/runs/execution-actions.js";
 import { ToolFreePiRunner } from "./support/tool-free-pi-runner.mjs";
 
@@ -229,6 +230,32 @@ test("actual workflow Pi Run seals isolated input, approves Host edit/write, dra
     const capture = isolation.assertTerminalCapture({ writer, expectedRevision: binding.revision, now: new Date().toISOString() });
     assert.equal(capture.status, "authorized", JSON.stringify(capture));
     assert.equal(capture.terminal.completion.effectCoverage, "pi_tracked_tools_v1");
+    const intent = isolation.getTerminalResultIntent(bindingId);
+    assert.equal(intent?.status, "confirmed", JSON.stringify(store.listArtifacts(run.id)
+      .filter(artifact => artifact.sealedPayload?.kind === "workflow_isolation_result_capture_blocked")));
+    assert.equal(intent.bindingRevision, binding.revision);
+    assert.equal(intent.proofDigest, capture.proofDigest);
+    const packetArtifact = store.getArtifact(intent.packetArtifactId), packet = packetArtifact.sealedPayload;
+    assert.equal(packet.kind, "workflow_branch_result");
+    assert.deepEqual(packet.context.allowedPaths, ["owned.txt"]);
+    assert.equal(packet.context.lineage.bindingId, bindingId);
+    assert.deepEqual(packet.changedPaths.map(change => ({ path: change.path, change: change.change })),
+      [{ path: "owned.txt", change: "modify" }]);
+    assert.deepEqual(packet.terminal.validations, [], "file tools cannot invent a passing command validation");
+    assert.equal(store.getChannelWorkflowStep(step.id).metadata.outputArtifactId, packet.terminal.outputPacketArtifactRef);
+    for (const id of [packet.terminal.terminalArtifactRef, packet.terminal.quiescenceArtifactRef,
+      packet.terminal.toolCompletionArtifactRef, packet.terminal.outputPacketArtifactRef, ...packet.terminal.contextArtifactRefs]) {
+      const artifact = store.getArtifact(id);
+      assert.equal(artifact.runId, run.id);
+      assert.ok(artifact.contentSha256);
+    }
+    assert.equal(await git("rev-parse", packet.resultRef), packet.commit);
+    assert.equal(await git("show", `${packet.commit}:owned.txt`), "final isolated result");
+    assert.equal(workflowIsolatedResultBlocker(store, store.getRun(run.id), new Date().toISOString()), undefined);
+    const artifacts = store.listArtifacts(run.id), again = await captureWorkflowIsolatedResult({ store, writer });
+    assert.deepEqual(again.packet, packet);
+    assert.deepEqual(store.listArtifacts(run.id), artifacts, "reopen observes the sealed result without a second effect or artifact");
+    assert.equal(isolation.getExecutionBinding(bindingId).revision, binding.revision);
     assert.equal(store.listRuns({ workflowStepId: step.id, limit: 20 }).length, 1);
     assert.equal(await readFile(join(cwd, "owned.txt"), "utf8"), "initial owned content\n");
     assert.equal(await git("rev-parse", "HEAD"), targetHead);

@@ -79,6 +79,7 @@ import { executeWorkflowIsolatedTool } from "./workflow-isolated-executor.js";
 import { prepareWorkflowIsolatedExecution, type WorkflowIsolatedExecution } from "./workflow-isolation-execution.js";
 import { assertWorkflowIsolatedExecutionAuthority } from "./workflow-isolation-file-authority.js";
 import { readWorkflowIsolationWorktreeScope } from "../channels/workflow-isolation-planning.js";
+import { settleWorkflowIsolatedResult } from "../channels/workflow-isolated-result.js";
 import { captureWorkflowStartOwner, commitWorkflowStartReady, assertWorkflowRunAdmission,
   failUndispatchedWorkflowStart, resumeWorkflowStartAdmission } from "./workflow-step-start-admission.js";
 import { failUnlinkedPreparationThread } from "./preparation-thread-failure.js";
@@ -4004,6 +4005,9 @@ async function executeAdmittedRunRequest(
           // lifetime and finish durable cleanup before admitting another Run.
           resolveRunCompletion?.();
           await durableAttemptCompletion;
+          if (isolatedExecution && (terminalRun.status === "succeeded" || terminalRun.status === "failed")) {
+            await settleWorkflowIsolatedResult({ store, writer: isolatedExecution.writer, now: executionNow });
+          }
           // Atomic Host result production follows the original lifetime and
           // exact-usage settlement. Narrative text and the Run status alone
           // never satisfy a required dynamic participant.

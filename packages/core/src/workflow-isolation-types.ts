@@ -2,6 +2,7 @@ import type { RuntimeAttemptFenceV1 } from "./runtime-supervisor-types.js";
 import type { HostAttemptCompletionRecord } from "./host-attempt-completion-types.js";
 import type { WorkflowStepAdmissionPlan } from "./workflow-step-admission.js";
 import type { WorkflowStepStartOwnerV1 } from "./workflow-step-start-owner.js";
+import type { WorkflowIsolationTerminalResultsStore } from "./workflow-isolation-results-types.js";
 
 export interface WorkflowIsolationRepositoryIdentity {
   /** Host-realpathed Git common directory. Core performs no filesystem or Git I/O. */
@@ -245,7 +246,7 @@ export type WorkflowIsolationTerminalCaptureResult = {
 } | { readonly status: "invalid" | "stale" | "blocked"; readonly code: string };
 
 /** Host-internal persistence only. No route, approval grant, Git executor or write-concurrency opt-in. */
-export interface WorkflowIsolationStore {
+export interface WorkflowIsolationStore extends WorkflowIsolationTerminalResultsStore {
   createIntegrationRound(input: { readonly roundId: string; readonly inputs: WorkflowIntegrationRoundInputsV1; readonly now: string }): WorkflowIsolationMutationResult<WorkflowIntegrationRound>;
   getIntegrationRound(roundId: string, generation?: number): WorkflowIntegrationRound | undefined;
   beginIntegrationRoundGeneration(input: { readonly commandId: string; readonly roundId: string; readonly expectedGeneration: number;

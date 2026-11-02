@@ -22,6 +22,7 @@ import type { SqliteStoreContext } from "./store-context.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { readSqliteSnapshot } from "./read-snapshot.js";
 import { readWorkflowIsolationTerminalCapture, type WorkflowIsolationTerminalCapturePorts } from "./workflow-isolation-terminal-capture.js";
+import { SqliteWorkflowIsolationResultsStore } from "./workflow-isolation-results-store.js";
 
 type Ports = WorkflowIsolationTerminalCapturePorts;
 type Row = Record<string, SQLOutputValue>;
@@ -60,8 +61,27 @@ export function registerSqliteWorkflowIsolationStore(store: RunStore, context: S
 }
 
 class SqliteWorkflowIsolationStore implements WorkflowIsolationStore {
+  private readonly results: SqliteWorkflowIsolationResultsStore;
   constructor(private readonly context: SqliteStoreContext, private readonly ports: Ports,
-    private readonly canonicalWorkspaceRoot: string) {}
+    private readonly canonicalWorkspaceRoot: string) {
+    this.results = new SqliteWorkflowIsolationResultsStore(context, ports, this, canonicalWorkspaceRoot);
+  }
+
+  recordTerminalResultIntent(input: Parameters<WorkflowIsolationStore["recordTerminalResultIntent"]>[0]): ReturnType<WorkflowIsolationStore["recordTerminalResultIntent"]> {
+    return this.results.recordTerminalResultIntent(input);
+  }
+  getTerminalResultIntent(bindingId: string): ReturnType<WorkflowIsolationStore["getTerminalResultIntent"]> {
+    return this.results.getTerminalResultIntent(bindingId);
+  }
+  recordTerminalResultReceipt(input: Parameters<WorkflowIsolationStore["recordTerminalResultReceipt"]>[0]): ReturnType<WorkflowIsolationStore["recordTerminalResultReceipt"]> {
+    return this.results.recordTerminalResultReceipt(input);
+  }
+  getTerminalResultReceipt(receiptId: string): ReturnType<WorkflowIsolationStore["getTerminalResultReceipt"]> {
+    return this.results.getTerminalResultReceipt(receiptId);
+  }
+  resumeTerminalResultStep(input: Parameters<WorkflowIsolationStore["resumeTerminalResultStep"]>[0]): ReturnType<WorkflowIsolationStore["resumeTerminalResultStep"]> {
+    return this.results.resumeTerminalResultStep(input);
+  }
 
   createIntegrationRound(input: Parameters<WorkflowIsolationStore["createIntegrationRound"]>[0]): WorkflowIsolationMutationResult<WorkflowIntegrationRound> {
     return this.transaction(() => {

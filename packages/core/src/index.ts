@@ -152,6 +152,7 @@ export * from "./workflow-step-start-owner.js";
 export * from "./workflow-step-admission.js";
 export * from "./workflow-safety-plan.js";
 export * from "./workflow-isolation-types.js";
+export * from "./workflow-isolation-results-types.js";
 export * from "./workflow-isolation.js";
 export { createSqliteWorkflowIsolationStore } from "./storage/sqlite/workflow-isolation-store.js";
 export * from "./workflow-pre-gate.js";

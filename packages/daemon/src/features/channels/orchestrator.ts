@@ -39,6 +39,7 @@ import {
 } from "./agent-context-consistency.js";
 import { ensureDeterministicWorkflowSelectorDecision } from "./workflow-selector.js";
 import { verifyWorkflowStepExecutionOperations } from "./workflow-operation-evidence.js";
+import { reconcileWorkflowIsolatedResults, workflowIsolatedResultBlocker } from "./workflow-isolated-result.js";
 import { finalizeDelegatedWorkflowStepFromCanonicalState } from "./workflow-step-finalizer.js";
 import { preserveMarkdownLayout } from "./markdown-text.js";
 import { reconcileWorkflowFromCanonicalState } from "./workflow-reconciliation.js";
@@ -148,6 +149,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
   if (planModeBlocker) {
     throw new HttpError(409, "plan_mode_workflow_blocked", planModeBlocker);
   }
+  await reconcileWorkflowIsolatedResults(input.store, workflow.id);
   const reconciled = reconcileWorkflowStepRuns(input.store, workflow.id);
   if (reconciled.status === "completed") {
     return { status: "completed", workflow: reconciled.workflow };
@@ -700,6 +702,12 @@ export function finalizeOrchestratedWorkflowStepRun(
   const currentRun = store.getRun(run.id);
   if (!currentRun || !["succeeded", "failed", "cancelled"].includes(currentRun.status)) return step;
   run = currentRun;
+  const isolatedResultBlocker = run.status === "succeeded" ? workflowIsolatedResultBlocker(store, run, now) : undefined;
+  if (isolatedResultBlocker) {
+    applyWorkflowStepFailurePolicy({ store, workflow, step, policy: "block_for_user", actor: "system",
+      reason: isolatedResultBlocker, blocker: isolatedResultBlocker, now, taskId, runId: run.id });
+    return store.getChannelWorkflowStep(workflowStepId);
+  }
   if (workflow.metadata?.requiredParticipantManifest) {
     const canonicalRun = step.runId ? store.getRun(step.runId) : undefined;
     if (!canonicalRun || (canonicalRun.status !== "succeeded" && canonicalRun.status !== "failed" && canonicalRun.status !== "cancelled")) {
@@ -1146,7 +1154,9 @@ function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): Workflo
     }
     if (step.status === "running") {
       const now = new Date().toISOString();
-      const ownership = classifyWorkflowStepStartOwner(store, step, now);
+      const linkedRun = step.runId ? store.getRun(step.runId) : undefined;
+      const terminalRun = linkedRun && ["succeeded", "failed", "cancelled"].includes(linkedRun.status);
+      const ownership = classifyWorkflowStepStartOwner(store, step, now, { requireActiveLease: !terminalRun });
       if (ownership.status === "preparing") continue;
       if (ownership.status === "invalid") {
         const owner = step.metadata?.startOwner;
