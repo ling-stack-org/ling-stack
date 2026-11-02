@@ -24,6 +24,19 @@ test("core and daemon plans preserve full discovery exactly once with dynamic co
   }
 });
 
+test("split channel suites are discovered once with ordinary parallel workers and watchdogs", async () => {
+  const plan = await createTestPlan(["@ling-stack/daemon"]);
+  const suite = plan.suites.daemon;
+  for (const file of ["channel-discussion", "channel-intents", "channel-workflows", "channel-workspace"]) {
+    const path = `test/${file}.test.mjs`;
+    assert.equal(suite.shards.flatMap(bucket => bucket.files).filter(file => file === path).length, 1);
+    assert.ok(!testSuites.daemon.exclusive.includes(path));
+    assert.equal(testSuites.daemon.fileTimeouts[path], undefined);
+  }
+  assert.ok(!suite.files.some(file => file.includes("channel-workspace-fixture")));
+  assert.ok(testSuites.daemon.exclusive.includes("test/delegation-production-tool-surface.test.mjs"));
+});
+
 test("measured durations balance placement deterministically without changing coverage", () => {
   const files = ["test/a.test.mjs", "test/b.test.mjs", "test/c.test.mjs", "test/new.test.mjs"];
   const options = { timings: { [files[0]]: 100_000, [files[1]]: 90_000, [files[2]]: 10_000 } };

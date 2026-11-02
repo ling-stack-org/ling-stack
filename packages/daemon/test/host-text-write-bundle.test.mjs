@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { runInNewContext } from "node:vm";
+import { compileFunction, runInNewContext } from "node:vm";
 import test from "node:test";
 import { parse } from "acorn";
 import { ELECTRON_NODE_RESOURCE_PATHS, digestElectronNodeResource } from "../dist/runtime/sandbox/electron-node-resources.js";
@@ -49,10 +49,12 @@ async function packagingOptions(sourceMode) {
   const config = configs[0].value;
   const tsconfigRaw = runInNewContext(`(${inputCode.slice(config.start, config.end)})`);
   const emptyPlugin = { name: "host-write-bundle-mechanism-only", setup() {} };
-  return runInNewContext(`(${code.slice(argument.start, argument.end)})`, {
+  const bindings = {
     desktopRoot, gstack: { plugin: emptyPlugin }, definitions: [],
     sourceInputs: sourceMode ? { entryPoint: "unused", tsconfigRaw, plugin: emptyPlugin } : undefined,
-  });
+  };
+  // esbuild validates plugin filters against its own realm's RegExp constructor.
+  return compileFunction(`return (${code.slice(argument.start, argument.end)})`, Object.keys(bindings))(...Object.values(bindings));
 }
 
 for (const sourceMode of [false, true]) {

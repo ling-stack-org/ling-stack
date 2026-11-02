@@ -22,6 +22,7 @@ for (const code of ["stop_blocked", "stop_unconfirmed"]) {
     assert.equal(f.context.desktopRuntime, f.runtime);
     assert.equal(f.context.computerUse, f.computerUse);
     assert.equal(f.context.officeDriverRuntime, f.office);
+    assert.equal(f.context.backgroundRepository, f.background);
   });
 }
 
@@ -35,9 +36,13 @@ test("main does not destroy any owned transport before Host preflight resolves",
   release();
   await stopping;
   assert.ok(f.events.indexOf("computer-use") > f.events.indexOf("host-preflight"));
+  assert.ok(f.events.indexOf("background-ipc") > f.events.indexOf("host-preflight"));
+  assert.ok(f.events.indexOf("background") > f.events.indexOf("background-ipc"));
   assert.ok(f.events.indexOf("runtime-cleanup") > f.events.indexOf("office"));
   assert.equal(f.context.mainWindow, undefined);
   assert.equal(f.context.desktopRuntime, undefined);
+  assert.equal(f.context.unregisterBackgroundIpc, undefined);
+  assert.equal(f.context.backgroundRepository, undefined);
 });
 
 function fixture(prepare) {
@@ -48,17 +53,19 @@ function fixture(prepare) {
     async shutdown() { events.push("runtime-cleanup"); } };
   const computerUse = { async dispose() { events.push("computer-use"); } };
   const office = { async stop() { events.push("office"); } };
+  const background = { dispose() { events.push("background"); } };
   const context = vm.createContext({
     mainWindowOpenCoordinator: { stopAcceptingAndWait() { events.push("stop-opens"); return Promise.resolve(); } },
     mainWindow: window, loadingMainWindow: undefined, desktopRuntime: runtime, computerUse,
     officeDriverRuntime: office, hostCapabilityRuntime: { async stop() { events.push("host-capabilities"); } },
     unregisterLockedControlPreview() { events.push("preview-ipc"); },
     windowsProviderSmokeCommandReader: undefined, macosTccRevocationCommandReader: undefined,
+    unregisterBackgroundIpc() { events.push("background-ipc"); }, backgroundRepository: background,
     unregisterThemePackageIpc() { events.push("theme-ipc"); },
     humanEvaluation: { async dispose() { events.push("human-evaluation"); } },
     unregisterIpc() { events.push("ipc"); }, captureSmokeTargetWindows: [],
     realCaptureSmokeDescriptorRegistry: undefined, realCaptureSmokeProjectionClient: undefined,
   });
   const shutdown = vm.runInContext(`${compiled.code}\nshutdown;`, context);
-  return { context, shutdown, events, window, runtime, computerUse, office };
+  return { context, shutdown, events, window, runtime, computerUse, office, background };
 }

@@ -110,6 +110,9 @@ only when its description is complete and its claimed validation has actually ru
 
 ## Validation
 
+See [CI maintenance](docs/maintenance/ci.md) for the current workflow, test
+execution and dependency-patch maintenance guides.
+
 For documentation-only changes:
 
 ```bash

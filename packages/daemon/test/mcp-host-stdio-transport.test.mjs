@@ -14,11 +14,98 @@ import { createUnifiedExecFixture } from "./support/unified-exec-fixture.mjs";
 const dist = process.env.LING_MCP_STDIO_TEST_DIST ?? resolve(dirname(fileURLToPath(import.meta.url)), "../dist");
 const load = path => import(pathToFileURL(join(dist, path)).href);
 const { createHostMcpStdioTransport } = await load("features/mcp/host-stdio-transport.js");
+const { BoundedMcpStdioReadBuffer } = await load("features/mcp/host-stdio-read-buffer.js");
 const { reserveHostMcpOperation } = await load("features/mcp/host-operation.js");
 const { AttemptHostOperationTracker } = await load("runtime/attempt-host-operation-tracker.js");
 const MIB = 1024 * 1024;
 const LARGE_STDIO_BOUNDARY_TIMEOUT_MS = 45_000;
 const required = { kind: "user_input_required", requestId: "stdio-pause", requestVersion: 1 };
+
+test("fragmented stdout framing copies and scans a linear byte budget", t => {
+  const size = 8 * MIB;
+  const message = { jsonrpc: "2.0", method: "fixture/fragmented", params: { payload: "" } };
+  message.params.payload = "x".repeat(size - Buffer.byteLength(JSON.stringify(message) + "\n"));
+  const bytes = Buffer.from(JSON.stringify(message) + "\n");
+  const reader = new BoundedMcpStdioReadBuffer({ maxBufferSize: 64 * MIB });
+  const concat = Buffer.concat, copy = Buffer.prototype.copy, indexOf = Buffer.prototype.indexOf;
+  let copiedBytes = 0, scannedBytes = 0, received;
+  Buffer.concat = function(chunks, length) {
+    copiedBytes += length ?? chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    return Reflect.apply(concat, this, [chunks, length]);
+  };
+  Buffer.prototype.copy = function(...args) {
+    const copied = Reflect.apply(copy, this, args);
+    copiedBytes += copied;
+    return copied;
+  };
+  Buffer.prototype.indexOf = function(value, offset = 0, encoding) {
+    scannedBytes += this.length - offset;
+    return Reflect.apply(indexOf, this, [value, offset, encoding]);
+  };
+  try {
+    for (let offset = 0; offset < bytes.length; offset += 16 * 1024) {
+      reader.append(bytes.subarray(offset, offset + 16 * 1024));
+      const next = reader.readMessage();
+      if (next !== null) {
+        assert.equal(received, undefined);
+        received = next;
+      }
+    }
+    assert.equal(reader.readMessage(), null);
+  } finally {
+    Buffer.concat = concat;
+    Buffer.prototype.copy = copy;
+    Buffer.prototype.indexOf = indexOf;
+    reader.clear();
+  }
+  assert.equal(received.params.payload.length, message.params.payload.length);
+  t.diagnostic(JSON.stringify({ frameBytes: bytes.length, chunkBytes: 16 * 1024, copiedBytes, scannedBytes }));
+  assert.ok(copiedBytes <= 3 * bytes.length, "fragmented input must not repeatedly copy the accumulated frame");
+  assert.ok(scannedBytes <= bytes.length, "newline search must not rescan previously received bytes");
+});
+
+test("bounded stdout framing preserves split UTF-8, CRLF, multiple messages and partial-tail compaction", () => {
+  const reader = new BoundedMcpStdioReadBuffer({ maxBufferSize: 256 });
+  const first = { jsonrpc: "2.0", method: "fixture/first", params: { text: "x".repeat(128) } };
+  const second = { jsonrpc: "2.0", method: "fixture/chinese", params: { text: "中文" } };
+  const firstBytes = Buffer.from(JSON.stringify(first) + "\n");
+  const secondBytes = Buffer.from(JSON.stringify(second) + "\r\n");
+  const split = secondBytes.indexOf(Buffer.from("中")) + 1;
+  reader.append(Buffer.concat([firstBytes, secondBytes.subarray(0, 8)]));
+  assert.deepEqual(reader.readMessage(), first);
+  assert.equal(reader.readMessage(), null);
+  reader.append(secondBytes.subarray(8, split));
+  assert.equal(reader.readMessage(), null);
+  reader.append(secondBytes.subarray(split));
+  assert.deepEqual(reader.readMessage(), second);
+  assert.equal(reader.readMessage(), null);
+  reader.append(Buffer.concat([secondBytes, secondBytes]));
+  assert.deepEqual(reader.readMessage(), second);
+  assert.deepEqual(reader.readMessage(), second);
+  assert.equal(reader.readMessage(), null);
+});
+
+test("bounded stdout framing clears partial input on overflow and disposal without changing its byte limit", () => {
+  const maxBufferSize = 256;
+  const reader = new BoundedMcpStdioReadBuffer({ maxBufferSize });
+  const message = { jsonrpc: "2.0", method: "fixture/boundary", params: { text: "" } };
+  message.params.text = "x".repeat(maxBufferSize - Buffer.byteLength(JSON.stringify(message) + "\n"));
+  const bytes = Buffer.from(JSON.stringify(message) + "\n");
+  reader.append(bytes.subarray(0, -1));
+  assert.equal(reader.readMessage(), null);
+  reader.append(bytes.subarray(-1));
+  assert.deepEqual(reader.readMessage(), message);
+  reader.append(bytes.subarray(0, -1));
+  assert.equal(reader.readMessage(), null);
+  assert.throws(() => reader.append(Buffer.from("xx")));
+  assert.equal(reader.readMessage(), null);
+  reader.append(bytes.subarray(0, 20));
+  reader.clear();
+  assert.equal(reader.readMessage(), null);
+  reader.append(bytes);
+  assert.deepEqual(reader.readMessage(), message);
+  assert.equal(reader.readMessage(), null);
+});
 
 const serverScript = `
 const fs = require('node:fs');
@@ -372,8 +459,15 @@ test("required closure within one multi-frame chunk suppresses the later message
   f.finish(); assertUnknown(f);
 });
 
-for (const invalid of ["not json\n", '{"jsonrpc":"2.0","method":7}\n']) {
-  test(`fatal framing seals callbacks and closes original process (${invalid.startsWith("not") ? "JSON" : "JSON-RPC"})`, { timeout: 10_000 }, async t => {
+for (const [kind, invalid] of [
+  ["JSON", "not json\n"],
+  ["JSON-RPC", '{"jsonrpc":"2.0","method":7}\n'],
+  ["non-protocol JSON", '{"not":"JSON-RPC"}\n'],
+  ["blank", "\n"],
+  ["CRLF-only", "\r\n"],
+  ["whitespace", " \t\n"],
+]) {
+  test(`fatal framing seals callbacks and closes original process (${kind})`, { timeout: 10_000 }, async t => {
     const f = await fixture(t, { script: `process.stdout.write(${JSON.stringify(invalid)});process.stdin.resume();` });
     await f.transport.start(); await until(() => f.errors.length === 1);
     await f.transport.close();
