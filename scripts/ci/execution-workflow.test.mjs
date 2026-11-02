@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
 const labelWorkflow = readFileSync(new URL("../../.github/workflows/full-ci-label.yml", import.meta.url), "utf8");
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
+const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
 const platformJobs = ["daemon-tests", "daemon-linux-contracts", "restricted-command-macos"];
 
 /** Read a top-level job without matching similarly named steps. */
@@ -46,7 +46,7 @@ test("PR transitions and full-ci labels trigger validation while full regression
 });
 
 test("every expensive job requires complete execution and retains its scope selection", () => {
-  for (const id of ["dependency-policy", "build", "typecheck", "unit-tests", ...platformJobs]) {
+  for (const id of ["dependency-policy", "framework-assurance", "build", "typecheck", "unit-tests", ...platformJobs]) {
     const source = jobSource(id);
     assert.match(source, /^    if: .*needs\.scope\.outputs\.execution-tier == 'complete'/mu, id);
     assert.match(source, platformJobs.includes(id) ? /needs\.scope\.outputs\.daemon == 'true'/u : /needs\.scope\.outputs\.mode != 'docs'/u, id);
@@ -87,7 +87,7 @@ test("long-running jobs respond to cancellation while quality still reports inco
   assert.match(cancelled.stdout, /UNIT=cancelled.*DAEMON=cancelled/u);
 });
 
-test("workflow gate requires all nine lanes and refuses incomplete Draft validation", () => {
+test("workflow gate requires all ten lanes and refuses incomplete Draft validation", () => {
   const quality = jobSource("quality");
   assert.match(quality, /^    if: always\(\)/mu);
   assert.match(quality, /EXECUTION_TIER: \$\{\{ needs\.scope\.outputs\.execution-tier \}\}/u);

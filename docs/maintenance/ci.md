@@ -34,7 +34,9 @@ Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，�
 
 整合 `main@328bb10a`（#515）后，类型检查、单元测试、Daemon 及 Linux 契约／macOS helper 任务条件使用 `!cancelled()`，使手动取消或新推送的自动取消能终止长任务。只使用 `always()` 时 GitHub 重新计算条件仍为真，任务可能继续运行；汇总门保留 `always()`，明确拒绝取消或未完成的验证。
 
-所有任务固定 Node `22.22.1`。构建只执行一次 `build:ci` 拓扑构建，短期 `dist` artifact 供类型检查、单元测试和 Daemon 分片复用；`test:ci` 不隐式重建依赖。本地通过不替代 GitHub 对当前待检提交的干净 runner 验证，完整 CI 成功也不替代 packaged 产品验收。
+所有任务固定 Node `22.22.1`。产品测试图只执行一次 `build:ci` 拓扑构建，短期 `dist` artifact 供类型检查、单元测试和 Daemon 分片复用；`test:ci` 不隐式重建依赖。框架 assurance 是独立重建例外，不能用该 artifact 代替实际 producer/tarball 消费证据。本地通过不替代 GitHub 对当前待检提交的干净 runner 验证，完整 CI 成功也不替代 packaged 产品验收。
+
+本分支新增 `framework-assurance`：完整非文档档位在 Ubuntu / Node `22.22.1`、完整 Git 历史与锁定依赖下运行离线测试、三任务九控制校准及真实 SDK consumer；零模型、无 secrets、不启动 daemon。Consumer 串行重建 localization/contracts/plugin-sdk/api-client、实际 pack 并仓外离线安装，不使用 `ci-dist`。`quality` 要求 `ASSURANCE=success`，失败、取消、缺失或意外跳过均拒绝；Draft/full-ci 规则不变。报告和直属日志上传为 `ci-framework-assurance` 并保留七天，不上传 consumer/toolchain 树或 tarball。当前已通过本地 macOS/Node 22 验证，托管 Linux 首次结果仍须单独确认；见[补强实现记录](../design/ling-framework-complementary-implementation-plan.md#9-交付记录与完成判定)。
 
 Linux 构建任务在选中 CLI 时运行真实 daemon 生命周期和新工作区 doctor 检查；未配置 provider 的新工作区预期返回诊断退出码 4。在选中 Web 时，使用生产构建的 Vite preview 运行六项 Playwright 回归，覆盖权限、内置技能元数据和中文角色。浏览器测试使用模拟 daemon 数据，不包含真实模型调用。当前运行的截图与测试结果上传为 `ci-linux-source-web-smoke` artifact，保留七天。
 

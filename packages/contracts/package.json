@@ -4,6 +4,10 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "fixtures/channel-conversation-continuity-v2.json"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

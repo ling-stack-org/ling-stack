@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { assertCiResults, selectExecutionTier } from "./execution-policy.mjs";
 
 const script = fileURLToPath(new URL("./execution-policy.mjs", import.meta.url));
-const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
+const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
 
 function prEvent(action, { draft = false, labels = [], label } = {}) {
   return { action, pull_request: { draft, labels: labels.map((name) => ({ name })) }, ...(label === undefined ? {} : { label: { name: label } }) };
@@ -105,7 +105,7 @@ test("documentation scope requires scope and common but permits every product la
 test("Web-only scope can skip platform lanes but requires every Linux product lane", () => {
   const platformSkips = results({ DAEMON: "skipped", LINUX_CONTRACT: "skipped", MACOS_NATIVE: "skipped" });
   assert.equal(quality({ mode: "affected", daemon: false, results: platformSkips }), true);
-  for (const lane of ["DEPENDENCY", "BUILD", "TYPECHECK", "UNIT"]) {
+  for (const lane of ["DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT"]) {
     assert.throws(() => quality({ mode: "affected", daemon: false, results: { ...platformSkips, [lane]: "skipped" } }), new RegExp(`${lane}=skipped`, "u"));
   }
 });

@@ -1,0 +1,1 @@
+Inspect the frozen containsJson implementation. Identify its module and symbol, and state whether array containment is indexed-prefix or unordered-set matching. Do not edit files or call a Provider.
