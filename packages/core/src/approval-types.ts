@@ -21,6 +21,7 @@ export type ApprovalActionType =
   | "credential_change"
   | "provider_change"
   | "workflow_step"
+  | "workflow_merge"
   | "mcp_tool_call"
   | "host_capability"
   | "runtime_permission_request";
@@ -205,6 +206,7 @@ export type ApprovalPayload =
       readonly environment?: string;
     }
   | MediaCostApprovalPayload
+  | import("./workflow-merge-types.js").WorkflowMergeApprovalPayloadV1
   | {
       readonly type: "provider_change";
       readonly providerPresetId: string;
@@ -321,6 +323,7 @@ export type ResolveApprovalBySystemReviewerResult =
         | "approval_invalid_decision"
         | "approval_not_found"
         | "approval_not_pending"
+        | "approval_system_reviewer_disallowed"
         | "approval_identity_changed"
         | "approval_effect_changed"
         | "approval_policy_changed"
@@ -359,6 +362,7 @@ export const approvalActionTypes: readonly ApprovalActionType[] = [
   "credential_change",
   "provider_change",
   "workflow_step",
+  "workflow_merge",
   "mcp_tool_call",
   "host_capability",
   "runtime_permission_request",

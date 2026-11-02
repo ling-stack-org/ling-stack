@@ -18,7 +18,7 @@ export const nativeGit = { skip: !["darwin", "linux"].includes(process.platform)
 export const now = () => new Date().toISOString();
 
 /** One real isolated branch, Host completion and sealed result; no forged coordinator authority. */
-export async function workflowIntegrationCoordinatorFixture(t, { stage = "succeeded" } = {}) {
+export async function workflowIntegrationCoordinatorFixture(t, { stage = "succeeded", mode = "candidate_only" } = {}) {
   assert.ok(["running", "terminal", "captured", "succeeded"].includes(stage));
   let drain;
   t.after(async () => { await drain?.(); });
@@ -56,7 +56,7 @@ export async function workflowIntegrationCoordinatorFixture(t, { stage = "succee
     cleanStateDigest: workflowGitRepositoryBasisDigest(f.repository) };
   const { executionRoot, worktreeId, branchRef } = f.integrationScope;
   // These fixed Host pins must enter the immutable inputs before the round is created.
-  f.inputs = { ...f.inputs, repositoryIdentity: { commonDir: f.repository.commonDir,
+  f.inputs = { ...f.inputs, mode, repositoryIdentity: { commonDir: f.repository.commonDir,
     objectFormat: f.repository.head.length === 40 ? "sha1" : "sha256" }, target, baseCommit: f.repository.head,
     integration: { executionRoot, worktreeId, branchRef }, safetyPins,
     safetyFingerprint: workflowIsolationSafetyFingerprint(safetyPins),

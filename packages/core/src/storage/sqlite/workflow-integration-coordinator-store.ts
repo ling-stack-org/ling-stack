@@ -19,6 +19,7 @@ import { SqliteWorkflowIsolationResultsStore } from "./workflow-isolation-result
 import { createSqliteWorkflowIsolationStore } from "./workflow-isolation-store.js";
 import { readWorkflowIntegrationCompletionBlocker, registerWorkflowIntegrationCompletionReader,
   workflowCandidateVerificationMatches } from "./workflow-integration-completion.js";
+import { registerSqliteWorkflowMergeApprovalStore, type WorkflowMergeApprovalPorts } from "./workflow-merge-approval-store.js";
 
 type Authority = Extract<WorkflowIntegrationCoordinatorAuthority, { readonly status: "authorized" }>;
 type Rejection = { readonly status: "invalid" | "stale" | "conflict"; readonly code: string };
@@ -41,30 +42,43 @@ export function createSqliteWorkflowIntegrationCoordinatorStore(store: RunStore)
 
 /** Host composition only. Neither a SQLite handle nor a terminal writer is added to RunStore. */
 export function registerSqliteWorkflowIntegrationCoordinatorStore(store: RunStore, context: SqliteStoreContext,
-  ports: WorkflowIsolationTerminalCapturePorts, canonicalWorkspaceRoot: string): void {
+  ports: WorkflowIsolationTerminalCapturePorts & WorkflowMergeApprovalPorts, canonicalWorkspaceRoot: string): void {
   if (adapters.has(store)) throw new Error("workflow_integration.store_already_registered");
   const adapter = new SqliteWorkflowIntegrationCoordinatorStore(context, ports, canonicalWorkspaceRoot,
     createSqliteWorkflowIsolationStore(store));
   adapters.set(store, adapter);
+  adapter.registerMergeApprovalStore(store);
   registerWorkflowIntegrationCompletionReader(context.database, (workflowId, now) => adapter.completionBlocker(workflowId, now),
     workflowId => adapter.readPublicationBlocker(workflowId));
 }
 
 class SqliteWorkflowIntegrationCoordinatorStore implements WorkflowIntegrationCoordinatorStore {
   private readonly results: SqliteWorkflowIsolationResultsStore;
-  constructor(private readonly context: SqliteStoreContext, private readonly ports: WorkflowIsolationTerminalCapturePorts,
+  constructor(private readonly context: SqliteStoreContext, private readonly ports: WorkflowIsolationTerminalCapturePorts & WorkflowMergeApprovalPorts,
     private readonly root: string, private readonly isolation: WorkflowIsolationStore) {
     this.results = new SqliteWorkflowIsolationResultsStore(context, ports, isolation, root);
   }
 
   assertAuthority(input: Parameters<WorkflowIntegrationCoordinatorStore["assertAuthority"]>[0]): WorkflowIntegrationCoordinatorAuthority {
-    return readSqliteSnapshot(this.context.database, () => {
-      try { return this.authority(input.roundId, input.generation, input.now); }
-      catch (error) {
-        if (error instanceof Veto) return { status: error.result.status === "conflict" ? "blocked" : error.result.status, code: error.result.code };
-        return { status: "blocked", code: "workflow_integration.authority_evidence_unverified" };
-      }
+    return readSqliteSnapshot(this.context.database, () => this.readAuthority(input.roundId, input.generation, input.now));
+  }
+
+  registerMergeApprovalStore(store: RunStore): void {
+    registerSqliteWorkflowMergeApprovalStore(store, this.context, this.isolation, this.ports, {
+      authority: (roundId, generation, now, excludedMergeApprovalId) => this.readAuthority(roundId, generation, now, excludedMergeApprovalId),
+      candidateVerified: authority => {
+        try { this.verifyRetainedCandidate(authority); return true; }
+        catch { return false; }
+      },
     });
+  }
+
+  private readAuthority(roundId: string, generation: number, now: string, excludedMergeApprovalId?: string): WorkflowIntegrationCoordinatorAuthority {
+    try { return this.authority(roundId, generation, now, excludedMergeApprovalId); }
+    catch (error) {
+      if (error instanceof Veto) return { status: error.result.status === "conflict" ? "blocked" : error.result.status, code: error.result.code };
+      return { status: "blocked", code: "workflow_integration.authority_evidence_unverified" };
+    }
   }
 
   recordIntent(input: RecordWorkflowIntegrationCoordinatorIntentInput): WorkflowIsolationMutationResult<WorkflowIntegrationCoordinatorEffect> {
@@ -299,18 +313,12 @@ class SqliteWorkflowIntegrationCoordinatorStore implements WorkflowIntegrationCo
       const authority = this.authority(String(row.round_id), Number(row.current_generation), now), { round } = authority;
       if (round.inputs.mode !== "candidate_only") return "workflow_isolation.merge_permit_not_implemented";
       if (round.phase !== "awaiting_approval" || !round.candidate || round.openIntentId) return "workflow_isolation.completion_candidate_unverified";
-      const effects = this.effects(round.roundId, round.generation), receipts = this.receipts(round.roundId, round.generation);
-      if (effects.some(effect => effect.status !== "confirmed")) return "workflow_isolation.completion_effect_unconfirmed";
-      const final = effects.find(effect => effect.effectKey === `ref:${this.refPrefix(round)}/candidate`);
-      if (!final) return "workflow_isolation.completion_candidate_unverified";
-      const packet = this.effectBody(final).packetJson;
-      if (typeof packet !== "string") return "workflow_isolation.completion_candidate_unverified";
-      this.verifyCandidate(authority, round.candidate, undefined, effects, receipts, JSON.parse(packet));
+      this.verifyRetainedCandidate(authority);
     }
     return undefined;
   }
 
-  private authority(roundId: string, generation: number, now: string): Authority {
+  private authority(roundId: string, generation: number, now: string, excludedMergeApprovalId?: string): Authority {
     if (!identity(roundId) || !Number.isSafeInteger(generation) || generation < 1 || !time(now)) veto("invalid", "authority_input_invalid");
     const round = this.isolation.getIntegrationRound(roundId);
     if (!round || round.generation !== generation) veto("stale", "generation_changed");
@@ -356,12 +364,12 @@ class SqliteWorkflowIntegrationCoordinatorStore implements WorkflowIntegrationCo
     if (round.writerBindingId && round.writerBindingId !== writer.bindingId || effects.some(effect => !same(effect.writer, writer))) veto("stale", "writer_changed");
     if (this.context.database.prepare(`SELECT 1 FROM channel_workflow_steps WHERE workflow_id=? AND (status='waiting_for_approval'
       OR json_extract(metadata_json,'$.activeGateStage') IS NOT NULL) LIMIT 1`).get(workflow.id)
-      || this.context.database.prepare(`SELECT 1 FROM approval_requests approval WHERE approval.status='pending' AND (
+      || this.context.database.prepare(`SELECT 1 FROM approval_requests approval WHERE approval.status='pending' AND approval.id<>? AND (
         EXISTS (SELECT 1 FROM channel_workflow_steps step WHERE step.workflow_id=? AND (step.id=approval.workflow_step_id
           OR step.task_id=approval.task_id OR step.run_id=approval.run_id OR EXISTS (SELECT 1 FROM run_sessions run
             WHERE run.workflow_step_id=step.id AND (run.id=approval.run_id OR run.task_id=approval.task_id))))
         OR CASE WHEN json_valid(approval.payload_json) THEN json_extract(approval.payload_json,'$.workflowId') END=?) LIMIT 1`)
-        .get(workflow.id, workflow.id)) veto("conflict", "approval_gate_active");
+        .get(excludedMergeApprovalId ?? "", workflow.id, workflow.id)) veto("conflict", "approval_gate_active");
     const authorityDigest = digest({ roundId, generation, inputsDigest: round.inputsDigest, writer, participants }, "wica1_");
     if (effects.some(effect => effect.authorityDigest !== authorityDigest)
       || receipts.some(receipt => !effects.some(effect => effect.intentId === receipt.intentId))) veto("stale", "authority_changed");
@@ -514,6 +522,17 @@ class SqliteWorkflowIntegrationCoordinatorStore implements WorkflowIntegrationCo
       return workflowCandidateVerificationMatches(artifact.body.evidence, { roundId: round.roundId, generation: round.generation,
         inputs: round.inputs, inputsDigest: round.inputsDigest, candidate, writer: authority.writer });
     })) veto("invalid", "candidate_verification_receipt_missing");
+  }
+
+  private verifyRetainedCandidate(authority: Authority): void {
+    const { round } = authority;
+    const effects = this.effects(round.roundId, round.generation), receipts = this.receipts(round.roundId, round.generation);
+    if (!round.candidate || round.openIntentId || effects.some(effect => effect.status !== "confirmed"))
+      veto("conflict", "candidate_effects_unconfirmed");
+    const final = effects.find(effect => effect.effectKey === `ref:${this.refPrefix(round)}/candidate`);
+    const packet = final && this.effectBody(final).packetJson;
+    if (typeof packet !== "string") veto("invalid", "candidate_packet_missing");
+    this.verifyCandidate(authority, round.candidate, undefined, effects, receipts, JSON.parse(packet));
   }
 
   private selectedParticipants(authority: Authority): readonly WorkflowIntegrationCoordinatorParticipant[] {

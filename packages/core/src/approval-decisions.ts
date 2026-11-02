@@ -16,6 +16,12 @@ export function assertApprovalDecisionAvailable(
 ): asserts decision is Exclude<ApprovalDecisionKind, "deny"> {
   const offered = approval.availableDecisions ?? ["approve_once", "deny"];
   if (!isApprovalGrantDecisionKind(decision) || !offered.includes(decision)) throw new ApprovalDecisionUnavailableError();
+  if (approval.actionType === "workflow_merge" || approval.payload.type === "workflow_merge") {
+    if (approval.actionType !== "workflow_merge" || approval.payload.type !== "workflow_merge" || decision !== "approve_once") {
+      throw new ApprovalDecisionUnavailableError();
+    }
+    return;
+  }
   const nativeScope = approval.payload.type === "native_permission_request";
   if (nativeScope || decision === "approve_permission_scope") {
     if (decision !== "approve_permission_scope" || approval.actionType !== "runtime_permission_request"

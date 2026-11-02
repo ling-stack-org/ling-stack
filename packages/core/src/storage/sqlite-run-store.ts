@@ -777,6 +777,7 @@ import { applyWorkflowStepAdmissionMigration } from "./sqlite/workflow-step-admi
 import { applyWorkflowIsolationMigration } from "./sqlite/workflow-isolation-migration.js";
 import { applyWorkflowIsolationResultsMigration } from "./sqlite/workflow-isolation-results-migration.js";
 import { applyWorkflowIntegrationCoordinatorMigration } from "./sqlite/workflow-integration-coordinator-migration.js";
+import { applyWorkflowMergeApprovalMigration } from "./sqlite/workflow-merge-approval-migration.js";
 import { registerSqliteWorkflowIsolationStore } from "./sqlite/workflow-isolation-store.js";
 import { registerSqliteWorkflowIntegrationCoordinatorStore } from "./sqlite/workflow-integration-coordinator-store.js";
 import { SqliteChannelWorkflowPreApprovalStore } from "./sqlite/channel-workflow-pre-approval-store.js";
@@ -1901,6 +1902,11 @@ export class SqliteRunStore implements RunStore {
           recordMigration: (version, name) => this.recordMigration(version, name),
         });
         applyWorkflowIntegrationCoordinatorMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
+        applyWorkflowMergeApprovalMigration({
           database: this.database,
           hasMigration: (version) => this.hasMigration(version),
           recordMigration: (version, name) => this.recordMigration(version, name),

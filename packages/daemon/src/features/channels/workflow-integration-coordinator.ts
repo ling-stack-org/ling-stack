@@ -33,7 +33,7 @@ export async function reconcileWorkflowIntegrations(store: RunStore, workflowId:
   return results;
 }
 
-/** Explicit Host candidate-only coordinator. No model dispatch, merge approval, target apply or cleanup. */
+/** Host candidate coordinator. No model dispatch, merge approval, target apply or cleanup. */
 export async function coordinateWorkflowIntegration(input: { readonly store: RunStore; readonly roundId: string;
   readonly now?: () => string }): Promise<WorkflowIntegrationCoordinationResult> {
   const initial = createSqliteWorkflowIsolationStore(input.store).getIntegrationRound(input.roundId);
@@ -55,7 +55,6 @@ async function coordinateWorkflowIntegrationInner(input: Parameters<typeof coord
     }
     const authority = coordinator.assertAuthority({ roundId: initial.roundId, generation: initial.generation, now: now() });
     if (authority.status !== "authorized") throw new WorkflowIntegrationCoordinatorError(authority.code);
-    requireIntegration(initial.inputs.mode === "candidate_only", "workflow_isolation.merge_permit_not_implemented");
     const branchResults: WorkflowBranchResult[] = authority.participants.map(({ binding, resultIntent }) => {
       const packet = readIntegrationArtifact(store, resultIntent.packetArtifactId, binding.runId) as unknown as WorkflowBranchResultPacketV1;
       requireIntegration(workflowGitPacketDigest(packet) === resultIntent.packetDigest, "workflow_integration.branch_packet_changed");

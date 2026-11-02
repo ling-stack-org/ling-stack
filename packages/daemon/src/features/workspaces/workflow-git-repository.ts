@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, realpath, rmdir, statfs, unlink } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { workflowMergeTargetSnapshotDigest } from "@ling-stack/core";
 import { workflowGit } from "./managed-worktrees.js";
 
 export class WorkflowGitError extends Error {
@@ -46,12 +47,7 @@ export interface WorkflowGitWorktreeReceipt {
 
 /** Target identity frozen before approval, not proof of OS isolation or permission to apply. */
 export function workflowGitRepositoryBasisDigest(repository: WorkflowGitRepository): string {
-  return `wgr1_${createHash("sha256").update(JSON.stringify({
-    root: repository.root, commonDir: repository.commonDir, gitDir: repository.gitDir,
-    head: repository.head, branchRef: repository.branchRef, configurationDigest: repository.configurationDigest,
-    rootDevice: repository.rootDevice, rootInode: repository.rootInode,
-    commonDevice: repository.commonDevice, commonInode: repository.commonInode, dirty: repository.dirty,
-  })).digest("hex")}`;
+  return workflowMergeTargetSnapshotDigest(repository);
 }
 
 const oid = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;

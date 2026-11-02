@@ -344,7 +344,7 @@ export function syncWorkflowApprovalDecision(
   approval: ApprovalRequest,
   now = new Date().toISOString(),
 ): WorkflowApprovalDecisionSyncResult {
-  if (!approval.workflowStepId) {
+  if (!approval.workflowStepId || approval.actionType === "workflow_merge" || approval.payload.type === "workflow_merge") {
     return { status: "not_workflow_approval" };
   }
   const step = store.getChannelWorkflowStep(approval.workflowStepId);

@@ -47,8 +47,11 @@ P2 当前边界：
   Host 静态校验、持久 coordinator/completion barrier 与 startup/cancel/drain 已接入并通过
   本地回归。Core journal/migration 72 项、daemon Git/lifecycle/result 64 项、publication/recovery
   30 项通过；report 最终事务重新核验 retained evidence，移除 step pin 不绕过持久 round。
-- P2-D 的 clean-target fast-forward 机制已有实现和故障回归，但尚无 merge approval/permit
-  接线，不可用于向用户工作区自动应用结果。
+- P2-D 的 Host merge approval 基础已实现：冻结完整目标快照、候选与验证证据，审批只支持
+  本地用户单次批准或拒绝，request/checkpoint/round 关联原子落库；不允许自动 reviewer、
+  可复用规则或 permission-scope 授权。Core 审批/迁移及关联回归、daemon 真实 Git 审批
+  回归通过。clean-target fast-forward 机制已有实现，但 permit、实际 apply 与恢复接线
+  仍未完成；普通审批同意不代表已合入工作区。
 - 内部 isolation planner 保持 `candidate_only`；普通 workflow 写并发仍关闭。静态校验
   明确记录 `projectTestsRun: false`，不等于项目测试、审批或 apply 已完成。
 
@@ -294,6 +297,6 @@ shadow 只生成调度决定与诊断，不启动额外 Run/模型/工具/Git ef
 不再把功能 WIP 与已合并 PR 混为一谈。提交只含当前责任文件；未完成现场保留明确
 branch/owner，不跨数个大阶段堆积一个不可审查的 dirty worktree。
 
-下一步为收口 P2-C 的持久 coordinator、completion barrier 与重开/取消联合验证，
-随后接入 P2-D 的 merge approval、permit、apply reconciliation。P1 与已完成的 P2
+下一步接入 P2-D 的单次 permit、target apply journal 与只观察的 crash reconciliation。
+P2-C 的持久 coordinator/completion barrier 与 P2-D 审批基础已通过本地定向回归。P1 与已完成的 P2
 单元不重复从零实现；P3-P5、CI/merge 和真实客户端/平台验收仍未完成。
