@@ -26,7 +26,8 @@ export function createProtectedHostStageFixture(t, { registry: suppliedRegistry 
   const stagePath = join(root, "stage"); mkdirSync(stagePath, { mode: 0o700 });
   const store = createSqliteRunStore(cwd), arenas = [], stages = new Set();
   const pin = path => ({ path: realpathSync(path), sha256: createHash("sha256").update(readFileSync(path)).digest("hex") });
-  const config = { inputHelper: { ...pin("/usr/bin/true"), version: "stage-test-v1" }, executables: { node: pin(process.execPath) } };
+  const config = { inputHelper: { ...pin("/usr/bin/true"), version: "stage-test-v1" },
+    executables: { node: pin(process.execPath), true: pin("/usr/bin/true") } };
   const supervisor = new RuntimeSupervisor(resolveConfig({ defaultWorkspaceCwd: cwd, sandbox: { restrictedCommands: config } }));
   // The real native cases use the production Supervisor's enrolled Registry.
   // Generic wrapper tests may supply their separate, initially unbound Registry
