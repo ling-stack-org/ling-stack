@@ -61,6 +61,7 @@ export type ConversationProtocolAction =
   | "start_workflow"
   | "advance_workflow"
   | "start_isolated_workflow"
+  | "recover_workflow_conflict"
   | "cancel_workflow"
   | "retry_step"
   | "supersede_decision"

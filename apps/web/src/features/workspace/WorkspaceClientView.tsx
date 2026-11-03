@@ -149,6 +149,8 @@ import {
 import { useChannelProgressSummary } from "./ChannelProgressSummary.js";
 import { useChannelPlanHistory } from "./useChannelPlanHistory.js";
 import { useWorkflowIsolationEvidence } from "./useWorkflowIsolationEvidence.js";
+import { useWorkflowConflictRecovery } from "./useWorkflowConflictRecovery.js";
+import { WorkflowConflictRecoveryDialog } from "./WorkflowConflictRecoveryDialog.js";
 import {
   ChannelInspector,
   type ChannelInspectorMode,
@@ -798,6 +800,11 @@ export function WorkspaceClientView({
     workflows: selectedChannelWorkflows, steps: selectedChannelWorkflowSteps,
     refreshSignature: [channelCollaborationCardRefreshSignature, committedTerminalReportItemRevisionSignature].join("\n"),
     refreshToken: channelConversationRefreshToken,
+  });
+  const workflowConflictRecovery = useWorkflowConflictRecovery({
+    cwd, channelId: selectedChannelId, threadId: channelSessionThreadId, enabled: daemonHealthy === true,
+    workflows: selectedChannelWorkflows, observations: workflowIsolationEvidenceByWorkflowId,
+    onChanged: () => { onRefreshChannelProtocol(); onRefreshChannelMessages(); },
   });
   useEffect(() => {
     const workspaceCwd = cwd.trim();
@@ -1909,6 +1916,13 @@ export function WorkspaceClientView({
     item: ConversationTimelineProtocolEventItem | ConversationTimelineApprovalItem,
     action: ConversationProtocolAction,
   ): Promise<void> {
+    if (action === "recover_workflow_conflict") {
+      const workflowId = item.sourceRefs.find(ref => ref.kind === "workflow")?.id;
+      const round = item.sourceRefs.find(ref => ref.kind === "workflow_integration_round")?.id;
+      const separator = round?.lastIndexOf(":") ?? -1;
+      if (workflowId && round && separator > 0) await workflowConflictRecovery.open(workflowId, round.slice(0, separator), Number(round.slice(separator + 1)), item.revision);
+      return;
+    }
     const sourceRef = item.sourceRefs.find((ref) => ref.kind.startsWith("channel_"));
     const sourceKind = sourceRef?.kind.slice("channel_".length);
     const sourceId = sourceRef?.id;
@@ -3870,6 +3884,7 @@ export function WorkspaceClientView({
         </section>
       ) : null}
 
+      {workflowConflictRecovery.session ? <WorkflowConflictRecoveryDialog controller={workflowConflictRecovery} /> : null}
       <ChannelWorkspaceOverlays
         rename={channelRenameOpen ? {
           value: channelRenameName, currentName: selectedChannel?.name ?? "", saving: channelRenameSaving,

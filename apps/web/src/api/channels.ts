@@ -57,6 +57,8 @@ import type {
   ChannelCollaborationCardListResponse,
   WorkflowEvidenceResponse,
   WorkflowCollaborationCardResponse,
+  WorkflowConflictRecoveryRequest,
+  WorkflowConflictRecoveryResponse,
   CreateChannelBranchRequest,
   CreateChannelCollaborationProtocolDraftRequest,
   CreateChannelPlaybookCandidateFromClusterRequest,
@@ -546,6 +548,15 @@ export async function retryChannelWorkflowStep(cwd: string, workflowStepId: stri
 export async function orchestrateChannelWorkflow(cwd: string, workflowId: string,
   input: ChannelWorkflowOrchestrationRequest = {}): Promise<ChannelWorkflowOrchestrationResponse> {
   return daemonClient.orchestrateChannelWorkflow(cwd, workflowId, input);
+}
+
+export async function recoverChannelWorkflowConflict(cwd: string, workflowId: string,
+  input: WorkflowConflictRecoveryRequest): Promise<WorkflowConflictRecoveryResponse> {
+  return daemonClient.recoverChannelWorkflowConflict(cwd, workflowId, input);
+}
+
+export async function getChannelWorkflowConflictRecovery(cwd: string, workflowId: string): Promise<WorkflowConflictRecoveryResponse> {
+  return daemonClient.getChannelWorkflowConflictRecovery(cwd, workflowId);
 }
 
 export async function listChannelCollaborationCards(

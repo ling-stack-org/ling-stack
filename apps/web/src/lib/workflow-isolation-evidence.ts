@@ -93,6 +93,19 @@ function orderedRounds(rounds: readonly WorkflowIntegrationRoundEvidenceV1[]): W
   return [...rounds].sort((left, right) => left.generation - right.generation || left.roundId.localeCompare(right.roundId));
 }
 
+/** A repair affordance only; the Host must prove selection, drain and parent ownership. */
+export function workflowConflictRecoveryRound(workflow: ChannelWorkflow, observation?: WorkflowIsolationObservation): WorkflowIntegrationRoundEvidenceV1 | undefined {
+  const evidence = observation?.isolation;
+  if (observation?.status !== "loaded" || !evidence || evidence.schemaVersion !== 1 || evidence.status !== "available"
+    || evidence.rounds.length !== 1 || hasUnconfirmedEffects(evidence) || !["blocked", "running", "failed"].includes(workflow.status)) return;
+  const round = evidence.rounds[0];
+  if (round.phase !== "conflicted" || round.reasonCode !== "workflow_integration.text_conflict"
+    || round.mode !== "candidate_only" || round.maxConcurrentSteps !== 2 || round.candidate || round.approval
+    || !["not_started", "not_applied"].includes(round.application.status)
+    || round.effects.some(effect => effect.status !== "confirmed")) return;
+  return round;
+}
+
 export function isWorkflowIsolationTimelineItem(item: ConversationTimelineItem): boolean {
   return item.kind === "protocolEvent" && item.protocolKind === "workflow" && item.id.startsWith("workflow-isolation:");
 }
@@ -144,6 +157,7 @@ export function buildWorkflowIsolationPresentation(input: {
     const roundState = workflowIntegrationDisplayState(round);
     const canOpenApproval = !unavailable && !unconfirmed && round === latest && roundState === "pending_approval"
       && workflow.status !== "cancelled" && workflow.status !== "failed";
+    const canRecoverConflict = workflowConflictRecoveryRound(workflow, observation) === round;
     const codes = [round.reasonCode, round.approval?.reasonCode, round.application.reasonCode].filter((code): code is string => Boolean(code));
     const description = [
       t("Integration round {round} · generation {generation}", { round: round.roundId, generation: round.generation }),
@@ -163,6 +177,7 @@ export function buildWorkflowIsolationPresentation(input: {
       meta: unavailable ? t("Integration result unconfirmed") : t(roundStateKeys[roundState]),
       status: unavailable ? "waiting" : roundTimelineStatus(roundState), description,
       ...(canOpenApproval ? { approvalId: round.approval!.approvalId, availableActions: ["open_approval" as const] } : {}),
+      ...(canRecoverConflict ? { availableActions: ["recover_workflow_conflict" as const] } : {}),
     });
   }
   return {
