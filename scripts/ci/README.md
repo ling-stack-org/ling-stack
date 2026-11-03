@@ -71,8 +71,8 @@ a requested package via `--if-present`.
   such package is selected, excluding core and daemon because their complete
   discovery runs in their own entries.
 - Daemon: four `macos-26` shards, two serial file workers per shard. The Kimi Host
-  read/terminal, delegation production-tool-surface and channel-workspace files
-  run serially in an exclusive phase before other files on their assigned runner.
+  read/terminal and delegation production-tool-surface files run serially in an
+  exclusive phase before other files on their assigned runner.
 - Linux restricted-command contracts and real macOS native smoke remain separate
   mandatory lanes. No daemon files have been moved to Linux or removed.
 
@@ -83,12 +83,13 @@ Every file gets a private runtime home/workspace and a POSIX process group,
 and each file process runs with `--test-concurrency=1`.
 An assertion failure does not suppress later files. A file exceeding five
 minutes fails and its group is terminated; it is not retried or forced green.
-The two known high-cost daemon integration fixtures,
-`test/channel-workspace.test.mjs` and
-`test/recovery-discovery-fair-scan.test.mjs`, have an explicit ten-minute
+The known high-cost daemon integration fixture,
+`test/recovery-discovery-fair-scan.test.mjs`, has an explicit ten-minute
 watchdog because hosted macOS runs crossed five minutes while continuing to
 make progress. This exception is file-scoped; every other daemon file keeps
-the five-minute bound.
+the five-minute bound. Channel discussion, intent, workflow and workspace
+tests are separate files in the ordinary parallel queue, each with the default
+five-minute watchdog; their shared support fixture is not a test entrypoint.
 SIGTERM gets up to five seconds before SIGKILL. Cancellation stops new work.
 The core queue has a 20-minute deadline and daemon has a 30-minute deadline,
 leaving setup and artifact upload time within their unchanged job caps.
@@ -125,13 +126,16 @@ failed or cancelled test reports never produce a new baseline, and PRs cannot
 publish timing hints.
 
 Recovery-discovery fixtures retain the real 500-row paging boundary and SQLite
-persistence. Stale blockers use separate threads and turns so normal metadata
-rebuilds read one Run instead of repeatedly reading a growing shared-thread
-history. The prefix regression checks that read bound, ownership, frozen input
-and store reopen; the existing fair-scan cases still exercise real continuation
-execution. Scheduled-prefix preparation and production storage remain unchanged.
+persistence. Stale blockers retain their shared Thread and Turn. Fixture seeding
+defers only derived thread-metadata rebuilding, then flushes once per affected
+Thread in `finally`; source writes and their transactions remain real. Scheduled
+blockers keep distinct Threads and their own prepared Pi inputs, with one final
+projection per Thread. Regressions check bounded rebuild work, ownership, frozen
+input, store reopen, projection equivalence and restoration after source-write or
+input-preparation failures. The existing fair-scan cases still exercise real
+continuation execution; production storage and input preparation are unchanged.
 
-Channel-workspace and approval-policy integration tests opt in to
+The four split Channel suites and approval-policy integration tests opt in to
 `test/test-support/sqlite-workspace-fixture.ts` for ordinary workspace directories.
 Each test process creates one empty database through the current real Store and
 migrations, closes its only connection, then copies that database into independent
@@ -150,7 +154,10 @@ Stores. It also checks distinct inodes; a hard-link mutation probe must fail.
 
 On 2026-11-03, a local macOS comparison used Node.js v22.22.1 and the same isolated
 file runner with `concurrency: 1`. Only the empty-database fixture change differed;
-other runner changes stayed constant. One before/after pair measured:
+other runner changes stayed constant. This comparison preceded the Channel suite
+split merged in #645; its single `channel-workspace.test.mjs` row covers the old
+combined file, not the current smaller workspace suite. One before/after pair
+measured:
 
 | Integration file | Tests | Before (s) | After (s) | Reduction |
 | --- | ---: | ---: | ---: | ---: |

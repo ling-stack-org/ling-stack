@@ -169,7 +169,8 @@ test("packaged validation may take 52 seconds before readiness and engine author
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const child = createFakeChild();
   const channel = new PassThrough();
-  child.stdio = [null, null, null, channel];
+  const resources = new PassThrough();
+  child.stdio = [null, null, null, channel, resources];
   const spawned = deferred();
   const readyAt = Date.now() + 52_000;
   const lifecycle = new DesktopDaemonLifecycle({
@@ -193,6 +194,7 @@ test("packaged validation may take 52 seconds before readiness and engine author
   assert.equal(channel.destroyed, false, "FD3 must survive the same packaged validation budget as readiness");
   await assert.rejects(lifecycle.getExecutionEngineAuthority(), /engine_host_authority_unavailable/);
   t.mock.timers.tick(31_000);
+  resources.end(JSON.stringify({ schemaVersion: 1, phase: "resources_ready", pid: child.pid }));
   channel.end(JSON.stringify(engineAuthorityFixture(child.pid)));
   await new Promise(resolve => setImmediate(resolve));
   assert.equal((await startup).ownedByDesktop, true);
@@ -227,6 +229,7 @@ for (const [label, options, budget] of [
     const child = createFakeChild();
     const channel = new PassThrough();
     child.stdio = [null, null, null, channel];
+    acknowledgePackagedResources(child);
     const spawned = deferred();
     const lifecycle = new DesktopDaemonLifecycle({
       baseUrl: "http://127.0.0.1:17991", daemonEntryPath: existingEntryPath,
@@ -289,7 +292,14 @@ function engineAuthorityFixture(pid) {
     credentials: { capability: "fixture".repeat(7), csrfToken: "csrf".repeat(11) } };
 }
 
+function acknowledgePackagedResources(child) {
+  const resources = new PassThrough();
+  child.stdio[4] = resources;
+  resources.end(JSON.stringify({ schemaVersion: 1, phase: "resources_ready", pid: child.pid }));
+}
+
 function engineLifecycle(child, onSpawn = () => {}, options = {}) {
+  if (options.packaged) acknowledgePackagedResources(child);
   let probes = 0;
   return new DesktopDaemonLifecycle({
     baseUrl: "http://127.0.0.1:17991", daemonEntryPath: existingEntryPath,

@@ -2,9 +2,11 @@
 
 本文按当前工作区源码说明 CI 行为，再记录尚未实施的平台分工和定时优化方案。分类收窄、Draft 分档、严格汇总门、Core 分片和文件级计时已实现；这不表示当前修改已合并或通过 hosted CI 验收。
 
+分片执行、文件 watchdog、报告与耗时缓存见 [CI 测试执行说明](../../scripts/ci/README.md)；依赖安全补丁、兼容边界与验证入口见[补丁维护说明](../../patches/README.md)。
+
 ## 当前行为
 
-以下描述以工作区中的分类器、执行器和工作流为准，不以历史提交作为当前基线。PR 工作流在推送修改后应用；定时任务使用默认分支上的工作流。本次文档同步未核验 GitHub 仓库可见性、账户额度或账单，不能据此承诺排队时间或费用。
+以下描述以工作区中的[分类器](../../scripts/ci/classify-scope.mjs)、[执行策略](../../scripts/ci/execution-policy.mjs)和[工作流](../../.github/workflows/ci.yml)为准，不以历史提交作为当前基线。PR 工作流在推送修改后应用；定时任务使用默认分支上的工作流。本次文档同步未核验 GitHub 仓库可见性、账户额度或账单，不能据此承诺排队时间或费用。
 
 CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 
@@ -24,13 +26,15 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 | 手动运行 | 目标分支上的完整验证 |
 | 定时运行 | 默认分支每天 UTC 03:17（北京时间 11:17）的完整验证 |
 
-Daemon 测试拆为四个 `macos-26` shard，每个 shard 使用两个文件 worker；每个文件单独以 `--test-concurrency=1` 启动，拥有独立的 runtime home、workspace 和 POSIX 进程组。Kimi Host read／terminal、delegation production tool surface 及 channel-workspace 文件在所属 shard 的独占阶段先串行完成，其余文件再进入按估计耗时降序的共享队列。完整执行档位下选择 Daemon 时，仍运行独立的 Linux restricted-command 拒绝契约和真实 macOS helper／Seatbelt smoke。
+Daemon 测试拆为四个 `macos-26` shard，每个 shard 使用两个文件 worker；每个文件单独以 `--test-concurrency=1` 启动，拥有独立的 runtime home、workspace 和 POSIX 进程组。Kimi Host read／terminal 和 delegation production tool surface 文件在所属 shard 的独占阶段先串行完成，其余文件再进入按估计耗时降序的共享队列。Channel 测试已拆为 discussion、intents、workflows 和 workspace 四个普通并行文件，共享 fixture 不作为测试入口。完整执行档位下选择 Daemon 时，仍运行独立的 Linux restricted-command 拒绝契约和真实 macOS helper／Seatbelt smoke。
 
-Daemon 分片任务上限为 40 分钟，执行队列上限为 30 分钟；默认文件 watchdog 为五分钟，channel-workspace 和 recovery-discovery-fair-scan 两个文件显式放宽到十分钟。超时或取消会终止文件所属进程并使任务失败，不重试或强制通过。任务预算和本地计时不能证明 hosted CI 性能改善。
+Daemon 分片任务上限为 40 分钟，执行队列上限为 30 分钟；默认文件 watchdog 为五分钟，仅 recovery-discovery-fair-scan 文件保留十分钟例外，拆分后的 Channel 文件使用默认上限。超时或取消会终止文件所属进程并使任务失败，不重试或强制通过。任务预算和本地计时不能证明 hosted CI 性能改善。
 
 Core 已接入四个 Linux shard，每个使用两个文件 worker、20 分钟队列上限，属于既有 `unit-tests` 必需矩阵。普通 packages 入口排除 Core 与 Daemon，避免重复执行；只有存在其他被选测试包时才生成该入口。仅改 Core 测试时生成四个 Core 入口，且不生成空 packages 入口；仅改 Daemon 测试时没有 Linux unit 入口。
 
 [分片计划](../../scripts/ci/test-shard-plan.mjs)在 scope 阶段统一生成并上传 `ci-test-plan`，各 shard 与新发现的 `test/*.test.mjs`、`test/*.test.ts` 核对完整且恰好一次的分配。计时提示仅影响外层分片和内部队列顺序；缺失或不可用时回退源码大小／类别估算，不减少覆盖。每文件日志及 JSON 计时报告上传为 `ci-test-report-core-*`／`ci-test-report-daemon-*`；汇总验证全部计划文件恰好通过一次后，仅默认分支运行可发布计时缓存。无关策略失败不阻止完整测试报告的计时保存，但仍使质量门失败；PR 不能发布计时基线。这些计时不是跳过测试的成功证据。
+
+历史运行 `39274142315` 的分片 1 在当时 25 分钟上限前已连续通过 1,584 个顶层测试，尚有文件未执行；扩大任务上限只补足运行预算，不代表性能优化。当前任务上限包含依赖安装及原生准备。
 
 完整 Daemon 分片使用 macOS，是为了让 Darwin 专属正向用例实际执行。[平台契约测试](../../scripts/ci/platform-lanes.test.mjs)当前明确保护这一要求，不能只改 `runs-on`，让 Linux 上的跳过被当成原生验证成功。
 

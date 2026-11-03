@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fsModule from "node:fs";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { registerHooks, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { build } from "esbuild";
+import { build, transform } from "esbuild";
 
 const script = fileURLToPath(new URL("../scripts/build-packaged-daemon.mjs", import.meta.url));
 const sourceScript = fileURLToPath(new URL("../scripts/packaged-office-daemon-source-inputs.mjs", import.meta.url));
@@ -16,7 +17,7 @@ let fixtureNumber = 0;
 function newFile(path, bytes) { mkdirSync(dirname(path), { recursive: true, mode: 0o700 }); writeFileSync(path, bytes, { mode: 0o600 }); }
 
 /** Real esbuild/source projection; native/codesign origin, review and external gstack selection are explicitly synthetic. */
-async function fixture(t) {
+async function fixture(t, options = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-office-emitted-test-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const modulePath = join(root, "apps/desktop/scripts/build-packaged-daemon.mjs");
@@ -34,18 +35,37 @@ async function fixture(t) {
   newFile(officeModule, officeMarker + "\nexport const office = embeddedPublishedOfficeReviewJson;\n");
   newFile(join(runtime, "packaged-codesign-published-review.js"), readFileSync(codesignModule, "utf8").replace(": string", ""));
   newFile(join(runtime, "packaged-office-native-published-review.js"), readFileSync(officeModule, "utf8").replace(": string", ""));
+  const acpModule = join(root, "packages/daemon/src/features/execution-engines/acp-sdk-version.ts");
+  const originalAcpSource = readFileSync(new URL("../../../packages/daemon/src/features/execution-engines/acp-sdk-version.ts", import.meta.url), "utf8");
+  const acpSource = options.acpSource?.(originalAcpSource) ?? originalAcpSource;
+  newFile(acpModule, acpSource);
+  newFile(join(root, "packages/daemon/dist/features/execution-engines/acp-sdk-version.js"),
+    (await transform(acpSource, { loader: "ts", target: "es2022" })).code);
+  const sdkRoot = join(root, "node_modules/@agentclientprotocol/sdk");
+  if (options.sdkDirectory) {
+    cpSync(options.sdkDirectory, sdkRoot, { recursive: true });
+    symlinkSync(realpathSync(new URL("../../../packages/daemon/node_modules/zod", import.meta.url)), join(root, "node_modules/zod"), "dir");
+  } else {
+    newFile(join(sdkRoot, "package.json"), JSON.stringify({ name: "@agentclientprotocol/sdk",
+      version: options.version ?? "0.0.0-fixture", type: "module", exports: "./" + (options.layout ?? "dist/acp.js") }));
+    newFile(join(sdkRoot, options.layout ?? "dist/acp.js"), "export const PROTOCOL_VERSION = 1;\n");
+  }
+  const sdkManifest = join(sdkRoot, "package.json");
   const entry = join(root, "packages/daemon/dist/cli.js");
   newFile(entry, 'export { codesign } from "./runtime/sandbox/packaged-codesign-published-review.js";\n'
-    + 'export { office } from "./runtime/sandbox/packaged-office-native-published-review.js";\n');
+    + 'export { office } from "./runtime/sandbox/packaged-office-native-published-review.js";\n'
+    + 'export { readInstalledAcpSdkVersion } from "./features/execution-engines/acp-sdk-version.js";\n'
+    + 'export { PROTOCOL_VERSION } from "@agentclientprotocol/sdk";\n');
   const sourceEntry = join(root, "packages/daemon/src/cli.ts");
   newFile(sourceEntry, readFileSync(entry));
-  const sourceFiles = [sourceEntry, codesignModule, officeModule];
+  const sourceFiles = [sourceEntry, codesignModule, officeModule, acpModule];
   for (const name of ["browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"]) {
     const packagePath = join(root, "packages", name, "package.json"), configPath = join(root, "packages", name, "tsconfig.json");
     newFile(packagePath, JSON.stringify({ name: "@ling-stack/" + name, type: "module", main: "./dist/index.js" }));
     newFile(configPath, JSON.stringify({ compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", target: "ES2022",
       outDir: "dist", rootDir: "src", strict: true }, include: ["src/**/*.ts"] }));
-    sourceFiles.push(packagePath, configPath);
+    const index = join(root, "packages", name, "src/index.ts"); newFile(index, "export {};\n");
+    sourceFiles.push(packagePath, configPath, index);
   }
   const sourceReviewSha256 = hash("EXPLICIT SYNTHETIC REVIEW (not production approval)");
   const sourceReview = Object.freeze({ sourceReviewSha256, review: Object.freeze({ packagingSha256: Object.freeze(
@@ -56,6 +76,7 @@ async function fixture(t) {
   const codesignToken = Object.freeze({ synthetic: "codesign token" });
   const codesign = Object.freeze({ synthetic: "codesign publication (not approval)" });
   const state = { active: publication, original: publication, token, publication, codesignToken, codesign, sourceReview,
+    mode: options.mode,
     nativeBuilds: 0, codesignBuilds: 0, buildCompleted: false, builds: [], outputs: [], afterBuild: undefined, afterOriginalRead: undefined,
     gstackPreparations: [],
     readOriginal(receipt) {
@@ -64,6 +85,7 @@ async function fixture(t) {
     },
     async build(options) {
       state.builds.push(options);
+      state.beforeBuild?.(options);
       const result = await build({ ...options, logLevel: "silent" });
       state.outputs.push(result.outputFiles?.map(file => Buffer.from(file.contents)));
       state.buildCompleted = true; state.afterBuild?.(result); return result;
@@ -86,7 +108,12 @@ async function fixture(t) {
       }`],
     ["./packaged-office-native-review.mjs", bridge + `
       export function readReviewedPackagedOfficeSource() { return state.sourceReview; }
-      export function readLocalPackagedOfficeSource() { throw new Error("synthetic_review_requires_release_path"); }`],
+      export function readLocalPackagedOfficeSource() {
+        if (state.mode !== "source") throw new Error("synthetic_review_requires_release_path");
+        return state.sourceReview;
+      }`],
+    ["./packaged-office-native-review-inputs.mjs", bridge + `
+      export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.keys(state.sourceReview.review.packagingSha256);`],
     ["./packaged-gstack-resources.mjs", bridge + `
       export async function preparePackagedGstackBuild(options) { state.gstackPreparations.push(options); return undefined; }
       export function packagedGstackIdentityPlugin({ identity }) {
@@ -106,15 +133,18 @@ async function fixture(t) {
     Object.defineProperty(process, name, { ...original, value });
     t.after(() => Object.defineProperty(process, name, original));
   }
-  const priorReleaseIntent = process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
-  process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = "1";
-  t.after(() => { if (priorReleaseIntent === undefined) delete process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
-    else process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = priorReleaseIntent; });
   const priorIntent = process.env.LING_PACKAGED_CODESIGN_REVIEW_REQUIRED;
   delete process.env.LING_PACKAGED_CODESIGN_REVIEW_REQUIRED;
   t.after(() => { if (priorIntent === undefined) delete process.env.LING_PACKAGED_CODESIGN_REVIEW_REQUIRED;
     else process.env.LING_PACKAGED_CODESIGN_REVIEW_REQUIRED = priorIntent; });
-  return { root, api: await import(url), state, publication, token, entry: sourceEntry, cliPath, officeModule, officeMarker, codesignModule, codesignMarker };
+  const priorRelease = process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
+  if (options.mode === "source") delete process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
+  else process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = "1";
+  t.after(() => { if (priorRelease === undefined) delete process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
+    else process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = priorRelease; });
+  return { root, api: await import(url), state, publication, token, entry: sourceEntry, distEntry: entry, cliPath,
+    acpModule, acpDist: join(root, "packages/daemon/dist/features/execution-engines/acp-sdk-version.js"), sdkManifest,
+    officeModule, officeMarker, codesignModule, codesignMarker };
 }
 
 test("Office emitted CLI pins: real esbuild, synthetic publication/signature, not macOS package acceptance", async t => {
@@ -272,4 +302,134 @@ test("Office emitted CLI pins: real esbuild, synthetic publication/signature, no
     assert.equal(f.api.readActiveOriginalPackagedOfficeDaemonBundle().sha256, hash(readFileSync(f.cliPath)));
   });
   t.diagnostic("Real esbuild/source projection and disposable inputs only; synthetic source review, original native/codesign readers and external gstack selection/identity. These output custody contracts do not replace the real source-review integration, gstack resource/identity validation, real signatures, Electron, ZIP/DMG, or packaged acceptance.");
+});
+
+function runVersion(modulePath, cwd, entryUrl) {
+  const code = `import { readInstalledAcpSdkVersion } from ${JSON.stringify(pathToFileURL(modulePath).href)};
+    console.log(readInstalledAcpSdkVersion(${entryUrl === undefined ? "" : JSON.stringify(entryUrl)}));`;
+  return spawnSync(process.execPath, ["--input-type=module", "-e", code, "--", "999.0.0-forged"], {
+    cwd, encoding: "utf8", timeout: 20_000, maxBuffer: 1024 * 1024,
+    env: { PATH: process.env.PATH, HOME: cwd, LING_ACP_SDK_VERSION: "999.0.0-forged", ACP_SDK_VERSION: "999.0.0-forged" },
+  });
+}
+
+async function bundleVersionFixture(f, mode) {
+  if (mode === "dist") await f.api.buildPackagedDaemon();
+  else await f.api.buildFreshPackagedDaemonForMacOffice();
+}
+
+function assertIsolatedVersion(t, f, expected) {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), "ling-acp-no-sdk-")));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const module = join(directory, "cli.mjs"); copyFileSync(f.cliPath, module);
+  // A caller-selected entry and environment must not override the build-owned version.
+  const foreignEntry = join(directory, "foreign/dist/acp.js");
+  newFile(join(directory, "foreign/package.json"), JSON.stringify({ name: "@agentclientprotocol/sdk", version: "999.0.0-forged" }));
+  for (const entryUrl of [undefined, pathToFileURL(foreignEntry).href]) {
+    const result = runVersion(module, directory, entryUrl);
+    assert.equal(result.error, undefined); assert.equal(result.signal, null);
+    assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout.trim(), expected);
+  }
+  const output = readFileSync(module, "utf8");
+  assert.doesNotMatch(output, /from ["']@agentclientprotocol\/sdk["']/u);
+  assert.match(output, /PROTOCOL_VERSION/u);
+}
+
+test("ACP SDK binding: dist, local source and reviewed source use real esbuild and isolated Node", async t => {
+  for (const mode of ["dist", "source", "reviewed"]) {
+    for (const [version, layout] of [["1.9.0", "dist/acp.js"], ["2.1.0", "dist/v1/acp.js"]]) {
+      await t.test(`${mode}: synthetic ${version} layout, no runtime node_modules`, async t => {
+        const f = await fixture(t, { mode, version, layout });
+        // Resolution must originate from daemon, never Desktop's own installation.
+        newFile(join(f.root, "apps/desktop/node_modules/@agentclientprotocol/sdk/package.json"), JSON.stringify({
+          name: "@agentclientprotocol/sdk", version: "999.0.0-desktop-decoy", exports: "./acp.js",
+        }));
+        newFile(join(f.root, "apps/desktop/node_modules/@agentclientprotocol/sdk/acp.js"), "export const PROTOCOL_VERSION = 999;\n");
+        const source = runVersion(f.acpDist, f.root);
+        assert.equal(source.status, 0, source.stderr); assert.equal(source.stdout.trim(), version);
+        await bundleVersionFixture(f, mode);
+        assertIsolatedVersion(t, f, version);
+      });
+    }
+  }
+});
+
+test("ACP SDK binding: actual installed SDK bytes survive all packaging input modes", async t => {
+  const directories = process.env.LING_TEST_ACP_SDK_DIRECTORIES
+    ? JSON.parse(process.env.LING_TEST_ACP_SDK_DIRECTORIES)
+    : [fileURLToPath(new URL("../../../packages/daemon/node_modules/@agentclientprotocol/sdk", import.meta.url))];
+  for (const directory of directories) {
+    const manifest = JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
+    assert.equal(manifest.name, "@agentclientprotocol/sdk");
+    for (const mode of ["dist", "source", "reviewed"]) await t.test(`${mode}: real SDK ${manifest.version}`, async t => {
+      const f = await fixture(t, { mode, sdkDirectory: directory });
+      const source = runVersion(f.acpDist, f.root);
+      assert.equal(source.status, 0, source.stderr); assert.equal(source.stdout.trim(), manifest.version);
+      await bundleVersionFixture(f, mode); assertIsolatedVersion(t, f, manifest.version);
+    });
+  }
+});
+
+test("ACP SDK binding rejects changed/missing/duplicate markers in compiled and captured inputs", async t => {
+  const marker = 'const embeddedBundledAcpSdkVersion: string = "NO_PACKAGED_ACP_SDK_VERSION";';
+  for (const mode of ["dist", "source", "reviewed"]) for (const kind of ["missing", "duplicate"]) {
+    await t.test(`${mode}: ${kind} marker`, async t => {
+      const f = await fixture(t, { mode, acpSource(source) {
+        return kind === "missing" ? source.replace(marker, marker.replace("NO_PACKAGED_ACP_SDK_VERSION", "CHANGED_MARKER"))
+          : source + "\n// " + marker + "\n";
+      } });
+      // esbuild removes the duplicate comment when emitting JS; keep the literal-count probe explicit.
+      if (mode === "dist" && kind === "duplicate") {
+        writeFileSync(f.acpDist, readFileSync(f.acpDist, "utf8") + "\n// " + marker.replace(": string", "") + "\n");
+      }
+      await assert.rejects(bundleVersionFixture(f, mode), /packaged_acp_sdk_version_marker_changed/u);
+    });
+  }
+  await t.test("unvisited helper cannot silently leave the runtime resolver in a package", async t => {
+    const f = await fixture(t);
+    writeFileSync(f.distEntry, 'export { PROTOCOL_VERSION } from "@agentclientprotocol/sdk";\n');
+    await assert.rejects(f.api.buildPackagedDaemon(), /packaged_acp_sdk_version_not_bundled/u);
+  });
+  await t.test("foreign same-suffix module is never rewritten", async t => {
+    const f = await fixture(t), foreign = join(f.root, "foreign/features/execution-engines/acp-sdk-version.js");
+    newFile(foreign, readFileSync(f.acpDist));
+    writeFileSync(f.distEntry, `export * from ${JSON.stringify(foreign)};\n`);
+    await assert.rejects(f.api.buildPackagedDaemon(), /packaged_acp_sdk_version_module_changed/u);
+  });
+  await t.test("a second actual esbuild load of the helper is rejected", async t => {
+    const f = await fixture(t);
+    writeFileSync(f.distEntry, readFileSync(f.distEntry, "utf8")
+      + 'export { readInstalledAcpSdkVersion as duplicate } from "./features/execution-engines/acp-sdk-version.js?duplicate";\n');
+    f.state.beforeBuild = options => options.plugins.unshift({ name: "synthetic-second-helper-load", setup(builder) {
+      builder.onResolve({ filter: /acp-sdk-version\.js\?duplicate$/ }, () => ({ path: f.acpDist, namespace: "synthetic-duplicate" }));
+    } });
+    await assert.rejects(f.api.buildPackagedDaemon(), /packaged_acp_sdk_version_module_reloaded/u);
+  });
+  await t.test("reviewed helper retains its original source capture and final identity fence", async t => {
+    const f = await fixture(t);
+    f.state.beforeBuild = () => writeFileSync(f.acpModule, readFileSync(f.acpModule, "utf8") + "\n// changed after capture\n");
+    await assert.rejects(f.api.buildFreshPackagedDaemonForMacOffice(), /packaged_office_daemon_source_input_invalid/u);
+  });
+});
+
+test("ACP SDK binding fails closed on invalid manifests and post-build changes", async t => {
+  for (const mode of ["dist", "reviewed"]) for (const value of [undefined, "", " ", 2, null, "malformed", "wrong-name", "missing"]) {
+    await t.test(`${mode}: manifest ${String(value)}`, async t => {
+      const f = await fixture(t, { mode });
+      const originalManifest = JSON.parse(readFileSync(f.sdkManifest, "utf8"));
+      if (value === "missing") rmSync(f.sdkManifest);
+      else writeFileSync(f.sdkManifest, value === "malformed" ? "{" : JSON.stringify({
+        ...originalManifest,
+        name: value === "wrong-name" ? "unrelated-sdk" : "@agentclientprotocol/sdk", version: value === "wrong-name" ? "9.9.9" : value,
+      }));
+      await assert.rejects(bundleVersionFixture(f, mode), /packaged_acp_sdk_version_(?:manifest|resolution)_/u);
+      const standalone = runVersion(f.acpDist, f.root);
+      assert.notEqual(standalone.status, 0, "source mode must not substitute an environment version");
+    });
+  }
+  for (const mode of ["dist", "reviewed"]) await t.test(`${mode}: manifest changed during esbuild`, async t => {
+    const f = await fixture(t, { mode });
+    f.state.afterBuild = () => writeFileSync(f.sdkManifest, readFileSync(f.sdkManifest, "utf8") + " ");
+    await assert.rejects(bundleVersionFixture(f, mode), /packaged_acp_sdk_version_manifest_changed/u);
+  });
 });

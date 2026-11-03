@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
+import { readInstalledAcpSdkVersion } from "../dist/features/execution-engines/acp-sdk-version.js";
 import { assessRunnerAcceptance } from "../dist/runtime/runner-acceptance.js";
 
 const now = Date.parse("2026-09-08T00:00:00Z");
@@ -138,11 +142,46 @@ test("parent-thread inheritance cannot reuse task acceptance", async () => {
   }
 });
 
+test("ACP SDK manifest discovery follows root and nested entry layouts", t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-acp sdk-version-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const [index, layout] of ["acp.js", "dist/acp.js", "dist/v1/stable/acp.js", "lib/deep/runtime/acp.js"].entries()) {
+    const directory = join(root, String(index)), entry = join(directory, layout), version = `2.${index}.0`;
+    mkdirSync(dirname(entry), { recursive: true });
+    writeFileSync(entry, "export {};\n");
+    writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "@agentclientprotocol/sdk", version }));
+    if (dirname(entry) !== directory) {
+      writeFileSync(join(dirname(entry), "package.json"), JSON.stringify({ name: "another-package", version: "999.0.0", type: "module" }));
+    }
+    assert.equal(readInstalledAcpSdkVersion(pathToFileURL(entry).href), version);
+  }
+});
+
+test("ACP SDK manifest discovery does not substitute unrelated package metadata", t => {
+  const directory = mkdtempSync(join(tmpdir(), "ling-acp-sdk-missing-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "@ling-stack/daemon", version: "999.0.0" }));
+  assert.throws(() => readInstalledAcpSdkVersion(pathToFileURL(join(directory, "dist/acp.js")).href),
+    /Unable to find @agentclientprotocol\/sdk manifest/);
+});
+
+test("ACP SDK manifest discovery fails closed on missing or invalid versions and malformed manifests", t => {
+  const directory = mkdtempSync(join(tmpdir(), "ling-acp-sdk-invalid-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const manifestPath = join(directory, "package.json"), entry = pathToFileURL(join(directory, "dist/v1/acp.js")).href;
+  for (const version of [undefined, "", " ", 2, null]) {
+    writeFileSync(manifestPath, JSON.stringify({ name: "@agentclientprotocol/sdk", version }));
+    assert.throws(() => readInstalledAcpSdkVersion(entry), /Invalid @agentclientprotocol\/sdk version/);
+  }
+  writeFileSync(manifestPath, "{");
+  assert.throws(() => readInstalledAcpSdkVersion(entry), SyntaxError);
+});
+
 for (const engineId of ["kimi-acp", "openclaw-acp"]) {
   test(`ACP admission for ${engineId} binds verification to the installed SDK version`, async () => {
     const { assertNativeExecutionAccepted } = await import("../dist/features/execution-engines/native-admission.js");
     const { fixtureNativeAcceptance, fixtureNativePolicy } = await import("./support/fixture-native-acceptance.mjs");
-    const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.resolve("@agentclientprotocol/sdk")), "utf8"));
+    const version = readInstalledAcpSdkVersion();
     const input = { runRequest: { cwd: "/fixture", task: {}, executionBinding: {
       kind: "native_profile", engineId, profileId: "profile", profileRevision: 1,
     } }, store: {}, effectivePolicySnapshot: {}, signal: new AbortController().signal };
@@ -158,10 +197,14 @@ for (const engineId of ["kimi-acp", "openclaw-acp"]) {
     assert.ok(observed.length >= 2, "admission and final submission must both check verification");
     for (const current of observed) assert.equal(current.sdkVersion, `@agentclientprotocol/sdk@${version}`);
 
-    for (const previousVersion of ["1.3.0", "1.8.0"]) {
+    for (const previousVersion of ["1.3.0", "1.8.0", "1.9.0"].filter(previousVersion => previousVersion !== version)) {
       const previousSdkEvidence = fixtureNativeAcceptance({ ...observed[0], sdkVersion: `@agentclientprotocol/sdk@${previousVersion}` });
       await assert.rejects(assertNativeExecutionAccepted({ ...options, readAcceptanceEvidence: () => previousSdkEvidence }, input, profile, installation),
         error => error.code === "native_execution_verification_mismatch");
+      let currentEvidence = fixtureNativeAcceptance(observed[0]);
+      const assertBeforeSubmission = await assertNativeExecutionAccepted({ ...options, readAcceptanceEvidence: () => currentEvidence }, input, profile, installation);
+      currentEvidence = previousSdkEvidence;
+      assert.throws(assertBeforeSubmission, error => error.code === "native_execution_verification_mismatch");
     }
   });
 }
