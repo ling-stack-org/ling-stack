@@ -10,8 +10,10 @@ import {
   type ConversationTimelineScopeKind,
   type TimelineSnapshot,
 } from "@ling-stack/conversation-ui-core";
+import type { UserInputAnswerAcceptedResponseV1, UserInputAnswerCommandV1 } from "../../../types.js";
 import { ChevronDown, CircleAlert, UserRound } from "lucide-react";
 import { ConversationActivityLabel } from "../feedback/ConversationActivityLabel.js";
+import { useDaemonObservation } from "../observation/daemon-observation.js";
 import { renderConversationTimelineItem } from "./renderer-registry.js";
 import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
 import {
@@ -46,6 +48,9 @@ export interface ConversationTimelineProps {
   readonly onDisclosureIntent?: (intent: ConversationTimelineDisclosureIntent) => void;
   readonly renderSubAgentAvatar?: (item: ConversationTimelineSubAgentItem) => ReactNode;
   readonly renderUserInputAvatar?: (item: ConversationTimelineUserInputItem) => ReactNode;
+  readonly onSubmitUserInputAnswer?: (
+    command: UserInputAnswerCommandV1,
+  ) => Promise<UserInputAnswerAcceptedResponseV1>;
   readonly renderMessageChrome?: (item: Extract<ConversationTimelineItem, { kind: "userMessage" | "agentMessage" }>, body: ReactNode, presentation: ConversationTimelineMessagePresentation) => ReactNode;
   readonly renderResponseActions?: ConversationTimelineResponseActionsRenderer;
   readonly emptyLabel?: ReactNode;
@@ -96,6 +101,7 @@ export function ConversationTimeline({
   onDisclosureIntent,
   renderSubAgentAvatar,
   renderUserInputAvatar,
+  onSubmitUserInputAnswer,
   renderMessageChrome,
   renderResponseActions,
   emptyLabel,
@@ -105,6 +111,7 @@ export function ConversationTimeline({
   ariaLabel,
 }: ConversationTimelineProps): React.JSX.Element {
   const { t } = useI18n();
+  const observationPaused = useDaemonObservation().paused;
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const timelineItems = useMemo(() => placeTimelineResponseReports(snapshot.items), [snapshot.items]);
   const responsePresentation = useMemo(() => projectTimelineResponsePresentation(timelineItems), [timelineItems]);
@@ -197,6 +204,7 @@ export function ConversationTimeline({
     "data-conversation-timeline-visible-row-count": displayRows.length,
     "data-conversation-timeline-potential-row-count": displayModel.potentialRowCount,
     "data-activity-density": effectiveDensity,
+    "data-daemon-observation": observationPaused ? "paused" : "live",
     "aria-label": ariaLabel,
     onPointerOver: (event: React.PointerEvent<HTMLDivElement>) => setHoveredResponseId(responseIdForTarget(event.target)),
     onPointerLeave: () => setHoveredResponseId(undefined),
@@ -290,8 +298,10 @@ export function ConversationTimeline({
         >
           {displayModel.segments.map((segment) => renderTimelineSegment(segment, {
             t,
+            observationPaused,
             scopeKind: snapshot.scope.kind,
             renderUserInputAvatar,
+            onSubmitUserInputAnswer,
             cwd,
             onOpenSourceRef,
             onOpenReview,
@@ -321,8 +331,10 @@ export function ConversationTimeline({
     <div ref={timelineRootRef} className={className} {...attrs}>
       {displayModel.segments.map((segment) => renderTimelineSegment(segment, {
         t,
+        observationPaused,
         scopeKind: snapshot.scope.kind,
         renderUserInputAvatar,
+        onSubmitUserInputAnswer,
         cwd,
         onOpenSourceRef,
         onOpenReview,
@@ -415,12 +427,13 @@ function countAtomicItems(items: readonly ConversationTimelineItem[]): number {
   }, 0);
 }
 
-type TimelineRenderContext = Pick<ConversationTimelineProps, "cwd" | "onOpenSourceRef" | "onOpenReview" | "onInvokeProtocolAction" | "onDisclosureIntent" | "renderMessageChrome" | "renderSubAgentAvatar" | "renderUserInputAvatar"> & {
+type TimelineRenderContext = Pick<ConversationTimelineProps, "cwd" | "onOpenSourceRef" | "onOpenReview" | "onInvokeProtocolAction" | "onDisclosureIntent" | "renderMessageChrome" | "renderSubAgentAvatar" | "renderUserInputAvatar" | "onSubmitUserInputAnswer"> & {
   readonly scopeKind?: ConversationTimelineScopeKind;
   readonly depth: 0 | 1;
 };
 
 interface TimelineSegmentRenderContext extends Omit<TimelineRenderContext, "depth"> {
+  readonly observationPaused: boolean;
   readonly t: ReturnType<typeof useI18n>["t"];
   readonly visibleIdentityOwners: ReadonlySet<string>;
   readonly responsePresentation: TimelineResponsePresentation;
@@ -475,7 +488,7 @@ function renderTimelineSegment(
       className="conversation-timeline-sub-agent-detail conversation-timeline-sub-agent-group"
       role="group"
       aria-label={segment.item.label}
-      aria-busy={segment.item.lifecycle === "running" || segment.item.lifecycle === "waiting"}
+      aria-busy={!context.observationPaused && (segment.item.lifecycle === "running" || segment.item.lifecycle === "waiting")}
       data-conversation-sub-agent-group="true"
       data-conversation-parent-sub-agent-id={segment.item.id}
       data-conversation-timeline-scope="child"
@@ -536,6 +549,7 @@ function renderTimelineDisplayRow(
       }} /> : renderTimelineItem(row, {
         scopeKind: context.scopeKind,
         renderUserInputAvatar: context.renderUserInputAvatar,
+        onSubmitUserInputAnswer: context.onSubmitUserInputAnswer,
         cwd: context.cwd,
         onOpenSourceRef: context.onOpenSourceRef,
         onInvokeProtocolAction: context.onInvokeProtocolAction,
@@ -566,6 +580,7 @@ function renderTimelineItem(
   return renderConversationTimelineItem(row.item, {
     scopeKind: context.scopeKind,
     renderUserInputAvatar: context.renderUserInputAvatar,
+    onSubmitUserInputAnswer: context.onSubmitUserInputAnswer,
     cwd: context.cwd,
     onOpenSourceRef: context.onOpenSourceRef,
     onInvokeProtocolAction: context.onInvokeProtocolAction,
@@ -610,8 +625,11 @@ function RootSubAgentTimelineItem({
   readonly onExpandedChange: (expanded: boolean) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
+  const observationPaused = useDaemonObservation().paused;
   const hasChildItems = item.childItems.length > 0;
-  const statusLabel = t(subAgentStatusLabel(item.lifecycle));
+  const originalStatusLabel = item.stateLabel ?? t(subAgentStatusLabel(item.lifecycle));
+  const statusLabel = observationPaused && (item.lifecycle === "running" || item.lifecycle === "waiting")
+    ? `${t("Stale snapshot")} · ${originalStatusLabel}` : originalStatusLabel;
 
   return (
     <section

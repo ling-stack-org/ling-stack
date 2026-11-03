@@ -14,7 +14,7 @@ import {
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
-import { listExecutionActions } from "./execution-actions.js";
+import { listAllExecutionActionsForRun } from "./execution-actions.js";
 
 export type TraceRoute =
   | { readonly kind: "detail"; readonly traceId: string }
@@ -92,7 +92,6 @@ function buildThreadTrace(
     return undefined;
   }
   const runs = [...store.listRuns({ threadId, limit })].sort(compareRuns);
-  const runIds = new Set(runs.map((run) => run.id));
   const input = buildTraceProjectionInput({
     store,
     subjectKind: "thread",
@@ -103,7 +102,7 @@ function buildThreadTrace(
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
     runs,
-    actions: collectThreadActions(store, thread, runIds),
+    actions: collectThreadActions(store, runs),
     transitions: collectStateTransitionsForRuns(store, runs, thread),
     interventions: collectRunInterventions(store, runs),
   });
@@ -131,7 +130,7 @@ function buildRunTrace(
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     runs: [run],
-    actions: listExecutionActions(store, { runId: run.id, limit: 500 }),
+    actions: listAllExecutionActionsForRun(store, run.id),
     transitions: collectStateTransitionsForRuns(store, [run], thread),
     interventions: collectRunInterventions(store, [run]),
   });
@@ -156,6 +155,8 @@ function buildTraceProjectionInput(input: {
   const runtimeEventsByWorkUnitId: Record<string, ReturnType<RunStore["listRuntimeEvents"]>> = {};
   const artifacts: RunArtifact[] = [];
   for (const run of input.runs) {
+    // Canonical actions above read every event page. This bounded raw window
+    // is diagnostic-only; any unmatched fallback explicitly declares partial.
     eventsByRunId[run.id] = input.store.listEvents(run.id, { limit: 1000 });
     artifacts.push(...input.store.listArtifacts(run.id));
     if (run.workUnitId) {
@@ -182,21 +183,10 @@ function buildTraceProjectionInput(input: {
   };
 }
 
-function collectThreadActions(store: RunStore, thread: LingThread, runIds: ReadonlySet<string>): ExecutionAction[] {
-  const direct = listExecutionActions(store, { threadId: thread.id, limit: 500 });
-  const related = listExecutionActions(store, { limit: 500 }).filter((action) => {
-    if (action.threadId === thread.id) {
-      return true;
-    }
-    if (action.runId && runIds.has(action.runId)) {
-      return true;
-    }
-    return action.targetRefs.some((ref) =>
-      (ref.type === "workflow_step" && ref.id === thread.workflowStepId) ||
-      (ref.type === "task" && ref.id === thread.taskId) ||
-      (ref.type === "channel" && ref.id === thread.channelId));
-  });
-  return uniqueById([...direct, ...related]);
+function collectThreadActions(store: RunStore, runs: readonly RunSession[]): ExecutionAction[] {
+  // Completeness is per selected Run, not a workspace-wide or thread-wide
+  // action window that may silently exclude this Run or include sibling work.
+  return uniqueById(runs.flatMap((run) => listAllExecutionActionsForRun(store, run.id)));
 }
 
 function collectStateTransitionsForRuns(

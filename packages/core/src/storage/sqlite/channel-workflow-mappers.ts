@@ -246,6 +246,9 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     autoStart: typeof record.autoStart === "boolean" ? record.autoStart : undefined,
     approvalGate: parseOptionalApprovalProfileValue(record.approvalGate),
     preStepApprovalId: readOptionalStringValue(record.preStepApprovalId),
+    // Preserve malformed persisted markers so admission fails closed as stale;
+    // dropping one here would turn a corrupt approval basis into "no gate".
+    preStepApprovalMarker: record.preStepApprovalMarker as ChannelWorkflowStepMetadata["preStepApprovalMarker"],
     policy: parseOptionalWorkflowStepPolicyValue(record.policy),
     gates: parseOptionalWorkflowStepGateListValue(record.gates),
     fanInPolicy: parseOptionalWorkflowFanInPolicyValue(record.fanInPolicy),
@@ -666,10 +669,14 @@ function readOptionalGateStageValue(value: unknown): "pre" | "post" | undefined 
 }
 
 function parseOptionalWorkflowStepStatusListValue(value: unknown): readonly ChannelWorkflowStepStatus[] | undefined {
-  if (!Array.isArray(value)) {
+  if (value === undefined) {
     return undefined;
   }
-  return value.every(isChannelWorkflowStepStatusValue) ? value as ChannelWorkflowStepStatus[] : undefined;
+  // Dropping an invalid restriction would broaden this gate to every status.
+  if (!Array.isArray(value) || !value.every(isChannelWorkflowStepStatusValue)) {
+    throw new Error("workflow_step_gate_statuses_invalid");
+  }
+  return value as ChannelWorkflowStepStatus[];
 }
 
 function isChannelWorkflowStepStatusValue(value: unknown): value is ChannelWorkflowStepStatus {

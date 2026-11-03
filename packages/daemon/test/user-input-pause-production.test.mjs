@@ -235,8 +235,8 @@ test(`enforced-Broker production tracks actual Host effects without exposing use
 });
 }
 
-for (const toolBroker of ["off", "shadow"]) {
-test(`Host stop tracking preserves the existing ${toolBroker} file path`, async t => {
+for (const toolBroker of ["off", "shadow"]) for (const enableUserInputPause of [false, true]) {
+test(`Host stop tracking preserves the existing ${toolBroker} file path: user-input=${enableUserInputPause}`, async t => {
   let admissions = 0;
   const f = await productionFixture(t, ({ store }) => {
     store.updateApprovalPolicy({ toolDecisions: { write: "allow" }, allowedWritePaths: [store.paths.cwd] }, new Date().toISOString());
@@ -250,11 +250,12 @@ test(`Host stop tracking preserves the existing ${toolBroker} file path`, async 
       assert.equal(await readFile(join(options.cwd, "legacy.txt"), "utf8"), "preserved effect\n");
       return { taskId: options.task.id, messages: [], events: [] };
     } };
-  }, {}, { tools: ["write"], authorizationMode: "always", workspaceAccessMode: "workspace_write",
+  }, { enableUserInputPause }, { tools: ["write"], authorizationMode: "always", workspaceAccessMode: "workspace_write",
     harnessFeatureSnapshot: { schemaVersion: 1, continuations: "off", toolBroker, evaluations: "off",
       evaluationModelGate: "shadow", delegations: "off", delegationMaxDepth: 3 } });
   const run = f.store.getRun(f.runId);
   assert.equal(run.status, "succeeded", run.errorMessage);
+  assert.equal(run.requestSnapshot.harnessFeatureSnapshot.toolBroker, toolBroker);
   await f.activeRuns.waitForIdle();
   assert.equal(admissions, 0, "stop observation must not turn off/shadow into enforce");
   const attempt = f.store.listWorkUnitAttempts(run.workUnitId)[0];
@@ -285,8 +286,9 @@ test("required input arriving during lock-screen await wins before a provider co
   assert.equal(f.store.getRun(f.runId).status, "yielded");
 });
 
-for (const selected of [false, true]) {
-  test(`real Pi production keeps its frozen user-input tool surface: selected=${selected}`, async t => {
+for (const toolBroker of ["off", "shadow", "enforce"]) for (const optIn of [false, true]) {
+  const selected = optIn && toolBroker === "enforce";
+  test(`real Pi production keeps its frozen user-input tool surface: broker=${toolBroker}, opt-in=${optIn}`, async t => {
     let calls = 0;
     let transportTools;
     let wireTools;
@@ -308,9 +310,10 @@ for (const selected of [false, true]) {
           } }) });
       }
     }
-    const f = await productionFixture(t, () => new Runner(), { enableUserInputPause: selected });
+    const f = await productionFixture(t, () => new Runner(), { enableUserInputPause: optIn }, {}, "pi", false, toolBroker);
     const run = f.store.getRun(f.runId);
     assert.equal(run.status, selected ? "yielded" : "succeeded", run.errorMessage);
+    assert.equal(run.requestSnapshot.harnessFeatureSnapshot.toolBroker, toolBroker);
     assert.equal(calls, 1, "actual SDK input must match before the first provider call");
     assert.deepEqual(wireTools, transportTools, "the final provider payload must keep the canonical SDK tool surface");
     assert.deepEqual(transportTools, run.requestSnapshot.runnerExecutionInput.preparedInput.tools.map(tool => tool.name),
@@ -470,7 +473,8 @@ test("production executeRunRequest consumes typed user-input yield without termi
   const cwd = await mkdtemp(join(tmpdir(), "ling-user-input-production-"));
   const stores = new RunStoreRegistry(createSqliteRunStore);
   const activeRuns = new ActiveRunRegistry();
-  const supervisor = new RuntimeSupervisor(resolveConfig({ defaultWorkspaceCwd: cwd }));
+  const supervisor = new RuntimeSupervisor(resolveConfig({ defaultWorkspaceCwd: cwd,
+    harness: { toolBroker: { mode: "enforce" } } }));
   t.after(async () => {
     supervisor.releaseAll();
     stores.closeAll();
@@ -518,6 +522,7 @@ test("production executeRunRequest consumes typed user-input yield without termi
 
   assert.ok(runId, JSON.stringify(observed.errors));
   const run = store.getRun(runId);
+  assert.equal(run.requestSnapshot.harnessFeatureSnapshot.toolBroker, "enforce");
   assert.equal(run.status, "yielded");
   assert.equal(observed.errors.length, 0);
   assert.equal(observed.terminals.length, 0);
@@ -536,7 +541,8 @@ test("production pause keeps the source owner when durable evidence is still unc
   const cwd = await mkdtemp(join(tmpdir(), "ling-user-input-blocked-"));
   const stores = new RunStoreRegistry(createSqliteRunStore);
   const activeRuns = new ActiveRunRegistry();
-  const supervisor = new RuntimeSupervisor(resolveConfig({ defaultWorkspaceCwd: cwd }));
+  const supervisor = new RuntimeSupervisor(resolveConfig({ defaultWorkspaceCwd: cwd,
+    harness: { toolBroker: { mode: "enforce" } } }));
   t.after(async () => {
     supervisor.releaseAll();
     stores.closeAll();
@@ -575,6 +581,7 @@ test("production pause keeps the source owner when durable evidence is still unc
 
   assert.ok(runId, JSON.stringify(errors));
   assert.deepEqual(errors, []);
+  assert.equal(store.getRun(runId).requestSnapshot.harnessFeatureSnapshot.toolBroker, "enforce");
   assert.equal(store.getRun(runId).status, "running");
   assert.equal(store.getWorkUnit(store.getRun(runId).workUnitId).status, "running");
   await activeRuns.waitForIdle(100);

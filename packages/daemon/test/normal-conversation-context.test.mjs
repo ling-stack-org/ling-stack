@@ -99,6 +99,19 @@ test("normal follow-up includes scoped Host report outcome and unresolved risk",
   assert.ok(captured.renderedHistory.includes("find requires a pattern"));
   assert.equal(captured.hydration.entries.filter((entry) => entry.origin === "terminal_report").length, 1);
 
+  // Regression: R11-PUBLICATION — an unpublished revision must not erase scoped normal-context facts.
+  // Found by /qa on 2026-10-25; evidence: output/e6-20260928/p3-bash-cwd-contract-live-20261025/exploration-178.json
+  const orphan = f.store.createTerminalReportDraft({ generation: 2, evidenceSnapshot: snapshot }, at(1));
+  f.store.updateTerminalReportDraft({ reportId: orphan.id, expectedStatus: "draft", expectedEvidenceFingerprint: snapshot.evidenceFingerprint,
+    status: "validating", now: at(1) });
+  const orphanReport = buildDeterministicTerminalReport(snapshot, { id: orphan.id, createdAt: at(1), committedAt: at(1) });
+  f.store.commitTerminalReport({ reportId: orphan.id, expectedStatus: "validating", expectedEvidenceFingerprint: snapshot.evidenceFingerprint,
+    report: orphanReport, synthesisMode: orphanReport.synthesis.mode, promptVersion: orphanReport.synthesis.promptVersion, attemptCount: 0, now: at(1) });
+  const withOrphan = capture({ store: f.store, threadId: f.thread.id, sourceItemId: source.sourceItemId });
+  assert.equal(withOrphan.renderedHistory, captured.renderedHistory);
+  assert.equal(withOrphan.hydration.entries.filter((entry) => entry.origin === "terminal_report").length, 1);
+  assert.equal(f.store.getTerminalReport(orphan.id).resultItemId, undefined);
+
   f.database.prepare("UPDATE conversation_items SET visibility='operator' WHERE id=?").run(itemId);
   const hidden = capture({ store: f.store, threadId: f.thread.id, sourceItemId: source.sourceItemId });
   assert.equal(hidden.renderedHistory.includes("find requires a pattern"), false);

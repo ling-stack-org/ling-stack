@@ -63,7 +63,7 @@ export function prepareNormalConversationInput(input: {
     interventionId: input.interventionId,
     actorType: input.actorType ?? "local_user",
     payload: { body: userInstruction, format: "markdown", mentions: [], attachmentIds: attachments.map((attachment) => attachment.id),
-      linkPreviewIds: [], fileRefs: input.fileRefs.map((ref) => ({ path: ref.path, source: "explicit_text",
+      linkPreviewIds: [], fileRefs: input.fileRefs.map((ref) => ({ path: ref.path, source: ref.source ?? "explicit_text",
         ...(ref.label ? { label: ref.label } : {}), ...(ref.line !== undefined ? { line: ref.line } : {}) })) },
     domainRefs: [{ type: "turn", id: turnId }],
     idempotencyKey,

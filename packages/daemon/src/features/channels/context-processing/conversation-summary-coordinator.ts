@@ -123,7 +123,7 @@ export function planConversationContextSummary(input: ConversationSummaryPlannin
 export function assessConversationContextSummary(input: ConversationSummaryPlanningInput): ConversationSummaryAssessment {
   const policy = input.policy ?? DEFAULT_CONVERSATION_SUMMARY_POLICY;
   assertValidPolicy(policy);
-  if (!Number.isSafeInteger(input.inputBudgetTokens) || input.inputBudgetTokens < 1_024) {
+  if (!Number.isSafeInteger(input.inputBudgetTokens) || input.inputBudgetTokens < 1) {
     throw new RangeError(`Invalid conversation summary input budget: ${input.inputBudgetTokens}`);
   }
   const projection = buildConversationContextProjection({

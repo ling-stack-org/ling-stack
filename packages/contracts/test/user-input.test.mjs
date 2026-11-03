@@ -26,6 +26,22 @@ const submission = () => ({
   idempotencyKey: "submit-1",
   answers: [{ questionId: "theme", kind: "option", optionId: "dark" }],
 });
+const answerCommand = () => ({
+  schemaVersion: 1,
+  authority: {
+    schemaVersion: 1,
+    threadId: "thread-1",
+    runId: "run-1",
+    attemptId: "attempt-1",
+    participantId: "engineer",
+    requestId: "request-1",
+    requestVersion: 1,
+    statusRevision: 3,
+    token: "a".repeat(64),
+  },
+  idempotencyKey: "submit-1",
+  answers: [{ questionId: "theme", kind: "option", optionId: "dark" }],
+});
 const parseTool = (value) => contract.parseUserInputToolInputV1(value);
 
 test("canonical question/answer anchors contain references only and cannot become plain channel messages", () => {
@@ -64,6 +80,21 @@ test("user input exports bounded limits and separate request/delivery lifecycle 
     ["pending", "answered", "skipped", "cancelled", "expired", "superseded"]);
   assert.deepEqual(contract.userInputDeliveryStatusesV1,
     ["pending", "claimed", "applied", "failed", "obsolete"]);
+});
+
+test("public answer command freezes exact Host lineage and rejects forged or extra authority", () => {
+  const parsed = contract.parseUserInputAnswerCommandV1(answerCommand());
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(parsed.value, answerCommand());
+  for (const override of [
+    { authority: { ...answerCommand().authority, token: "short" } },
+    { authority: { ...answerCommand().authority, requestVersion: 0 } },
+    { authority: { ...answerCommand().authority, participantId: "" } },
+    { authority: { ...answerCommand().authority, runtimeInstanceId: "private" } },
+    { accepted: true },
+  ]) {
+    error(contract.parseUserInputAnswerCommandV1({ ...answerCommand(), ...override }), "invalid_input");
+  }
 });
 
 test("question parser preserves Unicode, Markdown and caller input without selecting an answer", () => {

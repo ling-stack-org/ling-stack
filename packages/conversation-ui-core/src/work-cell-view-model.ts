@@ -195,6 +195,8 @@ export interface ConversationAgentActivitySpan {
   readonly summary?: string;
   readonly meta?: string;
   readonly tone?: ConversationWorkCellRowTone;
+  /** Execution state is independent of color and translated display text. */
+  readonly lifecycle?: import("./transcript-item.js").ConversationTimelineSubAgentItem["lifecycle"];
   readonly stateLabel?: string;
   readonly latestRow?: ConversationWorkCellRow;
   readonly rows: readonly ConversationWorkCellRow[];

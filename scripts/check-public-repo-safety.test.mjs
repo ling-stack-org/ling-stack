@@ -48,3 +48,21 @@ test("unknown provider key is blocked without echoing its bytes", t => {
   assert.match(result.stderr, /model provider key/u);
   assert.equal(result.stderr.includes(key), false);
 });
+
+for (const [name, parts] of [
+  ["C010 export redaction", ["sk-", "c010-", "synthetic-not-a-real-key"]],
+  ["B009 command redaction", ["sk-", "b009Command", "FixtureOnly0001"]],
+  ["B009 path redaction", ["sk-", "b009Path", "FixtureOnly0001"]],
+]) {
+  test(`only the exact fixed sentinel is allowed: ${name}`, t => {
+    const result = scan(t, JSON.stringify(parts.join("")));
+    assert.equal(result.status, 0, result.stderr);
+  });
+  test(`a changed sentinel remains blocked: ${name}`, t => {
+    const changed = parts.join("") + "X";
+    const result = scan(t, JSON.stringify(changed));
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /model provider key/u);
+    assert.equal(result.stderr.includes(changed), false);
+  });
+}

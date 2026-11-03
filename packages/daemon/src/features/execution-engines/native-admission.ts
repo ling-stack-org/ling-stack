@@ -5,6 +5,7 @@ import { HttpError } from "../../errors.js";
 import { assessRunnerAcceptance } from "../../runtime/runner-acceptance.js";
 import { runnerAcceptanceFingerprint } from "../../runtime/runner-acceptance-store.js";
 import type { NativeRunAdmissionInput } from "../runs/native-run-dispatcher.js";
+import { readInstalledAcpSdkVersion } from "./acp-sdk-version.js";
 
 export interface NativeAdmissionOptions {
   /** Trusted host composition only; never read these callbacks from a request or workspace config. */
@@ -29,7 +30,7 @@ export async function assertNativeExecutionAccepted(options: NativeAdmissionOpti
       : thread?.kind === "automation" ? "automation" : thread?.kind === "external_work" ? "external_work"
       : input.runRequest.task.channelId ? "channel" : input.workflowSurface ?? "task";
     return { runnerId: binding.engineId, runtimeVersion: installation.runtimeVersion ?? "",
-      sdkVersion: binding.engineId === "codex-app-server" ? "codex-app-server-schema-v2" : "@agentclientprotocol/sdk@1.9.0",
+      sdkVersion: binding.engineId === "codex-app-server" ? "codex-app-server-schema-v2" : `@agentclientprotocol/sdk@${readInstalledAcpSdkVersion()}`,
       adapterVersion: `${binding.engineId}:native-adapter-v1`, executableDigest: installation.executableDigest ?? "",
       platform: process.platform, architecture: process.arch, profileId: profile.id, profileRevision: profile.revision,
       configurationFingerprint: runnerAcceptanceFingerprint({ profile: profile.configurationFingerprint, binding }),

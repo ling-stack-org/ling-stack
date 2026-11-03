@@ -12,8 +12,9 @@ export async function learningFixture(t, { correction, selectedSkillId, skillDef
   const store = createSqliteRunStore(cwd);
   const database = new DatabaseSync(store.paths.databasePath);
   const now = new Date().toISOString();
-  const supervisor = new RuntimeSupervisor({ host: "127.0.0.1", port: 0, maxBodyBytes: 1024 * 1024,
-    defaultWorkspaceCwd: cwd, runners: {}, runtimeTools: {}, transports: { providerWebSocketFallback: true, localWebSocketRpc: true }, channels: {} });
+  const runtimeConfig = { host: "127.0.0.1", port: 0, maxBodyBytes: 1024 * 1024,
+    defaultWorkspaceCwd: cwd, runners: {}, runtimeTools: {}, transports: { providerWebSocketFallback: true, localWebSocketRpc: true }, channels: {} };
+  const supervisor = new RuntimeSupervisor(runtimeConfig);
   t.after(async () => { supervisor.releaseAll(); database.close(); store.close(); await rm(cwd, { recursive: true, force: true }); });
   const channel = store.createChannel({ name: "Amber ledger", boundPath: cwd }, now);
   const task = store.createTask({ channelId: channel.id, title: "Amber receipt reconciliation", prompt: "Compare both receipt totals and verify the ledger sum." }, now);
@@ -50,5 +51,5 @@ export async function learningFixture(t, { correction, selectedSkillId, skillDef
     const fence = toRuntimeAttemptFence(started.attempt);
     return { fence, job: store.claimLearningReviewJob(job.id, fence, new Date().toISOString()) };
   };
-  return { cwd, channel, store, database, supervisor, task, run, skill, evidence, draft, hub, published, enqueue, claim, now };
+  return { cwd, channel, store, database, supervisor, createSupervisor: () => new RuntimeSupervisor(runtimeConfig), task, run, skill, evidence, draft, hub, published, enqueue, claim, now };
 }

@@ -110,6 +110,12 @@ test("actual local Office ASAR contracts (synthetic original readers, NOT packag
     replaceHeader(f, header => { header.files.alias = { link: "../OFFICE-LOCAL/office-local.node" }; });
     assertInvalid(f);
   });
+  await t.test("development bundled metadata inside app.asar is rejected", async t => {
+    const f = await fixture(t);
+    newFile(join(f.source, "dist/daemon/bundled/foreign-plugin/unreviewed.txt"), "UNREVIEWED FOREIGN FILE\n");
+    await f.repack();
+    assertInvalid(f);
+  });
   await t.test("same-size unrelated files do not count as a duplicate Office addon", async t => {
     const f = await fixture(t); newFile(join(f.source, "unrelated-data"), Buffer.alloc(f.addon.length, 65));
     await f.repack(); newFile(join(f.archive + ".unpacked", "unrelated-data"), Buffer.alloc(f.addon.length, 66));

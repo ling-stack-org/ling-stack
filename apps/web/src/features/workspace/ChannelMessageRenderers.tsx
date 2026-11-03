@@ -56,6 +56,7 @@ import {
   type TerminalReportFileTarget,
 } from "../../shared/conversation/index.js";
 import { InlineFeedback } from "../../shared/ui/index.js";
+import { submitUserInputAnswer } from "../../api.js";
 import type {
   ChannelAttachment,
   ChannelExecutionProposal,
@@ -410,6 +411,7 @@ function channelTurnTerminalReportTimelineItem(
   return visibleTerminalReportTimelineItem({
     id: `terminal-report:${block.terminalReportId}`,
     kind: "terminalReport",
+    reportStatus: report?.status,
     language: report?.language,
     outcomeSourceRefs: terminalReportSourceRefs(report?.outcome.sourceRefs ?? []),
     revision: block.revision ?? 1,
@@ -1071,6 +1073,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       snapshot,
       depth: 0,
       cwd: input.cwd,
+      onSubmitUserInputAnswer: (command) => submitUserInputAnswer(input.cwd, command),
       renderSubAgentAvatar: (item) => renderConversationParticipantAvatar(item.participantId, item.label),
       renderUserInputAvatar: (item) => {
         if (item.kind === "userInputAnswer") return <UserProfileAvatar profile={input.userProfile} fallbackLabel={input.localUserDisplayName} />;

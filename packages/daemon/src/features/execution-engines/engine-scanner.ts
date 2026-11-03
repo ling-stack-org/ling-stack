@@ -81,14 +81,17 @@ export interface DiscoverEnginesOptions {
 
 /** Scan PATH and well-known locations for installed engines; probe what is found. */
 export async function discoverEngines(options: DiscoverEnginesOptions = {}): Promise<EngineDiscoveryReport> {
+  options.signal?.throwIfAborted();
   const env = options.env ?? process.env;
   const home = options.home ?? homedir();
   const platform = options.platform ?? process.platform;
   const candidates: EngineDiscoveryCandidate[] = [];
   for (const pkg of MANAGED_ENGINE_PACKAGES) {
+    options.signal?.throwIfAborted();
     const executable = options.resolveExecutable
       ? await options.resolveExecutable(pkg.commandName)
       : await firstExecutable(candidatePaths(pkg.commandName, env, home, platform));
+    options.signal?.throwIfAborted();
     if (!executable) {
       candidates.push({ engineId: pkg.engineId, status: "not_found", installable: pkg.installable, manualGuidance: pkg.manualGuidance });
       continue;
@@ -96,6 +99,7 @@ export async function discoverEngines(options: DiscoverEnginesOptions = {}): Pro
     const probe = await probeEngineInstallation(discoveryProfile(pkg.engineId, executable), {
       signal: options.signal, timeoutMs: options.probeTimeoutMs ?? 3000, spawn: options.spawn,
     });
+    options.signal?.throwIfAborted();
     const outOfRange = probe.runtimeVersion && pkg.installable && !versionInRange(probe.runtimeVersion, pkg.minSupported, pkg.maxVerified);
     candidates.push({
       engineId: pkg.engineId,

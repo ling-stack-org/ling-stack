@@ -1,0 +1,14 @@
+(node:23508) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./output/e6-20260928/public-projection-test-loader.mjs", pathToFileURL("./")); register("./output/e6-20260928/public-projection-test-loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ conversation stream materializes uploaded attachments into the run prompt (850.568625ms)
+✔ model-assisted thread follow-up writes the recent local target without phrase-rule matching (1112.001875ms)
+✔ autoplan-lite workflow compiles durable steps and orchestrates them through the runner (1040.291083ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4521.266208

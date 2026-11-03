@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { ArrowDown, Copy, FileText, Image, Loader2, MessageSquare, Pencil, Plus, ThumbsDown, ThumbsUp } from "lucide-react";
-import { attachmentContentUrl } from "../../api.js";
+import { attachmentContentUrl, daemonBaseUrl, submitUserInputAnswer } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
@@ -53,6 +53,7 @@ import {
   selectTeammatePrivateOwnedMessages,
 } from "./teammate-private-timeline-items.js";
 import { useTeammatePrivateTimeline } from "./use-teammate-private-timeline.js";
+import { conversationReadingScope } from "../../shared/conversation/view-store/conversation-reading-storage.js";
 
 export type TeammatePrivateChatFeedProps = Pick<TeammatePrivateChatSurfaceProps,
   | "approvals"
@@ -434,6 +435,7 @@ export function TeammatePrivateChatFeed({
     <div className="teammate-private-feed-owner" data-ui2-teammate-private-feed="true">
       <ConversationTimelineFeed
         surfaceId={`teammate:${teammate.id}`}
+        readingScopeKey={conversationReadingScope(daemonBaseUrl, cwd, `teammate:${teammate.id}`, threadId ?? canonical.directThreadId)}
         scrollRef={privateFeedRef}
         ariaLabel={t("Private message feed")}
         frameClassName="message-feed-wrap"
@@ -454,6 +456,7 @@ export function TeammatePrivateChatFeed({
             snapshot: timelineSnapshot,
             depth: 0,
             cwd: cwd.trim(),
+            onSubmitUserInputAnswer: (command) => submitUserInputAnswer(cwd.trim(), command),
             virtualScrollRef: privateFeedRef,
             itemLocatorRef: timelineItemLocatorRef,
             onPositionNavigate: onCancelPrivateFeedAutoFollow,

@@ -62,7 +62,12 @@ export function useFullAccessConfirmationController(): FullAccessConfirmationCon
     if (confirmed) return Promise.resolve(confirmed);
     if (pendingRef.current) return Promise.resolve(undefined);
     const activeElement = document.activeElement;
-    returnFocusTargetRef.current = activeElement instanceof HTMLElement ? activeElement : null;
+    // A compact menu item unmounts as the confirmation opens. Restore focus to
+    // its persistent trigger instead of remembering the disappearing item.
+    const menuTriggerId = activeElement?.closest('[role="menu"]')?.getAttribute("aria-labelledby");
+    const menuTrigger = menuTriggerId ? document.getElementById(menuTriggerId) : null;
+    returnFocusTargetRef.current = menuTrigger instanceof HTMLElement ? menuTrigger
+      : activeElement instanceof HTMLElement ? activeElement : null;
     return new Promise<PermissionConfirmation | undefined>((resolve) => {
       pendingRef.current = { resolve, scopeKey };
       setOpen(true);

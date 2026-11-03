@@ -1,5 +1,5 @@
 import { createScopedLearningCandidate } from "./scoped-candidates.js";
-import { toRuntimeAttemptFence, type RunStore, type SecretResolver, type LearningReviewJob,
+import { createRuntimeResourceRenewal, toRuntimeAttemptFence, type RunStore, type SecretResolver, type LearningReviewJob,
   type ControlPlaneEvent, type RuntimeAttemptFenceV1 } from "@ling-stack/core";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { startRuntimeWorkUnit, transitionWorkUnitCancelled, transitionWorkUnitTerminal } from "../../runtime/work-units.js";
@@ -189,7 +189,8 @@ export class LearningReviewCoordinator {
       } catch { stop(); }
     }, 250);
     const heartbeat = setInterval(() => {
-      try { store.recordRuntimeHeartbeat({ ...fence, source: "supervisor", ts: new Date().toISOString() }); }
+      const ts = new Date().toISOString();
+      try { store.recordRuntimeHeartbeat({ ...fence, source: "supervisor", ts, resourceExpiresAt: createRuntimeResourceRenewal(ts).expiresAt }); }
       catch { stop(); }
     }, 10_000);
     try {

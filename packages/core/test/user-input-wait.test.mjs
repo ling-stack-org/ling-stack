@@ -784,11 +784,12 @@ test("old cleanup and heartbeat cannot touch a newer attempt's resources", async
     resourceKey: "runner_pi_embedded", limit: 1, ownerType: "work_unit_attempt", ownerId: successor.id,
     acquiredAt: committedAt, expiresAt: "2026-09-07T01:00:00.000Z" }));
   const unit = f.store.getWorkUnit(f.unit.id);
-  assert.throws(() => f.store.recordRuntimeHeartbeat({ ...f.fence, ts: committedAt, source: "runner" }), /Stale/);
+  const renewal = { renewedAt: committedAt, expiresAt: new Date(Date.parse(committedAt) + 6 * 60 * 60 * 1000).toISOString() };
+  assert.throws(() => f.store.recordRuntimeHeartbeat({ ...f.fence, ts: committedAt, resourceExpiresAt: renewal.expiresAt, source: "runner" }), /Stale/);
   assert.equal(f.store.releaseResourceLeasesForAttempt(f.fence, committedAt, "late-finally"), 0);
   assert.equal(f.store.releaseRuntimeSemaphoreSlotsForAttempt(f.fence, committedAt, "late-finally"), 0);
-  assert.equal(f.store.renewResourceLeasesForAttempt(f.fence, committedAt), 0);
-  assert.equal(f.store.renewRuntimeSemaphoreSlotsForAttempt(f.fence, committedAt), 0);
+  assert.equal(f.store.renewResourceLeasesForAttempt(f.fence, renewal), 0);
+  assert.equal(f.store.renewRuntimeSemaphoreSlotsForAttempt(f.fence, renewal), 0);
   assert.deepEqual(f.store.getWorkUnit(f.unit.id), unit);
   assert.equal(f.store.listResourceLeases({ ownerId: successor.id, status: "active" }).length, 1);
   assert.equal(f.store.listRuntimeSemaphoreSlots({ ownerId: successor.id, status: "active" }).length, 1);

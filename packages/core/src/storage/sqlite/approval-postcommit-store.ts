@@ -24,6 +24,42 @@ function ownerForApproval(approval: ApprovalRequest): { kind: ApprovalPostCommit
   return owners[0];
 }
 
+function decisionEventOwnerForApproval(
+  database: DatabaseSync,
+  approval: ApprovalRequest,
+): { kind: "run"; id: string } | undefined {
+  if (approval.runId) {
+    return database.prepare(`
+      SELECT id
+      FROM run_sessions
+      WHERE id = ? AND task_id = ? AND channel_id IS ?
+    `).get(approval.runId, approval.taskId ?? null, approval.channelId ?? null)
+      ? { kind: "run", id: approval.runId }
+      : undefined;
+  }
+
+  const payload = approval.payload;
+  if (payload.type !== "workflow_step" || payload.gateStage !== "post"
+    || !approval.workflowStepId || !approval.channelId || !payload.runId) {
+    return undefined;
+  }
+  const lineage = database.prepare(`
+    SELECT run.id
+    FROM channel_workflow_steps AS step
+    JOIN channel_workflows AS workflow
+      ON workflow.id = step.workflow_id AND workflow.channel_id = step.channel_id
+    JOIN run_sessions AS run
+      ON run.id = step.run_id
+      AND run.workflow_step_id = step.id
+      AND run.channel_id = step.channel_id
+    WHERE step.id = ?
+      AND step.channel_id = ?
+      AND step.workflow_id = ?
+      AND step.run_id = ?
+  `).get(approval.workflowStepId, approval.channelId, payload.workflowId, payload.runId) as { id?: unknown } | undefined;
+  return lineage?.id === payload.runId ? { kind: "run", id: payload.runId } : undefined;
+}
+
 function mapEffect(row: Record<string, unknown>): ApprovalPostCommitEffect {
   return {
     approvalId: String(row.approval_id),
@@ -47,12 +83,15 @@ export class SqliteApprovalPostCommitStore {
   /** Must be called from inside the approval decision's SQLite savepoint. */
   recordDecision(approval: ApprovalRequest, now: string): void {
     const owner = ownerForApproval(approval);
+    const decisionEventOwner = decisionEventOwnerForApproval(this.database, approval);
     const insert = this.database.prepare(`
       INSERT INTO approval_postcommit_effects
         (approval_id, effect_kind, owner_kind, owner_id, status, created_at, updated_at)
       VALUES (?, ?, ?, ?, 'pending', ?, ?)
     `);
-    if (owner?.kind === "run") insert.run(approval.id, "decision_event", owner.kind, owner.id, now, now);
+    if (decisionEventOwner) {
+      insert.run(approval.id, "decision_event", decisionEventOwner.kind, decisionEventOwner.id, now, now);
+    }
     if (owner) insert.run(approval.id, "owner", owner.kind, owner.id, now, now);
     insert.run(approval.id, "control_plane_event", null, null, now, now);
   }

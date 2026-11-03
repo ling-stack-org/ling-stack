@@ -54,8 +54,9 @@ manifest SHA、扩展 ZIP SHA 与 source commit 一致。macOS 本机结构检�
 私有原生构建不能替代 Developer ID/notarization、Authenticode/SmartScreen 和 clean-host
 安装/升级/卸载验收。
 
-开发阶段仓库为 private，不启用应用自动更新。公开后使用 GitHub Releases；无需改变安装包
-身份，只需在 release workflow 发布现已保留的 updater companion assets。最终用户可见文件：
+源码仓库已公开，当前 Desktop 尚未接入应用自动更新。后续使用 GitHub Releases 作为更新
+通道时，需要完成客户端接入、updater companion assets 发布以及安装、升级和签名验收。
+安装包身份继续保持一致。最终用户可见文件：
 
 ```text
 Ling-Stack-<version>-macos-arm64.dmg
@@ -176,8 +177,9 @@ raw listener residue 均为 **0**。这是当前机器 development runtime 的�
 
 ```bash
 corepack pnpm --filter @ling-stack/desktop package:mac
-hdiutil verify 'apps/desktop/release/Ling-Stack-0.0.0-macos-arm64.dmg'
-unzip -t 'apps/desktop/release/Ling-Stack-0.0.0-macos-arm64.zip'
+desktop_version="$(node -p "require('./apps/desktop/package.json').version")"
+hdiutil verify "apps/desktop/release/Ling-Stack-${desktop_version}-macos-arm64.dmg"
+unzip -t "apps/desktop/release/Ling-Stack-${desktop_version}-macos-arm64.zip"
 ```
 
 unsigned job 必须验证：

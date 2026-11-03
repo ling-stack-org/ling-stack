@@ -98,12 +98,13 @@ function buildConversationRunPrompt(
 }
 
 function renderConversationFileRefsForPrompt(fileRefs: readonly ChannelMessageFileRef[]): string {
-  if (fileRefs.length === 0) {
+  const explicitRefs = fileRefs.filter((ref) => ref.source !== "inferred_text");
+  if (explicitRefs.length === 0) {
     return "";
   }
   return [
     "Workspace file references:",
-    ...fileRefs.map((fileRef, index) => `- ${index + 1}. ${fileRef.label ? `${fileRef.label}: ` : ""}${fileRef.path}${fileRef.line ? `:${fileRef.line}` : ""}`),
+    ...explicitRefs.map((fileRef, index) => `- ${index + 1}. ${fileRef.label ? `${fileRef.label}: ` : ""}${fileRef.path}${fileRef.line ? `:${fileRef.line}` : ""}`),
     "Treat these as user-supplied references only. Existing workspace and approval policy still controls access.",
   ].join("\n");
 }

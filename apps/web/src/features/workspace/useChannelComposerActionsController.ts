@@ -405,7 +405,7 @@ export function useChannelComposerActionsController({
     const fileRefs = composerWorkspaceFileParts(liveInputParts).map((part): ChannelMessageFileRef => ({
       path: part.path,
       label: part.path,
-      source: "composer",
+      source: "inferred_text",
       ...(part.line !== undefined ? { line: part.line } : {}),
     }));
     if (!body && serializedInput.attachmentIds.length === 0 && !pendingLinkPreviews.some((item) => item.preview) && fileRefs.length === 0) {

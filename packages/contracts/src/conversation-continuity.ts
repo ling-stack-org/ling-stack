@@ -115,6 +115,7 @@ export const conversationWorkspaceFileRefSourcesV1 = [
   "composer",
   "explicit_text",
   "api",
+  "inferred_text",
 ] as const;
 
 export type ConversationWorkspaceFileRefSourceV1 = (typeof conversationWorkspaceFileRefSourcesV1)[number];
@@ -370,7 +371,8 @@ export interface ConversationContextSummary {
 export interface ConversationContextSnapshot {
   readonly id: string;
   readonly threadId: string;
-  readonly segmentId: string;
+  /** Absent only for an explicitly empty fork boundary (sequence zero). */
+  readonly segmentId?: string;
   readonly projectionVersion: string;
   readonly throughItemSequence: number;
   readonly summaryIds: readonly string[];
@@ -421,6 +423,21 @@ export type ChannelIntentDecisionV2CreatedBy = (typeof channelIntentDecisionV2Cr
 export interface ChannelIntentClarificationV2 {
   readonly missingFields: readonly string[];
   readonly question: string;
+  /** Host-bound draft only. Its existence grants no scheduling or tool authority. */
+  readonly pendingOperation?: ChannelIntentPendingOperationV1;
+}
+
+export interface ChannelIntentPendingOperationV1 {
+  readonly schemaVersion: 1;
+  readonly sourceRevision: number;
+  readonly sourceAssignmentId: string;
+  readonly sourceAssignmentRevision: number;
+  readonly authorityFingerprint: string;
+  readonly execution: ChannelIntentExecutionPlanV1;
+  readonly participantManifest: RequiredParticipantManifestV1;
+  /** Only these typed fields may change when this question is answered. */
+  readonly slots: readonly { readonly operationId: string; readonly field: "project_input_root" }[];
+  readonly fingerprint: string;
 }
 
 export const commandMatchExecutableValuesV1 = [

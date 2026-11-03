@@ -14,12 +14,18 @@ hook.deregister();
 
 const scope = { cwd: "/repo", runId: "run", workUnitId: "unit", linkedWorkUnitId: "unit", linkedRunId: "run" };
 const timestamp = "2026-10-09T00:00:00.000Z";
+const checkpointDomains = ["continuation", "tool_execution", "evaluation", "delegation"];
+function checkpoints(overrides = {}) {
+  return checkpointDomains.map(domain => ({ domain, generation: 1, sourceEpoch: 2, builtEpoch: 2,
+    state: "ready", rowCount: 1, isCurrent: true, updatedAt: timestamp, ...overrides }));
+}
 function observation(id = "c1", overrides = {}) {
   return { record: { id, kind: "continuation", runId: "run", workUnitId: "unit", revision: 1, createdAt: timestamp, updatedAt: timestamp,
     state: "running", sourceAttemptId: "a", origin: "approval_resume", strategy: "native_resume", runnerId: "pi", generation: 1, ...overrides }, leaseStatus: "unclaimed", attempts: [{ id: "a", status: "missing" }] };
 }
 function page(items = [], overrides = {}) {
-  return { schemaVersion: 1, cwd: scope.cwd, runId: scope.runId, workUnitId: scope.workUnitId, status: "available", observedAt: timestamp, items, ...overrides };
+  return { schemaVersion: 1, cwd: scope.cwd, runId: scope.runId, workUnitId: scope.workUnitId, status: "available", observedAt: timestamp,
+    items, projectionCheckpoints: checkpoints(), ...overrides };
 }
 function cursor(item) {
   const { runId, workUnitId, id, kind, createdAt } = item.record;
@@ -151,7 +157,7 @@ test("responses must match exact workspace, work unit, run and every record's li
 
 test("unlinked/missing/mismatched responses are unavailable rather than an empty success", async () => {
   for (const status of ["run_unlinked", "run_missing", "lineage_mismatch"]) {
-    const response = page([], { status, ...(status === "run_unlinked" ? { runId: undefined } : {}) });
+    const response = page([], { status, projectionCheckpoints: [], ...(status === "run_unlinked" ? { runId: undefined } : {}) });
     const controller = createHarnessDiagnosticsController(async () => response, scope);
     await controller.activate();
     assert.equal(controller.getSnapshot().phase, "unavailable");
@@ -279,4 +285,57 @@ test("initial proposed tool revision zero is a valid persisted observation", asy
   await controller.activate();
   assert.equal(controller.getSnapshot().phase, "ready");
   assert.equal(controller.getSnapshot().items[0].record.revision, 0);
+});
+
+test("evaluation and delegation observations preserve their distinct attempt lineage", async () => {
+  const evaluation = observation("evaluation", { kind: "evaluation", rootRunId: "root", state: "grading" });
+  evaluation.attempts = [];
+  const delegation = observation("delegation", { kind: "delegation", rootRunId: "root", state: "running",
+    parentAttemptId: "parent", workflowId: "workflow", workflowStepId: "step", parentDelegationStepId: "parent-step",
+    childRunId: "child", required: true, depth: 2 });
+  delegation.attempts = [{ id: "parent", status: "observed", workUnitId: "unit", fencingToken: "opaque:parent" }];
+  const controller = createHarnessDiagnosticsController(async () => page([evaluation, delegation]), scope);
+  await controller.activate();
+  assert.equal(controller.getSnapshot().phase, "ready");
+  assert.deepEqual(controller.getSnapshot().items, [evaluation, delegation]);
+});
+
+test("projection checkpoints are complete, current, canonical and closed-shape", async () => {
+  const invalid = [
+    [], checkpoints().slice(0, 3), [...checkpoints(), checkpoints()[0]],
+    checkpoints().map((item, index) => index === 3 ? { ...item, domain: "unknown" } : item),
+    checkpoints().map((item, index) => index === 0 ? { ...item, generation: -1 } : item),
+    checkpoints().map((item, index) => index === 0 ? { ...item, sourceEpoch: 1.5 } : item),
+    checkpoints().map((item, index) => index === 0 ? { ...item, builtEpoch: -1 } : item),
+    checkpoints().map((item, index) => index === 0 ? { ...item, rowCount: -1 } : item),
+    checkpoints().map((item, index) => index === 0 ? { ...item, state: "stale", isCurrent: true } : item),
+    checkpoints().map((item, index) => index === 0 ? { ...item, sourceEpoch: 3, isCurrent: true } : item),
+    checkpoints().map((item, index) => index === 0 ? { ...item, updatedAt: "not-a-date" } : item),
+    checkpoints().map((item, index) => index === 0 ? { ...item, digest: "PRIVATE_SENTINEL" } : item),
+    checkpoints().map((item, index) => index === 0 ? { ...item, cursor: "PRIVATE_SENTINEL" } : item),
+    checkpoints().map((item, index) => index === 0 ? { ...item, completed: true } : item),
+  ];
+  for (const projectionCheckpoints of invalid) {
+    const controller = createHarnessDiagnosticsController(async () => page([], { projectionCheckpoints }), scope);
+    await controller.activate();
+    assert.equal(controller.getSnapshot().issue, "invalid_response");
+  }
+  const stale = checkpoints().map((item, index) => index === 0
+    ? { ...item, sourceEpoch: 3, builtEpoch: 2, state: "stale", isCurrent: false, failureCode: "projection.source_advanced" }
+    : item);
+  const controller = createHarnessDiagnosticsController(async () => page([], { projectionCheckpoints: stale }), scope);
+  await controller.activate();
+  assert.equal(controller.getSnapshot().phase, "ready");
+});
+
+test("unavailable diagnostics cannot carry projection checkpoints", async () => {
+  for (const status of ["run_unlinked", "run_missing", "lineage_mismatch"]) {
+    const response = page([], { status, projectionCheckpoints: [], ...(status === "run_unlinked" ? { runId: undefined } : {}) });
+    const controller = createHarnessDiagnosticsController(async () => response, scope);
+    await controller.activate();
+    assert.equal(controller.getSnapshot().phase, "unavailable");
+    const bad = createHarnessDiagnosticsController(async () => ({ ...response, projectionCheckpoints: checkpoints() }), scope);
+    await bad.activate();
+    assert.equal(bad.getSnapshot().issue, "invalid_response");
+  }
 });

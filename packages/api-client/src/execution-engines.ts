@@ -4,6 +4,12 @@ import { isExecutionEngineSecretValue } from "@ling-stack/contracts";
 import type { EngineDiscoveryReport, ManagedInstallStatus } from "@ling-stack/contracts";
 import { LingDaemonError } from "./errors.js";
 
+const managementRequestTimeoutMs = 10_000;
+// Discovery can run four serial 3-second probes; an install also downloads and
+// extracts its pinned package. Both remain bounded, synchronous owned requests.
+const discoveryRequestTimeoutMs = 20_000;
+const installRequestTimeoutMs = 5 * 60_000;
+
 export interface ExecutionEngineManagementClientOptions {
   readonly baseUrl: string;
   readonly fetch?: typeof globalThis.fetch;
@@ -54,11 +60,11 @@ export class ExecutionEngineManagementClient {
   }
 
   discover(): Promise<EngineDiscoveryReport> {
-    return this.request("/discovery", "GET");
+    return this.request("/discovery", "GET", undefined, true, undefined, discoveryRequestTimeoutMs);
   }
 
   install(engineId: ExternalExecutionEngineId): Promise<{ readonly install: ManagedInstallStatus }> {
-    return this.request(enginePath(engineId) + "/install", "POST", {});
+    return this.request(enginePath(engineId) + "/install", "POST", {}, true, undefined, installRequestTimeoutMs);
   }
 
   installStatus(engineId: ExternalExecutionEngineId): Promise<{ readonly install: ManagedInstallStatus }> {
@@ -130,7 +136,8 @@ export class ExecutionEngineManagementClient {
     return (this.#options.now ?? Date.now)();
   }
 
-  private async request<T>(path: string, method: string, body?: unknown, authenticated = true, signal?: AbortSignal): Promise<T> {
+  private async request<T>(path: string, method: string, body?: unknown, authenticated = true, signal?: AbortSignal,
+    timeoutMs = managementRequestTimeoutMs): Promise<T> {
     if (authenticated && this.#session && Date.parse(this.#session.expiresAt) <= this.now()) this.forgetSession();
     const credentials = authenticated ? this.#options.credentials?.() ?? this.#session : undefined;
     const sessionRevision = this.#sessionRevision;
@@ -145,7 +152,7 @@ export class ExecutionEngineManagementClient {
     const response = await this.#fetch(`${this.#baseUrl}/execution-engines${path}`, {
       method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       redirect: "error", cache: "no-store", credentials: "omit",
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) {
       if (response.status === 401 && credentials && credentials.token === this.#session?.token) this.forgetSession();

@@ -331,6 +331,7 @@ export function createStartOrchestratedRun(
         options.secretResolver,
         options.mcpBroker,
         {
+          enableUserInputPause: true,
           onRunReady: (runId) => {
             resolveOnce(runId);
           },

@@ -30,6 +30,21 @@ test("completed nonzero exit retains complete bounded output without turning fai
       stdout: "<plist>partial receipt</plist>", stderr: "nonzero diagnostic", outputComplete: true,
     });
     assert.equal(Object.isFrozen(error.commandReceipt), true);
+    assert.equal(error.commandDiagnostic.command, process.execPath.split("/").at(-1));
+    assert.equal(error.commandDiagnostic.exitCode, 7);
+    assert.equal(error.commandDiagnostic.signal, null);
+    assert.equal(error.commandDiagnostic.killed, false);
+    assert.equal(error.commandDiagnostic.outputComplete, true);
+    assert.equal(error.commandDiagnostic.timeoutMs, 120_000);
+    assert.equal(error.commandDiagnostic.stdoutBytes, Buffer.byteLength(error.commandReceipt.stdout));
+    assert.equal(error.commandDiagnostic.stderrBytes, Buffer.byteLength(error.commandReceipt.stderr));
+    assert.ok(Number.isInteger(error.commandDiagnostic.pid) && error.commandDiagnostic.pid > 0);
+    assert.ok(Number.isFinite(error.commandDiagnostic.elapsedMs) && error.commandDiagnostic.elapsedMs >= 0);
+    assert.ok(Number.isFinite(Date.parse(error.commandDiagnostic.startedAt)));
+    assert.equal(Object.isFrozen(error.commandDiagnostic), true);
+    assert.ok(error.message.includes(JSON.stringify(error.commandDiagnostic)));
+    assert.equal(error.message.includes("partial receipt"), false);
+    assert.equal(error.message.includes("nonzero diagnostic"), false);
     return true;
   });
 });
@@ -44,6 +59,12 @@ for (const [label, script, options] of [
     await assert.rejects(runBoundedCommand(process.execPath, ["-e", script], options), error => {
       assert.equal(error.code, "final_artifact_command_failed");
       assert.equal(error.commandReceipt.outputComplete, false);
+      assert.equal(error.commandDiagnostic.outputComplete, false);
+      if (label === "timeout" || label === "signal") {
+        assert.equal(error.commandDiagnostic.signal, "SIGTERM");
+        assert.equal(error.commandDiagnostic.killed, label === "timeout");
+        assert.equal(error.commandDiagnostic.timeoutMs, options.timeoutMs ?? 120_000);
+      }
       return true;
     });
   });
@@ -53,6 +74,9 @@ test("spawn failure is unknown, not a complete output receipt", async () => {
   await assert.rejects(runBoundedCommand("/explicit-test-only/missing-command", []), error => {
     assert.equal(error.cause.code, "ENOENT");
     assert.equal(error.commandReceipt.outputComplete, false);
+    assert.equal(error.commandDiagnostic.pid, null);
+    assert.equal(error.commandDiagnostic.exitCode, null);
+    assert.equal(error.commandDiagnostic.errorCode, "ENOENT");
     return true;
   });
 });

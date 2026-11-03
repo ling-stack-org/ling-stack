@@ -462,10 +462,20 @@ async function persistedRun(f, runId) {
   const row = f.sql(db => db.prepare("SELECT request_snapshot_json, status FROM run_sessions WHERE id=?").get(runId));
   assert.ok(row);
   assert.equal(row.status, "succeeded");
-  assert.deepEqual(JSON.parse(row.request_snapshot_json), run.requestSnapshot,
-    "HTTP serialization must match a second read-only SQLite connection");
+  const storedRun = f.store.getRun(runId);
+  assert.ok(storedRun);
+  const storedRequest = JSON.parse(row.request_snapshot_json);
+  assert.deepEqual(storedRequest, storedRun.requestSnapshot,
+    "the complete recovery snapshot must match a second read-only SQLite connection");
+  const publicRequest = { ...storedRequest };
+  for (const key of ["runnerExecutionInput", "preselectedMemoryUse", "systemPrompt", "appendSystemPrompt"]) {
+    delete publicRequest[key];
+    assert.equal(Object.hasOwn(run.requestSnapshot, key), false, `HTTP must omit private ${key}`);
+  }
+  assert.deepEqual(run.requestSnapshot, publicRequest,
+    "HTTP serialization must preserve public authority without exposing private recovery input");
   assert.equal(run.cwd, f.cwd);
-  return run;
+  return storedRun;
 }
 
 function assertPreparedRequest(f, run, selection) {

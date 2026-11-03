@@ -19,7 +19,7 @@ const overlap = (root, path) => {
   return !r || !isAbsolute(r) && r !== ".." && !r.startsWith("../") && !r.startsWith("..\\");
 };
 const acquisitionInputs = ["collect-ungoogled-chromium.mjs", "ungoogled-chromium-candidate.json", "collect-browser-archives.mjs",
-  "runtime-dependency-audit.mjs", "upstream-lock.json"];
+  "runtime-dependency-audit.mjs", "upstream-lock.json", "public-github-metadata.mjs"];
 const inputNames = ["inspect-ungoogled-dmg.mjs", "inspect-browser-zip.mjs", "inspect-chromium-credits.mjs", "chromium-data-pack.mjs", ...acquisitionInputs];
 const inputRecords = () => Promise.all(inputNames.map(async path => ({ path, checksum: checksum(await readFile(new URL(path, import.meta.url))) })));
 

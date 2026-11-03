@@ -58,7 +58,8 @@ export async function buildGstackNativeRuntime({
   assertNativeTarget(await readFile(bunPath), target);
   assertNativeTarget(await readFile(nodePath), target);
   await mkdir(dirname(output), { recursive: true });
-  const stage = await mkdtemp(join(dirname(output), ".gstack-native-stage-"));
+  const stage = await mkdtemp(join(lease.scratchPath, "tmp", ".gstack-native-stage-"));
+  let completed = false;
   try {
     const candidate = join(stage, "candidate");
     await cp(source, candidate, { recursive: true, errorOnExist: true, force: false });
@@ -181,9 +182,11 @@ export async function buildGstackNativeRuntime({
     await writeFile(join(candidate, "native-build.json"), `${JSON.stringify(record, null, 2)}\n`);
     await resourceCheckpoint(lease.root);
     await publishStagedDirectory(candidate, output);
+    completed = true;
     return record;
   } finally {
-    await rm(stage, { recursive: true, force: true });
+    // Preserve failed compiler inputs until managed process settlement.
+    if (completed) await rm(stage, { recursive: true, force: true });
   }
 }
 

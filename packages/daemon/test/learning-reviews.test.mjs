@@ -197,14 +197,16 @@ test("a restarted worker cancels an old Attempt rather than dispatching it again
   const f = await learningFixture(t); const { job, fence } = f.claim(f.enqueue());
   f.store.reserveLearningReviewModelRequest(job.id, fence, 3000, clock());
   f.supervisor.releaseAll();
+  const restartedSupervisor = f.createSupervisor();
   let calls = 0;
-  const coordinator = new LearningReviewCoordinator({ runtimeSupervisor: f.supervisor, secretResolver: {}, controlPlaneEvents: f.hub,
+  const coordinator = new LearningReviewCoordinator({ runtimeSupervisor: restartedSupervisor, secretResolver: {}, controlPlaneEvents: f.hub,
     extract: async () => { calls += 1; return f.draft; } });
   coordinator.registerStore(f.store); coordinator.beginShutdown(); await coordinator.drain();
   assert.equal(calls, 0); assert.equal(f.store.getLearningReviewJob(job.id).status, "cancelled");
   assert.equal(f.store.getLearningReviewJob(job.id).modelRequests, 1);
   assert.throws(() => commitLearningDraft({ store: f.store, job, fence, draft: f.draft, hub: f.hub }));
   assert.equal(f.store.listSkillCandidates().length, 0);
+  restartedSupervisor.releaseAll();
 });
 
 test("a transient retry stays within the same durable job and cumulative reservation", async t => {

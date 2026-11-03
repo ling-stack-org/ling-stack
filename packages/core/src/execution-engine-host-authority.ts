@@ -47,6 +47,7 @@ export function readExecutionEngineHostAuthority(input: {
   readonly baseUrl: string;
   readonly pid: number;
   readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
 }): Promise<ExecutionEngineHostAuthority> {
   const baseUrl = localBaseUrl(input.baseUrl);
   return new Promise((resolve, reject) => {
@@ -57,7 +58,17 @@ export function readExecutionEngineHostAuthority(input: {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      input.signal?.removeEventListener("abort", unavailable);
       input.channel.off("data", data).off("end", end).off("error", unavailable).off("close", unavailable);
+      // An abort can race an already queued pipe error. Drain it through close
+      // before removing the final listener; settling alone does not cancel IO.
+      const drainError = (): void => undefined;
+      const removeDrain = (): void => {
+        input.channel.off("error", drainError).off("close", removeDrain);
+      };
+      input.channel.on("error", drainError).once("close", removeDrain);
+      // closed may be true even while Node still has error/close queued.
+      if (input.channel.closed) setImmediate(removeDrain);
       input.channel.destroy();
       if (error) reject(error);
       else resolve(value!);
@@ -77,7 +88,8 @@ export function readExecutionEngineHostAuthority(input: {
       } catch { finish(new ExecutionEngineHostAuthorityError("engine_host_authority_invalid")); }
     };
     input.channel.on("data", data).once("end", end).once("error", unavailable).once("close", unavailable);
-    if (input.channel.destroyed || input.channel.readableEnded) unavailable();
+    input.signal?.addEventListener("abort", unavailable, { once: true });
+    if (input.signal?.aborted || input.channel.destroyed || input.channel.readableEnded) unavailable();
   });
 }
 

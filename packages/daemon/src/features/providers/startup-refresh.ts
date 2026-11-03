@@ -19,6 +19,8 @@ export type ProviderStartupRefreshStore = ProviderStoreFacet & RunExecutionStore
 export class ProviderStartupRefreshService {
   private readonly refreshesByCwd = new Map<string, Promise<readonly ProviderCheckResult[]>>();
   private readonly refreshGenerationsByCwd = new Map<string, number>();
+  private readonly inFlight = new Set<Promise<readonly ProviderCheckResult[]>>();
+  private stopped = false;
 
   constructor(
     private readonly dependencies: {
@@ -29,6 +31,7 @@ export class ProviderStartupRefreshService {
   ) {}
 
   start(cwd: string, store: ProviderStartupRefreshStore, options: { readonly force?: boolean } = {}): Promise<readonly ProviderCheckResult[]> {
+    if (this.stopped) return Promise.resolve([]);
     const existing = this.refreshesByCwd.get(cwd);
     if (existing && !options.force) {
       return existing;
@@ -36,7 +39,7 @@ export class ProviderStartupRefreshService {
     const generation = (this.refreshGenerationsByCwd.get(cwd) ?? 0) + 1;
     if (!Number.isSafeInteger(generation)) throw new Error("Provider startup refresh generation exhausted.");
     this.refreshGenerationsByCwd.set(cwd, generation);
-    const isCurrent = (): boolean => this.refreshGenerationsByCwd.get(cwd) === generation;
+    const isCurrent = (): boolean => !this.stopped && this.refreshGenerationsByCwd.get(cwd) === generation;
     this.markWarming(cwd);
     const refresh = refreshProvidersOnStartup({
       cwd,
@@ -54,10 +57,15 @@ export class ProviderStartupRefreshService {
         // check results; unexpected service errors must not block daemon startup.
         if (isCurrent()) this.markUnexpectedError(cwd);
         return [];
-      });
+      }).finally(() => this.inFlight.delete(refresh));
     this.refreshesByCwd.set(cwd, refresh);
+    this.inFlight.add(refresh);
     return refresh;
   }
+
+  beginShutdown(): void { this.stopped = true; }
+
+  async waitForIdle(): Promise<void> { while (this.inFlight.size) await Promise.allSettled([...this.inFlight]); }
 
   async refreshBeforeRun(input: {
     readonly cwd: string;

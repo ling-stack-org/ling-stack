@@ -52,6 +52,8 @@ export interface ApprovalCommandRuleProposal {
   readonly display: string;
   readonly fingerprint: string;
   readonly version: 1;
+  /** Original command directory; reuse never authorizes another directory. */
+  readonly cwd?: string;
 }
 
 export interface ApprovalCommandRule extends ApprovalCommandRuleProposal {

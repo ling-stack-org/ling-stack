@@ -2,6 +2,7 @@
 
 Status: active design addendum for shared conversation UI
 Date: 2026-06-28
+Permission UI contract updated: 2026-10-28 (supersedes the old four-preset composer menu)
 Scope: channel composer, normal conversation composer, teammate private chat composer,
 and future Desktop/PC conversation composers
 
@@ -48,7 +49,7 @@ The implementation is split into seven product slices plus one delayed packaging
 1. Code audit and current-state checklist for channel, normal conversation, and teammate
    private chat composer state.
 2. Shared composer shell and visual tokens.
-3. Shared toolbar with the four authorization presets.
+3. Shared toolbar with one compact authorization control; independent sandbox defaults in Settings.
 4. Normal conversation adapter, including model selection and no teammate mentions.
 5. Teammate private chat adapter, including direct guidance and no model picker.
 6. Channel adapter, preserving the richest `/`, `@`, attachment, approval, active run,
@@ -134,9 +135,9 @@ teammate settings domains, route modules, or app shell navigation.
 
 | Adapter | Surface | Required mapping |
 | --- | --- | --- |
-| `ChannelComposerAdapter` | channel root/branch | text, slash commands, teammate mentions, attachments, active run guidance, stop/follow-up, four-preset authorization, no model picker |
-| `NormalConversationComposerAdapter` | normal conversation after home send | text, slash commands, attachments, selected model, thinking when supported, four-preset authorization, no teammate mentions |
-| `TeammateDirectComposerAdapter` | teammate private chat | text, slash commands, private-scoped attachments, direct guidance, four-preset authorization, optional read-only teammate model status, no model picker, no teammate mentions |
+| `ChannelComposerAdapter` | channel root/branch | text, slash commands, teammate mentions, attachments, active run guidance, stop/follow-up, compact authorization control, no model picker |
+| `NormalConversationComposerAdapter` | normal conversation after home send | text, slash commands, attachments, selected model, thinking when supported, compact authorization control, no teammate mentions |
+| `TeammateDirectComposerAdapter` | teammate private chat | text, slash commands, private-scoped attachments, direct guidance, compact authorization control, optional read-only teammate model status, no model picker, no teammate mentions |
 
 Adapters own business state. `ConversationComposer` receives already-resolved props and
 only renders the result.
@@ -188,6 +189,7 @@ type ConversationPermissionPreset =
   | "custom";
 
 interface ConversationComposerAuthorizationState {
+  readonly mode: "ask" | "smart" | "always";
   readonly preset: ConversationPermissionPreset;
   readonly disabled: boolean;
   readonly disabledReason?: string;
@@ -220,7 +222,7 @@ interface ConversationComposerProps {
   readonly onChange: (value: string, caret: number) => void;
   readonly onSubmit: () => void | Promise<void>;
   readonly onStop?: () => void | Promise<void>;
-  readonly onAuthorizationChange: (preset: ConversationPermissionPreset) => void;
+  readonly onAuthorizationChange: (mode: "ask" | "smart" | "always") => void;
   readonly onModelChange?: (modelId: string) => void;
   readonly onAttachFiles?: (files: readonly File[]) => void | Promise<void>;
 }
@@ -252,9 +254,10 @@ Rules:
    cannot select a model from the composer because channel teammates already own
    configured model/provider settings.
 5. Authorization belongs in the shared composer toolbar for channel, normal
-   conversation, and teammate private chat. It is always visible as the same four
-   permission presets: `read_only`, `workspace_collaboration`, `full_access`, and
-   `custom`.
+   conversation, and teammate private chat. It uses one shared compact control with
+   Request approval, Help me approve, and Full access shortcuts. There is no separate
+   composer sandbox selector. Task inspectors show permission details read-only and
+   link to Settings instead of maintaining another sandbox editor.
 6. Authorization defaults come from settings/surface defaults. If settings resolve to a
    custom policy, the composer starts on `custom`; do not silently coerce it into a
    friendlier preset.
@@ -385,13 +388,18 @@ right tools: model/thinking controls when editable, read-only model status when 
 Toolbar rules:
 
 - icon buttons are 30-32px with transparent default background,
-- normal conversation offers Request approval, Help me approve, and Full access
-  shortcuts in its compact permission menu. Independent authorization and sandbox
+- all three surfaces offer Request approval, Help me approve, and Full access
+  shortcuts in their compact permission menu. Independent authorization and sandbox
   defaults remain in Settings. Request approval and Help me approve preserve the
   selected sandbox; Full access sets both always authorization and full access only
   after confirmation. Returning from that shortcut restores the prior sandbox, or
   the workspace default when restoring an existing conversation;
-  channel and private chat retain separate compact authorization triggers,
+  channel and private chat use the same shared `ConversationPermissionControl`,
+  with no independent sandbox picker in any composer. Settings owns the sandbox
+  default for the selected workspace, not an implicit machine-wide grant. The
+  shared presentation does not merge conversation authorization scopes. Pending
+  confirmations are discarded on owner/policy changes, permission changes, active
+  execution or unmount; returning to the same owner must not revive an old reply,
 - model picker is right aligned and appears only for normal conversation,
 - teammate private chat can show read-only effective model status, but not a model
   picker,
@@ -462,15 +470,22 @@ Channel:
 
 ### Authorization
 
-All conversation composers expose authorization next to the attach button. The menu is
-the same four-preset model used by workspace settings:
+All conversation composers expose the same compact authorization menu next to the
+attach button. Settings keeps authorization and sandbox as independent defaults;
+it saves them for the selected workspace, not as a machine-wide authorization grant.
 
-| Preset | Session mode | Meaning |
+| Shortcut | Authorization | Sandbox |
 | --- | --- | --- |
-| `read_only` | `ask_everything` | Inspect and plan; ask before risky workspace mutation. |
-| `workspace_collaboration` | `workspace_write` | Allow scoped workspace edits; keep commands and external actions gated. |
-| `full_access` | `full_access` | Broad local access after explicit confirmation and policy resolution. |
-| `custom` | `custom` | Use the saved custom workspace/channel policy. |
+| Request approval | `ask` | Preserve current sandbox; restore the previous sandbox when leaving Full access. |
+| Help me approve | `smart` | Preserve current sandbox; restore the previous sandbox when leaving Full access. |
+| Full access | `always` | Change to `full_access` only after explicit confirmation for this conversation. |
+
+If the prior sandbox is unavailable after restoring a conversation, leaving Full
+access uses the workspace default. An inherited `always` with a restricted sandbox
+is not the Full access shortcut: preserve and distinguish that combination rather
+than silently broadening access. Legacy preset fields remain transport projections,
+not another editable composer control. UI reuse does not combine the authorization
+scope of a channel, ordinary thread or teammate direct conversation.
 
 Default resolution:
 
@@ -693,12 +708,12 @@ the original SSE stream continues.
 
 Important boundary:
 
-- Normal conversation sends the selected four-preset authorization through the existing
-  conversation stream payload.
-- Channel authorization continues to update the existing run permission mode and preset.
-- Teammate private chat shows and locks the permission preset in the shared composer, but
-  does not send it to the daemon yet because teammate direct messages do not currently
-  have a permission snapshot field.
+- Normal, channel and private adapters submit both the selected `authorizationMode`
+  and `workspaceAccessMode` through their existing request paths, together with the
+  derived legacy fields and scope-bound Full access confirmation where required.
+- Channel updates both dimensions in one state transition. Private selection updates
+  its paired local/owner state together; it cannot display Full access while sending
+  a restricted sandbox or preserve a stale approval result after changing owner.
 - Normal/private do not expose teammate `@` routing. Channel remains the only surface
   with teammate mention picker behavior.
 
@@ -709,7 +724,7 @@ No blocking product decision remains for the first design slice.
 - Teammate private chat does not change model from the composer. The model is owned by
   teammate/provider settings and may be shown read-only.
 - Channel authorization is not hidden. Channel, normal conversation, and teammate private
-  chat all show the same four permission presets.
+  chat all use one `ConversationPermissionControl`; sandbox defaults remain in Settings.
 - The default authorization preset comes from settings. A configured custom policy
   resolves to `custom`.
 - Authorization cannot change the permission snapshot of an active model call/run/direct

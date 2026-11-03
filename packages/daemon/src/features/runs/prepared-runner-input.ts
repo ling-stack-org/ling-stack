@@ -3,7 +3,7 @@ import { resolveAutomaticMemoryRecallScope } from "../memory/recall-service.js";
 import { isDeepStrictEqual } from "node:util";
 import { isHostCapabilityToolDefinitionV1 } from "@ling-stack/contracts";
 import { redactSecrets, type RunStore, type SkillDefinition, type SkillSourceRuntimeContext } from "@ling-stack/core";
-import { assertPreparedPiTaskInput, readPreparedPiInput, type PiRunnerPreparedInput, type PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import { assertPreparedPiTaskInput, DELEGATION_TOOL_NAMES, readPreparedPiInput, type PiRunnerPreparedInput, type PiRunnerRunOptions } from "@ling-stack/runner-pi";
 import { HttpError } from "../../errors.js";
 import { isRecord } from "../../shared/validation.js";
 import type { RunRequest } from "./schemas.js";
@@ -67,8 +67,12 @@ export function restorePreparedRunnerOptions(
     }
     return { ...frozen, defaultApproval: live.defaultApproval, sideEffectLevel: live.sideEffectLevel };
   });
-  if (payload.toolHydrationEnabled && !(current.initialToolSurface?.toolHydration ?? Boolean(current.onToolHydrationRequest)) ||
-    payload.input.initialToolSurface?.userInput === true && current.initialToolSurface?.userInput !== true ||
+  const frozenSurface = payload.input.initialToolSurface;
+  const currentSurface = current.initialToolSurface;
+  if (payload.toolHydrationEnabled && !(currentSurface?.toolHydration ?? Boolean(current.onToolHydrationRequest)) ||
+    frozenSurface?.userInput === true && currentSurface?.userInput !== true ||
+    frozenSurface?.delegation === true && currentSurface?.delegation !== true ||
+    frozenSurface?.nativeFileCreate !== undefined && currentSurface?.nativeFileCreate !== frozenSurface.nativeFileCreate ||
     !requiredRuntimeToolFeaturesRemainAvailable(payload.input.runtimeToolFeatures, current.runtimeToolFeatures)) {
     throw new HttpError(409, "prepared_tool_capability_changed", "Prepared runtime tool capabilities changed.");
   }
@@ -133,11 +137,24 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
       }
     }
   }
-  if (value.input.initialToolSurface !== undefined) {
+  const preparedNativeCreateSelected = prepared.tools.some(tool => tool.name === "write" && isNativeCreateWriteTool(tool));
+  if (value.input.initialToolSurface !== undefined || preparedNativeCreateSelected) {
     const surface = value.input.initialToolSurface;
-    if (!isRecord(surface) || Object.keys(surface).some(key => !["mediaGeneration", "toolHydration", "userInput"].includes(key)) ||
-      Object.values(surface).some(selected => typeof selected !== "boolean") ||
-      surface.userInput !== undefined && prepared.tools.some(tool => tool.name === "request_user_input") !== surface.userInput) {
+    const surfaceRecord = isRecord(surface) ? surface : undefined;
+    const delegationSelected = prepared.tools.filter(tool => (DELEGATION_TOOL_NAMES as readonly string[]).includes(tool.name)).map(tool => tool.name);
+    const delegationSurfaceMatches = surfaceRecord?.delegation === undefined ||
+      (surfaceRecord?.delegation === (delegationSelected.length > 0) &&
+        (surfaceRecord.delegation === false || delegationSelected.length === DELEGATION_TOOL_NAMES.length &&
+          DELEGATION_TOOL_NAMES.every(name => delegationSelected.includes(name))));
+    const nativeCreateSelected = preparedNativeCreateSelected;
+    const nativeSurfaceMatches = nativeCreateSelected
+      ? surfaceRecord?.nativeFileCreate === true
+      : surfaceRecord?.nativeFileCreate === undefined || surfaceRecord?.nativeFileCreate === false;
+    const delegationSurfaceRequired = delegationSelected.length > 0 && surfaceRecord?.delegation !== true;
+    if (!surfaceRecord || Object.keys(surfaceRecord).some(key => !['mediaGeneration', 'toolHydration', 'userInput', 'nativeFileCreate', 'delegation'].includes(key)) ||
+      Object.values(surfaceRecord).some(selected => typeof selected !== "boolean") ||
+      surfaceRecord.userInput !== undefined && prepared.tools.some(tool => tool.name === "request_user_input") !== surfaceRecord.userInput ||
+      !delegationSurfaceMatches || delegationSurfaceRequired || !nativeSurfaceMatches) {
       throw new Error("Invalid prepared user-input tool surface");
     }
   }
@@ -170,6 +187,13 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
   return structuredClone(value) as unknown as PreparedRunnerInput;
 }
 function json<T>(value: T): T { return value === undefined ? value : JSON.parse(JSON.stringify(value)) as T; }
+
+function isNativeCreateWriteTool(tool: PiRunnerPreparedInput["tools"][number]): boolean {
+  const parameters = tool.parameters;
+  return isRecord(parameters) && parameters.required instanceof Array &&
+    parameters.required.length === 2 && parameters.required.includes("path") && parameters.required.includes("content") &&
+    !Object.hasOwn(parameters, "anyOf") && parameters.additionalProperties === false;
+}
 
 function requiredRuntimeToolFeaturesRemainAvailable(
   frozen: PiRunnerRunOptions["runtimeToolFeatures"],

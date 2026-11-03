@@ -10,8 +10,10 @@ export function createGuardedMediaHttpTransport(input: {
   readonly captureAdmissionFailure: (error: MediaLocalExecutionAdmissionError) => void;
 }): HostMediaNativeTransport {
   const host = getHostMediaOperation(input.execution);
+  const localSignal = input.registry.getAbortSignal(input.execution);
   let native: HostMediaNativeTransport;
   native = createHostMediaNativeTransport({
+    signal: localSignal,
     launch: (mode, request, send) => {
       if (!host || mode === "observation") input.registry.launchEffect(input.execution, mode, send);
       else {
@@ -30,6 +32,14 @@ export function createGuardedMediaHttpTransport(input: {
     try { return await native.fetch(url, init); }
     catch (error) {
       if (error instanceof MediaLocalExecutionAdmissionError) input.captureAdmissionFailure(error);
+      else if (localSignal.aborted) {
+        // Adapters may translate native abort into a business failure result.
+        // Preserve the Host stop separately so their catch cannot terminalize
+        // the durable job/child or discard a recoverable remote operation.
+        // Complete responses and late genuine ACKs never enter this branch.
+        input.captureAdmissionFailure(new MediaLocalExecutionAdmissionError("media_local_aborted",
+          "Media request ended after local stop; remote outcome remains unconfirmed."));
+      }
       throw error;
     }
   };

@@ -234,6 +234,7 @@ async function runFixture(target, scenario) {
       + "export const captureKimiAccountOperation = () => { throw new Error('unexpected-kimi-operation'); }; "
       + "export const probeEngineConnection = () => { throw new Error('unexpected-probe'); };",
     "./installation-probe.js": "export class EngineProbeBusyError extends Error {} "
+      + "export const killOwnedProbe = () => { throw new Error('unexpected-owned-probe'); }; "
       + "export const probeEngineInstallation = async () => ({status:'installed',executableDigest:'fixture-digest'});",
     "./native-auth-home.js": "export const prepareNativeAuthHome = globalThis.__lingLoginRace.prepareHome;",
     "./run-target-dispatcher.js": "export const createExecutionEngineRunTargetDispatcher = () => ({ "

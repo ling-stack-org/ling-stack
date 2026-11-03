@@ -60,7 +60,13 @@ export function commitNormalTerminalReportWithinTransaction(
     || computeTerminalReportEvidenceFingerprint(evidence) !== record.evidenceFingerprint
     || evidence.evidenceFingerprint !== record.evidenceFingerprint) return conflict("stale_completion_basis");
   if (candidate.outcome.status !== evidence.terminalState
-    || (candidate.outcome.status === "succeeded" && (!basis.settled || basis.turnStatus !== "succeeded" || !basis.successAllowed))) {
+    || (candidate.outcome.status === "succeeded" && (!basis.settled || basis.turnStatus !== "succeeded" || !basis.successAllowed))
+    // Atomic action failures may turn a successful source into a partial report.
+    // That does not permit the source to bypass required dynamic descendants.
+    // A genuinely failed primary with successful validation remains explainable.
+    || (candidate.outcome.status === "partially_succeeded"
+      && (basis.turnStatus === "succeeded" || (basis.source.kind === "run" && basis.effectiveRunStatus === "succeeded"))
+      && !basis.delegationSuccessAllowed)) {
     return conflict("outcome_conflict");
   }
   // Failure publication may explain unknown effects, never erase them. The

@@ -1,0 +1,30 @@
+(node:23503) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./output/e6-20260928/public-projection-test-loader.mjs", pathToFileURL("./")); register("./output/e6-20260928/public-projection-test-loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ public snapshots omit only internal recovery input without mutating accepted execution (0.90825ms)
+✔ historical workflow prompt bodies are private in all three task views, not in ordinary or nested user tasks (0.149917ms)
+✔ a real prepared answer continuation retains private system input internally but not in successor DTOs (399.771209ms)
+✔ public projection preserves non-Run requests, absent inputs, and nested user/tool keys (0.166917ms)
+✔ Run and WorkUnit HTTP views and terminal control responses never serialize frozen private input (21.92ms)
+✔ direct control HTTP runtime, intervention, promote, and cancel responses project WorkUnits without changing services (7.352666ms)
+(node:23509) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./output/e6-20260928/public-projection-test-loader.mjs", pathToFileURL("./")); register("./output/e6-20260928/public-projection-test-loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ supervisor HTTP projects every nested Run-owned collection without changing service facts (14.474584ms)
+(node:23510) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./output/e6-20260928/public-projection-test-loader.mjs", pathToFileURL("./")); register("./output/e6-20260928/public-projection-test-loader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ historical workflow HTTP thread/turn/item/Run DTOs hide private dispatch input without rewriting facts (358.589458ms)
+✔ workflow search cannot disclose private input via match snippets or private-only matches (343.753375ms)
+✔ workflow resume preview is public and generic resume cannot rehydrate private workflow input (315.838375ms)
+✔ workflow fork and fork-run source and child DTOs never reuse historical private input (331.652875ms)
+✔ trusted workflow Thread ownership protects unmarked Run-owned WorkUnits and leaves ordinary inputs intact (529.3ms)
+✔ search uses referenced Run/Turn workflow ownership even under an ordinary Thread (1.419458ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4717.138334

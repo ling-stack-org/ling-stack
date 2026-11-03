@@ -6,6 +6,7 @@ import type { ApprovalCommandRuleProposal, ApprovalDecisionKind } from "./approv
 import type { RunProviderErrorDiagnostic, RunProviderRetryEvidence } from "./provider-diagnostics.js";
 import type { HarnessFeatureSnapshotV1 } from "./harness.js";
 import type { ExecutionBindingRequest } from "./execution-engines.js";
+import type { ConversationWorkspaceFileRefSourceV1 } from "./conversation-continuity.js";
 
 export type RuntimePermissionRequestKind =
   | "core_tool"
@@ -458,6 +459,7 @@ export interface RuntimeSemaphoreListResponse {
 export type RunEventType =
   | "host_command_prepared"
   | "host_command_settled"
+  | "delegation_instruction_checkpointed"
   | "run_created"
   | "run_start"
   | "turn_start"
@@ -515,6 +517,13 @@ export interface RunTokenUsageEvidence {
 }
 
 export interface RunEventDataByType {
+  readonly delegation_instruction_checkpointed: {
+    readonly schemaVersion: 1;
+    readonly attemptId: string;
+    readonly messageIds: readonly string[];
+    readonly modelViewSha256: string;
+    readonly [key: string]: unknown;
+  };
   readonly host_command_prepared: import("./host-command-journal.js").HostCommandPreparedV1 & { readonly [key: string]: unknown };
   readonly host_command_settled: import("./host-command-journal.js").HostCommandSettledV1 & { readonly [key: string]: unknown };
   readonly run_created: {
@@ -923,6 +932,7 @@ export interface RunInterventionLinkPreviewPayload {
 export interface RunInterventionWorkspaceFilePayload {
   readonly path: string;
   readonly label?: string;
+  readonly source?: ConversationWorkspaceFileRefSourceV1;
   readonly rootRelation: "inside_workspace" | "outside_workspace" | "unknown";
   readonly kind: "file" | "directory" | "glob" | "unknown";
   readonly materializationStatus: RunInterventionMaterializationStatus;

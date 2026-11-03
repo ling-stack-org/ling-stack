@@ -59,14 +59,14 @@ test("interactive html scan accepts offline self-contained documents and rejects
 test("interactive html preview carries the resource CSP for connections and form submission", () => {
   const cspMeta = '<meta http-equiv="Content-Security-Policy" content="' + HTML_INTERACTIVE_CSP + '">';
   const withHead = injectInteractiveHtmlCsp("<html><head><title>t</title></head><body><script>1+1</script></body></html>");
-  assert.ok(withHead.startsWith("<html><head>" + cspMeta), withHead.slice(0, 120));
+  assert.ok(withHead.startsWith("<!doctype html><html><head>" + cspMeta), withHead.slice(0, 120));
   const withHtmlOnly = injectInteractiveHtmlCsp("<html><body>x</body></html>");
-  assert.ok(withHtmlOnly.includes("<head>" + cspMeta + "</head>"));
+  assert.ok(withHtmlOnly.startsWith("<!doctype html><html><head>" + cspMeta));
   const bare = injectInteractiveHtmlCsp("<script>1+1</script>");
-  assert.ok(bare.startsWith(cspMeta));
+  assert.ok(bare.startsWith("<!doctype html><html><head>" + cspMeta));
   const doubled = injectInteractiveHtmlCsp(withHead);
   assert.notEqual(doubled, withHead, "never skips injection based on document content");
-  assert.equal(doubled.split("Content-Security-Policy").length, 3, "repeated injection stacks the same strict policy");
+  assert.equal(doubled.split("Content-Security-Policy").length, 5, "repeated wrapping retains both inherited policies");
   assert.match(HTML_INTERACTIVE_CSP, /connect-src 'none'/u);
   assert.match(HTML_INTERACTIVE_CSP, /form-action 'none'/u);
 });

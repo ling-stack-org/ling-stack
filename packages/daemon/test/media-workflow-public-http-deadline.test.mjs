@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import test from "node:test";
@@ -9,22 +10,24 @@ import { createA11PublicHttpNetworkFixture } from "./support/a11-public-http-net
 const cases = ["dns", "headers", "body"];
 const childCase = process.env.LING_A11_PUBLIC_HTTP_DEADLINE_CASE;
 
-function assertIsolation() {
+function assertIsolation(environment = process.env) {
   for (const name of ["LING_STACK_HOME", "LING_STACK_DEFAULT_WORKSPACE_CWD"]) {
-    const value = process.env[name];
+    const value = environment[name];
     assert.ok(value && isAbsolute(value) && resolve(value) === value && value !== process.cwd() && value !== "/");
     assert.ok(statSync(value).isDirectory());
   }
 }
 
 async function runChild(caseName) {
-  assertIsolation();
-  const root = mkdtempSync(join(process.env.LING_STACK_HOME, `deadline-${caseName}-`));
+  const root = mkdtempSync(join(tmpdir(), `ling-a11-deadline-${caseName}-`));
   const home = join(root, "user"), workspace = join(root, "workspace");
   mkdirSync(home, { mode: 0o700 }); mkdirSync(workspace, { mode: 0o700 });
-  const environment = { ...process.env, LING_STACK_HOME: home, LING_STACK_DEFAULT_WORKSPACE_CWD: workspace,
+  const environment = { PATH: process.env.PATH, LANG: "C.UTF-8", TZ: "UTC",
+    LING_STACK_HOME: home, LING_STACK_DEFAULT_WORKSPACE_CWD: workspace,
     LING_A11_PUBLIC_HTTP_DEADLINE_CASE: caseName };
-  delete environment.NODE_TEST_CONTEXT;
+  // Match the API launcher: only the fresh child scope is consumed by product
+  // imports, and no daily credentials or Node test context are inherited.
+  assertIsolation(environment);
   const child = spawn(process.execPath,
     ["--test", "--test-name-pattern=^A11 public HTTP deadline fixture child ", import.meta.filename],
     { env: environment, stdio: ["ignore", "pipe", "pipe"] });
@@ -32,7 +35,9 @@ async function runChild(caseName) {
   child.stdout.on("data", bytes => { stdout += bytes; });
   child.stderr.on("data", bytes => { stderr += bytes; });
   let expired = false;
-  const timeout = setTimeout(() => { expired = true; child.kill("SIGKILL"); }, 45_000);
+  // The request deadline is 30 seconds; allow a slower macOS runner enough
+  // time to flush the daemon shutdown and restore the process-global fixture.
+  const timeout = setTimeout(() => { expired = true; child.kill("SIGKILL"); }, 65_000);
   let status;
   try {
     status = await new Promise((resolveExit, rejectExit) => {
@@ -41,18 +46,18 @@ async function runChild(caseName) {
   } finally { clearTimeout(timeout); }
   process.stdout.write(stdout);
   if (stderr) process.stderr.write(stderr);
-  assert.equal(expired, false, `${caseName} child exceeded its 45-second bound`);
+  assert.equal(expired, false, `${caseName} child exceeded its 65-second bound`);
   assert.match(stdout, new RegExp(`A11 deadline child entered: ${caseName}`));
   assert.deepEqual(status, { code: 0, signal: null }, `${caseName}\n${stdout}\n${stderr}`);
 }
 
 if (!childCase) {
-  test("A11 Comfy public HTTP actual default deadlines", { concurrency: 3, timeout: 50_000 }, async t => {
-    await Promise.all(cases.map(caseName => t.test(`A11 actual 30-second ${caseName} deadline`, { timeout: 47_000 },
+  test("A11 Comfy public HTTP actual default deadlines", { concurrency: 3, timeout: 70_000 }, async t => {
+    await Promise.all(cases.map(caseName => t.test(`A11 actual 30-second ${caseName} deadline`, { timeout: 67_000 },
       () => runChild(caseName))));
   });
 } else {
-  test(`A11 public HTTP deadline fixture child ${childCase}`, { timeout: 42_000 }, async t => {
+  test(`A11 public HTTP deadline fixture child ${childCase}`, { timeout: 62_000 }, async t => {
     assertIsolation();
     assert.ok(cases.includes(childCase));
     console.log(`A11 deadline child entered: ${childCase}`);

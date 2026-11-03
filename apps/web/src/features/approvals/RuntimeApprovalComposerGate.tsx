@@ -55,7 +55,7 @@ export function RuntimeApprovalComposerGate({
       allowLabel={t("Allow once")}
       allowMenuLabel={proposedCommandRule ? t("Allow options") : undefined}
       allowSecondaryDescription={proposedCommandRule
-        ? t("Allow commands starting with {command} in this workspace", { command: proposedCommandRule.display })
+        ? `${t("Allow commands starting with {command} in this workspace", { command: proposedCommandRule.display })}${proposedCommandRule.cwd ? ` · ${t("Working directory")}: ${proposedCommandRule.cwd}` : ""}`
         : undefined}
       allowSecondaryLabel={proposedCommandRule ? t("Allow similar commands") : undefined}
       allowingLabel={t("Allowing")}

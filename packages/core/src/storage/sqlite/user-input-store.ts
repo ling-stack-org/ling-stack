@@ -15,6 +15,7 @@ import type { SqliteControlPlaneStore } from "./control-plane-store.js";
 import { readString, rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { resolveActiveUserInputSource, type UserInputSourcePorts } from "./user-input-source.js";
 import { isCurrentRunExecutionOwner } from "./run-execution-admission.js";
+import { assertUserInputAnswerAuthority, type UserInputAnswerAuthorityPorts } from "./user-input-answer-authority.js";
 import { captureUserInputRunEventPosition } from "./user-input-event-position.js";
 import {
   assertNonSensitiveUserInput, mapUserInputRequest, userInputCreateFingerprint,
@@ -27,7 +28,7 @@ export class SqliteUserInputStore {
     private readonly context: SqliteStoreContext,
     private readonly items: SqliteConversationItemStore,
     private readonly events: SqliteControlPlaneStore,
-    private readonly sources: UserInputSourcePorts,
+    private readonly sources: UserInputSourcePorts & UserInputAnswerAuthorityPorts,
   ) {}
 
   create(input: CreateUserInputRequest, now: string): CreateUserInputRequestResult {
@@ -123,8 +124,16 @@ export class SqliteUserInputStore {
         .get(request.requestId, submission.expectedVersion);
       // Replay before pending-only validation; a receipt remains valid after delivery or expiration.
       if (existing) {
+        if (input.authority) {
+          if (input.authority.statusRevision !== submission.expectedStatusRevision) throw new UserInputStoreError("stale_request");
+          assertUserInputAnswerAuthority(this.context, this.sources, request, input.authority, now, { requireCurrent: false });
+        }
         if (existing.submission_fingerprint !== fingerprint) throw new UserInputStoreError("idempotency_conflict");
         return this.receipt(request, existing, true);
+      }
+      if (input.authority) {
+        if (input.authority.statusRevision !== submission.expectedStatusRevision) throw new UserInputStoreError("stale_request");
+        assertUserInputAnswerAuthority(this.context, this.sources, request, input.authority, now, { requireCurrent: true });
       }
       const validated = validateUserInputAnswerForRequestV1(submission, request, nowMs);
       if (!validated.ok) throw new UserInputStoreError(validated.error.code);

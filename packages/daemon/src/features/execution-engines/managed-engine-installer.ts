@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getManagedEnginePackage, type ExternalExecutionEngineId, type ManagedEnginePackage } from "@ling-stack/contracts";
 import type { LingStackUserConfigPaths } from "@ling-stack/core";
-import { probeEngineInstallation } from "./installation-probe.js";
+import { killOwnedProbe, probeEngineInstallation } from "./installation-probe.js";
 
 export class ManagedInstallError extends Error {
   readonly code = "managed_install_failed";
@@ -66,27 +66,36 @@ function readDist(metadata: Record<string, unknown>): { tarball: string; integri
   return { tarball: record.tarball, integrity: record.integrity };
 }
 
-async function extractTarball(tarball: string, targetDir: string, spawnImpl: typeof spawn): Promise<void> {
-  const entries = await new Promise<string>((resolve, reject) => {
-    const child = spawnImpl("tar", ["-tzf", tarball], { stdio: ["ignore", "pipe", "pipe"] });
+async function extractTarball(tarball: string, targetDir: string, spawnImpl: typeof spawn, signal?: AbortSignal): Promise<void> {
+  const run = (args: string[], failureCode: string): Promise<string> => new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
+    const child = spawnImpl("tar", args, { stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" });
     let stdout = "";
+    let failure: unknown;
+    const abort = (): void => { failure = signal?.reason; killOwnedProbe(child); };
+    signal?.addEventListener("abort", abort, { once: true });
     child.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
-    child.once("error", reject);
-    child.once("exit", (code) => (code === 0 ? resolve(stdout) : reject(new ManagedInstallError("managed_install_list_failed"))));
+    child.stderr?.resume();
+    child.on("error", (error) => { failure ??= error; });
+    child.once("exit", () => killOwnedProbe(child));
+    // Keep ownership until streams and the actual child have closed, including on abort/error.
+    child.once("close", (code) => {
+      signal?.removeEventListener("abort", abort);
+      if (failure !== undefined) reject(failure);
+      else if (code === 0) resolve(stdout);
+      else reject(new ManagedInstallError(failureCode));
+    });
+    if (signal?.aborted) abort();
   });
+  const entries = await run(["-tzf", tarball], "managed_install_list_failed");
   for (const entry of entries.split("\n").filter(Boolean)) {
     if (entry.startsWith("/") || entry.includes("..") || entry.includes("\\")) {
       throw new ManagedInstallError("managed_install_archive_entry_rejected");
     }
   }
+  signal?.throwIfAborted();
   await mkdir(targetDir, { recursive: true });
-  await new Promise<void>((resolve, reject) => {
-    const child = spawnImpl("tar", ["-xzf", tarball, "-C", targetDir], { stdio: ["ignore", "ignore", "pipe"] });
-    let stderr = "";
-    child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
-    child.once("error", reject);
-    child.once("exit", (code) => (code === 0 ? resolve() : reject(new ManagedInstallError(`managed_install_extract_failed:${stderr.slice(0, 200)}`))));
-  });
+  await run(["-xzf", tarball, "-C", targetDir], "managed_install_extract_failed");
 }
 
 export interface InstallManagedEngineOptions {
@@ -106,6 +115,7 @@ export async function installManagedEngine(
   userPaths: Pick<LingStackUserConfigPaths, "rootDir">,
   options: InstallManagedEngineOptions = {},
 ): Promise<ManagedInstallResult> {
+  options.signal?.throwIfAborted();
   const pkg = options.packageOverride ?? getManagedEnginePackage(engineId);
   if (!pkg?.installable || !pkg.install) throw new ManagedInstallError(`managed_install_unsupported_engine:${engineId}`);
   const platform = options.platform ?? process.platform;
@@ -118,6 +128,7 @@ export async function installManagedEngine(
   const binaryPackage = pkg.install.binaryPackageName(target.platformKey);
   const binaryVersion = pkg.install.binaryVersion(pkg.pinnedVersion, target.platformKey);
   const metadata = await fetchJson(fetchImpl, `https://registry.npmjs.org/${binaryPackage}/${binaryVersion}`, options.signal);
+  options.signal?.throwIfAborted();
   const dist = readDist(metadata);
   const tarballUrl = new URL(dist.tarball);
   if (tarballUrl.protocol !== "https:" || tarballUrl.hostname !== "registry.npmjs.org") {
@@ -132,18 +143,21 @@ export async function installManagedEngine(
     const response = await fetchImpl(dist.tarball, { signal: options.signal });
     if (!response.ok) throw new ManagedInstallError(`managed_install_download_http_${response.status}`);
     const bytes = Buffer.from(await response.arrayBuffer());
+    options.signal?.throwIfAborted();
     const digest = `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
     if (digest !== pinnedIntegrity || digest !== dist.integrity) throw new ManagedInstallError("managed_install_integrity_mismatch");
     await writeFile(tarballPath, bytes);
 
     const extractDir = join(root, "extract");
-    await extractTarball(tarballPath, extractDir, spawnImpl);
+    await extractTarball(tarballPath, extractDir, spawnImpl, options.signal);
+    options.signal?.throwIfAborted();
 
     const relativeBinary = pkg.install.binaryPath(target.targetTriple);
     const binary = join(extractDir, relativeBinary);
     await access(binary, constants.X_OK).catch(async () => {
       if (platform !== "win32") await chmod(binary, 0o755);
     });
+    options.signal?.throwIfAborted();
 
     const installRoot = join(userPaths.rootDir, "engines", engineId, pkg.pinnedVersion);
     const parent = dirname(installRoot);
@@ -158,6 +172,7 @@ export async function installManagedEngine(
       alreadyInstalled = false;
     }
     if (!alreadyInstalled) {
+      options.signal?.throwIfAborted();
       const staged = join(parent, `.staging-${pkg.pinnedVersion}-${process.pid}`);
       await rm(staged, { recursive: true, force: true });
       await rename(extractDir, staged);
@@ -170,10 +185,11 @@ export async function installManagedEngine(
     }
 
     const probe = await probeEngineInstallation(discoveryProfileFor(pkg, executablePath), { signal: options.signal, timeoutMs: 5000 });
+    options.signal?.throwIfAborted();
     if (probe.status !== "installed") throw new ManagedInstallError(`managed_install_probe_failed:${probe.status}`);
     return { engineId, version: pkg.pinnedVersion, executablePath, integrity: dist.integrity, installedAt: now().toISOString() };
   } finally {
-    await rm(root, { recursive: true, force: true }).catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
   }
 }
 

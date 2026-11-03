@@ -1,5 +1,6 @@
 import type {
   UserInputAnswerV1,
+  UserInputAnswerAuthorityV1,
   ConversationItemVisibilityV1, RuntimeAttemptFenceV1,
   UserInputQuestionV1, UserInputRequestStatusV1, UserInputToolInputV1, UserInputValidationCodeV1,
 } from "@ling-stack/contracts";
@@ -60,6 +61,8 @@ export interface SubmitUserInputAnswer {
   /** Authenticated caller scope; this store does not establish API authorization. */
   readonly threadId: string;
   readonly submission: unknown;
+  /** Required only at the public API boundary; internal Host callers retain their existing trusted path. */
+  readonly authority?: UserInputAnswerAuthorityV1;
 }
 /** Immutable acceptance evidence, not a delivery acknowledgment or permission grant. */
 export interface UserInputAnswerReceipt {

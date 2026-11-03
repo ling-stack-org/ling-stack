@@ -287,6 +287,40 @@ test("tool load requests reject over-budget namespace materialization before run
   }
 });
 
+test("tool load requests reject a source whose execution owner was retired during startup recovery", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-tool-load-stale-owner-"));
+  const store = createSqliteRunStore(cwd);
+  const daemon = createDaemonServer({
+    host: "127.0.0.1",
+    port: 0,
+    defaultWorkspaceCwd: cwd,
+  }, {
+    runner: new NoopRunner(),
+    storeFactory: () => store,
+  });
+
+  try {
+    const fixture = seedToolSurfaceFixture(store, cwd);
+    await daemon.start();
+    const response = await postJsonResponse(
+      `${serverBaseUrl(daemon)}/runs/${encodeURIComponent(fixture.runId)}/tool-load-requests?cwd=${encodeURIComponent(cwd)}`,
+      {
+        scope: { kind: "namespace", namespaceId: "mcp:mcp_files" },
+        reason: "must not hydrate after recovery retired the owner",
+        idempotencyKey: "stale-owner-tool-load",
+      },
+    );
+
+    assert.equal(response.status, 409);
+    assert.equal(response.body.error, "tool_materialization_denied");
+    assert.equal(store.listRuntimeEvents(fixture.workUnitId, { limit: 10 }).some((event) =>
+      event.type === "tool_namespace_materialized" || event.type === "tool_hydration_rejected"), false);
+  } finally {
+    await daemon.stop();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 function seedToolSurfaceFixture(store, cwd) {
   const now = "2026-06-19T04:00:00.000Z";
   const provider = store.createProviderPreset(

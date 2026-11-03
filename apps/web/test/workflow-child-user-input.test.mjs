@@ -141,7 +141,7 @@ test("full protocol refresh preserves revocation, accepts first questions, and d
 test("full protocol and mutation controllers use the shared read-model merger", async () => {
   const { readFile } = await import("node:fs/promises");
   const domain = await readFile(new URL("../src/domains/workspace/use-workspace-domain.ts", import.meta.url), "utf8");
-  assert.match(domain, /setChannelWorkflowSteps\(current => mergeWorkflowStepReadModels\(current, workflowSteps\)\)/);
+  assert.match(domain, /read\.publish\(setChannelWorkflowSteps, current => mergeWorkflowStepReadModels\(current, workflowSteps\)\)/);
   const controller = await readFile(new URL("../src/app/use-channel-workflow-controller.ts", import.meta.url), "utf8");
   assert.doesNotMatch(controller, /item\.id === response\.workflowStep\.id \? response\.workflowStep/);
 });

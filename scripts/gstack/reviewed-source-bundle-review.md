@@ -1,4 +1,41 @@
-# GStack source producer review, 2026-10-23
+# GStack source producer review
+
+## Current source-only binding, 2026-10-26
+
+Commit `6b2a53dd` repairs failure staging ownership. The source builder hashes
+itself, so its recipe changes even though the generated file contents do not.
+The previous receipt below remains historical; it does not authorize the new
+recipe by metadata substitution.
+
+An actual fixed-object fetch/render ran under the original local-bounded root
+and managed lease. The original builder and the preview's strict production
+verifier both checked the real source generation. Its exact identities are:
+
+- Manifest: `sha256:46d0b73ac3efa12039ea2332f03782b9d940cdd47c3798bf99cd75406166f866`.
+- Recipe: `ling-35d2bce87d68a986b352980d196e383a1ed1ea9bc6684d7edcc5d5a2ca64be5c`.
+- Fixed upstream remains `47d639abffa882b8cbb641d7d1dedf08ecada9ec`.
+- All 3,714 file records, all 57 skills, and the entire manifest except the
+  recipe field equal the previous actual manifest. No metadata recovery ran.
+- Parent result: actual exit 0, 20,162 ms, direct child closed/exit 0, POSIX
+  process group absent, output settled, lease released.
+
+Evidence is under
+`output/e6-20260928/p5-merged-input-review-20261026/source-recipe-preview-run-v3/`:
+`actual-manifest.json`, `packet.json`, `comparison.json`, `build.log`, and
+`managed-result.json`. Independent review rehashed the manifest, recipe and all
+212 frozen inputs, deeply compared the complete manifests, and verified the
+command/policy checksums and real settlement receipt. The source itself was
+verified during the actual child execution; the independent reviewer did not
+claim to rehash file bytes after the managed owner released that scratch.
+
+The v2 preview's omitted `expectedSkillIds` caused a real strict rejection.
+Its failure log/receipt and the earlier static report are preserved; the v3
+delta report explicitly corrects that static omission. The production verifier
+was not weakened. This binding admits only source for subsequent candidate
+builds, not native artifacts, licenses, browser execution, packaged GUI or
+release. It does not amend Office approval or replace remaining acceptance.
+
+## Historical source review, 2026-10-23
 
 The previous receipt (`2921f0cf…`, adaptation `0713f441…`) was introduced together
 with the source producer in commit `d8c1cb4d`. Its producer inputs are not

@@ -429,7 +429,7 @@ export function useChannelComposerInputController({
     () => composerWorkspaceFileParts(composerSubmissionInputParts).map((part): ChannelMessageFileRef => ({
       path: part.path,
       label: part.path,
-      source: "composer",
+      source: "inferred_text",
       ...(part.line !== undefined ? { line: part.line } : {}),
     })),
     [composerSubmissionInputParts],

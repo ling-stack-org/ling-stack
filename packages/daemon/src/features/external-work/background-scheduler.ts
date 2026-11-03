@@ -29,6 +29,8 @@ interface ExternalWorkBackgroundSchedulerEntry {
 export class ExternalWorkBackgroundSchedulerRegistry {
   private readonly entriesById = new Map<string, ExternalWorkBackgroundSchedulerEntry>();
   private readonly idsByKey = new Map<string, string>();
+  private readonly inFlight = new Set<Promise<void>>();
+  private stopped = false;
 
   constructor(
     private readonly storeRegistry: RunStoreRegistry,
@@ -41,6 +43,7 @@ export class ExternalWorkBackgroundSchedulerRegistry {
     readonly duplicate: boolean;
     readonly startupReconcile?: ExternalWorkReconcileResponse;
   }> {
+    if (this.stopped) throw new Error("external_work_scheduler_shutdown");
     const prepared = this.prepare(cwd, input);
     const key = this.key(cwd, input.channelId, prepared.workflowFile.path);
     const existingId = this.idsByKey.get(key);
@@ -119,6 +122,14 @@ export class ExternalWorkBackgroundSchedulerRegistry {
     }
   }
 
+  /** Permanent Daemon admission close; stopAll alone remains reusable. */
+  stopAdmission(): void {
+    this.stopped = true;
+    this.stopAll();
+  }
+
+  async waitForIdle(): Promise<void> { while (this.inFlight.size) await Promise.allSettled([...this.inFlight]); }
+
   private isCurrentRunningEntry(entry: ExternalWorkBackgroundSchedulerEntry): boolean {
     return this.entriesById.get(entry.scheduler.id) === entry
       && this.idsByKey.get(entry.key) === entry.scheduler.id
@@ -184,6 +195,15 @@ export class ExternalWorkBackgroundSchedulerRegistry {
   }
 
   private async runTick(entry: ExternalWorkBackgroundSchedulerEntry): Promise<void> {
+    // Register before the first await; stopping a timer is not a lifetime receipt for its poll.
+    let resolveDone!: () => void;
+    const done = new Promise<void>(resolve => { resolveDone = resolve; });
+    this.inFlight.add(done);
+    try { await this.runOwnedTick(entry); }
+    finally { this.inFlight.delete(done); resolveDone(); }
+  }
+
+  private async runOwnedTick(entry: ExternalWorkBackgroundSchedulerEntry): Promise<void> {
     if (entry.running || !this.isCurrentRunningEntry(entry)) {
       return;
     }

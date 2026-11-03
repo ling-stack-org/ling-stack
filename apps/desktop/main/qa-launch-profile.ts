@@ -8,11 +8,13 @@ const osEnvironmentNames = new Set([
 ]);
 const markerFields = ["schemaVersion", "kind", "synthetic", "modelExecution", "humanConfirmation", "workspaceCwd", "userDataDir", "lingHome"];
 
-/** Scope declaration only: neither package nor profile markers authorize human decisions or tools. */
+/** Baseline namespace only: never use this marker as a model-run or human-decision receipt. */
 export interface DesktopQaLaunchProfile {
   readonly schemaVersion: 1;
   readonly purpose: "synthetic-human-evaluation";
-  readonly synthetic: true;
+  readonly synthetic: boolean;
+  /** Startup selection only, never evidence that any model invocation happened. */
+  readonly modelExecution?: "host-authorized-budgeted";
   readonly profileCwd: string;
   readonly userDataDir: string;
   readonly workspaceCwd: string;
@@ -73,10 +75,12 @@ export function initializeDesktopQaLaunchProfile(options: DesktopQaLaunchOptions
     profileCwd: profileArgument, userDataDir: join(profileArgument, "user-data"), workspaceCwd: join(profileArgument, "workspace"),
     lingHome: join(profileArgument, "ling-home"), daemonBaseUrl: "http://127.0.0.1:17928" } as const);
   validateQaArguments(options.argv, profile, options.applicationPath);
+  let harnessSelection: unknown;
   try {
     const paths = [profile.profileCwd, profile.userDataDir, profile.workspaceCwd, profile.lingHome];
     const before = paths.map(path => privateDirectory(path, userId));
     validateProfileMarker(profile, userId);
+    harnessSelection = readQaHarnessSelection(profile, userId);
     paths.forEach((path, index) => sameIdentity(before[index], privateDirectory(path, userId)));
   } catch { throw new Error("desktop_qa_profile_invalid"); }
 
@@ -88,13 +92,19 @@ export function initializeDesktopQaLaunchProfile(options: DesktopQaLaunchOptions
     LING_STACK_DAEMON_URL: profile.daemonBaseUrl,
     LING_STACK_HARNESS_CONTINUATIONS_MODE: "enforce",
     LING_STACK_LOCAL_WS_RPC: "false",
+    ...(harnessSelection === undefined ? {} : {
+      LING_STACK_HARNESS_TOOL_BROKER_MODE: "enforce",
+      LING_STACK_HARNESS_DELEGATIONS_MODE: "enforce",
+      LING_STACK_QA_HARNESS_SELECTION: JSON.stringify(harnessSelection),
+    }),
   });
   try {
     options.setUserDataPath(profile.userDataDir);
     if (options.getUserDataPath() !== profile.userDataDir) throw new Error("invalid");
   } catch { throw new Error("desktop_qa_user_data_invalid"); }
-  initializedQaProfile = profile;
-  return profile;
+  initializedQaProfile = harnessSelection === undefined ? profile : Object.freeze({ ...profile,
+    synthetic: false, modelExecution: "host-authorized-budgeted" as const });
+  return initializedQaProfile;
 }
 
 function parseProfileArgument(argv: readonly string[]): string | undefined {
@@ -140,8 +150,9 @@ function privateDirectory(path: string, userId: number): BigIntStats {
   return stat;
 }
 
-function validateProfileMarker(profile: DesktopQaLaunchProfile, userId: number): void {
-  const path = join(profile.profileCwd, "qa-profile.json"), before = lstatSync(path, { bigint: true });
+/** Both policy files are Host startup input, never read from workspace/model metadata. */
+function readPrivateQaJson(path: string, userId: number): unknown {
+  const before = lstatSync(path, { bigint: true });
   const validFile = (stat: BigIntStats): void => {
     if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== BigInt(userId) || (stat.mode & 0o7777n) !== 0o600n
       || stat.nlink !== 1n || stat.size <= 0n || stat.size > 4096n) throw new Error("invalid");
@@ -164,12 +175,40 @@ function validateProfileMarker(profile: DesktopQaLaunchProfile, userId: number):
     const after = fstatSync(fd, { bigint: true }); validFile(after); sameIdentity(opened, after);
     sameIdentity(after, lstatSync(path, { bigint: true }));
   } finally { closeSync(fd); }
+  return value;
+}
+
+function validateProfileMarker(profile: DesktopQaLaunchProfile, userId: number): void {
+  const value = readPrivateQaJson(join(profile.profileCwd, "qa-profile.json"), userId);
   if (!exactRecord(value, markerFields) || value.schemaVersion !== 1 || value.kind !== "synthetic-human-qa-profile"
     || value.synthetic !== true || value.modelExecution !== false || value.humanConfirmation !== false
     || value.workspaceCwd !== profile.workspaceCwd || value.userDataDir !== profile.userDataDir || value.lingHome !== profile.lingHome) {
     throw new Error("invalid");
   }
 }
+
+function readQaHarnessSelection(profile: DesktopQaLaunchProfile, userId: number): unknown {
+  const path = join(profile.profileCwd, "qa-harness.json");
+  try { lstatSync(path); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  const value = readPrivateQaJson(path, userId);
+  if (!exactRecord(value, ["schemaVersion", "kind", "modelExecution", "workspaceCwd", "selectedWorkflowIds", "maxDepth", "rootBudget"])
+    || value.schemaVersion !== 1 || value.kind !== "isolated-qa-delegation-selection"
+    || value.modelExecution !== "host-authorized-budgeted"
+    || value.workspaceCwd !== profile.workspaceCwd || !Array.isArray(value.selectedWorkflowIds)
+    || value.selectedWorkflowIds.length < 1 || value.selectedWorkflowIds.length > 100
+    || value.selectedWorkflowIds.some(id => typeof id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,255}$/u.test(id))
+    || new Set(value.selectedWorkflowIds).size !== value.selectedWorkflowIds.length
+    || !positive(value.maxDepth) || value.maxDepth > 16
+    || !exactRecord(value.rootBudget, ["tokenBudget", "wallTimeBudgetMs"])
+    || !positive(value.rootBudget.tokenBudget) || !positive(value.rootBudget.wallTimeBudgetMs)) throw new Error("invalid");
+  return value;
+}
+
+function positive(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value > 0; }
 
 function sameIdentity(left: BigIntStats, right: BigIntStats): void {
   for (const key of ["dev", "ino", "uid", "mode", "nlink", "size", "mtimeNs", "ctimeNs"] as const) if (left[key] !== right[key]) throw new Error("invalid");

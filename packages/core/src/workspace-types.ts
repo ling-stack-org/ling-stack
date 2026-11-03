@@ -426,6 +426,8 @@ export interface CreateChannelBranchInput {
   readonly name: string;
   readonly status?: ChannelBranchStatus;
   readonly rootThreadId?: string;
+  /** Host-built canonical origin; persisted atomically with the registry row. */
+  readonly conversationThread?: Extract<import("./conversation-thread-topology-types.js").ResolveOrCreateConversationThreadInput, { surfaceKind: "branch" }>;
   readonly archivedAt?: string;
   readonly deletedAt?: string;
 }
@@ -1273,7 +1275,8 @@ export interface ChannelMention {
   readonly kind: "ai-teammate" | "local-user" | "channel";
 }
 
-export type ChannelMessageFileRefSource = "composer" | "explicit_text" | "api";
+/** inferred_text is display-only lexical metadata, not a request to load a file. */
+export type ChannelMessageFileRefSource = "composer" | "explicit_text" | "api" | "inferred_text";
 
 export interface ChannelMessageFileRef {
   readonly path: string;
@@ -1957,6 +1960,7 @@ export const channelWorkflowStatuses: readonly ChannelWorkflowStatus[] = [
   "ready",
   "running",
   "waiting_for_approval",
+  "waiting_for_input",
   "blocked",
   "succeeded",
   "failed",
@@ -1980,6 +1984,7 @@ export const channelWorkflowStepStatuses: readonly ChannelWorkflowStepStatus[] =
   "claimed",
   "running",
   "waiting_for_approval",
+  "waiting_for_input",
   "blocked",
   "succeeded",
   "failed",
@@ -2413,6 +2418,7 @@ export interface ChannelWorkflowStepMetadata {
   readonly autoStart?: boolean;
   readonly approvalGate?: SkillApprovalProfile;
   readonly preStepApprovalId?: string;
+  readonly preStepApprovalMarker?: import("./workflow-pre-gate.js").WorkflowPreGateMarkerV1;
   readonly policy?: WorkflowStepPolicy;
   readonly gates?: readonly WorkflowStepGate[];
   readonly fanInPolicy?: WorkflowFanInPolicy;

@@ -457,7 +457,8 @@ export interface ChannelMention {
   readonly kind: "ai-teammate" | "local-user" | "channel";
 }
 
-export type ChannelMessageFileRefSource = "composer" | "explicit_text" | "api";
+/** inferred_text is display-only lexical metadata, not a request to load a file. */
+export type ChannelMessageFileRefSource = "composer" | "explicit_text" | "api" | "inferred_text";
 
 export interface ChannelMessageFileRef {
   readonly path: string;

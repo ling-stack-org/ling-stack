@@ -5,10 +5,11 @@ import { join } from "node:path";
 import test from "node:test";
 import { createSqliteRunStore } from "@ling-stack/core";
 import { resolveTeammateDirectExecutionContext } from "../dist/features/teammates/direct-execution-context.js";
+import { buildPrivateChatContextView } from "../dist/features/channels/context-processing/private-chat.js";
 
 const now = "2026-09-05T10:00:00.000Z";
 
-async function fixture(t, authorType = "local-user") {
+async function fixture(t, authorType = "local-user", fileRefs = [{ path: "README.md", label: "README.md", line: 1 }]) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-private-ingest-"));
   const store = createSqliteRunStore(cwd);
   t.after(async () => { store.close(); await rm(cwd, { recursive: true, force: true }); });
@@ -18,7 +19,7 @@ async function fixture(t, authorType = "local-user") {
   const sourceMessage = store.createTeammateDirectMessage({
     threadId: directThread.id, teammateId: teammate.id, authorType,
     body: "Read README.md and report.", status: "ready",
-    fileRefs: [{ path: "README.md", label: "README.md", line: 1 }],
+    fileRefs,
   }, now);
   const replyMessage = store.createTeammateDirectMessage({
     threadId: directThread.id, teammateId: teammate.id, authorType: "ai-teammate",
@@ -38,6 +39,20 @@ async function fixture(t, authorType = "local-user") {
     systemPrompt: "Use only this teammate's private context.",
   };
 }
+
+test("private ingestion and context keep inferred path tokens out of the file-reference lane", async t => {
+  const fileRefs = [{ path: "README.md", source: "inferred_text" }];
+  const input = await fixture(t, "local-user", fileRefs);
+  assert.deepEqual(input.sourceMessage.fileRefs, fileRefs, "SQLite round-trip must not discard the origin");
+  const execution = resolveTeammateDirectExecutionContext(input);
+  assert.ok(execution.runRequest.turnId);
+  const item = input.store.getConversationItem(input.sourceMessage.id);
+  assert.deepEqual(item.payload.fileRefs, fileRefs, "canonical private input must not upgrade display provenance");
+  const view = buildPrivateChatContextView({ store: input.store, teammate: input.teammate, thread: input.directThread,
+    messages: [input.sourceMessage], sourceMessage: input.sourceMessage });
+  assert.match(view.sections[0].text, /Read README\.md and report\./);
+  assert.doesNotMatch(view.sections[0].text, /Workspace file refs:/);
+});
 
 test("private execution ingests a real owned canonical anchor before starting a run", async (t) => {
   const input = await fixture(t);

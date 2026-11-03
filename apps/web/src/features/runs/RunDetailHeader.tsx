@@ -1,4 +1,5 @@
 import { Activity, RotateCcw, Square } from "lucide-react";
+import { canRerunSnapshot } from "../../api/run-request-builders.js";
 import { useI18n } from "../../i18n.js";
 import { readTaskTitle } from "../../lib/run-evidence.js";
 import { Button, StatusIndicator } from "../../shared/ui/index.js";
@@ -17,7 +18,6 @@ export function RunDetailHeader({ run, approvals, isRunning, cancellingRunId, on
   const { t } = useI18n();
   const primaryState = deriveRunPrimaryState(run, approvals);
   const stopping = Boolean(run && cancellingRunId === run.id);
-  const providerPresetId = run?.providerPresetId || (run?.requestSnapshot && typeof run.requestSnapshot === "object" && "providerPresetId" in run.requestSnapshot ? String(run.requestSnapshot.providerPresetId ?? "") : "");
   return (
     <header className="runs-detail-header">
       <div className="runs-detail-heading">
@@ -27,7 +27,7 @@ export function RunDetailHeader({ run, approvals, isRunning, cancellingRunId, on
       </div>
       <div className="runs-detail-actions">
         {run && (runCanBeStopped(run) || stopping) ? <Button aria-label={stopping ? t("Stopping") : t("Stop")} leadingIcon={<Square size={14} />} loading={stopping} onClick={() => onCancelRun(run)} size="sm" variant="danger">{stopping ? t("Stopping") : t("Stop")}</Button> : null}
-        <Button disabled={!run || isRunning || !providerPresetId} leadingIcon={<RotateCcw size={15} />} loading={isRunning} onClick={() => run && onRerun(run)} size="sm" variant="primary">{t("Rerun snapshot")}</Button>
+        <Button disabled={isRunning || !canRerunSnapshot(run)} leadingIcon={<RotateCcw size={15} />} loading={isRunning} onClick={() => run && canRerunSnapshot(run) && onRerun(run)} size="sm" variant="primary">{t("Rerun snapshot")}</Button>
       </div>
     </header>
   );

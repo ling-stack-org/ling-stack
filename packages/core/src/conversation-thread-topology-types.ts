@@ -19,7 +19,8 @@ export type ResolveOrCreateConversationThreadInput =
   | (ConversationThreadTopologyBaseInput & {
       readonly surfaceKind: "branch";
       readonly parentThreadId: string;
-      readonly parentTurnId: string;
+      /** Missing only when the parent is genuinely empty at sequence zero. */
+      readonly parentTurnId?: string;
       readonly forkedFromRunId?: string;
       readonly forkContextSnapshot: Omit<CreateConversationContextSnapshotInput, "threadId">;
     });

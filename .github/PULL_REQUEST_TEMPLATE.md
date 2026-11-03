@@ -30,6 +30,8 @@ backward-compatibility impact. Write `None` only after checking each category.
 
 - [ ] The change is focused and follows existing module boundaries.
 - [ ] Tests cover the changed behavior or the missing coverage is explained.
+- [ ] New or migrated tests follow the [testing policy](../CONTRIBUTING.md#testing-policy): TypeScript tests are executed and type-checked, or a concrete JavaScript exception is explained.
+- [ ] Test consolidation or removal has supporting coverage and validation evidence; independent safety and architecture contracts remain protected.
 - [ ] Chinese and English product copy remain aligned when applicable.
 - [ ] Documentation and implementation status are updated when applicable.
 - [ ] No credentials, tokens, local databases, logs, artifacts, or private paths are committed.

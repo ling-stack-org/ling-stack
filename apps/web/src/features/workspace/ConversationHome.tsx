@@ -364,7 +364,7 @@ export function ConversationHome({
     () => composerWorkspaceFileParts(composerSubmissionInputParts).map((part) => ({
       path: part.path,
       ...(part.line !== undefined ? { line: part.line } : {}),
-      source: "composer" as const,
+      source: "inferred_text" as const,
     })),
     [composerSubmissionInputParts],
   );
@@ -805,6 +805,33 @@ export function ConversationHome({
             if (selectionSequence !== permissionSelectionSequenceRef.current || !conversationIdentityController.isCurrent(selectionIdentity)) return;
             actionFeedback.report("validation", error instanceof Error ? error.message : String(error));
           });
+      }}
+      onPermissionPresetChange={(preset) => {
+        if (preset === "full_access") {
+          if (!onConfirmFullAccessSelection) {
+            actionFeedback.report("validation", t("Use full access for this conversation after explicit confirmation."));
+            return;
+          }
+          const selectionSequence = ++permissionSelectionSequenceRef.current;
+          const selectionIdentity = conversationIdentityController.capture();
+          void onConfirmFullAccessSelection()
+            .then((confirmation) => {
+              if (!confirmation || selectionSequence !== permissionSelectionSequenceRef.current || !conversationIdentityController.isCurrent(selectionIdentity)) return;
+              if (selectedAuthorizationMode !== "always" || selectedPermissionPreset !== "full_access") {
+                permissionBeforeFullAccessRef.current = selectedPermissionPreset;
+              }
+              setSelectedAuthorizationMode("always");
+              setSelectedPermissionPreset("full_access");
+            })
+            .catch((error: unknown) => {
+              if (selectionSequence !== permissionSelectionSequenceRef.current || !conversationIdentityController.isCurrent(selectionIdentity)) return;
+              actionFeedback.report("validation", error instanceof Error ? error.message : String(error));
+            });
+          return;
+        }
+        permissionBeforeFullAccessRef.current = undefined;
+        setSelectedPermissionPreset(preset);
+        setSelectedAuthorizationMode(preset === "read_only" ? "ask" : "smart");
       }}
       onModelChange={selectModel}
       onThinkingLevelChange={selectThinkingLevel}

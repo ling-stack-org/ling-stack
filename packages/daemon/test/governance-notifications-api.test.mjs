@@ -11,9 +11,10 @@ const teammateId = "teammate_builtin_engineer";
 const lingAgentId = "ling_agent";
 const quietWindowMs = 15 * 60 * 1000;
 
-test("governance notification API exposes memory candidate projections and lifecycle", async () => {
+test("governance notification API exposes memory candidate projections and lifecycle", async (t) => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-governance-notifications-api-"));
-  const daemon = await startDaemonForTest();
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const daemon = await startDaemonForTest(cwd);
   try {
     const memory = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
       scopeType: "channel",
@@ -52,13 +53,13 @@ test("governance notification API exposes memory candidate projections and lifec
     assert.equal(resolved.notifications[0].status, "resolved");
   } finally {
     await daemon.close();
-    await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test("teammate direct governance notification delivers one private system message after quiet gate", async () => {
+test("teammate direct governance notification delivers one private system message after quiet gate", async (t) => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-governance-notifications-direct-api-"));
-  const daemon = await startDaemonForTest();
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const daemon = await startDaemonForTest(cwd);
   try {
     await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-thread?cwd=${encodeURIComponent(cwd)}`);
     const memory = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
@@ -93,13 +94,13 @@ test("teammate direct governance notification delivers one private system messag
     assert.equal(channelLeak.notifications.length, 0);
   } finally {
     await daemon.close();
-    await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test("teammate direct governance notification defers during the 15 minute quiet window", async () => {
+test("teammate direct governance notification defers during the 15 minute quiet window", async (t) => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-governance-notifications-direct-quiet-api-"));
-  const daemon = await startDaemonForTest();
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const daemon = await startDaemonForTest(cwd);
   try {
     await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-thread?cwd=${encodeURIComponent(cwd)}`);
     const directMessage = (await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`, {
@@ -126,12 +127,12 @@ test("teammate direct governance notification defers during the 15 minute quiet 
     assert.equal(directMessages.messages.filter((message) => message.authorType === "system").length, 0);
   } finally {
     await daemon.close();
-    await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test("teammate direct governance flush defers while an AI reply message is pending", async () => {
+test("teammate direct governance flush defers while an AI reply message is pending", async (t) => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-governance-notifications-pending-reply-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
   const store = createSqliteRunStore(cwd);
   try {
     const now = "2026-06-21T00:00:00.000Z";
@@ -170,13 +171,13 @@ test("teammate direct governance flush defers while an AI reply message is pendi
     assert.equal(store.listTeammateDirectMessages({ teammateId, threadId: thread.id }).filter((message) => message.authorType === "system").length, 0);
   } finally {
     store.close();
-    await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test("workspace governance notifications deliver one Ling Agent digest", async () => {
+test("workspace governance notifications deliver one Ling Agent digest", async (t) => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-governance-notifications-ling-agent-"));
-  const daemon = await startDaemonForTest();
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const daemon = await startDaemonForTest(cwd);
   try {
     await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
       scopeType: "workspace",
@@ -217,19 +218,36 @@ test("workspace governance notifications deliver one Ling Agent digest", async (
     assert.equal(channelLeak.notifications.length, 0);
   } finally {
     await daemon.close();
-    await rm(cwd, { recursive: true, force: true });
   }
 });
 
-async function startDaemonForTest() {
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 });
-  await daemon.start();
-  const address = daemon.server.address();
-  assert.ok(address && typeof address === "object");
-  return {
-    url: `http://127.0.0.1:${address.port}`,
-    close: () => daemon.stop(),
+async function startDaemonForTest(defaultWorkspaceCwd) {
+  const home = await mkdtemp(resolve(tmpdir(), "ling-governance-notifications-home-"));
+  const previousHome = process.env.LING_STACK_HOME;
+  process.env.LING_STACK_HOME = home;
+  const restoreHome = async () => {
+    if (previousHome === undefined) delete process.env.LING_STACK_HOME;
+    else process.env.LING_STACK_HOME = previousHome;
+    await rm(home, { recursive: true, force: true });
   };
+  let daemon;
+  try {
+    daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd });
+    await daemon.start();
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    return {
+      url: `http://127.0.0.1:${address.port}`,
+      close: async () => {
+        try { await daemon.stop(); }
+        finally { await restoreHome(); }
+      },
+    };
+  } catch (error) {
+    try { await daemon?.stop(); }
+    finally { await restoreHome(); }
+    throw error;
+  }
 }
 
 async function postJson(url, body) {

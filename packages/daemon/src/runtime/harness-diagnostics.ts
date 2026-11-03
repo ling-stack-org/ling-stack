@@ -2,17 +2,25 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   HarnessDiagnosticAttemptV1,
   HarnessDiagnosticObservationV1,
+  HarnessDiagnosticProjectionCheckpointV1,
   HarnessDiagnosticQueryV1,
   HarnessDiagnosticRecordV1,
   HarnessDiagnosticScopeV1,
   WorkUnitHarnessDiagnosticsResponse,
 } from "@ling-stack/contracts";
-import { HarnessDiagnosticsStoreError, validateHarnessDiagnosticQuery, type RunStore } from "@ling-stack/core";
+import {
+  HARNESS_PROJECTION_DOMAINS,
+  HarnessDiagnosticsStoreError,
+  validateHarnessDiagnosticQuery,
+  type HarnessProjectionCheckpoint,
+  type RunStore,
+} from "@ling-stack/core";
 import { HttpError } from "../errors.js";
 import { writeJson } from "../shared/response.js";
 import type { RunStoreRegistry } from "./store-registry.js";
 
-type DiagnosticsReader = Pick<RunStore, "getHarnessDiagnosticAttempt" | "queryHarnessDiagnostics">;
+type DiagnosticsReader = Pick<RunStore,
+  "getHarnessDiagnosticAttempt" | "queryHarnessDiagnostics" | "getHarnessProjectionCheckpoint">;
 
 /** A read-only metadata projection: observation never grants a claim or a usable execution fence. */
 export function projectWorkUnitHarnessDiagnostics(
@@ -22,7 +30,10 @@ export function projectWorkUnitHarnessDiagnostics(
   query: HarnessDiagnosticQueryV1,
   observedAt: string,
 ): WorkUnitHarnessDiagnosticsResponse {
-  const base = { schemaVersion: 1 as const, cwd, workUnitId: scope.workUnitId, observedAt };
+  const base = {
+    schemaVersion: 1 as const, cwd, workUnitId: scope.workUnitId, observedAt,
+    projectionCheckpoints: [] as readonly HarnessDiagnosticProjectionCheckpointV1[],
+  };
   const runId = scope.runId;
   if (scope.status !== "available" || !runId) return { ...base, runId, status: scope.status, items: [] };
   const page = store.queryHarnessDiagnostics(runId, scope.workUnitId, query);
@@ -36,13 +47,37 @@ export function projectWorkUnitHarnessDiagnostics(
   };
   return {
     ...base, runId, status: "available", nextCursor: page.nextCursor,
+    projectionCheckpoints: HARNESS_PROJECTION_DOMAINS.map(domain => {
+      const checkpoint = store.getHarnessProjectionCheckpoint(domain);
+      if (checkpoint.domain !== domain) {
+        throw new HarnessDiagnosticsStoreError("diagnostics.record_invalid", "Harness projection checkpoint domain does not match.");
+      }
+      return projectProjectionCheckpoint(checkpoint);
+    }),
     items: page.items.map(record => ({
       record,
       leaseStatus: observeLease(record, observedAt),
       attempts: (record.kind === "tool_execution" ? [record.attemptId]
-        : [...new Set([record.sourceAttemptId, ...(record.targetAttemptId ? [record.targetAttemptId] : [])])])
+        : record.kind === "continuation"
+          ? [...new Set([record.sourceAttemptId, ...(record.targetAttemptId ? [record.targetAttemptId] : [])])]
+          : record.kind === "delegation" ? [record.parentAttemptId] : [])
         .map(observeAttempt),
     })),
+  };
+}
+
+/** Explicit allowlist: projection digests/cursors and source rows stay internal. */
+function projectProjectionCheckpoint(checkpoint: HarnessProjectionCheckpoint): HarnessDiagnosticProjectionCheckpointV1 {
+  return {
+    domain: checkpoint.domain,
+    generation: checkpoint.generation,
+    sourceEpoch: checkpoint.sourceEpoch,
+    builtEpoch: checkpoint.builtEpoch,
+    state: checkpoint.state,
+    rowCount: checkpoint.rowCount,
+    isCurrent: checkpoint.state === "ready" && checkpoint.sourceEpoch === checkpoint.builtEpoch,
+    ...(checkpoint.failureCode === undefined ? {} : { failureCode: checkpoint.failureCode }),
+    updatedAt: checkpoint.updatedAt,
   };
 }
 

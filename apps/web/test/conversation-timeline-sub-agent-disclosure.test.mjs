@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
+import { createServer } from "vite";
+import { fileURLToPath } from "node:url";
 import { shouldDefaultExpandConversationTimelineSubAgent } from "../src/shared/conversation/timeline/conversation-timeline-sub-agent-disclosure.ts";
-import {
-  collectConversationTimelineViewRetainKeys,
-  conversationTimelineSubAgentDisclosureKey,
-} from "../src/shared/conversation/timeline/conversation-timeline-view-retain-keys.ts";
 import { createConversationViewStore } from "../src/shared/conversation/view-store/conversation-view-store.ts";
+
+const vite = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, logLevel: "silent", server: { middlewareMode: true } });
+const { collectConversationTimelineViewRetainKeys, conversationTimelineSubAgentDisclosureKey } = await vite.ssrLoadModule(
+  "/src/shared/conversation/timeline/conversation-timeline-view-retain-keys.ts",
+);
+after(() => vite.close());
 
 const lineage = {
   revision: 1,

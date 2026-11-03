@@ -6,9 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { DatabaseSync } from "node:sqlite";
+import { installOwnedMediaNativeObserver } from "./support/media-owned-native-observer.mjs";
 
 // This process owns all credentials, files, SQLite state and HTTP listeners.
-// No daily workspace, external Provider, global fetch or Response replacement.
+// No daily workspace, external Provider, synthetic fetch result or Response replacement.
 const ownedRoot = await mkdtemp(join(tmpdir(), "ling-a19-scene-cancel-"));
 const home = join(ownedRoot, "user");
 const initialWorkspace = join(ownedRoot, "initial-workspace");
@@ -24,6 +25,12 @@ after(async () => {
   }
   await rm(ownedRoot, { recursive: true, force: true });
 });
+
+// Installed before the product captures native fetch. Only explicitly armed
+// owned-upstream requests are observed; late-tail controls additionally ignore
+// their signal to retain A19's real EOF/ACK case under a non-cooperative sender.
+const nativeObserver = installOwnedMediaNativeObserver();
+after(() => nativeObserver.restore());
 
 // Import only after storage isolation is established; native transport is real.
 const { createSqliteRunStore } = await import("@ling-stack/core");
@@ -122,7 +129,8 @@ function observeRealOwners() {
 async function createOwnedUpstream() {
   const requests = [], failures = [], operations = new Set();
   const entered = deferred(), release = deferred();
-  let sequence = 0, armFailure, armStage = "poll", armed = false, targetOperationId;
+  let sequence = 0, armFailure, armStage = "poll", armed = false, targetOperationId, wire;
+  let targetClosed = false, released = false;
   const server = createServer((request, response) => {
     void handle(request, response).catch(error => {
       failures.push(error);
@@ -161,6 +169,9 @@ async function createOwnedUpstream() {
       remoteCancel, collection, body: bodyText ? JSON.parse(bodyText) : undefined });
     const selectedStage = armStage === "submit" ? submission : armStage === "collect" ? collection : providerPoll || comfyPoll;
     if (selectedStage && armed && operationId === targetOperationId) {
+      assert.equal(wire?.record?.url, url.href, "the selected owner uses the exact observed native URL");
+      assert.equal(wire.record.method, request.method);
+      response.once("close", () => { targetClosed = true; });
       if (collection) {
         // Enter actual response body consumption, not only a pre-header await.
         response.writeHead(200, { "content-type": "video/mp4",
@@ -170,6 +181,9 @@ async function createOwnedUpstream() {
       entered.resolve();
       // Keep the real native fetch/Host response receipt pending until cancel.
       await release.promise;
+      // A cooperative native abort already closed this real response. Fixture
+      // cleanup must not pretend to deliver bytes or raise write-after-close.
+      if (response.destroyed) return;
       if (collection) {
         if (armFailure) response.destroy();
         else response.end(mediaBytes.subarray(4));
@@ -202,11 +216,27 @@ async function createOwnedUpstream() {
   return {
     baseUrl, requests, failures, entered: entered.promise,
     get targetOperationId() { return targetOperationId; },
-    arm(failure, stage = "poll") { assert.equal(armed, false); armed = true; armFailure = failure; armStage = stage; },
-    release: () => release.resolve(),
+    get native() { return wire?.record; },
+    get targetClosed() { return targetClosed; },
+    get released() { return released; },
+    arm(failure, stage = "poll", { ignoreSignal = false } = {}) {
+      assert.equal(armed, false); armed = true; armFailure = failure; armStage = stage;
+      wire = nativeObserver.register({ ignoreSignal, matches: (value, input, init) => {
+        const url = new URL(value);
+        if (url.origin !== baseUrl) return false;
+        const method = input instanceof Request ? input.method : init?.method ?? "GET";
+        const submit = method === "POST" && (url.pathname.endsWith("/contents/generations/tasks") || url.pathname === "/api/prompt");
+        const collect = method === "GET" && (url.pathname.startsWith("/generated/") || url.pathname === "/api/view");
+        return stage === "submit" ? submit : stage === "collect" ? collect
+          : method === "GET" && (url.pathname.includes("/contents/generations/tasks/") || url.pathname.startsWith("/api/jobs/") || url.pathname.startsWith("/api/history/"));
+      } });
+    },
+    release: () => { released = true; release.resolve(); },
+    restoreNativeObservation: () => wire?.close(),
     async close() {
-      release.resolve();
-      await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
+      released = true; release.resolve();
+      try { await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }); }
+      finally { wire?.close(); }
     },
   };
 }
@@ -247,6 +277,8 @@ async function createCase(t) {
     assert.equal(runnerCalls, 0);
     assert.deepEqual(upstream.failures, [], "owned upstream itself must not fail");
   });
+  // A previous cleanup failure must not leak this test's selected sender rule.
+  t.after(() => upstream.restoreNativeObservation());
   await daemon.start();
   const base = `http://127.0.0.1:${daemon.server.address().port}`;
   async function api(path, body) {
@@ -336,6 +368,32 @@ function assertTerminalLineage(store, mediaJobId, expected) {
   assert.ok(slots.every(slot => slot.status === "released"), "settled exact child retains no active semaphore");
 }
 
+function assertNonCooperativeEnteredTail(fixture, owner) {
+  const wire = fixture.upstream.native;
+  assert.ok(wire, "observe the exact owned native request");
+  assert.equal(wire.ignoreSignal, true, "only this explicit test sender ignores cancellation");
+  assert.equal(wire.signal.aborted, true); assert.equal(wire.aborts, 1);
+  assert.equal(wire.fetchRejected, 0); assert.equal(wire.bodySettled, 0);
+  assert.equal(wire.completedEof, false); assert.equal(owner.pending, true);
+  assert.equal(fixture.upstream.targetClosed, false); assert.equal(fixture.upstream.released, false);
+  assert.deepEqual(wire.errors, []);
+}
+
+async function assertCooperativeNativeAbort(fixture, owner) {
+  await bounded(owner.completion, "original cooperative native/owner settles before fixture release");
+  await fixture.observer.drain();
+  await waitUntil(() => fixture.upstream.targetClosed, "actual upstream close caused by local abort, not fixture cleanup");
+  const wire = fixture.upstream.native;
+  assert.ok(wire, "observe the exact owned native request");
+  assert.equal(wire.ignoreSignal, false, "cooperative control uses the default product signal");
+  assert.equal(wire.signal.aborted, true); assert.equal(wire.aborts, 1);
+  assert.equal(wire.fetchSettled, 1);
+  assert.equal(wire.fetchRejected + wire.bodyRejected, 1, "actual native request or original body rejects exactly once");
+  assert.equal(wire.completedEof, false, "abort is not a completed response or remote terminal receipt");
+  assert.equal(owner.pending, false); assert.equal(fixture.upstream.released, false);
+  assert.deepEqual(wire.errors, []);
+}
+
 for (const kind of ["provider", "workflow"]) {
   test(`A19 ${kind}: public scene independently completes through native HTTP`,
     { timeout: 30_000, concurrency: false }, async t => {
@@ -404,15 +462,16 @@ for (const kind of ["provider", "workflow"]) {
       });
   }
 
-  for (const stage of ["submit", "collect"]) for (const lateResult of ["success", "failure"]) {
-    test(`A19 ${kind}: ${stage} pending cancel preserves late ${lateResult} facts without reviving the generation`,
+  for (const stage of ["submit", "collect"]) for (const lateResult of ["success", "failure"])
+    for (const sender of ["non-cooperative", "cooperative"]) {
+    test(`A19 ${kind}: ${stage} pending cancel with ${sender} sender preserves ${lateResult} facts without reviving the generation`,
       { timeout: 35_000, concurrency: false }, async t => {
         const fixture = await createCase(t);
         const project = await prepareProject(fixture, kind);
         const scene = assertResponse(await fixture.api(`/media-projects/${project.id}/scenes`, {
           title: `A19 ${stage} ${lateResult}`, prompt: "A19 actual late response", ratio: "16:9", durationSeconds: 5,
         }), 201, "create delayed scene").mediaScene;
-        fixture.upstream.arm(lateResult === "failure", stage);
+        fixture.upstream.arm(lateResult === "failure", stage, { ignoreSignal: sender === "non-cooperative" });
         const started = assertResponse(await fixture.api(`/media-scenes/${scene.id}/run`, {}), 202, "start delayed scene");
         const mediaJobId = started.mediaJob.id;
         await bounded(fixture.upstream.entered, `actual ${stage} request/body entered`);
@@ -425,8 +484,14 @@ for (const kind of ["provider", "workflow"]) {
         ]);
         assert.deepEqual(cancellations.map(result => result.status).sort(), [200, 409], "one cancellation wins the CAS");
         assert.equal(fixture.store.getMediaJob(mediaJobId).status, "cancelled");
-        assert.equal(fixture.store.getWorkUnitAttempt(originalLineage.attempt.id).status, "started",
-          "original entered EOF/ACK producer keeps its exact child fence until response facts arrive");
+        if (sender === "non-cooperative") {
+          assertNonCooperativeEnteredTail(fixture, owner);
+          assert.equal(fixture.store.getWorkUnitAttempt(originalLineage.attempt.id).status, "started",
+            "original entered EOF/ACK producer keeps its exact child fence until response facts arrive");
+        } else {
+          await assertCooperativeNativeAbort(fixture, owner);
+          assertTerminalLineage(fixture.store, mediaJobId, "cancelled");
+        }
         const waitingHandle = fixture.store.getMediaJobExecutionHandle(mediaJobId);
         assert.equal(waitingHandle.nextPollAt, undefined);
         if (stage === "submit") {
@@ -442,11 +507,22 @@ for (const kind of ["provider", "workflow"]) {
         const finalHandle = fixture.store.getMediaJobExecutionHandle(mediaJobId);
         assert.ok(finalHandle, "local cancellation cannot erase unknown/actual submitted operation identity");
         assert.equal(finalHandle.nextPollAt, undefined);
-        if (stage === "submit" && lateResult === "failure") {
+        if (stage === "submit" && (lateResult === "failure" || sender === "cooperative")) {
           assert.equal(finalHandle.externalOperationId, `ling-pending:${mediaJobId}`);
           assert.equal(finalHandle.recovery.phase, "submission_outcome_unknown");
+          assert.equal(finalHandle.recovery.submissionOutcome, "unknown",
+            "a sent submission without real ACK never becomes known-no-start or remote cancelled");
         } else assert.equal(finalHandle.externalOperationId, fixture.upstream.targetOperationId,
           "the original genuine late ACK, not a cancellation fiction, supplies the operation identity");
+        if (sender === "non-cooperative") {
+          const wire = fixture.upstream.native;
+          assert.equal(wire.fetchSettled, 1);
+          if (lateResult === "success") {
+            assert.equal(wire.completedEof, true, "the late facts come from the original genuine native EOF");
+            assert.equal(wire.bodySettled, 1); assert.equal(wire.bodyRejected, 0);
+          }
+          assert.deepEqual(wire.errors, []);
+        }
         const artifacts = assertResponse(await fixture.api(`/media-jobs/${mediaJobId}/artifacts`), 200, "read cancelled artifact rows");
         assert.deepEqual(artifacts.artifacts, [], "an entered download may return, but cannot be persisted as business success");
         assertResponse(await fixture.api(`/media-jobs/${mediaJobId}/run`, {}), 409,
@@ -615,6 +691,7 @@ async function createCapturedCase(t, kind) {
   const stores = new RunStoreRegistry(requestedCwd => { assert.equal(requestedCwd, cwd); return store; });
   assert.equal(stores.getStore(cwd), store);
   const config = resolveConfig({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd,
+    harness: { toolBroker: { mode: "enforce" } },
     channels: { autoRoute: false, intentSelector: false, terminalReports: false } });
   const supervisor = new RuntimeSupervisor(config);
   const hooks = {
@@ -706,6 +783,7 @@ async function createCapturedCase(t, kind) {
     assert.equal(runnerCalls, 1);
     assert.deepEqual(upstream.failures, []);
   });
+  t.after(() => upstream.restoreNativeObservation());
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   const base = `http://127.0.0.1:${server.address().port}`;
   return { store, upstream, observer, project, captured: captured.promise, releaseRun: () => runnerRelease.resolve(),
@@ -750,8 +828,9 @@ async function createCapturedCase(t, kind) {
 // creates the real source, child, private Host tickets, native sender and receipts.
 // A Store sceneRun association lets the unchanged production HTTP cancel handler
 // target that exact job, in the very same Registry/Supervisor/Store.
-for (const kind of ["provider", "workflow"]) for (const stage of ["submit", "collect"]) {
-  test(`A19 internal captured ${kind}: cancel during native ${stage} preserves original Core ACK/EOF evidence`,
+for (const kind of ["provider", "workflow"]) for (const stage of ["submit", "collect"])
+  for (const sender of ["non-cooperative", "cooperative"]) {
+  test(`A19 internal captured ${kind}: cancel during native ${stage} with ${sender} sender preserves original Core ACK/EOF evidence`,
     { timeout: 35_000, concurrency: false }, async t => {
       const fixture = await createCapturedCase(t, kind);
       const project = fixture.project;
@@ -759,7 +838,7 @@ for (const kind of ["provider", "workflow"]) for (const stage of ["submit", "col
       const scene = fixture.store.createMediaScene({ projectId: project.id,
         title: "A19 captured cancel association", prompt: "A19 real captured tool job", ratio: "16:9", durationSeconds: 5,
       }, now);
-      fixture.upstream.arm(false, stage);
+      fixture.upstream.arm(false, stage, { ignoreSignal: sender === "non-cooperative" });
       const execution = fixture.runCaptured();
       const actual = await bounded(fixture.captured, "actual trusted orchestrator calls its captured Media tool");
       await bounded(fixture.upstream.entered, `captured actual ${stage} request entered`);
@@ -773,8 +852,14 @@ for (const kind of ["provider", "workflow"]) for (const stage of ["submit", "col
         assert.ok(before?.execution_id, "actual captured Host preparation, not a hand-minted receipt");
         assert.ok(before.child_attempt_id);
         assertResponse(await fixture.api(`/media-scene-runs/${sceneRun.id}/cancel`, {}), 200, "cancel genuine captured job");
-        assert.equal(fixture.store.getWorkUnitAttempt(before.child_attempt_id).status, "started",
-          "retain original exact fence while its native response is physically pending");
+        if (sender === "non-cooperative") {
+          assertNonCooperativeEnteredTail(fixture, owner);
+          assert.equal(fixture.store.getWorkUnitAttempt(before.child_attempt_id).status, "started",
+            "retain original exact fence while its native response is physically pending");
+        } else {
+          await assertCooperativeNativeAbort(fixture, owner);
+          assertTerminalLineage(fixture.store, actual.mediaJobId, "cancelled");
+        }
         fixture.upstream.release();
         await bounded(owner.completion, "actual captured response is processed by its original owner");
         await fixture.observer.drain();
@@ -787,14 +872,39 @@ for (const kind of ["provider", "workflow"]) for (const stage of ["submit", "col
         }, "captured Host producer finalization/unknown readback");
         fixture.releaseRun();
         await execution;
-        assert.ok(after.row.submission_artifact_id, "genuine late ACK passes the unchanged Core atomic receipt/handle writer");
-        const ack = db.prepare("SELECT sealed_payload_json FROM artifacts WHERE id=?").get(after.row.submission_artifact_id);
-        assert.equal(JSON.parse(ack.sealed_payload_json).externalOperationId, fixture.upstream.targetOperationId);
-        assert.equal(fixture.store.getMediaJobExecutionHandle(actual.mediaJobId).externalOperationId, fixture.upstream.targetOperationId);
+        const finalHandle = fixture.store.getMediaJobExecutionHandle(actual.mediaJobId);
         const effects = db.prepare("SELECT * FROM host_media_effects WHERE execution_id=?").all(before.execution_id);
         assert.ok(effects.length >= 1);
-        assert.ok(effects.every(effect => effect.launched_at && effect.response_artifact_id && !effect.no_start_artifact_id),
-          "actual entered requests retain original response receipts, never fake no-start");
+        assert.ok(effects.every(effect => effect.launched_at && !effect.no_start_artifact_id),
+          "actual entered requests cannot become fake no-start after local cancellation");
+        if (sender === "cooperative" && stage === "submit") {
+          assert.equal(before.submission_artifact_id, null);
+          assert.equal(after.row.submission_artifact_id, null, "aborted native response cannot mint a submission ACK");
+          assert.ok(effects.every(effect => !effect.response_artifact_id), "no EOF means no completed response receipt");
+          assert.equal(finalHandle.externalOperationId, `ling-pending:${actual.mediaJobId}`);
+          assert.equal(finalHandle.recovery.phase, "submission_outcome_unknown");
+          assert.equal(finalHandle.recovery.submissionOutcome, "unknown");
+          assert.ok(after.operations.every(operation => operation.phase === "unknown_outcome"),
+            "native abort plus local cancelled child is not proof of remote no-start, failure or cancellation");
+        } else {
+          assert.ok(after.row.submission_artifact_id, "genuine ACK passes the unchanged Core atomic receipt/handle writer");
+          const ack = db.prepare("SELECT sealed_payload_json FROM artifacts WHERE id=?").get(after.row.submission_artifact_id);
+          assert.equal(JSON.parse(ack.sealed_payload_json).externalOperationId, fixture.upstream.targetOperationId);
+          assert.equal(finalHandle.externalOperationId, fixture.upstream.targetOperationId);
+          assert.ok(effects.every(effect => effect.response_artifact_id),
+            "original complete submit responses retain their real response receipts");
+          if (sender === "non-cooperative") {
+            assert.equal(fixture.upstream.native.completedEof, true,
+              "non-cooperative late ACK/collection uses the original real body EOF, not fabricated response facts");
+            assert.equal(fixture.upstream.native.bodySettled, 1);
+            assert.equal(fixture.upstream.native.bodyRejected, 0);
+          } else {
+            assert.equal(after.row.submission_artifact_id, before.submission_artifact_id,
+              "collection abort preserves the prior genuinely committed ACK");
+            assert.equal(after.row.terminal_artifact_id, before.terminal_artifact_id,
+              "collection abort cannot erase or replace the prior genuine terminal observation");
+          }
+        }
         if (stage === "submit") {
           assert.equal(after.row.terminal_artifact_id, null);
           assert.ok(after.operations.every(operation => operation.phase === "unknown_outcome"),
@@ -804,6 +914,16 @@ for (const kind of ["provider", "workflow"]) for (const stage of ["submit", "col
         assert.deepEqual(fixture.store.getMediaJob(actual.mediaJobId).artifactIds, []);
         assertTerminalLineage(fixture.store, actual.mediaJobId, "cancelled");
         assertResponse(await fixture.api(`/media-jobs/${actual.mediaJobId}/run`, {}), 409, "captured old-job replay remains forbidden");
+        assert.equal(finalHandle.nextPollAt, undefined);
+        await delay(2_150);
+        const requests = fixture.upstream.requests.filter(item => item.operationId === fixture.upstream.targetOperationId);
+        assert.equal(requests.filter(item => item.submission).length, 1, "cancel cannot replay the already-entered submission");
+        assert.equal(requests.filter(item => item.poll).length, stage === "submit" ? 0 : 1);
+        assert.equal(requests.filter(item => item.collection).length, stage === "submit" ? 0 : 1,
+          "only the original collection may have entered; no successor download or retry");
+        assert.ok(requests.every(item => item.method === "GET" || item.submission),
+          "local abort never sends or invents a remote cancel request");
+        assert.deepEqual(fixture.upstream.native.errors, []);
       } finally { db.close(); }
     });
 }

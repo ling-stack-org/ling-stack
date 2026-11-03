@@ -10,6 +10,7 @@ const snapshot = {
   evaluationModelGate: "shadow",
   delegations: "enforce",
   delegationMaxDepth: 4,
+  delegationSelectedWorkflowIds: ["workflow-explicit-qa"],
 };
 
 function healthClient(harness, features = {}) {
@@ -30,7 +31,7 @@ function healthClient(harness, features = {}) {
   });
 }
 
-test("health projects only the seven validated Harness snapshot fields", async () => {
+test("health projects only the validated Harness snapshot fields", async () => {
   const health = await healthClient({
     ...snapshot,
     privateConfig: { providerKey: "must-not-project" },
@@ -85,6 +86,11 @@ const invalidSnapshots = [
   ["fractional depth", { ...snapshot, delegationMaxDepth: 1.5 }],
   ["string depth", { ...snapshot, delegationMaxDepth: "4" }],
   ["missing depth", { ...snapshot, delegationMaxDepth: undefined }],
+  ["workflow selection string", { ...snapshot, delegationSelectedWorkflowIds: "workflow-explicit-qa" }],
+  ["workflow selection wildcard", { ...snapshot, delegationSelectedWorkflowIds: ["*"] }],
+  ["workflow selection duplicate", { ...snapshot, delegationSelectedWorkflowIds: ["workflow-a", "workflow-a"] }],
+  ["workflow selection too large", { ...snapshot,
+    delegationSelectedWorkflowIds: Array.from({ length: 101 }, (_value, index) => `workflow-${index}`) }],
 ];
 
 for (const [name, harness] of invalidSnapshots) {
@@ -110,4 +116,9 @@ test("Harness projection does not change existing channel or transport parsing",
     transports: { providerWebSocketFallback: false, localWebSocketRpc: false },
     harness: snapshot,
   });
+});
+
+test("health accepts a historical Harness snapshot without frozen workflow selection", async () => {
+  const { delegationSelectedWorkflowIds: _selection, ...historical } = snapshot;
+  assert.deepEqual((await healthClient(historical).getHealth()).features.harness, historical);
 });

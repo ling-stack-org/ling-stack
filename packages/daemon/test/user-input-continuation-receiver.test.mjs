@@ -40,15 +40,12 @@ async function fixture(t, surface = "normal", sourceOptions = {}, answers) {
     provider: { provider: "fixture", model: "fixture", api: "openai-completions", baseUrl: "https://fixture.invalid/v1",
       apiKey: "fixture-only-not-a-credential", reasoning: false }, tools: [],
     onEvent: event => {
-      if (event.type !== "run_start" || f.store.getRun(f.binding.runId).status !== "queued") return;
-      const startedAt = f.executionNow ?? claimedAt;
-      assert.ok(f.store.updateWorkUnitAttemptStatus({ ...f.binding.fence, status: "started", startedAt, now: startedAt }));
-      assert.equal(f.store.transitionWorkUnitStatus({ ...f.binding.fence, expectedStatus: "claimed", event: "runner_started", actor: "runner", now: startedAt }).ok, true);
-      assert.equal(f.store.transitionRunStatus({ runId: f.binding.runId, expectedStatus: "queued", event: "runner_started", actor: "runner", now: startedAt }).ok, true);
-      if (f.storedTask) assert.equal(f.store.transitionTaskStatus({ taskId: f.storedTask.id, expectedStatus: "claimed",
-        event: "start_run", actor: "system", currentRunId: f.binding.runId, now: startedAt }).ok, true);
-      if (f.step) assert.equal(f.store.transitionChannelWorkflowStepStatus({ workflowStepId: f.step.id, expectedStatus: "claimed",
-        event: "start", actor: "system", runId: f.binding.runId, now: startedAt }).ok, true);
+      if (event.type !== "run_start") return;
+      f.runStartState = {
+        run: f.store.getRun(f.binding.runId).status,
+        unit: f.store.getWorkUnit(f.binding.fence.workUnitId).status,
+        attempt: f.store.getWorkUnitAttempt(f.binding.fence.attemptId).status,
+      };
     } };
   // Only the original Run is seeded. The actual builder must obtain the answer
   // from SQLite; no answer-only request or hand-written continuation prompt.
@@ -59,7 +56,7 @@ async function fixture(t, surface = "normal", sourceOptions = {}, answers) {
       preparedInput: await f.adapter.prepareTaskInput(f.options) }) };
   f.db.prepare("UPDATE run_sessions SET task_snapshot_json=?,request_snapshot_json=?,provider_snapshot_json=? WHERE id=?")
     .run(JSON.stringify(f.options.task), JSON.stringify(sourceRequest), JSON.stringify(f.options.provider), f.run.id);
-  f.submit(answers); f.delivery = f.claim();
+  f.submit(answers); f.delivery = f.claim({ leaseMs: 60_000 });
   const claim = { threadId: f.thread.id, deliveryId: f.delivery.deliveryId, expectedRevision: f.delivery.revision,
     ownerId: f.delivery.claim.ownerId, claimToken: f.delivery.claim.token };
   f.preparedRequest = prepareUserInputContinuationRequest(f.store, claim, claimedAt);
@@ -71,19 +68,22 @@ async function fixture(t, surface = "normal", sourceOptions = {}, answers) {
   // request builder through SDK/ACK, not the unfinished product dispatch entry.
   const prepared = f.store.saveUserInputContinuationPreparation({ ...claim, stage: "execution", parentRef: f.preparedRequest.ref, payload: {
     schemaVersion: 1, runnerId: "pi", providerName: f.options.provider.provider, providerModel: f.options.provider.model,
-    taskSnapshot: f.options.task, requestSnapshot: request, providerSnapshot: runnerExecutionInput.input.provider,
+    taskSnapshot: f.options.task, requestSnapshot: request,
+    runRequestSnapshot: { ...request, runnerExecutionInput }, providerSnapshot: runnerExecutionInput.input.provider,
     preparedInput: f.preparedInput, preparedInputFingerprint: f.preparedInput.fingerprint,
     runnerExecutionInput,
   } }, claimedAt).snapshot;
   f.binding = f.store.admitUserInputContinuation({ ...claim, executionRef: ref(prepared), runtimeInstanceId: "receiver-runtime" }, claimedAt);
+  f.receiverClaim = { ...claim, expectedRevision: f.binding.deliveryRevision };
   f.attach = (changes = {}) => withUserInputContinuationReceiver({ store: f.store, threadId: f.thread.id, binding: f.binding,
-    adapter: f.adapter, options: f.options, now: () => f.receiverNow ?? now, ...changes });
+    claim: f.receiverClaim, adapter: f.adapter, options: f.options, now: () => f.receiverNow ?? now, ...changes });
   return f;
 }
 for (const surface of ["normal", "private", "channel"]) {
   test(`real SDK ${surface} receipt commits SQLite ACK before fixture transport`, async t => {
     const f = await fixture(t, surface);
     await f.adapter.runTask(f.attach());
+    assert.deepEqual(f.runStartState, { run: "queued", unit: "claimed", attempt: "created" });
     assert.equal(f.wire.length, 1);
     const userMessages = f.wire[0].messages.filter(message => message.role === "user");
     assert.equal(userMessages.length, 1);
@@ -162,8 +162,7 @@ test("two prebuilt receivers cannot dispatch the accepted input twice", async t 
 });
 test("a replacement Attempt fences an already prepared receiver before transport", async t => {
   const f = await fixture(t), options = f.attach();
-  // Close the old startup fixture first, then simulate a separately owned replacement.
-  f.options.onEvent({ type: "run_start" });
+  // Replace the prepared fence before the receiver has durably accepted it.
   f.store.createWorkUnitAttempt({ workUnitId: f.unit.id, attemptNumber: 3, runtimeInstanceId: "other-runtime", runnerId: "pi", now });
   await assert.rejects(f.adapter.runTask(options), error => error.code === "source_conflict");
   assert.equal(f.wire.length, 0);
@@ -176,6 +175,20 @@ test("Host ACK persistence failure prevents the first model transport", async t 
   assert.equal(f.wire.length, 0);
   assert.equal(f.store.getUserInputContinuationReceipt(f.thread.id, f.delivery.deliveryId), undefined);
   assert.equal(f.store.getUserInputDelivery(f.thread.id, f.delivery.deliveryId).status, "claimed");
+});
+
+test("receiver requires the current claim before expiry and rejects it at the expiry boundary", async t => {
+  const current = await fixture(t);
+  current.receiverNow = new Date(Date.parse(current.delivery.claim.expiresAt) - 1).toISOString();
+  await current.adapter.runTask(current.attach());
+  assert.equal(current.wire.length, 1);
+
+  const expired = await fixture(t);
+  expired.receiverNow = expired.delivery.claim.expiresAt;
+  await assert.rejects(expired.adapter.runTask(expired.attach()), error => error.code === "delivery_conflict");
+  assert.equal(expired.wire.length, 0);
+  assert.equal(expired.store.getUserInputContinuationReceipt(expired.thread.id, expired.delivery.deliveryId), undefined);
+  assert.equal(expired.store.getUserInputDelivery(expired.thread.id, expired.delivery.deliveryId).status, "claimed");
 });
 
 for (const surface of ["normal", "private", "channel"]) {
@@ -205,7 +218,7 @@ for (const surface of ["normal", "private", "channel"]) {
     try {
       const at = "2026-09-07T00:00:10.000Z";
       f.delivery = reopened.claimUserInputDelivery({ threadId: f.thread.id, deliveryId: answer.deliveryId,
-        expectedRevision: 1, ownerId: "second-worker", leaseMs: 1000 }, at);
+        expectedRevision: 1, ownerId: "second-worker", leaseMs: 60_000 }, at);
       const claim = { threadId: f.thread.id, deliveryId: f.delivery.deliveryId, expectedRevision: f.delivery.revision,
         ownerId: f.delivery.claim.ownerId, claimToken: f.delivery.claim.token };
       const preparedRequest = prepareUserInputContinuationRequest(reopened, claim, at), request = preparedRequest.request;
@@ -217,9 +230,11 @@ for (const surface of ["normal", "private", "channel"]) {
       const runnerExecutionInput = capturePreparedRunnerInput({ runnerId: "pi", options: f.options, preparedInput: f.preparedInput });
       const execution = reopened.saveUserInputContinuationPreparation({ ...claim, stage: "execution", parentRef: preparedRequest.ref,
         payload: { schemaVersion: 1, runnerId: "pi", providerName: f.options.provider.provider, providerModel: f.options.provider.model,
-          taskSnapshot: request.task, requestSnapshot: request, providerSnapshot: runnerExecutionInput.input.provider,
+          taskSnapshot: request.task, requestSnapshot: request,
+          runRequestSnapshot: { ...request, runnerExecutionInput }, providerSnapshot: runnerExecutionInput.input.provider,
           preparedInput: f.preparedInput, preparedInputFingerprint: f.preparedInput.fingerprint, runnerExecutionInput } }, at).snapshot;
       f.binding = reopened.admitUserInputContinuation({ ...claim, executionRef: ref(execution), runtimeInstanceId: "second-runtime" }, at);
+      f.receiverClaim = { ...claim, expectedRevision: f.binding.deliveryRevision };
       f.executionNow = at; f.receiverNow = "2026-09-07T00:00:11.000Z";
       await f.adapter.runTask(f.attach({ store: reopened }));
       assert.equal(f.wire.length, 2);

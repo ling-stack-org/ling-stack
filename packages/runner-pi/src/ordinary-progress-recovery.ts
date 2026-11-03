@@ -42,7 +42,7 @@ export function installOrdinaryProgressRecoveryView(
   appendPiSessionAuthority(session);
   for (const message of view) session.sessionManager.appendMessage(structuredClone(message) as never);
   session.refreshContext();
-  return (view.at(-1) as { role: string }).role === "toolResult" ? "continue" : "complete";
+  return (view.at(-1) as { role: string }).role === "assistant" ? "complete" : "continue";
 }
 
 /** Exact deterministic conversation projection, with no generated-summary metadata exemption. */
@@ -62,11 +62,14 @@ function validConversation(view: readonly unknown[]): boolean {
   if (view.length < 2 || !isRecord(view[0]) || view[0].role !== "user") return false;
   const calls = new Map<string, string>();
   const pending = new Set<string>();
+  const instructionIds = new Set<string>();
   for (const [index, message] of view.entries()) {
     if (!isRecord(message) || !Number.isFinite(message.timestamp) || typeof message.timestamp !== "number") return false;
     if (message.role === "user") {
       // Ordinary recovery preserves the original accepted task, not new user/steering authority.
-      if (index !== 0 || !validContent(message.content, "user")) return false;
+      if (index === 0) {
+        if (!validContent(message.content, "user")) return false;
+      } else if (pending.size || !validDelegationInstruction(message, instructionIds)) return false;
     } else if (message.role === "assistant") {
       if (pending.size || !validContent(message.content, "assistant")
         || message.stopReason === "error" || message.stopReason === "aborted" || message.errorMessage !== undefined) return false;
@@ -89,7 +92,22 @@ function validConversation(view: readonly unknown[]): boolean {
   }
   const last = view.at(-1) as Record<string, unknown>;
   // A missing/partial terminal reason is not authority to emit run_end without SDK settlement.
-  return pending.size === 0 && (last.role === "toolResult" || (last.role === "assistant" && last.stopReason === "stop"));
+  return pending.size === 0 && (last.role === "toolResult" || validDelegationInstruction(last, new Set())
+    || (last.role === "assistant" && last.stopReason === "stop"));
+}
+
+function validDelegationInstruction(message: Record<string, unknown>, seen: Set<string>): boolean {
+  if (Object.keys(message).sort().join(",") !== ["role", "content", "timestamp", "delegationInstruction"].sort().join(",")
+    || message.role !== "user" || typeof message.content !== "string" || !message.content.trim()
+    || typeof message.timestamp !== "number" || !Number.isFinite(message.timestamp)
+    || !isRecord(message.delegationInstruction)) return false;
+  const identity = message.delegationInstruction;
+  if (Object.keys(identity).sort().join(",") !== ["messageId", "digest"].sort().join(",")
+    || typeof identity.messageId !== "string" || !/^[a-zA-Z0-9_.:-]{1,240}$/u.test(identity.messageId)
+    || typeof identity.digest !== "string" || !/^[a-f0-9]{64}$/u.test(identity.digest)
+    || seen.has(identity.messageId)) return false;
+  seen.add(identity.messageId);
+  return true;
 }
 
 function validContent(value: unknown, role: "user" | "assistant" | "toolResult"): boolean {

@@ -604,6 +604,7 @@ function buildWorkflowAgentActivitySpans(input: {
         kind: "agent" as const,
         label: latestStep?.toParticipantLabel.trim() || orderedSteps[0]?.toParticipantLabel.trim() || participantId,
         tone: workflowStepTone(groupStatus),
+        lifecycle: workflowStepLifecycle(groupStatus),
         stateLabel: workflowStepStatusMeta(groupStatus, input.t),
         latestRow: latestActionRow ?? (latestStep ? workflowStepToAgentRow(latestStep, input.t, "latest") : undefined),
         rows,
@@ -727,6 +728,7 @@ function workflowAgentFocusStep(steps: readonly ChannelWorkflowStep[]): ChannelW
     steps.find((step) => step.status === "waiting_for_input") ??
     steps.find((step) => step.status === "running" || step.status === "claimed") ??
     steps.find((step) => step.status === "queued") ??
+    steps.find((step) => step.status === "cancelled") ??
     steps.at(-1);
 }
 
@@ -1102,6 +1104,16 @@ function isGenericWorkflowSuccessSummary(value: string): boolean {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function workflowStepLifecycle(status: ChannelWorkflowStep["status"]): NonNullable<ConversationAgentActivitySpan["lifecycle"]> {
+  if (status === "blocked") return "blocked";
+  if (status === "failed") return "errored";
+  if (status === "cancelled") return "interrupted";
+  if (status === "succeeded" || status === "skipped") return "completed";
+  if (status === "waiting_for_approval" || status === "waiting_for_input") return "waiting";
+  if (status === "running" || status === "claimed") return "running";
+  return "started";
 }
 
 function workflowStepTone(status: ChannelWorkflowStep["status"]): ConversationWorkCellRowTone {

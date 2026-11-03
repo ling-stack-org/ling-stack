@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { deflateSync } from "node:zlib";
 import { DEFAULT_WORKSPACE_ID, createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
+import { createSqliteWorkspaceFixture } from "./test-support/sqlite-workspace-fixture.ts";
 import { auditIgnoredRunnerCompletion } from "../dist/features/runs/stale-completion.js";
 import { ensureGitRepo, ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 import { ToolFreePiRunner } from "./support/tool-free-pi-runner.mjs";
@@ -48,7 +49,7 @@ function modelVisibleToolOutputs(handled, toolCallId) {
 }
 
 test("health includes the configured default workspace cwd", async () => {
-  const defaultWorkspaceCwd = await mkdtemp(resolve(tmpdir(), "ling-stack-health-cwd-"));
+  const defaultWorkspaceCwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-health-cwd-"));
   const daemon = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
@@ -76,7 +77,7 @@ test("health includes the configured default workspace cwd", async () => {
 });
 
 test("approval API rejects a pending request whose Run has already failed", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-stale-approval-api-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-stale-approval-api-"));
   const daemon = await startDaemonForTest(new ThreadResumeRunner());
   const store = createSqliteRunStore(cwd);
   try {
@@ -103,7 +104,7 @@ test("approval API rejects a pending request whose Run has already failed", asyn
 });
 
 test("runtime runner settings api seeds Pi defaults and explicit runner requests fail closed", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runner-settings-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-runner-settings-"));
   const runner = new ThreadResumeRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -160,7 +161,7 @@ test("runtime runner settings api seeds Pi defaults and explicit runner requests
 });
 
 test("bash=allow lets the runner continue without creating an approval request", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-policy-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-policy-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_bash_allow",
     toolName: "bash",
@@ -181,8 +182,40 @@ test("bash=allow lets the runner continue without creating an approval request",
   }
 });
 
+test("Bash approval displays and grants only the model-selected subdirectory", async () => {
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-approval-effective-cwd-"));
+  await mkdir(resolve(cwd, "project"));
+  const runner = new ApprovalProbeRunner({ toolCallId: "effective-cwd", toolName: "bash",
+    input: { command: "printf scoped", cwd: "project", prefix_rule: ["printf"] } });
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "effective-cwd-approval"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const [pending] = await listApprovals(daemon.url, cwd, ready.data.runId);
+    // Resolve first, so a failed assertion cannot strand this isolated approval wait.
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(pending.id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      decisionKind: "approve_command_rule", proposedRuleFingerprint: pending.proposedCommandRule.fingerprint,
+    });
+    await sse.collectRemaining();
+    assert.equal(requested.data.data.payload.cwd, resolve(cwd, "project"));
+    assert.equal(pending.payload.cwd, resolve(cwd, "project"));
+    assert.equal(pending.proposedCommandRule.cwd, resolve(cwd, "project"));
+    const rules = await getJson(`${daemon.url}/approval-command-rules?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(rules.rules[0].cwd, resolve(cwd, "project"));
+    assert.equal(runner.decisions[0].handledResult.details.unifiedExec.cwd, resolve(cwd, "project"));
+    const run = await getJson(`${daemon.url}/runs/${ready.data.runId}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(run.cwd, cwd);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("risk review upgrades allowed force push into an explicit approval request", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-risk-review-force-push-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-risk-review-force-push-"));
   execFileSync("git", ["init"], { cwd, stdio: "ignore" });
   execFileSync("git", ["config", "user.email", "test@example.com"], { cwd, stdio: "ignore" });
   execFileSync("git", ["config", "user.name", "Test User"], { cwd, stdio: "ignore" });
@@ -235,7 +268,7 @@ test("risk review upgrades allowed force push into an explicit approval request"
 });
 
 test("runtimeTools.unifiedExec config is authoritative over run request feature flags", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-gate-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-unified-exec-gate-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_bash_request_gate",
     toolName: "bash",
@@ -260,7 +293,7 @@ test("runtimeTools.unifiedExec config is authoritative over run request feature 
 });
 
 test("unified exec bash=allow runs through daemon and records redacted artifacts", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-allow-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-unified-exec-allow-"));
   const secretValue = "unified-exec-secret-value";
   const runner = new UnifiedExecProbeRunner({
     toolCallId: "tool_unified_exec_allow",
@@ -315,7 +348,7 @@ test("unified exec bash=allow runs through daemon and records redacted artifacts
 });
 
 test("shell snapshots stay disabled when only the run request asks for them", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-shell-snapshot-gate-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-shell-snapshot-gate-"));
   const runner = new UnifiedExecProbeRunner({
     toolCallId: "tool_shell_snapshot_request_gate",
     toolName: "bash",
@@ -344,7 +377,7 @@ test("shell snapshots stay disabled when only the run request asks for them", as
 });
 
 test("shell snapshots record unified exec start and end artifacts with redaction", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-shell-snapshot-allow-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-shell-snapshot-allow-"));
   const secretValue = "shell-snapshot-secret-value";
   const runner = new UnifiedExecProbeRunner({
     toolCallId: "tool_shell_snapshot_allow",
@@ -402,7 +435,7 @@ test("shell snapshots record unified exec start and end artifacts with redaction
 });
 
 test("unified exec bash=deny returns handled denial and never spawns", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-deny-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-unified-exec-deny-"));
   const markerPath = resolve(cwd, "should-not-exist.txt");
   const runner = new UnifiedExecProbeRunner({
     toolCallId: "tool_unified_exec_deny",
@@ -434,7 +467,7 @@ test("unified exec bash=deny returns handled denial and never spawns", async () 
 });
 
 test("unified exec bash=ask waits for approval before running", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-ask-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-unified-exec-ask-"));
   const runner = new UnifiedExecProbeRunner({
     toolCallId: "tool_unified_exec_ask",
     toolName: "bash",
@@ -478,7 +511,7 @@ test("unified exec bash=ask waits for approval before running", async () => {
 });
 
 test("parallel Host commands enter approval waits one at a time", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-parallel-host-approvals-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-parallel-host-approvals-"));
   const runner = new ConcurrentApprovalProbeRunner([
     { toolCallId: "tool_parallel_first", toolName: "bash", input: { command: "printf 'first\\n'" } },
     { toolCallId: "tool_parallel_second", toolName: "bash", input: { command: "printf 'second\\n'" } },
@@ -521,7 +554,7 @@ test("parallel Host commands enter approval waits one at a time", async () => {
 });
 
 test("denying the first parallel Host command does not create a successor approval", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-parallel-host-denial-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-parallel-host-denial-"));
   const runner = new ConcurrentApprovalProbeRunner([
     { toolCallId: "tool_denied_first", toolName: "bash", input: { command: "printf 'first\\n'" } },
     { toolCallId: "tool_denied_second", toolName: "bash", input: { command: "printf 'second\\n'" } },
@@ -550,7 +583,7 @@ test("denying the first parallel Host command does not create a successor approv
 });
 
 test("cancelling a Run during the first parallel Host approval does not admit the queued command", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-parallel-host-cancel-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-parallel-host-cancel-"));
   const runner = new ConcurrentApprovalProbeRunner([
     { toolCallId: "tool_cancel_parallel_first", toolName: "bash", input: { command: "printf 'first\\n'" } },
     { toolCallId: "tool_cancel_parallel_second", toolName: "bash", input: { command: "printf 'second\\n'" } },
@@ -588,7 +621,7 @@ test("cancelling a Run during the first parallel Host approval does not admit th
 // approval wait. Keep their real Host coverage above, all budgets/assertions
 // below, and the actual SQLite decision/replay path unchanged.
 test("approval wait does not consume runtime idle or hard timeout budgets", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-timeout-wait-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-approval-timeout-wait-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_approval_timeout_wait",
     toolName: "read",
@@ -648,7 +681,7 @@ test("approval wait does not consume runtime idle or hard timeout budgets", asyn
 });
 
 test("approval resume restores the hard timeout budget after an externally persisted decision", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-timeout-resume-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-approval-timeout-resume-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_approval_timeout_resume",
     toolName: "read",
@@ -699,7 +732,7 @@ test("approval resume restores the hard timeout budget after an externally persi
 });
 
 test("slow replay of an external approval decision resets idle time when execution resumes", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-approval-slow-replay-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-approval-slow-replay-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_approval_slow_replay", toolName: "read",
     input: { path: "unused-approval-budget-probe.txt" },
@@ -752,7 +785,7 @@ test("slow replay of an external approval decision resets idle time when executi
 });
 
 test("unified exec nonzero exit returns a handled failed result", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-nonzero-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-unified-exec-nonzero-"));
   const runner = new UnifiedExecProbeRunner({
     toolCallId: "tool_unified_exec_nonzero",
     toolName: "bash",
@@ -786,7 +819,7 @@ test("unified exec nonzero exit returns a handled failed result", async () => {
 });
 
 test("unified exec command timeout returns timed_out and does not create approvals", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-timeout-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-unified-exec-timeout-"));
   const runner = new UnifiedExecProbeRunner({
     toolCallId: "tool_unified_exec_timeout",
     toolName: "bash",
@@ -813,7 +846,7 @@ test("unified exec command timeout returns timed_out and does not create approva
 });
 
 test("unified exec rejects PTY requests as handled failures without spawning", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-pty-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-unified-exec-pty-"));
   const markerPath = resolve(cwd, "pty-should-not-run.txt");
   const runner = new UnifiedExecProbeRunner({
     toolCallId: "tool_unified_exec_pty",
@@ -842,7 +875,7 @@ test("unified exec rejects PTY requests as handled failures without spawning", a
 });
 
 test("unified exec bounds long output chunks and stream previews", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-long-output-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-unified-exec-long-output-"));
   const runner = new UnifiedExecProbeRunner({
     toolCallId: "tool_unified_exec_long_output",
     toolName: "bash",
@@ -908,7 +941,7 @@ test("unified exec bounds long output chunks and stream previews", async () => {
 });
 
 test("unified exec run cancellation kills command and leaves the run cancelled", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-unified-exec-cancel-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-unified-exec-cancel-"));
   const markerPath = resolve(cwd, "after-cancel.txt");
   const runner = new UnifiedExecProbeRunner({
     toolCallId: "tool_unified_exec_cancel",
@@ -959,7 +992,7 @@ for (const [command, profile, actionType] of [
   ["echo profile-gated", { requiredForTools: ["bash"] }, "bash"],
   ["git commit -m profile-gated", { requiredForActions: ["git_commit"] }, "git_commit"],
 ]) test(`assignee approval profile gates ${actionType} despite workspace bash=allow`, async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-policy-profile-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-policy-profile-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_bash_profile",
     toolName: "bash",
@@ -1015,7 +1048,7 @@ for (const [command, profile, actionType] of [
 });
 
 test("session permission mode snapshots the effective run policy without relaxing deny rules", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-session-policy-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-session-policy-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_write_session_policy",
     toolName: "write",
@@ -1060,7 +1093,7 @@ test("session permission mode snapshots the effective run policy without relaxin
 });
 
 test("smart authorization resolves an asked command through an isolated system reviewer", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-smart-review-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-smart-review-"));
   const runner = new SmartApprovalProbeRunner("approve");
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -1104,7 +1137,7 @@ test("smart authorization resolves an asked command through an isolated system r
 });
 
 test("smart authorization preserves the pending human path when the reviewer returns manual", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-smart-review-manual-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-smart-review-manual-"));
   const runner = new SmartApprovalProbeRunner("manual");
   const daemon = await startDaemonForTest(runner);
   try {
@@ -1139,7 +1172,7 @@ test("smart authorization preserves the pending human path when the reviewer ret
 for (const decision of ["approve", "deny"]) {
   const decisionVerb = decision === "approve" ? "approves" : "denies";
   test(`smart approval review recovers exactly once after daemon restart and ${decisionVerb} safely`, { timeout: 20_000 }, async () => {
-    const cwd = await mkdtemp(resolve(tmpdir(), `ling-stack-daemon-smart-review-restart-${decision}-`));
+    const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), `ling-stack-daemon-smart-review-restart-${decision}-`));
     const outputPath = resolve(cwd, `smart-review-restart-${decision}.txt`);
     const command = `printf '${decision}\\n' > ${JSON.stringify(outputPath)}`;
     const firstRunner = new BlockingSmartApprovalProbeRunner({
@@ -1220,7 +1253,7 @@ for (const decision of ["approve", "deny"]) {
 }
 
 test("full access permission mode requires explicit confirmation before creating a run", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-session-policy-confirm-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-session-policy-confirm-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_full_access_confirm",
     toolName: "write",
@@ -1245,7 +1278,7 @@ test("full access permission mode requires explicit confirmation before creating
 });
 
 test("bash=deny records an immediately denied approval request", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-policy-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-policy-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_bash_deny",
     toolName: "bash",
@@ -1275,7 +1308,7 @@ test("bash=deny records an immediately denied approval request", async () => {
 });
 
 test("bash=ask pauses the run until the approval is resolved", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-policy-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-policy-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_bash_ask",
     toolName: "bash",
@@ -1350,7 +1383,7 @@ test("bash=ask pauses the run until the approval is resolved", async () => {
 });
 
 test("workspace command rule approves the current Bash request and suppresses matching prompts until revoked", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-command-rule-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-command-rule-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_command_rule_first",
     toolName: "bash",
@@ -1412,7 +1445,7 @@ test("workspace command rule approves the current Bash request and suppresses ma
 });
 
 test("workspace command rule survives daemon restart without approving an unrelated command", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-command-rule-restart-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-command-rule-restart-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_rule_before_restart",
     toolName: "bash",
@@ -1470,7 +1503,7 @@ test("workspace command rule survives daemon restart without approving an unrela
 });
 
 test("daemon derives a reusable rule for a bounded compound Bash command without a model hint", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-compound-command-rule-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-compound-command-rule-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_compound_command_rule",
     toolName: "bash",
@@ -1496,7 +1529,7 @@ test("daemon derives a reusable rule for a bounded compound Bash command without
 });
 
 test("daemon shutdown preserves a pending approval instead of recording user cancellation", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-shutdown-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-approval-shutdown-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_bash_shutdown",
     toolName: "bash",
@@ -1572,7 +1605,7 @@ test("daemon shutdown preserves a pending approval instead of recording user can
 });
 
 test("a real orchestrator hard timeout fails the Run instead of recording cancellation", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-hard-timeout-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-hard-timeout-"));
   const runner = new AbortAwareBlockingRunner();
   const stores = new Map();
   const storeFactory = (workspaceCwd) => {
@@ -1614,7 +1647,7 @@ test("a real orchestrator hard timeout fails the Run instead of recording cancel
 });
 
 test("approved checkpoint resumes the same Run with one fenced replacement attempt after daemon restart", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-restart-resume-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-approval-restart-resume-"));
   const command = "printf 'resumed-ok\\n' > resumed-after-restart.txt";
   const firstRunner = new ApprovalProbeRunner({
     toolCallId: "tool_bash_restart_resume",
@@ -1697,7 +1730,7 @@ test("approved checkpoint resumes the same Run with one fenced replacement attem
 });
 
 test("restart resume fails closed when the exact approved side effect has no safe continuation", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-resume-unsupported-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-approval-resume-unsupported-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_write_resume_unsupported",
     toolName: "write",
@@ -1771,7 +1804,7 @@ test("restart resume fails closed when the exact approved side effect has no saf
 });
 
 test("approval execution actions expose preview and result artifacts", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-action-artifacts-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-action-artifacts-"));
   const runner = new ApprovalArtifactRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -1834,7 +1867,7 @@ test("approval execution actions expose preview and result artifacts", async () 
 });
 
 test("non-approval tool events are exposed as action lifecycle records", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-non-approval-actions-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-non-approval-actions-"));
   const runner = new NonApprovalToolLifecycleRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -1871,7 +1904,7 @@ test("non-approval tool events are exposed as action lifecycle records", async (
 });
 
 test("git commit approval actions include scope analysis and git preview artifacts", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-git-action-preview-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-git-action-preview-"));
   execFileSync("git", ["init"], { cwd, stdio: "ignore" });
   execFileSync("git", ["config", "user.email", "ling-test@example.com"], { cwd });
   execFileSync("git", ["config", "user.name", "Ling Test"], { cwd });
@@ -1928,7 +1961,7 @@ test("git commit approval actions include scope analysis and git preview artifac
 });
 
 test("thread evidence and manual resume preserve Ling-owned lineage", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-thread-resume-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-thread-resume-"));
   const runner = new ThreadResumeRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -1992,7 +2025,7 @@ test("thread evidence and manual resume preserve Ling-owned lineage", async () =
 });
 
 test("write=deny blocks file writes through the run approval chain", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-policy-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-policy-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_write_deny",
     toolName: "write",
@@ -2018,7 +2051,7 @@ test("write=deny blocks file writes through the run approval chain", async () =>
 });
 
 test("write outside allowed paths is denied even when write is allowed", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-policy-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-policy-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_write_outside",
     toolName: "write",
@@ -2048,7 +2081,7 @@ test("write outside allowed paths is denied even when write is allowed", async (
 });
 
 test("plan mode denies file writes without offering a pending approval", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-plan-mode-write-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-plan-mode-write-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_plan_write",
     toolName: "write",
@@ -2082,7 +2115,7 @@ test("plan mode denies file writes without offering a pending approval", async (
 });
 
 test("plan mode denies mutating shell commands without offering a pending approval", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-plan-mode-bash-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-plan-mode-bash-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_plan_bash",
     toolName: "bash",
@@ -2113,7 +2146,7 @@ test("plan mode denies mutating shell commands without offering a pending approv
 });
 
 test("patch-shaped write creates approval preview and applies only after approval", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-patch-approval-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-patch-approval-"));
   await writeFile(resolve(cwd, "src.txt"), "old\nkeep\n", "utf8");
   const patchText = `*** Begin Patch
 *** Update File: src.txt
@@ -2179,7 +2212,7 @@ test("patch-shaped write creates approval preview and applies only after approva
 });
 
 test("patch approval redacts resolved provider secrets from approvals and artifacts", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-patch-secret-redaction-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-patch-secret-redaction-"));
   await writeFile(resolve(cwd, "src.txt"), "old\n", "utf8");
   const secretValue = "resolved-patch-provider-secret";
   const patchText = `*** Begin Patch
@@ -2258,7 +2291,7 @@ test("patch approval redacts resolved provider secrets from approvals and artifa
 });
 
 test("patch-shaped edit creates approval preview and applies through the daemon", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-patch-edit-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-patch-edit-"));
   await writeFile(resolve(cwd, "src.txt"), "old\n", "utf8");
   const patchText = `*** Begin Patch
 *** Update File: src.txt
@@ -2299,7 +2332,7 @@ test("patch-shaped edit creates approval preview and applies through the daemon"
 });
 
 test("denied patch approval leaves files unchanged", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-patch-deny-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-patch-deny-"));
   await writeFile(resolve(cwd, "src.txt"), "old\n", "utf8");
   const patchText = `*** Begin Patch
 *** Update File: src.txt
@@ -2336,7 +2369,7 @@ test("denied patch approval leaves files unchanged", async () => {
 });
 
 test("approved patch fails closed when target changes after preview", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-patch-conflict-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-patch-conflict-"));
   await writeFile(resolve(cwd, "src.txt"), "old\nkeep\n", "utf8");
   const patchText = `*** Begin Patch
 *** Update File: src.txt
@@ -2389,7 +2422,7 @@ test("approved patch fails closed when target changes after preview", async () =
 });
 
 test("patch touched paths outside allowed write paths are denied without mutation", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-patch-policy-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-patch-policy-"));
   const patchText = `*** Begin Patch
 *** Add File: src/out.txt
 +outside
@@ -2422,7 +2455,7 @@ test("patch touched paths outside allowed write paths are denied without mutatio
 });
 
 test("patches cannot modify .ling-stack internal state", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-patch-internal-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-patch-internal-"));
   const patchText = `*** Begin Patch
 *** Add File: .ling-stack/owned.txt
 +blocked
@@ -2449,7 +2482,7 @@ test("patches cannot modify .ling-stack internal state", async () => {
 });
 
 test("approval listing lazily expires stale pending requests", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-expiry-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-approval-expiry-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_expiry",
     toolName: "bash",
@@ -2516,7 +2549,7 @@ test("approval listing lazily expires stale pending requests", async () => {
 });
 
 test("provider check persists last check result", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-provider-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused",
     toolName: "bash",
@@ -2556,7 +2589,7 @@ test("provider check persists last check result", async () => {
 });
 
 test("secret status reports configured, missing, unavailable, and invalid refs without values", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-secret-status-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-secret-status-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_secret_status",
     toolName: "bash",
@@ -2596,7 +2629,7 @@ test("secret status reports configured, missing, unavailable, and invalid refs w
 });
 
 test("provider create and update accept keychain refs and reject raw or unknown secret schemes", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-secret-ref-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-provider-secret-ref-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_provider_secret_ref",
     toolName: "bash",
@@ -2653,7 +2686,7 @@ test("provider create and update accept keychain refs and reject raw or unknown 
 });
 
 test("provider check and run startup use the injected secret resolver without leaking resolved values", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-secret-resolver-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-provider-secret-resolver-"));
   const secretValue = "resolved-keychain-secret";
   const runner = new SecretEchoRunner(secretValue);
   const daemon = await startDaemonForTest(runner, {
@@ -2693,7 +2726,7 @@ test("provider check and run startup use the injected secret resolver without le
 });
 
 test("provider local API keys are edited from sqlite without leaking in provider responses", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-local-secret-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-provider-local-secret-"));
   const openai = await startMockOpenAICompatibleServer();
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_local_secret",
@@ -2784,7 +2817,7 @@ test("provider local API keys are edited from sqlite without leaking in provider
   });
 
   test("provider draft check validates direct API keys without persisting providers", async () => {
-    const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-draft-check-"));
+    const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-provider-draft-check-"));
     const openai = await startMockOpenAICompatibleServer();
     const daemon = await startDaemonForTest(new ApprovalProbeRunner({
       toolCallId: "tool_unused_draft_check",
@@ -2836,7 +2869,7 @@ test("provider local API keys are edited from sqlite without leaking in provider
   });
 
   test("provider draft check allows provider-exposed model ids with chat protocols", async () => {
-    const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-draft-media-mismatch-"));
+    const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-provider-draft-media-mismatch-"));
     const openai = await startMockOpenAICompatibleServer();
     const daemon = await startDaemonForTest(new ApprovalProbeRunner({
       toolCallId: "tool_unused_media_mismatch",
@@ -2881,7 +2914,7 @@ test("provider local API keys are edited from sqlite without leaking in provider
   });
 
 test("provider model listing probes the endpoint with the provided API key", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-models-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-provider-models-"));
   const openai = await startMockOpenAICompatibleServer({
     models: [
       { id: "cliproxy-gpt-4o", object: "model", owned_by: "cliproxy" },
@@ -2963,7 +2996,7 @@ test("provider model listing probes the endpoint with the provided API key", asy
 });
 
 test("provider model listing normalizes OpenAI-compatible endpoint paths", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-models-normalize-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-provider-models-normalize-"));
   const openai = await startMockOpenAICompatibleServer();
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_model_list_normalize",
@@ -2992,7 +3025,7 @@ test("provider model listing normalizes OpenAI-compatible endpoint paths", async
 });
 
 test("provider model import creates and updates supplier model presets", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-model-import-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-provider-model-import-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_model_import",
     toolName: "bash",
@@ -3083,7 +3116,7 @@ test("provider model import creates and updates supplier model presets", async (
 });
 
 test("provider manual create and update auto-enable live transport for OpenAI Images", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-manual-openai-image-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-provider-manual-openai-image-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_manual_openai_image",
     toolName: "bash",
@@ -3125,7 +3158,7 @@ test("provider manual create and update auto-enable live transport for OpenAI Im
 });
 
 test("legacy OpenAI Images media providers are normalized for listing, checks, and runs", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-legacy-openai-image-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-provider-legacy-openai-image-"));
   const openai = await startMockOpenAICompatibleServer();
   process.env.LING_STACK_TEST_OPENAI_IMAGE_KEY = "test-openai-image-key";
   const now = "2026-06-30T00:00:00.000Z";
@@ -3188,7 +3221,7 @@ test("legacy OpenAI Images media providers are normalized for listing, checks, a
 });
 
 test("media provider model listing returns provider-exposed candidates without category filtering", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-media-models-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-provider-media-models-"));
   const openai = await startMockOpenAICompatibleServer({
     models: [
       { id: "doubao-seed-2-0-lite-260215", object: "model", owned_by: "volcengine" },
@@ -3253,7 +3286,7 @@ test("media provider model listing returns provider-exposed candidates without c
 });
 
 test("media provider check runs a real Seedream image probe", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-media-check-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-provider-media-check-"));
   const seedream = await startMockSeedreamServer();
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_check",
@@ -3332,7 +3365,7 @@ test("media provider check runs a real Seedream image probe", async () => {
 });
 
 test("startup provider refresh does not run live media probes", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-startup-media-skip-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-provider-startup-media-skip-"));
   const seedream = await startMockSeedreamServer();
   let daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_startup_media_skip",
@@ -3381,7 +3414,7 @@ test("startup provider refresh does not run live media probes", async () => {
 });
 
 test("media job API creates, lists, and shows queued jobs without running on creation", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-jobs-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-media-jobs-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_job",
     toolName: "bash",
@@ -3425,7 +3458,7 @@ test("media job API creates, lists, and shows queued jobs without running on cre
 });
 
 test("media production API persists storyboard order independently from canvas placement", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-production-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-media-production-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_production",
     toolName: "bash",
@@ -3467,7 +3500,7 @@ test("media production API persists storyboard order independently from canvas p
 });
 
 test("media production project assets validate, persist, serve and protect scene references", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-project-assets-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-media-project-assets-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_project_assets",
     toolName: "bash",
@@ -3599,7 +3632,7 @@ test("media production project assets validate, persist, serve and protect scene
 });
 
 test("media production project asset upload rejects a symlinked project directory", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-project-asset-symlink-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-media-project-asset-symlink-"));
   const outside = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-project-asset-outside-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_project_asset_symlink",
@@ -3635,7 +3668,7 @@ test("media production project asset upload rejects a symlinked project director
 });
 
 test("media production materializes project images only for the Seedance submission call", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-project-i2v-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-media-project-i2v-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_project_i2v",
     toolName: "bash",
@@ -3731,7 +3764,7 @@ test("media production materializes project images only for the Seedance submiss
 });
 
 test("media production rejects corrupt persisted image inputs before creating a paid job", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-corrupt-media-inputs-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-corrupt-media-inputs-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_corrupt_media_inputs",
     toolName: "bash",
@@ -3809,7 +3842,7 @@ test("media production rejects corrupt persisted image inputs before creating a 
 });
 
 test("media production project run validates every legacy target before creating any scene run", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-project-run-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-media-project-run-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_project_run",
     toolName: "bash",
@@ -3918,7 +3951,7 @@ test("media production project run validates every legacy target before creating
 });
 
 test("media production keeps direct Seedance scenes and ComfyUI workflow scenes in one project", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-mixed-sources-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-media-mixed-sources-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_mixed_sources",
     toolName: "bash",
@@ -4015,7 +4048,7 @@ test("media production keeps direct Seedance scenes and ComfyUI workflow scenes 
 });
 
 test("ComfyUI workflow polling resumes from the persisted execution handle after daemon restart", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-workflow-resume-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-media-workflow-resume-"));
   const comfy = await startMockComfyUiServer({ completeImmediately: false });
   const runner = () => new ApprovalProbeRunner({ toolCallId: "tool_unused_media_workflow_resume", toolName: "bash" });
   let daemon = await startDaemonForTest(runner(), {}, { defaultWorkspaceCwd: cwd });
@@ -4075,7 +4108,7 @@ test("ComfyUI workflow polling resumes from the persisted execution handle after
 });
 
 test("media job API blocks static media providers from reporting fake success", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-run-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-media-run-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_job_run",
     toolName: "bash",
@@ -4108,7 +4141,7 @@ test("media job API blocks static media providers from reporting fake success", 
 });
 
 test("media job live transport fails when the vendor response has no media artifact", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-run-failure-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-media-run-failure-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_job_run_failure",
     toolName: "bash",
@@ -4150,7 +4183,7 @@ test("media job live transport fails when the vendor response has no media artif
 });
 
 test("media job live transport calls Seedream image_generate directly and links artifacts", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-live-direct-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-media-live-direct-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_job_live_direct",
     toolName: "bash",
@@ -4225,7 +4258,7 @@ test("media job live transport calls Seedream image_generate directly and links 
 });
 
 test("legacy media cost approvals do not block direct media job execution", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-legacy-approval-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-media-legacy-approval-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_job_legacy_approval",
     toolName: "bash",
@@ -4298,7 +4331,7 @@ test("legacy media cost approvals do not block direct media job execution", asyn
 });
 
 test("media job API rejects chat providers and unsupported media operations", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-jobs-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-media-jobs-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused_media_job_reject",
     toolName: "bash",
@@ -4339,7 +4372,7 @@ test("media job API rejects chat providers and unsupported media operations", as
 });
 
 test("media provider presets remain blocked from coding task runs", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-run-block-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-media-run-block-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_media_run_block",
     toolName: "read",
@@ -4361,7 +4394,7 @@ test("media provider presets remain blocked from coding task runs", async () => 
 });
 
 test("provider preset run requires successful daemon preflight", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-run-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-provider-run-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_preflight_ready",
     toolName: "read",
@@ -4395,7 +4428,7 @@ test("provider preset run requires successful daemon preflight", async () => {
 });
 
 test("failed provider checks block daemon preset runs unless skipped", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-provider-run-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-provider-run-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_preflight_failed",
     toolName: "read",
@@ -4434,7 +4467,7 @@ test("failed provider checks block daemon preset runs unless skipped", async () 
 });
 
 test("task run endpoint rejects paused channels before runner start", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-paused-channel-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-paused-channel-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_paused_channel",
     toolName: "read",
@@ -4476,7 +4509,7 @@ test("task run endpoint rejects paused channels before runner start", async () =
 });
 
 test("same idempotency key returns the original task run without starting a duplicate", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-idempotent-run-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-idempotent-run-"));
   const runner = new BlockingRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -4522,7 +4555,7 @@ test("same idempotency key returns the original task run without starting a dupl
 });
 
 test("write runs in newly created channels use isolated worktrees and do not conflict", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-bound-path-lock-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-bound-path-lock-"));
   const runner = new BlockingRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -4607,7 +4640,7 @@ test("write runs in newly created channels use isolated worktrees and do not con
 });
 
 test("queueOnConflict persists a queued run for channels explicitly handed off to Local", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-bound-path-queue-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-bound-path-queue-"));
   const runner = new BlockingRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -4692,7 +4725,7 @@ test("queueOnConflict persists a queued run for channels explicitly handed off t
 });
 
 test("runtime diagnostics expose the same daemon-owned work unit to web and desktop-style clients", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-runtime-diagnostics-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-runtime-diagnostics-"));
   const runner = new BlockingRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -4763,7 +4796,7 @@ test("runtime diagnostics expose the same daemon-owned work unit to web and desk
 });
 
 test("work unit cancel cancels a linked active run without late success overwrite", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-work-unit-cancel-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-work-unit-cancel-"));
   const runner = new BlockingRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -4811,7 +4844,7 @@ test("work unit cancel cancels a linked active run without late success overwrit
 });
 
 test("run cancel cancels pending approvals for a waiting run", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-run-cancel-approval-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-run-cancel-approval-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_cancel_waiting_approval",
     toolName: "bash",
@@ -4847,7 +4880,7 @@ test("run cancel cancels pending approvals for a waiting run", async () => {
 });
 
 test("queued run guidance starts FIFO continuation after the source run finishes", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-run-guidance-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-run-guidance-"));
   const runner = new BlockingRunner({ verifyToolFree: true });
   const daemon = await startDaemonForTest(runner);
   let sse;
@@ -4962,7 +4995,7 @@ test("queued run guidance starts FIFO continuation after the source run finishes
 });
 
 test("interrupt redirect cancels the source run and starts a linked continuation", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-run-redirect-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-run-redirect-"));
   const runner = new BlockingRunner({ verifyToolFree: true });
   const daemon = await startDaemonForTest(runner);
   let sse;
@@ -5030,7 +5063,7 @@ test("interrupt redirect cancels the source run and starts a linked continuation
 });
 
 test("queued run guidance promote cancels the active run without duplicating the intervention", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-run-promote-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-run-promote-"));
   const runner = new BlockingRunner({ verifyToolFree: true });
   const daemon = await startDaemonForTest(runner);
   let sse;
@@ -5098,7 +5131,7 @@ test("queued run guidance promote cancels the active run without duplicating the
 });
 
 test("work unit retry and reconcile APIs operate on durable supervisor state", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-work-unit-controls-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-work-unit-controls-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
     toolCallId: "tool_unused",
     toolName: "read",
@@ -5190,7 +5223,7 @@ test("work unit retry and reconcile APIs operate on durable supervisor state", a
 });
 
 test("cancelled runs are not overwritten when a late runner reports success", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-cancel-race-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-cancel-race-"));
   const runner = new BlockingRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -5251,7 +5284,7 @@ test("cancelled runs are not overwritten when a late runner reports success", as
 });
 
 test("artifact APIs list metadata and serve content from the artifacts root", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-artifacts-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-artifacts-"));
   const largeContent = Buffer.alloc(2 * 1024 * 1024 + 17, 0x61);
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_artifact_read",
@@ -5381,7 +5414,7 @@ test("artifact APIs list metadata and serve content from the artifacts root", as
 });
 
 test("artifact access is workspace-bound, lineage-bound, and range-bounded", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-artifact-boundary-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-artifact-boundary-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_artifact_boundary",
     toolName: "read",
@@ -5434,7 +5467,7 @@ test("artifact access is workspace-bound, lineage-bound, and range-bounded", asy
 });
 
 test("daemon extracts artifacts from tool outputs and generated file paths", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-extract-artifacts-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-extract-artifacts-"));
   const runner = new ArtifactExtractionRunner();
   const daemon = await startDaemonForTest(runner);
   try {

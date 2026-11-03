@@ -23,7 +23,6 @@ import {
 import {
   isRecord,
   readNullableBoolean,
-  readNullableNumber,
   readNullableString,
   readOptionalBoolean,
   readOptionalNumber,
@@ -121,8 +120,8 @@ export function parseProviderModelImportRequest(value: unknown): ProviderModelIm
     reasoning: readOptionalBoolean(value, "reasoning"),
     thinkingModes: readProviderThinkingModes(value, "thinkingModes"),
     input: readOptionalStringArray(value, "input", ["text", "image"]),
-    contextWindow: readOptionalNumber(value, "contextWindow"),
-    maxTokens: readOptionalNumber(value, "maxTokens"),
+    contextWindow: readOptionalPositiveInteger(value, "contextWindow"),
+    maxTokens: readOptionalPositiveInteger(value, "maxTokens"),
     compat: isRecord(value.compat) ? value.compat : undefined,
     capabilities: readProviderCapabilities(value, "capabilities"),
     enabled: readOptionalBoolean(value, "enabled"),
@@ -142,6 +141,8 @@ export function parseProviderModelImportRequest(value: unknown): ProviderModelIm
       authHeader: request.authHeader,
       hasApiKey: Boolean(request.apiKey),
       capabilities: model.capabilities ?? request.capabilities,
+      contextWindow: model.contextWindow ?? request.contextWindow,
+      maxTokens: model.maxTokens ?? request.maxTokens,
     });
   }
   return request;
@@ -169,6 +170,8 @@ export function validateProviderPresetUpdate(existing: ProviderPreset, input: Pr
     headers: input.headers ?? existing.headers,
     secretHeaderRefs: input.secretHeaderRefs ?? existing.secretHeaderRefs,
     authHeader: input.authHeader === null ? undefined : input.authHeader ?? existing.authHeader,
+    contextWindow: input.contextWindow === null ? undefined : input.contextWindow ?? existing.contextWindow,
+    maxTokens: input.maxTokens === null ? undefined : input.maxTokens ?? existing.maxTokens,
     capabilities: input.capabilities ?? existing.capabilities,
   });
 }
@@ -192,8 +195,8 @@ function parseProviderPresetInput(value: unknown): ProviderPresetInput {
     reasoning: readOptionalBoolean(value, "reasoning"),
     thinkingModes: readProviderThinkingModes(value, "thinkingModes"),
     input: readOptionalStringArray(value, "input", ["text", "image"]),
-    contextWindow: readOptionalNumber(value, "contextWindow"),
-    maxTokens: readOptionalNumber(value, "maxTokens"),
+    contextWindow: readOptionalPositiveInteger(value, "contextWindow"),
+    maxTokens: readOptionalPositiveInteger(value, "maxTokens"),
     compat: isRecord(value.compat) ? value.compat : undefined,
     capabilities: readProviderCapabilities(value, "capabilities"),
     enabled: readOptionalBoolean(value, "enabled"),
@@ -220,8 +223,8 @@ function parseProviderPresetUpdateInput(value: unknown): ProviderPresetUpdateInp
     reasoning: readNullableBoolean(value, "reasoning"),
     thinkingModes: value.thinkingModes === undefined ? undefined : readProviderThinkingModes(value, "thinkingModes"),
     input: readOptionalStringArray(value, "input", ["text", "image"]),
-    contextWindow: readNullableNumber(value, "contextWindow"),
-    maxTokens: readNullableNumber(value, "maxTokens"),
+    contextWindow: value.contextWindow === null ? null : readOptionalPositiveInteger(value, "contextWindow"),
+    maxTokens: value.maxTokens === null ? null : readOptionalPositiveInteger(value, "maxTokens"),
     compat: isRecord(value.compat) ? value.compat : undefined,
     capabilities: value.capabilities === undefined ? undefined : readProviderCapabilities(value, "capabilities"),
     enabled: readOptionalBoolean(value, "enabled"),
@@ -233,6 +236,22 @@ function parseProviderPresetUpdateInput(value: unknown): ProviderPresetUpdateInp
 function validateProviderPresetInput(input: ProviderPresetInput): ProviderPresetInput {
   validateProviderPresetShape(input);
   return input;
+}
+
+/** Validate the final token pair after catalog enrichment and saved-value inheritance. */
+export function validateProviderTokenBudget(input: {
+  readonly contextWindow?: number;
+  readonly maxTokens?: number;
+}): void {
+  for (const key of ["contextWindow", "maxTokens"] as const) {
+    const value = input[key];
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) {
+      throw new Error(`${key} must be a positive safe integer`);
+    }
+  }
+  if (input.contextWindow !== undefined && input.maxTokens !== undefined && input.maxTokens >= input.contextWindow) {
+    throw new Error("maxTokens must be less than contextWindow");
+  }
 }
 
 function validateProviderPresetShape(input: {
@@ -248,7 +267,10 @@ function validateProviderPresetShape(input: {
   readonly secretHeaderRefs?: Record<string, string>;
   readonly authHeader?: boolean | null;
   readonly capabilities?: readonly ProviderCapability[];
+  readonly contextWindow?: number;
+  readonly maxTokens?: number;
 }): void {
+  validateProviderTokenBudget(input);
   if (!input.displayName?.trim()) {
     throw new Error("displayName must be a non-empty string");
   }
@@ -474,8 +496,8 @@ function readOptionalPositiveInteger(record: Record<string, unknown>, key: strin
   if (value === undefined) {
     return undefined;
   }
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${key} must be a positive integer`);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${key} must be a positive safe integer`);
   }
   return value;
 }

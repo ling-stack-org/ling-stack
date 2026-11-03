@@ -17,6 +17,7 @@ import {
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { ExternalSecretStore } from "../../context.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
+import type { ExternalWorkflowRequestRuntime } from "../../runtime/sandbox/external-workflow-request-runtime.js";
 import { isPathInsideRoot } from "../../shared/path.js";
 import { readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
@@ -38,6 +39,7 @@ export async function handleExternalWorkWorkflowConfigure(
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  externalWorkflowRequestRuntime?: ExternalWorkflowRequestRuntime,
 ): Promise<void> {
   if (request.method !== "POST") {
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for external work workflow setup` });
@@ -61,7 +63,56 @@ export async function handleExternalWorkWorkflowConfigure(
       return;
     }
 
-    const admission = admitExternalWorkflowPath(channel.boundPath ?? cwd, input.workflowPath);
+    const rootInput = channel.boundPath ?? cwd;
+    const root = realpathSync(rootInput);
+    const authority = Object.freeze({ channelId: channel.id, updatedAt: channel.updatedAt, rootInput, root });
+    const assertCurrentAuthority = (): void => {
+      const current = storeRegistry.getStore(cwd).getChannel(authority.channelId);
+      if (!current || current.updatedAt !== authority.updatedAt || (current.boundPath ?? cwd) !== authority.rootInput
+        || realpathSync(authority.rootInput) !== authority.root) {
+        throw new Error("External workflow configuration authority changed");
+      }
+    };
+    assertCurrentAuthority();
+
+    if (externalWorkflowRequestRuntime) {
+      let workflowUpdated = false;
+      const abortController = new AbortController();
+      const abort = (): void => abortController.abort(new Error("External workflow configuration request aborted"));
+      request.once("aborted", abort);
+      try {
+        const execution = await externalWorkflowRequestRuntime.execute({
+          root,
+          ...(input.workflowPath ? { workflowPath: input.workflowPath } : {}),
+          assertCurrentAuthority,
+          signal: abortController.signal,
+          decide(snapshot) {
+            const existingParsed = parseExternalWorkflowStatus(snapshot.markdown);
+            if (!snapshot.exists || !existingParsed.workflowDefinition) {
+              workflowUpdated = true;
+              return { action: "replace", markdown: buildMinimalExternalWorkflowMarkdown(input) };
+            }
+            return { action: "keep" };
+          },
+        });
+        const parsed = parseExternalWorkflowStatus(execution.result.markdown);
+        if (!parsed.workflowDefinition) throw new Error(parsed.error ?? "Generated WORKFLOW.md is invalid.");
+        const responseBody: ExternalWorkWorkflowMutationResponse = {
+          cwd,
+          channelId: channel.id,
+          sourceKind: parsed.workflowDefinition.config.source.kind,
+          workflow: buildExternalWorkStatusWorkflowSummary(execution.result, parsed),
+          workflowCreated: !execution.snapshot.exists,
+          workflowUpdated,
+        };
+        writeJson(response, 200, responseBody);
+        return;
+      } finally {
+        request.off("aborted", abort);
+      }
+    }
+
+    const admission = admitExternalWorkflowPath(root, input.workflowPath);
     const existingFile = readAdmittedExternalWorkflowFile(admission);
     const existingParsed = parseExternalWorkflowStatus(existingFile.markdown);
     const workflowCreated = !existingFile.exists;
@@ -87,7 +138,20 @@ export async function handleExternalWorkWorkflowConfigure(
     };
     writeJson(response, 200, responseBody);
   } catch (error) {
-    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+    writeJson(response, 400, { error: "bad_request", message: externalWorkflowConfigureErrorMessage(error) });
+  }
+}
+
+function externalWorkflowConfigureErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  switch (message) {
+    case "workflow_path_outside_root": return "workflowPath must resolve inside the channel bound path";
+    case "workflow_path_not_file": return "Workflow path is not a file";
+    case "workflow_parent_not_directory": return "Workflow parent is not a directory";
+    case "workflow_path_changed":
+    case "workflow_file_changed": return "Workflow path changed during configuration";
+    case "workflow_file_budget_exceeded": return "Workflow file exceeds the supported size limit";
+    default: return message;
   }
 }
 

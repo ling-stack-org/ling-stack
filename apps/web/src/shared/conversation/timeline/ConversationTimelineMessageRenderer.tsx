@@ -7,6 +7,7 @@ import { LocalFileLink } from "../blocks/LocalFileLink.js";
 import { useI18n } from "../../../i18n.js";
 import { ConversationActivityLabel } from "../feedback/ConversationActivityLabel.js";
 import type { ConversationTimelineMessagePresentation } from "./timeline-response-presentation.js";
+import { useDaemonObservation } from "../observation/daemon-observation.js";
 
 export interface ConversationTimelineMessageRendererProps {
   readonly item: ConversationTimelineMessageItem;
@@ -30,20 +31,21 @@ export function ConversationTimelineMessageRenderer({
   presentation = { ownsIdentity: true },
 }: ConversationTimelineMessageRendererProps): React.JSX.Element {
   const { t } = useI18n();
+  const paused = useDaemonObservation().paused;
   const streaming = item.status === "pending" || item.status === "running";
   // Only explicit adapter placeholders or empty live messages are waiting copy.
   const waiting = item.kind === "agentMessage" && streaming &&
     (item.waitingPlaceholder || !item.markdown.trim());
   const body = waiting ? (
     <div className="conversation-thinking-indicator" role="status">
-      <ConversationActivityLabel>{item.markdown || t("Thinking...")}</ConversationActivityLabel>
+      <ConversationActivityLabel>{paused ? t("Pending confirmation") : item.markdown || t("Thinking...")}</ConversationActivityLabel>
     </div>
   ) : (
     <MessageBodyRenderer
       text={item.markdown}
       cwd={cwd}
       compact={false}
-      streaming={streaming}
+      streaming={streaming && !paused}
       renderLocalFile={({ reference }) => {
         return <LocalFileLink reference={reference} />;
       }}

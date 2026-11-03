@@ -89,6 +89,39 @@ test("actual first model context equals the prepared snapshot with current crede
   assert.equal(f.hostCalls(), 0);
 });
 
+// Regression: C01-R10 — typed creates must not advertise the rejected patch protocol.
+// Found by /qa on 2026-10-25; report: docs/design/c01-native-create-tool-surface-2026-10-25.md
+test("exclusive-create schema is native-only in prepared and actual SDK model input", async t => {
+  const f = await fixture(t, { tools: ["write", "edit"], initialToolSurface: {
+    mediaGeneration: false, toolHydration: false, nativeFileCreate: true,
+  } });
+  const preparedInput = await f.runner.prepareTaskInput(f.options);
+  const write = preparedInput.tools.find(tool => tool.name === "write");
+  assert.deepEqual(write.parameters.required, ["path", "content"]);
+  assert.deepEqual(Object.keys(write.parameters.properties).sort(), ["content", "path"]);
+  assert.equal(write.parameters.additionalProperties, false);
+  assert.equal(write.parameters.anyOf, undefined);
+  assert.match(write.description, /exclusive|overwrite/i);
+  assert.doesNotMatch(write.description, /patchText|apply-patch/);
+  assert.ok(preparedInput.tools.find(tool => tool.name === "edit").parameters.properties.patchText,
+    "the edit schema is unchanged; the Host still decides authorized effects");
+  await f.runner.runTask({ ...f.options, preparedInput, runId: "native-create-run", runnerAttemptId: "native-create-attempt" });
+  assert.deepEqual(f.contexts[0].tools, preparedInput.tools);
+  assert.equal(f.hostCalls(), 0, "schema selection is not execution authority");
+  const ordinary = await f.runner.prepareTaskInput({ ...f.options, initialToolSurface: {
+    ...f.options.initialToolSurface, nativeFileCreate: false,
+  } });
+  assert.ok(ordinary.tools.find(tool => tool.name === "write").parameters.properties.patchText);
+  assert.notEqual(ordinary.fingerprint, preparedInput.fingerprint);
+  await assert.rejects(f.runner.runTask({ ...f.options, initialToolSurface: {
+    ...f.options.initialToolSurface, nativeFileCreate: false,
+  }, preparedInput }), /prepared.*input|input.*prepar/i);
+  assert.equal(f.contexts.length, 1, "schema drift must fail before any later provider request");
+  const withoutWrite = await f.runner.prepareTaskInput({ ...f.options, tools: ["read"] });
+  assert.equal(withoutWrite.tools.some(tool => tool.name === "write"), false,
+    "native-create selection never activates a tool outside the Host's selection");
+});
+
 test("approved tool continuation resumes from the durable Host result without executing the tool again", async (t) => {
   const f = await fixture(t);
   const preparedInput = await f.runner.prepareTaskInput(f.options);

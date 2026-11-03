@@ -20,6 +20,37 @@ const requestDigest = "a".repeat(64);
 const sideEffectFingerprint = "b".repeat(64);
 const resultDigest = "c".repeat(64);
 
+test("external-file evidence can settle unknown while SQLite-backed evidence remains pinned", async t => {
+  const f = await fixture(t);
+  const prepared = f.store.prepareHarnessToolExecution(f.input);
+  const lease = { executionId: prepared.execution.id, claimOwner: "daemon", claimToken: "file-evidence", sourceFence: f.input.sourceFence, now };
+  assert.equal(f.store.claimHarnessToolExecution({ ...lease, expectedRevision: 0, claimExpiresAt: expires }).ok, true);
+  assert.equal(f.store.startHarnessToolExecution({ ...lease, expectedRevision: 1 }).ok, true);
+  const external = f.store.createArtifact({ runId: f.run.id, type: "file", path: "evidence/file.txt", createdAt: now });
+  const sealed = f.store.createArtifact({ runId: f.run.id, type: "json", path: "evidence/receipt.json", sealedPayload: { state: "unknown" }, createdAt: now });
+  const result = f.store.finishHarnessToolExecution({ ...lease, expectedRevision: 2, nextState: "unknown_outcome", resultDigest,
+    resultSummary: { status: "unknown_outcome" }, failureCode: "tool.unknown_side_effect_outcome", evidenceArtifactIds: [external.id, sealed.id] });
+  assert.equal(result.ok, true);
+  assert.deepEqual(f.database.prepare("SELECT artifact_id FROM harness_artifact_pins WHERE released_at IS NULL ORDER BY artifact_id").all().map(row => row.artifact_id),
+    [f.policyArtifact.id, sealed.id].sort());
+});
+
+test("tool terminal pin release failure rolls back evidence and authority together", async t => {
+  const f = await fixture(t);
+  const prepared = f.store.prepareHarnessToolExecution(f.input);
+  const lease = { executionId: prepared.execution.id, claimOwner: "daemon", claimToken: "pin-release-fault", sourceFence: f.input.sourceFence, now };
+  assert.equal(f.store.claimHarnessToolExecution({ ...lease, expectedRevision: 0, claimExpiresAt: expires }).ok, true);
+  assert.equal(f.store.startHarnessToolExecution({ ...lease, expectedRevision: 1 }).ok, true);
+  const outcome = { ...lease, expectedRevision: 2, nextState: "succeeded", resultDigest, resultSummary: { exitCode: 0 }, evidenceArtifactIds: [] };
+  f.database.exec("CREATE TRIGGER reject_pin_release BEFORE INSERT ON harness_artifact_pin_events WHEN NEW.event='release' BEGIN SELECT RAISE(ABORT,'pin-release-fault'); END");
+  assert.throws(() => f.store.finishHarnessToolExecution(outcome), /pin-release-fault/u);
+  assert.equal(f.store.getHarnessToolExecution(prepared.execution.id).state, "executing");
+  assert.equal(f.database.prepare("SELECT COUNT(*) n FROM harness_artifact_pins WHERE released_at IS NULL").get().n, 1);
+  f.database.exec("DROP TRIGGER reject_pin_release");
+  assert.equal(f.store.finishHarnessToolExecution(outcome).ok, true);
+  assert.equal(f.database.prepare("SELECT COUNT(*) n FROM harness_artifact_pins WHERE released_at IS NULL").get().n, 0);
+});
+
 async function fixture(t) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-tool-execution-store-"));
   const f = { cwd, store: createSqliteRunStore(cwd) };

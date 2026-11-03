@@ -24,6 +24,7 @@ import {
   stringifyJson,
 } from "./helpers.js";
 import {
+  isChannelMessageFileRefSource,
   normalizeChannelMessageFileRefs,
   parseChannelMessageFileRefs,
 } from "./channel-message-parsers.js";
@@ -154,6 +155,7 @@ function normalizeRunInterventionWorkspaceFilePayloads(
   return fileRefs.map((ref) => ({
     path: ref.path.trim(),
     ...(ref.label?.trim() ? { label: ref.label.trim() } : {}),
+    ...(ref.source && isChannelMessageFileRefSource(ref.source) ? { source: ref.source } : {}),
     rootRelation: readRunInterventionWorkspaceFileRootRelation(ref.rootRelation),
     kind: readRunInterventionWorkspaceFileKind(ref.kind),
     materializationStatus: ref.materializationStatus,
@@ -252,9 +254,11 @@ function parseRunInterventionWorkspaceFilePayload(value: unknown): RunInterventi
   const label = readPayloadOptionalString(value, "label");
   const previewText = readPayloadOptionalString(value, "previewText");
   const blockedReason = readPayloadOptionalString(value, "blockedReason");
+  const source = readPayloadOptionalString(value, "source");
   return {
     path: readPayloadString(value, "path"),
     ...(label ? { label } : {}),
+    ...(source && isChannelMessageFileRefSource(source) ? { source } : {}),
     rootRelation: readRunInterventionWorkspaceFileRootRelation(value.rootRelation),
     kind: readRunInterventionWorkspaceFileKind(value.kind),
     materializationStatus: readRunInterventionMaterializationStatus(value.materializationStatus),

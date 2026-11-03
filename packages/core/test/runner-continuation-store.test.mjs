@@ -16,6 +16,35 @@ const now = "2026-09-13T00:00:00.000Z";
 const later = "2026-09-13T00:01:00.000Z";
 const expires = "2026-09-13T00:05:00.000Z";
 
+test("continuation producer pin failure rolls back target Attempt admission", async t => {
+  const f = await fixture(t);
+  f.database.exec("CREATE TRIGGER reject_continuation_pin BEFORE INSERT ON harness_artifact_pin_events BEGIN SELECT RAISE(ABORT,'continuation-pin-fault'); END");
+  assert.throws(() => f.store.prepareContinuationAndAttempt(f.input), /continuation-pin-fault/u);
+  assert.equal(count(f, "runner_continuations"), 0);
+  assert.equal(f.store.listWorkUnitAttempts(f.targetUnit.id).length, 0);
+  assert.equal(f.store.getWorkUnit(f.targetUnit.id).activeAttemptId, undefined);
+  assert.equal(count(f, "harness_artifact_pins"), 0);
+});
+
+test("continuation known terminal releases only its owner, with transaction-atomic release audit", async t => {
+  const f = await fixture(t);
+  const prepared = f.store.prepareContinuationAndAttempt(f.input);
+  f.store.pinHarnessArtifact({ artifactId: f.contextArtifact.id, holder: "independent-audit", reason: "audit_hold", now });
+  const lease = { continuationId: prepared.continuation.id, claimOwner: "daemon", claimToken: "pin-lifecycle", targetFence: toRuntimeAttemptFence(prepared.attempt), now };
+  assert.equal(f.store.claimRunnerContinuation({ ...lease, expectedRevision: 0, claimExpiresAt: expires }).ok, true);
+  assert.equal(f.store.startRunnerContinuation({ ...lease, expectedRevision: 1 }).ok, true);
+  const finish = { ...lease, expectedRevision: 2, nextState: "succeeded", now: later };
+  assert.equal(f.store.finishRunnerContinuation({ ...finish, expectedRevision: 0 }).ok, false);
+  assert.equal(f.database.prepare("SELECT COUNT(*) n FROM harness_artifact_pins WHERE released_at IS NULL").get().n, 2);
+  f.database.exec("CREATE TRIGGER reject_continuation_release BEFORE INSERT ON harness_artifact_pin_events WHEN NEW.event='release' BEGIN SELECT RAISE(ABORT,'continuation-release-fault'); END");
+  assert.throws(() => f.store.finishRunnerContinuation(finish), /continuation-release-fault/u);
+  assert.equal(f.store.getRunnerContinuation(prepared.continuation.id).state, "running");
+  assert.equal(f.database.prepare("SELECT COUNT(*) n FROM harness_artifact_pins WHERE released_at IS NULL").get().n, 2);
+  f.database.exec("DROP TRIGGER reject_continuation_release");
+  assert.equal(f.store.finishRunnerContinuation(finish).ok, true);
+  assert.deepEqual(f.database.prepare("SELECT holder FROM harness_artifact_pins WHERE released_at IS NULL").all().map(row => row.holder), ["independent-audit"]);
+});
+
 async function fixture(t) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-runner-continuation-store-"));
   const f = { cwd, store: createSqliteRunStore(cwd) };
@@ -434,10 +463,13 @@ test("rejected native resume is atomically reprepared once with a fresh replay A
   const started = f.store.startRunnerContinuation({ continuationId: prepared.continuation.id,
     expectedRevision: 1, claimOwner: "daemon", claimToken: "claim-native", targetFence: abandonedFence, now });
   assert.equal(started.ok, true);
+  const failureDetail = f.store.createArtifact({ runId: f.targetRun.id, type: "json", path: "harness/native-failure.json",
+    sealedPayload: { reason: "handle rejected" }, createdAt: now });
   const pending = f.store.finishRunnerContinuation({ continuationId: prepared.continuation.id,
     expectedRevision: 2, claimOwner: "daemon", claimToken: "claim-native", targetFence: abandonedFence,
-    nextState: "recovery_pending", failureCode: "continuation.handle_rejected", now: later });
+    nextState: "recovery_pending", failureCode: "continuation.handle_rejected", failureDetailArtifactId: failureDetail.id, now: later });
   assert.equal(pending.ok, true);
+  assert.equal(f.database.prepare("SELECT COUNT(*) n FROM harness_artifact_pins WHERE released_at IS NULL").get().n, 2);
 
   const reprepareInput = {
     continuationId: prepared.continuation.id,
@@ -465,6 +497,7 @@ test("rejected native resume is atomically reprepared once with a fresh replay A
   assert.equal(replay.attempt.id, "attempt-target-replay");
   assert.equal(f.store.getWorkUnitAttempt(prepared.attempt.id).status, "lost");
   assert.equal(f.store.getWorkUnit(f.targetUnit.id).activeAttemptId, replay.attempt.id);
+  assert.deepEqual(f.database.prepare("SELECT artifact_id FROM harness_artifact_pins WHERE released_at IS NULL").all().map(row => row.artifact_id), [f.contextArtifact.id]);
 
   const repeated = f.store.reprepareContinuationAndAttempt(reprepareInput);
   assert.equal(repeated.replayed, true);

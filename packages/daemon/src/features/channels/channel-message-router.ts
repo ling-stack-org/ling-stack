@@ -18,6 +18,7 @@ import { resolveProviderForRun } from "../runs/providers.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-protocol.js";
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
+import { ChannelModelBudgetError, requireChannelNoToolsBudget } from "./channel-reply-budget-admission.js";
 import {
   buildChannelAutoRouteContextPack,
   buildChannelReplyContextPack,
@@ -444,6 +445,8 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
   const runnerResolution = input.runnerRegistry.resolve({ tools: [], allowFallback: true });
   const textDeltas: string[] = [];
   const runRouteTask = async (taskPrompt: string) => {
+    requireChannelNoToolsBudget({ budget: contextPack.budget, contextPackOverBudget: contextPack.overBudget,
+      prompt: taskPrompt, systemPrompt: "You are Ling's channel message router. Return strict JSON only." });
     const provider = resolveProviderForRun(input.store, {
       cwd: input.store.paths.cwd,
       workspaceCwd: input.store.paths.cwd,
@@ -489,7 +492,7 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
   try {
     result = await runRouteTask(prompt);
   } catch (error) {
-    if (!isContextLengthError(error)) {
+    if (error instanceof ChannelModelBudgetError || !isContextLengthError(error)) {
       throw error;
     }
     const observedAt = new Date().toISOString();

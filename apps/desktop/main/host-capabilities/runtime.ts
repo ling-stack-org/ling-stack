@@ -22,6 +22,10 @@ const RESULT_ACK_ATTEMPTS = 3;
 
 export class HostCapabilityRuntime {
   private abortController: AbortController | undefined;
+  private claimAbortController: AbortController | undefined;
+  private claimsPaused = false;
+  private pauseRevision = 0;
+  private acceptedCommand = false;
   private runPromise: Promise<void> | undefined;
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private client: HostCapabilityDaemonTransport | undefined;
@@ -41,9 +45,10 @@ export class HostCapabilityRuntime {
   }) {}
 
   async start(): Promise<void> {
-    if (this.runPromise) return;
+    if (this.runPromise || this.abortController || this.claimsPaused) return;
     this.generation = Math.max(this.generation + 1, this.now());
     this.abortController = new AbortController();
+    this.claimAbortController = new AbortController();
     this.client = this.options.daemonClientFactory?.(this.generation) ?? new HostCapabilityDaemonClient({
       daemonBaseUrl: this.options.daemonBaseUrl,
       bridgeToken: this.options.bridgeToken,
@@ -51,13 +56,19 @@ export class HostCapabilityRuntime {
       generation: this.generation,
     });
     const signal = this.abortController.signal;
-    await this.publishAvailability(signal).catch((error) => {
-      if (!signal.aborted) this.diagnostic("host_capability.availability_failed", error);
+    const claimSignal = this.claimAbortController.signal;
+    await this.publishAvailability(claimSignal).catch((error) => {
+      if (!claimSignal.aborted) this.diagnostic("host_capability.availability_failed", error);
     });
-    this.runPromise = this.runClaimLoop(signal);
+    if (signal.aborted || this.claimsPaused) return;
+    this.runPromise = this.runClaimLoop(signal, claimSignal);
     this.heartbeat = setInterval(() => {
-      void this.publishAvailability(signal).catch((error) => {
-        if (!signal.aborted) this.diagnostic("host_capability.heartbeat_failed", error);
+      if (signal.aborted || (this.claimsPaused && !this.acceptedCommand)) return;
+      // Availability is also the authority lease for an accepted result. Do
+      // not cancel that lease merely because no new commands may be claimed.
+      const availabilitySignal = this.acceptedCommand ? signal : claimSignal;
+      void this.publishAvailability(availabilitySignal).catch((error) => {
+        if (!availabilitySignal.aborted) this.diagnostic("host_capability.heartbeat_failed", error);
       });
     }, this.options.heartbeatMs ?? AVAILABILITY_HEARTBEAT_MS);
   }
@@ -66,20 +77,34 @@ export class HostCapabilityRuntime {
     await this.stopInternal(true);
   }
 
+  /** Fence this generation's admission without aborting an accepted effect/result. */
+  pauseNewClaims(): void {
+    this.pauseRevision += 1;
+    this.claimsPaused = true;
+    this.claimAbortController?.abort();
+    if (!this.acceptedCommand) this.stopHeartbeat();
+  }
+
   /**
    * Rebind the host bridge after the daemon authority is recreated. The
    * desktop-owned preview manager remains reusable across a daemon restart;
    * closing it here would permanently disable subsequent previews.
    */
   async restart(): Promise<void> {
-    if (!this.runPromise && !this.abortController) return;
+    if (!this.runPromise && !this.abortController && !this.claimsPaused) return;
+    const revision = this.pauseRevision;
     await this.stopInternal(false);
+    // Only an explicit new-generation rebind may reopen admission. A newer
+    // drain observed while the old generation was stopping still wins.
+    if (revision !== this.pauseRevision) return;
+    this.claimsPaused = false;
     await this.start();
   }
 
   private async stopInternal(closePreviewManager: boolean): Promise<void> {
-    if (this.heartbeat) clearInterval(this.heartbeat);
-    this.heartbeat = undefined;
+    this.stopHeartbeat();
+    this.claimAbortController?.abort();
+    this.claimAbortController = undefined;
     this.abortController?.abort();
     this.abortController = undefined;
     await this.runPromise?.catch(() => undefined);
@@ -90,24 +115,48 @@ export class HostCapabilityRuntime {
     }
   }
 
-  private async runClaimLoop(signal: AbortSignal): Promise<void> {
-    while (!signal.aborted) {
+  private async runClaimLoop(signal: AbortSignal, claimSignal: AbortSignal): Promise<void> {
+    while (!signal.aborted && !this.claimsPaused) {
       try {
-        const command = await this.client?.claim(signal);
+        const command = await this.client?.claim(claimSignal);
         if (!command || signal.aborted) continue;
-        await this.execute(command, signal);
+        if (this.claimsPaused || claimSignal.aborted) {
+          this.claimedNotStarted(command.id);
+          return;
+        }
+        this.acceptedCommand = true;
+        try { await this.execute(command, signal); }
+        finally {
+          this.acceptedCommand = false;
+          if (this.claimsPaused) this.stopHeartbeat();
+        }
       } catch (error) {
-        if (signal.aborted) return;
+        if (signal.aborted || this.claimsPaused) return;
         this.diagnostic("host_capability.claim_failed", error);
         if (error instanceof HostCapabilityDaemonClientError
           && error.daemonCode === "host_capability_authority_invalid") {
-          await this.publishAvailability(signal).catch((recoveryError) => {
-            if (!signal.aborted) this.diagnostic("host_capability.availability_failed", recoveryError);
+          await this.publishAvailability(claimSignal).catch((recoveryError) => {
+            if (!claimSignal.aborted) this.diagnostic("host_capability.availability_failed", recoveryError);
           });
         }
-        await delay(this.options.errorBackoffMs ?? ERROR_BACKOFF_MS, signal);
+        await delay(this.options.errorBackoffMs ?? ERROR_BACKOFF_MS, claimSignal);
       }
     }
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = undefined;
+  }
+
+  private claimedNotStarted(commandId: string): void {
+    // At most one claim is outstanding. A lost/late claim is not an effect or
+    // a Host stop receipt; no begin/result/requeue is manufactured here.
+    try {
+      this.options.onDiagnostic?.("host_capability.claimed_not_started", {
+        commandId, effectState: "not_started", hostState: "unknown",
+      });
+    } catch { /* Observation cannot reopen admission or retire the owner. */ }
   }
 
   private async execute(command: HostCapabilityBridgeCommandV1, signal: AbortSignal): Promise<void> {

@@ -68,6 +68,7 @@ export async function handleTerminalReportsCollection(
       sourceKind: readSourceKind(url.searchParams.get("sourceKind")),
       sourceId: url.searchParams.get("sourceId") ?? undefined,
       effectiveOnly: !includeHistory,
+      publishedOnly: !includeHistory,
       limit: readOptionalIntegerQuery(url, "limit", 1),
     })
       .filter((record) => terminalReportIsEligibleForDisplay(storeRegistry.getStore(cwd), record))
@@ -113,6 +114,7 @@ export async function handleChannelTerminalReports(
       sourceKind: readSourceKind(url.searchParams.get("sourceKind")),
       sourceId: url.searchParams.get("sourceId") ?? undefined,
       effectiveOnly: !includeHistory,
+      publishedOnly: !includeHistory,
       limit: readOptionalIntegerQuery(url, "limit", 1),
     })
       .filter((record) => terminalReportIsEligibleForDisplay(store, record))

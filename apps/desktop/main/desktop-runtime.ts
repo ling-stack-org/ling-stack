@@ -32,9 +32,11 @@ import {
 } from "./cua-driver/platform-binding.js";
 import type { CuaDriverDesktopPlatformOwner } from "./cua-driver/platform-owner.js";
 import { createCuaDriverTelemetry } from "./cua-driver/telemetry.js";
-import type {
-  DesktopDaemonCuaDriverAuthorityTuple,
-  DesktopDaemonLifecycle,
+import {
+  DesktopDaemonLifecycleError,
+  type DesktopDaemonCuaDriverAuthorityTuple,
+  type DesktopDaemonLifecycle,
+  type DesktopDaemonStopResult,
 } from "./daemon-lifecycle.js";
 import { createLockedControlCapabilityAttestor } from "./locked-computer-control/capability-attestor.js";
 import { createLockedControlDaemonClient } from "./locked-computer-control/daemon-client.js";
@@ -84,6 +86,7 @@ export interface DesktopRuntimeCuaDriverCoordinator {
   resumeForSystem?(): Promise<void>;
   readonly snapshot?: CuaDriverCoordinatorSnapshot;
   closeCallGateForSecurityBoundary?(reason: string): void;
+  beginHostDrain?(reason: string): void;
   shutdown(): Promise<void>;
 }
 
@@ -159,6 +162,12 @@ export class DesktopRuntime {
   private restartPromise: Promise<DesktopDaemonStatus> | undefined;
   private stopDaemonStatusObserver: (() => void) | undefined;
   private shutdownRequested = false;
+  private hostDraining = false;
+  private hostStopConfirmed = false;
+  private hostStopResult: DesktopDaemonStopResult | undefined;
+  private hostDrainFailure: unknown;
+  private prepareShutdownPromise: Promise<void> | undefined;
+  private shutdownCleanupStarted = false;
   private shutdownPromise: Promise<void> | undefined;
   private stopPowerMonitor: (() => void) | undefined;
   private systemSessionLocked = false;
@@ -194,11 +203,11 @@ export class DesktopRuntime {
       });
     this.desktopInstanceId = options.desktopInstanceId
       ?? `desktop-${randomBytes(16).toString("hex")}`;
-    if (desktopBundledCuaDriverGateEnabled(this.featureFlags, this.platform)) {
-      this.stopDaemonStatusObserver = options.daemon.onStatusChanged((status) => {
-        this.handleDaemonStatusChanged(status);
-      });
-    }
+    // Host admission is not a Computer Use feature. Native execution must
+    // observe the same stop fence even when the CUA provider is disabled.
+    this.stopDaemonStatusObserver = options.daemon.onStatusChanged((status) => {
+      this.handleDaemonStatusChanged(status);
+    });
     // Task continuation is independent from Cua Driver readiness. Even when a
     // provider owner fails to compose, Desktop must still publish lock state.
     if (options.powerMonitor) {
@@ -211,8 +220,11 @@ export class DesktopRuntime {
   }
 
   async getExecutionEngineAuthority(): ReturnType<DesktopDaemonLifecycle["getExecutionEngineAuthority"]> {
+    this.assertCanStart();
     if (!this.options.daemon.getExecutionEngineAuthority) throw new Error("engine_host_authority_unavailable");
-    return this.options.daemon.getExecutionEngineAuthority();
+    const authority = await this.options.daemon.getExecutionEngineAuthority();
+    this.assertCanStart();
+    return authority;
   }
 
   get cuaDriverCoordinator(): DesktopRuntimeCuaDriverCoordinator | undefined {
@@ -353,6 +365,9 @@ export class DesktopRuntime {
     if (this.shutdownRequested) {
       return Promise.reject(new DesktopRuntimeError("shutdown_requested"));
     }
+    if (this.hostDraining) {
+      return Promise.reject(this.hostDrainFailure ?? new DesktopRuntimeError("shutdown_requested"));
+    }
     if (this.ensureStartedPromise) {
       return this.ensureStartedPromise;
     }
@@ -376,7 +391,7 @@ export class DesktopRuntime {
     return pending;
   }
 
-  /** Revoke the old coordinator before asking the daemon for a fresh tuple. */
+  /** Drain the original Host before retiring its transport or starting a successor. */
   restart(): Promise<DesktopDaemonStatus> {
     if (this.shutdownRequested) {
       return Promise.reject(new DesktopRuntimeError("shutdown_requested"));
@@ -385,34 +400,33 @@ export class DesktopRuntime {
       return this.restartPromise;
     }
     const pending = this.enqueue(async () => {
-      this.assertCanStart();
-      let firstError: unknown;
+      let successorStarted = false;
       try {
+        this.assertShutdownNotRequested();
+        await this.awaitOriginalHostStop();
+        this.hostStopConfirmed = true;
+        this.assertShutdownNotRequested();
         await this.shutdownCoordinator("daemon_restart");
+        this.assertShutdownNotRequested();
+        this.hostDraining = false;
+        this.hostDrainFailure = undefined;
+        this.hostStopConfirmed = false;
+        this.hostStopResult = undefined;
+        successorStarted = true;
+        const status = await this.options.daemon.restart();
+        this.assertCanStart();
+        await this.syncLockedTaskContinuationState();
+        await this.reconcileCoordinator();
+        return status;
       } catch (error) {
-        firstError = error;
+        // A failed stop or cleanup retains its exact owner and original error.
+        // Only an explicit retry may recheck that owner; never start a successor.
+        if (!successorStarted) this.hostDrainFailure = error;
+        throw error;
       }
-      this.assertCanStart();
-      let status: DesktopDaemonStatus | undefined;
-      try {
-        status = await this.options.daemon.restart();
-      } catch (error) {
-        firstError ??= error;
-      }
-      this.assertCanStart();
-      if (firstError !== undefined) {
-        // A fresh daemon handshake fences the old lease, but an incompletely
-        // stopped local coordinator must block creation of another provider.
-        throw firstError;
-      }
-      if (!status) {
-        throw new Error("desktop_runtime_restart_status_missing");
-      }
-      await this.syncLockedTaskContinuationState();
-      await this.reconcileCoordinator();
-      return status;
     });
     this.restartPromise = pending;
+    this.beginHostDrain("daemon_restart");
     void pending.finally(() => {
       if (this.restartPromise === pending) {
         this.restartPromise = undefined;
@@ -447,7 +461,7 @@ export class DesktopRuntime {
   }
 
   suspendComputerControlForSystem(reason: string): Promise<void> {
-    if (this.shutdownRequested) return Promise.resolve();
+    if (this.shutdownRequested || this.hostDraining) return Promise.resolve();
     if (reason === "system_lock") {
       this.systemSessionLocked = true;
     } else {
@@ -462,6 +476,7 @@ export class DesktopRuntime {
         ? lockedPolicy.handleLock()
         : lockedPolicy.handleSuspend()
       : this.enqueue(async () => {
+          if (this.shutdownRequested || this.hostDraining) return;
           const coordinator = this.coordinatorValue;
           if (!coordinator) return;
           if (coordinator.suspendForSystem) {
@@ -474,7 +489,7 @@ export class DesktopRuntime {
   }
 
   resumeComputerControlForSystem(kind: "unlock" | "resume" = "unlock"): Promise<void> {
-    if (this.shutdownRequested) return Promise.resolve();
+    if (this.shutdownRequested || this.hostDraining) return Promise.resolve();
     const boundaryWasActive = kind === "unlock"
       ? this.systemSessionLocked
       : this.systemSuspended;
@@ -494,6 +509,7 @@ export class DesktopRuntime {
     }
     if (this.systemSessionLocked || this.systemSuspended) return continuationSync;
     const controlResume = this.enqueue(async () => {
+      if (this.shutdownRequested || this.hostDraining) return;
       const coordinator = this.coordinatorValue;
       if (!coordinator) {
         await this.reconcileCoordinator();
@@ -508,19 +524,40 @@ export class DesktopRuntime {
     return Promise.all([controlResume, continuationSync]).then(() => undefined);
   }
 
-  /**
-   * Cleanup is serialized and best-effort-complete: provider/coordinator first,
-   * then the Desktop-owned daemon even when the earlier cleanup rejects.
-   */
+  /** Admission closes synchronously; accepted calls retain all owners until real stop proof. */
+  prepareShutdown(): Promise<void> {
+    if (this.prepareShutdownPromise) return this.prepareShutdownPromise;
+    this.shutdownRequested = true;
+    const pending = this.enqueue(async () => {
+      // An in-flight restart may already have proved the original stop, but
+      // resets this bit before it attempts to create any successor.
+      if (!this.hostStopConfirmed) {
+        await this.awaitOriginalHostStop();
+        this.hostStopConfirmed = true;
+      }
+    });
+    this.prepareShutdownPromise = pending;
+    this.beginHostDrain("desktop_quit");
+    void pending.catch(() => {
+      // A finite observation timeout is not a permanent failure: a later
+      // explicit exit may observe the original child's clean exit. Keep the
+      // admission fence, but do not permanently cache this rejected observation.
+      if (this.prepareShutdownPromise === pending) this.prepareShutdownPromise = undefined;
+    });
+    return pending;
+  }
+
+  /** After original Host stop proof, finish all ordinary cleanup and preserve its first error. */
   shutdown(): Promise<void> {
     if (this.shutdownPromise) {
       return this.shutdownPromise;
     }
-    this.shutdownRequested = true;
-    this.stopObservingDaemonStatus();
-    this.stopObservingPowerMonitor();
-    this.stopLockedTaskContinuationHeartbeat();
-    const pending = this.enqueue(async () => {
+    const prepared = this.prepareShutdown();
+    const pending = prepared.then(() => this.enqueue(async () => {
+      this.shutdownCleanupStarted = true;
+      this.stopObservingDaemonStatus();
+      this.stopObservingPowerMonitor();
+      this.stopLockedTaskContinuationHeartbeat();
       let firstError: unknown;
       const attempt = async (operation: () => void | Promise<void>): Promise<void> => {
         try {
@@ -532,21 +569,27 @@ export class DesktopRuntime {
       await attempt(() => this.shutdownCoordinator("desktop_quit"));
       await attempt(() => this.options.platformOwner?.dispose());
       await attempt(() => this.enqueueLockedTaskContinuation(async () => {
+        // Owned Host shutdown has already cleared its in-memory continuation
+        // lease. Only a reused, still-independent Host needs the release RPC.
+        if (this.hostStopResult?.kind === "owned_stopped") return;
         await this.lockedTaskContinuationClient.release?.({
           workspaceCwd: this.workspaceCwd,
           desktopInstanceId: this.desktopInstanceId,
         });
       }));
-      await attempt(() => this.options.daemon.stopOwnedDaemon());
       if (firstError !== undefined) {
         throw firstError;
       }
-    });
+    }));
     this.shutdownPromise = pending;
+    void pending.catch(() => {
+      if (!this.hostStopConfirmed && this.shutdownPromise === pending) this.shutdownPromise = undefined;
+    });
     return pending;
   }
 
   private async reconcileCoordinator(): Promise<void> {
+    this.assertCanStart();
     const gateEnabled = desktopBundledCuaDriverGateEnabled(this.featureFlags, this.platform);
     if (!gateEnabled) {
       // Closed gates preserve the current preview/external runtime exactly and
@@ -709,6 +752,8 @@ export class DesktopRuntime {
     authority: DesktopDaemonCuaDriverAuthorityTuple,
     platform: BundledCuaDriverPlatform,
   ): Promise<void> {
+    if (this.hostDraining) coordinator.beginHostDrain?.("host_draining");
+    this.assertCanStart();
     let snapshot: CuaDriverCoordinatorSnapshot | undefined;
     let enableFailed = false;
     let enableError: unknown;
@@ -756,6 +801,7 @@ export class DesktopRuntime {
   private async reassertSystemBoundaryAfterEnable(
     coordinator: DesktopRuntimeCuaDriverCoordinator,
   ): Promise<void> {
+    if (this.shutdownRequested || this.hostDraining) return;
     const reason = this.systemSessionLocked
       ? "system_lock"
       : this.systemSuspended
@@ -829,6 +875,7 @@ export class DesktopRuntime {
       }),
       closeCallGate: (reason) => coordinator.closeCallGateForSecurityBoundary?.(reason),
       retireNormalForLock: async (reason) => {
+        if (this.shutdownRequested || this.hostDraining) return;
         if (!coordinator.suspendForSystem) throw new Error("locked_control_runtime_unavailable");
         await coordinator.suspendForSystem(
           reason === "locked_control_suspend" ? "system_suspend" : "system_lock",
@@ -849,8 +896,9 @@ export class DesktopRuntime {
       },
       async stopLockedGeneration() {},
       resumeNormal: async () => {
-        if (this.systemSessionLocked || this.systemSuspended) return;
+        if (this.shutdownRequested || this.hostDraining || this.systemSessionLocked || this.systemSuspended) return;
         await coordinator.resumeForSystem?.();
+        if (this.shutdownRequested || this.hostDraining) return;
         const reason = this.systemSessionLocked
           ? "system_lock"
           : this.systemSuspended
@@ -929,10 +977,18 @@ export class DesktopRuntime {
     if (this.coordinatorValue !== coordinator) {
       return;
     }
+    if (this.hostDraining && !this.hostStopConfirmed) {
+      coordinator.beginHostDrain?.(reason);
+      return;
+    }
     this.options.onDiagnostic?.("desktop_runtime.cua_driver_shutdown", { reason });
     const lockedPolicy = this.lockedControlPolicyCoordinator;
-    this.lockedControlPolicyCoordinator = undefined;
     await lockedPolicy?.shutdown();
+    if (this.hostDraining && !this.hostStopConfirmed) {
+      coordinator.beginHostDrain?.(reason);
+      return;
+    }
+    if (this.lockedControlPolicyCoordinator === lockedPolicy) this.lockedControlPolicyCoordinator = undefined;
     await coordinator.shutdown();
     if (this.coordinatorValue === coordinator) {
       this.coordinatorValue = undefined;
@@ -942,8 +998,20 @@ export class DesktopRuntime {
   }
 
   private handleDaemonStatusChanged(status: DesktopDaemonStatus): void {
+    if (status.ownedByDesktop && (status.state === "draining" || status.state === "blocked")) {
+      this.beginHostDrain(`daemon_status_${status.state}`);
+      return;
+    }
     if (status.state === "connected" || this.shutdownRequested) {
       return;
+    }
+    if (this.hostDraining) {
+      if (status.state !== "disconnected" || status.ownedByDesktop || status.reason || this.restartPromise) return;
+      // The lifecycle only releases its owned stop fence on an actual clean
+      // exit. Do not confuse a disconnected probe or abnormal exit with this.
+      this.hostDraining = false;
+      this.hostDrainFailure = undefined;
+      this.hostStopConfirmed = true;
     }
     const coordinator = this.coordinatorValue;
     if (!coordinator) {
@@ -953,7 +1021,7 @@ export class DesktopRuntime {
     }
     const reason = `daemon_status_${status.state}`;
     void this.enqueue(async () => {
-      if (this.shutdownRequested || this.coordinatorValue !== coordinator) {
+      if (this.shutdownRequested || this.hostDraining || this.coordinatorValue !== coordinator) {
         return;
       }
       await this.shutdownCoordinatorInstance(coordinator, reason);
@@ -963,6 +1031,40 @@ export class DesktopRuntime {
         error: error instanceof Error ? error.message : String(error),
       });
     });
+  }
+
+  private beginHostDrain(reason: string): void {
+    if (!this.hostDraining) {
+      this.hostDraining = true;
+      this.hostStopConfirmed = false;
+      this.hostStopResult = undefined;
+      this.hostDrainFailure = undefined;
+    }
+    this.coordinatorValue?.beginHostDrain?.(reason);
+  }
+
+  private async awaitOriginalHostStop(): Promise<void> {
+    try {
+      const result = await this.options.daemon.stopOwnedDaemon();
+      if (result?.kind !== "not_owned"
+        && !(result?.kind === "owned_stopped" && result.code === 0 && result.signal === null)) {
+        throw new DesktopDaemonLifecycleError("stop_unconfirmed", this.options.daemonBaseUrl);
+      }
+      this.hostStopResult = result;
+    } catch (error) {
+      if (error instanceof DesktopDaemonLifecycleError
+        && (error.code === "stop_blocked" || error.code === "stop_unconfirmed")) throw error;
+      // An unknown stop failure is still missing stop proof, not an ordinary
+      // post-stop cleanup error that may authorize process exit.
+      try {
+        this.options.onDiagnostic?.("desktop_runtime.daemon_stop_unconfirmed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } catch {
+        // Observers cannot change the lifecycle classification of missing proof.
+      }
+      throw new DesktopDaemonLifecycleError("stop_unconfirmed", this.options.daemonBaseUrl);
+    }
   }
 
   private stopObservingDaemonStatus(): void {
@@ -1092,9 +1194,9 @@ export class DesktopRuntime {
   }
 
   private ensureLockedTaskContinuationHeartbeat(): void {
-    if (this.lockedTaskContinuationHeartbeat || this.shutdownRequested) return;
+    if (this.lockedTaskContinuationHeartbeat || this.shutdownCleanupStarted) return;
     this.lockedTaskContinuationHeartbeat = setInterval(() => {
-      if (this.shutdownRequested) return;
+      if (this.shutdownCleanupStarted) return;
       void this.syncLockedTaskContinuationState().catch(() => undefined);
     }, LOCKED_TASK_CONTINUATION_HEARTBEAT_MS);
     if (typeof this.lockedTaskContinuationHeartbeat.unref === "function") {
@@ -1125,6 +1227,13 @@ export class DesktopRuntime {
   }
 
   private assertCanStart(): void {
+    this.assertShutdownNotRequested();
+    if (this.hostDraining) {
+      throw this.hostDrainFailure ?? new DesktopRuntimeError("shutdown_requested");
+    }
+  }
+
+  private assertShutdownNotRequested(): void {
     if (this.shutdownRequested) {
       throw new DesktopRuntimeError("shutdown_requested");
     }

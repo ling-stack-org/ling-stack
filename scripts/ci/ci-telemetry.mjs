@@ -129,6 +129,7 @@ function reportTelemetry(reports) {
   return { shards, suites };
 }
 
+/** @param {{ run?: Record<string, unknown> | null, jobs?: unknown, reports?: unknown, capturedAt?: string }} [input] */
 export function buildTelemetry({ run = {}, jobs = [], reports = [], capturedAt = new Date().toISOString() } = {}) {
   run ??= {};
   const normalizedJobs = normalizeJobs(jobs);

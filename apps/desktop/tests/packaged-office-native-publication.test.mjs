@@ -51,6 +51,10 @@ const addedDependencyGroups = Object.freeze({
     "apps/desktop/scripts/packaged-codesign-review-publication.mjs",
     "apps/desktop/scripts/packaged-office-native-asar-checks.mjs",
     "apps/desktop/scripts/packaged-office-native-review-inputs.mjs",
+    "apps/desktop/scripts/stage-development-bundled-plugins.mjs",
+    "packages/daemon/src/features/plugins/bundled/cua-driver/.ling-plugin/plugin.json",
+    "packages/daemon/src/features/plugins/bundled/cua-driver/mcp-server.json",
+    "packages/daemon/src/features/plugins/bundled/cua-driver/README.md",
   ],
   helper: [
     "native/sandbox/Cargo.toml", "native/sandbox/Cargo.lock", "native/sandbox/rust-toolchain.toml",
@@ -81,6 +85,7 @@ const addedDependencyGroups = Object.freeze({
     "packages/core/src/storage/sqlite/recovery-discovery-validation.ts",
   ],
   packaging: [
+    "apps/desktop/scripts/cua-driver-parent-lease-stream-writer.mjs",
     "apps/desktop/scripts/packaged-office-signing-inputs.mjs",
     "apps/desktop/scripts/cua-driver-package-staging-contract.mjs",
     "apps/desktop/scripts/cua-driver-package-staging-files.mjs",
@@ -105,6 +110,72 @@ const addedDependencyGroups = Object.freeze({
     "packages/localization/src/index.ts", "packages/runner-pi/src/index.ts", "packages/providers/src/index.ts",
     "packages/browser-host/src/index.ts", "packages/remote-protocol/src/index.ts", "packages/plugin-sdk/src/index.ts",
   ],
+  localServiceIpc: [
+    "apps/desktop/main/local-services.ts", "apps/desktop/main/main.ts", "apps/desktop/main/ipc.ts",
+    "apps/desktop/preload/main-window.ts", "apps/desktop/shared/ipc-channels.ts",
+    "apps/desktop/shared/desktop-capabilities.ts", "apps/desktop/shared/local-service-capabilities.ts",
+    "apps/web/src/api/client.ts",
+  ],
+  reachableRuntime: [
+    "packages/contracts/src/channel-sessions-validation.ts",
+    "packages/contracts/src/learning-reviews.ts",
+    "packages/contracts/src/memory-derivatives.ts",
+    "packages/contracts/src/memory-wiki.ts",
+    "packages/core/src/channel-session-types.ts",
+    "packages/core/src/learning-review-types.ts",
+    "packages/core/src/memory-derivative-types.ts",
+    "packages/core/src/memory-wiki-types.ts",
+    "packages/core/src/storage/sqlite/channel-session-admission.ts",
+    "packages/core/src/storage/sqlite/channel-session-lineage.ts",
+    "packages/core/src/storage/sqlite/channel-session-migration.ts",
+    "packages/core/src/storage/sqlite/channel-session-notification.ts",
+    "packages/core/src/storage/sqlite/channel-session-store.ts",
+    "packages/core/src/storage/sqlite/learning-review-migration.ts",
+    "packages/core/src/storage/sqlite/learning-review-store.ts",
+    "packages/core/src/storage/sqlite/memory-derivative-migration.ts",
+    "packages/core/src/storage/sqlite/memory-derivative-store.ts",
+    "packages/core/src/storage/sqlite/memory-search-index.ts",
+    "packages/core/src/storage/sqlite/memory-wiki-store.ts",
+    "packages/core/src/storage/sqlite/procedure-observation-job-migration.ts",
+    "packages/core/src/storage/sqlite/skill-definition-revision-migration.ts",
+    "packages/core/src/storage/sqlite/skill-definition-revision-store.ts",
+    "packages/daemon/src/features/channels/conversation-runtime-metrics-scope.ts",
+    "packages/daemon/src/features/channels/session-routes.ts",
+    "packages/daemon/src/features/learning/coordinator.ts",
+    "packages/daemon/src/features/learning/evidence.ts",
+    "packages/daemon/src/features/learning/extractor.ts",
+    "packages/daemon/src/features/learning/model.ts",
+    "packages/daemon/src/features/learning/routes.ts",
+    "packages/daemon/src/features/learning/scoped-candidates.ts",
+    "packages/daemon/src/features/memory/embedding-client.ts",
+    "packages/daemon/src/features/memory/lancedb-provider.ts",
+    "packages/daemon/src/features/memory/recall-service.ts",
+    "packages/daemon/src/features/memory/semantic-registry.ts",
+    "packages/daemon/src/features/memory/semantic-routes.ts",
+    "packages/daemon/src/features/memory/semantic-service.ts",
+    "packages/daemon/src/features/memory/wiki-compiler.ts",
+    "packages/daemon/src/features/memory/wiki-routes.ts",
+    "packages/daemon/src/features/skills/procedure-observation-service.ts",
+    "packages/daemon/src/features/skills/revision-notices.ts",
+  ],
+});
+
+test("real Office source approval record binds every fixed packaging and native input", () => {
+  const review = JSON.parse(readFileSync(join(repositoryRoot, "native/office-local/reviewed-packaged-source-v1.json"), "utf8"));
+  assert.deepEqual(Object.keys(review.packagingSha256).sort(), [...PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS].sort());
+  for (const path of PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS) {
+    assert.equal(review.packagingSha256[path], hash(readFileSync(join(repositoryRoot, path))), path);
+  }
+  assert.deepEqual(Object.keys(review.sourceSha256).sort(), [...OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS].sort());
+  for (const path of OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS) {
+    assert.equal(review.sourceSha256[path], hash(readFileSync(join(repositoryRoot, "native/office-local", path))), path);
+  }
+});
+
+test("independently reviewed reachable runtime dependencies remain explicit packaging inputs", () => {
+  for (const path of addedDependencyGroups.reachableRuntime) {
+    assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path), path);
+  }
 });
 
 test("Office signing admission remains an explicit authored root and packaging source input", () => {
@@ -141,12 +212,39 @@ test("Office recovery discovery validation remains an explicit packaging source 
     "packages/core/src/storage/sqlite/recovery-discovery-validation.ts"));
 });
 
+test("Host private shutdown observer and signal handling remain explicit reviewed runtime inputs", () => {
+  for (const path of ["packages/core/src/daemon-shutdown-observer.ts", "packages/daemon/src/runtime/signal-shutdown.ts"]) {
+    assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path), path);
+  }
+});
+
+test("C001 parent-lease stream writer remains an explicit packaging source input", () => {
+  assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(
+    "apps/desktop/scripts/cua-driver-parent-lease-stream-writer.mjs"));
+});
+
+test("Office bundled-plugin staging code and copied metadata remain in the fixed review closure", () => {
+  const stageScript = "apps/desktop/scripts/stage-development-bundled-plugins.mjs";
+  const metadata = [
+    "packages/daemon/src/features/plugins/bundled/cua-driver/.ling-plugin/plugin.json",
+    "packages/daemon/src/features/plugins/bundled/cua-driver/mcp-server.json",
+    "packages/daemon/src/features/plugins/bundled/cua-driver/README.md",
+  ];
+  assert.ok(PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS.includes(stageScript));
+  for (const path of [stageScript, ...metadata]) {
+    assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path), path);
+  }
+});
+
 /** Disposable, explicitly synthetic compiler/signature fixture. It never approves product sources. */
-async function fixture(t, { portable = false } = {}) {
-  const prior = process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
-  process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = "1";
-  t.after(() => { if (prior === undefined) delete process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
-    else process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = prior; });
+async function fixture(t, { portable = false, releaseReview = true, onCompilerVersion } = {}) {
+  const previousReleaseReview = process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
+  if (releaseReview) process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = "1";
+  else delete process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
+  t.after(() => {
+    if (previousReleaseReview === undefined) delete process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED;
+    else process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED = previousReleaseReview;
+  });
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-office-publication-test-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const scripts = join(root, "apps/desktop/scripts"), nativeRoot = join(root, "native/office-local");
@@ -198,7 +296,7 @@ async function fixture(t, { portable = false } = {}) {
   }
   const reviewPath = join(nativeRoot, "reviewed-packaged-source-v1.json");
   writeFileSync(reviewPath, JSON.stringify(review));
-  let signCalls = 0, verifyCalls = 0;
+  let signCalls = 0, verifyCalls = 0, compilerCalls = 0, discoveryCalls = 0;
   const loader = registerHooks({ load(url, context, nextLoad) {
     if (url === pathToFileURL(join(nativeRoot, "scripts/build.mjs")).href) {
       return { format: "module", shortCircuit: true, source: `
@@ -225,8 +323,15 @@ async function fixture(t, { portable = false } = {}) {
     t.after(() => Object.defineProperty(process, key, original));
   }
   const mock = t.mock.method(childProcess, "spawnSync", (command, argv) => {
-    if (portable && command === "/usr/bin/xcrun") return { status: 0, stdout: argv.includes("--find") ? compilerPath : sdkRoot };
-    if (portable && command === compilerPath) return { status: 0, stdout: buildReview.compiler.version };
+    if (portable && command === "/usr/bin/xcrun") {
+      discoveryCalls++;
+      return { status: 0, stdout: argv.includes("--find") ? compilerPath : sdkRoot };
+    }
+    if (portable && command === compilerPath) {
+      compilerCalls++;
+      const version = onCompilerVersion?.({ root, compilerPath, sdkRoot, headersRoot, version: buildReview.compiler.version });
+      return { status: 0, stdout: version ?? buildReview.compiler.version };
+    }
     assert.equal(command, "/usr/bin/codesign");
     if (argv[0] === "--force") {
       signCalls++;
@@ -239,10 +344,111 @@ async function fixture(t, { portable = false } = {}) {
   const api = await import(pathToFileURL(producerModule).href);
   const reviewApi = await import(pathToFileURL(reviewModule).href);
   return { root, api, reviewApi, review, reviewPath, paths, stage: join(root, "apps/desktop/dist/office-local"),
-    counts: () => ({ signCalls, verifyCalls }) };
+    counts: () => ({ signCalls, verifyCalls }),
+    toolchainCounts: () => ({ compilerCalls, discoveryCalls }) };
 }
 
+test("Office unsigned developer publication retains reviewed toolchain admission (synthetic compiler/signature)", async t => {
+  await t.test("default local lane records the admitted compiler version and accepts fresh evidence", async t => {
+    const f = await fixture(t, { portable: true, releaseReview: false }), row = readFileSync(f.reviewPath);
+    assert.equal(process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED, undefined);
+    const observed = f.reviewApi.readLocalPackagedOfficeSource();
+    assert.equal(observed.review.compiler.version, f.review.toolchains[0].compilerVersionFirstLine);
+    const token = f.api.buildFreshPackagedOfficeNativePublication();
+    assert.equal(f.api.readOriginalPackagedOfficeNativePublication(token).schemaVersion, 1);
+    assert.ok(f.toolchainCounts().compilerCalls > 0);
+    assert.deepEqual(f.counts(), { signCalls: 1, verifyCalls: 1 });
+    assert.deepEqual(readFileSync(f.reviewPath), row);
+  });
+  await t.test("default local lane rejects unreviewed identities before invoking a compiler", async t => {
+    for (const [name, mutate] of [
+      ["compiler", f => { writeFileSync(join(f.root, "toolchain/clang++"), "UNREVIEWED COMPILER"); }],
+      ["SDK", f => { writeFileSync(join(f.root, "sdk/SDKSettings.json"), JSON.stringify({ CanonicalName: "macosx99.0", Version: "99.0" })); }],
+      ["headers", f => { writeFileSync(join(f.root, "headers/node_api.h"), "UNREVIEWED HEADER"); }],
+      ["empty profiles", f => { f.review.toolchains = []; writeFileSync(f.reviewPath, JSON.stringify(f.review)); }],
+    ]) {
+      await t.test(name, async t => {
+        const f = await fixture(t, { portable: true, releaseReview: false });
+        mutate(f);
+        assert.throws(() => f.api.buildFreshPackagedOfficeNativePublication(), /toolchain_invalid/u);
+        assert.equal(f.toolchainCounts().compilerCalls, 0);
+        assert.equal(f.counts().signCalls, 0);
+      });
+    }
+  });
+  await t.test("default local lane rejects an admitted compiler reporting an unreviewed version", async t => {
+    const f = await fixture(t, { portable: true, releaseReview: false,
+      onCompilerVersion: () => "Apple clang version 99.0.0 (clang-9900.1.0)" });
+    assert.throws(() => f.api.buildFreshPackagedOfficeNativePublication(), /toolchain_invalid/u);
+    assert.equal(f.toolchainCounts().compilerCalls, 1);
+    assert.equal(f.counts().signCalls, 0);
+  });
+  await t.test("default local lane still rejects changed native sources before tool discovery", async t => {
+    const f = await fixture(t, { portable: true, releaseReview: false });
+    writeFileSync(join(f.root, "native/office-local", OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS[0]), "UNREVIEWED NATIVE SOURCE");
+    assert.throws(() => f.api.buildFreshPackagedOfficeNativePublication(), /source_review_invalid/u);
+    assert.equal(f.toolchainCounts().discoveryCalls, 0);
+    assert.equal(f.toolchainCounts().compilerCalls, 0);
+    assert.equal(f.counts().signCalls, 0);
+  });
+});
+
 test("Office publication private origin and final-byte contracts (synthetic compiler/signature, not packaged validation)", async t => {
+  await t.test("portable reader rejects stale authored closure before any tool discovery or compiler execution", async t => {
+    const f = await fixture(t, { portable: true });
+    f.review.packagingSha256[f.paths[0]] = "0".repeat(64);
+    writeFileSync(f.reviewPath, JSON.stringify(f.review));
+    assert.throws(() => f.reviewApi.readReviewedPackagedOfficeSource(), /source_review_invalid/u);
+    assert.equal(f.toolchainCounts().discoveryCalls, 0);
+    assert.equal(f.toolchainCounts().compilerCalls, 0);
+    assert.equal(f.counts().signCalls, 0);
+  });
+  await t.test("portable reader rejects unreviewed compiler bytes before invoking that compiler", async t => {
+    const f = await fixture(t, { portable: true });
+    writeFileSync(join(f.root, "toolchain/clang++"), "UNREVIEWED SYNTHETIC COMPILER BYTES");
+    assert.throws(() => f.reviewApi.readReviewedPackagedOfficeSource(), /toolchain_invalid/u);
+    assert.equal(f.toolchainCounts().compilerCalls, 0);
+    assert.equal(f.counts().signCalls, 0);
+  });
+  await t.test("portable reader rejects invalid profiles, SDK and header identities without executing a compiler", async t => {
+    const f = await fixture(t, { portable: true }), original = structuredClone(f.review);
+    for (const mutate of [
+      row => { row.toolchains = []; },
+      row => { row.toolchains[0].sdkSettingsSha256 = "0".repeat(64); },
+      row => { row.headers.sha256["node_api.h"] = "0".repeat(64); },
+    ]) {
+      const row = structuredClone(original); mutate(row);
+      writeFileSync(f.reviewPath, JSON.stringify(row));
+      assert.throws(() => f.reviewApi.readReviewedPackagedOfficeSource(), /toolchain_invalid/u);
+      assert.equal(f.toolchainCounts().compilerCalls, 0);
+    }
+    assert.equal(f.counts().signCalls, 0);
+  });
+  await t.test("unapproved toolchain observation reads identity without executing a candidate compiler", async t => {
+    const f = await fixture(t, { portable: true });
+    const api = await import(pathToFileURL(join(f.root, "apps/desktop/scripts/packaged-office-native-toolchain.mjs")).href);
+    const observed = api.observeOfficeNativeToolchain();
+    assert.equal(observed.compiler.version, null);
+    assert.equal(observed.profile.compilerVersionFirstLine, null);
+    assert.equal(f.toolchainCounts().compilerCalls, 0);
+    assert.equal(f.counts().signCalls, 0);
+  });
+  await t.test("portable reader rejects compiler, SDK, headers and authored inputs changed during an admitted version probe", async t => {
+    for (const [name, mutate, error] of [
+      ["compiler", value => { writeFileSync(value.compilerPath, "CHANGED DURING VERSION PROBE"); }, /toolchain_invalid/u],
+      ["SDK", value => { writeFileSync(join(value.sdkRoot, "SDKSettings.json"), "CHANGED DURING VERSION PROBE"); }, /toolchain_invalid/u],
+      ["headers", value => { writeFileSync(join(value.headersRoot, "node_api.h"), "CHANGED DURING VERSION PROBE"); }, /toolchain_invalid/u],
+      ["authored closure", value => { writeFileSync(join(value.root, PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS[0]), "CHANGED DURING VERSION PROBE"); }, /source_review_invalid/u],
+      ["reported version", () => "Apple clang version 99.0.0 (clang-9900.1.0)", /toolchain_invalid/u],
+    ]) {
+      await t.test(name, async t => {
+        const f = await fixture(t, { portable: true, onCompilerVersion: mutate });
+        assert.throws(() => f.reviewApi.readReviewedPackagedOfficeSource(), error);
+        assert.equal(f.toolchainCounts().compilerCalls, 1);
+        assert.equal(f.counts().signCalls, 0);
+      });
+    }
+  });
   await t.test("portable exact tool profile preserves original publication and immutable source approvals", async t => {
     const f = await fixture(t, { portable: true }), row = readFileSync(f.reviewPath);
     const first = f.reviewApi.readReviewedPackagedOfficeSource();

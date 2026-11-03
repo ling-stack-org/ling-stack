@@ -72,13 +72,16 @@ export function createUnifiedExecRawDispatch(input: {
   const source = structuredClone(input.run), approvalRequest = structuredClone(input.approvalRequest);
   const request = structuredClone(input.request), fence = Object.freeze({ ...input.sourceFence });
   const approvalId = input.approvalId, secrets = [...(input.extraSecrets ?? [])];
-  const assertRequest = (run: RunSession): void => {
+  const assertRequest = (run: RunSession): UnifiedExecRequest => {
     const normalized = normalizeBashRequest(run, approvalRequest, approvalId);
     requireSource(!("error" in normalized) && Object.keys(request).every(key => Object.hasOwn(normalized.request, key))
       && Object.entries(normalized.request).every(([key, value]) => isDeepStrictEqual(value, Reflect.get(request, key))),
       "unified_exec_raw_command_binding_invalid");
+    return normalized.request;
   };
-  assertRequest(source);
+  // Derive the approval directory from the exact original-source normalization,
+  // even when an internal caller bypasses the public tool binder.
+  const boundApprovalRequest = { ...approvalRequest, cwd: assertRequest(source).cwd };
   const workspacePolicy = structuredClone(store.getApprovalPolicy());
   const snapshot = isRecord(source.requestSnapshot) ? source.requestSnapshot : {};
   const policy = readStoredEffectivePolicySnapshot(snapshot);
@@ -109,7 +112,7 @@ export function createUnifiedExecRawDispatch(input: {
       requireSource(isDeepStrictEqual(readRawWorkflowRequirement(store, current), requirement), "unified_exec_raw_requirement_changed");
       requireSource(validateSelection(snapshot, policy, currentPolicy, current, store, currentProfile, command) === fullAccess,
         "unified_exec_raw_selection_changed");
-      if (policy) assertCommandLaunchApproval({ store, source, fence, request: approvalRequest, policy, approvalId,
+      if (policy) assertCommandLaunchApproval({ store, source, fence, request: boundApprovalRequest, policy, approvalId,
         extraSecrets: secrets, approvalProfile: currentProfile, delegatedRequirementFingerprint: requirement?.fingerprint,
         codePrefix: "unified_exec_raw" });
     });

@@ -8,6 +8,7 @@ import { assertUserInputDurableQuiescence } from "./user-input-durable-quiescenc
 import { isCurrentRunExecutionOwner } from "./run-execution-admission.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { hostAttemptReadScopeForSource } from "./host-attempt-read-scope.js";
 
 type ReadPorts = Pick<RunStore, "getRun" | "getArtifact" | "listArtifacts"
   | "getLatestRunCompactionCheckpoint" | "getLatestWorkspaceProvenanceWatermark">;
@@ -126,7 +127,8 @@ function verifyInventory(database: DatabaseSync, ports: ReadPorts, source: HostO
     || Object.keys(value).sort().join(",") !== "schemaVersion,settledBuiltinReads,toolCallIds" || !Number.isFinite(Date.parse(at))) reject();
   const inventory = value as unknown as HostAttemptEffectInventory;
   let settled: ReadonlyMap<string, string>;
-  try { settled = assertUserInputDurableQuiescence(database, source.runId, source, Date.parse(at)); } catch { return reject(); }
+  try { settled = assertUserInputDurableQuiescence(database, source.runId, source, Date.parse(at),
+    hostAttemptReadScopeForSource(database, source)); } catch { return reject(); }
   const covered = new Map(settled);
   for (const read of inventory.settledBuiltinReads) {
     if (!record(read) || !inventory.toolCallIds.includes(read.toolCallId)

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { chmod, lstat, mkdir, readdir, readlink, realpath, rename, rm, rmdir, stat, symlink, unlink } from "node:fs/promises";
-import { once } from "node:events";
+import { Transform, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
@@ -418,26 +418,19 @@ async function restoreWorkspaceSnapshotLocked(
     createdAt: now,
     updatedAt: now,
   });
-  let lifecycleState = request.state;
-  if (lifecycleState === "requested") {
-    const validating = store.updateSnapshotRestoreRequest({ id: request.id, expectedState: "requested", state: "validating", updatedAt: now });
-    if (!validating) throw new WorkspaceSnapshotRestoreError(409, "restore_claim_conflict", "Another restore request owns this idempotency key.");
-    lifecycleState = "validating";
-  }
-  if (lifecycleState !== "validating") throw new WorkspaceSnapshotRestoreError(409, "restore_claim_conflict", `Restore request is already in ${lifecycleState}.`);
-  const epoch = store.acquireWorkspaceSnapshotFence(workspaceId, request.id, now);
-  if (await hasActiveWorkspaceRun(store, root)) {
-    store.releaseWorkspaceSnapshotFence(workspaceId, request.id, new Date().toISOString(), epoch);
-    throw new WorkspaceSnapshotRestoreError(409, "workspace_busy", "A Run became active while restore fencing was acquired.");
-  }
-  const fenced = store.updateSnapshotRestoreRequest({ id: request.id, expectedState: "validating", state: "fenced", fencingEpoch: epoch, updatedAt: now });
-  if (!fenced) {
-    store.releaseWorkspaceSnapshotFence(workspaceId, request.id, new Date().toISOString(), epoch);
-    throw new WorkspaceSnapshotRestoreError(409, "restore_claim_conflict", "Another restore request owns this idempotency key.");
-  }
-  lifecycleState = "fenced";
+  if (request.state !== "requested" && request.state !== "validating") throw new WorkspaceSnapshotRestoreError(409, "restore_claim_conflict", `Restore request is already in ${request.state}.`);
+  const epoch = store.claimSnapshotRestoreFence({ requestId: request.id, expectedState: request.state,
+    expectedRequestFencingEpoch: request.fencingEpoch, now });
+  if (epoch === undefined) throw new WorkspaceSnapshotRestoreError(409, "restore_claim_conflict", "Another restore request owns this idempotency key.");
+  let lifecycleState: SnapshotRestoreRequest["state"] = "fenced";
   let workspaceEffectsAttempted = false;
+  let failure: { readonly error: unknown } | undefined;
   try {
+    // Core has committed the request and lease together. A failed claim above
+    // publishes neither a partial epoch nor a durable validating intermediate.
+    if (await hasActiveWorkspaceRun(store, root)) {
+      throw new WorkspaceSnapshotRestoreError(409, "workspace_busy", "A Run became active while restore fencing was acquired.");
+    }
     let journal = store.listSnapshotRestoreJournalEntries({ restoreRequestId: request.id, limit: 100_000 });
     if (journal.length === 0) {
       const plan = await buildRestorePlan(root, entries.filter((entry) => entry.managed), store, current.entries.filter((entry) => entry.managed));
@@ -505,26 +498,38 @@ async function restoreWorkspaceSnapshotLocked(
     if (!committed) throw new WorkspaceSnapshotRestoreError(409, "restore_claim_conflict", "Restore commit outcome was superseded.");
     return committed;
   } catch (error) {
-    const currentRequest = store.getSnapshotRestoreRequest(request.id);
-    if (currentRequest?.state === lifecycleState && currentRequest.fencingEpoch === epoch
-      && !["committed", "failed", "conflict", "expired", "recovery_required"].includes(currentRequest.state)) {
-      store.updateSnapshotRestoreRequest({
-        id: request.id,
-        expectedState: lifecycleState,
-        state: workspaceEffectsAttempted ? "recovery_required" : "failed",
-        fencingEpoch: epoch,
-        expectedFencingEpoch: epoch,
-        lastError: error instanceof Error ? error.message : String(error),
-        updatedAt: new Date().toISOString(),
-      });
+    failure = { error };
+    try {
+      const currentRequest = store.getSnapshotRestoreRequest(request.id);
+      if (currentRequest?.state === lifecycleState && currentRequest.fencingEpoch === epoch
+        && !["committed", "failed", "conflict", "expired", "recovery_required"].includes(currentRequest.state)) {
+        if (!store.updateSnapshotRestoreRequest({
+          id: request.id,
+          expectedState: lifecycleState,
+          state: workspaceEffectsAttempted ? "recovery_required" : "failed",
+          fencingEpoch: epoch,
+          expectedFencingEpoch: epoch,
+          lastError: error instanceof Error ? error.message : String(error),
+          updatedAt: new Date().toISOString(),
+        })) throw new WorkspaceSnapshotRestoreError(409, "restore_claim_conflict", "Restore failure outcome was superseded.");
+      }
+    } catch (cleanupError) {
+      failure = { error: new AggregateError([error, cleanupError], "Snapshot restore failure could not be recorded.", { cause: error }) };
     }
-    throw error;
+    throw failure.error;
   } finally {
-    const completed = store.getSnapshotRestoreRequest(request.id);
-    const fence = store.getWorkspaceSnapshotFence(workspaceId);
-    if (completed?.fencingEpoch === epoch && ["committed", "failed", "conflict", "expired"].includes(completed.state)
-      && fence.ownerRequestId === request.id && fence.epoch === epoch) {
-      store.releaseWorkspaceSnapshotFence(workspaceId, request.id, new Date().toISOString(), epoch);
+    try {
+      const fence = store.getWorkspaceSnapshotFence(workspaceId);
+      const completed = store.getSnapshotRestoreRequest(request.id);
+      const terminal = completed?.fencingEpoch === epoch && ["committed", "failed", "conflict", "expired"].includes(completed.state);
+      // Before any workspace syscall, a failed state claim cannot strand our
+      // lease either. A later epoch/owner is never ours to release.
+      if ((!workspaceEffectsAttempted || terminal) && fence.ownerRequestId === request.id && fence.epoch === epoch) {
+        store.releaseWorkspaceSnapshotFence(workspaceId, request.id, new Date().toISOString(), epoch);
+      }
+    } catch (cleanupError) {
+      if (failure) throw new AggregateError([failure.error, cleanupError], "Snapshot restore fence cleanup failed.", { cause: failure.error });
+      throw cleanupError;
     }
   }
 }
@@ -863,18 +868,40 @@ async function hashFile(path: string, stagingDir?: string): Promise<{ readonly s
   if (temporary) { await mkdir(dirname(temporary), { recursive: true }); }
   const input = createReadStream(path); const output = temporary ? createWriteStream(temporary, { flags: "wx" }) : undefined;
   let sizeBytes = 0;
+  let ownsTemporary = false;
+  output?.once("open", () => { ownsTemporary = true; });
+  const meter = new Transform({
+    transform(chunk, _encoding, callback) {
+      try {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        hash.update(buffer);
+        sizeBytes += buffer.byteLength;
+        callback(null, buffer);
+      } catch (error) {
+        callback(error instanceof Error ? error : new Error(String(error)));
+      }
+    },
+  });
   try {
-    for await (const chunk of input) {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      hash.update(buffer); sizeBytes += buffer.byteLength;
-      if (output && !output.write(buffer)) await once(output, "drain");
-    }
-    if (output) { output.end(); await once(output, "close"); }
+    await pipeline(input, meter, output ?? new Writable({ write(_chunk, _encoding, callback) { callback(); } }));
   } catch (error) {
-    output?.destroy();
+    if (temporary && ownsTemporary) {
+      try { await rm(temporary); }
+      catch (cleanupError) {
+        throw new AggregateError([error, cleanupError],
+          `Snapshot stream failed (${snapshotStreamErrorCode(error)}); staging cleanup failed (${snapshotStreamErrorCode(cleanupError)}).`,
+          { cause: error });
+      }
+    }
     throw error;
   }
   return { sha256: hash.digest("hex"), sizeBytes, ...(temporary ? { tempPath: temporary } : {}) };
+}
+
+/** Durable/public errors retain failure categories without copying arbitrary paths or messages. */
+function snapshotStreamErrorCode(error: unknown): string {
+  const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  return typeof code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/u.test(code) ? code : "unknown";
 }
 
 async function copyFileStreaming(source: string, destination: string): Promise<void> {
@@ -883,13 +910,21 @@ async function copyFileStreaming(source: string, destination: string): Promise<v
 }
 
 async function hasActiveWorkspaceRun(store: RunStore, root: string): Promise<boolean> {
-  for (const run of store.listRuns({ limit: 200 })) {
-    if (!["queued", "running", "waiting_for_approval"].includes(run.status)) continue;
+  // Logical terminal/yielded status is not proof that a previously launched
+  // command has physically stopped. Its independent journal remains blocking.
+  if (store.listHostCommandWriteBlockers(root).length > 0) return true;
+  const contains = (parent: string, child: string): boolean => {
+    const path = relative(parent, child);
+    return !isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`);
+  };
+  for (const run of store.listActiveRunScopes()) {
+    let scope = resolve(run.cwd);
     try {
-      if (await realpath(resolve(run.cwd)) === root) return true;
-    } catch {
-      if (resolve(run.cwd) === root) return true;
+      scope = await realpath(scope);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
+    if (contains(root, scope) || contains(scope, root)) return true;
   }
   return false;
 }
@@ -906,14 +941,24 @@ async function withWorkspaceSnapshotFence<T>(
   }
   const ownerRequestId = `workspace_snapshot_${operationKind}_${randomUUID()}`;
   let acquiredEpoch: number | undefined;
+  let failure: { readonly error: unknown } | undefined;
   try {
     acquiredEpoch = store.acquireWorkspaceSnapshotFence(workspaceId, ownerRequestId, new Date().toISOString());
     if (await hasActiveWorkspaceRun(store, root)) {
       throw new WorkspaceSnapshotRestoreError(409, "workspace_busy", `${operationKind} was fenced after a Run became active.`);
     }
     return await operation();
+  } catch (error) {
+    failure = { error };
+    throw error;
   } finally {
-    if (acquiredEpoch !== undefined) store.releaseWorkspaceSnapshotFence(workspaceId, ownerRequestId, new Date().toISOString(), acquiredEpoch);
+    if (acquiredEpoch !== undefined) {
+      try { store.releaseWorkspaceSnapshotFence(workspaceId, ownerRequestId, new Date().toISOString(), acquiredEpoch); }
+      catch (cleanupError) {
+        if (failure) throw new AggregateError([failure.error, cleanupError], "Snapshot capture fence cleanup failed.", { cause: failure.error });
+        throw cleanupError;
+      }
+    }
   }
 }
 

@@ -2,6 +2,7 @@ import type { RunSession, RunStore } from "../../run-types.js";
 import type { WorkUnit, WorkUnitAttempt } from "../../runtime-supervisor-types.js";
 import { delegatedStepFinalizationBasisFingerprintV1, isDelegatedStepRequirementV1, type DelegatedOutcomeV1 } from "@ling-stack/contracts";
 import { transitionWorkflow, transitionWorkflowStep } from "../../state-machines.js";
+import { inspectWorkflowPreApproval, isWorkflowPreGateExecutionPermitV1, workflowStepNewStartMetadata } from "../../workflow-pre-gate.js";
 import {
   classifyWorkflowStepStartOwner, workflowStepStartAuthorityBasis, workflowStepStartOwnerMatches,
   type BeginChannelWorkflowStepStartInput, type BeginChannelWorkflowStepStartResult,
@@ -11,7 +12,8 @@ import {
   type WorkflowStepPostApprovalResolvedInput,
 } from "../../workflow-step-start-owner.js";
 import type { ChannelWorkflow, ChannelWorkflowStep, ChannelWorkflowStepMetadata, Task } from "../../workspace-types.js";
-import { rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
+import { stringifyJson } from "./helpers.js";
+import { workflowHasUnresolvedApprovalWait } from "./channel-workflow-pre-approval-store.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
 type Ports = WorkflowStepStartReadStore & Pick<RunStore, "createTask" | "transitionTaskStatus" | "recordStateTransitionEvent" | "releaseResourceLease" | "listChannelWorkflowSteps" | "getWorkUnit" | "getWorkUnitAttempt" | "getApprovalRequest" | "createApprovalRequest">;
@@ -27,6 +29,11 @@ export class SqliteChannelWorkflowStartStore {
       const workflow = this.ports.getChannelWorkflow(step.workflowId);
       const authorityBasis = workflowStepStartAuthorityBasis(this.ports, step);
       if (!workflow || !authorityBasis || !this.validLease(step, input.leaseId, input.now)
+        || input.executionPermit !== undefined && (!isWorkflowPreGateExecutionPermitV1(input.executionPermit)
+          || input.executionPermit.mode !== (input.createTaskOnly ? "create_task" : "create_and_run_task")
+          || input.executionPermit.taskTitle !== input.task.title
+          || input.executionPermit.taskPrompt !== input.task.prompt
+          || input.executionPermit.assigneeTeammateId !== input.task.assigneeTeammateId)
         || !["queued", "blocked", "claimed", "running"].includes(step.status)
         || step.status === "running" && (step.taskId !== undefined || step.runId !== undefined)
         || input.task.channelId !== step.channelId || input.task.assigneeTeammateId !== step.toParticipantId
@@ -34,13 +41,27 @@ export class SqliteChannelWorkflowStartStore {
         || input.createTaskOnly && Boolean(step.metadata?.executionPlan || step.metadata?.delegatedRequirement)) {
         return { status: "invalid", code: "workflow_start_not_permitted" };
       }
+      const preApproval = inspectWorkflowPreApproval(this.ports, step, input.now, input.executionPermit);
+      if (preApproval.status !== "not_required" && !input.executionPermit) {
+        return { status: "invalid", code: "workflow_pre_approval_required" };
+      }
+      if (preApproval.status === "required" || preApproval.status === "pending") {
+        return { status: "invalid", code: "workflow_pre_approval_required" };
+      }
+      if (preApproval.status === "stale" || preApproval.status === "blocked") {
+        return { status: "invalid", code: preApproval.code };
+      }
       if (!this.startWorkflow(workflow, input.now) || !this.startStep(step, input.now)) {
         // Throwing rolls the whole start back, including any earlier audit transition.
         throw new Error("Workflow start transition changed while beginning its owner");
       }
       const task = this.ports.createTask(input.task, input.now);
       const owner: WorkflowStepStartOwnerV1 = { schemaVersion: 1, taskId: task.id, leaseId: input.leaseId, phase: "preparing", authorityBasis };
-      const startMetadata: ChannelWorkflowStepMetadata = { ...cleanResultMetadata(step.metadata),
+      const { activeGateStage, ...definitionMetadata } = workflowStepNewStartMetadata(step.metadata);
+      const startMetadata: ChannelWorkflowStepMetadata = { ...definitionMetadata,
+        ...(preApproval.status === "approved"
+          ? { preStepApprovalMarker: { basis: preApproval.basis, consumedByTaskId: task.id } }
+          : {}),
         ...(input.fanInContextReviews ? { fanInContextReviews: input.fanInContextReviews } : {}) };
       const metadata: ChannelWorkflowStepMetadata = { ...startMetadata, startOwner: owner };
       this.context.database.prepare(`UPDATE channel_workflow_steps
@@ -229,8 +250,10 @@ export class SqliteChannelWorkflowStartStore {
         return { status: "stale", code: "workflow_post_approval_state_stale" };
       }
       const actor = input.actor ?? "system";
-      if (workflow.status === "waiting_for_approval") this.workflowTransition(workflow, "approval_approved", input.now, `approval:${approval.id}`, actor);
       this.stepTransition(step, "approval_approved", input.now, `approval:${approval.id}`, actor);
+      if (workflow.status === "waiting_for_approval" && !workflowHasUnresolvedApprovalWait(this.ports, workflow.id)) {
+        this.workflowTransition(workflow, "approval_approved", input.now, `approval:${approval.id}`, actor);
+      }
       const { activeGateStage, ...metadata } = step.metadata;
       this.context.database.prepare("UPDATE channel_workflow_steps SET metadata_json=?, blocker=NULL, updated_at=? WHERE id=?")
         .run(stringifyJson(metadata), input.now, step.id);
@@ -283,7 +306,11 @@ export class SqliteChannelWorkflowStartStore {
   private transaction<T>(operation: () => T): T {
     this.context.database.exec("BEGIN IMMEDIATE;");
     try { const result = operation(); this.context.database.exec("COMMIT;"); return result; }
-    catch (error) { rollbackOwnedSqliteTransaction(this.context.database); throw error; }
+    catch (error) {
+      try { this.context.database.exec("ROLLBACK;"); }
+      catch (rollbackError) { throw new AggregateError([error, rollbackError], "Workflow start transaction and rollback failed"); }
+      throw error;
+    }
   }
 }
 
@@ -310,12 +337,6 @@ function validQueuedTaskHandoff(step: ChannelWorkflowStep, task: Task, run: RunS
 }
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-}
-function cleanResultMetadata(metadata: ChannelWorkflowStepMetadata = {}): ChannelWorkflowStepMetadata {
-  const { startOwner, executionVerification, delegatedOutcome, delegatedOutcomeBasisFingerprint, contextArtifactId,
-    outputArtifactId, outputArtifactIds, fanInSummaryArtifactId, fanInContextReviews, resultContextReview, memoryCandidateIds,
-    postStepApprovalId, activeGateStage, ...definition } = metadata;
-  return { ...definition, ...(activeGateStage === "pre" ? { activeGateStage } : {}) };
 }
 function dependenciesComplete(store: Pick<RunStore, "listChannelWorkflowSteps">, step: ChannelWorkflowStep): boolean {
   const ids = step.metadata?.dependsOnStepIds ?? [];

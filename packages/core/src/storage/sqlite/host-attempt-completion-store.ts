@@ -5,6 +5,7 @@ import { isNativeCompletionSource, nativeAttemptInventory, readNativeAttemptEffe
 import { readString, rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { isCurrentRunExecutionOwner } from "./run-execution-admission.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { hostAttemptReadScopeForSource } from "./host-attempt-read-scope.js";
 
 const capturedSourceSql = `EXISTS (SELECT 1 FROM run_sessions AS run
   JOIN work_units AS unit ON unit.id=run.work_unit_id
@@ -52,7 +53,8 @@ export class SqliteHostAttemptCompletionStore {
       const observation = verifyEffectCoverage?.();
       const native = isNativeCompletionSource(db, captured);
       const coverage = !native && observation === true ? "pi_no_tools_v1" : "unverified";
-      const tracked = native ? undefined : verifiedTrackedToolCalls(db, captured, observation, drainedAt);
+      const scope = hostAttemptReadScopeForSource(db, captured);
+      const tracked = native ? undefined : verifiedTrackedToolCalls(db, captured, observation, drainedAt, scope);
       const nativeInventory = native ? nativeAttemptInventory(observation) : undefined;
       const changed = db.prepare(`UPDATE host_attempt_completions AS c SET drained_at=?,effect_coverage=?,tracked_tool_calls_json=?,native_effect_inventory_json=?
         WHERE c.run_id=? AND c.work_unit_id=? AND c.attempt_id=? AND c.runtime_instance_id=? AND c.fencing_token=?
@@ -74,8 +76,9 @@ export class SqliteHostAttemptCompletionStore {
         AND ${capturedSourceSql}`)
       .get(source.runId, source.workUnitId, source.attemptId, source.runtimeInstanceId, source.fencingToken);
     if (!row) return undefined;
+    const scope = hostAttemptReadScopeForSource(this.context.database, source);
     const native = isNativeCompletionSource(this.context.database, source);
-    const nativeStatus = native ? readNativeAttemptEffectStatus(this.context.database, source, row.native_effect_inventory_json) : undefined;
+    const nativeStatus = native ? readNativeAttemptEffectStatus(this.context.database, source, row.native_effect_inventory_json, scope) : undefined;
     return Object.freeze({ schemaVersion: 1, source: Object.freeze({ runId: readString(row, "run_id"),
       workUnitId: readString(row, "work_unit_id"), attemptId: readString(row, "attempt_id"),
       runtimeInstanceId: readString(row, "runtime_instance_id"), fencingToken: readString(row, "fencing_token") }),
@@ -84,7 +87,7 @@ export class SqliteHostAttemptCompletionStore {
       ...(nativeStatus === "settled" && row.drained_at !== null ? { effectCoverage: "native_journal_v1" as const }
         : !native && row.drained_at !== null && row.effect_coverage === "pi_no_tools_v1" ? { effectCoverage: "pi_no_tools_v1" as const }
         : !native && row.drained_at !== null && readTrackedToolCoverage(this.context.database, source, row.tracked_tool_calls_json,
-          new Date().toISOString()) ? { effectCoverage: "pi_tracked_tools_v1" as const } : {}),
+          new Date().toISOString(), scope) ? { effectCoverage: "pi_tracked_tools_v1" as const } : {}),
       ...(row.drained_at === null ? {} : { drainedAt: readString(row, "drained_at") }) });
   }
 

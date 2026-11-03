@@ -179,7 +179,7 @@ export interface RunEvaluationTaskWorkerRegistryOptions {
   readonly onError?: (error: unknown) => void;
 }
 
-/** Explicit independent internal worker. No production registration, enrollment or ordinary Run quota. */
+/** Explicit independent internal worker. Registration is Host-only; there is no automatic enrollment or ordinary Run quota. */
 export class RunEvaluationTaskWorkerRegistry {
   private readonly entries = new Map<string, WorkerEntry>();
   private readonly pending = new Set<string>();
@@ -214,9 +214,17 @@ export class RunEvaluationTaskWorkerRegistry {
 
   /** Close forward admission synchronously before signalling only owned adapters. */
   beginShutdown(): void {
+    this.stopAdmission();
+    this.abortOwned();
+  }
+
+  stopAdmission(): void {
     this.stopped = true;
     this.pending.clear();
     for (const entry of this.entries.values()) if (entry.timer) clearInterval(entry.timer);
+  }
+
+  abortOwned(): void {
     for (const controller of this.inFlight.values()) controller.abort();
   }
 

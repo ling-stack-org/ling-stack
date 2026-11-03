@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import * as core from "../dist/index.js";
+import { createBudgetHarness } from "./support/delegation-budget-fixture.mjs";
+import { SqliteDelegationLifecycleStore } from "../dist/storage/sqlite/delegation-lifecycle-store.js";
+import { verifyCompactionSuspensionEffects } from "../dist/storage/sqlite/run-compaction-suspension-effects.js";
 
 const now = "2026-10-13T03:00:00.000Z";
 const digest = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -12,7 +15,7 @@ const normalClose = { scope: "process_group", leaderExited: true, stdioClosed: t
   descendants: "unverified", settledBy: "close", signalFailures: [] };
 
 /** Core transaction fixture; not real SDK, OS execution, or packaged GUI evidence. */
-async function fixture(t) {
+async function fixture(t, extraTools = []) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-a21-progress-core-"));
   const f = { cwd, store: core.createSqliteRunStore(cwd) };
   t.after(async () => { f.other?.close(); f.store.close(); await rm(cwd, { recursive: true, force: true }); });
@@ -29,22 +32,28 @@ async function fixture(t) {
   const preparedBody = { schemaVersion: 1, boundary: "pi-model-context", taskId: task.id, systemPrompt: "Fixture system",
     userPrompt: acceptedPrompt, model: { id: "fixture-model", provider: "fixture", api: "openai-completions",
       baseUrl: "https://fixture.invalid/v1", reasoning: false, input: ["text"], contextWindow: 100_000, maxTokens: 8192 },
-    thinkingLevel: "off", tools: ["bash", "write", "edit"].map(name => ({ name, description: `Fixture ${name}`, parameters: { type: "object" } })) };
+    thinkingLevel: "off", tools: ["bash", "write", "edit", ...extraTools].map(name => ({ name, description: `Fixture ${name}`, parameters: { type: "object" } })) };
   f.execution = { schemaVersion: 1, runnerId: "pi", input: { cwd, task, provider: { provider: "fixture", model: "fixture-model",
-    api: "openai-completions", baseUrl: "https://fixture.invalid/v1" }, tools: ["bash", "write", "edit"], systemPrompt: "Fixture system" },
+    api: "openai-completions", baseUrl: "https://fixture.invalid/v1" }, tools: ["bash", "write", "edit", ...extraTools], systemPrompt: "Fixture system" },
     toolHydrationEnabled: false, preparedInput: { ...preparedBody, fingerprint: digest(preparedBody) } };
   const policy = core.resolveSessionRunPolicy({ workspacePolicy: f.store.getApprovalPolicy(),
     authorizationMode: "always", workspaceAccessMode: "full_access", channelBoundPath: cwd });
   f.policy = core.applyConversationModeToEffectiveRunPolicySnapshot(policy.snapshot, "default");
   f.unit = f.store.createWorkUnit({ workspaceId: core.DEFAULT_WORKSPACE_ID, kind: "task_run", ownerType: "task", ownerId: f.task.id,
-    taskId: f.task.id, channelId: f.channel.id, runnerId: "pi", status: "running", idempotencyKey: "unit", createdByActor: "system", request: {}, now });
+    taskId: f.task.id, channelId: f.channel.id, runnerId: "pi", status: extraTools.length ? "claimed" : "running", idempotencyKey: "unit", createdByActor: "system", request: {}, now });
   f.attempt = f.store.createWorkUnitAttempt({ workUnitId: f.unit.id, attemptNumber: 1, runtimeInstanceId: "source-A",
-    runnerId: "pi", effectiveRunnerId: "pi", providerPresetId: f.preset.id, status: "started", now });
+    runnerId: "pi", effectiveRunnerId: "pi", providerPresetId: f.preset.id, status: extraTools.length ? "created" : "started", now });
   f.run = f.store.createRun({ id: "progress-run", cwd, taskId: f.task.id, channelId: f.channel.id, threadId: f.thread.id, turnId: f.turn.turnId,
     workUnitId: f.unit.id, providerPresetId: f.preset.id, providerName: "fixture", providerModel: "fixture-model", taskSnapshot: task,
     providerSnapshot: {}, requestSnapshot: { authorizationMode: "always", workspaceAccessMode: "full_access",
       effectivePolicySnapshot: f.policy, runnerExecutionInput: f.execution }, contextViewId: "owned-context", contextViewCreatedAt: now, createdAt: now });
-  f.store.linkRunToWorkUnit(f.run.id, f.unit.id, now); f.store.markRunStarted(f.run.id, now);
+  f.store.linkRunToWorkUnit(f.run.id, f.unit.id, now);
+  if (extraTools.length) {
+    f.delegationBudget = createBudgetHarness(cwd, { store: f.store, rootRunId: f.run.id, now,
+      later: new Date(Date.parse(now) + 1).toISOString() });
+    f.delegationBudget.freeze();
+    f.delegationBudget.start();
+  } else f.store.markRunStarted(f.run.id, now);
   assert.equal(f.store.transitionTaskStatus({ taskId: f.task.id, expectedStatus: "todo", event: "claim", actor: "system", now }).ok, true);
   f.fence = core.toRuntimeAttemptFence(f.attempt);
   f.view = [{ role: "user", content: acceptedPrompt, timestamp: 1 }];
@@ -147,6 +156,219 @@ const assertCommitted = result => assert.equal(result.kind, "committed", JSON.st
 const assertBlocked = (result, code) => { assert.equal(result.kind, "blocked", JSON.stringify(result)); if (code) assert.equal(result.code, code); };
 const counts = f => ["artifacts", "run_progress_checkpoints", "run_progress_checkpoint_heads"].map(table =>
   Number(f.store.database.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n));
+
+/** Full canonical failed result, paired with genuine dedicated Host journal rows. */
+function addClosedFailedBash(f, { mutate = () => {}, observation = normalClose, settle = true, receipt = true,
+  source = f.fence, id = "closed-failure", cwd = f.cwd } = {}) {
+  const args = { command: "printf 'observed failure\\n'; exit 7", ...(cwd === f.cwd ? {} : { cwd }) };
+  const command = { kind: "shell", command: args.command, shell: "bash" };
+  const content = [{ type: "text", text: "observed failure\n\nCommand exited with code 7" }];
+  const unifiedExec = { status: "failed", runId: f.run.id, taskId: f.task.id, toolCallId: id,
+    cwd, command, environmentSummary: { mode: "inherit_minimal", cwd, keys: [], redactedKeys: [] },
+    startedAt: now, endedAt: now, durationMs: 1, exitCode: 7, timedOut: false, cancelled: false,
+    processObservation: structuredClone(normalClose), stdout: { byteCount: 17, preview: "observed failure\n", truncated: false },
+    stderr: { byteCount: 0, preview: "", truncated: false }, artifacts: [] };
+  const result = { content, details: { unifiedExec } };
+  mutate(result);
+  f.view.push({ role: "assistant", content: [{ type: "toolCall", id, name: "bash", arguments: args }], stopReason: "toolUse", timestamp: 2 });
+  f.store.appendExecutionEvent(f.run.id, source, "tool_start", { toolCallId: id, toolName: "bash", args });
+  if (receipt) {
+    const ticket = f.store.prepareHostCommandExecution({ runId: f.run.id, sourceFence: source, toolCallId: id, command, cwd });
+    if (settle) f.store.settleHostCommandExecution(ticket, { kind: "observed", observation });
+  }
+  f.store.appendExecutionEvent(f.run.id, source, "tool_end", { toolCallId: id, toolName: "bash", result, isError: true });
+  f.view.push({ role: "toolResult", toolCallId: id, toolName: "bash", content, isError: true, timestamp: 3 });
+}
+
+test("A21 Core closed failed bash seals and reopens the exact original error view", async t => {
+  const f = await fixture(t); addClosedFailedBash(f);
+  const input = f.input(), committed = f.store.commitRunProgressCheckpoint(input); assertCommitted(committed);
+  assert.deepEqual(f.store.getArtifact(committed.checkpoint.modelViewArtifactId).sealedPayload.completedToolCallIds, ["closed-failure"]);
+  const read = f.read(f.openOther()); assert.equal(read.kind, "verified", JSON.stringify(read));
+  assert.deepEqual(read.modelView, f.view); assert.equal(read.modelView.at(-1).isError, true);
+  f.store.close(); f.store = core.createSqliteRunStore(f.cwd);
+  assert.deepEqual(f.read().modelView, f.view);
+  assert.equal(f.store.listHostCommandWriteBlockers(f.cwd).length, 0);
+});
+
+test("A21 Core closed failed bash remains historical A evidence when genuine B advances the head", async t => {
+  const f = await fixture(t); addClosedFailedBash(f);
+  const first = f.store.commitRunProgressCheckpoint(f.input()); assertCommitted(first);
+  const read = f.read(); f.loseSource(); const activation = f.store.commitExistingRunContinuation(f.activation(read.witness));
+  assert.equal(activation.ok, true, JSON.stringify(activation)); const target = f.startB(activation);
+  f.addRound("later-success", target);
+  const input = f.input(headOf(first), { sourceFence: target, recoveryPredecessor: read.witness });
+  const second = f.store.commitRunProgressCheckpoint(input); assertCommitted(second);
+  assert.equal(second.headRevision, 2);
+  const recovered = f.read(f.openOther(), { sourceFence: target, expectedLineage: input.expectedLineage });
+  assert.equal(recovered.kind, "verified", JSON.stringify(recovered)); assert.deepEqual(recovered.modelView, f.view);
+  assert.equal(recovered.modelView.find(message => message.role === "toolResult" && message.toolCallId === "closed-failure").isError, true);
+});
+
+const failedBashMutations = {
+  "missing canonical details": result => { delete result.details; },
+  "missing canonical unifiedExec": result => { delete result.details.unifiedExec; },
+  "wrong run": result => { result.details.unifiedExec.runId = "foreign"; },
+  "wrong task": result => { result.details.unifiedExec.taskId = "foreign"; },
+  "wrong call": result => { result.details.unifiedExec.toolCallId = "foreign"; },
+  "different command": result => { result.details.unifiedExec.command = { kind: "shell", command: "exit 8", shell: "bash" }; },
+  "different shell": result => { result.details.unifiedExec.command = { ...result.details.unifiedExec.command, shell: "zsh" }; },
+  "different cwd": result => { result.details.unifiedExec.cwd = join(result.details.unifiedExec.cwd, "other"); },
+  "relative cwd": result => { result.details.unifiedExec.cwd = "."; },
+  "success status": result => { result.details.unifiedExec.status = "succeeded"; },
+  "zero exit": result => { result.details.unifiedExec.exitCode = 0; },
+  "missing exit": result => { delete result.details.unifiedExec.exitCode; },
+  "negative exit": result => { result.details.unifiedExec.exitCode = -1; },
+  "fractional exit": result => { result.details.unifiedExec.exitCode = 1.5; },
+  "timed out": result => { result.details.unifiedExec.timedOut = true; },
+  "cancelled": result => { result.details.unifiedExec.cancelled = true; },
+  "missing timeout flag": result => { delete result.details.unifiedExec.timedOut; },
+  "missing cancellation flag": result => { delete result.details.unifiedExec.cancelled; },
+  "signal": result => { result.details.unifiedExec.signal = "SIGINT"; },
+  "denied": result => { result.details.denied = true; },
+  "missing observation": result => { delete result.details.unifiedExec.processObservation; },
+  "different observation": result => { result.details.unifiedExec.processObservation.scope = "leader"; },
+  "open stdio": result => { result.details.unifiedExec.processObservation.stdioClosed = false; },
+  "not closed": result => { result.details.unifiedExec.processObservation.settledBy = "cleanup_deadline"; },
+};
+for (const [mutation, mutate] of Object.entries(failedBashMutations)) {
+  test(`A21 Core closed failed bash rejects ${mutation} without checkpoint writes`, async t => {
+    const f = await fixture(t); addClosedFailedBash(f, { mutate });
+    assertBlocked(f.store.commitRunProgressCheckpoint(f.input()), "checkpoint.effect_unknown");
+    assert.deepEqual(counts(f), [0, 0, 0]);
+  });
+}
+
+for (const variant of ["no receipt", "unsettled", "stop unconfirmed", "pending approval", "unknown Host operation", "old owner", "wrong digest", "SDK-only details"]) {
+  test(`A21 Core closed failed bash refuses ${variant}`, async t => {
+    const f = await fixture(t);
+    addClosedFailedBash(f, { receipt: variant !== "no receipt", settle: variant !== "unsettled",
+      observation: variant === "stop unconfirmed" ? { ...normalClose, stopReason: "cancelled" } : normalClose,
+      ...(variant === "SDK-only details" ? { mutate: result => { delete result.details; } } : {}) });
+    if (variant === "pending approval") f.store.createApprovalRequest({ runId: f.run.id, taskId: f.task.id, toolCallId: "pending",
+      actionType: "bash", risk: "high", title: "Pending command", description: "Fixture pending approval",
+      payload: { type: "bash", command: "exit 7", cwd: f.cwd, riskFlags: [] } }, now);
+    if (variant === "unknown Host operation") {
+      const ticket = f.store.admitHostOperation({ operationId: "unresolved", kind: "command", source: { runId: f.run.id, ...f.fence },
+        toolCallId: "closed-failure", admittedAt: now });
+      f.store.settleHostOperation(ticket, { kind: "unknown_outcome", code: "command_physical_scope_unverified", settledAt: now });
+    }
+    if (variant === "old owner" || variant === "wrong digest") {
+      const event = f.store.listEvents(f.run.id).find(event => event.type === (variant === "old owner" ? "host_command_settled" : "host_command_prepared"));
+      const data = structuredClone(event.data);
+      if (variant === "old owner") { data.ownerCurrent = false; data.outcome = "stop_unconfirmed"; }
+      else data.commandDigest = "a".repeat(64);
+      f.openOther().database.prepare("UPDATE run_events SET data_json=? WHERE id=?").run(JSON.stringify(data), event.id);
+    }
+    if (variant === "SDK-only details") f.view.at(-1).details = { unifiedExec: { status: "failed", exitCode: 7 } };
+    assertBlocked(f.store.commitRunProgressCheckpoint(f.input()), "checkpoint.effect_unknown");
+    assert.deepEqual(counts(f), [0, 0, 0]);
+  });
+}
+
+for (const mutation of ["command digest", "source fence", "canonical result", "normal close"]) {
+  test(`A21 Core closed failed bash recovery revalidates ${mutation} after sealing`, async t => {
+    const f = await fixture(t); addClosedFailedBash(f);
+    assertCommitted(f.store.commitRunProgressCheckpoint(f.input()));
+    const type = mutation === "canonical result" ? "tool_end" : mutation === "normal close" ? "host_command_settled" : "host_command_prepared";
+    const event = f.store.listEvents(f.run.id).find(event => event.type === type), data = structuredClone(event.data);
+    if (mutation === "command digest") data.commandDigest = "a".repeat(64);
+    else if (mutation === "source fence") data.source.runtimeInstanceId = "foreign";
+    else if (mutation === "canonical result") data.result.details.unifiedExec.cancelled = true;
+    else { data.outcome = "stop_unconfirmed"; data.observation.stopReason = "observer_error"; }
+    f.openOther().database.prepare("UPDATE run_events SET data_json=? WHERE id=?").run(JSON.stringify(data), event.id);
+    assertBlocked(f.read(), "checkpoint.effect_unknown");
+    assert.deepEqual(counts(f), [1, 1, 1]);
+  });
+}
+
+test("A21 Core closed failed bash remains outside the existing compaction suspension domain", async t => {
+  const f = await fixture(t); addClosedFailedBash(f);
+  assert.throws(() => verifyCompactionSuspensionEffects(f.store.database, f.store, f.store.getRun(f.run.id),
+    f.store.listEvents(f.run.id), f.view, f.fence), error => error.code === "checkpoint.effect_unknown");
+});
+
+function delegationFixture(f) {
+  const d = f.delegationBudget;
+  const lifecycle = new SqliteDelegationLifecycleStore({ database: d.db }, {
+    getRun: id => f.store.getRun(id), getWorkUnit: id => f.store.getWorkUnit(id),
+    getWorkUnitAttempt: id => f.store.getWorkUnitAttempt(id), getDelegationStep: id => f.store.getDelegationStep(id),
+    getDelegationBudgetReservation: id => d.writer.getDelegationBudgetReservation(id),
+    getArtifact: id => f.store.getArtifact(id), createArtifactWithinTransaction: d.ports.createArtifactWithinTransaction,
+  });
+  const round = (name, id, args, result) => {
+    const content = [{ type: "text", text: JSON.stringify(result) }];
+    f.view.push({ role: "assistant", content: [{ type: "toolCall", id, name, arguments: args }], stopReason: "toolUse", timestamp: 2 });
+    f.store.appendExecutionEvent(f.run.id, f.fence, "tool_start", { toolCallId: id, toolName: name, args });
+    f.store.appendExecutionEvent(f.run.id, f.fence, "tool_end", { toolCallId: id, toolName: name, result: { content }, isError: false });
+    f.view.push({ role: "toolResult", toolCallId: id, toolName: name, content, isError: false, timestamp: 3 });
+  };
+  const args = { objective: "Inspect only this QA fixture", requestedBudget: { tokenBudget: 40 }, required: true };
+  const child = d.spawn({ spawnCallId: "spawn-1", ...args });
+  const spawnResult = { status: "accepted", reservationId: child.reservation.id, childRunId: child.childRun.id,
+    stepId: child.stepId, state: "spawning", stepRevision: 0 };
+  return { d, child, lifecycle, round, args, spawnResult };
+}
+
+test("A21 Core real delegation spawn and queued instruction facts authorize an exact progress checkpoint", async t => {
+  const f = await fixture(t, ["spawn_agent", "send_message"]), d = delegationFixture(f);
+  d.round("spawn_agent", "spawn-1", d.args, d.spawnResult);
+  const message = d.lifecycle.appendDelegationInstruction({ reservationId: d.child.reservation.id,
+    parentFence: f.fence, messageCallId: "message-1", text: "Keep the original objective", now: new Date(Date.parse(now) + 2).toISOString() });
+  d.round("send_message", "message-1", { reservationId: d.child.reservation.id, text: "Keep the original objective" },
+    { status: "durable_queued", messageId: message.message.id });
+  const committed = f.store.commitRunProgressCheckpoint(f.input());
+  assertCommitted(committed);
+  const recovered = f.read(f.openOther());
+  assert.equal(recovered.kind, "verified", JSON.stringify(recovered));
+  assert.deepEqual(recovered.modelView, f.view);
+  assert.equal(f.store.listWorkUnitAttempts(d.child.childWorkUnit.id).length, 0);
+  assert.equal(d.d.writer.getDelegationBudgetReservation(d.child.reservation.id).state, "reserved");
+});
+
+for (const mutation of ["missing spawn", "wrong canonical arguments", "wrong SDK result", "changed durable objective",
+  "changed durable budget", "corrupt objective", "missing instruction", "changed durable instruction", "corrupt instruction"]) {
+  test(`A21 Core delegation checkpoint rejects ${mutation} without advancing its head`, async t => {
+    const f = await fixture(t, ["spawn_agent", "send_message"]), d = delegationFixture(f);
+    const spawnArgs = mutation === "changed durable objective" ? { ...d.args, objective: "Different task" }
+      : mutation === "changed durable budget" ? { ...d.args, requestedBudget: { tokenBudget: 39 } } : d.args;
+    d.round("spawn_agent", mutation === "missing spawn" ? "unrecorded-spawn" : "spawn-1", spawnArgs, d.spawnResult);
+    if (mutation === "wrong canonical arguments") f.view[1].content[0].arguments = { ...d.args, objective: "Different task" };
+    if (mutation === "wrong SDK result") f.view[2].content[0].text = "Different result";
+    if (mutation === "corrupt objective") {
+      const step = f.store.getDelegationStep(d.child.stepId);
+      f.store.database.prepare("UPDATE artifacts SET sealed_payload_json=? WHERE id=?")
+        .run(JSON.stringify({ schemaVersion: 1, objective: "Corrupted task" }), step.objectiveArtifactId);
+    }
+    if (mutation === "missing instruction") {
+      d.round("send_message", "message-missing", { reservationId: d.child.reservation.id, text: "Unrecorded instruction" },
+        { status: "durable_queued", messageId: "not-a-durable-message" });
+    }
+    if (mutation === "corrupt instruction" || mutation === "changed durable instruction") {
+      const message = d.lifecycle.appendDelegationInstruction({ reservationId: d.child.reservation.id,
+        parentFence: f.fence, messageCallId: "message-1", text: "Keep the original objective", now: new Date(Date.parse(now) + 2).toISOString() });
+      d.round("send_message", "message-1", { reservationId: d.child.reservation.id,
+        text: mutation === "changed durable instruction" ? "Different instruction" : "Keep the original objective" },
+        { status: "durable_queued", messageId: message.message.id });
+      if (mutation === "corrupt instruction") {
+        f.store.database.prepare("UPDATE artifacts SET sealed_payload_json=? WHERE id=?").run(JSON.stringify({ schemaVersion: 1,
+          kind: "delegation.instruction.v1", parentFence: f.fence, text: "Corrupted instruction" }), message.message.bodyArtifactId);
+      }
+    }
+    const before = counts(f);
+    assertBlocked(f.store.commitRunProgressCheckpoint(f.input()), "checkpoint.effect_unknown");
+    assert.deepEqual(counts(f), before);
+  });
+}
+
+test("A21 Core wait_agent checkpoint requires this parent's actual reservation, not merely the tool name", async t => {
+  const f = await fixture(t, ["wait_agent"]), d = delegationFixture(f);
+  d.round("wait_agent", "wait-1", { reservationId: d.child.reservation.id, timeoutMs: 0 }, { status: "timed_out", timedOut: true });
+  assertCommitted(f.store.commitRunProgressCheckpoint(f.input()));
+  const g = await fixture(t, ["wait_agent"]), e = delegationFixture(g);
+  e.round("wait_agent", "wait-1", { reservationId: "not-an-owned-reservation", timeoutMs: 0 }, { status: "timed_out", timedOut: true });
+  assertBlocked(g.store.commitRunProgressCheckpoint(g.input()), "checkpoint.effect_unknown");
+});
 
 test("A21 Core atomically seals artifact/checkpoint/head; second connection and reopen verify exact view", async t => {
   const f = await fixture(t); f.addRound(); const input = f.input();

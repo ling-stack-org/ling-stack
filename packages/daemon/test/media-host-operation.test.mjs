@@ -21,7 +21,6 @@ import { createUnifiedExecFixture } from "./support/unified-exec-fixture.mjs";
 const required = { kind: "user_input_required", requestId: "media-required", requestVersion: 1 };
 async function fixture(t, withRuntime = false) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-media-host-operation-"));
-  t.after(() => rm(cwd, { recursive: true, force: true }));
   const task = { id: "media-task", title: "Media", prompt: "Isolated Media" };
   let f, supervisor;
   if (withRuntime) {
@@ -40,6 +39,9 @@ async function fixture(t, withRuntime = false) {
     f = { store, run: store.getRun("media-run"), sourceFence: toRuntimeAttemptFence(execution.attempt) };
     t.after(() => { supervisor.releaseAll(); store.close(); });
   } else f = createUnifiedExecFixture(t, cwd, task, "media-run");
+  // after hooks run in registration order. Retire the exact live owner and
+  // close SQLite before removing its diagnostic projection and coordination DB.
+  t.after(() => rm(cwd, { recursive: true, force: true }));
   const source = { runId: f.run.id, ...f.sourceFence };
   const tracker = new AttemptHostOperationTracker({ store: f.store, source });
   const rows = () => tracker.executorGroup.getSnapshot().operations.map(row => f.store.getHostOperation(row.ticket.id));

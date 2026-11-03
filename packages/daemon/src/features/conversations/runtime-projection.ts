@@ -118,7 +118,7 @@ function conversationFileRefsFromIntervention(intervention: RunIntervention): re
   return (intervention.messagePayload?.fileRefs ?? []).map((fileRef) => ({
     path: fileRef.path,
     ...(fileRef.label ? { label: fileRef.label } : {}),
-    source: "api" as const,
+    source: fileRef.source ?? "api" as const,
   }));
 }
 

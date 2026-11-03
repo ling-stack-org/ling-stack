@@ -281,6 +281,55 @@ test("private unverified linked runs retain owned text but publish no execution 
   }
 });
 
+test("loaded canonical snapshot does not erase a sanitized unverified-link diagnostic", () => {
+  const { input } = fixture();
+  input.runs = [];
+  input.messages[1].facts = [{ id: "untrusted-diagnostic", kind: "diagnostic", revision: 1,
+    threadSequence: 0, partIndex: 0, status: "blocked", title: "untrusted-target-secret",
+    summary: "Command batch lineage is incomplete.", actionId: "untrusted-action",
+    runId: "untrusted-run", sourceRefs: [{ kind: "path", id: "untrusted-path-secret" }] }];
+  const output = projectTeammatePrivateTimelineItems({ ...input, canonicalState: "loaded" });
+  const diagnostics = output.filter(item => item.kind === "diagnostic");
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0].status, "blocked");
+  assert.equal(diagnostics[0].summary, "Command batch lineage is incomplete.");
+  assert.deepEqual(diagnostics[0].sourceRefs, []);
+  assert.equal(diagnostics[0].runId, undefined);
+  assert.equal(diagnostics[0].actionId, undefined);
+  assert.equal(JSON.stringify(output).includes("untrusted-"), false);
+  assert.equal(projectTeammatePrivateTimelineItems({ ...input, canonicalState: "loading" }).some(item => item.kind === "diagnostic"), false);
+});
+
+test("admitted private Run retains its sanitized missing-action notice beside canonical narration", () => {
+  const { input } = fixture();
+  input.messages[1].facts = [{ id: "legacy-incomplete", kind: "diagnostic", revision: 1,
+    threadSequence: 0, partIndex: 0, status: "blocked", sourceRefs: [],
+    summary: "Command batch lineage is incomplete." }];
+  const output = projectTeammatePrivateTimelineItems({ ...input, canonicalState: "loaded" });
+  assert.equal(output.filter(item => item.kind === "diagnostic").length, 1);
+  assert.ok(output.some(item => item.kind === "agentMessage"));
+  const notice = output.find(item => item.kind === "diagnostic");
+  assert.equal(notice.runId, undefined);
+  assert.deepEqual(notice.sourceRefs, []);
+  input.canonical.items.push({ ...notice, id: "canonical-notice", runId: "run-private" });
+  assert.equal(projectTeammatePrivateTimelineItems({ ...input, canonicalState: "loaded" }).filter(item => item.kind === "diagnostic").length, 1);
+});
+
+test("loaded legacy link without admitted Run evidence remains visibly blocked without fetching foreign facts", () => {
+  const { input } = fixture();
+  input.runs = [];
+  input.messages[1].facts = [];
+  const output = projectTeammatePrivateTimelineItems({ ...input, canonicalState: "loaded" });
+  const diagnostics = output.filter(item => item.kind === "diagnostic");
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0].summary, "Execution evidence is missing required lineage.");
+  assert.equal(diagnostics[0].description, diagnostics[0].summary);
+  assert.equal(diagnostics[0].status, "blocked");
+  assert.equal(diagnostics[0].runId, undefined);
+  assert.deepEqual(diagnostics[0].sourceRefs, []);
+  assert.equal(output.some(item => item.kind === "commandExecution"), false);
+});
+
 test("private owner collaboration is blocked without external targets while ordinary tools survive", () => {
   const { input } = fixture();
   const anchor = { id: "private-user", workspaceId: "workspace-private", threadId: "canonical-private", turnId: "turn-private", sequence: 1, revision: 1, kind: "user_message", status: "committed", actorType: "local_user", payload: { body: "Read then test." } };

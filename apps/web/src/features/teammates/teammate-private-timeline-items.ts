@@ -4,6 +4,7 @@ import {
   interleaveConversationUserInputRows,
   projectConversationRunNarration,
   type CanonicalTranscriptProjection,
+  type ConversationTimelineDiagnosticItem,
   type ConversationTimelineItem,
   type ConversationTimelineMessageItem,
   type ConversationTimelineUserInputItem,
@@ -131,9 +132,13 @@ export function projectTeammatePrivateTimelineItems(input: TeammatePrivateTimeli
   const messages = input.messages.flatMap((entry) => {
     const message = ownedMessages.get(entry.message.id);
     if (!message || !privateMessageIsOwned(entry.message, input)) return [];
-    const unverifiedDiagnostics = !message.linkedRunId && entry.message.linkedRunId
-      ? sanitizePrivateUnverifiedDiagnostics(entry.facts, message.id)
-      : [];
+    const unverifiedDiagnostics = sanitizePrivateUnverifiedDiagnostics(entry.facts, message.id);
+    if (!message.linkedRunId && entry.message.linkedRunId && input.canonicalState === "loaded" && !unverifiedDiagnostics.length) {
+      unverifiedDiagnostics.push({ id: `diagnostic:private-unverified:${message.id}:missing`, kind: "diagnostic",
+        revision: message.revision ?? 1, threadSequence: 0, partIndex: 0, status: "blocked", sourceRefs: [],
+        title: "Activity unavailable", summary: "Execution evidence is missing required lineage.",
+        description: "Execution evidence is missing required lineage." });
+    }
     return [{ ...entry, message, facts: message.linkedRunId ? entry.facts : [], unverifiedDiagnostics }];
   });
   const turnIdByRunId = new Map(input.runLinks?.map((link) => [link.runId, link.turnId]) ?? []);
@@ -265,15 +270,19 @@ export function projectTeammatePrivateTimelineItems(input: TeammatePrivateTimeli
     } else if (!existing) {
       items.push({ ...messageItem, ...(message.linkedRunId ? { runId: message.linkedRunId } : {}) });
     }
-    if (!input.canonical && input.canonicalState !== "loading" && input.canonicalState !== undefined &&
+    // A loaded canonical snapshot may omit incomplete legacy action evidence.
+    // Preserve only sanitized notices, without granting a legacy link authority.
+    if (input.canonicalState === "loaded" && unverifiedDiagnostics.length > 0) {
+      items.push(...unverifiedDiagnostics.filter(diagnostic => !canonical.some(item =>
+        item.kind === "diagnostic" && Boolean(message.linkedRunId && item.runId === message.linkedRunId) &&
+        item.summary === diagnostic.summary,
+      )).map((diagnostic, index) => ({
+        ...diagnostic,
+        threadSequence,
+        partIndex: messageItem.partIndex + index + 1,
+      })));
+    } else if (!input.canonical && input.canonicalState !== "loading" && input.canonicalState !== undefined &&
       (facts.length > 0 || unverifiedDiagnostics.length > 0)) {
-      if (input.canonicalState === "loaded" && unverifiedDiagnostics.length > 0) {
-        items.push(...unverifiedDiagnostics.map((diagnostic, index) => ({
-          ...diagnostic,
-          threadSequence,
-          partIndex: messageItem.partIndex + index + 1,
-        })));
-      } else {
         items.push({
           id: `diagnostic:private-canonical:${message.id}`,
           kind: "diagnostic",
@@ -287,7 +296,6 @@ export function projectTeammatePrivateTimelineItems(input: TeammatePrivateTimeli
           description: input.canonicalState === "error" ? "Execution evidence could not be loaded." : "Execution evidence is missing required lineage.",
           summary: input.canonicalState === "error" ? "Execution evidence could not be loaded." : "Execution evidence is missing required lineage.",
         });
-      }
     }
   });
   if (scopeBlocked) items.push({
@@ -319,7 +327,7 @@ const safePrivateUnverifiedDiagnosticSummaries = new Set([
 function sanitizePrivateUnverifiedDiagnostics(
   facts: readonly ConversationTimelineItem[],
   messageId: string,
-): readonly ConversationTimelineItem[] {
+): ConversationTimelineDiagnosticItem[] {
   const summaries = new Set<string>();
   return facts.flatMap((item, index) => {
     if (item.kind !== "diagnostic" || item.status !== "blocked") return [];

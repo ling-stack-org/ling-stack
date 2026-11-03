@@ -205,6 +205,7 @@ function ApprovalCommandRulesSettings({ cwd }: { readonly cwd: string }): React.
                 <span className="settings-authorization-copy">
                   <strong><code>{rule.display}</code></strong>
                   <small>{t("Allows commands starting with {command}", { command: rule.display })}</small>
+                  {rule.cwd ? <small title={rule.cwd}>{t("Working directory")}: <code>{rule.cwd}</code></small> : null}
                 </span>
               )}
               actions={(

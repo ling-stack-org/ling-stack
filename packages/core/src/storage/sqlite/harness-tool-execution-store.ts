@@ -30,6 +30,7 @@ import { rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
 import { harnessToolExecutionSelectSql, mapHarnessToolExecution } from "./harness-tool-execution-mappers.js";
 import type { SqliteRuntimeWorkUnitStore } from "./runtime-work-unit-store.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { harnessArtifactOwnerHolder, syncHarnessArtifactOwnerPins } from "./harness-artifact-recovery-pins.js";
 
 interface HarnessToolExecutionStorePorts {
   readonly getRun: (id: string) => RunSession | undefined;
@@ -124,6 +125,7 @@ export class SqliteHarnessToolExecutionStore {
         updatedAt: input.now,
       };
       this.insert(execution);
+      this.syncRecoveryPins(execution, input.now);
       return { execution: this.getHarnessToolExecution(execution.id)!, replayed: false };
     });
   }
@@ -161,6 +163,7 @@ export class SqliteHarnessToolExecutionStore {
         input.approvalId,
       );
       if (Number(updated.changes) !== 1) return { ok: false, code: "stale_revision" };
+      this.syncRecoveryPins(this.getHarnessToolExecution(input.executionId)!, input.now);
       return { ok: true, value: this.getHarnessToolExecution(input.executionId)!, replayed: false };
     });
   }
@@ -191,6 +194,7 @@ export class SqliteHarnessToolExecutionStore {
       `).run(input.claimOwner, input.claimToken, input.claimExpiresAt, input.now,
         input.executionId, input.expectedRevision, input.now);
       if (Number(updated.changes) !== 1) return this.classifyClaimFailure(input);
+      this.syncRecoveryPins(this.getHarnessToolExecution(input.executionId)!, input.now);
       return { ok: true, value: this.getHarnessToolExecution(input.executionId)!, replayed: false };
     });
   }
@@ -217,6 +221,7 @@ export class SqliteHarnessToolExecutionStore {
       `).run(input.now, input.now, input.executionId, input.expectedRevision,
         input.claimOwner, input.claimToken, input.now);
       if (Number(updated.changes) !== 1) return { ok: false, code: "stale_revision" };
+      this.syncRecoveryPins(this.getHarnessToolExecution(input.executionId)!, input.now);
       return { ok: true, value: this.getHarnessToolExecution(input.executionId)!, replayed: false };
     });
   }
@@ -264,6 +269,7 @@ export class SqliteHarnessToolExecutionStore {
       if (Number(terminal.changes) !== 1) {
         throw new Error("Harness tool evidence terminal commit lost its transaction-local CAS.");
       }
+      this.syncRecoveryPins(this.getHarnessToolExecution(input.executionId)!, input.now);
       return { ok: true, value: this.getHarnessToolExecution(input.executionId)!, replayed: false };
     });
   }
@@ -291,6 +297,7 @@ export class SqliteHarnessToolExecutionStore {
         input.resultSummary ? boundedJson(input.resultSummary, "tool failure summary") : null,
         input.now, input.now, input.executionId, input.expectedRevision);
       if (Number(updated.changes) !== 1) return { ok: false, code: "stale_revision" };
+      this.syncRecoveryPins(this.getHarnessToolExecution(input.executionId)!, input.now);
       return { ok: true, value: this.getHarnessToolExecution(input.executionId)!, replayed: false };
     });
   }
@@ -387,6 +394,7 @@ export class SqliteHarnessToolExecutionStore {
         VALUES (?, ?, ?)
       `);
       artifacts.forEach((artifactId, ordinal) => insertArtifact.run(current.id, artifactId, ordinal));
+      this.syncRecoveryPins(this.getHarnessToolExecution(current.id)!, now);
       return this.getHarnessToolExecution(current.id)!;
     });
   }
@@ -434,6 +442,7 @@ export class SqliteHarnessToolExecutionStore {
       || stringifyJson(existing.resultSummary) !== stringifyJson(input.resultSummary)) {
       throw new HarnessToolExecutionStoreError("tool.idempotency_conflict");
     }
+    this.syncRecoveryPins(existing, input.now);
     return { execution: existing, replayed: true };
   }
 
@@ -466,6 +475,23 @@ export class SqliteHarnessToolExecutionStore {
     if (Number(updated.changes) !== 1) {
       throw new HarnessToolExecutionStoreError("tool.lineage_mismatch");
     }
+    this.syncRecoveryPins(this.getHarnessToolExecution(prior.id)!, input.now);
+  }
+
+  private syncRecoveryPins(execution: HarnessToolExecutionV1, now: string): void {
+    // unknown_outcome has an executionFinishedAt but is not a known safe settlement.
+    // External-file artifacts never had a SQLite body. They remain FK-protected
+    // metadata, not a body-GC admission failure. A GC receipt still marks a pruned
+    // sealed body and must fail closed rather than masquerading as external data.
+    const bodyEvidence = execution.evidenceArtifactIds.filter(id => {
+      const row = this.context.database.prepare(`SELECT sealed_payload_json IS NOT NULL AS has_body,
+        EXISTS(SELECT 1 FROM harness_artifact_gc_receipts WHERE artifact_id=artifacts.id) AS was_pruned
+        FROM artifacts WHERE id=?`).get(id);
+      return row?.has_body === 1 || row?.was_pruned === 1;
+    });
+    syncHarnessArtifactOwnerPins(this.context.database, { holder: harnessArtifactOwnerHolder("tool_execution", execution.id),
+      artifactIds: [execution.policySnapshotArtifactId, ...bodyEvidence],
+      keep: ["proposed", "approval_pending", "approved", "claimed", "executing", "committing_evidence", "unknown_outcome"].includes(execution.state), now });
   }
 
   private requireCurrentAttempt(runId: string, fence: RuntimeAttemptFenceV1, allowCleanup: boolean): WorkUnitAttempt {

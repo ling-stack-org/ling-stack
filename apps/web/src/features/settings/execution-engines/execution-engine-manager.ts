@@ -26,7 +26,7 @@ export interface EngineManagementState {
   readonly discovery?: EngineDiscoveryReport;
   readonly installs: Readonly<Partial<Record<ExternalExecutionEngineId, ManagedInstallStatus>>>
   readonly editor?: EngineProfileEditor;
-  readonly busy: Readonly<Partial<Record<ExternalExecutionEngineId, "save" | "reload" | "probe" | "disconnect">>>;
+  readonly busy: Readonly<Partial<Record<ExternalExecutionEngineId, "save" | "reload" | "probe" | "disconnect" | "install">>>;
   readonly probes: Readonly<Partial<Record<ExternalExecutionEngineId, ExecutionEngineConnectionProbe>>>;
   readonly errors: Readonly<Partial<Record<ExternalExecutionEngineId, string>>>;
   readonly authorizing?: boolean;
@@ -39,6 +39,8 @@ export class ExecutionEngineManager {
   readonly #listeners = new Set<() => void>();
   #state: EngineManagementState = { phase: "loading", profiles: [], installs: {}, busy: {}, probes: {}, errors: {} };
   #loadRevision = 0;
+  #discoveryRevision = 0;
+  #editorRevision = 0;
   #scope = 0;
   #revalidation?: Promise<void>;
   readonly #probes = new Map<ExternalExecutionEngineId, AbortController>();
@@ -87,45 +89,67 @@ export class ExecutionEngineManager {
 
   /** Read-only discovery of existing engine installations on the host. */
   async discover(): Promise<void> {
-    if (this.#state.phase !== "ready" || this.transport.kind === "unavailable") return;
+    if (this.#state.phase !== "ready" || this.#state.authorizing || this.transport.kind === "unavailable") return;
+    const scope = this.#scope;
+    const revision = ++this.#discoveryRevision;
     try {
       const discovery = await this.transport.api.discover();
+      if (scope !== this.#scope || revision !== this.#discoveryRevision) return;
       this.publish({ discovery });
-    } catch {
+    } catch (error) {
+      if (scope !== this.#scope || revision !== this.#discoveryRevision) return;
+      const code = engineManagementErrorCode(error);
+      if (needsAuthority(code)) this.loseAuthority(code);
       // Discovery is best-effort; the manual path stays available without it.
     }
   }
 
   /** Managed install of the pinned engine package, then open the prefilled profile draft. */
   async installEngine(engineId: ExternalExecutionEngineId): Promise<void> {
-    if (this.#state.phase !== "ready" || this.transport.kind === "unavailable" || this.#state.busy[engineId]) return;
+    if (!this.canAct(engineId) || this.transport.kind === "unavailable") return;
+    const scope = this.#scope;
+    const editorRevision = this.#editorRevision;
+    // Reserve before the first await; a second click must not send another POST.
+    this.setBusy(engineId, "install");
     const publish = (install: ManagedInstallStatus): void => {
+      if (install.engineId !== engineId) throw new Error("engine_operation_failed");
       this.publish({ installs: { ...this.#state.installs, [engineId]: install } });
     };
     try {
-      publish((await this.transport.api.install(engineId)).install);
+      const result = await this.transport.api.install(engineId);
+      if (scope !== this.#scope) return;
+      publish(result.install);
       let current = this.#state.installs[engineId];
       while (current && (current.phase === "downloading" || current.phase === "verifying")) {
         await new Promise((resolve) => setTimeout(resolve, 1500));
-        publish((await this.transport.api.installStatus(engineId)).install);
+        if (scope !== this.#scope) return;
+        const result = await this.transport.api.installStatus(engineId);
+        if (scope !== this.#scope) return;
+        publish(result.install);
         current = this.#state.installs[engineId];
       }
-      if (current?.phase === "installed" && current.executablePath) {
-        this.edit(engineId);
-        this.updateDraft({ executablePath: current.executablePath });
+      if (current?.phase === "installed" && current.executablePath && !this.#state.editor
+        && editorRevision === this.#editorRevision) {
+        this.setBusy(engineId, undefined);
+        // Installation is not a configuration write or permission to replace a draft.
+        this.edit(engineId, current.executablePath);
       }
     } catch (error) {
+      if (scope !== this.#scope) return;
       const code = engineManagementErrorCode(error);
-      this.publish({ installs: { ...this.#state.installs, [engineId]: { engineId, phase: "failed", error: code, updatedAt: new Date().toISOString() } }, errors: { ...this.#state.errors, [engineId]: code } });
+      if (needsAuthority(code)) this.loseAuthority(code);
+      else this.publish({ installs: { ...this.#state.installs, [engineId]: { engineId, phase: "failed", error: code, updatedAt: new Date().toISOString() } }, errors: { ...this.#state.errors, [engineId]: code } });
+    } finally {
+      if (scope === this.#scope && this.#state.busy[engineId] === "install") this.setBusy(engineId, undefined);
     }
   }
 
-  edit(engineId: ExternalExecutionEngineId): void {
+  edit(engineId: ExternalExecutionEngineId, executablePath = ""): void {
     if (this.#state.phase !== "ready" || this.#state.editor || this.#state.busy[engineId]) return;
     const profile = this.#state.profiles.find((item) => item.configuration.engineId === engineId);
     this.publish({ editor: {
       expectedRevision: profile?.revision ?? 0,
-      draft: structuredClone(profile?.configuration ?? { engineId, executablePath: "", authProfileId: "ling" }),
+      draft: structuredClone(profile?.configuration ?? { engineId, executablePath, authProfileId: "ling" }),
     } });
   }
 
@@ -197,14 +221,17 @@ export class ExecutionEngineManager {
     const scope = ++this.#scope;
     this.#loadRevision++;
     this.abortProbes();
-    this.publish({ authorizing: true, error: undefined, busy: {} });
+    this.publish({ authorizing: true, error: undefined, busy: {}, discovery: undefined, installs: {} });
     try {
       await this.transport.enroll(code);
       if (scope === this.#scope) await this.load();
     } catch (error) {
       if (scope === this.#scope) this.publish({ phase: "authorization_required", error: engineManagementErrorCode(error) });
     } finally {
-      if (scope === this.#scope) this.publish({ authorizing: false });
+      if (scope === this.#scope) {
+        this.publish({ authorizing: false });
+        void this.discover();
+      }
     }
   }
 
@@ -213,7 +240,8 @@ export class ExecutionEngineManager {
     const scope = ++this.#scope;
     this.#loadRevision++;
     this.abortProbes();
-    this.publish({ phase: "authorization_required", profiles: [], editor: undefined, busy: {}, probes: {}, errors: {}, authorizing: true, error: undefined });
+    this.publish({ phase: "authorization_required", profiles: [], editor: undefined, busy: {}, probes: {}, errors: {},
+      discovery: undefined, installs: {}, authorizing: true, error: undefined });
     try {
       await this.transport.revoke();
     } catch (error) {
@@ -228,7 +256,7 @@ export class ExecutionEngineManager {
     this.#scope++;
     this.#loadRevision++;
     this.abortProbes();
-    this.#state = { ...this.#state, editor: undefined, busy: {}, authorizing: false };
+    this.#state = { ...this.#state, editor: undefined, busy: {}, discovery: undefined, installs: {}, authorizing: false };
   }
 
   private canAct(id: ExternalExecutionEngineId): boolean {
@@ -295,7 +323,7 @@ export class ExecutionEngineManager {
     this.#loadRevision++;
     this.abortProbes();
     this.publish({ phase: "authorization_required", profiles: [], editor: undefined,
-      probes: {}, errors: {}, busy: {}, authorizing: false, error: code });
+      probes: {}, errors: {}, busy: {}, discovery: undefined, installs: {}, authorizing: false, error: code });
   }
 
   private abortProbes(): void {
@@ -314,6 +342,7 @@ export class ExecutionEngineManager {
   }
 
   private publish(patch: Partial<EngineManagementState>): void {
+    if ("editor" in patch && patch.editor !== this.#state.editor) this.#editorRevision++;
     this.#state = { ...this.#state, ...patch };
     for (const listener of this.#listeners) listener();
   }

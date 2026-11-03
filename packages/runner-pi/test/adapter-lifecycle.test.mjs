@@ -13,6 +13,11 @@ import { formatTaskPrompt } from "../dist/utils.js";
 
 const requiredInput = { kind: "user_input_required", requestId: "input_fixture", requestVersion: 1 };
 const acceptedTaskAnchor = options => ({ role: "user", content: [{ type: "text", text: formatTaskPrompt(options.task) }], timestamp: 0 });
+const delegationMessage = (id, content) => ({ role: "user", content, timestamp: 1,
+  delegationInstruction: { messageId: id, digest: "a".repeat(64) } });
+const delegationDirective = (insertAfterMessageCount, messages) => ({
+  kind: "delegation_instructions", schemaVersion: 1, insertAfterMessageCount, messages,
+});
 
 test("Host compaction opt-in enables SDK compaction only for the admitted Run", { timeout: 10000 }, async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-pi-host-compaction-"));
@@ -187,6 +192,7 @@ async function fixture(t, changes = {}, toolNames = [], toolInputs = {}) {
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const controller = new AbortController();
   const events = [];
+  const contexts = [];
   let requestCount = 0;
   // Keep the actual adapter, SDK session, provider parser and Ling extensions.
   // Replace only this instance's provider transport; never read credentials or
@@ -196,13 +202,16 @@ async function fixture(t, changes = {}, toolNames = [], toolInputs = {}) {
       super.registerCustomProviderIfNeeded(runtime, provider);
       runtime.registerProvider(provider.provider, {
         api: "openai-completions",
-        streamSimple: (model, context, options) => stream(model, context, {
+        streamSimple: (model, context, options) => {
+          contexts.push(structuredClone(context));
+          return stream(model, context, {
           ...options,
           fetch: async () => {
             requestCount += 1;
             return sseResponse(requestCount === 1 ? toolNames : [], toolInputs);
           },
-        }),
+          });
+        },
       });
     }
   }
@@ -221,7 +230,7 @@ async function fixture(t, changes = {}, toolNames = [], toolInputs = {}) {
     })),
     ...changes,
   };
-  return { runner, options, controller, events, requestCount: () => requestCount };
+  return { runner, options, controller, events, contexts, requestCount: () => requestCount };
 }
 
 test("adapter completes a real SDK session with an in-memory provider response", { timeout: 10000 }, async (t) => {
@@ -231,6 +240,50 @@ test("adapter completes a real SDK session with an in-memory provider response",
   assert.equal(f.events.filter((event) => event.type === "run_end").length, 1);
   assert.equal(f.events.filter((event) => event.type === "run_error").length, 0);
   assert.ok(result.messages.some((message) => message.role === "assistant"));
+});
+
+test("delegation instructions reach each real provider boundary exactly once without replaying a settled tool", { timeout: 10000 }, async t => {
+  let providerBoundary = 0;
+  let toolEffects = 0;
+  const first = delegationMessage("instruction-first", "Inspect the fixture before acting.");
+  const second = delegationMessage("instruction-after-tool", "Use the settled read exactly once.");
+  const f = await fixture(t, {
+    runId: "delegation-instruction-run", runnerAttemptId: "delegation-instruction-attempt",
+    hostCompactionEnabled: true,
+    onMcpToolCall: async () => { toolEffects += 1; return { content: [{ type: "text", text: "settled evidence" }] }; },
+    onTaskContinuationBoundary: async (boundary, modelView) => {
+      if (boundary !== "before_provider_request") return undefined;
+      assert.ok(Array.isArray(modelView));
+      providerBoundary += 1;
+      if (providerBoundary === 1) return delegationDirective(modelView.length, [first]);
+      if (providerBoundary === 2) return delegationDirective(modelView.length, [second]);
+      return undefined;
+    },
+  }, ["fixture_read"]);
+  const preparedInput = await f.runner.prepareTaskInput(f.options);
+  await f.runner.runTask({ ...f.options, preparedInput });
+  assert.equal(f.requestCount(), 2);
+  assert.equal(toolEffects, 1, "a later instruction must not replay the settled tool");
+  assert.equal(f.contexts.length, 2);
+  const identities = context => context.messages
+    .map(entry => entry?.delegationInstruction?.messageId).filter(Boolean);
+  assert.deepEqual(identities(f.contexts[0]), [first.delegationInstruction.messageId]);
+  assert.deepEqual(identities(f.contexts[1]), [first.delegationInstruction.messageId, second.delegationInstruction.messageId]);
+  assert.equal(f.events.filter(event => event.type === "tool_end" && event.toolName === "fixture_read").length, 1);
+});
+
+test("an invalid delegation transcript anchor prevents every real provider request", { timeout: 10000 }, async t => {
+  const f = await fixture(t, {
+    runId: "delegation-anchor-run", runnerAttemptId: "delegation-anchor-attempt",
+    hostCompactionEnabled: true,
+    onTaskContinuationBoundary: async (boundary, modelView) => boundary === "before_provider_request"
+      ? delegationDirective((modelView?.length ?? 0) + 1, [delegationMessage("missing-anchor", "Do not dispatch.")])
+      : undefined,
+  });
+  const preparedInput = await f.runner.prepareTaskInput(f.options);
+  await assert.rejects(f.runner.runTask({ ...f.options, preparedInput }), /anchor is unavailable/u);
+  assert.equal(f.requestCount(), 0);
+  assert.equal(f.events.some(event => event.type === "run_end"), false);
 });
 
 test("settled built-in reads require the original ended SDK session, not MCP labels or copied observations", { timeout: 10000 }, async t => {
@@ -334,7 +387,7 @@ test("completed compaction recovery installs the sealed assistant view without a
       modelView: [
         { role: "compactionSummary", summary: "Already complete." },
         acceptedTaskAnchor(f.options),
-        { role: "assistant", content: [{ type: "text", text: "Already complete." }] },
+        { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Already complete." }] },
       ],
     },
   });

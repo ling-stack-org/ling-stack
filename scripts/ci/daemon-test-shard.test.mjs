@@ -84,6 +84,24 @@ test("daemon workers overlap while retaining separate homes and workspaces", asy
   assert.deepEqual(await readdir(fixture.options.temporaryDirectory), []);
 });
 
+test("file-specific watchdogs can extend only a known slow fixture", async (t) => {
+  const fixture = await runnerFixture(t, [`
+    import { setTimeout as delay } from 'node:timers/promises';
+    import test from 'node:test';
+    test('slow fixture', async () => { await delay(1200); });
+  `], ["recovery-discovery-fair-scan.test.mjs"]);
+  const report = join(fixture.root, "report.json");
+  assert.equal(await runDaemonTestFiles(fixture.files, {
+    ...fixture.options,
+    fileTimeoutMs: 1000,
+    fileTimeouts: { "test/recovery-discovery-fair-scan.test.mjs": 2500 },
+    reportPath: report,
+  }), 0);
+  const result = JSON.parse(await readFile(report, "utf8")).results[0];
+  assert.equal(result.fileTimeoutMs, 2500);
+  assert.equal(result.status, "passed");
+});
+
 test("daemon workers report failures and finish every assigned file before cleanup", async (t) => {
   const fixture = await runnerFixture(t, [0, 1, 2].map(index => `
     import assert from 'node:assert/strict';
@@ -140,6 +158,28 @@ test("native lifecycle fixtures finish exclusively before parallel workers start
   ], ['acp-kimi-host-read.test.mjs', 'acp-kimi-host-terminal.test.mjs', 'ordinary.test.mjs']);
   assert.equal(await runDaemonTestFiles([...fixture.files].reverse(), { ...fixture.options, concurrency: 2 }), 0);
   assert.equal(await readFile(join(fixture.root, "parallel-started"), "utf8"), "done");
+  assert.deepEqual(await readdir(fixture.options.temporaryDirectory), []);
+});
+
+test("delegation lifecycle fixture finishes exclusively before ordinary files", async (t) => {
+  const fixture = await runnerFixture(t, [
+    `import assert from 'node:assert/strict';
+     import { existsSync, writeFileSync } from 'node:fs';
+     import test from 'node:test';
+     test('delegation lifecycle', () => {
+       assert.equal(existsSync('ordinary-started'), false);
+       writeFileSync('delegation-finished', 'done');
+     });`,
+    `import assert from 'node:assert/strict';
+     import { existsSync, writeFileSync } from 'node:fs';
+     import test from 'node:test';
+     test('ordinary file', () => {
+       writeFileSync('ordinary-started', 'yes');
+       assert.ok(existsSync('delegation-finished'));
+     });`,
+  ], ['delegation-production-tool-surface.test.mjs', 'aaa-ordinary.test.mjs']);
+  assert.equal(await runDaemonTestFiles([...fixture.files].reverse(), { ...fixture.options, concurrency: 1 }), 0);
+  assert.equal(await readFile(join(fixture.root, 'delegation-finished'), 'utf8'), 'done');
   assert.deepEqual(await readdir(fixture.options.temporaryDirectory), []);
 });
 

@@ -29,3 +29,32 @@ The source binding is now
 The catalogs still state `releaseEligible: false`. This identity-only review
 does not grant runtime authority, redistribution approval, complete dependency
 closure, native Windows acceptance, or installed-client acceptance.
+
+## Accurate source-recipe consumer binding, 2026-10-26
+
+The three catalogs now name the actually reproduced source manifest
+`sha256:46d0b73ac3efa12039ea2332f03782b9d940cdd47c3798bf99cd75406166f866`.
+All other JSON fields deep-equal the preceding catalogs: no path, source edge,
+expression, target, classification, prerequisite, runtime control or graph pin
+changes. Their detached checksum constants bind the exact checked-in bytes.
+The census keeps its preceding compact layout; its checksum is therefore
+`sha256:fab35ce3d78a492f8c89b43be53ece28316abcd1530d9ba310e2e83fa37420f3`,
+not the pretty-printed proposal's checksum. Their complete JSON values agree.
+Dependency and command catalog bytes exactly match their reviewed proposals.
+
+The real v2 preparation used a newly and repeatedly compiled Go parser
+`sha256:f9be71e1b29e7cba1fcb871a07ee489bd3e3098b5faceaf463ee0ac0c9495cdc`
+with the unchanged pinned module and fixed Go 1.26.3. Actual Bash syntax and AST
+checks processed 136 scripts/14,990 calls, 128 source sites, 26 dynamic sites,
+and 270 command expressions in 99 groups. All four graph pins listed above
+remain unchanged; the original production verifiers checked all reviewed
+mappings plus the actual 20/50 resource counterparts. These are parse/static
+dependency checks, not execution of the commands or runtime-control approval.
+
+The same `catalog-binding-review-run-v2` packet and exit-0 owner settlement as
+the macOS SDK review bind these receipts. A new checkout regression first
+detected all four stale source consumers (3 passed/4 failed), then caught the
+census pretty-print/actual-byte mismatch (24 passed/1 failed). After exact-byte
+binding, the final focused combination passed 25/25, no skip/cancellation,
+223.218542 ms. The failed receipts remain preserved. This does not refresh the
+unreviewed build-only/Windows catalogs or certify a new executable or client.

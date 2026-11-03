@@ -32,7 +32,8 @@ export async function buildGstackSourceBundle({ sourcePath, outputPath, bunComma
   if (await lstat(output).then(() => true, () => false)) throw new Error("gstack_output_already_exists");
   const lease = await managedResourceWrite(output, { kind: "source", additionalBytes: (await resourceTreeBytes(source)) * 3 + 256 * 1024 ** 2 });
   await mkdir(dirname(output), { recursive: true });
-  const staging = await mkdtemp(join(dirname(output), ".gstack-source-stage-"));
+  const staging = await mkdtemp(join(lease.scratchPath, "tmp", ".gstack-source-stage-"));
+  let completed = false;
   try {
     const env = sourceBuildEnvironment({ staging, cachePath: join(lease.root, "cache/bun") });
     for (const path of [env.HOME, env.TMPDIR, env.GSTACK_HOME, env.GSTACK_PLAN_DIR, env.BUN_INSTALL_CACHE_DIR]) {
@@ -107,8 +108,12 @@ export async function buildGstackSourceBundle({ sourcePath, outputPath, bunComma
     }
     await resourceCheckpoint(lease.root);
     await rename(bundleRoot, output);
+    completed = true;
     return { manifestChecksum: verified.manifestChecksum, skillCount: ids.length, fileCount: files.length, deliveryStage: "source", upstreamRevision: lock.revision };
-  } finally { await rm(staging, { recursive: true, force: true }); }
+  } finally {
+    // On failure, only the outer managed owner can establish child drain.
+    if (completed) await rm(staging, { recursive: true, force: true });
+  }
 }
 
 export function sourceBuildEnvironment({ staging, cachePath, inherited = process.env }) {

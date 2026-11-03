@@ -59,11 +59,14 @@ test("workflow agents share one projection while private role memory stays owner
     assert.match(designer.runRequest.task.prompt, /Designer private continuity-agent-memory evidence/u);
     assert.doesNotMatch(designer.runRequest.task.prompt, /Engineer private continuity-agent-memory evidence/u);
     assert.equal(engineer.runRequest.skipMemoryRecall, true);
-    assert.deepEqual(engineer.runRequest.preselectedMemoryUse, {
-      memoryIds: [fixture.engineerMemory.id],
-      recallQuery: `${fixture.workflow.objective}\n${fixture.engineerStep.title}\n${fixture.engineerStep.prompt}`,
-      policyVersion: "ling-memory-v1-lexical-v3+memory_use_isolation_v2",
-    });
+    assert.deepEqual(engineer.runRequest.preselectedMemoryUse.memoryIds, [fixture.engineerMemory.id]);
+    assert.deepEqual(engineer.runRequest.preselectedMemoryUse.recallQuery,
+      `${fixture.workflow.objective}\n${fixture.engineerStep.title}\n${fixture.engineerStep.prompt}`);
+    assert.equal(engineer.runRequest.preselectedMemoryUse.policyVersion,
+      "ling-memory-v1-lexical-v3+memory_use_isolation_v2");
+    assert.deepEqual(engineer.runRequest.preselectedMemoryUse.sourceRevisions.map(({ memoryId }) => memoryId), [fixture.engineerMemory.id]);
+    assert.match(engineer.runRequest.preselectedMemoryUse.sourceRevisions[0].semanticHash, /^sha256:[a-f0-9]{64}$/u);
+    assert.match(engineer.runRequest.preselectedMemoryUse.renderedPrompt, /Engineer private continuity-agent-memory evidence/u);
     assert.equal(engineer.runRequest.contextProjection.projectionVersion, engineer.runRequest.contextPack.agentContext.contextProjection.projectionVersion);
 
     const forgedProjection = {

@@ -65,21 +65,21 @@ test("daemon shutdown retires a workflow timer after its initial real 202 tick",
 });
 
 for (const collectorResult of ["success", "failure"]) {
-  test(`daemon shutdown waits for actual workflow collector and ${collectorResult} tail writes`, { timeout: 8000 }, async t => {
+  test(`daemon shutdown preserves resumable workflow when pending ${collectorResult} collector is locally aborted`, { timeout: 8000 }, async t => {
     const remote = await remoteFixture({ holdCollector: true, collectorResult });
     const f = await daemonFixture(t, remote);
     assert.equal((await f.run()).status, 202);
     await remote.waitFor(() => remote.collectorEntered(), 3000);
-    let shutdownSettled = false;
-    const stopping = f.stop().then(() => { shutdownSettled = true; });
-    await delay(20);
-    assert.equal(shutdownSettled, false, "initial 202 and timer callback return are not collector completion");
-    assert.equal(f.closed(), false, "the actual collector and its success/failure Store tail must finish before close");
-    remote.releaseCollector();
-    await stopping;
+    const handle = f.store.getMediaJobExecutionHandle(f.job.id);
+    const child = f.store.getWorkUnit(handle.workUnitId);
+    const attempt = f.store.getWorkUnitAttempt(handle.attemptId);
+    await f.stop();
     assert.equal(f.closed(), true);
     assert.equal(f.afterCloseReads(), 0);
-    assert.equal(f.persistedTerminalStatus(), collectorResult === "success" ? "succeeded" : "failed");
+    assert.equal(f.persistedTerminalStatus(), "running", "local abort is neither genuine collector success nor remote failure");
+    assert.deepEqual(f.persistedExecutionSnapshot(), { handle, child, attempt },
+      "the original operation and child remain durable for restart recovery");
+    assert.equal(remote.submissions.length, 1);
   });
 }
 
@@ -161,7 +161,7 @@ async function daemonFixture(t, remote) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-media-producer-daemon-"));
   const store = createSqliteRunStore(cwd);
   const job = configureWorkflow(store, remote.url);
-  let closed = false, afterCloseReads = 0, terminalStatus, stopping;
+  let closed = false, afterCloseReads = 0, terminalStatus, executionSnapshot, stopping;
   const getMediaJob = store.getMediaJob.bind(store);
   const recoverStaleRuns = store.recoverStaleRuns.bind(store);
   const close = store.close.bind(store);
@@ -169,6 +169,10 @@ async function daemonFixture(t, remote) {
   store.recoverStaleRuns = (...args) => { if (closed) afterCloseReads++; return recoverStaleRuns(...args); };
   store.close = () => {
     terminalStatus = getMediaJob(job.id)?.status;
+    const handle = store.getMediaJobExecutionHandle(job.id);
+    executionSnapshot = handle ? { handle,
+      child: typeof handle.workUnitId === "string" ? store.getWorkUnit(handle.workUnitId) : undefined,
+      attempt: typeof handle.attemptId === "string" ? store.getWorkUnitAttempt(handle.attemptId) : undefined } : undefined;
     closed = true;
     return close();
   };
@@ -192,6 +196,7 @@ async function daemonFixture(t, remote) {
   });
   return { cwd, store, job, stop, closed: () => closed, afterCloseReads: () => afterCloseReads,
     persistedTerminalStatus: () => terminalStatus,
+    persistedExecutionSnapshot: () => executionSnapshot,
     run: () => fetch(`${url}/media-jobs/${job.id}/run?cwd=${encodeURIComponent(cwd)}`, { method: "POST" }) };
 }
 

@@ -57,6 +57,16 @@ export function publishTerminalReportPublication(input: {
       || expectedCompletion.gate.status !== workflow.metadata.completionGate?.status)) {
     throw new TerminalReportPublicationError("stale_completion_basis", `Workflow completion gate is stale or unverified: ${workflow.id}`);
   }
+  const expectedDelegationCompletion = expectedCompletion?.expectedReadSet.delegations
+    ?? input.store.getDelegationCompletionEvidence({ rootRunIds: [...new Set(steps.flatMap(step => step.runId ? [step.runId] : []))].sort() });
+  const capturedDelegationFingerprint = input.store.getTerminalReport(input.report.id)?.evidenceSnapshot.delegationCompletionFingerprint;
+  const hasDynamicEvidence = expectedDelegationCompletion.steps.length > 0 || expectedDelegationCompletion.issues.length > 0
+    || capturedDelegationFingerprint !== undefined;
+  // The sealed synthesis input pins the subtree. Reconstructing the same
+  // fingerprint supplies the full atomic read-set; a newer tree cannot replace it.
+  if (hasDynamicEvidence && capturedDelegationFingerprint !== expectedDelegationCompletion.fingerprint) {
+    throw new TerminalReportPublicationError("stale_completion_basis", `Workflow delegated evidence changed: ${workflow.id}`);
+  }
 
   const supersededResultItemId = input.store.listTerminalReports({
     sourceKind: "workflow",
@@ -69,12 +79,20 @@ export function publishTerminalReportPublication(input: {
     .find((itemId): itemId is string => Boolean(itemId));
 
   const resultItemId = terminalReportResultItemId(input.report.id);
+  // The first publication freezes its optional Run anchor. A later completion
+  // callback or startup sweep must not rebuild that identity from the current
+  // workflow Run (which may already belong to another participant or retry).
+  const publishedItem = input.store.getConversationItem(resultItemId);
+  const linkedRunRefs = publishedItem
+    ? publishedItem.domainRefs.filter((ref) => ref.type === "run")
+    : input.linkedRunId ? [{ type: "run" as const, id: input.linkedRunId }] : [];
   const result = input.store.commitTerminalReportPublication({
     reportId: input.report.id,
     expectedReportStatus: input.report.status,
     expectedEvidenceFingerprint: input.report.evidenceFingerprint,
     expectedWorkflowId: workflow.id,
     ...(expectedCompletion ? { expectedCompletion } : {}),
+    ...(hasDynamicEvidence ? { expectedDelegationCompletion } : {}),
     expectedSourceTurn: {
       id: sourceTurn.id,
       status: sourceTurn.status,
@@ -102,7 +120,7 @@ export function publishTerminalReportPublication(input: {
         { type: "workflow", id: workflow.id },
         { type: "conversation_item", id: sourceMessage.id },
         { type: "turn", id: sourceTurn.id },
-        ...(input.linkedRunId ? [{ type: "run" as const, id: input.linkedRunId }] : []),
+        ...linkedRunRefs,
       ],
       idempotencyKey: `terminal-report:${input.report.id}`,
       ...(supersededResultItemId ? { supersedesItemId: supersededResultItemId } : {}),

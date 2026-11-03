@@ -278,13 +278,13 @@
     padding-inline: var(--ling-space-2);
   }
 
-  [data-conversation-composer][data-surface="normal_conversation"] .conversation-permission-trigger {
+  [data-conversation-composer] .conversation-permission-trigger {
     min-width: 0;
     max-width: 34vw;
     padding-inline: var(--ling-space-2);
   }
 
-  [data-conversation-composer][data-surface="normal_conversation"] .conversation-permission-trigger .ling-ui-button-label {
+  [data-conversation-composer] .conversation-permission-trigger .ling-ui-button-label {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

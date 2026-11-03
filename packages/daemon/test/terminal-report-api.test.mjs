@@ -43,6 +43,7 @@ test("terminal report API exposes committed reports without developer synthesis 
     attemptCount: 0,
     now,
   });
+  assert.ok(publishTerminalReport({ store, report, now }));
   store.createTerminalReportDraft({ id: "terminal_report_hidden_draft", generation: 2, evidenceSnapshot: snapshot }, now);
   const historicalInvalidReport = persistHistoricalChannelReplyTerminalReport({
     store,
@@ -106,11 +107,12 @@ test("terminal report API exposes committed reports without developer synthesis 
   }
 });
 
-test("terminal report API returns only the latest effective generation by default", async () => {
+test("terminal report API returns only the latest published effective generation by default", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-api-history-"));
   const store = createSqliteRunStore(cwd);
   const fixture = createTerminalWorkflowFixture(store, cwd, "history");
   const firstNow = "2026-07-11T09:00:00.000Z";
+  store.updateChannelWorkflow(fixture.workflow.id, { status: "blocked" }, firstNow);
   const firstSnapshot = collectWorkflowTerminalReportEvidence(store, fixture.workflow.id, { generatedAt: firstNow });
   const firstDraft = store.createTerminalReportDraft({ id: "terminal_report_history_1", evidenceSnapshot: firstSnapshot }, firstNow);
   const firstValidating = store.updateTerminalReportDraft({
@@ -132,6 +134,15 @@ test("terminal report API returns only the latest effective generation by defaul
     now: firstNow,
   });
 
+  assert.ok(publishTerminalReport({ store, report: firstReport, now: firstNow }));
+  store.transitionLingTurnStatus({ turnId: fixture.workflow.metadata.sourceTurnId, expectedStatus: "blocked", event: "start",
+    actor: "system", reason: "API fixture retries blocked workflow", idempotencyKey: "terminal-report-api-history-retry",
+    now: "2026-07-11T09:00:10.000Z" });
+  store.transitionChannelWorkflowStatus({ workflowId: fixture.workflow.id, expectedStatus: "blocked", event: "start",
+    actor: "system", reason: "API fixture retries blocked workflow", now: "2026-07-11T09:00:11.000Z" });
+  store.transitionChannelWorkflowStatus({ workflowId: fixture.workflow.id, expectedStatus: "running", event: "all_steps_succeeded",
+    actor: "system", reason: "API fixture retry completed", now: "2026-07-11T09:00:12.000Z" });
+
   const secondSnapshot = collectWorkflowTerminalReportEvidence(store, fixture.workflow.id, { generatedAt: "2026-07-11T09:01:00.000Z" });
   const secondDraft = store.createTerminalReportDraft({ id: "terminal_report_history_2", generation: 2, evidenceSnapshot: secondSnapshot }, "2026-07-11T09:01:00.000Z");
   const secondValidating = store.updateTerminalReportDraft({
@@ -152,6 +163,7 @@ test("terminal report API returns only the latest effective generation by defaul
     attemptCount: 0,
     now: "2026-07-11T09:01:00.000Z",
   });
+  assert.ok(publishTerminalReport({ store, report: secondReport, now: "2026-07-11T09:01:00.000Z" }));
   store.close();
 
   const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd });

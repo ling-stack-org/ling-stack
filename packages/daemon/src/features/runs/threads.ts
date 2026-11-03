@@ -18,6 +18,7 @@ import type {
 import type { RunRequest } from "./schemas.js";
 import { publishNormalNarrationAfterRun } from "../conversations/normal-narration-publication.js";
 import { approvalEventReflectsRunState } from "./approval-event-state.js";
+import { ensureWorkflowStepInputTurn } from "./workflow-step-input-turn.js";
 import { isNativeApprovalEvent } from "./native-approval-events.js";
 
 export function ensureLingThreadForRun(store: RunStore, runRequest: RunRequest, now: string): LingThread {
@@ -100,6 +101,10 @@ export function ensureLingTurnForRun(store: RunStore, thread: LingThread, runReq
       throw new Error(`Ling turn cannot be reused: ${runRequest.turnId}`);
     }
     return turn;
+  }
+
+  if (thread.kind === "workflow_step" && runRequest.workflowStepId) {
+    return ensureWorkflowStepInputTurn(store, thread, runRequest, inferLingTurnKind(thread, runRequest), now);
   }
 
   const sourceTurn = runRequest.parentRunId ? store.getLingTurnForRun(runRequest.parentRunId) : undefined;
@@ -197,12 +202,14 @@ export function syncLingThreadForRunEvent(
   }
 }
 
-export function syncLingThreadForTerminalRun(store: RunStore, runId: string, now: string): LingThread | undefined {
+export function syncLingThreadForTerminalRun(
+  store: RunStore, runId: string, now: string, threadActivityAt = now,
+): LingThread | undefined {
   const run = store.getRun(runId);
   if (!run || !isTerminalRunStatus(run.status)) {
     return undefined;
   }
-  return updateLingThreadForTerminalRunStatus(store, run, run.status, now);
+  return updateLingThreadForTerminalRunStatus(store, run, run.status, now, threadActivityAt);
 }
 
 export function updateLingThreadForTerminalRunStatus(
@@ -210,6 +217,7 @@ export function updateLingThreadForTerminalRunStatus(
   run: RunSession,
   status: Extract<RunStatus, "succeeded" | "failed" | "cancelled">,
   now: string,
+  threadActivityAt = now,
 ): LingThread | undefined {
   if (!run.threadId) {
     return undefined;
@@ -225,7 +233,8 @@ export function updateLingThreadForTerminalRunStatus(
       activeRunId: thread.activeRunId === run.id ? null : thread.activeRunId,
       lastRunId: run.id,
     },
-    now,
+    // Recovery's historical activity clock must not roll back Goal/narration maintenance.
+    threadActivityAt,
   );
   syncLingThreadGoalForTerminalRun(store, run, now);
   publishNormalNarrationAfterRun(store, run.id, now);
