@@ -108,6 +108,47 @@ only when its description is complete and its claimed validation has actually ru
   states and theme switching. Include current screenshots; distinguish token
   integration, behavior verification and visual approval.
 
+## Testing Policy
+
+### TypeScript By Default
+
+- For JavaScript/TypeScript modules, write new tests and test helpers in TypeScript by
+  default, using `.test.ts` or the owning suite's `.spec.ts` convention. Use `.tsx`
+  when a test needs JSX. Native-language tests should use their own ecosystem's tools.
+- New or migrated TypeScript tests must be discovered by the owning test runner and
+  included in its type-checking configuration. Wire any separate test typecheck into
+  the package's validation commands and relevant CI gates. Renaming a file, transpiling
+  it, or stripping types at runtime does not establish that it was type-checked.
+- When a package currently runs only `.mjs` tests, add the minimal package-local
+  TypeScript execution and typecheck support with its first TypeScript test, preserving
+  existing coverage and test entrypoints. Keep the existing runner where practical;
+  a repository-wide framework replacement is not required.
+- JavaScript exceptions need a concrete runtime, host, or compatibility constraint,
+  explained in the pull request or a short adjacent comment. An existing `.mjs`-only
+  test glob alone is not a reason to keep adding JavaScript tests.
+
+### Incremental Migration
+
+- Existing `.mjs` tests remain valid. Prefer migrating touched tests as their owning
+  module is maintained, with execution and type checking verified together.
+- Keep migrations scoped to the module and behavior being changed. Do not perform
+  unrelated mass renames, lose test discovery, or reduce coverage during migration.
+
+### Behavior And Independent Contracts
+
+- Prefer tests that exercise observable behavior, invariants, and public boundaries.
+  A source keyword or call-name match alone does not prove runtime behavior or call
+  order. Prioritize improving these assertions when maintaining the owning module.
+- Keep source-inspection tests when they independently guard a declared security,
+  architecture, protocol, package, release, or generated-output contract. Make the
+  protected contract clear; static evidence does not replace required runtime or
+  platform acceptance.
+- Consolidate or remove tests only with evidence that they are redundant, obsolete,
+  or ineffective. Explain what each removed test protected, why its removal is safe,
+  and which retained coverage and focused validation support that conclusion.
+- Do not optimize test counts or language percentages by deleting tests. A preference
+  for TypeScript tests is not a reason to rewrite production modules in Rust.
+
 ## Validation
 
 See [CI maintenance](docs/maintenance/ci.md) for the current workflow, test
