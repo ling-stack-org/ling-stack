@@ -4,7 +4,7 @@ Status: canonical design patch for the next multi-agent implementation slices.
 
 Date: 2026-06-24
 Owner: Ling maintainers
-Last amended: 2026-11-02 (post-PR-614 safe-concurrency planning; not fresh runtime acceptance)
+Last amended: 2026-11-03 (local safe-concurrency implementation and frozen-input regression; release acceptance remains open)
 
 The active concurrency delivery order is owned by the
 [Ling Multi-Agent Safe Concurrency Implementation Plan](ling-multi-agent-safe-concurrency-implementation-plan.md).
@@ -39,7 +39,9 @@ It settles these design points:
   stores refs, not packet bodies.
 - Safe parallel workflow is allowed only for explicitly safe side-effect classes by
   default.
-- Parallel workspace writes require a future isolated worktree merge protocol.
+- The isolated-worktree protocol is implemented locally, but release acceptance remains
+  open. Ordinary workspace writes remain serial; explicit candidate-only selection is
+  Host-gated.
 - UI should extend `ConversationTurn -> OperationCell / ConversationWorkCell`, not add a
   second workflow page or a raw multi-agent transcript.
 - Conversation UI is adaptive and block-driven, not a fixed template. Requirement
@@ -519,8 +521,9 @@ implementation succeeded
 ```
 
 `qa` may join this group only when the run request is artifact-only. If QA needs to write
-fixtures, snapshots, generated files, or external state, it becomes `workspace_write` or
-`external_mutation` and must run serially or through future isolated worktrees.
+fixtures, snapshots, or generated files, it becomes `workspace_write` and must run
+serially unless an explicitly accepted isolated-worktree profile covers those effects.
+External state changes remain `external_mutation` and serial.
 
 ### What "Foundation Complete" Means
 
@@ -542,13 +545,21 @@ defaults now."
 
 Parallel workspace writes are not safe until Ling owns a merge protocol.
 
-This protocol is pending P2/P3 scope in the active
-[implementation plan](ling-multi-agent-safe-concurrency-implementation-plan.md). Its
+This protocol is implemented locally, with P2/P3 release acceptance still open in the
+active [implementation plan](ling-multi-agent-safe-concurrency-implementation-plan.md). Its
 [detailed design](ling-multi-agent-safe-concurrency-detailed-design.md) owns the fixed
 base, execution binding, integration journal, approval fingerprint and crash windows.
-Keep `workspace_write` serial by default until that protocol and its acceptance gates
-pass. `external_mutation` and `release` remain serial even after local isolated merge
+Public isolated selection remains off by default and, when explicitly enabled, accepts
+only macOS/Pi/enforced Broker with fixed concurrency two and candidate-only output.
+Keep ordinary `workspace_write` serial until its acceptance gates pass.
+`external_mutation` and `release` remain serial even after local isolated merge
 exists; local filesystem isolation does not isolate external effects.
+
+Complete scoped package regression and the four production-build live-daemon browser
+scenarios pass locally, with the existing platform/native/fixture skips retained.
+The separate dependency-security lane, real-model Provider, packaged/cross-platform
+and review/CI/merge gates remain open; local controlled-transport acceptance does not
+authorize ordinary parallel writes.
 
 ### Goal
 
@@ -602,8 +613,9 @@ interface IsolatedWorktreeMergePacket {
 }
 ```
 
-Until this protocol is implemented, any attempt to auto-parallelize `workspace_write`
-should be rejected or downgraded to serial with a visible reason.
+The implemented protocol does not open ordinary `workspace_write` parallelism. An
+explicit candidate-only selection still requires the Host gates; all other attempts
+remain rejected or serial with a visible reason until their acceptance gates pass.
 
 ## UI Projection
 
@@ -897,7 +909,8 @@ Packet and shaping code that already exists must be reused, not rebuilt from thi
 7. Render shaping discussion inside `ConversationTurn` operation cell.
 8. Add inline evidence groups for shaping contributions and packet refs.
 9. Add fan-in diagnostics for missing/bad packets.
-10. Reserve isolated worktree merge protocol fields without enabling write parallel.
+10. Keep the implemented isolated-worktree protocol compatible with packet refs,
+    side-effect classes and scheduler policy; do not enable ordinary write parallelism.
 
 ## Acceptance Criteria
 
@@ -918,8 +931,8 @@ Packet and shaping code that already exists must be reused, not rebuilt from thi
 - The main conversation exposes packet/evidence detail on demand through inline expansion
   and in-turn previews without becoming a raw transcript.
 - Restart recovery does not duplicate branch starts or auto-start side-effectful work.
-- Future isolated worktree merge can be added without changing packet refs, side-effect
-  class, or scheduler policy shape.
+- The implemented isolated-worktree protocol preserves packet refs, side-effect class,
+  and scheduler policy shape.
 
 ## Resolved Decisions
 

@@ -1,6 +1,8 @@
 # Ling 多 Agent 安全并发详细设计
 
-状态：P1/P2 本地协议与执行路径已接入；P3 联合验收与缺口收口进行中，不是全阶段交付声明。
+状态：P1-P5 均已有本地实现，受控 Provider 的真实 daemon/Web 联合链路已验证；
+冻结输入的完整相关回归通过，独立 dependency-security lane、真实 Provider、packaged、
+跨平台和 review/CI/merge 门禁仍开放，不是发布完成声明。
 Owner：Ling maintainers。
 最后核对：2026-11-03，基于 PR #614 合并后的 `main`。
 文档类型：Reference / Explanation。
@@ -28,8 +30,9 @@ Owner：Ling maintainers。
 
 ## 2. 当前基线与证据
 
-下表描述 #614 合并时的基线差距。P1 已补显式安全 metadata、Host 只读文件工具、
-冻结计划与 Attempt 容量交接；当前交付边界见实施计划。客户端、完整平台与写并发验收仍未完成。
+下表描述 #614 合并时的基线差距。当前已接入显式安全 metadata、Host 执行约束、
+原子准入、隔离执行/集成/审批、恢复、模板创作和 graph/list；交付边界见实施计划。
+真实 daemon 的本地浏览器验证不替代真实 Provider、packaged 或完整平台验收，普通写并发仍关闭。
 
 | 已有能力 | 代码锚点 | 本轮需要补的边界 |
 | --- | --- | --- |
@@ -44,7 +47,8 @@ Owner：Ling maintainers。
 | evidence finalizer、Completion Gate 与 TerminalReport | [workflow-step-finalizer.ts](../../packages/daemon/src/features/channels/workflow-step-finalizer.ts)、[workflow-completion-gate.ts](../../packages/daemon/src/features/channels/workflow-completion-gate.ts)、[报告协议](ling-agent-terminal-report-protocol.md) | 纳入隔离产物、合并结果和未确认副作用，不从 UI 数量推断成功 |
 
 旧 Harness worktree 只作为候选参考，不是新分支基线；逐模块取舍见实施计划。
-已有串行与并行基础不是待重建清单，也不等于下述新协议已经实现。
+已有串行与并行基础不是待重建清单，也不能单独证明新协议完成；当前实现与验收范围
+以实施计划为准。
 
 ## 3. 领域分层与所有权
 
@@ -218,14 +222,22 @@ merge apply 的目标 lease 只能由 Core 在已验证 single-use permit 的事
 Core 父锁只协调同一个业务数据库。Daemon 还在 canonical Git common directory 中持有
 独立 repository fence，绑定 common-directory dev/inode、canonical root、数据库路径、
 round/generation 与输入 digest。普通、native、delegated 和 continuation Run 的准入均需
-检查该持久 fence，不能换 checkout 或另开 Store 绕过。首版 parallel profile 规划时要求
-单 checkout、单 canonical Host 数据库；已登记过其他数据库的仓库保守拒绝，不按 TTL、
-PID 或一时没有 resource rows 回收其他 Store 身份，也不自动删除协调文件。
+检查该持久 fence，不能换 checkout 或另开 Store 绕过。首版 parallel profile 只支持一个
+canonical target 和一个 canonical Host 数据库。额外 registration 仅允许通过历史 owner、
+terminal/drain/effect、资源释放及物理身份核验的 retained worktree，不恢复其执行权限；
+未知或外来 checkout 仍拒绝，全部 registration 均计入 16 预算。已登记过其他数据库的
+仓库保守拒绝，不按 TTL、PID 或一时没有 resource rows 回收其他 Store 身份，也不自动
+删除协调文件。
 
-reservation 在 SQLite writer transaction 内取得；未冻结 round 前，只有该 reservation 的
-唯一 token 可补偿释放。另一个同 round 请求尚未取得 token 时不得释放赢家；已有 round
-的重复请求也不能凭同一个 owner 身份撤销持久父锁。第一次 open 在初始化前遇忙后留下的
-空数据库可在后续 writer transaction 内初始化；未知版本、损坏或外来 schema 仍拒绝。
+规划先持久化 admission marker，再持有 sidecar SQLite writer transaction 完成 checkout
+inventory 和 Core freeze。新协议 marker 带 `reservationProtocol: "sqlite_writer_v1"` 与唯一
+token；重新取得 writer 后必须重验 token，COMMIT/re-BEGIN 间被其他 planner 替换的请求
+不得 freeze 或补偿赢家。没有 Core round 的同一精确 owner 只有在旧 writer 已退出、协议
+marker 可验证时才能重新规划，不按 PID/TTL 接管，也不凭游离 token 释放 marker。
+Core COMMIT 后即使 sidecar 未 COMMIT 就崩溃，之前持久 marker 仍阻止普通 Run 准入。
+已有 round 的释放仍由 Core 原始 drain/effect/parent 协议决定；旧 token-only、未知协议、
+输入漂移或外来 owner 保持 fail closed。第一次 open 在初始化前遇忙后留下的空数据库
+可在 writer transaction 内初始化；未知版本、损坏或外来 schema 仍拒绝。
 
 同一 Host 进程内的 worktree create 与 branch capture 按 canonical Git common directory
 排 FIFO 队列，避免正常 sibling 同时完成时互相触发 fail-fast 仓库锁。队列不替代物理锁；
@@ -248,6 +260,16 @@ Host 能力。关闭开关后拒绝新准入，但保留已接受 round 的观�
 安全收尾与 evidence 读取，不能用关闭能力开关撤销原隔离边界。
 全组满足原执行 drain 与完成协议后，普通 Run 应能重新取得自己的目标写锁和容量；
 关闭开关或重启后的恢复准入不得重放旧 sibling，也不得顺便应用留存的 candidate。
+
+同一 conversation 的 workflow 行提供显式“启动隔离分支（仅生成候选）”操作，只在新建、
+未执行且完整写入步骤清单符合请求条件时出现。它只提交固定 profile，不授予 Host 能力；
+普通“推进工作流”不会自动选择隔离或升级旧 round。Host 关闭或能力不足仍须返回拒绝。
+candidate 完成后的每个 orchestrator completed 出口重新尝试调度 TerminalReport；沿用原始
+drain 和原子 publication/turn settlement，不由客户端轮询或 SSE callback 伪造终结。
+
+模板的显式创建在同一 Core writer transaction 中编译 workflow/steps、解析 channel root
+thread、写入用户输入 turn/item 并绑定 `sourceTurnId/sourceMessageId`。失败全部回滚；
+创建和预览都不 dispatch。后续 Run 和 TerminalReport 只能使用该 canonical source lineage。
 
 ## 6. Step 级隔离执行
 
@@ -329,6 +351,10 @@ capture 无法确认时，将 step 阻塞在可恢复的 `workflow_isolation.res
 
 step worktree 必须有 durable owner 和可查询的生命周期，不能成为新的匿名 WIP。
 Host 在创建前检查本地活动 worktree 数量与磁盘预算；不足时排队/阻塞，不无限创建。
+规划时即检查所有 Git registration（含 target 和外来 checkout）加全部 writing participants
+及一个 integration worktree 不超过 16；不是只计算同时运行的 slots，串行隔离也适用。
+单 target 因此最多容纳 14 个 writing steps，readonly steps 不占隔离目录名额。freeze 前再
+检查一次，实际 create 仍逐次检查数量与可用磁盘，外部新增 checkout 不获得超额许可。
 
 只有原 Attempt/子树已真实停止、effect journals 已确认、branch result 已封存且所有
 需要的文件已进入独立 artifact storage 后，才能释放执行资源。未知 effect、待审批、
@@ -381,7 +407,8 @@ preparing -> collecting -> integrating -> verifying -> awaiting_approval
 ```
 
 取消是持久 control intent；仅实际停止和 effect quiescence 后才能投影 cancelled。
-`blocked` 保留原因与最后已确认 phase；retry 新 generation，不擦掉原冲突/失败记录。
+`blocked` 保留原因与最后已确认 phase；恢复不擦掉原冲突/失败记录。公共 selected parallel
+冲突修复创建新 workflow 的 generation 1 successor，不在旧 round 上增加 generation。
 candidate-only 模式最终报告“候选分支已验证，尚未应用”，不能报用户 workspace 已更新。
 若此模式在编译/接受时已选定，Completion Gate 可按 candidate-ready 目标判完成；
 要求 apply 的 workflow 未达到 applied 前不得成功。模式不能因 apply 失败而偷偷改变。
@@ -397,9 +424,41 @@ candidate-only 模式最终报告“候选分支已验证，尚未应用”，�
 
 出现冲突即停止集成，不使用自动 ours/theirs 或模型静默解决。
 冲突 artifact 记录 base/ours/theirs、路径、发生顺序和可审查 diff。
-用户可取消该 round、显式重跑某分支，或启动有权限的新冲突修复 Attempt；
-修复结果形成新 generation，重新验证和审批，不覆盖已批准 candidate。
+用户可取消该 round；公共 selected parallel 路径的显式修复按下述 successor 协议创建全新
+执行，再重新验证。不得重用旧 Attempt/审批或覆盖已批准 candidate。
 optional 失败不能隐式遗漏；只可按已冻结策略排除，并在输出和 TerminalReport 明示。
+
+### 7.2.1 显式冲突修复与继承边界
+
+本机 `POST /workflows/:id/conflict-recovery` 只接受精确 `roundId/generation/expectedRevision`、
+`idempotencyKey` 和有界 `repairInstruction`。仅 `candidate_only`、固定并发 2 的已选择
+text-conflict round 可进入；必须确认原 Host 实际 drain、全部 effect/receipt、无待处理 intent、
+无 merge approval/permit、无活动 workspace 资源和其他父锁。未确认时不转移所有权。
+
+Core 在同一事务中重编译 accepted graph、创建新的 canonical 用户修复 turn/item、记录
+不可变 predecessor/successor lineage、永久退役旧 workflow 并释放其精确父锁。旧 round、
+journal、冲突 artifact、ref 和目录保持不变；旧 workflow 的 start/coordinator authority
+之后始终拒绝。migration 213 保存 lineage 并禁止覆盖或删除；sequence 计修复次数
+（上限 128），每个 successor 都是独立 workflow/round 的 generation 1。
+
+退役事务提交后立即通过现有 coordinator 调度旧 workflow 的 TerminalReport，不能等到
+successor 规划成功或 daemon 重启才收尾。报告仍绑定旧 source turn/item，按现有
+single-flight、evidence fingerprint 和原子发布协议去重；相同恢复请求不得重复发布、
+重复终结旧 turn，或触碰新 source 的状态。后继规划失败不撤销已经提交的退役与报告。
+旧 steps 已成功而整体冲突退役时，报告保留 `partially_succeeded` 的原子证据，旧 source
+turn 仍按已重验的 workflow 状态终结为 `failed`。取消后的部分结果同理；报告 outcome
+不授予成功、继续执行或应用权限，required-participant、isolation effect 与 source lineage
+仍在原子发布事务中核验。canonical 绑定以结果 item/turn refs 为准，不要求可选的报告
+正文 `turnId` 字段存在。
+
+新 workflow 不继承 runtime pins、safety plans、Run、Attempt、审批或旧 source turn。
+事务提交后才规划新的 candidate-only round；失败保留 `planning`，普通推进和 manual start
+不得降级执行。相同请求可幂等续完规划，修改请求不能复用原 key；GET 仅观察 lineage，
+重启不自动规划、重跑模型或重放 Git。返回 `ready` 也只表示计划已冻结，仍需用户单独
+orchestrate；后续 apply 继续要求独立审批，修复请求本身不签发执行或 target 写权限。
+
+HTTP 与 API-client 已实现上述恢复契约；当前 Web 可观察冲突和既有证据，但没有专用
+冲突修复表单。不能把 API 可用或新计划已冻结描述成 UI 已启动修复或冲突已解决。
 
 ### 7.3 审批绑定
 
@@ -493,11 +552,15 @@ Completion Gate 区分 branch execution success、candidate verified 与 target 
 TerminalReport 明示实际完成模式、应用目标、排除分支、审批/冲突/检查结果和证据 refs。
 runtime events/SSE 只负责唤醒和增量展示，SQLite 与 sealed artifacts 才是重启后的事实源。
 
+同一 source turn 可经历多轮审批等待/恢复，以及 blocked 后重新 start。每轮有效转换
+分别记录，同状态重复 sync 不新增事件。去重依赖当前状态 guard 与 `expectedStatus` CAS，
+不复用 workflow-wide 固定 key，也不以时间戳区分轮次。
+
 ## 10. 模板 Registry 与 Authoring
 
-先复用现有 skill registry 的 owner、review、version、archive 与 source pin 规则。
-`kind = workflow_template` 是待新增的显式契约，不假设当前 registry 已支持该值。
-不另造一份可绕过校验、工具授权或来源审查的模板数据库。
+已实现显式 `kind = workflow_template` 契约和专用 registry/version store，复用 skill library
+的来源、可见性与 review 约定。专用表仍属于同一 canonical workspace Store；模板不是
+executable skill entry，不绕过编译、来源审查或执行授权。
 
 模板版本不可变；同 id/version 不同 digest 是冲突。compile 冻结 template version/digest、
 resolved skill/participant/provider/runner refs、graph fingerprint 和 safety policy，

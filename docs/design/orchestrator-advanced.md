@@ -2,7 +2,7 @@
 
 Status: reference contract with active safe-concurrency follow-up
 Owner: Ling maintainers
-Last verified: 2026-11-03 (source and local production-build live acceptance; release gates remain open)
+Last verified: 2026-11-03 (frozen-input regression and local production-build live acceptance; release gates remain open)
 Code anchors: daemon workflow compiler, smart scheduler and orchestrator listed below
 
 ## Purpose
@@ -71,24 +71,33 @@ Implemented locally in the current branch, not a release-acceptance claim:
 Local acceptance and remaining gates:
 
 - P1-P5 all have local implementation and controlled browser/fixture acceptance coverage.
-  Focused daemon regressions, shared UI model and Web tests, builds and Web lint pass;
+  Complete scoped Core/Daemon/Web/Contracts/API-client/shared UI/localization/runner-pi
+  regressions, builds and Web lint pass. Unchanged-input shards are reused only after
+  digest/preimage verification; existing platform/native/fixture skips remain explicit;
 - recorded local regression covers real Git/SQLite and macOS real Pi SDK/Host with a
   credential-free scripted loopback Provider. Production-build live
-  browser E2E passed both local daemon/HTTP/SSE scenarios: cancel/offline reconnect/reload/
-  Host drain/same-scenario restart, and merge-approval UI/apply/TerminalReport/reload;
+  browser E2E passed four local daemon/HTTP/SSE scenarios: cancel/offline reconnect/reload/
+  Host drain/same-scenario restart, merge-approval UI/apply/TerminalReport/reload, explicit
+  public candidate-only selection with unchanged target and desktop/narrow-width
+  settled observation, and authored exact-pin creation followed by an explicit Pi start;
 - the pending-approval refresh failure is fixed locally: after the original Host callback
   leaves the pending set, [isolation settlement](../../packages/daemon/src/features/channels/workflow-isolation-lifecycle.ts)
   triggers a durable, published `channel_workflow.isolation_settled` event in the `runs`
   domain. Notification is observation invalidation, not proof of a successful effect;
-- the last complete daemon suite was not green. Stub repairs passed focused regressions
-  and the ComfyUI timeout case passed separately; there is no post-repair whole-suite pass;
+- the post-repair frozen-input Daemon suite passes under the repository's fixed shard
+  plan, default deadlines and existing exclusions. Its separately owned
+  `dependency-security.test.mjs` lane has not been run in this acceptance;
 - P5 graph projection now filters and sorts before truncation, preserving the bounded node
   set and selection across refresh order changes. Keyboard names reuse the projected status;
   regression, real browser keyboard selection, narrow-list fallback and reduced-motion
-  checks pass locally. Current-source complete Daemon regression, real-model Provider,
+  checks pass locally. The independent dependency-security lane, real-model Provider,
   packaged/cross-platform and review/CI/merge gates remain open. The
   local controlled-transport pass does not complete P3 release acceptance or open ordinary
   write parallelism.
+
+Explicit text-conflict recovery is implemented through HTTP/API-client using a retired
+predecessor and a separately planned generation-one successor. A dedicated Web conflict
+repair form is not implemented; observation or a ready successor is not execution authority.
 
 Tool-list inference alone is not an artifact-only enforcement contract. No verified
 artifact-only executor is available, so QA does not gain automatic parallel admission.
@@ -392,12 +401,18 @@ POST /channels/:channelId/workflows
   runnerId?
   autoStart?
 
--> validate template and freeze compilation
--> create ChannelWorkflow(status=ready)
--> create ChannelWorkflowStep rows
--> attach deterministic metadata and version pins
+-> one Core writer transaction:
+     validate template and freeze compilation
+     create ChannelWorkflow(status=ready), steps, metadata and version pins
+     resolve channel-root thread
+     append canonical user turn/item
+     bind sourceTurnId/sourceMessageId
+     commit all records or roll back all records
 -> return workflow + steps
 ```
+
+Preview creates none of these execution records. Create records the explicit user
+request but creates no Task, Run or approval and does not automatically orchestrate.
 
 ### Tests
 
