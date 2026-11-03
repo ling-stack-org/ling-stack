@@ -1,8 +1,8 @@
 # Ling 多 Agent 安全并发详细设计
 
 状态：P1-P5 均已有本地实现，受控 Provider 的真实 daemon/Web 联合链路已验证；
-冻结输入的完整相关回归通过，独立 dependency-security lane、真实 Provider、packaged、
-跨平台和 review/CI/merge 门禁仍开放，不是发布完成声明。
+冻结输入的完整相关回归、后续 Web 冲突修复增量验收及 Daemon 独立 dependency-security
+lane 通过；真实 Provider、packaged、跨平台和 review/CI/merge 门禁仍开放，不是发布完成声明。
 Owner：Ling maintainers。
 最后核对：2026-11-03，基于 PR #614 合并后的 `main`。
 文档类型：Reference / Explanation。
@@ -457,8 +457,21 @@ turn 仍按已重验的 workflow 状态终结为 `failed`。取消后的部分�
 重启不自动规划、重跑模型或重放 Git。返回 `ready` 也只表示计划已冻结，仍需用户单独
 orchestrate；后续 apply 继续要求独立审批，修复请求本身不签发执行或 target 写权限。
 
-HTTP 与 API-client 已实现上述恢复契约；当前 Web 可观察冲突和既有证据，但没有专用
-冲突修复表单。不能把 API 可用或新计划已冻结描述成 UI 已启动修复或冲突已解决。
+HTTP、API-client 与 Web 修复窗口实现同一契约。会话证据行只在单轮 candidate-only
+文本冲突、原 Host 已确认 drain 且无未知 effect 时提供入口；退役为 failed 的前驱只允许
+发现已有 lineage，不能创建另一个计划。首次打开与“查询恢复结果”只 GET；只有精确
+`404 + workflow_recovery.not_found` 才表示不存在，网络错误、其他 404 和权限错误均不
+授予创建权限。窗口提交有界修复要求，创建完成显示 ready/not-started，再由独立按钮
+显式启动 candidate-only 后继。只有 `planning` 且 workflow 为 `ready`、所有步骤仍为
+`queued` 且没有 Run/Task 的后继允许重试规划；已启动、取消或终结的后继保留可读计划，
+不再提供规划重试或启动入口。
+
+[客户端 controller](../../apps/web/src/features/workspace/useWorkflowConflictRecovery.ts) 按
+workspace/channel/thread 和 daemon epoch/base URL fencing，命令 single-flight，15 秒
+超时转为结果待确认且丢弃迟到响应。查询验证精确 predecessor/revision、successor lineage
+与原始请求；显式重试只能复用原 key/instruction/revision。关闭、切换会话或重连不自动
+重试或启动。窗口支持键盘焦点返回当前证据按钮，窄屏按钮允许完整换行；语言目录覆盖
+所有受支持 locale。不能把计划已冻结或窗口已关闭描述成冲突已解决、结果已应用。
 
 ### 7.3 审批绑定
 

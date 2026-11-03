@@ -67,6 +67,9 @@ Implemented locally in the current branch, not a release-acceptance claim:
   UI are locally committed. Saving or previewing a template does not start execution;
 - P5 shared graph read model and same-turn graph/list UI are implemented locally.
   The graph is read-only and adds no execution authority.
+- explicit text-conflict recovery has HTTP/API-client and Web dialog support. Discovery
+  is read-only; planning and starting a generation-one successor are separate commands.
+  Retired predecessor evidence remains available and cannot regain execution authority.
 
 Local acceptance and remaining gates:
 
@@ -80,24 +83,32 @@ Local acceptance and remaining gates:
   Host drain/same-scenario restart, merge-approval UI/apply/TerminalReport/reload, explicit
   public candidate-only selection with unchanged target and desktop/narrow-width
   settled observation, and authored exact-pin creation followed by an explicit Pi start;
-- the pending-approval refresh failure is fixed locally: after the original Host callback
-  leaves the pending set, [isolation settlement](../../packages/daemon/src/features/channels/workflow-isolation-lifecycle.ts)
+- after the original Host callback leaves the pending set,
+  [isolation settlement](../../packages/daemon/src/features/channels/workflow-isolation-lifecycle.ts)
   triggers a durable, published `channel_workflow.isolation_settled` event in the `runs`
   domain. Notification is observation invalidation, not proof of a successful effect;
-- the post-repair frozen-input Daemon suite passes under the repository's fixed shard
-  plan, default deadlines and existing exclusions. Its separately owned
-  `dependency-security.test.mjs` lane has not been run in this acceptance;
-- P5 graph projection now filters and sorts before truncation, preserving the bounded node
+- the frozen-input Daemon suite passes under the repository's fixed shard plan, default
+  deadlines and existing exclusions. Its separate `dependency-security.test.mjs` lane
+  also passes; this is not a claim that the root security command's other packages ran;
+- conflict recovery has separate incremental Web/shared UI/localization/Daemon regression
+  and production-build browser evidence. Original sibling writes create a real Git text
+  conflict; creating a plan starts no Run. Only a separate click starts the successor,
+  with independent approvals, Runs/Attempts and worktrees. Same-database restart before
+  start and after candidate completion preserves lineage, reports and Run counts; the
+  target stays unchanged. Closing/reopening only observes, and desktop keyboard focus
+  and narrow-width button wrapping are verified. The earlier complete frozen-input
+  regression is not reused as a whole-suite claim for these later source changes;
+- P5 graph projection filters and sorts before truncation, preserving the bounded node
   set and selection across refresh order changes. Keyboard names reuse the projected status;
   regression, real browser keyboard selection, narrow-list fallback and reduced-motion
-  checks pass locally. The independent dependency-security lane, real-model Provider,
-  packaged/cross-platform and review/CI/merge gates remain open. The
+  checks pass locally. Real-model Provider, packaged/cross-platform and review/CI/merge
+  gates remain open. The
   local controlled-transport pass does not complete P3 release acceptance or open ordinary
   write parallelism.
 
-Explicit text-conflict recovery is implemented through HTTP/API-client using a retired
-predecessor and a separately planned generation-one successor. A dedicated Web conflict
-repair form is not implemented; observation or a ready successor is not execution authority.
+The Web repair controller fences responses by workspace/channel/thread and daemon epoch,
+retains the original idempotent request through ambiguous results, and requires read-only
+discovery before explicit retry. A ready successor is not execution or target-apply authority.
 
 Tool-list inference alone is not an artifact-only enforcement contract. No verified
 artifact-only executor is available, so QA does not gain automatic parallel admission.

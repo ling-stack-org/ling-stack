@@ -557,9 +557,13 @@ exists; local filesystem isolation does not isolate external effects.
 
 Complete scoped package regression and the four production-build live-daemon browser
 scenarios pass locally, with the existing platform/native/fixture skips retained.
-The separate dependency-security lane, real-model Provider, packaged/cross-platform
-and review/CI/merge gates remain open; local controlled-transport acceptance does not
-authorize ordinary parallel writes.
+Web text-conflict repair has separate incremental regression and live-daemon browser
+acceptance: the user creates a successor plan, then explicitly starts it with independent
+approvals and executions; same-database restart retains the old conflict and new candidate
+without additional Runs or target changes. The earlier frozen-source complete regression
+does not cover those later inputs. The Daemon's separate dependency-security lane passes;
+real-model Provider, packaged/cross-platform and review/CI/merge gates remain open.
+Local controlled-transport acceptance does not authorize ordinary parallel writes.
 
 ### Goal
 
