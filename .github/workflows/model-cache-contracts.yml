@@ -5,6 +5,8 @@ on:
     paths:
       - scripts/gstack/testsavant-model-*.mjs
       - scripts/gstack/testsavant-model-pin.json
+      - scripts/gstack/testsavant-gs-client.mjs
+      - scripts/gstack/testsavant-client.mjs
       - .github/workflows/model-cache-contracts.yml
   workflow_dispatch:
 

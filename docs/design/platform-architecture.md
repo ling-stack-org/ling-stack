@@ -1,11 +1,15 @@
 # Platform Architecture
 
+Status: target architecture with current implementation mapping
+Owner: repository maintainers
+Last verified: 2026-11-02 (source review, not release or platform acceptance)
+
 ## Purpose
 
 This document defines the aggressive long-term architecture direction for Ling Stack.
 The goal is to turn Ling Stack into a local-first AI workspace platform that can support:
 
-- Web, desktop, CLI, and future mobile or PWA clients.
+- Web, desktop, CLI, the constrained mobile source surface, and future PWA clients.
 - Multiple channels and concurrent task execution.
 - AI teammates, skill packs, workflow templates, and memory scopes.
 - Provider, runner, channel, tool, GitHub automation, and UI feature extensions.
@@ -23,6 +27,12 @@ replaceable extensions.
 The top-level product and platform map lives in [Ling Framework](ling-framework.md). This
 document focuses on the kernel, extension, and package boundaries that make that framework
 safe to implement.
+
+The diagrams below describe target boundaries, not a fully extracted current package
+graph. Shared contracts/client, internal registries, workflows, and the Electron shell
+already exist. Kernel and workflow responsibilities remain in core/daemon modules; CLI
+still owns a separate request layer. Mobile source exists behind device authentication
+and a separate Remote Gateway, but remains outside current product acceptance.
 
 ```text
 Web / Desktop / CLI
@@ -45,9 +55,10 @@ The kernel owns correctness. Extensions add capability.
 The runtime supervisor is the kernel-facing execution owner for work units. Web,
 desktop, CLI, and future clients can all control the same workspace at the same time,
 but they must connect to one daemon runtime rather than starting client-specific
-runtimes. The detailed design lives in [Runtime Supervisor](runtime-supervisor.md).
-The phased plan for evolving this daemon into a Codex app-server-like local control
-plane lives in [Runtime Control Plane Roadmap](runtime-control-plane-roadmap.md).
+runtimes. Runtime-supervisor ownership, startup reconciliation, control-plane
+snapshots/events, SSE, and configurable local WebSocket RPC are implemented. The detailed
+boundary lives in [Runtime Supervisor](runtime-supervisor.md). Remaining control-plane
+evolution lives in [Runtime Control Plane Roadmap](runtime-control-plane-roadmap.md).
 The mid-term control-plane implementation breakdown lives in
 [Runtime Control Plane Mid-Term Implementation Plan](./runtime-control-plane-detailed-design.md).
 The long-term transport, processor, registry, subscription, and worker layering plan
@@ -124,18 +135,26 @@ packages/
     Local, GitHub, Slack, Feishu, email, and custom channel source adapters.
 ```
 
-Current packages can map into this direction without immediate renames:
+Current source maps into this direction without immediate renames. In particular,
+`kernel`, `extension-host`, `workflow-engine`, `ui`, and `features` above are target
+packages, not existing packages with those names:
 
-| Current path | Target responsibility |
+| Current path | Current responsibility |
 | --- | --- |
-| `packages/core` | Kernel plus early contracts |
-| `packages/daemon` | Daemon gateway plus coordinator |
+| `packages/core` | Durable domain model, stores, state machines, and policy |
+| `packages/daemon` | Gateway, coordinator, runtime supervisor, workflows, and managed plugin lifecycle |
+| `packages/contracts` | Shared daemon wire types and selected runtime validators |
+| `packages/api-client` | Typed local client used by Web and selected Desktop services; CLI migration remains |
+| `packages/plugin-sdk` | Internal metadata registries and managed-package manifest contracts, not an open third-party SDK |
+| `packages/ui-react` | Shared design tokens and React primitives |
+| `packages/conversation-ui-core`, `packages/conversation-ui-react` | Shared conversation semantics and React components |
+| `packages/remote-protocol`, `packages/remote-client` | Constrained device-authenticated remote protocol and client |
 | `packages/providers` | Provider extension implementations |
 | `packages/runner-pi` | First runner extension |
 | `packages/cli` | CLI client over daemon API |
 | `apps/web` | Reference client and feature host |
-| `apps/desktop` | Packaged desktop shell, daemon lifecycle, and local notifications |
-| `apps/mobile` | Device-authenticated constrained remote shell over Remote Gateway |
+| `apps/desktop` | Electron shell over the shared Web build, daemon lifecycle, and Computer Use utility windows |
+| `apps/mobile` | Constrained Remote Gateway source surface, outside current product acceptance |
 
 ## System Diagram
 
@@ -177,6 +196,10 @@ flowchart TD
 
 ## Layer Responsibilities
 
+These responsibilities define the target separation. The current package mapping above
+identifies where implemented responsibilities live; it does not imply a generic
+extension host or every target package has been extracted.
+
 ### Platform Kernel
 
 The kernel is the non-negotiable center of the system.
@@ -210,7 +233,7 @@ The daemon is the local trusted process that exposes the kernel to clients.
 It owns:
 
 - HTTP APIs.
-- SSE or future WebSocket streaming.
+- SSE and configurable local WebSocket RPC.
 - Local auth token.
 - Request idempotency.
 - Coordinator calls.
@@ -412,8 +435,10 @@ post to GitHub, merge code, close issues, or push commits without policy and app
 
 ## Plugin Manifest
 
-The first manifest should be conservative and typed. It should support internal plugins
-before external plugins.
+Current code uses `LingExtensionManifest` and `LingPluginPackageManifest` in
+`packages/plugin-sdk/src/manifest.ts`, with interface-version validation. The generic
+manifest below remains a target design, not the exported internal/package schema or a
+published third-party SDK.
 
 ```ts
 export type LingPluginKind =
@@ -457,7 +482,9 @@ Plugin failures should degrade the specific capability, not corrupt kernel state
 
 ## Plugin Runtime Contract
 
-Plugins communicate with the daemon through a restricted host context.
+The restricted host context below remains a target design, not an implemented generic
+plugin runtime API. Managed internal/bundled capabilities currently execute through their
+own daemon feature boundaries.
 
 ```ts
 export interface LingPluginContext {
@@ -520,16 +547,18 @@ Approval classes:
 
 ## GitHub Automation Architecture
 
-GitHub should be implemented as a channel source adapter plus automation plugins. It
-should not become a separate execution path.
+GitHub intake and approval-gated external actions are implemented on the shared external
+work path, not a separate state model. Import/polling normalize PRs and issues, deduplicate
+them, and create durable workflow/evidence records. Import alone does not start an agent;
+CI triage and explicit fix-run execution are separate operations.
 
 This section records the platform-level boundary. The detailed workflow, approval, UI,
 resource lease, and test plan lives in [GitHub Automation Design](github-automation.md).
 
 ### Event Sources
 
-The GitHub channel source normalizes webhook or polled events. The Phase 4 CI triage
-implementation plan is tracked in
+The event list below describes the target source scope, not a claim that every webhook
+and release event is implemented. Current import/polling and CI triage are tracked in
 [External Work Orchestration](./external-work-orchestration.md).
 
 ```text
@@ -561,7 +590,7 @@ GitHub event
 
 ### Automation Workflows
 
-Recommended built-in workflows:
+Recommended built-in workflows (target catalog, not a list of registered templates):
 
 | Workflow | Purpose | Typical teammate |
 | --- | --- | --- |
@@ -573,7 +602,13 @@ Recommended built-in workflows:
 
 ### GitHub Action Policy
 
-GitHub actions should be split by risk:
+Implemented external actions include comments, labels, and PR reviews with `COMMENT`,
+`APPROVE`, or `REQUEST_CHANGES`. Execution requires an approved action and revalidates
+the target before mutation; PR reviews require strict approval. Approval alone does not
+send an action. Push, merge, close, release, and deploy are outside the implemented
+action set below.
+
+The full target action policy is split by risk:
 
 | Action | Default requirement |
 | --- | --- |
@@ -611,27 +646,32 @@ or queued a follow-up run.
 
 ## Multi-Client Strategy
 
-The web app is the reference client. The desktop app is a packaged local experience. The
-mobile client is a constrained remote surface over the same semantic contracts through a
-separate Remote Gateway.
+The Web app is the reference client, and the Electron shell loads its built application.
+Selected Desktop services also consume `LingDaemonClient` directly. Mobile source uses
+the separate constrained Remote Gateway and is outside current product acceptance; PWA
+remains a future client.
 
 Shared pieces:
 
 - `contracts` for API types and status enums.
-- `api-client` for local HTTP/SSE/WebSocket calls from trusted local clients.
+- `api-client` for trusted-local HTTP APIs and response-returning stream requests. Web
+  and CLI still own run transport/WebSocket RPC code; stream decoding is not all shared.
 - `remote-protocol` and `remote-client` for mobile device authentication, snapshots, and
   bounded remote commands.
-- `ui` for design tokens and reusable primitives.
-- `features` for channel/task/run/approval/provider/teammate modules.
+- `ui-react` and conversation UI packages for shared primitives and conversation
+  semantics.
+- `apps/web/src/features` for feature presentation and `apps/web/src/domains` for domain
+  controllers. Independent `ui`/`features` packages remain target boundaries.
 
-Client-specific pieces:
+Client-specific pieces and remaining scope:
 
 | Client | Owns |
 | --- | --- |
 | Web | Browser routing, responsive layout, local development UI |
-| Desktop | Daemon lifecycle, tray, notifications, keychain, updater |
+| Desktop | Implemented daemon lifecycle and shared Web shell; tray, notifications, full keychain UX, and updater remain |
 | CLI | Scriptable commands and diagnostics |
-| Mobile/PWA | Read-heavy channel workflows, notifications, lightweight text comments, and the explicit Remote Gateway capability allowlist |
+| Mobile | Device-authenticated constrained remote source surface, outside current acceptance |
+| PWA | Future client; not an implemented Mobile distribution |
 
 Do not fork durable feature behavior per client. A paused channel, queued run, pending
 approval, or blocked lease must mean the same thing everywhere. A remote client may expose
@@ -639,9 +679,12 @@ fewer controls, but it may not invent a second authority or bypass daemon policy
 
 ## UI Architecture Direction
 
-The current web page should evolve from one large app component into feature modules.
+Web modularization is implemented across app, domain, feature, shared UI, API, and style
+modules. `App.tsx` delegates to `AppShell`; further shell decomposition remains.
 
-Recommended module shape:
+The original target sketch below is not a current directory inventory. Actual shared UI
+lives in shared packages and the Web shared facade; API modules live under `src/api/`.
+See [Web Modularization](web-modularization.md) for current ownership.
 
 ```text
 apps/web/src/
@@ -675,9 +718,10 @@ Rules:
 
 - Page modules can compose API calls; they do not duplicate daemon state rules.
 - Feature modules own local UI state only.
-- Shared UI primitives should live below `ui`.
+- Shared UI primitives stay below feature modules, in shared packages or the Web shared
+  facade.
 - Domain contracts come from shared packages, not hand-copied web types.
-- Desktop should reuse feature modules where practical.
+- Desktop reuses the built Web application rather than copying its feature modules.
 
 ## State, Workflow, and Recovery Boundary
 
@@ -805,18 +849,25 @@ Before a release:
 - Docs updated for changed contracts or behavior.
 - Migration notes for status, schema, manifest, or API changes.
 
-## Migration Plan
+## Migration Status and Remaining Work
+
+These phases record the original migration order, not a queue of entirely unstarted
+work. Status below describes source implementation; release and platform acceptance
+remain tracked separately in [Implementation Status](implementation-status.md).
 
 ### Phase 0: Current v0.1 Stabilization
 
 Keep shipping the existing local daemon, core types, web UI, provider presets, skills,
 state machines, leases, and docs.
 
+Status: these foundations are in place; stabilization remains ongoing.
+
 Do not reorganize packages while the current product loop is still moving quickly.
 
 ### Phase 1: Web Feature Modules
 
-Split the web app into feature modules:
+Feature presentation, domain controllers, helpers, API modules, and styles have been
+split out of the original app component. The original feature scope included:
 
 - Channels.
 - Tasks.
@@ -827,25 +878,28 @@ Split the web app into feature modules:
 - Skill packs.
 - Settings.
 
-This reduces UI chaos quickly and creates reusable surfaces for desktop.
-The detailed plan lives in [Web Modularization](web-modularization.md).
+Desktop now reuses the built Web client. Further `AppShell` decomposition and ownership
+cleanup remain; the current boundary lives in [Web Modularization](web-modularization.md).
 
 ### Phase 2: Contracts and API Client
 
-Extract shared API DTOs and client code:
+Shared API DTOs and client code have been extracted:
 
 - `packages/contracts`
 - `packages/api-client`
 
-The web app, CLI, and Desktop should stop carrying separate copies of the same types.
-The detailed plan lives in [Contracts and API Client](contracts-api-client.md).
+The detailed boundary lives in [Contracts and API Client](contracts-api-client.md).
 
-Status: the shared packages exist and Web is the first consumer through a compatibility
-wrapper. CLI, daemon route handler typing, and desktop migration remain follow-up work.
+Status: Web consumes shared contracts/client through compatibility facades; Desktop
+reuses Web and selected native services use the client directly. Selected daemon response
+builders return shared contract types. CLI transport consolidation and remaining daemon
+route typing are still partial; the proposed block-level transcript protocol is not yet
+an exported shared contract.
 
 ### Phase 3: Internal Extension Registries
 
-Before dynamic plugins, create internal registries:
+Internal metadata registries are implemented before dynamic plugins, with typed
+collections for:
 
 - Provider registry.
 - Runner registry.
@@ -853,32 +907,40 @@ Before dynamic plugins, create internal registries:
 - Skill pack registry.
 - Tool registry.
 - Memory registry.
+- Automation registry.
 
-Registries validate capabilities and policy before execution.
-The detailed plan lives in [Internal Registry and Plugin SDK](internal-registry-plugin-sdk.md).
+Registries validate metadata, manifests, and identifiers. Execution policy remains in
+daemon, approval, lease, state-machine, and runner paths. The executable `RunnerRegistry`
+is separate from this metadata registry. The detailed boundary lives in
+[Internal Registry and Plugin SDK](internal-registry-plugin-sdk.md).
 
-Status: `packages/plugin-sdk` now exists as a pure interface and registry package.
+Status: `packages/plugin-sdk` contains interfaces, manifest validation, and registries.
 Core, providers, and runner-pi expose built-in extension metadata, and daemon assembles
-the default internal registry at startup. Execution still flows through the existing
-daemon, approval policy, leases, state machines, providers, and runner paths.
+the default internal registry at startup. Memory/automation collections exist without
+default implementations registered by that startup assembly. This is not a generic
+dynamic extension host.
 
 ### Phase 4: Internal/Bundled Plugin Manager
 
-Add Codex-like plugin management for internal, bundled, and trusted local capabilities
-before opening third-party APIs. The design lives in [Plugin Manager](plugin-manager.md);
-the Stage 1-3 implementation plan lives in
-[Plugin Manager](./plugin-manager.md).
+Plugin management for internal, bundled, and trusted-local capabilities is implemented
+before opening third-party APIs. The current lifecycle and remaining scope live in
+[Plugin Manager](plugin-manager.md).
 
-Initial scope:
+Implemented foundations include:
 
 - safe plugin catalog and Settings surface,
-- built-in registry metadata visibility,
+- separate runtime diagnostics for built-in registry metadata (not every registry entry
+  is a product-managed plugin),
 - bundled/trusted-local plugin descriptors,
+- package validation/install flows and runtime previews,
 - MCP preset apply flow,
 - `cua-driver` as the first high-risk capability with an external preset and packaged
   macOS/Windows `bundled_embedded` distributions defined by
   [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md),
 - health checks, approval defaults, and audit events.
+
+Runtime preview `apps` and `hooks` remain empty; this does not establish a generic app or
+hook host, or platform release acceptance.
 
 Explicitly defer:
 
@@ -889,40 +951,49 @@ Explicitly defer:
 
 ### Phase 5: Workflow Engine
 
-Move multi-agent workflows into a workflow engine that compiles templates into explicit
-workflow and step state machines.
+Template compilation and execution already live in core/daemon modules, with built-in
+templates, inline custom templates, workflow graphs, durable workflow/step state,
+resource leases, and approval-aware execution.
 
-This is the right time to connect `gstack-default`, custom AI teammates, and future
-`AGENTS.md` imports to real execution.
+A separate `workflow-engine` package and persistent custom-template registry remain
+unimplemented: `customTemplateId` lookup explicitly rejects requests. This phase does
+not establish generic `AGENTS.md` imports or completion of multi-agent delivery and
+resilience acceptance.
 
 ### Phase 6: GitHub Automation
 
-Add GitHub as:
+GitHub external work already includes:
 
-- Channel source adapter.
-- Automation workflows.
-- Tool actions.
-- Approval-gated external sender.
+- PR/issue normalization, import, polling, and deduplication.
+- Durable workflow/evidence creation and separate CI triage/fix-run operations.
+- Approval-gated comments, labels, and PR reviews with target revalidation.
 - Evidence artifacts.
 
-Start with read-only PR review artifacts, then add approval-gated comments, then stricter
-actions such as request-changes, approve, push, merge, and release.
+Import does not start an agent, and approval does not itself send an external action.
+Request-changes and approve review actions are implemented with strict approval; push,
+merge, close, release, and deploy are not part of the implemented action set. Mock-backed
+tests do not establish live repository permission or branch-protection acceptance.
 
 ### Phase 7: Desktop Shell
 
-Build the desktop shell around the daemon and shared UI:
+The Electron alpha already loads the shared Web application and implements:
 
-- Start/stop daemon.
-- Tray/menu bar.
-- OS keychain.
-- Local notifications.
-- Auto-update.
-- File picker and workspace binding.
+- Daemon startup, reuse, restart, and owned-process shutdown without stopping compatible
+  external daemons.
+- Workspace binding and daemon-backed system directory selection.
+- Theme persistence and Computer Use utility-window foundations.
+- macOS/Windows packaging scripts.
 
-Desktop should not fork the product model.
-The detailed plan lives in [Desktop Shell](desktop-shell.md).
+The daemon has scoped system keychain write/delete support on macOS; this is not full
+Desktop keychain UX. Tray/menu bar, OS notifications, auto-update, signed distribution,
+and remaining platform acceptance are still open. Desktop does not fork the product
+model; the detailed boundary lives in [Desktop Shell](desktop-shell.md).
 
 ### Phase 8: External Plugin SDK
+
+Internal/package manifest contracts and interface-version checks already exist. The
+published third-party API, restricted generic host, external loading, and sandboxing
+below remain target work.
 
 Only after internal registries and internal/bundled plugin management are stable:
 
@@ -943,11 +1014,11 @@ Only after internal registries and internal/bundled plugin management are stable
 - Skills that bypass tools, approvals, leases, or state machines.
 - Direct plugin database access.
 
-## Recommended Immediate Next Steps
+## Remaining Architecture Work
 
 1. Keep `packages/core` as the temporary kernel while v0.1 stabilizes.
-2. Start splitting `apps/web/src/App.tsx` into feature modules before adding more UI; see [Web Modularization](web-modularization.md).
-3. Add `packages/contracts` when the same API shape appears in core, daemon, CLI, and web; see [Contracts and API Client](contracts-api-client.md).
-4. Add internal registries before dynamic plugin loading; see [Internal Registry and Plugin SDK](internal-registry-plugin-sdk.md).
-5. Build GitHub automation first as read-only review artifacts, then approval-gated external actions.
+2. Continue decomposing `AppShell` and consolidating existing domain/feature ownership; see [Web Modularization](web-modularization.md).
+3. Complete remaining CLI client consolidation and daemon contract typing; keep the block-level transcript proposal distinct from existing conversation contracts. See [Contracts and API Client](contracts-api-client.md).
+4. Build further extension support on the existing internal registries and managed-plugin foundation; generic hosting and the external SDK remain target work. See [Internal Registry and Plugin SDK](internal-registry-plugin-sdk.md).
+5. Extend GitHub automation from existing intake, evidence, and approval-gated actions, without treating unsupported push, merge, or release actions as implemented.
 6. Create ADRs for any decision that changes state machines, plugin permissions, storage, or public API.

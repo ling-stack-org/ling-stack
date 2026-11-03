@@ -17,9 +17,23 @@ import { createDetachedRunExecutionSink, executeExistingRunContinuation } from "
 import { createRunnerRegistry } from "../../dist/runtime/runners.js";
 import { RunStoreRegistry } from "../../dist/runtime/store-registry.js";
 import { RuntimeSupervisor } from "../../dist/runtime/supervisor.js";
+import { seedBlockedStalePrefix as seedStalePrefix } from "./recovery-discovery-prefix.ts";
 
 export const DISCOVERY_CREATED_AT = "2026-10-01T00:00:00.000Z";
 export const DISCOVERY_DUE_AT = "2026-10-01T01:00:00.000Z";
+
+function deferThreadMetadataRebuilds(store) {
+  const metadata = store.lingThreadMetadata;
+  const descriptor = Object.getOwnPropertyDescriptor(metadata, "rebuildLingThreadMetadata");
+  const pending = new Map();
+  // Only defer this derived read cache. Source writes and their transactions stay real.
+  metadata.rebuildLingThreadMetadata = (threadId, now) => { pending.set(threadId, now); };
+  return () => {
+    if (descriptor) Object.defineProperty(metadata, "rebuildLingThreadMetadata", descriptor);
+    else delete metadata.rebuildLingThreadMetadata;
+    for (const [threadId, now] of pending) metadata.tryRebuildLingThreadMetadata(threadId, now);
+  };
+}
 
 /** Real SQLite, frozen Pi input and Host policy. No provider request is made. */
 export async function createRecoveryDiscoveryFixture(t, suffix, options = {}) {
@@ -129,18 +143,11 @@ export async function createRecoveryDiscoveryFixture(t, suffix, options = {}) {
   }
 
   function seedBlockedStalePrefix(seeded, count = 500) {
-    for (let index = 0; index < count; index += 1) {
-      const id = `z-blocked-${seeded.unit.kind}-${String(index).padStart(4, "0")}`;
-      const unit = store.createWorkUnit({ id: `unit-${id}`, workspaceId: "workspace_default", kind: seeded.unit.kind,
-        ownerType: seeded.unit.ownerType, ownerId: seeded.unit.ownerId, channelId: seeded.unit.channelId,
-        taskId: seeded.unit.taskId, teammateId: seeded.unit.teammateId, runnerId: "pi", effectiveRunnerId: "pi",
-        providerPresetId: preset.id, idempotencyKey: id, status: "stale", request: {}, createdByActor: "system",
-        now: seeded.unit.createdAt });
-      store.createWorkUnitAttempt({ id: `attempt-${id}`, workUnitId: unit.id, attemptNumber: 1,
-        runtimeInstanceId: "runtime-before-restart", runnerId: "pi", status: "lost", now: seeded.unit.createdAt });
-      const run = store.createRun({ ...seeded.run, id: `run-${id}`, workUnitId: unit.id, createdAt: seeded.unit.createdAt });
-      store.linkRunToWorkUnit(run.id, unit.id, seeded.unit.createdAt);
-      store.markRunCancelled(run.id, seeded.unit.createdAt);
+    const flushMetadata = deferThreadMetadataRebuilds(store);
+    try {
+      seedStalePrefix(store, preset.id, seeded, count);
+    } finally {
+      flushMetadata();
     }
   }
 
@@ -198,9 +205,14 @@ export async function waitForRecovery(predicate, message, timeoutMs = 5_000) {
 }
 
 export async function seedScheduledBlockedPrefix(fixture) {
-  for (let index = 0; index < 500; index += 1) {
-    const seeded = await fixture.seedRun("conversation", `scheduled-blocked-${String(index).padStart(4, "0")}`);
-    fixture.schedule(seeded, DISCOVERY_DUE_AT, `a-blocked-${String(index).padStart(4, "0")}`);
-    fixture.store.markRunCancelled(seeded.run.id, seeded.run.createdAt);
+  const flushMetadata = deferThreadMetadataRebuilds(fixture.store);
+  try {
+    for (let index = 0; index < 500; index += 1) {
+      const seeded = await fixture.seedRun("conversation", `scheduled-blocked-${String(index).padStart(4, "0")}`);
+      fixture.schedule(seeded, DISCOVERY_DUE_AT, `a-blocked-${String(index).padStart(4, "0")}`);
+      fixture.store.markRunCancelled(seeded.run.id, seeded.run.createdAt);
+    }
+  } finally {
+    flushMetadata();
   }
 }

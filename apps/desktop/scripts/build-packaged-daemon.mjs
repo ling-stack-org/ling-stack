@@ -173,12 +173,35 @@ async function bundleOriginalDaemon(prepareOriginals) {
   finally { bundling = false; }
 }
 
+function readBundledAcpSdkManifest(entry) {
+  let directory = dirname(entry);
+  while (true) {
+    const path = join(directory, "package.json");
+    let contents, manifest;
+    try { contents = readFileSync(path, "utf8"); manifest = JSON.parse(contents); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    if (manifest?.name === "@agentclientprotocol/sdk") {
+      if (typeof manifest.version !== "string" || manifest.version.trim().length === 0) {
+        throw new Error("packaged_acp_sdk_version_manifest_invalid");
+      }
+      return { path, contents, version: manifest.version };
+    }
+    const parent = dirname(directory);
+    if (parent === directory) throw new Error("packaged_acp_sdk_version_manifest_missing");
+    directory = parent;
+  }
+}
+
 async function buildOriginalDaemonBundle(codesignReceipt, officeReceipt, sourceInputs) {
   requireBundle(Boolean(officeReceipt) === Boolean(sourceInputs));
   const gstackIdentity = await preparePackagedGstackBuild({
     required: Boolean(officeReceipt) && process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED === "1",
   });
   const gstack = packagedGstackIdentityPlugin({ identity: gstackIdentity, sourceInputs });
+  const acpVersionModule = realpathSync(resolve(desktopRoot, "../../packages/daemon",
+    sourceInputs ? "src/features/execution-engines/acp-sdk-version.ts" : "dist/features/execution-engines/acp-sdk-version.js"));
+  const acpVersionMarker = `const embeddedBundledAcpSdkVersion${sourceInputs ? ": string" : ""} = "NO_PACKAGED_ACP_SDK_VERSION";`;
+  let acpVersionVisits = 0, acpManifest;
   const definitions = [
     {
       name: "codesign", suffix: /packaged-codesign-published-review\.js$/,
@@ -205,7 +228,27 @@ async function buildOriginalDaemonBundle(codesignReceipt, officeReceipt, sourceI
     bundle: true, platform: "node", format: "esm", outfile: "dist/daemon/cli.mjs",
     ...(sourceInputs ? { write: false, metafile: true, tsconfigRaw: sourceInputs.tsconfigRaw, target: "es2022" } : {}),
     banner: { js: 'import { createRequire as __lingCreateRequire } from "node:module"; const require = __lingCreateRequire(import.meta.url);' },
-    plugins: [gstack.plugin, ...definitions.map(item => ({
+    plugins: [gstack.plugin, {
+      name: "build-owned-acp-sdk-version-literal",
+      setup(plugin) {
+        plugin.onLoad({ filter: /features[\\/]execution-engines[\\/]acp-sdk-version\.(?:ts|js)$/ }, async args => {
+          if (realpathSync(args.path) !== acpVersionModule) throw new Error("packaged_acp_sdk_version_module_changed");
+          if (++acpVersionVisits !== 1) throw new Error("packaged_acp_sdk_version_module_reloaded");
+          const source = sourceInputs ? sourceInputs.loadSource(acpVersionModule).contents : readFileSync(acpVersionModule, "utf8");
+          if (source.split(acpVersionMarker).length !== 2) throw new Error("packaged_acp_sdk_version_marker_changed");
+          const sdk = await plugin.resolve("@agentclientprotocol/sdk", {
+            resolveDir: resolve(desktopRoot, "../../packages/daemon"), kind: "import-statement",
+          });
+          if (sdk.errors.length || sdk.external || sdk.namespace !== "file" || !sdk.path) {
+            throw new Error("packaged_acp_sdk_version_resolution_failed");
+          }
+          acpManifest = readBundledAcpSdkManifest(realpathSync(sdk.path));
+          return { contents: source.replace(acpVersionMarker,
+            `const embeddedBundledAcpSdkVersion${sourceInputs ? ": string" : ""} = ${JSON.stringify(acpManifest.version)};`),
+            loader: sourceInputs ? "ts" : "js", resolveDir: dirname(acpVersionModule) };
+        });
+      },
+    }, ...definitions.map(item => ({
       name: `original-${item.name}-review-literal`,
       setup(plugin) {
         plugin.onLoad({ filter: sourceInputs ? new RegExp(item.suffix.source.replace("\\.js", "\\.ts")) : item.suffix }, args => {
@@ -221,6 +264,8 @@ async function buildOriginalDaemonBundle(codesignReceipt, officeReceipt, sourceI
     })), ...(sourceInputs ? [sourceInputs.plugin] : [])],
   });
   const originalOutput = officeReceipt ? pinOriginalBuildOutput(result) : undefined;
+  if (acpVersionVisits !== 1) throw new Error("packaged_acp_sdk_version_not_bundled");
+  if (readFileSync(acpManifest.path, "utf8") !== acpManifest.contents) throw new Error("packaged_acp_sdk_version_manifest_changed");
   gstack.assertIncluded();
   sourceInputs?.assertOriginalInputs(result);
   for (const item of definitions) {

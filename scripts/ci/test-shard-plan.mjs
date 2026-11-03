@@ -8,24 +8,18 @@ export const testSuites = {
   core: { packageName: "@ling-stack/core", cwd: join(root, "packages/core"), platform: "linux", shardCount: 4, concurrency: 2, excluded: [], exclusive: [] },
   daemon: { packageName: "@ling-stack/daemon", cwd: join(root, "packages/daemon"), platform: "darwin", shardCount: 4, concurrency: 2,
     excluded: ["dependency-security.test.mjs"],
-    // These integration fixtures are deliberately bounded more generously:
-    // hosted macOS runners crossed the default five-minute watchdog while
-    // still making forward progress. The default remains five minutes for
-    // every other daemon file.
+    // Keep the existing hosted-runner allowance for the recovery fixture.
+    // Split channel files use the ordinary five-minute watchdog and workers.
     fileTimeouts: {
-      "test/channel-workspace.test.mjs": 600_000,
       "test/recovery-discovery-fair-scan.test.mjs": 600_000,
     },
     exclusive: ["test/acp-kimi-host-read.test.mjs", "test/acp-kimi-host-terminal.test.mjs",
       // Preserve the child-lifecycle fixture's exclusive execution from the PR.
-      "test/delegation-production-tool-surface.test.mjs",
-      // This large channel integration file exceeds its 5-minute file watchdog
-      // only when it contends with another macOS worker.
-      "test/channel-workspace.test.mjs"] },
+      "test/delegation-production-tool-surface.test.mjs"] },
 };
 
 export async function discoverTestFiles(cwd, excluded = []) {
-  return (await readdir(join(cwd, "test"))).filter(file => file.endsWith(".test.mjs") && !excluded.includes(file))
+  return (await readdir(join(cwd, "test"))).filter(file => /\.test\.(?:mjs|ts)$/u.test(file) && !excluded.includes(file))
     .sort().map(file => `test/${file}`);
 }
 
@@ -39,10 +33,19 @@ export function estimateTestWeight(file, { cwd = testSuites.daemon.cwd, timings 
   catch (error) { if (error.code !== "ENOENT") throw error; return floor; }
 }
 
-export function assignTestShards(files, shardCount, options) {
+/**
+ * @param {string[]} files
+ * @param {number} shardCount
+ * @param {{ cwd?: string, timings?: Record<string, number>, exclusive?: string[], concurrency?: number }} [options]
+ */
+export function assignTestShards(files, shardCount, options = {}) {
   if (!Number.isInteger(shardCount) || shardCount < 1) throw new RangeError("shardCount must be a positive integer");
+  const concurrency = options.concurrency ?? 1;
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1) throw new RangeError("concurrency must be a positive integer");
   const buckets = Array.from({ length: shardCount }, () => ({ files: [], weight: 0 }));
-  const weighted = [...new Set(files)].map(file => ({ file, weight: estimateTestWeight(file, options) }))
+  // Exclusive files occupy the whole runner; ordinary files use one worker.
+  const weighted = [...new Set(files)].map(file => ({ file, weight: estimateTestWeight(file, options)
+    * (options.exclusive?.includes(file) ? concurrency : 1) }))
     .sort((a, b) => b.weight - a.weight || a.file.localeCompare(b.file));
   for (const item of weighted) {
     let target = 0;
@@ -68,6 +71,8 @@ export async function loadTimingHints(path) {
 
 export async function createTestPlan(packages, { timings = { suites: {} } } = {}) {
   if (!Array.isArray(packages) || packages.some(name => typeof name !== "string")) throw new TypeError("packages must be a string array");
+  /** @type {Record<string, { platform: string, files: string[], shardCount: number, concurrency: number,
+   * timings: Record<string, number>, shards: ReturnType<typeof assignTestShards> }>} */
   const suites = {};
   for (const [name, config] of Object.entries(testSuites)) {
     if (!packages.includes(config.packageName)) continue;
@@ -76,10 +81,11 @@ export async function createTestPlan(packages, { timings = { suites: {} } } = {}
     const hints = timings.suites?.[name];
     const durations = hints?.platform === config.platform ? hints.durationsMs : {};
     suites[name] = { platform: config.platform, files, shardCount: config.shardCount, concurrency: config.concurrency, timings: durations ?? {},
-      shards: assignTestShards(files, config.shardCount, { cwd: config.cwd, timings: durations ?? {} }) };
+      shards: assignTestShards(files, config.shardCount, { ...config, timings: durations ?? {} }) };
   }
+  const shardedPackages = Object.values(testSuites).map(config => config.packageName);
   return { version: 1, suites, unitMatrix: { include: [
-    { suite: "packages", shard: 0 },
+    ...(packages.some(name => !shardedPackages.includes(name)) ? [{ suite: "packages", shard: 0 }] : []),
     ...Array.from({ length: suites.core?.shardCount ?? 0 }, (_, shard) => ({ suite: "core", shard })),
   ] } };
 }

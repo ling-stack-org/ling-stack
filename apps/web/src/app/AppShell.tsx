@@ -1913,6 +1913,7 @@ export function AppShell(): React.JSX.Element {
     // guarded workspace reads from that committed owner, never the old render.
     void refreshChannels(cwd);
     void refreshAiCouncils(cwd);
+    void refreshRuns(cwd);
     void refreshUsedMemoryAudit(cwd);
   }, [form.cwd, daemonHealthy, daemonObservation.epoch, daemonObservation.paused]);
 

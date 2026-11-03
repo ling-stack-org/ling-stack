@@ -2,30 +2,35 @@
 
 ## Purpose
 
-This document records the next Web UI refactor plan. The goal is to make the Web client
-maintainable before adding GitHub automation, persistent AI teammate management, plugin
-management, and a future desktop shell.
+This document records the implemented behavior-preserving Web UI modularization and its
+remaining ownership boundaries. Source status was checked on 2026-11-02; it does not
+claim a fresh browser regression run.
 
-Current pressure points:
+The original pressure points were a single `App.tsx` coordinating state, pages, API
+calls, and helpers, plus a monolithic stylesheet. The current shape is:
 
-- `apps/web/src/App.tsx` owns application state, page routing, feature components, API
-  orchestration, UI helpers, and pure formatting helpers.
-- `apps/web/src/styles.css` owns global layout, feature styles, form controls, and
-  component-specific rules.
-- More features will make this shape harder to test and harder to reuse in desktop.
+- `App.tsx` is an entry component; `app/AppShell.tsx` wires feature pages and domain
+  controllers and retains cross-feature coordination.
+- Presentation lives under `features/`, domain hooks under `domains/`, and pure helpers
+  under `lib/`.
+- `styles.css` aggregates ordered shared-package and Web styles. Desktop loads the same
+  built Web client.
 
 This is a behavior-preserving refactor. It is not a redesign.
 
-## Goals
+## Original Slice Goals
 
 - Keep the current visual direction and behavior unchanged.
 - Split the Web UI into feature modules with explicit props and local helpers.
 - Keep daemon API, routes, request bodies, and response shapes unchanged.
 - Keep existing Playwright selectors and visible labels stable.
-- Create reusable surfaces for the future desktop shell.
+- Create reusable surfaces for the desktop shell.
 - Avoid introducing a router, global state manager, or new dependency in this slice.
 
-## Target Structure
+## Original Target Structure
+
+This sketch records the initial extraction, not the complete current tree. Domain
+controllers, feature pages, shared packages, and styles have since evolved beyond it.
 
 ```text
 apps/web/src/
@@ -73,9 +78,9 @@ apps/web/src/
     settings.css
 ```
 
-`styles.css` should become the stable import surface for ordered CSS imports. Feature
-styles are split after component extraction is stable. `styles.css` remains the only
-import used by the Vite entrypoint.
+`styles.css` is now the ordered Web style import surface. `main.tsx` imports this
+aggregate and loads KaTeX CSS separately; the historical `forms.css` placeholder in the
+sketch is not a current file.
 
 ## Feature Boundaries
 
@@ -107,7 +112,7 @@ Rules:
 - Do not introduce Redux, Zustand, React Router, or another state/routing library in this
   refactor.
 
-## Migration Order
+## Original Migration Order
 
 1. Move pure constants, formatters, provider readiness helpers, approval helpers, artifact
    helpers, and local-storage helpers out of `App.tsx`.
@@ -122,7 +127,7 @@ Rules:
 
 ## Implementation Status
 
-Current slice:
+Current source ownership:
 
 - `App.tsx` is now a thin entry component; the coordinator lives in
   `app/AppShell.tsx`.
@@ -133,48 +138,42 @@ Current slice:
 - Generic UI pieces `MetaRow`, `StatusBadge`, `AvatarInitial`, and
   `RunRepairHintBanner` live under `shared/components/`.
 - Sidebar navigation lives under `features/navigation/`.
-- AI teammate presentation now lives under `features/teammates/`; local draft state,
-  default skill pack wiring, sidebar coordination, and pin/hide/delete callbacks stay in
-  `AppShell`.
-- Model Workbench presentation now lives under `features/providers/`; provider CRUD,
-  check, batch check, repair handoff, and rerun coordination stay in `AppShell`.
-- Approval inbox presentation now lives under `features/approvals/`; approval refresh,
-  resolution, and repair-run routing stay in `AppShell`. `ApprovalCard` is exported for
-  run detail and inline pending approval surfaces.
-- Media Jobs presentation now lives under `features/media/`; media job load/create/run
-  coordination stays in `AppShell`.
+- AI teammate, Model Workbench, approval inbox, Media Jobs, Settings, Runs, and Workspace
+  presentation live under their respective `features/` directories.
+- State, loading, and mutation logic have also moved into domain hooks, including
+  `useTeammatesDomain`, `useProvidersDomain`, `useApprovalsDomain`, `useMediaDomain`,
+  `useSettingsDomain`, `useRunsDomain`, and `useWorkspaceDomain` under `domains/`.
+- `AppShell` retains navigation, domain wiring, stream coordination, and cross-feature
+  handoffs. Domain extraction is not complete.
+- `ApprovalCard` is exported for run detail and inline pending approval surfaces.
 - `ArtifactRow` lives under `shared/components/` because run evidence and media jobs both
   render artifact links.
-- Settings approval policy presentation now lives under `features/settings/`; approval
-  policy load/save, workspace path, loading, and error coordination stay in `AppShell`.
-- Runs presentation now lives under `features/runs/`; run loading, selection, rerun,
-  approval resolution, provider repair, and task repair routing stay in `AppShell`.
-
-- Workspace presentation now lives under `features/workspace/`; channel/task
-  coordination, run orchestration, provider selection, and repair handoffs stay in
-  `AppShell`.
-- `styles.css` is now an ordered import surface for `styles/base.css`, `forms.css`,
-  `navigation.css`, `workspace.css`, `runs.css`, `media.css`, `providers.css`,
-  `settings.css`, `approvals.css`, `layout.css`, `teammates.css`, and `components.css`.
-  The split preserves the previous cascade order; `forms.css` is intentionally reserved
-  for later form-control refinement.
+- `styles.css` imports shared UI package styles and Web styles under `styles/`,
+  `styles/features/`, `styles/shared/`, and `styles/app/` in a defined order. The original
+  flat file list and reserved `forms.css` placeholder no longer describe this tree.
 - Goal 2 is complete: feature presentation has moved out of `AppShell`, and CSS has a
   stable modular entry structure.
 
-Follow-up design:
+Follow-up implementation and remaining boundaries:
 
 - [Web AppShell Domain Modularization](web-appshell-domain-modularization.md) defines
-  the next architecture slice: page-level lazy loading, domain-owned state controllers,
-  a typed `AppEventRouter`, concurrency rules, refresh/cache policy, stream lifecycle,
-  and migration exit criteria. That follow-up keeps this document's original
-  no-new-global-store constraint while addressing the remaining `AppShell` growth and
-  large initial Web chunk warning.
-- [Web API Facade Modularization](web-api-facade-modularization.md) defines the next
-  source-ownership slice for `apps/web/src/api.ts`: keep the compatibility barrel,
-  extract request builders and form payload adapters, then move endpoint wrappers into
-  domain-specific API modules.
+  domain-owned state controllers, concurrency rules, refresh/cache policy, stream
+  lifecycle, and migration exit criteria. Page-level lazy loading, domain hooks, and
+  typed `DomainEvent` handling are implemented. Cross-domain event handling remains in
+  `AppShell.handleDomainEvent`, not a separate `AppEventRouter`; this is not a claim that
+  all migration exit criteria are met.
+- [Web API Facade Modularization](web-api-facade-modularization.md) owns the API boundary.
+  `apps/web/src/api.ts` is already a compatibility barrel; request builders, form
+  adapters, and domain endpoint wrappers now live under `apps/web/src/api/`.
+- Source/test anchors: `apps/web/src/app/lazy-pages.tsx`,
+  `apps/web/src/app/domain-events.ts`, `apps/web/src/domains/`,
+  `apps/web/src/styles.css`, `apps/web/e2e/ui2-app-shell-state.spec.ts`, and
+  `apps/web/e2e/api-adapters.spec.ts`.
 
 ## Non-Goals
+
+These non-goals describe the original refactor scope, not features absent from the
+current repository. Contracts extraction and Desktop have their own implementations.
 
 - No daemon API changes.
 - No visual redesign.
@@ -185,15 +184,15 @@ Follow-up design:
 
 ## Web E2E Structure Guidance
 
-`apps/web/e2e/app.spec.ts` is the Web end-to-end regression suite. It runs with
-Playwright against the real Vite Web client, while daemon calls to
-`http://127.0.0.1:17891/**` are mocked through the suite's route handler. Treat it as a
-browser-level Web contract test, not as a full daemon process integration test.
+The Web E2E suite is already split between `apps/web/e2e/app.spec.ts` and domain specs.
+These tests run Playwright against the real Vite Web client, while daemon calls to
+`http://127.0.0.1:17891/**` are mocked through shared support route handling. Treat them
+as browser-level Web contract tests, not full daemon-process integration tests.
 
-Do not split the file only to make the tree look cleaner. The current suite intentionally
-shares `MockState`, daemon route handling, fixture builders, and cross-feature flows.
-Splitting tests before those support boundaries are stable would create churn and raise
-the risk of breaking selectors, mock daemon behavior, or setup order.
+Shared support lives under `e2e/support/`, but its internal extraction remains partial:
+`mock-state.ts` and `test-helpers.ts` re-export from `mock-daemon.ts`. Further splits
+should establish support ownership without changing selectors, mock behavior, or setup
+order.
 
 Refactor the e2e structure incrementally when there is a real maintenance trigger:
 
@@ -203,7 +202,7 @@ Refactor the e2e structure incrementally when there is a real maintenance trigge
 - a domain can move cleanly with its helpers and fixtures, such as channel, workspace,
   runtime, model workbench, settings, external work, or media jobs.
 
-When the trigger exists, split support code before splitting scenarios:
+The shared support entrypoints already exist:
 
 ```text
 apps/web/e2e/
@@ -214,8 +213,7 @@ apps/web/e2e/
     test-helpers.ts
 ```
 
-Only after the shared support layer is stable should domain specs move out of
-`app.spec.ts`:
+Domain specs already include:
 
 ```text
 apps/web/e2e/channel.spec.ts
@@ -263,4 +261,4 @@ Regression coverage must preserve:
 - This refactor follows the existing client-style UI direction.
 - The first success metric is behavior-preserving modularity, not smaller files at any
   cost.
-- Web remains the reference client for the future desktop shell.
+- Web remains the reference client loaded by the implemented Electron shell.
