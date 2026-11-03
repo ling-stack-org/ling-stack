@@ -19,6 +19,9 @@
  * resolved in this fixed audit. It is not proof about nonliteral/user-selected
  * imports, third-party vendor source, Rust/
  * linker/native-publisher tool identities, the complete SDK or OS/kernel trust.
+ * Optional LanceDB imports remain external opt-ins, disabled by default. Their
+ * authored loader is pinned; configured provider/vendor/native bytes are not
+ * part of this source approval.
  * The fixed builder config is an explicit root for its nonliteral config URL.
  * Provider=true source-build verifier and Windows custom signer are not roots:
  * this fixed mac/provider=false lane rejects provider=true before packaging.
@@ -33,12 +36,15 @@
  * generated files. Source config changes require a new explicit review.
  * Human QA's early-entry/lifecycle sources are explicit non-Office-build review
  * inputs: their inclusion pins QA isolation/startup, not the entire Main graph.
+ * Local-service IPC is an authored root; its Main/preload/Web wiring is pinned
+ * nonrecursively, without pulling the entire Main graph into this closure.
  *
  * A graph change requires an explicit review of this fixed list. It must not
  * silently discover, regenerate, approve, or refresh digests during a build.
  */
 export const PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS = Object.freeze([
   "apps/desktop/main/resource-paths.ts",
+  "apps/desktop/main/local-services.ts",
   "apps/desktop/scripts/after-sign.mjs",
   "apps/desktop/scripts/engine-supervisor-package.mjs",
   "apps/desktop/scripts/build-packaged-daemon.mjs",
@@ -111,6 +117,47 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/channels/channel-pending-operation.ts",
   // Host-issued channel dependency scope; listing alone grants no approval.
   "packages/daemon/src/features/channels/channel-command-input-policy.ts",
+  // Explicit reviewed session, learning and memory closure; no build-time discovery.
+  "packages/contracts/src/channel-sessions-validation.ts",
+  "packages/contracts/src/learning-reviews.ts",
+  "packages/contracts/src/memory-derivatives.ts",
+  "packages/contracts/src/memory-wiki.ts",
+  "packages/core/src/channel-session-types.ts",
+  "packages/core/src/learning-review-types.ts",
+  "packages/core/src/memory-derivative-types.ts",
+  "packages/core/src/memory-wiki-types.ts",
+  "packages/core/src/storage/sqlite/channel-session-admission.ts",
+  "packages/core/src/storage/sqlite/channel-session-lineage.ts",
+  "packages/core/src/storage/sqlite/channel-session-migration.ts",
+  "packages/core/src/storage/sqlite/channel-session-notification.ts",
+  "packages/core/src/storage/sqlite/channel-session-store.ts",
+  "packages/core/src/storage/sqlite/learning-review-migration.ts",
+  "packages/core/src/storage/sqlite/learning-review-store.ts",
+  "packages/core/src/storage/sqlite/memory-derivative-migration.ts",
+  "packages/core/src/storage/sqlite/memory-derivative-store.ts",
+  "packages/core/src/storage/sqlite/memory-search-index.ts",
+  "packages/core/src/storage/sqlite/memory-wiki-store.ts",
+  "packages/core/src/storage/sqlite/procedure-observation-job-migration.ts",
+  "packages/core/src/storage/sqlite/skill-definition-revision-migration.ts",
+  "packages/core/src/storage/sqlite/skill-definition-revision-store.ts",
+  "packages/daemon/src/features/channels/conversation-runtime-metrics-scope.ts",
+  "packages/daemon/src/features/channels/session-routes.ts",
+  "packages/daemon/src/features/learning/coordinator.ts",
+  "packages/daemon/src/features/learning/evidence.ts",
+  "packages/daemon/src/features/learning/extractor.ts",
+  "packages/daemon/src/features/learning/model.ts",
+  "packages/daemon/src/features/learning/routes.ts",
+  "packages/daemon/src/features/learning/scoped-candidates.ts",
+  "packages/daemon/src/features/memory/embedding-client.ts",
+  "packages/daemon/src/features/memory/lancedb-provider.ts",
+  "packages/daemon/src/features/memory/recall-service.ts",
+  "packages/daemon/src/features/memory/semantic-registry.ts",
+  "packages/daemon/src/features/memory/semantic-routes.ts",
+  "packages/daemon/src/features/memory/semantic-service.ts",
+  "packages/daemon/src/features/memory/wiki-compiler.ts",
+  "packages/daemon/src/features/memory/wiki-routes.ts",
+  "packages/daemon/src/features/skills/procedure-observation-service.ts",
+  "packages/daemon/src/features/skills/revision-notices.ts",
   // FD5 observer and its CLI signal owner are explicit, independently reviewed inputs.
   "packages/core/src/daemon-shutdown-observer.ts",
   "packages/daemon/src/runtime/signal-shutdown.ts",
@@ -130,6 +177,15 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/conversations/context-compaction-projection.ts",
   // Explicit cold resource-bootstrap delta; listing alone grants no approval.
   "apps/desktop/main/daemon-lifecycle.ts",
+  // Fixed local-service IPC and its exact integration inputs; listing is not approval.
+  "apps/desktop/main/local-services.ts",
+  "apps/desktop/main/main.ts",
+  "apps/desktop/main/ipc.ts",
+  "apps/desktop/preload/main-window.ts",
+  "apps/desktop/shared/ipc-channels.ts",
+  "apps/desktop/shared/desktop-capabilities.ts",
+  "apps/desktop/shared/local-service-capabilities.ts",
+  "apps/web/src/api/client.ts",
   // Explicit shutdown/lease-consumer delta, independently reviewed before binding.
   "apps/desktop/main/desktop-runtime.ts",
   "packages/core/src/daemon-resource-bootstrap.ts",
@@ -1030,6 +1086,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/harness/tool-execution/recovery.ts",
   "packages/daemon/src/features/mcp/broker.ts",
   "packages/daemon/src/features/mcp/host-operation.ts",
+  "packages/daemon/src/features/mcp/host-stdio-read-buffer.ts",
   "packages/daemon/src/features/mcp/host-stdio-transport.ts",
   "packages/daemon/src/features/mcp/office-local-mcp-operation.ts",
   "packages/daemon/src/features/mcp/reserved-ids.ts",
@@ -1662,6 +1719,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/execution-engines/kimi-connection.ts",
   "packages/daemon/src/features/execution-engines/kimi-native-executable.ts",
   "packages/daemon/src/features/execution-engines/kimi-probe-isolation.ts",
+  "packages/daemon/src/features/execution-engines/acp-sdk-version.ts",
   "packages/daemon/src/features/execution-engines/native-admission.ts",
   "packages/daemon/src/features/execution-engines/native-auth-home.ts",
   "packages/daemon/src/features/execution-engines/native-login.ts",
@@ -1744,13 +1802,8 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "scripts/gstack/testsavant-model-cache.mjs",
   "scripts/gstack/testsavant-model-pin.json",
   // Explicitly reviewed mainline runtime edges, 2026-10-29. Keep existing inputs
-  // and the 41 authored roots; packaging never discovers or approves this list.
-  "packages/contracts/src/artifacts.ts",
+  // and the fixed authored roots; packaging never discovers or approves this list.
   "packages/contracts/src/deliverables.ts",
-  "packages/contracts/src/engine-lifecycle.ts",
-  "packages/contracts/src/im-destinations.ts",
-  "packages/contracts/src/marketplace.ts",
-  "packages/contracts/src/notifications.ts",
   "packages/core/src/runner-ids.ts",
   "packages/core/src/storage/sqlite/runner-id-migration.ts",
   "packages/core/src/storage/sqlite/workspace-permission-migration.ts",
@@ -1760,14 +1813,6 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/deliverables/routes.ts",
   "packages/daemon/src/features/deliverables/spreadsheet-extract.ts",
   "packages/daemon/src/features/deliverables/spreadsheet-manifest.ts",
-  "packages/daemon/src/features/diagnostics/routes.ts",
-  "packages/daemon/src/features/execution-engines/engine-scanner.ts",
-  "packages/daemon/src/features/execution-engines/managed-engine-installer.ts",
-  "packages/daemon/src/features/im-destinations/registry.ts",
-  "packages/daemon/src/features/im-destinations/routes.ts",
   "packages/daemon/src/features/media/workflows/media-protocol-contract.ts",
-  "packages/daemon/src/features/notifications/hub.ts",
-  "packages/daemon/src/features/notifications/routes.ts",
-  "packages/daemon/src/features/skills/marketplace-route.ts",
   "packages/daemon/src/shared/permission-contract.ts",
 ]);

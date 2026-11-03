@@ -7,16 +7,34 @@ import { createHash } from "node:crypto";
 import { registerHooks, syncBuiltinESMExports } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { readReviewedCodesignSource } from "../scripts/packaged-codesign-review-publication.mjs";
 
 const desktopRoot = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
 const nativeRoot = resolve(desktopRoot, "../../native/sandbox");
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
+test("committed codesign review has distinct OS identities and matches the existing Office review pin", () => {
+  const { review, sourceReviewSha256 } = readReviewedCodesignSource();
+  const releases = [review.os, ...review.additionalOs].map(row => row.release);
+  assert.equal(new Set(releases).size, releases.length);
+  const office = JSON.parse(readFileSync(resolve(nativeRoot, "../office-local/reviewed-packaged-source-v1.json"), "utf8"));
+  assert.equal(sourceReviewSha256, office.packagingSha256["native/sandbox/reviewed-codesign-source-v1.json"]);
+});
+function syntheticReview() {
+  const review = JSON.parse(readFileSync(join(nativeRoot, "reviewed-codesign-source-v1.json"), "utf8"));
+  const rows = ["24.0.0", "25.0.0"].map(release => ({
+    release, backendHelperVersion: `ling-seatbelt-v1:${release}:${hash("SYNTHETIC BACKEND VERSION:" + release)}`,
+    backendSha256: hash("SYNTHETIC BACKEND:" + release), codesignSha256: hash("SYNTHETIC CODESIGN:" + release),
+    templateSha256: hash("SYNTHETIC TEMPLATE:" + release), taskgatedBinding: "reviewed_xml_v1",
+  }));
+  // Publication mechanics use disposable OS identities, never release approvals.
+  return { ...review, schemaVersion: 2, os: rows[0], additionalOs: rows.slice(1) };
+}
 async function fixture(t, { hostRelease } = {}) {
   const root = realpathSync(mkdtempSync("/private/tmp/ling-codesign-publication-test-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const scripts = join(root, "apps/desktop/scripts"), dist = join(root, "apps/desktop/dist");
   mkdirSync(scripts, { recursive: true }); mkdirSync(dist);
-  const review = JSON.parse(readFileSync(join(nativeRoot, "reviewed-codesign-source-v1.json"), "utf8"));
+  const review = syntheticReview();
   const releaseMock = t.mock.method(os, "release", () => hostRelease ?? review.os.release);
   t.after(() => { releaseMock.mock.restore(); syncBuiltinESMExports(); });
   const fixtureNative = join(root, "native/sandbox"); mkdirSync(fixtureNative, { recursive: true });
@@ -114,7 +132,7 @@ test("same-process original trusted build receipt (explicit synthetic builder, n
     assert.equal(f.counts().signingCalls, 0);
   });
   await t.test("each exact reviewed OS builds a descriptor bound to just that tuple", async t => {
-    const current = JSON.parse(readFileSync(join(nativeRoot, "reviewed-codesign-source-v1.json"), "utf8"));
+    const current = syntheticReview();
     for (const selected of [current.os, ...current.additionalOs]) {
       await t.test(selected.release, async t => {
         const f = await fixture(t, { hostRelease: selected.release });

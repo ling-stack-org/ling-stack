@@ -53,3 +53,58 @@ test("a callback captured before pause consults the current observation ref", ()
   const f = fixture(); const oldCallback = f.effect;
   f.observe(true); oldCallback(); assert.equal(f.calls.length, 0);
 });
+
+// Health can supply cwd before the observation owner commits. Exercise the
+// production hydration effect so guarded pre-commit reads are retried after it.
+const hydrateCallback = withTypeScriptSourceFiles([appPath], files => {
+  const source = files.get(appPath), matches = [];
+  visitTypeScriptNode(source, node => {
+    if (!ts.isCallExpression(node) || node.expression.getText(source) !== "useEffect") return;
+    const body = node.arguments[0]?.getText(source) ?? "";
+    if (body.includes("refreshChannels(cwd)") && body.includes("refreshUsedMemoryAudit(cwd)")) matches.push(body);
+  });
+  assert.equal(matches.length, 1);
+  return stripTypeScriptTypes(matches[0], { mode: "transform" }).trim().replace(/;$/, "");
+}, { cwd: fileURLToPath(new URL("..", import.meta.url)) });
+
+function hydrationFixture() {
+  const calls = [];
+  const record = domain => async cwd => { calls.push({ domain, cwd }); };
+  const context = { form: { cwd: "" }, daemonHealthy: true,
+    daemonObservation: { workspaceCwd: "", paused: false, epoch: 1 },
+    refreshChannels: record("channels"), refreshAiCouncils: record("councils"),
+    refreshRuns: record("runs"), refreshUsedMemoryAudit: record("memory") };
+  return { calls, context, effect: runInNewContext(`(${hydrateCallback})`, context) };
+}
+
+test("Health's committed workspace hydrates Runs after the empty startup observation", () => {
+  const f = hydrationFixture();
+  f.effect();
+  assert.deepEqual(f.calls, []);
+  f.context.form.cwd = "/isolated/health-workspace";
+  f.effect();
+  assert.deepEqual(f.calls, [], "a workspace mismatch cannot admit reads");
+  f.context.daemonObservation = { workspaceCwd: "/isolated/health-workspace", paused: false, epoch: 2 };
+  f.effect();
+  assert.deepEqual(f.calls.filter(call => call.domain === "runs"), [
+    { domain: "runs", cwd: "/isolated/health-workspace" },
+  ]);
+  assert.deepEqual(f.calls.map(call => call.domain).sort(), ["channels", "councils", "memory", "runs"]);
+});
+
+test("workspace hydration preserves Health, pause and observation ownership guards", () => {
+  const f = hydrationFixture();
+  f.context.form.cwd = "/isolated/health-workspace";
+  f.context.daemonObservation.workspaceCwd = f.context.form.cwd;
+  f.context.daemonHealthy = false;
+  f.effect();
+  assert.deepEqual(f.calls, []);
+  f.context.daemonHealthy = true;
+  f.context.daemonObservation.paused = true;
+  f.effect();
+  assert.deepEqual(f.calls, []);
+  f.context.daemonObservation.paused = false;
+  f.context.daemonObservation.workspaceCwd = "/isolated/other-workspace";
+  f.effect();
+  assert.deepEqual(f.calls, []);
+});

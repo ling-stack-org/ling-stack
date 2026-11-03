@@ -191,7 +191,8 @@ test("unknown actual bootstrap bytes close registration/current Office only, wit
 });
 
 test("more than 256 real ordinary commands and more than 64 closed stage lifetimes do not exhaust history budgets", native, async t => {
-  const f = createProtectedHostStageFixture(t), command = commandFor("process.exit(0)");
+  // Exercise real native launches without rehashing and starting Node 258 times.
+  const f = createProtectedHostStageFixture(t), command = "true";
   for (let i = 0; i < 258; i++) {
     const prepared = await f.runtime.prepare(f.input(command, f.current, "many-call-" + i));
     await waitActor(prepared.spawn()); prepared.dispose();

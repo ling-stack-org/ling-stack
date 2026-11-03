@@ -1449,7 +1449,8 @@ test("channel environment surface shows read-only context and opens review", asy
   await expect.poll(async () => Math.round((await popover.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(290);
   await expect(popover).toContainText("Environment");
   await expect(popover).toContainText("Changes");
-  await expect(popover).toContainText("Review");
+  await expect(popover.getByLabel("Work summary", { exact: true })).toBeVisible();
+  await expect(popover).toContainText("Pull requests");
   await expect(popover).toContainText("Local environment");
   await expect(popover).toContainText("Working branch");
   await expect(popover).toContainText("Commit or push");
@@ -1568,9 +1569,12 @@ test("channel environment surface shows read-only context and opens review", asy
   await page.setViewportSize({ width: 1984, height: 1200 });
   await page.waitForTimeout(200);
 
-  await popover.getByRole("button", { name: "Review" }).click();
+  await summaryChanges.click();
+  await expect(popover).toBeHidden();
   await expect(dock).toBeVisible();
   await expect(dock.locator(".right-dock-head-page")).toContainText("Review");
+  await expect(dock.locator(".right-dock-head-page")).toContainText("Workspace changes");
+  await summaryButton.click();
   await expect.poll(async () => Math.round((await dock.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(300);
   await expect.poll(async () => Math.round((await dock.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(320);
   await expect(popover).toBeVisible();
@@ -1765,6 +1769,16 @@ test("channel environment labels review-only items as review instead of changes"
   await expect(environmentSection).toContainText("1 review item");
   await expect(environmentSection).not.toContainText("Changes");
   await expect(environmentSection).not.toContainText("+0 -0");
+  await environmentSection.getByRole("button", { name: "Local environment" }).click();
+  const environmentPage = page.locator(".channel-environment-page");
+  await expect(environmentPage).toBeVisible();
+  const reviewRow = environmentPage.locator('[data-environment-row="review"]');
+  await expect(reviewRow).toContainText("Review");
+  await expect(reviewRow).toContainText("1 review item");
+  await expect(reviewRow).not.toContainText("Changes");
+  await reviewRow.getByRole("button", { name: "View review" }).click();
+  await expect(environmentPage).toHaveCount(0);
+  await expect(page.locator(".channel-side-panel .right-dock-head-page")).toContainText("Review");
 });
 
 test("channel environment shows clean git state without review rows", async ({ page }) => {
@@ -2361,7 +2375,12 @@ test("multi-role channel messages create workflow proposals instead of AI replie
   const state = createBaseState({ approvalStatus: "expired" });
   state.channels = state.channels.map((channel) =>
     isRecord(channel) && channel.id === "channel_engineering"
-      ? { ...channel, defaultTeammateId: "teammate_builtin_engineer", autoReplyMode: "default_teammate" }
+      ? {
+        ...channel,
+        allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+        defaultTeammateId: "teammate_builtin_engineer",
+        autoReplyMode: "default_teammate",
+      }
       : channel,
   );
   state.aiTeammates = [
@@ -2421,6 +2440,11 @@ test("task proposal gate uses one sentence and direct deny or allow actions", as
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "expired" });
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) && channel.id === "channel_engineering"
+      ? { ...channel, allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"] }
+      : channel,
+  );
   state.aiTeammates = [createMockTeammate({ id: "ling_agent", displayName: "Ling Agent", allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"] })];
   state.channelMessages = [
     {
@@ -4721,7 +4745,7 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
   ]);
 });
 
-test("channel composer sends workspace file refs as native message payload", async ({ page }) => {
+test("channel composer infers workspace file refs into the native message payload", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -4742,7 +4766,7 @@ test("channel composer sends workspace file refs as native message payload", asy
     {
       path: "apps/web/src/features/workspace/WorkspaceClientView.tsx",
       label: "apps/web/src/features/workspace/WorkspaceClientView.tsx",
-      source: "composer",
+      source: "inferred_text",
     },
   ]);
   const references = page.getByLabel("References");
@@ -5797,6 +5821,11 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   });
   page.on("pageerror", (error) => runtimeErrors.push(`pageerror:${error.message}`));
   const state = createBaseState({ approvalStatus: "expired" });
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) && channel.id === "channel_engineering"
+      ? { ...channel, allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"] }
+      : channel,
+  );
   state.providers = [
     createChatProvider({
       id: "provider_ready",
@@ -6008,6 +6037,11 @@ test("requirement shaping stays compact while its task decision uses the Compose
     localStorage.setItem("ling-stack.themeBootstrapPreference", "dark");
   });
   const state = createBaseState({ approvalStatus: "expired" });
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) && channel.id === "channel_engineering"
+      ? { ...channel, allowedTools: ["read", "grep", "find", "ls", "edit"] }
+      : channel,
+  );
   state.aiTeammates = [createMockTeammate({ id: "ling_agent", displayName: "Ling Agent" })];
   state.channelMessages = [
     {
@@ -7234,10 +7268,15 @@ test("running workflow Agent stays expanded while context inspect details stay b
   await expect(timeline).not.toContainText("read_only");
   await expect(timeline).not.toContainText("workspace_write");
   const engineerShellRow = timeline.locator('[data-conversation-timeline-kind="commandExecution"]');
-  await expect(engineerShellRow.locator(".conversation-timeline-activity-main")).toHaveClass(/static/u);
+  await expect(engineerShellRow.locator(".conversation-timeline-activity-main")).toHaveAttribute("aria-expanded", "false");
   await expect(engineerShellRow).not.toContainText("Run focused workflow UI test");
   await expect(engineerShellRow.locator(".conversation-timeline-activity-main strong")).toHaveAttribute("title", "pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g workflow");
   await expect(engineerShellRow.locator(".conversation-timeline-activity-detail")).toHaveCount(0);
+  await expandTimelineItem(engineerShellRow);
+  await expect(engineerShellRow.locator(".conversation-timeline-activity-main")).toHaveAttribute("aria-expanded", "true");
+  await expect(engineerShellRow.getByLabel("Command", { exact: true })).toHaveText("pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g workflow");
+  await expect(engineerShellRow.locator("[data-conversation-command-output-stats]")).toHaveCount(0);
+  await expect(engineerShellRow.locator(".conversation-timeline-activity-detail")).not.toContainText("exit 0");
   await expect(engineerShellRow).not.toContainText("Validate workflow detail rows.");
   await expect(timeline).not.toContainText("Kept sections");
   await expect(timeline).not.toContainText("Dropped sections");
@@ -8120,7 +8159,9 @@ test("completed multi-agent disclosure excludes plan-only rows and preserves can
   const qaActionRow = qaGroup.locator('[data-conversation-timeline-kind="commandExecution"]');
   await qaActionRow.locator(".conversation-timeline-activity-main").click();
   await expect(qaActionRow.locator(".conversation-timeline-activity-main strong")).toHaveAttribute("title", "pnpm --filter @ling-stack/web test:e2e -- login-smoke");
-  await expect(qaActionRow.locator(".conversation-timeline-activity-detail")).not.toContainText("exit 0");
+  await expect(qaActionRow.locator(".conversation-timeline-activity-detail")).toContainText(`cwd: ${cwd}`);
+  await expect(qaActionRow.locator("[data-conversation-command-output-stats]")).toHaveText("输出: 0 行 · 0 B");
+  await expect(qaActionRow.locator(".conversation-timeline-activity-detail")).toContainText("exit 0 · 6.0s");
 
   const revisionBeforeRefresh = await timeline.getAttribute("data-conversation-canonical-revision");
   state.channelMessages.push({
@@ -9273,8 +9314,8 @@ test("channel activity paginates long message history and virtualizes visible ro
   const renderedBefore = await page.locator(".activity-shell .message-feed .conversation-timeline-virtual-row").count();
   expect(renderedBefore).toBeGreaterThan(0);
   expect(renderedBefore).toBeLessThan(100);
-  const scrollBefore = await readScrollState(page, ".activity-shell .message-feed");
-  expect(scrollBefore.atBottom).toBe(true);
+  // Row measurement schedules tail reconciliation on the next animation frame.
+  await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
 
   await page.locator(".activity-shell .message-feed").evaluate((element) => {
     element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
@@ -11047,26 +11088,19 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(terminalReport).toBeVisible();
   await expect.poll(() => terminalReport.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
-  await expect(terminalReportItem).toContainText("频道现在会保留 Architect、Designer、Engineer 和 QA 的真实操作过程，并在完成后展示结构化总结。");
-  await expect(terminalReport).toContainText("Architect");
-  await expect(terminalReport).toContainText("Designer");
-  await expect(terminalReport).toContainText("Engineer");
-  await expect(terminalReport).toContainText("QA");
-  await expect(terminalReport.locator('[data-terminal-report-section="agents"] .conversation-timeline-terminal-entry')).toHaveCount(4);
-  await expect(terminalReport).toContainText("重构操作记录展示");
-  await expect(terminalReport).toContainText("Web typecheck");
-  await expect(terminalReport).toContainText("确认 workflow、run、action 和 artifact 的会话投影边界");
-  for (const [name, path] of [
-    ["ConversationWorkCell.tsx", "apps/web/src/shared/conversation/blocks/ConversationWorkCell.tsx"],
-    ["components.css", "apps/web/src/styles/components.css"],
-    ["conversation-work-cell-operation-records.md", "docs/design/conversation-work-cell-operation-records.md"],
-  ] as const) {
-    const reportRef = terminalReport.locator(".conversation-timeline-file-ref").filter({ hasText: name }).first();
-    await expect(reportRef).toBeVisible();
-    await expect(reportRef).toHaveAttribute("title", path);
-    await expect(reportRef.locator(".conversation-timeline-file-ref-icon")).toBeVisible();
-    await expect(terminalReport.getByRole("button", { name, exact: true })).toHaveCount(0);
-  }
+  await expect(terminalReportItem).toHaveAttribute("data-conversation-timeline-status", "succeeded");
+  await expect(terminalReportItem).toContainText("任务已完成。");
+  await expect(terminalReportItem).not.toContainText("频道现在会保留 Architect、Designer、Engineer 和 QA 的真实操作过程");
+  await expect(terminalReport.locator('[data-terminal-report-section="agents"], [data-terminal-report-section="verification"]')).toHaveCount(0);
+  await expect(terminalReport).not.toContainText("重构操作记录展示");
+  await expect(terminalReport).not.toContainText("Web typecheck");
+  const reportRef = terminalReport.locator(".conversation-timeline-file-ref")
+    .filter({ hasText: "conversation-work-cell-operation-records.md" });
+  await expect(reportRef).toHaveCount(1);
+  await expect(reportRef).toBeVisible();
+  await expect(reportRef).toHaveAttribute("title", "docs/design/conversation-work-cell-operation-records.md");
+  await expect(reportRef.locator(".conversation-timeline-file-ref-icon")).toBeVisible();
+  await expect(terminalReport.getByRole("button", { name: "conversation-work-cell-operation-records.md", exact: true })).toHaveCount(0);
   await expect(timeline.locator('[data-conversation-timeline-kind="agentMessage"]').filter({ hasText: "完成：「频道 work-cell 操作记录样例」" })).toHaveCount(0);
 
   const topLevelKinds = await timeline.locator(":scope > .conversation-timeline-focus-block")
@@ -11107,6 +11141,14 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(editFileRefs.nth(1)).toHaveAttribute("title", "apps/web/src/shared/conversation/blocks/ConversationWorkCell.tsx");
   await expect(editFileRefs.nth(1).locator(".conversation-timeline-file-ref-icon")).toHaveText("±");
   await expect(editActionRow.locator(".conversation-timeline-change-preview")).toHaveCount(0);
+
+  const styleActionRow = engineerDetail.locator('[data-conversation-timeline-kind="fileChange"]')
+    .filter({ hasText: "components.css" }).first();
+  await expandTimelineItem(styleActionRow);
+  const styleRef = styleActionRow.locator(".conversation-timeline-file-ref").first();
+  await expect(styleRef).toBeVisible();
+  await expect(styleRef).toHaveAttribute("title", "apps/web/src/styles/components.css");
+  await expect(styleRef.locator(".conversation-timeline-file-ref-icon")).toBeVisible();
 
   const commandBatch = engineerDetail.locator(".conversation-command-batch");
   await expect(commandBatch).toHaveCount(1);
@@ -11456,7 +11498,9 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await expect(command).toHaveAttribute("data-conversation-action-id", "execution_action_thread_check");
   await expandTimelineItem(command);
   await expect(command.locator(".conversation-timeline-activity-main strong")).toHaveAttribute("title", "pnpm typecheck");
-  await expect(command.locator(".conversation-timeline-activity-detail")).not.toContainText("exit 0");
+  await expect(command.locator(".conversation-timeline-activity-detail")).toContainText(`cwd: ${cwd}`);
+  await expect(command.locator(".conversation-timeline-activity-detail")).toContainText("Output: 0 lines · 0 B");
+  await expect(command.locator(".conversation-timeline-activity-detail")).toContainText("exit 0 · 15s");
 
   const image = timeline.locator('[data-conversation-timeline-kind="imageView"]')
     .filter({ hasText: "channel-transcript.png" });
@@ -11624,7 +11668,9 @@ test("durable Ling turns drive conversation work cell title, status, and attempt
   await expect(retryCommand).toHaveAttribute("data-conversation-participant-id", "ling");
   await expandTimelineItem(retryCommand);
   await expect(retryCommand.locator(".conversation-timeline-activity-main strong")).toHaveAttribute("title", "node retry-once.cjs");
-  await expect(retryCommand.locator(".conversation-timeline-activity-detail")).not.toContainText("exit 0");
+  await expect(retryCommand.locator(".conversation-timeline-activity-detail")).toContainText(`cwd: ${cwd}`);
+  await expect(retryCommand.locator("[data-conversation-command-output-stats]")).toHaveText("Output: 0 B");
+  await expect(retryCommand.locator(".conversation-timeline-activity-detail")).toContainText("exit 0 · 200ms");
   await expect(timeline.locator('[data-conversation-timeline-kind="fileChange"]').filter({ hasText: "sqlite-run-store.ts" })).toHaveCount(1);
   await expect(timeline.locator('[data-conversation-timeline-kind="diagnostic"]')).toHaveCount(0);
 });

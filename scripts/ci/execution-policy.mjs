@@ -5,8 +5,12 @@ import { pathToFileURL } from "node:url";
 const EXECUTION_TIERS = new Set(["complete", "preview", "ignore"]);
 const SCOPE_MODES = new Set(["docs", "affected", "full"]);
 const LANES = ["SCOPE", "COMMON", "DEPENDENCY", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
-const PRODUCT_LANES = ["DEPENDENCY", "BUILD", "TYPECHECK", "UNIT"];
-const DAEMON_LANES = ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
+const SELECTOR_LANES = {
+  dependency: ["DEPENDENCY"],
+  typecheck: ["TYPECHECK"],
+  unit: ["UNIT"],
+  daemon: ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"],
+};
 const JOB_RESULTS = new Set(["success", "failure", "cancelled", "skipped"]);
 
 /**
@@ -51,21 +55,29 @@ export function selectExecutionTier({ eventName, event }) {
  * Fail closed if any selected lane did not execute successfully. Even a lane
  * outside the scope cannot hide a failure or cancellation behind the aggregate.
  * A Draft preview always fails the merge gate after its common checks pass.
- * @param {{tier: "complete"|"preview"|"ignore", mode: "docs"|"affected"|"full", daemon: boolean, results: Record<string, string>}} input
+ * @param {{tier: "complete"|"preview"|"ignore", mode: "docs"|"affected"|"full", dependency: boolean, typecheck: boolean, unit: boolean, daemon: boolean, results: Record<string, string>}} input
  * @returns {true} Only a complete execution with all required lanes succeeding.
  * @throws {Error} For malformed scope, failed lanes, or intentionally deferred CI.
  */
-export function assertCiResults({ tier, mode, daemon, results }) {
+export function assertCiResults({ tier, mode, dependency, typecheck, unit, daemon, results }) {
   if (!EXECUTION_TIERS.has(tier)) throw new Error(`Invalid EXECUTION_TIER: ${String(tier)}`);
   if (tier === "ignore") throw new Error("ignored_event_not_quality_gate: unrelated label events cannot publish the required CI context");
   if (!SCOPE_MODES.has(mode)) throw new Error(`Invalid SCOPE_MODE: ${String(mode)}`);
-  if (typeof daemon !== "boolean") throw new Error("DAEMON_SELECTED must be true or false");
+  const selectors = { dependency, typecheck, unit, daemon };
+  for (const [selector, selected] of Object.entries(selectors)) {
+    const name = `${selector.toUpperCase()}_SELECTED`;
+    if (typeof selected !== "boolean") throw new Error(`${name} must be true or false`);
+    if (mode === "docs" && selected) throw new Error(`Invalid docs scope: ${name} must be false`);
+    if (mode === "full" && !selected) throw new Error(`Invalid full scope: ${name} must be true`);
+  }
   requireObject(results, "results");
 
   const required = new Set(["SCOPE", "COMMON"]);
   if (tier === "complete") {
-    if (mode !== "docs") for (const lane of PRODUCT_LANES) required.add(lane);
-    if (daemon) for (const lane of DAEMON_LANES) required.add(lane);
+    if (mode !== "docs") required.add("BUILD");
+    for (const [selector, lanes] of Object.entries(SELECTOR_LANES)) {
+      if (selectors[selector]) for (const lane of lanes) required.add(lane);
+    }
   }
 
   const failures = LANES.filter((lane) => {
@@ -124,13 +136,15 @@ function parseArguments(args) {
 function main(args, env) {
   const options = parseArguments(args);
   if (options.checkQuality) {
-    if (env.DAEMON_SELECTED !== "true" && env.DAEMON_SELECTED !== "false") {
-      throw new Error("DAEMON_SELECTED must be true or false");
-    }
+    const selectors = Object.fromEntries(Object.keys(SELECTOR_LANES).map((selector) => {
+      const name = `${selector.toUpperCase()}_SELECTED`;
+      if (env[name] !== "true" && env[name] !== "false") throw new Error(`${name} must be true or false`);
+      return [selector, env[name] === "true"];
+    }));
     assertCiResults({
       tier: env.EXECUTION_TIER,
       mode: env.SCOPE_MODE,
-      daemon: env.DAEMON_SELECTED === "true",
+      ...selectors,
       results: Object.fromEntries(LANES.map((lane) => [lane, env[`${lane}_RESULT`]])),
     });
     console.log("All applicable CI lanes passed; skipped lanes were outside this change scope.");
