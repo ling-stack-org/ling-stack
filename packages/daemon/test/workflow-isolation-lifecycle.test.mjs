@@ -15,6 +15,65 @@ function deferred() {
   return { promise, resolve };
 }
 
+test("isolation settlement notifies once after the original callback leaves the drain set", async () => {
+  const store = {}, gate = deferred(), events = [];
+  let committed = false;
+  configureWorkflowIsolationLifecycle(store, {
+    trackCompletion: () => {}, isShuttingDown: () => false,
+    onSettled: event => events.push({ ...event, committed, draining: workflowIsolationIsDraining(store, "wf") }),
+  });
+  const first = runWorkflowIsolationOperation(store, "wf", "merge-approval:round", async () => {
+    await gate.promise;
+    committed = true;
+    return "approval persisted";
+  });
+  assert.equal(runWorkflowIsolationOperation(store, "wf", "merge-approval:round", async () => assert.fail("duplicate")), first);
+  await Promise.resolve();
+  assert.deepEqual(events, [], "an admitted operation is not a settled state");
+  gate.resolve();
+  assert.equal(await first, "approval persisted");
+  assert.deepEqual(events, [{ workflowId: "wf", operationKey: "merge-approval:round", committed: true, draining: false }]);
+});
+
+test("nested isolation settlement retains the enclosing Host drain", async () => {
+  const store = {}, events = [];
+  configureWorkflowIsolationLifecycle(store, {
+    trackCompletion: () => {}, isShuttingDown: () => false,
+    onSettled: event => events.push({ ...event, draining: workflowIsolationIsDraining(store, "wf") }),
+  });
+  await runWorkflowIsolationOperation(store, "wf", "integration:round", async () => {
+    await runWorkflowIsolationOperation(store, "wf", "merge-apply:round", async () => "applied");
+  });
+  assert.deepEqual(events, [
+    { workflowId: "wf", operationKey: "merge-apply:round", draining: true },
+    { workflowId: "wf", operationKey: "integration:round", draining: false },
+  ]);
+});
+
+test("rejected isolation callbacks notify without replacing their original failure", async () => {
+  const store = {}, events = [], failure = new Error("unknown physical outcome");
+  configureWorkflowIsolationLifecycle(store, {
+    trackCompletion: () => {}, isShuttingDown: () => false,
+    onSettled: event => events.push({ ...event, draining: workflowIsolationIsDraining(store, "wf") }),
+  });
+  await assert.rejects(runWorkflowIsolationOperation(store, "wf", "capture:branch", async () => { throw failure; }),
+    error => error === failure);
+  assert.deepEqual(events, [{ workflowId: "wf", operationKey: "capture:branch", draining: false }]);
+});
+
+test("a failed isolation notification does not replace the operation result or leak its drain", async t => {
+  const store = {};
+  const warn = t.mock.method(console, "warn", () => {});
+  configureWorkflowIsolationLifecycle(store, {
+    trackCompletion: () => {}, isShuttingDown: () => false,
+    onSettled: () => { throw new Error("notification unavailable"); },
+  });
+  assert.equal(await runWorkflowIsolationOperation(store, "wf", "integration:round", async () => "retained"), "retained");
+  await waitForWorkflowIsolationIdle(store, "wf");
+  assert.equal(workflowIsolationIsDraining(store, "wf"), false);
+  assert.equal(warn.mock.callCount(), 1);
+});
+
 test("isolation single-flight retains its actual callback in the existing shutdown drain", async () => {
   const store = {}, activeRuns = new ActiveRunRegistry(), gate = deferred();
   configureWorkflowIsolationLifecycle(store, {

@@ -4,6 +4,7 @@ interface WorkflowIsolationLifecycle {
   readonly pending: Map<string, Map<string, Promise<unknown>>>;
   readonly trackCompletion?: (completion: Promise<unknown>) => void;
   readonly isShuttingDown?: () => boolean;
+  readonly onSettled?: (input: { readonly workflowId: string; readonly operationKey: string }) => void;
 }
 
 const lifecycles = new WeakMap<RunStore, WorkflowIsolationLifecycle>();
@@ -11,6 +12,7 @@ const lifecycles = new WeakMap<RunStore, WorkflowIsolationLifecycle>();
 export function configureWorkflowIsolationLifecycle(store: RunStore, input: {
   readonly trackCompletion: (completion: Promise<unknown>) => void;
   readonly isShuttingDown: () => boolean;
+  readonly onSettled?: WorkflowIsolationLifecycle["onSettled"];
 }): void {
   const previous = lifecycles.get(store);
   lifecycles.set(store, { ...input, pending: previous?.pending ?? new Map() });
@@ -38,6 +40,9 @@ export function runWorkflowIsolationOperation<T>(store: RunStore, workflowId: st
   const finish = () => {
     if (operations.get(key) === completion) operations.delete(key);
     if (!operations.size) lifecycle.pending.delete(workflowId);
+    // Invalidate after physical drain; settlement does not assert a confirmed effect.
+    try { lifecycles.get(store)?.onSettled?.({ workflowId, operationKey: key }); }
+    catch { console.warn("workflow_isolation_settlement_notification_failed: retained evidence remains readable"); }
   };
   void completion.then(finish, finish);
   lifecycle.trackCompletion?.(completion);

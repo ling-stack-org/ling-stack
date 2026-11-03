@@ -397,6 +397,16 @@ export function createDaemonServer(
     configureWorkflowIsolationLifecycle(store, {
       trackCompletion: completion => activeRuns.trackCompletion(completion),
       isShuttingDown: () => activeRuns.isShuttingDown(),
+      onSettled: ({ workflowId, operationKey }) => {
+        const workflow = store.getChannelWorkflow(workflowId);
+        if (!workflow) return;
+        appendControlPlaneEvent(store, controlPlaneEvents, {
+          workspaceId: workflow.workspaceId, cwd: store.paths.cwd,
+          domain: "runs", entityType: "channel_workflow", entityId: workflowId,
+          action: "channel_workflow.isolation_settled",
+          data: { channelId: workflow.channelId, workflowId, operationKey },
+        });
+      },
     });
     dependencies.initializeBundledSkills?.(store);
     flushSkillDefinitionRevisionNotices(store, controlPlaneEvents, cwd);
