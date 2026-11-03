@@ -14,6 +14,7 @@ const snapshot = db => ({ schema: schema(db), markers: markers(db), workspaces: 
   ...Object.fromEntries(registryTables.filter(name => db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name))
     .map(name => [name, rows(db, name)])) });
 const owned = row => registryTables.includes(row.tbl_name);
+const recoveryOwned = row => row.tbl_name === "workflow_conflict_recoveries";
 
 function rejectUnchanged(f, pattern, extra = {}, reopen = true) {
   const before = snapshot(f.db), data = businessSnapshot(f.db);
@@ -31,7 +32,7 @@ function rejectUnchanged(f, pattern, extra = {}, reopen = true) {
 test("fresh Core installs migration212 with exact owned tables, foreign keys and immutable retention guards", t => {
   const f = fixture(t, { fresh: true }), db = f.db;
   assert.equal(WORKFLOW_TEMPLATE_REGISTRY_MIGRATION_VERSION, 212);
-  assert.equal(db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get().v, 212);
+  assert.equal(db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get().v, 213);
   assert.deepEqual(db.prepare("SELECT version,name FROM schema_migrations WHERE version=212 OR name='workflow_template_registry'").all()
     .map(row => ({ ...row })), [{ version: 212, name: "workflow_template_registry" }]);
   assert.deepEqual(schema(db).filter(owned).map(row => row.name).sort(), [...registryTables, ...registryTriggers].sort());
@@ -66,7 +67,10 @@ test("real211 upgrade is additive and the production constructor preserves exist
   assert.deepEqual(registrySnapshot(f.db), { workflow_template_registry: [], workflow_template_versions: [] });
   const installed = snapshot(f.db);
   f.reopen();
-  assert.deepEqual(snapshot(f.db), installed);
+  assert.deepEqual(schema(f.db).filter(row => !recoveryOwned(row)), installed.schema);
+  assert.deepEqual(markers(f.db).filter(row => row.version <= 212), installed.markers);
+  assert.deepEqual({ ...snapshot(f.db), schema: schema(f.db).filter(row => !recoveryOwned(row)),
+    markers: markers(f.db).filter(row => row.version <= 212) }, installed);
   assert.deepEqual(businessSnapshot(f.db), data);
   assert.deepEqual(f.registry.list(), []);
   assert.equal(f.store.getTask(task.id).title, "Keep predecessor");
@@ -78,9 +82,9 @@ test("Core constructor alone upgrades a real211 database exactly once", t => {
   const before = snapshot(f.db), data = businessSnapshot(f.db);
   f.reopen();
   const installed = snapshot(f.db);
-  assert.deepEqual(installed.schema.filter(row => !owned(row)), before.schema);
+  assert.deepEqual(installed.schema.filter(row => !owned(row) && !recoveryOwned(row)), before.schema);
   assert.deepEqual(installed.markers.filter(row => row.version < 212), before.markers);
-  assert.equal(installed.markers.at(-1).version, 212);
+  assert.equal(installed.markers.at(-1).version, 213);
   assert.deepEqual(businessSnapshot(f.db), data);
   f.reopen();
   assert.deepEqual(snapshot(f.db), installed);

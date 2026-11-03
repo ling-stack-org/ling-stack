@@ -38,6 +38,8 @@ const overlays = [
   { version: 212, name: "workflow_template_registry", tables: ["workflow_template_registry", "workflow_template_versions"], indexes: [],
     triggers: ["trg_workflow_template_registry_created_draft", "trg_workflow_template_registry_immutable",
       "trg_workflow_template_registry_retained", "trg_workflow_template_versions_immutable", "trg_workflow_template_versions_retained"] },
+  { version: 213, name: "workflow_conflict_recoveries", tables: ["workflow_conflict_recoveries"], indexes: [],
+    triggers: ["trg_workflow_conflict_recovery_immutable", "trg_workflow_conflict_recovery_retained"] },
 ];
 const schema = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
 const markers = db => db.prepare("SELECT * FROM schema_migrations ORDER BY version").all();

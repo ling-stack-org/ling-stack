@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { readSqliteSnapshot, readSqliteWithinTransaction } from "../src/storage/sqlite/read-snapshot.ts";
+import { readSqliteSnapshot, readSqliteWithinTransaction, withSqliteSnapshotParentTransaction } from "../src/storage/sqlite/read-snapshot.ts";
 
 test("read snapshot pins WAL reads against another connection and restores write access", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "ling-n03-snapshot-test-"));
@@ -90,5 +90,51 @@ test("explicit Host launch read window permits nested evidence reads without wri
     database.exec("INSERT INTO facts VALUES (3)");
     assert.throws(() => readSqliteSnapshot(database, () => { throw Error("fixture"); }), /fixture/);
     assert.equal(readSqliteSnapshot(database, () => 4), 4);
+  } finally { database.close(); }
+});
+
+test("explicit write owner composes read-only snapshots without ending or leaking its transaction scope", () => {
+  const database = new DatabaseSync(":memory:");
+  try {
+    database.exec("CREATE TABLE facts (value INTEGER); BEGIN IMMEDIATE; INSERT INTO facts VALUES (1)");
+    const result = withSqliteSnapshotParentTransaction(database, () => {
+      database.exec("INSERT INTO facts VALUES (2)");
+      const count = withSqliteSnapshotParentTransaction(database, () => readSqliteSnapshot(database, () => {
+        assert.throws(() => database.exec("INSERT INTO facts VALUES (3)"), /readonly/i);
+        return readSqliteSnapshot(database, () => database.prepare("SELECT COUNT(*) AS count FROM facts").get().count);
+      }));
+      assert.throws(() => readSqliteSnapshot(database, () => { throw new Error("registry rejected"); }), /registry rejected/);
+      database.exec("INSERT INTO facts VALUES (4)");
+      assert.equal(readSqliteSnapshot(database, () => 7), 7);
+      return count;
+    });
+    assert.equal(result, 2);
+    assert.equal(database.isTransaction, true);
+    assert.equal(database.prepare("PRAGMA query_only").get().query_only, 0);
+    assert.throws(() => readSqliteSnapshot(database, () => 1), /transaction/i);
+    database.exec("ROLLBACK");
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM facts").get().count, 0);
+    assert.throws(() => withSqliteSnapshotParentTransaction(database, () => 1), /transaction required/);
+  } finally { database.close(); }
+});
+
+test("write owner snapshot scope preserves original errors and rejects async work without committing", () => {
+  const database = new DatabaseSync(":memory:");
+  try {
+    database.exec("CREATE TABLE facts (value INTEGER); BEGIN IMMEDIATE");
+    const original = new Error("workflow_template_not_published");
+    assert.throws(() => withSqliteSnapshotParentTransaction(database, () => {
+      database.exec("INSERT INTO facts VALUES (1)");
+      return readSqliteSnapshot(database, () => { throw original; });
+    }), error => error === original);
+    assert.throws(() => readSqliteSnapshot(database, () => 1), /transaction/i);
+    assert.throws(() => withSqliteSnapshotParentTransaction(database, async () => 1), /synchronous/i);
+    assert.throws(() => withSqliteSnapshotParentTransaction(database, () => Promise.reject(original)), /synchronous/i);
+    assert.throws(() => readSqliteSnapshot(database, () => 1), /transaction/i);
+    assert.equal(database.isTransaction, true);
+    assert.equal(database.prepare("PRAGMA query_only").get().query_only, 0);
+    database.exec("ROLLBACK");
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM facts").get().count, 0);
+    assert.equal(readSqliteSnapshot(database, () => 2), 2);
   } finally { database.close(); }
 });

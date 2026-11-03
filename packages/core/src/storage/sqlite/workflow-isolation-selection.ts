@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { WorkflowIsolationSelection } from "../../workflow-isolation-types.js";
 import { workflowIsolationIdentity, workflowIsolationTime } from "../../workflow-isolation.js";
+import { workflowConflictRecoveryRetired } from "./workflow-conflict-recovery-guard.js";
 
 export function readWorkflowIsolationSelection(database: DatabaseSync, workflowId: string): WorkflowIsolationSelection | undefined {
   const object = database.prepare("SELECT type FROM sqlite_master WHERE name='workflow_isolation_selections'").get();
@@ -20,5 +21,5 @@ export function readWorkflowIsolationSelection(database: DatabaseSync, workflowI
 
 /** Missing authority is not supplied by a metadata field. A selected plan cannot fall back to ordinary execution. */
 export function workflowIsolationSelectionReady(database: DatabaseSync, workflowId: string): boolean {
-  return readWorkflowIsolationSelection(database, workflowId)?.phase !== "planning";
+  return !workflowConflictRecoveryRetired(database, workflowId) && readWorkflowIsolationSelection(database, workflowId)?.phase !== "planning";
 }

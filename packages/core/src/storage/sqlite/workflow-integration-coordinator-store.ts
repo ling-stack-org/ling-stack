@@ -21,6 +21,7 @@ import { readWorkflowIntegrationCompletionBlocker, registerWorkflowIntegrationCo
   workflowCandidateVerificationMatches } from "./workflow-integration-completion.js";
 import { registerSqliteWorkflowMergeApprovalStore, type WorkflowMergeApprovalPorts } from "./workflow-merge-approval-store.js";
 import { registerSqliteWorkflowMergeApplyStore, type WorkflowMergeApplyInternalReader } from "./workflow-merge-apply-store.js";
+import { workflowConflictRecoveryRetired } from "./workflow-conflict-recovery-guard.js";
 
 type Authority = Extract<WorkflowIntegrationCoordinatorAuthority, { readonly status: "authorized" }>;
 type Rejection = { readonly status: "invalid" | "stale" | "conflict"; readonly code: string };
@@ -340,6 +341,7 @@ class SqliteWorkflowIntegrationCoordinatorStore implements WorkflowIntegrationCo
     const round = this.isolation.getIntegrationRound(roundId);
     if (!round || round.generation !== generation) veto("stale", "generation_changed");
     const { inputs } = round, workflow = this.ports.getChannelWorkflow(inputs.workflowId);
+    if (workflowConflictRecoveryRetired(this.context.database, inputs.workflowId)) veto("stale", "workflow_retired_by_recovery");
     const channel = workflow && this.ports.getChannel(workflow.channelId);
     if (!workflow || !channel || !["running", "waiting_for_approval", "blocked", "succeeded"].includes(workflow.status)
       || workflow.workspaceId !== inputs.canonicalWorkspaceId || channel.workspaceId !== inputs.canonicalWorkspaceId

@@ -96,14 +96,32 @@ test("an explicitly parallel QA sibling can finish while Engineer waits for its 
   assert.equal(successors.length, 1);
   assert.equal(binding.runId, successors[0].id);
   assert.equal(fixture.store.getChannelWorkflowStep(engineer.id).runId, successors[0].id);
-  // A source-less graph has no parent channel projection to stamp. Its Host
-  // context is the frozen step pack plus its own canonical child Turn/segment;
-  // a typed channel-source stamp is tested separately by the Q1 scenario.
-  assert.equal(created.workflow.metadata.sourceMessageId, undefined);
+  // Explicit graph creation owns a canonical user source; each participant
+  // consumes that source while retaining its own child Turn and frozen pack.
+  const workflowSource = fixture.store.getConversationItem(created.workflow.metadata.sourceMessageId);
+  const workflowTurn = fixture.store.getLingTurn(created.workflow.metadata.sourceTurnId);
+  assert.ok(workflowSource && workflowTurn);
+  assert.equal(workflowSource.actorType, "local_user");
+  assert.equal(workflowSource.turnId, workflowTurn.id);
+  assert.equal(workflowTurn.sourceItemId, workflowSource.id);
+  assert.notEqual(workflowTurn.id, question.sourceTurn.id);
+  assert.notEqual(workflowSource.id, question.sourceCanonicalItem.id);
+  assert.equal(question.sourceTurn.sourceItemId, question.sourceCanonicalItem.id);
+  assert.equal(question.sourceCanonicalItem.actorType, "system");
+  assert.equal(question.sourceCanonicalItem.actorId, "workflow-dispatch");
+  assert.ok(question.sourceCanonicalItem.domainRefs
+    .some((ref) => ref.type === "conversation_item" && ref.id === workflowSource.id));
+  assert.ok(question.sourceCanonicalItem.domainRefs
+    .some((ref) => ref.type === "turn" && ref.id === workflowTurn.id));
   const sourcePack = question.sourceRun.requestSnapshot.contextPack;
   assert.ok(sourcePack);
   assert.equal(sourcePack.kind, "workflow_step");
-  assert.equal(sourcePack.agentContext, undefined);
+  assert.ok(sourcePack.agentContext);
+  assert.equal(sourcePack.agentContext.sourceItemId, workflowSource.id);
+  assert.equal(sourcePack.agentContext.consumerTeammateId, engineer.toParticipantId);
+  assert.deepEqual(sourcePack.agentContext.contextProjection, sourcePack.contextProjection);
+  assert.equal(question.sourceRun.requestSnapshot.sourceMessageId, workflowSource.id);
+  assert.equal(successors[0].requestSnapshot.sourceMessageId, question.sourceCanonicalItem.id);
   assert.ok(sourcePack.sourceRefs.some((ref) => ref.type === "workflow_step" && ref.id === engineer.id));
   assert.ok(sourcePack.sourceRefs.some((ref) => ref.type === "workflow_step" && ref.id === entry.id));
   assert.equal(sourcePack.sourceRefs.some((ref) => ref.type === "workflow_step" && ref.id === qa.id), false,

@@ -136,3 +136,59 @@ test("workflow compilation preserves legacy inline errors and exposes registry v
   assert.equal(stale.body.error, "workflow_template_version_conflict");
   assert.equal(f.store.listChannelWorkflows({ channelId: f.channel.id }).length, 0);
 });
+
+test("explicit template creation owns a canonical channel input without enqueuing execution", async t => {
+  const f = await fixture(t), path = `/channels/${f.channel.id}/workflows`;
+  const provider = f.store.createProviderPreset({ kind: "openai-compatible", displayName: "Creation fixture", providerId: "creation-fixture",
+    model: "creation-fixture", api: "openai-completions", capabilities: ["chat"], enabled: true }, new Date().toISOString());
+  f.store.updateChannel(f.channel.id, { defaultProviderPresetId: provider.id }, new Date().toISOString());
+  f.store.updateWorkspaceSettings({ defaultProviderPresetId: provider.id }, new Date().toISOString());
+  const saved = f.registry.saveVersion({ kind: "workflow_template", id: f.template.id, version: "v1",
+    template: f.template, source: "workspace", visibility: { workspaceVisible: true, promotableToWorkspace: false },
+    expectedRevision: 0, now: new Date().toISOString() });
+  f.registry.setReviewStatus({ id: saved.entry.id, reviewStatus: "published", version: saved.version.version,
+    digest: saved.version.digest, expectedRevision: saved.entry.revision, now: new Date().toISOString() });
+  const input = { objective: "Inspect the exact authored template", customTemplateId: saved.entry.id,
+    customTemplateVersion: saved.version.version, customTemplateDigest: saved.version.digest };
+  assert.equal((await f.api("/workflow-templates/preview", "POST", { ...input, channelId: f.channel.id })).status, 200);
+  const count = table => Number(f.store.database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count);
+  assert.equal(count("ling_turns"), 0);
+  const response = await f.api(path, "POST", input);
+  assert.equal(response.status, 201, JSON.stringify(response));
+  const { workflow, workflowSteps } = response.body;
+  assert.ok(workflow.metadata?.sourceTurnId);
+  assert.ok(workflow.metadata?.sourceMessageId);
+  const turn = f.store.getLingTurn(workflow.metadata.sourceTurnId), item = f.store.getConversationItem(workflow.metadata.sourceMessageId);
+  assert.equal(turn.sourceItemId, item.id);
+  assert.equal(turn.threadId, item.threadId);
+  assert.equal(turn.channelId, f.channel.id);
+  assert.equal(turn.userInstruction, input.objective);
+  assert.equal(item.kind, "user_message");
+  assert.equal(item.actorType, "local_user");
+  assert.equal(item.payload.body, input.objective);
+  assert.deepEqual(item.domainRefs, [{ type: "workflow", id: workflow.id }]);
+  assert.equal(f.store.getLingThread(item.threadId).surfaceKind, "channel_root");
+  assert.equal(workflowSteps.length, 1);
+  assert.equal(workflowSteps[0].status, "queued");
+  for (const table of ["work_units", "tasks", "run_sessions", "approval_requests"]) assert.equal(count(table), 0, table);
+  assert.equal(count("ling_turns"), 1);
+  assert.equal(count("conversation_items"), 1);
+});
+
+for (const failedTable of ["channel_workflow_steps", "conversation_items"]) {
+  test(`failed ${failedTable} creation rolls back its workflow, steps and canonical source together`, async t => {
+    const f = await fixture(t), path = `/channels/${f.channel.id}/workflows`;
+    f.store.database.exec(`CREATE TEMP TRIGGER force_workflow_creation_failure BEFORE INSERT ON ${failedTable}
+      BEGIN SELECT RAISE(ABORT, 'forced workflow creation failure'); END`);
+    const response = await f.api(path, "POST", { objective: "Must not leave a partial workflow", customTemplate: f.template });
+    assert.equal(response.status, 400, JSON.stringify(response));
+    assert.match(response.body.message, /forced workflow creation failure/);
+    for (const table of ["channel_workflows", "channel_workflow_steps", "ling_turns", "conversation_items", "work_units", "run_sessions"])
+      assert.equal(Number(f.store.database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count), 0, table);
+    assert.equal(f.store.database.isTransaction, false);
+    assert.equal(f.store.database.prepare("PRAGMA query_only").get().query_only, 0);
+    f.store.database.exec("DROP TRIGGER force_workflow_creation_failure");
+    assert.equal((await f.api(path, "POST", { objective: "Retry explicit creation", customTemplate: f.template })).status, 201);
+    assert.equal(f.store.listRuns({ limit: 10 }).length, 0);
+  });
+}

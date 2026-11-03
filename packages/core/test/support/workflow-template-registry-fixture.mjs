@@ -14,6 +14,7 @@ export const saveInput = (extra = {}) => ({ kind: "workflow_template", id: "revi
 export const registryTables = ["workflow_template_registry", "workflow_template_versions"];
 export const registryTriggers = ["trg_workflow_template_registry_created_draft", "trg_workflow_template_registry_immutable",
   "trg_workflow_template_registry_retained", "trg_workflow_template_versions_immutable", "trg_workflow_template_versions_retained"];
+const recoveryObjects = ["workflow_conflict_recoveries", "trg_workflow_conflict_recovery_immutable", "trg_workflow_conflict_recovery_retained"];
 export const rows = (db, name) => db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all();
 export const schema = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
 export const markers = db => db.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
@@ -44,13 +45,17 @@ export function removeRegistryOverlay(f) {
   const db = f.db;
   assert.equal(db.isTransaction, false);
   assert.deepEqual(markers(db).filter(row => row.version >= 212).map(({ version, name }) => ({ version, name })),
-    [{ version: 212, name: "workflow_template_registry" }]);
+    [{ version: 212, name: "workflow_template_registry" }, { version: 213, name: "workflow_conflict_recoveries" }]);
+  assert.equal(rows(db, recoveryObjects[0]).length, 0);
+  assert.deepEqual(schema(db).filter(row => row.tbl_name === recoveryObjects[0]).map(row => row.name).sort(), [...recoveryObjects].sort());
   for (const table of registryTables) assert.equal(rows(db, table).length, 0);
   assert.deepEqual(schema(db).filter(row => registryTables.includes(row.tbl_name)).map(row => row.name).sort(),
     [...registryTables, ...registryTriggers].sort());
   db.exec("PRAGMA foreign_keys=OFF");
   try {
     db.exec("BEGIN IMMEDIATE");
+    db.exec("DROP TABLE workflow_conflict_recoveries");
+    assert.equal(db.prepare("DELETE FROM schema_migrations WHERE version=213 AND name='workflow_conflict_recoveries'").run().changes, 1);
     for (const table of [...registryTables].reverse()) db.exec(`DROP TABLE "${table}"`);
     assert.equal(db.prepare("DELETE FROM schema_migrations WHERE version=212 AND name='workflow_template_registry'").run().changes, 1);
     db.exec("COMMIT");

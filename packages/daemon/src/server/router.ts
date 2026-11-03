@@ -377,6 +377,7 @@ import { setCorsHeaders, writeJson } from "../shared/response.js";
 import { readOptionalJsonBody } from "../shared/request.js";
 import { parseChannelWorkflowOrchestrationRequest } from "@ling-stack/contracts";
 import { selectWorkflowIsolatedExecution, type WorkflowIsolationHost } from "../features/channels/workflow-isolation-selection.js";
+import { handleWorkflowConflictRecovery } from "../features/channels/workflow-conflict-recovery-route.js";
 import { handleStartupStatus } from "../startup/routes.js";
 import { handleDiagnosticsDoctor, handleDiagnosticsLogs } from "../features/diagnostics/routes.js";
 import { handleNotifications } from "../features/notifications/routes.js";
@@ -2114,6 +2115,11 @@ export async function routeRequest(
   const workflowRoute = parseChannelWorkflowRoute(url.pathname);
   if (workflowRoute) {
     if (workflowRoute.kind === "workflow") {
+      if (workflowRoute.action === "conflict-recovery") {
+        await handleWorkflowConflictRecovery({ request, response, url, config, storeRegistry, runnerRegistry,
+          workflowId: workflowRoute.workflowId, host: workflowIsolationHost });
+        return;
+      }
       if (workflowRoute.action === "workspace-changes" || workflowRoute.action === "workspace-changes-undo" || workflowRoute.action === "workspace-changes-reapply") {
         const expectedMethod = workflowRoute.action === "workspace-changes" ? "GET" : "POST";
         if (request.method !== expectedMethod) {

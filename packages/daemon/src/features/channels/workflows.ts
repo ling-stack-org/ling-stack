@@ -2,6 +2,7 @@ import { recallMemory } from "../memory/recall-service.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   DEFAULT_WORKSPACE_ID,
+  createSqliteWorkflowUserCreationStore,
   effectiveWorkflowPreGate,
   inspectWorkflowPreApproval,
   type ApprovalRequest,
@@ -199,7 +200,9 @@ export async function handleChannelWorkflowsCollection(
       if (isWorkflowTemplateCompileRequest(body)) {
         const input = parseWorkflowTemplateCompileRequest(body, channelId);
         registryCompilation = input.customTemplateId !== undefined;
-        const compiled = compileWorkflowTemplate(store, input, new Date().toISOString(), runnerRegistry);
+        const now = new Date().toISOString();
+        const compiled = createSqliteWorkflowUserCreationStore(store).create({ channelId, now,
+          compile: () => compileWorkflowTemplate(store, input, now, runnerRegistry) });
         writeJson(response, 201, compiled);
         return;
       }
