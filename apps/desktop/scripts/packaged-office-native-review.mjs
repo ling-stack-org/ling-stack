@@ -136,7 +136,9 @@ export function readLocalPackagedOfficeSource() {
   }));
   requireReview(OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS.every(name =>
     sourceSha256[name] === approved.sourceSha256[name]));
-  const observed = observeOfficeNativeToolchain();
+  const observed = observeOfficeNativeToolchain({
+    profiles: approved.toolchains, headerDigests: approved.headers.sha256,
+  });
   exactKeys(observed.headers.sha256, headerNames);
   requireReview(headerNames.every(name => validHash(observed.headers.sha256[name])));
   const review = freezeReview({ ...approved, sourceSha256,

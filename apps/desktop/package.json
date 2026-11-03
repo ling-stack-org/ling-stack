@@ -1,6 +1,6 @@
 {
   "name": "@ling-stack/desktop",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Ling Stack desktop shell with shared Web UI and Computer Use picture-in-picture.",
   "license": "MIT",
   "author": "Ling Stack contributors",
@@ -53,12 +53,12 @@
   },
   "dependencies": {
     "@ling-stack/browser-host": "workspace:*",
-    "@napi-rs/canvas": "1.0.13",
+    "@napi-rs/canvas": "1.1.0",
     "@ling-stack/api-client": "workspace:*",
     "@ling-stack/contracts": "workspace:*",
     "@ling-stack/localization": "workspace:*",
     "@ling-stack/ui-react": "workspace:*",
-    "lucide-react": "1.61.0",
+    "lucide-react": "1.65.0",
     "mammoth": "1.13.0",
     "pdf-parse": "2.4.5",
     "react": "^19.2.8",

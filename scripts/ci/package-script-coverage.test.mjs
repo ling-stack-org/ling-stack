@@ -20,8 +20,7 @@ for (const directory of ["apps", "packages"]) {
   }
 }
 
-// The workflow runner uses --if-present: a selected package without its CI
-// script otherwise reports success without checking that package at all.
+// Static coverage complements the runner's fail-closed selected-script check.
 for (const [task, selected] of [["typecheck:ci", scope.typecheckPackages], ["test:ci", scope.testPackages]]) {
   test(`every package selected for ${task} has an executable CI entry`, () => {
     assert.ok(selected.length > 0, "full regression must select workspace packages");

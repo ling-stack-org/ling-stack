@@ -3,6 +3,12 @@ name: Native installer contracts
 on:
   pull_request:
     paths:
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - apps/desktop/package.json
+      - apps/desktop/build/installer.nsh
+      - apps/desktop/build/icon.ico
       - scripts/release/verify-nsis-plugins.mjs
       - scripts/release/nsis-extractor.mjs
       - scripts/ci/desktop-bun-entry.test.mjs

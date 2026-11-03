@@ -5,9 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
+import type { TestContext } from "node:test";
 import { runNodeTestFiles } from "./node-test-shard.mjs";
 
-async function fixture(t, sources) {
+async function fixture(t: TestContext, sources: string[]) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-node-runner-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   await Promise.all([mkdir(join(cwd, "test")), mkdir(join(cwd, "isolation"))]);
@@ -17,7 +18,7 @@ async function fixture(t, sources) {
     options: { cwd, reportPath, stdio: "ignore", temporaryDirectory: join(cwd, "isolation"), terminationGraceMs: 100 } };
 }
 
-async function waitFor(check) {
+async function waitFor<T>(check: () => Promise<T>) {
   const deadline = AbortSignal.timeout(5000);
   for (;;) {
     const result = await check();
@@ -66,6 +67,48 @@ test("serial files never reuse a previous file's runtime home or workspace", asy
   assert.notEqual(records[0].workspace, records[1].workspace);
 });
 
+test("an idle worker takes the next weighted file while another worker is still busy", async t => {
+  const f = await fixture(t, [
+    `import { access, writeFile } from 'node:fs/promises';
+     import { setTimeout } from 'node:timers/promises'; import test from 'node:test';
+     test('first worker finishes', { timeout: 5000 }, async context => {
+       for (;;) {
+         try { await access('busy-started'); break; }
+         catch (error) { if (error.code !== 'ENOENT') throw error; }
+         await setTimeout(10, undefined, { signal: context.signal });
+       }
+       await writeFile('first-finished', 'yes');
+     });`,
+    `import { access, writeFile } from 'node:fs/promises';
+     import { setTimeout } from 'node:timers/promises'; import test from 'node:test';
+     test('busy worker needs queued file', { timeout: 5000 }, async context => {
+       await writeFile('busy-started', 'yes');
+       for (;;) {
+         try { await access('released'); break; }
+         catch (error) { if (error.code !== 'ENOENT') throw error; }
+         await setTimeout(10, undefined, { signal: context.signal });
+       }
+     });`,
+    `import { access, writeFile } from 'node:fs/promises'; import test from 'node:test';
+     test('queued file releases busy worker', async () => {
+       await access('busy-started'); await access('first-finished');
+       await writeFile('released', 'yes');
+     });`,
+  ]);
+  const timings = Object.fromEntries(f.files.map((file, index) => [file, [100000, 90000, 10000][index]]));
+  assert.equal(await runNodeTestFiles([...f.files].reverse(), {
+    ...f.options, concurrency: 2, timings,
+  }), 0);
+  const report = JSON.parse(await readFile(f.reportPath, "utf8"));
+  assert.equal(report.complete, true);
+  assert.equal(report.results.length, 3);
+  assert.ok(report.results.every((result: { status: string }) => result.status === "passed"));
+  const workers = new Map(report.results.map((result: { file: string; worker: number }) => [result.file, result.worker]));
+  assert.equal(workers.get(f.files[0]), workers.get(f.files[2]));
+  assert.notEqual(workers.get(f.files[0]), workers.get(f.files[1]));
+  assert.deepEqual(await readdir(f.options.temporaryDirectory), []);
+});
+
 test("file deadlines kill SIGTERM-resistant descendants, fail the file and continue", async t => {
   const f = await fixture(t, [
     `import { spawn } from 'node:child_process'; import { writeFileSync } from 'node:fs'; import test from 'node:test';
@@ -79,11 +122,11 @@ test("file deadlines kill SIGTERM-resistant descendants, fail the file and conti
   assert.equal(await runNodeTestFiles(f.files, { ...f.options, fileTimeoutMs: 800 }), 1);
   const report = JSON.parse(await readFile(f.reportPath, "utf8"));
   assert.equal(report.complete, true);
-  assert.deepEqual(report.results.map(result => result.status), ["timed_out", "passed"]);
+  assert.deepEqual(report.results.map((result: { status: string }) => result.status), ["timed_out", "passed"]);
   const pid = Number(await readFile(join(f.cwd, "child-pid"), "utf8"));
   await waitFor(async () => {
     try { process.kill(pid, 0); return false; }
-    catch (error) { assert.equal(error.code, "ESRCH"); return true; }
+    catch (error) { assert.equal((error as NodeJS.ErrnoException).code, "ESRCH"); return true; }
   });
   assert.deepEqual(await readdir(f.options.temporaryDirectory), []);
 });
@@ -99,19 +142,19 @@ for (const timeout of [false, true]) test(`detached descendants cannot survive $
      });`,
     "import test from 'node:test'; test('next file still runs', () => {});",
   ]);
-  let pid;
+  let pid = 0;
   t.after(() => {
-    if (pid) { try { process.kill(pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; } }
+    if (pid) { try { process.kill(pid, "SIGKILL"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; } }
   });
   let code;
   try { code = await runNodeTestFiles(f.files, { ...f.options, fileTimeoutMs: 800 }); }
   finally { pid = Number(await readFile(join(f.cwd, "detached-pid"), "utf8").catch(() => 0)); }
   assert.equal(code, 1);
   const report = JSON.parse(await readFile(f.reportPath, "utf8"));
-  assert.deepEqual(report.results.map(result => result.status), [timeout ? "timed_out" : "leaked_processes", "passed"]);
+  assert.deepEqual(report.results.map((result: { status: string }) => result.status), [timeout ? "timed_out" : "leaked_processes", "passed"]);
   await waitFor(async () => {
     try { process.kill(pid, 0); return false; }
-    catch (error) { assert.equal(error.code, "ESRCH"); return true; }
+    catch (error) { assert.equal((error as NodeJS.ErrnoException).code, "ESRCH"); return true; }
   });
 });
 
@@ -131,29 +174,32 @@ test("cancellation reaps a detached child with a cleared environment without tou
   const controller = new AbortController();
   const run = runNodeTestFiles(f.files, { ...f.options, signal: controller.signal });
   const pid = Number(await waitFor(() => readFile(join(f.cwd, "detached-pid"), "utf8").catch(() => false)));
-  t.after(() => { try { process.kill(pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; } });
+  t.after(() => { try { process.kill(pid, "SIGKILL"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; } });
   controller.abort("fixture cancelled");
   assert.equal(await run, 1);
+  assert.ok(unrelated.pid);
   assert.equal(process.kill(unrelated.pid, 0), true);
   await waitFor(async () => {
     try { process.kill(pid, 0); return false; }
-    catch (error) { assert.equal(error.code, "ESRCH"); return true; }
+    catch (error) { assert.equal((error as NodeJS.ErrnoException).code, "ESRCH"); return true; }
   });
 });
 
-test("cancellation stops active files, does not launch queued files, and retains incomplete evidence", async t => {
+for (const concurrency of [1, 2]) test(`cancellation stops ${concurrency} active files without launching queued files`, async t => {
   const f = await fixture(t, [
-    "import { writeFileSync } from 'node:fs'; writeFileSync('ready', 'yes'); setInterval(() => {}, 1000);",
+    ...Array.from({ length: concurrency }, (_, index) =>
+      `import { writeFileSync } from 'node:fs'; writeFileSync('ready-${index}', 'yes'); setInterval(() => {}, 1000);`),
     "throw new Error('cancelled queue must not launch');",
   ]);
   const controller = new AbortController();
-  const run = runNodeTestFiles(f.files, { ...f.options, signal: controller.signal });
-  await waitFor(async () => readFile(join(f.cwd, "ready"), "utf8").catch(() => false));
+  const run = runNodeTestFiles(f.files, { ...f.options, concurrency, signal: controller.signal });
+  await Promise.all(Array.from({ length: concurrency }, (_, index) =>
+    waitFor(() => readFile(join(f.cwd, `ready-${index}`), "utf8").catch(() => false))));
   controller.abort(new Error("fixture cancelled"));
   assert.equal(await run, 1);
   const report = JSON.parse(await readFile(f.reportPath, "utf8"));
   assert.equal(report.complete, false);
-  assert.deepEqual(report.results.map(result => result.status), ["cancelled", "cancelled"]);
+  assert.deepEqual(report.results.map((result: { status: string }) => result.status), Array(concurrency + 1).fill("cancelled"));
   assert.deepEqual(await readdir(f.options.temporaryDirectory), []);
 });
 
@@ -162,7 +208,7 @@ test("the shard deadline bounds the entire queue independently of file deadlines
   assert.equal(await runNodeTestFiles(f.files, { ...f.options, fileTimeoutMs: 10000, shardTimeoutMs: 500 }), 1);
   const report = JSON.parse(await readFile(f.reportPath, "utf8"));
   assert.equal(report.complete, false);
-  assert.deepEqual(report.results.map(result => result.status), ["cancelled", "cancelled"]);
+  assert.deepEqual(report.results.map((result: { status: string }) => result.status), ["cancelled", "cancelled"]);
 });
 
 test("an already cancelled shard cannot become green, including an empty assignment", async t => {

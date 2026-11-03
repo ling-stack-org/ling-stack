@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
-import { brandRoot, macSlots, pngSizes, renderBrandIcon, repoRoot } from "../scripts/brand-icon-assets.mjs";
+import { brandRoot, encodeIcns, macSlots, pngSizes, renderBrandIcon, repoRoot } from "../scripts/brand-icon-assets.mjs";
 import { inspectIcoFrames } from "./verify-windows-app-icons.mjs";
 
 function pixels(canvas) {
@@ -122,13 +122,23 @@ test("macOS system decoder preserves all standard and Retina optical representat
   t.after(() => rm(directory, { recursive: true, force: true }));
   const output = resolve(directory, "Ling.iconset");
   execFileSync("iconutil", ["-c", "iconset", resolve(repoRoot, "apps/desktop/build/icon.icns"), "-o", output]);
-  for (const slot of macSlots) {
+  const frames = [];
+  for (const slot of macSlots) frames.push({ slot, ...await renderBrandIcon(slot.size, slot.logical) });
+  const currentIcns = resolve(directory, "current.icns");
+  const currentOutput = resolve(directory, "Current.iconset");
+  await writeFile(currentIcns, encodeIcns(frames));
+  execFileSync("iconutil", ["-c", "iconset", currentIcns, "-o", currentOutput]);
+  for (const { slot, canvas: expected } of frames) {
     const actual = await decode(resolve(output, `icon_${slot.name}.png`), slot.size);
-    const expected = (await renderBrandIcon(slot.size, slot.logical)).canvas;
     assertSameArtwork(actual, expected);
     if (slot.size >= 256) assertCrispExteriorEdges(actual);
+    // Historical assets allow renderer drift; exact decoder fidelity uses the
+    // same raster that was encoded, without depending on a previous canvas build.
+    const roundtrip = await decode(resolve(currentOutput, `icon_${slot.name}.png`), slot.size);
+    assertSameArtwork(roundtrip, expected);
+    if (slot.size >= 256) assertCrispExteriorEdges(roundtrip);
     if (slot.argb) {
-      const a = pixels(actual);
+      const a = pixels(roundtrip);
       const b = pixels(expected);
       for (let pixel = 0; pixel < a.length; pixel += 4) {
         assert.equal(a[pixel + 3], b[pixel + 3]);

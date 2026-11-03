@@ -31,7 +31,10 @@ jobs:
       packages: ${{ steps.classify.outputs.packages }}
       test-packages: ${{ steps.classify.outputs.test-packages }}
       typecheck-packages: ${{ steps.classify.outputs.typecheck-packages }}
+      dependency-policy: ${{ steps.classify.outputs.dependency-policy }}
+      typecheck-selected: ${{ steps.classify.outputs.typecheck-selected }}
       unit-matrix: ${{ steps.test-plan.outputs.unit-matrix }}
+      unit-selected: ${{ steps.test-plan.outputs.unit-selected }}
       daemon: ${{ steps.classify.outputs.daemon }}
       web: ${{ steps.classify.outputs.web }}
     steps:
@@ -81,6 +84,8 @@ jobs:
             packages: JSON.stringify(scope.packages),
             "test-packages": JSON.stringify(scope.testPackages),
             "typecheck-packages": JSON.stringify(scope.typecheckPackages),
+            "dependency-policy": String(scope.dependencyPolicy),
+            "typecheck-selected": String(scope.typecheckPackages.length > 0),
             daemon: String(scope.daemon),
             web: String(scope.web),
           };
@@ -107,6 +112,10 @@ jobs:
             --timings=.codex-artifacts/ci/timings.json \
             --output=.codex-artifacts/ci/test-plan.json)"
           printf 'unit-matrix=%s\n' "$unit_matrix" >> "$GITHUB_OUTPUT"
+          UNIT_MATRIX="$unit_matrix" node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          const matrix = JSON.parse(process.env.UNIT_MATRIX);
+          console.log(`unit-selected=${matrix.include.length > 0}`);
+          NODE
 
       - name: Publish the immutable test plan for every shard
         if: steps.policy.outputs.execution-tier == 'complete' && steps.classify.outputs.mode != 'docs'
@@ -145,7 +154,7 @@ jobs:
         run: node scripts/check-public-repo-safety.mjs
 
       - name: Check scanner boundaries, execution policy, classification, and platform CI gates
-        run: node --test scripts/check-public-repo-safety.test.mjs scripts/ci/*.test.mjs scripts/native-execution-engines/verify-codex.test.mjs
+        run: node --test scripts/check-public-repo-safety.test.mjs scripts/ci/*.test.mjs scripts/ci/*.test.ts scripts/native-execution-engines/verify-codex.test.mjs
 
       # Final file scope cannot exclude secrets introduced and later deleted.
       - name: Scan Git history for secrets
@@ -184,7 +193,7 @@ jobs:
   dependency-policy:
     name: Dependency policy and security checks
     needs: scope
-    if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs'
+    if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.dependency-policy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -317,7 +326,7 @@ jobs:
   typecheck:
     name: Typecheck selected packages
     needs: [scope, build]
-    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success' }}
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.typecheck-selected == 'true' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -357,10 +366,13 @@ jobs:
       - name: Typecheck selected packages without rebuilding dependencies
         run: node scripts/ci/run-packages.mjs --task=typecheck:ci --packages="$SELECTED_PACKAGES"
 
+      - name: Typecheck CI tool tests
+        run: corepack pnpm typecheck:ci-tests
+
   unit-tests:
     name: Unit tests and Web checks (${{ matrix.suite }} ${{ matrix.shard }})
     needs: [scope, build]
-    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success' }}
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.unit-selected == 'true' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -705,20 +717,23 @@ jobs:
           LINUX_CONTRACT_RESULT: ${{ needs.daemon-linux-contracts.result }}
           MACOS_NATIVE_RESULT: ${{ needs.restricted-command-macos.result }}
           DAEMON_SELECTED: ${{ needs.scope.outputs.daemon }}
+          DEPENDENCY_SELECTED: ${{ needs.scope.outputs.dependency-policy }}
+          TYPECHECK_SELECTED: ${{ needs.scope.outputs.typecheck-selected }}
+          UNIT_SELECTED: ${{ needs.scope.outputs.unit-selected }}
         shell: bash
         run: |
           set -euo pipefail
           node scripts/ci/execution-policy.mjs --check-quality
 
       - name: Download the shared test plan for coverage verification
-        if: needs.scope.outputs.execution-tier == 'complete' && (needs.scope.outputs.daemon == 'true' || contains(needs.scope.outputs.test-packages, '"@ling-stack/core"'))
+        if: ${{ !cancelled() && needs.scope.result == 'success' && needs.scope.outputs.execution-tier == 'complete' && (needs.scope.outputs.daemon == 'true' || contains(needs.scope.outputs.test-packages, '"@ling-stack/core"')) }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: ci-test-plan
           path: .codex-artifacts/ci
 
-      - name: Download all successful shard reports
-        if: needs.scope.outputs.execution-tier == 'complete' && (needs.scope.outputs.daemon == 'true' || contains(needs.scope.outputs.test-packages, '"@ling-stack/core"'))
+      - name: Download all shard reports
+        if: ${{ !cancelled() && needs.scope.result == 'success' && needs.scope.outputs.execution-tier == 'complete' && (needs.scope.outputs.daemon == 'true' || contains(needs.scope.outputs.test-packages, '"@ling-stack/core"')) }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           pattern: ci-test-report-*
@@ -726,16 +741,18 @@ jobs:
           path: .codex-artifacts/ci/reports
 
       - name: Verify every planned file passed exactly once and collect timings
-        if: needs.scope.outputs.execution-tier == 'complete' && (needs.scope.outputs.daemon == 'true' || contains(needs.scope.outputs.test-packages, '"@ling-stack/core"'))
+        id: test-timings
+        if: ${{ !cancelled() && needs.scope.result == 'success' && needs.scope.outputs.execution-tier == 'complete' && (needs.scope.outputs.daemon == 'true' || contains(needs.scope.outputs.test-packages, '"@ling-stack/core"')) }}
         run: >-
           node scripts/ci/test-shard-plan.mjs
           --plan=.codex-artifacts/ci/test-plan.json --reports=.codex-artifacts/ci/reports
           --output=.codex-artifacts/ci/timings.json
 
-      # Only validated default-branch runs publish hints. PRs consume them but
-      # cannot replace the baseline; all shards use the same uploaded plan.
+      # Timing evidence can survive an unrelated policy failure; the required
+      # gate above still fails the job. Only test-complete default-branch runs
+      # publish hints. PRs consume but cannot replace the shared baseline.
       - name: Save trusted default-branch test timings
-        if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        if: ${{ !cancelled() && steps.test-timings.outcome == 'success' && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: .codex-artifacts/ci/timings.json
