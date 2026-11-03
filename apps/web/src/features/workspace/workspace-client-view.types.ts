@@ -75,6 +75,7 @@ import type { ChannelStreamErrorOwner, ChannelStreamErrorOwnerHint } from "../..
 export interface WorkspaceClientViewProps {
   readonly cwd: string;
   readonly daemonHealthy: boolean | undefined;
+  readonly workflowObservationReady?: boolean;
   readonly channelAutoRouteEnabled: boolean;
   readonly providerLabel: string;
   readonly userProfile?: UserProfile;

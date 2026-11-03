@@ -52,6 +52,26 @@ test("confirmed Git journals neither complete nor stop observation of running At
   assert.equal(shouldPollWorkflowIsolation(conflict, workflow({ status: "blocked" })), false);
 });
 
+test("only the latest confirmed pending merge exposes the existing approval detail action", () => {
+  const owner = workflow({ status: "running" });
+  const project = (observation, workflowOverride = owner) => buildWorkflowIsolationPresentation({ workflow: workflowOverride, observation, t });
+  const pending = project(observed(evidence({ rounds: [round()] })));
+  assert.equal(pending.items[1].approvalId, "approval-qa");
+  assert.deepEqual(pending.items[1].availableActions, ["open_approval"]);
+  const generations = project(observed(evidence({ rounds: [round(), round({ generation: 2 })] })));
+  assert.equal(generations.items[1].availableActions, undefined);
+  assert.deepEqual(generations.items[2].availableActions, ["open_approval"]);
+  for (const observation of [observed(evidence(), { status: "error" }), observed(evidence({ hostOperationPending: true })),
+    observed(evidence({ gitEffects: "unconfirmed" })), observed(evidence({ rounds: [round({ mode: "candidate_only" })] })),
+    observed(evidence({ rounds: [round({ approval: { approvalId: "approval-qa", status: "approved" } })] })),
+    observed(evidence({ rounds: [round({ application: { status: "effect_unknown" } })] }))]) {
+    assert.equal(project(observation).items[1].availableActions, undefined);
+  }
+  for (const status of ["cancelled", "failed"]) {
+    assert.equal(project(observed(evidence()), workflow({ status })).items[1].availableActions, undefined);
+  }
+});
+
 test("cancelled lifecycle and unconfirmed effects are independent, including Host drain after confirmed journals", () => {
   const owner = workflow({ status: "cancelled" });
   const before = evidence({ hostOperationPending: true, rounds: [round({ phase: "collecting" })] });

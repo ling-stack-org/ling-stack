@@ -1,4 +1,4 @@
-import type { ConversationTimelineItem } from "@ling-stack/conversation-ui-core";
+import type { ConversationTimelineItem, ConversationTimelineProtocolEventItem } from "@ling-stack/conversation-ui-core";
 import { isWorkflowIsolationTimelineItem } from "./workflow-isolation-evidence.js";
 
 /** Display availability is not execution evidence or workflow completion. */
@@ -12,4 +12,15 @@ export function hasWorkflowTimelineContent(item: ConversationTimelineItem): bool
   return ["userInputRequest", "userInputAnswer", "terminalReport", "approval",
     "commandExecution", "fileChange", "exploration", "mcpToolCall", "dynamicToolCall",
     "collabAgentToolCall", "imageView"].includes(item.kind);
+}
+
+/** Retained execution facts must not hide the owning workflow's lifecycle controls. */
+export function selectWorkflowTimelineItems(
+  facts: readonly ConversationTimelineItem[],
+  summary: ConversationTimelineProtocolEventItem,
+  retainControls: boolean,
+): readonly ConversationTimelineItem[] {
+  if (!facts.some(hasWorkflowTimelineContent)) return [summary];
+  if (!retainControls || facts.some(item => item.id === summary.id)) return facts;
+  return [summary, ...facts];
 }

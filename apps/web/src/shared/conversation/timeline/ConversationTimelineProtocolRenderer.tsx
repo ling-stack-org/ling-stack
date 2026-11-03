@@ -10,10 +10,12 @@ export function ConversationTimelineProtocolRenderer({
   item,
   depth,
   onInvokeProtocolAction,
+  renderProtocolDetail,
 }: {
   readonly item: ConversationTimelineProtocolEventItem;
   readonly depth: 0 | 1;
   readonly onInvokeProtocolAction?: (item: ConversationTimelineProtocolEventItem, action: ConversationProtocolAction) => void | Promise<void>;
+  readonly renderProtocolDetail?: (item: ConversationTimelineProtocolEventItem) => React.ReactNode;
 }): React.JSX.Element {
   const { t } = useI18n();
   if (item.blockedExplanation) {
@@ -22,6 +24,7 @@ export function ConversationTimelineProtocolRenderer({
       detail={<BlockedExplanationDetail explanation={item.blockedExplanation} />} />;
   }
   const hasActions = Boolean(onInvokeProtocolAction && item.availableActions?.length);
+  const surfaceDetail = renderProtocolDetail?.(item);
   return (
     <TimelineFactRow
       item={item}
@@ -29,10 +32,11 @@ export function ConversationTimelineProtocolRenderer({
       title={item.title}
       meta={item.meta}
       icon={<ProtocolIcon kind={item.protocolKind} />}
-      detail={detailExists(item) || hasActions ? (
+      detail={detailExists(item) || hasActions || surfaceDetail ? (
         <>
           {detailExists(item) ? <TextDetail text={item.description ?? item.detailLines?.map((line) => line.text).join("\n")} /> : null}
           <ConversationTimelineProtocolActions item={item} onInvoke={onInvokeProtocolAction} />
+          {surfaceDetail}
         </>
       ) : undefined}
     />

@@ -142,6 +142,8 @@ export function buildWorkflowIsolationPresentation(input: {
   }];
   for (const [index, round] of rounds.entries()) {
     const roundState = workflowIntegrationDisplayState(round);
+    const canOpenApproval = !unavailable && !unconfirmed && round === latest && roundState === "pending_approval"
+      && workflow.status !== "cancelled" && workflow.status !== "failed";
     const codes = [round.reasonCode, round.approval?.reasonCode, round.application.reasonCode].filter((code): code is string => Boolean(code));
     const description = [
       t("Integration round {round} · generation {generation}", { round: round.roundId, generation: round.generation }),
@@ -160,6 +162,7 @@ export function buildWorkflowIsolationPresentation(input: {
       title: t("Integration round {generation}", { generation: round.generation }),
       meta: unavailable ? t("Integration result unconfirmed") : t(roundStateKeys[roundState]),
       status: unavailable ? "waiting" : roundTimelineStatus(roundState), description,
+      ...(canOpenApproval ? { approvalId: round.approval!.approvalId, availableActions: ["open_approval" as const] } : {}),
     });
   }
   return {

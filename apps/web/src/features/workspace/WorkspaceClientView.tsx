@@ -268,6 +268,7 @@ function terminalReportResultItemId(report: TerminalReportDto): string {
 export function WorkspaceClientView({
   cwd,
   daemonHealthy,
+  workflowObservationReady,
   channelAutoRouteEnabled,
   providerLabel,
   userProfile,
@@ -2948,6 +2949,8 @@ export function WorkspaceClientView({
   }
 
   const messageRenderers = createChannelMessageRenderers({
+    daemonHealthy,
+    workflowObservationReady,
     isDefaultChannelSession: channelSession?.isDefault,
     runLifecycles: runById,
     contextSegmentIdByItemId: channelContextSegmentIdByItemId,

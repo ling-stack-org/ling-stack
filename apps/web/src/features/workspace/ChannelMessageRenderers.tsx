@@ -12,7 +12,7 @@ import {
   ThumbsUp,
 } from "lucide-react";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
-import { hasWorkflowTimelineContent } from "../../lib/workflow-timeline-content.js";
+import { selectWorkflowTimelineItems } from "../../lib/workflow-timeline-content.js";
 import type { ChannelActivityItem } from "../../lib/channel-activity.js";
 import { type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import type { ConversationTurnViewModel } from "../../lib/conversation-turn-projector.js";
@@ -99,6 +99,7 @@ import { conversationTimelineItemsForModel } from "../../lib/conversation-work-c
 import type { WorkflowProgressModel } from "../../lib/workflow-progress.js";
 import { requestTimelineWorkspaceFileOpen } from "../../shared/conversation/timeline/workspace-file-capability.js";
 import { orderChannelTurnTimelineItems } from "./channel-turn-timeline-order.js";
+import { WorkflowGraphDetail } from "./workflow-graph/WorkflowGraphDetail.js";
 
 function channelMessageTimelineItem(
   message: ChannelMessage,
@@ -355,9 +356,9 @@ function channelTurnTimelineItems(
     ? conversationTimelineItemsForModel(turn.operationCell, composerApprovalId)
     : [];
   const workflow = turn.operationRef?.kind === "workflow" ? workflowById.get(turn.operationRef.workflowId) : undefined;
-  const facts = projectedFacts.some(hasWorkflowTimelineContent) || !workflow
+  const facts = !workflow
     ? projectedFacts
-    : [channelProtocolTimelineItem({
+    : selectWorkflowTimelineItems(projectedFacts, channelProtocolTimelineItem({
         id: `workflow:${workflow.id}`,
         kind: "workflow",
         createdAt: workflow.updatedAt,
@@ -374,7 +375,7 @@ function channelTurnTimelineItems(
       }, t, workflowProgressByWorkflowId.get(workflow.id)?.summary, {
         actionBusy: orchestratingWorkflowId === workflow.id,
         actionFeedback: workflowErrors[workflow.id],
-      })];
+      }) as ConversationTimelineProtocolEventItem, workflowCanAdvance(workflow.status) || workflowCanCancel(workflow.status) || Boolean(workflowProgressByWorkflowId.get(workflow.id)?.steps.length));
   const terminalReport = channelTurnTerminalReportTimelineItem(
     turn, terminalReportById.get(turn.operationCell?.terminalReportId ?? ""), conversationItems,
   );
@@ -526,6 +527,8 @@ export interface ChannelMessageRenderersInput {
   readonly conversationWorkCellByWorkflowId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly composerGateApprovals: readonly InlineApprovalView[];
   readonly cwd: string;
+  readonly daemonHealthy?: boolean;
+  readonly workflowObservationReady?: boolean;
   readonly workspaceId?: string;
   readonly executionProposalsByMessageId: ReadonlyMap<string, readonly ChannelExecutionProposal[]>;
   readonly formatBytes: (value: number) => string;
@@ -1016,14 +1019,12 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             )?.approvalId,
           )
           : [];
-        if (workCellItems.some(hasWorkflowTimelineContent)) {
-          for (const item of workCellItems) addItem(item, sequence);
-        } else {
-          addItem(channelProtocolTimelineItem(activity, input.t, progressModel?.summary, {
+        const summary = channelProtocolTimelineItem(activity, input.t, progressModel?.summary, {
             actionBusy: input.orchestratingWorkflowId === activity.record.id,
             actionFeedback: input.workflowErrors[activity.record.id],
-          }), sequence);
-        }
+          }) as ConversationTimelineProtocolEventItem;
+        for (const item of selectWorkflowTimelineItems(workCellItems, summary,
+          workflowCanAdvance(activity.record.status) || workflowCanCancel(activity.record.status) || Boolean(progressModel?.steps.length))) addItem(item, sequence);
         return;
       }
       if (activity.kind === "run") {
@@ -1087,6 +1088,21 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       },
       onOpenReview: input.onOpenReview,
       onInvokeProtocolAction: input.onInvokeProtocolAction,
+      renderProtocolDetail: (item) => {
+        if (item.protocolKind !== "workflow") return null;
+        const workflowId = item.sourceRefs.find(ref => ref.kind === "channel_workflow")?.id;
+        const progress = workflowId ? input.workflowProgressByWorkflowId.get(workflowId) : undefined;
+        if (!progress || !workflowById.has(progress.workflowId)) return null;
+        const stepProtocolItems = new Map(progress.steps.map(step => [step.id, channelProtocolTimelineItem({
+          id: `workflow-step:${step.id}`, kind: "workflow-step", record: step, createdAt: step.updatedAt,
+          category: "runtime", attention: "none", searchText: "",
+        }, input.t, undefined, { actionBusy: input.runningWorkflowStepId === step.id, actionFeedback: input.workflowErrors[step.id] }) as ConversationTimelineProtocolEventItem]));
+        return <WorkflowGraphDetail key={progress.workflowId} workflowId={progress.workflowId} steps={progress.steps}
+          timelineItems={projectedTimelineItems} stepProtocolItems={stepProtocolItems} daemonHealthy={input.daemonHealthy}
+          observationReady={input.workflowObservationReady}
+          onInvokeProtocolAction={input.onInvokeProtocolAction}
+          onRevealFacts={ids => { void input.timelineItemLocatorRef?.current?.revealFirstMatchingItem(ids, target => target.scrollIntoView({ block: "center" })); }} />;
+      },
       onDisclosureIntent: input.onTimelineDisclosureIntent,
       renderResponseActions: (response, copyText) => {
         const message = response.message?.itemId ? messageByTimelineItemId.get(`message:agent:${response.message.itemId}`) : undefined;
