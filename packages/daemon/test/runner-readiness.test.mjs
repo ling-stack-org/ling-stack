@@ -5,8 +5,8 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { createSqliteRunStore } from "@ling-stack/core";
 import { createDaemonServer } from "../dist/index.js";
-import { startFakeAcpServer } from "../dist/runtime/acp/fake-server.js";
-import { startFakeCodexAppServer } from "../dist/runtime/adapters/fake-codex-app-server.js";
+import { startFakeAcpServer } from "./test-support/fake-acp-server.ts";
+import { startFakeCodexAppServer } from "./test-support/fake-codex-app-server.ts";
 
 test("runner readiness routes keep retired endpoints blocked even after legacy gates pass", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runner-readiness-"));

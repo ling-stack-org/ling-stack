@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 import { createDefaultRunnerRegistry } from "../dist/index.js";
-import { startFakeAcpServer } from "../dist/runtime/acp/fake-server.js";
+import { startFakeAcpServer } from "./test-support/fake-acp-server.ts";
 import { createCodexAppServerAdapter } from "../dist/runtime/adapters/codex-app-server.js";
-import { startFakeCodexAppServer } from "../dist/runtime/adapters/fake-codex-app-server.js";
+import { startFakeCodexAppServer } from "./test-support/fake-codex-app-server.ts";
 import { createOpenClawAcpAdapter } from "../dist/runtime/adapters/openclaw-acp.js";
 import { UnsupportedRunnerError } from "../dist/runtime/runners.js";
 

@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "allowSyntheticDefaultImports": true,
+    "jsx": "react-jsx",
+    "lib": ["DOM", "DOM.Iterable", "ES2022", "ESNext.Disposable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022",
+    "types": ["node", "vite/client"]
+  },
+  "files": [
+    "e2e/channel-work-cell.spec.ts",
+    "e2e/conversation-terminal-response-actions.spec.ts",
+    "e2e/conversation-transcript-color-hierarchy.spec.ts",
+    "e2e/conversation-turn-change-review.spec.ts",
+    "e2e/ui2-conversation-message-transcript-ownership.spec.ts",
+    "e2e/ui2-conversation-work-cell-activity.spec.ts",
+    "e2e/ui2-conversation-work-cell-shell-artifacts.spec.ts"
+  ]
+}

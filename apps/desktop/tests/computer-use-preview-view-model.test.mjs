@@ -3,6 +3,28 @@ import test from "node:test";
 import { createComputerUsePreviewViewModel } from "../dist/renderer/computer-use-preview/preview-view-model.js";
 import { loadComputerUsePreviewTranslator } from "../dist/renderer/computer-use-preview/messages.js";
 
+test("missing snapshots expose waiting or unavailable state without task actions", () => {
+  const waiting = createComputerUsePreviewViewModel(undefined, {
+    bridgeAvailable: true,
+    openCommandState: "failed",
+    stopCommandState: "failed",
+  });
+  assert.equal(waiting.state, "waiting");
+  assert.equal(waiting.label, "Waiting for activity");
+  assert.equal(waiting.busy, true);
+  assert.equal(waiting.controlsPersistent, true);
+  assert.equal(waiting.commandIssue, undefined);
+  assert.deepEqual(waiting.primaryActions.map((action) => action.id), ["hide"]);
+  assert.deepEqual(waiting.menuActions.map((action) => action.id), ["reset", "close"]);
+
+  const unavailable = createComputerUsePreviewViewModel(undefined, { bridgeAvailable: false });
+  assert.equal(unavailable.state, "unavailable");
+  assert.equal(unavailable.label, "Preview unavailable");
+  assert.equal(unavailable.busy, false);
+  assert.deepEqual(unavailable.primaryActions, []);
+  assert.deepEqual(unavailable.menuActions, []);
+});
+
 test("preview view model exposes explicit runtime/source states", () => {
   const cases = [
     ["running/live", { runtimeStatus: "running", sourceStatus: "live", frameReady: true }, "live", "Live"],
@@ -75,6 +97,10 @@ test("view model exposes structured pending and failed Stop feedback", () => {
 
 test("view model localizes status, actions, and Stop recovery without translating runtime detail", async () => {
   const translate = await loadComputerUsePreviewTranslator("zh-CN");
+  const waiting = createComputerUsePreviewViewModel(undefined, { bridgeAvailable: true }, translate);
+  assert.equal(waiting.label, "等待活动");
+  const unavailable = createComputerUsePreviewViewModel(undefined, { bridgeAvailable: false }, translate);
+  assert.equal(unavailable.label, "预览不可用");
   const live = createComputerUsePreviewViewModel(snapshot({ locale: "zh-CN", statusDetail: undefined }), {}, translate);
   assert.equal(live.label, "实时");
   assert.deepEqual(live.primaryActions.map((action) => action.label), ["打开任务", "隐藏"]);

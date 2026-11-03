@@ -10,7 +10,7 @@ import {
 } from "@ling-stack/core";
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 import type { MemoryObject } from "@ling-stack/core";
-import type { ConversationExecutionSelectionResponse, ConversationGeneratedMedia, ConversationItemV1, ConversationReasoningSummaryRecord, ConversationRuntimeMetrics, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings, WorkUnitDetailResponse } from "@ling-stack/contracts";
+import type { ConversationExecutionSelectionResponse, ConversationGeneratedMedia, ConversationItemV1, ConversationReasoningSummaryRecord, ConversationRuntimeMetrics, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ManagedPluginSetupView, PreviewContentResponse, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings, WorkUnitDetailResponse } from "@ling-stack/contracts";
 import { isSupportedLocale, type SupportedLocale } from "@ling-stack/localization";
 
 const configuredWorkspaceCwd = process.env.LING_PLAYWRIGHT_WORKSPACE_CWD;
@@ -143,7 +143,6 @@ export interface MockState {
   memoryMarkdownImportCalls: MockMemoryMarkdownImportCall[];
   teammateDirectThreads: Record<string, unknown>;
   teammateDirectMessages: unknown[];
-  lastTeammateDirectMessageRequest?: Record<string, unknown>;
   teammateDirectInterventions: MockTeammateDirectIntervention[];
   teammateDirectLinkPreviews: unknown[];
   teammatePrivateAttachments: unknown[];
@@ -334,6 +333,7 @@ export interface MockRun {
   cwd: string;
   taskId: string;
   channelId?: string;
+  workflowStepId?: string;
   teammateId?: string;
   providerPresetId?: string;
   providerName: string;
@@ -442,6 +442,8 @@ export interface MockRunIntervention {
   status: "queued" | "cancelling_source" | "starting_continuation" | "started" | "failed" | "cancelled";
   instruction: string;
   messagePayload?: {
+    sourceMessageId?: string;
+    targetTeammateId?: string;
     body: string;
     attachmentIds: string[];
     linkPreviewIds: string[];
@@ -788,29 +790,7 @@ export interface MockManagedPlugin {
   }>;
   package?: MockManagedPluginPackage;
   runtimePreview?: MockManagedPluginRuntimePreview;
-  setup?: {
-    kind: "local_binary";
-    state: "detected" | "missing" | "unsupported" | "connected" | "ready";
-    checkedAt: string;
-    schemaVersion?: 2;
-    distribution?: "bundled_embedded" | "external_local";
-    platform?: "darwin" | "win32" | "unsupported";
-    providerState?: "included" | "desktop_unavailable" | "permission_required" | "interactive_session_required" | "platform_unavailable" | "ready" | "incompatible" | "corrupt" | "external_missing" | "external_detected" | "external_connected" | "unsupported";
-    requestedEnabled?: boolean;
-    effectiveEnabled?: boolean;
-    integrityCoverage?: "standard" | "uiaccess";
-    limitations?: Array<"elevated_pixel_input" | "uwp_send_input">;
-    providerVersion?: string;
-    providerDistributionRevision?: string;
-    providerDisplayVersion?: string;
-    integrity?: "verified" | "failed" | "unknown";
-    detectedCommand?: string;
-    guide?: {
-      documentationUrl: string;
-      installCommand: string;
-      supportsCustomCommand: boolean;
-    };
-  };
+  setup?: ManagedPluginSetupView;
   events?: MockManagedPluginEvent[];
   disabledReason?: string;
   actions: {
@@ -1166,7 +1146,7 @@ async function clickVisibleNewTask(page: Page): Promise<boolean> {
 }
 
 export async function openChannelSidePanel(page: Page, name: "Settings"): Promise<void> {
-  const expectedLabels = [name];
+  const expectedLabels: readonly string[] = [name];
   const panel = page.locator(".channel-side-panel");
   const panelVisible = (await panel.count()) > 0 && await panel.isVisible().catch(() => false);
   const panelLabel = panelVisible ? await panel.getAttribute("aria-label") : "";
@@ -1987,7 +1967,7 @@ function safeMockTraceIdFragment(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]/g, "_");
 }
 
-function normalizeMockTraceStatus(status: string): Exclude<LingTraceStatus, "skipped"> {
+function normalizeMockTraceStatus(status: string): Exclude<LingTraceStatus, "skipped" | "waiting_for_input"> {
   if (status === "queued" || status === "running" || status === "waiting_for_approval" || status === "succeeded" || status === "failed" || status === "cancelled") {
     return status;
   }
@@ -3030,7 +3010,7 @@ export function createMockSkillHealthReport(state: MockState, limit = 100): Reco
     isRecord(item) &&
     (item.reviewStatus === "builtin" || item.reviewStatus === "published")
   );
-  const openCandidates = state.skillCandidates.filter((item) =>
+  const openCandidates = state.skillCandidates.filter((item): item is Record<string, unknown> =>
     isRecord(item) &&
     (item.status === "pending" || item.status === "needs_edit" || item.status === "approved_for_draft")
   );
@@ -3334,7 +3314,7 @@ export function buildMockEffectiveSkills(state: MockState, teammateId: string): 
   }
   const bindings = state.teammateSkillBindings.filter((item) => isRecord(item) && item.teammateId === teammateId);
   const definitions = state.skillRegistryEntries
-    .filter((item) =>
+    .filter((item): item is Record<string, unknown> & { definition: Record<string, unknown> } =>
       isRecord(item) &&
       (item.reviewStatus === "builtin" || item.reviewStatus === "published") &&
       isRecord(item.definition)
@@ -4536,7 +4516,7 @@ export function createMockPluginHealth(
   pluginId: string,
   status: string,
   message: string,
-): MockManagedPlugin["health"] {
+): NonNullable<MockManagedPlugin["health"]> {
   return {
     pluginId,
     checkedAt: "2026-06-06T00:30:00.000Z",
@@ -5735,8 +5715,6 @@ export function createMockTeammate(overrides: Record<string, unknown> = {}): Rec
     displayName: "Ling Engineer",
     description: "Owns scoped implementation in the Engineering channel.",
     avatarTone: "teal",
-    modelBindingMode,
-    providerPresetId,
     systemPrompt: "You are the Engineering AI teammate.",
     appendSystemPrompt: [],
     allowedTools: ["read", "grep", "find", "ls"],
@@ -5913,7 +5891,7 @@ function buildMockAiCouncilHealthReport(
     }
     const councilId = council.id;
     const members = state.aiCouncilMembers
-      .filter((item) => isRecord(item) && item.councilId === councilId)
+      .filter((item): item is Record<string, unknown> => isRecord(item) && item.councilId === councilId)
       .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0));
     totalMembers += members.length;
     const councilDisplayName = typeof council.displayName === "string" ? council.displayName : councilId;
@@ -6228,7 +6206,7 @@ function buildMockEffectiveChannelCouncil(state: MockState, channelId: string): 
     .map((council) => {
       const councilId = String(council.id);
       const members = state.aiCouncilMembers
-        .filter((item) => isRecord(item) && item.councilId === councilId)
+        .filter((item): item is Record<string, unknown> => isRecord(item) && item.councilId === councilId)
         .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0))
         .map((member) => {
           const teammateId = typeof member.teammateId === "string" ? member.teammateId : "";
@@ -6670,10 +6648,10 @@ function mockRecentWorkflowFileTarget(state: MockState, channelId: string, fileN
   const wanted = fileName.toLowerCase();
   const texts = [
     ...state.channelExecutionProposals
-      .filter((proposal) => isRecord(proposal) && proposal.channelId === channelId)
+      .filter((proposal): proposal is Record<string, unknown> => isRecord(proposal) && proposal.channelId === channelId)
       .flatMap((proposal) => [proposal.title, proposal.prompt, proposal.riskSummary].filter((value): value is string => typeof value === "string")),
     ...state.channelWorkflowSteps
-      .filter((step) => isRecord(step) && step.channelId === channelId)
+      .filter((step): step is Record<string, unknown> => isRecord(step) && step.channelId === channelId)
       .flatMap((step) => [step.title, step.prompt, step.resultSummary].filter((value): value is string => typeof value === "string")),
   ];
   for (const text of texts) {
@@ -7310,7 +7288,7 @@ export function buildMockConversationDetail(state: MockState, cwd: string, threa
       id,
       role: "user",
       content: intervention.messagePayload?.body || intervention.instruction,
-      attachments: state.conversationAttachments.filter((attachment) => intervention.messagePayload?.attachmentIds.includes(attachment.id)),
+      attachments: state.conversationAttachments.filter((attachment) => isRecord(attachment) && typeof attachment.id === "string" && intervention.messagePayload?.attachmentIds.includes(attachment.id)),
       fileRefs: (intervention.messagePayload?.fileRefs ?? []).map((fileRef) => ({
         path: fileRef.path,
         ...(fileRef.label ? { label: fileRef.label } : {}),
@@ -7393,7 +7371,7 @@ export function buildMockConversationDetail(state: MockState, cwd: string, threa
     };
   });
   const terminalReportItems = state.terminalReports
-    .filter((report) => isRecord(report) && report.threadId === thread.id)
+    .filter((report): report is Record<string, unknown> => isRecord(report) && report.threadId === thread.id)
     .flatMap((report, index) => {
       const reportId = readString(report, "id");
       const resultItemId = readString(report, "resultItemId") || (reportId ? `result_terminal_report:${reportId}` : "");
@@ -8256,7 +8234,7 @@ export async function handleDaemonRoute(
       readonly handle?: unknown;
       readonly avatarDataUrl?: unknown;
     };
-    const nextProfile: UserProfile = {
+    const nextProfile = {
       ...state.userProfile,
       displayName: typeof body.displayName === "string" && body.displayName.trim() ? body.displayName.trim() : state.userProfile.displayName,
       updatedAt: "2026-05-25T00:18:00.000Z",
@@ -9926,7 +9904,7 @@ export async function handleDaemonRoute(
         updatedAt: "2026-06-20T00:02:00.000Z",
       });
       const clonedMembers = state.aiCouncilMembers
-        .filter((item) => isRecord(item) && item.councilId === councilId && item.teammateId !== "ling_agent")
+        .filter((item): item is Record<string, unknown> => isRecord(item) && item.councilId === councilId && item.teammateId !== "ling_agent")
         .map((member) => ({
           ...member,
           councilId: clonedCouncilId,
@@ -9970,7 +9948,7 @@ export async function handleDaemonRoute(
     }
     if (isMembersRoute && request.method() === "GET") {
       const members = state.aiCouncilMembers
-        .filter((item) => isRecord(item) && item.councilId === councilId)
+        .filter((item): item is Record<string, unknown> => isRecord(item) && item.councilId === councilId)
         .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0));
       await route.fulfill({ json: { cwd, councilId, members } });
       return;
@@ -9986,7 +9964,7 @@ export async function handleDaemonRoute(
       state.aiCouncilMembers = state.aiCouncilMembers.filter((item) => !isRecord(item) || item.councilId !== councilId);
       state.aiCouncilMembers.push(...normalizeMockAiCouncilMembers(councilId, inputMembers));
       const members = state.aiCouncilMembers
-        .filter((item) => isRecord(item) && item.councilId === councilId)
+        .filter((item): item is Record<string, unknown> => isRecord(item) && item.councilId === councilId)
         .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0));
       await route.fulfill({ json: { cwd, councilId, members } });
       return;
@@ -10221,7 +10199,7 @@ export async function handleDaemonRoute(
       }
       const body = await request.postDataJSON() as Record<string, unknown>;
       const bindings = Array.isArray(body.bindings) ? body.bindings : [];
-      const existingBindings = state.teammateSkillBindings.filter((item) => isRecord(item) && item.teammateId === teammateId);
+      const existingBindings = state.teammateSkillBindings.filter((item): item is Record<string, unknown> => isRecord(item) && item.teammateId === teammateId);
       const existingSkillIds = new Set(existingBindings.map((binding) => String(binding.skillId)));
       const knownSkillIds = new Set(state.skillRegistryEntries.flatMap((entry) =>
         isRecord(entry) && typeof entry.id === "string" && (entry.reviewStatus === "builtin" || entry.reviewStatus === "published")
@@ -10563,7 +10541,7 @@ export async function handleDaemonRoute(
     }
     if ((action === "direct-thread" || action === "direct-messages") && request.method() === "GET") {
       const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
-      const messages = state.teammateDirectMessages.filter((item) =>
+      const messages = state.teammateDirectMessages.filter((item): item is Record<string, unknown> =>
         isRecord(item) && item.teammateId === teammateId && item.threadId === thread.id && item.status !== "superseded"
       );
       const url = new URL(request.url());
@@ -10605,13 +10583,14 @@ export async function handleDaemonRoute(
     }
     if (action === "direct-interventions") {
       const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
+      const threadId = typeof thread.id === "string" ? thread.id : `tdthread_${teammateId}`;
       if (request.method() === "GET") {
         await route.fulfill({
           json: {
             cwd,
             teammateId,
             thread,
-            interventions: listOpenMockTeammateDirectInterventions(state, teammateId, thread.id),
+            interventions: listOpenMockTeammateDirectInterventions(state, teammateId, threadId),
           },
         });
         return;
@@ -10644,7 +10623,7 @@ export async function handleDaemonRoute(
           id: `tdint_${state.teammateDirectInterventions.length + 1}`,
           workspaceId: "workspace_default",
           teammateId,
-          threadId: thread.id,
+          threadId,
           sourceMessageId: runtime.activeReply.sourceMessageId,
           sourceWorkUnitId: runtime.activeReply.workUnitId,
           mode,
@@ -10813,7 +10792,7 @@ export async function handleDaemonRoute(
     }
     if (action === "activity" && request.method() === "GET") {
       const directItems = state.teammateDirectMessages
-        .filter((item) => isRecord(item) && item.teammateId === teammateId)
+        .filter((item): item is Record<string, unknown> => isRecord(item) && item.teammateId === teammateId)
         .map((item) => ({
           id: `direct-message:${item.id}`,
           kind: "direct-message",
@@ -10824,7 +10803,7 @@ export async function handleDaemonRoute(
           sourceId: item.id,
         }));
       const taskItems = state.tasks
-        .filter((task) => isRecord(task) && task.assigneeTeammateId === teammateId)
+        .filter((task): task is Record<string, unknown> => isRecord(task) && task.assigneeTeammateId === teammateId)
         .map((task) => ({
           id: `task:${task.id}`,
           kind: "task",
@@ -10859,7 +10838,7 @@ export async function handleDaemonRoute(
       updatedAt: "2026-06-04T00:31:00.000Z",
     } satisfies MockTeammateDirectIntervention;
     state.teammateDirectInterventions[interventionIndex] = intervention;
-    const thread = state.teammateDirectThreads[intervention.teammateId] ?? getOrCreateMockTeammateThread(state, intervention.teammateId, {});
+    const thread = getOrCreateMockTeammateThread(state, intervention.teammateId, {});
     await route.fulfill({
       json: {
         cwd,
@@ -10883,7 +10862,7 @@ export async function handleDaemonRoute(
       await route.fulfill({ status: 409, json: { error: "direct_intervention_not_queued", message: "Only queued guidance can run now." } });
       return;
     }
-    const thread = state.teammateDirectThreads[current.teammateId] ?? getOrCreateMockTeammateThread(state, current.teammateId, {});
+    const thread = getOrCreateMockTeammateThread(state, current.teammateId, {});
     const activeWorkUnitIndex = state.workUnits.findIndex((unit) =>
       unit.kind === "teammate_direct_reply" &&
       (unit.teammateId === current.teammateId || unit.ownerId === current.teammateId) &&
@@ -11285,7 +11264,7 @@ export async function handleDaemonRoute(
     );
     const channelIds = new Set(channels.filter(isRecord).map((channel) => channel.id).filter((id): id is string => typeof id === "string"));
     const branches = state.channelBranches
-      .filter((branch) =>
+      .filter((branch): branch is Record<string, unknown> =>
         isRecord(branch) &&
         channelIds.has(typeof branch.channelId === "string" ? branch.channelId : "") &&
         (archived ? branch.status === "archived" : branch.status !== "archived")
@@ -11707,7 +11686,7 @@ export async function handleDaemonRoute(
     if (request.method() === "GET" && !branchId) {
       const archived = url.searchParams.get("archived") === "true";
       const branches = state.channelBranches
-        .filter((branch) =>
+        .filter((branch): branch is Record<string, unknown> =>
           isRecord(branch) &&
           branch.channelId === channelId &&
           (archived ? branch.status === "archived" : branch.status !== "archived")
@@ -11868,7 +11847,7 @@ export async function handleDaemonRoute(
       updatedAt: "2026-05-25T00:18:00.000Z",
     };
     state.channelMessages.push(message);
-    const aiMentions = message.mentions.filter((mention) => isRecord(mention) && mention.kind === "ai-teammate");
+    const aiMentions = message.mentions.filter((mention): mention is Record<string, unknown> => isRecord(mention) && mention.kind === "ai-teammate");
     const requestedTeammateId = aiMentions.length > 1
       ? "ling_agent"
       : aiMentions.length === 1 && typeof aiMentions[0]?.id === "string"
@@ -11887,7 +11866,7 @@ export async function handleDaemonRoute(
     ));
     if (activeTargetRun && (message.body.trim() || message.attachmentIds.length > 0 || message.linkPreviewIds.length > 0 || message.fileRefs.length > 0)) {
       const sourceRunId = activeTargetRun.parentRunId ?? activeTargetRun.id;
-      const intervention = {
+      const intervention: MockRunIntervention = {
         id: `intervention_${state.runInterventions.length + 1}`,
         workspaceId: "workspace_default",
         sourceRunId,
@@ -12085,10 +12064,10 @@ export async function handleDaemonRoute(
     }));
     const pendingReplyById = state.pendingChannelAiReplies ?? {};
     for (const message of state.channelMessages) {
-      if (!isRecord(message) || message.status !== "pending") {
+      if (!isRecord(message) || message.status !== "pending" || typeof message.id !== "string") {
         continue;
       }
-      const readyBody = typeof message.id === "string" ? pendingReplyById[message.id] : undefined;
+      const readyBody = pendingReplyById[message.id];
       if (readyBody) {
         message.body = readyBody;
         message.status = "ready";
@@ -12820,7 +12799,7 @@ export async function handleDaemonRoute(
     const body = await request.postDataJSON() as Record<string, unknown>;
     const sourceRun = state.runs.find(run => run.id === handoff.sourceRunId)
       ?? state.runs.find(run => handoff.sourceTaskId && run.taskId === handoff.sourceTaskId);
-    const sourceMessageId = handoff.sourceMessageId ?? sourceRun?.requestSnapshot.sourceMessageId;
+    const sourceMessageId = handoff.sourceMessageId ?? (isRecord(sourceRun?.requestSnapshot) ? sourceRun.requestSnapshot.sourceMessageId : undefined);
     const workflow = {
       id: `workflow_${state.channelWorkflows.length + 1}`,
       workspaceId: "workspace_default",
@@ -12865,7 +12844,7 @@ export async function handleDaemonRoute(
     const channelId = decodeURIComponent(channelCollaborationCardsMatch[1]);
     const limit = Number(url.searchParams.get("limit") ?? 100);
     const cards = state.channelWorkflows
-      .filter((workflow) => isRecord(workflow) && workflow.channelId === channelId)
+      .filter((workflow): workflow is Record<string, unknown> => isRecord(workflow) && workflow.channelId === channelId)
       .map((workflow) => buildMockCollaborationTaskCard(state, workflow))
       .filter((card): card is Record<string, unknown> => Boolean(card))
       .slice(0, Number.isFinite(limit) && limit > 0 ? limit : 100);
@@ -13001,7 +12980,7 @@ export async function handleDaemonRoute(
     const updatedWorkflow = { ...workflow, status: "cancelled", updatedAt: "2026-05-25T00:39:00.000Z" };
     const terminalStepStatuses = new Set(["succeeded", "failed", "skipped", "cancelled"]);
     const updatedSteps = state.channelWorkflowSteps
-      .filter((step) => isRecord(step) && step.workflowId === workflowId)
+      .filter((step): step is Record<string, unknown> => isRecord(step) && step.workflowId === workflowId)
       .map((step) => terminalStepStatuses.has(String(step.status))
         ? step
         : { ...step, status: "cancelled", updatedAt: "2026-05-25T00:39:00.000Z" });
@@ -13190,7 +13169,7 @@ export async function handleDaemonRoute(
   if (workflowStepMatch && request.method() === "PATCH") {
     const stepId = decodeURIComponent(workflowStepMatch[1]);
     const body = await request.postDataJSON() as Record<string, unknown>;
-    let updated;
+    let updated: Record<string, unknown> | undefined;
     state.channelWorkflowSteps = state.channelWorkflowSteps.map((step) => {
       if (isRecord(step) && step.id === stepId) {
         updated = { ...step, ...body, updatedAt: "2026-05-25T00:37:00.000Z" };
@@ -13199,7 +13178,7 @@ export async function handleDaemonRoute(
       return step;
     });
     const workflow = isRecord(updated)
-      ? state.channelWorkflows.find((item) => isRecord(item) && item.id === updated.workflowId)
+      ? state.channelWorkflows.find((item) => isRecord(item) && item.id === updated?.workflowId)
       : undefined;
     await route.fulfill({ status: updated ? 200 : 404, json: updated ? { workflowStep: updated, workflow } : { error: "workflow_step_not_found" } });
     return;
@@ -13257,7 +13236,7 @@ export async function handleDaemonRoute(
   const attachmentContentMatch = /^\/attachments\/([^/]+)\/content$/.exec(path);
   if (attachmentContentMatch && request.method() === "GET") {
     const attachmentId = decodeURIComponent(attachmentContentMatch[1]);
-    const privateAttachment = state.teammatePrivateAttachments.find((attachment) => isRecord(attachment) && attachment.id === attachmentId);
+    const privateAttachment = state.teammatePrivateAttachments.find((attachment): attachment is Record<string, unknown> => isRecord(attachment) && attachment.id === attachmentId);
     if (privateAttachment || attachmentId.startsWith("tpatt_")) {
       if (!privateAttachment) {
         await route.fulfill({ status: 404, json: { error: "attachment_not_found" } });
@@ -14036,6 +14015,9 @@ export async function handleDaemonRoute(
           tokenBudget: typeof body.tokenBudget === "number" ? body.tokenBudget : undefined,
           tokensUsed: 0,
           timeUsedSeconds: 0,
+          continuationDepth: 0,
+          noEvidenceContinuationCount: 0,
+          sameBlockerCount: 0,
           createdAt: now,
           updatedAt: now,
           completionEvidenceRefs: [],
@@ -14051,7 +14033,9 @@ export async function handleDaemonRoute(
           return;
         }
         const body = readMockPostData(request);
-        const status = typeof body.status === "string" ? body.status : existing.status;
+        const status = body.status === "active" || body.status === "paused" || body.status === "blocked" || body.status === "usage_limited" || body.status === "budget_limited" || body.status === "complete" || body.status === "cleared" || body.status === "replaced"
+          ? body.status
+          : existing.status;
         if (status === "complete") {
           await route.fulfill({ status: 400, json: { error: "goal_complete_action_required" } });
           return;
@@ -14063,7 +14047,7 @@ export async function handleDaemonRoute(
           status,
           tokenBudget: body.tokenBudget === null ? undefined : typeof body.tokenBudget === "number" ? body.tokenBudget : existing.tokenBudget,
           updatedAt: now,
-          completedAt: status === "complete" ? now : existing.completedAt,
+          completedAt: existing.completedAt,
           clearedAt: status === "cleared" ? now : existing.clearedAt,
           lastRunId: body.lastRunId === null ? undefined : typeof body.lastRunId === "string" ? body.lastRunId : existing.lastRunId,
           blockedReason: body.blockedReason === null ? undefined : typeof body.blockedReason === "string" ? body.blockedReason : existing.blockedReason,
@@ -15941,7 +15925,7 @@ export async function handleDaemonRoute(
       return;
     }
     const image = artifact.type === "image" || artifact.contentType?.startsWith("image/");
-    const compare = image && artifact.compareBeforeImageUrl && artifact.compareAfterImageUrl
+    const compare: PreviewContentResponse["compare"] = image && artifact.compareBeforeImageUrl && artifact.compareAfterImageUrl
       ? {
           before: {
             label: artifact.compareBeforeLabel ?? "Before",
@@ -15966,14 +15950,14 @@ export async function handleDaemonRoute(
           sizeBytes: artifact.sizeBytes,
           previewable: true,
         },
-        kind: image ? "image" : artifact.type === "diff" ? "diff" : artifact.type === "json" ? "json" : "plain_text",
+        kind: image ? "image" : artifact.type === "diff" ? "diff" : artifact.type === "json" ? "json" : artifact.type === "markdown" ? "markdown_text" : artifact.type === "log" ? "log" : "plain_text",
         text: image ? undefined : artifact.contentText ?? `${artifact.title ?? artifact.path ?? artifact.id}\n`,
         imageUrl: image ? `/artifacts/${encodeURIComponent(artifact.id)}/content?cwd=${encodeURIComponent(cwd)}` : undefined,
         compare,
         truncated: false,
         sizeBytes: artifact.sizeBytes,
         redactionNotes: [],
-      },
+      } satisfies PreviewContentResponse,
     });
     return;
   }
@@ -16337,7 +16321,7 @@ export function buildMockTeammateDirectRuntime(
   state: MockState,
   teammateId: string,
   thread: Record<string, unknown>,
-): Record<string, unknown> {
+) {
   const threadId = typeof thread.id === "string" ? thread.id : `tdthread_${teammateId}`;
   const activeWorkUnit = state.workUnits.find((unit) =>
     unit.kind === "teammate_direct_reply" &&
@@ -16393,7 +16377,7 @@ export function listOpenMockTeammateDirectInterventions(
 function buildMockWorkflowEvidence(state: MockState, workflow: Record<string, unknown>): Record<string, unknown> {
   const workflowId = readString(workflow, "id");
   const steps = state.channelWorkflowSteps
-    .filter((step) => isRecord(step) && step.workflowId === workflowId)
+    .filter((step): step is Record<string, unknown> => isRecord(step) && step.workflowId === workflowId)
     .sort((left, right) => readNumber(left, "position") - readNumber(right, "position") || readString(left, "createdAt").localeCompare(readString(right, "createdAt")));
   const stepRunIds = new Set(steps.map((step) => readString(step, "runId")).filter(Boolean));
   const artifacts = Object.entries(state.artifactsByRun)
@@ -16533,7 +16517,7 @@ function buildMockCollaborationTaskCard(state: MockState, workflow: Record<strin
     return undefined;
   }
   const steps = state.channelWorkflowSteps
-    .filter((step) => isRecord(step) && step.workflowId === workflowId)
+    .filter((step): step is Record<string, unknown> => isRecord(step) && step.workflowId === workflowId)
     .sort((left, right) => readNumber(left, "position") - readNumber(right, "position") || readString(left, "createdAt").localeCompare(readString(right, "createdAt")));
   if (steps.length === 0) {
     return undefined;
@@ -17165,7 +17149,7 @@ function readOptionalMockWorkflowStepPreviews(
         ownerLabel: readOptionalMockString(item, "ownerLabel"),
       };
     })
-    .filter((item): item is { readonly title: string; readonly ownerId?: string; readonly ownerLabel?: string } => Boolean(item));
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
   return previews.length > 0 ? previews : undefined;
 }
 
@@ -17182,7 +17166,7 @@ function readMockPostData(request: Request): Record<string, unknown> {
   }
 }
 
-function mockMediaProjectDetail(state: MockDaemonState, mediaProject: MockMediaProject): {
+function mockMediaProjectDetail(state: MockState, mediaProject: MockMediaProject): {
   readonly mediaProject: MockMediaProject;
   readonly assets: readonly MockMediaProjectAsset[];
   readonly scenes: ReadonlyArray<MockMediaScene & { readonly videoImageInputs: NonNullable<MockMediaScene["videoImageInputs"]> }>;

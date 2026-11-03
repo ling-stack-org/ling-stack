@@ -17,6 +17,10 @@ test.beforeEach(async ({}, testInfo) => {
     args: [harnessDirectory],
     env: {
       ...process.env,
+      LING_PREVIEW_HARNESS_BRIDGE: testInfo.title.includes("without a bridge") ? "absent" : "present",
+      LING_PREVIEW_HARNESS_SNAPSHOT: testInfo.title.includes("empty snapshot")
+        ? "empty"
+        : testInfo.title.includes("pending snapshot") ? "pending" : "ready",
       LING_PREVIEW_HARNESS_DISPLAY_MEDIA: manualDisplayMediaMode
         ? "manual"
         : displayMediaMode ? "1" : "0",
@@ -36,6 +40,78 @@ test.beforeEach(async ({}, testInfo) => {
 test.afterEach(async () => {
   expect(rendererErrors).toEqual([]);
   await electronApp?.close();
+});
+
+test("shows preview unavailable without a bridge", async () => {
+  await expect(page.locator(".preview-shell")).toHaveAttribute("data-state", "unavailable");
+  await expect(page.locator(".preview-shell")).toHaveAttribute("data-window-state", "attention");
+  await expect(page.getByRole("status")).toContainText("Preview unavailable");
+  await expect(page.locator(".fake-page, .preview-video")).toHaveCount(0);
+  await expect(page.locator(".preview-controls button")).toHaveCount(0);
+  expect(await page.evaluate(() => typeof window.lingComputerUsePreview)).toBe("undefined");
+});
+
+for (const mode of ["empty", "pending"]) {
+  test(`waits for the ${mode} snapshot and renders only an explicit fake source`, async () => {
+    const shell = page.locator(".preview-shell");
+    await expect(shell).toHaveAttribute("data-state", "waiting");
+    await expect(shell).toHaveAttribute("data-window-state", "busy");
+    await expect(page.getByRole("status")).toContainText("Waiting for activity");
+    await expect(page.locator(".fake-page, .preview-video")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Open task" })).toHaveCount(0);
+    await page.getByRole("button", { name: "More preview actions" }).click();
+    expect(await page.getByRole("menuitem").allTextContents()).toEqual(["Reset position", "Close window"]);
+    await page.keyboard.press("Escape");
+    expect(await callCount("reportFrameReady")).toBe(0);
+
+    await page.evaluate(() => window.lingPreviewTestHarness.pushSnapshot({}));
+    await expect(shell).toHaveAttribute("data-state", "live");
+    await expect(page.locator(".fake-page")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open task" })).toBeVisible();
+    await expect.poll(() => callCount("reportFrameReady")).toBe(1);
+  });
+}
+
+test("clears a missing snapshot and ignores a late Stop result after the same session returns", async () => {
+  await expect.poll(() => callCount("reportFrameReady")).toBe(1);
+  await page.evaluate(() => window.lingPreviewTestHarness.setCommandPending("requestStop"));
+  await invokeStop();
+  const shell = page.locator(".preview-shell");
+  await expect(shell).toHaveAttribute("data-stop-command", "pending");
+
+  await page.evaluate(() => window.lingPreviewTestHarness.clearSnapshot());
+  await expect(shell).toHaveAttribute("data-state", "waiting");
+  await expect(shell).toHaveAttribute("data-stop-command", "idle");
+  await expect(page.locator(".fake-page, .preview-video")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Open task" })).toHaveCount(0);
+
+  await page.evaluate(() => window.lingPreviewTestHarness.pushSnapshot({}));
+  await expect(shell).toHaveAttribute("data-state", "live");
+  expect(await page.evaluate(() => window.lingPreviewTestHarness.resolveCommand(
+    "requestStop",
+    { accepted: false, reason: "late_failure" },
+  ))).toBe(true);
+  await expect(shell).toHaveAttribute("data-stop-command", "idle");
+  await expect(shell).toHaveAttribute("data-state", "live");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("releases display-media when the snapshot disappears without rendering a fake frame", async () => {
+  await expect.poll(() => callCount("reportFrameReady")).toBe(1);
+  await page.evaluate(() => {
+    window.lingPreviewTestHarness.clearCalls();
+    window.lingPreviewTestHarness.clearSnapshot();
+  });
+
+  await expect(page.locator(".preview-shell")).toHaveAttribute("data-state", "waiting");
+  await expect(page.locator(".fake-page, .preview-video")).toHaveCount(0);
+  await expect.poll(() => displayMediaState()).toMatchObject({
+    requestCount: 1,
+    pendingCount: 0,
+    streamTrackStates: [["ended"]],
+  });
+  expect(await callCount("reportFrameReady")).toBe(0);
+  expect(await callCount("reportSourceFailure")).toBe(0);
 });
 
 test("keeps Open task, Hide, and More as the ordered top-level actions", async () => {
