@@ -146,7 +146,7 @@ importers:
         specifier: 45.2.1
         version: 45.2.1
       electron-builder:
-        specifier: ^26.15.3
+        specifier: 26.18.0
         version: 26.18.0(electron-builder-squirrel-windows@26.15.3)
       esbuild:
         specifier: ^0.28.1
