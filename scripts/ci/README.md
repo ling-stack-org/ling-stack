@@ -232,6 +232,12 @@ Missing/ambiguous history or changes to scanner configuration/ignore policy
 select full history. Scheduled/manual runs scan full reachable history. Checkout
 must retain complete history; the scanner cannot reconstruct a shallow clone.
 
+Gitleaks fingerprints bind a commit, path, rule and line. A merge that imports
+reviewed evidence can produce distinct fingerprints for identical SHA-256
+records. Verify each digest against the source bytes before adding exact
+fingerprints to `.gitleaksignore`; do not exclude whole evidence paths, broaden
+hash-pattern allowlists or omit merge patches.
+
 ## Validation
 
 ```sh
