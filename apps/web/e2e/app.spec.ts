@@ -337,7 +337,7 @@ test("sidebar archive hides conversations and teammates without deleting data", 
   await expect(teammateArchiveButton).toBeVisible();
   await teammateArchiveButton.click();
   await expect(navigation.getByRole("button", { name: "Designer", exact: true })).toHaveCount(0);
-  await expect.poll(() => state.aiTeammates.find((teammate) => teammate.id === "teammate_sidebar_designer")?.hidden).toBe(true);
+  await expect.poll(() => state.aiTeammates.filter(isRecord).find((teammate) => teammate.id === "teammate_sidebar_designer")?.hidden).toBe(true);
 
   await navigation.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
@@ -352,7 +352,7 @@ test("sidebar archive hides conversations and teammates without deleting data", 
   await page.locator(".archived-items-settings-panel").getByRole("tab", { name: /AI Teammates/ }).click();
   await expect(archivedList).toContainText("Designer");
   await archivedList.getByRole("button", { name: "Restore" }).click();
-  await expect.poll(() => state.aiTeammates.find((teammate) => teammate.id === "teammate_sidebar_designer")?.hidden).toBe(false);
+  await expect.poll(() => state.aiTeammates.filter(isRecord).find((teammate) => teammate.id === "teammate_sidebar_designer")?.hidden).toBe(false);
   await page.getByRole("button", { name: "Back to app" }).click();
   await expect(navigation.locator(".sidebar-recent-row").filter({ hasText: "Archive me" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Designer", exact: true })).toBeVisible();
@@ -795,12 +795,13 @@ test("normal conversation queues approvals in its composer gate", async ({ page 
       return;
     }
     approval.status = "denied";
-    approval.resolvedAt = "2026-07-20T02:00:02.000Z";
+    const resolvedAt = "2026-07-20T02:00:02.000Z";
+    approval.resolvedAt = resolvedAt;
     approval.resolvedBy = "local-user";
     setTimeout(() => {
       thread.status = "failed";
       thread.activeRunId = undefined;
-      thread.updatedAt = approval.resolvedAt;
+      thread.updatedAt = resolvedAt;
     }, 150);
     await route.fulfill({ json: { approval } });
   });
@@ -926,7 +927,7 @@ test("teammate private chat resolves its runtime approval through its composer g
     ...state.runs[0],
     id: runId,
     channelId: undefined,
-    taskId: undefined,
+    taskId: "task_private_approval",
     teammateId,
     threadId: executionThreadId,
     workUnitId,
@@ -1612,14 +1613,33 @@ test("executed normal conversation retains one useful supplemental terminal repo
   const terminalResponse = timeline.locator(".conversation-timeline-terminal-response");
   const terminalReport = terminalResponse.locator('[data-conversation-timeline-kind="terminalReport"]');
   await expect(terminalResponse).toHaveCount(1);
-  await expect(terminalResponse).toContainText("执行详情");
+  await expect(terminalReport).toHaveCount(1);
+  const reportToggle = terminalReport.locator(".conversation-timeline-activity-main");
+  await expect(reportToggle.locator("strong")).toHaveText("任务已完成。");
+  await expect(reportToggle).toHaveAttribute("aria-expanded", "true");
+  await expect(terminalResponse).not.toContainText("执行详情");
   await expect(terminalResponse).not.toContainText("结构化终局报告已接入普通会话");
-  await terminalReport.locator(".conversation-timeline-activity-main").click();
-  await expect(terminalResponse).toContainText("Committed report evidence owns the final file summary.");
-  await expect(terminalResponse).toContainText("执行过程保留在工作记录中，最终结果由 TerminalReport 独立展示。");
-  await expect(terminalResponse).toContainText("Web typecheck");
-  await expect(terminalResponse).toContainText("ConversationHome-1.tsx");
-  await expect(terminalResponse).toContainText("ConversationHome-2.tsx");
+  await expect(terminalResponse.locator(".conversation-timeline-result-summary")).toHaveCount(0);
+  await expect(terminalResponse).not.toContainText("执行过程保留在工作记录中，最终结果由 TerminalReport 独立展示。");
+  const corrections = terminalReport.locator('[data-terminal-report-section="corrections"]');
+  await expect(corrections).toHaveCount(1);
+  await expect(corrections.locator(".conversation-timeline-terminal-entry-head strong")).toHaveText("Committed report evidence owns the final file summary.");
+  await expect(corrections).toContainText("Previously: Only provider narration contains the final file evidence.");
+  await expect(corrections).toContainText("高置信度");
+  await reportToggle.click();
+  await expect(reportToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(corrections).toHaveCount(0);
+  await expect(reportToggle.locator("strong")).toHaveText("任务已完成。");
+  await reportToggle.click();
+  await expect(reportToggle).toHaveAttribute("aria-expanded", "true");
+  await expect(corrections).toContainText("Committed report evidence owns the final file summary.");
+  await expect(terminalResponse.locator('[data-terminal-report-section="verification"]')).toHaveCount(0);
+  await expect(terminalResponse).not.toContainText("Web typecheck");
+  const responseFiles = timeline.locator("[data-conversation-response-files]");
+  await expect(responseFiles).toHaveCount(1);
+  await expect(responseFiles.locator(".conversation-response-file-link")).toHaveText(["ConversationHome-1.tsx", "ConversationHome-2.tsx"]);
+  await expect(terminalResponse).not.toContainText("ConversationHome-1.tsx");
+  await expect(terminalResponse).not.toContainText("ConversationHome-2.tsx");
   await expect(terminalResponse).not.toContainText("Generated file metadata");
   await expect(terminalResponse).not.toContainText("Action preview");
   await expect(conversationPage.locator(".conversation-work-cell")).toHaveCount(0);
@@ -1765,7 +1785,9 @@ test("conversation home follows user language and shows thinking as off", async 
   await expect(home.getByRole("button", { name: "幻灯片" })).toBeVisible();
   await expect(home.getByRole("button", { name: "文档" })).toBeVisible();
   await expect(home.getByRole("button", { name: "表格" })).toBeVisible();
-  await expect(home.getByRole("button", { name: "已选择模型 gpt-5.5 · 关闭", exact: true })).toBeVisible();
+  const modelTrigger = home.getByRole("button", { name: "已选择模型 gpt-5.5 · 已选择思考模式 关闭", exact: true });
+  await expect(modelTrigger).toBeVisible();
+  await expect(modelTrigger.locator(".conversation-model-trigger-effort")).toHaveText("思考关闭");
   await home.getByRole("textbox", { name: "对话内容" }).fill("你好");
   await home.getByRole("button", { name: "发送" }).click();
   const conversationPage = page.getByLabel("对话页面");
@@ -2006,14 +2028,15 @@ test("conversation home model picker uses the model workbench default without ch
   const defaultUses = page.locator(".provider-default-purpose-bar");
   await defaultUses.getByLabel("Chat model").selectOption("provider_gemini");
   await expect(defaultUses.getByLabel("Chat model")).toHaveValue("provider_gemini");
+  await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("provider_gemini");
   await expect(page.locator(".provider-row").getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
   await page.getByRole("button", { name: "Back to app" }).click();
 
   await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const home = page.getByLabel("Conversation home");
-  await expect(home.getByRole("button", { name: "Selected model gemini-2.5-pro" })).toBeVisible();
-  const modelTrigger = home.getByRole("button", { name: "Selected model gemini-2.5-pro" });
-  await expect(modelTrigger).toContainText("Off");
+  const modelTrigger = home.getByRole("button", { name: "Selected model gemini-2.5-pro · Selected thinking mode Off", exact: true });
+  await expect(modelTrigger).toBeVisible();
+  await expect(modelTrigger.locator(".conversation-model-trigger-effort")).toHaveText("Thinking off");
   await modelTrigger.click();
   const reasoning = page.getByRole("dialog", { name: "Thinking mode" });
   await expect(reasoning.getByRole("slider")).toHaveAttribute("max", "5");
@@ -2055,6 +2078,7 @@ test("conversation home model picker uses the model workbench default without ch
   await navigation.locator(".sidebar-recent-row").filter({ hasText: "Use Sonnet for this conversation" }).click();
   await expect(conversationPage.getByRole("button", { name: "Selected model claude-sonnet-4" })).toBeVisible();
   await expect(conversationPage.getByRole("button", { name: "Selected model claude-sonnet-4" })).toContainText("High");
+  await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("provider_gemini");
 });
 
 test("settings keeps configuration tools embedded while Work Board stays hidden from global navigation", async ({ page }) => {

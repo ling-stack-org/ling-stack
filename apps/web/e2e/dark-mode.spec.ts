@@ -1,4 +1,5 @@
 import { expect, type Page, test, type TestInfo } from "@playwright/test";
+import type { DesktopDaemonStatus, LingDesktopCapabilities } from "../../desktop/shared/desktop-capabilities.js";
 import { createMockBundledEmbeddedCuaPlugin, mockDaemon } from "./support/mock-daemon";
 import { openWorkBoardFromInbox } from "./support/open-work-board";
 import { openPendingStartupDiagnostics } from "./support/pending-settings-sections";
@@ -337,11 +338,16 @@ test("packaged Computer Control follows the same dark surface hierarchy", async 
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
     localStorage.setItem("ling-stack.themePreference", "dark");
+    const daemonStatus: DesktopDaemonStatus = {
+      state: "connected",
+      baseUrl: "http://127.0.0.1:17891",
+      ownedByDesktop: true,
+    };
     Object.defineProperty(window, "lingDesktop", {
       configurable: true,
       value: {
         platform: "macos",
-        daemonBaseUrl: "http://127.0.0.1:17891",
+        daemonBaseUrl: daemonStatus.baseUrl,
         appearance: { reportTheme() {} },
         computerControl: {
           packagedBundledCapable: true,
@@ -354,8 +360,15 @@ test("packaged Computer Control follows the same dark surface hierarchy", async 
           onIntent: () => () => undefined,
         },
         daemon: {
-          getStatus: async () => ({ state: "connected", baseUrl: "http://127.0.0.1:17891", ownedByDesktop: true }),
-          restart: async () => ({ state: "connected", baseUrl: "http://127.0.0.1:17891", ownedByDesktop: true }),
+          getStatus: async () => daemonStatus,
+          restart: async () => daemonStatus,
+          onStatusChanged(listener) {
+            let subscribed = true;
+            queueMicrotask(() => {
+              if (subscribed) listener(daemonStatus);
+            });
+            return () => { subscribed = false; };
+          },
         },
         computerUse: {
           reportLocale() {},
@@ -369,7 +382,7 @@ test("packaged Computer Control follows the same dark surface hierarchy", async 
           setAutoShow: async () => ({ accepted: true }),
           onSummaryChanged: () => () => undefined,
         },
-      },
+      } satisfies Pick<LingDesktopCapabilities, "platform" | "daemonBaseUrl" | "daemon"> & Record<string, unknown>,
     });
   });
   const state = createDarkThemeState();

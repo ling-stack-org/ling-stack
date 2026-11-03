@@ -12,12 +12,29 @@
     "types": ["node", "vite/client"]
   },
   "files": [
+    "e2e/app.spec.ts",
     "e2e/channel-work-cell.spec.ts",
+    "e2e/computer-control.spec.ts",
+    "e2e/conversation-activity-categories.spec.ts",
+    "e2e/conversation-host-status-report.spec.ts",
     "e2e/conversation-terminal-response-actions.spec.ts",
     "e2e/conversation-transcript-color-hierarchy.spec.ts",
     "e2e/conversation-turn-change-review.spec.ts",
     "e2e/ui2-conversation-message-transcript-ownership.spec.ts",
     "e2e/ui2-conversation-work-cell-activity.spec.ts",
     "e2e/ui2-conversation-work-cell-shell-artifacts.spec.ts"
+  ],
+  "include": [
+    "src/desktop-capabilities.d.ts",
+    "e2e/conversation-tool-evidence-presentation.spec.ts",
+    "e2e/dark-mode.spec.ts",
+    "e2e/desktop-computer-use-bridge.spec.ts",
+    "e2e/full-window-background.spec.ts",
+    "e2e/gen-ui-interactive-artifact.spec.ts",
+    "e2e/local-file-preview.spec.ts",
+    "e2e/macos-titlebar.spec.ts",
+    "e2e/ui2-desktop-theme-package-persistence.spec.ts",
+    "e2e/ui2-settings-interface-preferences.spec.ts",
+    "e2e/workspace.spec.ts"
   ]
 }
