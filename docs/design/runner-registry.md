@@ -57,7 +57,7 @@ Implemented in the first backend slice:
 - `packages/daemon/test/runner-registry.test.mjs` covers default Pi resolution, legacy
   alias normalization, fallback, explicit missing runner rejection, and provider/tool
   conformance.
-- `packages/daemon/test/runner-conformance.test.mjs` contains the first reusable
+- `packages/daemon/test/runner-conformance.test.ts` contains the first reusable
   normalized-runner conformance harness for lifecycle events, text streaming, tool event
   translation, approval interception, abort handling, provider failure surfacing, cleanup,
   and secret redaction.
@@ -382,7 +382,7 @@ Recommended package/module additions:
 ```text
 packages/daemon/src/runtime/runners.ts
 packages/daemon/test/runner-registry.test.mjs
-packages/daemon/test/runner-conformance.test.mjs
+packages/daemon/test/runner-conformance.test.ts
 ```
 
 Keep `packages/runner-pi` as the Pi adapter owner.

@@ -1,13 +1,56 @@
-import { _electron as electron, expect, test } from "@playwright/test";
+import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type {
+  ComputerUsePipRendererSnapshot,
+  ComputerUsePreviewReleaseMediaAck,
+  ComputerUsePreviewReleaseMediaRequest,
+  DesktopCommandResult,
+  LingComputerUsePreviewCapabilities,
+} from "../shared/desktop-capabilities.js";
+import type { DesktopRendererThemeSnapshot } from "../shared/renderer-theme.js";
+
+type PreviewDeck = NonNullable<ComputerUsePipRendererSnapshot["deck"]>;
+type PreviewHarnessCall = {
+  [Name in keyof LingComputerUsePreviewCapabilities]: {
+    name: Name;
+    args: Parameters<LingComputerUsePreviewCapabilities[Name]>;
+  };
+}[keyof LingComputerUsePreviewCapabilities] | { name: "releaseMediaAck"; args: [ComputerUsePreviewReleaseMediaAck] };
+
+declare global {
+  interface Window {
+    readonly lingPreviewTestHarness: {
+      clearCalls(): void;
+      getCalls(): PreviewHarnessCall[];
+      getDisplayMediaRequestCount(): number;
+      getDisplayMediaState(): {
+        requestCount: number;
+        requests: DisplayMediaStreamOptions[];
+        pendingCount: number;
+        streamTrackStates: MediaStreamTrackState[][];
+      };
+      resolveNextDisplayMediaAcquisition(): boolean;
+      forceNoDecodedFrameFallback(): boolean;
+      restoreDecodedFrameFallback(): boolean;
+      pushSnapshot(overrides: Partial<ComputerUsePipRendererSnapshot>): void;
+      clearSnapshot(): void;
+      pushThemeSnapshot(snapshot: DesktopRendererThemeSnapshot): void;
+      emitReleaseMedia(request: ComputerUsePreviewReleaseMediaRequest): Promise<ComputerUsePreviewReleaseMediaAck[]>;
+      setCommandResult(name: keyof LingComputerUsePreviewCapabilities, result: DesktopCommandResult): void;
+      setCommandFailure(name: keyof LingComputerUsePreviewCapabilities, message: string): void;
+      setCommandPending(name: keyof LingComputerUsePreviewCapabilities): void;
+      resolveCommand(name: keyof LingComputerUsePreviewCapabilities, result: DesktopCommandResult): boolean;
+    };
+  }
+}
 
 const testsDirectory = dirname(fileURLToPath(import.meta.url));
 const harnessDirectory = join(testsDirectory, "computer-use-preview-renderer-harness");
 
-let electronApp;
-let page;
-let rendererErrors;
+let electronApp: ElectronApplication | undefined;
+let page: Page;
+let rendererErrors: string[];
 
 test.beforeEach(async ({}, testInfo) => {
   rendererErrors = [];
@@ -446,6 +489,7 @@ test("never maps Escape to Stop Computer Use", async () => {
 test("reports hover and keyboard-focus interaction without duplicate active edges", async () => {
   await page.evaluate(() => {
     const previewRoot = document.getElementById("preview-root");
+    if (!previewRoot) throw new Error("Preview root is missing");
     const focusSink = document.createElement("button");
     focusSink.id = "interaction-focus-sink";
     document.body.append(focusSink);
@@ -459,11 +503,13 @@ test("reports hover and keyboard-focus interaction without duplicate active edge
   await page.getByRole("button", { name: "Hide" }).focus();
   await page.evaluate(() => {
     const focusSink = document.getElementById("interaction-focus-sink");
+    if (!focusSink) throw new Error("Interaction focus sink is missing");
     focusSink.focus();
     focusSink.remove();
   });
   await page.evaluate(() => {
     const previewRoot = document.getElementById("preview-root");
+    if (!previewRoot) throw new Error("Preview root is missing");
     previewRoot.dispatchEvent(new PointerEvent("pointerleave"));
     previewRoot.dispatchEvent(new PointerEvent("pointerleave"));
   });
@@ -839,7 +885,7 @@ test("same-revision display-media source replacement reacquires and releases onl
   });
 });
 
-async function pushDeckSnapshot(deck, overrides = {}) {
+async function pushDeckSnapshot(deck: PreviewDeck, overrides: Partial<ComputerUsePipRendererSnapshot> = {}) {
   await page.evaluate(({ deckValue, snapshotOverrides }) => {
     window.lingPreviewTestHarness.pushSnapshot({
       ...snapshotOverrides,
@@ -848,7 +894,11 @@ async function pushDeckSnapshot(deck, overrides = {}) {
   }, { deckValue: deck, snapshotOverrides: overrides });
 }
 
-function deckPage(pageId, targetLabel, presentationState) {
+function deckPage(
+  pageId: string,
+  targetLabel: string,
+  presentationState: PreviewDeck["pages"][number]["presentationState"],
+): PreviewDeck["pages"][number] {
   return {
     pageId,
     targetLabel,
@@ -857,7 +907,7 @@ function deckPage(pageId, targetLabel, presentationState) {
   };
 }
 
-function availablePage(pageId, targetLabel, resident) {
+function availablePage(pageId: string, targetLabel: string, resident: boolean): PreviewDeck["availablePages"][number] {
   return {
     pageId,
     targetLabel,
@@ -871,7 +921,7 @@ async function invokeStop() {
   await page.getByRole("menuitem", { name: "Stop Computer Use" }).click();
 }
 
-async function callCount(name) {
+async function callCount(name: PreviewHarnessCall["name"]) {
   return page.evaluate((callName) => window.lingPreviewTestHarness
     .getCalls()
     .filter((call) => call.name === callName).length, name);
@@ -881,7 +931,7 @@ async function displayMediaState() {
   return page.evaluate(() => window.lingPreviewTestHarness.getDisplayMediaState());
 }
 
-function releaseRequest(sourceRevision, requestId, sourceGeneration = 1) {
+function releaseRequest(sourceRevision: number, requestId: string, sourceGeneration = 1): ComputerUsePreviewReleaseMediaRequest {
   return {
     requestId,
     sessionId: "renderer-harness-session",

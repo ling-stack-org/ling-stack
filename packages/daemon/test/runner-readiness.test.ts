@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 import { createSqliteRunStore } from "@ling-stack/core";
-import { createDaemonServer } from "../dist/index.js";
+import type { ControlPlaneSnapshotResponse, RunnerListResponse, RunnerReadinessResponse, RunnersDomainSnapshot } from "@ling-stack/contracts";
+import type { PiRunnerResult, PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import { createDaemonServer, type DaemonConfig, type RunnerAdapter } from "../dist/index.js";
 import { startFakeAcpServer } from "./test-support/fake-acp-server.ts";
 import { startFakeCodexAppServer } from "./test-support/fake-codex-app-server.ts";
 
@@ -28,10 +30,13 @@ test("runner readiness routes keep retired endpoints blocked even after legacy g
     },
   });
   try {
-    const runners = await getJson(`${daemon.url}/runners?cwd=${encodeURIComponent(cwd)}`);
+    const runners = await getJson<RunnerListResponse>(`${daemon.url}/runners?cwd=${encodeURIComponent(cwd)}`);
     const pi = runners.runners.find((runner) => runner.id === "pi");
     const openclaw = runners.runners.find((runner) => runner.id === "openclaw-acp");
     const codexRunner = runners.runners.find((runner) => runner.id === "codex-app-server");
+    assert.ok(pi?.readiness);
+    assert.ok(openclaw?.readiness);
+    assert.ok(codexRunner?.readiness);
     assert.equal(pi.status, "enabled");
     assert.equal(pi.readiness.status, "ready");
     assert.equal(openclaw.status, "disabled");
@@ -39,7 +44,7 @@ test("runner readiness routes keep retired endpoints blocked even after legacy g
     assert.equal(codexRunner.status, "disabled");
     assert.equal(codexRunner.readiness.status, "blocked");
 
-    const readiness = await getJson(`${daemon.url}/runners/openclaw-acp/readiness?cwd=${encodeURIComponent(cwd)}`);
+    const readiness = await getJson<RunnerReadinessResponse>(`${daemon.url}/runners/openclaw-acp/readiness?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(readiness.cwd, cwd);
     assert.equal(readiness.readiness.runnerId, "openclaw-acp");
     assert.equal(readiness.readiness.status, "blocked");
@@ -52,16 +57,21 @@ test("runner readiness routes keep retired endpoints blocked even after legacy g
     assert.equal(readiness.readiness.capabilityNegotiated, false);
     assert.deepEqual(blockerCodes(readiness), ["legacy_runner_migration_required"]);
 
-    const snapshot = await getJson(`${daemon.url}/control-plane/snapshot?cwd=${encodeURIComponent(cwd)}&domains=runners`);
+    const snapshot = await getJson<ControlPlaneSnapshotResponse>(`${daemon.url}/control-plane/snapshot?cwd=${encodeURIComponent(cwd)}&domains=runners`);
     assert.equal(snapshot.domains.runners.ok, true);
-    assert.equal(snapshot.domains.runners.data.runners.find((runner) => runner.id === "openclaw-acp").readiness.status, "blocked");
+    const runnersSnapshot = snapshot.domains.runners.data as RunnersDomainSnapshot;
+    const snapshotRunner = runnersSnapshot.runners.find((runner) => runner.id === "openclaw-acp");
+    assert.ok(snapshotRunner?.readiness);
+    assert.equal(snapshotRunner.readiness.status, "blocked");
 
     const missing = await requestJson(`${daemon.url}/runners/missing/readiness?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(missing.status, 404);
+    assert.ok(isRecord(missing.json));
     assert.equal(missing.json.error, "runner_not_found");
 
     const missingCwd = await requestJson(`${daemon.url}/runners/openclaw-acp/readiness`);
     assert.equal(missingCwd.status, 400);
+    assert.ok(isRecord(missingCwd.json));
     assert.equal(missingCwd.json.error, "bad_request");
   } finally {
     await daemon.close();
@@ -85,7 +95,7 @@ test("legacy ACP capability responses cannot re-enable a retired runner", async 
     },
   });
   try {
-    const readiness = await getJson(`${daemon.url}/runners/openclaw-acp/readiness?cwd=${encodeURIComponent(cwd)}`);
+    const readiness = await getJson<RunnerReadinessResponse>(`${daemon.url}/runners/openclaw-acp/readiness?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(readiness.readiness.endpointReachable, false);
     assert.equal(readiness.readiness.capabilityNegotiated, false);
     assert.deepEqual(blockerCodes(readiness), ["legacy_runner_migration_required"]);
@@ -100,7 +110,7 @@ test("default readiness explains native migration instead of suggesting legacy e
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runner-readiness-default-"));
   const daemon = await startDaemonForTest({ defaultWorkspaceCwd: cwd });
   try {
-    const readiness = await getJson(`${daemon.url}/runners/codex-app-server/readiness?cwd=${encodeURIComponent(cwd)}`);
+    const readiness = await getJson<RunnerReadinessResponse>(`${daemon.url}/runners/codex-app-server/readiness?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(readiness.readiness.status, "blocked");
     assert.equal(readiness.readiness.featureFlagEnabled, false);
     assert.equal(readiness.readiness.toolExecutionConformance.status, "blocked");
@@ -111,11 +121,11 @@ test("default readiness explains native migration instead of suggesting legacy e
   }
 });
 
-function blockerCodes(response) {
+function blockerCodes(response: RunnerReadinessResponse) {
   return response.readiness.blockingReasons.map((blocker) => blocker.code);
 }
 
-async function startDaemonForTest(config = {}) {
+async function startDaemonForTest(config: DaemonConfig = {}) {
   const daemon = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
@@ -133,24 +143,28 @@ async function startDaemonForTest(config = {}) {
   };
 }
 
-async function getJson(url) {
+async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
   if (response.status !== 200) {
     assert.fail(`${url} returned ${response.status}: ${await response.text()}`);
   }
-  return response.json();
+  return response.json() as Promise<T>;
 }
 
-async function requestJson(url, init = {}) {
+async function requestJson(url: string, init: RequestInit = {}) {
   const response = await fetch(url, init);
   return {
     status: response.status,
-    json: await response.json(),
+    json: await response.json() as unknown,
   };
 }
 
-class NoopRunner {
-  async runTask(options) {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+class NoopRunner implements RunnerAdapter {
+  async runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult> {
     return { taskId: options.task.id, events: [], messages: [] };
   }
 }

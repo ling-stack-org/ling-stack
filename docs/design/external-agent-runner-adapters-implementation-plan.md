@@ -333,7 +333,7 @@ Use this template before adding any non-Pi runner id or adapter module:
 
 ### P2: Conformance Harness Extraction
 
-- Move reusable checks from `runner-conformance.test.mjs` into a helper that adapter tests
+- Move reusable checks from `runner-conformance.test.ts` into a helper that adapter tests
   can reuse.
 - Add fixtures for capability negotiation, side-effect approval, cancellation, artifact
   import, and secret redaction.

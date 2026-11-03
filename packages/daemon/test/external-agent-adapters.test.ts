@@ -3,7 +3,8 @@ import { readFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
-import { createDefaultRunnerRegistry } from "../dist/index.js";
+import type { PiRunnerApprovalRequest, PiRunnerEvent, PiRunnerResult, PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import { createDefaultRunnerRegistry, type RunnerAdapter, type RunnerToolExecutionConformanceV1 } from "../dist/index.js";
 import { startFakeAcpServer } from "./test-support/fake-acp-server.ts";
 import { createCodexAppServerAdapter } from "../dist/runtime/adapters/codex-app-server.js";
 import { startFakeCodexAppServer } from "./test-support/fake-codex-app-server.ts";
@@ -37,14 +38,16 @@ test("openclaw-acp adapter executes fake ACP through normalized events with a Ho
       adapterRevision: "ling-acp/0.1:adapter-v1",
       toolExecutionConformance: readOnlyReceipt("ling-acp/0.1:adapter-v1"),
     });
-    const events = [];
+    const events: PiRunnerEvent[] = [];
     const result = await adapter.runTask({
       ...baseRunOptions(cwd),
       runtimePaths: { artifactsDir: artifactRoot },
       onEvent: (event) => events.push(event),
     });
 
-    assert.equal(acp.requests.find(request => request.method === "session/run")?.params.runnerId, "openclaw-acp");
+    const runRequest = acp.requests.find(request => isRecord(request) && request.method === "session/run");
+    assert.ok(isRecord(runRequest) && isRecord(runRequest.params));
+    assert.equal(runRequest.params.runnerId, "openclaw-acp");
     assert.equal(result.taskId, "task_external");
     assert.deepEqual(events.map((event) => event.type), [
       "run_start",
@@ -58,7 +61,8 @@ test("openclaw-acp adapter executes fake ACP through normalized events with a Ho
     assert.equal(events.find((event) => event.type === "message_end")?.text, "OpenClaw says hello.");
     assert.equal(JSON.stringify(events).includes("sk-test-secret"), false);
     const artifactEvent = events.find((event) => event.type === "tool_end" && event.toolName === "artifact_import");
-    assert.ok(artifactEvent);
+    assert.ok(artifactEvent?.type === "tool_end");
+    assert.ok(isRecord(artifactEvent.result) && typeof artifactEvent.result.path === "string");
     assert.equal(artifactEvent.result.path.startsWith(artifactRoot), true);
     const artifactContent = await readFile(artifactEvent.result.path, "utf8");
     assert.equal(artifactContent.includes("sk-test-secret"), false);
@@ -92,7 +96,7 @@ test("external adapter accepts only requested read-only proposals from its curat
       adapterRevision: "ling-acp/0.1:adapter-v1",
       toolExecutionConformance: readOnlyReceipt("ling-acp/0.1:adapter-v1"),
     });
-    const events = [];
+    const events: PiRunnerEvent[] = [];
     await adapter.runTask({
       ...baseRunOptions(cwd),
       tools: ["read"],
@@ -162,7 +166,7 @@ test("external adapter rejects unrequested side-effect proposals without asking 
       adapterRevision: "ling-acp/0.1:adapter-v1",
       toolExecutionConformance: readOnlyReceipt("ling-acp/0.1:adapter-v1"),
     });
-    const approvals = [];
+    const approvals: PiRunnerApprovalRequest[] = [];
     await assert.rejects(
       () => adapter.runTask({
         ...baseRunOptions(cwd),
@@ -313,7 +317,7 @@ test("openclaw-acp adapter fails closed before session run when capabilities are
   const acp = await startFakeAcpServer({ capabilities: { artifacts: false } });
   try {
     const adapter = createOpenClawAcpAdapter({ endpoint: acp.endpoint });
-    const events = [];
+    const events: PiRunnerEvent[] = [];
     await assert.rejects(
       () => adapter.runTask({
         ...baseRunOptions(cwd),
@@ -340,7 +344,7 @@ test("openclaw-acp stops on a backend run_error without publishing a successful 
   });
   try {
     const adapter = createOpenClawAcpAdapter({ endpoint: acp.endpoint });
-    const events = [];
+    const events: PiRunnerEvent[] = [];
     await assert.rejects(
       () => adapter.runTask({
         ...baseRunOptions(cwd),
@@ -362,7 +366,7 @@ test("codex-app-server adapter executes fake app-server through dedicated transp
   const codex = await startFakeCodexAppServer();
   try {
     const adapter = createCodexAppServerAdapter({ baseUrl: codex.baseUrl });
-    const events = [];
+    const events: PiRunnerEvent[] = [];
     const result = await adapter.runTask({
       ...baseRunOptions(cwd),
       onEvent: (event) => events.push(event),
@@ -398,17 +402,20 @@ test("retired endpoint registry requests fail without contacting backends or sil
   const codex = await startFakeCodexAppServer();
   const pi = new RecordingRunner();
   try {
-    const registry = createDefaultRunnerRegistry(pi, {
+    const config = {
       runners: {
         openclawAcp: { enabled: true, endpoint: acp.endpoint, readinessPassed: true, conformancePassed: true },
         codexAppServer: { enabled: true, baseUrl: codex.baseUrl, readinessPassed: true, conformancePassed: true },
       },
-    });
+    };
+    const registry = createDefaultRunnerRegistry(pi, config);
     for (const runnerId of ["openclaw-acp", "codex-app-server"]) {
       const runner = registry.get(runnerId);
+      assert.ok(runner);
       assert.equal(runner.status, "disabled");
+      assert.ok(typeof runner.disabledReason === "string");
       assert.match(runner.disabledReason, /legacy_runner_migration_required/);
-      for (const explicitFallbackPolicy of [undefined, "disabled"]) {
+      for (const explicitFallbackPolicy of [undefined, "disabled"] as const) {
         assert.throws(() => registry.resolve({ requestedRunnerId: runnerId, explicitFallbackPolicy, tools: ["read"] }),
           error => error instanceof UnsupportedRunnerError && error.requestedRunnerId === runnerId
             && error.fallbackReason.code === "disabled_requested_runner");
@@ -424,7 +431,7 @@ test("retired endpoint registry requests fail without contacting backends or sil
   }
 });
 
-function baseRunOptions(cwd) {
+function baseRunOptions(cwd: string): PiRunnerRunOptions {
   return {
     cwd,
     task: {
@@ -442,7 +449,7 @@ function baseRunOptions(cwd) {
   };
 }
 
-function readOnlyReceipt(adapterRevision) {
+function readOnlyReceipt(adapterRevision: string): RunnerToolExecutionConformanceV1 {
   return {
     adapterRevision,
     curatedTools: ["read"],
@@ -460,18 +467,18 @@ function readOnlyReceipt(adapterRevision) {
   };
 }
 
-function readMethods(requests) {
+function readMethods(requests: readonly unknown[]) {
   return requests.map((request) => isRecord(request) && typeof request.method === "string" ? request.method : undefined);
 }
 
-function isRecord(value) {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-class RecordingRunner {
+class RecordingRunner implements RunnerAdapter {
   calls = 0;
 
-  async runTask(options) {
+  async runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult> {
     this.calls++;
     return { taskId: options.task.id, events: [], messages: [] };
   }

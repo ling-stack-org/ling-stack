@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createComputerUsePreviewViewModel } from "../dist/renderer/computer-use-preview/preview-view-model.js";
-import { loadComputerUsePreviewTranslator } from "../dist/renderer/computer-use-preview/messages.js";
+import type { ComputerUsePipRendererSnapshot } from "../shared/desktop-capabilities.js";
+import type { ComputerUsePreviewVisualState } from "../renderer/computer-use-preview/preview-view-model.js";
+
+const { createComputerUsePreviewViewModel }: typeof import("../renderer/computer-use-preview/preview-view-model.js") =
+  await import(new URL("../dist/renderer/computer-use-preview/preview-view-model.js", import.meta.url).href);
+const { loadComputerUsePreviewTranslator }: typeof import("../renderer/computer-use-preview/messages.js") =
+  await import(new URL("../dist/renderer/computer-use-preview/messages.js", import.meta.url).href);
 
 test("missing snapshots expose waiting or unavailable state without task actions", () => {
   const waiting = createComputerUsePreviewViewModel(undefined, {
@@ -26,7 +31,7 @@ test("missing snapshots expose waiting or unavailable state without task actions
 });
 
 test("preview view model exposes explicit runtime/source states", () => {
-  const cases = [
+  const cases: [string, Partial<ComputerUsePipRendererSnapshot>, ComputerUsePreviewVisualState, string][] = [
     ["running/live", { runtimeStatus: "running", sourceStatus: "live", frameReady: true }, "live", "Live"],
     ["starting", { runtimeStatus: "starting", sourceStatus: "connecting" }, "connecting", "Connecting"],
     ["stalled", { runtimeStatus: "running", sourceStatus: "stalled" }, "reconnecting", "Reconnecting"],
@@ -141,12 +146,13 @@ test("view model localizes status, actions, and Stop recovery without translatin
 
 test("unsupported renderer locale falls back to English", async () => {
   const translate = await loadComputerUsePreviewTranslator("xx-YY");
+  // @ts-expect-error Exercise a locale outside the supported-locale contract.
   const viewModel = createComputerUsePreviewViewModel(snapshot({ locale: "xx-YY" }), {}, translate);
   assert.equal(viewModel.label, "Live");
   assert.equal(viewModel.primaryActions[0].label, "Open task");
 });
 
-function snapshot(overrides = {}) {
+function snapshot(overrides: Partial<ComputerUsePipRendererSnapshot> = {}): ComputerUsePipRendererSnapshot {
   return {
     sessionId: "session-1",
     conversationId: "conversation-1",
@@ -156,6 +162,7 @@ function snapshot(overrides = {}) {
     sourceStatus: "live",
     sourceKind: "fake",
     sourceRevision: 1,
+    sourceGeneration: 1,
     visibilityIntent: "auto",
     frameReady: true,
     aspectRatio: 1.6,
