@@ -174,6 +174,107 @@ test("terminal report publication closes the workflow source turn exactly once",
   }
 });
 
+for (const outcome of ["failed", "cancelled"]) {
+  test(`a ${outcome} workflow with succeeded steps publishes a partial report and settles only its source turn once`, async () => {
+    const fixture = await createCompletedStepsPartialPublicationFixture(`partial-${outcome}`, outcome);
+    try {
+      const { store, workflow, sourceTurn, report } = fixture;
+      const otherMessage = appendChannelItemFixture(store, {
+        channelId: fixture.channel.id,
+        authorType: "local-user",
+        body: "A separate source must remain open.",
+      }, "2026-07-11T05:04:01.000Z");
+      const otherItem = store.getConversationItem(otherMessage.id);
+      assert.ok(otherItem?.turnId);
+      assert.notEqual(otherItem.turnId, sourceTurn.id);
+      const captureOtherSource = () => ({
+        turn: store.getLingTurn(otherItem.turnId),
+        items: store.listConversationItemsForTurn({ turnId: otherItem.turnId }),
+        transitions: store.listStateTransitionEvents({ entityType: "turn", entityId: otherItem.turnId }),
+      });
+      const otherSourceBefore = captureOtherSource();
+      assert.equal(otherSourceBefore.turn.status, "open");
+      const stepsBefore = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
+      const runsBefore = stepsBefore.map((step) => store.getRun(step.runId));
+
+      const message = publishWorkflowTerminalReport({ store, report, now: fixture.publishAt });
+      assert.equal(message?.id, terminalReportResultItemId(report.id));
+      const committed = capturePublicationLineage(store, fixture, message.id);
+      assert.equal(committed.item.kind, "terminal_report");
+      assert.equal(committed.item.status, "committed");
+      assert.equal(committed.item.channelId, workflow.channelId);
+      assert.equal(committed.item.threadId, sourceTurn.threadId);
+      assert.equal(committed.item.turnId, sourceTurn.id);
+      assert.equal(committed.item.payload.reportId, report.id);
+      assert.equal(committed.item.payload.outcomeStatus, "partially_succeeded");
+      assert.equal(committed.item.payload.evidenceFingerprint, report.evidenceFingerprint);
+      for (const ref of [
+        { type: "terminal_report", id: report.id },
+        { type: "workflow", id: workflow.id },
+        { type: "conversation_item", id: fixture.sourceItem.id },
+        { type: "turn", id: sourceTurn.id },
+      ]) {
+        assert.ok(committed.item.domainRefs.some((actual) => actual.type === ref.type && actual.id === ref.id));
+      }
+      assert.equal(committed.report.resultItemId, message.id);
+      assert.equal(committed.report.report.outcome.status, "partially_succeeded");
+      assert.equal(committed.turn.status, outcome);
+      assert.equal(committed.turn.completedAt, fixture.publishAt);
+      const settlements = committed.transitions.filter((event) => event.reason?.includes(`published:${message.id}`));
+      assert.equal(settlements.length, 1);
+      assert.equal(settlements[0].event, outcome === "failed" ? "fail" : "cancel");
+      assert.equal(settlements[0].toStatus, outcome);
+      assert.equal(committed.events.length, 1);
+      assert.deepEqual(captureOtherSource(), otherSourceBefore);
+
+      for (const now of ["2026-07-11T05:06:00.000Z", "2026-07-11T05:07:00.000Z"]) {
+        assert.equal(publishWorkflowTerminalReport({ store, report, now })?.id, message.id);
+        assert.deepEqual(capturePublicationLineage(store, fixture, message.id), committed);
+        assert.deepEqual(captureOtherSource(), otherSourceBefore);
+      }
+      assert.deepEqual(store.listConversationItemsByChannelPage({
+        channelId: workflow.channelId,
+        kinds: ["terminal_report"],
+        effectiveOnly: true,
+        limit: 100,
+      }).items.map((item) => item.id), [message.id]);
+      assert.deepEqual(store.getChannelWorkflow(workflow.id), workflow);
+      assert.deepEqual(store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true }), stepsBefore);
+      assert.deepEqual(stepsBefore.map((step) => store.getRun(step.runId)), runsBefore);
+    } finally {
+      await fixture.close();
+    }
+  });
+}
+
+test("a negative partial report atomically rejects a late isolation blocker", async (t) => {
+  const fixture = await createCompletedStepsPartialPublicationFixture("negative-partial-late-isolation", "failed");
+  try {
+    const { store, report } = fixture;
+    const itemId = terminalReportResultItemId(report.id);
+    const before = capturePublicationLineage(store, fixture, itemId);
+    const coordinator = createSqliteWorkflowIntegrationCoordinatorStore(store);
+    const commit = store.commitTerminalReportPublication;
+    let blocker;
+    const commitSpy = t.mock.method(store, "commitTerminalReportPublication", function(input) {
+      blocker = t.mock.method(coordinator, "readPublicationBlocker", () => "workflow_isolation.integration_effect_unconfirmed");
+      return commit.call(this, input);
+    });
+
+    assert.throws(
+      () => publishWorkflowTerminalReport({ store, report, now: fixture.publishAt }),
+      (error) => error instanceof TerminalReportPublicationError && error.code === "stale_completion_basis",
+    );
+    assert.equal(commitSpy.mock.callCount(), 1, "the blocker must be introduced after the daemon precheck");
+    assert.ok(blocker.mock.callCount() > 0, "the real publication transaction must read the late blocker");
+    assertNoPublication(fixture);
+    assert.deepEqual(capturePublicationLineage(store, fixture, itemId), before,
+      "late isolation evidence must leave the Item, report, source Turn, settlement and publication event unchanged");
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("atomic publication rolls back every internal write boundary", async (t) => {
   for (const boundary of ["item", "report", "turn", "turn_event", "publication_event"]) {
     await t.test(boundary, async () => {
@@ -472,6 +573,61 @@ function capturePublicationLineage(store, fixture, itemId) {
     events: store.listControlPlaneEvents({ workspaceId: "workspace_default", entityType: "terminal_report",
       entityId: fixture.report.id, action: "terminal_report.published", limit: 100 }),
   };
+}
+
+async function createCompletedStepsPartialPublicationFixture(suffix, outcome) {
+  const cwd = await mkdtemp(resolve(tmpdir(), `ling-terminal-publication-${suffix}-`));
+  const store = createSqliteRunStore(cwd);
+  const close = async () => {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  };
+  try {
+    const fixture = createTerminalWorkflowFixture(store, cwd, suffix);
+    const workflow = store.updateChannelWorkflow(fixture.workflow.id, { status: outcome }, "2026-07-11T05:03:59.000Z");
+    assert.equal(workflow.status, outcome);
+    assert.equal(workflow.metadata.requiredParticipantManifest, undefined);
+    const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
+    assert.equal(steps.length, 2);
+    for (const step of steps) {
+      assert.equal(step.status, "succeeded");
+      assert.equal(store.getRun(step.runId).status, "succeeded");
+    }
+    const sourceItem = store.getConversationItem(fixture.sourceMessage.id);
+    assert.ok(sourceItem?.turnId);
+    const sourceTurn = store.getLingTurn(sourceItem.turnId);
+    assert.equal(sourceTurn.status, "open");
+    const now = "2026-07-11T05:04:00.000Z";
+    const snapshot = collectWorkflowTerminalReportEvidence(store, workflow.id, { generatedAt: now });
+    assert.equal(snapshot.terminalState, "partially_succeeded");
+    const draft = store.createTerminalReportDraft({ id: `terminal_report_${suffix}`, evidenceSnapshot: snapshot }, now);
+    const validating = store.updateTerminalReportDraft({
+      reportId: draft.id,
+      expectedStatus: "draft",
+      expectedEvidenceFingerprint: draft.evidenceFingerprint,
+      status: "validating",
+      now,
+    });
+    const report = buildDeterministicTerminalReport(snapshot, { id: draft.id, committedAt: now });
+    assert.equal(report.status, "fallback");
+    assert.equal(report.outcome.status, "partially_succeeded");
+    store.commitTerminalReport({
+      reportId: draft.id,
+      expectedStatus: "validating",
+      expectedEvidenceFingerprint: validating.evidenceFingerprint,
+      report,
+      synthesisMode: "deterministic_fallback",
+      promptVersion: report.synthesis.promptVersion,
+      attemptCount: 0,
+      now,
+    });
+    assert.equal(store.getTerminalReport(report.id).report.outcome.status, "partially_succeeded");
+    return { ...fixture, cwd, store, workflow, sourceItem, sourceTurn, report,
+      publishAt: "2026-07-11T05:05:00.000Z", close };
+  } catch (error) {
+    await close();
+    throw error;
+  }
 }
 
 async function createManifestPublicationFixture(suffix, outcome, options = {}) {

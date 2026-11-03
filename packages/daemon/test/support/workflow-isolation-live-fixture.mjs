@@ -13,18 +13,21 @@ import { promisify } from "node:util";
 const filename = fileURLToPath(import.meta.url);
 const exec = promisify(execFile);
 const now = () => new Date().toISOString();
-const branches = [
+const defaultBranches = [
   { id: "left", participantId: "teammate_builtin_engineer", name: "Engineer", path: "left.txt", content: "left through parallel Host\n" },
   { id: "right", participantId: "teammate_builtin_qa", name: "QA", path: "right.txt", content: "right through parallel Host\n" },
 ];
 
 /** Runs the real daemon/SDK in a child with an explicit, credential-free environment. */
-export async function startWorkflowIsolationLiveFixture({ holdReturn = false, port = 0 } = {}) {
+export async function startWorkflowIsolationLiveFixture({ holdReturn = false, port = 0, authoring = false, publicSelection = false } = {}) {
   assert.equal(typeof holdReturn, "boolean");
+  assert.equal(typeof authoring, "boolean");
+  assert.equal(typeof publicSelection, "boolean");
+  assert.equal(authoring && publicSelection, false);
   assert.ok(Number.isInteger(port) && port >= 0 && port <= 65535);
   const root = await realpath(await mkdtemp(join(tmpdir(), "ling-workflow-live-")));
   await Promise.all(["home", "tmp", "state"].map(path => mkdir(join(root, path))));
-  const child = fork(filename, ["--fixture-child", root, JSON.stringify({ holdReturn, port })], {
+  const child = fork(filename, ["--fixture-child", root, JSON.stringify({ holdReturn, port, authoring, publicSelection })], {
     cwd: root, execArgv: [], stdio: ["ignore", "pipe", "pipe", "ipc"],
     env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: join(root, "home"),
       TMPDIR: join(root, "tmp"), LING_STACK_HOME: join(root, "state"), SHELL: "/bin/sh", LANG: "en_US.UTF-8",
@@ -80,6 +83,8 @@ export async function startWorkflowIsolationLiveFixture({ holdReturn = false, po
 }
 
 async function startChild(root, options) {
+  const branches = options.publicSelection ? [{ id: "prepare", participantId: "teammate_builtin_architect", name: "Architect",
+    path: "prepare.txt", content: "prepare through selected Host\n" }, ...defaultBranches] : defaultBranches;
   const [core, { PiRunnerAdapter }, { stream }, { createDaemonServer }, { workflowGraphFingerprintV1 },
     { planWorkflowIsolatedRound }, { WORKFLOW_CANDIDATE_VALIDATORS }, { appendChannelItemFixture }] = await Promise.all([
     import("../../../core/dist/index.js"), import("../../../runner-pi/dist/index.js"),
@@ -98,6 +103,20 @@ async function startChild(root, options) {
       const s = current, run = input.runId ? s.store.getRun(input.runId) : undefined;
       // Terminal report synthesis also uses the real SDK, without a persisted Run or branch gates.
       if (!run) return contexts.run(undefined, () => super.runTask(input));
+      if (options.authoring) {
+        const step = s.store.getChannelWorkflowStep(run.workflowStepId);
+        const workflow = s.store.getChannelWorkflow(step.workflowId);
+        assert.equal(workflow.metadata.templateCompilation.source, "registry");
+        // No skill is bound: the frozen template grants no tools even though
+        // the channel allows reads.
+        assert.deepEqual(input.tools, []);
+        assert.equal(input.readonlyToolsProfile, "host_readonly_v1");
+        assert.equal(s.executions.has(run.id), false, "An authored step must dispatch only once");
+        const execution = { runId: run.id, requests: [], sdkSettled: false, returned: false };
+        s.executions.set(run.id, execution);
+        try { return await contexts.run(execution, () => super.runTask(input)); }
+        finally { execution.sdkSettled = true; execution.returned = true; }
+      }
       assert.notEqual(s.dispatchClosed, true, "Terminal-scenario restart is observation-only; workflow Run redispatch is forbidden");
       assert.equal(run.workflowId ?? s.store.getChannelWorkflowStep(run.workflowStepId)?.workflowId, s.workflow.id);
       const index = branches.findIndex(branch => branch.participantId === run.teammateId);
@@ -155,7 +174,7 @@ async function startChild(root, options) {
     await Promise.all([mkdir(s.cwd), mkdir(s.worktreeRoot)]);
     s.git = async (...args) => (await exec("/usr/bin/git", args, { cwd: s.cwd, env: process.env })).stdout.trim();
     await s.git("init", "--initial-branch=main");
-    await writeFile(join(s.cwd, ".gitignore"), "*\n!.gitignore\n!left.txt\n!right.txt\n");
+    await writeFile(join(s.cwd, ".gitignore"), `*\n!.gitignore\n${branches.map(branch => `!${branch.path}\n`).join("")}`);
     for (const branch of branches) await writeFile(join(s.cwd, branch.path), `initial ${branch.path}\n`);
     await s.git("add", "--", ".gitignore", ...branches.map(branch => branch.path));
     await s.git("commit", "-m", "initial isolated live inputs");
@@ -172,6 +191,13 @@ async function startChild(root, options) {
         const snapshot = body.messages.map(messageText).join("\n").match(/Evidence snapshot: (\{[^\n]+\})/u)?.[1];
         assert.ok(snapshot, "Report must receive real Host evidence");
         return { text: JSON.stringify(core.buildDeterministicTerminalReportContent(JSON.parse(snapshot))) };
+      }
+      if (options.authoring) {
+        const execution = s.executions.get(runId);
+        assert.ok(execution, "Only a user-started authored Run may reach the Provider");
+        assert.deepEqual((body.tools ?? []).map(tool => tool.function.name), ["request_user_input"]);
+        execution.requests.push(body);
+        return { text: "Authored analysis completed through the original Pi SDK Run." };
       }
       const index = branches.findIndex((_, index) => s.executions.get(index)?.runId === runId);
       assert.ok(index >= 0, "Provider request must belong to an original workflow Run");
@@ -223,15 +249,37 @@ async function startChild(root, options) {
       capabilities: ["chat", "tool_call"], input: ["text"], authHeader: false, reasoning: false, enabled: true })).provider;
     s.store.recordProviderCheckResult(provider.id, { ok: true, code: "ready", message: "Fixture scripted loopback readiness", checkedAt: now() });
     await s.api("/approval-policy", { toolDecisions: { write: "ask" } }, "PATCH");
-    for (const branch of branches) await s.api(`/teammates/${branch.participantId}`, { providerPresetId: provider.id, allowedTools: ["write"] }, "PATCH");
-    s.channel = (await s.api("/channels", { name: "P3 live isolated writing siblings", status: "active", boundPath: s.cwd,
-      defaultProviderPresetId: provider.id, allowedTools: ["write"], autoReplyMode: "mentions_only",
+    const tools = options.authoring ? ["read"] : ["write"];
+    for (const branch of branches) await s.api(`/teammates/${branch.participantId}`, { providerPresetId: provider.id, allowedTools: tools }, "PATCH");
+    s.channel = (await s.api("/channels", { name: options.authoring ? "P4 live authored workflow" : "P3 live isolated writing siblings", status: "active", boundPath: s.cwd,
+      defaultProviderPresetId: provider.id, allowedTools: tools, autoReplyMode: "mentions_only",
       runtimePolicy: { maxConcurrentRuns: 2, schedulingMode: "smart", writeLockScope: "boundPath", allowReadOnlyParallel: false, queueOnConflict: true } })).channel;
     await s.api(`/channels/${s.channel.id}/workspace/cleanup`, {});
     await s.api(`/channels/${s.channel.id}/workspace/handoff`, { mode: "local" });
     for (const branch of branches) await s.api(`/teammates/${branch.participantId}/channels`, { memberships: [{ channelId: s.channel.id }] }, "PUT");
     s.source = appendChannelItemFixture(s.store, { channelId: s.channel.id, authorType: "local-user",
       body: "Write both isolated files and retain the target until approved." }, now());
+    if (options.authoring) return s;
+    if (options.publicSelection) {
+      const graph = { schemaVersion: 1, id: "live-public-selection", name: "Prepare then fork two isolated writes", entryNodeId: "prepare",
+        maxParallelSteps: 2, nodes: branches.map(branch => ({ id: branch.id, kind: "step", name: branch.name,
+          prompt: `Write ${branch.path}.`, teammateId: branch.participantId, requestedRunnerId: "pi", providerPresetId: provider.id,
+          autoStart: true, requiredTools: ["write"], sideEffectClass: "workspace_write",
+          parallelPolicy: { autoParallel: true, maxParallelSiblings: 2, resourceKeys: [] } })),
+        edges: defaultBranches.map(branch => ({ id: `prepare-${branch.id}`, fromNodeId: "prepare", toNodeId: branch.id,
+          condition: { kind: "all_succeeded" } })),
+        termination: { success: "all_required_succeeded", onFailedRequiredNode: "block_for_user", onApprovalDenied: "block_for_user" } };
+      const compiled = await s.api(`/channels/${s.channel.id}/workflows`, { workflowGraph: graph,
+        title: "P3 live Pi Host isolated writes", objective: "Create an isolated candidate through the public profile",
+        confirmUnsafeAutoStart: true });
+      s.workflow = compiled.workflow;
+      s.steps = branches.map(branch => compiled.workflowSteps.find(step => step.metadata.graphNodeId === branch.id));
+      assert.ok(s.steps.every(Boolean));
+      s.source = s.store.getConversationItem(s.workflow.metadata.sourceMessageId);
+      assert.equal(core.createSqliteWorkflowIsolationStore(s.store).getSelection(s.workflow.id), undefined);
+      assert.equal(s.store.listRuns({ limit: 100 }).length, 0);
+      return s;
+    }
     const graph = { schemaVersion: 1, id: "live-isolated", name: "Two independent writing siblings", entryNodeId: "left",
       nodes: branches.map(branch => ({ id: branch.id, kind: "step", name: branch.name, prompt: `Write ${branch.path}.`, sideEffectClass: "workspace_write" })),
       edges: [], termination: { success: "all_required_succeeded", onFailedRequiredNode: "block_for_user", onApprovalDenied: "block_for_user" } };
@@ -255,10 +303,12 @@ async function startChild(root, options) {
   function manifest() {
     const s = current, source = s.store.getConversationItem(s.source.id);
     const scope = `cwd=${encodeURIComponent(s.cwd)}`;
+    if (options.authoring) return { daemonUrl: s.url, workspaceCwd: s.cwd, channelId: s.channel.id,
+      threadId: source.threadId, participantId: branches[0].participantId };
     return { kind: "workflow-isolation-live-fixture", pid: process.pid, daemonUrl: s.url, daemonAuthToken: "",
       workspaceCwd: s.cwd, workspaceId: source.workspaceId, channelId: s.channel.id, workflowId: s.workflow.id,
       threadId: source.threadId, sourceTurnId: source.turnId, sourceMessageId: source.id,
-      stepIds: Object.fromEntries(branches.map((branch, index) => [branch.id, s.steps[index].id])), roundId: s.roundId,
+      stepIds: Object.fromEntries(branches.map((branch, index) => [branch.id, s.steps[index].id])), roundId: s.roundId ?? "",
       providerBaseUrl: s.upstream.baseUrl, holdReturn: s.holdReturn,
       databasePath: s.store.database.prepare("PRAGMA database_list").all().find(row => row.name === "main")?.file,
       control: { url: `http://127.0.0.1:${control.address().port}`, token, authorization: `Bearer ${token}`,
@@ -269,11 +319,33 @@ async function startChild(root, options) {
         sourceTurns: `${s.url}/threads/${source.threadId}/turns?${scope}` },
       web: { workspaceStorageKey: "ling-stack.workspaceCwd", websocketRpc: false },
       limits: ["Scripted provider, real Pi SDK/Host/Git/SQLite; no real model or credentials.",
-        "Internally preplanned apply_to_target; not public execution-profile selection.", "Browser start/approve/cancel/reload and SSE evidence belong to the caller."] };
+        options.publicSelection ? "Unselected until the browser explicitly requests candidate-only execution."
+          : "Internally preplanned apply_to_target; not public execution-profile selection.",
+        "Browser start/approve/cancel/reload and SSE evidence belong to the caller."] };
   }
 
   async function status(full = false) {
-    const s = current, isolation = core.createSqliteWorkflowIsolationStore(s.store);
+    const s = current, target = await s.target();
+    // Git inspection yields; canonical publication and turn state must share one SQLite snapshot.
+    const state = s.store.readSnapshot(() => statusSnapshot(s, target, full));
+    if (!full || options.authoring) return state;
+    return { ...state, workflowEvidence: await s.api(`/workflows/${s.workflow.id}/evidence`),
+      sourceTurns: await s.api(`/threads/${s.store.getConversationItem(s.source.id).threadId}/turns`), providerRequests: s.providerRequests };
+  }
+
+  function statusSnapshot(s, target, full) {
+    const isolation = core.createSqliteWorkflowIsolationStore(s.store);
+    if (options.authoring) {
+      const workflows = s.store.listChannelWorkflows({ channelId: s.channel.id });
+      return { workflows, steps: workflows.flatMap(workflow => s.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true })),
+        runs: s.store.listRuns({ limit: 100 }), approvals: s.store.listApprovalRequests({ status: "pending", limit: 100 }),
+        templates: core.createSqliteWorkflowTemplateRegistryStore(s.store).list(),
+        reports: workflows.flatMap(workflow => s.store.listTerminalReports({ sourceKind: "workflow", sourceId: workflow.id, limit: 100 })),
+        executions: [...s.executions.values()].map(execution => ({ ...execution, requests: execution.requests.length })),
+        target, initialTarget: s.initialTarget, errors: s.errors };
+    }
+    const selection = isolation.getSelection(s.workflow.id);
+    s.roundId ??= selection?.roundId;
     const runs = s.store.listRuns({ limit: 100 }).map(run => {
       const unit = run.workUnitId ? s.store.getWorkUnit(run.workUnitId) : undefined;
       const attempt = unit?.activeAttemptId ? s.store.getWorkUnitAttempt(unit.activeAttemptId) : undefined;
@@ -287,14 +359,13 @@ async function startChild(root, options) {
     });
     return { manifest: manifest(), workflow: s.store.getChannelWorkflow(s.workflow.id),
       steps: s.steps.map(step => s.store.getChannelWorkflowStep(step.id)), sourceTurn: s.store.getLingTurn(s.source.turnId),
-      target: await s.target(), initialTarget: s.initialTarget, round: isolation.getIntegrationRound(s.roundId),
-      parent: s.store.database.prepare("SELECT * FROM workflow_parallel_parent_fences WHERE round_id=? AND generation=1").get(s.roundId),
+      target, initialTarget: s.initialTarget, selection,
+      round: s.roundId ? isolation.getIntegrationRound(s.roundId) : undefined,
+      parent: s.roundId ? s.store.database.prepare("SELECT * FROM workflow_parallel_parent_fences WHERE round_id=? AND generation=1").get(s.roundId) : undefined,
       approvals: s.store.listApprovalRequests({ status: "pending", limit: 100 }), runs,
       executions: [...s.executions.values()].map(execution => ({ ...execution, requests: full ? execution.requests : execution.requests.length })),
       gates: branches.map((branch, index) => ({ branch: branch.id, providerReleased: s.providerGates[index].settled, hostReleased: s.hostGates[index].settled })),
-      reports: s.store.listTerminalReports({ sourceKind: "workflow", sourceId: s.workflow.id, limit: 100 }), errors: s.errors,
-      ...(full ? { workflowEvidence: await s.api(`/workflows/${s.workflow.id}/evidence`),
-        sourceTurns: await s.api(`/threads/${s.store.getConversationItem(s.source.id).threadId}/turns`), providerRequests: s.providerRequests } : {}) };
+      reports: s.store.listTerminalReports({ sourceKind: "workflow", sourceId: s.workflow.id, limit: 100 }), errors: s.errors };
   }
 
   async function check(kind) {
@@ -362,7 +433,7 @@ async function startChild(root, options) {
       if (input.op === "check") return check(input.kind);
       if (input.op === "release") {
         const branch = input.branch ?? "all", gate = input.gate ?? "provider";
-        assert.ok(["left", "right", "all"].includes(branch)); assert.ok(["provider", "host", "all"].includes(gate));
+        assert.ok(["prepare", "left", "right", "all"].includes(branch)); assert.ok(["provider", "host", "all"].includes(gate));
         for (const [index, item] of branches.entries()) if (branch === "all" || branch === item.id) {
           if (gate !== "host") current.providerGates[index].resolve();
           if (gate !== "provider") current.hostGates[index].resolve();

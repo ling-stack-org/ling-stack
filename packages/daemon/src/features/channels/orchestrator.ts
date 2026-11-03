@@ -176,11 +176,13 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
     const completed = input.store.getChannelWorkflow(workflow.id);
     if (completed?.status === "succeeded") {
       await cleanupWorkflowWorktrees(input.store, workflow.id);
+      maybeCreateWorkflowTerminalCoordinatorReply(input.store, workflow.id);
       return { status: "completed", workflow: completed };
     }
   }
   if (reconciled.status === "completed") {
     await cleanupWorkflowWorktrees(input.store, workflow.id);
+    maybeCreateWorkflowTerminalCoordinatorReply(input.store, workflow.id);
     return { status: "completed", workflow: reconciled.workflow };
   }
   if (reconciled.status === "blocked") {
@@ -211,6 +213,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
     const latest = input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow;
     if (latest.status === "succeeded") {
       await cleanupWorkflowWorktrees(input.store, workflow.id);
+      maybeCreateWorkflowTerminalCoordinatorReply(input.store, workflow.id);
       return { status: "completed", workflow: latest, schedulingDecision };
     }
     return {

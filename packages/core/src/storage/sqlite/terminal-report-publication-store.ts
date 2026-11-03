@@ -298,13 +298,10 @@ function outcomeMatchesTarget(
   outcome: TerminalReportOutcomeStatus,
   target: "succeeded" | "blocked" | "failed" | "cancelled",
 ): boolean {
-  // A verified workflow may finish all required work while its atomic audit
-  // retains a recovered tool failure. Keep that conservative report outcome;
-  // it must not strand the finished source Turn without a published result.
-  // Required-participant authority is independently revalidated above.
-  if (target === "succeeded") return outcome === "succeeded" || outcome === "partially_succeeded";
-  if (target === "blocked") return outcome === "blocked" || outcome === "partially_succeeded";
-  return outcome === target;
+  // Mixed atomic evidence also survives workflow failure or cancellation.
+  // Preserve that audit outcome; the revalidated workflow/completion basis,
+  // not a partial report, determines the source Turn's settlement status.
+  return outcome === target || outcome === "partially_succeeded";
 }
 
 function validPublicationItem(input: PublicationItem, authority: {
