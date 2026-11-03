@@ -24,10 +24,16 @@ const MAINTENANCE_CHECK_FILES = new Set([
   "scripts/check-public-repo-safety.test.mjs",
 ]);
 
+const DEPENDENCY_CHECK_FILES = new Set([
+  "packages/daemon/test/dependency-security.test.mjs",
+  "apps/mobile/test/dependency-security-patches.test.mjs",
+  "apps/mobile/test/dependency-security-tooling.test.mjs",
+]);
+
 const FORCE_FULL_PATTERNS = [
   /^(?:package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$/u,
   /^(?:\.github|scripts|patches)(?:\/|$)/u,
-  /(?:^|\/)(?:package\.json|tsconfig(?:\.[^/]+)?\.json|vite\.config\.[^/]+|webpack\.config\.[^/]+|eslint\.config\.[^/]+|\.eslintrc(?:\.[^/]+)?|\.prettierrc(?:\.[^/]+)?)$/u,
+  /^(?:tsconfig(?:\.[^/]+)?\.json|vite\.config\.[^/]+|webpack\.config\.[^/]+|eslint\.config\.[^/]+|\.eslintrc(?:\.[^/]+)?|\.prettierrc(?:\.[^/]+)?)$/u,
   /(?:^|\/)(?:Dockerfile|docker-compose[^/]*|Makefile)$/u,
 ];
 
@@ -35,6 +41,9 @@ const TEST_PATH_PATTERN = /(?:^|\/)(?:test|tests|__tests__|e2e)(?:\/|$)|(?:^|\/)
 const TEST_SUPPORT_PATTERN = /(?:fixture|fixtures|helper|helpers|support|setup|util|utils)/iu;
 const SUPPORTED_TEST_PACKAGE_PREFIXES = ["packages/"];
 const SUPPORTED_TEST_PACKAGE_DIRECTORIES = new Set(["apps/web", "apps/chrome-extension", "apps/mobile"]);
+// The catalog importer reads Web's AST helper, locale sources and tsconfig
+// without a manifest dependency. Keep that validation consumer in the graph.
+const VALIDATION_CONSUMERS = new Map([["@ling-stack/web", ["@ling-stack/localization"]]]);
 
 /**
  * Classify a pull request by the narrowest safe CI scope.
@@ -42,7 +51,7 @@ const SUPPORTED_TEST_PACKAGE_DIRECTORIES = new Set(["apps/web", "apps/chrome-ext
  * The classifier is intentionally conservative: a path that is not recognized
  * as documentation, allowlisted maintenance, or a workspace package escalates
  * to the full CI lane.
- * @param {{files: string[], eventName?: string, forceFull?: boolean, packageEntries?: PackageEntry[]}} input
+ * @param {{files: string[], eventName?: string, forceFull?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[]}} input
  * @returns {CiScope}
  */
 export function classifyChangedFiles(input) {
@@ -54,7 +63,8 @@ export function classifyChangedFiles(input) {
     return buildScope("full", files, packages, "non-PR event or explicit full CI");
   }
 
-  if (files.some((file) => !isMaintenancePath(file) && FORCE_FULL_PATTERNS.some((pattern) => pattern.test(file)))) {
+  if (files.some((file) => !isDocumentationPath(file) && !isMaintenancePath(file)
+    && FORCE_FULL_PATTERNS.some((pattern) => pattern.test(file)))) {
     return buildScope("full", files, packages, "root, workflow, dependency, or build configuration change");
   }
 
@@ -63,6 +73,17 @@ export function classifyChangedFiles(input) {
       ? "documentation and allowlisted maintenance checks only"
       : "documentation and documentation assets only";
     return buildScope("docs", files, packages, reason);
+  }
+
+  for (const file of files.filter((file) => file.endsWith("/package.json"))) {
+    const directory = dirname(file);
+    const current = packages.find((entry) => entry.directory === directory);
+    const previous = input.basePackageEntries?.find((entry) => entry.directory === directory);
+    if (!current || !previous || current.name !== previous.name
+      || current.hasTestScript !== previous.hasTestScript || current.hasTypecheckScript !== previous.hasTypecheckScript
+      || !current.scriptsFingerprint || current.scriptsFingerprint !== previous.scriptsFingerprint) {
+      return buildScope("full", files, packages, "unverified or changed workspace package identity or validation scripts");
+    }
   }
 
   const changedEntries = new Set();
@@ -91,7 +112,18 @@ export function classifyChangedFiles(input) {
 
   const sourceEntries = [...changedSourceEntries];
   const affectedNames = new Set(changedEntries);
-  for (const name of sourceEntries) collectDependents(name, packages, affectedNames);
+  const dependencyGraph = packages.map((entry) => ({ ...entry, dependencies: [...new Set([
+    ...entry.dependencies,
+    ...(input.basePackageEntries?.find((previous) => previous.name === entry.name)?.dependencies ?? []),
+  ])] }));
+  for (const name of sourceEntries) collectDependents(name, dependencyGraph, affectedNames);
+  // These are test inputs, not production edges. Rechecking an importer does
+  // not change its shipped output or select all of its production consumers.
+  for (const name of sourceEntries) {
+    for (const consumer of VALIDATION_CONSUMERS.get(name) ?? []) {
+      if (packages.some((entry) => entry.name === consumer)) affectedNames.add(consumer);
+    }
+  }
 
   const testSupportImporters = findChangedTestSupportImporters({
     files,
@@ -120,6 +152,7 @@ export function classifyChangedFiles(input) {
     packages: affectedEntries.map((entry) => entry.name).sort(),
     testPackages,
     typecheckPackages,
+    dependencyPolicy: files.some((file) => file.endsWith("/package.json") || DEPENDENCY_CHECK_FILES.has(file)),
     daemon: affectedNames.has("@ling-stack/daemon"),
     web: affectedNames.has("@ling-stack/web"),
     reason: changedSourceEntries.size === 0
@@ -128,8 +161,8 @@ export function classifyChangedFiles(input) {
   };
 }
 
-/** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean}} PackageEntry */
-/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], daemon: boolean, web: boolean, reason: string}} CiScope */
+/** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string}} PackageEntry */
+/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, daemon: boolean, web: boolean, reason: string}} CiScope */
 
 /** @param {string} value */
 function normalizePath(value) {
@@ -145,7 +178,8 @@ function normalizeFiles(files) {
 function isDocumentationPath(file) {
   return file.startsWith("docs/")
     || DOCUMENTATION_ROOT_FILES.has(file)
-    || /(?:^|\/)README\.md$/iu.test(file);
+    || /(?:^|\/)README\.md$/iu.test(file)
+    || /^\.github\/(?:PULL_REQUEST_TEMPLATE\.md|PULL_REQUEST_TEMPLATE\/[^/]+\.md|CODEOWNERS|FUNDING\.yml)$/u.test(file);
 }
 
 /** @param {string} file */
@@ -184,11 +218,13 @@ function findOwningPackage(file, packages) {
 }
 
 /** @param {string} name @param {PackageEntry[]} packages @param {Set<string>} affected */
-function collectDependents(name, packages, affected) {
+function collectDependents(name, packages, affected, visited = new Set()) {
+  if (visited.has(name)) return;
+  visited.add(name);
   for (const entry of packages) {
-    if (affected.has(entry.name) || !entry.dependencies.includes(name)) continue;
+    if (!entry.dependencies.includes(name)) continue;
     affected.add(entry.name);
-    collectDependents(entry.name, packages, affected);
+    collectDependents(entry.name, packages, affected, visited);
   }
 }
 
@@ -229,7 +265,15 @@ function sameImportTarget(changed, imported) {
 }
 
 /** @param {string} root @returns {PackageEntry[]} */
-function discoverPackages(root) {
+function discoverPackages(root, ref) {
+  if (ref) {
+    return execFileSync("git", ["ls-tree", "-r", "--name-only", "-z", ref, "--", "packages", "apps"], {
+      cwd: root, encoding: "utf8",
+    }).split("\0").filter((file) => /^(?:apps|packages)\/[^/]+\/package\.json$/u.test(file))
+      .map((file) => packageEntry(dirname(file), JSON.parse(execFileSync("git", ["show", `${ref}:${file}`], {
+        cwd: root, encoding: "utf8",
+      }))));
+  }
   const entries = [];
   for (const workspaceRoot of ["packages", "apps"]) {
     const absoluteRoot = resolve(root, workspaceRoot);
@@ -239,22 +283,22 @@ function discoverPackages(root) {
       const packagePath = resolve(root, directory, "package.json");
       if (!existsSync(packagePath)) continue;
       const manifest = JSON.parse(readFileSync(packagePath, "utf8"));
-      const dependencyMap = {
-        ...manifest.dependencies,
-        ...manifest.devDependencies,
-        ...manifest.optionalDependencies,
-        ...manifest.peerDependencies,
-      };
-      entries.push({
-        name: manifest.name,
-        directory,
-        dependencies: Object.keys(dependencyMap ?? {}),
-        hasTestScript: typeof manifest.scripts?.test === "string",
-        hasTypecheckScript: typeof manifest.scripts?.typecheck === "string",
-      });
+      entries.push(packageEntry(directory, manifest));
     }
   }
   return entries;
+}
+
+function packageEntry(directory, manifest) {
+  return {
+    name: manifest.name,
+    directory,
+    dependencies: Object.keys({ ...manifest.dependencies, ...manifest.devDependencies,
+      ...manifest.optionalDependencies, ...manifest.peerDependencies }),
+    hasTestScript: typeof manifest.scripts?.test === "string",
+    hasTypecheckScript: typeof manifest.scripts?.typecheck === "string",
+    scriptsFingerprint: JSON.stringify(Object.entries(manifest.scripts ?? {}).sort(([a], [b]) => a.localeCompare(b))),
+  };
 }
 
 /** @param {string} root */
@@ -285,6 +329,7 @@ function buildScope(mode, files, packages, reason) {
     packages: names,
     testPackages: mode === "full" ? packages.filter((entry) => entry.hasTestScript && isSupportedTestPackage(entry.directory)).map((entry) => entry.name).sort() : [],
     typecheckPackages: mode === "full" ? packages.filter((entry) => entry.hasTypecheckScript && isSupportedTypecheckPackage(entry.directory)).map((entry) => entry.name).sort() : [],
+    dependencyPolicy: mode === "full",
     daemon: mode === "full" || names.includes("@ling-stack/daemon"),
     web: mode === "full" || names.includes("@ling-stack/web"),
     reason,
@@ -306,12 +351,14 @@ const args = parseArgs(process.argv.slice(2));
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const eventName = args.event ?? process.env.GITHUB_EVENT_NAME ?? "pull_request";
   let files;
+  let basePackageEntries;
   if (args.files) {
     files = JSON.parse(args.files);
   } else if (eventName === "pull_request" && args.base && args.head) {
-    files = execFileSync("git", ["diff", "--name-only", "-z", `${args.base}...${args.head}`], { cwd: repositoryRoot, encoding: "utf8" }).split("\0").filter(Boolean);
+    files = execFileSync("git", ["diff", "--no-renames", "--name-only", "-z", `${args.base}...${args.head}`], { cwd: repositoryRoot, encoding: "utf8" }).split("\0").filter(Boolean);
+    if (files.some((file) => file.endsWith("/package.json"))) basePackageEntries = discoverPackages(repositoryRoot, args.base);
   } else {
     files = [];
   }
-  console.log(JSON.stringify(classifyChangedFiles({ files, eventName, forceFull: args["force-full"] === "true" })));
+  console.log(JSON.stringify(classifyChangedFiles({ files, eventName, forceFull: args["force-full"] === "true", basePackageEntries })));
 }

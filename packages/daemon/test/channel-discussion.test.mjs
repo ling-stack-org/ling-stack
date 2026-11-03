@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
+import { createSqliteWorkspaceFixture } from "./test-support/sqlite-workspace-fixture.ts";
 import { DEFAULT_WORKSPACE_ID, createCompositeSecretResolver, createSqliteRunStore } from "../../core/dist/index.js";
 import { buildContextPack, estimateTextTokens, resolveProviderContextBudget } from "../dist/features/channels/context-packs.js";
 import { resolveChannelReplyExecutionTarget } from "../dist/features/channels/channel-reply-execution-target.js";
@@ -140,7 +141,7 @@ test("provider runtime availability mapper records transient failures only", () 
 });
 
 test("channel proposal confirmation claim is durable, first-writer-wins, and recoverable", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-proposal-cas-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-proposal-cas-"));
   const store = createSqliteRunStore(cwd);
   const now = "2026-09-19T10:00:00.000Z";
   try {
@@ -205,7 +206,7 @@ test("channel proposal confirmation claim is durable, first-writer-wins, and rec
 });
 
 test("an expired proposal confirmation lease can be reclaimed without releasing the old claim", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-proposal-lease-expiry-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-proposal-lease-expiry-"));
   const store = createSqliteRunStore(cwd);
   try {
     const now = "2026-09-19T11:00:00.000Z";
@@ -251,7 +252,7 @@ test("an expired proposal confirmation lease can be reclaimed without releasing 
 });
 
 test("channel branches follow archive restore and delete lifecycle", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-branches-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-branches-"));
   const stores = [];
   const daemon = await startDaemonForTest(undefined, {
     storeFactory: (storeCwd) => {
@@ -444,7 +445,7 @@ test("context budget manager resolves provider modes and trims lower priority se
 });
 
 test("ling agent session view is open when channel has no active work", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-session-open-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-ling-agent-session-open-"));
   const store = createSqliteRunStore(cwd);
   try {
     const { channel } = createStoreChannelAndMessage(store, cwd, "hello");
@@ -465,7 +466,7 @@ test("ling agent session view is open when channel has no active work", async ()
 });
 
 test("ling agent session view projects draft proposal as task confirmation", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-session-proposal-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-ling-agent-session-proposal-"));
   const store = createSqliteRunStore(cwd);
   try {
     const { channel, message } = createStoreChannelAndMessage(store, cwd, `在 ${cwd} 下创建 README.md`);
@@ -496,7 +497,7 @@ test("ling agent session view projects draft proposal as task confirmation", asy
 });
 
 test("proposed plan APIs hydrate deleted source message state without deleting plans", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-proposed-plan-source-state-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-proposed-plan-source-state-"));
   const store = createSqliteRunStore(cwd);
   let thread;
   let channel;
@@ -544,7 +545,7 @@ test("proposed plan APIs hydrate deleted source message state without deleting p
 });
 
 test("channel team metrics exposes visible evidence total separately from team evidence", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-evidence-summary-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-evidence-summary-"));
   const store = createSqliteRunStore(cwd);
   try {
     const { channel, message } = createStoreChannelAndMessage(store, cwd, "collect evidence");
@@ -675,7 +676,7 @@ test("channel team metrics exposes visible evidence total separately from team e
 });
 
 test("approval-only workflow owner closes immediately after approval", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-approval-owner-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-workflow-approval-owner-"));
   const store = createSqliteRunStore(cwd);
   let workflow;
   let step;
@@ -728,7 +729,7 @@ test("approval-only workflow owner closes immediately after approval", async () 
 });
 
 test("ling agent session view projects active workflow approval wait", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-session-approval-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-ling-agent-session-approval-"));
   const store = createSqliteRunStore(cwd);
   try {
     const { channel } = createStoreChannelAndMessage(store, cwd, "帮我跑测试");
@@ -791,7 +792,7 @@ test("ling agent session view projects active workflow approval wait", async () 
 });
 
 test("ling agent session view projects terminal workflow final result", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-session-final-workflow-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-ling-agent-session-final-workflow-"));
   const store = createSqliteRunStore(cwd);
   try {
     const { channel } = createStoreChannelAndMessage(store, cwd, "实现并验证");
@@ -868,7 +869,7 @@ test("ling agent session view projects terminal workflow final result", async ()
 });
 
 test("ling agent session view projects blocked workflow final result with next action", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-session-blocked-workflow-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-ling-agent-session-blocked-workflow-"));
   const store = createSqliteRunStore(cwd);
   try {
     const { channel } = createStoreChannelAndMessage(store, cwd, "需要写文件");
@@ -909,7 +910,7 @@ test("ling agent session view projects blocked workflow final result with next a
 });
 
 test("ling agent session view projects terminal failed run", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-session-failed-run-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-ling-agent-session-failed-run-"));
   const store = createSqliteRunStore(cwd);
   try {
     const { channel } = createStoreChannelAndMessage(store, cwd, "修复失败任务");
@@ -943,7 +944,7 @@ test("ling agent session view projects terminal failed run", async () => {
 });
 
 test("ling agent session view reports denied approval for terminal run", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-session-denied-approval-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-ling-agent-session-denied-approval-"));
   const store = createSqliteRunStore(cwd);
   try {
     const { channel } = createStoreChannelAndMessage(store, cwd, "创建 README.md");
@@ -993,7 +994,7 @@ test("ling agent session view reports denied approval for terminal run", async (
 });
 
 test("ling agent coordinator queues active run follow-up before ordinary routing", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-coordinator-followup-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-ling-agent-coordinator-followup-"));
   const stores = new Map();
   const daemon = await startDaemonForTest(undefined, {
     storeFactory: (storeCwd) => {
@@ -1044,7 +1045,7 @@ test("ling agent coordinator queues active run follow-up before ordinary routing
 });
 
 test("active channel reply does not intercept an unmarked direct workflow request", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-active-reply-direct-workflow-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-active-reply-direct-workflow-"));
   const runner = new RecordingRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -1093,7 +1094,7 @@ test("active channel reply does not intercept an unmarked direct workflow reques
 });
 
 test("root reply guidance cannot capture a branch turn and branch continuation stays on its thread", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-reply-branch-lineage-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-reply-branch-lineage-"));
   await ensureGitRepo(cwd);
   const runner = new AbortableDelayedRunner();
   const stores = new Map();
@@ -1189,7 +1190,7 @@ test("root reply guidance cannot capture a branch turn and branch continuation s
 });
 
 test("topic channel replies keep canonical LingThread identity and isolate guidance by source message lineage", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-topic-reply-lineage-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-topic-reply-lineage-"));
   const runner = new AbortableDelayedRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -1269,7 +1270,7 @@ test("topic channel replies keep canonical LingThread identity and isolate guida
 });
 
 test("ling agent coordinator queues attachment-only active run guidance", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-coordinator-attachment-followup-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-ling-agent-coordinator-attachment-followup-"));
   const stores = new Map();
   const daemon = await startDaemonForTest(undefined, {
     storeFactory: (storeCwd) => {
@@ -1322,7 +1323,7 @@ test("ling agent coordinator queues attachment-only active run guidance", async 
 });
 
 test("ling agent coordinator queues file-ref-only active run guidance", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-coordinator-file-ref-followup-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-ling-agent-coordinator-file-ref-followup-"));
   await writeFile(resolve(cwd, "README.md"), "# File ref guidance\n", "utf8");
   const stores = new Map();
   const daemon = await startDaemonForTest(undefined, {
@@ -1377,7 +1378,7 @@ test("ling agent coordinator queues file-ref-only active run guidance", async ()
 });
 
 test("ling agent turn envelope merges persisted and explicit text file refs safely", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-turn-file-refs-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-ling-agent-turn-file-refs-"));
   await writeFile(resolve(cwd, "README.md"), "# Current README\n", "utf8");
   const store = createSqliteRunStore(cwd);
   try {
@@ -1411,7 +1412,7 @@ test("ling agent turn envelope merges persisted and explicit text file refs safe
 });
 
 test("channel input materialization cache upserts and feeds turn envelope", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-input-materialization-cache-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-input-materialization-cache-"));
   const store = createSqliteRunStore(cwd);
   try {
     const channel = store.createChannel({
@@ -1489,7 +1490,7 @@ test("channel input materialization cache upserts and feeds turn envelope", asyn
 });
 
 test("inline materialization writes image vision cache with injected summarizer", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-image-vision-inline-cache-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-image-vision-inline-cache-"));
   const store = createSqliteRunStore(cwd);
   try {
     await mkdir(store.paths.attachmentsDir, { recursive: true });
@@ -1561,7 +1562,7 @@ test("inline materialization writes image vision cache with injected summarizer"
 });
 
 test("inline image materialization reuses same image content after provider timeout", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-image-vision-content-cache-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-image-vision-content-cache-"));
   const store = createSqliteRunStore(cwd);
   try {
     await mkdir(store.paths.attachmentsDir, { recursive: true });
@@ -1649,7 +1650,7 @@ test("inline image materialization reuses same image content after provider time
 });
 
 test("retryable image materialization failures are not cached permanently", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-image-vision-timeout-retry-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-image-vision-timeout-retry-"));
   const store = createSqliteRunStore(cwd);
   try {
     await mkdir(store.paths.attachmentsDir, { recursive: true });
@@ -1717,7 +1718,7 @@ test("retryable image materialization failures are not cached permanently", asyn
 });
 
 test("teammate direct materialization reads image attachments with injected summarizer", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-direct-image-vision-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-direct-image-vision-"));
   const store = createSqliteRunStore(cwd);
   try {
     await mkdir(store.paths.attachmentsDir, { recursive: true });
@@ -1901,7 +1902,7 @@ test("A11 preview and body fresh native connections consume audited DNS addresse
 });
 
 test("inline materialization writes public link body cache for explicit link request", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-link-body-inline-cache-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-link-body-inline-cache-"));
   const store = createSqliteRunStore(cwd);
   try {
     const channel = store.createChannel({
@@ -1959,7 +1960,7 @@ test("inline materialization writes public link body cache for explicit link req
 });
 
 test("cached public link body lets Ling answer without materialization clarify", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-link-body-cached-reply-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-link-body-cached-reply-"));
   const runner = new ScriptedRunner(["这个页面讲的是 cached public link body。"]);
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -2025,7 +2026,7 @@ test("cached public link body lets Ling answer without materialization clarify",
 });
 
 test("pdf and OOXML extractors materialize bounded attachment text", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-document-extractors-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-document-extractors-"));
   const store = createSqliteRunStore(cwd);
   const officeArtifacts = new OfficeArtifactService();
   try {
@@ -2166,7 +2167,7 @@ test("pdf and OOXML extractors materialize bounded attachment text", async () =>
 });
 
 test("inline materialization writes pdf and docx cache for current-turn attachments", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-document-inline-cache-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-document-inline-cache-"));
   const store = createSqliteRunStore(cwd);
   try {
     await mkdir(store.paths.attachmentsDir, { recursive: true });
@@ -2243,7 +2244,7 @@ test("inline materialization writes pdf and docx cache for current-turn attachme
 });
 
 test("materialized pdf and docx attachments let Ling answer without materialization clarify", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-document-materialized-reply-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-document-materialized-reply-"));
   const runner = new ScriptedRunner(["我读到了 PDF 和 DOCX 的正文。"]);
   const daemon = await startDaemonForTest(runner);
   try {
@@ -2295,7 +2296,7 @@ test("materialized pdf and docx attachments let Ling answer without materializat
 });
 
 test("materialized image attachment lets Ling answer without materialization clarify", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-image-materialized-reply-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-image-materialized-reply-"));
   const runner = new ScriptedRunner(["我读到了截图摘要。"]);
   const daemon = await startDaemonForTest(runner, {
     imageVisionSummarizer: async () => ({
@@ -2342,7 +2343,7 @@ test("materialized image attachment lets Ling answer without materialization cla
 });
 
 test("provider-backed image materialization works without injected summarizer", async (t) => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-provider-backed-image-materialization-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-provider-backed-image-materialization-"));
   const relay = await startMockOpenAICompatibleServer(t, {
     responseContent: ({ body }) => {
       const content = body?.messages?.[0]?.content;
@@ -2425,7 +2426,7 @@ test("provider-backed image materialization works without injected summarizer", 
 });
 
 test("ling agent coordinator preserves materialized guidance metadata for active run continuation", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-coordinator-materialized-guidance-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-ling-agent-coordinator-materialized-guidance-"));
   await writeFile(resolve(cwd, "README.md"), "# Current README\n", "utf8");
   const stores = new Map();
   const daemon = await startDaemonForTest(undefined, {
@@ -2496,7 +2497,7 @@ test("ling agent coordinator preserves materialized guidance metadata for active
 });
 
 test("ling agent coordinator treats redirect-like text as queued guidance", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-coordinator-redirect-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-ling-agent-coordinator-redirect-"));
   const stores = new Map();
   const daemon = await startDaemonForTest(undefined, {
     storeFactory: (storeCwd) => {
@@ -2546,7 +2547,7 @@ test("ling agent coordinator treats redirect-like text as queued guidance", asyn
 });
 
 test("channel reply guidance drains FIFO without interrupting and projects every continuation reply", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-guidance-fifo-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-reply-guidance-fifo-"));
   await ensureGitRepo(cwd);
   const runner = new AbortableDelayedRunner();
   const stores = new Map();
@@ -2718,7 +2719,7 @@ test("channel reply guidance drains FIFO without interrupting and projects every
 });
 
 test("channel reply guidance continues draining after the first continuation fails to start", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-guidance-start-failure-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-reply-guidance-start-failure-"));
   const runner = new AbortableDelayedRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -2800,7 +2801,7 @@ test("channel reply guidance continues draining after the first continuation fai
 });
 
 test("queued channel source stays hidden while dispatch classification is still in flight", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-classification-visibility-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-reply-classification-visibility-"));
   await ensureGitRepo(cwd);
   const runner = new AbortableDelayedRunner();
   const stores = new Map();
@@ -2897,7 +2898,7 @@ test("queued channel source stays hidden while dispatch classification is still 
 });
 
 test("unmentioned channel guidance joins the pending Ling reply lane before its run is linked", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-pending-lane-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-reply-pending-lane-"));
   await ensureGitRepo(cwd);
   const runner = new AbortableDelayedRunner();
   const stores = new Map();
@@ -3003,7 +3004,7 @@ test("unmentioned channel guidance joins the pending Ling reply lane before its 
 });
 
 test("channel messages persist and AI blocker replies do not drop the user message", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-messages-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-messages-"));
   const daemon = await startDaemonForTest();
   try {
     const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
@@ -3038,7 +3039,7 @@ test("channel messages persist and AI blocker replies do not drop the user messa
 });
 
 test("known unavailable teammate is accepted and replayed as one typed Channel blocker", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-unavailable-participant-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-unavailable-participant-"));
   const runner = new RecordingRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -3104,7 +3105,7 @@ test("known unavailable teammate is accepted and replayed as one typed Channel b
 });
 
 test("unavailable participant produces the same typed blocker over Channel SSE", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-unavailable-participant-sse-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-unavailable-participant-sse-"));
   const runner = new RecordingRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -3139,7 +3140,7 @@ test("unavailable participant produces the same typed blocker over Channel SSE",
 });
 
 test("channel discussion uses the mentioned teammate provider preset", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-mentioned-teammate-provider-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-mentioned-teammate-provider-"));
   const runner = new RecordingRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -3178,7 +3179,7 @@ test("channel discussion uses the mentioned teammate provider preset", async () 
 });
 
 test("an untrusted scripted channel adapter cannot publish Provider availability incidents", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-provider-runtime-incident-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-provider-runtime-incident-"));
   const rateLimitError = Object.assign(new Error("Too many requests"), { code: "rate_limited" });
   const runner = new ScriptedRunner([rateLimitError]);
   const stores = new Map();
@@ -3224,7 +3225,7 @@ test("an untrusted scripted channel adapter cannot publish Provider availability
 });
 
 test("channel observer bus stays inert when the feature flag is disabled", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-observer-bus-off-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-observer-bus-off-"));
   const runner = new RecordingRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -3263,7 +3264,7 @@ test("channel observer bus stays inert when the feature flag is disabled", async
 });
 
 test("channel observer bus writes bounded relevance evidence without visible observer messages", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-observer-bus-on-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-observer-bus-on-"));
   const runner = new RecordingRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -3314,7 +3315,7 @@ test("channel observer bus writes bounded relevance evidence without visible obs
 });
 
 test("channel observer bus skips unavailable observers without blocking the main reply", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-observer-bus-unavailable-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-observer-bus-unavailable-"));
   const runner = new RecordingRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -3376,7 +3377,7 @@ test("channel observer bus skips unavailable observers without blocking the main
 });
 
 test("channel observer bus applies provider-level availability incidents to matching observers", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-observer-bus-provider-unavailable-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-observer-bus-provider-unavailable-"));
   const runner = new RecordingRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -3436,7 +3437,7 @@ test("channel observer bus applies provider-level availability incidents to matc
 });
 
 test("channel observer bus ignores expired provider-level availability incidents", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-observer-bus-provider-expired-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-observer-bus-provider-expired-"));
   const runner = new RecordingRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -3496,7 +3497,7 @@ test("channel observer bus ignores expired provider-level availability incidents
 });
 
 test("channel discussion injects web search context before runner reply", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-web-search-context-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-web-search-context-"));
   const runner = new RecordingRunner();
   const webSearchCalls = [];
   const stores = new Map();
@@ -3610,7 +3611,7 @@ test("channel discussion injects web search context before runner reply", async 
 });
 
 test("channel discussion blocks runner prompt envelope echoes", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-prompt-echo-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-prompt-echo-"));
   const runner = new PromptEchoRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -3644,7 +3645,7 @@ test("channel discussion blocks runner prompt envelope echoes", async () => {
 });
 
 test("channel message stream emits visible deltas into a durable AI reply", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-message-stream-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-message-stream-"));
   const runner = new ScriptedRunner(["Streamed channel reply"]);
   const daemon = await startDaemonForTest(runner);
   try {
@@ -3709,7 +3710,7 @@ test("channel message stream emits visible deltas into a durable AI reply", asyn
 });
 
 test("conversation stream materializes uploaded attachments into the run prompt", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-attachment-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-conversation-attachment-"));
   const runner = new ScriptedRunner(["Attachment received"]);
   const daemon = await startDaemonForTest(runner);
   try {
@@ -3784,7 +3785,7 @@ test("conversation stream materializes uploaded attachments into the run prompt"
 });
 
 test("channel message stream hides unbound task proposal blocks without creating approvals", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-message-stream-proposal-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-message-stream-proposal-"));
   const runner = new ScriptedRunner([
     `可以开始。\n<ling_task_proposal>{"title":"Stream proposal","prompt":"Implement streaming","assigneeTeammateId":"teammate_builtin_engineer","acceptanceCriteria":["reply streams"],"collaborationSteps":[{"teammateId":"teammate_builtin_engineer","action":"coordinated","summary":"Implement"}],"requiredTools":["read"],"riskSummary":"low"}</ling_task_proposal>`,
   ]);
@@ -3826,7 +3827,7 @@ test("channel message stream hides unbound task proposal blocks without creating
 });
 
 test("channel AI reply prompt carries projected segment context for short follow-ups", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-followup-context-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-reply-followup-context-"));
   const runner = new ScriptedRunner([
     "雨下到第三天，城里的钟停了。修表匠阿岚把怀表放进钟芯，世界重新开始走动。",
     "四百字版本",
@@ -3867,7 +3868,7 @@ test("channel AI reply prompt carries projected segment context for short follow
 });
 
 test("channel AI reply injects Plan Mode instructions for plan threads", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-plan-mode-prompt-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-plan-mode-prompt-"));
   const runner = new ScriptedRunner(["<proposed_plan title=\"Plan slice\">1. Inspect first.</proposed_plan>"]);
   const daemon = await startDaemonForTest(runner);
   try {
@@ -3902,7 +3903,7 @@ test("channel AI reply injects Plan Mode instructions for plan threads", async (
 });
 
 test("channel no-tools AI reply retries once with compacted channel summary after context-length error", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-context-retry-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-reply-context-retry-"));
   const runner = new ScriptedRunner([
     new Error("context_length exceeded by test provider"),
     "Retry reply",
@@ -3964,7 +3965,7 @@ test("channel no-tools AI reply retries once with compacted channel summary afte
 });
 
 test("channel hard summary uses the effective workspace provider before dispatching a reply", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-proactive-summary-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-proactive-summary-"));
   const runner = new SummaryAwareRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -4149,7 +4150,7 @@ test("channel hard summary uses the effective workspace provider before dispatch
 });
 
 test("channel hard summary with no completed prefix records the limitation and blocks oversized input", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-no-summary-prefix-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-no-summary-prefix-"));
   const runner = new SummaryAwareRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {

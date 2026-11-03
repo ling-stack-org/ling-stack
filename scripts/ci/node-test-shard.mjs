@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { finished } from "node:stream/promises";
-import { assignTestShards, assertSuiteCoverage, discoverTestFiles, parseArguments, testSuites } from "./test-shard-plan.mjs";
+import { assignTestShards, assertSuiteCoverage, discoverTestFiles, estimateTestWeight, parseArguments, testSuites } from "./test-shard-plan.mjs";
 import { trackTestProcesses } from "./test-processes.mjs";
 
 export const defaultFileTimeoutMs = 300_000;
@@ -136,6 +136,13 @@ async function runFile(file, { cwd, shard, worker, suite, temporaryDirectory, st
   return result;
 }
 
+/**
+ * @param {string[]} files
+ * @param {{ concurrency?: number, shard?: number, shardCount?: number, suite?: string,
+ * cwd?: string, exclusive?: string[], timings?: Record<string, number>, fileTimeouts?: Record<string, number>,
+ * temporaryDirectory?: string, stdio?: string, fileTimeoutMs?: number, shardTimeoutMs?: number,
+ * terminationGraceMs?: number, reportPath?: string, signal?: AbortSignal }} [options]
+ */
 export async function runNodeTestFiles(files, {
   concurrency = 1, shard = 0, shardCount = 1, suite = "tests", cwd = process.cwd(), exclusive = [], timings = {}, fileTimeouts = {}, temporaryDirectory = tmpdir(), stdio = "inherit",
   fileTimeoutMs = defaultFileTimeoutMs, shardTimeoutMs = defaultShardTimeoutMs, terminationGraceMs = 5000,
@@ -193,9 +200,13 @@ export async function runNodeTestFiles(files, {
     await persist();
     const exclusiveFiles = selected.filter(file => exclusive.includes(file)).sort();
     await worker(exclusiveFiles, "exclusive");
-    const parallel = selected.filter(file => !exclusive.includes(file));
-    const buckets = parallel.length ? assignTestShards(parallel, Math.min(concurrency, parallel.length), { cwd, timings }) : [];
-    const outcomes = await Promise.allSettled(buckets.map((bucket, index) => worker(bucket.files, index)));
+    const parallel = selected.filter(file => !exclusive.includes(file))
+      .map(file => ({ file, weight: estimateTestWeight(file, { cwd, timings }) }))
+      .sort((a, b) => b.weight - a.weight || a.file.localeCompare(b.file));
+    // Each idle worker claims one file synchronously from the same iterator.
+    const queue = parallel.map(item => item.file).values();
+    const outcomes = await Promise.allSettled(Array.from({ length: Math.min(concurrency, parallel.length) },
+      (_, index) => worker(queue, index)));
     for (const outcome of outcomes) if (outcome.status === "rejected") errors.push(outcome.reason);
     complete = !controller.signal.aborted && [...records.values()].every(result => result.status !== "pending" && result.status !== "running");
   } finally {
@@ -217,11 +228,12 @@ export async function runTestShard(suiteName, argv) {
   if (!config) throw new Error(`Unknown suite: ${suiteName}`);
   const shard = Number(args["--shard"] ?? 0);
   const shardCount = Number(args["--shard-count"] ?? config.shardCount);
+  const concurrency = Number(args["--concurrency"] ?? config.concurrency);
   if (!Number.isInteger(shard) || !Number.isInteger(shardCount) || shardCount < 1 || shard < 0 || shard >= shardCount) {
     throw new RangeError(`expected --shard in [0, ${shardCount - 1}]`);
   }
   const discovered = await discoverTestFiles(config.cwd, config.excluded);
-  let shards = assignTestShards(discovered, shardCount, { cwd: config.cwd });
+  let shards = assignTestShards(discovered, shardCount, { ...config, concurrency });
   let timings = {};
   if (args["--plan"]) {
     const plan = JSON.parse(await readFile(args["--plan"], "utf8"));
@@ -240,7 +252,7 @@ export async function runTestShard(suiteName, argv) {
   process.once("SIGTERM", onTerm);
   try {
     return await runNodeTestFiles(files, { ...config, suite: suiteName, shard, shardCount, timings,
-      concurrency: Number(args["--concurrency"] ?? config.concurrency), reportPath: args["--report"], signal: controller.signal,
+      concurrency, reportPath: args["--report"], signal: controller.signal,
       fileTimeoutMs: Number(args["--file-timeout-ms"] ?? defaultFileTimeoutMs),
       shardTimeoutMs: Number(args["--shard-timeout-ms"] ?? defaultShardTimeoutMs) });
   } finally {

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
+import { createSqliteWorkspaceFixture } from "./test-support/sqlite-workspace-fixture.ts";
 import { createSqliteRunStore } from "../../core/dist/index.js";
 import {
   RecordingRunner,
@@ -30,7 +31,7 @@ import {
 } from "./support/channel-workspace-fixture.mjs";
 
 test("channel collaboration protocol resolver API patches existing channel fields and reverts to defaults", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-protocol-settings-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-protocol-settings-"));
   const daemon = await startDaemonForTest(undefined, {}, { channels: { autoRoute: false } });
   try {
     await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
@@ -113,7 +114,7 @@ test("channel collaboration protocol resolver API patches existing channel field
 });
 
 test("channel collaboration protocol drafts apply protocol-only overrides with source refs", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-protocol-drafts-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-protocol-drafts-"));
   const daemon = await startDaemonForTest();
   try {
     const first = await createChannel(daemon.url, cwd);
@@ -224,7 +225,7 @@ test("channel collaboration protocol drafts apply protocol-only overrides with s
 });
 
 test("channel collaboration protocol endpoints persist state and reject cross-channel sources", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-protocol-api-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-protocol-api-"));
   const daemon = await startDaemonForTest();
   try {
     const first = await createChannel(daemon.url, cwd);
@@ -314,7 +315,7 @@ test("channel collaboration protocol endpoints persist state and reject cross-ch
 });
 
 test("concurrent decision supersession accepts one successor, reuses exact retries, and rejects conflicts", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-decision-supersession-api-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-decision-supersession-api-"));
   const daemon = await startDaemonForTest();
   try {
     const channel = await createChannel(daemon.url, cwd);
@@ -411,7 +412,7 @@ test("concurrent decision supersession accepts one successor, reuses exact retri
 });
 
 test("channel handoff workflows start steps, create tasks, and expose blockers", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflows-api-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflows-api-"));
   const daemon = await startDaemonForTest();
   try {
     const first = await createChannel(daemon.url, cwd);
@@ -514,7 +515,7 @@ test("channel handoff workflows start steps, create tasks, and expose blockers",
 });
 
 test("manual workflow step start rejects a result after source context changes", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-manual-workflow-stale-context-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-manual-workflow-stale-context-"));
   const runner = new DelayedRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -608,7 +609,7 @@ test("manual workflow step start rejects a result after source context changes",
 });
 
 test("queued workflow runs keep private role memory out of durable snapshots", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-queued-workflow-memory-isolation-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-queued-workflow-memory-isolation-"));
   const runner = new AbortableDelayedRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -729,7 +730,7 @@ test("queued workflow runs keep private role memory out of durable snapshots", a
 });
 
 test("workflow handoff intents validate, accept, and stay visible as workflow evidence", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-handoff-intents-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-handoff-intents-"));
   const stores = new Map();
   const daemon = await startDaemonForTest(undefined, {
     storeFactory: (storeCwd) => {
@@ -808,7 +809,7 @@ test("workflow handoff intents validate, accept, and stay visible as workflow ev
 });
 
 test("workflow collaboration card endpoints derive compact product cards", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-collaboration-card-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-workflow-collaboration-card-"));
   const stores = new Map();
   const daemon = await startDaemonForTest(undefined, {
     storeFactory: (storeCwd) => {
@@ -904,7 +905,7 @@ test("workflow collaboration card endpoints derive compact product cards", async
 });
 
 test("autoplan-lite workflow compiles durable steps and orchestrates them through the runner", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-orchestrator-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-orchestrator-"));
   const runner = new RecordingRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -1080,7 +1081,7 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
 });
 
 test("workflow graph compiles into durable steps and emits standardized packets", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-graph-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-graph-"));
   const runner = new RecordingRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -1197,7 +1198,7 @@ test("workflow graph compiles into durable steps and emits standardized packets"
 
 for (const contextWindowTokens of [1800, 4096]) {
 test(`workflow dependency compaction preserves the SDK budget gate at ${contextWindowTokens} tokens`, async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-context-compaction-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-context-compaction-"));
   const runner = new class extends RecordingRunner {
     providerRequests = 0;
 
@@ -1356,7 +1357,7 @@ test(`workflow dependency compaction preserves the SDK budget gate at ${contextW
 }
 
 test("workflow planning failure follows policy and blocks for user repair", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-planning-failure-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-planning-failure-"));
   const runner = new SelectiveFailingRunner(["Product Discovery"]);
   const daemon = await startDaemonForTest(runner);
   try {
@@ -1386,7 +1387,7 @@ test("workflow planning failure follows policy and blocks for user repair", asyn
 });
 
 test("workflow implementation failure follows policy and fails the workflow", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-implementation-failure-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-implementation-failure-"));
   const runner = new SelectiveFailingRunner(["Implementation"]);
   const daemon = await startDaemonForTest(runner);
   try {
@@ -1418,7 +1419,7 @@ test("workflow implementation failure follows policy and fails the workflow", as
 });
 
 test("workflow post-step gate pauses downstream steps until approval", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-post-gate-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-post-gate-"));
   const runner = new RecordingRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -1493,7 +1494,7 @@ test("workflow post-step gate pauses downstream steps until approval", async () 
 });
 
 test("workflow post-step gate resumes after daemon restart when approval was granted", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-post-gate-restart-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-post-gate-restart-"));
   const runner = new RecordingRunner();
   const stores = new Map();
   let daemon = await startDaemonForTest(runner, {
@@ -1565,7 +1566,7 @@ test("workflow post-step gate resumes after daemon restart when approval was gra
 });
 
 test("workflow run cancellation follows default policy and blocks for user", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-cancellation-policy-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-cancellation-policy-"));
   const runner = new DelayedRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -1606,7 +1607,7 @@ test("workflow run cancellation follows default policy and blocks for user", asy
 });
 
 test("workflow approval denial follows onApprovalDenied policy and blocks", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-approval-denial-policy-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-approval-denial-policy-"));
   const runner = new RecordingRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -1648,7 +1649,7 @@ test("workflow approval denial follows onApprovalDenied policy and blocks", asyn
 });
 
 test("workflow skipped optional step allows downstream steps to start", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-skip-optional-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-skip-optional-"));
   const runner = new SelectiveFailingRunner(["Product Review"]);
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -1709,7 +1710,7 @@ test("workflow skipped optional step allows downstream steps to start", async ()
 });
 
 test("workflow orchestrator starts independent parallel branches within channel budget", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-parallel-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-parallel-"));
   const runner = new ParallelDelayedRunner();
   let cleanupWorkflowId;
   const stores = new Map();
@@ -1790,7 +1791,7 @@ test("workflow orchestrator starts independent parallel branches within channel 
 });
 
 test("custom workflow template compiles deterministic steps and dependencies", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-custom-template-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-custom-template-"));
   const daemon = await startDaemonForTest();
   try {
     const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
@@ -1855,7 +1856,7 @@ test("custom workflow template compiles deterministic steps and dependencies", a
 });
 
 test("workflow councilSlotKey resolves through attached AI council specialists", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-council-slot-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-council-slot-"));
   const daemon = await startDaemonForTest();
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Council slot workflow");
@@ -1951,7 +1952,7 @@ test("workflow councilSlotKey resolves through attached AI council specialists",
 });
 
 test("custom workflow template rejects cycles and unknown runners at compile time", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-custom-template-invalid-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-custom-template-invalid-"));
   const daemon = await startDaemonForTest();
   try {
     const channel = await createChannel(daemon.url, cwd);
@@ -1996,7 +1997,7 @@ test("custom workflow template rejects cycles and unknown runners at compile tim
 });
 
 test("custom workflow template unsafe autostart requires explicit confirmation", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-custom-template-autostart-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-custom-template-autostart-"));
   const daemon = await startDaemonForTest();
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Unsafe custom template");
@@ -2039,7 +2040,7 @@ test("custom workflow template unsafe autostart requires explicit confirmation",
 });
 
 test("custom workflow template parallel branches start within compiled budget", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-custom-template-parallel-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-custom-template-parallel-"));
   const runner = new ParallelDelayedRunner();
   let cleanupWorkflowId;
   const daemon = await startDaemonForTest(runner);
@@ -2111,7 +2112,7 @@ test("custom workflow template parallel branches start within compiled budget", 
 });
 
 test("workflow orchestrator keeps serial behavior when smart scheduling max runs is one", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-serial-budget-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-serial-budget-"));
   const runner = new ParallelDelayedRunner();
   let cleanupWorkflowId;
   const stores = new Map();
@@ -2183,7 +2184,7 @@ test("workflow orchestrator keeps serial behavior when smart scheduling max runs
 });
 
 test("workflow smart scheduling keeps side-effectful branches serial", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-smart-write-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-smart-write-"));
   const runner = new ParallelDelayedRunner();
   let cleanupWorkflowId;
   const stores = new Map();
@@ -2250,7 +2251,7 @@ test("workflow smart scheduling keeps side-effectful branches serial", async () 
 });
 
 test("workflow smart scheduling keeps unknown-tool branches serial", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-smart-unknown-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-smart-unknown-"));
   const runner = new ParallelDelayedRunner();
   let cleanupWorkflowId;
   const stores = new Map();
@@ -2319,7 +2320,7 @@ test("workflow smart scheduling keeps unknown-tool branches serial", async () =>
 });
 
 test("workflow smart scheduling does not start sibling branches while approval is pending", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-smart-approval-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-smart-approval-"));
   const runner = new ParallelDelayedRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -2380,7 +2381,7 @@ test("workflow smart scheduling does not start sibling branches while approval i
 });
 
 test("workflow dependencyMode any_succeeded can start a fan-in after mixed terminal branches", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-any-succeeded-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-any-succeeded-"));
   const runner = new RecordingRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -2451,7 +2452,7 @@ test("workflow dependencyMode any_succeeded can start a fan-in after mixed termi
 });
 
 test("fan-in requireAllBranchesTerminal is a scheduling barrier even with any_succeeded", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-fanin-barrier-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-fanin-barrier-"));
   const runner = new ParallelDelayedRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -2560,7 +2561,7 @@ test("fan-in requireAllBranchesTerminal is a scheduling barrier even with any_su
 });
 
 test("workflow fan-in creates summary artifact, memory candidate, selector decision, and evidence drilldown", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-fanin-evidence-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-fanin-evidence-"));
   const runner = new RecordingRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -2659,7 +2660,7 @@ test("workflow fan-in creates summary artifact, memory candidate, selector decis
 });
 
 test("workflow cancel aborts active run, queued steps, and pending workflow approvals", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-cancel-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-cancel-"));
   const runner = new DelayedRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -2694,7 +2695,7 @@ test("workflow cancel aborts active run, queued steps, and pending workflow appr
 });
 
 test("workflow step retry starts a blocked step after configuration is repaired", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-retry-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-retry-"));
   const runner = new RecordingRunner();
   const daemon = await startDaemonForTest(runner);
   try {
@@ -2738,7 +2739,7 @@ test("workflow step retry starts a blocked step after configuration is repaired"
 });
 
 test("channel link preview blocks localhost targets instead of fetching them", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-links-"));
+  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-links-"));
   const daemon = await startDaemonForTest();
   try {
     const channel = await createChannel(daemon.url, cwd);
