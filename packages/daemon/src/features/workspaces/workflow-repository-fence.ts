@@ -24,6 +24,7 @@ interface RepositoryFence {
   readonly owner: RepositoryFenceOwner;
   readonly ownerJson: string;
   readonly reservationToken?: string;
+  readonly reservationProtocol?: typeof planningReservationProtocol;
   readonly state: "held" | "released";
 }
 interface RepositoryStore {
@@ -33,6 +34,7 @@ interface RepositoryStore {
   readonly databaseInode: string;
 }
 const filename = "ling-workflow-repository-fence.sqlite";
+const planningReservationProtocol = "sqlite_writer_v1";
 
 const busy = () => new HttpError(409, "workflow_repository_busy", "This repository is reserved by an isolated workflow round.");
 function unknown(cause?: unknown): HttpError {
@@ -53,35 +55,7 @@ function ownerFor(store: RunStore, roundId: string, generation: number, inputs: 
 /** Shared across checkout-local Stores and daemon processes; no PID/TTL takeover or pathname deletion. */
 export async function reserveWorkflowRepositoryFence(store: RunStore, roundId: string,
   inputs: WorkflowIntegrationRoundInputsV1): Promise<string | undefined> {
-  const owner = ownerFor(store, roundId, 1, inputs), path = join(owner.commonDir, filename);
-  const identity = storeIdentity(store), isolation = createSqliteWorkflowIsolationStore(store);
-  ensureDatabaseFile(path);
-  const reservationToken = withDatabase(owner.commonDir, false, database => {
-    database.exec("BEGIN IMMEDIATE");
-    initializeIfEmpty(database);
-    const prior = readFence(database, owner.commonDir);
-    if (prior?.state === "held" && !isDeepStrictEqual(prior.owner, owner)) throw busy();
-    const round = isolation.getIntegrationRound(roundId, 1);
-    if (round && workflowIntegrationRoundInputsDigest(round.inputs) !== owner.inputsDigest) throw unknown();
-    registerStore(database, identity);
-    // A different Store may have passed admission before this reservation. Its history is
-    // deliberately not reclaimed by PID, TTL or a momentary absence of resource rows.
-    if (readStores(database).some(value => !isDeepStrictEqual(value, identity))) throw new HttpError(409,
-      "workflow_repository_stores_unsupported", "This isolated parallel profile requires one canonical Host database per repository.");
-    // The durable round makes a duplicate recoverable. An unfinished reservation has
-    // exactly one writer, even when another process presents the same round identity.
-    if (prior?.state === "held") {
-      if (!round) throw busy();
-      database.exec("COMMIT");
-      return undefined;
-    }
-    const token = randomUUID();
-    database.prepare(`INSERT INTO repository_fence(singleton,owner_json,state) VALUES(1,?,'held')
-      ON CONFLICT(singleton) DO UPDATE SET owner_json=excluded.owner_json,state='held'`)
-      .run(JSON.stringify({ ...owner, reservationToken: token }));
-    database.exec("COMMIT");
-    return token;
-  });
+  const { reservationToken } = reserveFenceRow(store, roundId, inputs, false);
   if (reservationToken === undefined) return undefined;
   try {
     // Inventory after reserving: a new checkout cannot enter Run admission in the inspection window.
@@ -96,17 +70,98 @@ export async function reserveWorkflowRepositoryFence(store: RunStore, roundId: s
   return reservationToken;
 }
 
+/** Only this writer transaction may freeze a recoverable reservation, including across awaits. */
+export async function withWorkflowRepositoryFence<T>(store: RunStore, roundId: string,
+  inputs: WorkflowIntegrationRoundInputsV1, freeze: () => Promise<T>): Promise<T> {
+  const { owner, reservationToken } = reserveFenceRow(store, roundId, inputs, true);
+  const isolation = createSqliteWorkflowIsolationStore(store), database = openDatabase(owner.commonDir, false);
+  try {
+    let current: RepositoryFence;
+    try {
+      beginRepositoryWriter(database);
+      const held = readFence(database, owner.commonDir);
+      // COMMIT/re-BEGIN is synchronous, but another process can still win between them.
+      if (held?.state !== "held" || !isDeepStrictEqual(held.owner, owner)
+        || reservationToken !== undefined && held.reservationToken !== reservationToken) throw busy();
+      current = held;
+    } catch (error) { throw error instanceof HttpError ? error : unknown(error); }
+    try {
+      if (!isolation.getIntegrationRound(roundId, 1)) {
+        await verifyWorkflowRepositoryCheckouts(store, inputs,
+          (await workflowGit(inputs.canonicalWorkspaceRoot, ["worktree", "list", "--porcelain", "-z"])).stdout);
+      }
+      const result = await freeze();
+      const round = isolation.getIntegrationRound(roundId, 1);
+      if (!round || workflowIntegrationRoundInputsDigest(round.inputs) !== owner.inputsDigest) throw unknown();
+      try { database.exec("COMMIT"); } catch (error) { throw unknown(error); }
+      return result;
+    } catch (error) {
+      // A committed Core round keeps the durable marker even if the sidecar COMMIT failed.
+      // Otherwise only this transaction's exact token may compensate its unused reservation.
+      if (reservationToken !== undefined && !isolation.getIntegrationRound(roundId, 1)) {
+        try {
+          database.prepare("UPDATE repository_fence SET state='released' WHERE singleton=1 AND state='held' AND owner_json=?")
+            .run(current.ownerJson);
+          database.exec("COMMIT");
+        } catch (cause) { throw unknown(cause); }
+      }
+      throw error;
+    }
+  } finally { database.close(); }
+}
+
+function reserveFenceRow(store: RunStore, roundId: string, inputs: WorkflowIntegrationRoundInputsV1,
+  recoverable: boolean): { readonly owner: RepositoryFenceOwner; readonly reservationToken: string | undefined } {
+  const owner = ownerFor(store, roundId, 1, inputs), path = join(owner.commonDir, filename);
+  const identity = storeIdentity(store), isolation = createSqliteWorkflowIsolationStore(store);
+  ensureDatabaseFile(path);
+  const reservationToken = withDatabase(owner.commonDir, false, database => {
+    beginRepositoryWriter(database);
+    initializeIfEmpty(database);
+    const prior = readFence(database, owner.commonDir);
+    if (prior?.state === "held" && !isDeepStrictEqual(prior.owner, owner)) throw busy();
+    const round = isolation.getIntegrationRound(roundId, 1);
+    if (round && workflowIntegrationRoundInputsDigest(round.inputs) !== owner.inputsDigest) throw unknown();
+    registerStore(database, identity);
+    // A different Store may have passed admission before this reservation. Its history is
+    // deliberately not reclaimed by PID, TTL or a momentary absence of resource rows.
+    if (readStores(database).some(value => !isDeepStrictEqual(value, identity))) throw new HttpError(409,
+      "workflow_repository_stores_unsupported", "This isolated parallel profile requires one canonical Host database per repository.");
+    // Legacy token-only callers cannot prove that a no-round planner has stopped.
+    // Marked planners can only freeze while holding this same SQLite writer lock.
+    if (prior?.state === "held") {
+      if (round) {
+        database.exec("COMMIT");
+        return undefined;
+      }
+      if (!recoverable || prior.reservationProtocol !== planningReservationProtocol || !prior.reservationToken) throw busy();
+    }
+    const token = randomUUID();
+    database.prepare(`INSERT INTO repository_fence(singleton,owner_json,state) VALUES(1,?,'held')
+      ON CONFLICT(singleton) DO UPDATE SET owner_json=excluded.owner_json,state='held'`)
+      .run(JSON.stringify({ ...owner, reservationToken: token,
+        ...(recoverable ? { reservationProtocol: planningReservationProtocol } : {}) }));
+    // Persist before Core freeze: rollback after a later Core commit must not open Run admission.
+    database.exec("COMMIT");
+    return token;
+  });
+  return { owner, reservationToken };
+}
+
 /** Core is the release authority. Unknown rounds/effects stay held, including after a crash. */
 export function releaseWorkflowRepositoryFence(store: RunStore, roundId: string, generation: number,
   inputs: WorkflowIntegrationRoundInputsV1, now = new Date().toISOString(), reservationToken?: string): void {
   if (!present(join(inputs.repositoryIdentity.commonDir, filename))) return;
-  const isolation = createSqliteWorkflowIsolationStore(store), round = isolation.getIntegrationRound(roundId, generation);
-  if (!round && reservationToken === undefined) return;
-  if (round && isolation.reconcileParallelParentFence({ roundId, generation, now }).status !== "released") return;
+  const isolation = createSqliteWorkflowIsolationStore(store);
   const owner = ownerFor(store, roundId, generation, inputs);
   withDatabase(owner.commonDir, false, database => {
-    database.exec("BEGIN IMMEDIATE");
+    beginRepositoryWriter(database);
     const current = readFence(database, owner.commonDir);
+    // Read Core only after excluding a concurrent planner's freeze/commit.
+    const round = isolation.getIntegrationRound(roundId, generation);
+    // Marked no-round reservations are recoverable by a new writer, never by detached token cleanup.
+    if (!round && (reservationToken === undefined || current?.reservationProtocol !== undefined)
+      || round && isolation.reconcileParallelParentFence({ roundId, generation, now }).status !== "released") return;
     if (current?.state === "held" && isDeepStrictEqual(current.owner, owner)
       && (reservationToken === undefined || current.reservationToken === reservationToken)) {
       database.prepare("UPDATE repository_fence SET state='released' WHERE singleton=1 AND state='held' AND owner_json=?")
@@ -126,7 +181,7 @@ export function assertWorkflowRepositoryRunAllowed(store: RunStore, request: {
   for (const commonDir of commonDirs) {
     ensureDatabaseFile(join(commonDir, filename));
     withDatabase(commonDir, false, database => {
-      database.exec("BEGIN IMMEDIATE");
+      beginRepositoryWriter(database);
       initializeIfEmpty(database);
       const fence = readFence(database, commonDir);
       if (fence?.state === "held") {
@@ -200,16 +255,35 @@ function registerStore(database: DatabaseSync, identity: RepositoryStore): void 
 function withDatabase<T>(commonDir: string, readOnly: boolean, operation: (database: DatabaseSync) => T): T {
   let database: DatabaseSync | undefined;
   try {
-    const path = join(commonDir, filename), identity = lstatSync(path);
-    if (!identity.isFile() || identity.isSymbolicLink() || identity.nlink !== 1 || realpathSync.native(path) !== path) throw unknown();
-    database = new DatabaseSync(path, { readOnly });
-    database.exec("PRAGMA busy_timeout=0");
-    if (!readOnly) database.exec("PRAGMA synchronous=FULL");
+    database = openDatabase(commonDir, readOnly);
     return operation(database);
   } catch (error) {
     if (error instanceof HttpError) throw error;
     throw unknown(error);
   } finally { database?.close(); }
+}
+
+function openDatabase(commonDir: string, readOnly: boolean): DatabaseSync {
+  let database: DatabaseSync | undefined;
+  try {
+    const path = join(commonDir, filename), identity = lstatSync(path);
+    if (!identity.isFile() || identity.isSymbolicLink() || identity.nlink !== 1 || realpathSync.native(path) !== path) throw unknown();
+    database = new DatabaseSync(path, { readOnly });
+    database.exec("PRAGMA busy_timeout=0");
+    if (!readOnly) database.exec("PRAGMA synchronous=FULL");
+    return database;
+  } catch (error) {
+    database?.close();
+    throw error instanceof HttpError ? error : unknown(error);
+  }
+}
+
+function beginRepositoryWriter(database: DatabaseSync): void {
+  try { database.exec("BEGIN IMMEDIATE"); }
+  catch (error) {
+    if (error && typeof error === "object" && "errcode" in error && [5, 6].includes(Number(error.errcode))) throw busy();
+    throw unknown(error);
+  }
 }
 
 function readFence(database: DatabaseSync, commonDir: string): RepositoryFence | undefined {
@@ -224,11 +298,13 @@ function readFence(database: DatabaseSync, commonDir: string): RepositoryFence |
     || typeof value.databasePath !== "string" || !isAbsolute(value.databasePath) || typeof value.roundId !== "string"
     || !value.roundId || !Number.isSafeInteger(value.generation) || Number(value.generation) < 1
     || typeof value.inputsDigest !== "string" || !value.inputsDigest || !["held", "released"].includes(String(row.state))) throw unknown();
-  const { reservationToken, ...owner } = value;
+  const { reservationToken, reservationProtocol, ...owner } = value;
   if (reservationToken !== undefined && (typeof reservationToken !== "string"
     || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(reservationToken))) throw unknown();
+  if (reservationProtocol !== undefined && reservationProtocol !== planningReservationProtocol) throw unknown();
   return { owner: owner as unknown as RepositoryFenceOwner, ownerJson: String(row.owner_json),
-    reservationToken: reservationToken as string | undefined, state: row.state as RepositoryFence["state"] };
+    reservationToken: reservationToken as string | undefined, reservationProtocol: reservationProtocol as RepositoryFence["reservationProtocol"],
+    state: row.state as RepositoryFence["state"] };
 }
 
 /** Read Git's gitfile/commondir indirection without adding a synchronous process producer. */

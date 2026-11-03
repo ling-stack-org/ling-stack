@@ -212,17 +212,29 @@ const workerSource = `
 import childProcess from "node:child_process";
 import { readFileSync } from "node:fs";
 import { registerHooks, stripTypeScriptTypes, syncBuiltinESMExports } from "node:module";
+import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 const input = JSON.parse(process.argv[1]);
 if (input.source) (${installSourceHooks.toString()})(input.sourceModules);
+const originalExec = DatabaseSync.prototype.exec;
+let reservationCommitted = false;
+DatabaseSync.prototype.exec = function (sql) {
+  const file = this.prepare("PRAGMA database_list").get().file;
+  const result = originalExec.call(this, sql);
+  if (file === input.fencePath && sql === "COMMIT") reservationCommitted = true;
+  return result;
+};
 const actual = childProcess.execFile;
-let inventoryCalls = 0;
+let inventoryCalls = 0, paused = false;
 function execFile(...args) {
   const callback = args.pop();
   return actual(...args, (error, stdout, stderr) => {
-    if (!args[1].includes("worktree") || !args[1].includes("--porcelain")) return callback(error, stdout, stderr);
+    if (!args[1].includes("worktree") || !args[1].includes("--porcelain") || !reservationCommitted) {
+      return callback(error, stdout, stderr);
+    }
     inventoryCalls++;
-    if (!input.barrier) return callback(error, stdout, stderr);
+    if (!input.barrier || paused) return callback(error, stdout, stderr);
+    paused = true;
     process.once("message", action => callback(action.fail ? Object.assign(new Error("inventory barrier failed"),
       { code: "fixture_inventory_failed" }) : error, stdout, stderr));
     process.send({ type: "inventory", stdout: stdout.toString("utf8"), inventoryCalls });
@@ -258,6 +270,7 @@ function fenceWorker(t, f, options) {
   const { store: _, ...planInput } = f.input;
   const child = spawn(process.execPath, ["--input-type=module", "--eval", workerSource, JSON.stringify({
     cwd: f.cwd, paths: f.paths, roundId: f.input.roundId, planInput,
+    fencePath: join(f.cwd, ".git", "ling-workflow-repository-fence.sqlite"),
     core: import.meta.resolve("@ling-stack/core"), fence: new URL("features/workspaces/workflow-repository-fence.js", dist).href,
     planner: new URL("features/channels/workflow-isolation-planning.js", dist).href,
     source: !!process.env.LING_WORKFLOW_FENCE_TEST_SOURCE, sourceModules, ...options,
@@ -440,19 +453,22 @@ test("a same-path replacement cannot adopt a retired checkout's creation receipt
 test("first BEGIN SQLITE_BUSY leaves an empty sidecar that the next ordinary Run initializes", native, async t => {
   const f = await fixture(t), input = f.ordinary(), path = join(f.cwd, ".git", "ling-workflow-repository-fence.sqlite");
   const original = DatabaseSync.prototype.exec;
-  let blocker, intercepted = false;
+  let blocker, sqliteError, intercepted = false;
   const patch = t.mock.method(DatabaseSync.prototype, "exec", function(sql) {
     if (sql === "BEGIN IMMEDIATE" && !intercepted) {
       intercepted = true;
       blocker = new DatabaseSync(path);
       original.call(blocker, "BEGIN IMMEDIATE");
     }
-    return original.call(this, sql);
+    try { return original.call(this, sql); }
+    catch (error) { sqliteError = error; throw error; }
   });
   try {
-    assert.throws(() => prepareRunConcurrency(input), error => error.code === "workflow_repository_fence_unknown"
-      && error.cause?.code === "ERR_SQLITE_ERROR" && error.cause.errcode === 5);
+    assert.throws(() => prepareRunConcurrency(input), { code: "workflow_repository_busy", statusCode: 409 });
     assert.equal(intercepted, true);
+    assert.equal(sqliteError?.code, "ERR_SQLITE_ERROR");
+    assert.equal(sqliteError.errcode, 5);
+    assert.equal(f.store.listResourceLeases({ status: "active" }).length, 0);
   } finally { patch.mock.restore(); if (blocker) { blocker.exec("ROLLBACK"); blocker.close(); } }
   const empty = new DatabaseSync(path);
   try {
@@ -529,6 +545,8 @@ test("a rejected concurrent planner cannot compensate another process's pending 
   const f = await fixture(t), first = fenceWorker(t, f, { action: "plan", barrier: true });
   assert.equal((await first.next()).type, "inventory");
   const held = fenceSnapshot(f);
+  assert.equal(held.fence.state, "held");
+  assert.equal(createSqliteWorkflowIsolationStore(f.store).getIntegrationRound(f.input.roundId), undefined);
   const duplicate = fenceWorker(t, f, { action: "plan", barrier: true });
   assert.equal((await duplicate.next()).code, "workflow_repository_busy");
   await duplicate.done();

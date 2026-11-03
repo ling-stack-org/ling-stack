@@ -11,10 +11,10 @@ import {
 import { HttpError } from "../../errors.js";
 import { createWorkflowSafetyAdmission, createWorkflowSafetyPlan, workflowSafetySnapshot } from "../runs/workflow-safety.js";
 import { assertChannelWorkspaceReady } from "./workspace.js";
-import { assertWorkflowRepositoryRunAllowed, releaseWorkflowRepositoryFence, reserveWorkflowRepositoryFence }
+import { assertWorkflowRepositoryRunAllowed, withWorkflowRepositoryFence }
   from "../workspaces/workflow-repository-fence.js";
 import {
-  inspectWorkflowGitRepository, planWorkflowGitWorktree, workflowGitRepositoryBasisDigest,
+  assertWorkflowGitWorktreeBudget, inspectWorkflowGitRepository, planWorkflowGitWorktree, workflowGitRepositoryBasisDigest,
   type WorkflowGitWorktreeScope,
 } from "../workspaces/workflow-git-repository.js";
 
@@ -75,6 +75,8 @@ export async function planWorkflowIsolatedRound(input: PlanWorkflowIsolatedRound
   }
   const hostStateRoot = store.paths.stateLocation === "repo-local" ? store.paths.rootDir : undefined;
   const repository = await inspectWorkflowGitRepository(store.paths.cwd, { hostStateRoot });
+  // Writing scopes survive until round completion, so budget every participant plus integration, not just concurrent slots.
+  await assertWorkflowGitWorktreeBudget(repository.root, steps.length + 1);
   const worktreeRoot = input.worktreeRoot ?? resolveStoragePaths(store.paths.cwd, { workspaceStateLocation: "user-data-dir" }).workspace.worktreesDir;
   if (!input.worktreeRoot) await mkdir(worktreeRoot, { recursive: true, mode: 0o700 });
   if (await realpath(worktreeRoot) !== worktreeRoot) blocked("The Host worktree root must be canonical.");
@@ -135,20 +137,16 @@ export async function planWorkflowIsolatedRound(input: PlanWorkflowIsolatedRound
     return { ...fields, planDigest: workflowIsolationScopePlanDigest(fields) };
   });
   const now = input.now ?? new Date().toISOString(), isolation = createSqliteWorkflowIsolationStore(store);
-  let repositoryReservation: string | undefined;
-  if (parallelExecution) repositoryReservation = await reserveWorkflowRepositoryFence(store, input.roundId, inputs);
-  else assertWorkflowRepositoryRunAllowed(store, { cwd: repository.root });
-  try {
+  const freeze = async () => {
+    await assertWorkflowGitWorktreeBudget(repository.root, steps.length + 1);
     assertUnchanged();
     return accepted(isolation.freezePlan({ roundId: input.roundId, inputs, plans,
       safetyPlans: prepared.map(({ step }) => step.metadata.safetyPlan!),
       expectedWorkflow: workflow, expectedChannel: channel, expectedSteps: allSteps, now }));
-  } catch (error) {
-    // No Core round means no member could have acquired execution authority.
-    if (repositoryReservation !== undefined && !isolation.getIntegrationRound(input.roundId))
-      releaseWorkflowRepositoryFence(store, input.roundId, 1, inputs, now, repositoryReservation);
-    throw error;
-  }
+  };
+  if (parallelExecution) return withWorkflowRepositoryFence(store, input.roundId, inputs, freeze);
+  assertWorkflowRepositoryRunAllowed(store, { cwd: repository.root });
+  return freeze();
 }
 
 /** Rebuild only the preallocated scope; this is not creation or authority to run. */

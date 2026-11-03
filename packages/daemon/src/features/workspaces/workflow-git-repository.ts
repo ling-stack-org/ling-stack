@@ -53,6 +53,7 @@ export function workflowGitRepositoryBasisDigest(repository: WorkflowGitReposito
 
 const oid = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const identifier = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
+const maxRegisteredWorktrees = 16;
 const lockName = "ling-workflow-git.lock";
 const repositoryOperations = new Map<string, Promise<void>>();
 const ongoing = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD", "rebase-apply", "rebase-merge", "sequencer", "BISECT_START"];
@@ -145,6 +146,14 @@ export function safeWorkflowGitPath(path: string): boolean {
       && !/^\.git(?:$|[ .])/iu.test(part) && part === part.trimEnd());
 }
 
+/** Count every Git registration, including the target and foreign checkouts. This is not a reservation. */
+export async function assertWorkflowGitWorktreeBudget(root: string, additionalWorktrees: number): Promise<void> {
+  const registered = decode((await workflowGit(root, ["worktree", "list", "--porcelain", "-z"])).stdout);
+  const count = registered.split("\0").filter(value => value.startsWith("worktree ")).length;
+  requireGit(Number.isSafeInteger(additionalWorktrees) && additionalWorktrees > 0
+    && count + additionalWorktrees <= maxRegisteredWorktrees, "workflow_git_worktree_budget_exceeded");
+}
+
 /** Preallocate this identity before approval. No directory/ref mutation occurs. */
 export async function planWorkflowGitWorktree(input: {
   readonly repository: WorkflowGitRepository;
@@ -218,9 +227,7 @@ export async function createWorkflowGitWorktree(scope: WorkflowGitWorktreeScope,
     requireGit(sameRepository(scope.repository, current), "workflow_git_repository_basis_changed");
     requireGit(!await present(scope.executionRoot) && !await workflowGitRefExists(scope.repository.root, scope.branchRef),
       "workflow_git_worktree_identity_exists");
-    const registered = decode((await workflowGit(scope.repository.root, ["worktree", "list", "--porcelain", "-z"])).stdout);
-    requireGit(registered.split("\0").filter(value => value.startsWith("worktree ")).length < 16,
-      "workflow_git_worktree_budget_exceeded");
+    await assertWorkflowGitWorktreeBudget(scope.repository.root, 1);
     const disk = await statfs(scope.worktreeRoot, { bigint: true });
     requireGit(disk.bavail * disk.bsize >= 64n * 1024n * 1024n, "workflow_git_disk_budget_exceeded");
     // The caller rechecks its persisted intent/fence in the physical launch stack.
