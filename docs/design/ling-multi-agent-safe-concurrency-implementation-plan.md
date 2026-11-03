@@ -1,6 +1,8 @@
 # Ling 多 Agent 安全并发实施计划
 
-状态：P1/P2 协议与执行路径已接入本地代码；P3 联合验收与缺口收口进行中，P4/P5 未开始。
+状态：P1/P2 执行路径、P3 本地联合可靠性、P4 模板创作和 P5 graph 均已有本地实现；
+构建、相关回归与受控 Provider 的真实 daemon 浏览器链路已验证。完整 Daemon 回归、
+真实 Provider、packaged、跨平台与 review/CI/merge 尚未全部通过，不满足发布门禁。
 Owner：Ling maintainers。
 最后核对：2026-11-03。
 文档类型：implementation plan；完成后将长期规则归入 owning contracts，不保留完成日志。
@@ -35,9 +37,9 @@ requirement shaping 产品扩展、自动远端 merge/push/deploy、跨 worktree
 | P0 | DONE：总体设计、详细协议、实施计划与索引已对齐，文档检查通过 | 统一产品边界、协议、代码责任与验收入口，不代表功能完成 |
 | P1 | 本地实现与回归完成，review/CI/merge 和平台验收未完成 | 安全类别贯穿全路径，Host 实际约束生效，原子准入与回归通过 |
 | P2 | 本地代码已接入并进入组合验收，尚未声明可发布；普通 workflow 写并发仍关闭 | 隔离写入、封存结果、确定性集成、审批应用和故障恢复协议可运行 |
-| P3 | 进行中：真实 Git/SQLite、Pi SDK/Host 双分支与客户端状态组合验收；真实 Provider、packaged 和跨平台门禁未完成 | 目标组合的联合与真实客户端验收通过，才允许选定 workflow 开启写并发 |
-| P4 | 待实现 | registry 版本冻结、校验、authoring 与真实保存/编译流程通过 |
-| P5 | 待实现 | 同一工作对象内 graph/list 一致、可访问、真实状态可靠 |
+| P3 | 本地 Git/SQLite、Pi SDK/Host 与生产 Web 构建上的取消/重启、SSE/reload、审批/apply 链路通过；真实 Provider、packaged、跨平台与完整回归门禁未完成 | 目标组合的联合与真实客户端验收通过，才允许选定 workflow 开启写并发 |
+| P4 | registry、编译冻结、HTTP/API-client 与 authoring UI 已接入；保存/发布/预览、CAS 冲突与 exact pin 显式创建已通过本地浏览器验收 | registry 版本冻结、校验、authoring 与真实保存/编译流程通过 |
+| P5 | 共享 read model、同 turn graph/list、选择与断连状态已接入；桌面键盘、390px 列表回退、reduced motion 和 reload/SSE 检查通过 | 同一工作对象内 graph/list 一致、可访问、真实状态可靠 |
 
 P2 当前边界：
 
@@ -104,13 +106,40 @@ Web 本地构建产物已用 Playwright 和受控 HTTP fixture 检查：1440x960
 candidate-only、待审批、已批准未应用、已应用、冲突、结果待确认和取消，均保留两个参与
 分支；重新打开同一会话后不会将未应用结果标为 applied。390x844 下检查取消与未知结果、
 参与者展开及候选 hash 换行，document/feed/证据行均无横向溢出。本地截图位于
-`output/playwright/concurrency-*.png`；这不是真实 daemon/Provider 的浏览器端到端验收，
-也未完成完整客户端重启、SSE 断连与 packaged 门禁。
+`output/playwright/concurrency-*.png`；这些受控 HTTP 快照本身不是真实 daemon/Provider
+端到端证据。后续真实 daemon 浏览器链路见下文；packaged 门禁仍未完成。
 
-P3 仍缺 policy/source-turn 撤权贯穿原 Host drain、新 round 启动后旧 generation 重入的
-联合验收，以及真实 Provider、真实 daemon 的浏览器端到端、完整客户端重启/SSE 和
-packaged/跨平台门禁。此前全量 Core/Daemon 的 migration fixture 编号与旧 Core 构建产物
-相关失败已修复并定向复验，但未重新运行两个全量套件，不能标记全量通过。
+P3 已补齐 policy/source-turn 撤权贯穿原 Host drain、新 round 启动后旧 generation 重入、
+terminal generation 的原始停止/coverage/audit 核验，以及历史 retained checkout 的只读
+身份核验。取消不会把物理停止证据变成结果封存或重试权限；未确认 intent 不会被重放。
+Pi SDK 的 schema/gate 拒绝只有在冻结 Host-only profile 且真实 producer 从未进入时，才可
+被证明为未派发；实际 effect 仍必须有 Core receipt。活跃 workflow 控件不会被已有证据隐藏。
+
+2026-11-03 最新本地证据：Core 全量与 Web 全量通过；Contracts/API-client/共享 UI model、
+registry/migration、编译/HTTP/safety、P3 terminal/SDK drain 等相关回归通过，Daemon 和
+Web 构建及 Web lint 通过。Daemon 整套运行未全绿：旧 mock 未提供新安全读取接口及编译
+错误码预期已修复并定向验证；media/ComfyUI job timeout 的独立场景通过，但没有修复后
+固定构建的整套通过记录，不把独立通过替代完整回归。
+
+`apps/web/e2e/workflow-isolation-live.spec.ts` 在生产 Web 构建上走真实 daemon HTTP/SSE，
+两条场景通过：双分支运行期间断网/重连/reload，取消立即撤权但原 Host/slots 保留到实际
+drain，同一数据库重启后不重复 Run；另一条由界面逐次批准写入、等待候选验证、打开
+merge approval、批准后实际 fast-forward，验证 target 内容、source turn、TerminalReport
+并 reload。fixture 使用真实 Pi SDK/Host/Git/SQLite，仅 Provider 回答由本地受控传输生成，
+且内部预先冻结 `apply_to_target`；不代表公共 selected profile 开放自动合并或真实模型验收。
+
+该联调暴露并修复了原始 Run terminal 事件早于 integration/approval 完成的问题：Host 隔离
+operation 真正结束并移出 pending 后，daemon 持久追加并发布 `channel_workflow.isolation_settled`，
+复用现有 runs invalidation 刷新协议与审批。duplicate single-flight 不重复通知；嵌套任务、
+异常结果与通知失败不伪造 drain 或 effect-confirmed。前端只在整批协议刷新成功后恢复
+observation-ready；失败保留重连，而不是延长轮询或在测试中手动刷新掩盖缺失通知。
+
+P5 审查发现并修复了大图先截断后排序造成的节点/选择漂移，以及节点键盘名称缺少真实
+状态的问题。新增回归在修复前均失败；修复后 graph 定向 13 项、共享 UI model 全量 205 项、
+Web 全量 1207 项通过，最终 Web 构建与 lint 通过。生产构建浏览器也核验了 Tab 到 QA 节点后
+焦点、可访问名称与详情选择一致。此检查不替代 packaged 或跨平台可访问性验收。
+
+真实 Provider、packaged 和跨平台门禁尚未完成；普通 workflow 写并发继续关闭。
 
 P1/P2 中各模块的故障测试随实现提交，不能把基本正确性留到 P3 才补。
 P3 是端到端组合验收与缺口收口，不是第一次考虑取消、重启和审批。
@@ -144,6 +173,9 @@ deterministic evaluation 和 evaluation worker 也已有主线实现，不能因
 尚未迁移，就把通用 grading 误列为本轮缺失的执行底座。
 
 ## 4. 分支与小 PR 策略
+
+当前本地实现位于 `codex/ling-multi-agent-safe-concurrency`，按下述责任边界分批提交；
+尚未 push、创建 PR 或合并。以下是后续审查/交付拆分，不代表已有这些 PR。
 
 P0 使用独立 `codex/ling-multi-agent-concurrency-plan` 分支。
 P1 开工时更新远端，确认 P0 文档可作为基线，再从最新 `origin/main` 开实现分支。
@@ -298,6 +330,15 @@ retry 保留 pins、旧 inline custom 兼容。保存模板不会启动执行，
 UI 覆盖草稿、校验错误、未保存、冲突版本、权限不足和归档状态，真实浏览器跑完整
 保存 -> 预览 -> 用户确认启动 -> 观察结果。未通过 P3 的执行能力不因模板 UI 出现而开启。
 
+当前实现：`workflow-template-registry.ts` 提供有界纯 JSON/DAG/safety 校验；Core 专用
+registry store 与 migration 保存不可变版本、CAS revision、review status 和历史 pin。
+daemon `/workflow-templates`、版本读取、review 与 preview 路由复用本机 workspace trust
+gate；版本来源与可见性由服务端拥有。编译冻结 objective、prompt、policy/gates、依赖、
+参与者、skill 实际源、Provider 和 effective Runner；准入与实际 effect 再检查撤权，Runner
+不可静默 fallback。preview 不创建 workflow/Task/Run/approval；创建请求只保存 workflow，
+不自动 orchestrate。Web 在现有 Skill Library 内编辑、导入导出、处理 dirty/CAS 冲突、发布
+并预览，只有当前 clean published exact pin 的预览才允许显式创建。
+
 ## 9. P5：Workflow Graph
 
 从现有 workflow evidence/progress 建立共享 read model，再把 graph 放入同一 turn 的
@@ -309,6 +350,12 @@ UI 覆盖草稿、校验错误、未保存、冲突版本、权限不足和归�
 收敛、长标题、大图有界布局、键盘/屏幕阅读器、窄屏与 reduced motion。
 graph 不能创建节点或执行 effect；列表回退始终可用。视觉验收用实际浏览器和截图，
 不能仅凭组件快照或构建通过。
+
+当前实现：`packages/conversation-ui-core/src/workflow-graph-*` 投影 accepted step 及真实
+依赖、branch/join、审批与有界 dynamic overlay；缺依赖、cycle、duplicate 或观察断连显示
+unknown，而不是伪造成功。Web 同 turn 展开区复用现有协议操作，graph/list 共享 step id
+和选择；`@xyflow/react` 按需加载，窄屏保留列表，断线后需 control-plane baseline 完成才
+恢复 current 状态。graph 只读，不新增执行 API。
 
 ## 10. 验证命令与证据分级
 
@@ -329,6 +376,7 @@ corepack pnpm --filter @ling-stack/daemon build
 corepack pnpm --filter @ling-stack/daemon exec node --test --test-concurrency=1 test/workflow-start-lifecycle.test.mjs test/workflow-operation-effect-gate.test.mjs
 corepack pnpm --filter @ling-stack/web test
 corepack pnpm --filter @ling-stack/web build
+LING_PLAYWRIGHT_PORT=4190 LING_PLAYWRIGHT_PREVIEW=1 corepack pnpm --filter @ling-stack/web exec playwright test e2e/workflow-isolation-live.spec.ts
 corepack pnpm check:docs
 ```
 
@@ -355,6 +403,7 @@ shadow 只生成调度决定与诊断，不启动额外 Run/模型/工具/Git ef
 不再把功能 WIP 与已合并 PR 混为一谈。提交只含当前责任文件；未完成现场保留明确
 branch/owner，不跨数个大阶段堆积一个不可审查的 dirty worktree。
 
-下一步收口 P3 的双分支联合故障矩阵、repository fence 竞争与客户端恢复验收，再完成目标
-Provider/Runner 和 packaged 平台门禁。P4 registry/authoring 与 P5 graph 仍未开始，不能因
-局部 fixture、静态检查或构建通过而提前宣称完成；CI/merge 也与本地验证分开记录。
+本轮按 P3 可靠性、P4 registry/API、P4 UI、P5 projection/UI 和真实浏览器联合验收的边界
+分批本地提交，不 push、不创建 PR 或合并。后续交付门禁仍包括：固定构建的完整 Daemon
+回归、目标真实 Provider/Runner、packaged/平台验收及 review/CI/merge；不能把本地可运行
+实现或受控 Provider 验收报成整体可发布。各门禁通过前保持普通写并发关闭。

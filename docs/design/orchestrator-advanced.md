@@ -2,12 +2,12 @@
 
 Status: reference contract with active safe-concurrency follow-up
 Owner: Ling maintainers
-Last verified: 2026-11-02 (static source review)
+Last verified: 2026-11-03 (source and local production-build live acceptance; release gates remain open)
 Code anchors: daemon workflow compiler, smart scheduler and orchestrator listed below
 
 ## Purpose
 
-This document defines the next orchestrator slices after the implemented serial
+This document defines advanced orchestrator slices built on the implemented serial
 `autoplan-lite` engine.
 
 Current source boundary:
@@ -19,7 +19,7 @@ Current source boundary:
 - downstream steps start on explicit orchestrator ticks.
 
 Basic smart branch scheduling and inline custom-template compilation already exist.
-The remaining delivery order is:
+The delivery stages are:
 
 1. explicit side-effect classes, Host enforcement and safe parallel admission;
 2. step-level isolated worktree execution and merge;
@@ -36,16 +36,16 @@ and [implementation plan](ling-multi-agent-safe-concurrency-implementation-plan.
 
 ## Implementation Status
 
-Implemented in the current future-hardening slice:
+Implemented locally in the current branch, not a release-acceptance claim:
 
 - workflow step metadata persists and round-trips `branchGroupId`, `joinGroupId`,
   `dependencyMode`, `maxParallelSiblings`, and `templateVersion`;
 - the orchestrator tick uses smart scheduling to start multiple eligible read-only steps
-  when step metadata opts in with `maxParallelSiblings > 1` and channel
-  `maxConcurrentRuns` has budget;
-- default smart scheduling still falls back to a single started step per tick when the
-  budget is one, tools are unknown, approvals are pending, or any eligible step is
-  side-effectful;
+  when explicit safety/parallel policy and `maxParallelSiblings > 1` opt in, the
+  actual Host capability is verified, and channel/resource/provider/runner budgets allow;
+- smart scheduling stays serial when the budget is one, tools or Host safety are
+  unverified, or an eligible effect lacks a verified isolated-round binding;
+  approval/dependency/resource gates still control each candidate;
 - `dependencyMode` supports `all_succeeded`, `all_terminal`, and `any_succeeded`;
 - dependency output refs include `branchGroupId` for downstream context packets;
 - orchestration responses can return `startedSteps` and `waitingApprovals` for UI/audit.
@@ -57,18 +57,41 @@ Implemented in the current future-hardening slice:
 - compiled custom template steps persist `workflowTemplateId`, `templateVersion`,
   `templateStepId`, dependency metadata, branch/join metadata, provider/runner
   metadata, step policy, gates, and explicit `autoStart` settings.
+- P1 side-effect metadata, Host-enforced safety snapshots and atomic parallel admission
+  are connected through the scheduler and normal Run/effect paths;
+- P2 isolated execution, sealed branch results, deterministic integration, single-use
+  approved target apply and owned-worktree cleanup are connected. Public selection stays
+  off by default, macOS/Pi Host/enforced Tool Broker only, with fixed concurrency two and
+  `candidate_only`; ordinary workflow write parallelism remains closed;
+- P4 versioned registry lookup, frozen compilation and existing Skill Library authoring
+  UI are locally committed. Saving or previewing a template does not start execution;
+- P5 shared graph read model and same-turn graph/list UI are implemented locally.
+  The graph is read-only and adds no execution authority.
 
-Still future:
+Local acceptance and remaining gates:
 
-- side-effect class and grouped parallel policy metadata on every built-in and custom
-  workflow step, bound to actual Host-enforced capability;
-- isolated worktree merge protocol for safe parallel `workspace_write` branches;
-- combined parallel restart/cancel/conflict/approval acceptance;
-- stored `customTemplateId` registry lookup and authoring UI for custom templates;
-- graph visualization of branch groups and fan-in.
+- P1-P5 all have local implementation and controlled browser/fixture acceptance coverage.
+  Focused daemon regressions, shared UI model and Web tests, builds and Web lint pass;
+- recorded local regression covers real Git/SQLite and macOS real Pi SDK/Host with a
+  credential-free scripted loopback Provider. Production-build live
+  browser E2E passed both local daemon/HTTP/SSE scenarios: cancel/offline reconnect/reload/
+  Host drain/same-scenario restart, and merge-approval UI/apply/TerminalReport/reload;
+- the pending-approval refresh failure is fixed locally: after the original Host callback
+  leaves the pending set, [isolation settlement](../../packages/daemon/src/features/channels/workflow-isolation-lifecycle.ts)
+  triggers a durable, published `channel_workflow.isolation_settled` event in the `runs`
+  domain. Notification is observation invalidation, not proof of a successful effect;
+- the last complete daemon suite was not green. Stub repairs passed focused regressions
+  and the ComfyUI timeout case passed separately; there is no post-repair whole-suite pass;
+- P5 graph projection now filters and sorts before truncation, preserving the bounded node
+  set and selection across refresh order changes. Keyboard names reuse the projected status;
+  regression, real browser keyboard selection, narrow-list fallback and reduced-motion
+  checks pass locally. Current-source complete Daemon regression, real-model Provider,
+  packaged/cross-platform and review/CI/merge gates remain open. The
+  local controlled-transport pass does not complete P3 release acceptance or open ordinary
+  write parallelism.
 
-Current tool-list inference is not a workflow-level artifact-only enforcement contract.
-Existing branch/list projection is reusable; it is not the final graph view.
+Tool-list inference alone is not an artifact-only enforcement contract. No verified
+artifact-only executor is available, so QA does not gain automatic parallel admission.
 
 ## Non-Goals
 
@@ -167,7 +190,7 @@ the workflow step should remain auditable:
 Dependency independence is necessary but not sufficient for automatic parallel work.
 Every parallel candidate must also declare a side-effect class and parallel policy.
 
-Target metadata:
+Implemented metadata (excerpt):
 
 ```ts
 type WorkflowStepSideEffectClass =
@@ -191,6 +214,7 @@ Default scheduler rule:
 ```text
 autoParallel=true
 + sideEffectClass in analysis_readonly | test_artifact_only
++ verified Host capability for the actual executor
 + no pending approval
 + no resource key conflict
 + runtime and provider budgets available
@@ -199,8 +223,9 @@ autoParallel=true
 
 `workspace_write`, `external_mutation`, and `release` must remain serial by default even
 when dependency graph and runtime budget would allow parallel starts. Isolated merge
-may later admit selected `workspace_write` steps; external mutation and release stay
-serial regardless of local worktree isolation. This is the
+already has a gated path for selected `workspace_write` steps; external mutation and
+release stay serial regardless of local worktree isolation. Artifact-only admission still
+requires a verified executor, not a template declaration. This is the
 required bridge between the existing `maxParallelSiblings` implementation and the safer
 product policy described in
 [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md#step-side-effect-model).
@@ -218,10 +243,12 @@ integration base
   -> approval before applying to the main workspace
 ```
 
-Until that protocol exists, automatic parallel `workspace_write` is a policy violation,
-not a scheduler optimization. The advanced scheduler may reserve metadata fields for
-worktree ids, branch names, merge packets, and verification artifact refs, but it must
-not start multiple writing siblings against the same workspace.
+The protocol is implemented locally in the
+[integration coordinator](../../packages/daemon/src/features/channels/workflow-integration-coordinator.ts)
+and [merge apply path](../../packages/daemon/src/features/channels/workflow-merge-apply.ts).
+It does not open general write parallelism or public target apply. Without a frozen,
+Host-verified isolated-round binding, automatic parallel `workspace_write` remains a
+policy violation; writing siblings must never share the target checkout.
 The [detailed protocol](ling-multi-agent-safe-concurrency-detailed-design.md) defines the
 Host execution binding, no-clobber ownership, immutable base, integration journal,
 explicit first-version merge approval and Git/SQLite crash recovery requirements.
@@ -254,8 +281,14 @@ Workspace workflow cards should show:
 - fan-in/join step indicator;
 - "Advance" action result with multiple started steps.
 
-The first delivery remains list-based. Graph visualization is the final planned stage,
-not a prerequisite for safe scheduling or recovery.
+List projection is implemented. The local P5 graph/list view shares durable step ids,
+selection, branch/join and approval facts through the
+[shared read model](../../packages/conversation-ui-core/src/workflow-graph-model.ts).
+Missing/cyclic/duplicate dependencies and disconnected observations remain unknown/stale;
+narrow views fall back to the list. The graph only reuses existing protocol actions,
+cannot edit accepted nodes/edges, and adds no execution authority or API. Local browser
+keyboard/mobile checks pass; packaged and cross-platform accessibility acceptance remains
+open. Graph rendering is not a scheduling prerequisite.
 
 ### Tests
 
@@ -326,13 +359,17 @@ Validation:
 
 ### Storage
 
-Prefer the existing skill registry as the initial owner:
+Implemented storage reuses skill-library source, visibility and review conventions:
 
-- built-in templates come from skill packs;
-- custom templates are skill-registry entries with `kind = "workflow_template"`;
-- compiled workflow rows store `workflowTemplateId` and `templateVersion`.
+- workflow templates use a [dedicated SQLite registry/version store](../../packages/core/src/storage/sqlite/workflow-template-registry-store.ts), not executable skill entries;
+- saved versions are immutable, with CAS revisions, review state and exact id/version/digest pins;
+- compilation freezes objective, prompts, policy/gates, dependencies, participants and
+  skill/provider/runner references; start and effect gates recheck revocation;
+- the [Skill Library authoring UI](../../apps/web/src/features/settings/WorkflowTemplatesSection.tsx)
+  supports save/publish/preview and explicit workflow creation.
 
-Do not store arbitrary executable code in templates.
+Preview creates no workflow, Task, Run or approval. Creation does not automatically
+orchestrate; `autoStart` defaults to false. Do not store arbitrary executable code in templates.
 
 ### Auto-Start Policy
 
@@ -349,16 +386,16 @@ Auto-start should be explicit and fail closed:
 
 ```text
 POST /channels/:channelId/workflows
-  templateId/customTemplateId
+  templateId | customTemplate | customTemplateId + customTemplateVersion + customTemplateDigest
   objective
   providerPresetId?
   runnerId?
   autoStart?
 
--> validate template
+-> validate template and freeze compilation
 -> create ChannelWorkflow(status=ready)
 -> create ChannelWorkflowStep rows
--> attach deterministic metadata
+-> attach deterministic metadata and version pins
 -> return workflow + steps
 ```
 
@@ -375,7 +412,7 @@ POST /channels/:channelId/workflows
 
 ## Rollout
 
-Items 1-3 below describe landed foundations, not a new delivery queue. Remaining work
+The items below describe local implementation, not release acceptance. Remaining work
 follows the [five-stage implementation plan](ling-multi-agent-safe-concurrency-implementation-plan.md).
 
 1. Add custom template parser and validator with no UI. Status: implemented for inline
@@ -384,8 +421,11 @@ follows the [five-stage implementation plan](ling-multi-agent-safe-concurrency-i
 3. Add parallel scheduling behind smart scheduling. Status: implemented through channel
    `runtimePolicy.schedulingMode: "smart"`, `maxConcurrentRuns`, and compiled
    `maxParallelSiblings` metadata.
-4. Add list UI for branch status.
-5. Add authoring UI only after backend validation and tests are stable.
+4. Add list UI for branch status. Status: implemented.
+5. Add registry and authoring UI. Status: implemented locally; controlled browser save,
+   publish, preview, CAS conflict and explicitly pinned creation pass.
+6. Add graph/list visualization. Status: implemented locally; read-only, with local browser
+   keyboard/mobile/reload checks passed. Packaged and cross-platform acceptance remain open.
 
 ## Exit Criteria
 
