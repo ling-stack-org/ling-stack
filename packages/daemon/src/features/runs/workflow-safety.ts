@@ -22,6 +22,7 @@ import type { RunnerRegistry } from "../../runtime/runners.js";
 import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import type { WorkflowGitWorktreeScope } from "../workspaces/workflow-git-repository.js";
+import { assertWorkflowTemplateCompilationCurrent } from "../channels/workflow-template-compilation.js";
 
 export interface WorkflowSafetySnapshotV1 {
   readonly schemaVersion: 1;
@@ -49,6 +50,7 @@ export function createWorkflowSafetyPlan(input: {
   readonly isolatedScope?: WorkflowGitWorktreeScope;
 }): WorkflowStepSafetyPlanV1 | undefined {
   const { store, step } = input;
+  assertWorkflowTemplateCompilationCurrent(store, step);
   const safety = parseWorkflowStepExecutionSafety(step.metadata);
   if (!safety) return undefined;
   if (safety.sideEffectClass === "test_artifact_only") {
@@ -135,6 +137,12 @@ export function assertWorkflowSafetyRequest(store: RunStore, request: RunRequest
     if (snapshot || request.workflowIsolationPlan) throw mismatch("Safety snapshot has no workflow owner.");
     return undefined;
   }
+  assertWorkflowTemplateCompilationCurrent(store, step);
+  if (step.metadata?.templateCompilationPin && (request.runnerId !== step.metadata.requestedRunnerId
+    || request.teammateId !== step.toParticipantId || request.requestedSkillId !== step.metadata.skillId
+    || step.metadata.providerPresetId !== undefined && request.providerPresetId !== step.metadata.providerPresetId)) {
+    throw mismatch("The Run does not use the frozen template execution references.");
+  }
   const safety = parseWorkflowStepExecutionSafety(step.metadata);
   if (!safety && !snapshot && !step.metadata?.safetyPlan && !request.workflowIsolationPlan && !step.metadata?.isolationScopePlan) return undefined;
   const plan = step.metadata?.safetyPlan;
@@ -156,6 +164,10 @@ export function assertWorkflowSafetyRunner(store: RunStore, request: RunRequest,
   readonly adapter: unknown; readonly runnerId: string; readonly tools?: readonly RunTool[];
 }): WorkflowStepSafetyPlanV1 | undefined {
   const plan = assertWorkflowSafetyRequest(store, request);
+  const step = request.workflowStepId ? store.getChannelWorkflowStep(request.workflowStepId) : undefined;
+  if (step?.metadata?.templateCompilationPin && input.runnerId !== step.metadata.requestedRunnerId) {
+    throw mismatch("The actual Runner differs from the frozen template reference.");
+  }
   if (plan?.runnerId && input.runnerId !== plan.runnerId) throw mismatch("The actual Runner differs from the approved profile.");
   if (plan?.profile !== "pi_host_readonly_v1" && plan?.profile !== "pi_host_isolated_files_v1") return plan;
   if (!(input.adapter instanceof PiRunnerAdapter) || input.runnerId !== "pi"
@@ -188,6 +200,8 @@ export function workflowSafetyEffectRejection(input: {
   const requested = isRecord(input.run.requestSnapshot) ? input.run.requestSnapshot : undefined;
   const stepId = persisted?.workflowStepId ?? input.run.workflowStepId;
   const step = stepId ? input.store.getChannelWorkflowStep(stepId) : undefined;
+  try { if (step) assertWorkflowTemplateCompilationCurrent(input.store, step); }
+  catch (error) { return { status: "blocked", code: "workflow_safety_mismatch", reason: error instanceof Error ? error.message : "The frozen template was revoked." }; }
   if (!raw?.workflowSafetySnapshot && !requested?.workflowSafetySnapshot && !step?.metadata?.sideEffectClass && !step?.metadata?.safetyPlan) return undefined;
   try {
     if (!persisted || !raw || !isDeepStrictEqual(raw.workflowSafetySnapshot, requested?.workflowSafetySnapshot)) throw mismatch("Safety snapshot was removed or changed.");

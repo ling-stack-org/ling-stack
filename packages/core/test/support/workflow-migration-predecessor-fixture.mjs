@@ -35,6 +35,9 @@ const overlays = [
     triggers: ["trg_workflow_parallel_parent_immutable", "trg_workflow_parallel_parent_retained"] },
   { version: 211, name: "workflow_isolation_selections", tables: ["workflow_isolation_selections"], indexes: [],
     triggers: ["trg_workflow_isolation_selection_immutable", "trg_workflow_isolation_selection_retained"] },
+  { version: 212, name: "workflow_template_registry", tables: ["workflow_template_registry", "workflow_template_versions"], indexes: [],
+    triggers: ["trg_workflow_template_registry_created_draft", "trg_workflow_template_registry_immutable",
+      "trg_workflow_template_registry_retained", "trg_workflow_template_versions_immutable", "trg_workflow_template_versions_retained"] },
 ];
 const schema = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
 const markers = db => db.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
@@ -95,9 +98,11 @@ export function workflowMigrationPredecessorFixture(f, version) {
   const { fullSchema, fullMarkers } = removeOwnedOverlays(f, version);
   return (upgradedDb, installed) => {
     const laterTables = overlays.filter(overlay => overlay.version > version).flatMap(overlay => overlay.tables);
-    assert.deepEqual(schema(upgradedDb).filter(row => !laterTables.includes(row.tbl_name)), installed.schema,
+    assert.deepEqual(schema(upgradedDb).filter(row => !laterTables.includes(row.tbl_name)),
+      installed.schema.filter(row => !laterTables.includes(row.tbl_name)),
       "constructor upgrade must preserve every single-migration schema object");
-    assert.deepEqual(markers(upgradedDb).filter(row => row.version <= version), installed.markers,
+    assert.deepEqual(markers(upgradedDb).filter(row => row.version <= version),
+      installed.markers.filter(row => row.version <= version),
       "constructor upgrade must preserve every installed marker, including its timestamp");
     assert.deepEqual(schema(upgradedDb), fullSchema, "constructor must restore the exact complete overlay schema");
     assert.deepEqual(identity(markers(upgradedDb)), identity(fullMarkers), "constructor must install every later marker exactly once");

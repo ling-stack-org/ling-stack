@@ -2,6 +2,7 @@ import type { SQLOutputValue } from "node:sqlite";
 import { isWorkflowStepStartOwnerV1 } from "../../workflow-step-start-owner.js";
 import { isWorkflowStepSafetyPlanV1 } from "../../workflow-safety-plan.js";
 import { workflowIsolationIdentity } from "../../workflow-isolation.js";
+import { parseWorkflowTemplateCompilation, parseWorkflowTemplateCompilationPin } from "../../workflow-template-compilation.js";
 import {
   isWorkflowParticipantAuthorityV1,
   isWorkflowParticipantProviderBindingV1,
@@ -62,6 +63,7 @@ export function normalizeChannelWorkflowStepMetadata(
   if (metadata.safetyPlan !== undefined && !isWorkflowStepSafetyPlanV1(metadata.safetyPlan)) {
     throw new WorkflowSafetyValidationError("Workflow safety plan is malformed");
   }
+  if (metadata.templateCompilationPin !== undefined) parseWorkflowTemplateCompilationPin(metadata.templateCompilationPin);
   return { ...metadata, ...parseWorkflowStepExecutionSafety(metadata),
     ...(metadata.isolationScopePlan === undefined ? {} : { isolationScopePlan: parseWorkflowIsolationScopePin(metadata.isolationScopePlan) }) };
 }
@@ -76,6 +78,7 @@ function parseWorkflowIsolationScopePin(value: unknown): NonNullable<ChannelWork
 export function normalizeChannelWorkflowMetadata(
   metadata: ChannelWorkflowMetadata | undefined,
 ): ChannelWorkflowMetadata | undefined {
+  if (metadata?.templateCompilation !== undefined) parseWorkflowTemplateCompilation(metadata.templateCompilation);
   if (metadata?.workflowGraph === undefined) return metadata;
   return { ...metadata, workflowGraph: normalizeWorkflowGraphExecutionSafety(metadata.workflowGraph) };
 }
@@ -262,6 +265,7 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     providerBinding: parseOptionalWorkflowParticipantProviderBinding(record.providerBinding),
     workflowTemplateId: readOptionalStringValue(record.workflowTemplateId),
     templateVersion: readOptionalStringValue(record.templateVersion),
+    templateCompilationPin: record.templateCompilationPin === undefined ? undefined : parseWorkflowTemplateCompilationPin(record.templateCompilationPin),
     templateStepId: readOptionalStringValue(record.templateStepId),
     graphId: readOptionalStringValue(record.graphId),
     graphNodeId: readOptionalStringValue(record.graphNodeId),
@@ -374,6 +378,7 @@ function parseOptionalChannelWorkflowMetadata(value: string | undefined): Channe
   }
   const record = parsed as Record<string, unknown>;
   return omitUndefined({
+    templateCompilation: record.templateCompilation === undefined ? undefined : parseWorkflowTemplateCompilation(record.templateCompilation),
     workflowGraphId: readOptionalStringValue(record.workflowGraphId),
     workflowGraphSchemaVersion: readOptionalPositiveIntegerValue(record.workflowGraphSchemaVersion),
     workflowGraphArtifactId: readOptionalStringValue(record.workflowGraphArtifactId),

@@ -108,11 +108,11 @@ test("real210 upgrades additively and full Core reopen preserves populated execu
   migrate(db); assert.deepEqual(snapshot(db), installed);
   f.reopenIsolation();
   f.assertFullUpgrade(f.store.database, installed);
-  assert.deepEqual(snapshot(f.store.database), installed);
+  const fullyUpgraded = snapshot(f.store.database);
   assert.deepEqual(dataSnapshot(f), data);
   assert.equal(f.isolation.assertExecutionBinding({ writer: f.writer, requireReady: false, now: f.at(8) }).status, "current");
   f.reopenIsolation();
-  assert.deepEqual(snapshot(f.store.database), installed);
+  assert.deepEqual(snapshot(f.store.database), fullyUpgraded);
   assert.deepEqual(dataSnapshot(f), data);
 });
 

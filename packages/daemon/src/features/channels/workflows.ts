@@ -21,6 +21,7 @@ import {
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
+import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
@@ -84,6 +85,7 @@ import { preflightWorkflowParticipantProvider } from "./workflow-participant-pro
 import { createWorkflowPreApprovalExecutionPermit, prepareWorkflowPreApproval,
   workflowPreApprovalStartOverrideError } from "./workflow-pre-approval.js";
 import { createWorkflowSafetyAdmission, freezeWorkflowSafetyPlan, workflowSafetySnapshot, type WorkflowSafetySnapshotV1 } from "../runs/workflow-safety.js";
+import { assertWorkflowTemplateCompilationCurrent } from "./workflow-template-compilation.js";
 import { assertWorkflowIsolationSelectionReady, type WorkflowIsolationHost } from "./workflow-isolation-selection.js";
 export { completeWorkflowIfStepsFinished } from "./workflow-completion.js";
 
@@ -173,6 +175,7 @@ export async function handleChannelWorkflowsCollection(
     return;
   }
 
+  let registryCompilation = false;
   try {
     const store = storeRegistry.getStore(cwd);
     if (!store.getChannel(channelId)) {
@@ -195,6 +198,7 @@ export async function handleChannelWorkflowsCollection(
       const body = await readJsonBody(request, config.maxBodyBytes);
       if (isWorkflowTemplateCompileRequest(body)) {
         const input = parseWorkflowTemplateCompileRequest(body, channelId);
+        registryCompilation = input.customTemplateId !== undefined;
         const compiled = compileWorkflowTemplate(store, input, new Date().toISOString(), runnerRegistry);
         writeJson(response, 201, compiled);
         return;
@@ -206,7 +210,10 @@ export async function handleChannelWorkflowsCollection(
     }
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel workflows` });
   } catch (error) {
-    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+    // Existing inline and built-in compilation callers retain their error contract.
+    const registryError = registryCompilation && error instanceof HttpError ? error : undefined;
+    writeJson(response, registryError?.statusCode ?? 400,
+      { error: registryError?.code ?? "bad_request", message: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -726,6 +733,22 @@ export async function prepareWorkflowStepStart(
   if (!channel) {
     return { kind: "error", statusCode: 404, code: "channel_not_found", message: `Channel not found: ${step.channelId}` };
   }
+  try {
+    assertWorkflowTemplateCompilationCurrent(store, step);
+    if (step.metadata?.templateCompilationPin && runnerRegistry) {
+      const settings = loadWorkspaceRuntimeSettings(store, runnerRegistry);
+      runnerRegistry.resolve({ requestedRunnerId: step.metadata.requestedRunnerId,
+        allowedRunnerIds: settings.allowedRunnerIds, allowFallback: false, tools: step.metadata.requiredTools });
+    }
+    if (step.metadata?.templateCompilationPin && (input.assigneeTeammateId && input.assigneeTeammateId !== step.toParticipantId
+      || input.providerPresetId && input.providerPresetId !== step.metadata.providerPresetId
+      || input.runnerId && input.runnerId !== step.metadata.requestedRunnerId || input.taskPrompt && input.taskPrompt !== step.prompt)) {
+      throw new HttpError(409, "workflow_template_compilation_stale", "Frozen template inputs cannot be overridden; explicitly compile another workflow.");
+    }
+  } catch (error) {
+    return { kind: "error", statusCode: error instanceof HttpError ? error.statusCode : 409,
+      code: "workflow_template_compilation_stale", message: error instanceof Error ? error.message : "Template compilation cannot be verified." };
+  }
   assertWorkflowIsolationSelectionReady(store, workflow.id, runnerRegistry, isolationHost);
   const planModeBlocker = getWorkflowPlanModeBlocker(store, workflow);
   if (planModeBlocker) {
@@ -831,7 +854,7 @@ export async function prepareWorkflowStepStart(
     return block(workspace.message);
   }
   const runnerId = input.runnerId ?? step.metadata?.safetyPlan?.runnerId
-    ?? (preApprovalEvidence.status === "approved" ? step.metadata?.requestedRunnerId : undefined);
+    ?? (preApprovalEvidence.status === "approved" || step.metadata?.templateCompilationPin ? step.metadata?.requestedRunnerId : undefined);
   const taskTitle = input.taskTitle ?? step.title;
   const requestedAssigneeTeammateId = input.assigneeTeammateId ?? step.toParticipantId;
   const runTools = workflowStepRunTools(step.metadata?.requiredTools);

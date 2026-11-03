@@ -765,7 +765,7 @@ async function executeAdmittedRunRequest(
       : skillTeammate?.runnerId ? "teammate_default" : "workspace_default";
     runnerResolution = runnerRegistry.resolve({
       requestedRunnerId: frozenExecution?.runnerId ?? runRequest.runnerId ?? skillTeammate?.runnerId ?? runtimeSettings.defaultRunnerId,
-      ...(frozenExecution ? { allowFallback: false } : {}),
+      ...(frozenExecution || selectedWorkflowStep?.metadata?.templateCompilationPin ? { allowFallback: false } : {}),
       defaultRunnerId: runtimeSettings.defaultRunnerId,
       allowedRunnerIds: runtimeSettings.allowedRunnerIds,
       requestSource: runnerRequestSource,

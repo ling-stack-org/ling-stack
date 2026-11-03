@@ -280,6 +280,7 @@ import {
 import { handleWorkspaceSnapshotRoute, parseWorkspaceSnapshotRoute } from "../features/runs/workspace-snapshot-routes.js";
 import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
+import { handleWorkflowTemplateRoute } from "../features/channels/workflow-template-routes.js";
 import { handleTaskItem, handleTaskRun, handleTasksCollection } from "../features/tasks/routes.js";
 import { materializeTaskAttachmentsForPrompt } from "../features/tasks/task-attachments.js";
 import {
@@ -1366,6 +1367,12 @@ export async function routeRequest(
     if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
     await handleLearningReviewRoute({ request, response, url, config, getStore: cwd => storeRegistry.getStore(cwd),
       coordinator: context.learningReviewCoordinator });
+    return;
+  }
+
+  if (url.pathname === "/workflow-templates" || url.pathname.startsWith("/workflow-templates/")) {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleWorkflowTemplateRoute({ request, response, url, config, storeRegistry, runnerRegistry });
     return;
   }
 

@@ -120,7 +120,8 @@ test("safety and channel policy changes invalidate approved semantic authority",
   body.customTemplate.steps[0].gates = [b013Gate()];
   const step = compile(f, body).workflowSteps[0];
   const executionPermit = createWorkflowPreGateExecutionPermit({ mode: "create_and_run_task", taskTitle: step.title,
-    taskPrompt: step.prompt, assigneeTeammateId: step.toParticipantId, skipProviderPreflight: false });
+    taskPrompt: step.prompt, assigneeTeammateId: step.toParticipantId,
+    runnerId: step.metadata.requestedRunnerId, providerPresetId: step.metadata.providerPresetId, skipProviderPreflight: false });
   const expected = { status: step.status, updatedAt: step.updatedAt };
   const pending = f.store.requestChannelWorkflowStepPreApproval({ workflowStepId: step.id, expected, executionPermit, now: new Date().toISOString() });
   assert.equal(pending.status, "requested");

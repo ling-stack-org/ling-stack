@@ -9,6 +9,7 @@ import type { RunTool } from "./shared.js";
 import type { WorkflowParticipantProviderBindingV1 } from "./conversation-model-binding.js";
 import type { Task } from "./tasks.js";
 import type { WorkflowStepParallelPolicy, WorkflowStepSideEffectClass } from "./workflow-safety.js";
+import type { WorkflowTemplatePin, WorkflowTemplateRegistryEntry, WorkflowTemplateVersion } from "./workflow-template-registry.js";
 import type {
   ChannelIntentExecutionPlanV1,
   ConversationContextProjectionMetadata,
@@ -868,6 +869,7 @@ export interface ChannelWorkflowStepMetadata {
   readonly providerBinding?: WorkflowParticipantProviderBindingV1;
   readonly workflowTemplateId?: string;
   readonly templateVersion?: string;
+  readonly templateCompilationPin?: WorkflowTemplateCompilationStepPinV1;
   readonly templateStepId?: string;
   readonly graphId?: string;
   readonly graphNodeId?: string;
@@ -976,6 +978,7 @@ export interface WorkflowGraph {
 }
 
 export interface ChannelWorkflowMetadata {
+  readonly templateCompilation?: WorkflowTemplateCompilationV1;
   readonly workflowGraphId?: string;
   readonly workflowGraphSchemaVersion?: number;
   readonly workflowGraphArtifactId?: string;
@@ -1279,6 +1282,8 @@ export interface CreateChannelWorkflowFromCustomTemplateRequest {
 
 export interface CreateChannelWorkflowFromCustomTemplateIdRequest {
   readonly customTemplateId: string;
+  readonly customTemplateVersion: string;
+  readonly customTemplateDigest: string;
   readonly title?: string;
   readonly objective: string;
   readonly createdBy?: string;
@@ -1314,6 +1319,81 @@ export interface CustomWorkflowTemplate {
   readonly autoStartDefault?: boolean;
   readonly steps: readonly CustomWorkflowTemplateStep[];
 }
+
+/** Frozen compiler input and resolved references. Never an independent execution permit. */
+export interface WorkflowTemplateCompilationV1 {
+  readonly schemaVersion: 1;
+  readonly source: "inline" | "registry";
+  readonly templatePin: WorkflowTemplatePin;
+  readonly template: CustomWorkflowTemplate;
+  readonly objective: string;
+  readonly steps: readonly WorkflowTemplateResolvedStepV1[];
+  readonly graphFingerprint: string;
+}
+
+export interface WorkflowTemplateResolvedStepV1 {
+  readonly templateStepId: string;
+  readonly title: string;
+  readonly prompt: string;
+  readonly autoStart: boolean;
+  readonly policy: WorkflowStepPolicy;
+  readonly gates?: readonly WorkflowStepGate[];
+  readonly toParticipantId: string;
+  readonly toParticipantLabel: string;
+  readonly participantDigest: string;
+  readonly skillId?: string;
+  readonly skillDigest?: string;
+  readonly runnerId: string;
+  readonly providerPresetId?: string;
+  readonly providerDigest?: string;
+  readonly requiredTools: readonly RunTool[];
+  readonly dependsOn: readonly string[];
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
+}
+
+export interface WorkflowTemplateCompilationStepPinV1 extends WorkflowTemplatePin {
+  readonly graphFingerprint: string;
+}
+
+export interface WorkflowTemplatePreviewRequest {
+  readonly channelId: string;
+  readonly objective: string;
+  readonly customTemplate?: CustomWorkflowTemplate;
+  readonly customTemplateId?: string;
+  readonly customTemplateVersion?: string;
+  readonly customTemplateDigest?: string;
+}
+
+export interface WorkflowTemplatePreviewResponse {
+  readonly templatePin: WorkflowTemplatePin;
+  readonly graphFingerprint: string;
+  readonly steps: readonly WorkflowTemplateResolvedStepV1[];
+}
+
+export interface WorkflowTemplateListResponse {
+  readonly cwd: string;
+  readonly templates: readonly WorkflowTemplateRegistryEntry[];
+}
+
+export interface WorkflowTemplateVersionResponse {
+  readonly entry: WorkflowTemplateRegistryEntry;
+  readonly version: WorkflowTemplateVersion;
+}
+
+export interface WorkflowTemplateSaveRequest {
+  readonly id: string;
+  readonly version: string;
+  readonly template: CustomWorkflowTemplate;
+  readonly expectedRevision: number;
+}
+
+export type WorkflowTemplateReviewRequest = { readonly expectedRevision: number } & (
+  | { readonly reviewStatus: "published"; readonly version: string; readonly digest: string }
+  | { readonly reviewStatus: "draft" | "disabled" | "archived"; readonly version?: never; readonly digest?: never }
+);
+
+export interface WorkflowTemplateReviewResponse { readonly entry: WorkflowTemplateRegistryEntry }
 
 export interface CustomWorkflowTemplateStep {
   readonly id: string;

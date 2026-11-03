@@ -24,8 +24,10 @@ import {
   type WorkflowGraph,
   type WorkflowStepParallelPolicy,
   type WorkflowStepSideEffectClass,
+  createSqliteWorkflowTemplateRegistryStore,
 } from "@ling-stack/core";
-import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
+import { createWorkflowParticipantAuthorityV1, parseWorkflowTemplate,
+  type WorkflowTemplateCompilationV1, type WorkflowTemplatePreviewResponse } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
@@ -34,12 +36,15 @@ import { listExecutableSkillDefinitions } from "../skills/registry.js";
 import { resolveCouncilSlotParticipant } from "./council-slot-resolver.js";
 import { compileWorkflowGraph, readOptionalWorkflowGraph } from "./workflow-graph.js";
 import { compileWorkflowStepSafety, readWorkflowStepSafety } from "./workflow-step-safety.js";
+import { resolveWorkflowTemplateCompilation } from "./workflow-template-compilation.js";
 
 export interface CompileWorkflowTemplateInput {
   readonly channelId: string;
   readonly templateId?: string;
   readonly customTemplate?: CustomWorkflowTemplate;
   readonly customTemplateId?: string;
+  readonly customTemplateVersion?: string;
+  readonly customTemplateDigest?: string;
   readonly workflowGraph?: WorkflowGraph;
   readonly title?: string;
   readonly objective: string;
@@ -97,6 +102,11 @@ export function parseWorkflowTemplateCompileRequest(value: unknown, channelId: s
   }
   const templateId = readOptionalString(value, "templateId");
   const customTemplateId = readOptionalString(value, "customTemplateId");
+  const customTemplateVersion = readOptionalString(value, "customTemplateVersion");
+  const customTemplateDigest = readOptionalString(value, "customTemplateDigest");
+  if (customTemplateId ? !customTemplateVersion || !customTemplateDigest : customTemplateVersion || customTemplateDigest) {
+    throw new Error("Registry compilation requires an explicit template id, version and digest together");
+  }
   const customTemplate = readOptionalCustomWorkflowTemplate(value, "customTemplate");
   const workflowGraph = readOptionalWorkflowGraph(value, "workflowGraph");
   const templateKinds = [templateId, customTemplateId, customTemplate, workflowGraph].filter((item) => item !== undefined).length;
@@ -107,6 +117,8 @@ export function parseWorkflowTemplateCompileRequest(value: unknown, channelId: s
     channelId,
     templateId,
     customTemplateId,
+    customTemplateVersion,
+    customTemplateDigest,
     customTemplate,
     workflowGraph,
     title: readOptionalString(value, "title"),
@@ -127,11 +139,9 @@ export function compileWorkflowTemplate(store: RunStore, input: CompileWorkflowT
   if (!channel) {
     throw new HttpError(404, "channel_not_found", `Channel not found: ${input.channelId}`);
   }
-  if (input.customTemplateId) {
-    throw new HttpError(400, "custom_workflow_template_not_found", `Custom workflow template registry lookup is not implemented: ${input.customTemplateId}`);
-  }
-  if (input.customTemplate) {
-    return compileCustomWorkflowTemplate(store, input, input.customTemplate, now, runnerRegistry);
+  if (input.customTemplateId || input.customTemplate) {
+    const compilation = prepareCustomWorkflowTemplate(store, input, runnerRegistry);
+    return compileCustomWorkflowTemplate(store, input, compilation, now);
   }
   if (input.workflowGraph) {
     return compileWorkflowGraph(store, { ...input, workflowGraph: input.workflowGraph }, now, runnerRegistry);
@@ -234,9 +244,8 @@ export function compileWorkflowTemplate(store: RunStore, input: CompileWorkflowT
 function compileCustomWorkflowTemplate(
   store: RunStore,
   input: CompileWorkflowTemplateInput,
-  template: CustomWorkflowTemplate,
+  compilation: WorkflowTemplateCompilationV1,
   now: string,
-  runnerRegistry?: RunnerRegistry,
 ): {
   readonly workflow: ChannelWorkflow;
   readonly workflowSteps: readonly ChannelWorkflowStep[];
@@ -245,7 +254,7 @@ function compileCustomWorkflowTemplate(
   if (!channel) {
     throw new HttpError(404, "channel_not_found", `Channel not found: ${input.channelId}`);
   }
-  validateCustomWorkflowTemplate(store, input, template, runnerRegistry);
+  const template = compilation.template;
   const workflow = store.createChannelWorkflow(
     {
       channelId: channel.id,
@@ -253,6 +262,7 @@ function compileCustomWorkflowTemplate(
       objective: input.objective,
       status: "ready",
       createdBy: input.createdBy ?? "local-user",
+      metadata: { templateCompilation: compilation, maxParallelSteps: template.maxParallelSteps },
     },
     now,
   );
@@ -261,9 +271,9 @@ function compileCustomWorkflowTemplate(
   const templateBudget = template.maxParallelSteps;
   for (const [index, templateStep] of template.steps.entries()) {
     const resolved = resolveCustomTemplateStepParticipant(store, channel.id, templateStep);
-    const stepAutoStart = templateStep.autoStart ?? input.autoStart ?? template.autoStartDefault ?? false;
-    const requestedRunnerId = templateStep.requestedRunnerId ?? input.runnerId;
-    const providerPresetId = templateStep.providerPresetId ?? input.providerPresetId;
+    const frozen = compilation.steps[index]!;
+    const requestedRunnerId = frozen.runnerId;
+    const providerPresetId = frozen.providerPresetId;
     const safety = compileWorkflowStepSafety(templateStep, {
       maxConcurrentRuns: channel.runtimePolicy.maxConcurrentRuns,
       maxParallelSteps: templateBudget,
@@ -271,21 +281,23 @@ function compileCustomWorkflowTemplate(
     });
     const metadata: ChannelWorkflowStepMetadata = {
       workflowTemplateId: template.id,
-      templateVersion: `custom:${template.schemaVersion}`,
+      templateVersion: compilation.templatePin.version,
+      templateCompilationPin: { ...compilation.templatePin, graphFingerprint: compilation.graphFingerprint },
       templateStepId: templateStep.id,
       teammateTemplateId: templateStep.teammateTemplateId,
       councilSlotKey: templateStep.councilSlotKey,
       skillId: templateStep.skillId,
       requestedRunnerId,
       providerPresetId,
-      autoStart: stepAutoStart,
+      requiredTools: frozen.requiredTools,
+      autoStart: frozen.autoStart,
       branchGroupId: templateStep.branchGroupId,
       joinGroupId: templateStep.joinGroupId,
       dependencyMode: templateStep.dependencyMode,
       ...safety,
       maxParallelSiblings: safety.parallelPolicy?.maxParallelSiblings,
-      policy: templateStep.policy ?? defaultCustomWorkflowStepPolicy(templateStep),
-      gates: templateStep.gates,
+      policy: frozen.policy,
+      gates: frozen.gates,
       proposalStepSources: resolved.sources,
     };
     const step = store.createChannelWorkflowStep(
@@ -293,7 +305,7 @@ function compileCustomWorkflowTemplate(
         workflowId: workflow.id,
         position: index + 1,
         title: templateStep.name,
-        prompt: renderCustomTemplateStepPrompt(templateStep, input.objective),
+        prompt: frozen.prompt,
         toParticipantId: resolved.toParticipantId,
         toParticipantLabel: resolved.toParticipantLabel,
         participantAuthority: createWorkflowParticipantAuthorityV1({
@@ -335,6 +347,41 @@ function compileCustomWorkflowTemplate(
   };
 }
 
+export function previewWorkflowTemplate(store: RunStore, input: CompileWorkflowTemplateInput, runnerRegistry?: RunnerRegistry): WorkflowTemplatePreviewResponse {
+  const compilation = prepareCustomWorkflowTemplate(store, input, runnerRegistry);
+  return { templatePin: compilation.templatePin, graphFingerprint: compilation.graphFingerprint, steps: compilation.steps };
+}
+
+function prepareCustomWorkflowTemplate(store: RunStore, input: CompileWorkflowTemplateInput, runnerRegistry?: RunnerRegistry): WorkflowTemplateCompilationV1 {
+  let template = input.customTemplate, templatePin;
+  if (!store.getChannel(input.channelId)) throw new HttpError(404, "channel_not_found", `Channel not found: ${input.channelId}`);
+  if (input.customTemplateId) {
+    const registry = createSqliteWorkflowTemplateRegistryStore(store), entry = registry.get(input.customTemplateId);
+    if (!entry || !["published", "builtin"].includes(entry.reviewStatus)) throw new HttpError(409, "workflow_template_not_published", "Publish the selected template version before compilation.");
+    const version = input.customTemplateVersion && registry.getVersion(input.customTemplateId, input.customTemplateVersion);
+    if (!version || version.digest !== input.customTemplateDigest || entry.publishedVersion?.version !== version.version
+      || entry.publishedVersion.digest !== version.digest) throw new HttpError(409, "workflow_template_version_conflict", "The explicit version/digest differs from the published template. Refresh the library.");
+    template = version.template;
+    templatePin = { id: version.id, version: version.version, digest: version.digest };
+    if (!entry.visibility.workspaceVisible && template.steps.some(step => resolveCustomTemplateStepParticipant(store, input.channelId, step).toParticipantId !== entry.visibility.ownerTeammateId)) {
+      throw new HttpError(403, "workflow_template_not_visible", "The template is private to another teammate.");
+    }
+  }
+  if (!template) throw new HttpError(400, "workflow_template_required", "A custom template or explicit registry version is required.");
+  // Direct internal callers can contain optional undefined fields; the stored input is always pure JSON.
+  template = readOptionalCustomWorkflowTemplate({ customTemplate: JSON.parse(JSON.stringify(template)) }, "customTemplate")!;
+  validateCustomWorkflowTemplate(store, input, template, runnerRegistry);
+  template = parseWorkflowTemplate(JSON.parse(JSON.stringify(template)));
+  const channel = store.getChannel(input.channelId)!;
+  return resolveWorkflowTemplateCompilation({ store, channelId: input.channelId, template,
+    source: input.customTemplateId ? "registry" : "inline", templatePin,
+    objective: input.objective, autoStart: input.autoStart,
+    providerPresetId: input.providerPresetId, runnerId: input.runnerId, runnerRegistry,
+    resolveParticipant: step => resolveCustomTemplateStepParticipant(store, input.channelId, step),
+    resolveSafety: step => compileWorkflowStepSafety(step, { maxConcurrentRuns: channel.runtimePolicy.maxConcurrentRuns,
+      maxParallelSteps: template.maxParallelSteps, legacyMaxParallelSiblings: step.maxParallelSiblings }) });
+}
+
 function defaultWorkflowStepPolicy(templateStep: WorkflowStepTemplate): WorkflowStepPolicy {
   return {
     onRunFailed: templateStep.id === "implementation" || templateStep.id === "ship" ? "fail_workflow" : "block_for_user",
@@ -353,17 +400,6 @@ function renderTemplateStepPrompt(templateStep: WorkflowStepTemplate, objective:
     "Complete this step only. Do not start or approve later workflow steps.",
     "Return a concise terminal summary and any artifacts or follow-up decisions needed by later steps.",
   ].join("\n\n");
-}
-
-function renderCustomTemplateStepPrompt(templateStep: CustomWorkflowTemplateStep, objective: string): string {
-  return [
-    `Workflow objective:\n${objective}`,
-    `Current step: ${templateStep.name}`,
-    templateStep.skillId ? `Skill: ${templateStep.skillId}` : undefined,
-    templateStep.prompt,
-    "Complete this step only. Do not start or approve later workflow steps.",
-    "Return a concise terminal summary and any artifacts or follow-up decisions needed by later steps.",
-  ].filter(isString).join("\n\n");
 }
 
 function validateCustomWorkflowTemplate(
@@ -572,15 +608,6 @@ function customTemplateStepHasSideEffects(store: RunStore, step: CustomWorkflowT
     : [];
   return skillTools.some(isRiskyRunTool) || step.sideEffectClass === "workspace_write"
     || step.sideEffectClass === "external_mutation" || step.sideEffectClass === "release";
-}
-
-function defaultCustomWorkflowStepPolicy(_templateStep: CustomWorkflowTemplateStep): WorkflowStepPolicy {
-  return {
-    onRunFailed: "block_for_user",
-    onRunCancelled: "block_for_user",
-    onApprovalDenied: "block_for_user",
-    retryable: true,
-  };
 }
 
 function readOptionalCustomWorkflowTemplate(record: Record<string, unknown>, key: string): CustomWorkflowTemplate | undefined {
