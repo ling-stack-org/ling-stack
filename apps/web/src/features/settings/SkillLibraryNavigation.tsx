@@ -42,6 +42,10 @@ export function SkillLibraryNavigation({
           label: "Built-in skills",
           badge: `${builtinCount}`,
         },
+        {
+          id: "workflow-templates",
+          label: "Workflow templates",
+        },
       ]}
     />
   );
