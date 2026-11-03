@@ -35,6 +35,7 @@ import type {
   ConversationActiveReplyTarget,
   ChannelExecutionProposal,
   ChannelWorkflow,
+  ChannelWorkflowOrchestrationRequest,
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
   ExecutionAction,
@@ -234,7 +235,7 @@ export interface WorkspaceClientViewProps {
   readonly onUpdateHandoffStatus: (handoff: ChannelHandoff, status: ChannelHandoffStatus) => void;
   readonly onStartWorkflowFromHandoff: (handoff: ChannelHandoff) => Promise<void>;
   readonly onStartTemplateWorkflow: () => void;
-  readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow) => Promise<void>;
+  readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow, request?: ChannelWorkflowOrchestrationRequest) => Promise<void>;
   readonly onCancelWorkflow: (workflow: ChannelWorkflow) => Promise<void>;
   readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
   readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => Promise<void>;

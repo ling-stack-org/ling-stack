@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { selectWorkflowTimelineItems } from "../../lib/workflow-timeline-content.js";
+import { canRequestWorkflowIsolation } from "../../lib/workflow-isolated-action.js";
 import type { ChannelActivityItem } from "../../lib/channel-activity.js";
 import { type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import type { ConversationTurnViewModel } from "../../lib/conversation-turn-projector.js";
@@ -138,6 +139,7 @@ function channelProtocolTimelineItem(
     readonly handoffWorkflowStarted?: boolean;
     readonly actionBusy?: boolean;
     readonly actionFeedback?: string;
+    readonly canRequestIsolation?: boolean;
   },
 ): ConversationTimelineProtocolEventItem | ConversationTimelineApprovalItem {
   const sourceRefs = [{
@@ -235,6 +237,7 @@ function channelProtocolTimelineItem(
       status: channelWorkflowTimelineStatus(item.record.status),
       availableActions: protocolActions(
         workflowCanAdvance(item.record.status) && !options?.actionBusy ? "advance_workflow" : undefined,
+        options?.canRequestIsolation && !options.actionBusy ? "start_isolated_workflow" : undefined,
         workflowCanCancel(item.record.status) && !options?.actionBusy ? "cancel_workflow" : undefined,
         "open_source",
         "open_details",
@@ -375,6 +378,7 @@ function channelTurnTimelineItems(
       }, t, workflowProgressByWorkflowId.get(workflow.id)?.summary, {
         actionBusy: orchestratingWorkflowId === workflow.id,
         actionFeedback: workflowErrors[workflow.id],
+        canRequestIsolation: canRequestWorkflowIsolation(workflow, workflowProgressByWorkflowId.get(workflow.id)?.steps ?? []),
       }) as ConversationTimelineProtocolEventItem, workflowCanAdvance(workflow.status) || workflowCanCancel(workflow.status) || Boolean(workflowProgressByWorkflowId.get(workflow.id)?.steps.length));
   const terminalReport = channelTurnTerminalReportTimelineItem(
     turn, terminalReportById.get(turn.operationCell?.terminalReportId ?? ""), conversationItems,
@@ -1022,6 +1026,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         const summary = channelProtocolTimelineItem(activity, input.t, progressModel?.summary, {
             actionBusy: input.orchestratingWorkflowId === activity.record.id,
             actionFeedback: input.workflowErrors[activity.record.id],
+            canRequestIsolation: canRequestWorkflowIsolation(activity.record, progressModel?.steps ?? []),
           }) as ConversationTimelineProtocolEventItem;
         for (const item of selectWorkflowTimelineItems(workCellItems, summary,
           workflowCanAdvance(activity.record.status) || workflowCanCancel(activity.record.status) || Boolean(progressModel?.steps.length))) addItem(item, sequence);

@@ -6550,6 +6550,7 @@ export const zhCN = {
   "Formulas are shown for reference and never evaluated.": "公式仅作展示，永不被求值。",
   "Workflow integration": "工作流集成",
   "Apply workflow candidate": "应用工作流候选结果",
+  "Start isolated branches (candidate only)": "启动隔离分支（仅生成候选）",
   "Workflow evidence unavailable": "工作流证据暂不可用",
   "Preparing integration": "正在准备集成",
   "Waiting for branch results": "等待分支结果",

@@ -1,6 +1,6 @@
 {
   "locale": "zh-CN",
-  "sourceRevision": "51cd03704ff22a130c769ab2ade79943bea3b6d2fa1ef392f684f4ea7e7bc7e5",
+  "sourceRevision": "f697f0c84fac9bf78190333665ff83c9b362a9320077dd00e33453554e6857e7",
   "sourceHashes": {
     "{action} (Enter)": "9472217728ec383f5dfdd37d2f84c381ed7b4546d115f6e3e536959810ef5af5",
     "{agent} wants to start task \"{task}\" and needs {permissions}.": "b87261e1f3ceaec90a862105f2885011d44b2722f9979327a3790af82a5dcdf1",
@@ -5965,6 +5965,7 @@
     "Start from blank": "522a3f7826d71ad7a3e93490280d81a44840688a79dc6c1fe5b16a1179d2498f",
     "Start generation": "fda83d2b36fcd2459f4c1f22b846457fc506d12c1fd4daa194ff55343a0b00e8",
     "Start handling": "b75e32dee65bb5eddc97f4d2947a10182bd80b9430b68a2c1f8337fe14e83807",
+    "Start isolated branches (candidate only)": "f77933850d8f661d286a11e418fa82d6f1956b2c6982c440be9658fe193fad05",
     "Start or retry this task, or copy its prompt and parameters.": "0eb0fddf13ad769874e9c78509e739e86933528e4463d1bd1077d3fe56d16fb6",
     "Start recording from a deliberate user action; Ling does not record background agent work automatically.": "b730207d2515517b4b154375404c5073f5533b331a882897fd6d9e2fe5730c7b",
     "Start scheduler": "c07b94dd82074ebdebc86f1a1c04d9b66c17a48a4ad250f0aa6e6cbbd743b569",
@@ -13145,6 +13146,7 @@
     "Start from blank": "从空白创建",
     "Start generation": "开始生成",
     "Start handling": "开始处理",
+    "Start isolated branches (candidate only)": "启动隔离分支（仅生成候选）",
     "Start or retry this task, or copy its prompt and parameters.": "可以开始或重试这个任务，也可以复制提示词和参数。",
     "Start recording from a deliberate user action; Ling does not record background agent work automatically.": "从用户明确操作开始录制；Ling 不会自动录制后台 agent 工作。",
     "Start scheduler": "启动调度",

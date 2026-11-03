@@ -60,6 +60,7 @@ export type ConversationProtocolAction =
   | "open_approval"
   | "start_workflow"
   | "advance_workflow"
+  | "start_isolated_workflow"
   | "cancel_workflow"
   | "retry_step"
   | "supersede_decision"

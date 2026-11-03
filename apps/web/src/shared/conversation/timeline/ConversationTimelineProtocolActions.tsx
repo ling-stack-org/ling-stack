@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { GitBranch } from "lucide-react";
 import type {
   ConversationProtocolAction,
   ConversationTimelineApprovalItem,
@@ -47,6 +48,7 @@ export function ConversationTimelineProtocolActions<TItem extends ProtocolAction
           disabled={invocationInFlight}
           onClick={() => void invoke(action)}
         >
+          {action === "start_isolated_workflow" ? <GitBranch size={14} aria-hidden="true" /> : null}
           {t(protocolActionLabel(action))}
         </button>
       ))}
@@ -64,6 +66,7 @@ function protocolActionLabel(action: ConversationProtocolAction): string {
     open_approval: "Open approval",
     start_workflow: "Start workflow",
     advance_workflow: "Advance workflow",
+    start_isolated_workflow: "Start isolated branches (candidate only)",
     cancel_workflow: "Cancel workflow",
     retry_step: "Retry",
     supersede_decision: "Supersede",

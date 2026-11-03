@@ -1945,9 +1945,11 @@ export function WorkspaceClientView({
       if (summary) await onCreateTaskFromContextSummary(summary);
       return;
     }
-    if (action === "advance_workflow" && sourceKind === "workflow" && sourceId) {
+    if ((action === "advance_workflow" || action === "start_isolated_workflow") && sourceKind === "workflow" && sourceId) {
       const workflow = channelWorkflows.find((candidate) => candidate.id === sourceId);
-      if (workflow) await onOrchestrateWorkflow(workflow);
+      if (workflow) await onOrchestrateWorkflow(workflow, action === "start_isolated_workflow"
+        ? { executionProfile: "pi_host_isolated_files_v1" }
+        : undefined);
       return;
     }
     if (action === "cancel_workflow" && sourceKind === "workflow" && sourceId) {

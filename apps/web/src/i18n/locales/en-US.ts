@@ -4677,6 +4677,7 @@ export const enUS = {
   "Formulas are shown for reference and never evaluated.": "Formulas are shown for reference and never evaluated.",
   "Workflow integration": "Workflow integration",
   "Apply workflow candidate": "Apply workflow candidate",
+  "Start isolated branches (candidate only)": "Start isolated branches (candidate only)",
   "Workflow evidence unavailable": "Workflow evidence unavailable",
   "Preparing integration": "Preparing integration",
   "Waiting for branch results": "Waiting for branch results",

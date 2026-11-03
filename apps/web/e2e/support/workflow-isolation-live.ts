@@ -10,11 +10,11 @@ export interface LiveManifest {
   threadId: string;
   sourceTurnId: string;
   sourceMessageId: string;
-  stepIds: Record<"left" | "right", string>;
+  stepIds: Record<string, string>;
   roundId: string;
 }
 
-interface LiveStatus {
+export interface LiveStatus {
   manifest: LiveManifest;
   workflow: { id: string; status: string };
   sourceTurn: { id: string; status: string };
@@ -28,14 +28,15 @@ interface LiveStatus {
   approvals: { id: string; actionType: string; risk: string }[];
   target: { head: string; status: string; files: string[] };
   initialTarget: { head: string; status: string; files: string[] };
-  round: { phase: string; candidate?: { commit: string } };
+  selection?: { phase: string; roundId: string };
+  round: { phase: string; inputs: { mode: "candidate_only" | "apply_to_target" }; candidate?: { commit: string } };
   parent: { state: string };
   reports: { resultItemId?: string }[];
   errors: string[];
 }
 
 type LiveCommand = { op: "status" } | { op: "check"; kind: "ready" | "approvals" | "parallel" | "retained" | "cancelled" | "drained" | "succeeded" }
-  | { op: "release"; gate: "provider" | "host" | "all"; branch?: "left" | "right" | "all" }
+  | { op: "release"; gate: "provider" | "host" | "all"; branch?: "prepare" | "left" | "right" | "all" }
   | { op: "restart" };
 
 interface LiveFixture {
@@ -53,10 +54,11 @@ export interface LiveScenario {
 // This import executes in Playwright's Node worker, never in the page or Vite.
 const fixtureUrl = new URL("../../../../packages/daemon/test/support/workflow-isolation-live-fixture.mjs", import.meta.url).href;
 
-export const test = base.extend<{ live: LiveScenario }>({
-  live: [async ({}, use, testInfo) => {
+export const test = base.extend<{ live: LiveScenario; publicSelection: boolean }>({
+  publicSelection: [false, { option: true }],
+  live: [async ({ publicSelection }, use, testInfo) => {
     const { startWorkflowIsolationLiveFixture } = await import(fixtureUrl);
-    const fixture: LiveFixture = await startWorkflowIsolationLiveFixture({ holdReturn: true });
+    const fixture: LiveFixture = await startWorkflowIsolationLiveFixture({ holdReturn: true, publicSelection });
     const status = async () => await fixture.command({ op: "status" }) as LiveStatus;
     const check: LiveScenario["check"] = async kind => {
       await expect.poll(async () => {
