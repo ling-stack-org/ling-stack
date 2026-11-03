@@ -6,7 +6,7 @@ import {
   realpathSync, rmSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { registerHooks, syncBuiltinESMExports } from "node:module";
-import { tmpdir } from "node:os";
+import { release, tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,6 +18,16 @@ const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.me
 const workspaceNames = ["browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"];
 const reviewedLeaf = "packages/core/src/original-office-host-bridge.ts";
 const compiledLeaf = "packages/core/dist/original-office-host-bridge.js";
+test("Office fixed closure contains no duplicate packaging inputs", () => {
+  assert.equal(new Set(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS).size,
+    PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.length);
+});
+test("Office fixed closure pins ACP version and bounded MCP read sources", () => {
+  for (const path of [
+    "packages/daemon/src/features/execution-engines/acp-sdk-version.ts",
+    "packages/daemon/src/features/mcp/host-stdio-read-buffer.ts",
+  ]) assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path), true, path);
+});
 const currentMainFeatureClosureInputs = [
   "packages/daemon/src/server/request-auth.ts",
   "packages/contracts/src/artifacts.ts",
@@ -723,6 +733,21 @@ async function approvedSyntheticFixture(t) {
   newFile(join(sdkRoot, "SDKSettings.json"), "EXPLICIT SYNTHETIC SDK");
   const headerNames = ["node_api.h", "js_native_api.h", "js_native_api_types.h", "node_api_types.h"];
   for (const name of headerNames) newFile(join(headersRoot, name), "EXPLICIT SYNTHETIC HEADER:" + name);
+  const helperReviewPath = join(root, "native/sandbox/reviewed-codesign-source-v1.json");
+  const helperReview = JSON.parse(readFileSync(helperReviewPath, "utf8"));
+  helperReview.schemaVersion = 1;
+  delete helperReview.additionalOs;
+  helperReview.os = {
+    release: release(), backendHelperVersion: `ling-seatbelt-v1:${release()}:${hash("EXPLICIT SYNTHETIC BACKEND VERSION")}`,
+    backendSha256: hash("EXPLICIT SYNTHETIC BACKEND"), codesignSha256: hash("EXPLICIT SYNTHETIC CODESIGN"),
+    templateSha256: hash("EXPLICIT SYNTHETIC TEMPLATE"), taskgatedBinding: "reviewed_xml_v1",
+  };
+  writeFileSync(helperReviewPath, JSON.stringify(helperReview));
+  // Its unchanged reviewed source files were already copied by the fixed
+  // packaging inventory; this is a disposable copy, not a product row update.
+  for (const name of Object.keys(helperReview.sourceSha256)) {
+    assert.equal(hash(readFileSync(join(root, "native/sandbox", name))), helperReview.sourceSha256[name]);
+  }
   const review = {
     schemaVersion: 1, reviewId: "packaged_office_native_v1", approval: "approved_source_and_packaging_review",
     protocolVersion: 2, napiVersion: 8, deploymentTarget: "13.0",
@@ -737,12 +762,6 @@ async function approvedSyntheticFixture(t) {
   };
   const reviewPath = join(nativeOffice, "reviewed-packaged-source-v1.json");
   newFile(reviewPath, JSON.stringify(review));
-  const helperReview = JSON.parse(readFileSync(join(root, "native/sandbox/reviewed-codesign-source-v1.json"), "utf8"));
-  // Its unchanged reviewed source files were already copied by the fixed
-  // packaging inventory; this is a disposable copy, not a product row update.
-  for (const name of Object.keys(helperReview.sourceSha256)) {
-    assert.equal(hash(readFileSync(join(root, "native/sandbox", name))), helperReview.sourceSha256[name]);
-  }
   const counts = { nativeCompilerCalls: 0, signCalls: 0, nativeVerifyCalls: 0, helperNormalizeCalls: 0 };
   const builds = [];
   const counterKey = `__LING_EXPLICIT_NATIVE_FIXTURE_${root.split("/").at(-1).replaceAll("-", "_")}__`;

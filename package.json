@@ -21,7 +21,7 @@
     "i18n:compile": "corepack pnpm --filter @ling-stack/localization catalog:compile",
     "check:licenses": "node scripts/check-license-policy.mjs",
     "check:public": "node scripts/check-public-repo-safety.mjs",
-    "check:dependency-security": "corepack pnpm --filter @ling-stack/mobile exec node --test test/dependency-security-patches.test.mjs test/dependency-security-tooling.test.mjs && corepack pnpm --filter @ling-stack/daemon exec node --test test/dependency-security.test.mjs && node --test scripts/dependency-security-regressions.test.mjs",
+    "check:dependency-security": "corepack pnpm --filter @ling-stack/mobile exec node --test test/dependency-security-patches.test.mjs test/dependency-security-tooling.test.mjs && corepack pnpm --filter @ling-stack/daemon exec node --test test/dependency-security.test.mjs && node --test scripts/dependency-security-regressions.test.mjs scripts/dependency-security-minimatch.test.mjs scripts/dependency-security-glob.test.mjs",
     "typecheck": "corepack pnpm --workspace-concurrency=1 -r typecheck",
     "ling": "node packages/cli/dist/index.js",
     "local:restart": "node packages/cli/dist/index.js restart",
@@ -56,7 +56,6 @@
     ],
     "overrides": {
       "@radix-ui/react-dismissable-layer@1.1.19": "1.1.20",
-      "@expo/cli>zod": "4.6.6",
       "brace-expansion@>=1.0.0 <1.1.21": "1.1.21",
       "brace-expansion@>=2.0.0 <2.1.7": "2.1.7",
       "brace-expansion@>=5.0.0 <5.0.12": "5.0.12",
@@ -81,12 +80,14 @@
     },
     "patchedDependencies": {
       "http-cache-semantics@4.3.0": "patches/http-cache-semantics@4.3.0.patch",
-      "node-forge@1.4.0": "patches/node-forge@1.4.0.patch",
       "braces@3.0.3": "patches/braces@3.0.3.patch",
       "sprintf-js@1.0.3": "patches/sprintf-js@1.0.3.patch",
       "sprintf-js@1.1.3": "patches/sprintf-js@1.1.3.patch",
       "image-size@2.0.4": "patches/image-size@2.0.4.patch",
-      "@expo/cli@58.1.13": "patches/@expo__cli@58.1.13.patch"
+      "minimatch@9.0.9": "patches/minimatch@9.0.9.patch",
+      "minimatch@10.2.6": "patches/minimatch@10.2.6.patch",
+      "glob@11.1.0": "patches/glob@11.1.0.patch",
+      "glob@13.0.6": "patches/glob@13.0.6.patch"
     }
   }
 }
