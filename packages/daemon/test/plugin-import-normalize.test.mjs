@@ -22,7 +22,7 @@ test("secret policy migrates secret-like env values into pending secrets", () =>
     env: {
       API_KEY: "test-secret-env-value-0123456789abcdefghij",
       LOG_LEVEL: "debug",
-      HOME: "/Users/demo",
+      HOME: "/home/demo",
     },
   });
   assert.equal(result.transport.env.API_KEY, undefined);
