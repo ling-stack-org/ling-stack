@@ -128,6 +128,12 @@ export async function resolveSkillSourceRoots(input: ResolveSkillSourceRootsInpu
       sourceKind: "workspace-skill-directory",
       label: "Workspace skill root",
     });
+    candidates.push({
+      id: hashedSkillSourceRootId("workspace-dsh-skill-root", resolve(input.workspaceRoot, ".dsh", "skills")),
+      rootPath: resolve(input.workspaceRoot, ".dsh", "skills"),
+      sourceKind: "dsh-skill-directory",
+      label: "Workspace dsh skill root",
+    });
   }
 
   for (const rootPath of input.gstackRepoRoots ?? []) {
@@ -157,6 +163,18 @@ export async function resolveSkillSourceRoots(input: ResolveSkillSourceRootsInpu
       rootPath: join(home, ".agents", "skills"),
       sourceKind: "codex-skill-directory",
       label: "Detected agent skill root",
+    });
+    candidates.push({
+      id: "claude-skills",
+      rootPath: join(home, ".claude", "skills"),
+      sourceKind: "claude-skill-directory",
+      label: "Detected Claude skill root",
+    });
+    candidates.push({
+      id: "dsh-skills",
+      rootPath: join(home, ".dsh", "skills"),
+      sourceKind: "dsh-skill-directory",
+      label: "Detected dsh skill root",
     });
   }
 

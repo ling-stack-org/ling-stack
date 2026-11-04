@@ -1,0 +1,60 @@
+.plugin-import-select {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plugin-import-source-row,
+.plugin-import-candidate-row {
+  align-items: center;
+  border: 1px solid var(--ling-border-subtle, rgba(127, 127, 127, 0.28));
+  border-radius: 8px;
+  display: flex;
+  gap: 10px;
+  padding: 8px 10px;
+}
+
+.plugin-import-candidate-row.is-disabled {
+  opacity: 0.55;
+}
+
+.plugin-import-candidate-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.plugin-import-candidate-main code {
+  font-size: 12px;
+  opacity: 0.75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-import-status-badge {
+  border-radius: 999px;
+  flex: 0 0 auto;
+  font-size: 12px;
+  padding: 2px 10px;
+}
+
+.plugin-import-status-badge.status-unchanged {
+  background: var(--ling-surface-neutral, rgba(127, 127, 127, 0.16));
+}
+
+.plugin-import-status-badge.status-new {
+  background: var(--ling-surface-success, rgba(76, 175, 80, 0.18));
+}
+
+.plugin-import-status-badge.status-conflict {
+  background: var(--ling-surface-warning, rgba(255, 167, 38, 0.2));
+}
+
+.plugin-import-report {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

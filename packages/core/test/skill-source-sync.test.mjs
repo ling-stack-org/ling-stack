@@ -466,3 +466,27 @@ test("semantic profile flags gate, tool, external, destructive, secret, and refe
   assert.equal(diff.some((item) => item.kind === "secret_claim_change" && item.severity === "error"), true);
   assert.equal(diff.some((item) => item.kind === "referenced_file_change" && item.severity === "warning"), true);
 });
+
+test("detected claude and dsh skill roots join the candidate list", async () => {
+  await withTempDir("ling-stack-skill-source-claude-dsh-", async (home) => {
+    await mkdir(resolve(home, ".claude", "skills"), { recursive: true });
+    await mkdir(resolve(home, ".dsh", "skills"), { recursive: true });
+    const roots = await resolveSkillSourceRoots({ homeDir: home });
+    const kinds = new Map(roots.map((root) => [root.id, root.sourceKind]));
+    assert.equal(kinds.get("claude-skills"), "claude-skill-directory");
+    assert.equal(kinds.get("dsh-skills"), "dsh-skill-directory");
+  });
+});
+
+test("workspace dsh skill root is detected for project directories", async () => {
+  await withTempDir("ling-stack-skill-source-workspace-dsh-", async (workspace) => {
+    await mkdir(resolve(workspace, ".dsh", "skills"), { recursive: true });
+    const roots = await resolveSkillSourceRoots({
+      homeDir: resolve(workspace, "missing-home"),
+      workspaceRoot: workspace,
+    });
+    const matched = roots.find((root) => root.sourceKind === "dsh-skill-directory");
+    assert.ok(matched);
+    assert.equal(matched.rootPath, resolve(workspace, ".dsh", "skills"));
+  });
+});

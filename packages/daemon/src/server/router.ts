@@ -200,6 +200,7 @@ import {
   handlePluginPackageItem,
   handlePluginSourcesCollection,
   handlePluginsCollection,
+  handlePluginsImport,
 } from "../features/plugins/routes.js";
 import { handleCuaDriverLeaseRoute } from "../features/plugins/cua-driver-lease-routes.js";
 import { handleOfficeDriverRoute } from "../features/office-documents/driver-routes.js";
@@ -887,6 +888,20 @@ export async function routeRequest(
 
   if (url.pathname === "/plugins/sources") {
     await handlePluginSourcesCollection(request, response, config);
+    return;
+  }
+
+  if (url.pathname === "/plugins/import/preview" || url.pathname === "/plugins/import/apply") {
+    await handlePluginsImport(
+      request,
+      response,
+      config,
+      storeRegistry,
+      mcpBroker,
+      secretResolver,
+      externalSecretStore,
+      { action: url.pathname === "/plugins/import/apply" ? "apply" : "preview" },
+    );
     return;
   }
 

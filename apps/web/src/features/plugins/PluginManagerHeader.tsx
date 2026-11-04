@@ -1,4 +1,4 @@
-import { Plus, Search, X } from "lucide-react";
+import { ArrowRightLeft, Plus, Search, X } from "lucide-react";
 import { Button, Field, Input, Select } from "../../shared/ui/index.js";
 import type { PluginManagerCopy } from "./plugin-manager-copy.js";
 import type { PluginManagerController } from "./usePluginManagerController.js";
@@ -12,6 +12,7 @@ export function PluginManagerHeader({
   isLoading,
   busyCreating,
   onRefresh,
+  onOpenImport,
   t,
 }: {
   readonly controller: PluginManagerController;
@@ -19,6 +20,7 @@ export function PluginManagerHeader({
   readonly isLoading: boolean;
   readonly busyCreating: boolean;
   readonly onRefresh: () => void;
+  readonly onOpenImport: () => void;
   readonly t: Translate;
 }): React.JSX.Element {
   return (
@@ -38,6 +40,15 @@ export function PluginManagerHeader({
           variant="primary"
         >
           {t("Add plugin")}
+        </Button>
+        <Button
+          className="plugin-import-button"
+          leadingIcon={<ArrowRightLeft aria-hidden="true" />}
+          onClick={onOpenImport}
+          size="md"
+          variant="secondary"
+        >
+          {t("Import")}
         </Button>
       </header>
       </DesktopTitlebarSurface>
