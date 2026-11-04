@@ -753,7 +753,7 @@ jobs:
       # publish hints. PRs consume but cannot replace the shared baseline.
       - name: Save trusted default-branch test timings
         if: ${{ !cancelled() && steps.test-timings.outcome == 'success' && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .codex-artifacts/ci/timings.json
           key: ci-node-timings-v1-${{ github.run_id }}-${{ github.run_attempt }}
