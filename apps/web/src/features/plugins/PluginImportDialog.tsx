@@ -7,6 +7,7 @@ import {
   DialogFooter,
   DialogHeader,
   InlineFeedback,
+  Radio,
 } from "../../shared/ui/index.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import type {
@@ -129,15 +130,14 @@ export function PluginImportDialog({
           {step === "select" && (
             <div className="plugin-import-select">
               {IMPORT_SOURCES.map((option) => (
-                <label key={option.source} className="plugin-import-source-row">
-                  <input
-                    checked={source === option.source}
-                    name="plugin-import-source"
-                    onChange={() => setSource(option.source)}
-                    type="radio"
-                  />
-                  <span>{option.label}</span>
-                </label>
+                <Radio
+                  checked={source === option.source}
+                  className="plugin-import-source-row"
+                  key={option.source}
+                  label={option.label}
+                  name="plugin-import-source"
+                  onChange={() => setSource(option.source)}
+                />
               ))}
             </div>
           )}
@@ -244,6 +244,7 @@ function ImportCandidateRow({
     <label className={`plugin-import-candidate-row${disabled ? " is-disabled" : ""}`}>
       <input
         checked={checked && !disabled}
+        data-ling-control-native="true"
         disabled={disabled}
         onChange={() => onToggle(candidate.name)}
         type="checkbox"
