@@ -37,7 +37,7 @@ export function OverlayScrollArea({
   const viewportRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const thumbRef = useRef<HTMLSpanElement>(null);
-  const scrollIdleTimerRef = useRef<number | undefined>(undefined);
+  const scrollIdleTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | undefined>(undefined);
   const dragRef = useRef<ScrollDragState | undefined>(undefined);
 
   const syncScrollbar = useCallback((): void => {
