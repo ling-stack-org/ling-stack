@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Image as ImageIcon, Loader2 } from "lucide-react";
 import type { ConversationTimelineImageViewItem } from "@ling-stack/conversation-ui-core";
 import { TimelineFactRow } from "./TimelineFactRow.js";
@@ -9,7 +9,10 @@ import { notifyConversationDeferredContentReady } from "../blocks/deferred-rende
 
 export function ConversationTimelineImageRenderer({ item, cwd, loadPreview, depth }: { readonly item: ConversationTimelineImageViewItem; readonly cwd?: string; readonly loadPreview?: ArtifactPreviewLoader; readonly depth: 0 | 1 }): React.JSX.Element {
   const artifactId = item.artifactRef?.kind === "artifact" ? item.artifactRef.id : undefined;
-  const request = loadPreview && cwd && artifactId ? { source: "artifact" as const, cwd, artifactId, maxBytes: 96_000 } : undefined;
+  const request = useMemo(
+    () => loadPreview && cwd && artifactId ? { source: "artifact" as const, cwd, artifactId, maxBytes: 96_000 } : undefined,
+    [artifactId, cwd, loadPreview],
+  );
   const [preview, setPreview] = useState<PreviewContentResponse>();
   const [previewLoading, setPreviewLoading] = useState(false);
   const [activePreview, setActivePreview] = useState(false);
