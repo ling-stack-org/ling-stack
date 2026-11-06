@@ -172,6 +172,38 @@ a statistical benchmark; full CI setup, shard contention and total job time stil
 need hosted-runner measurement. This documentation sync does not establish that
 the current changes have passed complete hosted CI.
 
+## Timing Telemetry
+
+The independent `timing-telemetry` job runs after `quality` and preserves a
+best-effort `ci-telemetry` artifact for complete and preview runs. The mandatory
+quality gate never depends on telemetry, so collection, download, parsing,
+upload, or telemetry job failures cannot change that gate. Available shard
+reports are downloaded even when the quality gate fails. The artifact retains
+run/job/step observations, per-file results, cumulative shard file time,
+imbalance by suite, and timeout/leaked-process counts from available reports.
+The summary is appended to the GitHub step summary and the JSON is retained
+for 14 days. Actions API jobs are restricted to the current run attempt.
+
+Job start delay includes dependency waits; it is not a pure runner queue
+measurement. Cumulative file time is not shard wall-clock time because files
+run concurrently. Elapsed time through completed jobs is not a dependency-DAG
+critical path and excludes in-progress jobs. Run duration is observed at
+collection while the workflow is still in progress. Missing reports do not
+establish zero failures across the full run.
+
+Use at least 5-10 complete hosted runs to compare the observations before
+changing shard counts, worker concurrency, or adding another E2E lane. The
+telemetry does not establish a fixed speedup percentage by itself.
+
+Telemetry and workflow regression tests are TypeScript files in the existing
+`scripts/ci/*.test.ts` lane and are checked by `pnpm typecheck:ci-tests`.
+The Node command diagnostic helper and its two owning daemon tests are also
+TypeScript; daemon discovery includes both test files, while
+`packages/daemon/tsconfig.test.json` checks the tests and helper through the
+required `typecheck:ci` script. Runtime type stripping alone is not validation.
+The diagnostic observes real child-process lifecycle events without changing
+command timeouts, invocation assertions, output capture, or native skip rules.
+
 Generate a local plan without running tests:
 
 ```sh
@@ -199,6 +231,12 @@ complete by `full-ci` runs it.
 Missing/ambiguous history or changes to scanner configuration/ignore policy
 select full history. Scheduled/manual runs scan full reachable history. Checkout
 must retain complete history; the scanner cannot reconstruct a shallow clone.
+
+Gitleaks fingerprints bind a commit, path, rule and line. A merge that imports
+reviewed evidence can produce distinct fingerprints for identical SHA-256
+records. Verify each digest against the source bytes before adding exact
+fingerprints to `.gitleaksignore`; do not exclude whole evidence paths, broaden
+hash-pattern allowlists or omit merge patches.
 
 ## Validation
 

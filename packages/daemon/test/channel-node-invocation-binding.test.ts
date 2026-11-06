@@ -1,21 +1,26 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
-import { bindChannelOperationPlan } from "../dist/features/channels/channel-operation-bindings.js";
+import test, { type TestContext } from "node:test";
+import { bindChannelOperationPlan, type ChannelOperationCandidatePlanV2, type ChannelOperationCandidateV2 } from "../dist/features/channels/channel-operation-bindings.js";
 import { workflowExactCommandBindingRejection } from "../dist/features/runs/approvals.js";
-import { channelOperationPlanFingerprintV1, isChannelIntentExecutionPlanV1, nodeFunctionGoalCommand, parseNodeFunctionInvocation } from "@ling-stack/contracts";
+import { channelOperationPlanFingerprintV1, isChannelIntentExecutionPlanV1, nodeFunctionGoalCommand, parseNodeFunctionInvocation,
+  type ChannelIntentExecutionOperationV1, type ChannelIntentExecutionPlanV1, type UnifiedExecResult } from "@ling-stack/contracts";
 import { executeUnifiedBashTool } from "../dist/features/runs/unified-exec.js";
 import { createUnifiedExecFixture } from "./support/unified-exec-fixture.mjs";
+import { captureNodeGoalCommandDiagnostic, type NodeGoalCommandDiagnostic } from "./support/node-goal-command-diagnostic.ts";
 import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, toRuntimeAttemptFence } from "@ling-stack/core";
 import { appendChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import { createDelegatedStepRequirement } from "../dist/features/channels/workflow-step-requirement.js";
 import { createWorkflowOperationExecutionSnapshot } from "../dist/features/runs/workflow-operation-snapshot.js";
 import { verifyWorkflowStepExecutionOperations } from "../dist/features/channels/workflow-operation-evidence.js";
 import { listAllExecutionActionsForRun } from "../dist/features/runs/execution-actions.js";
+import { isRecord } from "../dist/shared/validation.js";
+
+type Mutable<T> = { -readonly [Key in keyof T]: Mutable<T[Key]> };
 
 const body = '创建 continuity-v2-proof.js，内容是导出 formatProof，然后运行 Node 调用 formatProof("7319") 验证。';
-const owner = { kind: "host_default" };
+const owner = { kind: "host_default" } as const;
 function candidate() {
   return { schemaVersion: 2, operations: [
     { id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [], owner,
@@ -26,9 +31,11 @@ function candidate() {
       sourceQuote: '然后运行 Node 调用 formatProof("7319") 验证。',
       commandGoal: { kind: "node_function", module: { path: "continuity-v2-proof.js", sourceQuote: "continuity-v2-proof.js" },
         invocation: 'formatProof("7319")', sourceQuote: 'formatProof("7319")' } },
-  ] };
+  ] } satisfies Omit<ChannelOperationCandidatePlanV2, "operations"> & {
+    operations: [ChannelOperationCandidateV2, ChannelOperationCandidateV2];
+  };
 }
-async function fixture(t) {
+async function fixture(t: TestContext) {
   const cwd = await mkdtemp("/private/tmp/ling-node-goal-binding-");
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const bind = (plan = candidate(), sourceText = body) => bindChannelOperationPlan({ candidate: plan, sourceText,
@@ -40,34 +47,39 @@ async function fixture(t) {
 test("natural Node goal binds module, invocation and original source without inventing a user command", async t => {
   const { bind } = await fixture(t);
   const result = bind();
-  assert.equal(result.status, "bound", JSON.stringify(result));
+  assert.ok(result.status === "bound", JSON.stringify(result));
   assert.equal(isChannelIntentExecutionPlanV1(result.execution), true);
   const operation = result.execution.operations[1];
+  assert.ok(operation.binding?.commandGoal);
   assert.equal(operation.binding.commandGoal.kind, "node_function");
   assert.equal(operation.binding.commandGoal.modulePath, "continuity-v2-proof.js");
   assert.equal(operation.binding.commandGoal.invocation, 'formatProof("7319")');
   assert.deepEqual(operation.binding.effectScope.readPaths, ["continuity-v2-proof.js"]);
   assert.deepEqual(operation.dependsOn, ["create_file"]);
   assert.ok(operation.binding.commandGoal.sourceRefs.every(ref => ref.itemId === "node-goal-user-item" && body.includes(ref.quote)));
+  assert.ok(operation.commandMatchPolicy?.kind === "exact_command");
   const command = operation.commandMatchPolicy.command;
   assert.equal(body.includes(command), false, "the Host command must not masquerade as a user quote");
   assert.equal(workflowExactCommandBindingRejection({ bindings: [operation], request: { toolName: "bash", input: { command } } }), undefined);
   for (const substitute of [command.replace("7319", "7320"), command.replace("formatProof", "otherFunction"),
     command.replace("continuity-v2-proof.js", "other.js"), `node -e "console.log('proof:7319')"`]) {
-    assert.match(workflowExactCommandBindingRejection({ bindings: [operation], request: { toolName: "bash", input: { command: substitute } } }), /rejected/);
+    const rejection = workflowExactCommandBindingRejection({ bindings: [operation], request: { toolName: "bash", input: { command: substitute } } });
+    assert.ok(rejection);
+    assert.match(rejection, /rejected/);
   }
 });
 
 test("goal source, module dependency, invocation literals and exclusive command forms are verified", async t => {
   const { bind } = await fixture(t);
-  for (const mutate of [
+  const mutations: ((plan: ReturnType<typeof candidate>) => void)[] = [
     plan => { plan.operations[1].commandGoal.invocation = 'formatProof("9999")'; },
     plan => { plan.operations[1].commandGoal.module.path = "other.js"; },
     plan => { plan.operations[1].dependsOn = []; },
-    plan => { plan.operations[1].command = { text: "node --version", sourceQuote: "node --version" }; },
+    plan => { Object.assign(plan.operations[1], { command: { text: "node --version", sourceQuote: "node --version" } }); },
     plan => { plan.operations[1].commandGoal.sourceQuote = "not in the user item"; },
     plan => { plan.operations[1].sourceQuote = 'formatProof("7319")'; },
-  ]) {
+  ];
+  for (const mutate of mutations) {
     const plan = candidate(); mutate(plan);
     assert.equal(bind(plan).status, "clarify");
   }
@@ -75,7 +87,7 @@ test("goal source, module dependency, invocation literals and exclusive command 
     const plan = candidate(); plan.operations[1].sourceQuote = "运行 Node 调用 " + invocation;
     plan.operations[1].commandGoal.invocation = invocation; plan.operations[1].commandGoal.sourceQuote = invocation;
     const result = bind(plan, body + plan.operations[1].sourceQuote);
-    assert.equal(result.status, "clarify", invocation);
+    assert.ok(result.status === "clarify", invocation);
     assert.deepEqual(result.missingFields, ["commandGoal.invocation"], "reject the expression itself, not unrelated provenance");
   }
 });
@@ -98,43 +110,60 @@ test("Host-generated Node commands really invoke ESM/CJS exports and retain fail
   const { cwd } = await fixture(t);
   const task = { id: "node_goal_task", title: "Node goal fixture", prompt: "Execute only temporary fixture functions" };
   const f = createUnifiedExecFixture(t, cwd, task, "node_goal_run");
+  const run = f.run;
+  assert.ok(run);
   let sequence = 0;
-  const execute = async (modulePath, invocation) => {
+  const diagnostics: NodeGoalCommandDiagnostic[] = [];
+  const execute = async (modulePath: string, invocation: string) => {
     const command = nodeFunctionGoalCommand({ modulePath, invocation }); assert.ok(command);
-    const result = await executeUnifiedBashTool({ ...f,
-      request: { toolCallId: `node-goal-${++sequence}`, toolName: "bash", cwd, task, input: { command, timeoutMs: 4000 } },
-      appendAndMaybeStream: (type, data) => f.store.appendEvent(f.run.id, type, data) });
-    assert.equal(result.details.unifiedExec.command.command, command);
-    assert.equal(result.details.unifiedExec.runId, f.run.id);
-    return result.details.unifiedExec;
+    const result = await captureNodeGoalCommandDiagnostic({ sequence: ++sequence, timeoutMs: 4000,
+      record: diagnostic => diagnostics.push(diagnostic),
+      execute: () => executeUnifiedBashTool({ ...f, run,
+        request: { toolCallId: `node-goal-${sequence}`, toolName: "bash", cwd, task, input: { command, timeoutMs: 4000 } },
+        appendAndMaybeStream: (type, data) => f.store.appendEvent(run.id, type, data) }) });
+    assert.ok(isRecord(result.details) && isRecord(result.details.unifiedExec));
+    const unifiedExec = result.details.unifiedExec as unknown as UnifiedExecResult;
+    assert.ok(unifiedExec.command.kind === "shell");
+    assert.equal(unifiedExec.command.command, command);
+    assert.equal(unifiedExec.runId, run.id);
+    return unifiedExec;
   };
-  await writeFile(join(cwd, "proof.mjs"), 'export const formatProof = async value => "proof:" + value;');
-  let result = await execute("proof.mjs", 'formatProof("7319")');
-  assert.equal(result.status, "succeeded"); assert.equal(result.stdout.preview, "proof:7319\n");
-  await writeFile(join(cwd, "proof.cjs"), 'module.exports = { formatProof: value => "common:" + value };');
-  result = await execute("proof.cjs", 'formatProof("7319")');
-  assert.equal(result.status, "succeeded"); assert.equal(result.stdout.preview, "common:7319\n");
-  await writeFile(join(cwd, "quoted '# %.mjs"), "export const echo = value => value;");
-  result = await execute("quoted '# %.mjs", `echo("'$(touch must-not-exist)")`);
-  assert.equal(result.status, "succeeded"); assert.equal(result.stdout.preview, "'$(touch must-not-exist)\n");
-  await assert.rejects(readFile(join(cwd, "must-not-exist")), { code: "ENOENT" });
-  result = await execute("proof.mjs", "missing()");
-  assert.equal(result.status, "failed"); assert.notEqual(result.exitCode, 0); assert.match(result.stderr.preview, /missing export/);
-  await writeFile(join(cwd, "throwing.mjs"), 'export const formatProof = async () => { throw Error("fixture rejection"); };');
-  result = await execute("throwing.mjs", 'formatProof("7319")');
-  assert.equal(result.status, "failed"); assert.notEqual(result.exitCode, 0); assert.match(result.stderr.preview, /fixture rejection/);
-  assert.deepEqual(f.store.listHostCommandWriteBlockers(cwd), []);
+  try {
+    await writeFile(join(cwd, "proof.mjs"), 'export const formatProof = async value => "proof:" + value;');
+    let result = await execute("proof.mjs", 'formatProof("7319")');
+    assert.equal(result.status, "succeeded"); assert.equal(result.stdout.preview, "proof:7319\n");
+    await writeFile(join(cwd, "proof.cjs"), 'module.exports = { formatProof: value => "common:" + value };');
+    result = await execute("proof.cjs", 'formatProof("7319")');
+    assert.equal(result.status, "succeeded"); assert.equal(result.stdout.preview, "common:7319\n");
+    await writeFile(join(cwd, "quoted '# %.mjs"), "export const echo = value => value;");
+    result = await execute("quoted '# %.mjs", `echo("'$(touch must-not-exist)")`);
+    assert.equal(result.status, "succeeded"); assert.equal(result.stdout.preview, "'$(touch must-not-exist)\n");
+    await assert.rejects(readFile(join(cwd, "must-not-exist")), { code: "ENOENT" });
+    result = await execute("proof.mjs", "missing()");
+    assert.equal(result.status, "failed"); assert.notEqual(result.exitCode, 0); assert.match(result.stderr.preview, /missing export/);
+    await writeFile(join(cwd, "throwing.mjs"), 'export const formatProof = async () => { throw Error("fixture rejection"); };');
+    result = await execute("throwing.mjs", 'formatProof("7319")');
+    assert.equal(result.status, "failed"); assert.notEqual(result.exitCode, 0); assert.match(result.stderr.preview, /fixture rejection/);
+    assert.deepEqual(f.store.listHostCommandWriteBlockers(cwd), []);
+  } catch (error) {
+    for (const diagnostic of diagnostics) t.diagnostic(JSON.stringify(diagnostic));
+    throw error;
+  }
 });
 
 test("recomputed plan fingerprints cannot detach generated commands from their accepted goal", async t => {
   const { bind } = await fixture(t);
-  const result = bind(); assert.equal(result.status, "bound", JSON.stringify(result));
-  for (const mutate of [
-    operation => { operation.binding.commandGoal.invocation = 'formatProof("9999")'; },
-    operation => { operation.binding.commandGoal.modulePath = "other.js"; },
-    operation => { operation.commandMatchPolicy.command = "node --version"; operation.binding.effectScope.exactCommands = ["node --version"]; },
-  ]) {
-    const plan = structuredClone(result.execution); mutate(plan.operations[1]);
+  const result = bind(); assert.ok(result.status === "bound", JSON.stringify(result));
+  const mutations: ((operation: Mutable<ChannelIntentExecutionOperationV1>) => void)[] = [
+    operation => { assert.ok(operation.binding?.commandGoal); operation.binding.commandGoal.invocation = 'formatProof("9999")'; },
+    operation => { assert.ok(operation.binding?.commandGoal); operation.binding.commandGoal.modulePath = "other.js"; },
+    operation => {
+      assert.ok(operation.commandMatchPolicy?.kind === "exact_command" && operation.binding);
+      operation.commandMatchPolicy.command = "node --version"; operation.binding.effectScope.exactCommands = ["node --version"];
+    },
+  ];
+  for (const mutate of mutations) {
+    const plan = structuredClone(result.execution) as Mutable<ChannelIntentExecutionPlanV1>; mutate(plan.operations[1]);
     plan.fingerprint = channelOperationPlanFingerprintV1(plan.operations);
     assert.equal(isChannelIntentExecutionPlanV1(plan), false);
   }
