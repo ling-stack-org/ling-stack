@@ -73,7 +73,10 @@ const initialSnapshot = {
   canOpenSettings: false,
 };
 
-let snapshot = { ...initialSnapshot };
+const snapshotMode = process.env.LING_PREVIEW_HARNESS_SNAPSHOT;
+let snapshot = snapshotMode === "empty" || snapshotMode === "pending"
+  ? undefined
+  : { ...initialSnapshot };
 let themeSnapshot = {
   revision: 1,
   themeId: "ling-light",
@@ -109,7 +112,7 @@ function command(name, args = []) {
 
 contextBridge.exposeInMainWorld("lingComputerUsePreview", {
   getThemeSnapshot: () => Promise.resolve(themeSnapshot),
-  getSnapshot: () => Promise.resolve(snapshot),
+  getSnapshot: () => snapshotMode === "pending" ? new Promise(() => {}) : Promise.resolve(snapshot),
   activatePage: (pageId) => command("activatePage", [pageId]),
   closePage: (pageId) => command("closePage", [pageId]),
   retryCapture: () => command("retryCapture"),
@@ -226,9 +229,15 @@ contextBridge.exposeInMainWorld("lingPreviewTestHarness", {
     },
   }),
   pushSnapshot: (overrides) => {
-    snapshot = { ...snapshot, ...overrides };
+    snapshot = { ...(snapshot ?? initialSnapshot), ...overrides };
     for (const listener of snapshotListeners) {
       listener(snapshot);
+    }
+  },
+  clearSnapshot: () => {
+    snapshot = undefined;
+    for (const listener of snapshotListeners) {
+      listener(undefined);
     }
   },
   pushThemeSnapshot: (nextThemeSnapshot) => {

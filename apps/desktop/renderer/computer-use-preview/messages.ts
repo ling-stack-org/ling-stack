@@ -28,6 +28,8 @@ const messageIds = {
   closePageAction: "desktop.computer_use.close_page_action",
   viewAllPagesAction: "desktop.computer_use.view_all_pages_action",
   availablePagesLabel: "desktop.computer_use.available_pages_label",
+  waitingForActivityLabel: "Waiting for activity",
+  previewUnavailableLabel: "Preview unavailable",
   failedLabel: "desktop.computer_use.failed_label",
   computerUseFailedDetail: "desktop.computer_use.failed_detail",
   completedLabel: "desktop.computer_use.completed_label",

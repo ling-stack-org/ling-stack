@@ -18,7 +18,6 @@ import type {
   WorkspaceFileCapabilityResponse,
 } from "@ling-stack/contracts";
 import { daemonClient } from "./client.js";
-import { channelWorkCellDemoWorkflowRecovery } from "../lib/work-cell-demo-fixture.js";
 
 const pendingNetChanges = new Map<string, Promise<WorkspaceChangesResponse>>();
 
@@ -90,26 +89,14 @@ export function reapplyTurnWorkspaceChanges(cwd: string, turnId: string, idempot
 }
 
 export function getWorkflowWorkspaceChanges(cwd: string, workflowId: string): Promise<WorkflowWorkspaceChangesResponse> {
-  const demo = channelWorkCellDemoWorkflowRecovery({ cwd, workflowId });
-  if (demo) {
-    return Promise.resolve(demo);
-  }
   return daemonClient.getWorkflowWorkspaceChanges(cwd, workflowId);
 }
 
 export function undoWorkflowWorkspaceChanges(cwd: string, workflowId: string): Promise<WorkflowWorkspaceChangesResponse> {
-  const demo = channelWorkCellDemoWorkflowRecovery({ cwd, workflowId, action: "undo" });
-  if (demo) {
-    return Promise.resolve(demo);
-  }
   return daemonClient.undoWorkflowWorkspaceChanges(cwd, workflowId);
 }
 
 export function reapplyWorkflowWorkspaceChanges(cwd: string, workflowId: string): Promise<WorkflowWorkspaceChangesResponse> {
-  const demo = channelWorkCellDemoWorkflowRecovery({ cwd, workflowId, action: "reapply" });
-  if (demo) {
-    return Promise.resolve(demo);
-  }
   return daemonClient.reapplyWorkflowWorkspaceChanges(cwd, workflowId);
 }
 

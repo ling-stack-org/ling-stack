@@ -197,7 +197,8 @@ test(`reload restores the original ${surface} decision and menu keyboard focus i
   await page.screenshot({ path: `${evidenceDir}${surface}-reload-unconfirmed-${theme}.png`, animations: "disabled" });
   await page.reload();
   await selectSurface();
-  await expect(gate.getByRole("alert")).not.toBeEmpty();
+  await expect(page.getByRole("region", { name: "Notifications", exact: true })
+    .getByRole("status")).toContainText("Execution recovery could not be confirmed");
   expect(state.approvalDecisionRequests).toHaveLength(1);
   await page.screenshot({ path: `${evidenceDir}${surface}-reload-still-unconfirmed-${theme}.png`, animations: "disabled" });
   receiptAvailable = true;
