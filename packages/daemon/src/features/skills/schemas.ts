@@ -1071,7 +1071,7 @@ function readOptionalSkillSourceScanRoots(value: unknown): SkillSourceScanRoot[]
 
 function readSkillSourceKind(record: Record<string, unknown>, key: string): SkillSourceKind {
   const value = readString(record, key);
-  if (!["gstack-skill-directory", "codex-skill-directory", "workspace-skill-directory", "manual-markdown"].includes(value)) {
+  if (!["gstack-skill-directory", "codex-skill-directory", "claude-skill-directory", "dsh-skill-directory", "workspace-skill-directory", "manual-markdown"].includes(value)) {
     throw new Error(`${key} must be a supported skill source kind`);
   }
   return value as SkillSourceKind;

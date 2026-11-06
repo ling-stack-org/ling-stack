@@ -1,4 +1,10 @@
-import type { ManagedPluginCreateRequest, ManagedPluginView } from "../../types.js";
+import type {
+  ManagedPluginCreateRequest,
+  ManagedPluginImportApplyResponse,
+  ManagedPluginImportPreviewResponse,
+  ManagedPluginImportSource,
+  ManagedPluginView,
+} from "../../types.js";
 import type {
   PluginActionError,
   PluginActionErrorFilter,
@@ -165,6 +171,8 @@ export interface PluginManagerPageProps {
   readonly actionErrors: readonly PluginActionError[];
   readonly onRefresh: () => void;
   readonly onCreate: (input: ManagedPluginCreateRequest, request: PluginActionRequest) => Promise<ManagedPluginView | undefined>;
+  readonly onImportPreview: (source: ManagedPluginImportSource) => Promise<ManagedPluginImportPreviewResponse>;
+  readonly onImportApply: (source: ManagedPluginImportSource, names: readonly string[]) => Promise<ManagedPluginImportApplyResponse>;
   readonly onApplyPreset: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly onConnect: (pluginId: string, request: PluginActionRequest, command?: string) => Promise<ManagedPluginView | undefined>;
   readonly onCheck: (pluginId: string, request: PluginActionRequest) => Promise<void>;

@@ -63,6 +63,8 @@ export type SkillImportWarningSeverity = "info" | "warning" | "error";
 export type SkillSourceKind =
   | "gstack-skill-directory"
   | "codex-skill-directory"
+  | "claude-skill-directory"
+  | "dsh-skill-directory"
   | "workspace-skill-directory"
   | "manual-markdown";
 
