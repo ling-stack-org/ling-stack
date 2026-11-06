@@ -11,13 +11,14 @@ import type { PreviewContentKind, PreviewContentResponse } from "../../../types.
 export interface ArtifactPreviewProps {
   readonly preview: PreviewContentResponse;
   readonly cwd?: string;
+  readonly onImageError?: () => void;
 }
 
-export function ArtifactPreview({ preview, cwd }: ArtifactPreviewProps): React.JSX.Element {
+export function ArtifactPreview({ preview, cwd, onImageError }: ArtifactPreviewProps): React.JSX.Element {
   const { t } = useI18n();
 
   if (preview.kind === "image" && preview.imageUrl) {
-    return <ImageCompareViewer current={{ label: preview.ref.label, imageUrl: preview.imageUrl }} compare={preview.compare} />;
+    return <ImageCompareViewer current={{ label: preview.ref.label, imageUrl: preview.imageUrl }} compare={preview.compare} onImageError={onImageError} />;
   }
 
   if (preview.kind === "spreadsheet") {

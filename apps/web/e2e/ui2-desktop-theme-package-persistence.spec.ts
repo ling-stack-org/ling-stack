@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { strToU8, zipSync } from "fflate";
+import type { DesktopDaemonStatus, LingDesktopCapabilities } from "../../desktop/shared/desktop-capabilities.js";
 import {
   ThemeRegistry,
   lingLightTheme,
@@ -22,7 +22,7 @@ const nativeTheme = Object.freeze({
   source: "local-import",
 }) satisfies LingThemePackManifest;
 
-test("native install, preview, reimport, and hard reload use main-authoritative package state", async ({ page }) => {
+test("native bootstrap replaces stale renderer tokens and authorizes the next hard reload", async ({ page }) => {
   const errors = collectRuntimeErrors(page);
   const rendererInitial = importedTheme({
     appBackground: "#eef4f1",
@@ -34,217 +34,163 @@ test("native install, preview, reimport, and hard reload use main-authoritative 
     id: rendererInitial.id,
     name: "Native Verified",
   });
-  const rendererReplacement = importedTheme({
-    appBackground: "#e3ece7",
-    id: rendererInitial.id,
-    name: "Renderer Replacement",
-  });
-  const authoritativeReplacement = importedTheme({
-    appBackground: "#dce9e2",
-    id: rendererInitial.id,
-    name: "Native Refined",
-  });
+  const registry = new ThemeRegistry();
+  if (!registry.install(rendererInitial, "local-import").ok) throw new Error("Failed to prepare renderer snapshot");
+  const staleSnapshot = resolvedThemeToBootstrapSnapshot(
+    registry.resolve({ mode: "fixed", themeId: rendererInitial.id }, "light"),
+    "c".repeat(64),
+  );
+  if (!staleSnapshot) throw new Error("Failed to prepare renderer bootstrap snapshot");
+  await page.addInitScript((snapshot) => {
+    if (!localStorage.getItem("ling-stack.themeBootstrapSnapshot")) {
+      localStorage.setItem("ling-stack.themeBootstrapSnapshot", JSON.stringify(snapshot));
+    }
+  }, staleSnapshot);
   await prepareDesktopPage(page, {
-    packages: [],
-    publications: [
-      nativePublication(
-        "native-lifecycle.ling-theme",
-        readyDescriptor(authoritativeInitial, { checksum: "b".repeat(64), preview: true }),
-      ),
-      nativePublication(
-        "native-lifecycle-refined.ling-theme",
-        readyDescriptor(authoritativeReplacement, { checksum: "c".repeat(64), preview: true, revision: 2 }),
-      ),
-    ],
+    packages: [readyDescriptor(authoritativeInitial, { checksum: "b".repeat(64), preview: true })],
+    selectionThemeId: authoritativeInitial.id,
   });
 
   const panel = await openInterfacePreferences(page);
-  await panel.getByRole("button", { name: "Import theme" }).click();
-  const importDialog = page.getByRole("dialog", { name: "Import theme" });
-  await importDialog.getByLabel("Choose a theme file").setInputFiles(themeFile(
-    "native-lifecycle.ling-theme",
-    rendererInitial,
-  ));
-  await expect(importDialog.getByRole("region", { name: "Theme package summary" }))
-    .toContainText("Renderer Candidate");
-  await importDialog.getByLabel("Use this theme after import").check();
-  await importDialog.getByRole("button", { name: "Import theme" }).click();
-
-  await expect(importDialog).toHaveCount(0);
-  await expect(panel.getByRole("radio", { name: /Native Verified/ })).toBeVisible();
-  await expect(panel.getByRole("radio", { name: /Renderer Candidate/ })).toHaveCount(0);
-  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", rendererInitial.id);
-  await expect.poll(() => harnessOperationCount(page, "install")).toBe(1);
-  await expect.poll(() => desktopEvents(page)).toContain(`active:${rendererInitial.id}`);
-  await expectIndexedDbThemeAbsent(page, rendererInitial.id);
-
-  const initialActions = panel.getByRole("button", { name: "Theme actions for Native Verified" });
-  await initialActions.click();
-  await page.getByRole("menuitem", { name: "Preview" }).click();
-  const initialPreview = page.getByRole("dialog", { name: "Native Verified" });
-  await expect(initialPreview.locator("img.ling-ui-theme-preview-artwork")).toBeVisible();
-  await expect(initialPreview).not.toContainText("private/native/preview.png");
-  await initialPreview.locator(".ling-ui-dialog-footer").getByRole("button", { name: "Close" }).click();
-  await expect.poll(() => harnessOperationCount(page, "read")).toBe(1);
-
-  await initialActions.click();
-  await page.getByRole("menuitem", { name: "Reimport" }).click();
-  const reimportDialog = page.getByRole("dialog", { name: "Reimport theme" });
-  await reimportDialog.getByLabel("Choose a theme file").setInputFiles(themeFile(
-    "native-lifecycle-refined.ling-theme",
-    rendererReplacement,
-  ));
-  await expect(reimportDialog.getByRole("region", { name: "Theme package summary" }))
-    .toContainText("Renderer Replacement");
-  await reimportDialog.getByRole("button", { name: "Reimport theme" }).click();
-
-  await expect(reimportDialog).toHaveCount(0);
-  await expect(panel.getByRole("radio", { name: /Native Refined/ })).toBeVisible();
-  await expect(panel.getByRole("radio", { name: /Renderer Replacement/ })).toHaveCount(0);
+  await expectBuiltInPicker(panel);
+  await expect(page.locator("html")).toHaveAttribute("data-theme-first-paint", "ling-light");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", authoritativeInitial.id);
+  await expect(panel.locator(".settings-interface-theme-heading strong")).toHaveText("Native Verified");
+  await expect(panel).not.toContainText("Renderer Candidate");
+  await expect(panel).not.toContainText("private/native/preview.png");
   await expect.poll(() => page.evaluate(() => (
     getComputedStyle(document.documentElement).getPropertyValue("--ling-bg-app").trim()
-  ))).toBe("#dce9e2");
-  await expect.poll(() => harnessOperationCount(page, "reimport")).toBe(1);
-  await expectIndexedDbThemeAbsent(page, rendererInitial.id);
+  ))).toBe("#e6f0eb");
+  await expect.poll(async () => (await desktopSnapshot(page)).activeThemeId).toBe(authoritativeInitial.id);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("ling-stack.themeBootstrapSnapshot") ?? "null")))
+    .toMatchObject({
+      packageChecksumSha256: "b".repeat(64),
+      themeId: authoritativeInitial.id,
+      variableMap: { "--ling-bg-app": "#e6f0eb" },
+    });
+  await expectIndexedDbThemeRecord(page, authoritativeInitial.id);
 
   await page.reload();
   const reloadedPanel = await openInterfacePreferences(page);
-  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", rendererInitial.id);
-  await expect(reloadedPanel.getByRole("radio", { name: /Native Refined/ })).toBeVisible();
+  await expectBuiltInPicker(reloadedPanel);
+  await expect(page.locator("html")).toHaveAttribute("data-theme-first-paint", authoritativeInitial.id);
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", authoritativeInitial.id);
+  await expect(reloadedPanel.locator(".settings-interface-theme-heading strong")).toHaveText("Native Verified");
   await expect.poll(() => harnessOperationCount(page, "bootstrap")).toBeGreaterThanOrEqual(2);
-  await expect.poll(() => desktopEvents(page)).toContain(`active:${rendererInitial.id}`);
+  expect(await harnessOperationCount(page, "read")).toBe(0);
+  await expectNoPackageMutations(page);
+  await expectIndexedDbThemeRecord(page, authoritativeInitial.id);
   await expectNoPageOverflow(page);
   expect(errors).toEqual([]);
 });
 
-test("Desktop install failure stays native and never writes an IndexedDB fallback", async ({ page }) => {
+test("Desktop bootstrap failure stays native and never writes an IndexedDB fallback", async ({ page }) => {
   const errors = collectRuntimeErrors(page);
-  const rendererCandidate = importedTheme({ id: "native-failure", name: "Native Failure" });
+  const manifest = importedTheme({ id: "native-failure", name: "Native Failure" });
   await prepareDesktopPage(page, {
     failures: {
-      install: { code: "disk_full", retryable: true, themeId: rendererCandidate.id },
+      bootstrap: { code: "storage_unavailable", retryable: true },
     },
-    packages: [],
-    publications: [nativePublication(
-      "native-failure.ling-theme",
-      readyDescriptor(rendererCandidate, { checksum: "d".repeat(64), preview: true }),
-    )],
+    packages: [readyDescriptor(manifest)],
+    selectionThemeId: manifest.id,
   });
 
   const panel = await openInterfacePreferences(page);
-  await panel.getByRole("button", { name: "Import theme" }).click();
-  const dialog = page.getByRole("dialog", { name: "Import theme" });
-  await dialog.getByLabel("Choose a theme file").setInputFiles(themeFile(
-    "native-failure.ling-theme",
-    rendererCandidate,
-  ));
-  await dialog.getByRole("button", { name: "Import theme" }).click();
-
-  await expect(dialog.getByRole("alert")).toContainText("previous theme is unchanged");
-  await expect(panel.getByRole("radio", { name: /Native Failure/ })).toHaveCount(0);
+  const picker = await expectBuiltInPicker(panel);
+  const feedback = panel.locator("[data-ui2-interface-theme]").getByRole("status");
+  await expect(feedback).toContainText("Installed themes could not be loaded. Ling is using a built-in fallback.");
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-light");
-  await expect.poll(() => harnessOperationCount(page, "install")).toBe(1);
-  expect(await harnessPackageIds(page)).toEqual([]);
-  await expectIndexedDbThemeAbsent(page, rendererCandidate.id);
+  await expect.poll(async () => (await desktopSnapshot(page)).activeThemeId).toBe("ling-light");
+  const darkTheme = picker.getByRole("radio", { name: /Ling Dark/ });
+  await darkTheme.click();
+  await expect(darkTheme).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
+  await expect.poll(async () => (await desktopSnapshot(page)).activeThemeId).toBe("ling-dark");
+  await expect(feedback).toContainText("Installed themes could not be loaded.");
+  expect(await harnessPackageIds(page)).toEqual([manifest.id]);
+  await expectIndexedDbThemeRecord(page, manifest.id);
 
   await page.reload();
   const reloadedPanel = await openInterfacePreferences(page);
-  await expect(reloadedPanel.getByRole("radio", { name: /Native Failure/ })).toHaveCount(0);
-  await expectIndexedDbThemeAbsent(page, rendererCandidate.id);
+  await expectBuiltInPicker(reloadedPanel);
+  await expect(reloadedPanel.locator("[data-ui2-interface-theme]").getByRole("status"))
+    .toContainText("Installed themes could not be loaded.");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
+  await expect.poll(() => harnessOperationCount(page, "bootstrap")).toBeGreaterThanOrEqual(2);
+  await expectNoPackageMutations(page);
+  await expectIndexedDbThemeRecord(page, manifest.id);
   expect(errors).toEqual([]);
 });
 
-test("corrupt native packages can be reimported or deleted in dark zh-CN reduced motion", async ({ page }) => {
+test("corrupt native packages fall back without mutation in dark zh-CN reduced motion", async ({ page }) => {
   const errors = collectRuntimeErrors(page);
-  const repairedManifest = importedTheme({ id: "broken-reimport", name: "Native Repaired" });
+  const packages = [corruptDescriptor("broken-reimport", 4), corruptDescriptor("broken-delete", 7)];
   await prepareDesktopPage(page, {
     colorScheme: "dark",
     locale: "zh-CN",
-    packages: [
-      corruptDescriptor("broken-reimport", 4),
-      corruptDescriptor("broken-delete", 7),
-    ],
-    publications: [nativePublication(
-      "broken-reimport.ling-theme",
-      readyDescriptor(repairedManifest, { checksum: "e".repeat(64), preview: true, revision: 5 }),
-    )],
+    packages,
     reducedMotion: "reduce",
     selectionThemeId: "broken-reimport",
     viewport: { height: 800, width: 1280 },
   });
 
   const panel = await openInterfacePreferences(page, "zh-CN");
+  const picker = await expectBuiltInPicker(panel);
   await expect(page.locator("html")).toHaveAttribute("data-theme-first-paint", "ling-dark");
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
   expect((await desktopEvents(page)).filter((event) => event.startsWith("reported:"))[0]).toBe("reported:ling-dark");
-  const repairs = panel.locator("[data-ui2-theme-package-repairs]");
-  const reimportRow = repairs.locator('[data-theme-repair-kind="corrupt"]', { hasText: "broken-reimport" });
-  await reimportRow.getByRole("button", { name: "重新导入" }).click();
-  const reimportDialog = page.getByRole("dialog", { name: "重新导入主题" });
-  await reimportDialog.getByLabel("选择主题文件").setInputFiles(themeFile(
-    "broken-reimport.ling-theme",
-    repairedManifest,
-  ));
-  await reimportDialog.getByRole("button", { name: "重新导入主题" }).click();
-  await expect(reimportDialog).toHaveCount(0);
-  await expect(panel.getByRole("radio", { name: /Native Repaired/ })).toBeVisible();
-  await expect(repairs).not.toContainText("broken-reimport");
-  await expect.poll(() => harnessOperationCount(page, "reimport")).toBe(1);
-
-  const deleteRow = repairs.locator('[data-theme-repair-kind="corrupt"]', { hasText: "broken-delete" });
-  await deleteRow.getByRole("button", { name: /删除主题/ }).click();
-  const deleteDialog = page.getByRole("dialog", { name: /删除主题 broken-delete/ });
-  await deleteDialog.getByRole("button", { name: "删除主题" }).click();
-  await expect(deleteDialog).toHaveCount(0);
-  await expect(repairs).toHaveCount(0);
-  await expect.poll(() => harnessOperationCount(page, "delete")).toBe(1);
-  expect(await harnessPackageIds(page)).toEqual(["broken-reimport"]);
+  await expect(picker.getByRole("radio", { name: /Ling Dark/ })).toHaveAttribute("aria-checked", "true");
+  await expect.poll(async () => (await desktopSnapshot(page)).activeThemeId).toBe("ling-dark");
+  const lightTheme = picker.getByRole("radio", { name: /Ling Light/ });
+  await lightTheme.focus();
+  await page.keyboard.press("Space");
+  await expect(lightTheme).toBeFocused();
+  await expect(lightTheme).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-light");
+  await expect.poll(async () => (await desktopSnapshot(page)).activeThemeId).toBe("ling-light");
+  expect((await desktopSnapshot(page)).packages).toEqual(Object.fromEntries(packages.map((descriptor) => [
+    String(descriptor.themeId), { descriptor },
+  ])));
+  await expectNoPackageMutations(page);
   expect(await page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
+  expect(await lightTheme.evaluate((element) => getComputedStyle(element).transitionDuration)).toBe("0s");
   await expectNoPageOverflow(page);
   expect(errors).toEqual([]);
 });
 
-test("legacy-only browser theme reimport installs native state and clears the legacy record", async ({ page }) => {
+test("legacy-only Desktop selection falls back without migrating or deleting the browser record", async ({ page }) => {
   const errors = collectRuntimeErrors(page);
   const legacy = importedTheme({ id: "legacy-native-repair", name: "Legacy Browser Theme" });
-  const authoritative = importedTheme({ id: legacy.id, name: "Native Legacy Repair" });
   await prepareDesktopPage(page, {
+    colorScheme: "dark",
     legacyThemes: [legacy],
     packages: [],
-    publications: [nativePublication(
-      "legacy-native-repair.ling-theme",
-      readyDescriptor(authoritative, { checksum: "f".repeat(64), preview: true }),
-    )],
+    selectionThemeId: legacy.id,
   });
 
   const panel = await openInterfacePreferences(page);
-  const repairs = panel.locator("[data-ui2-theme-package-repairs]");
-  const legacyRow = repairs.locator('[data-theme-repair-kind="legacy-browser-only"]');
-  await expect(legacyRow).toContainText("Legacy Browser Theme");
-  await legacyRow.getByRole("button", { name: "Reimport" }).click();
-  const dialog = page.getByRole("dialog", { name: "Reimport theme" });
-  await dialog.getByLabel("Choose a theme file").setInputFiles(themeFile(
-    "legacy-native-repair.ling-theme",
-    legacy,
-  ));
-  await dialog.getByRole("button", { name: "Reimport theme" }).click();
-
-  await expect(dialog).toHaveCount(0);
-  await expect(repairs).toHaveCount(0);
-  await expect(panel.getByRole("radio", { name: /Native Legacy Repair/ })).toBeVisible();
-  await expect.poll(() => harnessOperationCount(page, "install")).toBe(1);
-  expect(await harnessOperationCount(page, "reimport")).toBe(0);
-  await expectIndexedDbThemeAbsent(page, legacy.id);
+  const picker = await expectBuiltInPicker(panel);
+  await expect(page.locator("html")).toHaveAttribute("data-theme-first-paint", "ling-dark");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-light");
+  await expect(picker.getByRole("radio", { name: /Ling Light/ })).toHaveAttribute("aria-checked", "true");
+  await expect.poll(async () => (await desktopSnapshot(page)).activeThemeId).toBe("ling-light");
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("ling-stack.themeSelection") ?? "null")))
+    .toEqual({ mode: "fixed", themeId: "ling-light" });
+  await expectIndexedDbThemeRecord(page, legacy.id, legacy);
 
   await page.reload();
   const reloadedPanel = await openInterfacePreferences(page);
-  await expect(reloadedPanel.locator("[data-ui2-theme-package-repairs]")).toHaveCount(0);
-  await expect(reloadedPanel.getByRole("radio", { name: /Native Legacy Repair/ })).toBeVisible();
+  await expectBuiltInPicker(reloadedPanel);
+  await expect(page.locator("html")).toHaveAttribute("data-theme-first-paint", "ling-light");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-light");
+  expect(await harnessPackageIds(page)).toEqual([]);
+  await expectNoPackageMutations(page);
+  await expectIndexedDbThemeRecord(page, legacy.id, legacy);
   await expectNoPageOverflow(page);
   expect(errors).toEqual([]);
 });
 
-test("Desktop bootstrap restores a native theme and confirms the active guard", async ({ page }) => {
+test("Desktop bootstrap restores a native theme and active guard without adding a picker option", async ({ page }) => {
   const errors = collectRuntimeErrors(page);
   await prepareDesktopPage(page, {
     packages: [readyDescriptor(nativeTheme)],
@@ -252,10 +198,14 @@ test("Desktop bootstrap restores a native theme and confirms the active guard", 
   });
 
   const panel = await openInterfacePreferences(page);
+  const picker = await expectBuiltInPicker(panel);
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", nativeTheme.id);
-  await expect(panel.getByRole("radio", { name: /Native Calm/ })).toBeVisible();
+  await expect(panel.locator(".settings-interface-theme-heading strong")).toHaveText("Native Calm");
+  await expect(picker.locator('[aria-checked="true"]')).toHaveCount(0);
+  await expect(picker.locator('[data-active="true"]')).toHaveCount(0);
   await expect.poll(() => desktopEvents(page)).toContain(`active:${nativeTheme.id}`);
-  await expect(panel.locator("[data-ui2-theme-package-repairs]")).toHaveCount(0);
+  await expect.poll(async () => (await desktopSnapshot(page)).activeThemeId).toBe(nativeTheme.id);
+  await expectNoPackageMutations(page);
   expect(errors).toEqual([]);
 });
 
@@ -390,33 +340,50 @@ test("Desktop malformed storage still follows the system Dark built-in on first 
   expect(errors).toEqual([]);
 });
 
-test("active Desktop theme deletion confirms the built-in fallback before native delete", async ({ page }) => {
+test("Desktop built-in selection persists and confirms the active guard without deleting the native package", async ({ page }) => {
   const errors = collectRuntimeErrors(page);
   await prepareDesktopPage(page, {
     packages: [readyDescriptor(nativeTheme)],
     selectionThemeId: nativeTheme.id,
   });
   const panel = await openInterfacePreferences(page);
+  const picker = await expectBuiltInPicker(panel);
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", nativeTheme.id);
-  await expect.poll(() => desktopEvents(page)).toContain(`active:${nativeTheme.id}`);
-
-  await panel.getByRole("button", { name: "Theme actions for Native Calm" }).click();
-  await page.getByRole("menuitem", { name: "Delete" }).click();
-  await page.getByRole("dialog", { name: "Delete theme Native Calm?" })
-    .getByRole("button", { name: "Delete theme" })
-    .click();
+  await expect.poll(async () => (await desktopSnapshot(page)).activeThemeId).toBe(nativeTheme.id);
+  const before = await desktopSnapshot(page);
+  const eventsBeforeSelection = await desktopEvents(page);
+  await picker.getByRole("radio", { name: /Ling Light/ }).click();
 
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-light");
-  await expect(panel.getByRole("radio", { name: /Native Calm/ })).toHaveCount(0);
+  await expect(picker.getByRole("radio", { name: /Ling Light/ })).toHaveAttribute("aria-checked", "true");
+  await expect.poll(async () => (await desktopSnapshot(page)).activeThemeId).toBe("ling-light");
   const events = await desktopEvents(page);
-  const fallbackIndex = events.indexOf("active:ling-light");
-  const deleteIndex = events.indexOf(`delete:${nativeTheme.id}`);
-  expect(fallbackIndex).toBeGreaterThanOrEqual(0);
-  expect(deleteIndex).toBeGreaterThan(fallbackIndex);
+  expect(events.slice(eventsBeforeSelection.length)).toContain("active:ling-light");
+  expect((await desktopSnapshot(page)).packages).toEqual(before.packages);
+  expect((await desktopSnapshot(page)).repositoryRevision).toBe(before.repositoryRevision);
+  expect(await page.evaluate(() => ({
+    selection: JSON.parse(localStorage.getItem("ling-stack.themeSelection") ?? "null"),
+    bootstrapSelection: JSON.parse(localStorage.getItem("ling-stack.themeBootstrapSelection") ?? "null"),
+    snapshot: localStorage.getItem("ling-stack.themeBootstrapSnapshot"),
+  }))).toEqual({
+    selection: { mode: "fixed", themeId: "ling-light" },
+    bootstrapSelection: { mode: "fixed", themeId: "ling-light" },
+    snapshot: null,
+  });
+
+  await page.reload();
+  const reloadedPanel = await openInterfacePreferences(page);
+  await expectBuiltInPicker(reloadedPanel);
+  await expect(page.locator("html")).toHaveAttribute("data-theme-first-paint", "ling-light");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-light");
+  await expect.poll(async () => (await desktopSnapshot(page)).activeThemeId).toBe("ling-light");
+  expect((await desktopSnapshot(page)).packages).toEqual(before.packages);
+  await expectNoPackageMutations(page);
+  await expectIndexedDbThemeRecord(page, nativeTheme.id);
   expect(errors).toEqual([]);
 });
 
-test("a failed Desktop fallback confirmation keeps the active package and prevents delete", async ({ page }) => {
+test("Desktop active-sync failure preserves the native guard and clears after a confirmed built-in selection", async ({ page }) => {
   const errors = collectRuntimeErrors(page);
   await prepareDesktopPage(page, {
     failActiveThemeId: "ling-light",
@@ -424,25 +391,35 @@ test("a failed Desktop fallback confirmation keeps the active package and preven
     selectionThemeId: nativeTheme.id,
   });
   const panel = await openInterfacePreferences(page);
+  const picker = await expectBuiltInPicker(panel);
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", nativeTheme.id);
+  await expect.poll(async () => (await desktopSnapshot(page)).activeThemeId).toBe(nativeTheme.id);
+  const before = await desktopSnapshot(page);
+  await picker.getByRole("radio", { name: /Ling Light/ }).click();
 
-  await panel.getByRole("button", { name: "Theme actions for Native Calm" }).click();
-  await page.getByRole("menuitem", { name: "Delete" }).click();
-  const dialog = page.getByRole("dialog", { name: "Delete theme Native Calm?" });
-  await dialog.getByRole("button", { name: "Delete theme" }).click();
+  const feedback = panel.locator("[data-ui2-interface-theme]").getByRole("status");
+  await expect(feedback).toContainText("Desktop could not confirm the active theme. Destructive theme actions remain blocked.");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-light");
+  await expect(picker.getByRole("radio", { name: /Ling Light/ })).toHaveAttribute("aria-checked", "true");
+  expect((await desktopSnapshot(page)).activeThemeId).toBe(nativeTheme.id);
+  expect((await desktopSnapshot(page)).packages).toEqual(before.packages);
 
-  await expect(dialog.getByRole("alert")).toContainText("remains installed");
-  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", nativeTheme.id);
-  await dialog.getByRole("button", { name: "Cancel" }).click();
-  await expect(panel.getByRole("radio", { name: /Native Calm/ })).toBeVisible();
-  expect((await desktopEvents(page)).some((event) => event.startsWith("delete:"))).toBe(false);
+  await picker.getByRole("radio", { name: /Ling Dark/ }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
+  await expect.poll(async () => (await desktopSnapshot(page)).activeThemeId).toBe("ling-dark");
+  await expect(feedback).toHaveCount(0);
+  expect((await desktopSnapshot(page)).packages).toEqual(before.packages);
+  expect((await desktopSnapshot(page)).repositoryRevision).toBe(before.repositoryRevision);
+  await expectNoPackageMutations(page);
+  await expectIndexedDbThemeRecord(page, nativeTheme.id);
   expect(errors).toEqual([]);
 });
 
-test("corrupt and legacy-only Desktop packages stay out of ThemePicker and share one repair owner", async ({ page }) => {
+test("corrupt native authority rejects a matching browser theme and snapshot without discarding legacy records", async ({ page }) => {
   const errors = collectRuntimeErrors(page);
   const legacyTheme = { ...nativeTheme, id: "legacy-calm", name: "Legacy Calm" };
   const brokenTheme = { ...nativeTheme, id: "broken-calm", name: "Broken Calm" };
+  const descriptor = corruptDescriptor(brokenTheme.id, 4);
   const registry = new ThemeRegistry();
   if (!registry.install(brokenTheme, "local-import").ok) throw new Error("Failed to prepare corrupt snapshot fixture");
   const brokenSnapshot = resolvedThemeToBootstrapSnapshot(
@@ -453,12 +430,7 @@ test("corrupt and legacy-only Desktop packages stay out of ThemePicker and share
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
   await installDesktopHarness(page, {
-    packages: [{
-      health: "corrupt",
-      issueCode: "checksum_mismatch",
-      recordRevision: 4,
-      themeId: "broken-calm",
-    }],
+    packages: [descriptor],
   });
   await page.addInitScript((snapshot) => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -469,22 +441,23 @@ test("corrupt and legacy-only Desktop packages stay out of ThemePicker and share
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/favicon.png");
   await seedLegacyTheme(page, legacyTheme);
+  await seedLegacyTheme(page, brokenTheme);
   await page.goto("/");
 
   const panel = await openInterfacePreferences(page);
+  const picker = await expectBuiltInPicker(panel);
   await expect(page.locator("html")).toHaveAttribute("data-theme-first-paint", "ling-light");
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-light");
-  const repairs = panel.locator("[data-ui2-theme-package-repairs]");
-  await expect(repairs).toHaveCount(1);
-  await expect(repairs).toContainText("broken-calm");
-  await expect(repairs).toContainText("Legacy Calm");
-  await expect(panel.getByRole("radio", { name: /broken-calm|Legacy Calm/ })).toHaveCount(0);
-
-  const corruptRow = repairs.locator('[data-theme-repair-kind="corrupt"]');
-  await corruptRow.getByRole("button", { name: "Reimport" }).click();
-  await expect(page.getByRole("dialog", { name: "Reimport theme" })).toBeVisible();
-  await page.getByRole("dialog", { name: "Reimport theme" }).getByRole("button", { name: "Cancel" }).click();
-  await expect(corruptRow.getByRole("button", { name: "Reimport" })).toBeFocused();
+  await expect(picker.getByRole("radio", { name: /Ling Light/ })).toHaveAttribute("aria-checked", "true");
+  await expect.poll(async () => (await desktopSnapshot(page)).activeThemeId).toBe("ling-light");
+  expect((await desktopSnapshot(page)).packages).toEqual({ [brokenTheme.id]: { descriptor } });
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("ling-stack.themeSelection") ?? "null")))
+    .toEqual({ mode: "fixed", themeId: "ling-light" });
+  expect(await page.evaluate(() => localStorage.getItem("ling-stack.themeBootstrapSnapshot"))).toBeNull();
+  await expectIndexedDbThemeRecord(page, legacyTheme.id, legacyTheme);
+  await expectIndexedDbThemeRecord(page, brokenTheme.id, brokenTheme);
+  await expectNoPackageMutations(page);
+  await expectNoPageOverflow(page);
   expect(errors).toEqual([]);
 });
 
@@ -520,6 +493,12 @@ interface DesktopHarnessOptions {
 interface DesktopHarnessCall {
   readonly operation: DesktopHarnessOperation;
   readonly request: Readonly<Record<string, unknown>>;
+}
+
+interface DesktopHarnessSnapshot {
+  readonly activeThemeId?: string;
+  readonly packages: Readonly<Record<string, { readonly descriptor: Record<string, unknown> }>>;
+  readonly repositoryRevision: number;
 }
 
 async function prepareDesktopPage(page: Page, options: DesktopHarnessOptions): Promise<void> {
@@ -651,11 +630,27 @@ async function installDesktopHarness(page: Page, options: DesktopHarnessOptions)
         snapshot: () => copy(state),
       },
     });
+    const daemonStatus: DesktopDaemonStatus = {
+      state: "connected",
+      baseUrl: "http://127.0.0.1:17891",
+      ownedByDesktop: true,
+    };
     Object.defineProperty(window, "lingDesktop", {
       configurable: true,
       value: {
         platform: "macos",
-        daemonBaseUrl: "http://127.0.0.1:17891",
+        daemonBaseUrl: daemonStatus.baseUrl,
+        daemon: {
+          getStatus: async () => daemonStatus,
+          restart: async () => daemonStatus,
+          onStatusChanged(listener) {
+            let subscribed = true;
+            queueMicrotask(() => {
+              if (subscribed) listener(daemonStatus);
+            });
+            return () => { subscribed = false; };
+          },
+        },
         appearance: {
           reportTheme(theme: { readonly themeId?: string }) {
             state.events.push(`reported:${String(theme.themeId ?? "unknown")}`);
@@ -819,7 +814,7 @@ async function installDesktopHarness(page: Page, options: DesktopHarnessOptions)
           setAutoShow: async () => ({ accepted: true }),
           onSummaryChanged: () => () => undefined,
         },
-      },
+      } satisfies Pick<LingDesktopCapabilities, "platform" | "daemonBaseUrl" | "daemon"> & Record<string, unknown>,
     });
   }, options);
 }
@@ -862,18 +857,6 @@ function corruptDescriptor(themeId: string, recordRevision: number): Record<stri
   };
 }
 
-function nativePublication(
-  originalFileName: string,
-  descriptor: Record<string, unknown>,
-): DesktopHarnessPublication {
-  return {
-    descriptor,
-    licenseText: "MIT License",
-    originalFileName,
-    previewBytes: [...previewPng],
-  };
-}
-
 async function desktopEvents(page: Page): Promise<string[]> {
   return page.evaluate(() => [...((window as typeof window & {
     __desktopThemeHarness?: { readonly events: string[] };
@@ -891,14 +874,41 @@ async function harnessOperationCount(page: Page, operation: DesktopHarnessOperat
 }
 
 async function harnessPackageIds(page: Page): Promise<string[]> {
+  return Object.keys((await desktopSnapshot(page)).packages).sort();
+}
+
+async function desktopSnapshot(page: Page): Promise<DesktopHarnessSnapshot> {
   return page.evaluate(() => {
-    const state = (window as typeof window & {
+    const harness = (window as typeof window & {
       __desktopThemeHarness?: {
-        snapshot(): { readonly packages: Readonly<Record<string, unknown>> };
+        snapshot(): DesktopHarnessSnapshot;
       };
-    }).__desktopThemeHarness?.snapshot();
-    return Object.keys(state?.packages ?? {}).sort();
+    }).__desktopThemeHarness;
+    if (!harness) throw new Error("Desktop theme harness is unavailable");
+    return harness.snapshot();
   });
+}
+
+async function expectNoPackageMutations(page: Page): Promise<void> {
+  expect((await desktopCalls(page)).filter(({ operation }) => (
+    operation === "install" || operation === "reimport" || operation === "delete"
+  ))).toEqual([]);
+}
+
+async function expectBuiltInPicker(panel: Locator): Promise<Locator> {
+  const picker = panel.getByRole("radiogroup", { name: /Theme packs|主题包/u });
+  const options = picker.getByRole("radio");
+  await expect(options).toHaveCount(6);
+  expect(await options.evaluateAll((elements) => elements.map((element) => (
+    element.getAttribute("data-theme-option-id")
+  )).sort())).toEqual([
+    "ling-breeze", "ling-dark", "ling-journey", "ling-light", "ling-night", "ling-ocean",
+  ]);
+  await expect(panel.getByRole("button", {
+    name: /Import theme|Create theme|Theme actions for|导入主题|创建主题|的主题操作/u,
+  })).toHaveCount(0);
+  await expect(panel.locator("[data-ui2-theme-package-repairs]")).toHaveCount(0);
+  return picker;
 }
 
 function importedTheme(input: {
@@ -926,29 +936,17 @@ function importedTheme(input: {
   };
 }
 
-function themeFile(name: string, manifest: LingThemePackManifest): {
-  readonly buffer: Buffer;
-  readonly mimeType: string;
-  readonly name: string;
-} {
-  return {
-    buffer: Buffer.from(zipSync({
-      "LICENSE.txt": strToU8("MIT License"),
-      "assets/preview.png": previewPng,
-      "theme.json": strToU8(JSON.stringify(manifest)),
-    }, { level: 6 })),
-    mimeType: "application/zip",
-    name,
-  };
-}
-
-async function expectIndexedDbThemeAbsent(page: Page, themeId: string): Promise<void> {
+async function expectIndexedDbThemeRecord(
+  page: Page,
+  themeId: string,
+  expectedManifest: LingThemePackManifest | null = null,
+): Promise<void> {
   const state = await page.evaluate(async (id) => new Promise<{
     readonly assets: number;
-    readonly manifest: boolean;
+    readonly manifest: LingThemePackManifest | null;
     readonly metadata: boolean;
   }>((resolve, reject) => {
-    const request = indexedDB.open("ling-stack-ui2", 3);
+    const request = indexedDB.open("ling-stack-ui2");
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains("themes")) {
         request.result.createObjectStore("themes", { keyPath: "id" });
@@ -977,7 +975,7 @@ async function expectIndexedDbThemeAbsent(page: Page, themeId: string): Promise<
       transaction.oncomplete = () => {
         resolve({
           assets: assets.result,
-          manifest: Boolean(manifest.result),
+          manifest: manifest.result ?? null,
           metadata: Boolean(metadata.result),
         });
         database.close();
@@ -988,7 +986,7 @@ async function expectIndexedDbThemeAbsent(page: Page, themeId: string): Promise<
       };
     };
   }), themeId);
-  expect(state).toEqual({ assets: 0, manifest: false, metadata: false });
+  expect(state).toEqual({ assets: 0, manifest: expectedManifest, metadata: false });
 }
 
 async function expectNoPageOverflow(page: Page): Promise<void> {
@@ -999,7 +997,7 @@ async function expectNoPageOverflow(page: Page): Promise<void> {
 
 async function seedLegacyTheme(page: Page, manifest: LingThemePackManifest): Promise<void> {
   await page.evaluate((storedManifest) => new Promise<void>((resolve, reject) => {
-    const request = indexedDB.open("ling-stack-ui2", 3);
+    const request = indexedDB.open("ling-stack-ui2");
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains("themes")) request.result.createObjectStore("themes", { keyPath: "id" });
       if (!request.result.objectStoreNames.contains("theme-packages")) request.result.createObjectStore("theme-packages", { keyPath: "themeId" });

@@ -21,9 +21,9 @@ export function installChannelWorkCellFixture(state: MockState, suffix: string):
   if (!baseRun) throw new Error("Base state must include a run");
 
   const threadId = `thread_ui2_work_cell_${suffix}`;
-  const turnId = `turn_ui2_work_cell_${suffix}`;
   const runId = `run_ui2_work_cell_${suffix}`;
   const sourceMessageId = `message_ui2_work_cell_${suffix}`;
+  const turnId = `turn_${sourceMessageId}`;
   const run = {
     ...baseRun,
     id: runId,
@@ -50,6 +50,7 @@ export function installChannelWorkCellFixture(state: MockState, suffix: string):
     title: `Focused WorkCell ${suffix}`,
     userInstruction: `Inspect the focused WorkCell ${suffix}.`,
     channelId: "channel_engineering",
+    sourceItemId: sourceMessageId,
     taskId: run.taskId,
     lastRunId: runId,
     createdByActor: "local-user",
@@ -105,7 +106,7 @@ export function installActiveChannelWorkCellFixture(state: MockState): {
   state.runs = state.runs.map((run) => run.id === result.runId
     ? { ...run, status: "running", endedAt: undefined, updatedAt: startedAt }
     : run);
-  state.turns = state.turns.map((turn) => isRecord(turn) && turn.id === `turn_ui2_work_cell_active-visibility`
+  state.turns = state.turns.map((turn) => isRecord(turn) && turn.lastRunId === result.runId
     ? { ...turn, status: "running", completedAt: undefined, updatedAt: startedAt }
     : turn);
   state.tasks = state.tasks.map((task) => isRecord(task) && task.currentRunId === result.runId
