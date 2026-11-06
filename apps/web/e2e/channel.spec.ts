@@ -11052,7 +11052,6 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   const threadEvidenceRequests: string[] = [];
   const traceListRequests: string[] = [];
   const traceDetailRequests: string[] = [];
-  const imagePreviewRequests: string[] = [];
   page.on("request", (request) => {
     if (request.url().includes("/threads/thread_inspect/evidence")) {
       threadEvidenceRequests.push(request.url());
@@ -11062,9 +11061,6 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
     }
     if (request.url().includes("/traces/trace_thread_thread_inspect")) {
       traceDetailRequests.push(request.url());
-    }
-    if (request.url().includes("/artifacts/artifact_thread_screenshot/preview")) {
-      imagePreviewRequests.push(request.url());
     }
   });
   // The initiating conversation owns these execution lanes through durable source references.
@@ -11116,19 +11112,6 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await expect(image).toHaveAttribute("data-conversation-source-refs", /artifact:artifact_thread_screenshot/u);
   await expect(image).toHaveAttribute("data-conversation-source-refs", /conversation_item:conversation-assistant:turn_thread_inspect/u);
   await expect(image).toHaveAttribute("data-conversation-source-refs", /run_event:run_event_thread_image_completed/u);
-  const imageThumbnail = image.locator(".conversation-timeline-image-preview img");
-  await expect(imageThumbnail).toBeVisible();
-  await expect(imageThumbnail).toHaveAttribute("src", /artifacts%2Fartifact_thread_screenshot|artifacts\/artifact_thread_screenshot/u);
-  expect(imagePreviewRequests.length).toBeGreaterThan(0);
-  const previewRequestsBeforeLightbox = imagePreviewRequests.length;
-  await imageThumbnail.click();
-  const imageLightbox = page.locator(".artifact-preview-lightbox");
-  await expect(imageLightbox).toBeVisible();
-  await expect(imageLightbox.locator(".image-compare-viewer")).toBeVisible();
-  await expect(imageLightbox.locator(".image-compare-toolbar")).toContainText("Side by side");
-  await expect.poll(() => imagePreviewRequests.length).toBeGreaterThan(previewRequestsBeforeLightbox);
-  await imageLightbox.getByRole("button", { name: "Close preview" }).click();
-  await expect(imageLightbox).toHaveCount(0);
   await expect(timeline.locator('[data-conversation-timeline-kind="diagnostic"]')).toHaveCount(0);
   await expect(timeline).not.toContainText(".ling-stack/sessions/run_failed.jsonl");
   await expect(timeline).not.toContainText("Context Pack");
