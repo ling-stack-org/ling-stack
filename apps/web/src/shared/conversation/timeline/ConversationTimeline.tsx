@@ -31,6 +31,7 @@ import { ConversationTimelineResponseFiles } from "./ConversationTimelineRespons
 import { ConversationTimelineProcessHeader } from "./ConversationTimelineProcessHeader.js";
 import type { WorkspaceRightDockReviewTarget } from "../../../features/workspace/right-dock/WorkspaceRightDock.js";
 import { conversationMeasurementScrollEvent, type ConversationReadingAnchor } from "../blocks/conversation-reading-anchor.js";
+import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 
 export interface ConversationTimelineProps {
   /** Immutable, already-scoped canonical/display projection. */
@@ -39,6 +40,7 @@ export interface ConversationTimelineProps {
   readonly className?: string;
   readonly ariaLabel?: string;
   readonly cwd?: string;
+  readonly loadPreview?: ArtifactPreviewLoader;
   readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
   readonly onOpenReview?: (target: WorkspaceRightDockReviewTarget) => void;
   readonly onInvokeProtocolAction?: (
@@ -95,6 +97,7 @@ export function ConversationTimeline({
   snapshot,
   depth,
   cwd,
+  loadPreview,
   onOpenSourceRef,
   onOpenReview,
   onInvokeProtocolAction,
@@ -303,6 +306,7 @@ export function ConversationTimeline({
             renderUserInputAvatar,
             onSubmitUserInputAnswer,
             cwd,
+            loadPreview,
             onOpenSourceRef,
             onOpenReview,
             onInvokeProtocolAction,
@@ -336,6 +340,7 @@ export function ConversationTimeline({
         renderUserInputAvatar,
         onSubmitUserInputAnswer,
         cwd,
+        loadPreview,
         onOpenSourceRef,
         onOpenReview,
         onInvokeProtocolAction,
@@ -427,7 +432,7 @@ function countAtomicItems(items: readonly ConversationTimelineItem[]): number {
   }, 0);
 }
 
-type TimelineRenderContext = Pick<ConversationTimelineProps, "cwd" | "onOpenSourceRef" | "onOpenReview" | "onInvokeProtocolAction" | "onDisclosureIntent" | "renderMessageChrome" | "renderSubAgentAvatar" | "renderUserInputAvatar" | "onSubmitUserInputAnswer"> & {
+type TimelineRenderContext = Pick<ConversationTimelineProps, "cwd" | "loadPreview" | "onOpenSourceRef" | "onOpenReview" | "onInvokeProtocolAction" | "onDisclosureIntent" | "renderMessageChrome" | "renderSubAgentAvatar" | "renderUserInputAvatar" | "onSubmitUserInputAnswer"> & {
   readonly scopeKind?: ConversationTimelineScopeKind;
   readonly depth: 0 | 1;
 };
@@ -551,6 +556,7 @@ function renderTimelineDisplayRow(
         renderUserInputAvatar: context.renderUserInputAvatar,
         onSubmitUserInputAnswer: context.onSubmitUserInputAnswer,
         cwd: context.cwd,
+        loadPreview: context.loadPreview,
         onOpenSourceRef: context.onOpenSourceRef,
         onInvokeProtocolAction: context.onInvokeProtocolAction,
         onDisclosureIntent: context.onDisclosureIntent,
@@ -582,6 +588,7 @@ function renderTimelineItem(
     renderUserInputAvatar: context.renderUserInputAvatar,
     onSubmitUserInputAnswer: context.onSubmitUserInputAnswer,
     cwd: context.cwd,
+    loadPreview: context.loadPreview,
     onOpenSourceRef: context.onOpenSourceRef,
     onInvokeProtocolAction: context.onInvokeProtocolAction,
     renderMessageChrome: context.renderMessageChrome,
