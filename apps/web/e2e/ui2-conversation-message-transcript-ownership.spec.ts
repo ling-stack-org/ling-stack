@@ -5,6 +5,7 @@ import { expandTimelineProcesses } from "./support/timeline-process";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { completedTerminalReport, installChannelWorkCellFixture, installNormalWorkCellFixture } from "./support/conversation-work-cell-fixture";
+import { installChannelWorkCellScenario } from "./support/conversation-work-cell-scenario";
 import { seedImportedQuietOcean } from "./support/media-jobs-fixtures";
 import { expectMessageFrameContained } from "./support/message-frame-assertions";
 import { expectMessageInteractionPolicy } from "./support/message-interaction-policy";
@@ -13,6 +14,7 @@ import {
   createBaseState,
   createChatProvider,
   createMockTeammate,
+  isRecord,
   type MockState,
 } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
@@ -28,11 +30,11 @@ test("1440x960 Ling Light owns a complete Channel Timeline and action feedback",
     height: 960,
     theme: "light",
     width: 1440,
-    workCellDemo: true,
   });
   const runtime = watchRuntime(page);
   const state = createBaseState({ approvalStatus: "expired" });
   const threadId = installChannelTranscriptFixture(state);
+  installChannelWorkCellScenario(state);
   await mockDaemon(page, state);
 
   await page.goto("/");
@@ -126,7 +128,12 @@ test("1280x800 Ling Dark keeps Normal message states independent from Channel ow
   await expect(ready.locator(":scope > .message-content > header")).toHaveCSS("clip-path", "inset(50%)");
   await expectSharedConversationBodyTypography(ready);
   await expect(pending).toHaveClass(/message-bubble-pending/u);
-  await expect(pending.locator(".message-pending-spinner")).toBeVisible();
+  await expect(feed.locator("[data-conversation-timeline-message]").filter({
+    hasText: "Normal ownership response is still streaming",
+  }))
+    .toHaveAttribute("data-conversation-timeline-status", "running");
+  await expect(pending.locator(".message-body-renderer")).toHaveText("Normal ownership response is still streaming");
+  await expect(pending.locator(".message-pending-spinner")).toHaveCount(0);
   await expect(failed).toHaveClass(/failed/u);
   await expect(failed.locator(".normal-conversation-message-error")).toHaveCount(0);
   await expectMessageInteractionPolicy(own, "user", "Copy message");
@@ -215,7 +222,7 @@ test("1440x960 imported Quiet Ocean keeps Teammate identity, attachments, Memory
 
 function installChannelTranscriptFixture(state: MockState): string {
   const { threadId } = installChannelWorkCellFixture(state, "transcript_contract");
-  const source = state.channelMessages.find((message) => message.threadId === threadId);
+  const source = state.channelMessages.find((message): message is Record<string, unknown> => isRecord(message) && message.threadId === threadId);
   if (!source) throw new Error("Channel Timeline fixture did not create a source message.");
   const createdAt = "2026-07-24T03:00:00.000Z";
   Object.assign(source, {
@@ -514,14 +521,13 @@ async function prepareSurface(page: Page, options: {
   readonly reducedMotion?: boolean;
   readonly theme: "light" | "dark";
   readonly width: number;
-  readonly workCellDemo?: boolean;
 }): Promise<void> {
   await page.setViewportSize({ height: options.height, width: options.width });
   await page.emulateMedia({
     colorScheme: options.theme,
     reducedMotion: options.reducedMotion ? "reduce" : "no-preference",
   });
-  await page.addInitScript(({ theme, workCellDemo }) => {
+  await page.addInitScript(({ theme }) => {
     const override = sessionStorage.getItem("ling-stack.e2eThemeSelection");
     const selection = override
       ? JSON.parse(override)
@@ -531,8 +537,7 @@ async function prepareSurface(page: Page, options: {
     localStorage.setItem("ling-stack.themeBootstrapSelection", JSON.stringify(selection));
     localStorage.setItem("ling-stack.themePreference", theme);
     localStorage.setItem("ling-stack.themeBootstrapPreference", theme);
-    if (workCellDemo) localStorage.setItem("ling-stack.workCellDemo", "true");
-  }, { theme: options.theme, workCellDemo: options.workCellDemo });
+  }, { theme: options.theme });
 }
 
 async function openNormalConversation(page: Page, title: string): Promise<void> {

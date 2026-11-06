@@ -3,6 +3,7 @@ import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, isRecord } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
 import { installChannelWorkCellFixture, installNormalWorkCellFixture, installTeammateWorkCellFixture } from "./support/conversation-work-cell-fixture";
+import { installChannelWorkCellScenario } from "./support/conversation-work-cell-scenario";
 import { expandTimelineProcesses } from "./support/timeline-process";
 
 // Display-only fixtures exercise production renderers and the complete CSS
@@ -164,8 +165,8 @@ async function openUserTranscript(page: Page, theme: "light" | "dark", surface: 
 
 async function openTranscript(page: Page, theme: "light" | "dark", markdown?: string): Promise<void> {
   await selectTheme(page, theme);
-  await page.addInitScript(() => localStorage.setItem("ling-stack.workCellDemo", "true"));
   const state = createBaseState({ approvalStatus: "expired" });
+  installChannelWorkCellScenario(state);
   if (markdown) state.channelMessages.push({
     id: "color-quote-reply", workspaceId: "workspace_default", channelId: "channel_engineering",
     kind: "ai_reply", intent: "discuss", authorType: "ai-teammate", authorId: "ling_agent",

@@ -574,7 +574,8 @@ function renderSidebarNotification(
         : labels[notification.primaryStatus];
     const staleActivity = observationPaused && (notification.primaryStatus === "running" || notification.primaryStatus === "waiting");
     const accessibleLabel = staleActivity ? `${labels.stale} · ${canonicalLabel}` : canonicalLabel;
-    const label = staleActivity ? accessibleLabel : notification.primaryStatus === "waiting" ? labels.waiting : accessibleLabel;
+    const label = !staleActivity && notification.primaryStatus === "waiting" && (notification.count ?? 0) > 0
+      ? labels.waiting : accessibleLabel;
     const tone = staleActivity ? "neutral" : notification.primaryStatus === "failed"
       ? "danger"
       : notification.primaryStatus === "paused"

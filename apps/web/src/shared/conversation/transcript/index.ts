@@ -5,7 +5,6 @@ export {
   type TranscriptBlockRendererProps,
   type TranscriptBlockRendererRegistry,
 } from "./renderer-registry.js";
-export { conversationTranscriptFixtures, type ConversationTranscriptFixture } from "../fixtures/conversation-transcript-fixtures.js";
 export type {
   ConversationPreviewTarget,
   ConversationPreviewTargetKind,

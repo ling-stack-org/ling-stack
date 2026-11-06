@@ -5,51 +5,64 @@ import {
   installNormalWorkCellFixture,
   installTeammateWorkCellFixture,
 } from "./support/conversation-work-cell-fixture";
+import { installChannelWorkCellScenario } from "./support/conversation-work-cell-scenario";
 import { mockDaemon } from "./support/mock-daemon";
-import { createBaseState } from "./support/mock-state";
+import { createBaseState, createChatProvider, isRecord } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
 
 
-test("Channel WorkCell keeps terminal report changes, references, and file-path disclosure contained", async ({ page }) => {
+test("Channel WorkCell keeps response files, references, and file-path disclosure contained", async ({ page }) => {
   await prepareSurface(page, {
     theme: "dark",
     width: 1280,
     height: 800,
     reducedMotion: true,
-    workCellDemo: true,
   });
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createBaseState({ approvalStatus: "expired" });
+  installChannelWorkCellScenario(state);
+  state.providers = [createChatProvider({
+    lastCheck: { ok: true, message: "Ready", checkedAt: "2026-07-30T00:00:00.000Z" },
+  })];
+  state.workspaceSettings.defaultProviderPresetId = "provider_local";
   await mockDaemon(page, state);
 
   await page.goto("/");
   await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
-  const timeline = feed.locator('[data-conversation-timeline-depth="0"]').first();
+  const timeline = feed.locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]').first();
   await expect(timeline).toBeVisible();
   const agentSpans = timeline.locator('[data-conversation-timeline-kind="subAgentActivity"]');
   await expect(agentSpans).toHaveCount(4);
   await expect(timeline.locator('[data-conversation-timeline-kind="diagnostic"]')).toHaveCount(0);
   const terminalReport = timeline.locator('[data-conversation-timeline-kind="terminalReport"]');
   await expect(terminalReport).toBeVisible();
-  await terminalReport.locator(".conversation-timeline-activity-main").click();
-  const changedSection = terminalReport.locator('[data-terminal-report-section="changes"]');
-  const firstChangedEntry = changedSection.locator(".conversation-timeline-terminal-entry").first();
-  const changedFileReferences = firstChangedEntry.locator(".conversation-timeline-file-ref");
-  await expect(terminalReport).toBeVisible();
-  await expect(changedSection).toBeVisible();
-  await expect(changedFileReferences).toHaveCount(2);
+  const responseFiles = timeline.locator("[data-conversation-response-files]");
+  await expect(responseFiles).toBeVisible();
+  await expect(responseFiles).toContainText("Edited 3 files");
+  const changedFileReferences = responseFiles.locator(".conversation-timeline-file-ref");
+  const changedFilePaths = [
+    "apps/web/src/shared/conversation/blocks/ConversationWorkCell.tsx",
+    "apps/web/src/styles/components.css",
+    "docs/design/conversation-work-cell-operation-records.md",
+  ];
+  await expect(changedFileReferences).toHaveCount(changedFilePaths.length);
+  for (const [index, path] of changedFilePaths.entries()) {
+    await expect(changedFileReferences.nth(index)).toBeVisible();
+    await expect(changedFileReferences.nth(index)).toHaveAttribute("title", path);
+  }
 
   const changedFile = changedFileReferences.first();
-  const changedFilePath = (await changedFile.getAttribute("title")) ?? "";
-  expect(changedFilePath).not.toBe("");
   await captureEvidence(page, "1280x800-ling-dark-channel-terminal-report-file-path.png");
 
   const composer = page.getByRole("textbox", { name: "Message this channel or @ an AI teammate", exact: true });
   await composer.fill("Please inspect apps/web/src/features/workspace/WorkspaceClientView.tsx");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
-  await expect.poll(() => state.lastChannelTurnRequest?.fileRefs?.[0]?.path)
+  await expect.poll(() => {
+    const refs = state.lastChannelTurnRequest?.fileRefs;
+    return Array.isArray(refs) && isRecord(refs[0]) ? refs[0].path : undefined;
+  })
     .toBe("apps/web/src/features/workspace/WorkspaceClientView.tsx");
   const references = feed.getByLabel("References").last();
   const fileReference = references.getByRole("button", { name: /WorkspaceClientView\.tsx/u });
@@ -63,7 +76,7 @@ test("Channel WorkCell keeps terminal report changes, references, and file-path 
   await fileReference.press("Tab");
   await expect(references.getByRole("tooltip")).toHaveCount(0);
 
-  await expectReducedMotion(page, [timeline, changedSection, changedFile]);
+  await expectReducedMotion(page, [timeline, responseFiles, changedFile]);
   await expectDocumentContained(page);
   expect(runtimeErrors).toEqual([]);
 });
@@ -79,8 +92,9 @@ test("Normal conversation renders the shared WorkCell shell without document ove
   await openRecentConversation(page, title);
 
   const conversation = page.getByLabel("Conversation page");
-  const timeline = conversation.locator('[data-conversation-timeline-depth="0"]').first();
+  const timeline = conversation.locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]').first();
   await expect(timeline).toBeVisible();
+  await expect(timeline.locator("[data-conversation-process-header]").first()).toBeVisible();
   await expandTimelineProcesses(timeline);
   const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"]');
   await expect(commandBatch).toHaveCount(1);
@@ -95,15 +109,17 @@ test("Terminal report summaries keep Markdown paragraphs and fenced code", async
   const state = createBaseState({ approvalStatus: "expired" });
   const title = installNormalWorkCellFixture(state);
   if (!state.terminalReports[0]) throw new Error("Normal WorkCell fixture did not create a terminal report.");
-  state.terminalReports = state.terminalReports.map((report, index) => index === 0
-    ? {
-        ...report,
-        outcome: {
-          ...report.outcome,
-          summary: "完成说明：\n\n- 已创建文件\n- 已验证内容\n\n```bash\nnode app.js\n```",
-        },
-      }
-    : report);
+  state.terminalReports = state.terminalReports.map((report, index) => {
+    if (index !== 0) return report;
+    if (!isRecord(report) || !isRecord(report.outcome)) throw new Error("Normal WorkCell fixture needs a report outcome");
+    return {
+      ...report,
+      outcome: {
+        ...report.outcome,
+        summary: "完成说明：\n\n- 已创建文件\n- 已验证内容\n\n```bash\nnode app.js\n```",
+      },
+    };
+  });
   for (const run of state.runs) {
     if (run.threadId === "thread_ui2_normal_work_cell") state.eventsByRun[run.id] = [];
   }
@@ -113,10 +129,9 @@ test("Terminal report summaries keep Markdown paragraphs and fenced code", async
   await openRecentConversation(page, title);
 
   const response = page.getByLabel("Conversation page").locator(".conversation-timeline-terminal-response");
-  const report = response.locator('[data-conversation-timeline-kind="terminalReport"]');
   await expect(response).toBeVisible();
-  await report.locator(".conversation-timeline-activity-main").click();
   const summary = response.locator(".conversation-timeline-result-summary");
+  await expect(summary).toBeVisible();
   await expect(summary.locator(".message-body-paragraph")).toHaveCount(3);
   await expect(summary.locator(".message-body-list")).toHaveCount(1);
   await expect(summary.locator(".message-code-block")).toHaveCount(1);
@@ -130,13 +145,14 @@ test("WorkCell command evidence preserves multiline output formatting", async ({
   const title = installNormalWorkCellFixture(state);
   const firstAction = state.executionActions.find((action) => action.id.includes("typecheck"));
   if (!firstAction?.commandEvidence) throw new Error("Normal WorkCell fixture did not create command evidence.");
+  const commandEvidence = firstAction.commandEvidence;
   state.executionActions = state.executionActions.map((action) => action.id.includes("typecheck")
     ? {
         ...action,
         commandEvidence: {
-          ...firstAction.commandEvidence,
+          ...commandEvidence,
           outputTail: [{
-            ...firstAction.commandEvidence.outputTail[0],
+            ...commandEvidence.outputTail[0],
             text: "first output line\nsecond output line\nthird output line\n",
           }],
           outputLineCount: 3,
@@ -148,14 +164,17 @@ test("WorkCell command evidence preserves multiline output formatting", async ({
   await page.goto("/");
   await openRecentConversation(page, title);
 
-  const timeline = page.getByLabel("Conversation page").locator('[data-conversation-timeline-depth="0"]').first();
+  const timeline = page.getByLabel("Conversation page").locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]').first();
+  await expect(timeline).toBeVisible();
+  await expect(timeline.locator("[data-conversation-process-header]").first()).toBeVisible();
   await expandTimelineProcesses(timeline);
   const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"]');
+  await expect(commandBatch).toHaveCount(1);
   await commandBatch.locator(".conversation-command-batch-header").click();
   const commandRow = (await timelineBatchGroup(commandBatch)).locator('[data-conversation-timeline-kind="commandExecution"][data-conversation-timeline-id="action:execution_action_typecheck_normal"]');
   await expect(commandRow).toHaveCount(1);
   await commandRow.locator(".conversation-timeline-activity-main").click();
-  const output = timeline.locator(".conversation-timeline-output").filter({ hasText: "first output line" }).first();
+  const output = commandRow.locator(".conversation-timeline-output");
   await expect(output).toBeVisible();
   await expect(output).toHaveCSS("white-space", "pre-wrap");
   expect(await output.textContent()).toBe("first output line\nsecond output line\nthird output line\n");
@@ -178,8 +197,9 @@ test("Teammate conversation renders the shared WorkCell shell in reduced motion"
   await page.getByRole("button", { name: teammate.displayName, exact: true }).click();
 
   const feed = page.getByLabel("Private message feed", { exact: true });
-  const timeline = feed.locator('[data-conversation-timeline-depth="0"]').first();
+  const timeline = feed.locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]').first();
   await expect(timeline).toBeVisible();
+  await expect(timeline.locator("[data-conversation-process-header]").first()).toBeVisible();
   await expandTimelineProcesses(timeline);
   const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"]');
   await expect(commandBatch).toHaveCount(1);
@@ -194,19 +214,17 @@ async function prepareSurface(page: Page, input: {
   readonly width: number;
   readonly height: number;
   readonly reducedMotion?: boolean;
-  readonly workCellDemo?: boolean;
 }): Promise<void> {
   await page.setViewportSize({ width: input.width, height: input.height });
   await page.emulateMedia({ reducedMotion: input.reducedMotion ? "reduce" : "no-preference" });
-  await page.addInitScript(({ theme, workCellDemo }) => {
+  await page.addInitScript(({ theme }) => {
     const selection = { mode: "fixed", themeId: `ling-${theme}` };
     localStorage.setItem("ling-stack.locale", "en-US");
     localStorage.setItem("ling-stack.themeSelection", JSON.stringify(selection));
     localStorage.setItem("ling-stack.themeBootstrapSelection", JSON.stringify(selection));
     localStorage.setItem("ling-stack.themePreference", theme);
     localStorage.setItem("ling-stack.themeBootstrapPreference", theme);
-    if (workCellDemo) localStorage.setItem("ling-stack.workCellDemo", "true");
-  }, { theme: input.theme, workCellDemo: input.workCellDemo });
+  }, { theme: input.theme });
 }
 
 async function openRecentConversation(page: Page, title: string): Promise<void> {

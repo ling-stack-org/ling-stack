@@ -215,6 +215,9 @@ selected CI typecheck lane run `typecheck:ci-tests`, whose strict, no-emit
 is not a typecheck. Docs scope and Draft preview do not run that typecheck lane.
 Daemon package commands and both shard discovery paths also include `.test.ts`;
 the owning `typecheck:ci` validates its new tests and imported TypeScript helpers.
+Desktop's Node test command discovers both `.test.mjs` and `.test.ts`; its preview
+renderer Playwright configuration selects `.spec.ts`. Desktop's `typecheck:ci`
+includes the strict, no-emit `tsconfig.test.json` for `tests/**/*.ts`.
 
 Local fixture and package checks are not evidence of Linux/macOS hosted-runner
 latency. Compare queue, setup, test-file and total durations after the next

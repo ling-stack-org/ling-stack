@@ -8,15 +8,18 @@ import {
   installNormalWorkCellFixture,
   installTeammateWorkCellFixture,
 } from "./support/conversation-work-cell-fixture";
+import { installChannelWorkCellScenario } from "./support/conversation-work-cell-scenario";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
 
 
 test("Channel multi-agent Timeline keeps rows and command batches keyboard-operable", async ({ page }) => {
-  await prepareSurface(page, { theme: "light", width: 1440, height: 960, workCellDemo: true });
+  await prepareSurface(page, { theme: "light", width: 1440, height: 960 });
   const runtimeErrors = collectRuntimeErrors(page);
-  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  const state = createBaseState({ approvalStatus: "expired" });
+  installChannelWorkCellScenario(state);
+  await mockDaemon(page, state);
 
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -241,22 +244,22 @@ async function prepareSurface(page: Page, input: {
   readonly width: number;
   readonly height: number;
   readonly reducedMotion?: boolean;
-  readonly workCellDemo?: boolean;
 }): Promise<void> {
   await page.setViewportSize({ width: input.width, height: input.height });
   await page.emulateMedia({ reducedMotion: input.reducedMotion ? "reduce" : "no-preference" });
-  await page.addInitScript(({ theme, workCellDemo }) => {
+  await page.addInitScript(({ theme }) => {
     const selection = { mode: "fixed", themeId: `ling-${theme}` };
     localStorage.setItem("ling-stack.locale", "en-US");
     localStorage.setItem("ling-stack.themeSelection", JSON.stringify(selection));
     localStorage.setItem("ling-stack.themeBootstrapSelection", JSON.stringify(selection));
     localStorage.setItem("ling-stack.themePreference", theme);
     localStorage.setItem("ling-stack.themeBootstrapPreference", theme);
-    if (workCellDemo) localStorage.setItem("ling-stack.workCellDemo", "true");
-  }, { theme: input.theme, workCellDemo: input.workCellDemo });
+  }, { theme: input.theme });
 }
 
 async function expectCommandBatchKeyboardFlow(workCell: Locator): Promise<void> {
+  // Private message text can mount before the canonical process facts.
+  await expect(workCell.locator("[data-conversation-process-header]").first()).toBeVisible();
   await expandTimelineProcesses(workCell);
   const batch = workCell.locator(".conversation-command-batch");
   const trigger = batch.locator(".conversation-command-batch-header");
@@ -271,10 +274,13 @@ async function expectCommandBatchKeyboardFlow(workCell: Locator): Promise<void> 
   await firstCommandTrigger.focus();
   await firstCommandTrigger.press("Space");
   await expect(firstCommandTrigger).toHaveAttribute("aria-expanded", "true");
-  // The header owns the exact command. Expanding adds only its output/result.
   await expect(firstCommand.locator(".conversation-timeline-activity-main strong")).toHaveAttribute("title", "git diff --check");
   await expect(firstCommand.locator(".conversation-timeline-command")).toHaveCount(0);
-  await expect(firstCommand.locator(".conversation-timeline-activity-detail")).not.toContainText("exit 0");
+  const detail = firstCommand.locator(".conversation-timeline-activity-detail");
+  await expect(detail.getByLabel("Command", { exact: true })).toHaveText("git diff --check");
+  await expect(detail.getByRole("button", { name: "Copy: Command", exact: true })).toBeVisible();
+  await expect(detail.locator(".conversation-timeline-output")).toHaveText("git diff --check passed.");
+  await expect(detail).toContainText("exit 0");
 }
 
 async function expectWorkCellMotionDisabled(workCell: Locator): Promise<void> {
