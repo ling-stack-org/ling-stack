@@ -33,7 +33,7 @@ export function ConversationTimelineImageRenderer({ item, cwd, loadPreview, dept
     return () => {
       cancelled = true;
     };
-  }, [loadPreview, request?.artifactId, request?.cwd]);
+  }, [item.revision, loadPreview, request?.artifactId, request?.cwd]);
 
   const imagePreview = preview?.kind === "image" && preview.imageUrl ? preview : undefined;
   const canPreview = Boolean(request && imagePreview);
