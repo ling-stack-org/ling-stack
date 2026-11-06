@@ -26,7 +26,7 @@ import { projectChannelUserInputTimeline } from "../../lib/channel-user-input-ti
 import { formatDateTime } from "../../lib/formatting.js";
 import { terminalReportGeneration } from "../../lib/terminal-report-generation.js";
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
-import { attachmentCanPreview, type PreviewRequest } from "../../lib/previews.js";
+import { attachmentCanPreview, loadPreviewContent, type PreviewRequest } from "../../lib/previews.js";
 import {
   buildComposerGateApprovalPresentationByRunId,
   composerGateApprovalPresentationForRunId,
@@ -1073,6 +1073,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       snapshot,
       depth: 0,
       cwd: input.cwd,
+      loadPreview: loadPreviewContent,
       onSubmitUserInputAnswer: (command) => submitUserInputAnswer(input.cwd, command),
       renderSubAgentAvatar: (item) => renderConversationParticipantAvatar(item.participantId, item.label),
       renderUserInputAvatar: (item) => {
