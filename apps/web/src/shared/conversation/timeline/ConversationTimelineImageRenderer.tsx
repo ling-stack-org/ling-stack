@@ -13,6 +13,7 @@ export function ConversationTimelineImageRenderer({ item, cwd, loadPreview, dept
   const [preview, setPreview] = useState<PreviewContentResponse>();
   const [previewLoading, setPreviewLoading] = useState(false);
   const [activePreview, setActivePreview] = useState(false);
+  const [imageLoadFailed, setImageLoadFailed] = useState(false);
 
   useEffect(() => {
     if (!request || !loadPreview) {
@@ -23,6 +24,7 @@ export function ConversationTimelineImageRenderer({ item, cwd, loadPreview, dept
     let cancelled = false;
     setPreview(undefined);
     setPreviewLoading(true);
+    setImageLoadFailed(false);
     void loadPreview(request).then((response) => {
       if (!cancelled) setPreview(response);
     }, () => {
@@ -35,7 +37,7 @@ export function ConversationTimelineImageRenderer({ item, cwd, loadPreview, dept
     };
   }, [item.revision, loadPreview, request?.artifactId, request?.cwd]);
 
-  const imagePreview = preview?.kind === "image" && preview.imageUrl ? preview : undefined;
+  const imagePreview = !imageLoadFailed && preview?.kind === "image" && preview.imageUrl ? preview : undefined;
   const canPreview = Boolean(request && imagePreview);
   const detail = imagePreview ? (
     <button
@@ -50,6 +52,7 @@ export function ConversationTimelineImageRenderer({ item, cwd, loadPreview, dept
         loading="lazy"
         decoding="async"
         onLoad={(event) => notifyConversationDeferredContentReady(event.currentTarget)}
+        onError={() => setImageLoadFailed(true)}
       />
     </button>
   ) : previewLoading ? (

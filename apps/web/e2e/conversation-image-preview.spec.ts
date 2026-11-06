@@ -70,6 +70,30 @@ test("same artifact ID reloads its thumbnail on a newer item revision without re
     .toEqual(["artifact-image", "artifact-image"]);
 });
 
+test("image resource failures fall back to the activity text", async ({ page }) => {
+  const row = await mount(page);
+  await requestCount(page, 1);
+  await page.evaluate(() => window.imagePreviewHarness.resolve(0, { imageUrl: "/e2e/fixtures/missing-thumbnail.jpg" }));
+  await expect(row.locator(".conversation-timeline-image-preview")).toHaveCount(0);
+  await expect(row).toContainText("Opened workspace-preview.jpg");
+});
+
+test("full preview reports an image resource failure", async ({ page }) => {
+  const row = await mount(page);
+  await requestCount(page, 1);
+  await page.evaluate(() => window.imagePreviewHarness.resolve(0));
+  const thumbnail = row.locator(".conversation-timeline-image-preview");
+  await expect(thumbnail).toBeVisible();
+  await thumbnail.click();
+  const lightbox = page.locator(".artifact-preview-lightbox");
+  await expect(lightbox).toBeVisible();
+  await requestCount(page, 2);
+  await page.evaluate(() => window.imagePreviewHarness.resolve(1, { imageUrl: "/e2e/fixtures/missing-preview.jpg" }));
+  await expect(lightbox.locator('[data-artifact-preview-feedback="preview"]')).toBeVisible();
+  await expect(lightbox).toContainText("Preview unavailable");
+  await expect(lightbox.locator("img")).toHaveCount(0);
+});
+
 for (const stale of ["success", "failure"] as const) {
   test(`obsolete ${stale} cannot replace a newer image or end its loading state`, async ({ page }) => {
     const row = await mount(page);
