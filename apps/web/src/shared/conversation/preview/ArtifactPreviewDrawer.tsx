@@ -58,6 +58,7 @@ export function ArtifactPreviewDrawer({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
+  const [imageLoadError, setImageLoadError] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | undefined>(undefined);
   const lightboxSwipeRef = useRef<{ readonly pointerId: number; readonly startX: number; readonly startY: number } | undefined>(undefined);
@@ -75,6 +76,7 @@ export function ArtifactPreviewDrawer({
     setLoading(true);
     setError("");
     setActionError("");
+    setImageLoadError(false);
     setPreview(undefined);
     void loadPreview(request).then((response) => {
       if (!cancelled) {
@@ -118,7 +120,7 @@ export function ArtifactPreviewDrawer({
     ? "artifact-preview-drawer artifact-preview-lightbox"
     : "artifact-preview-drawer";
   const toastScope = artifactPreviewToastScope(request);
-  const previewUnavailable = preview !== undefined && !artifactPreviewCanRender(preview);
+  const previewUnavailable = preview !== undefined && (!artifactPreviewCanRender(preview) || imageLoadError);
 
   function closePreview(): void {
     const returnTarget = previousFocusRef.current;
@@ -271,7 +273,7 @@ export function ArtifactPreviewDrawer({
               {actionError}
             </InlineFeedback>
           ) : null}
-          {preview && !previewUnavailable ? <ArtifactPreview preview={preview} cwd={request?.cwd} /> : null}
+          {preview && !previewUnavailable ? <ArtifactPreview preview={preview} cwd={request?.cwd} onImageError={() => setImageLoadError(true)} /> : null}
         </div>
 
         {preview?.redactionNotes.length ? (
