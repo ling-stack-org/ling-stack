@@ -66,7 +66,6 @@ Recommended daemon layout:
 packages/daemon/src/runtime/
   runners.ts                         existing registry and resolution
   runner-readiness.ts                shared readiness/doctor contracts
-  runner-conformance.ts              shared adapter conformance helpers
   external-agent/
     session-handles.ts               opaque backend session metadata
     event-normalizer.ts              backend event -> Ling event mapping
@@ -79,11 +78,15 @@ packages/daemon/src/runtime/
     client.ts                        process/http client lifecycle
     capabilities.ts                  capability negotiation and policy decisions
     doctor.ts                        ACP endpoint readiness checks
-    fake-server.ts                   test-only conformance harness
   adapters/
     codex-app-server.ts              dedicated Codex app-server adapter
     openclaw-acp.ts                  OpenClaw via ACP client bridge
     hermes-decision.ts               decision record helpers, no runner until chosen
+
+packages/daemon/test/test-support/
+  runner-conformance.ts              shared adapter conformance helpers
+  fake-acp-server.ts                 ACP conformance harness
+  fake-codex-app-server.ts            Codex app-server conformance harness
 ```
 
 Recommended contract package additions only when the daemon API needs to expose them:
@@ -330,7 +333,7 @@ Use this template before adding any non-Pi runner id or adapter module:
 
 ### P2: Conformance Harness Extraction
 
-- Move reusable checks from `runner-conformance.test.mjs` into a helper that adapter tests
+- Move reusable checks from `runner-conformance.test.ts` into a helper that adapter tests
   can reuse.
 - Add fixtures for capability negotiation, side-effect approval, cancellation, artifact
   import, and secret redaction.

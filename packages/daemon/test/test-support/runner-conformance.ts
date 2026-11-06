@@ -8,7 +8,7 @@ import type {
   PiRunnerRunOptions,
   PiRunnerToolHydrationResponse,
 } from "@ling-stack/runner-pi";
-import type { RunnerAdapter } from "../context.js";
+import type { RunnerAdapter } from "../../dist/context.js";
 
 export interface RunnerConformanceFakeOptions {
   readonly failProvider?: boolean;

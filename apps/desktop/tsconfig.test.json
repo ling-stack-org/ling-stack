@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.renderer.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "types": ["node", "vite/client"]
+  },
+  "include": ["tests/**/*.ts", "renderer/computer-use-preview/global.d.ts"]
+}

@@ -179,13 +179,11 @@ export { useConversationSpanView, type ConversationSpanViewState } from "./view-
 export { useConversationViewReconciliation } from "./view-store/use-conversation-view-reconciliation.js";
 export type { ConversationViewRetainKeys } from "./view-store/conversation-view-store.js";
 export {
-  conversationTranscriptFixtures,
   createTranscriptBlockRendererRegistry,
   renderTranscriptBlockFromRegistry,
   type ConversationPreviewTarget,
   type ConversationPreviewTargetKind,
   type ConversationTranscript,
-  type ConversationTranscriptFixture,
   type ConversationTurn,
   type RawDetailRef,
   type TranscriptBlock,

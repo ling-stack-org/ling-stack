@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import type { DesktopDaemonStatus, LingDesktopCapabilities } from "../../desktop/shared/desktop-capabilities.js";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, createMockTeammate, cwd, type MockState } from "./support/mock-state";
 
@@ -167,11 +168,27 @@ test.beforeEach(async ({ page }) => {
         };
       },
     };
+    const daemonStatus: DesktopDaemonStatus = {
+      state: "connected",
+      baseUrl: "http://127.0.0.1:17891",
+      ownedByDesktop: true,
+    };
     Object.defineProperty(window, "lingDesktop", {
       configurable: true,
       value: {
         platform: "macos",
-        daemonBaseUrl: "http://127.0.0.1:17891",
+        daemonBaseUrl: daemonStatus.baseUrl,
+        daemon: {
+          getStatus: async () => daemonStatus,
+          restart: async () => daemonStatus,
+          onStatusChanged(listener) {
+            let subscribed = true;
+            queueMicrotask(() => {
+              if (subscribed) listener(daemonStatus);
+            });
+            return () => { subscribed = false; };
+          },
+        },
         appearance: {
           reportTheme(theme: DesktopThemeTestInput) {
             reportedThemes.push(theme);
@@ -244,7 +261,7 @@ test.beforeEach(async ({ page }) => {
             };
           },
         },
-      },
+      } satisfies Pick<LingDesktopCapabilities, "platform" | "daemonBaseUrl" | "daemon"> & Record<string, unknown>,
     });
   });
   const state = createBaseState({ approvalStatus: "pending" });

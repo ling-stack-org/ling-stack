@@ -31,7 +31,9 @@ void app.whenReady().then(async () => {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      preload: join(harnessDirectory, "preload.cjs"),
+      preload: process.env.LING_PREVIEW_HARNESS_BRIDGE === "absent"
+        ? undefined
+        : join(harnessDirectory, "preload.cjs"),
     },
   });
   await previewWindow.loadFile(previewIndexPath);

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import type { DesktopDaemonStatus, LingDesktopCapabilities } from "../../desktop/shared/desktop-capabilities.js";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { mockDaemon } from "./support/mock-daemon";
@@ -27,12 +28,28 @@ async function prepare(page: Page, desktop = true): Promise<void> {
       if (path === directory) return { path, name: "光明乳业", kind: "directory", sizeBytes: 0, truncated: false, entries: [{ path: code, name: "示例 代码.py", directory: false }, { path: archive, name: "新版 工程包.zip", directory: false }] };
       throw new Error("ENOENT");
     };
+    const daemonStatus: DesktopDaemonStatus = {
+      state: "connected",
+      baseUrl: "http://127.0.0.1:17891",
+      ownedByDesktop: true,
+    };
     Object.defineProperty(window, "lingDesktop", { configurable: true, value: {
-      platform: "macos", daemonBaseUrl: "http://127.0.0.1:17891",
+      platform: "macos", daemonBaseUrl: daemonStatus.baseUrl,
+      daemon: {
+        getStatus: async () => daemonStatus,
+        restart: async () => daemonStatus,
+        onStatusChanged(listener) {
+          let subscribed = true;
+          queueMicrotask(() => {
+            if (subscribed) listener(daemonStatus);
+          });
+          return () => { subscribed = false; };
+        },
+      },
       appearance: { reportTheme() {} },
       computerUse: { reportLocale() {}, reportSelectedDeckOwner() {}, reportSelectedConversation() {}, reportHostLayout() {}, onSummaryChanged: () => () => {}, getAutoShowEnabled: async () => true },
       localFiles: { inspect, showMenu: async (request: { path: string }) => { calls.push({ operation: "menu", path: request.path }); return undefined; } },
-    } });
+    } satisfies Pick<LingDesktopCapabilities, "platform" | "daemonBaseUrl" | "daemon"> & Record<string, unknown> });
   }, { directory, code, archive, desktop });
 }
 
@@ -121,7 +138,7 @@ test("normal conversation file links open its own right drawer", async ({ page }
   const runId = "run_local_file_preview";
   const turnId = "turn_local_file_preview";
   state.providers = [createChatProvider({ id: "provider_files", displayName: "Local Files", model: "gpt-5.5" })];
-  state.threads = [{ id: threadId, workspaceId: "workspace_default", kind: "conversation", title: "File preview conversation", status: "succeeded", lastRunId: runId, createdAt: timestamp, updatedAt: timestamp }];
+  state.threads = [{ id: threadId, workspaceId: "workspace_default", kind: "conversation", title: "File preview conversation", objective: "Inspect these local files", status: "succeeded", lastRunId: runId, createdAt: timestamp, updatedAt: timestamp }];
   state.turns = [{ id: turnId, workspaceId: "workspace_default", threadId, kind: "initial_request", status: "succeeded", title: "File preview conversation", userInstruction: "Inspect these local files", lastRunId: runId, createdByActor: "local-user", createdAt: timestamp, updatedAt: timestamp, completedAt: timestamp }];
   state.turnRunLinks = [{ turnId, runId, attemptNumber: 1, role: "primary", createdAt: timestamp }];
   state.runs.unshift({ id: runId, status: "succeeded", cwd, taskId: "task_files", providerPresetId: "provider_files", providerName: "local-relay", providerModel: "gpt-5.5", taskSnapshot: { id: "task_files", title: "Files" }, providerSnapshot: {}, requestSnapshot: { cwd }, eventLogPath: `.ling-stack/sessions/${runId}.jsonl`, threadId, turnId, createdAt: timestamp, startedAt: timestamp, updatedAt: timestamp, endedAt: timestamp });

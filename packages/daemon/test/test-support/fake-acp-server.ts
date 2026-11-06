@@ -1,49 +1,44 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { once } from "node:events";
-import {
-  codexAppServerCapabilityKeys,
-  LING_CODEX_APP_SERVER_PROTOCOL_VERSION,
-  type CodexAppServerCapabilities,
-  type CodexAppServerRunResult,
-} from "./codex-app-server.js";
+import { acpCapabilityKeys, LING_ACP_PROTOCOL_VERSION, type AcpCapabilities, type AcpRunResult } from "../../dist/runtime/acp/protocol.js";
 
-export interface FakeCodexAppServerOptions {
+export interface FakeAcpServerOptions {
   readonly protocolVersion?: string;
-  readonly capabilities?: Partial<CodexAppServerCapabilities>;
+  readonly capabilities?: Partial<AcpCapabilities>;
   readonly malformedInitializeResponse?: boolean;
   readonly malformedRunResponse?: boolean;
   readonly statusCode?: number;
-  readonly runResult?: CodexAppServerRunResult;
+  readonly runResult?: AcpRunResult;
 }
 
-export interface FakeCodexAppServer {
-  readonly baseUrl: string;
+export interface FakeAcpServer {
+  readonly endpoint: string;
   readonly requests: readonly unknown[];
   close(): Promise<void>;
 }
 
-export async function startFakeCodexAppServer(options: FakeCodexAppServerOptions = {}): Promise<FakeCodexAppServer> {
+export async function startFakeAcpServer(options: FakeAcpServerOptions = {}): Promise<FakeAcpServer> {
   const requests: unknown[] = [];
   const server = createServer(async (request, response) => {
-    await handleFakeCodexAppServerRequest(request, response, options, requests);
+    await handleFakeAcpRequest(request, response, options, requests);
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const address = server.address();
   if (!address || typeof address === "string") {
-    throw new Error("Fake Codex app-server did not bind to a TCP port.");
+    throw new Error("Fake ACP server did not bind to a TCP port.");
   }
   return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
+    endpoint: `http://127.0.0.1:${address.port}`,
     requests,
     close: () => closeServer(server),
   };
 }
 
-async function handleFakeCodexAppServerRequest(
+async function handleFakeAcpRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  options: FakeCodexAppServerOptions,
+  options: FakeAcpServerOptions,
   requests: unknown[],
 ): Promise<void> {
   if (request.method !== "POST") {
@@ -54,36 +49,36 @@ async function handleFakeCodexAppServerRequest(
   const parsed = raw ? JSON.parse(raw) as unknown : undefined;
   requests.push(parsed);
   if (options.statusCode && options.statusCode >= 400) {
-    writeJson(response, options.statusCode, { error: { code: -32000, message: "fake Codex app-server failure" } });
+    writeJson(response, options.statusCode, { error: { code: -32000, message: "fake ACP failure" } });
     return;
   }
-  const record = isRecord(parsed) ? parsed : {};
-  if (record.method === "session/run") {
+  const requestRecord = isRecord(parsed) ? parsed : {};
+  if (requestRecord.method === "session/run") {
     if (options.malformedRunResponse) {
-      writeJson(response, 200, { jsonrpc: "2.0", id: record.id ?? 2, result: "bad-run-response" });
+      writeJson(response, 200, { jsonrpc: "2.0", id: requestRecord.id ?? 2, result: "bad-run-response" });
       return;
     }
     writeJson(response, 200, {
       jsonrpc: "2.0",
-      id: record.id ?? 2,
+      id: requestRecord.id ?? 2,
       result: options.runResult ?? {
-        taskId: readTaskId(record.params),
-        events: [{ type: "text_delta", data: { text: "Codex app-server fake response." } }],
-        messages: ["Codex app-server fake response."],
+        taskId: readTaskId(requestRecord.params),
+        events: [{ type: "text_delta", data: { text: "OpenClaw ACP fake response." } }],
+        messages: ["OpenClaw ACP fake response."],
       },
     });
     return;
   }
   if (options.malformedInitializeResponse) {
-    writeJson(response, 200, { jsonrpc: "2.0", id: record.id ?? 1, result: { protocolVersion: 7 } });
+    writeJson(response, 200, { jsonrpc: "2.0", id: 1, result: { protocolVersion: 7 } });
     return;
   }
-  const capabilities = Object.fromEntries(codexAppServerCapabilityKeys.map((key) => [key, options.capabilities?.[key] ?? true]));
+  const capabilities = Object.fromEntries(acpCapabilityKeys.map((key) => [key, options.capabilities?.[key] ?? true]));
   writeJson(response, 200, {
     jsonrpc: "2.0",
-    id: record.id ?? 1,
+    id: 1,
     result: {
-      protocolVersion: options.protocolVersion ?? LING_CODEX_APP_SERVER_PROTOCOL_VERSION,
+      protocolVersion: options.protocolVersion ?? LING_ACP_PROTOCOL_VERSION,
       capabilities,
     },
   });

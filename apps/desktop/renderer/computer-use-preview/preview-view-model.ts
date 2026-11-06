@@ -6,6 +6,8 @@ import {
 
 export type ComputerUsePreviewVisualState =
   | "live"
+  | "waiting"
+  | "unavailable"
   | "connecting"
   | "reconnecting"
   | "paused"
@@ -34,6 +36,7 @@ export type ComputerUsePreviewStopCommandState = "idle" | "pending" | "failed";
 export type ComputerUsePreviewOpenCommandState = "idle" | "pending" | "failed";
 
 export interface ComputerUsePreviewTransientState {
+  readonly bridgeAvailable?: boolean;
   readonly stopCommandState?: ComputerUsePreviewStopCommandState;
   readonly openCommandState?: ComputerUsePreviewOpenCommandState;
 }
@@ -61,11 +64,27 @@ export interface ComputerUsePreviewViewModel {
 }
 
 export function createComputerUsePreviewViewModel(
-  snapshot: ComputerUsePipRendererSnapshot,
+  snapshot: ComputerUsePipRendererSnapshot | undefined,
   transient: ComputerUsePreviewTransientState = {},
   translate?: ComputerUsePreviewTranslate,
 ): ComputerUsePreviewViewModel {
-  const t = translate ?? createComputerUsePreviewTranslator(snapshot.locale);
+  const t = translate ?? createComputerUsePreviewTranslator(snapshot?.locale);
+  if (!snapshot) {
+    const bridgeAvailable = transient.bridgeAvailable === true;
+    return {
+      state: bridgeAvailable ? "waiting" : "unavailable",
+      label: t(bridgeAvailable ? "waitingForActivityLabel" : "previewUnavailableLabel"),
+      tone: "neutral",
+      busy: bridgeAvailable,
+      ariaLive: "polite",
+      overlayMode: "prominent",
+      controlsPersistent: true,
+      primaryActions: bridgeAvailable ? [action("hide", t("hideAction"))] : [],
+      menuActions: bridgeAvailable
+        ? [action("reset", t("resetPositionAction")), action("close", t("closeWindowAction"))]
+        : [],
+    };
+  }
   const presentation = presentationFor(snapshot, transient, t);
   const actions = actionsFor(snapshot, transient, t);
   const commandIssue = transient.openCommandState === "failed" ? {

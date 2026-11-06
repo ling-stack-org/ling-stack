@@ -48,6 +48,8 @@ Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，�
 
 Linux 构建任务在选中 CLI 时运行真实 daemon 生命周期和新工作区 doctor 检查；未配置 provider 的新工作区预期返回诊断退出码 4。在选中 Web 时，使用生产构建的 Vite preview 运行六项 Playwright 回归，覆盖权限、内置技能元数据和中文角色。浏览器测试使用模拟 daemon 数据，不包含真实模型调用。当前运行的截图与测试结果上传为 `ci-linux-source-web-smoke` artifact，保留七天。
 
+会话操作记录、复制、文件审查、归属与颜色层级场景可通过 `corepack pnpm --filter @ling-stack/web test:e2e:work-cell` 本地按需运行。会话样例由 E2E mock daemon 提供，不依赖开发模式；Web 的 `typecheck` 和 `typecheck:ci` 通过 `tsconfig.e2e.json` 检查所列用例及其辅助文件。
+
 本地化包的 `typecheck:ci` 和 `test:ci` 已补齐；前者在干净 runner 重新生成未跟踪的 TypeScript 目录文件后检查类型，后者执行翻译目录完整性、占位符检查及本地化单元测试，复用构建阶段的 `dist`。新增[入口覆盖契约](../../scripts/ci/package-script-coverage.test.mjs)，要求分类器选中的每个类型检查／测试包都有对应 CI 脚本，防止 `--if-present` 静默跳过漏配包。
 
 ## CodeQL 安全扫描

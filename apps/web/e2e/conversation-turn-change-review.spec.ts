@@ -3,6 +3,7 @@ import type { WorkspaceChangeReview } from "@ling-stack/contracts";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, createMockTeammate } from "./support/mock-state";
 import { attachCommittedChannelReportItem, completedTerminalReport, installChannelWorkCellFixture, installNormalWorkCellFixture, installTeammateWorkCellFixture } from "./support/conversation-work-cell-fixture";
+import { installChannelWorkCellScenario } from "./support/conversation-work-cell-scenario";
 import { openEngineeringChannel } from "./support/test-helpers";
 
 const paths = ["src/shared.ts", "tests/shared.ts", "docs/readme.md", "src/extra.ts", "src/last.ts"];
@@ -18,8 +19,9 @@ function reviewFor(kind: WorkspaceChangeReview["scope"]["kind"], id: string): Wo
 
 test("child file review reuses the root right dock but requests only its own Run", async ({ page }, testInfo) => {
   const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
-  await page.addInitScript(() => { localStorage.setItem("ling-stack.locale", "en-US"); localStorage.setItem("ling-stack.workCellDemo", "true"); });
+  await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "en-US"));
   const state = createBaseState({ approvalStatus: "expired" });
+  installChannelWorkCellScenario(state);
   state.aiTeammates = [createMockTeammate({ id: "ling_agent", templateId: "ling_agent", kind: "system_teammate", systemRole: "ling_agent", roleKey: "custom", displayName: "Ling Agent" }),
     ...(["architect", "designer", "engineer", "qa"] as const).map((roleKey) => createMockTeammate({ id: `teammate_builtin_${roleKey}`, templateId: roleKey, roleKey, displayName: `Ling ${roleKey}` }))];
   await mockDaemon(page, state);
