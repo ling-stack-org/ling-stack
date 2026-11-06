@@ -212,6 +212,13 @@ export function ChannelCreateDialog({
         className="channel-create-dialog channel-create-dialog-clean"
         overlayClassName="channel-create-overlay"
         size="lg"
+        onKeyDown={(event) => {
+          // Focus can arrive before Radix attaches its document Escape listener.
+          if (event.key === "Escape" && !event.defaultPrevented) {
+            event.preventDefault();
+            requestClose();
+          }
+        }}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           commitClose();

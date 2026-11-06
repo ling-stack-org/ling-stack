@@ -1,8 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
-import { createBaseState, createMockTeammate } from "./support/mock-state";
+import { createBaseState, createMockTeammate, isRecord } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
 import { attachCommittedChannelReportItem, completedTerminalReport, installChannelWorkCellFixture, installNormalWorkCellFixture, installTeammateWorkCellFixture } from "./support/conversation-work-cell-fixture";
+import { installChannelWorkCellScenario } from "./support/conversation-work-cell-scenario";
 
 // Display fixtures test the real shared renderer, not a model or packaged run.
 for (const surface of ["normal", "private", "channel"] as const) {
@@ -19,7 +20,7 @@ for (const surface of ["normal", "private", "channel"] as const) {
     const state = createBaseState({ approvalStatus: "expired" });
     const title = surface === "normal" ? installNormalWorkCellFixture(state) : undefined;
     const teammate = surface === "private" ? installTeammateWorkCellFixture(state) : undefined;
-    if (surface === "channel") await page.addInitScript(() => localStorage.setItem("ling-stack.workCellDemo", "true"));
+    if (surface === "channel") installChannelWorkCellScenario(state);
     await mockDaemon(page, state);
     await page.goto("/");
     if (title) await page.getByRole("button", { name: /Open recent conversation \d+/u }).filter({ hasText: title }).click();
@@ -43,7 +44,12 @@ for (const surface of ["normal", "private", "channel"] as const) {
     else await expect(summary).toBeVisible();
     const toggle = result.locator("button.conversation-timeline-activity-main");
     const hasEvidenceDisclosure = await toggle.count() > 0;
-    if (hasEvidenceDisclosure) await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    if (hasEvidenceDisclosure) {
+      await expect(toggle).toHaveAttribute("aria-expanded", "true");
+      await toggle.click();
+      await expect(toggle).toHaveAttribute("aria-expanded", "false");
+      await toggle.blur();
+    }
     else if (await result.count()) await expect(result.locator(".conversation-timeline-activity-main.static")).toHaveCount(1);
     const copy = footer.getByRole("button", { name: "Copy message", exact: true });
     const actions = footer.locator(".message-action-bar");
@@ -80,9 +86,10 @@ test.describe('touch result actions', () => {
   test('keeps copy discoverable without hover', async ({ page }) => {
     await page.addInitScript(() => {
       localStorage.setItem('ling-stack.locale', 'en-US');
-      localStorage.setItem('ling-stack.workCellDemo', 'true');
     });
-    await mockDaemon(page, createBaseState({ approvalStatus: 'expired' }));
+    const state = createBaseState({ approvalStatus: 'expired' });
+    installChannelWorkCellScenario(state);
+    await mockDaemon(page, state);
     await page.goto('/');
     await page.getByRole('button', { name: 'Channels', exact: true }).click();
     await openEngineeringChannel(page);
@@ -109,10 +116,13 @@ for (const { surface, locale } of fileSummaryCases) {
       state.terminalReports = [report];
       attachCommittedChannelReportItem(state, report);
     }
-    state.terminalReports = state.terminalReports.map((report) => ({ ...report, changes: Array.from({ length: 5 }, (_, index) => ({
-      id: `change-${index}`, kind: "code" as const, title: `Updated file ${index}`, summary: "Applied change.",
-      paths: [`src/file-${index}.ts`], sourceRefs: [],
-    })) }));
+    state.terminalReports = state.terminalReports.map((report) => {
+      if (!isRecord(report)) throw new Error("File summary fixture requires a terminal report");
+      return { ...report, changes: Array.from({ length: 5 }, (_, index) => ({
+        id: `change-${index}`, kind: "code" as const, title: `Updated file ${index}`, summary: "Applied change.",
+        paths: [`src/file-${index}.ts`], sourceRefs: [],
+      })) };
+    });
     await mockDaemon(page, state);
     await page.goto("/");
     if (title) await page.getByRole("button", { name: /Open recent conversation \d+|打开最近对话 \d+/u }).filter({ hasText: title }).click();
@@ -140,13 +150,13 @@ test("channel child responses finish after their operations without copying anot
   page.on("console", (message) => { if (message.type() === "error") appErrors.push(`${message.location().url}: ${message.text()}`); });
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
-    localStorage.setItem("ling-stack.workCellDemo", "true");
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText: async (text: string) => { Reflect.set(globalThis, "__nestedResponseCopy", text); } },
     });
   });
   const state = createBaseState({ approvalStatus: "expired" });
+  installChannelWorkCellScenario(state);
   state.aiTeammates = [
     createMockTeammate({ id: "ling_agent", templateId: "ling_agent", kind: "system_teammate", systemRole: "ling_agent", roleKey: "custom", displayName: "Ling Agent" }),
     ...(["architect", "designer", "engineer", "qa"] as const).map((roleKey) => createMockTeammate({
@@ -154,9 +164,8 @@ test("channel child responses finish after their operations without copying anot
     })),
   ];
   await mockDaemon(page, state);
-  // Display-only demo mutations have no persisted recovery provenance. Model
-  // that read-only endpoint explicitly; never grant an executable Undo here.
-  await page.route(/\/(?:runs\/demo_work_cell_channel_engineering_run_engineer(?:_followup)?|turns\/conversation-turn%3Ademo_work_cell_channel_engineering_message_request|workflows\/demo_work_cell_channel_engineering_workflow)\/workspace-changes(?:\?.*)?$/u, async (route) => {
+  // Fixture mutations have no persisted recovery provenance.
+  await page.route(/\/(?:runs\/demo_work_cell_channel_engineering_run_engineer(?:_followup)?|turns\/turn_demo_work_cell_channel_engineering_message_request|workflows\/demo_work_cell_channel_engineering_workflow)\/workspace-changes(?:\?.*)?$/u, async (route) => {
     if (route.request().method() !== "GET") { await route.fallback(); return; }
     const url = new URL(route.request().url());
     const id = decodeURIComponent(url.pathname.split("/")[2]!);
@@ -165,7 +174,7 @@ test("channel child responses finish after their operations without copying anot
       files: [], summary: { fileCount: 0, addCount: 0, updateCount: 0, deleteCount: 0, moveCount: 0, addedLines: 0, removedLines: 0 },
       unavailableReason: "Display fixture has no persisted mutation provenance", updatedAt: "2026-07-10T09:15:00.000Z",
       ...(url.pathname.startsWith("/workflows/") ? { workflowId: id, runIds: [] } : url.pathname.startsWith("/runs/") ? { runId: id } : {
-        turnId: id, threadId: "conversation-thread:channel:channel_engineering", runIds: [], provenanceComplete: false,
+        turnId: id, threadId: "thread_channel_channel_engineering", runIds: [], provenanceComplete: false,
       }),
     } });
   });

@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 export default defineConfig({
   testDir: import.meta.dirname,
-  testMatch: "computer-use-preview-renderer.spec.mjs",
+  testMatch: "computer-use-preview-renderer.spec.ts",
   outputDir: join(tmpdir(), "ling-stack-desktop-computer-use-playwright"),
   reporter: "line",
   workers: 1,
