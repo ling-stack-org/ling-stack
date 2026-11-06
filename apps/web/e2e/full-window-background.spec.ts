@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import type { DesktopDaemonStatus, LingDesktopCapabilities } from '../../desktop/shared/desktop-capabilities.js';
 import { readFile, writeFile } from 'node:fs/promises';
 import { mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -18,8 +19,9 @@ async function prepare(page: Page, native?: 'ready' | 'blocked' | 'pending' | 'e
   URL.revokeObjectURL=url=>{live.delete(url);originalRevoke(url)};
   Object.defineProperty(window,'__backgroundUrls',{get:()=>live.size});
  });
- const state=createBaseState({approvalStatus:'expired'});state.providers=[createChatProvider({id:'background-provider',lastCheck:{ok:true,code:'ready',message:'Controlled fixture',checkedAt:'2026-10-19T00:00:00.000Z'}})];
- state.workspaceSettings.defaultProviderPresetId=state.providers[0].id;state.approvals=[];installNormalConversationFixture(state);
+ const providerId='background-provider';
+ const state=createBaseState({approvalStatus:'expired'});state.providers=[createChatProvider({id:providerId,lastCheck:{ok:true,code:'ready',message:'Controlled fixture',checkedAt:'2026-10-19T00:00:00.000Z'}})];
+ state.workspaceSettings.defaultProviderPresetId=providerId;state.approvals=[];installNormalConversationFixture(state);
  await mockDaemon(page,state);
  await page.route('**/runtime/conversation-execution**',route=>{
   if(native==='pending')return;
@@ -156,10 +158,16 @@ test('BG-11/12/13/14 local MP4 and WebM dynamic wallpapers play, pause and resto
   await expect(page.locator('html')).toHaveAttribute('data-background-source','local-video');
   const video=page.locator('[data-background-layer] video');
   await expect(video).toBeVisible();
-  await expect.poll(()=>video.evaluate(element=>({paused:element.paused,muted:element.muted,loop:element.loop,time:element.currentTime}))).toMatchObject({paused:false,muted:true,loop:true});
+  await expect.poll(()=>video.evaluate(element=>{
+   if(!(element instanceof HTMLVideoElement)) throw new TypeError('Expected background video');
+   return {paused:element.paused,muted:element.muted,loop:element.loop,time:element.currentTime};
+  })).toMatchObject({paused:false,muted:true,loop:true});
   await sceneScreenshot(page,testInfo,`${media.name}-wallpaper.png`);
   await page.emulateMedia({reducedMotion:'reduce'});
-  await expect.poll(()=>video.evaluate(element=>element.paused)).toBe(true);
+  await expect.poll(()=>video.evaluate(element=>{
+   if(!(element instanceof HTMLVideoElement)) throw new TypeError('Expected background video');
+   return element.paused;
+  })).toBe(true);
   await page.emulateMedia({reducedMotion:'no-preference'});
   await settings(page);await page.getByRole('button',{name:'Restore default background'}).click();await page.getByRole('button',{name:'Back to app',exact:true}).click();
   await expect(page.locator('html')).toHaveAttribute('data-background-source','theme-scene');
@@ -307,7 +315,33 @@ for(const state of ['ready','blocked','pending','error','pi'] as const) test(`BG
 });
 
 test('BG-23 incomplete Desktop capability stays solid and never writes background Web stores',async({page})=>{
- await page.addInitScript(()=>Object.defineProperty(window,'lingDesktop',{value:{platform:'macos',daemonBaseUrl:'http://127.0.0.1:17891',appearance:{reportTheme:()=>{}},computerUse:{reportLocale:()=>{},reportSelectedDeckOwner:()=>{},reportSelectedConversation:()=>{},reportHostLayout:()=>{},getPreferences:async()=>({previewAutoShow:true}),setAutoShow:async()=>({accepted:true}),onSummaryChanged:()=>()=>{}} },configurable:true}));
+ await page.addInitScript(()=>{
+  const daemonStatus: DesktopDaemonStatus = {
+   state: 'connected',
+   baseUrl: 'http://127.0.0.1:17891',
+   ownedByDesktop: true,
+  };
+  Object.defineProperty(window,'lingDesktop',{
+   configurable: true,
+   value: {
+    platform: 'macos',
+    daemonBaseUrl: daemonStatus.baseUrl,
+    daemon: {
+     getStatus: async()=>daemonStatus,
+     restart: async()=>daemonStatus,
+     onStatusChanged(listener) {
+      let subscribed = true;
+      queueMicrotask(()=>{
+       if(subscribed) listener(daemonStatus);
+      });
+      return ()=>{ subscribed = false; };
+     },
+    },
+    appearance: {reportTheme:()=>{}},
+    computerUse: {reportLocale:()=>{},reportSelectedDeckOwner:()=>{},reportSelectedConversation:()=>{},reportHostLayout:()=>{},getPreferences:async()=>({previewAutoShow:true}),setAutoShow:async()=>({accepted:true}),onSummaryChanged:()=>()=>{}},
+   } satisfies Pick<LingDesktopCapabilities, 'platform' | 'daemonBaseUrl' | 'daemon'> & Record<string, unknown>,
+  });
+ });
  await prepare(page);
  await page.getByRole('complementary',{name:/Sidebar display|侧栏显示/u}).getByRole('button',{name:'Settings'}).click();await page.getByLabel('Settings sections').getByRole('button',{name:'Interface preferences',exact:true}).click();
  await expect(page.locator('[data-background-settings]').getByRole('button',{name:'Choose or replace media'})).toBeDisabled();await expect(page.locator('[data-background-settings]').getByRole('alert')).toBeVisible();

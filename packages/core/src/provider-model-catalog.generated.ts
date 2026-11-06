@@ -3,11 +3,11 @@ import type { ProviderModelCatalogManifest, ProviderModelCatalogRecord } from ".
 
 export const providerModelCatalogManifest = {
   "schemaVersion": 1,
-  "version": "models.dev:73a7562c907b",
+  "version": "models.dev:a64cd7055b6b",
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
   "license": "MIT",
-  "generatedAt": "2026-11-02T09:40:02.288Z",
+  "generatedAt": "2026-11-06T09:32:04.318Z",
   "updatedAt": "2026-10-26"
 } as const satisfies ProviderModelCatalogManifest;
 
@@ -5912,21 +5912,6 @@ export const providerModelCatalogRecords = [
     "contextWindow": 16000,
     "maxTokens": 14464,
     "updatedAt": "2026-01-28"
-  },
-  {
-    "providerId": "xai",
-    "id": "grok-imagine-image-quality",
-    "displayName": "Grok Imagine Image Quality",
-    "input": [
-      "text",
-      "image"
-    ],
-    "capabilities": [
-      "vision"
-    ],
-    "contextWindow": 16000,
-    "maxTokens": 14464,
-    "updatedAt": "2026-04-03"
   },
   {
     "providerId": "xai",

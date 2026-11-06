@@ -48,6 +48,8 @@ Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，�
 
 Linux 构建任务在选中 CLI 时运行真实 daemon 生命周期和新工作区 doctor 检查；未配置 provider 的新工作区预期返回诊断退出码 4。在选中 Web 时，使用生产构建的 Vite preview 运行六项 Playwright 回归，覆盖权限、内置技能元数据和中文角色。浏览器测试使用模拟 daemon 数据，不包含真实模型调用。当前运行的截图与测试结果上传为 `ci-linux-source-web-smoke` artifact，保留七天。
 
+会话操作记录、复制、文件审查、归属与颜色层级场景可通过 `corepack pnpm --filter @ling-stack/web test:e2e:work-cell` 本地按需运行。会话样例由 E2E mock daemon 提供，不依赖开发模式；Web 的 `typecheck` 和 `typecheck:ci` 通过 `tsconfig.e2e.json` 检查所列用例及其辅助文件。
+
 本地化包的 `typecheck:ci` 和 `test:ci` 已补齐；前者在干净 runner 重新生成未跟踪的 TypeScript 目录文件后检查类型，后者执行翻译目录完整性、占位符检查及本地化单元测试，复用构建阶段的 `dist`。新增[入口覆盖契约](../../scripts/ci/package-script-coverage.test.mjs)，要求分类器选中的每个类型检查／测试包都有对应 CI 脚本，防止 `--if-present` 静默跳过漏配包。
 
 ## CodeQL 安全扫描
@@ -155,6 +157,18 @@ Linux 每日回归仅在同一提交、同一检查方案已有有效的完整�
 成功证据最多有效七天；每周至少一次强制完整 Linux 与 macOS 回归，即使提交不变也执行，检查两种 runner 镜像与外部环境漂移。检查方案或运行时配置变化、显式 `full-ci`、手动完整运行和发布前验证均不复用定时跳过结论。定时回归不增加失败后的自动密集重试。
 
 每次运行分别记录排队时间、页面总时长、各任务运行时间、Linux／macOS 累计任务分钟、测试数量与原生跳过数量。累计任务分钟是性能观察，不能在没有账单证据时称为实际扣额；失败任务已运行的部分也会消耗资源。
+
+独立的 `timing-telemetry` 任务在 `quality` 汇总结束后，尽力保存
+`ci-telemetry` artifact（保留 14 天）并写入 GitHub Step Summary。质量门
+不依赖该任务；采集、下载、解析、上传或观测任务失败都不改变原有门禁。
+质量门失败时仍下载可用分片报告，记录本次运行尝试的 run/job/step 观测、
+逐文件结果、Core/Daemon 最大分片文件累计耗时、分片不均衡比和可用报告中的
+timeout/leaked-process 计数。job 启动延迟包含依赖等待，不能当作纯 runner
+排队时间；并发文件累计耗时不等于分片实际时长；截至已完成任务的经过时间
+不等于依赖图关键路径，且不包含仍在执行的任务。run 总时长标为采集时
+已观测值，报告缺失也不能据此断言全量测试没有超时或泄漏。先观察至少
+5～10 次完整 hosted run，再决定是否调整分片、worker 并发或增加 E2E；当前
+不据此承诺固定提速比例。
 
 缓存继续用于锁定依赖和同一次构建输出复用。不得复用与提交、平台或方案不匹配的测试成功。分片缩短等待不一定减少累计费用；不在测量前承诺节省比例，也不把公开仓库、自托管 runner 或增加支出上限当作本轮方案的前提。
 

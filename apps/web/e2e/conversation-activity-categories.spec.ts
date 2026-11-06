@@ -81,8 +81,8 @@ for (const surface of ["normal", "private", "channel"] as const) {
       await page.screenshot({ path: `${evidence}/${surface}-category-${category}.png` });
       if (surface === "normal" && category === "tool") {
         await page.setViewportSize({ width: 390, height: 844 });
-        const hideNavigation = page.getByRole("button", { name: "收起左侧栏", exact: true });
-        if (await hideNavigation.isVisible()) await hideNavigation.click();
+        await expect(page.locator(".app-shell")).toHaveClass(/channel-sidebar-collapsed/u);
+        await expect(page.getByRole("button", { name: "展开左侧栏", exact: true })).toHaveAttribute("aria-pressed", "false");
         await expect(header).toBeInViewport();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
         await page.screenshot({ path: `${evidence}/normal-category-tool-mobile.png` });

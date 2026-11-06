@@ -4,7 +4,7 @@ Status: active UI2 Desktop component contract
 Owner: `@ling-stack/ui-react` Desktop components and Desktop renderers
 Last verified: 2026-08-03
 Code anchors: `packages/ui-react/src/desktop/`, `apps/desktop/renderer/`
-Test anchors: `apps/desktop/tests/computer-use-preview-renderer.spec.mjs`, `apps/desktop/tests/computer-use-page-deck-view-model.test.mjs`
+Test anchors: `apps/desktop/tests/computer-use-preview-renderer.spec.ts`, `apps/desktop/tests/computer-use-page-deck-view-model.test.mjs`
 
 本合同覆盖 PiP、Computer Use preview 等紧凑 Desktop renderer 的共享窗口骨架，不拥有 Electron、
 IPC、CUA 状态机或媒体生命周期。

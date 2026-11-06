@@ -34,7 +34,7 @@ export interface ComputerUsePreviewMediaController {
     request: ComputerUsePreviewReleaseMediaRequest,
   ): Promise<ComputerUsePreviewReleaseMediaResult>;
   setVideoElement(video: HTMLVideoElement | undefined): void;
-  sync(snapshot: ComputerUsePipRendererSnapshot): Promise<void>;
+  sync(snapshot: ComputerUsePipRendererSnapshot | undefined): Promise<void>;
 }
 
 export function createComputerUsePreviewMediaController(input: {
@@ -54,7 +54,11 @@ export function createComputerUsePreviewMediaController(input: {
     attachCurrentStream();
   };
 
-  const sync = async (snapshot: ComputerUsePipRendererSnapshot): Promise<void> => {
+  const sync = async (snapshot: ComputerUsePipRendererSnapshot | undefined): Promise<void> => {
+    if (!snapshot) {
+      invalidateCurrentMedia();
+      return;
+    }
     const mediaKey = mediaKeyFor(snapshot);
     if (
       snapshot.sourceKind === "display_media" &&
@@ -76,11 +80,11 @@ export function createComputerUsePreviewMediaController(input: {
     const requestGeneration = mediaRequestGeneration;
     if (snapshot.sourceKind === "fake") {
       const { sessionId, sourceRevision, sourceGeneration } = snapshot;
-      window.setTimeout(() => capabilities()?.reportFrameReady(
-        sessionId,
-        sourceRevision,
-        sourceGeneration,
-      ), 0);
+      window.setTimeout(() => {
+        if (isCurrentMediaIdentity(mediaKey, requestGeneration)) {
+          capabilities()?.reportFrameReady(sessionId, sourceRevision, sourceGeneration);
+        }
+      }, 0);
       return;
     }
 
