@@ -88,7 +88,7 @@ async function runProbe(mode: "success" | "timeout" | "sync-stall" | "cleanup-fa
   const directory = await mkdtemp(join(tmpdir(), "ling-owned-diagnostic-"));
   const file = join(directory, "probe.test.mjs");
   await writeFile(file, source);
-  const environment = { ...process.env, NODE_OPTIONS: "" };
+  const environment: NodeJS.ProcessEnv = { ...process.env, NODE_OPTIONS: "" };
   delete environment.NODE_TEST_CONTEXT;
   return await new Promise<{ code: number | null; output: string }>((resolve, reject) => {
     const child = spawn(process.execPath, ["--test", "--test-reporter=tap", file],
