@@ -50,14 +50,15 @@ runtime fields. Compiler, SDK, headers, deployment target, OS rows, trust,
 signing, approval fields and false/unbound safety axes are unchanged.
 
 The sandbox record was adopted first. The Office record then adopted exactly
-the following nine existing packaging digest replacements. No key was added
+the following ten existing packaging digest replacements. No key was added
 or removed; the other 1,697 values are unchanged.
 
 | Existing packaging input | Approved SHA-256 |
 | --- | --- |
-| `apps/desktop/package.json` | `27770142078674303ec055346be769f4d171a97d5f42360c3963cecfa40c31f4` |
-| `pnpm-lock.yaml` | `35a0c8f7099c7c16121bd37543a201a297faec8150be658a74d86acc8f6e8170` |
-| `packages/daemon/package.json` | `2a49fd5f9cfda243818930faa717ecaf660bde7374baf30e421022be15f40fcb` |
+| `apps/desktop/package.json` | `d8d064c0ea099c78d90b83462d90e590a9d5b4189eb997d0cee8f018cdd382f8` |
+| `packages/core/src/provider-model-catalog.generated.ts` | `c02eaf49e0f4e79f94cb18734d2613a3e9c88e4ca1250d9b353dc0574f7c41e4` |
+| `pnpm-lock.yaml` | `bea9a0f9bd2771063b97e1fd47f20aa43325670213909bcad06033e12fa2a1ad` |
+| `packages/daemon/package.json` | `1f44188e8a668392c8573c011e1aa80e9d589cba7036d6a97315f5445c40898b` |
 | `apps/desktop/scripts/distribution/installer-builder.mjs` | `4f67d19706b4f000a1ab90590932190fb6889803578d9bf0d9bfc38a7fab817d` |
 | `apps/desktop/scripts/cua-driver-signing/electron-builder-mac-sign.mjs` | `7000392b8ca2f4151442773d8150fddcd1c758ab6ad5516a5a7dfdc098ea1ead` |
 | `apps/desktop/scripts/cua-driver-signing/final-artifact-extractor.mjs` | `97e45821742403beaf936ebb5393633845b5be111e346266ec1f186af02efdc4` |
@@ -66,9 +67,9 @@ or removed; the other 1,697 values are unchanged.
 | `native/sandbox/reviewed-codesign-source-v1.json` | `5e4e8cc68a68f4901244aa773ca04787805021f61c714ab64b52bf960c328572` |
 
 The adopted Office record SHA-256 is
-`b2c06d112ad73b76e85b7d5c32e4f811d27c4fb60d983f5c7aa3141bfbe9fac9`.
+`c974cf2253ac6d754c9f2cb7141032133d58d7bb0c5d1b17a5827c72b9c8806c`.
 The fixed-order packaging aggregate is
-`3868fd0e3b646024891db46aca47fe0dfcaefb0a851e5f4a5bb928b85670290b`.
+`069e86b5b33420eacba6a4bf8280433a8245f52fe394cbf44d7e502e514f0c3b`.
 The unchanged Office and sandbox native aggregates are respectively
 `9c5f6a1a05fe63ab96de941432ec13166af8974ec52730934d5ac348c41a854e`
 and `6770a6864706c68c41ed4998c826daeff7e33baf7d59d9d9cfca8a9b63da1dbd`.
