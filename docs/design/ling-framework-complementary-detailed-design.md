@@ -1,6 +1,6 @@
 # Ling 框架补强详细设计
 
-Status: F1/F2 implemented; macOS local and Linux hosted checks passed; native boundary repair locally verified; full CI blocked; not merged or released; F3/F4/F5 remain design contracts
+Status: F1/F2 implemented; macOS local and Linux hosted checks passed; native boundary repair locally verified; PR #653 hosted CI green; not merged or released; F3/F4/F5 remain design contracts
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
 Last verified: 2026-11-08
 Document type: reference / technical design
@@ -311,6 +311,8 @@ extension manifest 与 plugin-package manifest 的版本校验不是同一套规
 本分支的 `framework-assurance` CI lane 使用 Ubuntu、Node `22.22.1` 与完整 Git 历史，执行离线回归/校准及独立重建的真实 SDK consumer，不复用 `ci-dist`。它在完整非文档档位下是 `quality` 的必需输入；失败、取消、缺失或意外跳过均拒绝。
 
 2026-11-03 已核实候选 `0a4f5327073058f45d14b5c21940a1811d9fb6b1` 的 [Linux job](https://github.com/ling-stack-org/ling-stack/actions/runs/41477220526/job/125386311185) 成功，工具回归 64/64、v3 校准 9/9 符合期望。其独立 SDK 报告记录 Linux x64、Node `22.22.1`、npm `10.9.4`、pnpm `10.0.0`、TypeScript `7.0.2` 及原生 `@typescript/typescript-linux-x64 7.0.2`：四包重新构建、真实打包和仓外离线安装通过，ESM 19/19，NodeNext/Bundler 各自的 strict 正例、必填字段负例及 317 文件解析审计通过。251 个 producer 输入前后摘要一致；报告与输入摘要见[实施记录](ling-framework-complementary-implementation-plan.md#9-交付记录与完成判定)。这是新增的真实 Linux 消费格，不是复制 macOS 结果。Common checks 的历史哈希误报已获批准补齐 106 条精确指纹，本地相同全历史范围扫描零命中、扫描契约 22/22 通过；旧远端失败不改记成功。完整 CI 已结束且失败，Daemon shard 0 取消、1/2 成功、3 失败，helper smoke 成功；不再列为排队或在途。
+
+当前 PR #653 的提交 `3c7b905be010fa0da37780da6e5288dbff760cd1` 已在 [CI run 42401958832](https://github.com/ling-stack-org/ling-stack/actions/runs/42401958832) 完成并通过。四个 Core shard、四个 Daemon shard、framework assurance、真实 SDK consumer、构建、类型检查、依赖策略、Linux restricted-command、macOS helper/Seatbelt、质量汇总和 timing telemetry 均为 success；Core shard 2 首次的时间边界失败在同一 run 的 job 重跑中通过。该证据只收口 F1/F2 的当前 PR 门禁，不扩大为真实 Runner、GUI 或 F3/F4 验收。
 
 后续本地限时诊断保留 0/10 轮完整完成、89/150 文件完成及 6 项实际失败，不推算通过率。独立合成探针确认的原生私有状态隔离缺陷已修复，并由真实 macOS native boundary 回归 22/22、相关 Kimi/relay 回归 65/65 验证；这不替代远端完整 CI 或原 history-budget 超时的独立处理，详见实施记录。
 

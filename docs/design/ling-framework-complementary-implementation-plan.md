@@ -1,6 +1,6 @@
 # Ling 框架补强实现计划书
 
-Status: F1/F2 implemented; macOS local and Linux hosted checks passed; native boundary repair locally verified; full CI blocked; F3/F4/F5 not implemented; no merge or release
+Status: F1/F2 implemented; macOS local and Linux hosted checks passed; native boundary repair locally verified; PR #653 hosted CI green; F3/F4/F5 not implemented; no merge or release
 Owner: Ling framework maintainers; one integration owner per implementation batch
 Last verified: 2026-11-08
 Document type: implementation plan / acceptance checklist
@@ -13,7 +13,7 @@ Code and test anchors: sections 7 and 9; no live task or GUI acceptance claimed
 
 按“离线评测与报告 + SDK 独立消费”先实施，再接真实执行和诊断。不要等待另一会话完成所有未来功能，也不要抢先改它正在拥有的安全并发、隔离执行、合并和恢复文件。
 
-用户确认开始后，已在 `codex/ling-framework-assurance` 独立工作区实现并本地验证 F1/F2，零模型 CI 已接线。候选 `0a4f5327` 已普通推送，Linux assurance/SDK 与依赖 job、Windows 安装器契约已通过；完整 CI 尚未通过，未创建 PR、未合并或发布。实际证据见第 9 节。默认不产生付费模型请求，不启动服务、不修改共享数据库。
+用户确认开始后，已在 `codex/ling-framework-assurance` 独立工作区实现并本地验证 F1/F2，零模型 CI 已接线。历史候选 `0a4f5327` 的 Linux assurance/SDK、依赖 job 与 Windows 安装器契约已通过；F1/F2 实现提交 `3c7b905b` 已附加到 [PR #653](https://github.com/ling-stack-org/ling-stack/pull/653)，并在 [CI run 42401958832](https://github.com/ling-stack-org/ling-stack/actions/runs/42401958832) 完成全绿门禁。Core shard 2 首次时间边界失败经同一 run 的 job 重跑后通过。本次文档同步继续附加在同一 PR，当前未合并、未发布，默认不产生付费模型请求，不启动服务、不修改共享数据库。实际证据见第 9 节。
 
 | 里程碑 | 内容 | 当前状态 | 进入条件 |
 | --- | --- | --- | --- |
@@ -256,7 +256,7 @@ corepack pnpm --filter @ling-stack/daemon exec node --test --test-concurrency=1 
 
 ### 7.5 CI 逐步接入
 
-本分支已在 `.github/workflows/ci.yml` 接入 `framework-assurance`；该 job 已在提前推送的候选上取得真实 Linux 通过证据，不能据此声称完整 CI 已通过。运行及产物定位见第 9 节。
+本分支已在 `.github/workflows/ci.yml` 接入 `framework-assurance`；当前 PR #653 的 `framework-assurance`、SDK consumer、完整 Core/Daemon、平台契约与 quality 汇总均已在 CI run 42401958832 通过。运行及产物定位见第 9 节。
 
 - 完整非文档档位在 Ubuntu / Node `22.22.1` / pnpm `10.0.0` 运行；Draft preview 与纯文档范围继续按现有规则延后或排除，不伪装完整验证。
 - 完整历史 checkout 后安装锁定依赖，运行新工具回归、离线 `calibrate` 与真实 `sdk-consumer`，不使用 secrets 或 Provider。
@@ -405,3 +405,16 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 - 新增 `packages/daemon/test/native-process-boundary.test.mjs` 回归，覆盖特殊字符 workspace 路径、合法 public read/write、嵌套私有目录和 symlink alias。旧实现先出现该回归预期失败，修复后真实 macOS 22/22 通过。
 - 相关 Kimi 安装/执行与 model relay 回归合计 65/65 通过；Daemon `build:ci` 通过，保留现有 Rust compiler warning。该证据只覆盖当前 macOS，不能替代 Linux/Windows 或远端完整 CI。
 - 合入最新 `main@8435a43e` 后，主线锁摘要由历史 v3 的 `56fd59b33ab2fc4ab8615ad7e050c839ed14fc621096ee9c754572b7212d3d78` 更新为 `167eb55b8ed43c0b58a363005b867069d1ddcd659b36408d95ddbb227338b543`；为保持 source pin 与工作树一致，新增默认 v4 校准套件 `framework-v4.json`，T01/T02/T03 版本为 `3/3/4`。历史 v3 套件字节摘要 `e27693c5e5e89e07845fc759dffcd5c85483fd672dda6c5066bcd5d28064013b` 保留为历史输入，v4 摘要为 `cd22fb7efda7585107a39b4bda195bcaf058be1a37e6e9416afd1da9bc8fab04`。合并后的 CI policy、workflow 和 assurance 回归为 162/162 通过；这是本地新鲜验证，不替代当前 PR 的 hosted CI。
+
+### 当前 PR 收口记录（2026-11-08）
+
+| 项目 | 已确认结果 |
+| --- | --- |
+| 代码提交 | F1/F2 实现提交 `3c7b905be010fa0da37780da6e5288dbff760cd1`，分支 `codex/ling-framework-assurance`；本次文档同步继续附加在同一 PR |
+| PR | [#653](https://github.com/ling-stack-org/ling-stack/pull/653)，已创建并承载实现及文档同步；未合并、未发布、未部署 |
+| Hosted CI | [run 42401958832](https://github.com/ling-stack-org/ling-stack/actions/runs/42401958832) completed/success；assurance、SDK consumer、依赖策略、构建、类型检查、四个 Core shard、四个 Daemon shard、Linux restricted-command、macOS helper/Seatbelt、quality 与 timing telemetry 全部通过 |
+| 时间相关重跑 | Core shard 2 首次因主线 `run-compaction-suspension.test.mjs` 的 `artifact_retention_deadline_in_past` 失败；同一 run 的 [重跑 job](https://github.com/ling-stack-org/ling-stack/actions/runs/42401958832/job/128498297153) 33/33 通过。该测试文件和 retention store 未被本分支修改，未将无关修复混入 PR |
+| 本地相关验证 | 合并最新主线后 assurance、CI policy、workflow 与相关回归 162/162 通过；F1/F2 工具及真实 SDK consumer 的 macOS 复验、Linux hosted consumer 与完整当前 PR 门禁均有独立证据 |
+| 运行边界 | 未运行真实模型、Provider、普通 Run 或付费任务；未启动/重启服务，未修改共享数据库或另一会话 worktree |
+
+当前 F1/F2 交付条件已满足：代码、离线校准、仓外真实 SDK consumer、零模型 CI 门禁、文档和 PR 均有证据。F3/F4/F5 仍按计划保持未实施；本 PR 不自动合并。
