@@ -29,6 +29,9 @@ overrides:
   exceljs>unzipper: 0.11.2
 
 patchedDependencies:
+  '@earendil-works/pi-coding-agent@1.4.0':
+    hash: 0109641cd7ceb1a42210da2d94dc5b96cb397d4497a63266354e21fe1fdf1ef0
+    path: patches/@earendil-works__pi-coding-agent@1.4.0.patch
   braces@3.0.3:
     hash: ad74a34b0200bbe14ba95e31e8f296205ce32a374eca2cef25cc8940aa0c76c1
     path: patches/braces@3.0.3.patch
@@ -554,7 +557,7 @@ importers:
         version: 1.4.0(@aws-sdk/credential-provider-node@3.972.92)(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(@smithy/signature-v4@5.7.5)(undici@7.30.1)(ws@8.22.1)(zod@4.6.7)
       '@earendil-works/pi-coding-agent':
         specifier: 1.4.0
-        version: 1.4.0(@aws-sdk/credential-provider-node@3.972.92)(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(@smithy/signature-v4@5.7.5)(ws@8.22.1)(zod@4.6.7)
+        version: 1.4.0(patch_hash=0109641cd7ceb1a42210da2d94dc5b96cb397d4497a63266354e21fe1fdf1ef0)(@aws-sdk/credential-provider-node@3.972.92)(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(@smithy/signature-v4@5.7.5)(ws@8.22.1)(zod@4.6.7)
       '@ling-stack/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
@@ -7587,7 +7590,7 @@ snapshots:
     dependencies:
       quickjs-wasi: 3.6.2
 
-  '@earendil-works/pi-coding-agent@1.4.0(@aws-sdk/credential-provider-node@3.972.92)(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(@smithy/signature-v4@5.7.5)(ws@8.22.1)(zod@4.6.7)':
+  '@earendil-works/pi-coding-agent@1.4.0(patch_hash=0109641cd7ceb1a42210da2d94dc5b96cb397d4497a63266354e21fe1fdf1ef0)(@aws-sdk/credential-provider-node@3.972.92)(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(@smithy/signature-v4@5.7.5)(ws@8.22.1)(zod@4.6.7)':
     dependencies:
       '@earendil-works/pi-agent-core': 1.4.0(@aws-sdk/credential-provider-node@3.972.92)(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(@smithy/signature-v4@5.7.5)(undici@8.12.2)(ws@8.22.1)(zod@4.6.7)
       '@earendil-works/pi-ai': 1.4.0(@aws-sdk/credential-provider-node@3.972.92)(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(@smithy/signature-v4@5.7.5)(undici@8.12.2)(ws@8.22.1)(zod@4.6.7)

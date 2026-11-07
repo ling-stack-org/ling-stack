@@ -88,7 +88,8 @@
       "minimatch@9.0.9": "patches/minimatch@9.0.9.patch",
       "minimatch@10.2.6": "patches/minimatch@10.2.6.patch",
       "glob@11.1.0": "patches/glob@11.1.0.patch",
-      "glob@13.0.6": "patches/glob@13.0.6.patch"
+      "glob@13.0.6": "patches/glob@13.0.6.patch",
+      "@earendil-works/pi-coding-agent@1.4.0": "patches/@earendil-works__pi-coding-agent@1.4.0.patch"
     }
   }
 }
