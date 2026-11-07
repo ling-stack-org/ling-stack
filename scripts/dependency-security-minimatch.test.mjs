@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -48,10 +47,10 @@ for (const [label, dependencyRequire, version] of [
 }
 
 for (const [label, dependencyRequire, version] of [
-  ["Pi", piRequire, "10.2.6"],
-  ["Electron builder", appBuilderRequire, "10.2.6"],
-  ["Electron universal", universalRequire, "9.0.9"],
-  ["Expo CLI", cliRequire, "10.2.6"],
+  ["Pi", piRequire, "11.0.1"],
+  ["Electron builder", appBuilderRequire, "11.0.1"],
+  ["Electron universal", universalRequire, "11.0.1"],
+  ["Expo CLI", cliRequire, "11.0.1"],
 ]) {
   const packagePath = dependencyRequire.resolve("minimatch/package.json");
   const packageRoot = dirname(packagePath);
@@ -59,16 +58,13 @@ for (const [label, dependencyRequire, version] of [
   const esmEntry = resolve(packageRoot, dependency.exports["."].import.default);
   const cjsEntry = dependencyRequire.resolve("minimatch");
 
-  test(`${label} consumes the exact minimatch version and frozen patch`, () => {
+  test(`${label} consumes the official minimatch security fix`, () => {
     assert.equal(dependency.version, version);
-    const key = `minimatch@${version}`;
-    const patchPath = manifest.pnpm.patchedDependencies[key];
-    assert.equal(patchPath, `patches/${key}.patch`);
-    const bytes = readFileSync(join(root, patchPath), "utf8").replaceAll("\r\n", "\n");
-    const digest = createHash("sha256").update(bytes).digest("hex");
-    assert.equal(lock.patchedDependencies[key].hash, digest);
-    assert.ok(cjsEntry.includes(`patch_hash=${digest}`));
-    assert.ok(esmEntry.includes(`patch_hash=${digest}`));
+    assert.ok(lock.packages[`minimatch@${version}`]);
+    assert.equal(manifest.pnpm.overrides["minimatch@9.0.9"], version);
+    assert.equal(manifest.pnpm.overrides["minimatch@10.2.6"], version);
+    assert.equal(cjsEntry.includes("patch_hash="), false);
+    assert.equal(esmEntry.includes("patch_hash="), false);
   });
 
   for (const [format, api] of [["CJS", dependencyRequire("minimatch")], ["ESM", await import(pathToFileURL(esmEntry).href)]]) {
@@ -81,14 +77,12 @@ for (const [label, dependencyRequire, version] of [
       assert.equal(matcher.firstPhasePreProcess(patterns).length, 100_000);
     });
 
-    if (version === "10.2.6") {
-      test(`${label} ${format} shares the explicit brace expansion budget with preprocessing`, () => {
-        const matcher = new Minimatch(Array(8).fill("**/../a/b").join("/"), {
-          optimizationLevel: 2, braceExpandMax: 64,
-        });
-        assert.equal(matcher.set.length, 64);
+    test(`${label} ${format} shares the explicit brace expansion budget with preprocessing`, () => {
+      const matcher = new Minimatch(Array(8).fill("**/../a/b").join("/"), {
+        optimizationLevel: 2, braceExpandMax: 64,
       });
-    }
+      assert.equal(matcher.set.length, 64);
+    });
 
     test(`${label} ${format} skips quadratic deduplication only for large pattern sets`, () => {
       const small = new Minimatch("{x,*}/{0..9}", { optimizationLevel: 2 });

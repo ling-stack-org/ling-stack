@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { formatCatalogMessage, loadCatalog } from "@ling-stack/localization";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { jsonStringLiteralForGeneratedSource } from "./generated-source.mjs";
 
 export { React, renderToStaticMarkup };
 const desktopRequire = createRequire(new URL("../../../desktop/package.json", import.meta.url));
@@ -34,7 +35,7 @@ export async function catalogConsumerHarness(t, { exports, expose = {}, transfor
     plugins: [{ name: "catalog-consumer-test-context", setup(builder) {
       builder.onResolve({ filter: /(?:^|\/)i18n\.js$/ }, () => ({ path: "i18n", namespace: "catalog-test" }));
       builder.onLoad({ filter: /.*/, namespace: "catalog-test" }, () => ({ contents:
-        `export function useI18n() { const s = globalThis[${JSON.stringify(key)}]; return { locale: s.locale, t: s.t }; }`, loader: "js" }));
+        `export function useI18n() { const s = globalThis[${jsonStringLiteralForGeneratedSource(key)}]; return { locale: s.locale, t: s.t }; }`, loader: "js" }));
       builder.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async ({ path }) => {
         const relative = sourceFiles.get(path);
         if (!relative) return undefined;
