@@ -1,8 +1,8 @@
 # Ling 框架补强实现计划书
 
-Status: F1/F2 implemented and locally verified; F3/F4/F5 not implemented; no merge or release
+Status: F1/F2 implemented; macOS local and Linux hosted checks passed; full CI blocked; F3/F4/F5 not implemented; no merge or release
 Owner: Ling framework maintainers; one integration owner per implementation batch
-Last verified: 2026-11-02
+Last verified: 2026-11-03
 Document type: implementation plan / acceptance checklist
 Canonical replacement: none; retain while material work remains unfinished
 Code and test anchors: sections 7 and 9; no live task or GUI acceptance claimed
@@ -13,13 +13,13 @@ Code and test anchors: sections 7 and 9; no live task or GUI acceptance claimed
 
 按“离线评测与报告 + SDK 独立消费”先实施，再接真实执行和诊断。不要等待另一会话完成所有未来功能，也不要抢先改它正在拥有的安全并发、隔离执行、合并和恢复文件。
 
-用户确认开始后，已在 `codex/ling-framework-assurance` 独立工作区实现并本地验证 F1/F2，零模型 CI 已接线。实际证据见第 9 节；提交和 PR 状态以实际记录为准，尚未合并或发布。默认不产生付费模型请求，不启动服务、不修改共享数据库。
+用户确认开始后，已在 `codex/ling-framework-assurance` 独立工作区实现并本地验证 F1/F2，零模型 CI 已接线。候选 `0a4f5327` 已普通推送，Linux assurance/SDK 与依赖 job、Windows 安装器契约已通过；完整 CI 尚未通过，未创建 PR、未合并或发布。实际证据见第 9 节。默认不产生付费模型请求，不启动服务、不修改共享数据库。
 
 | 里程碑 | 内容 | 当前状态 | 进入条件 |
 | --- | --- | --- | --- |
 | F0 | 三份设计与实施文档 | 已编写；文档检查通过 | 无代码执行依赖 |
 | F1 | 固定校准任务、预检、正反校准、离线报告 | 已实现；47 项离线/CLI 测试与实际校准通过 | 不构成真实代码任务验收 |
-| F2 | 真实包审计、仓外 consumer、支持矩阵 | 已实现；17 项边界测试及修复后的真实四包消费通过 | 当前仅 macOS arm64；19 组 runtime 与两个类型格 |
+| F2 | 真实包审计、仓外 consumer、支持矩阵 | 已实现；17 项边界测试及修复后的真实四包消费通过 | macOS arm64 本地及 Linux x64 托管分别有 19 组 runtime 与两个类型格；Windows SDK 未验证 |
 | F3-A | Run 证据适配与 fixture 回归 | 未开始 | F1 格式稳定、来源接口可核实 |
 | F3-B | 普通 Run 真实试点及后续并发对比 | 未开始，受准入约束 | 对应安全/隔离/恢复验收、可信验证、试点预算 |
 | F4 | 已有 Harness 诊断的只读消费 | 未开始 | F1 报告稳定、已有诊断合同可用 |
@@ -256,13 +256,13 @@ corepack pnpm --filter @ling-stack/daemon exec node --test --test-concurrency=1 
 
 ### 7.5 CI 逐步接入
 
-本分支已在 `.github/workflows/ci.yml` 接入 `framework-assurance`；这里描述的是已接线行为，不是托管 CI 已通过的声明。
+本分支已在 `.github/workflows/ci.yml` 接入 `framework-assurance`；该 job 已在提前推送的候选上取得真实 Linux 通过证据，不能据此声称完整 CI 已通过。运行及产物定位见第 9 节。
 
 - 完整非文档档位在 Ubuntu / Node `22.22.1` / pnpm `10.0.0` 运行；Draft preview 与纯文档范围继续按现有规则延后或排除，不伪装完整验证。
 - 完整历史 checkout 后安装锁定依赖，运行新工具回归、离线 `calibrate` 与真实 `sdk-consumer`，不使用 secrets 或 Provider。
 - Consumer 自行串行重建四包、真实 pack 并仓外离线安装，不下载/复用 `ci-dist`；缺少预置工具链直接报阻断，不临时升级或联网 fallback。
 - 输出限于 `RUNNER_TEMP` 下本任务拥有的目录；上传 JSON/Markdown 报告及直属命令日志，artifact `ci-framework-assurance` 保留 7 天，不上传 consumer/toolchain/归档树。
-- `quality` 明确要求 `ASSURANCE=success`；失败、取消、空结果和意外跳过均拒绝，相关契约已在本地验证。首个托管 Linux 格仍需真实运行确认，其他平台不扩大声明。
+- `quality` 明确要求 `ASSURANCE=success`；失败、取消、空结果和意外跳过均拒绝，相关契约已在本地验证。首个托管 Linux assurance/SDK 格已通过；独立 Windows 安装器结果不扩大成 Windows SDK 消费声明。
 - 不改变既有可靠性基准阈值、付费回归或业务执行入口；F3-B 仍是另行授权的人工试点。
 
 ## 8. 风险与停止条件
@@ -366,3 +366,35 @@ HEAD 只是实现基线；上述 producer 输入快照包含本次实际参与�
 - 本次门禁选择基于当时的 `origin/main@9f0b72d028f1`，受测候选仅整合到 `3cab8088d5bd`。随后已正常合并主线 `9f0b72d028f1`，合并提交为 `2ce605a89aab`；合并前后完整快照仅 `pnpm-lock.yaml` 不同，原有待提交修改完整保留。新锁摘要为 `56fd59b33ab2fc4ab8615ad7e050c839ed14fc621096ee9c754572b7212d3d78`，按新锁 frozen 安装及完整提交范围空白检查通过；尚未运行新候选的行为复验。本段文档及锁文件变化均晚于门禁，原 receipt 不作为新候选的新鲜证据。
 - 提前推送前的相关回归真实发现旧任务锁摘要与已整合锁不一致：154 passed / 2 failed，无跳过或取消；同一八文件命令的隔离诊断完成 10/10，均复现这两项失败。逐文件核对确认四个源码 pin 与新主线完全一致，只有锁摘要变化。修复不放宽校验：将三任务重新冻结到 `9f0b72d028f1` 及新锁，T01/T02 任务版本递增到 `2`、T03 到 `3`、套件到 `3`；测试使用既有 `DEFAULT_SUITE` 避免重复硬编码。规则、profile、注入内容及产品版本未变；修复后回归和校准结果单独核实。
 - 本轮仍处于审查与验证候选准备阶段，未创建 PR、未合并、未发布；提前推送仅用于取得平台证据，不等于最终交付。此前本地验收保留为历史证据，不能冒充审查修复后的最终验收。
+
+### 提前推送与平台证据（2026-11-03）
+
+以下结果更新前述历史待验收状态，不改写旧报告。已按维护者授权普通推送 `codex/ling-framework-assurance`，首次推送的受测提交为 `0a4f5327073058f45d14b5c21940a1811d9fb6b1`；产品版本仍为 `0.2.1`，未创建 PR、未合并、未发布。两个现有 workflow 均运行此提交，未新增付费资源或真实模型任务。
+
+| 检查 | 实际证据 | 结果与边界 |
+| --- | --- | --- |
+| Linux assurance | [CI job 125386311185](https://github.com/ling-stack-org/ling-stack/actions/runs/41477220526/job/125386311185) | success；工具 64/64，无失败、跳过或取消；v3 九控制全部符合期望，pass/fail/invalid_evidence 各三项 |
+| Linux SDK 消费 | 同 job 的 artifact `ci-framework-assurance`，ID `13158061597`，报告 `sdk/sdk-consumer-gL9aTc/sdk-consumer-report.json` | 四包 fresh serial build、真实 pack、仓外离线安装通过；ESM 19/19，NodeNext/Bundler 正负例及各 317 文件解析审计通过 |
+| Linux 依赖策略 | [CI job 125386311294](https://github.com/ling-stack-org/ling-stack/actions/runs/41477220526/job/125386311294) | success；四批测试 3+21+2+24，共 50/50；许可证检查覆盖 1252 个依赖版本 |
+| Windows 安装器 | [run 41477222513](https://github.com/ling-stack-org/ling-stack/actions/runs/41477222513) / job `125385880795` | completed/success；native NSIS 6/6，无失败、跳过或取消；不构成 Windows SDK 或 GUI 验收 |
+| 提前推送候选本地 pre-gate | 2026-11-02T16:15:00.087Z 生成，受测 tree `22ae9bb45cee06a40f385cd23f21292a1c891f8f` | 64 个 Node 文件全部 exit 0：2507 tests、2429 passed、78 skipped、0 failed/cancelled；浏览器 123 passed。跳过项不算资源/打包验收；保留 `requires-remote (3 uncleared)`，未登记远端 clearance |
+| 完整 CI | [run 41477220526](https://github.com/ling-stack-org/ling-stack/actions/runs/41477220526) | 已 completed/failure；Common checks 与 [Daemon shard 3](https://github.com/ling-stack-org/ling-stack/actions/runs/41477220526/job/125387958512) 失败，Daemon shard 0 取消、1/2 成功，macOS helper smoke 成功。不是全绿或最终验收 |
+
+Linux SDK 实际工具链为 Linux x64、Node `22.22.1`、npm `10.9.4`、pnpm `10.0.0`、TypeScript `7.0.2`、`@types/node 26.6.5`、`undici-types 8.9.0` 及原生 `@typescript/typescript-linux-x64 7.0.2`。251 个 producer 输入的前后 SHA-256 均为 `2b7f362bebfe7a860e54e976b260fedabf77d41892dcd6b6895abeb9002a839a`，consumer fixture 为 `056561c7269b980707c1395dfdaac3423307d7e2510f55357dc1d1d72f70ec2a`，根锁前后均为 `56fd59b33ab2fc4ab8615ad7e050c839ed14fc621096ee9c754572b7212d3d78`。报告核实无源码/工作区 fallback，自有 consumer 已清理；运行时仍是 mock transport，不等于真实 daemon/Runner、网络、权限或 GUI 验收。
+
+托管离线校准使用 suite `3`，套件字节摘要为 `e27693c5e5e89e07845fc759dffcd5c85483fd672dda6c5066bcd5d28064013b`；Provider 调用、普通 Run 派发、用户 Store 初始化均为零，`taskCodeExecuted=false`。提前推送前的相关回归已在修复锁 pin 后通过 189/189，不能将此前的 154/2 失败删除或改记为成功。
+
+Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、383387440 字节中产生 131 条 `generic-api-key` 命中，去重为 106 个精确 fingerprint，全部来自已在整合主线中的 `1047b00500ec478c5bf4594f25a97e73b8dd34a3`。逐条复核为源码/Node 头文件的 SHA-256 记录；五份命中文件与原已审核提交的 Git blob 完全相同，旧 `.gitleaksignore` 的文件/规则/行号也全部对应。根因是 squash 后提交号变化，原 commit-scoped 指纹未覆盖新提交，不是本次引入凭据。本地 Gitleaks `8.30.1` 只读扫描复现同样命中，但不宣称与远端容器版本等同。
+
+维护者于 2026-11-03 批准并已补齐这 106 条精确历史指纹；原名单 257 条记录及原文件字节前缀完整保留，不删除旧条目、不增加宽路径或规则排除。扫描配置、CI、扫描器及其测试均未改。以相同 `--full-history --diff-merges=first-parent 0a4f5327073058f45d14b5c21940a1811d9fb6b1` 范围复验，本地 Gitleaks `8.30.1` 退出 0，仍覆盖 1438 个提交和 383387440 字节，报告零命中；扫描契约测试 22/22 通过，无失败、跳过或取消。原失败报告保留；这是精确名单修复的本地证据，不是旧远端 Common job 改判通过，也不替代修复后的远端验证。
+
+精确名单补齐已单独提交为 `7ff94e88`，尚未推送；上述四份文档同步也未提交。文档与精确名单修改晚于前述受测 tree；原 receipt 保留其真实输入，不自动重绑定为新鲜通过。后续仍须完成远端门禁、既定审查、文档审计、最终冻结验证及 PR；F3/F4/F5、合并、发布和部署均未启动。
+
+### 失败诊断与新增阻断（2026-11-03）
+
+- 原 Daemon shard 3 的 150 个文件全部完成，149 个通过、1 个失败。失败在 `protected-host-staging.test.mjs` 的 history-budget 场景：内部子进程超过既有 90 秒上限，未确认具体停在哪次迭代。相关静态输入与整合基线相同，不足以证明动态故障早已存在。查阅的主线历史找到两个同名通过样本，未找到同样超时；这不是完整失败分布或根因证据。
+- 原文件集合、每 worker 顺序与并发不变的追加诊断，计划 10 轮、共用 600000ms 总上限，retry 关闭，独立 HOME/TMP/状态且无模型凭据。最终 0/10 轮完整完成：仅首轮启动，完成 89/150 文件，文件状态为 87 passed、2 failed、61 cancelled；完整文件的 native 汇总为 1367 tests、1359 passed、6 failed、2 skipped。目标 history-budget 文件尚未执行，其余九轮未启动；不把截断计为完整失败率或通过率，不重置预算重跑。
+- 6 项新失败集中在私有状态隔离。随后的独立最小合成探针已确认一项 macOS 原生权限边界缺陷，重新编译的两个相关模块与受测产物字节一致；仅临时权限配置的因果对照恢复了预期拒绝，不等于生产代码已修复。未读取真实用户数据、未调整 CI 或测试门槛。该修复超出原 F1/F2 范围，仍待范围确认。
+- 另一会话的 [PR #643](https://github.com/ling-stack-org/ling-stack/pull/643) 正在处理原 history-budget 场景。已查快照中尚未合并、其新候选 Daemon 验证未结束；本分支未复制、cherry-pick 或合并该修改，也不把其他候选的通过记录用作本分支验收。
+
+完整 CI 的最终状态已于 `2026-11-02T17:31:25Z` 附近查询确认，run 的 `updatedAt` 为 `2026-11-02T17:24:28Z`；Daemon shard 0 的取消原因尚未确认。当前停在失败处理阶段，未穿过门禁继续发布步骤。

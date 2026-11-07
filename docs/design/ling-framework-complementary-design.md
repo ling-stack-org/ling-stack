@@ -1,11 +1,11 @@
 # Ling 框架补强总体设计
 
-Status: F1/F2 implemented and locally verified; not merged or released; F3/F4/F5 not implemented
+Status: F1/F2 implemented; macOS local and Linux hosted checks passed; full CI blocked; not merged or released; F3/F4/F5 not implemented
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
-Last verified: 2026-11-02
+Last verified: 2026-11-03
 Document type: explanation / scope contract
 Canonical replacement: none; complements existing runtime, evaluation, and SDK contracts
-Code and test anchors: see section 10 and the implementation record; offline and local tarball acceptance only
+Code and test anchors: see section 10 and the implementation record; offline and tarball consumer acceptance only, no live task or GUI acceptance
 
 配套文档：[详细设计](ling-framework-complementary-detailed-design.md)、[实现计划书](ling-framework-complementary-implementation-plan.md)。
 
@@ -23,8 +23,9 @@ Code and test anchors: see section 10 and the implementation record; offline and
 
 ### 本轮实施边界
 
-- F1/F2 已在独立工作区实现并通过本地验证：离线工具与冻结校准数据、四包真实 tarball 的仓外消费。详细结果以[实施记录](ling-framework-complementary-implementation-plan.md#9-交付记录与完成判定)为准，不代表已合并或发布。
-- 审查修复后，新工具 64 项测试与相关 CI/历史扫描契约 125 项共 189/189 通过；既有三包 261 项测试及类型检查已有本地通过记录。真实 SDK consumer 已重新构建、打包并完成仓外 19 组运行时检查与 NodeNext/Bundler 类型正反例。本分支已接入零模型 CI 门禁，托管 runner 结果仍待 PR 运行确认。
+- F1/F2 已在独立工作区实现并通过本地验证，提前推送的候选也已取得 Linux 托管证据：离线工具与冻结校准数据、四包真实 tarball 的仓外消费。详细结果以[实施记录](ling-framework-complementary-implementation-plan.md#9-交付记录与完成判定)为准，不代表已合并或发布。
+- 审查修复后，新工具 64 项测试与相关 CI/历史扫描契约 125 项共 189/189 通过；既有三包 261 项测试及类型检查已有本地通过记录。候选 `0a4f5327` 的 Linux 托管 job 另行验证了工具 64/64、九控制校准、仓外 SDK 19/19 及 NodeNext/Bundler 类型正反例；Windows 安装器契约也已通过，但不代表 Windows SDK 消费通过。已获批准补齐 106 条精确历史误报指纹，本地同范围全历史扫描零命中、扫描契约 22/22 通过，未放宽规则或范围。旧候选的完整 CI 已以 failure 结束：Common checks 与 Daemon shard 3 失败，Daemon shard 0 取消，1/2 与 helper smoke 成功。本地修复不改写远端结果，不能声称门禁全绿。
+- 失败分片的限时追加诊断未完整完成任何一轮，并发现另一个原生私有状态隔离缺陷；最小合成探针已确认该缺陷，但尚未修改生产代码。原超时和新隔离缺陷分别记录，均不以单独 lane 成功或文档补齐替代收口。
 - 不修改多代理并发、worktree 合并、审批、Run/Attempt 生命周期和 SQLite schema。
 - 不运行真实模型，不启动、停止或重启其他会话的服务。
 - 新实现采用独立工作区和独立运行数据目录；不同工作区仍可能争用 CPU、内存、磁盘与 Provider 配额。
@@ -37,9 +38,10 @@ Code and test anchors: see section 10 and the implementation record; offline and
 | 复核时主线引用 | `d7227c83af77daf237e85845961cb54511d681f8`，新增架构文档同步 | 本文涉及的 evaluation、SDK、diagnostics 源码在两快照间无变化 |
 | 原文档工作区 | `codex/retry-report-supersession`，HEAD `8b259da0ff4302b97c69f9ef65e221fd108e0ee0` | 只保留原 WIP，不在此实现 |
 | 实施工作区 | `codex/ling-framework-assurance`，基于 `d7227c83af77daf237e85845961cb54511d681f8` | 独立 managed worktree；仅带入本计划文档与索引 |
+| 提前验证提交 | `0a4f5327073058f45d14b5c21940a1811d9fb6b1`，已整合主线 `9f0b72d028f1` | 2026-11-03 核实同提交的托管 job 与产物；未创建 PR，完整 CI 尚未通过 |
 | 并发实现会话 | 开工核查时，`评估 Super-agent 设计是否适合 Ling` 正在推进 P1/P2 | 这是观察快照，不是实时进度；正式接入前重新核验 |
 | F1 验证层级 | 纯函数与 CLI 进程回归，实际离线校准 | 三任务九控制；不执行候选代码，不构成真实任务或 GUI 验收 |
-| F2 验证层级 | macOS arm64、Node `22.22.1`、TypeScript `7.0.2` 的真实 tarball 消费；保留此前 Node `24.22.1` 本地记录 | 运行时使用 mock transport；未验收真实 daemon/Runner、浏览器或其他平台 |
+| F2 验证层级 | macOS arm64 本地记录及 Linux x64 托管候选，Node `22.22.1`、TypeScript `7.0.2` 的真实 tarball 消费；保留此前 Node `24.22.1` 本地记录 | 各报告独立保存，运行时使用 mock transport；未验收 Windows SDK、真实 daemon/Runner 或浏览器 |
 
 工作区已有六份架构文档修改由原任务拥有。本次不覆盖这些修改，只在设计索引增加入口。
 

@@ -1,8 +1,8 @@
 # Ling 框架补强详细设计
 
-Status: F1/F2 implemented and locally verified; not merged or released; F3/F4/F5 remain design contracts
+Status: F1/F2 implemented; macOS local and Linux hosted checks passed; full CI blocked; not merged or released; F3/F4/F5 remain design contracts
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
-Last verified: 2026-11-02
+Last verified: 2026-11-03
 Document type: reference / technical design
 Canonical replacement: none; does not replace existing evaluation, runtime, or API contracts
 Code and test anchors: section 12 and the implementation record; offline and local tarball acceptance only
@@ -298,7 +298,7 @@ extension manifest 与 plugin-package manifest 的版本校验不是同一套规
 
 ### 7.4 支持矩阵与版本轴
 
-每格记录 OS/架构、Node、npm/pnpm、实际 TS、module/解析模式、四包版本与 tarball SHA、fixture 版本和结果。当前复验环境为 macOS arm64、Node `22.22.1`、npm `11.12.0`、pnpm `10.0.0`、TypeScript `7.0.2`；类型依赖为 `@types/node 26.6.5` 与 `undici-types 8.9.0`，原生 compiler 为 `@typescript/typescript-darwin-arm64 7.0.2`。此前 Node `24.22.1` / npm `11.12.1` 结果保留为历史本地记录，不替代当前候选验证。
+每格记录 OS/架构、Node、npm/pnpm、实际 TS、module/解析模式、四包版本与 tarball SHA、fixture 版本和结果。以下本地复验环境为 macOS arm64、Node `22.22.1`、npm `11.12.0`、pnpm `10.0.0`、TypeScript `7.0.2`；类型依赖为 `@types/node 26.6.5` 与 `undici-types 8.9.0`，原生 compiler 为 `@typescript/typescript-darwin-arm64 7.0.2`。此前 Node `24.22.1` / npm `11.12.1` 结果保留为历史本地记录；新增托管候选结果单独记录，不改写此前报告的来源。
 
 | 已运行测试格 | 本轮结果 | 证据边界 |
 | --- | --- | --- |
@@ -308,7 +308,11 @@ extension manifest 与 plugin-package manifest 的版本校验不是同一套规
 
 审查修复后，新工具 64/64 项测试通过，其中 F1/CLI 为 47 项、SDK 边界测试为 17 项；连同相关 CI/历史扫描契约 125 项，共 189/189，无跳过或取消。新增中断回归覆盖预先取消和真实 CLI 的 `SIGINT` / `SIGTERM`，在 macOS arm64 上验证后代进程停止、自有目录清理、锁不变、失败报告和非成功退出。真实 SDK consumer 也已在修复后重跑通过。既有三包 typecheck 与 contracts/plugin-sdk/api-client 的 123/8/130 项测试已有本地通过记录；产物、fixture 与报告摘要见实施记录，不把包声明直接当通过证据。
 
-本分支的 `framework-assurance` CI lane 使用 Ubuntu、Node `22.22.1` 与完整 Git 历史，执行离线回归/校准及独立重建的真实 SDK consumer，不复用 `ci-dist`。它在完整非文档档位下是 `quality` 的必需输入；失败、取消、缺失或意外跳过均拒绝。托管 Linux 的首次运行仍待确认，不把本地 macOS 结果扩写为 Linux 已验收。
+本分支的 `framework-assurance` CI lane 使用 Ubuntu、Node `22.22.1` 与完整 Git 历史，执行离线回归/校准及独立重建的真实 SDK consumer，不复用 `ci-dist`。它在完整非文档档位下是 `quality` 的必需输入；失败、取消、缺失或意外跳过均拒绝。
+
+2026-11-03 已核实候选 `0a4f5327073058f45d14b5c21940a1811d9fb6b1` 的 [Linux job](https://github.com/ling-stack-org/ling-stack/actions/runs/41477220526/job/125386311185) 成功，工具回归 64/64、v3 校准 9/9 符合期望。其独立 SDK 报告记录 Linux x64、Node `22.22.1`、npm `10.9.4`、pnpm `10.0.0`、TypeScript `7.0.2` 及原生 `@typescript/typescript-linux-x64 7.0.2`：四包重新构建、真实打包和仓外离线安装通过，ESM 19/19，NodeNext/Bundler 各自的 strict 正例、必填字段负例及 317 文件解析审计通过。251 个 producer 输入前后摘要一致；报告与输入摘要见[实施记录](ling-framework-complementary-implementation-plan.md#9-交付记录与完成判定)。这是新增的真实 Linux 消费格，不是复制 macOS 结果。Common checks 的历史哈希误报已获批准补齐 106 条精确指纹，本地相同全历史范围扫描零命中、扫描契约 22/22 通过；旧远端失败不改记成功。完整 CI 已结束且失败，Daemon shard 0 取消、1/2 成功、3 失败，helper smoke 成功；不再列为排队或在途。
+
+后续本地限时诊断保留 0/10 轮完整完成、89/150 文件完成及 6 项实际失败，不推算通过率。独立合成探针已确认一项原生私有状态隔离缺陷；只使用临时假数据并核对实际产物与重新编译结果，不构成生产修复或原超时归因。该缺陷与原超时分别阻断后续收口，详见实施记录。
 
 - Linux、macOS、Windows 独立记录；单机通过不能复制结果到其他平台。
 - Bundler 类型通过不代表浏览器运行验收通过。
@@ -388,7 +392,7 @@ extension manifest 与 plugin-package manifest 的版本校验不是同一套规
 | 项目 | 关闭节点 | 未关闭的影响 |
 | --- | --- | --- |
 | 三个具体校准任务与冻结规则 | F1-01 已关闭 | 源码分析/故障注入标签明确；候选修复行为验证仍待 F3 |
-| 消费矩阵的实际工具链与依赖预置 | F2-01 已关闭当前 macOS arm64 格 | 其他平台和工具链仍未验证，不扩大承诺 |
+| 消费矩阵的实际工具链与依赖预置 | F2-01 已有 macOS arm64 本地及 Linux x64 托管消费格 | Windows SDK 及其他工具链仍未验证；安装器 job 不替代 SDK 消费 |
 | 正常 Run 证据内部读取及封存接口 | F3-01 | 只做 fixture，不执行真实适配 |
 | 对应执行 profile 的安全/恢复验收 | F3-B 启动前 | 阻断该能力的真实任务，不阻断离线和 SDK |
 | 付费总额与 Provider 选择 | 每次真实试点前 | 不产生任何模型请求 |
