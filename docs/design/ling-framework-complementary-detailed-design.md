@@ -1,8 +1,8 @@
 # Ling 框架补强详细设计
 
-Status: F1/F2 implemented; macOS local and Linux hosted checks passed; full CI blocked; not merged or released; F3/F4/F5 remain design contracts
+Status: F1/F2 implemented; macOS local and Linux hosted checks passed; native boundary repair locally verified; full CI blocked; not merged or released; F3/F4/F5 remain design contracts
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
-Last verified: 2026-11-03
+Last verified: 2026-11-08
 Document type: reference / technical design
 Canonical replacement: none; does not replace existing evaluation, runtime, or API contracts
 Code and test anchors: section 12 and the implementation record; offline and local tarball acceptance only
@@ -312,7 +312,7 @@ extension manifest 与 plugin-package manifest 的版本校验不是同一套规
 
 2026-11-03 已核实候选 `0a4f5327073058f45d14b5c21940a1811d9fb6b1` 的 [Linux job](https://github.com/ling-stack-org/ling-stack/actions/runs/41477220526/job/125386311185) 成功，工具回归 64/64、v3 校准 9/9 符合期望。其独立 SDK 报告记录 Linux x64、Node `22.22.1`、npm `10.9.4`、pnpm `10.0.0`、TypeScript `7.0.2` 及原生 `@typescript/typescript-linux-x64 7.0.2`：四包重新构建、真实打包和仓外离线安装通过，ESM 19/19，NodeNext/Bundler 各自的 strict 正例、必填字段负例及 317 文件解析审计通过。251 个 producer 输入前后摘要一致；报告与输入摘要见[实施记录](ling-framework-complementary-implementation-plan.md#9-交付记录与完成判定)。这是新增的真实 Linux 消费格，不是复制 macOS 结果。Common checks 的历史哈希误报已获批准补齐 106 条精确指纹，本地相同全历史范围扫描零命中、扫描契约 22/22 通过；旧远端失败不改记成功。完整 CI 已结束且失败，Daemon shard 0 取消、1/2 成功、3 失败，helper smoke 成功；不再列为排队或在途。
 
-后续本地限时诊断保留 0/10 轮完整完成、89/150 文件完成及 6 项实际失败，不推算通过率。独立合成探针已确认一项原生私有状态隔离缺陷；只使用临时假数据并核对实际产物与重新编译结果，不构成生产修复或原超时归因。该缺陷与原超时分别阻断后续收口，详见实施记录。
+后续本地限时诊断保留 0/10 轮完整完成、89/150 文件完成及 6 项实际失败，不推算通过率。独立合成探针确认的原生私有状态隔离缺陷已修复，并由真实 macOS native boundary 回归 22/22、相关 Kimi/relay 回归 65/65 验证；这不替代远端完整 CI 或原 history-budget 超时的独立处理，详见实施记录。
 
 - Linux、macOS、Windows 独立记录；单机通过不能复制结果到其他平台。
 - Bundler 类型通过不代表浏览器运行验收通过。
@@ -407,4 +407,5 @@ extension manifest 与 plugin-package manifest 的版本校验不是同一套规
 - SDK：`packages/plugin-sdk/test/package-manifest.test.mjs`、`registry.test.mjs`、`packages/contracts/test/conversation-continuity-v2.test.mjs`。
 - Client：`packages/api-client/test/client.test.mjs`、`computer-use.test.mjs`、`transport-origin.regression-1.test.mjs`；Web SSE 解码代码位于 `apps/web/src/sse.ts`，不等于 api-client 公共 decoder。
 - 现有构建/测试调度：`scripts/ci/run-packages.mjs`；实施时按同一基线先构建再测试，不重复使用来源不明的 dist。
+- macOS native boundary：`packages/daemon/src/runtime/sandbox/native-process-launch.ts` 与 `packages/daemon/test/native-process-boundary.test.mjs`；私有状态规则、合法 workspace 写入、Kimi metadata、relay 和进程回收分别保留独立边界。
 - 新工具：`scripts/framework-assurance/`；冻结输入：`fixtures/framework-assurance/`；实现测试：`offline.test.mjs`、`cli.test.mjs` 与 `sdk-consumer.test.mjs`，均位于新工具目录。

@@ -185,6 +185,80 @@ test("native internal-state denial includes nested workspaces", { skip: process.
   assert.equal(await readFile(path, "utf8"), "Nested private state");
 });
 
+test("native internal-state denial remains bound for special-character workspace paths", { skip: process.platform !== "darwin", timeout: 8000 }, async t => {
+  const base = await fixture(t);
+  const workspaceRoot = join(base.root, 'workspace.[+]^$(){}|?"\\');
+  await rename(base.workspaceRoot, workspaceRoot);
+  const f = { ...base, workspaceRoot };
+  const internal = join(workspaceRoot, ".ling-stack");
+  const nested = join(workspaceRoot, "nested", ".ling-stack");
+  const alias = join(workspaceRoot, "internal-link");
+  await mkdir(internal);
+  await mkdir(nested, { recursive: true });
+  await symlink(internal, alias);
+  for (const directory of [internal, nested]) await writeFile(join(directory, "sentinel.txt"), "Special private state");
+  const launch = await preparePlatformNativeProcessLaunch({ ...f, executable: "/bin/sh", policyProfileId: "workspace_write",
+    allowedWritePaths: [f.workspaceRoot] });
+  const publicPath = join(workspaceRoot, "public.txt");
+  await writeFile(publicPath, "Public state");
+  const publicRead = await run(t, launch, f, ["-c", '/bin/cat "$1"', "probe", publicPath]);
+  assert.equal(publicRead.code, 0, JSON.stringify(publicRead));
+  assert.equal(publicRead.stdout, "Public state");
+  const publicWrite = join(workspaceRoot, "public-output.txt");
+  const publicWriteResult = await run(t, launch, f, ["-c", 'printf Public > "$1"', "probe", publicWrite]);
+  assert.equal(publicWriteResult.code, 0, JSON.stringify(publicWriteResult));
+  assert.equal(await readFile(publicWrite, "utf8"), "Public");
+  for (const directory of [internal, nested, alias]) {
+    const path = join(directory, "sentinel.txt");
+    const read = await run(t, launch, f, ["-c", '/bin/cat "$1"', "probe", path]);
+    assert.notEqual(read.code, 0, JSON.stringify(read));
+    assert.equal(read.stdout, "");
+    const write = await run(t, launch, f, ["-c", 'printf Blocked > "$1"', "probe", path]);
+    assert.notEqual(write.code, 0, JSON.stringify(write));
+    assert.equal(await readFile(path, "utf8"), "Special private state");
+  }
+});
+
+for (const workspaceRelative of [".ling-stack", join(".ling-stack", "recovery")]) {
+  for (const policyProfileId of ["read_only", "workspace_write"]) test(`native workspace remains usable when its own path includes .ling-stack (${workspaceRelative}, ${policyProfileId})`,
+    { skip: process.platform !== "darwin", timeout: 8000 }, async t => {
+      const base = await fixture(t);
+      const workspaceRoot = join(base.root, workspaceRelative);
+      if (workspaceRelative !== ".ling-stack") await mkdir(join(base.root, ".ling-stack"));
+      await rename(base.workspaceRoot, workspaceRoot);
+      const f = { ...base, workspaceRoot };
+      const internal = join(workspaceRoot, ".ling-stack"), alias = join(workspaceRoot, "internal-link");
+      await mkdir(internal);
+      await writeFile(join(internal, "sentinel.txt"), "Nested private state");
+      await symlink(internal, alias);
+      const launch = await preparePlatformNativeProcessLaunch({ ...f, executable: "/bin/sh", policyProfileId,
+        allowedWritePaths: [f.workspaceRoot] });
+      const publicPath = join(workspaceRoot, "public.txt");
+      await writeFile(publicPath, "Public state");
+      const publicRead = await run(t, launch, f, ["-c", '/bin/cat "$1"', "probe", publicPath]);
+      assert.equal(publicRead.code, 0, JSON.stringify(publicRead));
+      assert.equal(publicRead.stdout, "Public state");
+      const publicWrite = join(workspaceRoot, "public-output.txt");
+      const publicWriteResult = await run(t, launch, f, ["-c", 'printf Public > "$1"', "probe", publicWrite]);
+      if (policyProfileId === "read_only") {
+        assert.notEqual(publicWriteResult.code, 0, JSON.stringify(publicWriteResult));
+        await assert.rejects(access(publicWrite), { code: "ENOENT" });
+      } else {
+        assert.equal(publicWriteResult.code, 0, JSON.stringify(publicWriteResult));
+        assert.equal(await readFile(publicWrite, "utf8"), "Public");
+      }
+      for (const directory of [internal, alias]) {
+        const path = join(directory, "sentinel.txt");
+        const read = await run(t, launch, f, ["-c", '/bin/cat "$1"', "probe", path]);
+        assert.notEqual(read.code, 0, JSON.stringify(read));
+        assert.equal(read.stdout, "");
+        const write = await run(t, launch, f, ["-c", 'printf Blocked > "$1"', "probe", path]);
+        assert.notEqual(write.code, 0, JSON.stringify(write));
+        assert.equal(await readFile(path, "utf8"), "Nested private state");
+      }
+    });
+}
+
 test("native network denial prevents contact with a verified live loopback sentinel", { skip: process.platform !== "darwin", timeout: 8000 }, async t => {
   const f = await fixture(t);
   let accepted = 0;

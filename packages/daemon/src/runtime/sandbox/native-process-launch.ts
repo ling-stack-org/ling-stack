@@ -56,6 +56,10 @@ export async function preparePlatformNativeProcessLaunch(input: PlatformNativePr
   const temporaryIndex = `^${"/[^/]+".repeat(home.path.split(sep).length - 1)}/workspaces[.]json[.]tmp[.][1-9][0-9]*[.]${"[a-f0-9]".repeat(8)}$`;
   const metadata = `(require-any (literal ${quoted(workspaceIndex)}) (literal ${quoted(legacySessionIndex)}) (require-all (subpath ${quoted(home.path)}) (regex #${quoted(temporaryIndex)})))`;
   const writes = requested.allowedWritePaths.map(path => resolveWriteRoot(path, workspace.path));
+  // Bind the dynamic root as a literal subpath and anchor the static matcher below it.
+  const workspaceDepth = workspace.path.split(sep).filter(Boolean).length;
+  const privateWorkspacePattern = `^${"/[^/]+".repeat(workspaceDepth)}(/[^/]+)*/[.]ling-stack(/|$)`;
+  const privateWorkspaceState = `(require-all (subpath ${quoted(workspace.path)}) (regex #${quoted(privateWorkspacePattern)}))`;
   const profile = [
     "(version 1)", "(deny default)", "(allow process-exec)", "(allow process-fork)",
     "(allow signal (target self))", "(allow sysctl-read)", "(deny network*)",
@@ -73,7 +77,7 @@ export async function preparePlatformNativeProcessLaunch(input: PlatformNativePr
     rule("allow", "file-write*", [operation.path, ...dataPaths,
       ...(requested.policyProfileId === "workspace_write" ? writes : [])]),
     ...(persistent ? [`(allow file-write* ${metadata})`] : []),
-    `(deny file-read* file-write* (regex #${quoted(`^${escapePattern(workspace.path)}(/[^/]+)*/[.]ling-stack(/|$)`)}))`,
+    `(deny file-read* file-write* ${privateWorkspaceState})`,
     rule("deny", "file-write*", [join(home.path, "config.toml")]),
     rule("deny", "file-read* file-write*", [join(home.path, "credentials"), ...(persistent ? [join(persistent.path, "credentials")] : [])]),
     ...(persistent ? [
@@ -128,7 +132,6 @@ function inside(root: string, candidate: string): boolean {
   return path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
 }
 function quoted(value: string): string { return JSON.stringify(value); }
-function escapePattern(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 function rule(effect: "allow" | "deny", operations: string, paths: readonly string[]): string {
   return `(${effect} ${operations} ${paths.map(path => `(subpath ${quoted(path)})`).join(" ")})`;
 }

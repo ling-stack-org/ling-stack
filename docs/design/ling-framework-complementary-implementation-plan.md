@@ -1,8 +1,8 @@
 # Ling 框架补强实现计划书
 
-Status: F1/F2 implemented; macOS local and Linux hosted checks passed; full CI blocked; F3/F4/F5 not implemented; no merge or release
+Status: F1/F2 implemented; macOS local and Linux hosted checks passed; native boundary repair locally verified; full CI blocked; F3/F4/F5 not implemented; no merge or release
 Owner: Ling framework maintainers; one integration owner per implementation batch
-Last verified: 2026-11-03
+Last verified: 2026-11-08
 Document type: implementation plan / acceptance checklist
 Canonical replacement: none; retain while material work remains unfinished
 Code and test anchors: sections 7 and 9; no live task or GUI acceptance claimed
@@ -388,13 +388,19 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 
 维护者于 2026-11-03 批准并已补齐这 106 条精确历史指纹；原名单 257 条记录及原文件字节前缀完整保留，不删除旧条目、不增加宽路径或规则排除。扫描配置、CI、扫描器及其测试均未改。以相同 `--full-history --diff-merges=first-parent 0a4f5327073058f45d14b5c21940a1811d9fb6b1` 范围复验，本地 Gitleaks `8.30.1` 退出 0，仍覆盖 1438 个提交和 383387440 字节，报告零命中；扫描契约测试 22/22 通过，无失败、跳过或取消。原失败报告保留；这是精确名单修复的本地证据，不是旧远端 Common job 改判通过，也不替代修复后的远端验证。
 
-精确名单补齐已单独提交为 `7ff94e88`，尚未推送；上述四份文档同步也未提交。文档与精确名单修改晚于前述受测 tree；原 receipt 保留其真实输入，不自动重绑定为新鲜通过。后续仍须完成远端门禁、既定审查、文档审计、最终冻结验证及 PR；F3/F4/F5、合并、发布和部署均未启动。
+精确名单补齐已单独提交为 `7ff94e88`，四份文档同步已提交为 `48022dc3` 并推送。native boundary 修复及其回归在此之后加入；前述 receipt 仍保留其真实输入，不自动重绑定为新鲜通过。后续仍须完成修复候选的远端门禁、既定审查、文档审计、最终冻结验证及 PR；F3/F4/F5、合并、发布和部署均未启动。
 
 ### 失败诊断与新增阻断（2026-11-03）
 
 - 原 Daemon shard 3 的 150 个文件全部完成，149 个通过、1 个失败。失败在 `protected-host-staging.test.mjs` 的 history-budget 场景：内部子进程超过既有 90 秒上限，未确认具体停在哪次迭代。相关静态输入与整合基线相同，不足以证明动态故障早已存在。查阅的主线历史找到两个同名通过样本，未找到同样超时；这不是完整失败分布或根因证据。
 - 原文件集合、每 worker 顺序与并发不变的追加诊断，计划 10 轮、共用 600000ms 总上限，retry 关闭，独立 HOME/TMP/状态且无模型凭据。最终 0/10 轮完整完成：仅首轮启动，完成 89/150 文件，文件状态为 87 passed、2 failed、61 cancelled；完整文件的 native 汇总为 1367 tests、1359 passed、6 failed、2 skipped。目标 history-budget 文件尚未执行，其余九轮未启动；不把截断计为完整失败率或通过率，不重置预算重跑。
-- 6 项新失败集中在私有状态隔离。随后的独立最小合成探针已确认一项 macOS 原生权限边界缺陷，重新编译的两个相关模块与受测产物字节一致；仅临时权限配置的因果对照恢复了预期拒绝，不等于生产代码已修复。未读取真实用户数据、未调整 CI 或测试门槛。该修复超出原 F1/F2 范围，仍待范围确认。
+- 6 项新失败集中在私有状态隔离。独立最小合成探针确认的 macOS 原生权限边界缺陷已在本分支修复；修复采用 canonical workspace literal 与固定私有状态组件匹配，未改变其他 allow/deny、CI 门槛或上游调用契约。真实 macOS native boundary 回归 22/22、相关 Kimi/relay 回归 65/65 通过；未读取真实用户数据，Linux/Windows 与远端完整 CI 仍待重跑。
 - 另一会话的 [PR #643](https://github.com/ling-stack-org/ling-stack/pull/643) 正在处理原 history-budget 场景。已查快照中尚未合并、其新候选 Daemon 验证未结束；本分支未复制、cherry-pick 或合并该修改，也不把其他候选的通过记录用作本分支验收。
 
-完整 CI 的最终状态已于 `2026-11-02T17:31:25Z` 附近查询确认，run 的 `updatedAt` 为 `2026-11-02T17:24:28Z`；Daemon shard 0 的取消原因尚未确认。当前停在失败处理阶段，未穿过门禁继续发布步骤。
+完整 CI 的历史最终状态已于 `2026-11-02T17:31:25Z` 附近查询确认，run 的 `updatedAt` 为 `2026-11-02T17:24:28Z`；Daemon shard 0 的取消原因尚未确认。native boundary 修复后的新候选尚未取得远端完整 CI 结果，未穿过门禁继续发布步骤。
+
+### Native boundary 修复（2026-11-08）
+
+- 修改 `packages/daemon/src/runtime/sandbox/native-process-launch.ts`：私有 workspace 状态 deny 规则使用 canonical workspace 的 SBPL literal bound，并将私有目录组件匹配保持为固定规则，避免动态路径参与二次正则序列化。其他 workspace、operation、home、external grant、network、metadata 和进程生命周期规则保持原契约。
+- 新增 `packages/daemon/test/native-process-boundary.test.mjs` 回归，覆盖特殊字符 workspace 路径、合法 public read/write、嵌套私有目录和 symlink alias。旧实现先出现该回归预期失败，修复后真实 macOS 22/22 通过。
+- 相关 Kimi 安装/执行与 model relay 回归合计 65/65 通过；Daemon `build:ci` 通过，保留现有 Rust compiler warning。该证据只覆盖当前 macOS，不能替代 Linux/Windows 或远端完整 CI。
