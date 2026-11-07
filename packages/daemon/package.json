@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "acorn": "8.19.0",
-    "@agentclientprotocol/sdk": "1.9.0",
+    "@agentclientprotocol/sdk": "2.2.0",
     "@anthropic-ai/sdk": "0.135.0",
     "@ling-stack/browser-host": "workspace:*",
     "@ling-stack/contracts": "workspace:*",
