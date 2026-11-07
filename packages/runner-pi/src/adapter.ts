@@ -145,6 +145,12 @@ export class PiRunnerAdapter {
       if (event.type === "agent_settled") sdkSettlement = { aborted: event.aborted };
       if ((event.type === "message_start" || event.type === "message_end" || event.type === "message_update")
         && isPiHostResumeControl(event.message)) return;
+      if (event.type === "message_end" && event.message.role === "system" && session && frozenAuthority) {
+        // Pi reduces the system patch into state before notifying subscribers.
+        // Omit SDK bookkeeping only after proving prompt and tools are unchanged.
+        frozenPiConversation(session.state.messages, frozenAuthority);
+        return;
+      }
       const translatedEvents = translatePiEvents(event);
       // Buffer only Pi's exact reflection of this boundary's private control
       // error and its identity-paired empty turn_end. Nothing is discarded until
