@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpat
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 
-export const builderVersion = "26.15.3";
+export const builderVersion = "26.18.0";
 export const originalTemplates = Object.freeze({
   "templates/nsis/installSection.nsh": "74c4dbb4163cdd90ca4850b75d304e916235c882d6af7b5cdad63bffbc977072",
   "templates/nsis/include/installer.nsh": "0e319437dd01dcbf911f3f48f664fde0cefbaef704f1cdb1739f63d563f5d4a0",

@@ -4,6 +4,7 @@ import { lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { builderVersion } from "../../apps/desktop/scripts/distribution/installer-builder.mjs";
 
 // Build-host tooling only: the Windows builder's standalone 7za lacks NSIS.
 // Source: https://github.com/ip7z/7zip/releases/tag/26.05 and its asset digest.
@@ -20,8 +21,8 @@ export async function prepareNsisExtractor() {
   if (process.env.ELECTRON_BUILDER_7ZIP_PATH) throw new Error("final_artifact_7zip_override_forbidden");
   const require = createRequire(new URL("../../apps/desktop/package.json", import.meta.url));
   const builderRequire = createRequire(require.resolve("electron-builder/package.json"));
-  if (require("electron-builder/package.json").version !== "26.15.3"
-    || builderRequire("app-builder-lib/package.json").version !== "26.15.3") throw new Error("final_artifact_builder_version_mismatch");
+  if (require("electron-builder/package.json").version !== builderVersion
+    || builderRequire("app-builder-lib/package.json").version !== builderVersion) throw new Error("final_artifact_builder_version_mismatch");
   const bootstrap = await builderRequire("app-builder-lib/out/toolsets/7zip.js").getPath7za();
   if (process.platform !== "win32") return { path: bootstrap, cleanup: async () => {} };
   if (process.arch !== "x64") throw new Error("Unsupported native NSIS verifier architecture");

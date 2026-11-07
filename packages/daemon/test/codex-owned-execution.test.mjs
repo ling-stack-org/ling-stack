@@ -11,10 +11,12 @@ import { test } from "node:test";
 import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, ExecutionEngineProfileStore, resolveUserConfigPaths, toRuntimeAttemptFence } from "../../core/dist/index.js";
 import { executeOwnedCodexTurn } from "../dist/runtime/adapters/codex/owned-execution.js";
 import { codexConfigurationFingerprint } from "../dist/runtime/adapters/codex/journaled-lifecycle.js";
+import { captureOwnedExecutionDiagnostic } from "./support/codex-owned-execution-diagnostic.ts";
 
 const now = () => new Date().toISOString();
 const prompt = { input: [{ type: "text", text: "Owned execution fixture", text_elements: [] }] };
-async function fixture(t, scenario = "output-events", auth = {}) {
+async function fixture(t, scenario = "output-events", auth = {}, diagnostic) {
+  diagnostic?.begin("fixture_setup");
   const cwd = await realpath(await mkdtemp(join(tmpdir(), "ling-owned-codex-")));
   const profileRoot = join(cwd, "profile-host");
   await mkdir(profileRoot, { mode: 0o700 });
@@ -34,13 +36,19 @@ async function fixture(t, scenario = "output-events", auth = {}) {
       ? { ref, configured: true, value: currentSecret, status: { ref, kind: "local", configured: true } }
       : { ref, configured: false, status: { ref, kind: "local", configured: false, errorCode: "secret_missing" } },
   };
+  diagnostic?.begin("sqlite_init");
   let store = createSqliteRunStore(cwd);
+  diagnostic?.begin("fixture_records");
   const children = [];
   const commands = [];
   t.after(async () => {
-    for (const { child, closed } of children) { child.kill("SIGKILL"); await closed; }
-    for (const command of commands) await rm(command.options.cwd, { recursive: true, force: true });
-    store.close(); profileStore.close(); await rm(cwd, { recursive: true, force: true });
+    diagnostic?.begin("fixture_cleanup");
+    try {
+      for (const { child, closed } of children) { child.kill("SIGKILL"); await closed; }
+      for (const command of commands) await rm(command.options.cwd, { recursive: true, force: true });
+      store.close(); profileStore.close(); await rm(cwd, { recursive: true, force: true });
+      diagnostic?.end();
+    } catch (error) { diagnostic?.fail("cleanup_failure"); throw error; }
   });
   const channel = store.createChannel({ name: "Native fixture", boundPath: cwd }, now());
   const task = store.createTask({ channelId: channel.id, title: "Native fixture", prompt: "Test" }, now());
@@ -68,18 +76,25 @@ async function fixture(t, scenario = "output-events", auth = {}) {
   };
   const requests = [];
   const launch = (executable, args, options) => {
+    diagnostic?.begin("spawn_call");
     commands.push({ executable, args, options });
     const child = spawn(process.execPath, [fileURLToPath(new URL("fixtures/codex-live-peer.mjs", import.meta.url))], {
       ...options, env: { ...options.env, LING_CODEX_PEER_SCENARIO: scenario,
         LING_CODEX_PEER_TURN_PREFIX: `${commands.length}-` }, stdio: [...options.stdio, "ipc"],
     });
+    diagnostic?.observeChild(child);
+    diagnostic?.begin("handshake_to_turn_start");
     const closed = once(child, "close");
     children.push({ child, closed });
     child.on("message", message => requests.push(message));
     return child;
   };
+  diagnostic?.begin("fixture_node_read");
+  const executableBytes = await readFile(process.execPath);
+  diagnostic?.begin("fixture_node_hash");
   const processInput = { executablePath: process.execPath,
-    executableDigest: createHash("sha256").update(await readFile(process.execPath)).digest("hex"), codexHome: home };
+    executableDigest: createHash("sha256").update(executableBytes).digest("hex"), codexHome: home };
+  diagnostic?.begin("fixture_ready");
   const makeOptions = () => ({ store, reservation: reserveInput(), configuration, input: prompt, process: processInput,
     authentication: { store: profileStore, profile, secretResolver },
     approvalPolicy: { policy: { toolDecisions: { bash: "ask", write: "ask", edit: "ask" }, allowedWritePaths: [cwd] } },
@@ -91,12 +106,22 @@ async function fixture(t, scenario = "output-events", auth = {}) {
 }
 
 test("owned execution launches native stdio and returns already-persisted output after child cleanup", { timeout: 8000 }, async t => {
-  const f = await fixture(t);
+  await captureOwnedExecutionDiagnostic(t, 8000, async diagnostic => {
+  const f = await fixture(t, "output-events", {}, diagnostic);
+  diagnostic.begin("fixture_reservation");
   const options = f.makeOptions();
+  diagnostic.begin("fixture_ready");
   assert.equal(f.profile.configuration.secretRef, undefined);
   await assert.rejects(access(f.authPath), { code: "ENOENT" });
   const streamed = [];
-  const result = await executeOwnedCodexTurn({ ...options, onEvent: event => streamed.push(event) });
+  diagnostic.begin("pre_spawn_validation_including_digest");
+  const result = await executeOwnedCodexTurn({ ...options, onEvent: event => {
+    if (event.type === "turn_start") diagnostic.begin("execute");
+    else if (event.type === "turn_end") diagnostic.begin("native_reap");
+    streamed.push(event);
+  } });
+  diagnostic.mark("execution_returned");
+  diagnostic.begin("assertions");
   assert.equal(result.status, "completed");
   assert.equal(f.store.getNativeSubmission(result.submissionId).status, "completed");
   assert.deepEqual(f.store.listEvents(options.reservation.runId).map(event => event.id), streamed.map(event => event.id));
@@ -109,6 +134,7 @@ test("owned execution launches native stdio and returns already-persisted output
   assert.equal(f.commands[0].options.env.OPENAI_API_KEY, undefined);
   assert.ok(f.children[0].child.signalCode || f.children[0].child.exitCode !== null);
   assert.equal(f.requests.filter(request => request.method === "turn/start").length, 1);
+  });
 });
 
 for (const auth of [

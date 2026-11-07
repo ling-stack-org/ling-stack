@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { cuaDriverArtifactLayoutFor } from "../../shared/cua-driver-artifact-layout.mjs";
 import { validateCuaDriverPackageAuthority } from "../../shared/cua-driver-package-authority-contract.mjs";
 import { verifyCuaDriverPackagedHostAuthority } from "../cua-driver-package-host-authority.mjs";
+import { builderVersion } from "../distribution/installer-builder.mjs";
 import { createDarwinPlatformSigner } from "./darwin-platform-signer.mjs";
 import {
   createDisposableFixtureSigner,
@@ -256,7 +257,7 @@ export async function runAfterPack(context, callOptions = {}) {
     }
 
     const state = {
-      electronBuilderVersion: "26.15.3",
+      electronBuilderVersion: builderVersion,
       platform,
       signingTier: profile.signingTier,
       distributionChannel: profile.distributionChannel,
