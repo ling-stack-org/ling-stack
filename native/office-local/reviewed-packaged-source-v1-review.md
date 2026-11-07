@@ -1,13 +1,13 @@
 # Scoped macOS Development Packaging Review
 
-Latest source/runtime rebinding: [2026-10-29 macOS development packaging review](../../docs/release/macos-source-review-2026-10-29.md).
+Latest source/runtime rebinding: [2026-11-03 macOS development packaging review](../../docs/release/macos-source-review-2026-11-03.md).
 The dated reviews below retain their historical evidence and scope.
 
 Status: independently reviewed source prerequisite; final artifact acceptance separate
 Date: 2026-10-13
-Current reviewed source: `37bbdf6de05c691fa6949543657d04e84dd17342`, comprising main `5bf2659bd11925b0e12fb459febcfde5c18688a6`, PR #537 `51f46a9ea1b128ac9d94243dd571f823f9a18fab` and compatibility correction `921c240b`
+Historical reviewed source: `37bbdf6de05c691fa6949543657d04e84dd17342`, comprising main `5bf2659bd11925b0e12fb459febcfde5c18688a6`, PR #537 `51f46a9ea1b128ac9d94243dd571f823f9a18fab` and compatibility correction `921c240b`
 
-## Current Dependency Compatibility Review
+## Historical Dependency Compatibility Review
 
 Two independent Codex reviewers approved the exact proposed source bytes before the persistent record was changed:
 
@@ -23,7 +23,7 @@ The approved replacements are:
 | `packages/daemon/package.json` | `9daa4ffc9dc8d1f0b30bb52ec44d5204db68739b7e7b97fa915862f466214201` |
 | `pnpm-lock.yaml` | `2b411405825673eee46fd1e099def6944744e830cb5cd6b3fbf28db30b49c799` |
 
-The current fixed packaging aggregate is `21877f37a6bf4d6e5cce77d19deba032e53cb4b9b0f64dc23bcf0c8f2f037db2`. The unchanged Office native aggregate is `715c56bcc31a2f6fbf546e86c2a937702305675cd17e6f69136089f09a4b7c0f`. Both encode the fixed-order `[path, sha256]` pairs as JSON plus a newline. The original reader rejected the stale record before this explicit review; no build-time discovery, approval updater or guard bypass was added.
+The historical fixed packaging aggregate is `21877f37a6bf4d6e5cce77d19deba032e53cb4b9b0f64dc23bcf0c8f2f037db2`. The unchanged Office native aggregate is `715c56bcc31a2f6fbf546e86c2a937702305675cd17e6f69136089f09a4b7c0f`. Both encode the fixed-order `[path, sha256]` pairs as JSON plus a newline. The original reader rejected the stale record before this explicit review; no build-time discovery, approval updater or guard bypass was added.
 
 The desktop license-material correction in PR #624 changes the fixed `pnpm-lock.yaml` input to `f8888021f9d124c5d5979857ab1fb8531f22a6c45095e23eed16147a72d59cad`. The change removes the legacy `exceljs -> unzipper -> binary -> buffers/chainsaw` notice gap and is covered by the distribution-material regression tests; the review record now binds that exact lockfile byte set.
 

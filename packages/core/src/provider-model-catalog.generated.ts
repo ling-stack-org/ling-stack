@@ -3,11 +3,11 @@ import type { ProviderModelCatalogManifest, ProviderModelCatalogRecord } from ".
 
 export const providerModelCatalogManifest = {
   "schemaVersion": 1,
-  "version": "models.dev:a089775f9be6",
+  "version": "models.dev:a64cd7055b6b",
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
   "license": "MIT",
-  "generatedAt": "2026-10-29T08:39:56.153Z",
+  "generatedAt": "2026-11-06T09:32:04.318Z",
   "updatedAt": "2026-10-26"
 } as const satisfies ProviderModelCatalogManifest;
 
@@ -2678,7 +2678,31 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "thinkingModes": [
-      "off",
+      "low",
+      "medium",
+      "high"
+    ],
+    "contextWindow": 1048576,
+    "maxTokens": 262144,
+    "updatedAt": "2026-10-06"
+  },
+  {
+    "providerId": "mistral",
+    "id": "mistral-large-4-0-8",
+    "displayName": "Mistral Large 4.0.8",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
       "high"
     ],
     "contextWindow": 1048576,
@@ -5888,21 +5912,6 @@ export const providerModelCatalogRecords = [
     "contextWindow": 16000,
     "maxTokens": 14464,
     "updatedAt": "2026-01-28"
-  },
-  {
-    "providerId": "xai",
-    "id": "grok-imagine-image-quality",
-    "displayName": "Grok Imagine Image Quality",
-    "input": [
-      "text",
-      "image"
-    ],
-    "capabilities": [
-      "vision"
-    ],
-    "contextWindow": 16000,
-    "maxTokens": 14464,
-    "updatedAt": "2026-04-03"
   },
   {
     "providerId": "xai",

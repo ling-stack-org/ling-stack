@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import type { DesktopDaemonStatus, LingDesktopCapabilities } from "../../desktop/shared/desktop-capabilities.js";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -306,6 +307,37 @@ test("macOS portal overlays subtract the underlying shell drag region", async ({
   await expect(preview).toHaveAttribute("data-clicked", "true");
 });
 
+test("channel creation handles Escape before the document layer listener attaches", async ({ page }) => {
+  await prepareSurface(page, "macos");
+  await page.addInitScript(() => {
+    const addEventListener = document.addEventListener.bind(document);
+    document.addEventListener = ((...args: Parameters<Document["addEventListener"]>) => {
+      const [type, , options] = args;
+      const capture = typeof options === "boolean" ? options : options?.capture;
+      if (type === "keydown" && capture && document.querySelector(".channel-create-dialog")) {
+        document.documentElement.dataset.deferredModalEscapeListeners = "true";
+        return;
+      }
+      addEventListener(...args);
+    }) as Document["addEventListener"];
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channels = [];
+  state.channelBranches = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const trigger = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
+    .getByRole("button", { name: "No channel yet" });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "New channel" });
+  await expect(dialog.getByRole("textbox", { name: "Name", exact: true })).toBeFocused();
+  await expect(page.locator("html")).toHaveAttribute("data-deferred-modal-escape-listeners", "true");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+});
+
 test("macOS management surfaces share one titlebar owner", async ({ page }, testInfo) => {
   const browserErrors: string[] = [];
   page.on("pageerror", (error) => browserErrors.push(error.message));
@@ -573,11 +605,27 @@ async function prepareSurface(
     if (desktopPlatform) {
       let maximized = false;
       const stateListeners = new Set<(state: { readonly maximized: boolean }) => void>();
+      const daemonStatus: DesktopDaemonStatus = {
+        state: "connected",
+        baseUrl: "http://127.0.0.1:17891",
+        ownedByDesktop: true,
+      };
       Object.defineProperty(window, "lingDesktop", {
         configurable: true,
         value: {
           platform: desktopPlatform,
-          daemonBaseUrl: "http://127.0.0.1:17891",
+          daemonBaseUrl: daemonStatus.baseUrl,
+          daemon: {
+            getStatus: async () => daemonStatus,
+            restart: async () => daemonStatus,
+            onStatusChanged(listener) {
+              let subscribed = true;
+              queueMicrotask(() => {
+                if (subscribed) listener(daemonStatus);
+              });
+              return () => { subscribed = false; };
+            },
+          },
           ...(desktopPlatform === "windows"
             ? {
                 windowControls: {
@@ -597,7 +645,7 @@ async function prepareSurface(
                 },
               }
             : {}),
-        },
+        } satisfies Pick<LingDesktopCapabilities, "platform" | "daemonBaseUrl" | "daemon"> & Record<string, unknown>,
       });
     }
   }, { desktopPlatform: platform, theme: options.theme });

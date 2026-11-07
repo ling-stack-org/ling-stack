@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 const localRequire = createRequire(import.meta.url);
 const expoRequire = createRequire(localRequire.resolve("expo/package.json"));
@@ -12,17 +16,27 @@ const forge = createRequire(signingPath)("node-forge");
 const metroRequire = createRequire(expoRequire.resolve("metro/package.json"));
 const fileMapRequire = createRequire(metroRequire.resolve("metro-file-map/package.json"));
 const braces = createRequire(fileMapRequire.resolve("micromatch"))("braces");
-const { z } = cliRequire("zod");
-const { z: legacyZod } = cliRequire("zod/v3");
 const { PluginSchema, DevToolsPluginOutputSchema } =
-  cliRequire("./build/src/start/server/DevToolsPlugin.schema.js");
+  cliRequire("./build/src/start/server/devtools/DevToolsPlugin.schema.js");
+const pluginPath = cliRequire.resolve("./build/src/start/server/devtools/DevToolsPlugin.js");
+const { DevToolsPlugin } = cliRequire(pluginPath);
+const { validate, ValidationError } = createRequire(pluginPath)("@expo/schema-utils");
+const { DevToolsPluginCliExtensionResults } =
+  cliRequire("./build/src/start/server/devtools/DevToolsPluginCliExtensionResults.js");
 const { createMCPDevToolsExtensionSchema } =
-  cliRequire("./build/src/start/server/createMCPDevToolsExtensionSchema.js");
+  cliRequire("./build/src/start/server/mcp/createMCPDevToolsExtensionSchema.js");
 const { addMcpCapabilities } =
-  cliRequire("./build/src/start/server/MCPDevToolsPluginCLIExtensions.js");
+  cliRequire("./build/src/start/server/mcp/MCPDevToolsPluginCLIExtensions.js");
+const { maybeCreateMCPServerAsync } = cliRequire("./build/src/start/server/mcp/MCP.js");
+// Match MCP.js: resolve both Zod and the tunnel relative to expo-mcp, not the CLI.
+const expoMcpRequire = createRequire(localRequire.resolve("expo-mcp"));
+const { z: legacyZod } = expoMcpRequire("zod");
+const tunnelPath = expoMcpRequire.resolve("@expo/mcp-tunnel");
+const { zodToJsonSchema } = createRequire(tunnelPath)("zod-to-json-schema");
+const { TunnelMcpServerProxy } = await import(pathToFileURL(tunnelPath).href);
 const daemonRequire = createRequire(new URL("../../../packages/daemon/package.json", import.meta.url));
 const mcpSdkRequire = createRequire(daemonRequire.resolve("@modelcontextprotocol/sdk/server/mcp.js"));
-const { zodToJsonSchema } = mcpSdkRequire("zod-to-json-schema");
+const { z } = mcpSdkRequire("zod");
 const pem = generateKeyPairSync("rsa", {
   modulusLength: 2048,
   publicKeyEncoding: { type: "spki", format: "pem" },
@@ -148,7 +162,7 @@ test("braces preserves normal glob compilation, expansion and literal escaping",
   assert.equal(braces.stringify(braces.parse(boundary)), boundary);
 });
 
-test("Expo's Zod rejects oversized bounded arrays before visiting elements", () => {
+test("fixed Zod still rejects oversized bounded arrays before visiting elements", () => {
   let elementVisits = 0;
   const schema = z.array(z.string().transform((value) => {
     elementVisits++;
@@ -164,7 +178,8 @@ test("Expo's Zod rejects oversized bounded arrays before visiting elements", () 
 
 test("Expo's DevTools plugin schema preserves command and parameter validation", () => {
   const plugin = devToolsPlugin();
-  assert.deepEqual(PluginSchema.parse(plugin), plugin);
+  assert.doesNotThrow(() => validate(PluginSchema, plugin));
+  assert.deepEqual(new DevToolsPlugin(plugin, "/fixture").plugin, plugin);
   for (const invalid of [
     { ...plugin, packageName: "" },
     { ...plugin, packageRoot: "" },
@@ -180,7 +195,8 @@ test("Expo's DevTools plugin schema preserves command and parameter validation",
       },
     },
   ]) {
-    assert.equal(PluginSchema.safeParse(invalid).success, false);
+    assert.throws(() => validate(PluginSchema, invalid), ValidationError);
+    assert.throws(() => new DevToolsPlugin(invalid, "/fixture"), /Invalid plugin configuration/);
   }
 });
 
@@ -190,7 +206,9 @@ test("Expo's DevTools output schema preserves text, audio and image validation",
     { type: "audio", url: "https://example.com/audio.mp3" },
     { type: "image", url: "https://example.com/image.png", text: "Preview" },
   ];
-  assert.deepEqual(DevToolsPluginOutputSchema.parse(output), output);
+  assert.doesNotThrow(() => validate(DevToolsPluginOutputSchema, output));
+  const results = new DevToolsPluginCliExtensionResults();
+  assert.deepEqual(results.parseOutputText(JSON.stringify(output)), output);
   for (const invalid of [
     { type: "video", url: "https://example.com/video.mp4" },
     { type: "text", text: "Missing level" },
@@ -198,13 +216,18 @@ test("Expo's DevTools output schema preserves text, audio and image validation",
     { type: "audio", url: "invalid-url" },
     { type: "image" },
   ]) {
-    assert.equal(DevToolsPluginOutputSchema.safeParse([invalid]).success, false);
+    assert.throws(() => validate(DevToolsPluginOutputSchema, [invalid]), ValidationError);
+    const parsed = results.parseOutputText(JSON.stringify([invalid]));
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0].type, "text");
+    assert.equal(parsed[0].level, "error");
+    assert.match(parsed[0].text, /^Invalid JSON:/);
   }
 });
 
 test("Expo's generated MCP schema preserves strict commands and optional typed parameters", () => {
   const plugin = devToolsPlugin();
-  const schema = createMCPDevToolsExtensionSchema(plugin);
+  const schema = createMCPDevToolsExtensionSchema(plugin, legacyZod);
   const parameters = { command: "inspect", query: "status", count: 2, confirm: true };
   assert.deepEqual(schema.parse(parameters), parameters);
   assert.deepEqual(schema.parse({ command: "ping" }), { command: "ping" });
@@ -218,11 +241,11 @@ test("Expo's generated MCP schema preserves strict commands and optional typed p
   ]) {
     assert.equal(schema.safeParse(invalid).success, false);
   }
-  assert.throws(() => createMCPDevToolsExtensionSchema({ ...plugin, cliExtensions: undefined }), /no commands defined/);
+  assert.throws(() => createMCPDevToolsExtensionSchema({ ...plugin, cliExtensions: undefined }, legacyZod), /no commands defined/);
   assert.throws(() => createMCPDevToolsExtensionSchema({
     ...plugin,
     cliExtensions: { ...plugin.cliExtensions, commands: [] },
-  }), /no commands defined/);
+  }, legacyZod), /no commands defined/);
 });
 
 test("Expo's MCP registration retains constraints through the legacy JSON schema converter", async () => {
@@ -244,7 +267,7 @@ test("Expo's MCP registration retains constraints through the legacy JSON schema
         return [plugin];
       },
     },
-  });
+  }, legacyZod);
   assert.equal(registrations.length, 1);
   const [name, config, handler] = registrations[0];
   assert.equal(name, plugin.packageName);
@@ -252,7 +275,7 @@ test("Expo's MCP registration retains constraints through the legacy JSON schema
   assert.equal(typeof handler, "function");
   assert.equal(config.inputSchema.parameters.safeParse({ command: "local" }).success, false);
 
-  // Expo's optional MCP tunnel wraps inputSchema with Zod 3 before this conversion.
+  // Use the converter consumed by the actual optional MCP tunnel.
   const converted = zodToJsonSchema(legacyZod.object(config.inputSchema));
   assert.equal(converted.type, "object");
   assert.deepEqual(converted.required, ["parameters"]);
@@ -266,4 +289,116 @@ test("Expo's MCP registration retains constraints through the legacy JSON schema
   assert.equal(Object.hasOwn(parameters.properties, "localPath"), false);
   assert.deepEqual(parameters.required, ["command"]);
   assert.equal(parameters.additionalProperties, false);
+});
+
+test("Expo's schema-utils rejects oversized bounded arrays before visiting elements", () => {
+  // Drop schema-utils' symbol cache before adding an independent array bound.
+  const schema = { ...structuredClone(DevToolsPluginOutputSchema), maxItems: 2 };
+  let elementVisits = 0;
+  const output = [
+    { type: "text", text: "Ready", level: "info" },
+    { type: "audio", url: "https://example.com/audio.mp3" },
+    { type: "image", url: "https://example.com/image.png" },
+  ];
+  const observed = (items) => new Proxy(items, {
+    get(target, key, receiver) {
+      if (typeof key === "string" && /^\d+$/.test(key)) elementVisits++;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  assert.throws(() => validate(schema, observed(output)), (error) =>
+    error instanceof ValidationError && error.errors[0].keyword === "maxItems");
+  assert.equal(elementVisits, 0);
+  assert.doesNotThrow(() => validate(schema, observed(output.slice(0, 2))));
+  assert.equal(elementVisits, 2);
+  assert.equal(Object.hasOwn(cliRequire("./package.json").dependencies, "zod"), false);
+  const schemaRequire = createRequire(pluginPath);
+  assert.equal(Object.hasOwn(schemaRequire("@expo/schema-utils/package.json").dependencies ?? {}, "zod"), false);
+});
+
+test("Expo's real MCP entry injects compatible Zod and retains constraints through its tunnel", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "ling-expo-mcp-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const projectRoot = dirname(localRequire.resolve("../package.json"));
+  const plugin = devToolsPlugin();
+  plugin.packageRoot = directory;
+  plugin.cliExtensions.entryPoint = "tools.cjs";
+  plugin.cliExtensions.commands.push({
+    name: "local",
+    title: "Local only",
+    environments: ["cli"],
+    parameters: [{ name: "localPath", type: "text" }],
+  });
+  const invocations = join(directory, "invocations.jsonl");
+  await writeFile(join(directory, "tools.cjs"), `
+    const fs = require("node:fs");
+    const invocation = { command: process.argv[2], args: JSON.parse(process.argv[3]) };
+    fs.appendFileSync(${JSON.stringify(invocations)}, JSON.stringify(invocation) + "\\n");
+    process.stdout.write(JSON.stringify([{ type: "text", text: JSON.stringify(invocation), level: "info" }]));
+  `);
+  const previousMcpServer = process.env.EXPO_UNSTABLE_MCP_SERVER;
+  process.env.EXPO_UNSTABLE_MCP_SERVER = "true";
+  t.after(() => {
+    if (previousMcpServer === undefined) delete process.env.EXPO_UNSTABLE_MCP_SERVER;
+    else process.env.EXPO_UNSTABLE_MCP_SERVER = previousMcpServer;
+  });
+  const server = await maybeCreateMCPServerAsync({
+    devServerManager: {
+      projectRoot,
+      devtoolsPluginManager: {
+        async queryPluginsAsync() {
+          return [new DevToolsPlugin(plugin, projectRoot)];
+        },
+      },
+      getDefaultDevServer() {
+        return { getJsInspectorBaseUrl: () => "http://127.0.0.1:8081" };
+      },
+    },
+    devServerUrl: "http://127.0.0.1:8081",
+  });
+  assert.ok(server instanceof TunnelMcpServerProxy, "real MCP entry must not silently return null");
+  t.after(() => server.closeAsync());
+  assert.equal(server.transport.ws, undefined, "schema registration must not open a network connection");
+  const tools = server.getRegisteredTools();
+  assert.ok(tools.has("open_devtools"), "expo-mcp's own tools are registered through the same tunnel");
+  const converted = tools.get(plugin.packageName).inputSchema;
+  assert.equal(converted.type, "object");
+  assert.deepEqual(converted.required, ["parameters"]);
+  const parameters = converted.properties.parameters;
+  assert.equal(parameters.type, "object");
+  assert.deepEqual(parameters.properties.command.enum, ["inspect", "ping"]);
+  assert.equal(parameters.properties.command.type, "string");
+  assert.equal(parameters.properties.query.type, "string");
+  assert.equal(parameters.properties.count.type, "number");
+  assert.equal(parameters.properties.confirm.type, "boolean");
+  assert.equal(Object.hasOwn(parameters.properties, "localPath"), false);
+  assert.deepEqual(parameters.required, ["command"]);
+  assert.equal(parameters.additionalProperties, false);
+  const input = { command: "inspect", query: "status", count: 2, confirm: true };
+  assert.doesNotThrow(() => validate(converted, { parameters: input }));
+  assert.doesNotThrow(() => validate(converted, { parameters: { command: "ping" } }));
+  for (const invalid of [
+    {},
+    { ...input, command: "local" },
+    { ...input, query: 1 },
+    { ...input, count: "2" },
+    { ...input, confirm: "true" },
+    { ...input, unexpected: true },
+  ]) {
+    assert.throws(() => validate(converted, { parameters: invalid }), ValidationError);
+  }
+  assert.deepEqual(await server.handleToolCall({ name: plugin.packageName, arguments: { parameters: input } }), {
+    content: [{ type: "text", text: JSON.stringify({ command: "inspect", args: { query: "status", count: 2, confirm: true } }), level: "info" }],
+  });
+  const execution = await readFile(invocations, "utf8");
+  for (const invalid of [
+    { command: "local", localPath: "/tmp/not-executable" },
+    { ...input, query: 1 },
+    { ...input, unexpected: true },
+  ]) {
+    const result = await server.handleToolCall({ name: plugin.packageName, arguments: { parameters: invalid } });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /not found|expected string|Expected 3 parameter/);
+  }
+  assert.equal(await readFile(invocations, "utf8"), execution, "invalid calls must not spawn the plugin");
 });

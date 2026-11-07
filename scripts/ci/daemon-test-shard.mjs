@@ -8,7 +8,7 @@ export { assignTestShards, estimateTestWeight } from "./test-shard-plan.mjs";
 export { createTestIsolation as createDaemonShardIsolation };
 
 export async function discoverDaemonTestFiles(testDirectory = join(testSuites.daemon.cwd, "test")) {
-  return (await readdir(testDirectory)).filter(file => file.endsWith(".test.mjs") && !testSuites.daemon.excluded.includes(file))
+  return (await readdir(testDirectory)).filter(file => /\.test\.(?:mjs|ts)$/u.test(file) && !testSuites.daemon.excluded.includes(file))
     .sort().map(file => `test/${file}`);
 }
 

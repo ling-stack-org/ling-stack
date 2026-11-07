@@ -177,8 +177,9 @@ raw listener residue 均为 **0**。这是当前机器 development runtime 的�
 
 ```bash
 corepack pnpm --filter @ling-stack/desktop package:mac
-hdiutil verify 'apps/desktop/release/Ling-Stack-0.0.0-macos-arm64.dmg'
-unzip -t 'apps/desktop/release/Ling-Stack-0.0.0-macos-arm64.zip'
+desktop_version="$(node -p "require('./apps/desktop/package.json').version")"
+hdiutil verify "apps/desktop/release/Ling-Stack-${desktop_version}-macos-arm64.dmg"
+unzip -t "apps/desktop/release/Ling-Stack-${desktop_version}-macos-arm64.zip"
 ```
 
 unsigned job 必须验证：

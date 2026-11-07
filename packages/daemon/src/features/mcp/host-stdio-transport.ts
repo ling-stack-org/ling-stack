@@ -1,10 +1,11 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Socket } from "node:net";
 import { getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
+import { serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { assertHostMcpOperation, McpHostAdmissionError, type HostMcpOperation } from "./host-operation.js";
+import { BoundedMcpStdioReadBuffer } from "./host-stdio-read-buffer.js";
 import { MCP_STDIO_MAX_BUFFER_BYTES, type McpStdioLaunchInput } from "./stdio-launcher.js";
 import { defineProtectedHostActorEntry } from "../../runtime/sandbox/protected-host-actor-inventory.js";
 
@@ -68,7 +69,7 @@ class OwnedStdioTransport implements HostMcpStdioTransport {
   readonly #operation: HostMcpStdioOperation;
   readonly #signal?: AbortSignal;
   readonly #sendTimeoutMs: number;
-  readonly #readBuffer = new ReadBuffer({ maxBufferSize: MCP_STDIO_MAX_BUFFER_BYTES });
+  readonly #readBuffer = new BoundedMcpStdioReadBuffer({ maxBufferSize: MCP_STDIO_MAX_BUFFER_BYTES });
   readonly #ready = deferred();
   readonly #closed = deferred();
   readonly #pendingSends = new Set<(error: Error) => void>();

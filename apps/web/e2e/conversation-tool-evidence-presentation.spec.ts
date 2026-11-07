@@ -87,9 +87,9 @@ for (const surface of ["normal", "private", "channel"] as const) {
     await expect(commandHead.locator("strong")).toHaveAttribute("title", commandText);
     await commandHead.click();
     await expect(command.locator(".conversation-timeline-output")).toHaveText("stdout:\n1 test passed\nstderr:\ncodesign warning\n");
-    await expect(command.locator(".conversation-timeline-activity-detail")).not.toContainText(commandText);
-    await expect(command.getByText("1.2s", { exact: true })).toHaveCount(1);
-    await expect(command.locator(".conversation-timeline-activity-detail")).not.toContainText("exit 0");
+    await expect(command.getByLabel("Command", { exact: true })).toHaveText(commandText);
+    await expect(command.getByRole("button", { name: "Copy: Command", exact: true })).toHaveCount(1);
+    await expect(command.getByText("exit 0 · 1.2s", { exact: true })).toHaveCount(1);
     await commandHead.click();
 
     const read = page.locator('[data-conversation-action-id="compact-read"][data-conversation-timeline-kind="exploration"]');

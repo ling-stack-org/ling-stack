@@ -78,7 +78,8 @@ test("revocation and host shutdown cancel a pending login without requiring stat
 });
 
 test("HTTP timeout clears challenges and malformed input cannot start a process", { timeout: 10_000, skip: process.platform === "win32" }, async (t) => {
-  const f = await fixture(t, { login: { timeoutMs: 1200 } });
+  const timeoutMs = 1200;
+  const f = await fixture(t, { login: { timeoutMs } });
   for (const body of [
     { expectedRevision: 1, method: "apiKey", apiKey: "never-echo-this" },
     { expectedRevision: 1, method: "chatgptAuthTokens" },
@@ -90,14 +91,31 @@ test("HTTP timeout clears challenges and malformed input cannot start a process"
     assert.equal(f.child(), undefined);
   }
   assert.equal((await f.request(`/${engineId}/auth`, "POST", { expectedRevision: 1, method: "chatgpt" })).body.error, "engine_login_method_unavailable");
-  const started = await f.request(`/${engineId}/auth`, "POST", { expectedRevision: 1, method: "chatgptDeviceCode" });
-  const path = `/${engineId}/auth/${started.body.id}`;
-  await f.until(path, "waiting");
-  const timedOut = await f.until(path, "timed_out");
-  assert.equal(timedOut.challenge, undefined);
-  assert.equal(timedOut.errorCode, "engine_login_timed_out");
-  assert.equal(existsSync(f.authHome()), false);
-  assert.equal((await f.request(`/${engineId}/profile`)).body.profile.revision, 1);
+  let elapsed = 0;
+  const clock = t.mock.method(performance, "now", () => elapsed);
+  try {
+    // Native startup uses real I/O; only the login deadline advances with this clock.
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const started = await f.request(`/${engineId}/auth`, "POST", { expectedRevision: 1, method: "chatgptDeviceCode" });
+    const path = `/${engineId}/auth/${started.body.id}`;
+    const waiting = await f.until(path, "waiting");
+    assert.equal(waiting.challenge.userCode, "ABCD-1234");
+    elapsed = timeoutMs - 1;
+    t.mock.timers.tick(elapsed);
+    assert.equal((await f.request(path)).body.status, "waiting");
+    elapsed = timeoutMs;
+    t.mock.timers.tick(1);
+    t.mock.timers.reset();
+    const timedOut = await f.until(path, "timed_out");
+    assert.equal(timedOut.challenge, undefined);
+    assert.equal(timedOut.errorCode, "engine_login_timed_out");
+    assert.equal(existsSync(f.authHome()), false);
+    assert.equal((await f.request(`/${engineId}/profile`)).body.profile.revision, 1);
+    assert.equal(f.child().signalCode, "SIGKILL");
+  } finally {
+    t.mock.timers.reset();
+    clock.mock.restore();
+  }
 });
 
 test("concurrent profile references prevent adopting a completed native account", { timeout: 10_000, skip: process.platform === "win32" }, async (t) => {
@@ -131,6 +149,7 @@ test("a changed profile invalidates its pending challenge instead of showing sta
 });
 
 async function fixture(t, options = {}) {
+  const pollNow = performance.now.bind(performance), pollDelay = delay;
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-login-routes-")));
   let child, authHome;
   const paths = resolveUserConfigPaths({ userRootDir: root });
@@ -186,15 +205,15 @@ async function fixture(t, options = {}) {
       return (await request("/session", "POST", { code }, null)).body;
     },
     until: async (path, status, credentials) => {
-      const deadline = performance.now() + (options.login?.timeoutMs ?? 5000) + 1000;
+      const deadline = pollNow() + (options.login?.timeoutMs ?? 5000) + 1000;
       let last;
-      while (performance.now() < deadline) {
+      while (pollNow() < deadline) {
         const current = await request(path, "GET", undefined, credentials);
         last = current.body;
         assert.equal(current.status, 200);
         if (current.body.status === status) return current.body;
         assert.equal(["failed", "cancelled", "timed_out"].includes(current.body.status), false, JSON.stringify(current.body));
-        await delay(20);
+        await pollDelay(20);
       }
       assert.fail(`login did not reach ${status}: ${JSON.stringify(last)}`);
     },

@@ -27,7 +27,8 @@ function runQuality(overrides = {}) {
       SCOPE_RESULT: "success", COMMON_RESULT: "success",
       DEPENDENCY_RESULT: "success", ASSURANCE_RESULT: "success", BUILD_RESULT: "success", TYPECHECK_RESULT: "success",
       UNIT_RESULT: "success", DAEMON_RESULT: "success", LINUX_CONTRACT_RESULT: "success",
-      MACOS_NATIVE_RESULT: "success", DAEMON_SELECTED: "true", ...overrides },
+      MACOS_NATIVE_RESULT: "success", DAEMON_SELECTED: "true", DEPENDENCY_SELECTED: "true",
+      TYPECHECK_SELECTED: "true", UNIT_SELECTED: "true", ...overrides },
   });
 }
 
@@ -76,8 +77,8 @@ for (const lane of ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"]) {
   }
 }
 
-test("out-of-scope platform skips do not block documentation or Web-only changes", () => {
-  const result = runQuality({ DAEMON_SELECTED: "false", DAEMON_RESULT: "skipped",
+test("out-of-scope platform skips do not block affected Web-only changes", () => {
+  const result = runQuality({ SCOPE_MODE: "affected", DAEMON_SELECTED: "false", DAEMON_RESULT: "skipped",
     LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" });
   assert.equal(result.status, 0, result.stderr);
 });
@@ -95,7 +96,8 @@ test("workflow quality gate keeps a Draft full scope deferred after common check
 });
 
 test("workflow documentation gate requires successful scope and common checks", () => {
-  const docs = { SCOPE_MODE: "docs", DAEMON_SELECTED: "false", DEPENDENCY_RESULT: "skipped", ASSURANCE_RESULT: "skipped",
+  const docs = { SCOPE_MODE: "docs", DAEMON_SELECTED: "false", DEPENDENCY_RESULT: "skipped",
+    DEPENDENCY_SELECTED: "false", TYPECHECK_SELECTED: "false", UNIT_SELECTED: "false",
     BUILD_RESULT: "skipped", TYPECHECK_RESULT: "skipped", UNIT_RESULT: "skipped",
     DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" };
   assert.equal(runQuality(docs).status, 0);
@@ -108,7 +110,7 @@ test("workflow documentation gate requires successful scope and common checks", 
   }
 });
 
-test("workflow non-daemon scope cannot pass with skipped build or unit tests", () => {
+test("workflow non-daemon scope cannot pass with skipped build or selected unit tests", () => {
   for (const lane of ["BUILD", "UNIT"]) {
     const check = runQuality({ SCOPE_MODE: "affected", DAEMON_SELECTED: "false",
       DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped",
@@ -116,4 +118,29 @@ test("workflow non-daemon scope cannot pass with skipped build or unit tests", (
     assert.equal(check.status, 1, check.stderr);
     assert.ok(check.stdout.includes(`${lane}=skipped`), check.stdout);
   }
+});
+
+test("workflow affected platform-only scope may skip unselected product lanes but never build", () => {
+  const platformOnly = { SCOPE_MODE: "affected", DEPENDENCY_SELECTED: "false", TYPECHECK_SELECTED: "false",
+    UNIT_SELECTED: "false", DEPENDENCY_RESULT: "skipped", TYPECHECK_RESULT: "skipped", UNIT_RESULT: "skipped" };
+  assert.equal(runQuality(platformOnly).status, 0);
+  for (const lane of ["BUILD", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"]) {
+    const check = runQuality({ ...platformOnly, [`${lane}_RESULT`]: "skipped" });
+    assert.equal(check.status, 1, check.stdout + check.stderr);
+    assert.match(check.stdout, new RegExp(`${lane}=skipped`, "u"));
+  }
+  for (const lane of ["DEPENDENCY", "TYPECHECK", "UNIT"]) {
+    for (const result of ["failure", "cancelled", "", undefined, "pending"]) {
+      const check = runQuality({ ...platformOnly, [`${lane}_RESULT`]: result });
+      assert.equal(check.status, 1, check.stdout + check.stderr);
+      assert.match(check.stdout, new RegExp(`${lane}=`, "u"));
+    }
+  }
+});
+
+test("workflow full scope cannot opt out of any platform lane", () => {
+  const check = runQuality({ DAEMON_SELECTED: "false", DAEMON_RESULT: "skipped",
+    LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" });
+  assert.equal(check.status, 1, check.stdout + check.stderr);
+  assert.match(check.stdout, /full.*DAEMON_SELECTED/u);
 });

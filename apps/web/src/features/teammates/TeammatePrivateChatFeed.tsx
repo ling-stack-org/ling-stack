@@ -456,6 +456,7 @@ export function TeammatePrivateChatFeed({
             snapshot: timelineSnapshot,
             depth: 0,
             cwd: cwd.trim(),
+            loadPreview: loadPreviewContent,
             onSubmitUserInputAnswer: (command) => submitUserInputAnswer(cwd.trim(), command),
             virtualScrollRef: privateFeedRef,
             itemLocatorRef: timelineItemLocatorRef,

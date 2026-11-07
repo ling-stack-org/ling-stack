@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import type { DesktopDaemonStatus, LingDesktopCapabilities } from "../../desktop/shared/desktop-capabilities.js";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { lingDarkTheme, type LingThemePackManifest, type ThemeSelection } from "@ling-stack/ui-react/theme";
@@ -407,11 +408,27 @@ async function installDesktopPreferenceHarness(page: Page): Promise<void> {
         return { setCalls: [...setCalls] };
       },
     };
+    const daemonStatus: DesktopDaemonStatus = {
+      state: "connected",
+      baseUrl: "http://127.0.0.1:17891",
+      ownedByDesktop: true,
+    };
     Object.defineProperty(window, "lingDesktop", {
       configurable: true,
       value: {
         platform: "macos",
-        daemonBaseUrl: "http://127.0.0.1:17891",
+        daemonBaseUrl: daemonStatus.baseUrl,
+        daemon: {
+          getStatus: async () => daemonStatus,
+          restart: async () => daemonStatus,
+          onStatusChanged(listener) {
+            let subscribed = true;
+            queueMicrotask(() => {
+              if (subscribed) listener(daemonStatus);
+            });
+            return () => { subscribed = false; };
+          },
+        },
         appearance: { reportTheme() {} },
         navigation: {
           acknowledgeIntent: async () => ({ accepted: true }),
@@ -437,7 +454,7 @@ async function installDesktopPreferenceHarness(page: Page): Promise<void> {
           },
           onSummaryChanged: () => () => undefined,
         },
-      },
+      } satisfies Pick<LingDesktopCapabilities, "platform" | "daemonBaseUrl" | "daemon"> & Record<string, unknown>,
     });
   });
 }

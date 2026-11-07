@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import { SigningContractError, canonicalJson, sha256Bytes } from "./signing-contract.mjs";
+import { builderVersion } from "../distribution/installer-builder.mjs";
 
 const TRACE_FILE = "provider-signing-trace.json";
 const STATE_FILE = "provider-signing-state.json";
@@ -75,7 +76,7 @@ async function appendSigningTraceSerially(directory, event) {
   const trace = {
     schemaVersion: 1,
     kind: "ling-cua-driver-signing-feasibility-trace",
-    electronBuilderVersion: "26.15.3",
+    electronBuilderVersion: builderVersion,
     events: [...events, normalized],
   };
   await writeJsonAtomically(join(directory, TRACE_FILE), trace);

@@ -26,7 +26,7 @@ export const mediaFixtureCatalog = [
 export type MediaFixtureId = typeof mediaFixtureCatalog[number];
 
 export function createMediaEmptyFixture(): MockState {
-  return createBaseState({});
+  return createBaseState({ approvalStatus: "expired" });
 }
 
 export function createMediaMixedFixture(total = 12): MockState {
