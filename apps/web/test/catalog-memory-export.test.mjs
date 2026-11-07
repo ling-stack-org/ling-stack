@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { jsonStringLiteralForGeneratedSource } from "./support/generated-source.mjs";
 import { buildMemoryMarkdownExport } from "../../../packages/core/dist/index.js";
 import { catalogConsumerHarness } from "./support/catalog-consumer-harness.mjs";
 import { catalogHookPort } from "./support/catalog-hook-port.mjs";
@@ -24,7 +25,7 @@ async function fixture(t) {
       return { export: buildMemoryMarkdownExport({ memories, options: { workspaceId: "workspace", generatedAt: "2026-10-17T00:00:00.000Z", ...options } }) };
     }, importMemoryMarkdown: async () => { throw new Error("not in scope"); }, reviewMemory: noop, updateMemoryReviewPolicy: noop },
   };
-  const fromPort = (names, target) => key => `const { ${names} } = globalThis[${JSON.stringify(key)}].ports${target ? `.${target}` : ""};`;
+  const fromPort = (names, target) => key => `const { ${names} } = globalThis[${jsonStringLiteralForGeneratedSource(key)}].ports${target ? `.${target}` : ""};`;
   const h = await catalogConsumerHarness(t, {
     exports: {
       "features/teammates/useTeammateMemoryController.ts": ["useTeammateMemoryController"],
@@ -35,9 +36,9 @@ async function fixture(t) {
         replace: fromPort("useCallback, useEffect, useMemo, useRef, useState", "hooks") },
       { anchor: 'import {\n  exportMemoryMarkdown,\n  importMemoryMarkdown,\n  reviewMemory,\n  updateMemoryReviewPolicy,\n} from "../../api.js";',
         replace: key => ["exportMemoryMarkdown", "importMemoryMarkdown", "reviewMemory", "updateMemoryReviewPolicy"]
-          .map(name => `const ${name} = (...args) => globalThis[${JSON.stringify(key)}].ports.api.${name}(...args);`).join("\n") },
+          .map(name => `const ${name} = (...args) => globalThis[${jsonStringLiteralForGeneratedSource(key)}].ports.api.${name}(...args);`).join("\n") },
       { anchor: 'import { useLingToast } from "../../shared/ui/index.js";',
-        replace: key => `const useLingToast = () => globalThis[${JSON.stringify(key)}].ports.toast;` },
+        replace: key => `const useLingToast = () => globalThis[${jsonStringLiteralForGeneratedSource(key)}].ports.toast;` },
       { anchor: 'import { downloadMemoryMarkdown } from "./teammate-memory-files.js";', replace: fromPort("downloadMemoryMarkdown") },
       { anchor: 'import { loadTeammateMemorySnapshot } from "./teammate-memory-data.js";', replace: fromPort("loadTeammateMemorySnapshot") },
     ] },

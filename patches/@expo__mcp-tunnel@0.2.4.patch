@@ -1,0 +1,32 @@
+diff --git a/dist/TunnelMcpServerProxy.js b/dist/TunnelMcpServerProxy.js
+index 4e6b1b6a..9b4d9d3a 100644
+--- a/dist/TunnelMcpServerProxy.js
++++ b/dist/TunnelMcpServerProxy.js
+@@ -1,5 +1,4 @@
+-import { z } from 'zod';
+-import { zodToJsonSchema } from 'zod-to-json-schema';
++import { z } from 'zod/v4';
+ import { ReverseTunnelClientTransport } from './ReverseTunnelClientTransport.js';
+ import { JSON_RPC_VERSION, WS_METHOD_MCP_PROMPTS_GET, WS_METHOD_MCP_RESOURCES_READ, WS_METHOD_MCP_TOOLS_CALL, WS_METHOD_REGISTER_MCP_PROMPT, WS_METHOD_REGISTER_MCP_RESOURCE, WS_METHOD_REGISTER_MCP_TOOL, } from './constants.js';
+ /**
+@@ -49,9 +48,9 @@ export class TunnelMcpServerProxy {
+             name,
+             title: config.title,
+             description: config.description,
+-            inputSchema: config.inputSchema ? zodToJsonSchema(z.object(config.inputSchema)) : undefined,
++            inputSchema: config.inputSchema ? z.toJSONSchema(z.object(config.inputSchema)) : undefined,
+             outputSchema: config.outputSchema
+-                ? zodToJsonSchema(z.object(config.outputSchema))
++                ? z.toJSONSchema(z.object(config.outputSchema))
+                 : undefined,
+             callback,
+         };
+@@ -66,7 +65,7 @@ export class TunnelMcpServerProxy {
+             name,
+             title: config.title,
+             description: config.description,
+-            argsSchema: config.argsSchema ? zodToJsonSchema(z.object(config.argsSchema)) : undefined,
++            argsSchema: config.argsSchema ? z.toJSONSchema(z.object(config.argsSchema)) : undefined,
+             callback,
+         };
+         this.registeredPrompts.set(name, serializedPrompt);
