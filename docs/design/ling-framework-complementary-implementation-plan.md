@@ -168,6 +168,8 @@ Code and test anchors: sections 7 and 9; no live task or GUI acceptance claimed
 
 任一项不满足，只阻断受影响的真实执行阶段，F1/F2 可继续。F5 仅对详细设计 A17 做合同检查，不进入代码实施。
 
+2026-11-09 的只读准入审计基于 `origin/main@0e56b76b`，结论为 `F3-B BLOCKED`；完整证据、八项核查和解阻顺序见[准入审计报告](../testing/f3b-admission-audit-2026-11-09.md)。
+
 ## 6. PR 与集成顺序
 
 下面是建议的最小可审查批次，不代表已经创建 PR。创建、合并和发布仍分别记录状态。
