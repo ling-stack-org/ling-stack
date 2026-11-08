@@ -107,6 +107,7 @@ de71ccccd55f21e909cb597347bcc6e1f81103e3:packages/daemon/test/media-native-trans
 93de59fbbed0e02ec68c7b41b5afcb6d16c9f87d:output/e6-20260928/office-human-qa-p3-memory-delta-frozen-20261025.json:generic-api-key:659
 93de59fbbed0e02ec68c7b41b5afcb6d16c9f87d:output/e6-20260928/office-human-qa-p3-memory-delta-frozen-20261025.json:generic-api-key:810
 93de59fbbed0e02ec68c7b41b5afcb6d16c9f87d:output/e6-20260928/office-human-qa-p3-memory-delta-frozen-20261025.json:generic-api-key:938
+
 93de59fbbed0e02ec68c7b41b5afcb6d16c9f87d:output/e6-20260928/office-human-qa-p3-memory-delta-frozen-20261025.json:generic-api-key:1037
 93de59fbbed0e02ec68c7b41b5afcb6d16c9f87d:output/e6-20260928/office-human-qa-p3-memory-delta-frozen-20261025.json:generic-api-key:1148
 93de59fbbed0e02ec68c7b41b5afcb6d16c9f87d:output/e6-20260928/office-human-qa-p3-memory-delta-frozen-20261025.json:generic-api-key:1161
@@ -512,3 +513,6 @@ f9f73f6cb5c4e5c13cc16758fb318a69a9de7bae:packages/providers/test/media-adapter-c
 7d8830a7ce57966965a75b0e0ce64fe98e746628:output/e6-20260928/office-human-qa-p3-memory-delta-frozen-20261025.json:generic-api-key:938
 7d8830a7ce57966965a75b0e0ce64fe98e746628:output/e6-20260928/p2-cold-bootstrap-final-regression-20261023.tap:generic-api-key:88
 7d8830a7ce57966965a75b0e0ce64fe98e746628:output/e6-20260928/p2-cold-bootstrap-final-regression-20261023.tap:generic-api-key:90
+
+# Workflow step admission fixture idempotency key, not a provider credential.
+cd9464909c2ef9eb78efa14d5143a608815b3db6:packages/core/test/support/workflow-step-admission-fixture.mjs:generic-api-key:156
