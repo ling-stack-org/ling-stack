@@ -34,6 +34,7 @@ export interface LingDaemonEndpointContext {
     body?: unknown,
     headers?: HeadersInit,
   ): Promise<T>;
+  _requestMultipart<T>(method: string, path: string, query: Query, body: FormData): Promise<T>;
   _url(path: string, query?: Query): string;
 }
 
@@ -152,6 +153,19 @@ export class LingDaemonTransport implements LingDaemonEndpointContext {
     }
     if (method === "DELETE") {
       return undefined as T;
+    }
+    return (await response.json()) as T;
+  }
+
+  /** @internal Multipart endpoints deliberately let fetch set the boundary header. */
+  async _requestMultipart<T>(method: string, path: string, query: Query = {}, body: FormData): Promise<T> {
+    const response = await this.fetchImpl(this._url(path, query), {
+      method,
+      body,
+    });
+    if (!response.ok) {
+      const error = await readErrorDetails(response);
+      throw new LingDaemonError(error.message, response.status, response.statusText, error.code);
     }
     return (await response.json()) as T;
   }

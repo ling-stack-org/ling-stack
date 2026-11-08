@@ -305,8 +305,8 @@ function validateProviderPresetShape(input: {
     }
     return;
   }
-  if (!input.capabilities.includes("chat")) {
-    throw new Error("coding provider presets must include chat capability");
+  if (!input.capabilities.includes("chat") && !input.capabilities.includes("asr")) {
+    throw new Error("provider presets must include chat or asr capability");
   }
 }
 
