@@ -47,14 +47,13 @@ export function parseExecutionEvidence(value) {
   requireCondition(Array.isArray(value.artifacts) && value.artifacts.length >= 1 && value.artifacts.length <= 100,
     "invalid_manifest", "Execution artifact pins are required.");
   const artifactIds = new Set();
-  const artifactRoles = new Set();
   for (const artifact of value.artifacts) {
     exactObject(artifact, ["role", "artifactId", "contentSha256"], "execution artifact pin");
     identifier(artifact.role, "execution artifact role"); identifier(artifact.artifactId, "execution artifact id");
     digest(artifact.contentSha256, "execution artifact digest");
-    requireCondition(!artifactIds.has(artifact.artifactId) && !artifactRoles.has(artifact.role),
-      "invalid_manifest", "Execution artifact pins must have unique IDs and roles.");
-    artifactIds.add(artifact.artifactId); artifactRoles.add(artifact.role);
+    requireCondition(!artifactIds.has(artifact.artifactId),
+      "invalid_manifest", "Execution artifact pins must have unique IDs.");
+    artifactIds.add(artifact.artifactId);
   }
   requireCondition(isCanonicalTimestamp(value.observedAt), "invalid_manifest", "Execution observedAt must be an ISO-8601 timestamp.");
   requireCondition(Array.isArray(value.limitations) && value.limitations.length >= 1 && value.limitations.length <= 100,
@@ -90,14 +89,13 @@ export function parseExecutionEvidenceBinding(value) {
   requireCondition(Array.isArray(value.artifacts) && value.artifacts.length >= 1 && value.artifacts.length <= 100,
     "invalid_manifest", "Trusted execution artifact pins are required.");
   const artifactIds = new Set();
-  const artifactRoles = new Set();
   for (const artifact of value.artifacts) {
     exactObject(artifact, ["role", "artifactId", "contentSha256"], "trusted execution artifact pin");
     identifier(artifact.role, "trusted execution artifact role"); identifier(artifact.artifactId, "trusted execution artifact id");
     digest(artifact.contentSha256, "trusted execution artifact digest");
-    requireCondition(!artifactIds.has(artifact.artifactId) && !artifactRoles.has(artifact.role),
-      "invalid_manifest", "Trusted execution artifact pins must have unique IDs and roles.");
-    artifactIds.add(artifact.artifactId); artifactRoles.add(artifact.role);
+    requireCondition(!artifactIds.has(artifact.artifactId),
+      "invalid_manifest", "Trusted execution artifact pins must have unique IDs.");
+    artifactIds.add(artifact.artifactId);
   }
   return structuredClone({
     schemaVersion: 1,

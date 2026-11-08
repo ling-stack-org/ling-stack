@@ -39,6 +39,16 @@ test("replaying the same frozen evidence is idempotent and does not dispatch or 
   assert.deepEqual(second, first);
 });
 
+test("allows multiple artifacts with the same descriptive role when IDs remain distinct", () => {
+  const candidate = clone(evidence);
+  const trusted = clone(binding);
+  candidate.artifacts[1].role = candidate.artifacts[0].role;
+  trusted.artifacts[1].role = trusted.artifacts[0].role;
+  const adapted = adaptExecutionEvidence(candidate, { binding: trusted });
+  assert.equal(adapted.observation.artifacts.length, 2);
+  assert.deepEqual(adapted.observation.artifacts.map(item => item.role), ["candidate", "candidate"]);
+});
+
 for (const [name, mutate, code] of [
   ["sibling Run", value => { value.execution.runId = "run-sibling-001"; }, "evidence_lineage_mismatch"],
   ["sibling WorkUnit", value => { value.execution.workUnitId = "work-unit-sibling-001"; }, "evidence_lineage_mismatch"],
