@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "profileId": "ling-assurance-t02",
+  "profileVersion": "1",
+  "mode": "offline_control_only",
+  "checks": [
+    "Canonical JSON sorts object keys recursively.",
+    "Array ordering remains unchanged.",
+    "Injected patch applicability is validated independently; no candidate code is executed by calibration."
+  ]
+}

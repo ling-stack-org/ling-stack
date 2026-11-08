@@ -83,6 +83,7 @@ export class SqliteRuntimeRunQueueStore implements RuntimeRunQueueStore {
   claimNextRuntimeRun(input: ClaimNextRuntimeRunInput): ReturnType<RuntimeRunQueueStore["claimNextRuntimeRun"]> {
     text(input.workspaceId, "workspaceId"); text(input.runtimeInstanceId, "runtimeInstanceId"); text(input.ownerId, "ownerId");
     if (input.runId !== undefined) text(input.runId, "runId");
+    if (input.ignoreRetryAt !== undefined && typeof input.ignoreRetryAt !== "boolean") throw new TypeError("Invalid runtime queue retry bypass.");
     integer(input.leaseMs, 1, 60_000); timestamp(input.now);
     const expiresAt = new Date(Date.parse(input.now) + input.leaseMs).toISOString();
     let deferredInvalidHead = false;
@@ -90,13 +91,14 @@ export class SqliteRuntimeRunQueueStore implements RuntimeRunQueueStore {
       const policy = this.ports.getRuntimeConcurrencyPolicy(input.workspaceId);
       if (!policy || policy.runtimeInstanceId !== input.runtimeInstanceId) return { status: "changed" };
       // Group FIFO and a persisted least-recently-selected group order survive new Stores and processes.
+      const retryPredicate = input.ignoreRetryAt ? "1=1" : "(q.retry_at IS NULL OR q.retry_at<=?)";
       const select = this.context.database.prepare(`SELECT q.* FROM runtime_run_queue q
         JOIN run_sessions r ON r.id=q.run_id JOIN work_units u ON u.id=q.work_unit_id
         JOIN work_unit_attempts a ON a.id=q.attempt_id
         WHERE q.workspace_id=? AND q.dispatched_at IS NULL AND r.status='queued' AND r.ended_at IS NULL
           AND u.status='queued' AND u.ended_at IS NULL AND u.active_attempt_id=a.id
           AND a.status='created' AND a.ended_at IS NULL AND a.abort_requested_at IS NULL
-          AND (q.claim_expires_at IS NULL OR q.claim_expires_at<=?) AND (q.retry_at IS NULL OR q.retry_at<=?)
+          AND (q.claim_expires_at IS NULL OR q.claim_expires_at<=?) AND ${retryPredicate}
           AND NOT EXISTS (SELECT 1 FROM runtime_run_queue p JOIN run_sessions pr ON pr.id=p.run_id
             JOIN work_units pu ON pu.id=p.work_unit_id JOIN work_unit_attempts pa ON pa.id=p.attempt_id
             WHERE p.workspace_id=q.workspace_id AND p.group_key=q.group_key AND p.sequence<q.sequence
@@ -108,7 +110,9 @@ export class SqliteRuntimeRunQueueStore implements RuntimeRunQueueStore {
       let before: RuntimeRunQueueEntry | undefined;
       // Invalid heads remain visible, but cannot monopolize arbitration for unrelated groups.
       for (let inspected = 0; inspected < 64; inspected++) {
-        const row = select.get(input.workspaceId, input.now, input.now);
+        const row = input.ignoreRetryAt
+          ? select.get(input.workspaceId, input.now)
+          : select.get(input.workspaceId, input.now, input.now);
         if (!row || input.runId !== undefined && row.run_id !== input.runId) return { status: "empty" };
         const candidate = mapEntry(row), source = this.source(candidate.runId, candidate.sourceFence);
         if (source && this.isPrestart(source) && source.digest === candidate.snapshotDigest && !this.hasResources(candidate.sourceFence)) {

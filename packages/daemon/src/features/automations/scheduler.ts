@@ -17,11 +17,15 @@ import { createDetachedRunExecutionSink, executeRunRequest } from "../runs/orche
 import type { NativeRunDispatcher } from "../runs/native-run-dispatcher.js";
 import { maybeStartNextRunInterventionContinuation } from "../runs/interventions.js";
 import { runAutomation } from "./run.js";
-import { AutomationRecurrenceError, computeNextAutomationRunAt } from "./recurrence.js";
+import { AutomationRecurrenceCompleteError, AutomationRecurrenceError, computeNextAutomationRunAt } from "./recurrence.js";
 export { computeNextAutomationRunAt, computeNextRunAt, computeNextRunAtFromRRule } from "./recurrence.js";
 
 // Node turns a larger delay into a 1ms timer, rather than waiting longer.
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
+// A small delivery delay is normal event-loop jitter. Beyond this boundary a
+// callback has likely crossed a sleep/wake or wall-clock jump and must use the
+// persisted missed-run policy instead of dispatching a stale skip slot.
+const LATE_TIMER_GRACE_MS = 60_000;
 
 export type AutomationSchedulerStatus = "running" | "stopped" | "error";
 
@@ -210,10 +214,29 @@ export class AutomationSchedulerRegistry {
       return;
     }
     const generation = entry.generation;
+    const persistedDue = automation.nextRunAt;
+    if (
+      automation.trigger.missedRunPolicy === "run_one"
+      && persistedDue
+      && Number.isFinite(Date.parse(persistedDue))
+      && Date.parse(persistedDue) <= from.getTime()
+    ) {
+      // A restarted daemon may have a durable due slot in the past. Admit one
+      // bounded catch-up run; the normal rearm path advances from the current
+      // wall clock and never bursts every missed occurrence.
+      this.armAutomationTimer(entry, automation, persistedDue, generation);
+      return;
+    }
     let nextRunAt: string;
     try {
       nextRunAt = computeNextAutomationRunAt(automation, from);
     } catch (error) {
+      if (error instanceof AutomationRecurrenceCompleteError) {
+        this.storeRegistry.getStore(entry.state.cwd).updateAutomationDefinition(automation.id,
+          { status: "disabled", nextRunAt: null, lastErrorMessage: null }, new Date().toISOString());
+        this.upsertItem(entry, { automationId: automation.id, title: automation.title });
+        return;
+      }
       if (!(error instanceof AutomationRecurrenceError)) throw error;
       // A malformed persisted schedule must not revoke unrelated timers. This
       // durable cleanup is intentionally outside the calculation catch: a DB
@@ -303,6 +326,14 @@ export class AutomationSchedulerRegistry {
         this.armAutomationTimer(entry, automation, scheduledFor, generation);
         return;
       }
+      if (automation.trigger.missedRunPolicy === "skip"
+        && Date.now() - Date.parse(scheduledFor) > LATE_TIMER_GRACE_MS) {
+        // The process woke materially after the due wall-clock. Advance from
+        // the current clock without creating an AutomationRun; run_one keeps
+        // the bounded stale-slot admission below.
+        this.scheduleAutomation(entry, automation, new Date());
+        return;
+      }
       executionEntered = true;
       const result = await runAutomation({
         cwd: entry.state.cwd,
@@ -381,6 +412,24 @@ export class AutomationSchedulerRegistry {
       store.updateAutomationDefinition(automationId, { status: "error", lastErrorMessage: message }, new Date().toISOString());
     } finally {
       entry.runningAutomationIds.delete(automationId);
+      if (executionEntered) {
+        // Mark the admitted slot consumed before rearming. Otherwise a
+        // run_one restart could mistake the just-fired persisted due for a
+        // second missed slot and replay it indefinitely.
+        try {
+          const completedAutomation = this.storeRegistry.getStore(entry.state.cwd).getAutomationDefinition(automationId);
+          if (completedAutomation?.trigger.type === "schedule" && completedAutomation.trigger.missedRunPolicy === "run_one") {
+            this.storeRegistry.getStore(entry.state.cwd).updateAutomationDefinition(
+              automationId,
+              { nextRunAt: null },
+              new Date().toISOString(),
+            );
+          }
+        } catch {
+          // Rearm below owns the scheduler failure boundary and will surface a
+          // store error without relabelling the already committed run.
+        }
+      }
       // Rearming is scheduling recovery, not part of the completed execution.
       // Both unchanged and refreshed generations use the same persistence
       // failure boundary without relabelling an already committed Run.

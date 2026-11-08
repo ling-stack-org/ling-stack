@@ -293,6 +293,95 @@ export interface ManagedPluginCheckResponse {
   readonly health: ManagedPluginHealthSnapshot;
 }
 
+export type ManagedPluginImportSource =
+  | "codex-config-toml"
+  | "claude-user-json"
+  | "claude-plugin-mcp"
+  | "dsh-cordis-patch"
+  | "claude-commands";
+
+export interface ManagedPluginImportSecretView {
+  readonly field: string;
+  readonly masked: string;
+  readonly needsInput: boolean;
+}
+
+export interface ManagedPluginImportCandidate {
+  readonly kind: "mcp";
+  readonly source: ManagedPluginImportSource;
+  readonly name: string;
+  readonly displayName: string;
+  readonly transportSummary: string;
+  readonly status: "new" | "unchanged" | "conflict";
+  readonly secrets: readonly ManagedPluginImportSecretView[];
+  readonly warnings: readonly string[];
+}
+
+export interface ManagedPluginImportCommandCandidate {
+  readonly kind: "command";
+  readonly source: ManagedPluginImportSource;
+  readonly name: string;
+  readonly displayName: string;
+  readonly status: "new" | "unchanged" | "conflict";
+  readonly inlineExecutions: readonly string[];
+  readonly warnings: readonly string[];
+}
+
+export type ManagedPluginImportPreviewCandidate =
+  | ManagedPluginImportCandidate
+  | ManagedPluginImportCommandCandidate;
+
+export interface ManagedPluginImportPreviewRequest {
+  readonly source: ManagedPluginImportSource;
+}
+
+export interface ManagedPluginImportPreviewResponse {
+  readonly cwd: string;
+  readonly source: ManagedPluginImportSource;
+  readonly sourceFound: boolean;
+  readonly candidates: readonly ManagedPluginImportPreviewCandidate[];
+  readonly warnings: readonly string[];
+}
+
+export interface ManagedPluginImportApplyRequest {
+  readonly source: ManagedPluginImportSource;
+  readonly names: readonly string[];
+}
+
+export interface ManagedPluginImportedMcpEntry {
+  readonly name: string;
+  readonly pluginId: string;
+  readonly mcpServerId: string;
+  readonly check: "ready" | "failed" | "unknown";
+  readonly checkMessage?: string;
+}
+
+export interface ManagedPluginImportedCommandEntry {
+  readonly name: string;
+  readonly draftId: string;
+  readonly skillId: string;
+}
+
+export type ManagedPluginImportedEntry =
+  | ManagedPluginImportedMcpEntry
+  | ManagedPluginImportedCommandEntry;
+
+export interface ManagedPluginImportSkippedEntry {
+  readonly name: string;
+  readonly reason: "unchanged" | "unknown_name";
+}
+
+export interface ManagedPluginImportApplyResponse {
+  readonly cwd: string;
+  readonly source: ManagedPluginImportSource;
+  readonly imported: readonly ManagedPluginImportedEntry[];
+  readonly skipped: readonly ManagedPluginImportSkippedEntry[];
+  readonly secretsMigrated: number;
+  readonly secretsNeedsInput: number;
+  readonly degradations: readonly string[];
+  readonly warnings: readonly string[];
+}
+
 export interface ManagedPluginApplyPresetRequest {
   readonly options?: Record<string, unknown>;
 }

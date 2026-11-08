@@ -1,0 +1,7 @@
+{
+  "analysis": {
+    "module": "packages/core/src/harness/evaluation-rule-grader.ts",
+    "symbol": "containsJson",
+    "arraySemantics": "unordered_set"
+  }
+}

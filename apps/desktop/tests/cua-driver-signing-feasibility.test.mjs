@@ -46,7 +46,7 @@ test.afterEach(() => {
   resetProviderSigningHooks();
 });
 
-test("opt-in Electron Builder 26.15.3 fixture config wires both platform signing callbacks", async () => {
+test("opt-in pinned Electron Builder fixture config wires both platform signing callbacks", async () => {
   const config = (await import("../scripts/cua-driver-signing/electron-builder.signing-feasibility.config.mjs?fixture=1")).default;
   assert.equal(config.afterPack, "./scripts/cua-driver-signing/after-pack.mjs");
   assert.equal(config.afterSign, "./scripts/cua-driver-signing/after-sign.mjs");

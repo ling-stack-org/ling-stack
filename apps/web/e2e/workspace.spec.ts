@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
+import type { DesktopDaemonStatus, LingDesktopCapabilities } from "../../desktop/shared/desktop-capabilities.js";
 import { mockDaemon } from "./support/mock-daemon";
 import { openWorkBoardFromInbox } from "./support/open-work-board";
 import {
@@ -292,12 +293,11 @@ test("workspace task run sends the selected session permission mode", async ({ p
 
   await expect.poll(() => {
     const snapshot = state.runs[0]?.requestSnapshot;
-    return isRecord(snapshot) ? snapshot.permissionMode : undefined;
-  }).toBe("workspace_write");
-  await expect.poll(() => {
-    const snapshot = state.runs[0]?.requestSnapshot;
-    return isRecord(snapshot) ? snapshot.permissionPreset : undefined;
-  }).toBe("workspace_collaboration");
+    return isRecord(snapshot) ? snapshot.schemaVersion : undefined;
+  }).toBe(2);
+  const requestSnapshot = state.runs[0]?.requestSnapshot;
+  expect(requestSnapshot).not.toHaveProperty("permissionMode");
+  expect(requestSnapshot).not.toHaveProperty("permissionPreset");
 });
 
 test("workspace full access task run requires confirmation and sends confirmation evidence", async ({ page }) => {
@@ -327,22 +327,37 @@ test("workspace full access task run requires confirmation and sends confirmatio
   await taskDetail.getByText("Permissions", { exact: true }).click();
   const permissionTrigger = page.getByLabel("Channel composer", { exact: true }).getByRole("button", { name: /Selected permission preset/ });
   await permissionTrigger.click();
-  await page.getByRole("menuitemradio", { name: "Full access permissions", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "Full access", exact: true }).click();
   const selectionSheet = page.getByRole("dialog", { name: "Confirm full access" });
   await expect(selectionSheet).toBeVisible();
   await selectionSheet.getByRole("button", { name: "Cancel" }).last().click();
   await expect(selectionSheet).toHaveCount(0);
-  await expect(permissionTrigger).toHaveText("Help me approve");
+  await expect(permissionTrigger).toHaveText("Workspace write");
   await expect(permissionTrigger).toBeFocused();
   expect(state.runs).toHaveLength(0);
 
   await permissionTrigger.click();
-  await page.getByRole("menuitemradio", { name: "Full access permissions", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "Full access", exact: true }).click();
   await expect(selectionSheet).toBeVisible();
   await expect(selectionSheet).toHaveClass(/ling-ui-dialog-content/u);
   await selectionSheet.getByRole("button", { name: "Start with full access" }).click();
   await expect(permissionTrigger).toHaveAccessibleName(/Full access · Confirmed for this conversation/);
-  await taskDetail.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(selectionSheet).toHaveCount(0);
+  expect(state.runs).toHaveLength(0);
+
+  const runButton = taskDetail.getByRole("button", { name: "Run", exact: true });
+  await runButton.click();
+  await expect(selectionSheet).toBeVisible();
+  expect(state.runs).toHaveLength(0);
+  await selectionSheet.getByRole("button", { name: "Cancel" }).last().click();
+  await expect(selectionSheet).toHaveCount(0);
+  await expect(runButton).toBeFocused();
+  expect(state.runs).toHaveLength(0);
+
+  await runButton.click();
+  await expect(selectionSheet).toBeVisible();
+  expect(state.runs).toHaveLength(0);
+  await selectionSheet.getByRole("button", { name: "Start with full access" }).click();
   await expect(selectionSheet).toHaveCount(0);
 
   await expect.poll(() => {
@@ -357,6 +372,9 @@ test("workspace full access task run requires confirmation and sends confirmatio
     const snapshot = state.runs[0]?.requestSnapshot;
     return isRecord(snapshot) ? snapshot.workspaceAccessMode : undefined;
   }).toBe("full_access");
+  expect(state.runs[0]?.requestSnapshot).toMatchObject({ schemaVersion: 2, authorizationMode: "smart" });
+  expect(state.runs[0]?.requestSnapshot).not.toHaveProperty("permissionMode");
+  expect(state.runs[0]?.requestSnapshot).not.toHaveProperty("permissionPreset");
 });
 
 test("saved workspace path wins over daemon default", async ({ page }) => {
@@ -379,12 +397,28 @@ test("desktop host ignores a saved workspace path and uses its daemon authority"
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
     localStorage.setItem("ling-stack.workspaceCwd", "/tmp/saved-workspace");
+    const daemonStatus: DesktopDaemonStatus = {
+      state: "connected",
+      baseUrl: "http://127.0.0.1:17891",
+      ownedByDesktop: true,
+    };
     Object.defineProperty(window, "lingDesktop", {
       configurable: true,
       value: {
         platform: "macos",
-        daemonBaseUrl: "http://127.0.0.1:17891",
-      },
+        daemonBaseUrl: daemonStatus.baseUrl,
+        daemon: {
+          getStatus: async () => daemonStatus,
+          restart: async () => daemonStatus,
+          onStatusChanged(listener) {
+            let subscribed = true;
+            queueMicrotask(() => {
+              if (subscribed) listener(daemonStatus);
+            });
+            return () => { subscribed = false; };
+          },
+        },
+      } satisfies Pick<LingDesktopCapabilities, "platform" | "daemonBaseUrl" | "daemon">,
     });
   });
   const daemonCwd = "/tmp/daemon-default-workspace";

@@ -741,6 +741,8 @@ export function AppShell(): React.JSX.Element {
   const {
     refreshPlugins,
     createPlugin,
+    previewPluginImport,
+    applyPluginImport,
     applyPluginPreset,
     connectPlugin,
     checkPlugin,
@@ -3325,6 +3327,8 @@ export function AppShell(): React.JSX.Element {
                     actionErrors={pluginManagerActionErrors}
                     onRefresh={() => void refreshPlugins()}
                     onCreate={createPlugin}
+                    onImportPreview={previewPluginImport}
+                    onImportApply={applyPluginImport}
                     onApplyPreset={applyPluginPreset}
                     onConnect={connectPlugin}
                     onCheck={checkPlugin}

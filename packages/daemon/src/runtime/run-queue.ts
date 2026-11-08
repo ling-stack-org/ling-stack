@@ -11,6 +11,7 @@ import type { RuntimeSupervisor } from "./supervisor.js";
 
 interface StoreQueueSignals {
   wake(): void;
+  hostCapacityReleased(): void;
   retain(runId: string, options: ExecuteRunRequestOptions): void;
 }
 export interface RuntimeHostCapacityAdmission {
@@ -47,6 +48,7 @@ export interface RuntimeHostCapacityAdmission {
 export function createRuntimeHostCapacityAdmission(input: {
   readonly host: HostRunCapacityStore;
   readonly workspace: (workspaceId: string) => RuntimeHostCapacityJournal;
+  readonly onReleased?: () => void;
 }): RuntimeHostCapacityAdmission {
   const bridgeFor = (workspaceId: string): RuntimeHostCapacityBridge =>
     new RuntimeHostCapacityBridge(input.workspace(workspaceId), input.host);
@@ -115,14 +117,18 @@ export function createRuntimeHostCapacityAdmission(input: {
     releaseNoDispatch({ workspaceId, intentId, now }) {
       const journal = input.workspace(workspaceId), prepared = journal.prepareNoDispatchRelease({ intentId, now });
       if (prepared.status === "changed") return false;
-      return bridgeFor(workspaceId).flushRelease(intentId, now);
+      const released = bridgeFor(workspaceId).flushRelease(intentId, now);
+      if (released) input.onReleased?.();
+      return released;
     },
     releaseStopped({ workspaceId, source, intentId, now }) {
       const journal = input.workspace(workspaceId), record = journal.getIntent(intentId);
       if (!record?.source || record.source.runId !== source.runId || record.source.attemptId !== source.attemptId) return false;
       const prepared = journal.prepareStoppedRelease({ intentId, now });
       if (prepared.status === "changed") return false;
-      return bridgeFor(workspaceId).flushRelease(intentId, now);
+      const released = bridgeFor(workspaceId).flushRelease(intentId, now);
+      if (released) input.onReleased?.();
+      return released;
     },
   };
 }
@@ -138,6 +144,10 @@ export function notifyRuntimeRunResourcesReleased(store: RunStore): void {
   signals.get(store)?.wake();
 }
 
+export function notifyRuntimeRunHostCapacityReleased(store: RunStore): void {
+  signals.get(store)?.hostCapacityReleased();
+}
+
 /** Durable claims arbitrate across processes; this coordinator only discovers and starts preparations. */
 export class RuntimeRunQueueCoordinator {
   private readonly stores = new Set<RunStore>();
@@ -145,6 +155,7 @@ export class RuntimeRunQueueCoordinator {
   private readonly retainedOptions = new WeakMap<RunStore, Map<string, ExecuteRunRequestOptions>>();
   private readonly scanning = new WeakSet<RunStore>();
   private readonly pendingWake = new WeakSet<RunStore>();
+  private readonly pendingResourceWake = new WeakSet<RunStore>();
   private readonly inFlight = new Set<Promise<unknown>>();
   private readonly ownerId = `run-queue:${randomUUID()}`;
   private started = false;
@@ -166,7 +177,7 @@ export class RuntimeRunQueueCoordinator {
     const retained = new Map<string, ExecuteRunRequestOptions>();
     this.retainedOptions.set(store, retained);
     this.preparing.set(store, new Set());
-    signals.set(store, { wake: () => this.wakeStore(store), retain: (runId, options) => {
+    signals.set(store, { wake: () => this.wakeStore(store), hostCapacityReleased: () => this.wakeAllStores(true), retain: (runId, options) => {
       retained.set(runId, { ...options, onRunReady: undefined });
     } });
     this.wakeStore(store);
@@ -195,17 +206,28 @@ export class RuntimeRunQueueCoordinator {
   }
 
   wakeStore(store: RunStore): void {
-    if (!this.started || this.closed || this.options.activeRuns.isShuttingDown() || this.pendingWake.has(store)) return;
+    this.scheduleStoreWake(store, false);
+  }
+
+  private wakeAllStores(ignoreRetryAt: boolean): void {
+    for (const store of this.stores) this.scheduleStoreWake(store, ignoreRetryAt);
+  }
+
+  private scheduleStoreWake(store: RunStore, ignoreRetryAt: boolean): void {
+    if (!this.started || this.closed || this.options.activeRuns.isShuttingDown()) return;
+    if (ignoreRetryAt) this.pendingResourceWake.add(store);
+    if (this.pendingWake.has(store)) return;
     this.pendingWake.add(store);
     queueMicrotask(() => {
       this.pendingWake.delete(store);
       if (this.closed || this.options.activeRuns.isShuttingDown()) return;
-      try { this.scanStore(store); }
+      const bypassRetryAt = this.pendingResourceWake.delete(store);
+      try { this.scanStore(store, bypassRetryAt); }
       catch { console.warn("runtime_run_queue_scan_incomplete: durable claims remain authoritative"); }
     });
   }
 
-  private scanStore(store: RunStore): void {
+  private scanStore(store: RunStore, ignoreRetryAt = false): void {
     if (this.scanning.has(store)) return;
     this.scanning.add(store);
     try {
@@ -220,7 +242,8 @@ export class RuntimeRunQueueCoordinator {
         this.options.runtimeSupervisor.getConcurrencyPolicy().maxConcurrentRuns);
       for (let visited = 0; visited < 16 && preparing.size < preparingLimit && !this.closed; visited++) {
         const selected = store.claimNextRuntimeRun({ workspaceId: DEFAULT_WORKSPACE_ID,
-          runtimeInstanceId: runtime.runtimeInstanceId, ownerId: this.ownerId, leaseMs: 30_000, now: new Date().toISOString() });
+          runtimeInstanceId: runtime.runtimeInstanceId, ownerId: this.ownerId, leaseMs: 30_000, now: new Date().toISOString(),
+          ...(ignoreRetryAt ? { ignoreRetryAt: true } : {}) });
         if (selected.status !== "claimed") break;
         const { claim } = selected;
         const now = new Date().toISOString();

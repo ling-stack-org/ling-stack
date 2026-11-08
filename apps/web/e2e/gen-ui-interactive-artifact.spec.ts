@@ -103,21 +103,21 @@ test("interactive HTML artifact renders in a sandboxed frame inside the file pre
 
   // Merely opening an untrusted document must not execute its scripts.
   const outerFrame = page.frameLocator("iframe[data-ui2-artifact-interactive]");
+  const contentFrame = outerFrame.frameLocator("iframe").frameLocator("iframe");
   await expect(outerFrame.locator("iframe")).toHaveAttribute("sandbox", "");
-  await outerFrame.frameLocator("iframe").locator("#counter").click();
-  await expect(outerFrame.frameLocator("iframe").locator("#counter")).toHaveText("Clicked 0");
+  await contentFrame.locator("#counter").click();
+  await expect(contentFrame.locator("#counter")).toHaveText("Clicked 0");
   await preview.getByRole("button", { name: "Run interactive preview", exact: true }).click();
   await expect(frame).toHaveAttribute("sandbox", "allow-scripts");
   await expect(outerFrame.locator("iframe")).toHaveAttribute("sandbox", "allow-scripts");
-  const frameLocator = outerFrame.frameLocator("iframe");
-  await frameLocator.locator("#counter").click();
-  await expect(frameLocator.locator("#counter")).toHaveText("Clicked 1");
-  await frameLocator.locator("#counter").click();
-  await expect(frameLocator.locator("#counter")).toHaveText("Clicked 2");
+  await contentFrame.locator("#counter").click();
+  await expect(contentFrame.locator("#counter")).toHaveText("Clicked 1");
+  await contentFrame.locator("#counter").click();
+  await expect(contentFrame.locator("#counter")).toHaveText("Clicked 2");
 
   await preview.getByRole("button", { name: "Stop interactive preview", exact: true }).click();
   await expect(frame).toHaveAttribute("sandbox", "");
-  await expect(frameLocator.locator("#counter")).toHaveText("Clicked 0");
+  await expect(contentFrame.locator("#counter")).toHaveText("Clicked 0");
 
   await mkdir(evidence, { recursive: true });
   await page.screenshot({ path: `${evidence}/interactive-preview.png`, animations: "disabled" });

@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "taskId": "T03",
+  "taskVersion": "5",
+  "category": "two_module_change",
+  "source": {
+    "repository": "ling-stack",
+    "commit": "c156901c6c0bb97570ba56f39ec0f731872f56d9",
+    "lockSha256": "49c509936672cbe4ce9118a4bf3907c4b32eea1babfc6dd74dec295c526f4d10",
+    "files": [
+      {
+        "path": "packages/contracts/src/harness-diagnostics.ts",
+        "sha256": "6db8ae52fdaf4ab07ead9c34bfdc78c79092545d459bdf0751a7f3ecb1a554b5",
+        "mediaType": "text/plain"
+      },
+      {
+        "path": "packages/api-client/src/endpoints/runtime.ts",
+        "sha256": "fbd5c359b941f834603a9d05d707036cfa994a71bf46273a055889cb4a6dc018",
+        "mediaType": "text/plain"
+      }
+    ]
+  },
+  "provenance": {
+    "kind": "fault_injection",
+    "description": "Explicit two-package injection: change diagnostics response schema to 2 and drop cwd from the API client request. This is not a historical mainline defect; one-sided repair is a negative control.",
+    "anchors": [
+      "packages/contracts/src/harness-diagnostics.ts",
+      "packages/api-client/src/endpoints/runtime.ts"
+    ],
+    "injection": {
+      "path": "cases/T03/injection.patch",
+      "sha256": "356c44bb235279ce81d2c197addf2f9552172486ce81c24f0d9dae2376f2c2f0",
+      "mediaType": "text/x-diff"
+    }
+  },
+  "prompt": {
+    "path": "cases/T03/prompt.txt",
+    "sha256": "1ee3e525a6643658c4990511afd12d61601a0524b8bcd407a6d6c66a9b3d380f",
+    "mediaType": "text/plain"
+  },
+  "validationProfile": {
+    "id": "ling-assurance-t03",
+    "version": "1",
+    "artifact": {
+      "path": "cases/T03/profile.json",
+      "sha256": "6e18eb70991c2e965725e64a9753a1113b42130efd31bce4cf74c9d8db8e7784",
+      "mediaType": "application/json"
+    }
+  },
+  "ruleCase": {
+    "path": "cases/T03/rule.json",
+    "sha256": "9fdfc20bb38b44a7680da7f5eb07665bfc52080c63d8f09c64fbdd8df14ca54d",
+    "mediaType": "application/json"
+  },
+  "expected": {
+    "path": "cases/T03/expected.json",
+    "sha256": "87bb581673bc61a7d2cca71d0e305a4ebcd9feaa3b9346953a36595c6d21fbcc",
+    "mediaType": "application/json"
+  },
+  "controls": {
+    "correct": {
+      "candidate": {
+        "path": "controls/T03-correct.json",
+        "sha256": "87bb581673bc61a7d2cca71d0e305a4ebcd9feaa3b9346953a36595c6d21fbcc",
+        "mediaType": "application/json"
+      },
+      "expectedAssessment": "pass"
+    },
+    "incorrect": {
+      "candidate": {
+        "path": "controls/T03-incorrect.json",
+        "sha256": "acd1ba9caee07d458948a40e202e9722bd4391327a45c36d357759dc0e59593a",
+        "mediaType": "application/json"
+      },
+      "expectedAssessment": "fail"
+    },
+    "missing": {
+      "candidate": {
+        "path": "controls/T03-missing.json",
+        "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+        "mediaType": "application/json"
+      },
+      "expectedAssessment": "invalid_evidence"
+    }
+  },
+  "environment": {
+    "node": ">=22.22.1",
+    "pnpm": "10.0.0",
+    "typescript": "7.0.2",
+    "platform": "record_at_execution"
+  },
+  "capabilityRequirements": [
+    "workspace_write"
+  ],
+  "requiredEvidence": [
+    "checks"
+  ],
+  "limits": {
+    "timeoutMs": 60000,
+    "maxConcurrent": 1,
+    "maxRequests": 0,
+    "maxAmount": 0,
+    "currency": "USD",
+    "unknownUsagePolicy": "stop"
+  }
+}

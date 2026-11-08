@@ -66,7 +66,8 @@ import { recoverApprovalPostCommitStore } from "./features/runs/approval-postcom
 import { runApprovalPostCommitEffects } from "./features/runs/approval-postcommit-effects.js";
 import { syncWorkflowApprovalDecision } from "./features/channels/orchestrator.js";
 import { DaemonRunnerRecoveryCoordinator } from "./features/harness/continuations/daemon-recovery-coordinator.js";
-import { createRuntimeHostCapacityAdmission, RuntimeRunQueueCoordinator, type RuntimeHostCapacityAdmission } from "./runtime/run-queue.js";
+import { createRuntimeHostCapacityAdmission, notifyRuntimeRunHostCapacityReleased, RuntimeRunQueueCoordinator,
+  type RuntimeHostCapacityAdmission } from "./runtime/run-queue.js";
 import { reconcileHarnessToolExecutionsAtStartup } from "./features/harness/tool-execution/recovery.js";
 import { RunEvaluationSchedulerRegistry } from "./features/harness/evaluations/scheduler.js";
 import { RunEvaluationTaskWorkerComposition } from "./features/harness/evaluations/task-worker-composition.js";
@@ -506,7 +507,8 @@ export function createDaemonServer(
       ...(resolvedConfig.concurrency.enabled ? { createRuntimeHostCapacity: () => {
         const capacity = createRuntimeHostCapacityStoreBinding();
         return { binding: capacity.binding, bindStore: (store: RunStore) => {
-          runtimeHostCapacities.set(store, createRuntimeHostCapacityAdmission({ host: hostRunCapacity, workspace: capacity.workspace }));
+          runtimeHostCapacities.set(store, createRuntimeHostCapacityAdmission({ host: hostRunCapacity, workspace: capacity.workspace,
+            onReleased: () => notifyRuntimeRunHostCapacityReleased(store) }));
         } };
       } } : {}),
       onDelegationStore: (store, lifecycle) => {

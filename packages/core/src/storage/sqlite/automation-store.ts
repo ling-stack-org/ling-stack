@@ -187,11 +187,21 @@ export class SqliteAutomationStore {
       return undefined;
     }
     const existing = mapAutomationDefinition(existingRow);
+    const nextTarget = input.target ?? existing.target;
+    const nextTargetThreadId = input.targetThreadId !== undefined
+      ? (input.targetThreadId ?? undefined)
+      : input.target
+        ? input.target.threadId
+        : existing.targetThreadId;
+    const targetMode = input.automationMode
+      ?? (input.target !== undefined || input.targetThreadId !== undefined
+        ? (nextTargetThreadId || nextTarget.scope === "thread" ? "heartbeat" : "cron")
+        : existing.automationMode);
     const next: AutomationDefinition = {
       ...existing,
       channelId: nullableUpdate(input.channelId, existing.channelId),
       threadId: input.threadId ?? existing.threadId,
-      automationMode: input.automationMode ?? existing.automationMode,
+      automationMode: targetMode,
       title: input.title ?? existing.title,
       description: nullableUpdate(input.description, existing.description),
       kind: input.kind ?? existing.kind,
@@ -200,17 +210,23 @@ export class SqliteAutomationStore {
       // The mapped RRULE may be derived from trigger; only the raw column owns explicit intent.
       rrule: nullableUpdate(input.rrule, readNullableString(existingRow, "rrule")),
       cwds: input.cwds ?? existing.cwds,
-      targetThreadId: nullableUpdate(input.targetThreadId, existing.targetThreadId),
+      targetThreadId: nextTargetThreadId,
       executionEnvironment: nullableUpdate(input.executionEnvironment, existing.executionEnvironment),
       reasoningEffort: nullableUpdate(input.reasoningEffort, existing.reasoningEffort),
       model: nullableUpdate(input.model, existing.model),
-      target: input.target ?? existing.target,
+      target: nextTarget,
       promptTemplate: input.promptTemplate ?? existing.promptTemplate,
       executionPolicy: input.executionPolicy ?? existing.executionPolicy,
       outputPolicy: input.outputPolicy ?? existing.outputPolicy,
       updatedAt: now,
       lastRunId: nullableUpdate(input.lastRunId, existing.lastRunId),
-      nextRunAt: nullableUpdate(input.nextRunAt, existing.nextRunAt),
+      // A trigger or explicit RRULE edit invalidates the old durable due slot;
+      // the scheduler will persist a fresh occurrence during its refresh.
+      nextRunAt: input.nextRunAt !== undefined
+        ? nullableUpdate(input.nextRunAt, existing.nextRunAt)
+        : input.trigger !== undefined || input.rrule !== undefined
+          ? undefined
+          : existing.nextRunAt,
       lastErrorMessage: nullableUpdate(input.lastErrorMessage, existing.lastErrorMessage),
     };
     // Authored schedule changes and enabling require admission. Operational

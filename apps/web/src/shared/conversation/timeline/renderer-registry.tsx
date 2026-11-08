@@ -34,6 +34,7 @@ export interface ConversationTimelineRenderContext {
     command: UserInputAnswerCommandV1,
   ) => Promise<UserInputAnswerAcceptedResponseV1>;
   readonly cwd?: string;
+  readonly loadPreview?: import("../preview/ArtifactPreviewDrawer.js").ArtifactPreviewLoader;
   readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
   readonly onInvokeProtocolAction?: (
     item: Extract<ConversationTimelineItem, { kind: "protocolEvent" | "approval" }>,
@@ -141,7 +142,7 @@ function renderApprovalItem(item: ConversationTimelineItem, context: Conversatio
 }
 
 function renderImageItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "imageView" ? <ConversationTimelineImageRenderer key={item.id} item={item} cwd={context.cwd} depth={context.depth} /> : null;
+  return item.kind === "imageView" ? <ConversationTimelineImageRenderer key={item.id} item={item} cwd={context.cwd} loadPreview={context.loadPreview} depth={context.depth} /> : null;
 }
 
 function renderContextCompactionItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {

@@ -380,8 +380,8 @@ function useArtifactHoverPreview(input: {
   readonly leaveSource: () => void;
 } {
   const [preview, setPreview] = useState<HoverPreviewState | undefined>();
-  const showTimerRef = useRef<number | undefined>(undefined);
-  const hideTimerRef = useRef<number | undefined>(undefined);
+  const showTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | undefined>(undefined);
+  const hideTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | undefined>(undefined);
   const requestIdRef = useRef(0);
   const previewRef = useRef<HTMLElement | null>(null);
 

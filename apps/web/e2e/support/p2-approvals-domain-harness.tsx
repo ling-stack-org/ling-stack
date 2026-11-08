@@ -21,6 +21,11 @@ export function mountApprovalsDomainFixture(options: {
       if (options.failResolutionRefresh) throw new Error("Resolution refresh failed");
       setEvents(current => [...current, event]);
     } });
+    const resolvedApprovalIds = new Set(events.flatMap(event => {
+      if (event.type === "approval.resolved") return [event.approvalId];
+      if (event.type === "approval.recoveryChanged" && event.recoveryState === "completed") return [event.approvalId];
+      return [];
+    }));
     function refresh(workspaceCwd: string) {
       void domain.actions.refreshApprovals(workspaceCwd).finally(() => setCompletedLoads(current => current + 1));
     }
@@ -46,8 +51,8 @@ export function mountApprovalsDomainFixture(options: {
       <output aria-label="Approval error">{domain.state.approvalErrors.approval ?? ""}</output>
       <output aria-label="Completed decisions">{completed}</output>
       <output aria-label="Completed loads">{completedLoads}</output>
-      <output aria-label="Resolved events">{events.length}</output>
-      <output aria-label="Reconciliation pending">{String(events.some(event => event.type === "approval.resolved" && event.reconciliationPending))}</output>
+      <output aria-label="Resolved events">{resolvedApprovalIds.size}</output>
+      <output aria-label="Reconciliation pending">{String(events.some(event => event.type === "approval.recoveryChanged" && event.recoveryState !== "completed"))}</output>
       <output aria-label="Load error">{domain.error?.message ?? ""}</output>
     </>;
   }

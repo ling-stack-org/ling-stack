@@ -219,7 +219,7 @@ function TerminalReportFileReference({
   readonly onOpen?: (target: TerminalReportFileTarget) => void;
 }): React.JSX.Element {
   const tooltipId = useId();
-  const timerRef = useRef<number | undefined>(undefined);
+  const timerRef = useRef<ReturnType<typeof globalThis.setTimeout> | undefined>(undefined);
   const [tooltipVisible, setTooltipVisible] = useState(false);
   const fileName = terminalReportFileName(target.path);
   const fileIcon = terminalReportFileIcon(target.path);

@@ -50,8 +50,8 @@ async function fixture(t, payload = evidence()) {
   const runActualWorkspaceChain = runInNewContext(`(function(input) {
     const {cwd, selectedChannelId, daemonHealthy, selectedChannelWorkflows, selectedChannelWorkflowSteps,
       channelCollaborationCardRefreshSignature, committedTerminalReportItemRevisionSignature, channelConversationRefreshToken,
-      channelWorkflowsForDisplay, channelWorkflowStepsForDisplay, channelRuns, approvals, channelArtifactsByRunForDisplay,
-      channelExecutionActionsForDisplay, channelContextSegmentIdByItemId, t, terminalReportByWorkflowId} = input;
+      channelWorkflows, channelWorkflowSteps, channelRuns, approvals, channelArtifactsByRun,
+      channelExecutionActions, channelContextSegmentIdByItemId, t, terminalReportByWorkflowId} = input;
     ${declarations}
     return { workflowProgressByWorkflowId, conversationWorkCellByWorkflowId };
   })`, { useMemo: port.hooks.useMemo, useWorkflowIsolationEvidence: h.module.useWorkflowIsolationEvidence,
@@ -59,8 +59,8 @@ async function fixture(t, payload = evidence()) {
   const owner = workflow(), tasks = steps(owner);
   const input = { cwd: "/qa", selectedChannelId: owner.channelId, daemonHealthy: true, selectedChannelWorkflows: [owner], selectedChannelWorkflowSteps: tasks,
     channelCollaborationCardRefreshSignature: "initial", committedTerminalReportItemRevisionSignature: "", channelConversationRefreshToken: 0,
-    channelWorkflowsForDisplay: [owner], channelWorkflowStepsForDisplay: tasks, channelRuns: [], approvals: [], channelArtifactsByRunForDisplay: {},
-    channelExecutionActionsForDisplay: [], channelContextSegmentIdByItemId: new Map(), t: h.state.t, terminalReportByWorkflowId: new Map() };
+    channelWorkflows: [owner], channelWorkflowSteps: tasks, channelRuns: [], approvals: [], channelArtifactsByRun: {},
+    channelExecutionActions: [], channelContextSegmentIdByItemId: new Map(), t: h.state.t, terminalReportByWorkflowId: new Map() };
   t.after(() => port.unmount());
   function snapshot(chain) {
     const renderers = h.module.createChannelMessageRenderers({
@@ -136,7 +136,7 @@ test("actual reload/SSE consumer converges approved-not-applied→applying→app
 
 test("the real consumer does not hide retained integration evidence when the current step list is empty", async t => {
   const f = await fixture(t);
-  f.input.selectedChannelWorkflowSteps = []; f.input.channelWorkflowStepsForDisplay = [];
+  f.input.selectedChannelWorkflowSteps = []; f.input.channelWorkflowSteps = [];
   f.chain(); await f.port.flush();
   const chain = f.chain();
   assert(chain.conversationWorkCellByWorkflowId.has("workflow-qa"));
@@ -146,7 +146,7 @@ test("the real consumer does not hide retained integration evidence when the cur
 test("existing protocol component renders unconfirmed cancelled observations separately, including Chinese source catalog", async t => {
   const f = await fixture(t, evidence({ hostOperationPending: true }));
   f.state.locale = "zh-CN"; f.state.messages = zhCN;
-  f.input.channelWorkflowsForDisplay = [workflow({ status: "cancelled" })];
+  f.input.channelWorkflows = [workflow({ status: "cancelled" })];
   f.chain(); await f.port.flush();
   const chain = f.chain(), observation = f.snapshot(chain).items.find(item => item.id.endsWith(":observation"));
   const html = f.render(f.module.ConversationTimelineProtocolRenderer, { item: observation, depth: 0 });

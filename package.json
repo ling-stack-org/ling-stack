@@ -14,6 +14,9 @@
     "gstack:managed": "node scripts/gstack/run-managed.mjs",
     "build": "corepack pnpm --workspace-concurrency=1 -r build",
     "check:docs": "node scripts/check-markdown-links.mjs",
+    "assurance:offline": "node scripts/framework-assurance/index.mjs calibrate",
+    "assurance:sdk": "node scripts/framework-assurance/index.mjs sdk-consumer",
+    "test:assurance": "node --test scripts/framework-assurance/*.test.mjs",
     "check:i18n": "corepack pnpm --filter @ling-stack/localization test && corepack pnpm --filter @ling-stack/web check:i18n",
     "i18n:import-legacy": "corepack pnpm --filter @ling-stack/localization catalog:import-legacy",
     "i18n:translate": "corepack pnpm --filter @ling-stack/localization catalog:translate --",
@@ -60,6 +63,8 @@
       "brace-expansion@>=1.0.0 <1.1.21": "1.1.21",
       "brace-expansion@>=2.0.0 <2.1.7": "2.1.7",
       "brace-expansion@>=5.0.0 <5.0.12": "5.0.12",
+      "glob@11.1.0": "14.0.2",
+      "glob@13.0.6": "14.0.2",
       "body-parser@>=2.0.0 <2.4.0": "2.4.0",
       "dompurify@>=3.0.0 <3.4.17": "3.4.17",
       "fast-uri@>=3.0.0 <3.1.9": "3.1.9",
@@ -77,18 +82,19 @@
       "officeparser>pdfjs-dist": "6.2.108",
       "@earendil-works/pi-coding-agent>undici@>=8.0.0 <8.12.2": "8.12.2",
       "katex@>=0.11.0 <0.18.2": "0.19.0",
-      "exceljs>unzipper": "0.11.2"
+      "exceljs>unzipper": "0.11.2",
+      "minimatch@9.0.9": "11.0.1",
+      "minimatch@10.2.6": "11.0.1",
+      "zod@3.25.76": "4.6.7"
     },
     "patchedDependencies": {
       "http-cache-semantics@4.3.0": "patches/http-cache-semantics@4.3.0.patch",
       "braces@3.0.3": "patches/braces@3.0.3.patch",
+      "@expo/mcp-tunnel@0.2.4": "patches/@expo__mcp-tunnel@0.2.4.patch",
       "sprintf-js@1.0.3": "patches/sprintf-js@1.0.3.patch",
       "sprintf-js@1.1.3": "patches/sprintf-js@1.1.3.patch",
       "image-size@2.0.4": "patches/image-size@2.0.4.patch",
-      "minimatch@9.0.9": "patches/minimatch@9.0.9.patch",
-      "minimatch@10.2.6": "patches/minimatch@10.2.6.patch",
-      "glob@11.1.0": "patches/glob@11.1.0.patch",
-      "glob@13.0.6": "patches/glob@13.0.6.patch"
+      "@earendil-works/pi-coding-agent@1.4.0": "patches/@earendil-works__pi-coding-agent@1.4.0.patch"
     }
   }
 }

@@ -43,6 +43,8 @@ export interface ClaimNextRuntimeRunInput {
   readonly ownerId: string;
   readonly leaseMs: number;
   readonly now: string;
+  /** A trusted resource-release notification may immediately recheck deferred work. */
+  readonly ignoreRetryAt?: boolean;
   /** A synchronous caller may claim itself only if it is the next fair candidate. */
   readonly runId?: string;
 }

@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import test, { after, before } from "node:test";
 import { chromium } from "@playwright/test";
+import { jsonStringLiteralForGeneratedSource } from "./support/generated-source.mjs";
 
 // Regression: C03-STREAM-SCOPE — topic SSE must not mutate the parent viewport.
 // Found by /qa on 2026-10-25.
@@ -30,7 +31,7 @@ before(async () => {
       plugin.onResolve({ filter: /^\.\.\/api\.js$/ }, args => args.importer === controller
         ? { path: "fixture-api", namespace: "fixture" } : undefined);
       plugin.onLoad({ filter: /.*/, namespace: "fixture" }, () => ({
-        contents: apiNames.map(name => `export const ${name} = (...args) => window.qa.http(${JSON.stringify(name)}, ...args);`).join("\n"),
+        contents: apiNames.map(name => `export const ${name} = (...args) => window.qa.http(${jsonStringLiteralForGeneratedSource(name)}, ...args);`).join("\n"),
         resolveDir: webRoot, loader: "js",
       }));
     } }],

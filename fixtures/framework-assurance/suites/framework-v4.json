@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "ling-framework-assurance",
+  "suiteVersion": "4",
+  "description": "Three source-pinned tasks with synthetic correct, incorrect and missing-evidence controls. No live task, candidate-code execution, Provider call or historical-regression claim.",
+  "tasks": [
+    {
+      "taskId": "T01",
+      "taskVersion": "3",
+      "task": {
+        "path": "cases/T01/task.json",
+        "sha256": "9583e3c9c50aaa646d5fd2c7d80d6796c3e018144a0a8147d4a8a40cd876a9be",
+        "mediaType": "application/json"
+      }
+    },
+    {
+      "taskId": "T02",
+      "taskVersion": "3",
+      "task": {
+        "path": "cases/T02/task.json",
+        "sha256": "ac5a4f2245729545b3b838382a78c2ba5bb3aa739fa38850faed74a72b2c0180",
+        "mediaType": "application/json"
+      }
+    },
+    {
+      "taskId": "T03",
+      "taskVersion": "4",
+      "task": {
+        "path": "cases/T03/task.json",
+        "sha256": "625c40bf64bc77de7ab18440273c5f1297c6d5fd7ea4f6e27a86b6d834233646",
+        "mediaType": "application/json"
+      }
+    }
+  ]
+}

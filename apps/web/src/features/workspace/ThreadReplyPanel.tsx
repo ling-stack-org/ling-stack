@@ -10,6 +10,7 @@ import { useConversationReadingViewport } from "../../shared/conversation/blocks
 import { conversationReadingScope } from "../../shared/conversation/view-store/conversation-reading-storage.js";
 import { IconButton, Textarea } from "../../shared/ui/index.js";
 import { daemonBaseUrl, submitUserInputAnswer } from "../../api.js";
+import { loadPreviewContent } from "../../lib/previews.js";
 import type { ChannelMention, ChannelMessage, ConversationItemV1, ConversationReasoningSummaryRecord, MemoryObject, UsedMemoryEvent, UserInputTranscriptItemV1 } from "../../types.js";
 
 export function ThreadReplyPanel({
@@ -108,6 +109,7 @@ export function ThreadReplyPanel({
     }),
     depth: 0,
     cwd,
+    loadPreview: loadPreviewContent,
     onSubmitUserInputAnswer: (command) => submitUserInputAnswer(cwd, command),
     virtualScrollRef: reading.scrollRef,
     itemLocatorRef: reading.locatorRef,

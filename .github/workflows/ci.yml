@@ -94,7 +94,7 @@ jobs:
 
       - name: Restore timing hints once for the entire run
         if: steps.policy.outputs.execution-tier == 'complete' && steps.classify.outputs.mode != 'docs'
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .codex-artifacts/ci/timings.json
           key: ci-node-timings-v1-${{ github.run_id }}-${{ github.run_attempt }}
@@ -230,6 +230,62 @@ jobs:
 
       - name: Check patched dependency security regressions
         run: corepack pnpm check:dependency-security
+
+  framework-assurance:
+    name: Offline assurance and external SDK consumer
+    needs: scope
+    if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out frozen source history without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+          cache: pnpm
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Test offline assurance boundaries
+        run: node --test scripts/framework-assurance/*.test.mjs
+
+      - name: Calibrate frozen offline controls without a Provider
+        run: node scripts/framework-assurance/index.mjs calibrate --output "$RUNNER_TEMP/ling-framework-assurance/offline"
+
+      # This consumer owns fresh producer builds and tarballs; ci-dist is not evidence.
+      - name: Build pack and verify the real SDK outside the checkout
+        run: node scripts/framework-assurance/index.mjs sdk-consumer --output "$RUNNER_TEMP/ling-framework-assurance/sdk"
+
+      - name: Preserve assurance reports and command logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-framework-assurance
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/ling-framework-assurance/offline/*.json
+            ${{ runner.temp }}/ling-framework-assurance/offline/*.md
+            ${{ runner.temp }}/ling-framework-assurance/sdk/sdk-consumer.json
+            ${{ runner.temp }}/ling-framework-assurance/sdk/sdk-consumer-*/sdk-consumer-report.json
+            ${{ runner.temp }}/ling-framework-assurance/sdk/sdk-consumer-*/*.log
 
   build:
     name: Build selected package graph once
@@ -687,7 +743,7 @@ jobs:
 
   quality:
     name: Typecheck, unit tests, and Web build
-    needs: [scope, common-fast, dependency-policy, build, typecheck, unit-tests, daemon-tests, daemon-linux-contracts, restricted-command-macos]
+    needs: [scope, common-fast, dependency-policy, framework-assurance, build, typecheck, unit-tests, daemon-tests, daemon-linux-contracts, restricted-command-macos]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -710,6 +766,7 @@ jobs:
           SCOPE_RESULT: ${{ needs.scope.result }}
           COMMON_RESULT: ${{ needs.common-fast.result }}
           DEPENDENCY_RESULT: ${{ needs.dependency-policy.result }}
+          ASSURANCE_RESULT: ${{ needs.framework-assurance.result }}
           BUILD_RESULT: ${{ needs.build.result }}
           TYPECHECK_RESULT: ${{ needs.typecheck.result }}
           UNIT_RESULT: ${{ needs.unit-tests.result }}
@@ -757,3 +814,103 @@ jobs:
         with:
           path: .codex-artifacts/ci/timings.json
           key: ci-node-timings-v1-${{ github.run_id }}-${{ github.run_attempt }}
+
+  timing-telemetry:
+    name: CI timing telemetry
+    needs: [scope, quality]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    continue-on-error: true
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out timing telemetry without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+
+      - name: Download available shard reports including failures
+        if: always() && needs.scope.outputs.execution-tier == 'complete' && (needs.scope.outputs.daemon == 'true' || contains(needs.scope.outputs.test-packages, '"@ling-stack/core"'))
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: ci-test-report-*
+          merge-multiple: true
+          path: .codex-artifacts/ci/reports
+
+      - name: Collect workflow timing metadata
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          set +e
+          mkdir -p .codex-artifacts/ci
+          run_status=0
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > .codex-artifacts/ci/telemetry-run.json || run_status=$?
+          if [ "$run_status" -ne 0 ]; then
+            printf '{"telemetry_unavailable":true,"reason":"workflow run API request failed"}\n' > .codex-artifacts/ci/telemetry-run.json
+          fi
+          jobs_status=0
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" > .codex-artifacts/ci/telemetry-jobs-pages.json || jobs_status=$?
+          if [ "$jobs_status" -ne 0 ]; then
+            printf '{"telemetry_unavailable":true,"reason":"workflow jobs API request failed"}\n' > .codex-artifacts/ci/telemetry-jobs-pages.json
+          else
+            node --input-type=module <<'NODE'
+          import { readFile, writeFile } from "node:fs/promises";
+          const pages = JSON.parse(await readFile(".codex-artifacts/ci/telemetry-jobs-pages.json", "utf8"));
+          if (!Array.isArray(pages) || pages.some(page => !Array.isArray(page?.jobs))) throw new Error("Invalid jobs API pages");
+          const jobs = pages.flatMap(page => page.jobs);
+          await writeFile(".codex-artifacts/ci/telemetry-jobs.json", `${JSON.stringify({ jobs }, null, 2)}\n`);
+          NODE
+          fi
+          if [ ! -f .codex-artifacts/ci/telemetry-jobs.json ]; then
+            printf '{"jobs":[],"telemetry_unavailable":true}\n' > .codex-artifacts/ci/telemetry-jobs.json
+          fi
+          exit 0
+
+      - name: Render CI timing telemetry
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          node scripts/ci/ci-telemetry.mjs \
+            --run=.codex-artifacts/ci/telemetry-run.json \
+            --jobs=.codex-artifacts/ci/telemetry-jobs.json \
+            --reports-dir=.codex-artifacts/ci/reports \
+            --output=.codex-artifacts/ci/ci-telemetry.json \
+            --summary=.codex-artifacts/ci/ci-telemetry.md
+          telemetry_status=$?
+          if [ "$telemetry_status" -ne 0 ]; then
+            printf '{"version":1,"telemetryUnavailable":true}\n' > .codex-artifacts/ci/ci-telemetry.json
+            printf '## CI timing telemetry\n\nTelemetry was unavailable; this did not affect the quality gate.\n' > .codex-artifacts/ci/ci-telemetry.md
+            echo "Warning: CI timing telemetry was unavailable" >&2
+          fi
+          cat .codex-artifacts/ci/ci-telemetry.md >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: Preserve CI timing telemetry
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-telemetry
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            .codex-artifacts/ci/ci-telemetry.json
+            .codex-artifacts/ci/ci-telemetry.md
+            .codex-artifacts/ci/telemetry-run.json
+            .codex-artifacts/ci/telemetry-jobs.json

@@ -25,7 +25,7 @@ function runQuality(overrides = {}) {
     encoding: "utf8",
     env: { ...process.env, EXECUTION_TIER: "complete", SCOPE_MODE: "full",
       SCOPE_RESULT: "success", COMMON_RESULT: "success",
-      DEPENDENCY_RESULT: "success", BUILD_RESULT: "success", TYPECHECK_RESULT: "success",
+      DEPENDENCY_RESULT: "success", ASSURANCE_RESULT: "success", BUILD_RESULT: "success", TYPECHECK_RESULT: "success",
       UNIT_RESULT: "success", DAEMON_RESULT: "success", LINUX_CONTRACT_RESULT: "success",
       MACOS_NATIVE_RESULT: "success", DAEMON_SELECTED: "true", DEPENDENCY_SELECTED: "true",
       TYPECHECK_SELECTED: "true", UNIT_SELECTED: "true", ...overrides },
@@ -88,7 +88,7 @@ test("workflow quality gate keeps a Draft full scope deferred after common check
   assert.match(quality, /EXECUTION_TIER: \$\{\{ needs\.scope\.outputs\.execution-tier \}\}/u);
   assert.match(quality, /SCOPE_MODE: \$\{\{ needs\.scope\.outputs\.mode \}\}/u);
   const check = runQuality({ EXECUTION_TIER: "preview", SCOPE_MODE: "full",
-    DEPENDENCY_RESULT: "skipped", BUILD_RESULT: "skipped", TYPECHECK_RESULT: "skipped",
+    DEPENDENCY_RESULT: "skipped", ASSURANCE_RESULT: "skipped", BUILD_RESULT: "skipped", TYPECHECK_RESULT: "skipped",
     UNIT_RESULT: "skipped", DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped",
     MACOS_NATIVE_RESULT: "skipped" });
   assert.equal(check.status, 1, check.stderr);

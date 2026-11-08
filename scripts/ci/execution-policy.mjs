@@ -4,7 +4,8 @@ import { pathToFileURL } from "node:url";
 
 const EXECUTION_TIERS = new Set(["complete", "preview", "ignore"]);
 const SCOPE_MODES = new Set(["docs", "affected", "full"]);
-const LANES = ["SCOPE", "COMMON", "DEPENDENCY", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
+const LANES = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
+const PRODUCT_LANES = ["ASSURANCE", "BUILD"];
 const SELECTOR_LANES = {
   dependency: ["DEPENDENCY"],
   typecheck: ["TYPECHECK"],
@@ -74,7 +75,7 @@ export function assertCiResults({ tier, mode, dependency, typecheck, unit, daemo
 
   const required = new Set(["SCOPE", "COMMON"]);
   if (tier === "complete") {
-    if (mode !== "docs") required.add("BUILD");
+    if (mode !== "docs") for (const lane of PRODUCT_LANES) required.add(lane);
     for (const [selector, lanes] of Object.entries(SELECTOR_LANES)) {
       if (selectors[selector]) for (const lane of lanes) required.add(lane);
     }

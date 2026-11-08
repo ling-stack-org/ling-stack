@@ -135,12 +135,78 @@ for (const missedRunPolicy of ["skip", "run_one"]) {
     t.mock.timers.setTime(START_MS + 4 * THIRTY_DAYS_MS);
     assert.equal(f.runner.runs.length, 0);
     pending.callback();
-    await assertCompletedSlot(f, due);
+    await f.scheduler.waitForIdle();
+    if (missedRunPolicy === "skip") {
+      assert.equal(f.runner.runs.length, 0, "skip must advance a stale wake without dispatch");
+      assert.equal(f.store.listAutomationRuns().length, 0);
+    } else {
+      await assertCompletedSlot(f, due);
+    }
     const next = f.store.getAutomationDefinition(f.automation.id).nextRunAt;
     assert.equal(next, new Date(START_MS + 5 * THIRTY_DAYS_MS).toISOString());
+    if (missedRunPolicy === "run_one") {
+      pending.callback();
+      await f.scheduler.waitForIdle();
+      assert.equal(f.runner.runs.length, 1, "a delivered stale timer cannot replay its slot");
+    }
+  });
+}
+
+for (const missedRunPolicy of ["skip", "run_one"]) {
+  test(`sleep/wake late timer honors ${missedRunPolicy} without burst backfill`, async (t) => {
+    const f = await schedulerFixture(t, 1000, missedRunPolicy);
+    f.scheduler.start(f.cwd);
+    const due = new Date(START_MS + 1000).toISOString();
+    const pending = f.timers.last();
+    t.mock.timers.setTime(START_MS + 120_000);
     pending.callback();
     await f.scheduler.waitForIdle();
-    assert.equal(f.runner.runs.length, 1, "a delivered stale timer cannot replay its slot");
+    if (missedRunPolicy === "skip") {
+      assert.equal(f.runner.runs.length, 0);
+      assert.equal(f.store.listAutomationRuns().length, 0);
+    } else {
+      assert.equal(f.runner.runs.length, 1);
+      assert.equal(f.store.listAutomationRuns()[0].scheduledFor, due);
+    }
+    assert.equal(f.store.getAutomationDefinition(f.automation.id).nextRunAt, new Date(START_MS + 121_000).toISOString());
+  });
+}
+
+test("scheduler disables a COUNT=1 automation after its terminal run", async (t) => {
+  const f = await schedulerFixture(t, 1000);
+  f.store.updateAutomationDefinition(f.automation.id, {
+    trigger: { type: "schedule", timezone: "UTC", schedule: { cadence: "daily", timeOfDay: "01:00" }, missedRunPolicy: "skip" },
+    rrule: "FREQ=DAILY;BYHOUR=1;BYMINUTE=0;BYSECOND=0;COUNT=1",
+  }, new Date().toISOString());
+  f.scheduler.start(f.cwd);
+  const due = new Date(START_MS + 60 * 60 * 1000).toISOString();
+  assert.equal(f.store.getAutomationDefinition(f.automation.id).nextRunAt, due);
+  t.mock.timers.tick(60 * 60 * 1000);
+  await f.scheduler.waitForIdle();
+  const completed = f.store.getAutomationDefinition(f.automation.id);
+  assert.equal(f.runner.runs.length, 1);
+  assert.equal(completed.status, "disabled");
+  assert.equal(completed.nextRunAt, undefined);
+});
+
+for (const missedRunPolicy of ["skip", "run_one"]) {
+  test(`scheduler restart applies ${missedRunPolicy} to a persisted stale due slot`, async (t) => {
+    const f = await schedulerFixture(t, 1000, missedRunPolicy);
+    const staleDue = new Date(START_MS - 1000).toISOString();
+    f.store.updateAutomationDefinition(f.automation.id, { nextRunAt: staleDue }, new Date().toISOString());
+    f.scheduler.start(f.cwd);
+    if (missedRunPolicy === "skip") {
+      assert.equal(f.store.getAutomationDefinition(f.automation.id).nextRunAt, new Date(START_MS + 1000).toISOString());
+      assert.equal(f.timers.last().delay, 1000);
+      assert.equal(f.runner.runs.length, 0);
+      return;
+    }
+    assert.equal(f.store.getAutomationDefinition(f.automation.id).nextRunAt, staleDue);
+    assert.equal(f.timers.last().delay, 1);
+    f.timers.last().callback();
+    await f.scheduler.waitForIdle();
+    assert.equal(f.runner.runs.length, 1);
+    assert.notEqual(f.store.getAutomationDefinition(f.automation.id).nextRunAt, staleDue);
   });
 }
 

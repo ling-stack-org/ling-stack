@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "profileId": "ling-assurance-t01",
+  "profileVersion": "1",
+  "mode": "offline_control_only",
+  "checks": [
+    "The frozen source module and containsJson symbol are identified.",
+    "Array rules retain index/prefix semantics; the grader does not implement unordered set matching."
+  ]
+}
