@@ -3,12 +3,28 @@ import { BookOpen, RefreshCw, Save } from "lucide-react";
 import { getSkillCandidate } from "../../../api.js";
 import { useI18n } from "../../../i18n.js";
 import type { LearningReviewJob, SkillCandidate } from "../../../types.js";
-import { Button, Field, InlineFeedback, Select, Textarea } from "../../ui/index.js";
+import { Button, Field, IconButton, InlineFeedback, Popover, PopoverContent, PopoverTrigger, Select, Textarea } from "../../ui/index.js";
 import { useLearningReviews } from "./useLearningReviews.js";
 import { LearningMemoryCandidate } from "./LearningMemoryCandidate.js";
 import { MemoryRetrievalSettings } from "./MemoryRetrievalSettings.js";
 import { MemoryWikiDisclosure } from "./MemoryWikiBrowser.js";
 import "./learning-review.css";
+
+export function LearningReviewAction({ cwd, runId }: { readonly cwd: string; readonly runId: string }): React.JSX.Element {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  return <Popover open={open} onOpenChange={setOpen}>
+    <span className="message-action-bar message-action-bar-hover-focus learning-review-action"
+      data-state={open ? "open" : "closed"} data-learning-review-run-id={runId}>
+      <PopoverTrigger asChild>
+        <IconButton className={`message-action-bar-action${open ? " selected" : ""}`} icon={BookOpen} label={t("Experience review")} />
+      </PopoverTrigger>
+    </span>
+    <PopoverContent className="learning-review-popover" size="content" side="top" aria-label={t("Experience review")}>
+      {open ? <LearningReviewPanel cwd={cwd} runId={runId} /> : null}
+    </PopoverContent>
+  </Popover>;
+}
 
 /** Closed conversation disclosures perform no reads and render no empty result cards. */
 export function LearningReviewDisclosure(props: { readonly cwd: string; readonly runId?: string; readonly decisionId?: string;

@@ -31,13 +31,15 @@ test("repair planning retries require an unstarted ready successor or an exact m
 });
 
 test("only a confirmed drained candidate-only text conflict exposes repair, including retained predecessor discovery", () => {
-  for (const status of ["running", "blocked", "failed"]) {
-    const owner = workflow({ status }), r = conflict(), observation = observed(evidence({ rounds: [r] }));
-    assert.equal(workflowConflictRecoveryRound(owner, observation), r);
-    const projection = buildWorkflowIsolationPresentation({ workflow: owner, observation, t });
-    assert.deepEqual(projection.items[1].availableActions, ["recover_workflow_conflict"]);
-    assert.equal(projection.items[1].revision, r.revision);
-    assert(projection.items[1].sourceRefs.some(ref => ref.kind === "workflow_integration_round" && ref.id === `${r.roundId}:${r.generation}`));
+  for (const maxConcurrentSteps of [2, 3, 4]) {
+    for (const status of ["running", "blocked", "failed"]) {
+      const owner = workflow({ status }), r = conflict({ maxConcurrentSteps }), observation = observed(evidence({ rounds: [r] }));
+      assert.equal(workflowConflictRecoveryRound(owner, observation), r);
+      const projection = buildWorkflowIsolationPresentation({ workflow: owner, observation, t });
+      assert.deepEqual(projection.items[1].availableActions, ["recover_workflow_conflict"]);
+      assert.equal(projection.items[1].revision, r.revision);
+      assert(projection.items[1].sourceRefs.some(ref => ref.kind === "workflow_integration_round" && ref.id === `${r.roundId}:${r.generation}`));
+    }
   }
 });
 
@@ -47,7 +49,7 @@ test("stale, unknown, multi-round, applied, approval-bearing and non-text confli
     observed(evidence({ rounds: [conflict()] }), { status: "loading" }), observed(evidence({ schemaVersion: 2, rounds: [conflict()] })),
     observed(evidence({ status: "unavailable", rounds: [conflict()] })), observed(evidence({ hostOperationPending: true, rounds: [conflict()] })),
     observed(evidence({ gitEffects: "unconfirmed", rounds: [conflict()] })), observed(evidence({ rounds: [conflict(), conflict({ generation: 2 })] })),
-    ...[{ phase: "blocked" }, { mode: "apply_to_target" }, { maxConcurrentSteps: 3 }, { reasonCode: "workflow_integration.repository_changed" },
+    ...[{ phase: "blocked" }, { mode: "apply_to_target" }, { maxConcurrentSteps: 1 }, { maxConcurrentSteps: 5 }, { reasonCode: "workflow_integration.repository_changed" },
       { candidate: { commit: "a", tree: "b" } }, { approval: { approvalId: "approval", status: "denied" } },
       { application: { status: "effect_unknown" } }, { application: { status: "pending" } }, { application: { status: "applied" } },
       { effects: [{ id: "effect", status: "blocked", kind: "integrate_branch", artifactIds: [] }] },

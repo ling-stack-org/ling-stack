@@ -17,7 +17,6 @@ import {
 } from "../../shared/components/index.js";
 import {
   ConversationAttachmentStrip,
-  mountConversationTimeline,
   ConversationGeneratedMediaBlock,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
@@ -42,6 +41,7 @@ import { conversationTimelineItemsForModel } from "../../lib/conversation-work-c
 import { formatBytes } from "./teammate-workspace-utils.js";
 import type { TeammatePrivateMessageController } from "./useTeammatePrivateMessageController.js";
 import { buildSurfaceTimelineSnapshot } from "../../domains/conversations/timeline-snapshot.js";
+import { mountConversationRunFeedbackTimeline } from "../../domains/conversations/ConversationRunFeedbackTimeline.js";
 import { requestTimelineWorkspaceFileOpen } from "../../shared/conversation/timeline/workspace-file-capability.js";
 import { timelineMessageChromeOwnerIds } from "../../shared/conversation/timeline/timeline-message-chrome-owners.js";
 import {
@@ -449,7 +449,7 @@ export function TeammatePrivateChatFeed({
         timelineId={`timeline:${timelineSnapshot.scope.threadId || "unbound"}`}
         onScroll={onPrivateFeedScroll}
         onUserScrollIntent={onCancelPrivateFeedAutoFollow}
-        timelineNode={mountConversationTimeline({
+        timelineNode={mountConversationRunFeedbackTimeline({
             renderUserInputAvatar: (item) => item.kind === "userInputAnswer"
               ? <UserProfileAvatar profile={userProfile} fallbackLabel={localUserDisplayName} />
               : item.participantId === teammate.id ? <TeammateAvatarView teammate={teammate} cwd={cwd} compact /> : undefined,

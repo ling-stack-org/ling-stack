@@ -272,6 +272,12 @@
   white-space: nowrap;
 }
 
+.conversation-timeline-activity[data-conversation-diagnostic-code="run_feedback"] .conversation-timeline-activity-copy strong {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .conversation-timeline-protocol-actions {
   display: flex;
   flex-wrap: wrap;

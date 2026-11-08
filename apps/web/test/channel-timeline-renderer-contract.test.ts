@@ -59,18 +59,21 @@ test("channel pending rows rebase turn-local offsets exactly once after feed ind
   assert.equal(pendingReplyOffset, "999_999");
   assert.equal((renderer.match(/threadSequence:\s*sequence \+ item\.threadSequence/gu) ?? []).length, 1);
 
-  const rebase = (feedIndex, turnLocalOffset) => feedIndex * 1_000_000 + turnLocalOffset;
-  const pendingSendOrder = [
+  const rebase = (feedIndex: number, turnLocalOffset: number) => feedIndex * 1_000_000 + turnLocalOffset;
+  const pendingSendPositions: [string, number][] = [
     ["pending-user", rebase(2, Number(pendingUserOffset))],
     ["pending-agent", rebase(2, Number(pendingAgentOffset))],
     ["next-durable", rebase(3, 0)],
-  ].sort((left, right) => left[1] - right[1]).map(([id]) => id);
+  ];
+  const pendingSendOrder = pendingSendPositions.sort((left, right) => left[1] - right[1]).map(([id]) => id);
   assert.deepEqual(pendingSendOrder, ["pending-user", "pending-agent", "next-durable"]);
 
-  const pendingReplyOrder = [
+  assert.ok(pendingReplyOffset);
+  const pendingReplyPositions: [string, number][] = [
     ["turn-pending-reply", rebase(1, Number(pendingReplyOffset.replaceAll("_", "")))],
     ["next-durable", rebase(2, 0)],
-  ].sort((left, right) => left[1] - right[1]).map(([id]) => id);
+  ];
+  const pendingReplyOrder = pendingReplyPositions.sort((left, right) => left[1] - right[1]).map(([id]) => id);
   assert.deepEqual(pendingReplyOrder, ["turn-pending-reply", "next-durable"]);
 });
 
@@ -90,7 +93,7 @@ test("protocol activity actions remain shell controls outside the fact renderer"
   assert.doesNotMatch(source, /renderFactActions/);
   assert.doesNotMatch(source, /data-channel-protocol-activity-controls/);
   assert.doesNotMatch(source, /activityActionRow/);
-  assert.match(source, /mountConversationTimeline/);
+  assert.match(source, /mountConversationRunFeedbackTimeline/);
 });
 
 test("protocol activity requires a real selected LingThread id", async () => {
@@ -107,14 +110,17 @@ test("normal and private surfaces each own exactly one Timeline mount", async ()
     readFile(normalFeedSourceUrl, "utf8"),
     readFile(privateFeedSourceUrl, "utf8"),
   ]);
-  assert.equal((normal.match(/mountConversationTimeline\(/gu) ?? []).length, 1);
-  assert.equal((privateFeed.match(/mountConversationTimeline\(/gu) ?? []).length, 1);
-  assert.match(privateFeed, /timelineNode=\{mountConversationTimeline/);
+  assert.equal((normal.match(/mountConversationRunFeedbackTimeline\(/gu) ?? []).length, 1);
+  assert.equal((privateFeed.match(/mountConversationRunFeedbackTimeline\(/gu) ?? []).length, 1);
+  assert.match(privateFeed, /timelineNode=\{mountConversationRunFeedbackTimeline/);
+  const adapter = await readFile(new URL("../src/domains/conversations/ConversationRunFeedbackTimeline.tsx", import.meta.url), "utf8");
+  assert.equal((adapter.match(/mountConversationTimeline\(/gu) ?? []).length, 1);
+  assert.doesNotMatch(adapter, /<ConversationTimeline\b|useVirtualizer|ConversationVirtualFeed/);
   for (const surface of [normal, privateFeed]) {
     assert.match(surface, /<ConversationTimelineFeed/);
     assert.doesNotMatch(surface, /useVirtualizer|ConversationVirtualFeed|renderVirtualRow/);
   }
-  assert.doesNotMatch(privateFeed, /renderItem=\{\(\) => mountConversationTimeline/);
+  assert.doesNotMatch(privateFeed, /renderItem=\{\(\) => mountConversationRunFeedbackTimeline/);
   assert.doesNotMatch(privateFeed, /private:\$\{teammate\.id\}/u);
   assert.match(normal, /onDisclosureIntent:\s*pauseTimelineAutoFollow/);
   assert.match(privateFeed, /onDisclosureIntent:\s*onCancelPrivateFeedAutoFollow/);
@@ -154,7 +160,7 @@ test("private Timeline delegates canonical merging instead of rebasing message-l
 
 test("topic replies use the shared Timeline with the resolved LingThread scope", async () => {
   const source = await readFile(topicPanelSourceUrl, "utf8");
-  assert.equal((source.match(/mountConversationTimeline\(/gu) ?? []).length, 1);
+  assert.equal((source.match(/mountConversationRunFeedbackTimeline\(/gu) ?? []).length, 1);
   assert.match(source, /buildSurfaceTimelineSnapshot/);
   assert.match(source, /surface:\s*"topic_reply"/);
   assert.match(source, /threadId,/);

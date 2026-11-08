@@ -30,24 +30,32 @@ export function ConversationTimelineTerminalReportRenderer({
   const presentation = terminalReportFinalPresentation(inputItem, hasNarration);
   const { item, summary, needsAttention } = presentation;
   if (!presentation.visible) return null;
+  // Prefer primary lineage; channel adapters retain source identity in outcome refs.
+  const reportSourceRefs = item.sourceRefs.some((ref) => ref.kind === "run" || ref.kind === "turn")
+    ? item.sourceRefs : [...item.sourceRefs, ...(item.outcomeSourceRefs ?? [])];
+  const isWorkflowReport = reportSourceRefs
+    .some((ref) => ref.kind === "workflow" || ref.kind === "channel_workflow");
   const hasDetail = presentation.corrections.length > 0 || presentation.verification.length > 0 ||
     presentation.participants.length > 0 || presentation.artifacts.length > 0 || presentation.risks.length > 0;
+  const showSupplement = !isWorkflowReport || needsAttention || presentation.corrections.length > 0;
+  const showStatus = presentation.showStatus && (showSupplement || !summary && !hasNarration);
+  if (!summary && !showStatus) return null;
   return (
     <div className="conversation-timeline-terminal-response" data-conversation-terminal-response={item.reportId}
-      data-conversation-timeline-kind={!presentation.showStatus ? item.kind : undefined}
-      data-conversation-timeline-renderer-key={!presentation.showStatus ? conversationTimelineRendererKey(item.kind) : undefined}
-      data-conversation-timeline-id={!presentation.showStatus ? item.id : undefined}
-      data-conversation-timeline-item-id={!presentation.showStatus ? item.id : undefined}
-      data-conversation-timeline-revision={!presentation.showStatus ? item.revision : undefined}
-      data-conversation-timeline-thread-sequence={!presentation.showStatus ? item.threadSequence : undefined}
-      data-conversation-timeline-part-index={!presentation.showStatus ? item.partIndex : undefined}
-      data-conversation-turn-id={!presentation.showStatus ? item.turnId : undefined}
-      data-conversation-run-id={!presentation.showStatus ? item.runId : undefined}
-      data-conversation-attempt-id={!presentation.showStatus ? item.attemptId : undefined}
-      data-conversation-participant-id={!presentation.showStatus ? item.participantId : undefined}
-      data-conversation-workflow-step-id={!presentation.showStatus ? item.workflowStepId : undefined}
-      data-conversation-timeline-status={!presentation.showStatus ? item.status : undefined}
-      data-conversation-timeline-depth={!presentation.showStatus ? depth : undefined}>
+      data-conversation-timeline-kind={!showStatus ? item.kind : undefined}
+      data-conversation-timeline-renderer-key={!showStatus ? conversationTimelineRendererKey(item.kind) : undefined}
+      data-conversation-timeline-id={!showStatus ? item.id : undefined}
+      data-conversation-timeline-item-id={!showStatus ? item.id : undefined}
+      data-conversation-timeline-revision={!showStatus ? item.revision : undefined}
+      data-conversation-timeline-thread-sequence={!showStatus ? item.threadSequence : undefined}
+      data-conversation-timeline-part-index={!showStatus ? item.partIndex : undefined}
+      data-conversation-turn-id={!showStatus ? item.turnId : undefined}
+      data-conversation-run-id={!showStatus ? item.runId : undefined}
+      data-conversation-attempt-id={!showStatus ? item.attemptId : undefined}
+      data-conversation-participant-id={!showStatus ? item.participantId : undefined}
+      data-conversation-workflow-step-id={!showStatus ? item.workflowStepId : undefined}
+      data-conversation-timeline-status={!showStatus ? item.status : undefined}
+      data-conversation-timeline-depth={!showStatus ? depth : undefined}>
       {summary ? (
         <MessageBodyRenderer
           className="conversation-timeline-result-summary"
@@ -56,16 +64,16 @@ export function ConversationTimelineTerminalReportRenderer({
           compact={false}
         />
       ) : null}
-      {presentation.showStatus ? <TimelineFactRow
+      {showStatus ? <TimelineFactRow
         item={item}
         depth={depth}
         title={presentation.statusLabel}
         compact
-        defaultExpanded
+        defaultExpanded={showSupplement}
         statusLabel=""
         meta=""
         icon={needsAttention ? <CircleAlert size={14} aria-hidden="true" /> : item.status === "succeeded" ? <CheckCircle2 size={14} aria-hidden="true" /> : <FileCheck2 size={14} aria-hidden="true" />}
-        detail={hasDetail ? <TerminalReportResultSupplement presentation={presentation} cwd={cwd} onOpenSourceRef={onOpenSourceRef} /> : undefined}
+        detail={showSupplement && hasDetail ? <TerminalReportResultSupplement presentation={presentation} cwd={cwd} onOpenSourceRef={onOpenSourceRef} /> : undefined}
       /> : null}
     </div>
   );

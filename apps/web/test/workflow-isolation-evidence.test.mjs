@@ -56,6 +56,7 @@ test("only the latest confirmed pending merge exposes the existing approval deta
   const owner = workflow({ status: "running" });
   const project = (observation, workflowOverride = owner) => buildWorkflowIsolationPresentation({ workflow: workflowOverride, observation, t });
   const pending = project(observed(evidence({ rounds: [round()] })));
+  assert.equal(pending.items[0].approvalId, "approval-qa");
   assert.equal(pending.items[1].approvalId, "approval-qa");
   assert.deepEqual(pending.items[1].availableActions, ["open_approval"]);
   const generations = project(observed(evidence({ rounds: [round(), round({ generation: 2 })] })));
@@ -70,6 +71,14 @@ test("only the latest confirmed pending merge exposes the existing approval deta
   for (const status of ["cancelled", "failed"]) {
     assert.equal(project(observed(evidence()), workflow({ status })).items[1].availableActions, undefined);
   }
+});
+
+test("the existing Composer approval gate owns both pending integration projections", () => {
+  const model = buildWorkflowProgressModel(progressInput({ isolationEvidence: observed(evidence()) }));
+  const cell = workflowProgressToConversationWorkCell(model);
+  const visible = conversationTimelineItemsForModel(cell, "approval-qa");
+  assert.equal(visible.some(item => item.id.startsWith("workflow-isolation:")), false);
+  assert.equal(visible.filter(item => item.kind === "subAgentActivity").length, 2);
 });
 
 test("cancelled lifecycle and unconfirmed effects are independent, including Host drain after confirmed journals", () => {

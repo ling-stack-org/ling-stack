@@ -1,9 +1,10 @@
 import type { WorkflowGraphReadModel } from "@ling-stack/conversation-ui-core";
 
-export const workflowGraphNodeSize = Object.freeze({ width: 240, height: 112 });
+export const workflowGraphNodeSize = Object.freeze({ width: 216, height: 96 });
+export const workflowGraphNarrowNodeSize = Object.freeze({ width: 144, height: 84 });
 
 /** Layout only. Dependencies and lifecycle have already been projected by the shared model. */
-export function layoutWorkflowGraph(model: WorkflowGraphReadModel): ReadonlyMap<string, { x: number; y: number }> {
+export function layoutWorkflowGraph(model: WorkflowGraphReadModel, narrow = false): ReadonlyMap<string, { x: number; y: number }> {
   const rank = new Map(model.nodes.map(node => [node.id, 0]));
   const incoming = new Map(model.nodes.map(node => [node.id, 0]));
   const outgoing = new Map<string, string[]>();
@@ -20,11 +21,17 @@ export function layoutWorkflowGraph(model: WorkflowGraphReadModel): ReadonlyMap<
       if (incoming.get(target) === 0) ready.push(target);
     }
   }
+  const columnSizes = new Map<number, number>();
+  for (const column of rank.values()) columnSizes.set(column, (columnSizes.get(column) ?? 0) + 1);
+  const maxRows = Math.max(0, ...columnSizes.values());
   const rows = new Map<number, number>();
   return new Map(model.nodes.map(node => {
     const column = rank.get(node.id)!;
     const row = rows.get(column) ?? 0;
     rows.set(column, row + 1);
-    return [node.id, { x: column * (workflowGraphNodeSize.width + 72), y: row * (workflowGraphNodeSize.height + 28) }];
+    const offset = (maxRows - columnSizes.get(column)!) / 2;
+    return [node.id, narrow
+      ? { x: (row + offset) * (workflowGraphNarrowNodeSize.width + 32), y: column * (workflowGraphNarrowNodeSize.height + 40) }
+      : { x: column * (workflowGraphNodeSize.width + 80), y: (row + offset) * (workflowGraphNodeSize.height + 32) }];
   }));
 }

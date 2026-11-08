@@ -1,12 +1,12 @@
 # Ling 多 Agent 安全并发实施计划
 
-状态：P1/P2 执行路径、P3 本地联合可靠性、P4 模板创作和 P5 graph 均已有本地实现；
+状态：P1/P2 执行路径、P3 本地联合可靠性、P4 模板创作、P5 graph、B4 受控档位验收和 B5 Host 策略回读均已有本地实现；
 构建、冻结输入下的完整相关 package 回归与受控 Provider 的真实 daemon 浏览器链路通过。
 Web 冲突修复、共享 UI、语言目录和夹具另有增量回归与真实浏览器验收；完整冻结回归
 不覆盖其后新增的源码。Daemon 独立 dependency-security lane 已通过；真实 Provider、
 packaged、跨平台与 review/CI/merge 尚未完成，不满足发布门禁。
 Owner：Ling maintainers。
-最后核对：2026-11-03。
+最后核对：2026-11-08。
 文档类型：implementation plan；完成后将长期规则归入 owning contracts，不保留完成日志。
 权威设计：[总体设计](multi-agent-app-detailed-design.md)、
 [安全并发详细设计](ling-multi-agent-safe-concurrency-detailed-design.md)。
@@ -94,8 +94,8 @@ P3 当前实现与开启范围：
   candidate-only、待审批、已批准未应用、applied、冲突、取消与结果待确认；客户端有界轮询
   不签发执行权限。功能关闭禁止新准入，但保留已接受 round 的观察与收尾。
 
-当前验收入口：`workflow-isolated-parallel-integration.test.mjs` 验真实 Pi SDK/Host 的双分支
-文件写入、审批与 drain；`workflow-multibranch-integration.test.mjs` 验真实 Git/SQLite 的
+当前验收入口：`workflow-isolated-parallel-integration.test.mjs` 验真实 Pi SDK/Host 的 2/3/4
+档位分支文件写入、审批、fan-in、apply 与 drain；`workflow-multibranch-integration.test.mjs` 验真实 Git/SQLite 的
 merge/conflict/reopen；`workflow-repository-fence.test.mjs` 验跨 Store/process 竞争。
 这些 Provider transport 可控的集成测试不等于真实 Provider 或 packaged 客户端验收。
 
@@ -406,7 +406,11 @@ graph 不能创建节点或执行 effect；列表回退始终可用。视觉验�
 当前实现：`packages/conversation-ui-core/src/workflow-graph-*` 投影 accepted step 及真实
 依赖、branch/join、审批与有界 dynamic overlay；缺依赖、cycle、duplicate 或观察断连显示
 unknown，而不是伪造成功。Web 同 turn 展开区复用现有协议操作，graph/list 共享 step id
-和选择；`@xyflow/react` 按需加载，窄屏保留列表，断线后需 control-plane baseline 完成才
+和选择；Graph 行默认折叠，节点仅显示名称和状态，选择只高亮、不展示详情。成功完成时保留
+至多一条简洁的最终集成状态，不重复展示 observation 和正常完成报告；失败由原会话结果承接，
+审批复用原窗口，会话 workflow 行继续保留必要的推进、取消、重试、审批和冲突修复动作。
+`@xyflow/react` 按需加载，窄屏的 Graph
+与列表均可访问，断线后需 control-plane baseline 完成才
 恢复 current 状态。graph 只读，不新增执行 API。
 
 ## 10. 验证命令与证据分级
@@ -462,3 +466,212 @@ branch/owner，不跨数个大阶段堆积一个不可审查的 dirty worktree�
 记录，Daemon 独立 dependency-security lane 已通过；后续交付门禁仍包括目标真实
 Provider/Runner、packaged/平台验收及 review/CI/merge。不能把本地可运行实现或受控
 Provider 验收报成整体可发布，各门禁通过前保持普通写并发关闭。
+
+## 12. 并发预算与扩容
+
+目标：将首版固定档位推进为可配置、受控、可恢复的并发准入，不增加另一套 Agent
+runtime。契约见[详细设计第 5.6-5.10 节](ling-multi-agent-safe-concurrency-detailed-design.md#56-并发预算的作用域与配置)。
+P3 的真实 Provider、packaged 和平台门禁继续保留；补齐配置不代表这些门禁通过。
+
+### 交付顺序与状态
+
+| 单元 | 状态 | 交付物 | 依赖 |
+| --- | --- | --- | --- |
+| B0 | 已完成文档检查 | 作用域、配置、计数、冻结/变更、排队、扩容与会话边界 | 当前 P1-P5 本地实现 |
+| B1 | 已实现并通过定向回归 | 可信 `DaemonConfig.concurrency`、严格解析、不可变策略与默认关闭的显式启用状态 | B0 |
+| B2 | B2.1-B2.4 已接线并通过 Core/Daemon 定向回归 | 单 workspace 普通 Run/workflow/delegation 的总量、分类和 Provider/Runner 统一持久准入；首次 Pi 队列消费 | B1 |
+| B3 | B3.1-B3.4 已接线并通过 Core/Daemon 定向回归；完整真实执行链联合验收未完成 | 跨 workspace 的 Host 持久总容量、可恢复交接与跨进程竞争 | B2 |
+| B4 | 受控 Pi SDK/Host 的 2/3/4 档位联合验收通过；真实 Provider、packaged、跨平台与发布门禁待完成 | 按目标组合验证 2-4 隔离写档位，冻结实际额度，保持独立 merge approval | B2、B3 和 P3 目标组合门禁 |
+| B5 | 已实现并通过类型/构建回归 | 现有执行引擎设置只读回读可信 Host 并发策略；文本流、Composer 和折叠 Graph 不扩张 | B2；跨 workspace 声明依赖 B3 |
+
+B1 是配置契约，不接入前不得宣称限制已生效。默认总容量 4、只读 4、写入 2、
+Provider/Runner 各 4、隔离 sibling 2 是候选运行政策；其解析范围不是通过验收的规模。
+`concurrency.enabled` 默认 false，仅填写数字不启用新预算。可信 Host 显式设为 true 后，
+普通 Run、workflow 与 delegation 使用同一持久策略；首次队列消费、公平性和恢复已通过
+Core/Daemon 定向回归，但仍不默认推广。disabled 状态仍持久保留 revision，不借关闭策略释放
+原执行资源。
+公开隔离入口默认固定为 2；可信 Host 显式启用统一并发策略后，新的隔离轮次可使用配置的
+2-4 档位。未启用时不因填写数字而放开，已冻结轮次也不会随配置变化自动升级或降级。
+
+### B2 实施单元
+
+| 单元 | 状态 | 实现内容 | 完成条件 |
+| --- | --- | --- | --- |
+| B2.1 | 已实现并通过定向回归 | Core `acquireRuntimeSemaphoreSlots` 与普通 Run 共用入口 | 同一事务整组取得 Provider/Runner/Channel；满额无半组历史、无虚假 acquired 事件，重复准入不破坏原 owner |
+| B2.2 | 已实现并通过定向回归 | workspace 持久策略和统一计数 | 普通 Run、workflow preparing/transfer、approval resume、continuation 读取同一容量权威；当前额度独立于 frozen plan |
+| B2.3 | 已实现并通过定向回归 | dynamic delegation 预留与 spawn 门禁 | 在创建可等待 child 前原子核对父/祖先占位与剩余容量；不能把确定未派发的容量不足误标成 unknown dispatch |
+| B2.4 | 已接线并通过 Core/Daemon 定向回归 | 恢复、配置变更与首次 Pi 排队 | legacy owner、unknown、取消、跨 Store/process、降额及公平性矩阵已有定向证据；真实 Provider/packaged/跨平台门禁仍需完成 |
+
+`wait_agent` 目前只观察 child；不释放父 Run 的 Provider/Runner slots。child 的预算预留、
+Attempt claim、执行槽准入与 SDK ACK 是不同阶段。B2.3 必须保留这个区分：容量不足时
+不能先 claim 再留下不可重发的未知派发，也不能为腾出槽位释放仍有 effect 责任的父资源。
+
+### B2.4 实现与验收
+
+1. 首次队列的冻结输入：保存原 Run、WorkUnit、created Attempt、Provider/Runner 输入和
+   effective policy；核对 task/channel/participant 当前 authority，不使用 successor continuation
+   的创建入口。原 teammate 的 active/visible 检查独立于 skill/memory，在 Core 最终准入
+   事务和 SDK 前均执行；不因冻结输入保留而豁免撤权。migration 217 保存精确队列身份；
+   旧 queued Run 不回填权限。
+2. 持久 claim 与 dispatch gate：精确 fence、CAS revision、稳定入队顺序、等待原因和一次性
+   派发边界；claim 接管后旧 owner 不得释放接管者资源，unknown dispatch 不因 TTL 重派。
+3. workspace 仲裁与生命周期：跨 channel/workflow 轮转、组内 FIFO、冲突跳过且防止新请求
+   持续插队；Store 初始化、入队、资源实际释放和审批就绪唤醒，周期 tick 兜底。
+4. 冷启动与联合验收：Core 与 Supervisor recovery 保留精确首次队列 custody；duplicate tick、
+   取消/实际 drain、降额、旧 owner、跨 Store/process 与 fairness 通过后，才考虑默认启用。
+
+受控进程验收已覆盖 dispatch gate 提交而 SDK ACK 未知的边界：独立 SQLite 连接核对后
+强制终止执行子进程，重新建立 Registry、Supervisor、首次队列和 continuation recovery
+coordinator。正常时间与 claim/resource TTL 过期后均保留原 fence、队列事实和资源；
+不重派、不建 successor，独立组的两轮实际准入仍因原占位而排队。这不是完整 daemon
+server 启动或真实 Provider 验收，也不覆盖尚未接线的跨 workspace Host 总池。
+
+首次队列仅覆盖普通首次 Pi、明确 tools 数组、preset 或无 secret 匿名 inline；不覆盖
+workflow/delegation/continuation/native/automation。生产 daemon 注册与启动 coordinator，
+入队/资源实际释放唤醒、周期 tick 兜底，shutdown 先停准备再等待完整执行。每 Store 至少
+保留 4 个 preparing 位，可信总容量更大时随配置提高；它们在 `onRunReady` 后归还，不是
+执行并发上限。
+占位按每次独立 preparation 计数，同一 Run 的多代 claim 分别占位；旧 ready/finally
+仅能归还自己的位。归还准备位不提前结束对应执行的 shutdown/drain 跟踪。
+
+### B3 实施单元
+
+| 单元 | 状态 | 交付物与门禁 |
+| --- | --- | --- |
+| B3.1 | 已实现并通过 Core/Daemon 定向回归 | 用户 global SQLite 独立 schema、policy CAS、精确持久 reservation、无 TTL 回收与跨进程末位竞争；daemon composition 持有唯一 Host authority |
+| B3.2 | 已接线并通过 Core/Daemon 定向回归 | workspace intent/receipt/dispatch gate/release outbox；跨库交接不同时持有两个写事务 |
+| B3.3 | 已接线并通过 Core/Daemon 定向回归 | workflow preparing/transfer、delegation spawn/claim/successor、approval/continuation、native/automation 与 legacy owner 的容量接缝 |
+| B3.4 | 已接线并通过 Core/Daemon 定向回归；完整真实执行链联合验收未完成 | Host policy 冲突与变更、真实多 workspace 竞争、冷启动、取消、unknown、释放恢复和公平性 |
+
+B3 必须在同用户存储根的全局数据库中建立 Host 总池，不把 workspace 数据库或内存池
+冒充整机限制。交接顺序为 workspace durable intent、Host reserve、workspace receipt、
+一次性 dispatch gate；不同时持有两个数据库写事务。unknown 保留额度，释放依赖原 fence
+停止/effect 证据及持久 outbox。不同 `LING_STACK_HOME` 不自动属于同一共享预算域。
+
+首次 Pi 的 `dispatchRuntimeQueuedRun` 已消费 Host dispatch gate，不再只由独立 fixture
+手动消费。启用可信 `DaemonConfig.concurrency` 时，daemon composition 会在 canonical
+用户存储的 `global.sqlite` 安装 Host policy，queue claim 会执行 Host reserve/receipt，
+再由原子 dispatch gate 消费；已有 Host intent 时省略引用也拒绝。整组资源、Task/WorkUnit
+认领和两道 dispatch gate 原子提交。workspace 的 workflow、delegation、approval/continuation
+等容量接缝已有 Core/Daemon 定向回归；installation-global Host 的完整生产接线仍以首次
+普通 Pi queue 为边界，native/automation、legacy owner、真实 Provider、packaged 和跨平台
+联合验收未完成，不能宣称整体已达到发布门禁。
+
+Core 构造私有 binding 将可信 composition 的 workspace journal accessor 与公开 Store
+分离。构造失败或关闭即撤销 accessor、facade 与提取的方法；每个真实 workspace 与
+queue 共用 journal，不向 composition 暴露事务内 dispatch consumer。此边界只提供生产
+接线所需的窄接口，不自行安装 Host policy 或启动 reserve/SDK/drain 生命周期。
+
+### 当前验证记录
+
+2026-11-03，activation 增量之前：Core 与 Daemon `build:ci` 通过；配置、原子准入、
+容量与生命周期分别完成 113 项 Core、247 项 Core 和 278 项 Daemon 定向回归。
+追加 policy、delegation capacity 与相关迁移矩阵 417 项通过。以上为独立测试集合，
+有重叠，不相加作为唯一测试数量；不是全仓 checker、真实 Provider 或 packaged 验收。
+
+2026-11-04：Core 245 项与 Daemon 210 项联合定向回归通过，覆盖 activation、delegation、
+普通/continuation/approval、workflow admission 与 recovery。首次队列行为 53 项、
+coordinator 生命周期 13 项、真实 Pi SDK 与本地受控传输的集成 3 项通过；后者验证原
+Attempt 1 执行、冻结请求、资源释放唤醒、Store 重开和取消不进入 SDK。authority 撤销与
+接管边界仍在增量验收。以上集合有重叠，不相加成唯一测试数量；不代表外部真实 Provider、
+全仓 checker、packaged 或发布验收。B3.3/B3.4 已有 Core/Daemon 定向回归证据；B4 的完整
+目标组合联合验收与发布门禁仍未完成。B5 已接入执行引擎设置页的只读 Host 策略回读；它不提供
+workspace HTTP 写入口，也不改变默认关闭状态。
+
+2026-11-04，B3.2 Core dispatch gate 接线：首次 Pi 的 Host/queue 联合准入 33 项通过，
+包含在 Host store、身份、journal/bridge、迁移和 queue 的 417 项联合定向回归中。
+Daemon coordinator、Supervisor 和受控 Pi SDK 队列集成联合回归 41 项通过。
+Core 与 Daemon 的 `build:ci`、`typecheck:ci` 均通过；新增 TypeScript 测试纳入严格检查。
+验证覆盖两道 gate 与整组本地资源的原子提交、缺失或伪造凭证拒绝、跨进程竞争、
+失败回滚、Store 重开、unknown 保留和原执行 drain 后释放。生产 daemon 的 Host
+reserve/SDK 前复核/drain 已接入首次普通 Pi queue；其他执行链的完整真实联合验收仍未完成，
+不代表真实外部 Provider、全仓 checker、packaged、平台或发布验收。
+
+2026-11-04，首次队列 authority 与 preparation 边界：Core queue/Host queue 89 项通过；
+Daemon coordinator、Supervisor 与受控 Pi SDK 队列集成 48 项通过。无 skill/memory 的
+teammate 在排队后 paused、disabled 或 hidden 时，Core 不消费 gate、不取得资源，
+daemon 不进入 SDK，且独立组可继续执行。协调器覆盖同一 Run 的多代 claim、每代占位、
+旧 ready/finally 回调与完整执行 drain。Core 与 Daemon 的 `build:ci`、`typecheck:ci`
+均通过，最终 Daemon 构建和严格检查包含上述两项修复；测试集合有重叠，不相加计数。
+preflight 内部 await 接管、dispatched ACK 未知的完整冷启动，以及 channel/Runner/
+凭据撤权在此轮尚未覆盖，后续增量见下；不据此关闭 B2.4 或开放 Host 总池。
+
+2026-11-04，构造私有绑定与首次队列增量验收：绑定生命周期 13 项通过；Host store、
+身份、journal/bridge、迁移和 queue 联合定向回归 420 项通过；构造器清理的既有
+delegation/Office bridge 与 SQLite fixture 兼容回归 69 项通过。Daemon coordinator、
+Supervisor 与受控 Pi SDK 集成 56 项通过，包含 sandbox preflight await 期间 claim 接管，
+以及排队后的 channel、Runner、凭据、policy、仓库和 teammate authority 变更。
+Core 与 Daemon 的 `build:ci`、`typecheck:ci` 通过。脚本化凭据状态不等于真实系统
+Keychain 认证验收；测试集合有重叠，不相加计数，Host 总池当前仅保护首次普通 Pi queue。
+
+首次队列的真实子进程终止与冷恢复 2 项通过，覆盖正常时间与超 TTL。独立组的每轮
+claim/revision、持久 defer 与精确 409 busy 响应分别核对；该响应不是 Run 执行失败。
+原未知执行的 gate、fence、冻结输入、事件和资源不变，queue 与 continuation discovery
+均不重放原执行。最终 Daemon 严格检查包含该 TypeScript 用例与 helper。
+
+Graph 动效验收：共享 read model、会话渲染与 presentation 定向测试 48 项通过；
+Web 严格类型检查和 lint 通过，i18n 检查退出成功但报告 skill-source 文案缺少中文键。
+真实浏览器验证桌面双分支信号移动、完成/等待/失败/断连静止、reduced motion、390px
+纵向布局、节点完整可见与长标题不造成页面横向溢出。该页面使用受控状态 fixture，
+不代表真实外部 Provider、多 workspace 或 packaged 验收。
+
+2026-11-07，并发预算与 Host 恢复增量：Core workflow migration 310/310 通过；Core 并发、
+Host、queue、continuation 与 workflow admission 定向回归 907/907 通过；Daemon composition、
+Supervisor、queue、delegation、approval 与 continuation 定向回归 193/193 通过。覆盖配置激活、
+跨 Store/process 争用、恢复、unknown dispatch、取消、降额、公平性、Host intent/receipt/
+dispatch gate/release outbox 以及旧 schema 兼容。以上是定向回归集合，不等于全仓 checker、
+真实 Provider、packaged、跨平台或所有执行链的完整联合验收。
+
+同日并发档位接线后，Core `workflow-isolation-selection` 61/61、Daemon
+`workflow-isolation-planning` 26/26 通过；覆盖默认二档以及可信 Host 配置的 3/4 档规划、
+冻结和边界拒绝。
+
+2026-11-08，受控 Host 档位联合验收：`workflow-isolated-parallel-integration.test.mjs`
+在 macOS 真实 Pi SDK/Host 链路上按 2、3、4 个 sibling 分别通过。每档均核对独立
+Run/Attempt、worktree/bound-path、Provider/Runner 与 workflow slots、文件写入审批、
+父 fence、固定 merge 顺序、candidate-only 目标不变、单次 merge approval、实际 apply、
+terminal/drain 及资源释放；普通 writer 拒绝和 Host 策略关闭边界也保留。该证据只覆盖
+本地受控 Provider transport，不等于外部真实 Provider、packaged、跨平台或 review/CI/merge
+发布门禁已通过。
+
+### 代码责任与实现约束
+
+- B1：daemon `config.ts` 与专用 `runtime/concurrency-policy.ts` 捕获可信启动值；
+  不新增模型/模板字段、环境变量、HTTP 热更新入口或权限扩张。
+- B2：沿用 Core admission/reservation、runtime slots 与精确 Attempt fence。普通 Run、
+  workflow preparing、dynamic child、approval resume、continuation 都须有接入证据。
+  新总池/分类池不能与旧 Provider/Runner 池互不计数，也不能绕过审批与仓库父锁。
+- B2：先实现整组资源的短事务准入与恢复，再替换调用点；不能用顺序 acquire 后只释放
+  部分资源，或在现有事务内调用另起 `BEGIN` 的公共方法。
+- B2：当前执行容量与 frozen resource/authority plan 分离。降额只阻止新准入，旧计划
+  不变；旧 owner 和 unknown execution 不得因缺新 pool 行、TTL 或重启而漏算。
+- B3：Host 容量记录不复用某个 workspace 的 DB 冒充全局 Store；跨数据库交接保留
+  durable intent/receipt，明确崩溃窗口、原 owner 发现和无副作用的 reconciliation。
+- B4：实际 sibling 数取所有限制的交集并冻结；放宽档位不放宽工具、路径、网络、
+  optional failure 或 target apply 规则。保留旧固定二并发轮次的读取与恢复。
+- B5：配置只在既有设置中呈现，不新增并发首页、会话预算卡或第二组恢复/审批按钮。
+
+### 必须通过的验收
+
+- 配置默认值、边界、unknown key、null、NaN/Infinity、原对象后续修改与启动快照。
+- 普通 Run、静态分支、动态子代理混合运行；总量与分类、Provider、Runner 同时生效。
+- 不同 channel/workflow/Store/process 争最后一个槽位，无超额、半组预留或重复 dispatch。
+- preparing 到 Attempt 的原子交接、重复回调、启动失败、取消、unknown、重启与 fence 接管。
+- 降额时保留已有执行；升额不升级旧 round；已批准计划、审批和 scope digest 不被重写。
+- legacy 活动 owner 纳入新容量，旧 workflow/round 不被无提示升级或遗漏计数。
+- 父任务占满容量时 child spawn 返回可处理的不足结果，不形成等待父任务结束的死锁；
+  真正 yield/drain 后交还与 resume 重新准入另验，不释放仍有权限责任的写锁。
+- 大 workflow 不饿死其他会话；Provider 限流不被当作额度丢失或成功派发。
+- Host 与 workspace 交接各崩溃窗口、跨 Store 重开及其他 Host 策略冲突均可恢复且不超额。
+- 2/3/4 分支的真实 Git/Host 与受控 Provider、审批、fan-in、目标不变、apply、drain 和资源释放
+  证据逐档记录；按每档的真实 Provider、完整取消/重启/竞争矩阵、浏览器、packaged 和平台验收
+  分别报告。
+
+### 阶段完成判定
+
+每个单元单独记录实现、测试、未验证范围与是否接入生产路径。B1 通过只能说明配置
+解析可用；B2 通过才能声明单 workspace 统一限制；B3 通过才能声明 Host 跨 workspace
+总限制。B4 的受控 Pi SDK/Host 2/3/4 档位已通过，但完整目标组合和发布门禁未通过前，
+默认仍维持二档；3/4 只作为可信 Host 的显式配置能力，不能据此宣称真实 Provider、
+packaged 或跨平台联合验收已完成。目标保持进行中，不能因为文档或受控测试完成就标记
+整体完成。

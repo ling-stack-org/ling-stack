@@ -1,10 +1,12 @@
 # Ling 多 Agent 安全并发详细设计
 
-状态：P1-P5 均已有本地实现，受控 Provider 的真实 daemon/Web 联合链路已验证；
-冻结输入的完整相关回归、后续 Web 冲突修复增量验收及 Daemon 独立 dependency-security
-lane 通过；真实 Provider、packaged、跨平台和 review/CI/merge 门禁仍开放，不是发布完成声明。
+状态：P1-P5 均已有本地实现，受控 Provider 的真实 daemon/Web 联合链路和 Host 2/3/4 档位
+已验证；安全并发 B1-B3 已接线并通过 Core/Daemon 定向回归，B5 已接入 Host 策略的客户端只读回读。
+冻结输入的完整相关回归、后续 Web 冲突修复
+增量验收及 Daemon 独立 dependency-security lane 通过；真实 Provider、packaged、跨平台
+和 review/CI/merge 门禁仍开放，不是发布完成声明。
 Owner：Ling maintainers。
-最后核对：2026-11-03，基于 PR #614 合并后的 `main`。
+最后核对：2026-11-08，基于 PR #614 合并后的 `main`。
 文档类型：Reference / Explanation。
 权威边界：[Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 继续拥有总体产品设计；本文细化安全并发、隔离执行与合并协议。
@@ -32,7 +34,7 @@ Owner：Ling maintainers。
 
 下表描述 #614 合并时的基线差距。当前已接入显式安全 metadata、Host 执行约束、
 原子准入、隔离执行/集成/审批、恢复、模板创作和 graph/list；交付边界见实施计划。
-真实 daemon 的本地浏览器验证不替代真实 Provider、packaged 或完整平台验收，普通写并发仍关闭。
+真实 daemon 的本地浏览器验证不替代真实 Provider、packaged 或完整平台验收；非显式隔离 profile 的普通 workflow 写并发仍关闭。
 
 | 已有能力 | 代码锚点 | 本轮需要补的边界 |
 | --- | --- | --- |
@@ -249,8 +251,9 @@ Core COMMIT 后即使 sidecar 未 COMMIT 就崩溃，之前持久 marker 仍阻�
 `POST /workflows/:id/orchestrate` 的可选 `executionProfile` 只支持
 `pi_host_isolated_files_v1`。Host 开关默认关闭；首版仅支持 macOS、enforced Tool Broker
 及真实注册、workspace-enabled 的 Pi adapter。完整步骤清单必须有 2-128 个
-`workspace_write` 参与者，Host 固定 `isolated_siblings_v1`、并发上限 2、
-`candidate_only` 和 `require_success`。请求不能指定 shell、command、路径、apply mode
+`workspace_write` 参与者。未启用统一并发策略时使用 `isolated_siblings_v1` 的默认并发 2；
+可信 Host 显式启用后，新 round 可按 `isolatedWriteMaxConcurrentSteps` 使用 2-4 档位，
+并在 round 冻结时锁定。请求不能指定 shell、command、路径、apply mode
 或新的并发数；内部 approved apply 协议不是公共自动合并权限。
 
 选择先持久化 `planning`，再以同一短事务冻结完整 workflow/channel/steps、safety plans、
@@ -270,6 +273,225 @@ drain 和原子 publication/turn settlement，不由客户端轮询或 SSE callb
 模板的显式创建在同一 Core writer transaction 中编译 workflow/steps、解析 channel root
 thread、写入用户输入 turn/item 并绑定 `sourceTurnId/sourceMessageId`。失败全部回滚；
 创建和预览都不 dispatch。后续 Run 和 TerminalReport 只能使用该 canonical source lineage。
+
+### 5.6 并发预算的作用域与配置
+
+并发预算限制同时获得执行资格的 Run/Attempt，不是可保存的 Agent 身份、打开的会话、
+DAG 节点数或子代理累计数量。静态 workflow 与动态 delegation 复用同一资源准入，
+不得各自维护互不计数的执行池。token、费用、wall time、子树深度与累计 child 数分别
+受其 owning contract 约束，不能用执行并发额度替代。
+
+当前 runtime slots 位于各 workspace 的 SQLite。单 workspace 的预算不等于跨 workspace、
+跨数据库或整台主机的总预算。先实现 workspace 内统一准入，再接 Host 持久总预算；
+后者未通过跨 Store/process 验收前，不对外宣称已有全机并发限制。
+
+可信启动配置使用 `DaemonConfig.concurrency`；模板、模型、普通 Run 请求和 workspace
+HTTP settings 不能写入该 Host 策略。初始配置契约如下，配置支持不等于执行能力已开启：
+
+| 字段 | 默认值 | 解析范围 | 含义 |
+| --- | --- | --- | --- |
+| `enabled` | `false` | 严格布尔值 | 显式启用 workspace 统一预算；不授予新的执行权限 |
+| `maxConcurrentRuns` | 4 | 1-64 | 一个 workspace 中已准入执行的总容量 |
+| `maxReadOnlyRuns` | 4 | 1-64 | Host 验证的只读执行容量 |
+| `maxWorkspaceWriteRuns` | 2 | 1-4 | 可写或无法证明只读的执行容量 |
+| `maxRunsPerProvider` | 4 | 1-64 | 同一 Provider 资源身份的容量 |
+| `maxRunsPerRunner` | 4 | 1-64 | 同一 Runner 资源身份的容量 |
+| `isolatedWriteMaxConcurrentSteps` | 2 | 2-4 | 新隔离轮次请求的 sibling 上限 |
+
+解析时逐项验证安全整数，拒绝未知字段、null、非数值、非有限值和越界值；不通过截断
+或静默回退把错误配置变成另一套策略。策略按值捕获并冻结，调用方后续修改原对象不能
+改变已启动 Host 的行为。分类上限可大于总容量；准入取交集，而不是把各分类额度相加。
+上述范围是配置解析边界，不代表 64 个执行已通过资源或产品验收。
+
+`enabled=false` 保留已有 Provider/Runner、channel、workflow 资源和审批规则，不施加新总量
+或分类上限。仅配置数字不会隐式开启预算。首次未派发 Run 的持久队列消费与公平性已通过
+Core/Daemon 定向回归，统一预算仍只供可信 Host 显式启用，不作为普通启动默认行为。
+
+启动时，Supervisor 在取得 workspace writer ownership 后，将启用状态、五项执行额度和
+runtime identity 作为同一 revision 的持久策略安装；缓存回读逐项核对。关闭预算仍写入
+新的 disabled revision，不删除策略行、slots、leases 或 preparing/delegation reservations。
+重新启用时继续计算原执行，不能把开关切换当作停止证据。migration 214 的历史策略保持
+可读；migration 215 追加持久启用状态，不改变原修订号、额度、审批或执行事实。
+
+Host 的隔离执行开关、已验证平台、实际 Runner、Tool Broker、权限及审批仍独立检查。
+配置并发数不授予 shell、网络、MCP/CUA、目标 apply 或发布权限；未知能力不能仅因
+被计入可写预算就获得并行资格。`external_mutation` 与 `release` 的串行规则不变。
+
+### 5.7 统一计数与原子准入
+
+有效额度同时受 Host 总容量（接入后）、workspace 总容量、分类容量、channel、workflow、
+step/group、Provider、Runner 和独占资源约束。例：总容量为 4、只读上限为 4、写入上限
+为 2 时，3 个只读和 2 个写入不能一起准入。Provider 或 Runner 剩余容量为零时，即使
+其他额度充足也必须等待。
+
+- 普通 Run、workflow step、dynamic child、approval resume 和 continuation 走同一边界。
+  恢复不能被当作一份额外容量；同一精确 Attempt 的重入不重复计数。
+- `preparing`、已获得 dispatch 资格和仍在执行的 Attempt 均计数。多个资源要么整组预留，
+  要么全部回滚；Provider 容量已满时不得留下总容量或写入容量的半组占位。
+- 只读分类来自可验证的 Host executor/profile，不来自工具名称、提示词或客户端自报。
+  无可验证只读约束的执行保守计入写入类，但仍须独立通过现有权限与串行规则。
+- 业务完成、取消请求、lease TTL、失联或客户端关闭不能代替实际停止。存在未确认
+  callback、子执行或 effect 时继续占位，只有原 fence 的收尾证据才能释放。
+- Host 跨 workspace 总容量需要绑定 canonical workspace/database、start/Attempt fence 的
+  持久 reservation。Host 与 workspace SQLite 之间采用可恢复 intent/receipt 交接，结果
+  未知保留预留并核对原 owner；禁止用内存 semaphore 冒充跨进程原子准入。
+- 媒体、评分、复盘等后台 worker 是否进入总池由各 owning contract 明确；本阶段先覆盖
+  Run 执行链，不把尚未接入的模型消费者算作已受统一容量保护。
+
+#### 5.7.1 Host 持久池与跨库交接
+
+Host 预算域是 canonical 用户存储根中的 `global.sqlite`。不同 `LING_STACK_HOME` 是不同
+预算域，不声称覆盖其他用户、其他存储根或尚未接入该协议的模型消费者。全局表使用
+独立 schema marker，不占用 workspace migration 编号，也不改写 workspace registry。
+
+一次容量承诺绑定以下不可变身份：
+
+- canonical workspace cwd、canonical workspace database path 及数据库文件 dev/inode。
+- workspace intent ID、owner kind、owner key 和 authority digest。
+- preparing start 的 step/lease/authority basis，或 spawn 的 parent Attempt/spawn call，
+  或执行的完整 WorkUnit/Attempt/runtime/fence；owner key 必须覆盖相应的精确身份。
+- Host reservation ID、随机 token、准入时 policy revision 和预留时间。
+
+路径别名不能制造第二个 workspace 身份；数据库文件被替换时不能沿用旧凭证。Host
+reservation 的精确重入只读取原凭证，不重新计数。降额不撤销已接受的 reservation；
+释放后的 intent 是历史事实，同一 intent 不会重新获得 dispatch 资格。
+
+交接不同时持有两个数据库的写事务：
+
+1. workspace 短事务持久化 intent，并复核当前权限、owner 和冻结计划。
+2. Host 短事务核对共同 policy revision，按所有 held reservation 取得一个总池位置。
+3. workspace 短事务持久化精确 receipt，与本地整组资源、start/Attempt 交接和一次性
+   dispatch gate 原子绑定。receipt 本身不是执行许可，既有权限与审批仍须通过。
+4. SDK/tool 边界复核同一 receipt 和当前 owner。preparing/child 到 Attempt 的交接保持
+   一个 reservation，不因身份补全重复占位或出现容量空档。
+5. workspace 先撤销未消费 gate，或封存原 fence 的实际停止、drain/effect 证据，再写入
+   release outbox；Host 消费精确 outbox 后释放，workspace 最后确认 outbox。
+
+| 崩溃窗口 | 恢复行为 |
+| --- | --- |
+| intent 已写、Host 未预留 | 重试同一 intent；不调用 SDK |
+| Host 已预留、workspace receipt 未写 | 保留预留，按原 intent 核对并补 receipt；不能根据 TTL 回收 |
+| receipt 已写、dispatch gate 未消费 | 仅当前 owner 可以消费原 gate；取消先撤销 gate 再形成 no-dispatch outbox |
+| gate 已消费、SDK ACK 未知 | 保留容量和原 fence；核对原执行，不重派 |
+| 停止证据/outbox 已写、Host 未释放 | 幂等消费原 outbox，不能凭 Run 的展示状态释放 |
+| Host 已释放、workspace ACK 丢失 | 按 reservation/token/proof digest 幂等确认；不创建新预留 |
+
+Host Store 只仲裁容量及精确凭证绑定；`no_dispatch`/`stopped` 的语义证明属于 workspace
+owning contract，不能接受模型、模板或 HTTP JSON 自报的停止证明。未确认、损坏或缺失
+receipt 一律不获得新 dispatch 权限。Host policy 更新使用持久 revision；各进程不能用
+自己的内存上限覆盖已安装 policy。Host 总池已接入首次普通 Pi queue，并通过跨 Store/process
+定向回归；真实 Provider、packaged、跨平台及所有执行链的完整联合验收仍未完成，不能把
+独立 Store 测试或受控回归称为整体发布门禁已通过。
+
+Native execution uses the same Host reservation and dispatch acknowledgement boundary. Its
+terminal release is allowed only after the original native lifetime drains and the native journal
+verifies the closed submission inventory as `native_journal_v1`; a boolean or Pi coverage
+observation cannot certify a native attempt. The release remains an idempotent workspace outbox
+operation if Host acknowledgement is interrupted.
+
+首次 Pi 队列准入在同一个 workspace writer transaction 中核对已持久的 Host intent。
+已存在 intent 时，调用方必须提供匹配的 intent ID 与 dispatch token；省略引用、缺少
+receipt、撤销、authority 漂移或外 workspace 凭证均不能退回无 Host 准入。整组本地
+leases/slots、Host gate、Task/WorkUnit claim、事件及 queue gate 一起提交或回滚。
+任一 gate 更新未命中也视为失败。队列已消费的 dispatch fact 不能补建成未派发 intent；
+资源已释放或 claim 过期不能改变这个事实。此边界不替代 daemon 的 reserve/SDK/drain
+接线，也不表示 workflow、delegation 或 legacy owner 已进入 Host 总池。
+
+workspace journal 由 `SqliteRunStore` 的原始构造器绑定。可信 composition 持有 opaque
+binding 和独立 workspace accessor，公开 `RunStore`、普通 Core 导出与 HTTP writer 不持有
+该 accessor。构造完成前、伪造或复用 binding、未知 workspace 均拒绝访问；构造失败或
+Store 关闭后，已取得的 journal facade 和提取的方法也失效。每个 workspace 的 facade
+复用 queue 准入所用的同一 journal，只提供 intent、receipt 和 release outbox 操作；
+消费 dispatch gate 的事务内方法不暴露给 composition。
+
+### 5.8 配置变更与冻结计划
+
+首版配置在可信 Host 启动时生效，不新增热更新 HTTP API。重启只能协调原 execution，
+不能为了应用配置而重复派发模型或工具。后续可编辑设置复用同一解析和 authority 边界。
+
+新隔离轮次在审批前冻结实际选择的 sibling 上限、参与者和资源计划。提高配置只影响
+后续轮次，不升级旧 round；降低当前容量只收紧新准入，不改写旧计划、不重签审批，
+不强杀已有 Attempt，也不把正在运行的执行从计数中移除。调度上限与已批准的语义计划
+分别校验：新的更小容量可以让旧轮次排队，但不能因额度变小而伪造其计划已被修改。
+
+旧数据缺少新预算快照时按原权限与隔离协议读取；运行中的旧 owner 必须纳入容量恢复，
+不能因没有新增 pool 行而漏算。多个 Host 对同一数据库提交不一致策略时必须通过持久
+revision/ownership 规则解决，不能让每个进程使用自己的上限并共同超额。
+
+`preparing` 已验证的精确 Provider/Runner 交接保留原容量资格，包括降低额度或关闭统一
+策略之后；channel、workflow 独占资源、计划一致性与审批仍独立验证。新请求不继承该
+交接资格，disabled 时仍受原 Provider/Runner 上限约束。
+
+动态 child 的 token 预留不等于执行容量承诺。Host 在 enabled 策略下完成 spawn 准入、
+首次 claim 或已接受的部分 slot 交接时，于同一写事务记录
+`runtime_delegation_capacity_admissions`：绑定 reservation、Attempt number、workspace、
+Provider/Runner identity、policy revision 和准入时间。关闭策略后仅这类凭证仍参与容量
+占用及精确交接；旧版 token-only 预留不回填、不自动获得豁免。停止并 drain 后的
+successor 必须重新准入并记录自己的 Attempt number，不能复用先前轮次的凭证。
+凭证写入失败时回滚 child 身份、预留或本次 slots，不留下半组容量承诺。
+
+### 5.9 排队、公平性与 delegation 等待
+
+资源不足复用持久 Run/WorkUnit 身份和稳定等待原因，不新增会话控制面。重复 tick、SSE reconnect
+及重试保留原请求身份。跨 workflow/channel 的就绪执行采用稳定顺序和轮转准入，避免
+一个大 workflow 长期占满全部槽位；有独占资源冲突的候选不阻塞无冲突的独立候选。
+
+普通首次 queued Run 的消费与 scheduled continuation 分开：复用原 created Attempt、冻结
+请求和 effective policy，不创建 successor Attempt，也不伪造 RunnerContinuation。派发前
+必须取得持久 claim 和一次性 dispatch gate；失去 claim 的执行者不能清理接管者的资源。
+原 gate 已消费但 ACK 未知时保留占位并核对原执行，不因 TTL 自动重派。冷启动保留确实
+尚未派发的队列项；取消、审批就绪、资源实际释放和 Store 初始化触发仲裁，周期 tick
+仅作兜底。生产 daemon 已将首次普通 Pi queue 接入 installation-global Host store：启用
+可信 `DaemonConfig.concurrency` 时，daemon 为 canonical 用户存储创建唯一 `global.sqlite`
+Host authority，并把 opaque workspace binding 注入默认 `SqliteRunStore`；queue claim
+先建立 workspace intent、Host reservation 和 receipt，再把一次性 dispatch reference
+交给原子 dispatch gate。Host 满额只延期 claim，准备失败尝试 no-dispatch outbox release，
+正常派发后的 reservation 仍等待 terminal、drain 和 effect evidence。Store 关闭先于 Host
+authority，构造失败也会关闭 Host store。注入的外部 `storeFactory` 不会被自动 retrofit，
+因此不获得这条 Host authority。
+
+workspace 统一容量准入已覆盖 workflow preparing/transfer、dynamic delegation、approval
+resume 和 continuation，并由 Core/Daemon 定向回归覆盖；installation-global Host 的生产
+composition 仍以首次普通 Pi queue 为完整接线边界。native、automation、legacy owner 以及
+真实 Provider、packaged、跨平台的完整联合验收仍需继续，不能把当前实现称为整体发布完成。
+
+冻结的 participant 身份不替代当前可用性：Core 最终准入事务与 daemon SDK 前复核均要求
+原 teammate 存在、active 且 visible。检查独立于 skill 和 memory 选择；停用、暂停或隐藏
+时不消费 gate、不取得资源，也不自动更换 teammate。恢复可用后仍以原 Run/Attempt
+身份重新仲裁，失效候选的退避不阻塞独立组。
+
+首次队列仅接受原始 Pi 执行、明确冻结的 tools 数组，以及 preset 或不含 secret 的匿名
+inline Provider。workflow、dynamic delegation、continuation、native 和 automation 保留
+各自 owning contract，不回填旧 queued Run 的恢复权限。准备 claim 的 TTL 不占执行槽
+或写锁；跨组持久轮转、组内 FIFO，失效组头退避且不阻塞其他组。协调器的准备上限以四个
+位置为公平性下限，并在可信 `RuntimeSupervisor.getConcurrencyPolicy().maxConcurrentRuns`
+更大时随配置提高；`onRunReady` 归还准备位，完整执行 Promise 仍被 shutdown/drain 跟踪；该值
+不是 Run 执行并发上限，实际执行受统一容量和资源准入约束。
+准备位按每次 preparation 的独立身份计数，不按 Run ID 去重；同一 Run 的 claim 接管
+不能漏计尚未完成的旧准备。ready 与 finally 幂等归还各自占位，旧回调不能释放新一代
+准备位；ready 不从完整执行 drain 集合移除该执行。准备位至少保留四个并行位置，较大的
+可信总容量可以提高这个准备上限；它不作为执行并发上限，避免一个暂停的队列组阻塞其他
+独立组取得已释放的执行资源。
+
+父 Run 等待 child 时仍可能持有 Provider/Runner slots 和写资源。不能直接释放这些资源
+来制造 child 容量，也不能让占据最后可用槽位的父任务无限等待一个尚未准入的 child。
+spawn 前同时检查祖先占用、子执行可用容量和等待链；无法完成准入则返回稳定的暂时容量
+不足结果，不创建等待父任务退出才能运行的子执行。后续只有实际 runner yield/ACK/drain
+协议可证明停用时，才允许交还执行槽；恢复父任务前重新取得容量，原写锁不因此失效。
+
+### 5.10 扩容门禁与会话呈现
+
+公开隔离入口默认并发 2。只有可信 Host 明确启用统一并发策略时，新隔离轮次才可按
+`isolatedWriteMaxConcurrentSteps` 使用 2-4 档位；未启用时仍强制回到 2。已冻结轮次的
+并发值保持不变，降额只阻止新的超额准入，不强杀已有执行。2/3/4 的本地配置、规划、
+选择以及受控 Pi SDK/Host 文件写入、审批、fan-in、apply、drain 和资源释放已逐档通过；
+真实 Provider、按每档完整的恢复/取消/竞争矩阵及 packaged/platform 验收仍需完成。
+更高写并发需另行修改隔离协议边界并提供资源测量，不能只放大 schema 数字。并发数不得
+等同每秒请求数，Provider 限流与退避仍单独处理。
+
+配置放入现有设置的高级区域，不在普通会话增加预算卡、调度详情或新的重试按钮。
+文本会话流、Composer 开始/继续/停止与审批窗口不变；Graph 继续只在多 participant 或
+真实并行分支时提供默认折叠的只读视图，不负责配置或授予并发权限。
 
 ## 6. Step 级隔离执行
 
@@ -431,7 +653,7 @@ optional 失败不能隐式遗漏；只可按已冻结策略排除，并在输�
 ### 7.2.1 显式冲突修复与继承边界
 
 本机 `POST /workflows/:id/conflict-recovery` 只接受精确 `roundId/generation/expectedRevision`、
-`idempotencyKey` 和有界 `repairInstruction`。仅 `candidate_only`、固定并发 2 的已选择
+`idempotencyKey` 和有界 `repairInstruction`。仅 `candidate_only`、并发值在 2-4 范围内的已选择
 text-conflict round 可进入；必须确认原 Host 实际 drain、全部 effect/receipt、无待处理 intent、
 无 merge approval/permit、无活动 workspace 资源和其他父锁。未确认时不转移所有权。
 
@@ -589,16 +811,39 @@ custom auto-start 默认 false；只能请求已被 Host 准入的能力，不�
 ## 11. Conversation 投影与 Graph
 
 扩展现有 conversation work-cell 与 workflow evidence，不新增顶层 workflow 页面。
-第一至三阶段先用列表显示分支、等待原因、隔离目录、candidate/applied、检查与冲突；
-审批沿用现有 in-turn/action surface，原始 refs 和日志放展开详情。
+分支过程与结果使用原会话事实流，审批沿用现有 Composer gate 与审批窗口；
+隔离目录、轮次、candidate refs 和 journal 保留在持久化证据中，不铺在普通会话中。
 
 最终 graph 是同一 read model 的可选视图：
 
+- Graph 内联于原会话的 workflow 行，默认折叠；展开不切换页面、不替换文本会话流，
+  节点只显示名称与状态，选择仅高亮、不展开详情面板。展开状态沿用会话 disclosure store，
+  刷新不强制重置。
+- 仅多个不同 participant id 或 accepted 依赖图存在可并行分支时提供 Graph；单步骤与
+  同一 agent 串行链不显示。依赖缺失、循环或截断时不据此推断并行，显示名称不代表身份。
+- 集成轮次不增加重试或恢复操作条；原会话已有的步骤失败不重复投影为 workflow-step 卡。
+  尚无原会话结果承接的集成失败或未确认结果仅显示一条紧凑状态，不展开技术详情。
+  审批由已有 gate 或原审批窗口承接，同一审批不同时展示 observation 与 round。
+- 工作流正常完成后只展示结果正文和至多一条简洁的最终集成状态，不提供重复完成报告或“详情”入口。
+  Graph 不附带节点结果摘要、失败说明、技术 ID、审批卡、处理按钮和审计面板。失败由原会话结果承接，
+  审批复用现有 Composer gate 与审批窗口，不另设 Graph 操作入口。
+- Graph 所属的会话 workflow 行保留推进、取消、重试、审批和冲突修复等已有处理动作；
+  这些动作不进入 Graph 节点，也不新增一套执行控制。
+- Composer 有内容时发送；空输入时控制当前会话归属的工作流：待执行为开始，可恢复为继续，
+  执行中为停止。继续调用原推进或 blocked-step retry 接口，停止取消整个工作流及其分支，
+  不重新发送用户消息。终态、不可重试循环、待审批、待追问和未确认副作用不转换为直接重跑。
+  已确认的 candidate-only 文本冲突由继续入口打开原冲突恢复窗口，不静默重放或应用候选。
+  主按钮按会话隔离 busy/single-flight 保护，切换会话不借用其他会话的执行归属。
+- 隔离执行 profile 仍为显式选择，放在输入框现有添加菜单；普通开始不隐式开启隔离或目标写入。
 - 稳定 node id 来自 workflowStepId，edge 来自 accepted dependsOnStepIds；
 - branch/join grouping 不凭位置猜依赖；dynamic tree 为明确标注的 overlay；
 - 节点状态来自 store projection，缺数据与断连不能绘成 success；
-- list/graph 共用选择状态、权限和动作，不从连线触发 hidden execution；
-- 支持键盘、窄屏、长标题、缩放与无动画偏好；列表始终可用。
+- 连线动效只表达 current snapshot 中已满足全部前驱依赖的 running 节点，信号沿 accepted
+  dependency path 移动；等待、失败、完成和未知状态保持静止，不由动画时钟推进状态。
+  布局由依赖拓扑与容器宽度决定，窄屏采用纵向分支，状态刷新不改变节点位置；
+  离屏、后台与无动画偏好暂停循环动效。
+- list/graph 共用只读选择和状态，不从节点或连线触发 execution；
+- 支持键盘、窄屏、长标题、缩放与无动画偏好；窄屏不禁用 Graph，列表始终可用。
 
 ## 12. 迁移、开启与回退
 

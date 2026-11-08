@@ -81,7 +81,7 @@ export function projectNormalConversationFeedItems(input: {
       streaming: bodyStreaming,
       streamingPlaceholder: input.t("Ling Agent is thinking..."),
     });
-    const messageItem = createConversationTimelineMessageItem({
+    const messageItem = { ...createConversationTimelineMessageItem({
       id: `message:${message.role === "user" ? "user" : "agent"}:${message.id}`,
       role: message.role === "user" ? "user" : "agent",
       markdown: messagePresentation.body,
@@ -93,7 +93,7 @@ export function projectNormalConversationFeedItems(input: {
       itemId: message.id,
       status: message.status,
       fileRefs: message.fileRefs,
-    });
+    }), ...(linkedRun ? { runId: linkedRun.id } : {}) };
     // Canonical typed facts own the normal surface whenever they are present.
     // The WorkCell path is only a source adapter for optimistic/older detail
     // responses and is never exposed as a renderer owner.

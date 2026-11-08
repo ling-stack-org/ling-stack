@@ -116,9 +116,12 @@ local HTTP provider fixture and daemon API round trip. It establishes dispatch, 
 budget and transaction behavior; it does not measure real model quality, cost, or platform
 packaging. Provider-quality evaluation remains a separate gate.
 
-The run diagnostics and unified settled-response footer provide a lazy Experience review
-disclosure. Closed disclosures do not read or poll. Settings → Skills → AI evolution
-uses the same component for policy, queue, cancellation and candidate review. Run-filtered
+Run diagnostics provide a lazy Experience review disclosure. The unified settled-response
+footer places an Experience review icon beside the message actions, including Copy message.
+The icon opens the same panel in a nonmodal popover; closing it unmounts the panel and returns
+to the transcript. Closed entries do not read or poll. Opening an entry reads the selected
+source without creating a learning job or changing automatic-proposal policy.
+Settings → Skills → AI evolution uses the same panel for policy, queue, cancellation and candidate review. Run-filtered
 listing applies the source filter before the result limit. Pending results remain labelled
 as awaiting review. Candidate steps, checks and original bounded evidence are inspectable;
 non-skill results keep their existing memory/channel review surfaces. Definition changes
@@ -178,5 +181,5 @@ there is no automatic promotion or ownership change. Channel protocol/playbook r
 continue to point to the channel review queue. Read errors remain visible.
 
 Optional semantic retrieval configuration and scoped Wiki browsing share the existing
-Experience review disclosure. Their independent behavior and native distribution boundary
+Experience review panel. Their independent behavior and native distribution boundary
 are owned by [Optional Memory Derivatives](memory-derived-views.md).

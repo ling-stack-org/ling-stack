@@ -35,7 +35,7 @@ async function fixture(t, payload = evidence()) {
   const ports = { hooks: port.hooks,
     observation: { paused: false, epoch: 0, workspaceCwd: "/qa", baseUrl: "http://127.0.0.1:9999" },
     request: async (...args) => { requests.push(args); return { workflow: workflow(), isolation: payload }; },
-    mountTimeline: input => { captures.push(input.snapshot); return { node: null }; },
+    mountTimeline: input => { captures.push(input); return { node: null }; },
   };
   const h = await catalogConsumerHarness(t, { ports,
     exports: {
@@ -43,7 +43,7 @@ async function fixture(t, payload = evidence()) {
       "features/workspace/ChannelMessageRenderers.tsx": ["createChannelMessageRenderers"],
       "shared/conversation/timeline/ConversationTimelineProtocolRenderer.tsx": ["ConversationTimelineProtocolRenderer"],
     }, transforms: { ...hookTransforms, "features/workspace/ChannelMessageRenderers.tsx": [
-      { anchor: "return mountConversationTimeline({", replace: key => `return globalThis[${JSON.stringify(key)}].ports.mountTimeline({` },
+      { anchor: "return mountConversationRunFeedbackTimeline({", replace: key => `return globalThis[${JSON.stringify(key)}].ports.mountTimeline({` },
     ] },
   });
   h.state.messages = enUS;
@@ -74,15 +74,16 @@ async function fixture(t, payload = evidence()) {
     });
     renderers.renderUnifiedTimeline([{ kind: "activity", item: { id: `workflow:${owner.id}`, kind: "workflow", record: owner,
       createdAt: owner.updatedAt, category: "runtime", attention: "none", searchText: "" } }]);
-    return captures.at(-1);
+    return captures.at(-1).snapshot;
   }
   return { ...h, port, input, requests, ports, snapshot,
+    mounted: () => captures.at(-1),
     chain: () => port.render(runActualWorkspaceChain, input),
     setPayload: next => { payload = next; },
   };
 }
 
-test("actual Workspace API→progress→work-cell→Channel renderer keeps integration facts with both real participant spans", async t => {
+test("actual Workspace API→progress→work-cell→Channel renderer keeps one approval entry with both real participant spans", async t => {
   const f = await fixture(t);
   f.chain(); await f.port.flush();
   const chain = f.chain();
@@ -91,16 +92,18 @@ test("actual Workspace API→progress→work-cell→Channel renderer keeps integ
   assert.equal(progress.mode, "active", "a succeeded step lifecycle is not a completed target delivery");
   assert.equal(progress.summary, "Awaiting merge approval");
   const items = f.snapshot(chain).items;
-  assert(items.some(item => item.id === "workflow-isolation:workflow-qa:observation"));
+  assert.equal(items.some(item => item.id === "workflow-isolation:workflow-qa:observation"), false);
   const roundFact = items.find(item => item.id === "workflow-isolation:workflow-qa:round:round-qa:1");
-  assert.equal(roundFact.meta, "Awaiting merge approval");
+  assert.equal(roundFact.title, "Awaiting merge approval");
+  assert.equal(roundFact.meta, undefined);
+  assert.equal(roundFact.description, undefined);
   const participants = items.filter(item => item.kind === "subAgentActivity");
   assert.equal(participants.length, 2);
   for (const [index, participant] of participants.entries()) {
     assert(participant.childItems.some(item => item.kind === "agentMessage" && item.markdown === `Participant ${index + 1} recorded result`));
   }
   const html = f.render(f.module.ConversationTimelineProtocolRenderer, { item: roundFact, depth: 0 });
-  assert.match(html, /Integration round 1/u);
+  assert.doesNotMatch(html, /Integration round 1|Candidate commit|Candidate tree|generation/u);
   assert.match(html, /Awaiting merge approval/u);
   assert.match(html, /data-conversation-timeline-status="waiting"/u);
   assert.doesNotMatch(html, /data-conversation-action-id=/u);
@@ -119,7 +122,16 @@ test("actual reload/SSE consumer converges approved-not-applied→applying→app
   assert.equal(chain.workflowProgressByWorkflowId.get("workflow-qa").mode, "completed");
   assert.equal(chain.workflowProgressByWorkflowId.get("workflow-qa").summary, "Applied to target");
   assert.equal(f.requests.length, 3);
-  assert(f.snapshot(chain).items.some(item => item.id.startsWith("workflow-isolation:") && item.meta === "Applied to target"));
+  const snapshot = f.snapshot(chain);
+  const integrationItems = snapshot.items.filter(item => item.id.startsWith("workflow-isolation:"));
+  assert.equal(integrationItems.length, 1);
+  assert.equal(integrationItems[0].meta, undefined);
+  assert.equal(integrationItems[0].title, "Applied to target");
+  assert.deepEqual(integrationItems[0].availableActions, []);
+  const owner = snapshot.items.find(item => item.protocolKind === "workflow");
+  const graph = f.mounted().renderProtocolDetail(owner);
+  assert(graph.props.timelineItems.some(item => item.id.startsWith("workflow-isolation:") && item.meta === "Applied to target"),
+    "settled integration facts remain in the graph inputs without duplicate conversation rows");
 });
 
 test("the real consumer does not hide retained integration evidence when the current step list is empty", async t => {
@@ -140,7 +152,7 @@ test("existing protocol component renders unconfirmed cancelled observations sep
   const html = f.render(f.module.ConversationTimelineProtocolRenderer, { item: observation, depth: 0 });
   assert.match(html, /工作流已取消/u);
   assert.match(html, /集成结果待确认/u);
-  assert.match(html, /Host 操作仍在收尾/u);
+  assert.doesNotMatch(html, /Host 操作仍在收尾|Integration round|Candidate commit/u);
   assert.match(html, /data-conversation-timeline-status="cancelled"/u);
   assert.doesNotMatch(html, /已应用到目标|Succeeded/u);
 });

@@ -100,7 +100,7 @@ export function workflowConflictRecoveryRound(workflow: ChannelWorkflow, observa
     || evidence.rounds.length !== 1 || hasUnconfirmedEffects(evidence) || !["blocked", "running", "failed"].includes(workflow.status)) return;
   const round = evidence.rounds[0];
   if (round.phase !== "conflicted" || round.reasonCode !== "workflow_integration.text_conflict"
-    || round.mode !== "candidate_only" || round.maxConcurrentSteps !== 2 || round.candidate || round.approval
+    || round.mode !== "candidate_only" || round.maxConcurrentSteps < 2 || round.maxConcurrentSteps > 4 || round.candidate || round.approval
     || !["not_started", "not_applied"].includes(round.application.status)
     || round.effects.some(effect => effect.status !== "confirmed")) return;
   return round;
@@ -148,10 +148,12 @@ export function buildWorkflowIsolationPresentation(input: {
     revision, threadSequence: 0, partIndex: 0, sourceRefs,
     title: workflow.status === "cancelled" ? t("Workflow cancelled")
       : observation.status === "error" ? t("Workflow evidence unavailable") : t("Workflow integration"),
-    meta: resultLabel,
+    meta: unconfirmed && !explicitFailure ? t("Integration result unconfirmed") : resultLabel,
     status: workflow.status === "cancelled" ? "cancelled" : explicitFailure ? roundTimelineStatus(state) : unconfirmed && terminalRound || unavailable ? "waiting"
       : completionBlocked && terminalRound ? "blocked" : roundTimelineStatus(state),
     description: detailLines.length ? [...new Set(detailLines)].join("\n") : undefined,
+    ...(!unavailable && !unconfirmed && state === "pending_approval" && latest?.approval
+      && !["cancelled", "failed"].includes(workflow.status) ? { approvalId: latest.approval.approvalId } : {}),
   }];
   for (const [index, round] of rounds.entries()) {
     const roundState = workflowIntegrationDisplayState(round);

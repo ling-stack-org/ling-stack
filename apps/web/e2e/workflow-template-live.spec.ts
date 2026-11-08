@@ -90,14 +90,24 @@ test("P4 authoring saves and pins a template before an explicit UI start reaches
     expect(completed.steps[0]!.status).toBe("succeeded");
     expect(completed.target).toEqual(completed.initialTarget);
     expect(completed.errors).toEqual([]);
-    await expect(row).toHaveAttribute("data-conversation-timeline-status", "succeeded");
+    // A single-agent workflow leaves the native response and terminal report in
+    // the conversation instead of duplicating them with a workflow summary.
+    await expect(row).toHaveCount(0);
+    const completedResponse = page.getByRole("region", { name: "Engineer Completed", exact: true })
+      .getByRole("button", { name: /Engineer · Completed\./u });
+    if (await completedResponse.getAttribute("aria-expanded") === "false") await completedResponse.click();
+    await expect(page.getByText("Authored analysis completed through the original Pi SDK Run.", { exact: true })).toBeVisible();
     await page.reload();
     await page.locator('[aria-label="P4 live authored workflow"]').click();
     await session.click();
     await expect(page.locator(`[data-session-id="${manifest.threadId}"] button[title="Default conversation"]`))
       .toHaveAttribute("aria-current", "page");
     await expect(page.locator(`[data-conversation-timeline-item="protocolEvent"][data-conversation-source-refs*="channel_workflow:${workflowId}"]`))
-      .toHaveAttribute("data-conversation-timeline-status", "succeeded");
+      .toHaveCount(0);
+    const reloadedCompletedResponse = page.getByRole("region", { name: "Engineer Completed", exact: true })
+      .getByRole("button", { name: /Engineer · Completed\./u });
+    if (await reloadedCompletedResponse.getAttribute("aria-expanded") === "false") await reloadedCompletedResponse.click();
+    await expect(page.getByText("Authored analysis completed through the original Pi SDK Run.", { exact: true })).toBeVisible();
     expect((await status()).runs.map(run => run.id)).toEqual(completed.runs.map(run => run.id));
     expect(mutations.filter(item => item.path === `/channels/${manifest.channelId}/workflows`)).toHaveLength(1);
     expect(mutations.filter(item => item.path === `/workflows/${workflowId}/orchestrate`)).toHaveLength(1);

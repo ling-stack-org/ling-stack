@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/desktop-capabilities.d.ts",
+    "src/qrcode.d.ts",
+    "e2e/support/conversation-run-feedback-harness.tsx",
+    "e2e/support/workflow-graph-harness.tsx"
+  ]
+}

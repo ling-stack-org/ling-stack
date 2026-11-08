@@ -95,7 +95,7 @@ export async function openLiveWorkflow(page: Page, live: LiveScenario): Promise<
   await page.goto("/");
   await selectLiveConversation(page, live.fixture.manifest);
   await expect(workflowRow(page, live.fixture.manifest).getByRole("button", {
-    name: "P3 live Pi Host isolated writes · Pending. Expand details", exact: true,
+    name: /^(?:Graph · )?P3 live Pi Host isolated writes · Pending\. Expand details$/u,
   })).toBeVisible();
 }
 

@@ -89,9 +89,7 @@ test("public isolated selection executes a dependency before parallel siblings a
     await expect(workflowRow(page, manifest)).toHaveAttribute("data-conversation-timeline-status", "succeeded");
     await expect(integrationRoundRow(page, selectedManifest)).toContainText("Candidate only; target unchanged");
     const integration = page.locator(`[data-conversation-timeline-id="workflow-isolation:${manifest.workflowId}:observation"]`);
-    await expect(integration).toHaveAttribute("data-conversation-timeline-status", "succeeded");
-    await expect(integration).toContainText("Candidate only; target unchanged");
-    await expect(integration).not.toContainText("Host operations still draining");
+    await expect(integration).toHaveCount(0);
     const restarted = await status();
     expect(restarted.runs.map(item => item.run.id).sort()).toEqual(originalRuns);
     expect(restarted.target).toEqual(completed.initialTarget);
@@ -102,7 +100,7 @@ test("public isolated selection executes a dependency before parallel siblings a
     await page.setViewportSize({ width: 390, height: 844 });
     await expandRow(integrationRoundRow(page, selectedManifest));
     await expect(integrationRoundRow(page, selectedManifest)).toContainText("Candidate only; target unchanged");
-    await expect(integration).toHaveAttribute("data-conversation-timeline-status", "succeeded");
+    await expect(integration).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath("public-isolated-candidate-mobile.png") });
   } finally {
