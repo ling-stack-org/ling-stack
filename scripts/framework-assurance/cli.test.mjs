@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,10 +62,16 @@ for (const [status, passed, exitCode] of [["passed", true, 0], ["failed", false,
     const root = await mkdtemp(join(tmpdir(), "ling-assurance-sdk-cli-"));
     t.after(() => rm(root, { recursive: true, force: true }));
     const reportPath = join(root, "local-report.json");
-    const stub = `export async function runSdkConsumer(){return ${JSON.stringify({ schemaVersion: 1, kind: "sdk_consumer", status, passed, reportPath })}}`;
-    const hook = `import {registerHooks} from 'node:module';registerHooks({resolve(s,c,n){if(s==='./sdk-consumer.mjs')return {url:${JSON.stringify(`data:text/javascript,${encodeURIComponent(stub)}`)},shortCircuit:true};return n(s,c)}});`;
-    const child = spawnSync(process.execPath, ["--import", `data:text/javascript,${encodeURIComponent(hook)}`, entry, "sdk-consumer", "--output", root],
-      { encoding: "utf8", timeout: 10000, env: { ...process.env, NODE_PATH: "", NODE_OPTIONS: "" } });
+    await writeFile(join(root, "sdk-stub.mjs"), "export async function runSdkConsumer(){return JSON.parse(process.env.LING_ASSURANCE_SDK_STUB)}\n");
+    await writeFile(join(root, "hook.mjs"), `import { registerHooks } from "node:module";
+registerHooks({ resolve(specifier, context, nextResolve) {
+  if (specifier === "./sdk-consumer.mjs") return { url: new URL("./sdk-stub.mjs", import.meta.url).href, shortCircuit: true };
+  return nextResolve(specifier, context);
+} });
+`);
+    const child = spawnSync(process.execPath, ["--import", join(root, "hook.mjs"), entry, "sdk-consumer", "--output", root],
+      { encoding: "utf8", timeout: 10000, env: { ...process.env, NODE_PATH: "", NODE_OPTIONS: "",
+        LING_ASSURANCE_SDK_STUB: JSON.stringify({ schemaVersion: 1, kind: "sdk_consumer", status, passed, reportPath }) } });
     assert.equal(child.status, exitCode, child.stderr);
     const summary = JSON.parse(child.stdout);
     assert.equal(summary.files.consumerReport, reportPath);
