@@ -61,6 +61,7 @@ export function DesktopDictationButton({
     }
     startPendingRef.current = true;
     stopRequestedRef.current = false;
+    cancelRef.current = false;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       if (stopRequestedRef.current || cancelRef.current) {
@@ -113,6 +114,7 @@ export function DesktopDictationButton({
 
   async function finishRecording(mimeType: string): Promise<void> {
     const wasCancelled = cancelRef.current;
+    cancelRef.current = false;
     const chunks = chunksRef.current;
     const stream = streamRef.current;
     recorderRef.current = null;
