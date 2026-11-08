@@ -14,7 +14,7 @@ export interface ComputerUsePageThumbnailState {
 }
 
 export function useComputerUsePageThumbnails(
-  snapshot: ComputerUsePipRendererSnapshot,
+  snapshot: ComputerUsePipRendererSnapshot | undefined,
 ): ComputerUsePageThumbnailState {
   const thumbnailsRef = useRef(new Map<string, HTMLCanvasElement>());
   const lastCaptureIdentityRef = useRef("");
@@ -22,9 +22,9 @@ export function useComputerUsePageThumbnails(
 
   useLayoutEffect(() => {
     const thumbnails = thumbnailsRef.current;
-    const deck = snapshot.deck;
+    const deck = snapshot?.deck;
     let changed = false;
-    if (!deck) {
+    if (!snapshot || !deck) {
       if (thumbnails.size > 0) {
         thumbnails.clear();
         changed = true;

@@ -1,10 +1,8 @@
-import type { ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, ConversationItemV1, ExecutionAction, MemoryObject, PreviewContentKind, PreviewContentResponse, RunArtifact, RunSession, TerminalReportDto, UsedMemoryEvent, WorkflowWorkspaceChangesResponse } from "../types.js";
-import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
-import type { PreviewRequest } from "./previews.js";
+import type { ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, ConversationItemV1, ExecutionAction, MemoryObject, RunArtifact, RunSession, TerminalReportDto, UsedMemoryEvent } from "../../src/types.js";
+import { createWorkflowParticipantAuthorityV1, type TurnContextAssignment } from "@ling-stack/contracts";
+import { cwd, type MockState } from "./mock-state.js";
 
-export const channelWorkCellDemoStorageKey = "ling-stack.workCellDemo";
-
-export interface ChannelWorkCellDemoFixture {
+interface ChannelWorkCellFixture {
   readonly channelMessages: readonly ChannelMessage[];
   readonly conversationItems: readonly ConversationItemV1[];
   readonly workflows: readonly ChannelWorkflow[];
@@ -18,10 +16,9 @@ export interface ChannelWorkCellDemoFixture {
   readonly contextSegmentIdByItemId: ReadonlyMap<string, string>;
 }
 
-const channelWorkCellDemoArtifactPrefix = "demo_work_cell_";
-const channelWorkCellDemoRecoveryStateByWorkflowId = new Map<string, "applied" | "undone">();
+const artifactPrefix = "demo_work_cell_";
 
-function demoParticipantAuthority(workflowId: string, participantId: string) {
+function participantAuthority(workflowId: string, participantId: string) {
   return createWorkflowParticipantAuthorityV1({
     kind: "workflow_definition",
     origin: "workflow_graph",
@@ -30,87 +27,70 @@ function demoParticipantAuthority(workflowId: string, participantId: string) {
   });
 }
 
-export function channelWorkCellDemoFixtureEnabled(): boolean {
-  if (!import.meta.env.DEV || typeof window === "undefined") {
-    return false;
+export function installChannelWorkCellScenario(state: MockState): void {
+  const channelId = "channel_engineering";
+  const rootThreadId = state.threads.find(thread => thread.channelId === channelId && thread.surfaceKind === "channel_root")?.id
+    ?? `thread_channel_${channelId}`;
+  const fixture = createChannelWorkCellFixture({ channelId, cwd, rootThreadId });
+  const sourceMessage = fixture.channelMessages.find(message => message.turnId);
+  if (!sourceMessage?.turnId) throw new Error("Work-cell scenario needs a source turn");
+  const sourceTurnId = sourceMessage.turnId;
+  state.channelMessages.push(...fixture.channelMessages);
+  state.channelConversationItemExtras ??= [];
+  state.channelConversationItemExtras.push(...fixture.conversationItems);
+  state.channelWorkflows.push(...fixture.workflows);
+  state.channelWorkflowSteps.push(...fixture.workflowSteps);
+  state.runs.push(...fixture.runs.map(run => ({ ...run, threadId: rootThreadId, turnId: sourceTurnId })));
+  state.executionActions.push(...fixture.executionActions.map(action => {
+    const { commandEvidence, ...fields } = action;
+    return {
+      ...fields,
+      threadId: rootThreadId,
+      updatedAt: action.updatedAt ?? action.createdAt,
+      targetRefs: [...action.targetRefs],
+      previewArtifactIds: [...action.previewArtifactIds],
+      resultArtifactIds: [...action.resultArtifactIds],
+      sourceRefs: [...action.sourceRefs],
+      commandEvidence: commandEvidence
+        ? { ...commandEvidence, outputTail: [...commandEvidence.outputTail] }
+        : undefined,
+    };
+  }));
+  state.memoryObjects.push(...fixture.memoryObjects);
+  state.usedMemoryEvents.push(...fixture.usedMemoryEvents);
+  state.terminalReports.push(...fixture.terminalReports);
+  for (const [runId, artifacts] of Object.entries(fixture.artifactsByRun)) {
+    state.artifactsByRun[runId] = artifacts.map(artifact => ({ ...artifact, contentText: artifactPreviewText(artifact) }));
   }
-  try {
-    const params = new URLSearchParams(window.location.search);
-    return window.localStorage.getItem(channelWorkCellDemoStorageKey) === "true" ||
-      params.get("workCellDemo") === "1" ||
-      params.get("lingWorkCellDemo") === "true";
-  } catch {
-    return false;
-  }
-}
-
-export function channelWorkCellDemoWorkflowRecovery(input: {
-  readonly cwd: string;
-  readonly workflowId: string;
-  readonly action?: "undo" | "reapply";
-}): WorkflowWorkspaceChangesResponse | undefined {
-  if (!channelWorkCellInteractiveDemoEnabled() || !input.workflowId.startsWith(channelWorkCellDemoArtifactPrefix)) {
-    return undefined;
-  }
-  if (input.action) {
-    channelWorkCellDemoRecoveryStateByWorkflowId.set(input.workflowId, input.action === "undo" ? "undone" : "applied");
-  }
-  const state = channelWorkCellDemoRecoveryStateByWorkflowId.get(input.workflowId) ?? "applied";
-  const idPrefix = input.workflowId.endsWith("_workflow")
-    ? input.workflowId.slice(0, -"_workflow".length)
-    : input.workflowId;
-  return {
-    cwd: input.cwd,
-    workflowId: input.workflowId,
-    runIds: [
-      `${idPrefix}_run_engineer`,
-      `${idPrefix}_run_qa`,
-      `${idPrefix}_run_engineer_followup`,
-    ],
-    state,
-    canUndo: state === "applied",
-    canReapply: state === "undone",
-    files: [],
-    summary: {
-      fileCount: 5,
-      addCount: 0,
-      updateCount: 5,
-      deleteCount: 0,
-      moveCount: 0,
-      addedLines: 15,
-      removedLines: 4,
-    },
-    updatedAt: new Date().toISOString(),
+  const segmentId = fixture.contextSegmentIdByItemId.get(sourceMessage.id);
+  if (!segmentId) throw new Error("Work-cell scenario needs a committed context segment");
+  state.channelTurnContexts[sourceTurnId] = {
+    assignment: {
+      id: `assignment_${sourceTurnId}`,
+      turnId: sourceTurnId,
+      segmentId,
+      status: "committed",
+      revision: 1,
+      decisionSource: "model_policy",
+      evidenceRefs: [{ type: "conversation_item", id: sourceMessage.id }],
+      policyVersion: "context-policy-v1",
+      createdAt: sourceMessage.createdAt,
+    } satisfies TurnContextAssignment,
   };
 }
 
-function channelWorkCellInteractiveDemoEnabled(): boolean {
-  if (!import.meta.env.DEV || typeof window === "undefined") {
-    return false;
-  }
-  try {
-    const params = new URLSearchParams(window.location.search);
-    return params.get("workCellDemo") === "1" || params.get("lingWorkCellDemo") === "true";
-  } catch {
-    return false;
-  }
-}
-
-export function createChannelWorkCellDemoFixture(input: {
+function createChannelWorkCellFixture(input: {
   readonly channelId: string;
   readonly cwd: string;
   readonly rootThreadId?: string;
-}): ChannelWorkCellDemoFixture | undefined {
+}): ChannelWorkCellFixture {
   const channelId = input.channelId.trim();
-  if (!channelId) {
-    return undefined;
-  }
 
   const workspaceId = "workspace_default";
-  const idPrefix = `${channelWorkCellDemoArtifactPrefix}${safeId(channelId)}`;
+  const idPrefix = `${artifactPrefix}${safeId(channelId)}`;
   const discussionMessageId = `${idPrefix}_message_discussion`;
   const sourceMessageId = `${idPrefix}_message_request`;
-  const sourceTurnId = `conversation-turn:${sourceMessageId}`;
+  const sourceTurnId = `turn_${sourceMessageId}`;
   const terminalReportId = `${idPrefix}_terminal_report`;
   const terminalMessageId = `message_${terminalReportId}`;
   const workflowId = `${idPrefix}_workflow`;
@@ -273,7 +253,7 @@ export function createChannelWorkCellDemoFixture(input: {
       prompt: "确认 workflow、step、run、action、artifact 如何进入频道会话投影。",
       toParticipantId: "architect",
       toParticipantLabel: "Architect",
-      participantAuthority: demoParticipantAuthority(workflowId, "architect"),
+      participantAuthority: participantAuthority(workflowId, "architect"),
       status: "succeeded",
       resultSummary: "确认频道工作记录应从现有 workflow progress 投影渲染。",
       createdAt: "2026-07-10T09:12:03.000Z",
@@ -290,7 +270,7 @@ export function createChannelWorkCellDemoFixture(input: {
       prompt: "确认操作记录不使用气泡，悬停时提升对比度，展开只影响自己的行。",
       toParticipantId: "designer",
       toParticipantLabel: "Designer",
-      participantAuthority: demoParticipantAuthority(workflowId, "designer"),
+      participantAuthority: participantAuthority(workflowId, "designer"),
       status: "succeeded",
       resultSummary: "确认 read/search 行保持简约，代码和命令只在展开细节里展示。",
       createdAt: "2026-07-10T09:12:16.000Z",
@@ -307,7 +287,7 @@ export function createChannelWorkCellDemoFixture(input: {
       prompt: "接入工作记录行、编辑记录、命令记录和完成后的折叠摘要。",
       toParticipantId: "engineer",
       toParticipantLabel: "Engineer",
-      participantAuthority: demoParticipantAuthority(workflowId, "engineer"),
+      participantAuthority: participantAuthority(workflowId, "engineer"),
       status: "succeeded",
       resultSummary: "完成频道 work-cell 操作记录投影。",
       createdAt: "2026-07-10T09:12:46.000Z",
@@ -324,7 +304,7 @@ export function createChannelWorkCellDemoFixture(input: {
       prompt: "验证频道中多 agent 操作记录可以折叠、展开，并且命令细节不会默认打断阅读。",
       toParticipantId: "qa",
       toParticipantLabel: "QA",
-      participantAuthority: demoParticipantAuthority(workflowId, "qa"),
+      participantAuthority: participantAuthority(workflowId, "qa"),
       status: "succeeded",
       resultSummary: "通过频道工作记录样例回归。",
       createdAt: "2026-07-10T09:13:33.000Z",
@@ -341,7 +321,7 @@ export function createChannelWorkCellDemoFixture(input: {
       prompt: "补齐本地样例记录和设计文档，保持第二轮动作在新位置单独展示。",
       toParticipantId: "engineer",
       toParticipantLabel: "Engineer",
-      participantAuthority: demoParticipantAuthority(workflowId, "engineer"),
+      participantAuthority: participantAuthority(workflowId, "engineer"),
       status: "succeeded",
       resultSummary: "主要任务已完成：频道已接入本地多 agent 操作记录样例，并保持完成后折叠展示。",
       createdAt: "2026-07-10T09:14:03.000Z",
@@ -528,7 +508,7 @@ export function createChannelWorkCellDemoFixture(input: {
       channelId,
       threadId: input.rootThreadId ?? sourceMessageId,
       turnId: sourceTurnId,
-      sequence: 1,
+      sequence: channelMessages.length + 1,
       kind: "terminal_report",
       status: "committed",
       actorType: "system",
@@ -717,51 +697,6 @@ export function createChannelWorkCellDemoFixture(input: {
   };
 }
 
-export function resolveChannelWorkCellDemoPreview(input: {
-  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
-  readonly request: PreviewRequest;
-}): PreviewContentResponse | undefined {
-  const request = input.request;
-  if (request.source !== "artifact") {
-    return undefined;
-  }
-  const artifactId = request.artifactId;
-  if (!artifactId.startsWith(channelWorkCellDemoArtifactPrefix)) {
-    return undefined;
-  }
-
-  const artifact = Object.values(input.artifactsByRun)
-    .flat()
-    .find((item) => item.id === artifactId);
-  if (!artifact) {
-    return undefined;
-  }
-
-  const text = demoArtifactPreviewText(artifact);
-  const maxBytes = request.maxBytes && Number.isFinite(request.maxBytes)
-    ? Math.max(1, Math.floor(request.maxBytes))
-    : undefined;
-  const previewText = maxBytes ? text.slice(0, maxBytes) : text;
-
-  return {
-    ref: {
-      id: artifact.id,
-      source: "artifact",
-      scope: "run",
-      label: artifact.title || basename(artifact.path) || artifact.id,
-      displayPath: artifact.path,
-      contentType: artifact.contentType,
-      sizeBytes: artifact.sizeBytes,
-      previewable: true,
-    },
-    kind: demoArtifactPreviewKind(artifact),
-    text: previewText,
-    truncated: previewText.length < text.length,
-    sizeBytes: artifact.sizeBytes,
-    redactionNotes: ["Preview is read-only and not included in AI context."],
-  };
-}
-
 function demoRun(input: {
   readonly id: string;
   readonly channelId: string;
@@ -794,23 +729,7 @@ function demoRun(input: {
   };
 }
 
-function demoArtifactPreviewKind(artifact: RunArtifact): PreviewContentKind {
-  if (artifact.type === "markdown") {
-    return "markdown_text";
-  }
-  if (artifact.type === "diff") {
-    return "diff";
-  }
-  if (artifact.type === "log") {
-    return "log";
-  }
-  if (artifact.type === "json") {
-    return "json";
-  }
-  return "plain_text";
-}
-
-function demoArtifactPreviewText(artifact: RunArtifact): string {
+function artifactPreviewText(artifact: RunArtifact): string {
   if (artifact.id.endsWith("_artifact_engineer_diff")) {
     return [
       "diff --git a/apps/web/src/shared/conversation/blocks/ConversationWorkCell.tsx b/apps/web/src/shared/conversation/blocks/ConversationWorkCell.tsx",
@@ -852,9 +771,9 @@ function demoArtifactPreviewText(artifact: RunArtifact): string {
   }
   if (artifact.id.endsWith("_artifact_qa_log")) {
     return [
-      "Running channel work-cell demo regression",
-      "PASS local channel work-cell demo fixture renders a realistic multi-agent operation record",
-      "PASS artifact preview opens from demo fixture without daemon lookup",
+      "Running channel work-cell regression",
+      "PASS channel work-cell renders a multi-agent operation record",
+      "PASS artifact preview opens through the mock daemon",
       "",
     ].join("\n");
   }
@@ -900,7 +819,7 @@ function demoArtifactPreviewText(artifact: RunArtifact): string {
     return [
       "# Conversation Work Cell Operation Records",
       "",
-      "本地 demo 通过 `?workCellDemo=1` 注入 display-only workflow、runs、actions 和 artifacts。",
+      "频道操作记录包含 workflow、runs、actions 和 artifacts。",
       "",
       "- 普通产物文件显示在上方。",
       "- 变更文件收进独立的编辑摘要。",

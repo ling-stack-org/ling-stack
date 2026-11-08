@@ -13,7 +13,8 @@ import type {
 const RENDERER_COMMAND_TIMEOUT_MS = 10_000;
 
 export interface ComputerUsePreviewControllerState {
-  readonly snapshot: ComputerUsePipRendererSnapshot;
+  readonly snapshot: ComputerUsePipRendererSnapshot | undefined;
+  readonly bridgeAvailable: boolean;
   readonly openCommandState: ComputerUsePreviewOpenCommandState;
   readonly stopCommandState: ComputerUsePreviewStopCommandState;
 }
@@ -31,10 +32,10 @@ export interface ComputerUsePreviewController {
 
 export function createComputerUsePreviewController(input: {
   readonly capabilities: LingComputerUsePreviewCapabilities | undefined;
-  readonly fallbackSnapshot: ComputerUsePipRendererSnapshot;
 }): ComputerUsePreviewController {
   let state: ComputerUsePreviewControllerState = {
-    snapshot: input.fallbackSnapshot,
+    snapshot: undefined,
+    bridgeAvailable: Boolean(input.capabilities),
     openCommandState: "idle",
     stopCommandState: "idle",
   };
@@ -82,21 +83,20 @@ export function createComputerUsePreviewController(input: {
   };
 
   const applySnapshot = (next: ComputerUsePipRendererSnapshot | undefined): void => {
-    const nextSnapshot = next ?? input.fallbackSnapshot;
-    const sessionChanged = nextSnapshot.sessionId !== state.snapshot.sessionId;
+    const sessionChanged = next?.sessionId !== state.snapshot?.sessionId;
     const terminalOrStopping =
-      nextSnapshot.runtimeStatus === "stopping" ||
-      nextSnapshot.runtimeStatus === "succeeded" ||
-      nextSnapshot.runtimeStatus === "failed" ||
-      nextSnapshot.runtimeStatus === "cancelled";
-    if (sessionChanged || terminalOrStopping) {
+      next?.runtimeStatus === "stopping" ||
+      next?.runtimeStatus === "succeeded" ||
+      next?.runtimeStatus === "failed" ||
+      next?.runtimeStatus === "cancelled";
+    if (!next || sessionChanged || terminalOrStopping) {
       clearStopConvergenceTimeout();
       stopRequestSequence += 1;
       openRequestSequence += 1;
-      emit({ snapshot: nextSnapshot, openCommandState: "idle", stopCommandState: "idle" });
+      emit({ ...state, snapshot: next, openCommandState: "idle", stopCommandState: "idle" });
       return;
     }
-    emit({ ...state, snapshot: nextSnapshot });
+    emit({ ...state, snapshot: next });
   };
 
   const startStopConvergenceTimeout = (requestSequence: number, sessionId: string): void => {
@@ -105,7 +105,7 @@ export function createComputerUsePreviewController(input: {
       stopConvergenceTimeoutId = undefined;
       if (
         requestSequence !== stopRequestSequence ||
-        state.snapshot.sessionId !== sessionId ||
+        state.snapshot?.sessionId !== sessionId ||
         state.stopCommandState !== "pending"
       ) {
         return;
@@ -115,7 +115,7 @@ export function createComputerUsePreviewController(input: {
   };
 
   const requestStop = async (capabilities: LingComputerUsePreviewCapabilities): Promise<void> => {
-    if (state.stopCommandState === "pending") {
+    if (!state.snapshot || state.stopCommandState === "pending") {
       return;
     }
     const sessionId = state.snapshot.sessionId;
@@ -123,7 +123,7 @@ export function createComputerUsePreviewController(input: {
     setStopCommandState("pending");
     try {
       const result = await waitForRendererCommand(capabilities.requestStop());
-      if (requestSequence !== stopRequestSequence || state.snapshot.sessionId !== sessionId) {
+      if (requestSequence !== stopRequestSequence || state.snapshot?.sessionId !== sessionId) {
         return;
       }
       if (!result.accepted) {
@@ -132,7 +132,7 @@ export function createComputerUsePreviewController(input: {
       }
       startStopConvergenceTimeout(requestSequence, sessionId);
     } catch {
-      if (requestSequence !== stopRequestSequence || state.snapshot.sessionId !== sessionId) {
+      if (requestSequence !== stopRequestSequence || state.snapshot?.sessionId !== sessionId) {
         return;
       }
       setStopCommandState("failed");
@@ -140,7 +140,7 @@ export function createComputerUsePreviewController(input: {
   };
 
   const requestOpenOwner = async (capabilities: LingComputerUsePreviewCapabilities): Promise<void> => {
-    if (state.openCommandState === "pending") {
+    if (!state.snapshot || state.openCommandState === "pending") {
       return;
     }
     const sessionId = state.snapshot.sessionId;
@@ -148,12 +148,12 @@ export function createComputerUsePreviewController(input: {
     setOpenCommandState("pending");
     try {
       const result = await waitForRendererCommand(capabilities.openOwnerConversation());
-      if (requestSequence !== openRequestSequence || state.snapshot.sessionId !== sessionId) {
+      if (requestSequence !== openRequestSequence || state.snapshot?.sessionId !== sessionId) {
         return;
       }
       setOpenCommandState(result.accepted ? "idle" : "failed");
     } catch {
-      if (requestSequence !== openRequestSequence || state.snapshot.sessionId !== sessionId) {
+      if (requestSequence !== openRequestSequence || state.snapshot?.sessionId !== sessionId) {
         return;
       }
       setOpenCommandState("failed");
@@ -183,8 +183,8 @@ export function createComputerUsePreviewController(input: {
   };
 
   return {
-    activatePage: async (pageId) => runPageCommand(input.capabilities?.activatePage(pageId)),
-    closePage: async (pageId) => runPageCommand(input.capabilities?.closePage(pageId)),
+    activatePage: async (pageId) => runPageCommand(state.snapshot ? input.capabilities?.activatePage(pageId) : undefined),
+    closePage: async (pageId) => runPageCommand(state.snapshot ? input.capabilities?.closePage(pageId) : undefined),
     dispose: () => {
       unsubscribeSnapshot?.();
       unsubscribeSnapshot = undefined;

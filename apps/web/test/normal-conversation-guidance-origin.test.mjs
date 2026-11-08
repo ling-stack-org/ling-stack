@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { jsonStringLiteralForGeneratedSource } from "./support/generated-source.mjs";
 
 const requireDesktop = createRequire(new URL("../../desktop/package.json", import.meta.url));
 const { build } = requireDesktop("esbuild");
@@ -24,7 +25,7 @@ test("normal queued guidance sends lexical origins instead of promoting them to 
     plugins: [{ name: "guidance-network-port", setup(builder) {
       builder.onResolve({ filter: /\/api\.js$/ }, () => ({ path: "api", namespace: "guidance-test" }));
       builder.onLoad({ filter: /.*/, namespace: "guidance-test" }, () => ({ contents:
-        `export const createRunIntervention = (...args) => globalThis[${JSON.stringify(hook)}](...args);
+        `export const createRunIntervention = (...args) => globalThis[${jsonStringLiteralForGeneratedSource(hook)}](...args);
          export const listRunInterventions = () => { throw new Error("Unexpected receipt lookup"); };` }));
     } }] });
   const { queueNormalConversationGuidance } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString("base64")}`);

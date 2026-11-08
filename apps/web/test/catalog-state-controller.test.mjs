@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { jsonStringLiteralForGeneratedSource } from "./support/generated-source.mjs";
 import { catalogConsumerHarness } from "./support/catalog-consumer-harness.mjs";
 import { catalogHookPort } from "./support/catalog-hook-port.mjs";
 
 const noop = () => {};
 const hooks = (names) => ({ anchor: `import { ${names} } from "react";`,
-  replace: key => `const { ${names} } = globalThis[${JSON.stringify(key)}].ports.hooks;` });
+  replace: key => `const { ${names} } = globalThis[${jsonStringLiteralForGeneratedSource(key)}].ports.hooks;` });
 
 async function snapshotFixture(t, request) {
   const port = catalogHookPort();
@@ -16,7 +17,7 @@ async function snapshotFixture(t, request) {
     transforms: { "features/runs/ShellSnapshotPanel.tsx": [
       hooks("useEffect, useRef, useState"),
       { anchor: 'import { artifactContentUrl, listRunShellSnapshots } from "../../api.js";',
-        replace: key => `import { artifactContentUrl } from "../../api.js";\nconst listRunShellSnapshots = (...args) => globalThis[${JSON.stringify(key)}].ports.listRunShellSnapshots(...args);` },
+        replace: key => `import { artifactContentUrl } from "../../api.js";\nconst listRunShellSnapshots = (...args) => globalThis[${jsonStringLiteralForGeneratedSource(key)}].ports.listRunShellSnapshots(...args);` },
     ] },
   });
   await h.select("tr-TR");
@@ -88,10 +89,10 @@ test("C012 te-IN actual archived panel and controller dispatch Unarchive, never 
     transforms: {
       "features/runs/useThreadDetailController.ts": [hooks("useEffect, useMemo, useRef, useState"), {
         anchor: `import {\n${apiNames.map(name => `  ${name},`).join("\n")}\n} from "../../api.js";`,
-        replace: key => apiNames.map(name => `const ${name} = (...args) => globalThis[${JSON.stringify(key)}].ports.api.${name}(...args);`).join("\n"),
+        replace: key => apiNames.map(name => `const ${name} = (...args) => globalThis[${jsonStringLiteralForGeneratedSource(key)}].ports.api.${name}(...args);`).join("\n"),
       }],
       "features/runs/ThreadDetailPanel.tsx": [{ anchor: "  const { state, actions } = controller;",
-        replace: key => `  const { state, actions } = controller;\n  globalThis[${JSON.stringify(key)}].captures.threadController = controller;` }],
+        replace: key => `  const { state, actions } = controller;\n  globalThis[${jsonStringLiteralForGeneratedSource(key)}].captures.threadController = controller;` }],
     },
   });
   await h.select("te-IN");

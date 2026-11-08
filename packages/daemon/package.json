@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "acorn": "8.19.0",
-    "@agentclientprotocol/sdk": "1.9.0",
+    "@agentclientprotocol/sdk": "2.2.0",
     "@anthropic-ai/sdk": "0.135.0",
     "@ling-stack/browser-host": "workspace:*",
     "@ling-stack/contracts": "workspace:*",
@@ -52,7 +52,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@babel/parser": "8.0.7",
+    "@babel/parser": "8.0.10",
     "@types/pdf-parse": "1.1.5",
     "@types/proper-lockfile": "4.1.4",
     "@types/ws": "^8.5.13",

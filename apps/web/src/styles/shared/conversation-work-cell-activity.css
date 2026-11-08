@@ -229,6 +229,33 @@ button.conversation-timeline-activity-main:not(:disabled):focus-visible .convers
   line-height: 1.45;
 }
 
+.conversation-timeline-image-preview {
+  display: block;
+  width: min(320px, 100%);
+  padding: 0;
+  border: 1px solid var(--ling-border-default);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--ling-bg-code);
+  cursor: zoom-in;
+}
+
+.conversation-timeline-image-preview img {
+  display: block;
+  width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+}
+
+.conversation-timeline-image-preview-loading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  color: var(--ling-text-muted);
+}
+
 .conversation-timeline-rich-detail > * {
   margin: 0;
 }

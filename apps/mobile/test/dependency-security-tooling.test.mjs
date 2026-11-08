@@ -30,7 +30,7 @@ const { addMcpCapabilities } =
 const { maybeCreateMCPServerAsync } = cliRequire("./build/src/start/server/mcp/MCP.js");
 // Match MCP.js: resolve both Zod and the tunnel relative to expo-mcp, not the CLI.
 const expoMcpRequire = createRequire(localRequire.resolve("expo-mcp"));
-const { z: legacyZod } = expoMcpRequire("zod");
+const { z: legacyZod } = expoMcpRequire("zod/v3");
 const tunnelPath = expoMcpRequire.resolve("@expo/mcp-tunnel");
 const { zodToJsonSchema } = createRequire(tunnelPath)("zod-to-json-schema");
 const { TunnelMcpServerProxy } = await import(pathToFileURL(tunnelPath).href);

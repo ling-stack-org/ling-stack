@@ -29,6 +29,7 @@ import {
 import { SigningContractError } from "./signing-contract.mjs";
 import { createDmgInputSnapshot } from "./dmg-input-snapshot.mjs";
 import { createDmgAttachmentCustody } from "./dmg-attachment-custody.mjs";
+import { builderVersion } from "../distribution/installer-builder.mjs";
 
 const require = createRequire(import.meta.url);
 const COMMAND_TIMEOUT_MS = 120_000;
@@ -288,10 +289,10 @@ async function resolvePinnedSevenZip() {
   const electronBuilderRequire = createRequire(electronBuilderPackage);
   const appBuilderPackage = electronBuilderRequire.resolve("app-builder-lib/package.json");
   const appBuilder = electronBuilderRequire(appBuilderPackage);
-  if (electronBuilder.version !== "26.15.3" || appBuilder.version !== "26.15.3") {
+  if (electronBuilder.version !== builderVersion || appBuilder.version !== builderVersion) {
     throw contractError(
       "final_artifact_builder_version_mismatch",
-      `Expected electron-builder/app-builder-lib 26.15.3, got ${String(electronBuilder.version)}/${String(appBuilder.version)}`,
+      `Expected electron-builder/app-builder-lib ${builderVersion}, got ${String(electronBuilder.version)}/${String(appBuilder.version)}`,
     );
   }
   const pinnedRequire = createRequire(appBuilderPackage);
