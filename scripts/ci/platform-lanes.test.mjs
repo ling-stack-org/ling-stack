@@ -38,8 +38,8 @@ function runQuality(overrides = {}) {
 test("complete daemon shards run on the explicit real macOS arm64 image", () => {
   const job = jobSource("daemon-tests");
   assert.match(job, /runs-on: macos-26\n/u);
-  assert.match(job, /shard: \[0, 1, 2, 3\]/u);
-  assert.match(job, /daemon-test-shard\.mjs --shard=\$\{\{ matrix\.shard \}\} --shard-count=4 --concurrency=2/u);
+  assert.match(job, /shard: \[0, 1, 2, 3, 4, 5\]/u);
+  assert.match(job, /daemon-test-shard\.mjs --shard=\$\{\{ matrix\.shard \}\} --shard-count=6 --concurrency=4/u);
   assert.doesNotMatch(job, /continue-on-error|--test-name-pattern|--test-skip-pattern/u);
 });
 
