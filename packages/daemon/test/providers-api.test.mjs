@@ -78,7 +78,7 @@ test("DELETE /providers/:id blocks channel references and preserves local secret
 test("POST /transcribe selects an enabled ASR provider and forwards the multipart audio", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-transcription-api-"));
   const stores = new Map();
-  const daemon = await startDaemonForTest(stores);
+  const daemon = await startDaemonForTest(stores, {}, { defaultWorkspaceCwd: cwd });
   const transcriptionServer = await startTranscriptionServer();
   const previousAsrKey = process.env.LING_STACK_TEST_ASR;
   try {
@@ -130,10 +130,56 @@ test("POST /transcribe selects an enabled ASR provider and forwards the multipar
   }
 });
 
+test("POST /transcribe rejects cross-origin workspace requests before reading audio", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-transcription-api-origin-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(stores, {}, { defaultWorkspaceCwd: cwd });
+  const transcriptionServer = await startTranscriptionServer();
+  const previousAsrKey = process.env.LING_STACK_TEST_ASR;
+  try {
+    process.env.LING_STACK_TEST_ASR = "unit-test-value-123";
+    await postJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "openai-compatible",
+      displayName: "ASR Relay",
+      providerId: "asr-relay",
+      model: "whisper-compatible",
+      api: "openai-completions",
+      baseUrl: transcriptionServer.url,
+      apiKeyRef: "env:LING_STACK_TEST_ASR",
+      capabilities: ["asr"],
+      input: ["text"],
+      enabled: true,
+    });
+
+    const form = new FormData();
+    form.append("file", new Blob(["audio bytes"], { type: "audio/webm" }), "voice.webm");
+    const response = await fetch(`${daemon.url}/transcribe?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { Origin: "https://evil.example" },
+      body: form,
+    });
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error, "forbidden_origin");
+    assert.equal(transcriptionServer.requests.length, 0);
+  } finally {
+    if (previousAsrKey === undefined) {
+      delete process.env.LING_STACK_TEST_ASR;
+    } else {
+      process.env.LING_STACK_TEST_ASR = previousAsrKey;
+    }
+    await transcriptionServer.close();
+    await daemon.close();
+    for (const store of stores.values()) {
+      store.close();
+    }
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("POST /transcribe honors a smaller daemon request body limit", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-transcription-api-limit-"));
   const stores = new Map();
-  const daemon = await startDaemonForTest(stores, {}, { maxBodyBytes: 8 * 1024 });
+  const daemon = await startDaemonForTest(stores, {}, { defaultWorkspaceCwd: cwd, maxBodyBytes: 8 * 1024 });
   const previousAsrKey = process.env.LING_STACK_TEST_ASR;
   try {
     process.env.LING_STACK_TEST_ASR = "unit-test-value-123";

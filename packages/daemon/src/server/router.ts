@@ -777,6 +777,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/transcribe") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
     await handleTranscription(request, response, config, storeRegistry, secretResolver);
     return;
   }
