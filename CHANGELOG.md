@@ -10,7 +10,7 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ### Changed
 
-- **Daemon CI runs up to four concurrent isolated file workers per macOS shard** while retaining full coverage and native-platform checks.
+- **Daemon CI runs up to five concurrent isolated file workers per macOS shard** while retaining full coverage and native-platform checks.
 
 ## [0.2.2] - 2026-11-03
 

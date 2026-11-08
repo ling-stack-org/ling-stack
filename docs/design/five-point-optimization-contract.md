@@ -306,7 +306,7 @@ fixture templates. Reuse them. Schema initialization/migration/recovery tests mu
 use the real production initializer rather than a template that skips their subject.
 
 Current source-confirmed constraints include single-worker Web/Desktop Renderer,
-up to four concurrent Daemon file workers per shard with serial queues within each
+up to five concurrent Daemon file workers per shard with serial queues within each
 worker, measured-duration shard weights when available with source-size/category
 fallbacks, and no full Web E2E in root `pnpm -r test` or the checked CI workflow.
 Exclusive Daemon resource groups remain serialized. Older sidebar locator mismatch

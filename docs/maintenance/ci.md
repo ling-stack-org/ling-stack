@@ -208,7 +208,7 @@ node scripts/check-public-repo-safety.mjs
 下面的命令会真实执行一个 Daemon 分片，不是只打印分配；需要构建产物和对应支持平台：
 
 ```bash
-node scripts/ci/daemon-test-shard.mjs --shard=0 --shard-count=4 --concurrency=4
+node scripts/ci/daemon-test-shard.mjs --shard=0 --shard-count=4 --concurrency=5
 ```
 
 ## 未决事项
