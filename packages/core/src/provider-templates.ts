@@ -18,6 +18,16 @@ export function defaultProviderTemplates(): readonly ProviderTemplate[] {
       baseUrl: "https://api.openai.com/v1",
       apiKeyRef: "env:OPENAI_API_KEY",
     }),
+    transcriptionProviderTemplate({
+      templateId: "openai-whisper",
+      kind: "openai",
+      displayName: "OpenAI Whisper",
+      description: "OpenAI-compatible speech-to-text endpoint for Desktop dictation. The provider model is used with /audio/transcriptions.",
+      providerId: "openai-whisper",
+      model: "whisper-1",
+      baseUrl: "https://api.openai.com/v1",
+      apiKeyRef: "env:OPENAI_API_KEY",
+    }),
     chatProviderTemplate({
       templateId: "openai-responses-web-search",
       kind: "openai",
@@ -318,5 +328,28 @@ function mediaProviderTemplate(input: {
     capabilities: input.capabilities,
     input: ["text", "image"],
     enabled: false,
+  };
+}
+
+function transcriptionProviderTemplate(input: {
+  readonly templateId: string;
+  readonly kind: ProviderPresetInput["kind"];
+  readonly displayName: string;
+  readonly description: string;
+  readonly providerId: string;
+  readonly model: string;
+  readonly baseUrl: string;
+  readonly apiKeyRef: string;
+}): ProviderTemplate {
+  return {
+    ...input,
+    api: "openai-completions",
+    capabilities: ["asr"],
+    input: ["text"],
+    enabled: true,
+    authHeader: true,
+    reasoning: false,
+    thinkingModes: [],
+    compat: {},
   };
 }

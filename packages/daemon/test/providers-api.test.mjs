@@ -75,6 +75,149 @@ test("DELETE /providers/:id blocks channel references and preserves local secret
   }
 });
 
+test("POST /transcribe selects an enabled ASR provider and forwards the multipart audio", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-transcription-api-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(stores, {}, { defaultWorkspaceCwd: cwd });
+  const transcriptionServer = await startTranscriptionServer();
+  const previousAsrKey = process.env.LING_STACK_TEST_ASR;
+  try {
+    process.env.LING_STACK_TEST_ASR = "unit-test-value-123";
+    await postJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "openai-compatible",
+      displayName: "ASR Relay",
+      providerId: "asr-relay",
+      model: "whisper-compatible",
+      api: "openai-completions",
+      baseUrl: transcriptionServer.url,
+      apiKeyRef: "env:LING_STACK_TEST_ASR",
+      capabilities: ["asr"],
+      input: ["text"],
+      enabled: true,
+    });
+
+    const form = new FormData();
+    form.append("file", new Blob(["audio bytes"], { type: "audio/webm" }), "voice.webm");
+    form.append("language", "zh");
+    const response = await fetch(`${daemon.url}/transcribe?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      body: form,
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      text: "来自 ASR",
+      providerId: (await getJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`)).providers[0].id,
+      model: "whisper-compatible",
+    });
+    assert.equal(transcriptionServer.requests.length, 1);
+    assert.equal(transcriptionServer.requests[0].url, "/audio/transcriptions");
+    assert.equal(transcriptionServer.requests[0].headers.authorization, "Bearer unit-test-value-123");
+    assert.match(transcriptionServer.requests[0].headers["content-type"], /^multipart\/form-data; boundary=/);
+    assert.match(transcriptionServer.requests[0].body.toString("utf8"), /name="model"/u);
+    assert.match(transcriptionServer.requests[0].body.toString("utf8"), /whisper-compatible/u);
+  } finally {
+    if (previousAsrKey === undefined) {
+      delete process.env.LING_STACK_TEST_ASR;
+    } else {
+      process.env.LING_STACK_TEST_ASR = previousAsrKey;
+    }
+    await transcriptionServer.close();
+    await daemon.close();
+    for (const store of stores.values()) {
+      store.close();
+    }
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("POST /transcribe rejects cross-origin workspace requests before reading audio", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-transcription-api-origin-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(stores, {}, { defaultWorkspaceCwd: cwd });
+  const transcriptionServer = await startTranscriptionServer();
+  const previousAsrKey = process.env.LING_STACK_TEST_ASR;
+  try {
+    process.env.LING_STACK_TEST_ASR = "unit-test-value-123";
+    await postJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "openai-compatible",
+      displayName: "ASR Relay",
+      providerId: "asr-relay",
+      model: "whisper-compatible",
+      api: "openai-completions",
+      baseUrl: transcriptionServer.url,
+      apiKeyRef: "env:LING_STACK_TEST_ASR",
+      capabilities: ["asr"],
+      input: ["text"],
+      enabled: true,
+    });
+
+    const form = new FormData();
+    form.append("file", new Blob(["audio bytes"], { type: "audio/webm" }), "voice.webm");
+    const response = await fetch(`${daemon.url}/transcribe?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { Origin: "https://evil.example" },
+      body: form,
+    });
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error, "forbidden_origin");
+    assert.equal(transcriptionServer.requests.length, 0);
+  } finally {
+    if (previousAsrKey === undefined) {
+      delete process.env.LING_STACK_TEST_ASR;
+    } else {
+      process.env.LING_STACK_TEST_ASR = previousAsrKey;
+    }
+    await transcriptionServer.close();
+    await daemon.close();
+    for (const store of stores.values()) {
+      store.close();
+    }
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("POST /transcribe honors a smaller daemon request body limit", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-transcription-api-limit-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(stores, {}, { defaultWorkspaceCwd: cwd, maxBodyBytes: 8 * 1024 });
+  const previousAsrKey = process.env.LING_STACK_TEST_ASR;
+  try {
+    process.env.LING_STACK_TEST_ASR = "unit-test-value-123";
+    await postJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "openai-compatible",
+      displayName: "ASR Relay",
+      providerId: "asr-relay",
+      model: "whisper-compatible",
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1:1",
+      apiKeyRef: "env:LING_STACK_TEST_ASR",
+      capabilities: ["asr"],
+      input: ["text"],
+      enabled: true,
+    });
+
+    const form = new FormData();
+    form.append("file", new Blob([new Uint8Array(12 * 1024)], { type: "audio/webm" }), "voice.webm");
+    const response = await fetch(`${daemon.url}/transcribe?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      body: form,
+    });
+    assert.equal(response.status, 413);
+    assert.equal((await response.json()).error, "payload_too_large");
+  } finally {
+    if (previousAsrKey === undefined) {
+      delete process.env.LING_STACK_TEST_ASR;
+    } else {
+      process.env.LING_STACK_TEST_ASR = previousAsrKey;
+    }
+    await daemon.close();
+    for (const store of stores.values()) {
+      store.close();
+    }
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("provider secret header refs are validated and materialized for model discovery", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-providers-api-secret-headers-"));
   const stores = new Map();
@@ -846,10 +989,11 @@ function waitForProviderRequest(requestArrived, signal) {
   });
 }
 
-async function startDaemonForTest(stores, dependencies = {}) {
+async function startDaemonForTest(stores, dependencies = {}, config = {}) {
   const daemon = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
+    ...config,
   }, {
     ...dependencies,
     storeFactory: (cwd) => {
@@ -931,6 +1075,33 @@ async function startModelServerForSecretHeaderTest() {
     }
     response.writeHead(200, { "Content-Type": "application/json" });
     response.end(JSON.stringify({ data: [{ id: "gpt-secret-header" }] }));
+  });
+  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  return {
+    requests,
+    url: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise((resolveClose, rejectClose) => {
+      server.close((error) => error ? rejectClose(error) : resolveClose());
+    }),
+  };
+}
+
+async function startTranscriptionServer() {
+  const requests = [];
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    requests.push({
+      url: request.url,
+      headers: request.headers,
+      body: Buffer.concat(chunks),
+    });
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ text: "来自 ASR" }));
   });
   await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
   const address = server.address();

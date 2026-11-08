@@ -734,6 +734,7 @@ export function ConversationHome({
 
   const composerNode = (
     <NormalConversationComposer
+      workspaceCwd={workspaceCwd}
       runtimeMetrics={runtimeMetrics}
       draft={draft}
       inputRef={composerInputRef}

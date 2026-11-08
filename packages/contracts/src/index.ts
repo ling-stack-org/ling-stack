@@ -54,6 +54,7 @@ export * from "./host-command-journal.js";
 export * from "./media-execution-evidence.js";
 export type * from "./shell-snapshots.js";
 export type * from "./providers.js";
+export type * from "./transcriptions.js";
 export type * from "./mcp.js";
 export type * from "./tool-surfaces.js";
 export type * from "./plugins.js";

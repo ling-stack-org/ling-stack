@@ -25,6 +25,20 @@ for (const method of ["_get", "_requestJson", "_fetch"]) {
   });
 }
 
+test("multipart transport errors preserve the fetch origin and cause", async () => {
+  const cause = new TypeError("Failed to fetch multipart request");
+  let calls = 0;
+  const client = new api.LingDaemonClient({ fetch: async () => { calls++; throw cause; } });
+  await assert.rejects(() => client._requestMultipart("POST", "/transcribe", {}, new FormData()), error => {
+    assert.equal(error.name, "LingDaemonTransportError");
+    assert.equal(error.phase, "fetch");
+    assert.equal(error.cause, cause);
+    assert.equal(error.message, cause.message);
+    return true;
+  });
+  assert.equal(calls, 1);
+});
+
 test("HTTP business errors and malformed JSON are not transport observation failures", async () => {
   for (const method of ["_get", "_requestJson"]) {
     const client = new api.LingDaemonClient({ fetch: async () => new Response(

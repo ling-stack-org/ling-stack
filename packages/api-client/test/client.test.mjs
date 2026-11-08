@@ -56,6 +56,30 @@ test("builds command-rule approval and management requests", async () => {
   });
 });
 
+test("builds multipart transcription requests without setting a boundary header", async () => {
+  const mock = createFetchMock({ text: "你好", providerId: "asr-provider", model: "whisper-1" });
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  await client.transcribeAudio("/repo path", new Blob(["audio bytes"], { type: "audio/webm" }), {
+    filename: "voice.webm",
+    language: " zh ",
+    prompt: " meeting ",
+    providerPresetId: "asr-provider",
+  });
+
+  assert.equal(mock.calls[0].method, "POST");
+  assert.equal(mock.calls[0].url, "http://daemon.test/transcribe?cwd=%2Frepo+path");
+  assert.equal(mock.calls[0].headers, undefined);
+  assert.ok(mock.calls[0].body instanceof FormData);
+  assert.equal(mock.calls[0].body.get("language"), "zh");
+  assert.equal(mock.calls[0].body.get("prompt"), "meeting");
+  assert.equal(mock.calls[0].body.get("providerPresetId"), "asr-provider");
+  const file = mock.calls[0].body.get("file");
+  assert.ok(file instanceof Blob);
+  assert.equal(file.name, "voice.webm");
+  assert.equal(file.type, "audio/webm");
+});
+
 test("builds workspace review recovery and open-action requests", async () => {
   const mock = createFetchMock([
     { cwd: "/repo", state: "clean", additions: 0, deletions: 0, files: [], checkedAt: "now" },
