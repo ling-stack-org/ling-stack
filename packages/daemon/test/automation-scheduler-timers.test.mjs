@@ -144,6 +144,44 @@ for (const missedRunPolicy of ["skip", "run_one"]) {
   });
 }
 
+test("scheduler disables a COUNT=1 automation after its terminal run", async (t) => {
+  const f = await schedulerFixture(t, 1000);
+  f.store.updateAutomationDefinition(f.automation.id, {
+    trigger: { type: "schedule", timezone: "UTC", schedule: { cadence: "daily", timeOfDay: "01:00" }, missedRunPolicy: "skip" },
+    rrule: "FREQ=DAILY;BYHOUR=1;BYMINUTE=0;BYSECOND=0;COUNT=1",
+  }, new Date().toISOString());
+  f.scheduler.start(f.cwd);
+  const due = new Date(START_MS + 60 * 60 * 1000).toISOString();
+  assert.equal(f.store.getAutomationDefinition(f.automation.id).nextRunAt, due);
+  t.mock.timers.tick(60 * 60 * 1000);
+  await f.scheduler.waitForIdle();
+  const completed = f.store.getAutomationDefinition(f.automation.id);
+  assert.equal(f.runner.runs.length, 1);
+  assert.equal(completed.status, "disabled");
+  assert.equal(completed.nextRunAt, undefined);
+});
+
+for (const missedRunPolicy of ["skip", "run_one"]) {
+  test(`scheduler restart applies ${missedRunPolicy} to a persisted stale due slot`, async (t) => {
+    const f = await schedulerFixture(t, 1000, missedRunPolicy);
+    const staleDue = new Date(START_MS - 1000).toISOString();
+    f.store.updateAutomationDefinition(f.automation.id, { nextRunAt: staleDue }, new Date().toISOString());
+    f.scheduler.start(f.cwd);
+    if (missedRunPolicy === "skip") {
+      assert.equal(f.store.getAutomationDefinition(f.automation.id).nextRunAt, new Date(START_MS + 1000).toISOString());
+      assert.equal(f.timers.last().delay, 1000);
+      assert.equal(f.runner.runs.length, 0);
+      return;
+    }
+    assert.equal(f.store.getAutomationDefinition(f.automation.id).nextRunAt, staleDue);
+    assert.equal(f.timers.last().delay, 1);
+    f.timers.last().callback();
+    await f.scheduler.waitForIdle();
+    assert.equal(f.runner.runs.length, 1);
+    assert.notEqual(f.store.getAutomationDefinition(f.automation.id).nextRunAt, staleDue);
+  });
+}
+
 for (const status of ["paused", "disabled", "archived"]) {
   test(`scheduler checks fresh SQLite ${status} state before a long segment can dispatch`, async (t) => {
     const f = await schedulerFixture(t, THIRTY_DAYS_MS);

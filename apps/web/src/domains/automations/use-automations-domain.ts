@@ -311,6 +311,7 @@ export function useAutomationsDomain(input: {
 
   async function setAutomationTargetById(automationId: string, target: AutomationTarget): Promise<AutomationDefinition | undefined> {
     return updateDefinition(automationId, "target", {
+      automationMode: target.scope === "thread" ? "heartbeat" : "cron",
       target,
       targetThreadId: target.scope === "thread" ? target.threadId ?? null : null,
     });
