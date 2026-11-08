@@ -88,7 +88,7 @@ test("POST /transcribe selects an enabled ASR provider and forwards the multipar
       model: "whisper-compatible",
       api: "openai-completions",
       baseUrl: transcriptionServer.url,
-      apiKey: "asr-provider-secret",
+      apiKey: "unit-test-value-123",
       capabilities: ["asr"],
       input: ["text"],
       enabled: true,
@@ -109,7 +109,7 @@ test("POST /transcribe selects an enabled ASR provider and forwards the multipar
     });
     assert.equal(transcriptionServer.requests.length, 1);
     assert.equal(transcriptionServer.requests[0].url, "/audio/transcriptions");
-    assert.equal(transcriptionServer.requests[0].headers.authorization, "Bearer asr-provider-secret");
+    assert.equal(transcriptionServer.requests[0].headers.authorization, "Bearer unit-test-value-123");
     assert.match(transcriptionServer.requests[0].headers["content-type"], /^multipart\/form-data; boundary=/);
     assert.match(transcriptionServer.requests[0].body.toString("utf8"), /name="model"/u);
     assert.match(transcriptionServer.requests[0].body.toString("utf8"), /whisper-compatible/u);
