@@ -305,10 +305,12 @@ Main already has build-once CI artifacts, platform lanes and per-process closed 
 fixture templates. Reuse them. Schema initialization/migration/recovery tests must still
 use the real production initializer rather than a template that skips their subject.
 
-Remaining source-confirmed constraints include single-worker Web/Desktop Renderer,
-serial Daemon shard interiors, source-size rather than measured-duration weights and
-no full Web E2E in root `pnpm -r test` or the checked CI workflow. Older sidebar locator
-mismatch counts are historical; the inspected Main locators have already changed.
+Current source-confirmed constraints include single-worker Web/Desktop Renderer,
+up to four concurrent Daemon file workers per shard with serial queues within each
+worker, measured-duration shard weights when available with source-size/category
+fallbacks, and no full Web E2E in root `pnpm -r test` or the checked CI workflow.
+Exclusive Daemon resource groups remain serialized. Older sidebar locator mismatch
+counts are historical; the inspected Main locators have already changed.
 
 The full-suite runner must enumerate every lane and preserve each lane's assertion set.
 Separate deterministic source regression from real-account, native/platform and package

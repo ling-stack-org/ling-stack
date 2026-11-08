@@ -70,9 +70,10 @@ a requested package via `--if-present`.
 - Other packages and Web checks: one Linux matrix entry only when at least one
   such package is selected, excluding core and daemon because their complete
   discovery runs in their own entries.
-- Daemon: four `macos-26` shards, four serial file workers per shard. The Kimi Host
-  read/terminal and delegation production-tool-surface files run serially in an
-  exclusive phase before other files on their assigned runner.
+- Daemon: four `macos-26` shards, up to four concurrent file workers per shard;
+  each worker processes its files serially. The Kimi Host read/terminal and
+  delegation production-tool-surface files run serially in an exclusive phase
+  before other files on their assigned runner.
 - Linux restricted-command contracts and real macOS native smoke remain separate
   mandatory lanes. No daemon files have been moved to Linux or removed.
 - Framework assurance: complete non-documentation runs add an Ubuntu / Node
