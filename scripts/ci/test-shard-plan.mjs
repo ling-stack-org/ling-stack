@@ -15,6 +15,7 @@ export const testSuites = {
       "test/workflow-candidate-validation.test.mjs": 600_000,
       "test/workflow-conflict-recovery.test.mjs": 600_000,
       "test/workflow-integration-candidate.test.mjs": 600_000,
+      "test/workflow-isolated-parallel-integration.test.mjs": 600_000,
       "test/workflow-merge-approval.test.mjs": 600_000,
     },
     exclusive: ["test/acp-kimi-host-read.test.mjs", "test/acp-kimi-host-terminal.test.mjs",

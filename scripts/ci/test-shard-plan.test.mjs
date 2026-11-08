@@ -47,7 +47,8 @@ test("split channel suites are discovered once with ordinary parallel workers an
   assert.ok(!suite.files.some(file => file.includes("channel-workspace-fixture")));
   assert.ok(testSuites.daemon.exclusive.includes("test/delegation-production-tool-surface.test.mjs"));
   for (const file of ["test/recovery-discovery-fair-scan.test.mjs", "test/workflow-candidate-validation.test.mjs",
-    "test/workflow-conflict-recovery.test.mjs", "test/workflow-integration-candidate.test.mjs", "test/workflow-merge-approval.test.mjs"]) {
+    "test/workflow-conflict-recovery.test.mjs", "test/workflow-integration-candidate.test.mjs",
+    "test/workflow-isolated-parallel-integration.test.mjs", "test/workflow-merge-approval.test.mjs"]) {
     assert.equal(testSuites.daemon.fileTimeouts[file], 600_000);
   }
 });

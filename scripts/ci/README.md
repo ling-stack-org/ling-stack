@@ -104,6 +104,7 @@ The known high-cost daemon integration fixture,
 fixtures `test/workflow-candidate-validation.test.mjs`,
 `test/workflow-conflict-recovery.test.mjs`,
 `test/workflow-integration-candidate.test.mjs`, and
+`test/workflow-isolated-parallel-integration.test.mjs`,
 `test/workflow-merge-approval.test.mjs` have explicit ten-minute watchdogs
 because hosted runners crossed five minutes while continuing to make progress.
 These exceptions are file-scoped; every other daemon file keeps the five-minute
