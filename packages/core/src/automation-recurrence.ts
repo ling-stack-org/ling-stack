@@ -3,16 +3,19 @@ import type { AutomationDefinition, AutomationSchedule } from "./automation-type
 const DAY_MS = 86_400_000;
 const DATE_LIMIT_MS = 8_640_000_000_000_000;
 const WEEKDAYS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"] as const;
-const RULE_FIELDS = new Set(["FREQ", "INTERVAL", "BYDAY", "BYHOUR", "BYMINUTE", "BYSECOND", "WKST"]);
+const RULE_FIELDS = new Set(["FREQ", "INTERVAL", "BYDAY", "BYMONTHDAY", "BYHOUR", "BYMINUTE", "BYSECOND", "WKST", "COUNT", "UNTIL"]);
 
 interface ParsedRRule {
-  readonly freq: "MINUTELY" | "DAILY" | "WEEKLY";
+  readonly freq: "MINUTELY" | "HOURLY" | "DAILY" | "WEEKLY" | "MONTHLY";
   readonly interval: number;
   readonly weekStart: number;
   readonly byDay: readonly number[];
+  readonly byMonthDay: readonly number[];
   readonly byHour: readonly number[];
   readonly byMinute: readonly number[];
   readonly bySecond: readonly number[];
+  readonly count?: number;
+  readonly until?: number;
 }
 
 /** A recurrence calculation failure, distinct from scheduler persistence failures. */
@@ -22,6 +25,9 @@ export class AutomationRecurrenceError extends Error {
     this.name = "AutomationRecurrenceError";
   }
 }
+
+/** A valid finite rule has no future occurrence; the scheduler disables it. */
+export class AutomationRecurrenceCompleteError extends AutomationRecurrenceError {}
 
 /** Reject unsupported fields instead of widening a finite or malformed rule. */
 export function isSupportedAutomationRRule(rule: string): boolean {
@@ -40,6 +46,9 @@ export function computeNextAutomationRunAt(
     if (automation.trigger.schedule.cadence !== "interval" && automation.rrule) {
       const next = computeNextRunAtFromRRule(automation.rrule, automation.trigger.timezone, from, new Date(automation.createdAt));
       if (!next) {
+        if (isSupportedAutomationRRule(automation.rrule) && /(?:COUNT=1|UNTIL=)/i.test(automation.rrule)) {
+          throw new AutomationRecurrenceCompleteError("Automation recurrence has no future occurrence.");
+        }
         throw new AutomationRecurrenceError("Automation recurrence RRULE is unsupported, invalid, or has no representable next occurrence.");
       }
       return next;
@@ -88,11 +97,21 @@ export function computeNextRunAtFromRRule(
   if (!parsed || !Number.isFinite(from.getTime()) || (!anchor && parsed.interval > 1)) return undefined;
   const start = anchor ?? from;
   if (!Number.isFinite(start.getTime())) return undefined;
-  if (parsed.freq === "MINUTELY") {
-    const period = parsed.interval * 60_000;
+  return computeNextRunAtFromParsed(parsed, timezone, from, start);
+}
+
+function computeNextRunAtFromParsed(parsed: ParsedRRule, timezone: string, from: Date, start: Date): string | undefined {
+  if (parsed.freq === "MINUTELY" || parsed.freq === "HOURLY") {
+    const period = parsed.interval * (parsed.freq === "HOURLY" ? 3_600_000 : 60_000);
     const index = Math.max(0, Math.floor((from.getTime() - start.getTime()) / period) + 1);
     const next = new Date(start.getTime() + index * period);
-    return Number.isFinite(next.getTime()) ? next.toISOString() : undefined;
+    if (!Number.isFinite(next.getTime()) || (parsed.until !== undefined && next.getTime() > parsed.until)) return undefined;
+    if (parsed.count === 1 && from.getTime() >= start.getTime()) return undefined;
+    return next.toISOString();
+  }
+  if (parsed.count === 1) {
+    const first = computeNextRunAtFromParsed({ ...parsed, count: undefined }, timezone, new Date(start.getTime() - 1), start);
+    if (!first || from.getTime() >= Date.parse(first)) return undefined;
   }
   const zone = zonedCalendar(timezone);
   const startParts = zone.parts(start);
@@ -100,13 +119,18 @@ export function computeNextRunAtFromRRule(
   const queryParts = zone.parts(from);
   const queryDay = dayNumber(queryParts);
   const hours = parsed.byHour.length ? parsed.byHour : [startParts.hour];
-  const minutes = parsed.byMinute.length ? parsed.byMinute : [anchor ? startParts.minute : 0];
-  const seconds = parsed.bySecond.length ? parsed.bySecond : [anchor ? startParts.second : 0];
+  const minutes = parsed.byMinute.length ? parsed.byMinute : [startParts.minute];
+  const seconds = parsed.bySecond.length ? parsed.bySecond : [startParts.second];
   const step = parsed.interval * (parsed.freq === "WEEKLY" ? 7 : 1);
   const firstPeriod = parsed.freq === "WEEKLY"
     ? startDay - positiveModulo(weekday(startDay) - parsed.weekStart, 7)
     : startDay;
-  let periodIndex = Math.max(0, Math.floor((queryDay - firstPeriod) / step));
+  const startMonth = startParts.year * 12 + startParts.month - 1;
+  const queryMonth = queryParts.year * 12 + queryParts.month - 1;
+  const firstMonth = startMonth;
+  let periodIndex = parsed.freq === "MONTHLY"
+    ? Math.max(0, Math.floor((queryMonth - firstMonth) / parsed.interval))
+    : Math.max(0, Math.floor((queryDay - firstPeriod) / step));
   const days = parsed.freq === "WEEKLY"
     ? (parsed.byDay.length ? parsed.byDay : [weekday(startDay)])
       .map((day) => positiveModulo(day - parsed.weekStart, 7)).sort((a, b) => a - b)
@@ -115,8 +139,21 @@ export function computeNextRunAtFromRRule(
   // Jump whole recurrence periods, not a fixed 370-day lookahead. The finite
   // search guard fails closed (never falls back to an unrelated daily trigger).
   for (let attempt = 0; attempt < 370; attempt += 1, periodIndex += 1) {
-    for (const offset of days) {
-      const day = firstPeriod + periodIndex * step + offset;
+    const monthlyDays = parsed.freq === "MONTHLY"
+      ? (parsed.byMonthDay.length ? parsed.byMonthDay : [startParts.day])
+      : [undefined];
+    for (const offset of parsed.freq === "MONTHLY" ? monthlyDays : days) {
+      let day: number;
+      if (parsed.freq === "MONTHLY") {
+        const monthIndex = firstMonth + periodIndex * parsed.interval;
+        const year = Math.floor(monthIndex / 12);
+        const month = positiveModulo(monthIndex, 12) + 1;
+        const monthDay = offset as number;
+        if (monthDay > daysInMonth(year, month)) continue;
+        day = dayNumber({ year, month, day: monthDay, hour: 0, minute: 0, second: 0 });
+      } else {
+        day = firstPeriod + periodIndex * step + (offset as number);
+      }
       if (day < startDay || day < queryDay) continue;
       if (parsed.freq === "DAILY" && parsed.byDay.length && !parsed.byDay.includes(weekday(day))) continue;
       if (!Number.isFinite(new Date(day * DAY_MS).getTime())) return undefined;
@@ -136,7 +173,9 @@ export function computeNextRunAtFromRRule(
           for (const second of seconds) {
             if (!hasValidWallTime(minuteStart + second, minuteStart + second + 1)) continue;
             const candidate = zone.instant(day, hour, minute, second);
-            if (candidate && candidate.getTime() >= start.getTime() && candidate.getTime() > from.getTime()) {
+            if (candidate && candidate.getTime() >= start.getTime() && candidate.getTime() > from.getTime()
+              && (parsed.until === undefined || candidate.getTime() <= parsed.until)
+              && (parsed.count !== 1 || candidate.getTime() === firstCalendarOccurrence(parsed, timezone, start))) {
               return candidate.toISOString();
             }
           }
@@ -157,20 +196,26 @@ function parseRRule(rule: string): ParsedRRule | undefined {
     fields.set(key, match[2]!.trim().toUpperCase());
   }
   const freq = fields.get("FREQ");
-  if (freq !== "MINUTELY" && freq !== "DAILY" && freq !== "WEEKLY") return undefined;
+  if (freq !== "MINUTELY" && freq !== "HOURLY" && freq !== "DAILY" && freq !== "WEEKLY" && freq !== "MONTHLY") return undefined;
   const interval = fields.has("INTERVAL") ? positiveInteger(fields.get("INTERVAL")!) : 1;
   if (interval === undefined) return undefined;
   const weekStart = fields.has("WKST") ? WEEKDAYS.indexOf(fields.get("WKST") as typeof WEEKDAYS[number]) : 1;
   if (weekStart < 0) return undefined;
   const byDay = fields.has("BYDAY") ? weekdays(fields.get("BYDAY")!) : [];
+  const byMonthDay = fields.has("BYMONTHDAY") ? monthDays(fields.get("BYMONTHDAY")!) : [];
   const byHour = numbers(fields.get("BYHOUR"), 23);
   const byMinute = numbers(fields.get("BYMINUTE"), 59);
   const bySecond = numbers(fields.get("BYSECOND"), 59);
-  if (!byDay || !byHour || !byMinute || !bySecond) return undefined;
+  if (!byDay || !byMonthDay || !byHour || !byMinute || !bySecond) return undefined;
   // The existing MINUTELY contract is an elapsed-time recurrence. Calendar
   // filters on it were previously ignored; reject them rather than fake support.
-  if (freq === "MINUTELY" && ["BYDAY", "BYHOUR", "BYMINUTE", "BYSECOND", "WKST"].some((key) => fields.has(key))) return undefined;
-  return { freq, interval, weekStart, byDay, byHour, byMinute, bySecond };
+  if ((freq === "MINUTELY" || freq === "HOURLY") && ["BYDAY", "BYMONTHDAY", "BYHOUR", "BYMINUTE", "BYSECOND", "WKST"].some((key) => fields.has(key))) return undefined;
+  if (freq === "MONTHLY" && fields.has("BYDAY")) return undefined;
+  const count = fields.has("COUNT") ? positiveInteger(fields.get("COUNT")!) : undefined;
+  if (fields.has("COUNT") && count !== 1) return undefined;
+  const until = fields.has("UNTIL") ? parseUntil(fields.get("UNTIL")!) : undefined;
+  if (fields.has("UNTIL") && until === undefined) return undefined;
+  return { freq, interval, weekStart, byDay, byMonthDay, byHour, byMinute, bySecond, count, until };
 }
 
 function positiveInteger(value: string): number | undefined {
@@ -189,6 +234,36 @@ function numbers(value: string | undefined, max: number): readonly number[] | un
 function weekdays(value: string): readonly number[] | undefined {
   const items = value.split(",").map((day) => WEEKDAYS.indexOf(day as typeof WEEKDAYS[number]));
   return items.includes(-1) ? undefined : [...new Set(items)].sort((a, b) => a - b);
+}
+
+function monthDays(value: string): readonly number[] | undefined {
+  const items = value.split(",");
+  if (items.some((item) => !/^-?\d+$/.test(item) || Number(item) < 1 || Number(item) > 31)) return undefined;
+  return [...new Set(items.map(Number))].sort((a, b) => a - b);
+}
+
+function parseUntil(value: string): number | undefined {
+  const normalized = value.trim();
+  if (/^\d{8}T\d{6}Z$/.test(normalized)) {
+    const iso = `${normalized.slice(0, 4)}-${normalized.slice(4, 6)}-${normalized.slice(6, 8)}T${normalized.slice(9, 11)}:${normalized.slice(11, 13)}:${normalized.slice(13, 15)}Z`;
+    const parsed = Date.parse(iso);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  const parsed = Date.parse(normalized);
+  return normalized.endsWith("Z") && Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function firstCalendarOccurrence(parsed: ParsedRRule, timezone: string, start: Date): number {
+  const withoutCount = { ...parsed, count: undefined };
+  const first = computeNextRunAtFromParsed(withoutCount, timezone, new Date(start.getTime() - 1), start);
+  return first ? Date.parse(first) : Number.NaN;
+}
+
+function daysInMonth(year: number, month: number): number {
+  const date = new Date(0);
+  date.setUTCFullYear(year, month, 0);
+  date.setUTCHours(0, 0, 0, 0);
+  return date.getUTCDate();
 }
 
 interface ZonedParts { readonly year: number; readonly month: number; readonly day: number; readonly hour: number; readonly minute: number; readonly second: number }

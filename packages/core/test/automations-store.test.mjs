@@ -85,6 +85,19 @@ test("sqlite automation definitions persist, filter, update, and archive without
     assert.equal(daily.status, "enabled");
     assert.equal(daily.threadId, thread.id);
     assert.equal(store.getLingThread(daily.threadId).kind, "automation");
+    const resumableTarget = store.createLingThread({ kind: "channel_discussion", channelId: channel.id, title: "Heartbeat target", objective: "Resume this conversation." }, now);
+    const heartbeat = store.updateAutomationDefinition(daily.id, {
+      target: { scope: "thread", workspaceId: DEFAULT_WORKSPACE_ID, channelId: channel.id, threadId: resumableTarget.id, cwd },
+      targetThreadId: resumableTarget.id,
+    }, "2026-06-06T00:00:30.000Z");
+    assert.equal(heartbeat.automationMode, "heartbeat");
+    assert.equal(heartbeat.targetThreadId, resumableTarget.id);
+    const cron = store.updateAutomationDefinition(daily.id, {
+      target: { scope: "channel", workspaceId: DEFAULT_WORKSPACE_ID, channelId: channel.id, cwd },
+      targetThreadId: null,
+    }, "2026-06-06T00:00:45.000Z");
+    assert.equal(cron.automationMode, "cron");
+    assert.equal(cron.targetThreadId, undefined);
     assert.equal(weekly.status, "disabled");
     assert.deepEqual(store.listAutomationDefinitions({ status: "enabled" }).map((item) => item.id), [daily.id]);
     assert.deepEqual(store.listAutomationDefinitions({ kind: "weekly_review" }).map((item) => item.id), [weekly.id]);
