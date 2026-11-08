@@ -26,7 +26,7 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 | 手动运行 | 目标分支上的完整验证 |
 | 定时运行 | 默认分支每天 UTC 03:17（北京时间 11:17）的完整验证 |
 
-Daemon 测试拆为四个 `macos-26` shard，每个 shard 最多使用四个并行文件 worker；每个 worker 按队列串行处理文件，每个文件单独以 `--test-concurrency=1` 启动，拥有独立的 runtime home、workspace 和 POSIX 进程组。Kimi Host read／terminal 和 delegation production tool surface 文件在所属 shard 的独占阶段先串行完成，其余文件再进入按估计耗时降序的共享队列。Channel 测试已拆为 discussion、intents、workflows 和 workspace 四个普通并行文件，共享 fixture 不作为测试入口。完整执行档位下选择 Daemon 时，仍运行独立的 Linux restricted-command 拒绝契约和真实 macOS helper／Seatbelt smoke。
+Daemon 测试拆为六个 `macos-26` shard，每个 shard 最多使用四个并行文件 worker；每个 worker 按队列串行处理文件，每个文件单独以 `--test-concurrency=1` 启动，拥有独立的 runtime home、workspace 和 POSIX 进程组。Kimi Host read／terminal 和 delegation production tool surface 文件在所属 shard 的独占阶段先串行完成，其余文件再进入按估计耗时降序的共享队列。Channel 测试已拆为 discussion、intents、workflows 和 workspace 四个普通并行文件，共享 fixture 不作为测试入口。完整执行档位下选择 Daemon 时，仍运行独立的 Linux restricted-command 拒绝契约和真实 macOS helper／Seatbelt smoke。
 
 Daemon 分片任务上限为 40 分钟，执行队列上限为 30 分钟；默认文件 watchdog 为五分钟，仅 recovery-discovery-fair-scan 文件保留十分钟例外，拆分后的 Channel 文件使用默认上限。超时或取消会终止文件所属进程并使任务失败，不重试或强制通过。任务预算和本地计时不能证明 hosted CI 性能改善。
 
