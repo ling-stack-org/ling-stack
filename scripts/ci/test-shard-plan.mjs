@@ -17,6 +17,7 @@ export const testSuites = {
       "test/workflow-integration-candidate.test.mjs": 600_000,
       "test/workflow-isolated-parallel-integration.test.mjs": 600_000,
       "test/workflow-merge-approval.test.mjs": 600_000,
+      "test/workflow-worktree-cleanup.test.mjs": 600_000,
     },
     exclusive: ["test/acp-kimi-host-read.test.mjs", "test/acp-kimi-host-terminal.test.mjs",
       // Preserve the child-lifecycle fixture's exclusive execution from the PR.
