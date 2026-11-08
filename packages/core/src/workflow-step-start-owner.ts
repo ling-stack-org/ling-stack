@@ -43,6 +43,8 @@ export interface WorkflowStepStartCommitInput {
   /** Optional atomic handoff together with ready linking. Otherwise transfer must already be committed. */
   readonly admission?: Omit<import("./workflow-step-admission.js").TransferChannelWorkflowStepStartAdmissionInput,
     "workflowStepId" | "owner" | "runId" | "now">;
+  /** Trusted daemon capability for the initial workflow dispatch gate. */
+  readonly hostCapacity?: import("./runtime-host-capacity-types.js").RuntimeHostCapacityDispatchReference;
   readonly now: string;
 }
 export type WorkflowStepStartCommitResult = { readonly status: "linked" | "duplicate" | "stale" | "invalid"; readonly code?: string };

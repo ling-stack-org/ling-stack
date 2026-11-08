@@ -16,6 +16,7 @@ import {
 import type { RunRequest } from "../runs/schemas.js";
 import type { HostCapabilityBridgeController } from "../runs/host-capability-bridge-controller.js";
 import type { NativeRunDispatcher } from "../runs/native-run-dispatcher.js";
+import type { RuntimeHostCapacityAdmission } from "../../runtime/run-queue.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { createWorkflowParallelCapabilityResolver } from "../runs/workflow-safety.js";
 import type { ProviderInvocationFailureSink } from "../providers/runtime-invocations.js";
@@ -57,6 +58,7 @@ export interface ChannelTurnDispatchExecutorOptions {
   readonly computerUsePreviews: ComputerUseProjectionRegistry;
   readonly hostCapabilityBridge: HostCapabilityBridgeController;
   readonly nativeRunDispatcher?: NativeRunDispatcher;
+  readonly hostCapacity?: RuntimeHostCapacityAdmission;
   readonly replyDispatchCoordinator: ChannelReplyDispatchCoordinator;
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
   readonly webFetch?: typeof globalThis.fetch;
@@ -270,6 +272,7 @@ function createStartRun(options: ChannelTurnDispatchExecutorOptions) {
         computerUsePreviews: options.computerUsePreviews,
         hostCapabilityBridge: options.hostCapabilityBridge,
         nativeRunDispatcher: options.nativeRunDispatcher,
+        workflowHostCapacityAdmission: options.hostCapacity,
       },
     );
 }
@@ -300,7 +303,9 @@ async function confirmAndOrchestrateProposal(
       { toolBrokerMode: () => options.runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
     runnerRegistry: options.runnerRegistry,
     isolationHost: { enabled: () => options.runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
-      toolBrokerMode: () => options.runtimeSupervisor.getHarnessFeatures().toolBroker.mode },
+      toolBrokerMode: () => options.runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
+      maxConcurrentSteps: () => options.runtimeSupervisor.getConcurrencyPolicy().enabled
+        ? options.runtimeSupervisor.getConcurrencyPolicy().isolatedWriteMaxConcurrentSteps : 2 },
     cwd,
     workflowId: confirmed.workflow.id,
     validateRunRequest,
@@ -352,7 +357,9 @@ export function createStartOrchestratedRun(
                   { toolBrokerMode: () => options.runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
                 runnerRegistry: options.runnerRegistry,
                 isolationHost: { enabled: () => options.runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
-                  toolBrokerMode: () => options.runtimeSupervisor.getHarnessFeatures().toolBroker.mode },
+                  toolBrokerMode: () => options.runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
+                  maxConcurrentSteps: () => options.runtimeSupervisor.getConcurrencyPolicy().enabled
+                    ? options.runtimeSupervisor.getConcurrencyPolicy().isolatedWriteMaxConcurrentSteps : 2 },
                 cwd,
                 workflowId: workflow.id,
                 validateRunRequest: (request) => resolveProviderForRun(store, request, options.secretResolver),
@@ -365,6 +372,7 @@ export function createStartOrchestratedRun(
           computerUsePreviews: options.computerUsePreviews,
           hostCapabilityBridge: options.hostCapabilityBridge,
           nativeRunDispatcher: options.nativeRunDispatcher,
+          workflowHostCapacityAdmission: options.hostCapacity,
         },
       ).then(resolveOnce, () => resolveOnce(undefined));
     });

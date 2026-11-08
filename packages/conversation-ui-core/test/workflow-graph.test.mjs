@@ -15,11 +15,41 @@ test("accepted step ids and dependencies produce real branches and fan-in, not p
   assert.equal(model.edges.some(edge => edge.source === "independent" || edge.target === "independent"), false);
 });
 
+test("a succeeded root with explicit empty dependencies stays succeeded only with a current observation", () => {
+  const steps = [step("prepare", [], { status: "succeeded", toParticipantLabel: "Architect" }),
+    step("left", ["prepare"]), step("right", ["prepare"])];
+  const model = project(steps), root = model.nodes.find(node => node.id === "prepare");
+  assert.equal(root.status, "succeeded");
+  assert.equal(root.reportedStatus, "succeeded");
+  assert.deepEqual(root.issues, []);
+  assert.deepEqual(root.dependencyIds, []);
+  assert.equal(root.branches, true);
+  for (const observation of ["stale", "unknown"]) {
+    const unavailable = project(steps, { observation }).nodes.find(node => node.id === root.id);
+    assert.equal(unavailable.status, "unknown");
+    assert.equal(unavailable.reportedStatus, "succeeded");
+    assert.deepEqual(unavailable.issues, ["observation_unavailable"]);
+  }
+});
+
+test("succeeded first steps cannot infer empty dependencies from missing or malformed metadata", () => {
+  for (const metadata of [undefined, {}, { graphId: "graph", graphNodeId: "prepare" },
+    { dependsOnStepIds: null }, { dependsOnStepIds: "[]" }]) {
+    const node = project([step("prepare", [], { position: 1, status: "succeeded", metadata })]).nodes[0];
+    assert.equal(node.status, "unknown");
+    assert.equal(node.reportedStatus, "succeeded");
+    assert.deepEqual(node.issues, ["dependencies_unavailable"]);
+  }
+});
+
 test("missing metadata/dependencies, duplicates, cycles and invalid dependencies stay explicitly unknown", () => {
   const model = project([step("missing", ["gone"], { status: "succeeded" }), step("legacy", [], { metadata: undefined }),
-    step("a", ["b"]), step("b", ["a"]), step("child", ["a"]), step("duplicate"), step("duplicate"), step("bad", ["bad", "", 7])]);
+    step("a", ["b"], { status: "succeeded" }), step("b", ["a"], { status: "succeeded" }),
+    step("child", ["a"]), step("duplicate"), step("duplicate"), step("bad", ["bad", "", 7])]);
   for (const id of ["missing", "legacy", "a", "b", "duplicate", "bad"]) assert.equal(model.nodes.find(node => node.id === id).status, "unknown");
   assert.deepEqual(model.nodes.find(node => node.id === "missing").missingDependencyIds, ["gone"]);
+  assert(model.nodes.find(node => node.id === "missing").issues.includes("missing_dependency"));
+  for (const id of ["a", "b"]) assert(model.nodes.find(node => node.id === id).issues.includes("cycle"));
   assert.equal(model.nodes.find(node => node.id === "child").issues.includes("cycle"), false);
   assert.equal(model.nodes.filter(node => node.id === "duplicate").length, 1);
   assert.equal(model.edges.some(edge => edge.source === "gone" || edge.source === "bad"), false);

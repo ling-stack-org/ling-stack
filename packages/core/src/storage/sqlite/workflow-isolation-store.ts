@@ -112,7 +112,8 @@ class SqliteWorkflowIsolationStore implements WorkflowIsolationStore {
       const selection = this.getSelection(workflow.id);
       if (selection && (selection.roundId !== input.roundId || !input.inputs.parallelExecution
         || input.inputs.mode !== "candidate_only" || input.inputs.optionalFailurePolicy !== "require_success"
-        || input.inputs.parallelExecution.maxConcurrentSteps !== 2)) veto("invalid", "selection_plan_mismatch");
+        || input.inputs.parallelExecution.maxConcurrentSteps < 2 || input.inputs.parallelExecution.maxConcurrentSteps > 4))
+        veto("invalid", "selection_plan_mismatch");
       const ids = input.inputs.participants.map(participant => participant.workflowStepId);
       if (selection && (steps.length !== ids.length || steps.some(step => !ids.includes(step.id)))
         || input.safetyPlans.length !== ids.length || input.plans.length !== ids.length

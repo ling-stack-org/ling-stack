@@ -20,6 +20,7 @@ import { UserInputStoreError } from "../../user-input-store-types.js";
 import { hostAttemptReadScopeForSource } from "./host-attempt-read-scope.js";
 import { hasActiveWorkflowMergeApplyLease } from "./workflow-merge-lease-guard.js";
 import { workflowParallelAdmissionAllowed, workflowParallelAttemptAllowed } from "./workflow-parallel-parent-guard.js";
+import { readRuntimeRunCapacityConflict } from "./runtime-run-capacity.js";
 
 type Ports = WorkflowStepStartReadStore & Pick<RunStore, "getWorkUnit" | "getWorkUnitAttempt" | "getRunnerContinuation" | "getHostAttemptCompletion">;
 type Entry = { readonly resourceType: RuntimeSemaphoreResourceType; readonly resourceKey: string; readonly limit: number };
@@ -89,7 +90,7 @@ export class SqliteWorkflowStepAdmissionStore {
     | { readonly status: "reserved" }
     | { readonly status: "conflict"; readonly code: string; readonly resourceType: RuntimeSemaphoreResourceType; readonly resourceKey: string } {
     const { step, task, owner, plan, now } = input;
-    const available = this.checkCapacityWithinTransaction(step, plan);
+    const available = this.checkCapacityWithinTransaction(step, plan, now);
     if (available.status === "conflict") return available;
     this.context.database.prepare(`INSERT INTO workflow_step_admissions
       (task_id,workspace_id,workflow_id,workflow_step_id,lease_id,authority_basis,plan_json,status,created_at)
@@ -101,7 +102,7 @@ export class SqliteWorkflowStepAdmissionStore {
     return { status: "reserved" };
   }
 
-  checkCapacityWithinTransaction(step: ChannelWorkflowStep, plan: WorkflowStepAdmissionPlan):
+  checkCapacityWithinTransaction(step: ChannelWorkflowStep, plan: WorkflowStepAdmissionPlan, now?: string):
     | { readonly status: "reserved" }
     | { readonly status: "conflict"; readonly code: string; readonly resourceType: RuntimeSemaphoreResourceType; readonly resourceKey: string } {
     if (hasActiveWorkflowMergeApplyLease(this.context.database, step.workspaceId)) {
@@ -114,8 +115,14 @@ export class SqliteWorkflowStepAdmissionStore {
         SELECT 1 FROM workflow_step_admission_entries AS entry JOIN runtime_semaphore_slots AS slot ON slot.id=entry.slot_id
         WHERE entry.task_id=admission.task_id AND slot.status='active')) LIMIT 1`).get(step.id);
     if (previous) return { status: "conflict", code: "workflow_admission_owner_retained", resourceType: "workflow_resource", resourceKey: step.id };
+    if (plan.entries.some(entry => entry.resourceType === "provider" || entry.resourceType === "runner")) {
+      const runners = plan.entries.filter(entry => entry.resourceType === "runner");
+      const conflict = readRuntimeRunCapacityConflict(this.context.database, { workspaceId: step.workspaceId, step,
+        stepRunnerId: runners.length === 1 ? runners[0]!.resourceKey : undefined, now });
+      if (conflict) return { status: "conflict", code: "workflow_admission_resource_conflict", ...conflict };
+    }
     for (const entry of allEntries(plan)) {
-      const capacity = readRuntimeSemaphoreCapacity(this.context.database, { workspaceId: step.workspaceId, ...entry });
+      const capacity = readRuntimeSemaphoreCapacity(this.context.database, { workspaceId: step.workspaceId, ...entry, now });
       if (capacity.occupied >= capacity.limit) return { status: "conflict", code: "workflow_admission_resource_conflict", ...entry };
     }
     return { status: "reserved" };
@@ -159,7 +166,7 @@ export class SqliteWorkflowStepAdmissionStore {
     if (this.hasActiveAttemptSlots(input.attemptId)) return { status: "invalid", code: "workflow_admission_unplanned_attempt_slots" };
     for (const entry of allEntries(plan)) {
       const capacity = readRuntimeSemaphoreCapacity(this.context.database,
-        { workspaceId: step.workspaceId, ...entry, excludePreparingTaskId: input.owner.taskId });
+        { workspaceId: step.workspaceId, ...entry, excludePreparingTaskId: input.owner.taskId, now: input.now });
       if (capacity.occupied >= capacity.limit) return { status: "invalid", code: "workflow_admission_capacity_changed" };
     }
     const slots: RuntimeSemaphoreSlot[] = [];
@@ -245,8 +252,12 @@ export class SqliteWorkflowStepAdmissionStore {
         return { status: "stale", code: "workflow_admission_slots_changed" };
       }
       if (this.hasActiveAttemptSlots(input.attemptId)) return { status: "invalid", code: "workflow_admission_unplanned_attempt_slots" };
+      if (plan.entries.some(entry => entry.resourceType === "provider" || entry.resourceType === "runner")) {
+        const conflict = readRuntimeRunCapacityConflict(this.context.database, { workspaceId: step.workspaceId, fence: input, now: input.now });
+        if (conflict) return { status: "conflict", code: "workflow_admission_resource_conflict", ...conflict };
+      }
       for (const entry of allEntries(plan)) {
-        const capacity = readRuntimeSemaphoreCapacity(this.context.database, { workspaceId: step.workspaceId, ...entry });
+        const capacity = readRuntimeSemaphoreCapacity(this.context.database, { workspaceId: step.workspaceId, ...entry, now: input.now });
         if (capacity.occupied >= capacity.limit) return { status: "conflict", code: "workflow_admission_resource_conflict", ...entry };
       }
       const slots: RuntimeSemaphoreSlot[] = [];

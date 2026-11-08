@@ -5,6 +5,8 @@ import type { RunRequest } from "./schemas.js";
 import { createWorkflowSafetyAdmission } from "./workflow-safety.js";
 import { QueueableRunConflictError } from "./concurrency.js";
 import type { PreparedRunnerContinuationExecution } from "../harness/continuations/coordinator.js";
+import type { RuntimeHostCapacityAdmission } from "../../runtime/run-queue.js";
+import type { RuntimeHostCapacityDispatchReference } from "@ling-stack/core/runtime-host-capacity-store-bridge";
 
 /** Rebuild continuation ownership only from an already linked canonical Run. Never synthesize a missing marker. */
 export function captureWorkflowStartOwner(
@@ -33,7 +35,10 @@ export function captureWorkflowStartOwner(
 
 /** Mandatory durable gate. Auxiliary ready notifications cannot authorize a Run. */
 export function commitWorkflowStartReady(store: RunStore, request: RunRequest, runId: string,
-  owner: WorkflowStepStartOwnerV1 | undefined, options: { readonly claimQueuedTask?: boolean } = {}): void {
+  owner: WorkflowStepStartOwnerV1 | undefined, options: {
+    readonly claimQueuedTask?: boolean;
+    readonly hostCapacity?: RuntimeHostCapacityDispatchReference;
+  } = {}): void {
   if (!request.workflowStepId) return;
   if (!owner) throw new HttpError(409, "workflow_start_owner_missing", "Workflow Run requires its captured start owner.");
   const step = store.getChannelWorkflowStep(request.workflowStepId);
@@ -47,12 +52,15 @@ export function commitWorkflowStartReady(store: RunStore, request: RunRequest, r
   const now = new Date().toISOString();
   const result = store.commitChannelWorkflowStepRunReady({ workflowStepId: request.workflowStepId, owner, runId,
     claimQueuedTask: options.claimQueuedTask, now,
+    ...(options.hostCapacity ? { hostCapacity: options.hostCapacity } : {}),
     ...(plan && attempt ? { admission: { ...toRuntimeAttemptFence(attempt), admission: plan,
       expiresAt: new Date(Date.parse(now) + 6 * 60 * 60 * 1000).toISOString() } } : {}) });
   if (result.status !== "linked" && result.status !== "duplicate") {
     rejectPreparedWorkflowRun(store, runId, result.code ?? "workflow_start_owner_stale");
-    failUndispatchedWorkflowStart({ store, request, owner, run, attempt, now,
-      reason: result.code ?? "workflow_start_owner_stale" });
+    if (!options.hostCapacity) {
+      failUndispatchedWorkflowStart({ store, request, owner, run, attempt, now,
+        reason: result.code ?? "workflow_start_owner_stale" });
+    }
     throw new HttpError(409, result.code ?? "workflow_start_owner_stale", "Workflow start changed before the Run could become ready.");
   }
 }
@@ -126,6 +134,7 @@ export function failUndispatchedWorkflowStart(input: {
     admissionRelease: { dispatchState: "not_dispatched",
       ...(input.run && input.attempt ? { runId: input.run.id, fence: toRuntimeAttemptFence(input.attempt) } : {}) } });
 }
+
 
 function rejectPreparedWorkflowRun(store: RunStore, runId: string, code: string): void {
   const run = store.getRun(runId);

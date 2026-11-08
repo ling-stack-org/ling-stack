@@ -36,6 +36,8 @@ import {
   type LockedTaskContinuationSnapshot,
 } from "./locked-task-continuation.js";
 import { WorkspaceRuntimeOwner } from "./workspace-runtime-owner.js";
+import { resolveRuntimeConcurrencyPolicy, type ResolvedRuntimeConcurrencyPolicy } from "./concurrency-policy.js";
+import type { RuntimeHostCapacityAdmission } from "./run-queue.js";
 
 const RUNTIME_SCHEMA_VERSION = 23;
 const originalOfficeRuntimeBindings = new WeakMap<RuntimeSupervisor, {
@@ -140,6 +142,7 @@ function localDevelopmentNodePin(): RestrictedCommandExecutablePin | undefined {
 
 export class RuntimeSupervisor {
   private readonly hostBootstrap?: RuntimeSupervisorHostBootstrap;
+  private readonly concurrency: ResolvedRuntimeConcurrencyPolicy;
   private restrictedCommandRuntime: NativeRestrictedCommandRuntime | undefined;
   private externalWorkflowRequestRuntime: ExternalWorkflowRequestRuntime | undefined;
   private externalWorkflowRequestRuntimeResolved = false;
@@ -156,8 +159,10 @@ export class RuntimeSupervisor {
     private readonly config: ResolvedDaemonConfig,
     private readonly onWorkUnitTransition?: RuntimeSupervisorWorkUnitTransitionObserver,
     hostBootstrap?: RuntimeSupervisorHostBootstrap,
+    private readonly hostCapacityAdmission?: RuntimeHostCapacityAdmission | ((store: RunStore) => RuntimeHostCapacityAdmission),
   ) {
     this.hostBootstrap = captureHostBootstrap(hostBootstrap);
+    this.concurrency = resolveRuntimeConcurrencyPolicy(config.concurrency);
     originalOfficeRuntimeBindings.set(this, { registry: this.protectedHostStages, stores: new WeakMap(), nativeRuntimes: new WeakMap(), storeBridges: new Set(),
       issuerId: `protected_host_supervisor_${randomUUID()}`, artifact: this.hostBootstrap?.officeLocalNativeArtifact, active: true });
     this.protectedHostStages.bindOriginalActorEntries(this.hostBootstrap?.actorEntries ?? readOriginalProtectedHostActorEntries());
@@ -181,6 +186,14 @@ export class RuntimeSupervisor {
 
   getChannelFeatures(): ResolvedDaemonConfig["channels"] {
     return this.config.channels;
+  }
+
+  getConcurrencyPolicy(): ResolvedRuntimeConcurrencyPolicy {
+    return this.concurrency;
+  }
+
+  getHostCapacityAdmission(store: RunStore): RuntimeHostCapacityAdmission | undefined {
+    return typeof this.hostCapacityAdmission === "function" ? this.hostCapacityAdmission(store) : this.hostCapacityAdmission;
   }
 
   getRestrictedCommandRuntime(): NativeRestrictedCommandRuntime | undefined {
@@ -267,6 +280,10 @@ export class RuntimeSupervisor {
       const owner = this.runtimeOwnersByCwd.get(cwd);
       if (!owner) throw new Error("runtime_owner_lease_unknown");
       owner.assertCurrent(cwd, store.paths.rootDir);
+      const policy = store.getRuntimeConcurrencyPolicy(existing.workspaceId);
+      if (!policy || policy.runtimeInstanceId !== existing.runtimeInstanceId
+        || policy.enabled !== this.concurrency.enabled
+        || !sameConcurrencyLimits(policy.limits, this.concurrency)) throw new Error("runtime_concurrency_policy_changed");
       return existing;
     }
     if (this.runtimeOwnersByCwd.has(cwd)) throw new Error("runtime_startup_incomplete");
@@ -275,7 +292,6 @@ export class RuntimeSupervisor {
     this.runtimeOwnersByCwd.set(cwd, owner);
     try {
       owner.acquire();
-      this.reconcileStartup(cwd, store);
       const runtime: RuntimeInstance = {
         workspaceId: DEFAULT_WORKSPACE_ID,
         runtimeInstanceId: `runtime_${randomUUID()}`,
@@ -287,6 +303,23 @@ export class RuntimeSupervisor {
         schemaVersion: RUNTIME_SCHEMA_VERSION,
         status: "healthy",
       };
+      const currentPolicy = store.getRuntimeConcurrencyPolicy(runtime.workspaceId);
+      const installed = store.installRuntimeConcurrencyPolicy({
+        workspaceId: runtime.workspaceId,
+        runtimeInstanceId: runtime.runtimeInstanceId,
+        expectedRevision: currentPolicy?.revision ?? 0,
+        enabled: this.concurrency.enabled,
+        limits: {
+          maxConcurrentRuns: this.concurrency.maxConcurrentRuns,
+          maxReadOnlyRuns: this.concurrency.maxReadOnlyRuns,
+          maxWorkspaceWriteRuns: this.concurrency.maxWorkspaceWriteRuns,
+          maxRunsPerProvider: this.concurrency.maxRunsPerProvider,
+          maxRunsPerRunner: this.concurrency.maxRunsPerRunner,
+        },
+        installedAt: runtime.startedAt,
+      });
+      if (installed.status === "changed") throw new Error("runtime_concurrency_policy_changed");
+      this.reconcileStartup(cwd, store);
       owner.publish(runtime);
       this.runtimesByCwd.set(cwd, runtime);
       return runtime;
@@ -377,6 +410,7 @@ export class RuntimeSupervisor {
       // child into a lost Attempt or release its resources through legacy
       // reconciliation. This preserves custody; it never authorizes resume.
       if (workUnit.ownerType === "delegation_step") continue;
+      if (workUnit.linkedRunId && store.hasRuntimeRunQueueCustody(workUnit.linkedRunId)) continue;
       const pendingAttempt = workUnit.activeAttemptId ? store.getWorkUnitAttempt(workUnit.activeAttemptId) : undefined;
       if (workUnit.linkedRunId && pendingAttempt && store.hasPendingRunTerminalIntent({ runId: workUnit.linkedRunId,
         workUnitId: pendingAttempt.workUnitId, attemptId: pendingAttempt.id,
@@ -440,6 +474,13 @@ export class RuntimeSupervisor {
       now,
     });
   }
+}
+
+function sameConcurrencyLimits(left: import("@ling-stack/core").RuntimeConcurrencyLimits,
+  right: ResolvedRuntimeConcurrencyPolicy): boolean {
+  return left.maxConcurrentRuns === right.maxConcurrentRuns && left.maxReadOnlyRuns === right.maxReadOnlyRuns
+    && left.maxWorkspaceWriteRuns === right.maxWorkspaceWriteRuns && left.maxRunsPerProvider === right.maxRunsPerProvider
+    && left.maxRunsPerRunner === right.maxRunsPerRunner;
 }
 
 /**

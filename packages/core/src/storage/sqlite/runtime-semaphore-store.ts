@@ -2,10 +2,12 @@ import type { SQLOutputValue } from "node:sqlite";
 import {
   createRuntimeSemaphoreSlotId,
   type AcquireRuntimeSemaphoreSlotInput,
+  type AcquireRuntimeSemaphoreSlotsResult,
   type ListRuntimeSemaphoreSlotsOptions,
   type RuntimeAttemptFenceV1,
   type RuntimeSemaphoreSlot,
   type RuntimeResourceRenewal,
+  type RuntimeSemaphoreResourceType,
 } from "../../runtime-supervisor-types.js";
 import { assertRuntimeResourceRenewal } from "../../runtime-resource-renewal.js";
 import { mapRuntimeSemaphoreSlot } from "./runtime-work-mappers.js";
@@ -15,6 +17,8 @@ import { withCancelledAttemptResourceVeto } from "./cancelled-attempt-resource-v
 import { readRuntimeSemaphoreCapacity } from "./workflow-step-admission-capacity.js";
 import { hasActiveWorkflowMergeApplyLease } from "./workflow-merge-lease-guard.js";
 import { readWorkflowParallelParents, workflowParallelSlotAllowed, type WorkflowParallelReadPorts } from "./workflow-parallel-parent-guard.js";
+import { readRuntimeRunCapacityConflict } from "./runtime-run-capacity.js";
+import { recordRuntimeDelegationAttemptCapacityAdmission } from "./runtime-delegation-capacity-admission.js";
 
 export class SqliteRuntimeSemaphoreStore {
   constructor(private readonly context: SqliteStoreContext, private readonly parallelPorts?: WorkflowParallelReadPorts) {}
@@ -60,17 +64,64 @@ export class SqliteRuntimeSemaphoreStore {
     }
   }
 
+  /** Ordinary admission creates a fresh group; only pre-start recovery may reuse slots. */
+  acquireRuntimeSemaphoreSlots(inputs: readonly AcquireRuntimeSemaphoreSlotInput[]): AcquireRuntimeSemaphoreSlotsResult {
+    let began = false;
+    try {
+      if (this.context.database.isTransaction) return { status: "changed" };
+      this.context.database.exec("BEGIN IMMEDIATE;");
+      began = true;
+      if (!validRuntimeSemaphoreBatch(inputs)) {
+        this.context.database.exec("ROLLBACK;");
+        return { status: "changed" };
+      }
+      this.expireRuntimeSemaphoreSlots(inputs[0]!.acquiredAt);
+      const existing = this.context.database.prepare(`SELECT 1 FROM runtime_semaphore_slots
+        WHERE workspace_id=? AND resource_type=? AND resource_key=? AND owner_type=? AND owner_id=?
+          AND work_unit_id=? AND attempt_id=? AND runtime_instance_id=? AND fencing_token=? AND status='active' LIMIT 1`);
+      if (inputs.some(input => existing.get(input.workspaceId, input.resourceType, input.resourceKey, input.ownerType, input.ownerId,
+        input.workUnitId, input.attemptId, input.runtimeInstanceId, input.fencingToken))) {
+        this.context.database.exec("ROLLBACK;");
+        return { status: "changed" };
+      }
+      const slots: RuntimeSemaphoreSlot[] = [];
+      for (const input of inputs) {
+        const result = this.acquireWithinTransaction(input, false);
+        if (result.status !== "acquired") {
+          this.context.database.exec("ROLLBACK;");
+          return result.status === "full"
+            ? { status: "full", resourceType: result.resourceType ?? input.resourceType, resourceKey: result.resourceKey ?? input.resourceKey }
+            : { status: "changed" };
+        }
+        slots.push(result.slot);
+      }
+      this.context.database.exec("COMMIT;");
+      return { status: "acquired", slots };
+    } catch {
+      if (began) {
+        try {
+          this.context.database.exec("ROLLBACK;");
+        } catch {
+          // Keep admission fail-closed if rollback itself cannot complete.
+        }
+      }
+      return { status: "changed" };
+    }
+  }
+
   /** The caller owns BEGIN/COMMIT. Only an exact validated admission handoff may exclude its reservation. */
   ensureRuntimeSemaphoreSlotForAttemptWithinTransaction(input: AcquireRuntimeSemaphoreSlotInput, excludePreparingTaskId?: string):
     | { readonly status: "acquired" | "existing"; readonly slot: RuntimeSemaphoreSlot }
     | { readonly status: "full" | "changed" } {
     if (input.ownerType !== "work_unit_attempt" || input.ownerId !== input.attemptId) return { status: "changed" };
-    return this.acquireWithinTransaction(input, true, excludePreparingTaskId);
+    const result = this.acquireWithinTransaction(input, true, excludePreparingTaskId);
+    return result.status === "full" ? { status: "full" } : result;
   }
 
   private acquireWithinTransaction(input: AcquireRuntimeSemaphoreSlotInput, reuse: boolean, excludePreparingTaskId?: string):
     | { readonly status: "acquired" | "existing"; readonly slot: RuntimeSemaphoreSlot }
-    | { readonly status: "full" | "changed" } {
+    | { readonly status: "full"; readonly resourceType?: RuntimeSemaphoreResourceType; readonly resourceKey?: string }
+    | { readonly status: "changed" } {
     if (!Number.isSafeInteger(input.limit) || input.limit < 1) return { status: "changed" };
     try {
       if (hasActiveWorkflowMergeApplyLease(this.context.database, input.workspaceId)) return { status: "changed" };
@@ -99,7 +150,13 @@ export class SqliteRuntimeSemaphoreStore {
         return slot && sameExactAttemptSlot(slot, input) ? { status: "existing", slot } : { status: "changed" };
       }
     }
-    const capacity = readRuntimeSemaphoreCapacity(this.context.database, { ...input, excludePreparingTaskId });
+    if (input.resourceType === "provider" || input.resourceType === "runner") {
+      const conflict = readRuntimeRunCapacityConflict(this.context.database, {
+        workspaceId: input.workspaceId, fence: input, excludePreparingTaskId, now: input.acquiredAt,
+      });
+      if (conflict) return { status: "full", ...conflict };
+    }
+    const capacity = readRuntimeSemaphoreCapacity(this.context.database, { ...input, fence: input, excludePreparingTaskId, now: input.acquiredAt });
     if (capacity.occupied >= capacity.limit) return { status: "full" };
     const id = createRuntimeSemaphoreSlotId();
     this.context.database.prepare(`INSERT INTO runtime_semaphore_slots (
@@ -108,6 +165,8 @@ export class SqliteRuntimeSemaphoreStore {
     ) VALUES (?,?,?,?,?,?,?,?,?,?,'active',?,?,?,NULL,NULL)`)
       .run(id, input.workspaceId, input.resourceType, input.resourceKey, input.ownerType, input.ownerId,
         input.workUnitId, input.attemptId, input.runtimeInstanceId, input.fencingToken, input.acquiredAt, input.acquiredAt, input.expiresAt);
+    if (input.resourceType === "provider" || input.resourceType === "runner")
+      recordRuntimeDelegationAttemptCapacityAdmission(this.context.database, input, input.acquiredAt);
     const row = this.context.database.prepare(runtimeSemaphoreSlotSelectSql("WHERE id=?")).get(id)!;
     return { status: "acquired", slot: mapRuntimeSemaphoreSlot(row as Record<string, SQLOutputValue>) };
   }
@@ -259,6 +318,30 @@ export class SqliteRuntimeSemaphoreStore {
       .all(...params)
       .map((row) => mapRuntimeSemaphoreSlot(row as Record<string, SQLOutputValue>));
   }
+}
+
+function validRuntimeSemaphoreBatch(inputs: readonly AcquireRuntimeSemaphoreSlotInput[]): boolean {
+  if (!Array.isArray(inputs) || inputs.length === 0) return false;
+  const first = inputs[0];
+  const commonFields = ["workspaceId", "ownerType", "ownerId", "workUnitId", "attemptId", "runtimeInstanceId", "fencingToken",
+    "acquiredAt", "expiresAt"] as const;
+  if (!first || commonFields.some(field => typeof first[field] !== "string" || !first[field].length || first[field].trim() !== first[field])
+    || first.ownerType !== "work_unit_attempt" && first.ownerType !== "system"
+    || first.ownerType === "work_unit_attempt" && first.ownerId !== first.attemptId) return false;
+  const acquiredAt = Date.parse(first.acquiredAt), expiresAt = Date.parse(first.expiresAt);
+  if (!Number.isFinite(acquiredAt) || !Number.isFinite(expiresAt) || expiresAt <= acquiredAt
+    || new Date(acquiredAt).toISOString() !== first.acquiredAt || new Date(expiresAt).toISOString() !== first.expiresAt) return false;
+  const resources = new Set<string>();
+  for (const input of inputs) {
+    if (!input || commonFields.some(field => input[field] !== first[field])
+      || !["provider", "runner", "channel_parallel", "media_provider", "workflow_resource"].includes(input.resourceType)
+      || typeof input.resourceKey !== "string" || !input.resourceKey.length || input.resourceKey.trim() !== input.resourceKey
+      || !Number.isSafeInteger(input.limit) || input.limit < 1) return false;
+    const key = JSON.stringify([input.resourceType, input.resourceKey]);
+    if (resources.has(key)) return false;
+    resources.add(key);
+  }
+  return true;
 }
 
 function sameExactAttemptSlot(slot: RuntimeSemaphoreSlot, input: AcquireRuntimeSemaphoreSlotInput): boolean {

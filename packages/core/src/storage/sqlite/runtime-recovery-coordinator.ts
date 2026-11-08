@@ -43,6 +43,7 @@ export interface SqliteRuntimeRecoveryCoordinatorPorts extends Pick<RunStore,
   readonly getWorkUnitAttempt: (attemptId: string) => WorkUnitAttempt | undefined;
   readonly hasPendingRunTerminalIntent: RunStore["hasPendingRunTerminalIntent"];
   readonly hasPendingRunSuspension: RunStore["hasPendingRunSuspension"];
+  readonly hasRuntimeRunQueueCustody: RunStore["hasRuntimeRunQueueCustody"];
   readonly findWorkUnitAttemptTerminalAudit: (attempt: WorkUnitAttempt) => RuntimeEvent | undefined;
   readonly getLingThread: (threadId: string) => LingThread | undefined;
   readonly updateLingThread: (threadId: string, input: UpdateLingThreadInput, now: string) => LingThread | undefined;
@@ -87,6 +88,7 @@ export class SqliteRuntimeRecoveryCoordinator {
 
     for (const runId of staleRuns) {
       const runBeforeRecovery = this.ports.getRun(runId);
+      if (this.ports.hasRuntimeRunQueueCustody(runId)) continue;
       // Queued/pre-ACK delegated children may not have a context view or Runner
       // snapshot yet. Their private lifecycle, not the ordinary recovery shape,
       // owns reconciliation. Preserve unknown effects and reserved capacity;

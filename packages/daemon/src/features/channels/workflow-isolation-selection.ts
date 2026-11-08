@@ -10,6 +10,24 @@ import { planWorkflowIsolatedRound } from "./workflow-isolation-planning.js";
 export interface WorkflowIsolationHost {
   readonly enabled: () => boolean;
   readonly toolBrokerMode: () => string;
+  /** Trusted Host ceiling for a newly selected isolated writing round. */
+  readonly maxConcurrentSteps?: () => number;
+}
+
+const MIN_ISOLATED_WRITE_STEPS = 2;
+const MAX_ISOLATED_WRITE_STEPS = 4;
+
+function hostParallelLimit(host: WorkflowIsolationHost | undefined): number {
+  const value = host?.maxConcurrentSteps?.() ?? MIN_ISOLATED_WRITE_STEPS;
+  if (!Number.isSafeInteger(value) || value < MIN_ISOLATED_WRITE_STEPS || value > MAX_ISOLATED_WRITE_STEPS) {
+    unavailable("workflow_isolation_parallel_limit_invalid", "The Host isolated-files parallel limit is invalid.");
+  }
+  return value;
+}
+
+function validParallelLimit(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value)
+    && value >= MIN_ISOLATED_WRITE_STEPS && value <= MAX_ISOLATED_WRITE_STEPS;
 }
 
 function unavailable(code: string, message: string): never { throw new HttpError(409, code, message); }
@@ -28,14 +46,17 @@ export function assertWorkflowIsolationHost(store: RunStore, runnerRegistry: Run
 }
 
 /** Retained rounds remain observable when the Host disables new execution admission. */
-export function assertWorkflowIsolationSelectionIntegrity(store: RunStore, workflowId: string): WorkflowIsolationSelection | undefined {
+export function assertWorkflowIsolationSelectionIntegrity(store: RunStore, workflowId: string,
+  host?: WorkflowIsolationHost): WorkflowIsolationSelection | undefined {
   const isolation = createSqliteWorkflowIsolationStore(store), selection = isolation.getSelection(workflowId);
   if (!selection) return;
   if (selection.phase !== "ready") unavailable("workflow_isolation_planning", "Isolation planning is incomplete. Retry the explicit selection before starting.");
   const round = isolation.getIntegrationRound(selection.roundId);
   const steps = store.listChannelWorkflowSteps({ workflowId, complete: true });
+  const parallelLimit = round?.inputs.parallelExecution?.maxConcurrentSteps;
   if (!round || round.inputs.workflowId !== workflowId || round.inputs.mode !== "candidate_only"
-    || round.inputs.optionalFailurePolicy !== "require_success" || round.inputs.parallelExecution?.maxConcurrentSteps !== 2
+    || round.inputs.optionalFailurePolicy !== "require_success" || !validParallelLimit(parallelLimit)
+    || host !== undefined && parallelLimit > hostParallelLimit(host)
     || steps.length !== round.inputs.participants.length || steps.some(step => {
       const pin = step.metadata?.isolationScopePlan, plan = pin && isolation.getScopePlan(pin.planId);
       return !plan || plan.planDigest !== pin!.planDigest || plan.workflowStepId !== step.id
@@ -49,7 +70,7 @@ export function assertWorkflowIsolationSelectionIntegrity(store: RunStore, workf
 /** All production start paths check Host authority before approval, Task or dispatch. */
 export function assertWorkflowIsolationSelectionReady(store: RunStore, workflowId: string,
   runnerRegistry?: RunnerRegistry, host?: WorkflowIsolationHost): void {
-  if (assertWorkflowIsolationSelectionIntegrity(store, workflowId)) assertWorkflowIsolationHost(store, runnerRegistry, host);
+  if (assertWorkflowIsolationSelectionIntegrity(store, workflowId, host)) assertWorkflowIsolationHost(store, runnerRegistry, host);
 }
 
 /** The request selects a fixed Host profile, never a command, path, parallel limit or target-apply permission. */
@@ -58,11 +79,12 @@ export async function selectWorkflowIsolatedExecution(input: { readonly store: R
   assertWorkflowIsolationHost(input.store, input.runnerRegistry, input.host);
   if (!input.store.getChannelWorkflow(input.workflowId)) throw new HttpError(404, "workflow_not_found", "Workflow not found.");
   const isolation = createSqliteWorkflowIsolationStore(input.store);
+  const maxConcurrentSteps = hostParallelLimit(input.host);
   const selected = isolation.beginSelection({ workflowId: input.workflowId, roundId: `wir_${randomUUID()}`, now: new Date().toISOString() });
   if (!("value" in selected)) unavailable(selected.code, "Isolation must be explicitly selected before any step approval or start.");
   if (selected.value.phase === "planning") await planWorkflowIsolatedRound({ store: input.store,
     workflowId: input.workflowId, roundId: selected.value.roundId, mode: "candidate_only", optionalFailurePolicy: "require_success",
-    parallelExecution: { profile: "isolated_siblings_v1", maxConcurrentSteps: 2, writeLockScope: "boundPath" },
+    parallelExecution: { profile: "isolated_siblings_v1", maxConcurrentSteps, writeLockScope: "boundPath" },
     validationRequirements: WORKFLOW_CANDIDATE_VALIDATORS.map(({ id, fingerprint }) => ({ id, fingerprint })) });
   assertWorkflowIsolationSelectionReady(input.store, input.workflowId, input.runnerRegistry, input.host);
 }

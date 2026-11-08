@@ -95,11 +95,18 @@ test("unknown Host delivery mode is rejected before persisting any isolation aut
 
 const parallelExecution = { profile: "isolated_siblings_v1", maxConcurrentSteps: 2, writeLockScope: "boundPath" };
 
-function parallelSteps(f) {
+function parallelSteps(f, count = 2, limit = count) {
   f.channel = f.store.updateChannel(f.channel.id, { runtimePolicy: { ...f.channel.runtimePolicy,
-    maxConcurrentRuns: 2, allowReadOnlyParallel: false, writeLockScope: "boundPath" } }, new Date().toISOString());
-  return [f.writing("One", { parallelPolicy: { autoParallel: true, maxParallelSiblings: 2, resourceKeys: ["fixture:left"] } }),
-    f.writing("Two", { parallelPolicy: { autoParallel: true, maxParallelSiblings: 2, resourceKeys: ["fixture:right"] } })];
+    maxConcurrentRuns: Math.max(2, limit), allowReadOnlyParallel: false, writeLockScope: "boundPath" } }, new Date().toISOString());
+  const workflow = f.store.getChannelWorkflow(f.workflow.id);
+  f.workflow = f.store.updateChannelWorkflow(f.workflow.id, { metadata: { ...workflow.metadata, maxParallelSteps: limit } }, new Date().toISOString());
+  if (count === 2 && limit === 2) return [
+    f.writing("One", { parallelPolicy: { autoParallel: true, maxParallelSiblings: 2, resourceKeys: ["fixture:left"] } }),
+    f.writing("Two", { parallelPolicy: { autoParallel: true, maxParallelSiblings: 2, resourceKeys: ["fixture:right"] } }),
+  ];
+  return Array.from({ length: count }, (_, index) => f.writing(`Step ${index + 1}`, {
+    parallelPolicy: { autoParallel: true, maxParallelSiblings: limit, resourceKeys: [`fixture:${index}`] },
+  }));
 }
 
 test("explicit Host isolated policy freezes per-worktree exclusive resources and bounded shared capacity", native, async t => {
@@ -122,6 +129,18 @@ test("explicit Host isolated policy freezes per-worktree exclusive resources and
     await assert.rejects(access(plan.executionRoot), { code: "ENOENT" });
   }
   assert.equal(f.store.database.prepare("SELECT COUNT(*) AS n FROM run_sessions").get().n, 0);
+});
+
+test("explicit Host isolated policy accepts configured limits above the default", native, async t => {
+  for (const limit of [3, 4]) await t.test(`limit ${limit}`, async t => {
+    const f = await fixture(t), steps = parallelSteps(f, limit, limit);
+    const planned = await planWorkflowIsolatedRound({ ...f.input(),
+      parallelExecution: { ...parallelExecution, maxConcurrentSteps: limit } });
+    assert.equal(planned.round.inputs.parallelExecution.maxConcurrentSteps, limit);
+    assert.equal(planned.plans.length, steps.length);
+    assert.ok(planned.plans.every(plan => plan.resourcePlan.entries
+      .filter(entry => entry.resourceType === "channel_parallel").every(entry => entry.limit === limit)));
+  });
 });
 
 for (const kind of ["no opt-in", "capacity", "coarse lock", "unknown profile", "too large", "fractional limit"]) {

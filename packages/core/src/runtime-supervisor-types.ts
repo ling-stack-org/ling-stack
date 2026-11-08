@@ -379,6 +379,11 @@ export interface AcquireRuntimeSemaphoreSlotInput extends RuntimeAttemptFenceV1 
   readonly expiresAt: string;
 }
 
+export type AcquireRuntimeSemaphoreSlotsResult =
+  | { readonly status: "acquired"; readonly slots: readonly RuntimeSemaphoreSlot[] }
+  | { readonly status: "full"; readonly resourceType: RuntimeSemaphoreResourceType; readonly resourceKey: string }
+  | { readonly status: "changed" };
+
 export interface ListRuntimeSemaphoreSlotsOptions {
   readonly status?: RuntimeSemaphoreSlotStatus;
   readonly resourceType?: RuntimeSemaphoreResourceType;

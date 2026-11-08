@@ -52,7 +52,7 @@ function createRecordingSink() {
   };
 }
 
-function createNativeWorkflowFixture(t, target, timeoutPolicy) {
+function createNativeWorkflowFixture(t, target, timeoutPolicy, hostCapacity) {
   const cwd = mkdtempSync(join(tmpdir(), "ling-native-workflow-"));
   const adapter = { async runTask() { throw new Error("Pi adapter must not receive a native run"); } };
   const runnerRegistry = createRunnerRegistry([
@@ -79,7 +79,7 @@ function createNativeWorkflowFixture(t, target, timeoutPolicy) {
     host: "127.0.0.1",
     port: 0,
     defaultWorkspaceCwd: cwd,
-  }));
+  }), undefined, undefined, hostCapacity);
   const dispatcher = createNativeRunDispatcher({
     runnerRegistry,
     storeRegistry,
@@ -499,6 +499,72 @@ test("native target cancellation remains cancelled instead of being published as
     else process.env.LING_STACK_HOME = home;
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("native terminal drain releases an acknowledged Host capacity reservation", async t => {
+  const calls = [];
+  const hostCapacity = {
+    reserveExecution(input) {
+      calls.push({ kind: "reserve", input });
+      return { status: "reserved", reference: { intentId: "native-intent", dispatchToken: "native-token" } };
+    },
+    consumeDispatch(input) {
+      calls.push({ kind: "consume", input });
+      return true;
+    },
+    releaseNoDispatch(input) {
+      calls.push({ kind: "releaseNoDispatch", input });
+      return true;
+    },
+    releaseStopped(input) {
+      calls.push({ kind: "releaseStopped", input });
+      return true;
+    },
+    getAttemptReference() { return undefined; },
+  };
+  const fixture = createNativeWorkflowFixture(t, {
+    hostCapacityAdmission: "dispatch_ack_v1",
+    async dispatch(input) {
+      input.onDispatchAccepted?.(new Date().toISOString());
+      return { status: "completed", events: [] };
+    },
+  }, undefined, hostCapacity);
+  const runId = await fixture.dispatcher.dispatch({
+    runRequest: nativeWorkflowRequest(fixture.cwd, {
+      id: "native-host-capacity", title: "Native Host capacity", prompt: "Finish the fixture run.",
+    }),
+    sink: createRecordingSink().sink,
+    executionOptions: {},
+  });
+  assert.ok(runId);
+  assert.equal(fixture.store.getRun(runId).status, "succeeded");
+  assert.deepEqual(calls.map(call => call.kind), ["reserve", "consume", "releaseStopped"]);
+  assert.equal(calls[2].input.source.runId, runId);
+  assert.equal(calls[2].input.intentId, "native-intent");
+});
+
+test("native Host capacity rejection releases local semaphore slots", async t => {
+  const hostCapacity = {
+    reserveExecution() { return { status: "full", policy: { revision: 1, maxConcurrentRuns: 1, installedAt: new Date().toISOString() } }; },
+    releaseNoDispatch() { assert.fail("a full Host pool must not create a release receipt"); },
+    releaseStopped() { assert.fail("a rejected native preparation must not release a stopped execution"); },
+    getAttemptReference() { return undefined; },
+  };
+  const fixture = createNativeWorkflowFixture(t, {
+    hostCapacityAdmission: "dispatch_ack_v1",
+    async dispatch() { assert.fail("Host capacity rejection must happen before native dispatch"); },
+  }, undefined, hostCapacity);
+  const recording = createRecordingSink();
+  const runId = await fixture.dispatcher.dispatch({
+    runRequest: nativeWorkflowRequest(fixture.cwd, {
+      id: "native-host-capacity-full", title: "Native Host capacity full", prompt: "Wait for capacity.",
+    }),
+    sink: recording.sink,
+    executionOptions: {},
+  });
+  assert.equal(runId, undefined);
+  assert.equal(recording.state.errors[0]?.body?.error, "runtime_host_capacity_full");
+  assert.equal(fixture.store.listRuntimeSemaphoreSlots({ status: "active" }).length, 0);
 });
 
 test("native OpenClaw binding reaches one injected dispatcher without touching Pi dependencies", async () => {

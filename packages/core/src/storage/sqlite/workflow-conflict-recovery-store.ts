@@ -62,7 +62,9 @@ class SqliteWorkflowConflictRecoveryStore implements WorkflowConflictRecoverySto
       if (!selection || selection.roundId !== round.roundId || selection.phase !== "ready"
         || round.phase !== "conflicted" || round.reason !== "workflow_integration.text_conflict"
         || round.candidate || round.openIntentId || round.outstandingApprovalId || round.inputs.mode !== "candidate_only"
-        || round.inputs.optionalFailurePolicy !== "require_success" || round.inputs.parallelExecution?.maxConcurrentSteps !== 2
+        || round.inputs.optionalFailurePolicy !== "require_success"
+        || round.inputs.parallelExecution?.maxConcurrentSteps === undefined
+        || round.inputs.parallelExecution.maxConcurrentSteps < 2 || round.inputs.parallelExecution.maxConcurrentSteps > 4
         || !["blocked", "running"].includes(workflow.status)) veto("conflict", "predecessor_not_recoverable");
       const rounds = coordinator.listRounds.bind(coordinator);
       const authority = readSqliteWithinTransaction(db, () => {

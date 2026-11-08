@@ -301,18 +301,22 @@ export function acquireRunRuntimeSemaphores(input: {
   readonly now: string;
 }): void {
   assertWorkflowRepositoryRunAllowed(input.store, { cwd: input.store.paths.cwd });
-  for (const slotInput of buildRunSemaphoreInputs(input)) {
-    const slot = input.store.acquireRuntimeSemaphoreSlot(slotInput);
-    if (!slot) {
-      input.store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(input.attempt), input.now, "semaphore-conflict");
-      input.store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(input.attempt), input.now, "semaphore-conflict");
-      const message = `Runtime semaphore is full: ${slotInput.resourceType}:${slotInput.resourceKey}`;
-      if (input.channel?.runtimePolicy.queueOnConflict) {
-        throw new QueueableRunConflictError("runtime_semaphore_conflict", message, input.channel);
-      }
-      throw new HttpError(409, "runtime_semaphore_conflict", message);
+  const inputs = buildRunSemaphoreInputs(input);
+  const admitted = input.store.acquireRuntimeSemaphoreSlots(inputs);
+  if (admitted.status === "changed") {
+    throw new HttpError(409, "runtime_semaphore_owner_changed", "Runtime semaphore admission no longer has an unchanged Attempt owner.");
+  }
+  if (admitted.status === "full") {
+    input.store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(input.attempt), input.now, "semaphore-conflict");
+    const message = `Runtime semaphore is full: ${admitted.resourceType}:${admitted.resourceKey}`;
+    if (input.channel?.runtimePolicy.queueOnConflict) {
+      throw new QueueableRunConflictError("runtime_semaphore_conflict", message, input.channel);
     }
-    appendSemaphoreAcquired(input.store, input.attempt, slot, slotInput.limit, input.now);
+    throw new HttpError(409, "runtime_semaphore_conflict", message);
+  }
+  for (const slot of admitted.slots) {
+    const entry = inputs.find(value => value.resourceType === slot.resourceType && value.resourceKey === slot.resourceKey)!;
+    appendSemaphoreAcquired(input.store, input.attempt, slot, entry.limit, input.now);
   }
 }
 
@@ -335,7 +339,7 @@ function assertRecoverablePreparedRunOwner(input: {
   }
 }
 
-function buildRunSemaphoreInputs(input: {
+export function buildRunSemaphoreInputs(input: {
   readonly workUnit: WorkUnit;
   readonly attempt: WorkUnitAttempt;
   readonly channel?: Channel;
@@ -384,7 +388,7 @@ function recoveryChanged(message: string): HttpError {
   return new HttpError(409, "continuation_resource_recovery_changed", message);
 }
 
-function buildRunLeaseInputs(input: {
+export function buildRunLeaseInputs(input: {
   readonly runId: string;
   readonly workUnit: WorkUnit;
   readonly attempt: WorkUnitAttempt;

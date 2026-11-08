@@ -15,6 +15,7 @@ import {
 } from "./store-composition.js";
 import type { RunRequest } from "../../runs/schemas.js";
 import { isRecord } from "../../../shared/validation.js";
+import type { RuntimeHostCapacityAdmission } from "../../../runtime/run-queue.js";
 
 export interface DelegationRuntimeDiscoveryCursor { readonly createdAt: string; readonly reservationId: string }
 export interface DelegationRuntimeDispatchInput {
@@ -71,6 +72,8 @@ export interface DelegationRuntimeRegistryOptions {
     readonly run: Pick<RunSession, "workflowStepId" | "channelId"> }) => boolean;
   /** Current Host authority for a resumed parent during startup discovery. Missing means observe only. */
   readonly assertRecoveryParentCurrent?: (input: Omit<DelegationRuntimeParentBinding, "assertCurrent">) => void;
+  /** Installation-owned Host pool; absent only for legacy disabled mode. */
+  readonly hostCapacity?: RuntimeHostCapacityAdmission;
   readonly now?: () => string;
   /** Idempotent durable projection hook. Notification ACK follows its success. */
   readonly onRunTerminal?: (input: { readonly store: RunStore; readonly run: RunSession;
@@ -290,7 +293,8 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
     // Aborting is only a request. The actual original completion stays owned until it settles.
     if (active.completion) track(Promise.resolve(active.completion), true);
   };
-  const dispatch = (binding: DelegationRuntimeParentBinding, child: ClaimedDelegatedChild): void => {
+  const dispatch = (binding: DelegationRuntimeParentBinding, child: ClaimedDelegatedChild,
+    hostCapacity?: import("@ling-stack/core/runtime-host-capacity-store-bridge").RuntimeHostCapacityDispatchReference): void => {
     if (child.replayed) return; // Response-loss replay is observation-only.
     const { state } = assertParent(binding);
     if (state.pending.has(child.reservation.id)) return;
@@ -307,7 +311,7 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
       const parentPrepared = child.reservation.parentReservationId
         ? state.lifecycle.getPreparation(child.reservation.parentReservationId) : undefined;
       const request = rebuildDelegatedRunRequest({ store: state.store, child, prepared, parentPrepared });
-      const executionEntry = state.lifecycle.createExecutionEntry(child);
+      const executionEntry = state.lifecycle.createExecutionEntry(child, hostCapacity);
       assertParent(binding);
       executionEntered = true;
       await options.executeDelegatedRunRequest({ store: state.store, request, executionEntry });
@@ -331,10 +335,51 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
   const startQueued = (binding: DelegationRuntimeParentBinding, classification: DelegationRecoveryClassification): void => {
     if (classification.kind !== "queued_unclaimed") return;
     const { state } = assertParent(binding);
-    const child = state.lifecycle.claim({ reservationId: classification.runtime.reservation.id,
+    const input = { reservationId: classification.runtime.reservation.id,
       expectedStepRevision: classification.runtime.step.revision,
-      runtimeInstanceId: options.supervisor.getRuntime(state.store.paths.cwd, state.store).runtimeInstanceId, now: now() });
-    dispatch(binding, child);
+      runtimeInstanceId: options.supervisor.getRuntime(state.store.paths.cwd, state.store).runtimeInstanceId, now: now() };
+    const hostCapacity = options.hostCapacity ?? options.supervisor.getHostCapacityAdmission?.(state.store);
+    if (!hostCapacity) {
+      dispatch(binding, state.lifecycle.claim(input));
+      return;
+    }
+    const admission = state.lifecycle.prepareAdmission(input);
+    if (admission.status === "claimed" || admission.status === "abandoned") return;
+    const capacity = hostCapacity.reserveDelegationPending({ workspaceId: classification.runtime.workUnit.workspaceId,
+      admissionId: admission.admissionId, now: input.now });
+    if (capacity.status !== "reserved" && capacity.status !== "duplicate") return;
+    try {
+      const child = state.lifecycle.commitClaim({ ...input, admissionId: admission.admissionId });
+      dispatch(binding, child, capacity.reference);
+    } catch (error) {
+      try { hostCapacity.releaseNoDispatch({ workspaceId: classification.runtime.workUnit.workspaceId,
+        intentId: capacity.reference.intentId, now: now() }); } catch { /* receipt remains recoverable */ }
+      throw error;
+    }
+  };
+  const startResuming = (binding: DelegationRuntimeParentBinding, classification: DelegationRecoveryClassification): boolean => {
+    if (classification.kind !== "resuming") return false;
+    const runtime = classification.runtime, attempt = runtime.attempt;
+    if (!attempt) return false;
+    assertParent(binding);
+    if (runtime.run.status !== "running" || runtime.workUnit.status !== "claimed"
+      || attempt.status !== "created" || runtime.step.state !== "resuming") return false;
+    // Once the private execution entry has crossed into the orchestrator, its
+    // dispatch custody is consumed even if SDK preparation or ACK later fails.
+    // The durable successor remains claimed/created for inspection or an
+    // explicit recovery action, but a sweep must not redispatch it.
+    const state = requireState(binding.store);
+    if (state.lifecycle.isExecutionEntryConsumed(attempt.id)) return false;
+    const source = { runId: runtime.run.id, ...toRuntimeAttemptFence(attempt) };
+    const hostCapacity = options.hostCapacity ?? options.supervisor.getHostCapacityAdmission?.(state.store);
+    if (!hostCapacity) {
+      dispatch(binding, { ...runtime, attempt, replayed: false });
+      return true;
+    }
+    const capacity = hostCapacity.reserveDelegationSpawn({ workspaceId: runtime.workUnit.workspaceId, source, now: now() });
+    if (capacity.status !== "reserved" && capacity.status !== "duplicate") return false;
+    dispatch(binding, { ...runtime, attempt, replayed: false }, capacity.reference);
+    return true;
   };
   const startSuspended = (binding: DelegationRuntimeParentBinding, classification: DelegationRecoveryClassification): boolean => {
     if (classification.kind !== "interrupted" || !classification.runtime.attempt) return false;
@@ -350,8 +395,7 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
       expectedStepRevision: classification.runtime.step.revision,
       runtimeInstanceId: options.supervisor.getRuntime(state.store.paths.cwd, state.store).runtimeInstanceId, now: now() });
     if (activated.kind !== "activated") return false; // A stored activation is observation only.
-    dispatch(binding, activated.child);
-    return true;
+    return startResuming(binding, { kind: "resuming", runtime: activated.child });
   };
 
   const registry: DelegationRuntimeRegistry = Object.freeze({
@@ -437,7 +481,7 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
             expectedStepRevision: delegationInteger(input.expectedStepRevision), parentFence: binding.sourceFence,
             callId: delegationId(input.callId),
             runtimeInstanceId: options.supervisor.getRuntime(state.store.paths.cwd, state.store).runtimeInstanceId, now: now() });
-          dispatch(binding, child);
+          if (!child.replayed) startResuming(binding, { kind: "resuming", runtime: child });
           return { ...observe(state, childFor(binding, reservationId)), replayed: child.replayed };
         },
       } satisfies DelegationRuntimeParentTools);
@@ -462,7 +506,7 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
         const classification = state.lifecycle.recover(delegationId(reservationId)), child = classification.runtime;
         // Unknown dispatches and manual interrupts stay retained. A graceful
         // interrupted source has its own one-shot activation, never public resume.
-        if (!["queued_unclaimed", "interrupted"].includes(classification.kind) || !options.assertRecoveryParentCurrent) { retained++; continue; }
+        if (!["queued_unclaimed", "interrupted", "resuming"].includes(classification.kind) || !options.assertRecoveryParentCurrent) { retained++; continue; }
         const run = store.getRun(child.step.parentRunId), unit = run?.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;
         const attempt = unit?.activeAttemptId ? store.getWorkUnitAttempt(unit.activeAttemptId) : undefined;
         if (!run || !attempt) { retained++; continue; }
@@ -471,6 +515,7 @@ export function createDelegationRuntimeRegistry(options: DelegationRuntimeRegist
         try {
           childFor(binding, reservationId);
           if (classification.kind === "queued_unclaimed") { startQueued(binding, classification); dispatched++; }
+          else if (classification.kind === "resuming") { if (startResuming(binding, classification)) dispatched++; else retained++; }
           else if (startSuspended(binding, classification)) dispatched++;
           else retained++;
         }

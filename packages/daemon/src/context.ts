@@ -156,6 +156,8 @@ export interface DaemonDependencies {
   readonly runner?: RunnerAdapter;
   readonly runnerRegistry?: RunnerRegistry;
   readonly storeFactory?: RunStoreFactory;
+  /** Optional synchronous observation of the exact production-owned Store after initialization. */
+  readonly onStoreInitialized?: (cwd: string, store: RunStore) => void;
   /** Optional in-memory QA Provider authority. Absence keeps model task execution disabled. */
   readonly runEvaluationQaTaskWorker?: RunEvaluationQaTaskWorkerActivation;
   /** Authenticated bundled sources, initialized synchronously before recovery/read access. */

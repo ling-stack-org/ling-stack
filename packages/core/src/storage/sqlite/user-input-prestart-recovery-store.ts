@@ -36,6 +36,7 @@ import { validDeliveryKey, validDeliveryRevision } from "./user-input-delivery-r
 import { isUserInputRunCreatedReplay } from "./user-input-run-created-replay.js";
 import type { UserInputWorkflowAdmissionRecoveryPlan } from "./user-input-workflow-step-admission.js";
 import { readRuntimeSemaphoreCapacity } from "./workflow-step-admission-capacity.js";
+import { readRuntimeRunCapacityConflict } from "./runtime-run-capacity.js";
 import { hasActiveWorkflowMergeApplyLease } from "./workflow-merge-lease-guard.js";
 
 type BindingReader = (threadId: string, deliveryId: string) => UserInputContinuationBinding | undefined;
@@ -316,7 +317,13 @@ export class SqliteUserInputPrestartRecoveryStore {
         recovered.push({ ...slot, lastRenewedAt: input.now, expiresAt: input.expiresAt });
         continue;
       }
-      const capacity = readRuntimeSemaphoreCapacity(this.context.database, candidate);
+      if (candidate.resourceType === "provider" || candidate.resourceType === "runner") {
+        const conflict = readRuntimeRunCapacityConflict(this.context.database, {
+          workspaceId: candidate.workspaceId, fence: candidate, now: input.now,
+        });
+        if (conflict) return { status: "busy", kind: "semaphore", ...conflict };
+      }
+      const capacity = readRuntimeSemaphoreCapacity(this.context.database, { ...candidate, fence: candidate, now: input.now });
       if (capacity.occupied >= capacity.limit) return { status: "busy", kind: "semaphore",
         resourceType: candidate.resourceType, resourceKey: candidate.resourceKey };
       const slot: RuntimeSemaphoreSlot = { ...candidate, id: createRuntimeSemaphoreSlotId(), status: "active",

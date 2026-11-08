@@ -1879,6 +1879,8 @@ export async function routeRequest(
   const workflowIsolationHost: WorkflowIsolationHost = {
     enabled: () => runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
     toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
+    maxConcurrentSteps: () => runtimeSupervisor.getConcurrencyPolicy().enabled
+      ? runtimeSupervisor.getConcurrencyPolicy().isolatedWriteMaxConcurrentSteps : 2,
   };
   const createStartOrchestratedRun = (store: RunStore, cwd: string): StartOrchestratedWorkflowStepRun => {
     const startOrchestratedRun: StartOrchestratedWorkflowStepRun = ({ workflow, workflowStep, taskId, runRequest }) =>

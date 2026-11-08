@@ -1,15 +1,18 @@
 import { isAbsolute } from "node:path";
+import type { SQLOutputValue } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import { parseWorkflowStepExecutionSafety } from "@ling-stack/contracts";
 import type { RunStore } from "../../run-types.js";
 import type { WorkflowStepAdmissionPlan } from "../../workflow-step-admission.js";
 import { inspectWorkflowPreApproval } from "../../workflow-pre-gate.js";
 import { isWorkflowStepSafetyPlanV1 } from "../../workflow-safety-plan.js";
-import type { WorkflowStepStartReadStore } from "../../workflow-step-start-owner.js";
+import { isWorkflowStepStartOwnerV1, type WorkflowStepStartReadStore } from "../../workflow-step-start-owner.js";
 import type { ChannelWorkflow, ChannelWorkflowStep } from "../../workspace-types.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { workflowParallelAdmissionAllowed, workflowParallelAttemptAllowed } from "./workflow-parallel-parent-guard.js";
 
-type Ports = WorkflowStepStartReadStore & Pick<RunStore, "getApprovalRequest" | "listChannelWorkflowSteps">;
+type Ports = WorkflowStepStartReadStore & Pick<RunStore, "getApprovalRequest" | "listChannelWorkflowSteps"
+  | "getWorkUnit" | "getWorkUnitAttempt" | "getChannelWorkflowStepStartAdmission">;
 
 /** Caller holds the begin writer lock. Aggregate waiting is not, by itself, permission to start. */
 export function workflowStepBeginApprovalPermitted(context: SqliteStoreContext, store: Ports,
@@ -29,17 +32,6 @@ export function workflowStepBeginApprovalPermitted(context: SqliteStoreContext, 
     || Boolean(step.runId && store.getRun(step.runId)?.status === "waiting_for_approval"));
   if (workflow.status !== "waiting_for_approval" && waiting.length === 0 && pending.length === 0) return true;
   if (waiting.length === 0) return false;
-  const localApprovals = new Set<string>();
-  const hasPersistedOwner = context.database.prepare(`SELECT 1 FROM channel_workflow_steps WHERE id=?
-    AND json_type(metadata_json,'$.startOwner') IS NOT NULL`);
-  for (const step of waiting) {
-    if (step.taskId !== undefined || step.runId !== undefined || step.metadata?.startOwner
-      || hasPersistedOwner.get(step.id) || step.metadata?.activeGateStage !== "pre") return false;
-    const inspection = inspectWorkflowPreApproval(store, step, now);
-    if (inspection.status !== "pending") return false;
-    localApprovals.add(inspection.approval.id);
-  }
-  if (pending.some(row => typeof row.id !== "string" || !localApprovals.has(row.id))) return false;
   const waitingIds = new Set(waiting.map(step => step.id)), visited = new Set<string>();
   const dependencies = [...candidate.metadata?.dependsOnStepIds ?? []];
   while (dependencies.length > 0) {
@@ -51,7 +43,57 @@ export function workflowStepBeginApprovalPermitted(context: SqliteStoreContext, 
     if (!dependency) return false;
     dependencies.push(...dependency.metadata?.dependsOnStepIds ?? []);
   }
-  return hasCompleteReadonlyAdmission(store, workflow, candidate, admission);
+  const hasPersistedOwner = context.database.prepare(`SELECT 1 FROM channel_workflow_steps WHERE id=?
+    AND json_type(metadata_json,'$.startOwner') IS NOT NULL`);
+  const independentPreApprovalWait = waiting.every(step => {
+    if (step.taskId !== undefined || step.runId !== undefined || step.metadata?.startOwner
+      || hasPersistedOwner.get(step.id) || step.metadata?.activeGateStage !== "pre") return false;
+    return inspectWorkflowPreApproval(store, step, now).status === "pending";
+  });
+  if (independentPreApprovalWait) {
+    const localApprovals = new Set(waiting.map(step => inspectWorkflowPreApproval(store, step, now))
+      .filter(inspection => inspection.status === "pending")
+      .map(inspection => inspection.approval.id));
+    if (pending.some(row => typeof row.id !== "string" || !localApprovals.has(row.id))) return false;
+    return hasCompleteReadonlyAdmission(store, workflow, candidate, admission);
+  }
+  return hasCompleteIsolatedWritingAdmission(context, store, workflow, candidate, admission, waiting, pending);
+}
+
+function hasCompleteIsolatedWritingAdmission(context: SqliteStoreContext, store: Ports, workflow: ChannelWorkflow,
+  candidate: ChannelWorkflowStep, admission: WorkflowStepAdmissionPlan | undefined,
+  waiting: readonly ChannelWorkflowStep[], pending: readonly Record<string, SQLOutputValue>[]): boolean {
+  const candidatePlan = candidate.metadata?.safetyPlan;
+  if (!admission || candidate.metadata?.sideEffectClass !== "workspace_write"
+    || !candidate.metadata?.isolationScopePlan || !isWorkflowStepSafetyPlanV1(candidatePlan)
+    || candidatePlan.profile !== "pi_host_isolated_files_v1"
+    || !workflowParallelAdmissionAllowed(context.database, store, candidate, admission)) return false;
+
+  const waitingApprovalIds = new Set<string>();
+  for (const step of waiting) {
+    if (step.id === candidate.id || step.status !== "running" || step.metadata?.sideEffectClass !== "workspace_write"
+      || !step.metadata?.isolationScopePlan || !isWorkflowStepSafetyPlanV1(step.metadata.safetyPlan)
+      || step.metadata.safetyPlan.profile !== "pi_host_isolated_files_v1") return false;
+    const owner = step.metadata.startOwner;
+    const run = step.runId ? store.getRun(step.runId) : undefined;
+    if (!isWorkflowStepStartOwnerV1(owner) || owner.phase !== "linked" || !run || run.status !== "waiting_for_approval"
+      || step.taskId !== owner.taskId || step.runId !== run.id || run.workflowStepId !== step.id
+      || run.taskId !== owner.taskId || run.channelId !== step.channelId || run.teammateId !== step.toParticipantId) return false;
+    const stepAdmission = store.getChannelWorkflowStepStartAdmission(step.id, owner);
+    if (!stepAdmission || stepAdmission.status !== "transferred" || !stepAdmission.fence
+      || !workflowParallelAdmissionAllowed(context.database, store, step, stepAdmission.plan)
+      || !workflowParallelAttemptAllowed(context.database, store, step.workspaceId, stepAdmission.fence)) return false;
+    const approvals = pending
+      .map(row => typeof row.id === "string" ? store.getApprovalRequest(row.id) : undefined)
+      .filter(approval => approval?.status === "pending" && approval.runId === run.id && approval.taskId === run.taskId
+        && approval.channelId === step.channelId
+        && (approval.actionType === "write" && approval.payload.type === "file_write"
+          || approval.actionType === "edit" && approval.payload.type === "file_edit"));
+    if (approvals.length !== 1) return false;
+    waitingApprovalIds.add(approvals[0]!.id);
+  }
+  return waitingApprovalIds.size > 0 && pending.length === waitingApprovalIds.size
+    && pending.every(row => typeof row.id === "string" && waitingApprovalIds.has(row.id));
 }
 
 function hasCompleteReadonlyAdmission(store: Ports, workflow: ChannelWorkflow, step: ChannelWorkflowStep,

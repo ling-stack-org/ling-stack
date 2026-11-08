@@ -103,6 +103,8 @@ export interface NativeRunTargetDispatchInput {
   readonly onEvent: (event: RunEventEnvelope) => void;
   readonly onApprovalWaitChanged?: (waiting: boolean) => void;
   readonly onLocalLifetime?: (lifetime: Promise<unknown>) => void;
+  /** Called by a verified native target immediately before its external spawn/submit boundary. */
+  readonly onDispatchAccepted?: (acceptedAt: string) => void;
   readonly assertCurrentAuthority?: () => void;
 }
 
@@ -117,6 +119,8 @@ export interface NativeRunTargetResult {
 }
 
 export interface NativeRunTargetDispatcher {
+  /** Native target must participate in the durable Host dispatch gate when enabled. */
+  readonly hostCapacityAdmission?: "dispatch_ack_v1";
   assertAvailable?(input: NativeRunAdmissionInput): Promise<void>;
   dispatch(input: NativeRunTargetDispatchInput): Promise<NativeRunTargetResult>;
 }
@@ -157,7 +161,13 @@ async function executeNativeRunRequest(
 ): Promise<string | undefined> {
   const { sink } = input;
   const runRequest = structuredClone(input.runRequest);
-  let hydratedRunRequest = runRequest;
+  let hydratedRunRequest: NativeBoundRunRequest = {
+    ...runRequest,
+    // Native adapters use their complete tool surface when the request omits a
+    // subset. Persist the effective surface so resource and Host admission do
+    // not classify a writable native run as tool-free.
+    tools: runRequest.tools ?? ["read", "grep", "find", "ls", "bash", "edit", "write"],
+  };
   let durableRunRequest: NativeBoundRunRequest | undefined;
   let preparedMemory: ReturnType<typeof prepareNativeMemory> | undefined;
   const binding = runRequest.executionBinding;
@@ -173,6 +183,9 @@ async function executeNativeRunRequest(
   let runtimeSettings: WorkspaceRuntimeSettings | undefined;
   let effectivePolicySnapshot: EffectiveRunPolicySnapshot | undefined;
   let approvalPolicy: ApprovalPolicy | undefined;
+  let hostCapacityAdmission: import("../../runtime/run-queue.js").RuntimeHostCapacityAdmission | undefined;
+  let hostCapacityReference: import("@ling-stack/core/runtime-host-capacity-store-bridge").RuntimeHostCapacityDispatchReference | undefined;
+  let hostCapacityDispatched = false;
   let runId = "";
   let createdAt = "";
   let workflowStartOwner: WorkflowStepStartOwnerV1 | undefined;
@@ -185,6 +198,11 @@ async function executeNativeRunRequest(
         "Native execution has no verified per-invocation delegation budget gate. Select Pi or remove the token/cost cap.");
     }
     store = dependencies.storeRegistry.getStore(workspaceCwd);
+    hostCapacityAdmission = dependencies.runtimeSupervisor.getHostCapacityAdmission?.(store);
+    if (hostCapacityAdmission && dependencies.target.hostCapacityAdmission !== "dispatch_ack_v1") {
+      throw new HttpError(409, "runtime_host_capacity_native_unsupported",
+        "Native execution target has no verified Host capacity dispatch boundary.");
+    }
     const duplicate = findExistingIdempotentRunRequest(store, runRequest);
     if (duplicate?.linkedRunId) throw new DuplicateRunRequestError(duplicate.linkedRunId);
     if (duplicate) throw new HttpError(409, "duplicate_work_unit", `Duplicate work unit request: ${duplicate.id}`);
@@ -197,6 +215,11 @@ async function executeNativeRunRequest(
       secretResolver: dependencies.secretResolver,
     });
     store = dependencies.storeRegistry.getStore(workspaceCwd);
+    hostCapacityAdmission = dependencies.runtimeSupervisor.getHostCapacityAdmission?.(store);
+    if (hostCapacityAdmission && dependencies.target.hostCapacityAdmission !== "dispatch_ack_v1") {
+      throw new HttpError(409, "runtime_host_capacity_native_unsupported",
+        "Native execution target has no verified Host capacity dispatch boundary.");
+    }
     assertFullAccessPermissionConfirmed(runRequest);
     validateWorkflowStepOwner(store, runRequest);
     if (assertWorkflowSafetyRequest(store, runRequest)?.profile === "pi_host_readonly_v1") {
@@ -239,8 +262,8 @@ async function executeNativeRunRequest(
       }
     }
     preparedMemory = store.readSnapshot(() => prepareNativeMemory(store!, runRequest));
-    hydratedRunRequest = { ...runRequest, preselectedMemoryUse: undefined,
-      ...(preparedMemory.prompt ? { appendSystemPrompt: [...(runRequest.appendSystemPrompt ?? []), preparedMemory.prompt] } : {}) };
+    hydratedRunRequest = { ...hydratedRunRequest, preselectedMemoryUse: undefined,
+      ...(preparedMemory.prompt ? { appendSystemPrompt: [...(hydratedRunRequest.appendSystemPrompt ?? []), preparedMemory.prompt] } : {}) };
     await dependencies.target.assertAvailable?.({ runRequest: { ...hydratedRunRequest, threadId: thread.id }, store, approvalPolicy, effectivePolicySnapshot,
       signal: AbortSignal.timeout(15_000) });
     preparedMemory.assertCurrent();
@@ -299,13 +322,13 @@ async function executeNativeRunRequest(
     attempt = store.createWorkUnitAttempt({ workUnitId: workUnit.id, attemptNumber: workUnit.attemptCount + 1,
       runtimeInstanceId: runtime.runtimeInstanceId, runnerId: binding.engineId,
       requestedRunnerId: binding.engineId, effectiveRunnerId: binding.engineId, now: createdAt });
-    preparedConcurrency = prepareRunConcurrency({ store, runRequest, runId, workUnit, attempt, now: createdAt });
+    preparedConcurrency = prepareRunConcurrency({ store, runRequest: hydratedRunRequest, runId, workUnit, attempt, now: createdAt });
     const reservation = runRequest.workflowStepId && workflowStartOwner
       ? store.getChannelWorkflowStepStartAdmission(runRequest.workflowStepId, workflowStartOwner) : undefined;
     if (!reservation || reservation.status !== "preparing") acquireRunRuntimeSemaphores({ store, workUnit, attempt, channel: preparedConcurrency.channel,
       channelParallelLimit: runRequest.channelParallelLimit,
       providerKey: `native:${binding.profileId}:${binding.profileRevision}`, runnerId: binding.engineId, now: createdAt });
-    claimPreparedRunTask({ store, task: preparedConcurrency.task, runRequest, runId,
+    claimPreparedRunTask({ store, task: preparedConcurrency.task, runRequest: hydratedRunRequest, runId,
       leases: preparedConcurrency.leases, attempt, now: createdAt });
     const claim = store.transitionWorkUnitStatus({ workUnitId: workUnit.id, attemptId: attempt.id,
       activeAttemptId: attempt.id, runtimeInstanceId: attempt.runtimeInstanceId,
@@ -322,6 +345,15 @@ async function executeNativeRunRequest(
     run = createNativeRun({ store, storeRegistry: dependencies.storeRegistry, runRequest: durableRunRequest,
       runId, workspaceCwd, workUnit, attempt, thread, turn, runtimeSettings,
       effectivePolicySnapshot, channelWorkspaceSnapshot, runnerResolution, createdAt });
+    if (hostCapacityAdmission) {
+      const reserved = hostCapacityAdmission.reserveExecution({ workspaceId: workUnit.workspaceId,
+        source: { runId: run.id, ...toRuntimeAttemptFence(attempt) }, now: createdAt });
+      if (reserved.status !== "reserved" && reserved.status !== "duplicate") {
+        throw new HttpError(409, `runtime_host_capacity_${reserved.status}`,
+          "Native execution is waiting for Host capacity.");
+      }
+      hostCapacityReference = reserved.reference;
+    }
     appendRunCreatedControlPlaneEvent(store, dependencies.controlPlaneEvents, workspaceCwd, run, createdAt);
     commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner);
   } catch (error) {
@@ -343,8 +375,16 @@ async function executeNativeRunRequest(
       sink.end();
       return run.id;
     }
-    if (preparedConcurrency.leases.length > 0 && store && attempt) {
-      store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), new Date().toISOString(), "run-prepare-failed");
+    if (store && attempt) {
+      releasePreparedRunResources(store, attempt, new Date().toISOString(), "run-prepare-failed");
+    }
+    if (hostCapacityReference && !hostCapacityDispatched && hostCapacityAdmission && store && workUnit) {
+      try {
+        hostCapacityAdmission.releaseNoDispatch({ workspaceId: workUnit.workspaceId,
+          intentId: hostCapacityReference.intentId, now: new Date().toISOString() });
+      } catch {
+        console.warn("runtime_host_capacity_native_no_dispatch_release_incomplete: reservation remains recoverable");
+      }
     }
     if (store && workUnit && !isTerminalWorkUnitStatus(store.getWorkUnit(workUnit.id)?.status ?? workUnit.status)) {
       const now = new Date().toISOString();
@@ -458,9 +498,20 @@ async function executeNativeRunRequest(
       }
     };
     assertCurrentAuthority();
+    const onDispatchAccepted = (acceptedAt: string): void => {
+      if (!hostCapacityAdmission || !hostCapacityReference) return;
+      if (hostCapacityDispatched) throw new Error("Native Host dispatch was acknowledged more than once.");
+      if (!hostCapacityAdmission.consumeDispatch({ workspaceId: workUnit!.workspaceId,
+        source, reference: hostCapacityReference, now: acceptedAt })) {
+        throw new HttpError(409, "runtime_host_capacity_changed",
+          "Native Host dispatch permission is no longer current.");
+      }
+      hostCapacityDispatched = true;
+    };
     const result = await dependencies.target.dispatch({ runRequest: { ...hydratedRunRequest, threadId: run.threadId }, store, run, workUnit, attempt,
       approvalPolicy, effectivePolicySnapshot, signal: abortController.signal,
       assertCurrentAuthority,
+      onDispatchAccepted,
       onApprovalWaitChanged: writers.wrapSync("native approval wait", supervision.approvalWaitChanged),
       onLocalLifetime: (lifetime) => {
         const finish = writers.reserve("native execution and callbacks");
@@ -590,7 +641,18 @@ async function executeNativeRunRequest(
       await durableCompletion;
       const terminal = store.getRun(run.id);
       if (terminal && isTerminalRunStatus(terminal.status)
-        && store.getWorkUnit(workUnit.id)?.activeAttemptId === attempt.id) await input.executionOptions.afterRunTerminal?.(terminal);
+        && store.getWorkUnit(workUnit.id)?.activeAttemptId === attempt.id) {
+        if (hostCapacityReference && hostCapacityDispatched && hostCapacityAdmission) {
+          try {
+            const released = hostCapacityAdmission.releaseStopped({ workspaceId: workUnit.workspaceId,
+              source, intentId: hostCapacityReference.intentId, now: new Date().toISOString() });
+            if (!released) console.warn("runtime_host_capacity_native_stopped_release_incomplete: release remains recoverable");
+          } catch {
+            console.warn("runtime_host_capacity_native_stopped_release_incomplete: release remains recoverable");
+          }
+        }
+        await input.executionOptions.afterRunTerminal?.(terminal);
+      }
     } finally {
       resolveCompletion?.();
     }

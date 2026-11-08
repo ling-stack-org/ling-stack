@@ -155,9 +155,6 @@ export function compileWorkflowGraph(
       .filter((edge) => edge.toNodeId === graphNodeId)
       .map((edge) => stepByNodeId.get(edge.fromNodeId)?.id)
       .filter((stepId): stepId is string => typeof stepId === "string");
-    if (dependsOnStepIds.length === 0) {
-      return step;
-    }
     return store.updateChannelWorkflowStep(
       step.id,
       {

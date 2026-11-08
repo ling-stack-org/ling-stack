@@ -4,7 +4,7 @@ import { createSqliteRunStore } from "../dist/index.js";
 import { applyWorkflowTemplateRegistryMigration, WORKFLOW_TEMPLATE_REGISTRY_MIGRATION_VERSION }
   from "../dist/storage/sqlite/workflow-template-registry-migration.js";
 import { at, businessSnapshot, fixture, markers, persistSkill, registrySnapshot, registryTables, registryTriggers,
-  removeRegistryOverlay, rows, saveInput, schema } from "./support/workflow-template-registry-fixture.mjs";
+  registrySuccessorTables, removeRegistryOverlay, rows, saveInput, schema } from "./support/workflow-template-registry-fixture.mjs";
 
 const has = db => version => !!db.prepare("SELECT 1 FROM schema_migrations WHERE version=?").get(version);
 const record = db => (version, name) => db.prepare("INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)").run(version, name, at(0));
@@ -14,7 +14,8 @@ const snapshot = db => ({ schema: schema(db), markers: markers(db), workspaces: 
   ...Object.fromEntries(registryTables.filter(name => db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name))
     .map(name => [name, rows(db, name)])) });
 const owned = row => registryTables.includes(row.tbl_name);
-const recoveryOwned = row => row.tbl_name === "workflow_conflict_recoveries";
+const successorOwned = row => registrySuccessorTables.includes(row.tbl_name);
+const markerIdentity = db => markers(db).map(({ version, name }) => ({ version, name }));
 
 function rejectUnchanged(f, pattern, extra = {}, reopen = true) {
   const before = snapshot(f.db), data = businessSnapshot(f.db);
@@ -32,7 +33,7 @@ function rejectUnchanged(f, pattern, extra = {}, reopen = true) {
 test("fresh Core installs migration212 with exact owned tables, foreign keys and immutable retention guards", t => {
   const f = fixture(t, { fresh: true }), db = f.db;
   assert.equal(WORKFLOW_TEMPLATE_REGISTRY_MIGRATION_VERSION, 212);
-  assert.equal(db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get().v, 213);
+  assert.equal(db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get().v, 220);
   assert.deepEqual(db.prepare("SELECT version,name FROM schema_migrations WHERE version=212 OR name='workflow_template_registry'").all()
     .map(row => ({ ...row })), [{ version: 212, name: "workflow_template_registry" }]);
   assert.deepEqual(schema(db).filter(owned).map(row => row.name).sort(), [...registryTables, ...registryTriggers].sort());
@@ -58,6 +59,7 @@ test("real211 upgrade is additive and the production constructor preserves exist
   f.store.createRun({ id: "registry-predecessor-run", cwd: f.root, taskId: task.id, channelId: channel.id,
     providerName: "Fixture", providerModel: "fixture", taskSnapshot: {}, providerSnapshot: {}, requestSnapshot: {}, createdAt: at(0) });
   persistSkill(f.store);
+  const fullSchema = schema(f.db), fullMarkers = markerIdentity(f.db);
   removeRegistryOverlay(f);
   const before = snapshot(f.db), data = businessSnapshot(f.db);
   assert.ok(data.tasks.length > 0 && data.run_sessions.length > 0 && data.skill_definitions.length > 0);
@@ -67,10 +69,13 @@ test("real211 upgrade is additive and the production constructor preserves exist
   assert.deepEqual(registrySnapshot(f.db), { workflow_template_registry: [], workflow_template_versions: [] });
   const installed = snapshot(f.db);
   f.reopen();
-  assert.deepEqual(schema(f.db).filter(row => !recoveryOwned(row)), installed.schema);
+  assert.deepEqual(schema(f.db).filter(row => !successorOwned(row)), installed.schema);
   assert.deepEqual(markers(f.db).filter(row => row.version <= 212), installed.markers);
-  assert.deepEqual({ ...snapshot(f.db), schema: schema(f.db).filter(row => !recoveryOwned(row)),
+  assert.deepEqual({ ...snapshot(f.db), schema: schema(f.db).filter(row => !successorOwned(row)),
     markers: markers(f.db).filter(row => row.version <= 212) }, installed);
+  assert.deepEqual(schema(f.db), fullSchema);
+  assert.deepEqual(markerIdentity(f.db), fullMarkers);
+  for (const table of registrySuccessorTables) assert.deepEqual(rows(f.db, table), []);
   assert.deepEqual(businessSnapshot(f.db), data);
   assert.deepEqual(f.registry.list(), []);
   assert.equal(f.store.getTask(task.id).title, "Keep predecessor");
@@ -78,13 +83,17 @@ test("real211 upgrade is additive and the production constructor preserves exist
 
 test("Core constructor alone upgrades a real211 database exactly once", t => {
   const f = fixture(t, { fresh: true });
+  const fullSchema = schema(f.db), fullMarkers = markerIdentity(f.db);
   removeRegistryOverlay(f);
   const before = snapshot(f.db), data = businessSnapshot(f.db);
   f.reopen();
   const installed = snapshot(f.db);
-  assert.deepEqual(installed.schema.filter(row => !owned(row) && !recoveryOwned(row)), before.schema);
+  assert.deepEqual(installed.schema.filter(row => !owned(row) && !successorOwned(row)), before.schema);
   assert.deepEqual(installed.markers.filter(row => row.version < 212), before.markers);
-  assert.equal(installed.markers.at(-1).version, 213);
+  assert.equal(installed.markers.at(-1).version, 220);
+  assert.deepEqual(installed.schema, fullSchema);
+  assert.deepEqual(markerIdentity(f.db), fullMarkers);
+  for (const table of registrySuccessorTables) assert.deepEqual(rows(f.db, table), []);
   assert.deepEqual(businessSnapshot(f.db), data);
   f.reopen();
   assert.deepEqual(snapshot(f.db), installed);

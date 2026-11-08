@@ -30,7 +30,9 @@ export function createUserInputWorkflowTerminalHook(options: ChannelTurnDispatch
         { toolBrokerMode: () => options.runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
       runnerRegistry: options.runnerRegistry,
       isolationHost: { enabled: () => options.runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
-        toolBrokerMode: () => options.runtimeSupervisor.getHarnessFeatures().toolBroker.mode },
+        toolBrokerMode: () => options.runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
+        maxConcurrentSteps: () => options.runtimeSupervisor.getConcurrencyPolicy().enabled
+          ? options.runtimeSupervisor.getConcurrencyPolicy().isolatedWriteMaxConcurrentSteps : 2 },
       validateRunRequest: request => resolveProviderForRun(store, request, options.secretResolver),
       startRun: createStartOrchestratedRun(options, store, store.paths.cwd) });
   };

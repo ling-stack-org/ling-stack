@@ -151,7 +151,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
   if (!workflow) {
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${input.workflowId}`);
   }
-  assertWorkflowIsolationSelectionIntegrity(input.store, workflow.id);
+  assertWorkflowIsolationSelectionIntegrity(input.store, workflow.id, input.isolationHost);
   syncWorkflowSourceTurnProgress(input.store, workflow, new Date().toISOString());
   const planModeBlocker = getWorkflowPlanModeBlocker(input.store, workflow);
   if (planModeBlocker) {

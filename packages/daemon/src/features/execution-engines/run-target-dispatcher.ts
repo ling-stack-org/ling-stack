@@ -107,6 +107,7 @@ export function createExecutionEngineRunTargetDispatcher(
   };
 
   return {
+    hostCapacityAdmission: "dispatch_ack_v1",
     async assertAvailable(input) { await prepare(snapshotAdmission(input)); },
     async dispatch(input) {
       input = snapshotAdmission(input);
@@ -158,6 +159,7 @@ export function createExecutionEngineRunTargetDispatcher(
           onEvent: input.onEvent,
           onApprovalWaitChanged: input.onApprovalWaitChanged,
           onLocalLifetime: input.onLocalLifetime,
+          onDispatchAccepted: input.onDispatchAccepted,
           assertCurrentAuthority,
           signal: input.signal,
         });
@@ -209,6 +211,7 @@ export function createExecutionEngineRunTargetDispatcher(
           onEvent: input.onEvent,
           onApprovalWaitChanged: input.onApprovalWaitChanged,
           onLocalLifetime: input.onLocalLifetime,
+          onDispatchAccepted: input.onDispatchAccepted,
           assertCurrentAuthority,
           signal: input.signal,
         });
@@ -256,6 +259,7 @@ export function createExecutionEngineRunTargetDispatcher(
         onEvent: input.onEvent,
         onApprovalWaitChanged: input.onApprovalWaitChanged,
         onLocalLifetime: input.onLocalLifetime,
+        onDispatchAccepted: input.onDispatchAccepted,
         assertCurrentAuthority,
         signal: input.signal,
       });

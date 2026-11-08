@@ -2,6 +2,11 @@ import { resolve as resolvePath } from "node:path";
 import { delegationBudget, resolveDelegationPriceForBudget,
   type LingSandboxPolicyProfileId, type DelegationTokenPriceSnapshot } from "@ling-stack/core";
 import type { DelegationBudgetV1 } from "@ling-stack/contracts";
+import {
+  resolveRuntimeConcurrencyPolicy,
+  type RuntimeConcurrencyFeatureConfig,
+  type ResolvedRuntimeConcurrencyPolicy,
+} from "./runtime/concurrency-policy.js";
 import type { RestrictedCommandRuntimeConfig } from "./runtime/sandbox/restricted-command-runtime.js";
 
 export interface DaemonConfig {
@@ -14,6 +19,8 @@ export interface DaemonConfig {
   readonly runners?: RunnerFeatureConfig;
   readonly sandbox?: SandboxFeatureConfig;
   readonly runtimeTools?: RuntimeToolFeatureConfig;
+  /** Trusted Host startup limits; never read from workspace/runtime HTTP settings. */
+  readonly concurrency?: RuntimeConcurrencyFeatureConfig;
   readonly transports?: TransportFeatureConfig;
   readonly channels?: ChannelFeatureConfig;
   readonly cuaDriver?: CuaDriverFeatureConfig;
@@ -176,6 +183,7 @@ export interface ResolvedDaemonConfig {
   readonly runners: RunnerFeatureConfig;
   readonly sandbox: SandboxFeatureConfig;
   readonly runtimeTools: RuntimeToolFeatureConfig;
+  readonly concurrency: ResolvedRuntimeConcurrencyPolicy;
   readonly transports: Required<TransportFeatureConfig>;
   readonly channels: ChannelFeatureConfig;
   readonly cuaDriver: {
@@ -235,6 +243,7 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
       shellSnapshot: config.runtimeTools?.shellSnapshot ??
         readBooleanEnv(process.env.LING_STACK_RUNTIME_SHELL_SNAPSHOT, false),
     },
+    concurrency: resolveRuntimeConcurrencyPolicy(config.concurrency),
     transports: {
       providerWebSocketFallback: config.transports?.providerWebSocketFallback ??
         readBooleanEnv(process.env.LING_STACK_PROVIDER_WS_FALLBACK, true),

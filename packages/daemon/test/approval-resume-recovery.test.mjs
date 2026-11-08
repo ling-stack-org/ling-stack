@@ -668,14 +668,14 @@ test("enforced approval preparation failure atomically closes checkpoint, task, 
     true,
   );
   try {
-    const acquireRuntimeSemaphoreSlot = fixture.store.acquireRuntimeSemaphoreSlot.bind(fixture.store);
+    const acquireRuntimeSemaphoreSlots = fixture.store.acquireRuntimeSemaphoreSlots.bind(fixture.store);
     let injected = false;
-    fixture.store.acquireRuntimeSemaphoreSlot = (input) => {
+    fixture.store.acquireRuntimeSemaphoreSlots = (inputs) => {
       if (!injected) {
         injected = true;
         throw new Error("FAULT_AFTER_APPROVAL_CONTINUATION_ACTIVATION");
       }
-      return acquireRuntimeSemaphoreSlot(input);
+      return acquireRuntimeSemaphoreSlots(inputs);
     };
     const activeRuns = new ActiveRunRegistry();
     const coordinator = createCoordinator(activeRuns, fixture);

@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import {
   applyConversationModeToEffectiveRunPolicySnapshot, assertDelegationAuthoritySubset,
   authorizationAndAccessFromLegacyPermission, captureRunProgressCheckpointLineage, delegationCapture, delegationDigest,
-  delegationFence, delegationTimestamp, resolveRunAncestry, resolveSessionRunPolicy, toRuntimeAttemptFence,
+  delegationFence, delegationId, delegationTimestamp, resolveRunAncestry, resolveSessionRunPolicy, toRuntimeAttemptFence,
   type ClaimedDelegatedChild, type DelegationAuthorityCapture, type DelegationBudgetReservation,
   type DelegationChildReceipt, type DelegationChildRuntime, type DelegationExecutionAuthority, type DelegationRootBudgetRecord,
   type DelegationPreparedExecution, type PrepareDelegatedChildInput, type PreparedDelegatedChild,
@@ -103,6 +103,9 @@ export interface OriginalDelegatedChildAdmission extends Omit<OriginalDelegation
 export interface OriginalDelegationLifecycle {
   readonly spawn: (input: Omit<PrepareDelegatedChildInput, "capture"> & { readonly participantId?: string }) => PreparedDelegatedChild;
   readonly claim: DelegationHostWriter["claimDelegatedChild"];
+  readonly prepareAdmission: DelegationHostWriter["prepareDelegatedChildAdmission"];
+  readonly commitClaim: DelegationHostWriter["commitDelegatedChildClaim"];
+  readonly consumeDispatchGate: DelegationHostWriter["consumeDelegatedChildDispatchGate"];
   readonly getPreparation: DelegationHostWriter["getDelegatedChildPreparation"];
   readonly listRecoveryCandidates: DelegationHostWriter["listDelegatedRecoveryCandidates"];
   readonly commitPreparation: DelegationHostWriter["commitDelegatedChildPreparation"];
@@ -115,6 +118,8 @@ export interface OriginalDelegationLifecycle {
   readonly activateSuspension: DelegationHostWriter["activateDelegatedRunSuspension"];
   readonly getSuspensionActivation: DelegationHostWriter["getDelegatedRunSuspensionActivation"];
   readonly getSuspensionStart: DelegationHostWriter["getDelegatedRunSuspensionStart"];
+  /** A consumed execution entry is audit-only and cannot be dispatched again. */
+  readonly isExecutionEntryConsumed: (attemptId: string) => boolean;
   /** Actual drained Host completion, measured usage settlement, then terminal step/result. */
   readonly terminal: DelegationHostWriter["commitDelegatedChildTerminal"];
   readonly prepareRunTerminalIntent: DelegationHostWriter["prepareRunTerminalIntent"];
@@ -129,7 +134,8 @@ export interface OriginalDelegationLifecycle {
   readonly beginRunSuspensionStop: DelegationHostWriter["beginRunSuspensionStop"];
   readonly commitRunSuspensionStopped: DelegationHostWriter["commitRunSuspensionStopped"];
   readonly getRunSuspensionStop: DelegationHostWriter["getRunSuspensionStop"];
-  readonly createExecutionEntry: (claimed: ClaimedDelegatedChild) => OriginalDelegatedExecutionEntry;
+  readonly createExecutionEntry: (claimed: ClaimedDelegatedChild,
+    hostCapacity?: import("@ling-stack/core/runtime-host-capacity-store-bridge").RuntimeHostCapacityDispatchReference) => OriginalDelegatedExecutionEntry;
 }
 declare const executionEntryBrand: unique symbol;
 export interface OriginalDelegatedExecutionEntry { readonly [executionEntryBrand]: true }
@@ -138,11 +144,13 @@ export interface OriginalDelegatedExecution {
   readonly prepared?: DelegationPreparedExecution;
   readonly parentPrepared?: DelegationPreparedExecution;
   readonly dispatchAuthority: DelegatedRunDispatchAuthority;
+  readonly hostCapacity?: import("@ling-stack/core/runtime-host-capacity-store-bridge").RuntimeHostCapacityDispatchReference;
   readonly buildRequest: () => RunRequest;
   readonly assertCurrent: () => void;
   /** Cleanup only: requires this source's durable graceful-stop provenance. */
   readonly assertSuspensionCleanupCurrent: () => void;
   readonly commitPreparation: (reference: unknown, now: string) => DelegationPreparedExecution;
+  readonly consumeDispatchGate: (now: string) => void;
   readonly commitStart: (reference: unknown, now: string) => ClaimedDelegatedChild;
   readonly isInterrupting: () => boolean;
   readonly commitInterrupted: (now: string) => ReturnType<DelegationHostWriter["commitDelegatedChildInterrupted"]>;
@@ -352,6 +360,9 @@ function createLifecycle(state: Composition): OriginalDelegationLifecycle {
         capture: state.host.captureChild(request.parentRunId, request.sourceFence, participant) });
     },
     claim: input => writer().claimDelegatedChild(input),
+    prepareAdmission: input => writer().prepareDelegatedChildAdmission(input),
+    commitClaim: input => writer().commitDelegatedChildClaim(input),
+    consumeDispatchGate: input => writer().consumeDelegatedChildDispatchGate(input),
     getPreparation: id => writer().getDelegatedChildPreparation(id),
     listRecoveryCandidates: input => writer().listDelegatedRecoveryCandidates(input),
     commitPreparation: input => writer().commitDelegatedChildPreparation(input),
@@ -364,6 +375,10 @@ function createLifecycle(state: Composition): OriginalDelegationLifecycle {
     activateSuspension: activation => activateOriginalDelegatedRunSuspension({ store: requiredStore(state), supervisor: state.supervisor, activation }),
     getSuspensionActivation: query => writer().getDelegatedRunSuspensionActivation(query),
     getSuspensionStart: query => writer().getDelegatedRunSuspensionStart(query),
+    isExecutionEntryConsumed(attemptId) {
+      const entry = state.entries.get(delegationId(attemptId));
+      return entry ? executionEntries.get(entry)?.consumed === true : false;
+    },
     terminal(input) {
       const store = requiredStore(state), runtime = writer().classifyDelegatedChildRecovery(input.reservationId).runtime;
       const completion = store.getHostAttemptCompletion({ runId: runtime.run.id, ...input.sourceFence });
@@ -397,7 +412,7 @@ function createLifecycle(state: Composition): OriginalDelegationLifecycle {
       }
       return writer().reconcileRunTerminalIntent(input);
     },
-    createExecutionEntry(input) {
+    createExecutionEntry(input, hostCapacity) {
       if (state.features.mode === "off" || !state.dispatch) fail("delegation.dynamic_gate_unavailable");
       const child = freezeData(verifyClaim(state, input));
       const key = child.attempt.id, existing = state.entries.get(key);
@@ -444,12 +459,18 @@ function createLifecycle(state: Composition): OriginalDelegationLifecycle {
       const execution: OriginalDelegatedExecution = Object.freeze({ claimed: child,
         terminalHandoff,
         ...(prepared ? { prepared: freezeData(prepared) } : {}), dispatchAuthority: state.dispatch,
+        ...(hostCapacity ? { hostCapacity } : {}),
         ...(parentPrepared ? { parentPrepared: freezeData(parentPrepared) } : {}),
         buildRequest: () => rebuildDelegatedRunRequest({ store: requiredStore(state), child, prepared, parentPrepared }),
         assertCurrent: () => assertExecutionCurrent(state, child),
         assertSuspensionCleanupCurrent: () => assertSuspensionCleanupCurrent(state, child),
         commitPreparation: (preparation: unknown, now: string) => writer().commitDelegatedChildPreparation({
           reservationId: child.reservation.id, sourceFence, preparation, now }),
+        consumeDispatchGate: (now: string) => {
+          if (!hostCapacity) fail("delegation.lifecycle_conflict");
+          writer().consumeDelegatedChildDispatchGate({ reservationId: child.reservation.id,
+            sourceFence, hostCapacity, now });
+        },
         commitStart: (observation: unknown, now: string) => writer().commitDelegatedChildStart({
           reservationId: child.reservation.id, sourceFence, observation, now }),
         isInterrupting() {

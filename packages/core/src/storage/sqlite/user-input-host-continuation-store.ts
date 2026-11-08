@@ -11,7 +11,9 @@ import type { SqliteRuntimeWorkUnitStore } from "./runtime-work-unit-store.js";
 import type { SqliteControlPlaneStore } from "./control-plane-store.js";
 import type { SqliteUserInputDeliveryStore } from "./user-input-delivery-store.js";
 import type { SqliteUserInputPreparationStore } from "./user-input-preparation-store.js";
-import { readSqliteSnapshot, readSqliteWithinTransaction } from "./read-snapshot.js";
+import type { SqliteRuntimeHostCapacityStore } from "./runtime-host-capacity-store.js";
+import type { RuntimeHostCapacityDispatchReference } from "../../runtime-host-capacity-types.js";
+import { readSqliteSnapshot, readSqliteWithinTransaction, withSqliteSnapshotParentTransaction } from "./read-snapshot.js";
 import { readUserInputDelivery, validDeliveryKey, validDeliveryRevision } from "./user-input-delivery-records.js";
 import { assertUserInputAdmissionPolicy } from "./user-input-admission-policy.js";
 import { activateUserInputWorkflowAdmission, prepareUserInputWorkflowAdmission,
@@ -35,7 +37,8 @@ export class SqliteUserInputHostContinuationStore {
   constructor(private readonly context: SqliteStoreContext, private readonly ports: Ports,
     private readonly deliveries: SqliteUserInputDeliveryStore, private readonly preparation: SqliteUserInputPreparationStore,
     private readonly runs: SqliteRunSessionStore, private readonly units: SqliteRuntimeWorkUnitStore,
-    private readonly events: SqliteControlPlaneStore) {}
+    private readonly events: SqliteControlPlaneStore,
+    private readonly hostCapacityJournal?: (workspaceId: string) => SqliteRuntimeHostCapacityStore) {}
 
   getBinding(threadId: string, deliveryId: string): UserInputContinuationBinding | undefined {
     return readSqliteSnapshot(this.context.database, () => {
@@ -78,6 +81,12 @@ export class SqliteUserInputHostContinuationStore {
       const bound = this.deliveries.assertContinuationClaim(captured, now);
       const seed = this.preparation.seedWithinTransaction(captured.threadId, captured.deliveryId);
       if (!seed) throw new UserInputStoreError("invalid_record");
+      if (captured.hostCapacity !== undefined && !validHostCapacityReference(captured.hostCapacity)) {
+        throw new UserInputStoreError("invalid_input");
+      }
+      if (this.hostCapacityJournal && !captured.hostCapacity || captured.hostCapacity && !this.hostCapacityJournal) {
+        throw new UserInputStoreError("source_conflict");
+      }
       const prepared = this.preparation.readWithinTransaction(seed, "execution");
       if (!prepared || !same(captured.executionRef, ref(prepared))) throw new UserInputStoreError("source_conflict");
       if (userInputTimestamp(now) < userInputTimestamp(prepared.createdAt)) throw new UserInputStoreError("delivery_conflict");
@@ -123,12 +132,17 @@ export class SqliteUserInputHostContinuationStore {
       const binding = makeUserInputContinuationRecord<UserInputContinuationBinding>(this.context, seed, "binding", {
         ...(captured.effectivePolicySnapshot ? { effectivePolicySnapshot: captured.effectivePolicySnapshot } : {}),
         ...(workflowStartOwner ? { workflowStartOwner } : {}),
+        ...(captured.hostCapacity ? { hostCapacity: captured.hostCapacity } : {}),
         executionRef: ref(prepared), runId: seed.successorRunId, fence,
         deliveryRevision: bound.delivery.revision + 1, waitRevision: wait.revision + 1,
       }, now);
       insertUserInputContinuationRecord(this.context, seed, binding);
       this.reconcile(seed, binding.runId, now);
       this.invalidate(seed, binding, "resuming", binding.waitRevision, binding.deliveryRevision, now);
+      if (captured.hostCapacity && !this.hostCapacityJournal!(seed.source.workspaceId).bindUserInputSourceWithinTransaction({
+        intentId: captured.hostCapacity.intentId, token: captured.hostCapacity.dispatchToken,
+        threadId: captured.threadId, deliveryId: captured.deliveryId, source: { runId: binding.runId, ...binding.fence }, now,
+      })) throw new UserInputStoreError("source_conflict");
       return this.readBinding(seed)!;
     });
   }
@@ -153,6 +167,14 @@ export class SqliteUserInputHostContinuationStore {
         || !wait || wait.status !== "resuming" || wait.revision !== binding.waitRevision
         || userInputTimestamp(now) < userInputTimestamp(bound.delivery.updatedAt)) throw new UserInputStoreError("delivery_conflict");
       this.assertCurrentReceiver(seed, binding, "prepared");
+      if (this.hostCapacityJournal || binding.hostCapacity) {
+        const hostCapacity = binding.hostCapacity;
+        if (!hostCapacity || !this.hostCapacityJournal
+          || !this.hostCapacityJournal(seed.source.workspaceId).consumeDispatchGateWithinTransaction({
+            intentId: hostCapacity.intentId, token: hostCapacity.dispatchToken,
+            source: { runId: binding.runId, ...binding.fence }, now,
+          })) throw new UserInputStoreError("source_conflict");
+      }
       this.startCurrentReceiver(seed, binding, now);
       this.assertCurrentReceiver(seed, binding, "running");
       const receipt = makeUserInputContinuationRecord<UserInputContinuationReceipt>(this.context, seed, "receipt",
@@ -206,7 +228,11 @@ export class SqliteUserInputHostContinuationStore {
     }
     requireUserInputRecordKeys(binding, [...userInputEnvelopeKeys, "executionRef", "runId", "fence", "deliveryRevision", "waitRevision",
       ...(binding.effectivePolicySnapshot !== undefined ? ["effectivePolicySnapshot"] : []),
-      ...(binding.workflowStartOwner !== undefined ? ["workflowStartOwner"] : [])]);
+      ...(binding.workflowStartOwner !== undefined ? ["workflowStartOwner"] : []),
+      ...(binding.hostCapacity !== undefined ? ["hostCapacity"] : [])]);
+    if (binding.hostCapacity !== undefined && !validHostCapacityReference(binding.hostCapacity)) {
+      throw new UserInputStoreError("invalid_record");
+    }
     if (binding.workflowStartOwner !== undefined && (!seed.source.workflowStepId || !isWorkflowStepStartOwnerV1(binding.workflowStartOwner))) {
       throw new UserInputStoreError("invalid_record");
     }
@@ -323,9 +349,20 @@ export class SqliteUserInputHostContinuationStore {
   private transaction<T>(now: string, operation: () => T): T {
     userInputTimestamp(now);
     this.context.database.exec("BEGIN IMMEDIATE");
-    try { const result = operation(); this.context.database.exec("COMMIT"); return result; }
+    try {
+      const result = withSqliteSnapshotParentTransaction(this.context.database, operation);
+      this.context.database.exec("COMMIT");
+      return result;
+    }
     catch (error) { rollbackOwnedSqliteTransaction(this.context.database); throw error; }
   }
+}
+function validHostCapacityReference(value: unknown): value is RuntimeHostCapacityDispatchReference {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  return keys.length === 2 && keys.includes("intentId") && keys.includes("dispatchToken")
+    && validDeliveryKey(Reflect.get(value, "intentId"))
+    && typeof Reflect.get(value, "dispatchToken") === "string" && /^[0-9a-f]{64}$/u.test(Reflect.get(value, "dispatchToken"));
 }
 function requireTransition(result: { readonly ok: boolean }): void {
   if (!result.ok) throw new UserInputStoreError("source_conflict");

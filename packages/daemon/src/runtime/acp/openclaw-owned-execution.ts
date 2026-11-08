@@ -43,6 +43,7 @@ export interface OwnedOpenClawExecutionOptions {
   readonly onEvent: (event: RunEventEnvelope) => void;
   readonly onApprovalWaitChanged?: (waiting: boolean) => void;
   readonly onLocalLifetime?: (lifetime: Promise<unknown>) => void;
+  readonly onDispatchAccepted?: (acceptedAt: string) => void;
   readonly assertCurrentAuthority?: () => void;
   readonly signal: AbortSignal;
   readonly now?: () => string;
@@ -177,6 +178,7 @@ export async function executeOwnedOpenClawPrompt(request: OwnedOpenClawExecution
     const launch = await prepareOwnedNativeSpawn(installed, processInput.executableDigest, options.launch);
     assertOwned(["reserved"]);
     const authOption = remote.credentialType === "password" ? "--password-file" : "--token-file";
+    options.onDispatchAccepted?.(now());
     const result = await withOwnedNativeProcess({ executable: installed, root, launch, signal: executionAbort.signal, onLocalLifetime: options.onLocalLifetime, assertCurrentAuthority: options.assertCurrentAuthority,
       environment: openclawProcessEnvironment(root),
       args: ["acp", "--url", remote.gatewayUrl, authOption, credentialFile], maxOutputBytes: 128 * 1024 * 1024,

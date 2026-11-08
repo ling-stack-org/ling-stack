@@ -21,13 +21,15 @@ import { workflowStepBeginApprovalPermitted } from "./workflow-step-start-approv
 import { hasActiveWorkflowMergeApplyLease } from "./workflow-merge-lease-guard.js";
 import { workflowParallelAdmissionAllowed } from "./workflow-parallel-parent-guard.js";
 import { workflowIsolationSelectionReady } from "./workflow-isolation-selection.js";
+import type { RuntimeHostCapacityJournal } from "../../runtime-host-capacity-store-bridge.js";
 
-type Ports = WorkflowStepStartReadStore & Pick<RunStore, "createTask" | "transitionTaskStatus" | "recordStateTransitionEvent" | "releaseResourceLease" | "listChannelWorkflowSteps" | "getWorkUnit" | "getWorkUnitAttempt" | "getApprovalRequest" | "createApprovalRequest">;
+type Ports = WorkflowStepStartReadStore & Pick<RunStore, "createTask" | "transitionTaskStatus" | "recordStateTransitionEvent" | "releaseResourceLease" | "listChannelWorkflowSteps" | "getWorkUnit" | "getWorkUnitAttempt" | "getApprovalRequest" | "getChannelWorkflowStepStartAdmission" | "createApprovalRequest">;
 
 /** Synchronous SQLite transactions only. No provider, permission or filesystem await under lock. */
 export class SqliteChannelWorkflowStartStore {
   constructor(private readonly context: SqliteStoreContext, private readonly ports: Ports,
-    private readonly admissions: SqliteWorkflowStepAdmissionStore) {}
+    private readonly admissions: SqliteWorkflowStepAdmissionStore,
+    private readonly hostCapacityJournal?: (workspaceId: string) => RuntimeHostCapacityJournal) {}
 
   beginChannelWorkflowStepStart(input: BeginChannelWorkflowStepStartInput): BeginChannelWorkflowStepStartResult {
     return this.transaction(() => {
@@ -82,7 +84,7 @@ export class SqliteChannelWorkflowStartStore {
         return { status: "invalid", code: "workflow_approval_wait_not_independent" };
       }
       if (plan) {
-        const capacity = this.admissions.checkCapacityWithinTransaction(step, plan);
+        const capacity = this.admissions.checkCapacityWithinTransaction(step, plan, input.now);
         if (capacity.status === "conflict") return capacity;
       }
       if (!this.startWorkflow(workflow, input.now) || !this.startStep(step, input.now)) {
@@ -115,15 +117,20 @@ export class SqliteChannelWorkflowStartStore {
   }
 
   commitChannelWorkflowStepRunReady(input: WorkflowStepStartCommitInput): WorkflowStepStartCommitResult {
-    return this.transaction(() => {
+    try {
+      return this.transaction(() => {
       const step = this.ports.getChannelWorkflowStep(input.workflowStepId);
       const owner = step?.metadata?.startOwner;
       const workflow = step && this.ports.getChannelWorkflow(step.workflowId);
-      if (!step || !workflow || !workflowStepStartOwnerMatches(owner, input.owner)
+      const ownerMatches = workflowStepStartOwnerMatches(owner, input.owner);
+      const authorityMatches = Boolean(step && workflowStepStartAuthorityBasis(this.ports, step) === input.owner.authorityBasis);
+      const leaseValid = Boolean(step && this.validLease(step, input.owner.leaseId, input.now));
+      if (!step || !workflow || !ownerMatches
         || step.taskId !== input.owner.taskId || step.status !== "running"
         || !["running", "waiting_for_approval", "blocked"].includes(workflow.status)
-        || workflowStepStartAuthorityBasis(this.ports, step) !== input.owner.authorityBasis
-        || !this.validLease(step, input.owner.leaseId, input.now)) return { status: "stale", code: "workflow_start_owner_stale" };
+        || !authorityMatches || !leaseValid) {
+        return { status: "stale", code: "workflow_start_owner_stale" };
+      }
       if (hasActiveWorkflowMergeApplyLease(this.context.database, step.workspaceId)) {
         return { status: "invalid", code: "workflow_merge_apply_workspace_busy" };
       }
@@ -150,6 +157,10 @@ export class SqliteChannelWorkflowStartStore {
       if (task.currentRunId || this.context.database.prepare("SELECT id FROM run_sessions WHERE task_id=? AND id<>? LIMIT 1").get(task.id, run.id)) {
         return { status: "stale", code: "workflow_start_task_run_stale" };
       }
+      const requiresHostCapacity = this.hostCapacityJournal && attempt.effectiveRunnerId === "pi";
+      if (requiresHostCapacity && !input.hostCapacity) {
+        return { status: "invalid", code: "runtime_host_capacity_dispatch_changed" };
+      }
       if (hasAdmission) {
         if (input.admission) {
           const handoff = this.admissions.transferWithinTransaction({ ...input.admission,
@@ -160,6 +171,17 @@ export class SqliteChannelWorkflowStartStore {
           return { status: "invalid", code: "workflow_admission_not_transferred" };
         }
       } else if (input.admission) return { status: "invalid", code: "workflow_admission_missing" };
+      if (requiresHostCapacity) {
+        const hostCapacity = input.hostCapacity;
+        if (!hostCapacity) throw new WorkflowStartCommitRollback("runtime_host_capacity_dispatch_changed");
+        const source = { runId: run.id, ...toRuntimeAttemptFence(attempt) };
+        if (!this.hostCapacityJournal(step.workspaceId).consumeDispatchGateWithinTransaction({
+          intentId: hostCapacity.intentId,
+          token: hostCapacity.dispatchToken,
+          source,
+          now: input.now,
+        })) throw new WorkflowStartCommitRollback("runtime_host_capacity_dispatch_changed");
+      }
       if (claimQueuedTask) {
         const claimed = this.ports.transitionTaskStatus({ taskId: task.id, expectedStatus: "todo", event: "claim",
           actor: "system", reason: `run:${run.id}`, now: input.now });
@@ -173,7 +195,11 @@ export class SqliteChannelWorkflowStartStore {
       this.context.database.prepare("UPDATE channel_workflow_steps SET run_id=?, metadata_json=?, updated_at=? WHERE id=?")
         .run(run.id, stringifyJson({ ...step.metadata, startOwner: { ...owner, phase: "linked" } }), input.now, step.id);
       return { status: "linked" };
-    });
+      });
+    } catch (error) {
+      if (error instanceof WorkflowStartCommitRollback) return { status: "invalid", code: error.code };
+      throw error;
+    }
   }
 
   settleChannelWorkflowStepStartFailure(input: WorkflowStepStartFailureInput): WorkflowStepStartCommitResult {
@@ -372,6 +398,13 @@ export class SqliteChannelWorkflowStartStore {
       catch (rollbackError) { throw new AggregateError([error, rollbackError], "Workflow start transaction and rollback failed"); }
       throw error;
     }
+  }
+}
+
+class WorkflowStartCommitRollback extends Error {
+  constructor(readonly code: "runtime_host_capacity_dispatch_changed") {
+    super(code);
+    this.name = "WorkflowStartCommitRollback";
   }
 }
 

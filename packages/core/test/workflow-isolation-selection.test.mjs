@@ -16,8 +16,8 @@ const unchanged = (f, action) => {
   return result;
 };
 
-async function fixture(t) {
-  const f = await workflowParallelParentFixture(t, { create: false, count: 2 });
+async function fixture(t, options = {}) {
+  const f = await workflowParallelParentFixture(t, { create: false, count: 2, ...options });
   f.safetyPlans = f.members.map(member => f.current(member).metadata.safetyPlan);
   // Selection precedes planning; retain the valid fixture plans only as future freeze inputs.
   for (const member of f.members) {
@@ -286,12 +286,21 @@ test("freeze cannot replace the selected round or weaken its parallel delivery p
     { inputs: { ...f.inputs, parallelExecution: undefined } },
     { inputs: { ...f.inputs, mode: "apply_to_target" } },
     { inputs: { ...f.inputs, optionalFailurePolicy: "exclude_failed_with_evidence" } },
-    { inputs: { ...f.inputs, parallelExecution: { ...f.inputs.parallelExecution, maxConcurrentSteps: 3 } } },
+    { inputs: { ...f.inputs, parallelExecution: { ...f.inputs.parallelExecution, maxConcurrentSteps: 5 } } },
   ]) assert.deepEqual(unchanged(f, () => f.isolation.freezePlan(f.freezeInput(change))),
     { status: "invalid", code: "workflow_isolation.selection_plan_mismatch" });
   assert.equal(f.selection().phase, "planning");
   f.freeze();
   assert.equal(f.selection().roundId, f.roundId);
+});
+
+test("selection accepts the bounded Host parallel limits", async t => {
+  for (const limit of [2, 3, 4]) await t.test(`limit ${limit}`, async t => {
+    const f = await fixture(t, { count: limit, limit }), selected = f.select(), frozen = f.freeze();
+    assert.equal(selected.phase, "planning");
+    assert.equal(frozen.round.inputs.parallelExecution.maxConcurrentSteps, limit);
+    assert.equal(f.selection().phase, "ready");
+  });
 });
 
 test("a selected freeze must cover every workflow participant with one safety plan and one scope", async t => {

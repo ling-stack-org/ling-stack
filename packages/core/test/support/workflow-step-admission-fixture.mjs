@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
-import { createSqliteRunStore, resolveStoragePaths, toRuntimeAttemptFence } from "../../dist/index.js";
+import { SqliteRunStore, resolveStoragePaths, toRuntimeAttemptFence } from "../../dist/index.js";
 
 export const admissionParticipant = "teammate_builtin_engineer";
 const tables = ["channel_workflows", "channel_workflow_steps", "tasks", "run_sessions", "run_events", "work_units", "work_unit_attempts",
@@ -19,7 +19,7 @@ export function admissionSnapshot(store) {
 }
 
 /** Owned, explicitly isolated real SQLite connections. Never dispatches a Provider, Runner, or daemon recovery. */
-export async function workflowAdmissionFixture(t) {
+export async function workflowAdmissionFixture(t, { runtimeHostCapacityBinding } = {}) {
   const root = await fs.realpath(await fs.mkdtemp(join(os.tmpdir(), "ling-p1c-admission-")));
   const cwd = join(root, "workspace"), opened = new Set(), epoch = Date.now();
   await fs.mkdir(cwd);
@@ -33,8 +33,11 @@ export async function workflowAdmissionFixture(t) {
     }
   });
   const at = tick => new Date(epoch + tick * 1_000).toISOString();
+  let bindingOwner = true;
   function open() {
-    const store = createSqliteRunStore(cwd, paths);
+    const store = new SqliteRunStore({ cwd, paths,
+      ...(runtimeHostCapacityBinding && bindingOwner ? { runtimeHostCapacityBinding } : {}) });
+    bindingOwner = false;
     opened.add(store);
     assert.equal(typeof store.transferChannelWorkflowStepStartAdmission, "function", "P1-C tests require the current Core implementation");
     assert.equal(store.database.prepare("SELECT name FROM schema_migrations WHERE version=203").get()?.name,
