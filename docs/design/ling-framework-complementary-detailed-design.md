@@ -134,6 +134,8 @@ assertions
 
 审查期间，为通过完整提交范围的空白检查，T03 patch 删除了一个不必要的空白上下文行；schema 与 cwd 的注入改动不变，T03 和 suite 曾递增到 `2`。随后整合主线锁更新，旧锁摘要在真实预检中被正确拒绝；历史 v3 将三任务源码基线和锁摘要一起冻结，当前 v4 再次跟随最新主线锁更新，T01/T02 `taskVersion` 为 `3`、T03 为 `4`，`suiteVersion` 为 `4`，默认索引为 `suites/framework-v4.json`。v4 套件字节摘要为 `cd22fb7efda7585107a39b4bda195bcaf058be1a37e6e9416afd1da9bc8fab04`。源码文件、注入内容、schema、规则和 profile 未变；历史报告和 v3 套件不改写，也不作为 v4 验收证据。
 
+最新主线再次只改变了依赖锁：`main@c156901c6c0bb97570ba56f39ec0f731872f56d9` 的 `pnpm-lock.yaml` 摘要为 `49c509936672cbe4ce9118a4bf3907c4b32eea1babfc6dd74dec295c526f4d10`，四个源码 pin 与 v4 保持一致。按版本规则保留 v4，并生成当前默认的 v5：T01/T02/T03 任务版本为 `4/4/5`，`suiteVersion` 为 `5`，默认索引为 `suites/framework-v5.json`，套件字节摘要为 `69129d529f41cdad17e9da1a706c4a1f7d3f00b7c4d8b59d11268faaf329a303`。该更新只重绑定冻结来源，不改变任务规则、控制输入或 F1 的零模型边界。
+
 ## 4. F1 离线流程
 
 ```text

@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "taskId": "T01",
-  "taskVersion": "3",
+  "taskVersion": "4",
   "category": "analysis_readonly",
   "source": {
     "repository": "ling-stack",
-    "commit": "8435a43e5ca610f2d0026c9e8b3947e5d25b3ab0",
-    "lockSha256": "167eb55b8ed43c0b58a363005b867069d1ddcd659b36408d95ddbb227338b543",
+    "commit": "c156901c6c0bb97570ba56f39ec0f731872f56d9",
+    "lockSha256": "49c509936672cbe4ce9118a4bf3907c4b32eea1babfc6dd74dec295c526f4d10",
     "files": [
       {
         "path": "packages/core/src/harness/evaluation-rule-grader.ts",

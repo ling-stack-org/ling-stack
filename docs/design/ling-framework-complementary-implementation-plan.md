@@ -418,3 +418,9 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 | 运行边界 | 未运行真实模型、Provider、普通 Run 或付费任务；未启动/重启服务，未修改共享数据库或另一会话 worktree |
 
 当前 F1/F2 交付条件已满足：代码、离线校准、仓外真实 SDK consumer、零模型 CI 门禁、文档和 PR 均有证据。F3/F4/F5 仍按计划保持未实施；本 PR 不自动合并。
+
+### 最新主线锁更新与 v5 冻结（2026-11-09）
+
+- 合并 `origin/main@c156901c6c0bb97570ba56f39ec0f731872f56d9` 后，原 v4 预检的两项失败均定位为 `pnpm-lock.yaml` 字节摘要失配；T01/T02/T03 的源码文件摘要仍与冻结来源一致。未放宽校验，也未修改规则、profile、注入补丁或控制输入。
+- 依赖锁当前摘要为 `49c509936672cbe4ce9118a4bf3907c4b32eea1babfc6dd74dec295c526f4d10`。三任务来源更新到该完整提交，任务版本递增为 `4/4/5`，套件递增为 `5`；v4 文件保留为历史输入，默认套件改为 `framework-v5.json`。v5 套件字节摘要为 `69129d529f41cdad17e9da1a706c4a1f7d3f00b7c4d8b59d11268faaf329a303`。
+- v5 修复后，framework-assurance、CI policy、workflow、平台 lane 与 SDK 边界相关回归共 `179/179` 通过；直接执行 `preflight` 与 `calibrate` 均成功。输出目录仍在 checkout 外，未初始化用户 Store、派发普通 Run、调用 Provider 或运行真实模型/付费任务。
