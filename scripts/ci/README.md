@@ -70,7 +70,7 @@ a requested package via `--if-present`.
 - Other packages and Web checks: one Linux matrix entry only when at least one
   such package is selected, excluding core and daemon because their complete
   discovery runs in their own entries.
-- Daemon: four `macos-26` shards, two serial file workers per shard. The Kimi Host
+- Daemon: four `macos-26` shards, four serial file workers per shard. The Kimi Host
   read/terminal and delegation production-tool-surface files run serially in an
   exclusive phase before other files on their assigned runner.
 - Linux restricted-command contracts and real macOS native smoke remain separate
@@ -228,7 +228,7 @@ node scripts/ci/test-shard-plan.mjs \
 On the suite's required platform, run a shard with that immutable plan:
 
 ```sh
-node scripts/ci/daemon-test-shard.mjs --shard=0 --shard-count=4 --concurrency=2 \
+node scripts/ci/daemon-test-shard.mjs --shard=0 --shard-count=4 --concurrency=4 \
   --plan=.codex-artifacts/ci/test-plan.json \
   --report=.codex-artifacts/ci/reports/daemon-0.json
 ```

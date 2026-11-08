@@ -570,7 +570,7 @@ jobs:
         # Every file owns its home/workspace and process group. Short native
         # lifecycle fixtures still finish exclusively before parallel workers.
         run: >-
-          node scripts/ci/daemon-test-shard.mjs --shard=${{ matrix.shard }} --shard-count=4 --concurrency=2
+          node scripts/ci/daemon-test-shard.mjs --shard=${{ matrix.shard }} --shard-count=4 --concurrency=4
           --plan=.codex-artifacts/ci/test-plan.json
           --report=.codex-artifacts/ci/reports/daemon-${{ matrix.shard }}.json
 
