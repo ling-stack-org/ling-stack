@@ -65,7 +65,7 @@ for (const maxConcurrentSteps of [2, 3, 4]) test(`explicit isolated siblings at 
 
   for (const index of evidence.keys()) if (index !== firstFinished) f.release[index].resolve();
   await Promise.all(evidence.map((item, index) => index === firstFinished ? undefined : f.finished(item)));
-  await f.wait(() => f.pending().some(approval => approval.actionType === "workflow_merge"), "real merge approval");
+  await f.wait(() => f.pending().some(approval => approval.actionType === "workflow_merge"), "real merge approval", 90_000);
   await waitForWorkflowIsolationIdle(f.store, f.workflow.id);
   const candidate = f.round().candidate, approval = f.pending().find(value => value.actionType === "workflow_merge");
   const packet = evidence.flatMap(item => f.store.listArtifacts(item.run.id)).map(artifact => artifact.sealedPayload)
@@ -596,7 +596,7 @@ async function fixture(t, { holdReturn = false, publicSelection = false, feature
           .map(artifact => artifact.sealedPayload),
         events: store.listEvents(run.id, { afterSeq: Math.max(0, store.countEvents(run.id) - 8), limit: 20 }) };
     }), approvals: pending() });
-  const wait = (predicate, label) => notices.wait(predicate, label, describe);
+  const wait = (predicate, label, timeoutMs) => notices.wait(predicate, label, describe, timeoutMs);
   const finished = async item => {
     await wait(() => store.getRun(item.run.id).status === "succeeded" && store.getChannelWorkflowStep(item.run.workflowStepId).status === "succeeded"
       && completion(item)?.drainedAt && slots(item).length === 0 && isolation.getTerminalResultIntent(item.binding.bindingId)?.status === "confirmed",
@@ -725,12 +725,12 @@ function sse(delta, reason) {
 
 function changes() {
   const listeners = new Set();
-  return { notify: () => { for (const check of [...listeners]) check(); }, wait: (predicate, label, describe) => new Promise((resolve, reject) => {
+  return { notify: () => { for (const check of [...listeners]) check(); }, wait: (predicate, label, describe, timeoutMs = 40_000) => new Promise((resolve, reject) => {
     // Timers bound failures; store notifications and explicit barriers establish ordering, never elapsed sleeps.
     let poll;
     const check = () => { try { if (!predicate()) return; clearTimeout(timer); clearInterval(poll); listeners.delete(check); resolve(); }
       catch (error) { clearTimeout(timer); clearInterval(poll); listeners.delete(check); reject(error); } };
-    const timer = setTimeout(() => { listeners.delete(check); clearInterval(poll); reject(new Error(`Waiting for ${label}: ${JSON.stringify(describe())}`)); }, 40_000);
+    const timer = setTimeout(() => { listeners.delete(check); clearInterval(poll); reject(new Error(`Waiting for ${label}: ${JSON.stringify(describe())}`)); }, timeoutMs);
     poll = setInterval(check, 10);
     listeners.add(check); check();
   }) };

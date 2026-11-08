@@ -8,10 +8,14 @@ export const testSuites = {
   core: { packageName: "@ling-stack/core", cwd: join(root, "packages/core"), platform: "linux", shardCount: 4, concurrency: 2, excluded: [], exclusive: [] },
   daemon: { packageName: "@ling-stack/daemon", cwd: join(root, "packages/daemon"), platform: "darwin", shardCount: 6, concurrency: 2,
     excluded: ["dependency-security.test.mjs"],
-    // Keep the existing hosted-runner allowance for the recovery fixture.
+    // Keep explicit hosted-runner allowances for high-cost workflow fixtures.
     // Split channel files use the ordinary five-minute watchdog and workers.
     fileTimeouts: {
       "test/recovery-discovery-fair-scan.test.mjs": 600_000,
+      "test/workflow-candidate-validation.test.mjs": 600_000,
+      "test/workflow-conflict-recovery.test.mjs": 600_000,
+      "test/workflow-integration-candidate.test.mjs": 600_000,
+      "test/workflow-merge-approval.test.mjs": 600_000,
     },
     exclusive: ["test/acp-kimi-host-read.test.mjs", "test/acp-kimi-host-terminal.test.mjs",
       // Preserve the child-lifecycle fixture's exclusive execution from the PR.
