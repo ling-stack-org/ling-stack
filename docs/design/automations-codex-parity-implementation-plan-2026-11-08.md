@@ -1,6 +1,6 @@
 # Automations Codex-like parity implementation plan
 
-Status: implementation in progress on `gansx/automation-codex-parity`
+Status: implemented and merged to `main` via PR #655 (`d6614ed393ea56493f401047aad6fb33673c0bd8`)
 
 ## Decision
 
