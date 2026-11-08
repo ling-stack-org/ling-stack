@@ -1,11 +1,11 @@
 # Ling 框架补强详细设计
 
-Status: F1/F2 implemented; macOS local and Linux hosted checks passed; native boundary repair locally verified; PR #653 hosted CI green; not merged or released; F3/F4/F5 remain design contracts
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A fixture evidence adapter and F4-01 read-only diagnostics report implemented on an independent branch; F3-B live execution and F5 rerun remain design contracts
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
-Last verified: 2026-11-08
+Last verified: 2026-11-09
 Document type: reference / technical design
 Canonical replacement: none; does not replace existing evaluation, runtime, or API contracts
-Code and test anchors: section 12 and the implementation record; offline and local tarball acceptance only
+Code and test anchors: section 12 and the implementation record; offline, fixture evidence, and read-only diagnostics acceptance only
 
 上层边界见[总体设计](ling-framework-complementary-design.md)，执行顺序见[实现计划书](ling-framework-complementary-implementation-plan.md)。
 
@@ -14,11 +14,11 @@ Code and test anchors: section 12 and the implementation record; offline and loc
 本文区分四类内容：
 
 - **现有合同**：已在核查基线中存在的函数、字段与行为。
-- **已实现私有格式**：F1 task/suite、offline observation 与报告、F2 consumer 报告，只用于本工具链；不是新增 daemon 公共 API。
-- **拟新增接入合同**：F3 真实执行证据、F4 诊断适配，尚无运行实现。
+- **已实现私有格式**：F1 task/suite、offline observation 与报告、F2 consumer 报告、F3-A fixture 执行证据与 F4-01 只读诊断报告，只用于本工具链；不是新增 daemon 公共 API。
+- **拟新增接入合同**：F3-B 真实执行证据接线与 F5 节点重跑，尚无运行实现。
 - **未来约束**：节点级重跑的设计要求，没有授权本轮修改执行链路。
 
-所有新格式采用 `schemaVersion: 1`。F1 由显式解析器拒绝未知 schema、未知字段和不合法枚举；未来接入遵循相同原则。下文 F3/F4 点号字段仍是结构说明，不是已存在的 DTO。
+所有新格式采用 `schemaVersion: 1`。F1、F3-A 和 F4-01 由显式解析器拒绝未知 schema、未知字段和不合法枚举；F3-B/F5 接入遵循相同原则。F3-A/F4-01 格式是本工具链私有报告，不是新增 daemon DTO。
 
 首批不新增持久化表、不更改 Run/Attempt 状态机，不把任务元数据塞进已有规则 case。
 
@@ -30,7 +30,9 @@ scripts/framework-assurance/
   manifest.mjs             # 新任务格式、路径与摘要验证
   preflight.mjs            # 纯离线预检与校准编排
   grader.mjs               # 源码加载两个既有 Core 纯函数模块
-  evidence.mjs             # 证据格式；F3 才增加执行适配
+  evidence.mjs             # 离线观察格式
+  execution-evidence.mjs   # F3-A fixture 证据与可信绑定适配
+  diagnostics.mjs          # F4-01 只读诊断分页报告
   report.mjs               # JSON/Markdown 报告与可比性检查
   output.mjs               # 外部目录校验与不覆盖式原子发布
   sdk-consumer.mjs         # producer 产物审计、仓外消费
@@ -40,6 +42,7 @@ fixtures/framework-assurance/
   cases/                   # task metadata 与独立规则 case
   controls/                # 已知正确、错误、缺证据的合成输入
   sdk-consumer/            # 仓外消费者模板；不是 workspace 包
+  execution-evidence/      # F3-A 的 Run/WorkUnit/Attempt fixture
 ```
 
 F1/F2 路径均已实现，F2 经统一 CLI 入口调用独立 consumer 模块。没有为了脚本便利新增 Core 公共出口或复制 grader。输出默认写入新临时根，显式 `--output` 必须在实施 checkout 外，并在创建目录前检查词法路径与最近已存在祖先的真实位置，拒绝 `.git`、`.ling-stack`、`node_modules` 及符号链接解析后落入上述位置的目录。不提交真实日志、用户数据库、tarball 或模型输出。
@@ -169,7 +172,7 @@ assertions
 
 现有 evaluation worker 负责判定封存输入，不负责替代正常 Provider 执行。现有 `RunEvaluationTaskV1` 以及 model grader 试点不是通用原始代码任务执行入口。
 
-### 5.2 拟新增 `TaskExecutionEvidenceV1`
+### 5.2 F3-A fixture `TaskExecutionEvidenceV1`
 
 | 字段组 | 必须包含 |
 | --- | --- |
@@ -183,7 +186,7 @@ assertions
 | 资源观察 | 已知调用和用量、未知项、来源、币种，分别区分任务和 grader |
 | 证据类型 | `synthetic_control`、`fixture_replay`、`live_execution`，不可互相冒充 |
 
-这些是新工具的概念字段，不要求修改既有数据库 DTO。尽可能保存在已有 artifact 与报告文件中；若无法通过现有公开内部接口取得必要关联，先提窄范围接口评审，不直接访问其他模块私有 SQLite 表。
+本批将这些字段收敛为 `scripts/framework-assurance/execution-evidence.mjs` 的 fixture 格式，并以独立 `trusted-binding` 作为可信侧输入。它不修改既有数据库 DTO，也不从候选证据推导可信绑定；真实 Host 读取和封存接口仍留给 F3-B 前的独立任务。若无法通过现有公开内部接口取得必要关联，不直接访问其他模块私有 SQLite 表。
 
 ### 5.3 可信验证边界
 
@@ -328,7 +331,7 @@ extension manifest 与 plugin-package manifest 的版本校验不是同一套规
 
 ## 8. F4 只读诊断
 
-现有入口：`getWorkUnitHarnessDiagnostics(cwd, workUnitId, query)` 对应 `GET /work-units/:id/harness`。cwd 必填，limit 当前为 1 至 500，cursor 受 Run/WorkUnit 范围约束。
+现有入口：`getWorkUnitHarnessDiagnostics(cwd, workUnitId, query)` 对应 `GET /work-units/:id/harness`。cwd 必填，limit 当前为 1 至 500，cursor 受 Run/WorkUnit 范围约束。F4-01 的 `diagnostics.mjs` 只通过这个回调逐页读取，并输出 workspace 摘要哈希、页级时间标记、allowlist 诊断记录和同一 Run/WorkUnit 的 F3 observation 关联。
 
 | 条件 | 消费方行为 |
 | --- | --- |
@@ -387,7 +390,7 @@ extension manifest 与 plugin-package manifest 的版本校验不是同一套规
 
 ## 11. 错误、兼容与未决项
 
-新脚本错误采用私有 code，并附脱敏 message。F1 已实现 `invalid_arguments`、`invalid_manifest`、`artifact_digest_mismatch`、`path_outside_fixture_root`、`snapshot_changed`、`source_unavailable`、`unsupported_evidence_kind`、`conflicting_observation`、`unsafe_output_directory`、`output_already_exists`，意外错误统一为 `assurance_failed`。不可比是报告结果，不伪造既有 daemon HTTP code。F3/F4 错误随接入另定。
+新脚本错误采用私有 code，并附脱敏 message。F1 已实现既有校验错误；F3-A 增加 `evidence_lineage_mismatch`、`evidence_stale_attempt`、`evidence_snapshot_changed`、`evidence_artifact_missing`、`evidence_artifact_digest_mismatch`、`evidence_claim_lost`、`evidence_effect_unknown` 等拒绝码；F4-01 增加 `diagnostics_scope_mismatch`、`diagnostics_invalid_response`、`diagnostics_duplicate_record`、`diagnostics_pagination_stalled` 等只读适配错误。冷工作区和既有 endpoint 错误映射为脱敏报告状态，不伪造 daemon HTTP code。
 
 既有 `harness_workspace_uninitialized` 等错误仍按原合同解释。现有 canonical write、历史 read、不可变证据字节、权限与 Runner 迁移继续归原兼容文档拥有，不因消费测试而放宽。
 
@@ -412,4 +415,4 @@ extension manifest 与 plugin-package manifest 的版本校验不是同一套规
 - Client：`packages/api-client/test/client.test.mjs`、`computer-use.test.mjs`、`transport-origin.regression-1.test.mjs`；Web SSE 解码代码位于 `apps/web/src/sse.ts`，不等于 api-client 公共 decoder。
 - 现有构建/测试调度：`scripts/ci/run-packages.mjs`；实施时按同一基线先构建再测试，不重复使用来源不明的 dist。
 - macOS native boundary：`packages/daemon/src/runtime/sandbox/native-process-launch.ts` 与 `packages/daemon/test/native-process-boundary.test.mjs`；私有状态规则、合法 workspace 写入、Kimi metadata、relay 和进程回收分别保留独立边界。
-- 新工具：`scripts/framework-assurance/`；冻结输入：`fixtures/framework-assurance/`；实现测试：`offline.test.mjs`、`cli.test.mjs` 与 `sdk-consumer.test.mjs`，均位于新工具目录。
+- 新工具：`scripts/framework-assurance/`；冻结输入：`fixtures/framework-assurance/`；实现测试：`offline.test.mjs`、`cli.test.mjs`、`sdk-consumer.test.mjs`、`execution-evidence.test.mjs` 与 `diagnostics.test.mjs`，均位于新工具目录。
