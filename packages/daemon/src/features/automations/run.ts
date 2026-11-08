@@ -74,6 +74,23 @@ export async function runAutomation(input: RunAutomationInput): Promise<RunAutom
       run: duplicateAutomationRun.runId ? store.getRun(duplicateAutomationRun.runId) : undefined,
     };
   }
+  // Run now and a timer tick can arrive through different callers. Keep the
+  // v1 concurrency contract at one admitted AutomationRun per definition and
+  // let the second caller observe the durable in-flight record instead of
+  // creating a second runner execution.
+  const activeAutomationRun = store.listAutomationRuns({ automationId: automation.id, limit: 100 })
+    .find((candidate) => candidate.status === "queued"
+      || candidate.status === "running"
+      || candidate.status === "waiting_for_approval");
+  if (activeAutomationRun) {
+    return {
+      cwd: input.cwd,
+      automation,
+      automationRun: activeAutomationRun,
+      thread,
+      run: activeAutomationRun.runId ? store.getRun(activeAutomationRun.runId) : undefined,
+    };
+  }
 
   // Invalid persisted context must not reserve a queued row or idempotency key.
   // Heartbeats resume their own conversation and never use this builder.

@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import test, { after, before } from "node:test";
 import { chromium } from "@playwright/test";
+import { jsonStringLiteralForGeneratedSource } from "./support/generated-source.mjs";
 
 // Regression: C03-PANEL-SCOPE — late channel reads must not replace another viewport.
 // Actual workspace Hook, React state and request guard; only HTTP is synthetic.
@@ -35,7 +36,7 @@ before(async () => {
             const [state, setter] = realUseState(initial);
             return [state, update => window.qa.schedule(() => setter(update))];
           }
-        ` : apiNames.map(name => `export const ${name} = (...args) => window.qa.http(${JSON.stringify(name)}, ...args);`).join("\n"),
+        ` : apiNames.map(name => `export const ${name} = (...args) => window.qa.http(${jsonStringLiteralForGeneratedSource(name)}, ...args);`).join("\n"),
         resolveDir: webRoot, loader: "js",
       }));
     } }],

@@ -32,6 +32,9 @@ const cases = [
   ["the Unix epoch instant is a valid occurrence rather than a falsy miss", "FREQ=DAILY;BYHOUR=0;BYMINUTE=0;BYSECOND=0", "UTC", "1969-12-31T23:59:59Z", new Date("1969-12-31T00:00:00Z"), "1970-01-01T00:00:00.000Z"],
   ["years below 100 are not silently interpreted as twentieth-century dates", "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0", "UTC", "0099-06-02T08:00:00Z", new Date("0099-06-01T09:00:00Z"), "0099-06-02T09:00:00.000Z"],
   ["astronomical year zero preserves its BC era during exact roundtrip", "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0", "UTC", "0000-06-02T08:00:00Z", new Date("0000-06-01T09:00:00Z"), "0000-06-02T09:00:00.000Z"],
+  ["hourly recurrence preserves its elapsed anchor phase", "FREQ=HOURLY;INTERVAL=2", "UTC", "2026-06-01T10:01:00Z", anchor, "2026-06-01T11:00:00.000Z"],
+  ["monthly recurrence uses the authored day of month", "FREQ=MONTHLY;BYMONTHDAY=15;BYHOUR=9;BYMINUTE=0;BYSECOND=0", "UTC", "2026-06-16T00:00:00Z", anchor, "2026-07-15T09:00:00.000Z"],
+  ["finite UNTIL includes its boundary occurrence", "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0;UNTIL=20260603T090000Z", "UTC", "2026-06-02T12:00:00Z", anchor, "2026-06-03T09:00:00.000Z"],
 ];
 
 for (const [name, rule, zone, from, start, expected] of cases) {
@@ -52,7 +55,7 @@ test("A09 production recurrence passes the durable creation anchor, not the quer
 for (const rule of [
   "FREQ=DAILY;INTERVAL=0", "FREQ=DAILY;INTERVAL=2x", "FREQ=DAILY;INTERVAL=1.5",
   "FREQ=DAILY;BYHOUR=24", "FREQ=WEEKLY;BYDAY=1MO", "FREQ=WEEKLY;WKST=XX",
-  "FREQ=DAILY;COUNT=2", "FREQ=DAILY;UNTIL=20260603T090000Z", "FREQ=DAILY;FREQ=WEEKLY",
+  "FREQ=DAILY;COUNT=2", "FREQ=DAILY;FREQ=WEEKLY",
   "FREQ=MINUTELY;BYDAY=MO", "FREQ=MINUTELY;BYHOUR=9", "FREQ=MINUTELY;WKST=MO",
   "FREQ=DAILY;BYMINUTE=-1", "FREQ=DAILY;BYSECOND=60", "FREQ=DAILY;BYHOUR=9,",
   "FREQ=DAILY;INTERVAL=9007199254740992", "FREQ=DAILY;DTSTART=20260601T090000Z",
@@ -64,6 +67,16 @@ for (const rule of [
     }, new Date("2026-06-02T12:00:00Z")), /recurrence|rrule/i);
   });
 }
+
+test("A09 COUNT=1 is a one-shot rule and reports completion after its first occurrence", () => {
+  const rule = "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0;COUNT=1";
+  assert.equal(computeNextRunAtFromRRule(rule, "UTC", new Date("2026-06-01T00:00:00Z"), anchor), "2026-06-01T09:00:00.000Z");
+  assert.equal(computeNextRunAtFromRRule(rule, "UTC", new Date("2026-06-01T10:00:00Z"), anchor), undefined);
+  assert.throws(() => computeNextAutomationRunAt({
+    createdAt: anchor.toISOString(), rrule: rule,
+    trigger: { type: "schedule", timezone: "UTC", schedule: { cadence: "daily", timeOfDay: "09:00" }, missedRunPolicy: "skip" },
+  }, new Date("2026-06-01T10:00:00Z")), /no future occurrence/i);
+});
 
 test("A09 invalid creation anchor and impossible weekday intersection fail closed", () => {
   assert.equal(computeNextRunAtFromRRule("FREQ=DAILY;INTERVAL=2", "UTC", anchor, new Date("invalid")), undefined);

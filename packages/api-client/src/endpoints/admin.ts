@@ -50,6 +50,10 @@ import type {
   ManagedPluginCreateResponse,
   ManagedPluginDetailResponse,
   ManagedPluginDisableRequest,
+  ManagedPluginImportApplyRequest,
+  ManagedPluginImportApplyResponse,
+  ManagedPluginImportPreviewRequest,
+  ManagedPluginImportPreviewResponse,
   ManagedPluginInstallRequest,
   ManagedPluginInstallResponse,
   ManagedPluginListResponse,
@@ -184,6 +188,14 @@ export const adminEndpoints = {
 
   async createManagedPlugin(this: LingDaemonEndpointContext, cwd: string, input: ManagedPluginCreateRequest): Promise<ManagedPluginCreateResponse> {
       return this._post("/plugins", { cwd }, input);
+    },
+
+  async previewManagedPluginImport(this: LingDaemonEndpointContext, cwd: string, input: ManagedPluginImportPreviewRequest): Promise<ManagedPluginImportPreviewResponse> {
+      return this._post("/plugins/import/preview", { cwd }, input);
+    },
+
+  async applyManagedPluginImport(this: LingDaemonEndpointContext, cwd: string, input: ManagedPluginImportApplyRequest): Promise<ManagedPluginImportApplyResponse> {
+      return this._post("/plugins/import/apply", { cwd }, input);
     },
 
   async getManagedPlugin(this: LingDaemonEndpointContext, cwd: string, pluginId: string): Promise<ManagedPluginDetailResponse> {

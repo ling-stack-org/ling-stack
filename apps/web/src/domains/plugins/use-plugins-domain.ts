@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import {
+  applyManagedPluginImport,
   applyManagedPluginPreset,
   checkManagedPlugin,
   connectManagedPlugin,
@@ -9,6 +10,7 @@ import {
   getManagedPluginRuntimePreview,
   installManagedPlugin,
   listManagedPlugins,
+  previewManagedPluginImport,
   refreshManagedPluginPackage,
   repairChromeBrowserHost,
   revokeChromeBrowserAccess,
@@ -16,7 +18,13 @@ import {
   validatePluginPackage,
 } from "../../api.js";
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
-import type { ManagedPluginCreateRequest, ManagedPluginView } from "../../types.js";
+import type {
+  ManagedPluginCreateRequest,
+  ManagedPluginImportApplyResponse,
+  ManagedPluginImportPreviewResponse,
+  ManagedPluginImportSource,
+  ManagedPluginView,
+} from "../../types.js";
 import { PluginActionRequestFence, pluginActionKey } from "./plugin-action-fence.js";
 export { PluginActionRequestFence, pluginActionKey } from "./plugin-action-fence.js";
 
@@ -64,6 +72,8 @@ export interface PluginsState {
 export interface PluginsActions {
   readonly refreshPlugins: (cwd?: string) => Promise<void>;
   readonly createPlugin: (input: ManagedPluginCreateRequest, request: PluginActionRequest) => Promise<ManagedPluginView | undefined>;
+  readonly previewPluginImport: (source: ManagedPluginImportSource) => Promise<ManagedPluginImportPreviewResponse>;
+  readonly applyPluginImport: (source: ManagedPluginImportSource, names: readonly string[]) => Promise<ManagedPluginImportApplyResponse>;
   readonly applyPluginPreset: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly connectPlugin: (pluginId: string, request: PluginActionRequest, command?: string) => Promise<ManagedPluginView | undefined>;
   readonly checkPlugin: (pluginId: string, request: PluginActionRequest) => Promise<void>;
@@ -176,6 +186,18 @@ export function usePluginsDomain(input: {
         noticePluginId: response.plugin.id,
       };
     });
+  }
+
+  async function previewPluginImport(source: ManagedPluginImportSource): Promise<ManagedPluginImportPreviewResponse> {
+    return previewManagedPluginImport(input.cwd, { source });
+  }
+
+  async function applyPluginImport(source: ManagedPluginImportSource, names: readonly string[]): Promise<ManagedPluginImportApplyResponse> {
+    const report = await applyManagedPluginImport(input.cwd, { source, names });
+    if (report.imported.length > 0) {
+      void refreshPlugins(input.cwd);
+    }
+    return report;
   }
 
   async function connectPlugin(pluginId: string, request: PluginActionRequest, command?: string): Promise<ManagedPluginView | undefined> {
@@ -364,6 +386,8 @@ export function usePluginsDomain(input: {
     actions: {
       refreshPlugins,
       createPlugin,
+      previewPluginImport,
+      applyPluginImport,
       applyPluginPreset,
       connectPlugin,
       checkPlugin,

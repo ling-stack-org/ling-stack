@@ -408,7 +408,7 @@ test("A09 HTTP create and draft inputs reject unsupported RRULE without persisti
       const drafts = `${daemon.url}/automation-drafts?cwd=${encodeURIComponent(cwd)}`;
       const before = await getJson(drafts);
       const rejected = await requestJson(drafts, { method: "POST", body: {
-        source: "manual", partialAutomation: { ...input, rrule: "FREQ=DAILY;UNTIL=20261231T090000Z" },
+        source: "manual", partialAutomation: { ...input, rrule: "FREQ=DAILY;COUNT=2" },
       } });
       assert.equal(rejected.status, 400);
       assert.match(rejected.body.message, /rrule/i);

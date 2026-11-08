@@ -4,7 +4,7 @@
 
 Status: implemented active product contract
 Owner: Automations domain
-Last verified: 2026-08-03
+Last verified: 2026-11-08
 
 Durable definitions, drafts, runs, templates, scheduler control, daemon routes, API client,
 Web management, manual execution and standard Run/Approval integration are implemented.
@@ -79,6 +79,17 @@ Implemented foundations and product behavior:
 - the Web Automations page manages definitions, drafts, runs, templates and execution
   detail through the shared API client.
 - scheduled and manual fires reuse normal Ling threads, runs, approvals and artifacts.
+- custom scheduled RRULEs support hourly, monthly, and finite `UNTIL` boundaries; a
+  one-shot task uses a finite `COUNT=1` rule and is disabled after its terminal run.
+- scheduler restart distinguishes `missedRunPolicy=skip` from `run_one`: skip advances
+  to the next future occurrence, while run_one admits one persisted due slot and then
+  resumes from the current wall clock without burst backfill.
+- changing a thread target atomically selects heartbeat mode; clearing that target
+  returns the definition to cron mode.
+- CLI `automations list`, `create`, `run`, and `runs` are thin projections of the
+  daemon API; `--json` writes only the response JSON to stdout.
+- A timer that wakes materially late after sleep or a wall-clock jump follows the
+  persisted `skip`/`run_one` policy instead of dispatching an unbounded stale slot.
 
 Remaining product work is limited to richer monitor sources, desktop notification policy,
 export/report destinations and approval-backed external action proposals.
@@ -113,7 +124,9 @@ export/report destinations and approval-backed external action proposals.
   Codex app-server internals.
 - No direct mutation of memory, persona, provider, tools, approval policy, or secrets from
   an automation prompt.
-- No guarantee that missed local schedules run while the machine is off.
+- No guarantee that missed local schedules run while the machine is off; after restart
+  or a materially late timer wake, the explicit `skip`/`run_one` policy controls the
+  one bounded recovery decision.
 
 ## Product Model
 
@@ -214,7 +227,11 @@ type AutomationSchedule =
   | { readonly cadence: "interval"; readonly everyMs: number };
 ```
 
-Full cron can be a later compatibility layer if the product needs it.
+The explicit schedule shape remains the stable editor contract. The custom RRULE field
+adds the Codex-like calendar forms without introducing a second scheduler:
+`FREQ=HOURLY`, `FREQ=MONTHLY;BYMONTHDAY=…`, `UNTIL=…`, and `COUNT=1` are supported.
+RRULE times use the definition timezone, reject malformed or unsupported fields, and
+fail closed at DST gaps/overlaps. Full arbitrary cron remains out of scope.
 
 ### AutomationTarget
 
@@ -570,7 +587,8 @@ Manual run response:
 
 ## CLI Surface
 
-P1 CLI automation should reuse the strict output rules from the CLI run I/O design.
+The CLI is a thin API client and reuses the strict output rules from the CLI run I/O
+design. It does not open a second scheduler or write SQLite directly.
 
 ```bash
 ling-stack automations list
@@ -588,6 +606,12 @@ Rules:
 - Human progress goes to stderr.
 - Commands must not require the Web UI.
 - Create and patch commands must not accept raw secret values.
+- `automations create` accepts explicit kind/title/channel/time/timezone and
+  `--rrule`/`--prompt`; unsupported monitor creation remains rejected by the daemon.
+- `automations run` accepts `--idempotency-key`; callers retain that key for retries,
+  while scheduled slots derive `automation:<id>:schedule:<scheduledFor>` durably.
+- `automations list` and `automations runs` expose the same status, target, schedule,
+  next-run, recent-run and error facts that Web reads from SQLite.
 
 ## Web Surface
 

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { jsonStringLiteralForGeneratedSource } from "./support/generated-source.mjs";
 import { ToastProvider } from "@ling-stack/ui-react";
 import { catalogConsumerHarness, React } from "./support/catalog-consumer-harness.mjs";
 import { catalogHookPort } from "./support/catalog-hook-port.mjs";
@@ -18,15 +19,15 @@ test("C012 ta-IN real private-workspace memory controller→summary distinguishe
     transforms: {
       "features/teammates/useTeammateMemoryController.ts": [
         { anchor: 'import { useCallback, useEffect, useMemo, useRef, useState } from "react";',
-          replace: key => `const { useCallback, useEffect, useMemo, useRef, useState } = globalThis[${JSON.stringify(key)}].ports.hooks;` },
+          replace: key => `const { useCallback, useEffect, useMemo, useRef, useState } = globalThis[${jsonStringLiteralForGeneratedSource(key)}].ports.hooks;` },
         { anchor: 'import { loadTeammateMemorySnapshot } from "./teammate-memory-data.js";',
-          replace: key => `const loadTeammateMemorySnapshot = (...args) => globalThis[${JSON.stringify(key)}].ports.loadSnapshot(...args);` },
+          replace: key => `const loadTeammateMemorySnapshot = (...args) => globalThis[${jsonStringLiteralForGeneratedSource(key)}].ports.loadSnapshot(...args);` },
       ],
       "features/teammates/TeammateWorkspace.tsx": [
         { anchor: "  const memoryController = useTeammateMemoryController({ cwd, teammate, channels });",
-          replace: key => `  const memoryController = useTeammateMemoryController({ cwd, teammate, channels });\n  globalThis[${JSON.stringify(key)}].captures.memoryController = memoryController;` },
+          replace: key => `  const memoryController = useTeammateMemoryController({ cwd, teammate, channels });\n  globalThis[${jsonStringLiteralForGeneratedSource(key)}].captures.memoryController = memoryController;` },
         { anchor: "  const chatDockController = useWorkspaceRightDockController({",
-          replace: key => `  globalThis[${JSON.stringify(key)}].captures.summaryRows = privateSummaryRows;\n  const chatDockController = useWorkspaceRightDockController({` },
+          replace: key => `  globalThis[${jsonStringLiteralForGeneratedSource(key)}].captures.summaryRows = privateSummaryRows;\n  const chatDockController = useWorkspaceRightDockController({` },
       ],
     },
   });

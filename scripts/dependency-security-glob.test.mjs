@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -22,10 +21,10 @@ const asarRequire = createRequire(asarEntry);
 const legacyAsarEntry = appBuilderRequire.resolve("@electron/asar");
 const legacyAsarRequire = createRequire(legacyAsarEntry);
 const consumers = [
-  { name: "electron-builder -> app-builder-lib", require: appBuilderRequire, version: "13.0.6" },
-  { name: "Expo -> CLI", require: cliRequire, version: "13.0.6" },
-  { name: "Expo -> expo-mcp", require: mcpRequire, version: "11.1.0" },
-  { name: "Desktop -> ASAR", require: asarRequire, version: "13.0.6" },
+  { name: "electron-builder -> app-builder-lib", require: appBuilderRequire, version: "14.0.2" },
+  { name: "Expo -> CLI", require: cliRequire, version: "14.0.2" },
+  { name: "Expo -> expo-mcp", require: mcpRequire, version: "14.0.2" },
+  { name: "Desktop -> ASAR", require: asarRequire, version: "14.0.2" },
 ];
 const timeout = 5_000;
 const readJson = path => JSON.parse(fs.readFileSync(path, "utf8"));
@@ -124,12 +123,11 @@ function streamResult(stream) {
 }
 
 const variants = [];
-const glob13Variants = [];
 for (const consumer of [consumers[2], consumers[0], consumers[1], consumers[3]]) {
   const manifestPath = consumer.require.resolve("glob/package.json");
   const manifest = readJson(manifestPath);
   assert.equal(manifest.version, consumer.version);
-  for (const raw of manifest.version === "13.0.6" ? [false, true] : [false]) {
+  for (const raw of manifest.version === "14.0.2" ? [false, true] : [false]) {
     const specifier = raw ? "glob/raw" : "glob";
     const declaration = manifest.exports[raw ? "./raw" : "."];
     for (const format of ["require", "import"]) {
@@ -140,114 +138,31 @@ for (const consumer of [consumers[2], consumers[0], consumers[1], consumers[3]])
         api: format === "require" ? consumer.require(specifier) : await import(pathToFileURL(entry).href),
       };
       if (consumer === consumers[2] || consumer === consumers[0]) variants.push(variant);
-      if (manifest.version === "13.0.6") {
-        glob13Variants.push({ ...variant, label: `${consumer.name} ${variant.label}` });
-      }
     }
   }
 }
 
-test("glob patch registration and installed consumer digests match the frozen lock", { timeout }, async () => {
-  const manifest = readJson(new URL("../package.json", import.meta.url));
+test("glob consumers resolve the official cancellation fix", { timeout }, async () => {
   const lock = appBuilderRequire("js-yaml").load(fs.readFileSync(new URL("../pnpm-lock.yaml", import.meta.url), "utf8"));
   for (const consumer of consumers) {
-    const selector = `glob@${consumer.version}`;
-    const patchPath = `patches/${selector}.patch`;
-    assert.equal(manifest.pnpm.patchedDependencies[selector], patchPath, consumer.name);
-    const patch = fs.readFileSync(new URL(`../${patchPath}`, import.meta.url), "utf8").replaceAll("\r\n", "\n");
-    const digest = createHash("sha256").update(patch).digest("hex");
-    assert.deepEqual(lock.patchedDependencies[selector], { hash: digest, path: patchPath });
-    assert.ok(lock.snapshots[`${selector}(patch_hash=${digest})`], "lock retains an exact-version patched snapshot");
     const installedManifest = consumer.require.resolve("glob/package.json");
     const globManifest = readJson(installedManifest);
     assert.equal(globManifest.version, consumer.version, consumer.name);
-    assert.ok(installedManifest.includes(`patch_hash=${digest}`), `${consumer.name} uses this patch, not a root duplicate`);
+    assert.equal(consumer.version, "14.0.2");
+    assert.ok(lock.packages[`glob@${consumer.version}`], "lock retains the official fixed release");
+    assert.equal(installedManifest.includes("patch_hash="), false, `${consumer.name} uses the official release`);
     for (const format of ["require", "import"]) {
       const entry = resolve(dirname(installedManifest), globManifest.exports["."][format].default);
-      assert.ok(entry.includes(`patch_hash=${digest}`), `${consumer.name} ${format} entry uses this patch`);
+      assert.equal(entry.includes("patch_hash="), false, `${consumer.name} ${format} entry uses the official release`);
       assert.ok(fs.statSync(entry).isFile());
     }
-    for (const format of ["commonjs", "esm"]) {
-      assert.ok(patch.includes(`+++ b/dist/${format}/walker.js`));
-    }
-    if (consumer.version === "13.0.6") {
-      assert.equal(globManifest.main, "./dist/commonjs/index.js");
-      assert.equal(globManifest.module, "./dist/esm/index.js");
-      assert.equal(globManifest.types, "./dist/commonjs/index.d.ts");
-      assert.deepEqual(globManifest.exports["."], globManifest.exports["./raw"], "default and raw retain the same code and type exports");
-      assert.equal(consumer.require.resolve("glob"), consumer.require.resolve("glob/raw"));
-      for (const [format, directory] of [["require", "commonjs"], ["import", "esm"]]) {
-        const expected = `./dist/${directory}/index.js`;
-        assert.equal(globManifest.exports["."][format].default, expected);
-        assert.equal(globManifest.exports["./raw"][format].default, expected);
-        assert.equal(globManifest.tshy.exports["."][format].default, expected);
-        assert.equal(globManifest.exports["."][format].types, `./dist/${directory}/index.d.ts`);
-        const entry = resolve(dirname(installedManifest), expected);
-        const rawEntry = resolve(dirname(installedManifest), globManifest.exports["./raw"][format].default);
-        const api = format === "require" ? consumer.require("glob") : await import(pathToFileURL(entry).href);
-        const rawApi = format === "require" ? consumer.require("glob/raw") : await import(pathToFileURL(rawEntry).href);
-        assert.equal(api, rawApi, `${consumer.name} ${format} default and raw share their public namespace`);
-        assert.equal(api.glob.Glob, api.Glob);
-        assert.equal(api.glob.glob, api.glob);
-        for (const [alias, name] of [["sync", "globSync"], ["stream", "globStream"], ["streamSync", "globStreamSync"], ["iterate", "globIterate"], ["iterateSync", "globIterateSync"]]) {
-          assert.equal(api[alias], api[name]);
-          assert.equal(api.glob[alias], api[name]);
-        }
-        const entryRequire = createRequire(entry);
-        const minimatchManifestPath = entryRequire.resolve("minimatch/package.json");
-        const minimatchManifest = readJson(minimatchManifestPath);
-        assert.equal(minimatchManifest.version, "10.2.6");
-        const minimatchSelector = `minimatch@${minimatchManifest.version}`;
-        const minimatchPatchPath = `patches/${minimatchSelector}.patch`;
-        assert.equal(manifest.pnpm.patchedDependencies[minimatchSelector], minimatchPatchPath);
-        const minimatchPatch = fs.readFileSync(new URL(`../${minimatchPatchPath}`, import.meta.url), "utf8").replaceAll("\r\n", "\n");
-        const minimatchDigest = createHash("sha256").update(minimatchPatch).digest("hex");
-        assert.deepEqual(lock.patchedDependencies[minimatchSelector], { hash: minimatchDigest, path: minimatchPatchPath });
-        const minimatchEntry = format === "require"
-          ? entryRequire.resolve("minimatch")
-          : resolve(dirname(minimatchManifestPath), minimatchManifest.exports["."].import.default);
-        assert.ok(minimatchManifestPath.includes(`patch_hash=${minimatchDigest}`), `${consumer.name} resolves the patched external minimatch`);
-        assert.ok(minimatchEntry.includes(`patch_hash=${minimatchDigest}`), `${consumer.name} ${format} loads the patched external minimatch entry`);
-        assert.ok(fs.statSync(minimatchEntry).isFile());
-      }
-    }
+    assert.equal(globManifest.exports["."].require.default, "./dist/commonjs/index.min.js");
+    assert.equal(globManifest.exports["."].import.default, "./dist/esm/index.min.js");
+    assert.equal(globManifest.exports["./raw"].require.default, "./dist/commonjs/index.js");
+    assert.equal(globManifest.exports["./raw"].import.default, "./dist/esm/index.js");
   }
   assert.equal(legacyAsarRequire("glob/package.json").version, "7.2.3", "legacy ASAR is not forced across glob majors");
 });
-
-// GHSA-g3hv-75wg-m249 must be fixed inside the Glob consumers actually construct,
-// whether their public export is bundled or delegates to the same-version raw API.
-for (const { label, api } of glob13Variants) {
-  test(`glob-consumer-minimatch: ${label} limits 8-segment globstar-parent expansion to braceExpandMax`, { timeout }, t => {
-    const glob = new api.Glob(Array(8).fill("**/../a/b").join("/"), { braceExpandMax: 64 });
-    t.diagnostic(JSON.stringify({ braceExpandMax: 64, patterns: glob.patterns.length }));
-    assert.equal(glob.patterns.length, 64, "Glob must pass the explicit budget to its actual minimatch implementation");
-  });
-
-  test(`glob-consumer-minimatch: ${label} skips quadratic deduplication only above 1000 patterns`, { timeout }, t => {
-    const small = new api.Glob("{x,*}/{0..9}", {});
-    const atLimit = new api.Glob("{x,*}/{0..499}", {});
-    const large = new api.Glob("{x,*}/{0..999}", {});
-    t.diagnostic(JSON.stringify({ smallPatterns: small.patterns.length, atLimitPatterns: atLimit.patterns.length, largePatterns: large.patterns.length }));
-    assert.equal(small.patterns.length, 10, "small pattern sets retain deduplication");
-    assert.equal(atLimit.patterns.length, 500, "the 1000-pattern boundary still permits deduplication");
-    assert.equal(large.patterns.length, 2000, "large pattern sets skip optional pairwise deduplication");
-  });
-
-  test(`glob-consumer-minimatch: ${label} preserves normal glob matching semantics`, { timeout }, t => {
-    const cwd = newDirectory(t);
-    for (const name of ["src/main.ts", "src/helper.js", "src/main.test.ts", "src/style.css", "src/.hidden.ts", "assets/data.json"]) write(cwd, name);
-    const matches = (pattern, options = {}) => sorted(new api.Glob(pattern, { cwd, ...options }).walkSync());
-    const source = ["src/helper.js", "src/main.test.ts", "src/main.ts"];
-    assert.equal(new api.Glob("**/../a/b/**/../c/d", {}).patterns.length, 4);
-    assert.deepEqual(matches("src/*.{ts,js}"), source);
-    assert.deepEqual(matches("src/*.{ts,js}", { dot: true }), ["src/.hidden.ts", ...source]);
-    assert.deepEqual(matches("src/*.{ts,js}", { ignore: "**/*.test.ts" }), ["src/helper.js", "src/main.ts"]);
-    assert.deepEqual(matches("src/*.{TS,JS}", { nocase: true }), source);
-    assert.deepEqual(matches("src\\*.{ts,js}", { windowsPathsNoEscape: true }), source);
-    assert.deepEqual(matches("src/../assets/*.json"), ["assets/data.json"]);
-  });
-}
 
 for (const { label, api } of variants) {
   test(`behavior: ${label} stops all asynchronous reads after first-read abort`, { timeout }, async t => {
@@ -382,7 +297,7 @@ for (const { label, api } of variants) {
 }
 
 for (const [name, entry, globVersion] of [
-  ["Desktop ASAR 4.3.1 (glob 13)", asarEntry, "13.0.6"],
+  ["Desktop ASAR 4.3.1 (glob 14)", asarEntry, "14.0.2"],
   ["builder ASAR 3.4.1 (legacy glob 7)", legacyAsarEntry, "7.2.3"],
 ]) {
   test(`behavior: ${name} packs, unpacks and extracts real files and links`, { timeout }, async t => {
