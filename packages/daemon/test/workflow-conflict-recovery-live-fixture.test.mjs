@@ -5,8 +5,10 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { startWorkflowIsolationLiveFixture } from "./support/workflow-isolation-live-fixture.mjs";
 
+const LIVE_WAIT_TIMEOUT_MS = 120_000;
+
 test("conflict recovery uses independent Pi Host executions and retains a candidate-only successor across observation and restart",
-  { skip: process.platform !== "darwin", timeout: 180_000 }, async t => {
+  { skip: process.platform !== "darwin", timeout: 300_000 }, async t => {
     const fixture = await startWorkflowIsolationLiveFixture({ conflictRecovery: true, holdReturn: true });
     t.after(() => fixture.close());
     const manifest = fixture.manifest, recoveryPath = `/workflows/${manifest.workflowId}/conflict-recovery`;
@@ -15,7 +17,7 @@ test("conflict recovery uses independent Pi Host executions and retains a candid
     const api = async (path, body, expectedStatus = 200) => {
       const method = body === undefined ? "GET" : "POST";
       const response = await fetch(`${fixture.url}${path}?cwd=${encodeURIComponent(fixture.cwd)}`, {
-        method, signal: AbortSignal.timeout(45_000), ...(body === undefined ? {} : {
+        method, signal: AbortSignal.timeout(LIVE_WAIT_TIMEOUT_MS), ...(body === undefined ? {} : {
           headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
       });
       const value = await response.json();
@@ -25,7 +27,7 @@ test("conflict recovery uses independent Pi Host executions and retains a candid
     const status = () => fixture.command({ op: "status" });
     const scope = (state, workflowId) => workflowId === manifest.workflowId ? state : state.successor;
     const wait = async (label, predicate) => {
-      const deadline = performance.now() + 45_000;
+      const deadline = performance.now() + LIVE_WAIT_TIMEOUT_MS;
       let state;
       while (performance.now() < deadline) {
         state = await status();

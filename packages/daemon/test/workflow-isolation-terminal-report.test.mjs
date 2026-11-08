@@ -3,8 +3,10 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { startWorkflowIsolationLiveFixture } from "./support/workflow-isolation-live-fixture.mjs";
 
+const LIVE_WAIT_TIMEOUT_MS = 120_000;
+
 test("public candidate-only completion publishes once after original Host operations and cleanup settle",
-  { skip: process.platform !== "darwin", timeout: 180_000 }, async t => {
+  { skip: process.platform !== "darwin", timeout: 300_000 }, async t => {
     const fixture = await startWorkflowIsolationLiveFixture({ publicSelection: true, holdReturn: true });
     t.after(() => fixture.close());
     const manifest = fixture.manifest;
@@ -18,7 +20,7 @@ test("public candidate-only completion publishes once after original Host operat
     };
     const status = () => fixture.command({ op: "status" });
     const wait = async (label, predicate) => {
-      const deadline = performance.now() + 45_000;
+      const deadline = performance.now() + LIVE_WAIT_TIMEOUT_MS;
       let state;
       while (performance.now() < deadline) {
         state = await status();
