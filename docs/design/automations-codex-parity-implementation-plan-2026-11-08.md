@@ -1,6 +1,6 @@
 # Automations Codex-like parity implementation plan
 
-Status: implemented and merged to `main` via PR #655 (`d6614ed393ea56493f401047aad6fb33673c0bd8`)
+Status: implemented and merged to `main` via PR #655 (`d6614ed393ea56493f401047aad6fb33673c0bd8`); phase-2 CLI/timer follow-up is tracked in the companion SDD.
 
 ## Decision
 
@@ -51,6 +51,14 @@ the target run's provider/tool/permission snapshot.
    timer fencing, and completion-safe rearming.
 4. Existing Web custom RRULE and target selectors remain the authoring surface; the
    domain mutation also sends the normalized mode explicitly.
+
+## Phase-2 follow-up contract
+
+The first delivery left the daemon/API/Web surface authoritative but did not expose
+the same definitions and runs through the CLI, and it treated a timer callback as
+on-time even when the process had slept through the due wall-clock. The follow-up
+adds `automations list/create/run/runs`, strict JSON output, explicit manual
+idempotency keys, and bounded late-wake handling. It does not add a cloud scheduler.
 
 ## Verification gates
 

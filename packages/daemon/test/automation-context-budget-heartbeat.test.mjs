@@ -32,7 +32,7 @@ const emptySecrets = {
 };
 
 /** Loopback public routes and real SQLite/orchestration; no safety gates replaced. */
-async function createCase(t) {
+async function createCase(t, options = {}) {
   const cwd = await mkdtemp(join(ownedRoot, "workspace-"));
   process.env.LING_STACK_DEFAULT_WORKSPACE_CWD = cwd;
   const store = createSqliteRunStore(cwd), runnerInputs = [];
@@ -41,6 +41,7 @@ async function createCase(t) {
     secretResolver: emptySecrets,
     storeFactory: requestedCwd => { assert.equal(requestedCwd, cwd); return store; },
     runner: { prepareTaskInput: prepareFixtureTaskInput, async runTask(input) {
+      if (options.runTaskDelayMs) await delay(options.runTaskDelayMs);
       const message = `A23_HEARTBEAT_REPORT_${runnerInputs.length + 1}`;
       runnerInputs.push({ runId: input.runId, cwd: input.cwd, task: structuredClone(input.task),
         tools: [...input.tools], provider: input.provider.provider, model: input.provider.model });
@@ -74,6 +75,24 @@ async function createCase(t) {
   }
   return { cwd, store, provider, runnerInputs, url, api };
 }
+
+test("concurrent manual and timer triggers share one active AutomationRun", { timeout: 25_000 }, async t => {
+  const fixture = await createCase(t, { runTaskDelayMs: 100 });
+  const created = await fixture.api("/automations", { kind: "custom_prompt", title: "A23 concurrent trigger",
+    target: { scope: "workspace", workspaceId: DEFAULT_WORKSPACE_ID, cwd: fixture.cwd }, trigger: { type: "manual" },
+    promptTemplate: { templateVersion: 1, promptMarkdown: "A23 concurrent trigger report.", maxContextItems: 1,
+      contextSelectors: [{ kind: "recent_runs", limit: 8 }] },
+    executionPolicy: { providerPresetId: fixture.provider.id, allowedTools: ["read"], approvalProfile: { mode: "none" } },
+  });
+  const [manual, timer] = await Promise.all([
+    fixture.api(`/automations/${created.automation.id}/run`, { idempotencyKey: "a23-manual-key" }),
+    fixture.api(`/automations/${created.automation.id}/run`, { triggerType: "schedule", scheduledFor: "2026-10-15T00:00:00.000Z", idempotencyKey: "a23-timer-key" }),
+  ]);
+  assert.equal(manual.automationRun.id, timer.automationRun.id);
+  assert.equal(fixture.store.listAutomationRuns({ automationId: created.automation.id }).length, 1);
+  await waitForCompletedAutomation(fixture, manual);
+  assert.equal(fixture.runnerInputs.length, 1, "concurrent triggers must dispatch one Runner execution");
+});
 
 function parseSse(text) {
   return text.split(/\r?\n\r?\n/).filter(block => block.trim()).map(block => {

@@ -2,7 +2,7 @@
 
 ## Status
 
-Design proposal. 未实现。
+Implementation status: implemented in the daemon and Web plugin manager. The source readers, secret redaction, preview/apply routes, idempotency, skill-source discovery, Claude command import, and import dialog are present. The checklist below records the evidence currently available; unchecked items still require source-fixture or packaged/user acceptance.
 
 范围收敛到 L1（能力兼容）：**任何 MCP server 都能接 + 用户在 dsh / Claude / Codex 攒下的数据资产（MCP 配置、技能、命令）一键导入 Ling**。本设计是 [Ling 产品待做清单](ling-product-backlog.md) 条目 ③④ 的 L1 部分，输入为外部对比系列方案（`05-ling-import-and-adapter-plan.md`），并按当前仓库实况修正了其中与代码不符的两处（见 §2.3、§6.3）。
 
@@ -209,15 +209,17 @@ git diff --check
 
 ## 6. 验收清单
 
-- [ ] 从 Codex 配置预览出全部 `[mcp_servers.*]`，勾选导入后会话中可调用
+- [x] 从 Codex 配置预览出 `[mcp_servers.*]`，勾选导入后生成停用的 trusted-local MCP（daemon API fixture 已覆盖；真实会话调用仍需独立验收）
 - [ ] 从 dsh `cordis.patch.yml` 预览出 `dsh-mcp-client` 的 insert 条目，同上
 - [ ] 从 `~/.claude.json` 预览出全局 + 项目两个层级
-- [ ] 明文密钥被剥离到 secret store，预览与报告只见尾 4 位
-- [ ] 重复导入同一源全部 `skipped`，无重复插件
+- [x] 明文密钥被剥离到 secret store，预览与报告只见尾 4 位（normalize/API fixture 已覆盖）
+- [x] 重复导入同一源全部 `skipped`，无重复插件（API fixture 已覆盖）
 - [ ] 导入后卸载，MCP server / contribution / 事件链路按现有逻辑清理
-- [ ] `~/.claude/skills/` 与 `~/.dsh/skills/` 出现为可同步技能源
-- [ ] Claude `commands/*.md` 可导入，`` !`bash` `` 正确降级并标注
+- [x] `~/.claude/skills/` 与 `~/.dsh/skills/` 已接入可同步技能源探测（core skill-source-sync 回归已覆盖；真实目录联动仍需独立验收）
+- [x] Claude `commands/*.md` 可导入，`` !`bash` `` 正确降级并标注（daemon API fixture 已覆盖）
 - [ ] 现有插件/技能测试全绿，`createTrustedLocalMcpPlugin` 签名不变
+
+当前证据入口：`packages/daemon/test/plugin-import-api.test.mjs`、`packages/daemon/test/plugin-import-normalize.test.mjs`、`packages/core/test/skill-source-sync.test.mjs`。这些是本地源码/API fixture 证据，不替代真实外部配置、运行中的 MCP 会话或 packaged Desktop 验收。
 
 ## 7. 风险与缓解
 

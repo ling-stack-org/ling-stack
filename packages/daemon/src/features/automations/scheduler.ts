@@ -22,6 +22,10 @@ export { computeNextAutomationRunAt, computeNextRunAt, computeNextRunAtFromRRule
 
 // Node turns a larger delay into a 1ms timer, rather than waiting longer.
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
+// A small delivery delay is normal event-loop jitter. Beyond this boundary a
+// callback has likely crossed a sleep/wake or wall-clock jump and must use the
+// persisted missed-run policy instead of dispatching a stale skip slot.
+const LATE_TIMER_GRACE_MS = 60_000;
 
 export type AutomationSchedulerStatus = "running" | "stopped" | "error";
 
@@ -320,6 +324,14 @@ export class AutomationSchedulerRegistry {
       }
       if (Date.now() < Date.parse(scheduledFor)) {
         this.armAutomationTimer(entry, automation, scheduledFor, generation);
+        return;
+      }
+      if (automation.trigger.missedRunPolicy === "skip"
+        && Date.now() - Date.parse(scheduledFor) > LATE_TIMER_GRACE_MS) {
+        // The process woke materially after the due wall-clock. Advance from
+        // the current clock without creating an AutomationRun; run_one keeps
+        // the bounded stale-slot admission below.
+        this.scheduleAutomation(entry, automation, new Date());
         return;
       }
       executionEntered = true;
