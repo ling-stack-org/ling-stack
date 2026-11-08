@@ -86,6 +86,10 @@ Implemented foundations and product behavior:
   resumes from the current wall clock without burst backfill.
 - changing a thread target atomically selects heartbeat mode; clearing that target
   returns the definition to cron mode.
+- CLI `automations list`, `create`, `run`, and `runs` are thin projections of the
+  daemon API; `--json` writes only the response JSON to stdout.
+- A timer that wakes materially late after sleep or a wall-clock jump follows the
+  persisted `skip`/`run_one` policy instead of dispatching an unbounded stale slot.
 
 Remaining product work is limited to richer monitor sources, desktop notification policy,
 export/report destinations and approval-backed external action proposals.
@@ -120,8 +124,9 @@ export/report destinations and approval-backed external action proposals.
   Codex app-server internals.
 - No direct mutation of memory, persona, provider, tools, approval policy, or secrets from
   an automation prompt.
-- No guarantee that missed local schedules run while the machine is off; after restart,
-  the explicit `skip`/`run_one` policy controls the one bounded recovery decision.
+- No guarantee that missed local schedules run while the machine is off; after restart
+  or a materially late timer wake, the explicit `skip`/`run_one` policy controls the
+  one bounded recovery decision.
 
 ## Product Model
 
@@ -582,7 +587,8 @@ Manual run response:
 
 ## CLI Surface
 
-P1 CLI automation should reuse the strict output rules from the CLI run I/O design.
+The CLI is a thin API client and reuses the strict output rules from the CLI run I/O
+design. It does not open a second scheduler or write SQLite directly.
 
 ```bash
 ling-stack automations list
@@ -600,6 +606,12 @@ Rules:
 - Human progress goes to stderr.
 - Commands must not require the Web UI.
 - Create and patch commands must not accept raw secret values.
+- `automations create` accepts explicit kind/title/channel/time/timezone and
+  `--rrule`/`--prompt`; unsupported monitor creation remains rejected by the daemon.
+- `automations run` accepts `--idempotency-key`; callers retain that key for retries,
+  while scheduled slots derive `automation:<id>:schedule:<scheduledFor>` durably.
+- `automations list` and `automations runs` expose the same status, target, schedule,
+  next-run, recent-run and error facts that Web reads from SQLite.
 
 ## Web Surface
 

@@ -117,6 +117,7 @@ export function useAutomationsDomain(input: {
   const cwdRef = useRef(input.cwd.trim());
   const dataRequestSequenceRef = useRef(0);
   const automationBusyRef = useRef(new Set<string>());
+  const automationRunKeyRef = useRef(new Map<string, string>());
   const draftBusyRef = useRef(new Set<string>());
   const createBusyRef = useRef(false);
   const schedulerBusyRef = useRef(false);
@@ -283,7 +284,17 @@ export function useAutomationsDomain(input: {
 
   async function runAutomationById(automationId: string): Promise<AutomationRun | undefined> {
     return runAutomationMutation(automationId, "run", async (cwd) => {
-      const response = await runAutomation(cwd, automationId);
+      const idempotencyKey = automationRunKeyRef.current.get(automationId) ?? `automation:${automationId}:manual:${crypto.randomUUID()}`;
+      automationRunKeyRef.current.set(automationId, idempotencyKey);
+      let response;
+      try {
+        response = await runAutomation(cwd, automationId, { idempotencyKey, triggerType: "manual" });
+      } catch (error) {
+        // Keep the key across a transport failure so a retry can replay the
+        // durable AutomationRun instead of starting a second one.
+        throw error;
+      }
+      automationRunKeyRef.current.delete(automationId);
       setAutomationRuns((current) => [response.automationRun, ...current.filter((run) => run.id !== response.automationRun.id)]);
       if (response.automation) upsertAutomation(response.automation);
       if (response.context) setPreviewByAutomationId((current) => ({ ...current, [automationId]: response.context as AutomationContextPreview }));
