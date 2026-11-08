@@ -159,7 +159,7 @@ export class LingDaemonTransport implements LingDaemonEndpointContext {
 
   /** @internal Multipart endpoints deliberately let fetch set the boundary header. */
   async _requestMultipart<T>(method: string, path: string, query: Query = {}, body: FormData): Promise<T> {
-    const response = await this.fetchImpl(this._url(path, query), {
+    const response = await this._fetch(this._url(path, query), {
       method,
       body,
     });

@@ -130,6 +130,48 @@ test("POST /transcribe selects an enabled ASR provider and forwards the multipar
   }
 });
 
+test("POST /transcribe honors a smaller daemon request body limit", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-transcription-api-limit-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(stores, {}, { maxBodyBytes: 8 * 1024 });
+  const previousAsrKey = process.env.LING_STACK_TEST_ASR;
+  try {
+    process.env.LING_STACK_TEST_ASR = "unit-test-value-123";
+    await postJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "openai-compatible",
+      displayName: "ASR Relay",
+      providerId: "asr-relay",
+      model: "whisper-compatible",
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1:1",
+      apiKeyRef: "env:LING_STACK_TEST_ASR",
+      capabilities: ["asr"],
+      input: ["text"],
+      enabled: true,
+    });
+
+    const form = new FormData();
+    form.append("file", new Blob([new Uint8Array(12 * 1024)], { type: "audio/webm" }), "voice.webm");
+    const response = await fetch(`${daemon.url}/transcribe?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      body: form,
+    });
+    assert.equal(response.status, 413);
+    assert.equal((await response.json()).error, "payload_too_large");
+  } finally {
+    if (previousAsrKey === undefined) {
+      delete process.env.LING_STACK_TEST_ASR;
+    } else {
+      process.env.LING_STACK_TEST_ASR = previousAsrKey;
+    }
+    await daemon.close();
+    for (const store of stores.values()) {
+      store.close();
+    }
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("provider secret header refs are validated and materialized for model discovery", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-providers-api-secret-headers-"));
   const stores = new Map();
@@ -901,10 +943,11 @@ function waitForProviderRequest(requestArrived, signal) {
   });
 }
 
-async function startDaemonForTest(stores, dependencies = {}) {
+async function startDaemonForTest(stores, dependencies = {}, config = {}) {
   const daemon = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
+    ...config,
   }, {
     ...dependencies,
     storeFactory: (cwd) => {

@@ -92,7 +92,7 @@ export async function handleTranscription(
   }
 
   try {
-    const form = await readMultipartFormData(request, Math.max(config.maxBodyBytes, MAX_TRANSCRIPTION_REQUEST_BYTES));
+    const form = await readMultipartFormData(request, Math.min(config.maxBodyBytes, MAX_TRANSCRIPTION_REQUEST_BYTES));
     const file = form.get("file") ?? form.get("audio");
     if (!(file instanceof Blob) || file.size === 0) {
       throw new HttpError(400, "bad_request", "A non-empty audio file is required.");
