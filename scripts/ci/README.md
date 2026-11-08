@@ -75,6 +75,19 @@ a requested package via `--if-present`.
   exclusive phase before other files on their assigned runner.
 - Linux restricted-command contracts and real macOS native smoke remain separate
   mandatory lanes. No daemon files have been moved to Linux or removed.
+- Framework assurance: complete non-documentation runs add an Ubuntu / Node
+  22.22.1 lane for the zero-model offline tests, frozen controls and real external
+  SDK consumer. It checks out complete history and owns fresh serial builds and
+  tarballs of localization, contracts, plugin-sdk and api-client; it never consumes
+  `ci-dist`. The quality aggregate requires `ASSURANCE=success`, rejecting failed,
+  cancelled, missing or unexpectedly skipped results. Draft policy is unchanged.
+
+Assurance reports and direct command logs are uploaded as
+`ci-framework-assurance` for seven days, including on failure. Outputs live under
+`RUNNER_TEMP`; installed consumer/toolchain trees and tarballs are not uploaded.
+Transport fixtures use deterministic mocks, so this lane does not establish live
+daemon, Runner, model, browser or native-platform acceptance. The initial hosted
+Linux result must be verified separately from local macOS checks.
 
 Core and daemon discovery includes top-level `test/*.test.mjs` and
 `test/*.test.ts`; daemon's dependency-security test stays in its separate policy

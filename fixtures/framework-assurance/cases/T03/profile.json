@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "profileId": "ling-assurance-t03",
+  "profileVersion": "1",
+  "mode": "offline_control_only",
+  "checks": [
+    "WorkUnitHarnessDiagnosticsResponse keeps schemaVersion 1.",
+    "getWorkUnitHarnessDiagnostics forwards cwd.",
+    "Repairing only one package must fail the frozen control; real API behavior acceptance remains F3/F4."
+  ]
+}

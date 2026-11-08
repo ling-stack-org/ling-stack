@@ -1,0 +1,1 @@
+In a future isolated task, apply the frozen two-file injection. Restore the contracts diagnostics schema to version 1 and ensure api-client getWorkUnitHarnessDiagnostics forwards cwd. Both contracts and api-client must agree. Do not change runtime scheduling, storage or authorization. Offline calibration does not execute this task.

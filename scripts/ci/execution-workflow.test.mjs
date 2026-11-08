@@ -11,7 +11,7 @@ import { createTestPlan } from "./test-shard-plan.mjs";
 const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
 const labelWorkflow = readFileSync(new URL("../../.github/workflows/full-ci-label.yml", import.meta.url), "utf8");
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
+const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
 const platformJobs = ["daemon-tests", "daemon-linux-contracts", "restricted-command-macos"];
 const selectorOutputs = { DEPENDENCY: "dependency-policy", TYPECHECK: "typecheck-selected", UNIT: "unit-selected", DAEMON: "daemon" };
 const unselected = Object.fromEntries(Object.keys(selectorOutputs).map((selector) => [`${selector}_SELECTED`, "false"]));
@@ -83,7 +83,7 @@ async function assertScopeOutputs(scope, { mode, packages, daemon, web, dependen
   };
   // Expected lanes are independent of the emitted selectors: a false selector
   // must not turn a selected lane's skipped result into a passing quality gate.
-  const required = ["SCOPE", "COMMON", ...(mode === "docs" ? [] : ["BUILD"]),
+  const required = ["SCOPE", "COMMON", ...(mode === "docs" ? [] : ["ASSURANCE", "BUILD"]),
     ...(dependency ? ["DEPENDENCY"] : []), ...(packages.length ? ["TYPECHECK"] : []),
     ...(matrix.length ? ["UNIT"] : []), ...(daemon ? ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"] : [])];
   for (const lane of required) gate[`${lane}_RESULT`] = "success";
@@ -182,6 +182,9 @@ test("every expensive job requires complete execution and retains its scope sele
   assert.match(common, /name: Scan Git history for secrets\n        if: needs\.scope\.outputs\.execution-tier == 'complete'\n/u);
   const dependencyPolicy = jobSource("dependency-policy");
   assert.match(dependencyPolicy, /name: Check production dependency update policy\n        run: node --test scripts\/production-dependency-policy\.test\.mjs/u);
+  const assurance = jobSource("framework-assurance");
+  assert.match(assurance, /^    if: .*needs\.scope\.outputs\.execution-tier == 'complete'/mu);
+  assert.match(assurance, /needs\.scope\.outputs\.mode != 'docs'/u);
 });
 
 test("label events never create CI runs so the latest run always publishes the required context", () => {
@@ -213,7 +216,7 @@ test("long-running jobs respond to cancellation while quality still reports inco
   assert.match(cancelled.stdout, /UNIT=cancelled.*DAEMON=cancelled/u);
 });
 
-test("workflow gate requires all nine lanes and refuses incomplete Draft validation", () => {
+test("workflow gate requires all ten lanes and refuses incomplete Draft validation", () => {
   const quality = jobSource("quality");
   assert.match(quality, /^    if: always\(\)/mu);
   assert.match(quality, /EXECUTION_TIER: \$\{\{ needs\.scope\.outputs\.execution-tier \}\}/u);
@@ -253,7 +256,8 @@ test("workflow affected scope cannot hide skipped product work or selected Daemo
 
 test("workflow affected scope permits only explicit out-of-scope skips and still requires build", () => {
   const affected = { SCOPE_MODE: "affected", ...unselected,
-    ...Object.fromEntries(lanes.slice(2).filter((lane) => lane !== "BUILD").map((lane) => [`${lane}_RESULT`, "skipped"])) };
+    ASSURANCE_RESULT: "success",
+    ...Object.fromEntries(lanes.slice(2).filter((lane) => lane !== "BUILD" && lane !== "ASSURANCE").map((lane) => [`${lane}_RESULT`, "skipped"])) };
   assert.equal(runQuality(affected).status, 0);
   for (const lane of lanes.slice(2)) {
     for (const result of ["failure", "cancelled", "", undefined, "pending", ...(lane === "BUILD" ? ["skipped"] : [])]) {

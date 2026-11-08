@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { assertCiResults, selectExecutionTier } from "./execution-policy.mjs";
 
 const script = fileURLToPath(new URL("./execution-policy.mjs", import.meta.url));
-const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
+const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
 const selectors = ["dependency", "typecheck", "unit", "daemon"];
 const unselected = Object.fromEntries(selectors.map((selector) => [selector, false]));
 
@@ -108,7 +108,7 @@ test("documentation scope requires scope and common but permits every product la
 test("Web-only scope can skip platform lanes but requires every Linux product lane", () => {
   const platformSkips = results({ DAEMON: "skipped", LINUX_CONTRACT: "skipped", MACOS_NATIVE: "skipped" });
   assert.equal(quality({ mode: "affected", daemon: false, results: platformSkips }), true);
-  for (const lane of ["DEPENDENCY", "BUILD", "TYPECHECK", "UNIT"]) {
+  for (const lane of ["DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT"]) {
     assert.throws(() => quality({ mode: "affected", daemon: false, results: { ...platformSkips, [lane]: "skipped" } }), new RegExp(`${lane}=skipped`, "u"));
   }
 });
@@ -134,8 +134,8 @@ test("affected scope permits every selector combination without skipping selecte
 });
 
 test("unselected lanes permit explicit skips but still reject failed, cancelled, missing or invalid results", () => {
-  const skipped = results(Object.fromEntries(lanes.slice(2).filter((lane) => lane !== "BUILD").map((lane) => [lane, "skipped"])));
-  for (const lane of lanes.slice(2).filter((lane) => lane !== "BUILD")) {
+  const skipped = results(Object.fromEntries(lanes.slice(2).filter((lane) => lane !== "BUILD" && lane !== "ASSURANCE").map((lane) => [lane, "skipped"])));
+  for (const lane of lanes.slice(2).filter((lane) => lane !== "BUILD" && lane !== "ASSURANCE")) {
     for (const result of ["failure", "cancelled", "", undefined, "pending", null, false]) {
       assert.throws(() => quality({ mode: "affected", ...unselected, results: { ...skipped, [lane]: result } }),
         new RegExp(`${lane}=`, "u"));
@@ -220,9 +220,9 @@ test("quality CLI enforces environment types and reports failures in the workflo
   const unselectedEnv = Object.fromEntries(selectors.map((selector) => [`${selector.toUpperCase()}_SELECTED`, "false"]));
   assert.equal(run({ SCOPE_MODE: "docs", ...unselectedEnv, ...skippedProducts }).status, 0);
   assert.equal(run({ SCOPE_MODE: "affected", DAEMON_SELECTED: "false", DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" }).status, 0);
-  const affectedSkips = { SCOPE_MODE: "affected", ...unselectedEnv, ...skippedProducts, BUILD_RESULT: "success" };
+  const affectedSkips = { SCOPE_MODE: "affected", ...unselectedEnv, ...skippedProducts, ASSURANCE_RESULT: "success", BUILD_RESULT: "success" };
   assert.equal(run(affectedSkips).status, 0);
-  for (const lane of lanes.slice(2).filter((lane) => lane !== "BUILD")) {
+  for (const lane of lanes.slice(2).filter((lane) => lane !== "BUILD" && lane !== "ASSURANCE")) {
     for (const result of ["failure", "cancelled", "", undefined, "pending"]) {
       const check = run({ ...affectedSkips, [`${lane}_RESULT`]: result });
       assert.equal(check.status, 1, check.stdout + check.stderr);

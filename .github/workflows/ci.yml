@@ -231,6 +231,62 @@ jobs:
       - name: Check patched dependency security regressions
         run: corepack pnpm check:dependency-security
 
+  framework-assurance:
+    name: Offline assurance and external SDK consumer
+    needs: scope
+    if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out frozen source history without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+          cache: pnpm
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Test offline assurance boundaries
+        run: node --test scripts/framework-assurance/*.test.mjs
+
+      - name: Calibrate frozen offline controls without a Provider
+        run: node scripts/framework-assurance/index.mjs calibrate --output "$RUNNER_TEMP/ling-framework-assurance/offline"
+
+      # This consumer owns fresh producer builds and tarballs; ci-dist is not evidence.
+      - name: Build pack and verify the real SDK outside the checkout
+        run: node scripts/framework-assurance/index.mjs sdk-consumer --output "$RUNNER_TEMP/ling-framework-assurance/sdk"
+
+      - name: Preserve assurance reports and command logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-framework-assurance
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/ling-framework-assurance/offline/*.json
+            ${{ runner.temp }}/ling-framework-assurance/offline/*.md
+            ${{ runner.temp }}/ling-framework-assurance/sdk/sdk-consumer.json
+            ${{ runner.temp }}/ling-framework-assurance/sdk/sdk-consumer-*/sdk-consumer-report.json
+            ${{ runner.temp }}/ling-framework-assurance/sdk/sdk-consumer-*/*.log
+
   build:
     name: Build selected package graph once
     needs: scope
@@ -687,7 +743,7 @@ jobs:
 
   quality:
     name: Typecheck, unit tests, and Web build
-    needs: [scope, common-fast, dependency-policy, build, typecheck, unit-tests, daemon-tests, daemon-linux-contracts, restricted-command-macos]
+    needs: [scope, common-fast, dependency-policy, framework-assurance, build, typecheck, unit-tests, daemon-tests, daemon-linux-contracts, restricted-command-macos]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -710,6 +766,7 @@ jobs:
           SCOPE_RESULT: ${{ needs.scope.result }}
           COMMON_RESULT: ${{ needs.common-fast.result }}
           DEPENDENCY_RESULT: ${{ needs.dependency-policy.result }}
+          ASSURANCE_RESULT: ${{ needs.framework-assurance.result }}
           BUILD_RESULT: ${{ needs.build.result }}
           TYPECHECK_RESULT: ${{ needs.typecheck.result }}
           UNIT_RESULT: ${{ needs.unit-tests.result }}

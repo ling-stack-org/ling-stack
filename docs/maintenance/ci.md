@@ -46,6 +46,8 @@ Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，�
 
 公共检查同时发现 `scripts/ci/*.test.mjs` 和 `scripts/ci/*.test.ts`，由固定 Node 直接运行。根 `typecheck` 和被选中的 CI typecheck 任务执行 `typecheck:ci-tests`，使用 `scripts/ci/tsconfig.test.json` 严格检查 TS 测试；运行时类型擦除不能代替类型检查。Daemon 的包级测试命令及两处分片发现也包含 `.test.ts`，其 `typecheck:ci` 同时检查生产代码与 `test/**/*.ts`，包括测试辅助文件。
 
+框架 assurance 是独立重建例外，不能用产品测试图的 `dist` artifact 代替实际 producer/tarball 消费证据。本分支的 `framework-assurance` 在完整非文档档位运行离线测试、三任务九控制校准及真实 SDK consumer；零模型、无 secrets、不启动 daemon。Consumer 串行重建 localization/contracts/plugin-sdk/api-client，实际 pack 并仓外离线安装。`quality` 要求该 lane 成功，失败、取消、缺失或意外跳过均拒绝；Draft/full-ci 规则不变。报告和直属日志上传为 `ci-framework-assurance` 并保留七天，不上传 consumer/toolchain 树或 tarball。详见[补强实现记录](../design/ling-framework-complementary-implementation-plan.md#9-交付记录与完成判定)。
+
 Linux 构建任务在选中 CLI 时运行真实 daemon 生命周期和新工作区 doctor 检查；未配置 provider 的新工作区预期返回诊断退出码 4。在选中 Web 时，使用生产构建的 Vite preview 运行六项 Playwright 回归，覆盖权限、内置技能元数据和中文角色。浏览器测试使用模拟 daemon 数据，不包含真实模型调用。当前运行的截图与测试结果上传为 `ci-linux-source-web-smoke` artifact，保留七天。
 
 会话操作记录、复制、文件审查、归属与颜色层级场景可通过 `corepack pnpm --filter @ling-stack/web test:e2e:work-cell` 本地按需运行。会话样例由 E2E mock daemon 提供，不依赖开发模式；Web 的 `typecheck` 和 `typecheck:ci` 通过 `tsconfig.e2e.json` 检查所列用例及其辅助文件。
