@@ -240,7 +240,7 @@
     "packages/browser-host/src/paths.ts": "a2bf8cd243eeb17c5832a84245008f359e8066523abe48dcf2952a509116769a",
     "packages/browser-host/src/runtime-descriptor.ts": "fb7a006dd3f2cecc0d65d1003dcdd4c88c58ff3cce9524a0acc1d170d02ca122",
     "packages/browser-host/src/windows-acl.ts": "2ceb11e080479416d8ce1762c4583d7f93f574e00f73c08c282bd17b75edbffd",
-    "packages/contracts/package.json": "cff000b571b3a03a5d249b9c3397d41e261f3376d1fe6de50a52d090940dec27",
+    "packages/contracts/package.json": "abfd252de4f8cbaf25f5f6f8eb2976c7fba09a5a12d78be71eea1f477157bc79",
     "packages/contracts/src/channel-command-goal.ts": "ea8a19933b4108376c14c93ea9ae4022e52ba2c6854b6fff7ac278a5d6580db8",
     "packages/contracts/src/channel-conversation-projection.ts": "101c4fa7192a379e607bb2a208308e50c4edecf93339d2bbbccb05ad2b9f2515",
     "packages/contracts/src/channel-operation-bindings.ts": "bd05499a759671fd047e7cc06a5354f99981e928304b465732edc0d45af4388b",
