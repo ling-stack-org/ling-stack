@@ -80,7 +80,9 @@ test("POST /transcribe selects an enabled ASR provider and forwards the multipar
   const stores = new Map();
   const daemon = await startDaemonForTest(stores);
   const transcriptionServer = await startTranscriptionServer();
+  const previousAsrKey = process.env.LING_STACK_TEST_ASR;
   try {
+    process.env.LING_STACK_TEST_ASR = "unit-test-value-123";
     await postJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
       kind: "openai-compatible",
       displayName: "ASR Relay",
@@ -88,7 +90,7 @@ test("POST /transcribe selects an enabled ASR provider and forwards the multipar
       model: "whisper-compatible",
       api: "openai-completions",
       baseUrl: transcriptionServer.url,
-      apiKey: "unit-test-value-123",
+      apiKeyRef: "env:LING_STACK_TEST_ASR",
       capabilities: ["asr"],
       input: ["text"],
       enabled: true,
@@ -114,6 +116,11 @@ test("POST /transcribe selects an enabled ASR provider and forwards the multipar
     assert.match(transcriptionServer.requests[0].body.toString("utf8"), /name="model"/u);
     assert.match(transcriptionServer.requests[0].body.toString("utf8"), /whisper-compatible/u);
   } finally {
+    if (previousAsrKey === undefined) {
+      delete process.env.LING_STACK_TEST_ASR;
+    } else {
+      process.env.LING_STACK_TEST_ASR = previousAsrKey;
+    }
     await transcriptionServer.close();
     await daemon.close();
     for (const store of stores.values()) {
