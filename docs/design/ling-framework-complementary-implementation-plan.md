@@ -1,8 +1,8 @@
 # Ling 框架补强实现计划书
 
-Status: F1/F2 implemented; macOS local and Linux hosted checks passed; native boundary repair locally verified; PR #653 hosted CI green; F3/F4/F5 not implemented; no merge or release
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A fixture evidence adapter and F4-01 read-only diagnostics report implemented on `codex/ling-f3-f4-readonly`; F3-B/F5 remain unimplemented
 Owner: Ling framework maintainers; one integration owner per implementation batch
-Last verified: 2026-11-08
+Last verified: 2026-11-09
 Document type: implementation plan / acceptance checklist
 Canonical replacement: none; retain while material work remains unfinished
 Code and test anchors: sections 7 and 9; no live task or GUI acceptance claimed
@@ -13,16 +13,16 @@ Code and test anchors: sections 7 and 9; no live task or GUI acceptance claimed
 
 按“离线评测与报告 + SDK 独立消费”先实施，再接真实执行和诊断。不要等待另一会话完成所有未来功能，也不要抢先改它正在拥有的安全并发、隔离执行、合并和恢复文件。
 
-用户确认开始后，已在 `codex/ling-framework-assurance` 独立工作区实现并本地验证 F1/F2，零模型 CI 已接线。历史候选 `0a4f5327` 的 Linux assurance/SDK、依赖 job 与 Windows 安装器契约已通过；F1/F2 实现提交 `3c7b905b` 已附加到 [PR #653](https://github.com/ling-stack-org/ling-stack/pull/653)，并在 [CI run 42401958832](https://github.com/ling-stack-org/ling-stack/actions/runs/42401958832) 完成全绿门禁。Core shard 2 首次时间边界失败经同一 run 的 job 重跑后通过。本次文档同步继续附加在同一 PR，当前未合并、未发布，默认不产生付费模型请求，不启动服务、不修改共享数据库。实际证据见第 9 节。
+用户确认开始后，F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`。本轮继续在 `codex/ling-f3-f4-readonly` 实现 F3-A fixture 证据适配和 F4-01 只读诊断报告；默认不产生付费模型请求，不启动服务、不修改共享数据库，不进入 F3-B/F5。实际证据见第 9 节。
 
 | 里程碑 | 内容 | 当前状态 | 进入条件 |
 | --- | --- | --- | --- |
 | F0 | 三份设计与实施文档 | 已编写；文档检查通过 | 无代码执行依赖 |
 | F1 | 固定校准任务、预检、正反校准、离线报告 | 已实现；47 项离线/CLI 测试与实际校准通过 | 不构成真实代码任务验收 |
 | F2 | 真实包审计、仓外 consumer、支持矩阵 | 已实现；17 项边界测试及修复后的真实四包消费通过 | macOS arm64 本地及 Linux x64 托管分别有 19 组 runtime 与两个类型格；Windows SDK 未验证 |
-| F3-A | Run 证据适配与 fixture 回归 | 未开始 | F1 格式稳定、来源接口可核实 |
+| F3-A | Run 证据适配与 fixture 回归 | 已实现 fixture 适配；未接真实 Host | F1 格式稳定、来源接口可核实 |
 | F3-B | 普通 Run 真实试点及后续并发对比 | 未开始，受准入约束 | 对应安全/隔离/恢复验收、可信验证、试点预算 |
-| F4 | 已有 Harness 诊断的只读消费 | 未开始 | F1 报告稳定、已有诊断合同可用 |
+| F4 | 已有 Harness 诊断的只读消费 | F4-01 已实现分页报告；未改生产者 | F1 报告稳定、已有诊断合同可用 |
 | F5 | 节点重跑合同 | 仅文档设计 | 实现另立任务，本计划不增加 rerun 功能 |
 
 ## 2. 开工前的隔离与分工
@@ -124,13 +124,14 @@ Code and test anchors: sections 7 and 9; no live task or GUI acceptance claimed
 
 ## 5. F3 / F4 后续工作包
 
-### F3-01 执行证据适配，先做 fixture
+### F3-01 执行证据适配，fixture 范围已完成
 
 - **输入**：F1 已冻结格式、主线已合并的 Run/Attempt/WorkUnit 和封存接口。
-- **改动**：优先扩展本计划 `evidence.mjs` 与 fixture 测试；必要内部读取接口另列单一拥有者及窄范围差异。
+- **改动**：新增本计划 `execution-evidence.mjs` 与 fixture 测试；必要内部读取接口另列单一拥有者及窄范围差异。
 - **实施**：建立从正常源 Run 到可信验证结果，再到现有 evaluation 的关联。不负责普通任务派发或 Provider。
 - **验收**：A12；兄弟 Run、旧 Attempt、快照变化、缺 artifact、错误字节摘要、claim 丢失、报告重试不重跑任务。
 - **停止条件**：接口只存在于另一会话 WIP，或需要直接改私有表/迁移才能接入时，停止真实接线，保留 fixture 并提出具体接口差异。
+- **本批结果**：`execution-evidence.mjs` 提供独立 trusted binding、lineage/snapshot/artifact/claim 校验和 `fixture_replay` observation 适配；`execution-evidence.test.mjs` 与两个 JSON fixture 覆盖 A12。真实 Run/Host 封存接口仍未接入。
 
 ### F3-02 单任务串行真实验收
 
@@ -152,6 +153,7 @@ Code and test anchors: sections 7 and 9; no live task or GUI acceptance claimed
 - **改动**：本计划只读适配脚本和对应测试。首轮不改诊断生产者，不新建 UI 或 endpoint。
 - **实施**：正确处理冷工作区、缺 Run/lineage、分页与时间标记，关联同一身份的报告。
 - **验收**：A16；读取不能创建 Store、触发 supervisor / reconcile / retry / dispatch；无敏感字段泄露。
+- **本批结果**：`diagnostics.mjs` 通过注入的 `getWorkUnitHarnessDiagnostics` 逐页消费，保留页级 `observedAt`、cursor 和 checkpoint，输出 workspace 哈希并关联同一 Run/WorkUnit 的 F3 observation；冷工作区和断链状态转为脱敏报告状态。未改 daemon、Store、API endpoint 或 UI。
 
 ### F3-B 准入清单
 
@@ -178,9 +180,9 @@ Code and test anchors: sections 7 and 9; no live task or GUI acceptance claimed
 | E3 | F1-03 报告 | 可比性、分母、未知项与脱敏测试 | 数据库或仪表盘 |
 | S1 | F2-01 真实打包与隔离 | 归档/依赖审计、仓外解析、锁摘要 | 公共接口统一 |
 | S2 | F2-02 消费矩阵 | 类型/运行时正反例、每格产物摘要 | 真实 Runner 已验收声明 |
-| B1 | F3-A 证据适配 | 来源/快照/恢复/幂等反例 | 并发实现会话在途修复 |
+| B1 | F3-A 证据适配（fixture 范围已完成） | 来源/快照/恢复/幂等反例 | 并发实现会话在途修复 |
 | B2 | F3-B 真实试点 | 准入、调用账本、真实证据链 | 默认付费 CI |
-| O1 | F4 只读诊断 | 冷工作区、权限、零执行副作用 | 节点 rerun |
+| O1 | F4 只读诊断（F4-01 已完成） | 冷工作区、权限、零执行副作用 | 节点 rerun |
 
 ```text
 F0 -> 实施基线 -> E1 -> E2 -> E3 -----> B1 -> B2
@@ -292,7 +294,7 @@ corepack pnpm --filter @ling-stack/daemon exec node --test --test-concurrency=1 
 | 已合并 | 合并 commit，不以批准或 CI 通过代替 |
 | 已启用/发布 | 实际环境与版本；未发布时明确未发布 |
 
-F1/F2 是首批范围的独立交付，不等于 F3/F4/F5 已完成；F5 即使文档通过评审，也不能列成“支持节点重跑”。
+F1/F2、F3-A fixture 适配和 F4-01 只读报告是独立交付；它们不等于 F3-B 真实执行或 F5 已完成。F5 即使文档通过评审，也不能列成“支持节点重跑”。
 
 ### 本批实施记录（2026-11-02）
 
@@ -345,11 +347,13 @@ HEAD 只是实现基线；上述 producer 输入快照包含本次实际参与�
 - [x] 明确并发会话拥有范围，不修改其在途代码或计划。
 - [x] F1 任务/引用/规则校准/报告/CLI 的正反例验证通过。
 - [x] F2 真实 pack、仓外 runtime/type 检查及声明矩阵通过。
+- [x] F3-A fixture 证据适配覆盖 lineage、snapshot、artifact、claim、effect 和幂等反例。
+- [x] F4-01 只读诊断报告覆盖分页、冷工作区、断链、时间标记、敏感字段和零执行副作用。
 - [ ] 提交前最终本地链接、公共仓库安全及完整提交范围空白检查重新通过；历史检查不替代最终验收。
 - [x] 本批原六份 WIP 与实施工作区锁文件前后核对一致。
 - [x] 本批没有真实任务、模型调用、发布、服务或共享数据库操作。
 
-后续按 F3-A 来源/快照 fixture 和 F4 只读诊断分开接入；F3-B 的真实任务与付费试点仍须满足准入清单，不能因为 F1/F2 通过就自动开启。
+后续进入 F3-B 前仍须完成真实 Host 证据来源、可信隔离、预算和恢复准入；不能因为 F1/F2、F3-A 或 F4-01 通过就自动开启真实任务与付费试点。
 
 ### 审查收口进度（2026-11-02）
 
@@ -406,7 +410,7 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 - 相关 Kimi 安装/执行与 model relay 回归合计 65/65 通过；Daemon `build:ci` 通过，保留现有 Rust compiler warning。该证据只覆盖当前 macOS，不能替代 Linux/Windows 或远端完整 CI。
 - 合入最新 `main@8435a43e` 后，主线锁摘要由历史 v3 的 `56fd59b33ab2fc4ab8615ad7e050c839ed14fc621096ee9c754572b7212d3d78` 更新为 `167eb55b8ed43c0b58a363005b867069d1ddcd659b36408d95ddbb227338b543`；为保持 source pin 与工作树一致，新增默认 v4 校准套件 `framework-v4.json`，T01/T02/T03 版本为 `3/3/4`。历史 v3 套件字节摘要 `e27693c5e5e89e07845fc759dffcd5c85483fd672dda6c5066bcd5d28064013b` 保留为历史输入，v4 摘要为 `cd22fb7efda7585107a39b4bda195bcaf058be1a37e6e9416afd1da9bc8fab04`。合并后的 CI policy、workflow 和 assurance 回归为 162/162 通过；这是本地新鲜验证，不替代当前 PR 的 hosted CI。
 
-### 当前 PR 收口记录（2026-11-08）
+### PR #653 合并前收口记录（2026-11-08）
 
 | 项目 | 已确认结果 |
 | --- | --- |
@@ -417,10 +421,25 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 | 本地相关验证 | 合并最新主线后 assurance、CI policy、workflow 与相关回归 162/162 通过；F1/F2 工具及真实 SDK consumer 的 macOS 复验、Linux hosted consumer 与完整当前 PR 门禁均有独立证据 |
 | 运行边界 | 未运行真实模型、Provider、普通 Run 或付费任务；未启动/重启服务，未修改共享数据库或另一会话 worktree |
 
-当前 F1/F2 交付条件已满足：代码、离线校准、仓外真实 SDK consumer、零模型 CI 门禁、文档和 PR 均有证据。F3/F4/F5 仍按计划保持未实施；本 PR 不自动合并。
+合并前 F1/F2 交付条件已满足：代码、离线校准、仓外真实 SDK consumer、零模型 CI 门禁、文档和 PR 均有证据。随后 PR #653 以 `47afcc47` 合并；本节保留合并前证据，不覆盖下方 F3-A/F4-01 当前批次。
 
 ### 最新主线锁更新与 v5 冻结（2026-11-09）
 
 - 合并 `origin/main@c156901c6c0bb97570ba56f39ec0f731872f56d9` 后，原 v4 预检的两项失败均定位为 `pnpm-lock.yaml` 字节摘要失配；T01/T02/T03 的源码文件摘要仍与冻结来源一致。未放宽校验，也未修改规则、profile、注入补丁或控制输入。
 - 依赖锁当前摘要为 `49c509936672cbe4ce9118a4bf3907c4b32eea1babfc6dd74dec295c526f4d10`。三任务来源更新到该完整提交，任务版本递增为 `4/4/5`，套件递增为 `5`；v4 文件保留为历史输入，默认套件改为 `framework-v5.json`。v5 套件字节摘要为 `69129d529f41cdad17e9da1a706c4a1f7d3f00b7c4d8b59d11268faaf329a303`。
 - v5 修复后，framework-assurance、CI policy、workflow、平台 lane 与 SDK 边界相关回归共 `179/179` 通过；直接执行 `preflight` 与 `calibrate` 均成功。输出目录仍在 checkout 外，未初始化用户 Store、派发普通 Run、调用 Provider 或运行真实模型/付费任务。
+
+### F3-A / F4-01 当前批次（2026-11-09）
+
+| 项目 | 已确认结果 |
+| --- | --- |
+| 实施工作区 | `codex/ling-f3-f4-readonly`，基于合并后的 `origin/main@47afcc47b9063cd7a402a81cf1088caa695f3638`；另一会话 worktree 未修改 |
+| F3-A 代码 | `scripts/framework-assurance/execution-evidence.mjs`；独立 trusted binding、Run/WorkUnit/Attempt/fence lineage、snapshot、artifact digest、terminal claim 和 effect 校验；输出保留 `fixture_replay` / `not_assessed` |
+| F3-A fixture | `fixtures/framework-assurance/execution-evidence/valid.json`、`trusted-binding.json` |
+| F3-A 回归 | `execution-evidence.test.mjs` 覆盖兄弟 Run、旧 Attempt、快照变化、artifact 缺失/错误/多余、claim 丢失、未知副作用、重复适配；对应测试全通过 |
+| F4-01 代码 | `scripts/framework-assurance/diagnostics.mjs`；通过既有 `getWorkUnitHarnessDiagnostics` 回调逐页读取，保留 cursor/页级时间/checkpoint，按同一 Run/WorkUnit 关联 observation |
+| F4-01 回归 | `diagnostics.test.mjs` 覆盖分页、冷工作区、run_unlinked/run_missing/lineage_mismatch、重复页、停滞 cursor、错误 lineage、敏感字段和零 Store/重试/派发路径 |
+| 本批测试 | `node --test scripts/framework-assurance/execution-evidence.test.mjs scripts/framework-assurance/diagnostics.test.mjs`：30/30 通过 |
+| assurance 全套 | `node --test scripts/framework-assurance/*.test.mjs`：94/94 通过；`preflight` 与 `calibrate` 成功；本地缺失 `tar` 时临时复用既有只读 node_modules 后重跑，链接已清理 |
+| 运行边界 | 未启动真实 Run、Provider、模型、付费任务、daemon 或 Store；未修改 F3-B/F5、daemon、SQLite、API endpoint、UI 或另一会话 worktree |
+| 当前未完成 | F3-B 真实串行/并发执行证据、F5 节点重跑实现仍未启动；本批不创建 rerun API 或生产执行接线 |
