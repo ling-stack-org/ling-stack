@@ -69,3 +69,16 @@ test("inspection errors do not expose process environments", t => {
     return true;
   });
 });
+
+test("a transient process-table failure is retried before ownership inspection continues", t => {
+  let calls = 0;
+  t.mock.method(childProcess, "execFileSync", (_command, args) => {
+    calls += 1;
+    if (calls === 1) throw new Error("transient process-table failure");
+    return args[0] === "-axo" ? "101 1 101 S original" : "101 node LING_STACK_CI_TEST_OWNER=fixture-owner";
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  assert.deepEqual(trackTestProcesses(101, "fixture-owner").live(true).map(entry => entry.pid), [101]);
+  assert.equal(calls, 3);
+});

@@ -11,6 +11,9 @@ import { trackTestProcesses } from "./test-processes.mjs";
 
 export const defaultFileTimeoutMs = 300_000;
 export const defaultShardTimeoutMs = 1_800_000;
+// Keep process ownership checks frequent enough for cleanup without flooding
+// the hosted runner's process table while several files run in parallel.
+const processInspectionIntervalMs = 100;
 
 export async function createTestIsolation(label, temporaryDirectory = tmpdir()) {
   const root = await mkdtemp(join(temporaryDirectory, `ling-stack-test-${label}-`));
@@ -68,7 +71,7 @@ async function runFile(file, { cwd, shard, worker, suite, temporaryDirectory, st
     const observe = setInterval(() => {
       try { processes.live(); }
       catch (error) { cleanupError ??= error; stop("cleanup_error"); }
-    }, 25);
+    }, 100);
     const onAbort = () => stop("cancelled");
     const onLogError = error => { logError = error; stop("log_error"); };
     log?.on("error", onLogError);

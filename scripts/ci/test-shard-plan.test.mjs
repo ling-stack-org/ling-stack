@@ -18,7 +18,7 @@ test("core and daemon plans preserve full discovery exactly once with dynamic co
       const discovered = await discoverTestFiles(testSuites[name].cwd, testSuites[name].excluded);
       assert.ok(discovered.length > 100);
       assert.doesNotThrow(() => assertSuiteCoverage(suite, discovered));
-      assert.equal(suite.shardCount, 4);
+      assert.equal(suite.shardCount, name === "daemon" ? 6 : 4);
     }
     if (plan.suites.daemon) assert.ok(!plan.suites.daemon.files.includes("test/dependency-security.test.mjs"));
   }

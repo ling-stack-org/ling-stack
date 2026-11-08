@@ -6,6 +6,12 @@ open-source baseline onward.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and future
 release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-11-09
+
+### Changed
+
+- **Daemon CI balances the full Daemon suite across six macOS shards with up to four concurrent isolated file workers per shard** while retaining full coverage and native-platform checks.
+
 ## [0.2.2] - 2026-11-03
 
 ### Changed
