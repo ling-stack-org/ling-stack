@@ -66,6 +66,15 @@ export async function checkProviderPreset(
     return await checkMediaProviderPreset(store, normalizeProviderPresetForMediaRuntime(preset), checkedAt, secretResolver);
   }
 
+  if (preset.capabilities.includes("asr") && preset.api !== "openai-completions") {
+    return {
+      ok: false,
+      code: "unsupported_capability",
+      message: "ASR providers must use the OpenAI-compatible completions protocol.",
+      checkedAt,
+    };
+  }
+
   if (preset.capabilities.includes("asr") && !preset.capabilities.includes("chat")) {
     return {
       ok: true,
