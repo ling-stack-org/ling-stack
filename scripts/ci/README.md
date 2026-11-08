@@ -73,6 +73,9 @@ a requested package via `--if-present`.
 - Daemon: six `macos-26` shards, two serial file workers per shard. The Kimi Host
   read/terminal and delegation production-tool-surface files run serially in an
   exclusive phase before other files on their assigned runner.
+  The six-shard split keeps first runs bounded before the default-branch timing
+  cache has measurements for newly added daemon files; it does not reduce file
+  discovery, per-file watchdogs or platform coverage.
 - Linux restricted-command contracts and real macOS native smoke remain separate
   mandatory lanes. No daemon files have been moved to Linux or removed.
 - Framework assurance: complete non-documentation runs add an Ubuntu / Node
