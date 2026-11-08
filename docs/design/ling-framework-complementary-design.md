@@ -1,11 +1,11 @@
 # Ling 框架补强总体设计
 
-Status: F1/F2 implemented; macOS local and Linux hosted checks passed; native boundary repair locally verified; PR #653 hosted CI green; not merged or released; F3/F4/F5 not implemented
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A fixture evidence adapter and F4-01 read-only diagnostics report implemented on an independent branch; F3-B live execution and F5 rerun remain unimplemented
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
-Last verified: 2026-11-08
+Last verified: 2026-11-09
 Document type: explanation / scope contract
 Canonical replacement: none; complements existing runtime, evaluation, and SDK contracts
-Code and test anchors: see section 10 and the implementation record; offline and tarball consumer acceptance only, no live task or GUI acceptance
+Code and test anchors: see section 10 and the implementation record; offline, fixture evidence, and read-only diagnostics acceptance only, no live task or GUI acceptance
 
 配套文档：[详细设计](ling-framework-complementary-detailed-design.md)、[实现计划书](ling-framework-complementary-implementation-plan.md)。
 
@@ -23,9 +23,9 @@ Code and test anchors: see section 10 and the implementation record; offline and
 
 ### 本轮实施边界
 
-- F1/F2 已在独立工作区实现并通过本地验证，提前推送的候选也已取得 Linux 托管证据：离线工具与冻结校准数据、四包真实 tarball 的仓外消费。详细结果以[实施记录](ling-framework-complementary-implementation-plan.md#9-交付记录与完成判定)为准，不代表已合并或发布。
+- F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`；此前 Linux 托管证据覆盖离线工具与冻结校准数据、四包真实 tarball 的仓外消费。F3-A/F4-01 在独立 worktree 中补齐 fixture 证据适配和只读诊断报告，仍不代表真实 Run 或节点重跑能力。
 - 审查修复后，新工具 64 项测试与相关 CI/历史扫描契约 125 项共 189/189 通过；既有三包 261 项测试及类型检查已有本地通过记录。候选 `0a4f5327` 的 Linux 托管 job 另行验证了工具 64/64、九控制校准、仓外 SDK 19/19 及 NodeNext/Bundler 类型正反例；Windows 安装器契约也已通过，但不代表 Windows SDK 消费通过。已获批准补齐 106 条精确历史误报指纹，本地同范围全历史扫描零命中、扫描契约 22/22 通过，未放宽规则或范围。旧候选的完整 CI 已以 failure 结束：Common checks 与 Daemon shard 3 失败，Daemon shard 0 取消，1/2 与 helper smoke 成功。本地修复不改写远端结果，不能声称门禁全绿。
-- 当前 PR #653 的提交 `3c7b905be010fa0da37780da6e5288dbff760cd1` 已在 [CI run 42401958832](https://github.com/ling-stack-org/ling-stack/actions/runs/42401958832) 完成并通过：assurance、SDK consumer、依赖策略、构建、类型检查、四个 Core shard、四个 Daemon shard、Linux restricted-command、macOS helper/Seatbelt、质量汇总与 timing telemetry 均为 success；Core shard 2 首次的 `artifact_retention_deadline_in_past` 时间边界失败在同一 run 的 job 重跑中通过。该结果证明当前 PR 的门禁已通过，不代表已合并、发布或完成 F3/F4。
+- PR #653 的 hosted CI 已在合并前通过，合并结果以 `47afcc47` 为准；该门禁证据只覆盖 F1/F2，不扩大为真实 Runner、GUI、F3-B 或 F5 验收。
 - 失败分片的限时追加诊断未完整完成任何一轮，并发现一个原生私有状态隔离缺陷；该缺陷已在本分支修复，并由真实 macOS native boundary 回归 22/22、相关 Kimi/relay 回归 65/65 验证。原超时和远端完整 CI 失败仍分别记录，均不以单独 lane 成功或文档补齐替代收口。
 - 不修改多代理并发、worktree 合并、审批、Run/Attempt 生命周期和 SQLite schema。
 - 不运行真实模型，不启动、停止或重启其他会话的服务。
@@ -206,6 +206,8 @@ F1 只验证这些任务的元数据、注入补丁可应用性和 synthetic 控
 | 运行目录隔离 | `packages/core/src/runtime-paths.ts` |
 | macOS native boundary | `packages/daemon/src/runtime/sandbox/native-process-launch.ts`、`packages/daemon/test/native-process-boundary.test.mjs`；本地验证覆盖 workspace/private-state、Kimi metadata、relay 与进程回收 |
 | 本轮离线实现与回归 | `scripts/framework-assurance/manifest.mjs`、`preflight.mjs`、`grader.mjs`、`evidence.mjs`、`report.mjs`、`output.mjs`、`index.mjs`、`offline.test.mjs`、`cli.test.mjs` |
+| F3-A fixture 证据适配 | `scripts/framework-assurance/execution-evidence.mjs`、`execution-evidence.test.mjs`、`fixtures/framework-assurance/execution-evidence/` |
+| F4-01 只读诊断报告 | `scripts/framework-assurance/diagnostics.mjs`、`diagnostics.test.mjs`；消费既有 `getWorkUnitHarnessDiagnostics` |
 | 本轮真实包消费与回归 | `scripts/framework-assurance/sdk-consumer.mjs`、`sdk-consumer.test.mjs`、`fixtures/framework-assurance/sdk-consumer/` |
 | 冻结校准输入 | `fixtures/framework-assurance/suites/framework-v5.json` 及 cases/controls 引用；历史 v3/v4 结果不改写 |
 

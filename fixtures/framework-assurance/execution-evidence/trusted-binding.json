@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "taskIdentity": {
+    "suiteId": "ling-framework-assurance",
+    "suiteVersion": "5",
+    "taskId": "T01",
+    "taskVersion": "4"
+  },
+  "sourceCommit": "47afcc47b9063cd7a402a81cf1088caa695f3638",
+  "inputDigests": {
+    "suiteBytes": "1111111111111111111111111111111111111111111111111111111111111111",
+    "taskBytes": "2222222222222222222222222222222222222222222222222222222222222222",
+    "ruleBytes": "3333333333333333333333333333333333333333333333333333333333333333",
+    "expectedBytes": "4444444444444444444444444444444444444444444444444444444444444444",
+    "profileBytes": "5555555555555555555555555555555555555555555555555555555555555555",
+    "lockBytes": "6666666666666666666666666666666666666666666666666666666666666666"
+  },
+  "comparison": {
+    "model": "none",
+    "reasoning": "none",
+    "executionStrategy": "fixture_replay",
+    "node": "22.22.1",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "execution": {
+    "runId": "run-fixture-001",
+    "workUnitId": "work-unit-fixture-001",
+    "attemptId": "attempt-fixture-001",
+    "runtimeInstanceId": "runtime-fixture-001",
+    "fencingToken": "fence-fixture-001"
+  },
+  "snapshots": {
+    "run": {
+      "revision": 3,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "workUnit": {
+      "revision": 7,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "attempt": {
+      "revision": 2,
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  },
+  "artifacts": [
+    {
+      "role": "candidate",
+      "artifactId": "artifact-candidate-001",
+      "contentSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "role": "validation",
+      "artifactId": "artifact-validation-001",
+      "contentSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }
+  ]
+}
