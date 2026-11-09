@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { DEFAULT_WORKSPACE_ID, type HostOperationSource, type RunStore,
+import { type HostOperationSource, type RunStore,
   type RuntimeRunQueueClaim } from "@ling-stack/core";
 import { RuntimeHostCapacityBridge, type HostRunCapacityStore,
   type RuntimeHostCapacityDispatchReference, type RuntimeHostCapacityJournal,
@@ -15,6 +15,8 @@ interface StoreQueueSignals {
   retain(runId: string, options: ExecuteRunRequestOptions): void;
 }
 export interface RuntimeHostCapacityAdmission {
+  readonly observeReservation?: (input: { readonly workspaceId: string; readonly intentId: string; readonly now: string }) =>
+    ReturnType<RuntimeHostCapacityBridge["observeReservation"]>;
   reserveExecution(input: { readonly workspaceId: string; readonly source: HostOperationSource; readonly now: string }):
     | { readonly status: "reserved" | "duplicate"; readonly reference: RuntimeHostCapacityDispatchReference }
     | { readonly status: "full" | "unconfigured" | "changed" };
@@ -61,6 +63,9 @@ export function createRuntimeHostCapacityAdmission(input: {
     return { status: result.status === "retained" ? "changed" as const : result.status };
   };
   return {
+    observeReservation({ workspaceId, intentId, now }) {
+      return new RuntimeHostCapacityBridge(input.workspace(workspaceId), input.host).observeReservation(intentId, now);
+    },
     reserveExecution({ workspaceId, source, now }) {
       return reservedReference(bridgeFor(workspaceId).reserveExecution({ source, now }));
     },
@@ -241,7 +246,7 @@ export class RuntimeRunQueueCoordinator {
       const preparingLimit = Math.max(MINIMUM_QUEUE_PREPARATIONS,
         this.options.runtimeSupervisor.getConcurrencyPolicy().maxConcurrentRuns);
       for (let visited = 0; visited < 16 && preparing.size < preparingLimit && !this.closed; visited++) {
-        const selected = store.claimNextRuntimeRun({ workspaceId: DEFAULT_WORKSPACE_ID,
+        const selected = store.claimNextRuntimeRun({ workspaceId: runtime.workspaceId,
           runtimeInstanceId: runtime.runtimeInstanceId, ownerId: this.ownerId, leaseMs: 30_000, now: new Date().toISOString(),
           ...(ignoreRetryAt ? { ignoreRetryAt: true } : {}) });
         if (selected.status !== "claimed") break;

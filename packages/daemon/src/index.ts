@@ -90,6 +90,7 @@ import { resumePendingMediaJobExecutions, syncMediaJobForApprovalDecision } from
 import { createNativeRunDispatcher } from "./features/runs/native-run-dispatcher.js";
 import { publishConversationMediaProjectionChange } from "./features/media/conversation-events.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
+import { recoverHostCapacityReservations } from "./runtime/host-capacity-recovery.js";
 import { createRunShutdownCoordinator } from "./runtime/run-shutdown-coordinator.js";
 import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type RunnerRegistry } from "./runtime/runners.js";
 import { listNativeRunnerRegistrations } from "./runtime/native-runners.js";
@@ -430,10 +431,24 @@ export function createDaemonServer(
   const initializeOwnedStore = (cwd: string, store: RunStore): void => {
     if (harnessShuttingDown) throw new Error("runtime_shutting_down");
     if (initializedOwnedStores.has(store)) return;
-    runtimeSupervisor.getRuntime(cwd, store);
+    const runtime = runtimeSupervisor.getRuntime(cwd, store);
     const recoveryNow = new Date().toISOString();
     store.recoverStaleRuns(recoveryNow);
     store.recoverStaleChannelWorkflows(recoveryNow);
+    if (resolvedConfig.concurrency.enabled) {
+      const capacity = runtimeHostCapacities.get(store);
+      if (capacity) {
+        try {
+          const recovery = recoverHostCapacityReservations({ store, workspaceId: runtime.workspaceId,
+            host: hostRunCapacity, admission: capacity, now: recoveryNow });
+          if (recovery.observed || recovery.released) {
+            console.info(`runtime_host_capacity_startup_recovery: observed=${recovery.observed} released=${recovery.released}`);
+          }
+        } catch {
+          console.warn("runtime_host_capacity_startup_recovery_incomplete: held reservations remain recoverable");
+        }
+      }
+    }
     configureWorkflowIsolationLifecycle(store, {
       trackCompletion: completion => activeRuns.trackCompletion(completion),
       isShuttingDown: () => activeRuns.isShuttingDown(),

@@ -2,7 +2,6 @@ import { realpathSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { resolve as resolvePath } from "node:path";
 import {
-  DEFAULT_WORKSPACE_ID,
   type Channel,
   type ResourceLease,
   type RunStore,
@@ -356,7 +355,7 @@ export function buildRunSemaphoreInputs(input: {
       limit: Math.max(input.channelParallelLimit ?? input.channel.runtimePolicy.maxConcurrentRuns, 1) }] : []),
   ];
   return slots.map((slot) => ({
-    workspaceId: DEFAULT_WORKSPACE_ID,
+    workspaceId: input.workUnit.workspaceId,
     resourceType: slot.resourceType,
     resourceKey: slot.resourceKey,
     limit: slot.limit,
@@ -399,7 +398,7 @@ export function buildRunLeaseInputs(input: {
 }): Parameters<RunStore["acquireResourceLease"]>[0][] {
   const expiresAt = new Date(new Date(input.now).getTime() + RESOURCE_LEASE_TTL_MS).toISOString();
   const base = removeUndefined({
-    workspaceId: DEFAULT_WORKSPACE_ID,
+    workspaceId: input.workUnit.workspaceId,
     ownerType: "run" as const,
     ownerId: input.runId,
     acquiredAt: input.now,
@@ -422,11 +421,11 @@ export function buildRunLeaseInputs(input: {
   if (usesSideEffectTools(input.runRequest.tools ?? [])) {
     const scope = input.channel?.runtimePolicy.writeLockScope ?? "boundPath";
     if (scope === "workspace") {
-      leases.push({ ...base, resourceType: "workspace", resourceKey: DEFAULT_WORKSPACE_ID });
+      leases.push({ ...base, resourceType: "workspace", resourceKey: input.workUnit.workspaceId });
     } else if (scope === "channel" && input.channel) {
       leases.push({ ...base, resourceType: "channel", resourceKey: input.channel.id });
     } else if (scope === "channel") {
-      leases.push({ ...base, resourceType: "workspace", resourceKey: DEFAULT_WORKSPACE_ID });
+      leases.push({ ...base, resourceType: "workspace", resourceKey: input.workUnit.workspaceId });
     } else {
       leases.push({ ...base, resourceType: "bound_path", resourceKey: canonicalResourcePath(input.runRequest.cwd) });
     }

@@ -24,12 +24,12 @@ function deferred() {
 }
 
 // Finite selections exercise scheduling, without emulating SQLite admission or a Provider.
-function scriptedStore(label: string, count = 0) {
+function scriptedStore(label: string, count = 0, workspaceId = DEFAULT_WORKSPACE_ID) {
   const pending = Array.from({ length: count }, (_, index) => `${label}-${index + 1}`);
   const claimInputs: ClaimInput[] = [], claimed: Claimed[] = [], deferrals: Deferral[] = [];
   const revisions = new Map<string, number>();
   const store = {
-    paths: { cwd: `/queue-coordinator/${label}` },
+    paths: { cwd: `/queue-coordinator/${label}`, identity: { workspaceId } },
     claimNextRuntimeRun(input: ClaimInput): ReturnType<RunStore["claimNextRuntimeRun"]> {
       claimInputs.push(input);
       const runId = pending.shift();
@@ -40,7 +40,7 @@ function scriptedStore(label: string, count = 0) {
         runtimeInstanceId: `accepted-${label}`, fencingToken: `fence-${runId}` });
       const claim = Object.freeze({ runId, revision, sourceFence, ownerId: input.ownerId,
         token: `claim-${runId}-${revision}`, runtimeInstanceId: input.runtimeInstanceId });
-      const entry: RuntimeRunQueueEntry = { sequence: claimed.length + 1, runId, workspaceId: DEFAULT_WORKSPACE_ID, sourceFence,
+      const entry: RuntimeRunQueueEntry = { sequence: claimed.length + 1, runId, workspaceId, sourceFence,
         snapshotDigest: "a".repeat(64), groupKey: label, queuedAt: input.now,
         reason: claimed.length % 2 ? "resource_conflict" : "runtime_semaphore_conflict",
         revision: claim.revision, lastSelected: claimed.length + 1, claim,
@@ -70,7 +70,7 @@ function fixture(t: TestContext, stores: ReturnType<typeof scriptedStore>[] = []
       getRuntime(cwd: string, store: RunStore) {
         assert.equal(cwd, store.paths.cwd);
         runtimeCalls.push({ cwd, store });
-        return { runtimeInstanceId: `runtime:${cwd}` };
+        return { workspaceId: store.paths.identity.workspaceId, runtimeInstanceId: `runtime:${cwd}` };
       },
       getConcurrencyPolicy() {
         return { maxConcurrentRuns };
@@ -163,6 +163,16 @@ test("Host capacity full defers a claim without starting execution", async t => 
   assert.equal(f.executions.length, 0);
   assert.equal(queue.deferrals.length, 1);
   assert.equal(queue.deferrals[0]!.reason, "runtime_semaphore_conflict");
+});
+
+test("claims use the registered Store workspace identity", async t => {
+  const workspaceId = "workspace_non_default";
+  const queue = scriptedStore("non-default-workspace", 1, workspaceId);
+  const f = fixture(t, [queue]);
+  f.coordinator.start();
+  await nextTurn();
+  assert.equal(queue.claimInputs[0]?.workspaceId, workspaceId);
+  assert.equal(f.executions[0]?.claim.runId, "non-default-workspace-1");
 });
 
 test("a queued Host receipt reaches execution and is released only when dispatch is not committed", async t => {
