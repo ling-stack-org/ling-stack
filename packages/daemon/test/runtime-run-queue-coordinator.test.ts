@@ -151,6 +151,24 @@ test("preparation capacity follows the trusted Supervisor policy above its fairn
   assert.deepEqual(queue.pending, ["configured-preparation-7", "configured-preparation-8", "configured-preparation-9", "configured-preparation-10"]);
 });
 
+test("workspace scan cursor continues across bounded preparation scans", async t => {
+  const workspaces = ["workspace_b", "workspace_c", "workspace_d", "workspace_e"];
+  const queue = scriptedStore("workspace-cursor", 1, DEFAULT_WORKSPACE_ID,
+    workspaces.map(workspaceId => ({ workspaceId, count: 1 })));
+  const f = fixture(t, [queue]);
+  f.coordinator.start();
+  await nextTurn();
+  assert.deepEqual(f.executions.map(item => item.claim.sourceFence.workUnitId), [
+    "unit-workspace-cursor-1", "unit-workspace-cursor-workspace_b-1",
+    "unit-workspace-cursor-workspace_c-1", "unit-workspace-cursor-workspace_d-1",
+  ]);
+
+  ready(f.executions[0]!);
+  await nextTurn();
+  assert.equal(f.executions.length, 5);
+  assert.equal(f.executions[4]!.claim.sourceFence.workUnitId, "unit-workspace-cursor-workspace_e-1");
+});
+
 test("Host capacity full defers a claim without starting execution", async t => {
   const queue = scriptedStore("host-full", 1);
   const reserve = t.mock.fn<HostCapacity["reserve"]>(() => ({ status: "full" }));

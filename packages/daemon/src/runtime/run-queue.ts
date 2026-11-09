@@ -159,6 +159,7 @@ export class RuntimeRunQueueCoordinator {
   private readonly stores = new Set<RunStore>();
   private readonly preparing = new WeakMap<RunStore, Set<symbol>>();
   private readonly retainedOptions = new WeakMap<RunStore, Map<string, ExecuteRunRequestOptions>>();
+  private readonly workspaceScanCursors = new WeakMap<RunStore, string>();
   private readonly scanning = new WeakSet<RunStore>();
   private readonly pendingWake = new WeakSet<RunStore>();
   private readonly pendingResourceWake = new WeakSet<RunStore>();
@@ -248,7 +249,9 @@ export class RuntimeRunQueueCoordinator {
         this.options.runtimeSupervisor.getConcurrencyPolicy().maxConcurrentRuns);
       const workspaceIds = [...store.listWorkspaceIds()];
       const workspaceRuntimes = new Map<string, ReturnType<RuntimeSupervisor["getRuntime"]>>();
-      let workspaceIndex = 0;
+      const cursor = this.workspaceScanCursors.get(store);
+      let workspaceIndex = cursor ? workspaceIds.indexOf(cursor) : 0;
+      if (workspaceIndex < 0) workspaceIndex = 0;
       let visited = 0;
       while (visited < MAX_QUEUE_SCAN_ATTEMPTS && workspaceIds.length > 0
         && preparing.size < preparingLimit && !this.closed) {
@@ -261,12 +264,24 @@ export class RuntimeRunQueueCoordinator {
           ...(ignoreRetryAt ? { ignoreRetryAt: true } : {}) });
         if (selected.status === "empty") {
           workspaceIds.splice(workspaceIndex, 1);
-          if (workspaceIds.length > 0) workspaceIndex %= workspaceIds.length;
+          if (workspaceIds.length > 0) {
+            workspaceIndex %= workspaceIds.length;
+            this.workspaceScanCursors.set(store, workspaceIds[workspaceIndex]!);
+          } else {
+            this.workspaceScanCursors.delete(store);
+          }
           continue;
         }
-        if (selected.status !== "claimed") break;
+        if (selected.status !== "claimed") {
+          if (workspaceIds.length > 1) {
+            workspaceIndex = (workspaceIndex + 1) % workspaceIds.length;
+            this.workspaceScanCursors.set(store, workspaceIds[workspaceIndex]!);
+          }
+          break;
+        }
         visited += 1;
         workspaceIndex = (workspaceIndex + 1) % workspaceIds.length;
+        this.workspaceScanCursors.set(store, workspaceIds[workspaceIndex]!);
         const { claim } = selected;
         const now = new Date().toISOString();
         const hostCapacity = capacity?.reserve({
